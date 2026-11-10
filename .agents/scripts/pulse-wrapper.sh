@@ -1522,7 +1522,7 @@ main() {
 	# t18678 (GH#34469): one dedicated handler (pulse-instance-lock.sh) owns all
 	# process-lifetime cleanup. Never move it onto the shared
 	# push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
-	trap '_pulse_finish_post_dispatch_housekeeping; _pulse_exit_cleanup' EXIT
+	trap 'release_instance_lock; _pulse_finish_post_dispatch_housekeeping; _pulse_exit_cleanup' EXIT
 
 	if ! acquire_instance_lock; then
 		_pulse_run_routines_while_busy "lock-busy"
@@ -1806,9 +1806,10 @@ main() {
 	# reacquires this lock and writes only when health still names this cycle,
 	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
 	# Linux owns this bounded background lane in the service cgroup. Join only
-	# after admission/refill, before service exit or source re-exec can kill it.
-	_pulse_finish_post_dispatch_housekeeping
+	# after admission/refill and lock release, before service exit or source
+	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
 	release_instance_lock
+	_pulse_finish_post_dispatch_housekeeping
 	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
 	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
 	# unless prefetch has degraded long enough that the supervisor would starve;

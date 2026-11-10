@@ -172,32 +172,18 @@ _pulse_run_blocker_refresh_catchup() {
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$progress_file" \
 			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || return 1
+		_pulse_housekeeping_mark_stage_done "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$(_pulse_post_dispatch_housekeeping_statefile)"
 	fi
 	rm -f "$pending_file" "$progress_file" || return 1
 	return 0
 }
 
 #######################################
-# Give overdue synchronous blocker recovery a bounded admission opportunity.
-#
-# Linux synchronous housekeeping otherwise starts after dispatch passes which
-# can spend the entire non-reserved cycle budget. Merely moving recovery ahead
-# of optional scans cannot prevent that starvation. Only stale/pending recovery
-# runs here; fresh-cache and async cycles retain their dispatch-first ordering.
-# The shared watchdog still protects the main-dispatch reserve and all nested
-# API-budget gates. The whole attempt is capped at 180s, not 180s per step.
-#
-# Args: $1 - stage timeout ceiling
-# Returns 0 always; recovery failure must not block dispatch.
+# Compatibility entrypoint: recovery now has its own background budget on
+# Linux as well as launchd. Never spend up to 180s recovering briefs before
+# dispatch; the locked post-dispatch lane cannot be starved by the cycle clamp.
 #######################################
 _pulse_run_pre_dispatch_blocker_refresh() {
-	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	[[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]] || return 0
-	_pulse_blocker_refresh_starved || return 0
-	[[ "$stage_timeout" =~ ^[1-9][0-9]{0,8}$ ]] || stage_timeout=180
-	[[ "$stage_timeout" -le 180 ]] || stage_timeout=180
-	run_stage_with_timeout "preflight_blocker_refresh_catchup" "$stage_timeout" \
-		_pulse_run_locked_blocker_refresh_catchup "$stage_timeout" || true
 	return 0
 }
 
@@ -398,12 +384,16 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
 		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
 		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
+	local catchup_rc=0
 	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
-		_pulse_run_blocker_refresh_catchup "$stage_timeout" || incomplete=1
+		_pulse_run_blocker_refresh_catchup "$stage_timeout" || catchup_rc=$?
+	[[ "$catchup_rc" -eq 0 ]] || incomplete=1
 	# Brief edits need recovery even when the dependency graph is fresh. The
 	# catch-up's inner checkpoint alone must not leave them on admission's path.
-	_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
-		_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
+	if [[ "$catchup_rc" -eq 0 ]] && declare -F release_repaired_brief_holds >/dev/null 2>&1; then
+		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
+			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
+	fi
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
