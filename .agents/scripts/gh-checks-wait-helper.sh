@@ -649,6 +649,33 @@ emit_recovered_state() {
 	return 0
 }
 
+# Uses the waiter's dynamically scoped observation and stability state.
+classify_draft_stall() {
+	if [[ "$required_only" -eq 1 && ( "$classification" == pending || "$classification" == success ) ]] &&
+		[[ -n "$missing_contexts" || "$current" == *'"bucket":"skipping"'* ]] &&
+		printf '%s' "$current" | jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' >/dev/null &&
+		[[ "$(read_draft_state "$pr_number" "$repo" 2>/dev/null || true)" == true ]]; then
+		if [[ -z "$draft_since" || "$draft_snapshot" != "$current|$missing_contexts" ]]; then
+			draft_since="$now_epoch"
+			draft_snapshot="$current|$missing_contexts"
+		fi
+		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
+			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
+			if [[ "$final_head" != "$initial_head" ]]; then
+				initial_head="$final_head"
+				previous="" draft_since=""
+				return 3
+			fi
+			printf 'WAIT_CHECKS=draft-required-missing: run gh pr ready %s --repo %s, then wait again\n' "$pr_number" "$repo"
+			return 9
+		fi
+		classification=pending
+	else
+		draft_since=""
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -700,30 +727,10 @@ wait_for_checks() {
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
-		# Only required-only observations identify every reported check as required.
-		# Never mask a failure, a running check, or an unobservable draft state.
-		if [[ "$required_only" -eq 1 && ( "$classification" == pending || "$classification" == success ) ]] &&
-			[[ -n "$missing_contexts" || "$current" == *'"bucket":"skipping"'* ]] &&
-			printf '%s' "$current" | jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' >/dev/null &&
-			[[ "$(read_draft_state "$pr_number" "$repo" 2>/dev/null || true)" == true ]]; then
-			if [[ -z "$draft_since" || "$draft_snapshot" != "$current|$missing_contexts" ]]; then
-				draft_since="$now_epoch"
-				draft_snapshot="$current|$missing_contexts"
-			fi
-			if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
-				final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
-				if [[ "$final_head" != "$initial_head" ]]; then
-					initial_head="$final_head"
-					previous="" draft_since=""
-					continue
-				fi
-				printf 'WAIT_CHECKS=draft-required-missing: run gh pr ready %s --repo %s, then wait again\n' "$pr_number" "$repo"
-				return 9
-			fi
-			classification=pending
-		else
-			draft_since=""
-		fi
+		local draft_rc=0
+		classify_draft_stall || draft_rc=$?
+		[[ "$draft_rc" -ne 3 ]] || continue
+		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
 		if [[ -z "$previous" ]]; then
 			emit_initial_state "$current" "$missing_contexts"
 			changed=1
