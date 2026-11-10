@@ -1410,7 +1410,13 @@ _dispatch_filter_consolidated_candidates() {
 		return 0
 	fi
 	echo "[pulse-wrapper] Dispatch enumeration: ${repo_slug} consolidated management-label gate skipped #${skipped//,/ #} (blocked:consolidated would always reject; GH#35038)" >>"$LOGFILE"
-	_dispatch_stats_increment "dispatch_candidate_consolidated_filtered"
+	# GH#37600: count each excluded candidate, not each repository pass, so the
+	# counter is comparable with the dispatch-time blocked:consolidated count.
+	local -a skipped_issues=()
+	IFS=',' read -r -a skipped_issues <<<"$skipped"
+	for issue in ${skipped_issues[@]+"${skipped_issues[@]}"}; do
+		_dispatch_stats_increment "dispatch_candidate_consolidated_filtered"
+	done
 	# Stranded checkpoints: excluded issues that lost the auto-dispatch handoff.
 	for issue in ${stranded[@]+"${stranded[@]}"}; do
 		_dispatch_consolidated_attention_fresh "$repo_slug" "$issue" && continue
