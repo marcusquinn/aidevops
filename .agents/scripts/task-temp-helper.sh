@@ -168,6 +168,20 @@ def same_filesystem_trash(path):
         return False  # Unknown filesystem evidence never authorises deletion.
 
 
+def reject_mounted_scratch(path, deadline):
+    """rmtree is symlink-safe, not mount-safe; include same-device bind mounts."""
+    candidate = path.resolve()
+    with open('/proc/self/mountinfo') as mounts:
+        for line in mounts:
+            check_deadline(deadline)
+            fields = line.split()
+            if len(fields) < 6:
+                raise ValueError('mount evidence unavailable')
+            mount = Path(re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields[4]))
+            if mount == candidate or candidate in mount.parents:
+                raise ValueError('mounted scratch retained')
+
+
 def cleanup(args, root):
     safe_root(root)
     if not root.exists():
@@ -236,10 +250,13 @@ def cleanup(args, root):
                     try:
                         if not eligible(path, cutoff, deadline):
                             continue
+                        reject_mounted_scratch(path, deadline)
                     except TimeoutError:
                         exhausted = True
                         break
-                    except (OSError, ValueError, TypeError):
+                    except (OSError, ValueError, TypeError) as error:
+                        failed += 1
+                        log.write(f'Retained before delete: {path}: {error}\n')
                         continue
                     try:
                         if path.is_dir() and not path.is_symlink():

@@ -52,6 +52,7 @@ python3 - "$SCRIPT_DIR/worktree-artefact-reclaim.sh" "$@" <<'PY'
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import stat
@@ -242,6 +243,19 @@ def same_filesystem_trash(path):
         return False
 
 
+def reject_mounted_artefact(path):
+    # is_mount() cannot identify same-device bind mounts; rmtree crosses them.
+    with open('/proc/self/mountinfo') as mounts:
+        for line in mounts:
+            remaining()
+            fields = line.split()
+            if len(fields) < 6:
+                raise ValueError('mount evidence unavailable; retained')
+            mount = Path(re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields[4]))
+            if mount == path or path in mount.parents:
+                raise ValueError('mounted artefact retained')
+
+
 def reclaim(wt, paths):
     # Cargo's target is explicit: never let workspace/config defaults choose a
     # shared cache outside the verified worktree. Other outputs move in a batch.
@@ -256,6 +270,7 @@ def reclaim(wt, paths):
         if same_filesystem_trash(path):
             if not shutil.rmtree.avoids_symlink_attacks:
                 raise ValueError('safe recursive deletion unavailable; retained')
+            reject_mounted_artefact(path)
             remaining()
             shutil.rmtree(path)
             print(f'[worktree-artefacts] deleted={str(path)!r}', flush=True)
