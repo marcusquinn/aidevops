@@ -168,6 +168,17 @@ executes it. A missing tool defers with `tool_missing name=<name>`
 this, not a gitignored per-runner dispatch class, when every runner in the fleet
 must enforce the gate.
 
+A local service prerequisite (GH#37638) is a standalone issue-body line such as
+`requires-loopback-health: 8191/health` (port 1024-65535, optional path of
+`[A-Za-z0-9_./-]{0,64}` without `..`), or a `"loopback_health": ["8191/health"]`
+list in a dispatch class; at most four entries. The dispatcher sends one `GET` to
+`http://127.0.0.1:<port>/<path>` (no redirects, 2 s timeout, 4 KiB read) and
+requires a 2xx response. Issue text never supplies a host, method, header or
+command. Results are cached per port and path for the pulse cycle. An
+unhealthy service defers with `service_unhealthy port=<port>`
+(`cooldown=eligible`); an invalid value defers with `invalid_requirements`. This
+runs after the `PATH` tool check and before secret reads.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming
