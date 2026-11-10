@@ -1989,7 +1989,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18940 fix(pulse): worker-bus relay logs which gate stopped a GitHub read #auto-dispatch #bug ref:GH#37533 pr:#37535 completed:2026-11-10
 
-- [ ] t18945 test(pulse): repair stale auto-decomposer structural test assertions #auto-dispatch #bug ref:GH#37557
+- [ ] t18946 fix(relay): log gh-transport deferral tokens instead of redacted stderr #auto-dispatch #bug ref:GH#37561
 
 ## In Progress
 
