@@ -7,11 +7,11 @@
 # test-auto-decomposer-per-parent-gate.sh — structural tests for t2573
 #
 # Verifies the per-parent gating enhancements introduced in t2573:
-#   1. Global AUTO_DECOMPOSER_LAST_RUN gate removed from pulse-simplification.sh
+#   1. Global AUTO_DECOMPOSER_LAST_RUN gate removed from the scanner wrapper
 #   2. Scanner runs every pulse cycle (no global throttle in wrapper)
 #   3. Per-parent state file constants exist (AUTO_DECOMPOSER_PARENT_STATE)
-#   4. AUTO_DECOMPOSER_INTERVAL repurposed as per-parent re-file interval (1 day, GH#20532)
-#   5. SCANNER_FRESH_PARENT_HOURS env var present in scanner (default 0, GH#20532)
+#   4. AUTO_DECOMPOSER_INTERVAL uses the per-parent re-file interval (4 hours)
+#   5. SCANNER_FRESH_PARENT_HOURS env var defaults to the parent nudge threshold
 #   6. Fresh-parent threshold logic present in do_scan()
 #   7. Per-parent state read/write helpers present (_read_parent_last_filed, _update_parent_state)
 #   8. Non-nudge comment counter present (_count_non_nudge_comments)
@@ -91,8 +91,8 @@ assert_rc() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCANNER="$SCRIPT_DIR/auto-decomposer-scanner.sh"
-WRAPPER="$SCRIPT_DIR/pulse-simplification.sh"
-BOOTSTRAP="$SCRIPT_DIR/pulse-wrapper.sh"
+WRAPPER="$SCRIPT_DIR/pulse-simplification-review.sh"
+BOOTSTRAP="$SCRIPT_DIR/pulse-wrapper-config.sh"
 
 for required in "$SCANNER" "$WRAPPER" "$BOOTSTRAP"; do
 	if [[ ! -f "$required" ]]; then
@@ -104,7 +104,7 @@ done
 echo "${TEST_BLUE}=== t2573: auto-decomposer per-parent gate tests ===${TEST_NC}"
 echo ""
 
-# --- 1. Global gate removed from pulse-simplification.sh wrapper ---
+# --- 1. Global gate removed from scanner wrapper ---
 
 assert_not_grep_fixed \
 	"1a: global AUTO_DECOMPOSER_LAST_RUN write removed from wrapper" \
@@ -123,7 +123,7 @@ assert_grep \
 	'^_run_auto_decomposer_scanner\(\) \{' \
 	"$WRAPPER"
 
-# --- 3. Per-parent state constant in pulse-wrapper.sh bootstrap ---
+# --- 3. Per-parent state constant in pulse-wrapper-config.sh bootstrap ---
 
 assert_grep \
 	"3a: AUTO_DECOMPOSER_PARENT_STATE constant defined in pulse-wrapper" \
@@ -135,28 +135,28 @@ assert_not_grep_fixed \
 	'AUTO_DECOMPOSER_LAST_RUN' \
 	"$BOOTSTRAP"
 
-# --- 4. AUTO_DECOMPOSER_INTERVAL per-parent re-file interval (1 day default, GH#20532) ---
+# --- 4. AUTO_DECOMPOSER_INTERVAL per-parent re-file interval ---
 
 assert_grep \
-	"4a: AUTO_DECOMPOSER_INTERVAL default is 604800 (7 days) in pulse-wrapper" \
-	'AUTO_DECOMPOSER_INTERVAL=.*604800' \
+	"4a: AUTO_DECOMPOSER_INTERVAL defaults to the parent re-file gate" \
+	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-\$\{PARENT_TASK_REFILE_GATE_SECONDS\}\}"' \
 	"$BOOTSTRAP"
 
 assert_grep \
-	"4b: AUTO_DECOMPOSER_INTERVAL _validate_int min is 86400 (1 day) in pulse-wrapper" \
-	'_validate_int AUTO_DECOMPOSER_INTERVAL.*604800.*86400' \
+	"4b: AUTO_DECOMPOSER_INTERVAL validates with 4-hour default and 1-hour minimum" \
+	'_validate_int AUTO_DECOMPOSER_INTERVAL "\$AUTO_DECOMPOSER_INTERVAL" 14400 3600' \
 	"$BOOTSTRAP"
 
 assert_grep \
-	"4c: AUTO_DECOMPOSER_INTERVAL default 86400 (1 day) in scanner" \
-	'AUTO_DECOMPOSER_INTERVAL.*86400' \
+	"4c: scanner defaults to the parent re-file gate or 4 hours" \
+	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-\$\{PARENT_TASK_REFILE_GATE_SECONDS:-14400\}\}"' \
 	"$SCANNER"
 
 # --- 5. SCANNER_FRESH_PARENT_HOURS in scanner ---
 
 assert_grep \
-	"5a: SCANNER_FRESH_PARENT_HOURS env var defined in scanner (default 0 — immediate)" \
-	'SCANNER_FRESH_PARENT_HOURS.*:-0' \
+	"5a: SCANNER_FRESH_PARENT_HOURS is configurable and defaults to the parent nudge threshold" \
+	'^SCANNER_FRESH_PARENT_HOURS="\$\{SCANNER_FRESH_PARENT_HOURS:-\$\{_PTNUDGE_HOURS\}\}"' \
 	"$SCANNER"
 
 # --- 6. Fresh-parent threshold logic in do_scan ---
