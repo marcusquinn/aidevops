@@ -661,6 +661,7 @@ export async function AidevopsPlugin({ directory, client }) {
     activeAgentsDir: ACTIVE_AGENTS_DIR,
     agentsDir: AGENTS_DIR,
     client,
+    isHeadless,
   });
   const sessionTitleStatusHandler = createSessionTitleStatusHandler({ isHeadless });
   const routingFeedbackHandler = createRoutingFeedbackHandler({ client, isHeadless, getFeedback: getRoutingFeedback });

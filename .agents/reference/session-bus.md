@@ -26,7 +26,9 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 
-`to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+`to` accepts a session ID, `@<id>` (the last 6 session-ID characters), handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+
+Interactive root-session titles end with `· @<id>` (GH#37630), so the address shows in the OpenCode sidebar and the terminal tab; presence records store the title without it. Subagent and headless worker titles carry no token. `AIDEVOPS_SESSION_TITLE_ID=false` turns it off.
 
 ### Subagents and waiting for a reply
 

@@ -10,7 +10,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeCurrentDirectory, writeSessionRecoveryMarker } from "../session-recovery-marker.mjs";
-import { readAidevopsVersion, withAidevopsTitleSuffix } from "../session-title-suffix.mjs";
+import {
+  isSessionTitleAddressEnabled,
+  readAidevopsVersion,
+  stripSessionTitleDecorations,
+  withAidevopsTitleSuffix,
+  withSessionTitleDecorations,
+} from "../session-title-suffix.mjs";
 import { sanitizeTerminalTitle, withTerminalTitleStatus } from "../terminal-title.mjs";
 import { setupMessagesSlot } from "../tui-messages.mjs";
 import { setupPromptsSlot } from "../tui-prompts.mjs";
@@ -94,9 +100,11 @@ export function computeTerminalTitle(api, version = "") {
   if (route.type !== "session" || !route.sessionID) return "";
   const { root } = sessionFamily(api.data, route.sessionID);
   const info = safeCall(() => api.data.session.get(root), undefined);
-  const baseTitle = truncateTitle(sanitizeTerminalTitle(info?.title) || DEFAULT_TITLE);
+  const baseTitle = truncateTitle(stripSessionTitleDecorations(sanitizeTerminalTitle(info?.title)) || DEFAULT_TITLE);
+  // GH#37630: the session-bus address follows truncation so it stays visible.
+  const sessionID = isSessionTitleAddressEnabled() ? root : "";
   return withTerminalTitleStatus(
-    withAidevopsTitleSuffix(baseTitle, version),
+    withSessionTitleDecorations(baseTitle, { version, sessionID }),
     resolveSessionTitleStatus(api.data, route.sessionID),
   );
 }

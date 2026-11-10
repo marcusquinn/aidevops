@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import * as store from "./session-bus-store.mjs";
 import { warn } from "./session-bus-client.mjs";
+import { stripSessionAddressToken } from "./session-title-suffix.mjs";
 
 const execFileAsync = promisify(execFile);
 const PRESENCE_THROTTLE_MS = 10_000;
@@ -133,7 +134,8 @@ export class PresencePublisher {
     const base = {
       v: store.BUS_VERSION,
       session_id: state.sessionID,
-      title: String(state.title || "").slice(0, 200),
+      // GH#37630: the title's `· @xxxxxx` address token repeats session_id.
+      title: stripSessionAddressToken(state.title).slice(0, 200),
       pid: process.pid,
       start_token: this.processToken(),
       kind: this.kind,
