@@ -138,9 +138,21 @@ function providerRegistersModel(provider, modelID) {
   return Object.entries(models).some(([key, value]) => key === modelID || value?.id === modelID);
 }
 
+/**
+ * GH#37649: live rate-limit reset for a candidate whose provider OAuth pool is
+ * exhausted (`availability.rateLimitedProviders`); 0 when routable. Expired
+ * resets are ignored, so recovery needs no configuration change.
+ */
+export function candidateRateLimitedUntil(candidate, availability = {}, now = Date.now()) {
+  const { providerID } = routingModelIdentity(candidate);
+  const until = Number(availability?.rateLimitedProviders?.[providerID]) || 0;
+  return until > now ? until : 0;
+}
+
 function candidateRoutable(candidate, scope) {
   // GH#36698: skip a model with a live entitlement rejection for this auth.
   if (isModelUnavailable(candidate, scope.authSignature)) return false;
+  if (candidateRateLimitedUntil(candidate, scope.availability, scope.now)) return false;
   const { providerID, modelID } = routingModelIdentity(candidate);
   if (providerID === "openai" && scope.openAIAuthType === "oauth"
     && scope.chatgptOAuthUnsupported.includes(modelID)) return false;
@@ -154,6 +166,8 @@ function candidateRoutable(candidate, scope) {
 export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
   const scope = {
     authSignature: availability?.authSignature,
+    availability,
+    now: Date.now(),
     openAIAuthType: availability?.openAIAuthType,
     chatgptOAuthUnsupported: routing?.chatgptOAuthUnsupported || [],
     connected: new Set(Array.isArray(providerState?.connected) ? providerState.connected : []),

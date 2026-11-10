@@ -254,6 +254,36 @@ test("exhausted same-tier candidates report rejection without a lower-tier retry
   assert.equal(output.metadata.status, "error");
 });
 
+test("GH#37649 exhausted pools reroute unpinned children and name the reset when no model remains", async () => {
+  const until = Date.now() + 600_000;
+  const client = {
+    provider: { list: async () => ({ data: { connected: ["anthropic", "openai"], all: [
+      { id: "anthropic", models: { sonnet: { id: "sonnet" } } },
+      { id: "openai", models: { sol: { id: "sol" } } },
+    ] } }) },
+    session: { get: async ({ path }) => ({ data: { id: path.id, parentID: "parent", agent: "general" } }) },
+  };
+  const hooks = (models, pinned = new Set()) => createSubagentEffortHooks(client, {
+    modelRouting: { tiers: { standard: { models } } },
+    agentRoutingState: { tiers: new Map([["general", "standard"]]), pinned },
+    resolveRateLimits: () => ({ anthropic: until }),
+  });
+  const message = (sessionID) => ({ sessionID, agent: "general", model: { providerID: "anthropic", modelID: "sonnet" } });
+
+  const routed = message("child-routed");
+  await hooks(["anthropic/sonnet", "openai/sol"]).chatMessage({}, { message: routed, parts: [{ type: "text", text: "inspect" }] });
+  assert.deepEqual(routed.model, { providerID: "openai", modelID: "sol" });
+
+  const pinned = message("child-pinned");
+  await hooks(["anthropic/sonnet", "openai/sol"], new Set(["general"])).chatMessage({}, { message: pinned, parts: [{ type: "text", text: "inspect" }] });
+  assert.deepEqual(pinned.model, { providerID: "anthropic", modelID: "sonnet" }, "explicit pins are never substituted");
+
+  await assert.rejects(
+    hooks(["anthropic/sonnet"]).chatMessage({}, { message: message("child-blocked"), parts: [{ type: "text", text: "inspect" }] }),
+    new RegExp(`requested=anthropic/sonnet rate_limited=anthropic/sonnet@${new Date(until).toISOString().replace(/[.]/g, "\\.")}`),
+  );
+});
+
 test("only definite model rejections become failover evidence", () => {
   const lifecycle = new SubagentLifecycleTracker();
   for (const error of [
