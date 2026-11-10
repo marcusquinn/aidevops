@@ -82,7 +82,7 @@ assert_not_grep_fixed() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PARENT_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-parent.sh"
-ACTIONS_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+ACTIONS_TARGET="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 
 for target in "$PARENT_TARGET" "$ACTIONS_TARGET"; do
 	if [[ ! -f "$target" ]]; then

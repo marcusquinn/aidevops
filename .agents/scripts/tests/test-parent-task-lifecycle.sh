@@ -156,7 +156,7 @@ _parse_phases_section() {
 # --- Locate source file for structural tests ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$SCRIPT_DIR/pulse-issue-reconcile.sh"
-ACTIONS_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+ACTIONS_TARGET="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 PARENT_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-parent.sh"
 WRAPPER_TARGET="$SCRIPT_DIR/shared-gh-wrappers-create.sh"
 
