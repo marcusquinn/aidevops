@@ -682,6 +682,23 @@ class AdmissionTests(unittest.TestCase):
         self.budget.db.execute("UPDATE quota SET reset=1013")
         self.budget.acquire("core", now=1004)
 
+    def test_delivery_class_skips_pacing_only_above_floor(self):
+        # GH#37570: worker-bus relay reads must not starve behind bulk demand.
+        self.seed(5000, reset=4600)
+        for _ in range(10):
+            self.budget.acquire("core", now=1002)
+        slot = self.budget.db.execute("SELECT retry_at FROM pacing").fetchone()[0]
+        with self.assertRaisesRegex(Deferred, "time to reset divided by remaining"):
+            self.budget.acquire("core", now=1002)
+        with patch.dict(os.environ, {"AIDEVOPS_GH_ADMISSION_CLASS": "delivery"}):
+            self.budget.acquire("core", now=1002)
+            # Delivery admissions leave the shared bulk schedule untouched.
+            self.assertEqual(self.budget.db.execute("SELECT retry_at FROM pacing").fetchone()[0], slot)
+            # Below a quarter of the window (1249 usable < 1250), delivery is paced.
+            self.budget.db.execute("UPDATE quota SET remaining=1260")
+            with self.assertRaisesRegex(Deferred, "time to reset divided by remaining"):
+                self.budget.acquire("core", now=1002)
+
     def test_healthy_demand_does_not_force_sustainable_rate_when_unneeded(self):
         self.seed(4999)
         self.budget.db.executemany("INSERT INTO admission_history VALUES(?,?,?)", [
