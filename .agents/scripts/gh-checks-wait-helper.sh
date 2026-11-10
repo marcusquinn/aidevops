@@ -676,6 +676,23 @@ classify_draft_stall() {
 	return 0
 }
 
+emit_wait_transition() {
+	if [[ -z "$previous" ]]; then
+		emit_initial_state "$current" "$missing_contexts"
+		changed=1
+	elif [[ "$current" != "$previous" ]]; then
+		emit_transitions "$previous" "$current"
+		changed=1
+	elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
+		printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	if [[ "$changed" -eq 1 ]]; then
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -731,19 +748,7 @@ wait_for_checks() {
 		classify_draft_stall || draft_rc=$?
 		[[ "$draft_rc" -ne 3 ]] || continue
 		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
-		if [[ -z "$previous" ]]; then
-			emit_initial_state "$current" "$missing_contexts"
-			changed=1
-		elif [[ "$current" != "$previous" ]]; then
-			emit_transitions "$previous" "$current"
-			changed=1
-		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
-			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
-		if [[ "$changed" -eq 1 ]]; then
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
+		emit_wait_transition
 
 		case "$classification" in
 		failure | zero-job)
