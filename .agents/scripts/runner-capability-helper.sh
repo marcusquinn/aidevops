@@ -81,6 +81,7 @@ runner_capability_check() {
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
 		_runner_capability_python_classes
+		_runner_capability_python_tools
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -228,6 +229,35 @@ PY
 	return 0
 }
 
+# GH#37587: requires-tools names are bare commands resolved on PATH only; the
+# dispatcher never executes them.
+_runner_capability_python_tools() {
+	cat <<'PY'
+def requirement_tools(requirements):
+    tools = set()
+    for requirement in requirements:
+        names = requirement.get('tools', [])
+        if not isinstance(names, list) or len(names) > 8:
+            unmet('invalid_requirements')
+        for name in names:
+            # A bare command name only: no path, argument or shell text.
+            if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9._-]{0,63}', name):
+                unmet('invalid_requirements')
+            tools.add(name)
+    if len(tools) > 8:
+        unmet('invalid_requirements')
+    return tools
+
+def check_tools(tools):
+    # Cheapest deterministic gate first: PATH lookup only, nothing is run.
+    for name in sorted(tools):
+        if not shutil.which(name):
+            unmet(f'tool_missing name={name}')
+
+PY
+	return 0
+}
+
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
@@ -252,16 +282,9 @@ try:
         elif line.startswith('requires-tools:'):
             # GH#37587: bare command names resolved on PATH; never executed.
             requirements.append({'tools': re.split(r'[,\s]+', line.partition(':')[2].strip())})
-    secrets, probes, ssh_commands, tools = set(), [], [], set()
+    secrets, probes, ssh_commands = set(), [], []
+    tools = requirement_tools(requirements)
     for requirement in requirements:
-        names = requirement.get('tools', [])
-        if not isinstance(names, list) or len(names) > 8:
-            unmet('invalid_requirements')
-        for name in names:
-            # A bare command name only: no path, argument or shell text.
-            if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9._-]{0,63}', name):
-                unmet('invalid_requirements')
-            tools.add(name)
         commands = requirement.get('ssh_commands', [])
         if not isinstance(commands, list) or len(commands) > 8:
             unmet('invalid_requirements')
@@ -295,12 +318,7 @@ try:
             probes.append((str(executable), probe))
     if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
-    if len(tools) > 8:
-        unmet('invalid_requirements')
-    # Cheapest deterministic gate first: PATH lookup only, nothing is run.
-    for name in sorted(tools):
-        if not shutil.which(name):
-            unmet(f'tool_missing name={name}')
+    check_tools(tools)
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
     network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
