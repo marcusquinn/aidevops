@@ -29,10 +29,8 @@ on:
   issues:
     types: [unlabeled, labeled, assigned, unassigned]
 
-concurrency:
-  # Issue events can re-evaluate several linked PRs; never cancel those writes.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+# Keep cancellation job-scoped in the reusable workflow's check-pr verdict job.
+# Workflow-level cancellation would also interrupt PR label restoration.
 
 jobs:
   gate:
