@@ -34,6 +34,7 @@ tools:
 - **Auth**: API Tokens only (NEVER Global API Keys)
 - **Token creation**: Dashboard > My Profile > API Tokens > Create Token
 - **Permissions**: Zone:Read, DNS:Read, DNS:Edit (scope to specific zones)
+- **Cache guidance**: [Cloudflare + LiteSpeed cache notes](hostinger.md#cloudflare-cache-rules-that-skip-every-visitor-with-a-cookie)
 - **Config**: `configs/cloudflare-dns-config.json`
 - **Account ID**: Dashboard > Right sidebar > 32-char hex
 - **Zone ID**: Domain overview > Right sidebar > 32-char hex
@@ -77,6 +78,12 @@ Zone Settings:Read - Read zone settings (optional)
 4. **Zone Resources**: Include > Specific zones > [Select your domains]
 5. **IP Filtering** (recommended): Include > [Your home/office IP]
 6. **Expiration**: Set to 1 year maximum
+
+### Cache Rules and purge permissions
+
+- **Cache Rules API**: A token without rules permissions receives “request is not authorized” on `zones/<zone>/rulesets` when configuring the `http_request_cache_settings` phase. Grant **Zone → Cache Rules: Read** and **Zone → Cache Rules: Edit**, scoped to the required zone.
+- **Cache purge API**: Grant **Zone → Cache Purge** to purge and **Zone → Zone: Read** so the caller can find the zone. Scope the token to the relevant zone.
+- For Cloudflare Free edge TTL limits, safe development HTML caching, shared-zone purge scope and Smart Tiered Cache, see the [Hostinger LiteSpeed cache notes](hostinger.md#cloudflare-cache-rules-that-skip-every-visitor-with-a-cookie).
 
 ### 2. Collect IDs
 
