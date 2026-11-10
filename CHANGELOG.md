@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.157] - 2026-11-10
+
+### Fixed
+
+- round-robin repo cursor for review-thread and auto-decomposer scanners
+- recover stalled maintainer gate refresh (#37550)
+
 ## [3.39.156] - 2026-11-10
 
 ### Changed
