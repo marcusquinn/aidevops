@@ -2015,7 +2015,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18956 feat(session-bus): show addressable session-ID token in session and terminal titles #feat #interactive ref:GH#37630 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18956-brief.md]
 
-- [ ] t18958 Sidebar Messages rows open the full session-bus message in a TUI dialog #feat ref:GH#37645
+- [x] t18958 Sidebar Messages rows open the full session-bus message in a TUI dialog #feat ref:GH#37645 pr:#37647 completed:2026-11-10
+
+- [ ] t18959 fix(update): .aidevops.json migration issue fails when target repo lacks tier:simple label #bug #auto-dispatch tier:simple ref:GH#37650 logged:2026-11-10 -> [todo/tasks/t18959-brief.md]
+
+- [ ] t18960 feat(opencode-test-helper): add mouse-click injection to tui-capture #feat #auto-dispatch tier:standard ref:GH#37651 logged:2026-11-10 -> [todo/tasks/t18960-brief.md]
 
 ## In Progress
 
