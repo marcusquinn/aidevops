@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.156] - 2026-11-10
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#37546)
+- Refactor: split pulse-merge-stuck.sh saturation helpers into sub-library (GH#37541) (#37544)
+- Refactor: refactor task alias validation
+
+### Fixed
+
+- restore ownership reconcile budget in housekeeping lane
+
 ## [3.39.155] - 2026-11-10
 
 ### Fixed
