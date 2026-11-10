@@ -112,6 +112,30 @@ else
 	pass "enumerate excludes non-private testorg/public-repo slug"
 fi
 
+# Expired public entries must not suppress the pulse-enabled fallback. Private
+# cache entries remain protected regardless of age (including non-pulse repos).
+for cache_entry in \
+	'{"private":false,"checked_at":1}' \
+	'{"private":false}' \
+	'{"private":true,"checked_at":1}'; do
+	printf '{"testorg/public-repo":%s}\n' "$cache_entry" >"$PRIVACY_CACHE_FILE"
+	slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+	if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+		pass "enumerate protects pulse repo with stale visibility: $cache_entry"
+	else
+		fail "enumerate missed pulse repo with stale visibility: $cache_entry"
+	fi
+done
+printf '{"testorg/public-repo":{"private":true,"checked_at":1}}\n' >"$PRIVACY_CACHE_FILE"
+printf '{"initialized_repos":[{"slug":"testorg/public-repo","pulse":false}]}\n' >"${TMP}/nonpulse.json"
+slugs=$(PRIVACY_REPOS_CONFIG="${TMP}/nonpulse.json" privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate retains expired private entries for non-pulse repos"
+else
+	fail "enumerate dropped expired private entry for non-pulse repo"
+fi
+rm -f "$PRIVACY_CACHE_FILE"
+
 # -----------------------------------------------------------------------------
 # Test 4: extra slug file
 # -----------------------------------------------------------------------------

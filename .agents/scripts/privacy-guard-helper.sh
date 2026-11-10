@@ -239,8 +239,9 @@ privacy_enumerate_private_slugs() {
 
 	# Ordinary private repos: cached GitHub visibility (never a live API call).
 	# A repos.json `private: true` field also counts. Unknown visibility (no
-	# cache entry) fails closed only for pulse-enabled repos; known-public
-	# repos stay out so self-references remain allowed.
+	# cache entry or expired public entry) fails closed only for pulse-enabled
+	# repos; fresh public entries stay out so self-references remain allowed.
+	# Cached private entries remain protected even after expiry.
 	local cache_json='{}'
 	if [[ -r "$PRIVACY_CACHE_FILE" ]]; then
 		cache_json=$(jq -c 'if type == "object" then . else {} end' "$PRIVACY_CACHE_FILE" 2>/dev/null) || cache_json='{}'
@@ -248,11 +249,14 @@ privacy_enumerate_private_slugs() {
 	fi
 	local vis_slugs
 	# shellcheck disable=SC2016 # jq variables must reach jq literally.
-	vis_slugs=$(jq -r --argjson cache "$cache_json" '
+	vis_slugs=$(jq -r --argjson cache "$cache_json" \
+		--argjson now "$(date +%s)" --argjson ttl "$PRIVACY_CACHE_TTL" '
 		.initialized_repos[]?
 		| select((.slug // "") != "")
 		| . as $r
-		| ($cache[$r.slug] // null) as $c
+		| (($cache[$r.slug] // null)
+			| if .private == false and ($now - (.checked_at // 0)) >= $ttl
+			  then null else . end) as $c
 		| select(
 			($c != null and ($c.private // false) == true)
 			or ($c == null and (($r.private // false) == true or ($r.pulse // false) == true))
