@@ -253,7 +253,72 @@ _profile_clear_publication_state() {
 	PROFILE_PUBLICATION_CANONICAL_HEAD=""
 	PROFILE_PUBLICATION_CANONICAL_STATUS=""
 	PROFILE_PUBLICATION_INTENT_PATH=""
+	PROFILE_PUBLICATION_LIFECYCLE_PID=""
+	PROFILE_PUBLICATION_LIFECYCLE_SESSION=""
 	return 0
+}
+
+# GH#37591: a producer outside any declared runtime (for example launchd) left
+# its tree enrolled without a registered run, so retirement refused it with
+# coverage-gap. Declare this producer's shell as the owning runtime for
+# creation and for its own later removal, which relinquishes the run. A runtime
+# declared by the caller is kept. Sets the two PROFILE_PUBLICATION_LIFECYCLE_*
+# globals; they stay empty when the caller already declared an identity.
+_profile_declare_lifecycle_owner() {
+	local owner_session="$1"
+
+	PROFILE_PUBLICATION_LIFECYCLE_PID=""
+	PROFILE_PUBLICATION_LIFECYCLE_SESSION=""
+	if [[ -n "${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}" || -n "${AIDEVOPS_LIFECYCLE_SESSION_ID:-}" ]]; then
+		return 0
+	fi
+	PROFILE_PUBLICATION_LIFECYCLE_PID="$$"
+	PROFILE_PUBLICATION_LIFECYCLE_SESSION="$owner_session"
+	return 0
+}
+
+# Run the worktree helper's `remove` for $1 in canonical repo $2 under the
+# lifecycle identity this producer declared at creation (if any).
+_profile_publication_helper_remove() {
+	local worktree_path="$1"
+	local canonical_repo="$2"
+	local worktree_helper=""
+
+	worktree_helper=$(_profile_publication_worktree_helper)
+	if [[ -n "${PROFILE_PUBLICATION_LIFECYCLE_PID:-}" && "$worktree_path" == "${PROFILE_PUBLICATION_WORKTREE:-}" ]]; then
+		(cd "$canonical_repo" &&
+			AIDEVOPS_LIFECYCLE_RUNTIME_PID="$PROFILE_PUBLICATION_LIFECYCLE_PID" \
+				AIDEVOPS_LIFECYCLE_SESSION_ID="$PROFILE_PUBLICATION_LIFECYCLE_SESSION" \
+				"$worktree_helper" remove "$worktree_path" >/dev/null)
+		return $?
+	fi
+	(cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null 2>&1)
+	return $?
+}
+
+# GH#37591: retire an earlier tree enrolled without any registered run through
+# the registry's confirmed enrolled-only path. Callers must already have proved
+# the tree published, clean and unowned; the registry still archives first,
+# verifies and refuses a tree that has bound runs or a creation receipt.
+_profile_retire_enrolled_only_worktree() {
+	local worktree_path="$1"
+	local state_dir=""
+	local python=""
+	local entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
+	local archive_root="${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}"
+
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 && -f "$entry" ]] || return 1
+	python=$(type -P python3) || return 1
+	state_dir=$( (
+		# shellcheck source=worker-lifecycle-state.sh
+		source "${SCRIPT_DIR}/worker-lifecycle-state.sh" >/dev/null 2>&1 || exit 1
+		worker_lifecycle_state_dir 2>/dev/null
+	) ) || return 1
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 1
+	"$python" -E -s -B "$entry" --state-dir "$state_dir" retire-enrolled-only \
+		--repos-config "${HOME}/.config/aidevops/repos.json" \
+		--output-root "$archive_root" --path "$worktree_path" --confirm >/dev/null 2>&1
+	return $?
 }
 
 # Bounded retry for read-only git probes that can transiently time out under
@@ -468,7 +533,7 @@ _cleanup_profile_publication_worktree() {
 		echo "Warning: profile publication worktree cleanup is unavailable: $worktree_path" >&2
 		return 1
 	fi
-	if (cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null); then
+	if _profile_publication_helper_remove "$worktree_path" "$canonical_repo"; then
 		_profile_publication_registry_update unregister "$worktree_path" || true
 		_profile_remove_publication_intent || true
 		_profile_clear_publication_state
@@ -515,7 +580,11 @@ _profile_retire_prior_publication_worktree() {
 
 	worktree_helper=$(_profile_publication_worktree_helper)
 	if [[ -x "$worktree_helper" ]] &&
-		(cd "$canonical_repo" && "$worktree_helper" remove "$worktree_path" >/dev/null 2>&1); then
+		_profile_publication_helper_remove "$worktree_path" "$canonical_repo"; then
+		:
+	elif [[ -d "$worktree_path" ]] &&
+		_profile_publication_prior_worktree_is_safe "$worktree_path" "$canonical_repo" "$worktree_base" &&
+		_profile_retire_enrolled_only_worktree "$worktree_path"; then
 		:
 	elif ! _archive_and_remove_profile_publication_worktree "$worktree_path" \
 		_profile_publication_prior_worktree_is_safe "$canonical_repo" "$worktree_base"; then
@@ -754,10 +823,19 @@ _profile_run_in_worktree() {
 	local owner_session="profile-readme-${PROFILE_UPDATE_LOCK_TOKEN:-$$}"
 	# shellcheck source=shared-worktree-create.sh
 	source "${SCRIPT_DIR}/shared-worktree-create.sh" || return 1
-	if ! AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
-		AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
-		AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
-		worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null; then
+	_profile_declare_lifecycle_owner "$owner_session"
+	if ! (
+		# GH#37591: declare this producer as the lifecycle runtime so creation
+		# registers an owner run that its own cleanup can later relinquish.
+		if [[ -n "$PROFILE_PUBLICATION_LIFECYCLE_PID" ]]; then
+			export AIDEVOPS_LIFECYCLE_RUNTIME_PID="$PROFILE_PUBLICATION_LIFECYCLE_PID"
+			export AIDEVOPS_LIFECYCLE_SESSION_ID="$PROFILE_PUBLICATION_LIFECYCLE_SESSION"
+		fi
+		AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
+			AIDEVOPS_WORKTREE_CREATE_SESSION="$owner_session" \
+			AIDEVOPS_WORKTREE_CREATE_TASK="$PROFILE_PUBLICATION_REGISTRY_TASK" \
+			worktree_create_registered "$canonical_repo" "$worktree_path" "$canonical_head_before" --detach >/dev/null
+	); then
 		echo "Error: could not create profile publication worktree" >&2
 		# A failed registration may leave a tree. Try guarded cleanup now so
 		# it is not retained unenrolled; otherwise keep its intent for recovery.
