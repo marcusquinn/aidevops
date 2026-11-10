@@ -23,8 +23,19 @@ def answer_terminal_queries(fd, queries):
             os.write(fd, response)
         queries = queries.replace(query, b"")
     for query in re.finditer(rb"\x1bP\+q([0-9a-fA-F;]*)\x1b\\", queries):
-        os.write(fd, b"\x1bP0+r" + query.group(1) + b"\x1b\\")
+        os.write(fd, b"\x1bP0+r\x1b\\")
     return queries
+
+
+def incomplete_query(data):
+    """Return a trailing partial escape sequence to prepend to the next read."""
+    start = data.rfind(b"\x1b")
+    if start < 0 or len(data) - start > 256:
+        return b""
+    tail = data[start:]
+    if re.fullmatch(rb"\x1b(?:\[[0-?]*[ -/]*|P[^\x1b]*\x1b?)?", tail):
+        return tail
+    return b""
 
 
 def read_render(fd, seconds, interactive=False):
@@ -50,7 +61,7 @@ def read_render(fd, seconds, interactive=False):
             os.write(fd, b"\x1b[" + query.group(1) + b"1;1R")
         if interactive:
             queries = answer_terminal_queries(fd, queries)
-        query_tail = re.sub(rb"\x1b\[\??6n", b"", queries)[-4:]
+        query_tail = incomplete_query(re.sub(rb"\x1b\[\??6n", b"", queries))
     return b"".join(chunks)
 
 
@@ -61,8 +72,11 @@ def click_position(initial, text):
         positions = list(re.finditer(rb"\x1b\[(\d+);(\d+)H", initial[:target]))
     if not positions:
         raise ValueError(f"click target not rendered with a cursor position: {text!r}")
-    row, col = map(int, positions[-1].groups())
-    return row, col + 3
+    last = positions[-1]
+    row, col = map(int, last.groups())
+    run = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", initial[last.end():target])
+    col += len(run.decode("utf-8", "replace")) + min(3, len(text) - 1)
+    return row, col
 
 
 def decode_keys(keys):
