@@ -593,12 +593,15 @@ _isc_ordered_stamp_paths() {
 _isc_scan_dead_stamps_phase() {
 	local auto_release_flag="${1:-0}"
 	local stamp_limit="${2:-0}"
+	local budget_seconds="${3:-0}"
 	[[ "$stamp_limit" =~ ^[0-9]+$ ]] || stamp_limit=0
+	[[ "$budget_seconds" =~ ^[0-9]+$ ]] || budget_seconds=0
 	local stale_count=0
 	local auto_released=0
 	local closed_reaped=0
 	local skip_lockdown=0 skip_progress=0 skip_lookup=0
 	local stamps_examined=0 capped=0 last_examined="" cursor=""
+	local phase_start=$SECONDS
 	local local_host
 	local_host=$(hostname 2>/dev/null || echo "unknown")
 	# Only the bounded reaper rotates; unbounded scan-stale never touches it.
@@ -613,8 +616,19 @@ _isc_scan_dead_stamps_phase() {
 				capped=1
 				break
 			fi
+			# GH#37565: a release costs several GitHub calls, so a count cap alone
+			# let one cycle outlive the normalize stage budget and starve its
+			# passes. Stop at the wall-clock budget; overshoot is one stamp.
+			if [[ "$budget_seconds" -gt 0 && $((SECONDS - phase_start)) -ge "$budget_seconds" ]]; then
+				capped=1
+				break
+			fi
 			stamps_examined=$((stamps_examined + 1))
 			last_examined="${stamp##*/}"
+			# Persist the resume point before the slow work: a watchdog kill
+			# then resumes after this stamp instead of losing the cycle, and a
+			# stamp that always hangs cannot pin the rotation.
+			[[ "$stamp_limit" -gt 0 ]] && _isc_write_reap_cursor 1 "$last_examined"
 			_isc_examine_dead_stamp "$stamp" "$auto_release_flag" "$local_host"
 			case "$_ISC_STAMP_OUTCOME" in
 			ignored | alive) ;;
@@ -664,8 +678,14 @@ _isc_cmd_reap_dead_stamps() {
 		_isc_warn "invalid AIDEVOPS_DEAD_STAMP_REAP_LIMIT=${stamp_limit}; using 100"
 		stamp_limit=100
 	fi
+	# GH#37565: leave most of the normalize stage budget to its passes.
+	local budget_seconds="${AIDEVOPS_DEAD_STAMP_REAP_BUDGET_SECONDS:-60}"
+	if ! [[ "$budget_seconds" =~ ^[1-9][0-9]*$ ]]; then
+		_isc_warn "invalid AIDEVOPS_DEAD_STAMP_REAP_BUDGET_SECONDS=${budget_seconds}; using 60"
+		budget_seconds=60
+	fi
 
-	_isc_scan_dead_stamps_phase 1 "$stamp_limit"
+	_isc_scan_dead_stamps_phase 1 "$stamp_limit" "$budget_seconds"
 	return 0
 }
 
