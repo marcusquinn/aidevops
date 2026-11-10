@@ -377,6 +377,16 @@ Omit empty fields rather than inventing state.
 - Steering is model-only: plugin `experimental.text.complete` hooks never modify the rendered assistant text. OpenCode queues continuation steering and delivers it once as a synthetic message on the next model call, the same channel TTSR corrections use; Claude Code uses the Stop hook `reason` (GH#34123).
 - Override: set `AIDEVOPS_STOP_HOOK_DISABLE=1` (or `AIDEVOPS_STOP_HOOK_MAX_BLOCKS=0`) before launching Claude Code; any parse error fails open.
 
+## Interactive TUI Restart for Maintenance
+
+Long-lived OpenCode TUIs hold `opencode.db`, which blocks archive/VACUUM, and they keep an old plugin until they restart. Use `opencode-session-restart-helper.sh` (GH#37663) to interrupt, maintain and resume them:
+
+- `aidevops opencode-db maintenance-window --restart-interactive [--yes]` drains headless workers and then runs the helper's `stop`. When maintenance ends, or fails, `resume` runs as a cleanup. For other work (plugin, runtime or OS upgrades) use `opencode-session-restart-helper.sh run [--yes] -- <command…>`. `inventory [--json]` lists holders with PID, session ID, cwd, age, busy/idle state and tmux/screen pane.
+- `stop` sends each busy session a session-bus message, delivered at its next tool result, asking it to save its continuation checkpoint (see "Context Compaction Resilience") and pause. It waits up to `OPENCODE_RESTART_WAIT_TIMEOUT` (600s). A busy session is never signalled; it is skipped and reported. An idle session (no activity for `OPENCODE_RESTART_IDLE_SECONDS`, default 120) gets SIGTERM with no escalation. Before the signal, its `{session_id, cwd, pane, argv, resume_command}` goes into `~/.aidevops/.agent-workspace/work/opencode-session-restart/manifest.json`.
+- `resume` runs `cd <cwd> && opencode -s <id>` in the original tmux pane (`send-keys`) or screen window (`stuff`). Bare-TTY sessions can't be reattached, so they keep the resume command in the manifest and in the session-start notice. Every resumed session gets a session-bus note: it was restarted, and it should load its checkpoint and revalidate state before the next side effect.
+- Authority: an operator at a terminal confirms the stop or passes `--yes`. A run without a terminal (scheduler, headless agent) only notifies owners, at most once per 24h per session. The exception is a host whose config allows unattended stops (`allow_unattended=true` in `~/.config/aidevops/opencode-session-restart.conf`, e.g. a runner host with no human TUIs). Scheduled `auto` runs notify holders after `AUTO_SKIP_ESCALATION_COUNT` holder-blocked skips.
+- If archive/maintenance has not succeeded for 72h (`INTERACTIVE_HOLDER_NOTICE_SECONDS`) while TUIs hold the DB, the storage report and the session-start notice name the oldest holder's PID, session ID and age, and suggest the command above.
+
 ## Git Workflow Detail
 
 - Before edits: run the pre-edit check from `AGENTS.md`.
