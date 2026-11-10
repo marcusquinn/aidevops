@@ -89,16 +89,21 @@ def parse_pmset_assertion_intervals(output, now):
 
 def pmset_collection(now):
     output, error = read_pmset_log()
-    if error:
-        return {"status": "unavailable", "source": "macos-pmset-display-assertions", "reason": error, "intervals": []}
     held_output, _ = read_held_assertions()
     intervals = union_intervals(
         parse_pmset_assertion_intervals(output, now) + parse_held_display_assertion(held_output, now),
         now - WINDOWS["year"],
         now,
     )
-    if not intervals:
-        return {"status": "unavailable", "source": "macos-pmset-display-assertions", "reason": "no-display-assertions", "intervals": []}
+    if error or not intervals:
+        # Without the log, pmset alone is incomplete and stays unavailable; the
+        # live held span is still returned for a readable Knowledge union.
+        return {
+            "status": "unavailable",
+            "source": "macos-pmset-display-assertions",
+            "reason": error or "no-display-assertions",
+            "intervals": intervals,
+        }
     latest = max(right for _, right in intervals)
     earliest = min(left for left, _ in intervals)
     freshness = max(0.0, (now - latest) / 3600)
