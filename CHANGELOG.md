@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.162] - 2026-11-10
+
+### Added
+
+- commit-and-pr --base for stacked PRs (#37581)
+
+### Changed
+
+- Refactor: split pulse-issue-reconcile-actions.sh into sub-libraries (GH#37574) (#37579)
+- Maintenance: promote OpenCode v2 pin to 2.2.7 (#37582)
+- Maintenance: sync GitHub issue refs to TODO.md (#37585)
+
+### Fixed
+
+- keep continuation signing failures audit-only and ignore deferred-cleanup marker (GH#37597) (#37603)
+- run macOS input sampler at standard priority (GH#37588)
+- register publication owner so its tree can be retired (GH#37591) (#37602)
+- credit verified already-satisfied no-PR closes with an evidence-bound receipt (#37590)
+- cache held draft checkpoints with stale PR snapshots (#37598)
+- patch effect dependency (#37599)
+- report stable SQLite code in owner-admission refusal (GH#37577) (#37583)
+
 ## [3.39.161] - 2026-11-10
 
 ### Changed
