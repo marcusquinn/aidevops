@@ -514,6 +514,10 @@ _resolve_remote_default_branch() {
 	printf 'main\n'
 	return 0
 }
+_resolve_pr_base_branch() {
+	_resolve_remote_default_branch "$@"
+	return $?
+}
 session_origin_label() {
 	printf 'origin:worker\n'
 	return 0
