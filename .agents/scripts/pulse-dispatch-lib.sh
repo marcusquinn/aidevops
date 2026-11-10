@@ -384,12 +384,31 @@ _dispatch_negative_cache_record() {
 	return 0
 }
 
+# Quiet eligibility is fixed at write time, independently of record age.
+_dispatch_checkpoint_cooldown_ttl() {
+	local candidate="$1" stamp="$2" ttl="$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS"
+	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
+	local quiet_after="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS:-14400}" revision_epoch=""
+	[[ "$ttl" -gt 0 ]] || return 1
+	quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
+	((quiet_ttl <= 86400)) || quiet_ttl=86400
+	quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
+	if ((quiet_ttl > ttl)); then
+		revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
+			.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
+		if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
+			ttl="$quiet_ttl"
+		fi
+	fi
+	printf '%s\n' "$ttl"
+	return 0
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
-	local quiet_after="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS:-14400}" revision_epoch=""
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
@@ -415,8 +434,8 @@ _dispatch_negative_cache_reason() {
 	fi
 	case "$reason" in
 	worker_draft_checkpoint_cooldown)
-		ttl="$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS"
-		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
+		ttl=$(_dispatch_checkpoint_cooldown_ttl "$candidate" "$stamp") || return 1
+		[[ -n "$fingerprint" ]] || return 1
 		# Quiet hints must obey the same owner/re-arm limits as draft blocks.
 		# Legacy records without boundary evidence run the ceremony once.
 		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
@@ -427,18 +446,6 @@ _dispatch_negative_cache_reason() {
 		((checkpoint_deadline == 0 || now < checkpoint_deadline)) || return 1
 		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
-		# Only old, unassigned revisions can outlive the base cooldown: recent
-		# claims may still expire, and assigned issues need stale-owner recovery.
-		quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
-		((quiet_ttl <= 86400)) || quiet_ttl=86400
-		quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
-		if ((quiet_ttl > ttl)); then
-			revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
-				.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
-			if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
-				ttl="$quiet_ttl"
-			fi
-		fi
 		# Expire before the optional REST read; enumeration remains network-free.
 		((now >= stamp && now - stamp < ttl)) || return 1
 		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr" "$checkpoint_mode") || return 1
