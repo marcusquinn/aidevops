@@ -233,9 +233,13 @@ PY
 # dispatcher never executes them.
 _runner_capability_python_tools() {
 	cat <<'PY'
-def requirement_tools(requirements):
+def requirement_tools(requirements, body):
     tools = set()
-    for requirement in requirements:
+    declared = [requirement for requirement in requirements if 'tools' in requirement]
+    for line in body.splitlines():
+        if line.startswith('requires-tools:'):
+            declared.append({'tools': re.split(r'[,\s]+', line.partition(':')[2].strip())})
+    for requirement in declared:
         names = requirement.get('tools', [])
         if not isinstance(names, list) or len(names) > 8:
             unmet('invalid_requirements')
@@ -279,11 +283,8 @@ try:
             requirements.append({'secrets': names})
         elif line.startswith('requires-ssh:'):
             requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
-        elif line.startswith('requires-tools:'):
-            # GH#37587: bare command names resolved on PATH; never executed.
-            requirements.append({'tools': re.split(r'[,\s]+', line.partition(':')[2].strip())})
     secrets, probes, ssh_commands = set(), [], []
-    tools = requirement_tools(requirements)
+    tools = requirement_tools(requirements, issue.get('body', ''))
     for requirement in requirements:
         commands = requirement.get('ssh_commands', [])
         if not isinstance(commands, list) or len(commands) > 8:
