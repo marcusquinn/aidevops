@@ -368,6 +368,12 @@ _gh_ci_prepare_trusted_nmr_labels() {
 		print_info "[INFO] GH#29394: preserving external-origin needs-maintainer-review"
 		return 0
 	fi
+	# #aidevops:trust-boundary — throughput-throttling reports are maintainer
+	# decisions by design (reference/throughput-throttling-policy.md).
+	if _gh_wrapper_args_have_label "throughput-throttle-report" "$@"; then
+		print_info "[INFO] preserving throughput-throttle-report needs-maintainer-review"
+		return 0
+	fi
 
 	local target_repo=""
 	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)

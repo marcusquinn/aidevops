@@ -203,7 +203,7 @@ _dispatch_worktree_capacity_gate() {
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify registered worktree count; capacity gate remains fail-closed" >>"$LOGFILE"
 		return 1
 	fi
-	if [[ $((count * 100)) -ge $((max_count * 80)) ]]; then
+	if [[ "$count" -ge "$(aidevops_worktree_cleanup_threshold "$max_count")" ]]; then
 		_dispatch_launch_pressure_cleanup || true
 	fi
 	if [[ "$count" -lt "$max_count" ]]; then
@@ -269,14 +269,12 @@ _dispatch_dedup_capacity_gates() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 
-	# GH#18987: Worktree count cap — refuse dispatch when the repo has 200+
-	# registered git worktrees. At that scale, new worktrees risk consuming
-	# tens of GB; stale merged ones should be cleaned before adding more.
+	# GH#18987: runaway backstop on registered worktrees (default 1000; the disk
+	# gate above is the resource guard). Cleanup starts well below the cap.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "worktree_cap" "$_dss_t0" _ds_stage_attempt_id
 	local _wt_max=""
-	_wt_max="${AIDEVOPS_MAX_WORKTREES:-200}"
-	[[ "$_wt_max" =~ ^[1-9][0-9]*$ ]] || _wt_max=200
+	_wt_max=$(aidevops_worktree_count_cap)
 	if ! _dispatch_worktree_capacity_gate "$repo_path" "$issue_number" "$repo_slug" "$_wt_max"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: worktree capacity unavailable; recovery is asynchronous" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.worktree_cap" "$_dss_t0"
