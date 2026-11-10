@@ -27,6 +27,7 @@ import {
   clearOperationStatusWaiters,
   notifyOperationStatusWaiters,
   operationOutput,
+  operationSettle,
   operationStatus,
   operationStatusVersion,
 } from "./bounded-operation-access.mjs";
@@ -284,6 +285,11 @@ export class BoundedInteractiveOperationManager {
 
   async output(id, context = {}, requested = {}) {
     return operationOutput(this, id, context, requested);
+  }
+
+  /** t18953: wait for a terminal state, bounded like a status wait. */
+  async settle(id, context = {}, requested = {}) {
+    return operationSettle(this, id, context, requested);
   }
 
   cancel(id, context = {}) {
