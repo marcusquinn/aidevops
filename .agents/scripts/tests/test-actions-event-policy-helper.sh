@@ -119,9 +119,19 @@ assert "status covered after apply exits 0" "$?"
 assert "apply updates in place via PUT" "$(grep -q '^PUT repos/o/pub/actions/policies/7$' "$fx/writes.log" && echo 0 || echo 1)"
 
 # Narrow allowed_events (only the gate event) must not cover a multi-event workflow.
-printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"workflow_file_path","parameters":{"allowed_events":["pull_request_target"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["pull_request_target"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
 "$HELPER" status --repo o/pub >/dev/null 2>&1
 assert "narrow allowed_events exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
+
+# Positive control: full event union + glob include covers the workflow.
+printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/*.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+"$HELPER" status --repo o/pub >/dev/null 2>&1
+assert "full union + glob include exits 0" "$?"
+
+# Include naming a different path must not cover the workflow.
+printf '{"total_count":1,"policies":[{"id":9,"name":"x","enforcement":"active","conditions":{"workflow_path":{"include":[".github/workflows/other.yml"]}},"rules":[{"type":"restrict_action_events","parameters":{"allowed_events":["issues","pull_request_target","schedule","workflow_call","workflow_dispatch"]}}]}]}' >"$fx/repos__o__pub__actions__policies"
+"$HELPER" status --repo o/pub >/dev/null 2>&1
+assert "include of different path exits 1" "$([[ $? -eq 1 ]] && echo 0 || echo 1)"
 
 # Non-404 listing failure is an error, not an empty list.
 : >"$fx/FORBIDDEN"

@@ -216,7 +216,7 @@ _policy_uncovered_paths() {
 		def globre: gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\\(.c)")
 			| gsub("\\*\\*"; "\u0001") | gsub("\\*"; "[^/]*") | gsub("\u0001"; ".*")
 			| "^" + . + "$";
-		def matches($p): . == "~ALL" or . == $p or ($p | test(globre));
+		def matches($p): . as $pat | $pat == "~ALL" or $pat == $p or ($p | test($pat | globre));
 		def covers($p; $evs):
 			any($pol.policies[]?;
 				.enforcement == "active"
