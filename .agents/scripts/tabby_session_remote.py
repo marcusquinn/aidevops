@@ -8,15 +8,12 @@ import subprocess
 import time
 
 from tabby_session_config import SessionError, ssh_argv
+from tabby_session_errors import TransientSSHError, probe_error
 from tabby_session_protocol import extract_response, framed_command
 
 
 class CreationCollision(SessionError):
     """Only a verified tmux duplicate-name response authorizes a new attempt."""
-
-
-class TransientSSHError(SessionError):
-    """A transport failure that permits retrying read-only inventory, not creation."""
 
 
 INVENTORY = r"""
@@ -54,26 +51,6 @@ def remote(host, script):
     if result.returncode:
         raise probe_error(result.returncode, result.stderr)
     return extract_response(result.stdout, begin, end)
-
-
-def probe_error(returncode, stderr):
-    """Classify privately; never include server/user/key paths or raw SSH logs."""
-    if returncode == 255:
-        diagnostic = stderr.lower()
-        if "too many authentication failures" in diagnostic:
-            return SessionError("SSH rejected too many identities; select the correct key and enable identitiesOnly")
-        if "permission denied" in diagnostic or "authentication failed" in diagnostic:
-            return SessionError("SSH authentication failed; prepare agent/MFA privately")
-        if "host key verification failed" in diagnostic or "remote host identification has changed" in diagnostic:
-            return SessionError("SSH host key verification failed; verify the host key privately")
-        if any(text in diagnostic for text in (
-                "connection reset", "connection closed", "connection timed out",
-                "operation timed out", "session open refused by peer", "administratively prohibited",
-                "exceeded maxstartups", "too many unauthenticated connections")):
-            return TransientSSHError("SSH connection/channel unavailable; check server connection limits or multiplexing if persistent")
-    if returncode == 71:
-        return SessionError("Remote tmux inventory command failed (SSH reached the host)")
-    return SessionError("SSH/tmux probe failed (exit {}); prepare agent/MFA or SSH multiplexing privately".format(returncode))
 
 
 def inventory_response(host):
