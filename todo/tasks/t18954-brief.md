@@ -24,7 +24,8 @@ Request ledger (`~/.aidevops/.agent-workspace/observability/llm-requests.db`, `l
 
 ## Acceptance
 
-- `model_tier_candidates simple` and `fallback-chain-helper.sh resolve simple` return Luna first.
+- `model_tier_candidates simple` lists Luna first. Headless `fallback-chain-helper.sh resolve simple` returns Luna only once the availability probe accepts ChatGPT-OAuth-only accounts (t18955, GH#37627); until then it falls back to Haiku 5.5.
+- Installs with a custom `model-routing-table.json` simple-tier override keep their own order; reorder it there to adopt this change.
 - Existing GH#36169 test: without OpenAI credentials, compaction falls back to Haiku 5.5.
 - `node --test tests/test-model-routing.mjs tests/test-specialist-advisor.mjs` pass.
 - Live check after deploy and session restart: ledger shows `routing_population='compaction'` rows on `gpt-6-luna` again, with no rise in Luna errors.
