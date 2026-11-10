@@ -322,10 +322,16 @@ cmd_owner_notify() {
 	session=$(jq -r '.session // empty' <<<"$json")
 	[[ "$session" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || return 0
 	text="Release ${tag} of ${repo}: ${result}. You own the roll-out."
-	if command -v aidevops >/dev/null 2>&1; then
-		timeout 5 aidevops sessions send "$session" "$text" >/dev/null 2>&1 || true
+	if ! declare -F timeout_sec >/dev/null 2>&1; then
+		# shellcheck source=shared-constants.sh
+		source "$(dirname "${BASH_SOURCE[0]}")/shared-constants.sh" 2>/dev/null || true
 	fi
-	printf 'MANUAL_RELEASE_OWNER_NOTIFIED repo=%s tag=%s session=%s\n' "$repo" "$tag" "$session"
+	if command -v aidevops >/dev/null 2>&1 && declare -F timeout_sec >/dev/null 2>&1 &&
+		timeout_sec 5 aidevops sessions send "$session" "$text" >/dev/null 2>&1; then
+		printf 'MANUAL_RELEASE_OWNER_NOTIFIED repo=%s tag=%s session=%s\n' "$repo" "$tag" "$session"
+	else
+		printf 'MANUAL_RELEASE_OWNER_NOT_CONFIRMED repo=%s tag=%s session=%s\n' "$repo" "$tag" "$session" >&2
+	fi
 	return 0
 }
 
