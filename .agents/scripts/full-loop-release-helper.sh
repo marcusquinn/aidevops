@@ -779,6 +779,26 @@ _full_loop_release_resolve_persisted_intent() {
 	return 0
 }
 
+# Print executor-host guidance when an adopted lane is tagless and its
+# authorization file is absent on this host (the failed-pre-publication recovery
+# only runs where that file exists). Advisory only; never changes the exit code.
+_full_loop_release_print_foreign_host_hint() {
+	local repo="$1"
+	local source_pr="$2"
+	local release_type="$3"
+	local lane_host=""
+	local lane_tag=""
+	release_lane_read "$repo" >/dev/null 2>&1 || return 0
+	lane_tag=$(jq -r '.tag // ""' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" 2>/dev/null) || return 0
+	[[ -z "$lane_tag" ]] || return 0
+	_full_loop_read_release_authorization "$repo" "$source_pr" >/dev/null 2>&1 && return 0
+	lane_host=$(jq -r '.executor.host_id // ""' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" 2>/dev/null) || return 0
+	printf 'Lane has no tag and no release authorization exists on this host (executor host_id: %s).\n' "${lane_host:-unknown}"
+	printf 'Recovery of a failed pre-publication lane only works on the executor host; run there: aidevops release %s %s incremental\n' \
+		"${release_type:-patch}" "$source_pr"
+	return 0
+}
+
 _full_loop_release_start_new() {
 	local repo="$1"
 	local source_pr="$2"
@@ -832,6 +852,7 @@ _full_loop_release_start_new() {
 	release_lane_acquire "$repo" "$source_pr" "${expected_sources:-$source_pr}" || return $?
 	if [[ "$_AIDEVOPS_RELEASE_LANE_RESULT" == "adopted" ]]; then
 		printf 'Release lane already belongs to PR #%s; reconcile instead of creating another version bump\n' "$source_pr"
+		_full_loop_release_print_foreign_host_hint "$repo" "$source_pr" "$release_type"
 		return 8
 	fi
 	_full_loop_release_run_new "$repo" "$source_pr" "$release_type" "$deployment_scope" \
