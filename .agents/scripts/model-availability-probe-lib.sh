@@ -640,6 +640,13 @@ _probe_openai_codex_backend() {
 
 	local code
 	code=$(curl "${curl_args[@]}" "$url" 2>/dev/null) || code=""
+	if [[ "$quiet" != "true" && "$code" != "200" ]]; then
+		if [[ -n "$code" && "$code" != "000" ]]; then
+			print_warning "openai: Codex backend probe failed (HTTP $code)"
+		else
+			print_warning "openai: Codex backend probe failed (connection failure or timeout)"
+		fi
+	fi
 	case "$code" in
 	200)
 		[[ "$quiet" != "true" ]] && print_success "openai: ChatGPT OAuth verified via Codex backend (GH#37627)"
@@ -837,7 +844,11 @@ probe_provider() {
 	# auth.json has an OAuth entry for this provider. OAuth wins over a
 	# stale/invalid env key — the runtime authenticates at session start.
 	if [[ "$http_exit" -eq 3 ]]; then
-		_probe_check_oauth_fallback "$provider" "$quiet"
+		# Earlier resolve_api_key calls ran in command substitutions, so the
+		# RESOLVED_API_KEY_SOURCE they set was lost. Re-resolve in this shell
+		# (output discarded, never logged) so the t3555 env-key guard sees it.
+		resolve_api_key "$provider" >/dev/null 2>&1 || true
+		_probe_check_oauth_fallback "$provider" "$quiet" "${RESOLVED_API_KEY_SOURCE:-}"
 		return $?
 	fi
 
