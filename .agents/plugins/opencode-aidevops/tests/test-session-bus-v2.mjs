@@ -252,15 +252,18 @@ function fakeTimers() {
 
 test("V2 Messages registers under Prompts, shows root-session rows and honours the switch", async () => {
   const claims = [];
+  const dialogs = [];
+  const dialog = { alert: (input) => { dialogs.push(input); return Promise.resolve(); }, set: (opts) => dialogs.push(opts) };
   const api = {
-    ui: { slot: (claim) => { claims.push(claim); return () => claims.splice(claims.indexOf(claim), 1); } },
+    ui: { dialog, slot: (claim) => { claims.push(claim); return () => claims.splice(claims.indexOf(claim), 1); } },
     data: { session: {
       get: (id) => (id === "ses_child" ? { parentID: "ses_root" } : { id }),
       message: { list: () => [{ id: "u1", type: "user", text: "first prompt" }] },
     } },
     theme: { text: { default: "white", subdued: "grey" } },
   };
-  let rows = [{ id: "m1", pending: true, direction: "in", text: "• ← peer: hi" }];
+  const detail = { title: "Message from peer", message: "ID: m1\n\nhi there, in full" };
+  let rows = [{ id: "m1", pending: true, direction: "in", text: "• ← peer: hi", detail }];
   const seen = [];
   const timers = fakeTimers();
   const prompts = setupPromptsSlot(api, { env: {}, ...renderer });
@@ -278,6 +281,8 @@ test("V2 Messages registers under Prompts, shows root-session rows and honours t
   assert.deepEqual(texts().map(label), ["▼ Messages", "• ← peer: hi"]);
   assert.equal(seen.at(-1), "ses_root", "a subagent view shows its root session's traffic");
   assert.equal(texts()[1].props.fg, "white", "undelivered rows stay prominent");
+  texts()[1].props.onMouseUp();
+  assert.deepEqual(dialogs, [detail, { size: "large" }], "a row click opens the full message");
   rows = [...rows, { id: "m2", pending: false, direction: "out", text: "→ peer: ok" }];
   assert.equal(texts()[2].props.fg, "grey");
   texts()[0].props.onMouseUp();
