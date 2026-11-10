@@ -803,7 +803,7 @@ function subagentFailoverFixture(overrides = {}) {
   const logs = [];
   const failover = createV2SubagentRateLimitFailover({
     getSession: async ({ sessionID }) => sessions[sessionID],
-    getAgent: async ({ agentID }) => ({ data: { id: agentID, ...(overrides.agents?.[agentID] || {}) } }),
+    getAgent: async ({ agentID }) => ({ data: { id: agentID, ...overrides.agents?.[agentID] } }),
     listModels: async () => overrides.models || [
       { providerID: "anthropic", id: "opus", variants: [{ id: "high" }, { id: "max" }] },
       { providerID: "openai", id: "sol", variants: [{ id: "medium" }, { id: "high" }] },
