@@ -42,8 +42,9 @@ _runner_capability_check_fresh_logged() {
 # GH#33743: keep the operator-facing "deferred:" text, and append a structured
 # reason with the repo slug so candidate-scoped log matching classifies it as
 # runner_capability_unmet instead of no_recent_log_evidence. cooldown=eligible
-# marks deterministic runner-local gaps (missing secret, failing probe, invalid
-# requirement map); transient store/API/timeout signals are always re-checked.
+# marks deterministic runner-local gaps (missing secret, failing probe, missing
+# PATH tool, invalid requirement map); transient store/API/timeout signals are
+# always re-checked.
 _runner_capability_log_deferral() {
 	local issue_number="$1" repo_slug="$2" reason="$3" signal="$4"
 	local cooldown="none"
@@ -63,7 +64,7 @@ _runner_capability_log_deferral() {
 		fi
 	fi
 	case "$signal" in
-	secret_missing | probe_failed | invalid_requirements) cooldown="eligible" ;;
+	secret_missing | probe_failed | tool_missing | invalid_requirements) cooldown="eligible" ;;
 	esac
 	printf '[dispatch_with_dedup] #%s deferred: %s — DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=%s cooldown=%s issue=#%s repo=%s\n' \
 		"$issue_number" "$reason" "$signal" "$cooldown" "$issue_number" "$repo_slug" >&3
@@ -80,6 +81,7 @@ runner_capability_check() {
 		_runner_capability_python_runtime
 		_runner_capability_python_cycle
 		_runner_capability_python_classes
+		_runner_capability_python_tools
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -96,6 +98,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import signal
 import stat
 import subprocess
@@ -226,13 +229,46 @@ PY
 	return 0
 }
 
+# GH#37587: requires-tools names are bare commands resolved on PATH only; the
+# dispatcher never executes them.
+_runner_capability_python_tools() {
+	cat <<'PY'
+def requirement_tools(requirements, body):
+    tools = set()
+    declared = [requirement for requirement in requirements if 'tools' in requirement]
+    for line in body.splitlines():
+        if line.startswith('requires-tools:'):
+            declared.append({'tools': re.split(r'[,\s]+', line.partition(':')[2].strip())})
+    for requirement in declared:
+        names = requirement.get('tools', [])
+        if not isinstance(names, list) or len(names) > 8:
+            unmet('invalid_requirements')
+        for name in names:
+            # A bare command name only: no path, argument or shell text.
+            if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9._-]{0,63}', name):
+                unmet('invalid_requirements')
+            tools.add(name)
+    if len(tools) > 8:
+        unmet('invalid_requirements')
+    return tools
+
+def check_tools(tools):
+    # Cheapest deterministic gate first: PATH lookup only, nothing is run.
+    for name in sorted(tools):
+        if not shutil.which(name):
+            unmet(f'tool_missing name={name}')
+
+PY
+	return 0
+}
+
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
     requirements = class_requirements(root, issue)
-    # Issue text can name secrets, never executable commands.
+    # Issue text can name secrets and PATH tools, never executable commands.
     for label in issue.get('labels', []):
         name = label.get('name', '') if isinstance(label, dict) else label
         if name.startswith('needs-secret:'):
@@ -248,6 +284,7 @@ try:
         elif line.startswith('requires-ssh:'):
             requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
     secrets, probes, ssh_commands = set(), [], []
+    tools = requirement_tools(requirements, issue.get('body', ''))
     for requirement in requirements:
         commands = requirement.get('ssh_commands', [])
         if not isinstance(commands, list) or len(commands) > 8:
@@ -282,6 +319,7 @@ try:
             probes.append((str(executable), probe))
     if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
+    check_tools(tools)
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
     network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
@@ -300,7 +338,7 @@ try:
         secret_timeout = 15
     secret_timeout = min(60, max(1, secret_timeout))
     if sys.argv[3] == 'fresh':
-        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands)}',
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands) + len(tools)}',
               file=sys.stderr)
     if secrets:
         check_rejections(secrets)
