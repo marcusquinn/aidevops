@@ -5,7 +5,8 @@
 # Usage: worktree-artefact-reclaim.sh [--force] [--max-seconds N] [--idle-days N]
 # Defaults: dry run, 60 seconds, AIDEVOPS_WORKTREE_IDLE_DAYS (14).
 # .hermit itself contains project configuration; only its cache(s) qualify.
-# No permanent-delete fallback: without a native cleaner/trash, retain output.
+# Linux same-device Trash cannot reclaim space: delete only verified output.
+# Other filesystems/platforms require a native cleaner or Trash backend.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -225,6 +226,22 @@ def guarded(wt, branch):
     return run(['bash', helper, '--check-worktree', str(wt), branch]).returncode == 0
 
 
+def same_filesystem_trash(path):
+    """Match task scratch policy without creating or emptying user Trash."""
+    if not sys.platform.startswith('linux'):
+        return False
+    data_home = Path(os.environ.get('XDG_DATA_HOME', ''))
+    if not data_home.is_absolute():
+        data_home = Path.home() / '.local/share'
+    trash = data_home / 'Trash'
+    try:
+        while not trash.exists():
+            trash = trash.parent
+        return path.lstat().st_dev == trash.stat().st_dev
+    except OSError:
+        return False
+
+
 def reclaim(wt, paths):
     # Cargo's target is explicit: never let workspace/config defaults choose a
     # shared cache outside the verified worktree. Other outputs move in a batch.
@@ -236,6 +253,13 @@ def reclaim(wt, paths):
         if not safe_candidate(wt, path):
             raise ValueError('candidate changed; retained')
         size(path)  # Revalidate nested-repository/mount boundaries before cleaning.
+        if same_filesystem_trash(path):
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise ValueError('safe recursive deletion unavailable; retained')
+            remaining()
+            shutil.rmtree(path)
+            print(f'[worktree-artefacts] deleted={str(path)!r}', flush=True)
+            continue
         if path.name == 'target' and cargo:
             result = run([cargo, 'clean', '--manifest-path', str(path.parent / 'Cargo.toml'), '--target-dir', str(path)])
             if result.returncode == 0:

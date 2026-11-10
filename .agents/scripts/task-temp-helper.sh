@@ -151,6 +151,23 @@ def size(path, deadline):
     return total
 
 
+def same_filesystem_trash(path):
+    """Avoid moving reclaimable Linux data to Trash on the same device."""
+    if not sys.platform.startswith('linux'):
+        return False
+    data_home = Path(os.environ.get('XDG_DATA_HOME', ''))
+    if not data_home.is_absolute():
+        data_home = Path.home() / '.local/share'
+    trash = data_home / 'Trash'
+    try:
+        # Trash need not exist yet; its nearest existing ancestor owns its device.
+        while not trash.exists():
+            trash = trash.parent
+        return path.lstat().st_dev == trash.stat().st_dev
+    except OSError:
+        return False  # Unknown filesystem evidence never authorises deletion.
+
+
 def cleanup(args, root):
     safe_root(root)
     if not root.exists():
@@ -163,7 +180,6 @@ def cleanup(args, root):
     usage = shutil.disk_usage(root)
     pressure = usage.free < minimum_gb * 1024**3 or usage.free * 100 < usage.total * minimum_percent
     delete = pressure and sys.platform.startswith('linux')
-    action = 'delete' if delete else 'trash'
     cutoff = time.time() - days * 86400
     started = time.monotonic()
     deadline = started + args.max_seconds if args.max_seconds else float('inf')
@@ -187,7 +203,7 @@ def cleanup(args, root):
         candidates.sort(key=lambda item: item[0], reverse=True)
     log_dir = Path(os.environ.get('AIDEVOPS_LOG_DIR', str(Path.home() / '.aidevops/logs')))
     log_dir.mkdir(parents=True, exist_ok=True)
-    reclaimed = scanned = failed = 0
+    reclaimed = deleted = scanned = failed = 0
     with (log_dir / 'system-cleanup.log').open('a') as log:
         for offset in range(0, len(candidates), args.batch_size):
             if time.monotonic() >= deadline:
@@ -206,14 +222,17 @@ def cleanup(args, root):
             scanned += len(batch)
             if not args.force:
                 for path in batch:
+                    action = 'delete' if delete or same_filesystem_trash(path) else 'trash'
                     line = f'[dry-run] Would {action}: {path}'
                     print(line)
                     log.write(line + '\n')
                 continue
-            if delete:
+            delete_batch = [path for path in batch if delete or same_filesystem_trash(path)]
+            trash_batch = [path for path in batch if path not in delete_batch]
+            if delete_batch:
                 if not shutil.rmtree.avoids_symlink_attacks:
                     raise ValueError('safe recursive deletion unavailable')
-                for path in batch:
+                for path in delete_batch:
                     try:
                         if not eligible(path, cutoff, deadline):
                             continue
@@ -231,16 +250,16 @@ def cleanup(args, root):
                         failed += 1
                         log.write(f'Failed to delete: {path}: {error}\n')
                         continue  # Retain and retry next pass; keep reclaiming the rest.
-                    reclaimed += 1
+                    deleted += 1
                     log.write(f'Deleted: {path}\n')
-            elif batch:
+            if trash_batch:
                 backends = [command for command in (['trash'], ['gio', 'trash']) if shutil.which(command[0])]
                 if not backends:
                     raise ValueError('no trash backend available; entries retained')
-                pending = set(batch)
+                pending = set(trash_batch)
                 # Try each backend in bulk, then isolate entries that poison a batch.
-                attempts = [(backend, batch) for backend in backends]
-                attempts.extend((backend, [path]) for path in batch for backend in backends)
+                attempts = [(backend, trash_batch) for backend in backends]
+                attempts.extend((backend, [path]) for path in trash_batch for backend in backends)
                 for backend, paths in attempts:
                     retry = []
                     try:
@@ -277,7 +296,7 @@ def cleanup(args, root):
                 if pending:
                     log.write(f'Failed to trash {len(pending)} entries; entries retained\n')
     print(f'[system-cleanup] mode={"force" if args.force else "dry-run"} eligible={scanned} '
-          f'trashed={reclaimed if not delete else 0} deleted={reclaimed if delete else 0} '
+          f'trashed={reclaimed} deleted={deleted} '
           f'failed={failed} pressure={int(pressure)} elapsed_s={int(time.monotonic() - started)} '
           f'budget_s={args.max_seconds} budget_exhausted={int(exhausted)}')
 
