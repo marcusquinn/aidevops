@@ -37,7 +37,10 @@ jobs:
   # optimization, never a coverage gate.
   detect-scope:
     name: Detect PR scope
-    runs-on: ubuntu-latest
+    #aidevops:trust-boundary -- only main pushes and positively identified
+    # same-repository PRs may use the dedicated ephemeral public-repo pool.
+    # Missing metadata, fork PRs and all other events fail closed to hosted.
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       shell: ${{ steps.scope.outputs.shell }}
       substantive: ${{ steps.scope.outputs.substantive }}
@@ -125,7 +128,7 @@ jobs:
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
     needs: detect-scope
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -242,7 +245,7 @@ jobs:
     name: Bash 3.2 Compatibility
     needs: detect-scope
     if: needs.detect-scope.outputs.shell == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       pull-requests: write
       contents: read
@@ -355,7 +358,7 @@ jobs:
     name: Framework Validation
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
 
     steps:
     - name: Checkout code
@@ -677,7 +680,7 @@ jobs:
     name: Complexity Analysis
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       pull-requests: write
       contents: read
@@ -1150,7 +1153,7 @@ jobs:
 
   qlty-smells:
     name: Qlty Maintainability Smells
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     # Only run on PRs — diff mode needs a comparison base.
     #
     # NOTE (t2065, GH#18773): a richer per-rule / per-file regression
@@ -1193,7 +1196,7 @@ jobs:
   # increases remain blocking in `.github/workflows/qlty-regression.yml`.
   qlty-smell-threshold:
     name: Qlty Smell Threshold
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       QLTY_CLI_VERSION: "0.643.0"
 
@@ -1220,7 +1223,7 @@ jobs:
 
   sonarcloud:
     name: SonarCloud Analysis
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     # Job-level env so that step `if:` conditions can reference env.SONAR_TOKEN
     # (step-level env: blocks are applied AFTER the if: is evaluated)
     env:
@@ -1293,7 +1296,7 @@ jobs:
   # in unchanged lines are ignored (ratchet semantics).
   markdownlint:
     name: Markdown Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     if: github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -1370,7 +1373,7 @@ jobs:
   # green and then block the release. Secretlint is pinned from package.json.
   secretlint-changed:
     name: Secretlint (changed files)
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -1412,7 +1415,7 @@ jobs:
   # violations are tolerated (ratchet semantics, mirrors t2065 qlty gate).
   biome:
     name: Biome CI
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
     if: github.event_name == 'pull_request'
     permissions:
       pull-requests: write
