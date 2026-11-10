@@ -1985,6 +1985,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18938 fix(pulse): dead-stamp reaper starves every claim stamp after the first 100 #bug #interactive tier:standard ref:GH#37524 assignee:marcusquinn logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18938-brief.md]
 
+- [ ] t18939 fix(privacy-guard): enumeration expires known-public repos after 10 minutes and blocks dispatch claim comments #bug ref:GH#37530
+
+- [ ] t18940 fix(pulse): worker-bus relay logs which gate stopped a GitHub read #auto-dispatch #bug ref:GH#37533
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
