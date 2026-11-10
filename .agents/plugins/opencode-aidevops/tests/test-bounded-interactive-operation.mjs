@@ -596,6 +596,36 @@ describe("bounded interactive operations", () => {
     assert.equal(toolResult.output, `3: output for ${toolResult.output_id}\n`);
   });
 
+  test("start with wait_seconds returns terminal output inline in one call (t18953)", async () => {
+    const instance = manager();
+    const schemaNode = { optional() { return this; } };
+    const z = { enum: () => schemaNode, string: () => schemaNode, number: () => schemaNode, array: () => schemaNode };
+    const tool = createBoundedInteractiveOperationTool((definition) => definition, z, instance);
+    const quick = JSON.parse(await tool.execute({
+      action: "start",
+      command: [process.execPath, "-e", "console.log('inline-proof')"],
+      budget_seconds: SUCCESS_BUDGET_MS / 1000,
+      wait_seconds: 30,
+      output_limit: 5,
+    }, owner));
+    assert.equal(quick.state, "succeeded", JSON.stringify(quick));
+    assert.equal(quick.output.output, `1: output for ${quick.output_id}\n`);
+    assert.equal(quick.output.limit, 5);
+
+    const slow = JSON.parse(await tool.execute({
+      action: "start",
+      command: [process.execPath, "-e", "setTimeout(() => {}, 2000)"],
+      budget_seconds: 5,
+      wait_seconds: 0.05,
+    }, owner));
+    assert.equal(slow.state, "running");
+    assert.equal(slow.output, undefined);
+    instance.cancel(slow.operation_id, owner);
+    const settled = JSON.parse(await tool.execute({ action: "status", operation_id: slow.operation_id, wait_seconds: 10 }, owner));
+    assert.equal(settled.state, "cancelled", JSON.stringify(settled));
+    assert.ok(settled.output || settled.output_error, "terminal status carries output or its retrieval error");
+  });
+
   test("the sandbox adapter retrieves stored output without exposing its path", async () => {
     const helper = fileURLToPath(new URL("../../../scripts/output-sandbox-helper.sh", import.meta.url));
     const previousDirectory = process.env.AIDEVOPS_OUTPUT_SANDBOX_DIR;
