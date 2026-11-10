@@ -359,7 +359,6 @@ try:
             requirements.append({'ssh_commands': [json.loads(line.partition(':')[2])]})
     secrets, probes, ssh_commands = set(), [], []
     tools = requirement_tools(requirements, issue.get('body', ''))
-    services = requirement_services(requirements, issue.get('body', ''))
     for requirement in requirements:
         commands = requirement.get('ssh_commands', [])
         if not isinstance(commands, list) or len(commands) > 8:
@@ -395,7 +394,7 @@ try:
     if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
     check_tools(tools)
-    check_services(services, sys.argv[4] if sys.argv[3] == 'fresh' else '')
+    check_services(requirement_services(requirements, issue.get('body', '')), sys.argv[4] if sys.argv[3] == 'fresh' else '')
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
     network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))
@@ -414,7 +413,7 @@ try:
         secret_timeout = 15
     secret_timeout = min(60, max(1, secret_timeout))
     if sys.argv[3] == 'fresh':
-        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands) + len(tools) + len(services)}',
+        print(f'runner_capability_check source=fresh requirements={len(secrets) + len(probes) + len(ssh_commands) + len(tools)}',
               file=sys.stderr)
     if secrets:
         check_rejections(secrets)
