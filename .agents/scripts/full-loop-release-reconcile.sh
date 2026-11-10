@@ -1392,7 +1392,10 @@ _full_loop_release_validate_published_reconciliation_intent() {
 
 	[[ "$requested_pr" =~ ^[0-9]+$ && "$tag_name" =~ $_FULL_LOOP_RELEASE_VERSION_TAG_REGEX ]] || return 1
 	declare -F release_lane_read >/dev/null 2>&1 || return 1
-	persisted_sources=$(_full_loop_read_release_authorization "$repo" "$requested_pr") || return 1
+	persisted_sources=$(_full_loop_read_release_authorization "$repo" "$requested_pr") || {
+		printf 'Published reconciliation refused: local explicit authorization is missing or invalid for PR #%s; provide trusted intent for the verified source manifest before retrying.\n' "$requested_pr" >&2
+		return 1
+	}
 	persisted_json=$(release_authorization_manifest_json "$persisted_sources") || return 1
 	observed_json=$(release_authorization_observed_sources_json "$persisted_json" "$source_json") || return 1
 	observed_sources=$(jq -r 'sort_by(.pr) | map([.pr, .merge] | join("@")) | join(",")' \
@@ -1650,7 +1653,11 @@ _full_loop_release_finalize_stale_supersession() {
 		<<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 1
 	[[ -z "$source_run" || "$source_run" != "$release_run" ]] || return 1
 	release_receipt=$(_full_loop_release_receipt_path "$repo" "$successor_pr") || return 1
-	[[ -f "$release_receipt" ]] || return 1
+	[[ -f "$release_receipt" ]] || {
+		printf 'Cannot settle stale tag %s: local published receipt for successor PR #%s (%s) is missing; reconcile the successor first.\n' \
+			"$source_tag" "$successor_pr" "$release_tag" >&2
+		return 1
+	}
 	IFS= read -r release_status <"$release_receipt" || return 1
 	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
 
