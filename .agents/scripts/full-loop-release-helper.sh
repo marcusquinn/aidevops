@@ -355,6 +355,12 @@ Usage:
   aidevops release status SOURCE_PR
   aidevops release sources SOURCE_PR
   aidevops release reap-stale [--limit N]
+  aidevops release hold OWNER/REPO --pr N [--version vX.Y.Z] [--ttl-minutes M]
+  aidevops release unhold OWNER/REPO
+  aidevops release hold-status OWNER/REPO
+  aidevops release owner OWNER/REPO TAG --session ID
+  aidevops release owner-notify OWNER/REPO TAG [--result TEXT]
+  aidevops release duplicate-check OWNER/REPO vX.Y.Z
   aidevops release reconcile SOURCE_PR
   aidevops release recover-reservation SOURCE_PR
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
@@ -935,7 +941,19 @@ _full_loop_release_cmd_reap_stale() {
 	return $?
 }
 
+_full_loop_release_is_manual_hold_command() {
+	local command_name="${1:-}"
+	case "$command_name" in
+	hold | unhold | hold-status | owner | owner-notify | duplicate-check) return 0 ;;
+	esac
+	return 1
+}
+
 main() {
+	if _full_loop_release_is_manual_hold_command "${1:-}"; then
+		"${SCRIPT_DIR}/manual-release-hold-helper.sh" "$@"
+		return $?
+	fi
 	if [[ "${1:-}" == "reap-stale" ]]; then
 		_full_loop_release_cmd_reap_stale "$@"
 		return $?

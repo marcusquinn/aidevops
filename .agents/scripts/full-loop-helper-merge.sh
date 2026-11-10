@@ -63,6 +63,10 @@ source "${SCRIPT_DIR}/gh-merge-cache-remediation-lib.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/release-lane-helper.sh"
 
+# shellcheck source=./manual-release-hold-helper.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/manual-release-hold-helper.sh"
+
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
@@ -1557,7 +1561,14 @@ _merge_handle_already_merged_provenance() {
 _merge_release_lane_check() {
 	local pr_number="$1"
 	local repo="$2"
-	[[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] || return 0
+	if [[ "$repo" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]]; then
+		# Advisory manual-release hold: refuse other PRs while a release PR is in flight.
+		manual_release_hold_check "$repo" "$pr_number" || {
+			print_error "Merge deferred by active manual release hold"
+			return 1
+		}
+		return 0
+	fi
 	local pr_refs="" base_ref=""
 	pr_refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
 		print_error "Merge blocked: cannot verify release-lane PR identity"

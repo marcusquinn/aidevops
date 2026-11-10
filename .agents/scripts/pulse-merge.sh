@@ -298,6 +298,10 @@ source "${_PULSE_MERGE_DIR}/gh-merge-cache-remediation-lib.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/release-lane-helper.sh"
 
+# shellcheck source=./manual-release-hold-helper.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/manual-release-hold-helper.sh"
+
 readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 # Source author permission check helpers (GH#21426 — extracted to bring
@@ -1281,6 +1285,11 @@ _pmp_stage_parse_and_validate() {
 	if [[ "$repo_slug" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
 		&& ! release_lane_merge_guard "$repo_slug" "$pr_number" "$pr_base_ref_name" "$pr_head_ref_name"; then
 		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} for active exact-tip release lane" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
+		&& ! manual_release_hold_check "$repo_slug" "$pr_number" 2>>"$LOGFILE"; then
+		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} for active manual release hold" >>"$LOGFILE"
 		return 1
 	fi
 	# GH#24634: refresh REST-first UNKNOWN state before conflict handling.

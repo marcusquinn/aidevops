@@ -280,6 +280,16 @@ publication.
   bus, older CLI or timeout prints nothing. Disable both with
   `AIDEVOPS_RELEASE_NOTICES=false`.
 
+### Manual release roll-out owner
+
+For manual releases of non-aidevops repos (`workflows/release.md` → Manual Release),
+`aidevops release owner OWNER/REPO TAG --session ID` records the session that owns
+the roll-out in a remote branch `aidevops/manual-release-owner/<tag>`. After the
+Release run and update test finish, `aidevops release owner-notify OWNER/REPO TAG`
+sends that session one `aidevops sessions send` info message (best effort, 5-second
+budget, never fails the caller). The same helper holds merges while the release PR
+waits for CI (`aidevops release hold`); both are advisory.
+
 ## Storage
 
 Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESSION_BUS_DIR`).
