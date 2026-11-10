@@ -37,10 +37,7 @@ jobs:
   # optimization, never a coverage gate.
   detect-scope:
     name: Detect PR scope
-    #aidevops:trust-boundary -- only main pushes and positively identified
-    # same-repository PRs may use the dedicated ephemeral public-repo pool.
-    # Missing metadata, fork PRs and all other events fail closed to hosted.
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     outputs:
       shell: ${{ steps.scope.outputs.shell }}
       substantive: ${{ steps.scope.outputs.substantive }}
@@ -50,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate trusted runner routing
+      - name: Validate hosted runner routing
         run: node --test .agents/scripts/tests/test-ci-runner-routing.mjs
 
       - name: Determine scope
@@ -91,8 +88,9 @@ jobs:
           fi
           printf 'Changed files:\n%s\n' "$changed"
 
-          # Shell scope: files covered by ShellCheck / bash32-compat gates.
-          if printf '%s\n' "$changed" | grep -qE '(^|/)[^/]+\.sh$|(^|/)\.shellcheckrc$|^\.github/workflows/|^\.agents/scripts/'; then
+          # Documentation under scripts/ is not executable shell scope.
+          code_changed=$(printf '%s\n' "$changed" | grep -Ev '\.md$|^todo/' || true)
+          if printf '%s\n' "$code_changed" | grep -qE '(^|/)[^/]+\.sh$|(^|/)\.shellcheckrc$|^\.github/workflows/|^\.agents/scripts/'; then
             echo "Shell-relevant files changed."
             echo "shell=true" >> "$GITHUB_OUTPUT"
           else
@@ -107,7 +105,7 @@ jobs:
             -e '^CHANGELOG\.md$' \
             -e '^package\.json$' \
             -e '^package-lock\.json$' \
-            -e '^([A-Za-z0-9_.-]*\.md)$' \
+            -e '\.md$' \
             -e '^todo/' \
             -e '^TODO\.md$' \
             -e '^\.github/.*\.md$' \
@@ -131,7 +129,7 @@ jobs:
   cross-platform-shellcheck:
     name: ShellCheck (${{ matrix.os }})
     needs: detect-scope
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -248,7 +246,7 @@ jobs:
     name: Bash 3.2 Compatibility
     needs: detect-scope
     if: needs.detect-scope.outputs.shell == 'true'
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: read
@@ -361,7 +359,7 @@ jobs:
     name: Framework Validation
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
@@ -683,7 +681,7 @@ jobs:
     name: Complexity Analysis
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: read
@@ -701,7 +699,7 @@ jobs:
 
     - name: Install analysis tools
       run: |
-        pip install lizard pyflakes ruff==0.11.13 mypy==1.15.0
+        pip install ruff==0.11.13 mypy==1.15.0
 
     - name: Lint Worker Lifecycle Python
       run: ruff check --no-cache .agents/worker-lifecycle
@@ -802,34 +800,12 @@ jobs:
       run: |
         set -euo pipefail
 
-        # --- Non-blocking warning: total violation count ---
-        # Run dry-run scan to report total violations against the simplification
-        # routine threshold. Non-blocking — this is a target, not a gate.
-        THRESHOLD=420
-        if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^FUNCTION_COMPLEXITY_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
-            | cut -d= -f2 || true)
-          if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
-            THRESHOLD=$val
-          fi
-        fi
-
-        echo "Scanning shell function complexity (>100 lines)..."
-        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run 2>/dev/null \
-          | grep '^Total violations' || echo "Total violations (>100 lines): unknown")
-        echo "$total_out"
-
-        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
-        if [ "$total" -gt "$THRESHOLD" ]; then
-          echo "::warning::Function complexity total: $total violations (threshold: $THRESHOLD). See simplification routine."
-        else
-          echo "Within simplification threshold ($THRESHOLD)"
-        fi
+        # Full-tree advisory totals run once post-merge in code-quality-advisory.yml.
 
         # --- Blocking gate: per-function regression check (PRs only) ---
         # Skip on direct pushes to main — no meaningful "base" to diff against.
         if [ "${EVENT_NAME}" != "pull_request" ]; then
-          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          echo "Push event: skipping regression diff (no PR base); advisory totals run separately."
           exit 0
         fi
 
@@ -910,32 +886,11 @@ jobs:
       run: |
         set -euo pipefail
 
-        # --- Non-blocking warning: total violation count ---
-        THRESHOLD=260
-        if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^NESTING_DEPTH_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
-            | cut -d= -f2 || true)
-          if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
-            THRESHOLD=$val
-          fi
-        fi
-
-        echo "Scanning shell nesting depth (>8 levels)..."
-        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
-          --metric nesting-depth 2>/dev/null \
-          | grep '^Total violations' || echo "Total violations (nesting): unknown")
-        echo "$total_out"
-
-        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
-        if [ "$total" -gt "$THRESHOLD" ]; then
-          echo "::warning::Nesting depth total: $total violations (threshold: $THRESHOLD). See simplification routine."
-        else
-          echo "Within simplification threshold ($THRESHOLD)"
-        fi
+        # Full-tree advisory totals run once post-merge in code-quality-advisory.yml.
 
         # --- Blocking gate: per-file regression check (PRs only) ---
         if [ "${EVENT_NAME}" != "pull_request" ]; then
-          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          echo "Push event: skipping regression diff (no PR base); advisory totals run separately."
           exit 0
         fi
 
@@ -1006,16 +961,11 @@ jobs:
       run: |
         set -euo pipefail
 
-        # --- Informational: total violation count (no threshold gate) ---
-        echo "Scanning non-README Markdown file sizes (>1000 lines at root / >500 elsewhere)..."
-        total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
-          --metric file-size 2>/dev/null \
-          | grep '^Total violations' || echo "Total violations (file-size): unknown")
-        echo "$total_out (informational — debt tracked by #21146, gate is ratchet-based per t2938)"
+        # Full-tree advisory totals run once post-merge in code-quality-advisory.yml.
 
         # --- Blocking gate: per-file regression check (PRs only) ---
         if [ "${EVENT_NAME}" != "pull_request" ]; then
-          echo "Push event: skipping regression diff (no PR base). Total count warning above is advisory."
+          echo "Push event: skipping regression diff (no PR base); advisory totals run separately."
           exit 0
         fi
 
@@ -1069,54 +1019,6 @@ jobs:
         echo "::error::New non-README Markdown file size violations (root limit 1000 / elsewhere 500). First make the whole document more concise without losing detail; split or bypass only if that is not enough. A justified bypass requires 'complexity-bump-ok' and a '## Complexity Bump Justification' section."
         exit 1
 
-    - name: Python cyclomatic complexity (Lizard)
-      run: |
-        source .agents/scripts/lint-file-discovery.sh
-        lint_python_files
-
-        echo "Checking Python cyclomatic complexity (CCN > 8)..."
-        if [ -z "$LINT_PY_FILES" ]; then
-          echo "No Python files found"
-          exit 0
-        fi
-
-        # Run lizard with warnings-only mode (CCN > 8)
-        lizard_output=$(echo "$LINT_PY_FILES" | xargs lizard --CCN 8 --warnings_only 2>/dev/null || true)
-        if [ -n "$lizard_output" ]; then
-          echo "$lizard_output"
-           violations=$(echo "$lizard_output" | grep -c "warning:" || true)
-           [[ "$violations" =~ ^[0-9]+$ ]] || violations=0
-          echo ""
-          echo "Python complexity violations: $violations"
-          # Advisory — Codacy is the hard gate for Python
-          echo "::warning::$violations Python functions exceed cyclomatic complexity 8"
-        else
-          echo "No Python complexity violations"
-        fi
-
-    - name: Python import check (Pyflakes)
-      run: |
-        source .agents/scripts/lint-file-discovery.sh
-        lint_python_files
-
-        echo "Checking Python imports..."
-        if [ -z "$LINT_PY_FILES" ]; then
-          echo "No Python files found"
-          exit 0
-        fi
-
-        pyflakes_output=$(echo "$LINT_PY_FILES" | xargs pyflakes 2>/dev/null || true)
-        if [ -n "$pyflakes_output" ]; then
-          echo "$pyflakes_output"
-           violations=$(echo "$pyflakes_output" | grep -c . || true)
-           [[ "$violations" =~ ^[0-9]+$ ]] || violations=0
-          echo ""
-          echo "Pyflakes issues: $violations"
-          echo "::warning::$violations Python import/usage issues found"
-        else
-          echo "No Pyflakes issues"
-        fi
-
     - name: Python 3.9 annotation compatibility (GH#34098)
       # Blocking: macOS /usr/bin/python3 is 3.9, which evaluates `X | None`
       # signature/module/class annotations at import time and crashes unless the
@@ -1156,7 +1058,7 @@ jobs:
 
   qlty-smells:
     name: Qlty Maintainability Smells
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # Only run on PRs — diff mode needs a comparison base.
     #
     # NOTE (t2065, GH#18773): a richer per-rule / per-file regression
@@ -1199,7 +1101,7 @@ jobs:
   # increases remain blocking in `.github/workflows/qlty-regression.yml`.
   qlty-smell-threshold:
     name: Qlty Smell Threshold
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
       QLTY_CLI_VERSION: "0.643.0"
 
@@ -1226,7 +1128,7 @@ jobs:
 
   sonarcloud:
     name: SonarCloud Analysis
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # Job-level env so that step `if:` conditions can reference env.SONAR_TOKEN
     # (step-level env: blocks are applied AFTER the if: is evaluated)
     env:
@@ -1299,7 +1201,7 @@ jobs:
   # in unchanged lines are ignored (ratchet semantics).
   markdownlint:
     name: Markdown Lint
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -1376,7 +1278,7 @@ jobs:
   # green and then block the release. Secretlint is pinned from package.json.
   secretlint-changed:
     name: Secretlint (changed files)
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -1418,7 +1320,7 @@ jobs:
   # violations are tolerated (ratchet semantics, mirrors t2065 qlty gate).
   biome:
     name: Biome CI
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && toJSON(github.event.pull_request.head.repo.fork) == 'false' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
       pull-requests: write

@@ -2,83 +2,47 @@
 // SPDX-FileCopyrightText: 2026 Marcus Quinn
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { runInNewContext } from 'node:vm';
 
 const workflow = readFileSync(new URL('../../../.github/workflows/code-quality.yml', import.meta.url), 'utf8');
 const selectors = [...workflow.matchAll(/^    runs-on: (.+)$/gm)].map((match) => match[1]);
-const guarded = selectors.filter((selector) => selector.startsWith('${{'));
-const repository = 'marcusquinn/aidevops';
-const pool = 'aidevops-public-ephemeral';
 
-function context(eventName, { ref = 'refs/pull/1/merge', fork = false, fullName = repository } = {}) {
-  return {
-    github: {
-      repository,
-      event_name: eventName,
-      ref,
-      event: { pull_request: { head: { repo: { fork, full_name: fullName } } } },
-    },
-    vars: { CI_RUNNER: pool },
-    matrix: { os: 'ubuntu-latest' },
-  };
-}
-
-// These expressions use only the Actions/JavaScript common boolean subset.
-// Use loose equality just as Actions does: missing/null fork metadata must
-// not be accepted via Actions' null == false numeric coercion.
-function selectRunner(selector, values) {
-  const expression = selector.slice(3, -2);
-  return runInNewContext(expression, { ...values, toJSON: (value) => JSON.stringify(value ?? null) }, { timeout: 100 });
-}
-
-test('every eligible Code Quality job is guarded; platform-specific verifier stays hosted', () => {
+test('Code Quality stays hosted regardless of event or CI_RUNNER configuration', () => {
   assert.equal(selectors.length, 12);
-  assert.equal(guarded.length, 11);
-  assert.deepEqual(selectors.filter((selector) => !selector.startsWith('${{')), ['ubuntu-22.04']);
+  for (const selector of selectors) {
+    assert.ok(['ubuntu-latest', 'ubuntu-22.04', '${{ matrix.os }}'].includes(selector), selector);
+  }
+  assert.doesNotMatch(workflow, /vars\.CI_RUNNER|self-hosted/);
   assert.match(workflow, /name: ShellCheck \(\$\{\{ matrix\.os \}\}\)/);
   assert.match(workflow, /os: \[ubuntu-latest\]/);
+  assert.match(workflow, /name: Model replay verifier boundary \(ubuntu-22\.04\)\n    runs-on: ubuntu-22\.04/);
 });
 
-for (const [index, selector] of guarded.entries()) {
-  test(`runner selector ${index + 1}: trust boundary and hosted fallback`, () => {
-    assert.equal(selectRunner(selector, context('push', { ref: 'refs/heads/main' })), pool);
-    assert.equal(selectRunner(selector, context('pull_request')), pool);
-
-    const denied = [
-      context('push', { ref: 'refs/heads/develop' }),
-      context('push', { ref: 'refs/tags/v1' }),
-      context('pull_request', { fork: true, fullName: 'outside/fork' }),
-      context('pull_request', { fork: true }),
-      context('pull_request', { fullName: 'outside/fork' }),
-      context('pull_request', { fork: null }),
-      context('pull_request', { fork: 0 }),
-      context('pull_request', { fork: '' }),
-      context('pull_request', { fork: 'false' }),
-      context('pull_request_target'),
-      context('workflow_run'),
-      context('workflow_dispatch'),
-      context('schedule'),
-      context('issues'),
-      context('issue_comment'),
-    ];
-    // Destructuring defaults replace undefined; explicitly remove the property.
-    const missingFork = context('pull_request');
-    delete missingFork.github.event.pull_request.head.repo.fork;
-    denied.push(missingFork);
-    const missingName = context('pull_request');
-    delete missingName.github.event.pull_request.head.repo.full_name;
-    denied.push(missingName);
-    for (const values of denied) {
-      assert.equal(selectRunner(selector, values), 'ubuntu-latest', JSON.stringify(values.github));
-    }
-
-    const noPool = context('pull_request');
-    noPool.vars.CI_RUNNER = '';
-    assert.equal(selectRunner(selector, noPool), 'ubuntu-latest');
-    const ordinaryPush = context('push', { ref: 'refs/heads/main' });
-    ordinaryPush.github.event = {};
-    assert.equal(selectRunner(selector, ordinaryPush), pool);
+// Execute the workflow's actual classification block, not a duplicated model.
+// Redirect only the Actions output writes to stdout: Node's captured stdout may
+// be a socket that cannot be reopened via /dev/stdout. No temp Git refs needed.
+const scopeBlock = workflow
+  .slice(workflow.indexOf("          printf 'Changed files:"), workflow.indexOf('  # Cross-platform shellcheck:'))
+  .replaceAll('>> "$GITHUB_OUTPUT"', '>&1');
+assert.ok(scopeBlock.includes('code_changed='));
+for (const [label, files, shell, substantive] of [
+  ['root docs', ['README.md', 'CHANGELOG.md'], false, false],
+  ['nested docs', ['.agents/reference/ci-gate-policy.md', '.agents/scripts/README.md'], false, false],
+  ['planning', ['TODO.md', 'todo/tasks/brief.json'], false, false],
+  ['shell', ['.agents/scripts/example.sh'], true, true],
+  ['workflow', ['.github/workflows/code-quality.yml'], true, true],
+  ['Python', ['.agents/worker-lifecycle/example.py'], false, true],
+  ['mixed docs and source', ['docs/guide.md', '.agents/scripts/example.sh'], true, true],
+]) {
+  test(`actual PR scope: ${label}`, () => {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', scopeBlock], {
+      encoding: 'utf8',
+      env: { ...process.env, changed: files.join('\n') },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`^shell=${shell}$`, 'm'));
+    assert.match(result.stdout, new RegExp(`^substantive=${substantive}$`, 'm'));
   });
 }

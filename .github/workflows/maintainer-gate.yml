@@ -29,6 +29,11 @@ on:
   issues:
     types: [unlabeled, labeled, assigned, unassigned]
 
+concurrency:
+  # Issue events can re-evaluate several linked PRs; never cancel those writes.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
 jobs:
   gate:
     uses: ./.github/workflows/maintainer-gate-reusable.yml

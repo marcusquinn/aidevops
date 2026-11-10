@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.tag || github.sha }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   postflight:
