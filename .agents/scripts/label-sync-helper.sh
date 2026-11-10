@@ -708,7 +708,11 @@ cmd_ensure() {
 	for name in "$@"; do
 		definition=$(canonical_label_definition "$name") || return 1
 		IFS='|' read -r color desc <<<"$definition"
-		gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force >/dev/null 2>&1 || return 1
+		gh label create "$name" --repo "$repo" --color "$color" --description "$desc" --force >/dev/null 2>&1 && continue
+		# Write failed: accept the label if it already exists exactly.
+		local existing=""
+		existing=$(gh label list --repo "$repo" --search "$name" --limit 100 --json name --jq '.[].name' 2>/dev/null) || return 1
+		grep -Fxq -- "$name" <<<"$existing" || return 1
 	done
 	return 0
 }
