@@ -54,6 +54,31 @@ export function operationStatus(manager, id, context = {}, requested = {}) {
   });
 }
 
+/**
+ * t18953: wait until the operation leaves every active state or the deadline
+ * passes. One status wait returns on any transition (running -> finalizing),
+ * so this loops; the total stays within the single status-wait bound.
+ */
+export async function operationSettle(manager, id, context = {}, requested = {}) {
+  const waitMs = Number(requested.waitMs ?? 0);
+  if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > MAX_STATUS_WAIT_MS) {
+    throw new Error("settle wait must be an integer from 0 to 60000 milliseconds");
+  }
+  const deadline = manager.now() + waitMs;
+  let receipt = manager.status(id, context);
+  while (ACTIVE_STATES.includes(receipt.state)) {
+    const remaining = deadline - manager.now();
+    if (remaining <= 0) break;
+    receipt = await manager.status(id, context, { waitMs: Math.ceil(remaining) });
+  }
+  return receipt;
+}
+
+/** Whether a receipt is terminal with stored output that `output` can read. */
+export function hasInlineOutput(receipt) {
+  return Boolean(receipt?.output_id) && !ACTIVE_STATES.includes(receipt.state);
+}
+
 export async function operationOutput(manager, id, context = {}, requested = {}) {
   const operation = manager.ownedOperation(id, context);
   if (ACTIVE_STATES.includes(operation.state)) {
