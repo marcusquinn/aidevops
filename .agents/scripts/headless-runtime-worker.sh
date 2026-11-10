@@ -1745,19 +1745,22 @@ _hrw_post_pr_handoff_gate() {
 	return 1
 }
 
+_hrw_finish_not_launched() {
+	local session_key="$1"
+	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; revision continuation requires a new approval"
+	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
+	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
+	_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"
+	return 0
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
 	local finish_status=0
 	local permission_pending_file=""
-	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != "1" ]]; then
-		print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; revision continuation requires a new approval"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
-		_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
-		_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"
-		return 0
-	fi
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || { _hrw_finish_not_launched "$session_key"; return 0; }
 	if [[ "${_run_result_label:-}" == "$_HRW_STATUS_BLOCKED" ]]; then
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
