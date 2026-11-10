@@ -818,21 +818,152 @@ _dispatch_record_enumeration_seconds() {
 	return 0
 }
 
-# A skipped round returns a distinct status to its orchestrator, not a successful
-# empty queue. That lets the existing event refill failure path restore its signal.
-_dispatch_cycle_budget_admits_round() {
-	local context="$1" stage="${2:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0
-	[[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" == "1" ]] || return 0
-	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 0
-	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 0
-	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 0
+# GH#37623: minimum slack (seconds beyond floor + pre-stage margin) for which a
+# round that cannot fit its full-census estimate still runs a bounded census.
+# AIDEVOPS_PULSE_BOUNDED_ENUMERATION_MIN_S=0 disables the bounded fallback.
+_dispatch_bounded_enumeration_min_seconds() {
+	local minimum="${AIDEVOPS_PULSE_BOUNDED_ENUMERATION_MIN_S:-120}"
+	[[ "$minimum" =~ ^[0-9]{1,5}$ ]] || minimum=120
+	printf '%s\n' "$((10#$minimum))"
+	return 0
+}
+
+# GH#37623: a full census reserves its whole EWMA (782s observed) before it may
+# start, so every round with less left was skipped while slots stayed free. A
+# first-wave style census (GH#34331) stops once it holds a fresh candidate for
+# every free slot or its budget elapses, so it fits the slack the full census
+# cannot. Give it half the slack (capped at the first-wave budget) and leave the
+# other half for the one-repository overrun past its between-repo deadline
+# check. The post-enumeration floor + margin check still guards every launch.
+# Args: $1=remaining $2=floor $3=margin. Stdout: budget seconds; status 1 when
+# the slack is below the bounded minimum or the fallback is disabled.
+_dispatch_bounded_enumeration_budget_seconds() {
+	local remaining="$1" floor="$2" margin="$3" minimum="" configured="${PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S:-180}" slack=0 budget=0
+	[[ "$remaining" =~ ^-?[0-9]+$ && "$floor" =~ ^[0-9]+$ && "$margin" =~ ^[0-9]+$ ]] || return 1
+	minimum=$(_dispatch_bounded_enumeration_min_seconds)
+	((minimum > 0)) || return 1
+	[[ "$configured" =~ ^[0-9]{1,5}$ ]] || configured=180
+	configured=$((10#$configured))
+	slack=$((remaining - floor - margin))
+	((slack >= minimum)) || return 1
+	budget=$((slack / 2))
+	((budget <= configured)) || budget="$configured"
+	printf '%s\n' "$budget"
+	return 0
+}
+
+# Classify the remaining cycle budget for one dispatch round stage.
+# Stdout: "<mode> <bounded_budget> <remaining> <floor> <margin> <enumeration>"
+# where mode is full (fits, or the gate/clock is unavailable), bounded (before
+# stage only: the full census does not fit but a bounded census does) or skip.
+_dispatch_round_budget_plan() {
+	local stage="${1:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0 budget=0 mode=skip is_before=0
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]] || ! declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1; then
+		printf 'full 0\n'
+		return 0
+	fi
+	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || remaining=""
+	if [[ ! "$remaining" =~ ^-?[0-9]+$ ]]; then
+		printf 'full 0\n'
+		return 0
+	fi
 	[[ "$floor" =~ ^[1-9][0-9]*$ ]] || floor=600
 	margin=$(_dispatch_prestage_margin_seconds)
-	[[ "$stage" != "before" ]] || enumeration=$(_dispatch_enumeration_expected_seconds)
-	((remaining >= floor + margin + enumeration)) && return 0
-	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s prestage_margin=${margin}s enumeration=${enumeration}s); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
-	_dispatch_stats_increment "pulse_dispatch_cycle_budget_skipped"
+	[[ "$stage" != "before" ]] || is_before=1
+	((is_before == 0)) || enumeration=$(_dispatch_enumeration_expected_seconds)
+	if ((remaining >= floor + margin + enumeration)); then
+		mode=full
+	elif ((is_before == 1)) && budget=$(_dispatch_bounded_enumeration_budget_seconds "$remaining" "$floor" "$margin"); then
+		mode=bounded
+	else
+		budget=0
+	fi
+	printf '%s %s %s %s %s %s %s\n' "$mode" "$budget" "$remaining" "$floor" "$margin" "$enumeration" "$is_before"
+	return 0
+}
+
+# Return 0 when a plan line from _dispatch_round_budget_plan skips its stage.
+_dispatch_round_plan_skips() {
+	local plan="$1"
+	[[ "${plan%% *}" == "skip" ]] && return 0
 	return 1
+}
+
+# Log and count one budget-skipped round stage from its plan line.
+_dispatch_log_round_budget_skip() {
+	local context="$1" stage="$2" plan="$3" mode="" budget="" remaining="" floor="" margin="" enumeration="" is_before=0 bounded_detail=""
+	read -r mode budget remaining floor margin enumeration is_before <<<"$plan"
+	[[ "$is_before" != 1 ]] || bounded_detail=" bounded_census_min=$(_dispatch_bounded_enumeration_min_seconds)s"
+	echo "[pulse-wrapper] ${context} skipped ${stage} candidate enumeration: cycle wall-clock budget below dispatch reserve (remaining=${remaining}s floor=${floor}s prestage_margin=${margin}s enumeration=${enumeration}s${bounded_detail}); refill trigger retained for a fresh-budget pass (GH#33560)" >>"$LOGFILE"
+	_dispatch_stats_increment "pulse_dispatch_cycle_budget_skipped"
+	return 0
+}
+
+# A skipped round returns a distinct status to its orchestrator, not a successful
+# empty queue. That lets the existing event refill failure path restore its signal.
+# Before enumeration, a round that only fits a bounded census is admitted
+# (GH#37623); _dispatch_enumerate_ranked_round picks the census scope.
+_dispatch_cycle_budget_admits_round() {
+	local context="$1" stage="${2:-before}" plan=""
+	plan=$(_dispatch_round_budget_plan "$stage")
+	_dispatch_round_plan_skips "$plan" || return 0
+	_dispatch_log_round_budget_skip "$context" "$stage" "$plan"
+	return 1
+}
+
+# GH#37623: a full-census call that served a candidate snapshot captured before
+# it started measured a cache read, not a scan. Recording it would decay the
+# full-census estimate the cold-cache minimum protects (GH#33560).
+# Args: $1=scan limit $2=normalization mode $3=started_ms
+_dispatch_enumeration_served_snapshot() {
+	local scan_limit="$1" normalization_mode="$2" started_ms="$3" snapshot_file="" captured=""
+	[[ "${PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED:-1}" != "0" ]] || return 1
+	declare -F _dispatch_candidate_snapshot_path >/dev/null 2>&1 || return 1
+	[[ "$started_ms" =~ ^[0-9]{1,16}$ ]] || return 1
+	snapshot_file=$(_dispatch_candidate_snapshot_path "$scan_limit" "$normalization_mode" 2>/dev/null) || return 1
+	[[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] || return 1
+	captured=$(jq -r '.captured_at // empty' "$snapshot_file" 2>/dev/null) || return 1
+	[[ "$captured" =~ ^[0-9]{1,12}$ ]] || return 1
+	((captured < started_ms / 1000)) && return 0
+	return 1
+}
+
+# GH#37623: log measured enumeration wall time next to the estimate it feeds.
+# Only a completed full census that scanned is a representative sample: failed
+# passes and snapshot reads would distort the estimate, and a bounded census is
+# truncated by design, so those are logged but not recorded.
+# Args: $1=census mode (full|bounded) $2=outcome (ok|unavailable)
+#       $3=started_ms $4=scan limit $5=normalization mode
+_dispatch_finish_enumeration_timing() {
+	local mode="$1" outcome="$2" started_ms="$3" scan_limit="$4" normalization_mode="$5"
+	local ended_ms="" elapsed="unknown" before="" after="" sample="not_recorded"
+	ended_ms=$(_dispatch_now_ms 2>/dev/null) || ended_ms=""
+	if [[ "$started_ms" =~ ^[0-9]{1,16}$ && "$ended_ms" =~ ^[0-9]{1,16}$ ]] && ((ended_ms >= started_ms)); then
+		elapsed="$(((ended_ms - started_ms + 999) / 1000))s"
+	fi
+	before=$(_dispatch_enumeration_expected_seconds)
+	if [[ "$mode" == "full" && "$outcome" == "ok" ]]; then
+		if _dispatch_enumeration_served_snapshot "$scan_limit" "$normalization_mode" "$started_ms"; then
+			sample="snapshot_hit"
+		else
+			_dispatch_record_enumeration_seconds "$started_ms"
+			sample="recorded"
+		fi
+	fi
+	after=$(_dispatch_enumeration_expected_seconds)
+	echo "[pulse-wrapper] Dispatch_max: candidate enumeration timing census=${mode} outcome=${outcome} elapsed=${elapsed} sample=${sample} estimate=${before}s->${after}s (GH#37623)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#37623: bounded census through the first-wave scope (GH#34331): stop at one
+# fresh candidate per free slot or the budget, rotate the first-wave cursor, and
+# keep the partial result out of the full-scan snapshot key.
+# Args: $1=scan limit $2=normalization mode $3=budget seconds
+_dispatch_bounded_ranked_candidates_json() {
+	local scan_limit="$1" normalization_mode="$2"
+	local _PULSE_FIRST_DISPATCH_WAVE=1 PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S="$3"
+	_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode" || return 1
+	return 0
 }
 
 # Enumerate the launch-path backlog without broad diagnostic counters (GH#29255).
@@ -840,18 +971,34 @@ _dispatch_cycle_budget_admits_round() {
 # 3 budget-deferred. Keep timing/guard logic out of the dispatch orchestrator.
 _dispatch_enumerate_ranked_round() {
 	local scan_limit="$1" normalization_mode="$2" slots="$3" started_ms="" ranked_json="" count=0
+	local plan="" census="" budget=0 enumerate_rc=0
 	# GH#34331: dynamically scoped candidate target for a first-wave census
 	# (read only when _PULSE_FIRST_DISPATCH_WAVE=1); never exported to workers.
 	local _PULSE_FIRST_WAVE_CANDIDATE_TARGET="$slots"
-	_dispatch_cycle_budget_admits_round "Dispatch_max" before || return 3
+	plan=$(_dispatch_round_budget_plan before)
+	read -r census budget _ <<<"$plan"
+	if _dispatch_round_plan_skips "$plan"; then
+		_dispatch_log_round_budget_skip "Dispatch_max" before "$plan"
+		return 3
+	fi
 	started_ms=$(_dispatch_now_ms) || started_ms=""
-	if ! ranked_json=$(_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode"); then
-		_dispatch_record_enumeration_seconds "$started_ms"
+	if [[ "$census" == "bounded" ]]; then
+		local _remaining="" _floor="" _margin="" _enumeration=""
+		read -r _ _ _remaining _floor _margin _enumeration _ <<<"$plan"
+		echo "[pulse-wrapper] Dispatch_max: full candidate census does not fit (remaining=${_remaining}s floor=${_floor}s prestage_margin=${_margin}s enumeration=${_enumeration}s); running bounded census budget=${budget}s target=${slots} (GH#37623)" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_bounded_census"
+		ranked_json=$(_dispatch_bounded_ranked_candidates_json "$scan_limit" "$normalization_mode" "$budget") || enumerate_rc=1
+	else
+		census=full
+		ranked_json=$(_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode") || enumerate_rc=1
+	fi
+	if [[ "$enumerate_rc" -ne 0 ]]; then
+		_dispatch_finish_enumeration_timing "$census" unavailable "$started_ms" "$scan_limit" "$normalization_mode"
 		echo "[pulse-wrapper] Dispatch_max deferred: candidate enumeration unavailable (available=${slots}); not an empty queue" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_enumeration_unavailable"
 		return 1
 	fi
-	_dispatch_record_enumeration_seconds "$started_ms"
+	_dispatch_finish_enumeration_timing "$census" ok "$started_ms" "$scan_limit" "$normalization_mode"
 	_dispatch_cycle_budget_admits_round "Dispatch_max" after || return 3
 	count=$(printf '%s' "$ranked_json" | jq 'length' 2>/dev/null) || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0

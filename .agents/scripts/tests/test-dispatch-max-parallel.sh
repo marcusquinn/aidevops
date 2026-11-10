@@ -1205,13 +1205,24 @@ test_enumeration_budget_admission() {
 		mkdir -p "${HOME}/.aidevops/cache"
 		rm -f "$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
-		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=960
+		# GH#37623: below the full-census reserve, 120s+ of slack beyond
+		# floor + margin admits a bounded census (half the slack, <=180s).
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 149 959 600 60 300 1" ]] || exit 1
 		_dispatch_cycle_budget_admits_round test before || exit 1
-		printf '400\n' >"$_DISPATCH_TEST_CACHE"
+		AIDEVOPS_PULSE_BOUNDED_ENUMERATION_MIN_S=0 _dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=779
 		_dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=780
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 60 780 600 60 300 1" ]] || exit 1
+		test_remaining=960
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 960 600 60 300 1" ]] || exit 1
+		printf '400\n' >"$_DISPATCH_TEST_CACHE"
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 150 960 600 60 400 1" ]] || exit 1
 		test_remaining=1060
 		_dispatch_cycle_budget_admits_round test before || exit 1
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 1060 600 60 400 1" ]] || exit 1
+		test_remaining=1500
+		[[ "$(_dispatch_bounded_enumeration_budget_seconds 1500 600 60)" == 180 ]] || exit 1
 		test_remaining=660
 		_dispatch_cycle_budget_admits_round test after || exit 1
 		test_remaining=659
@@ -1264,9 +1275,10 @@ test_enumeration_overrun_retains_refill() {
 		: >"$trigger"
 		rm -f "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		printf '1000000\n' >"$clock_file"
-		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300.
+		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300;
+		# GH#37623: a bounded census needs 120s of slack beyond floor + margin.
 		if [[ "$stage" == before ]]; then
-			printf '959\n' >"$remaining_file"
+			printf '779\n' >"$remaining_file"
 		else
 			printf '1010\n' >"$remaining_file"
 		fi
