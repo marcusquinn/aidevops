@@ -168,6 +168,18 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.budget.db.execute(
             "SELECT COUNT(*) FROM reservation WHERE id='boundary'").fetchone()[0], 1)
 
+    def test_stale_reset_still_retires_full_window_old_uncertain_debt(self):
+        self.seed(5, 500, "search")
+        for identity, started in (("old", 939), ("live", 940)):
+            self.budget.db.execute(
+                "INSERT INTO reservation VALUES(?,?,?,?,?,?,?,1)",
+                (identity, "owner-one", "search", started, os.getpid(),
+                 self.budget.birth, "other"),
+            )
+        self.budget.acquire("search", now=1000)
+        self.assertEqual({r[0] for r in self.budget.db.execute(
+            "SELECT id FROM reservation WHERE id IN ('old','live')")}, {"live"})
+
     def test_foreign_debt_requires_causally_later_same_owner_observation(self):
         token = self.budget.acquire("core", now=1000)
         for identity, started, credential in (("covered", 999, "same-owner"),

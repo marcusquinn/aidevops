@@ -220,9 +220,9 @@ class Budget:
             ).fetchone()
             window = {"core": 3600, "graphql": 3600, "search": 60, "code_search": 60}.get(resource)
             if window:
-                # Other credentials can have later reset epochs. Requiring a full
-                # elapsed window as well avoids retiring their still-live debt.
-                cutoff = min(now, row[1]) - window if row else now - window
+                # A stale reset epoch must not pin the cutoff in the past. A full
+                # elapsed window from now keeps other credentials' live debt.
+                cutoff = now - window
                 self.db.execute(
                     "DELETE FROM reservation WHERE scope=? AND resource=? "
                     "AND uncertain=1 AND started<?", (self.scope, resource, cutoff),
