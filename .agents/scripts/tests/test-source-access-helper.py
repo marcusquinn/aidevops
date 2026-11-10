@@ -19,15 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-def _resolve_native_git() -> str:
-    """Resolve native Git from the system default PATH (portable to non-FHS hosts)."""
-    result = subprocess.run(  # nosec B603 -- fixed shell and constant command
-        ["/bin/sh", "-c", "command -p -v git"],
-        capture_output=True, text=True, check=True, shell=False)
-    return result.stdout.strip()
 
-
-NATIVE_GIT = _resolve_native_git()
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 HELPER_PATH = SCRIPTS_DIR / "source-access-helper.py"
 SPEC = importlib.util.spec_from_file_location("source_access_helper", HELPER_PATH)
@@ -35,6 +27,10 @@ assert SPEC and SPEC.loader
 HELPER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = HELPER
 SPEC.loader.exec_module(HELPER)
+
+# Reuse the broker's root-controlled PATH resolution, including Nix store tools,
+# rather than turning subprocess stdout into the next executable path.
+NATIVE_GIT = HELPER._SOURCE_CORE.GIT
 
 
 class SourceAccessHelperTests(unittest.TestCase):

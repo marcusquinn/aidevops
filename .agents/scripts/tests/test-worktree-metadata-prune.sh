@@ -92,7 +92,7 @@ if ! output=$(
 	exit 1
 fi
 
-if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $LINKED" >/dev/null; then
 	printf 'FAIL linked worktree metadata remains after helper removal\n'
 	exit 1
 fi
@@ -264,7 +264,7 @@ is_registered_canonical() {
 }
 worktree_has_changes() {
 	local worktree_path="$1"
-	if "$TEST_NATIVE_GIT" -C "$worktree_path" status --porcelain 2>/dev/null | grep -q .; then
+	if "$TEST_NATIVE_GIT" -C "$worktree_path" status --porcelain 2>/dev/null | grep . >/dev/null; then
 		return 0
 	fi
 	return 1
@@ -357,7 +357,7 @@ missing_recovery_output=$(
 	printf 'FAIL absent recoverable source did not complete metadata cleanup: %s\n' "$missing_recovery_output"
 	exit 1
 }
-if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $RECOVERABLE_MISSING_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $RECOVERABLE_MISSING_LINKED" >/dev/null; then
 	printf 'FAIL absent recoverable source left exact Git worktree metadata registered\n'
 	exit 1
 fi
@@ -377,7 +377,7 @@ recovery_output=$(
 	printf 'FAIL recoverable cleanup left original candidate path in place\n'
 	exit 1
 }
-if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $RECOVERABLE_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $RECOVERABLE_LINKED" >/dev/null; then
 	printf 'FAIL recoverable cleanup left exact Git worktree metadata registered\n'
 	exit 1
 fi
@@ -444,7 +444,7 @@ fi
 	printf 'FAIL metadata prune failure emitted completion or left an irreversible state\n'
 	exit 1
 }
-if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $PRUNE_FAILED_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $PRUNE_FAILED_LINKED" >/dev/null; then
 	printf 'FAIL native Git removal left stale metadata before verification failed\n'
 	exit 1
 fi
@@ -577,7 +577,7 @@ integration_output=$(
 	printf 'FAIL integrated degraded cleanup did not emit one verified completion event: %s\n' "$integration_output"
 	exit 1
 }
-if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $INTEGRATION_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $INTEGRATION_LINKED" >/dev/null; then
 	printf 'FAIL integrated degraded cleanup left exact metadata registered\n'
 	exit 1
 fi

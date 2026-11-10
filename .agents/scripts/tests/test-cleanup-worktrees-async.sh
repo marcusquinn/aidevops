@@ -30,7 +30,7 @@ _resolve_native_git() {
 		candidate="${dir}/git"
 		[[ -f "$candidate" && -x "$candidate" ]] || continue
 		# Skip the aidevops git wrapper.
-		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -aq 'aidevops'; then
+		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -a 'aidevops' >/dev/null; then
 			continue
 		fi
 		while [[ -L "$candidate" ]]; do
