@@ -111,9 +111,10 @@ chmod +x "$NO_GOPASS_BIN/gopass"
 
 # Direct resolver regressions use only synthetic files and no HTTP probes.
 test_static_credential_resolution() {
-	local fixture_home="$TEST_DB_DIR/credential-home"
+	local mode="$1"
+	local fixture_home="$TEST_DB_DIR/credential-home-$mode"
 	mkdir -p "$fixture_home/.config/aidevops" "$fixture_home/.local/share/opencode"
-	HOME="$fixture_home" PATH="$NO_GOPASS_BIN:$PATH" bash -s "$HELPER" <<'BASH'
+	HOME="$fixture_home" PATH="$NO_GOPASS_BIN:$PATH" bash -s "$HELPER" "$mode" <<'BASH'
 set -euo pipefail
 source "$1" help >/dev/null
 unset ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY
@@ -140,10 +141,9 @@ assert_key() {
 	return 0
 }
 
+if [[ "$2" == parser ]]; then
 assert_key openai fixture-file-openai credentials:OPENAI_API_KEY
 assert_key google fixture-file-gemini credentials:GEMINI_API_KEY
-[[ "$UNRELATED_VARIABLE" == preserved ]]
-[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
 
 # All gopass aliases precede all file aliases; environment precedes both.
 aidevops_gopass_secret() {
@@ -166,6 +166,10 @@ printf '%s\n' 'export AIDEVOPS_ACTIVE_TENANT="fixture"' >>"$HOME/.config/aidevop
 mkdir -p "$HOME/.config/aidevops/tenants/fixture"
 printf '%s\n' "export OPENAI_API_KEY='fixture-tenant'" >"$HOME/.config/aidevops/tenants/fixture/credentials.sh"
 assert_key openai fixture-tenant credentials:OPENAI_API_KEY
+fi
+
+[[ "$UNRELATED_VARIABLE" == preserved ]]
+[[ ! -e "$HOME/command-ran" && ! -e "$HOME/redirection-ran" && ! -e "$HOME/substitution-ran" ]]
 
 # Missing keys and parser failures retain the read-only OAuth fallback.
 printf '%s\n' '{"openai":{"type":"oauth"}}' >"$HOME/.local/share/opencode/auth.json"
@@ -185,10 +189,19 @@ BASH
 }
 
 section "Non-executing Credential Resolution"
-if test_static_credential_resolution; then
-	pass "static selected-key lookup preserves precedence and OAuth without executing configuration"
+if command -v node >/dev/null 2>&1; then
+	if test_static_credential_resolution parser; then
+		pass "static selected-key lookup preserves precedence and OAuth without executing configuration"
+	else
+		fail "static selected-key lookup preserves precedence and OAuth without executing configuration"
+	fi
 else
-	fail "static selected-key lookup preserves precedence and OAuth without executing configuration"
+	skip "static plaintext parser success assertions (Node unavailable)"
+fi
+if test_static_credential_resolution no-runtime; then
+	pass "missing-runtime OAuth fallback and unresolved outcomes run independently of Node availability"
+else
+	fail "missing-runtime OAuth fallback and unresolved outcomes run independently of Node availability"
 fi
 
 # ============================================================
