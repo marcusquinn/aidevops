@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.164] - 2026-11-10
+
+### Added
+
+- open full session-bus message from sidebar Messages rows
+
+### Changed
+
+- Maintenance: bump @vitejs/plugin-react from 6.1.2 to 6.2.1 (Supersedes #37608) (#37637)
+
+### Fixed
+
+- name executor host when tagless release lane is adopted from another host (#37643)
+- admit a bounded census when the full-census reserve does not fit (GH#37623) (#37641)
+- verify ChatGPT OAuth via Codex backend (GH#37627) (#37640)
+
 ## [3.39.163] - 2026-11-10
 
 ### Added
