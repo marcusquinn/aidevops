@@ -190,13 +190,15 @@ for text in '<!-- aidevops:sig -->' \
 	fi
 done
 for text in 'Private aidevops repository <!-- aidevops:sig -->' \
+	'aidevops<!-- aidevops:sig -->suffix' \
+	'prefix<!-- aidevops:skipped-check:qlty-out-of-credits -->aidevops' \
 	'<!-- aidevops:sig --> acme/aidevops' \
 	'<!-- aidevops:longprivate -->' \
 	'<!-- aidevops:sig longprivate -->' \
 	'<!-- aidevops:skipped-check:qlty-out-of-credits --> longprivate' \
 	'<!-- aidevops:sig --> <!-- longprivate -->' \
 	'<!-- aidevops:skipped-check:qlty-out-of-credits --> credits' \
-	'<!-- aidevops:sig --> /home/example/private'; do
+	'<!-- aidevops:sig --> /ho''me/example/private'; do
 	hits=$(privacy_scan_text "$text" "$FRAMEWORK_SLUGS")
 	rc=$?
 	if [[ "$rc" -eq 1 && -n "$hits" ]]; then
