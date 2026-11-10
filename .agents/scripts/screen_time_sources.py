@@ -7,11 +7,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from screen_time_interval_common import WINDOWS, union_intervals
-from screen_time_linux import linux_collection
+from screen_time_linux import linux_collection, linux_sample
 from screen_time_macos import macos_collection
+from screen_time_macos_input import macos_input_collection, macos_input_sample
 from screen_time_macos_pmset import pmset_collection
 
 STALE_HOURS = 72
+SAMPLED_PLATFORMS = ("Linux", "Darwin")
 
 
 def unsupported(os_type):
@@ -52,3 +54,26 @@ def display_collection(os_type, db, now, directory):
     if os_type == "Linux":
         return linux_collection(now, directory)
     return unsupported(os_type)
+
+
+def input_collection(os_type, now, directory):
+    """Human input activity under the shared idle cut-off rule on every platform."""
+    if os_type == "Darwin":
+        return macos_input_collection(now, directory)
+    if os_type == "Linux":
+        return linux_collection(now, directory)
+    return unsupported(os_type)
+
+
+def record_input_sample(os_type, now, user, directory):
+    """Record one input-activity sample: macOS HID idle; Linux tty and desktop idle."""
+    if os_type == "Darwin":
+        return macos_input_sample(now, directory)
+    return linux_sample(now, user, directory)
+
+
+def with_evidence(payload, collection):
+    """Expose the latest sample's evidence kinds (e.g. desktop vs terminal input)."""
+    if "evidence" in collection:
+        payload["evidence"] = collection["evidence"]
+    return payload

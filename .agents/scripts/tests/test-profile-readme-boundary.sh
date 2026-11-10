@@ -113,6 +113,7 @@ install_helper_with_libs() {
 		"${SOURCE_HELPER%/*}/screen_time_interval_common.py" \
 		"${SOURCE_HELPER%/*}/screen_time_macos.py" \
 		"${SOURCE_HELPER%/*}/screen_time_macos_apps.py" \
+		"${SOURCE_HELPER%/*}/screen_time_macos_input.py" \
 		"${SOURCE_HELPER%/*}/screen_time_macos_pmset.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux.py" \
 		"${SOURCE_HELPER%/*}/screen_time_linux_activity.py" \
@@ -1333,7 +1334,8 @@ test_work_with_ai_unavailable_is_not_zero() {
 	unavailable_json='{"status":"unavailable"}'
 	output_file="${TEST_DIR}/unavailable.md"
 	HOME="${TEST_DIR}/home" _generate_work_with_ai_table "$screen_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" "$unavailable_json" >"$output_file"
-	if ! grep -qF '| Screen time' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
+	# Linux labels its row "Input activity (Linux)"; other platforms "Screen time".
+	if ! grep -qE '^\| (Screen time|Input activity)' "$output_file" || ! grep -qF '| unavailable | unavailable | unavailable | unavailable |' "$output_file"; then
 		print_result "$test_name" 1 "unavailable cells were not visibly rendered"
 		return 0
 	fi
@@ -1492,6 +1494,21 @@ test_screen_json_paths_are_optional_and_fail_visibly() {
 	if [[ "$screen_status" != "$PROFILE_STATUS_UNAVAILABLE" || "$screen_source" != "$PROFILE_STATUS_UNAVAILABLE" ]] ||
 		! grep -qF 'screen-time payload is invalid' "$warning_file"; then
 		print_result "$test_name" 1 "malformed screen payload failure was not visible"
+		return 0
+	fi
+	# macOS input-activity row reuses the screen formatting; null periods stay unavailable.
+	local input_row input_note
+	eval "$(_generate_input_activity_vars '{"today_hours":1.25,"week_hours":7,"month_hours":20,"year_hours":null,"periods":{"month":{"status":"ok","source":"macos-input-activity:idle-cutoff-300s"}}}' "Input activity (Mac)")"
+	if [[ "$input_row" != "| Input activity (Mac) | 1.3h | 7h | 20h | unavailable |" || "$input_note" != *"from macos-input-activity:idle-cutoff-300s"* ]]; then
+		print_result "$test_name" 1 "macOS input-activity row or note malformed: ${input_row} / ${input_note}"
+		return 0
+	fi
+	# Linux evidence names whether a desktop or only terminals were measured.
+	if [[ "$(_input_evidence_note '{"evidence":["tty-atime"]}')" != *"terminal input only; no desktop session"* ||
+		"$(_input_evidence_note '{"evidence":["gnome-idle-monitor","tty-atime"]}')" != *"desktop and terminal input"* ||
+		"$(_input_evidence_note '{"evidence":["graphical-idle-unavailable","tty-atime"]}')" != *"idle time was unreadable"* ||
+		-n "$(_input_evidence_note '{}')" ]]; then
+		print_result "$test_name" 1 "Linux input evidence note did not distinguish desktop from terminal input"
 		return 0
 	fi
 	print_result "$test_name" 0

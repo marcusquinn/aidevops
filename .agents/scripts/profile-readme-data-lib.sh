@@ -192,15 +192,28 @@ _compute_model_row_savings() {
 # Gather — Screen Time, Session Time, Model Usage
 # =============================================================================
 
-# --- Gather screen time data ---
-_get_screen_time() {
+# --- Gather a screen-time helper payload; invalid output renders unavailable ---
+_get_screen_time_payload() {
+	local helper_command="$1"
 	local screen_json
-	screen_json=$("${SCRIPT_DIR}/screen-time-helper.sh" profile-stats 2>/dev/null) || screen_json=""
+	screen_json=$("${SCRIPT_DIR}/screen-time-helper.sh" "$helper_command" 2>/dev/null) || screen_json=""
 	if ! printf '%s' "$screen_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
 		printf '%s\n' '{"collection_status":"unavailable"}'
 		return 0
 	fi
 	printf '%s\n' "$screen_json"
+	return 0
+}
+
+# --- Gather screen time data (macOS display-on; Linux input activity) ---
+_get_screen_time() {
+	_get_screen_time_payload profile-stats
+	return 0
+}
+
+# --- Gather input-activity data (macOS row matching the Linux input rule) ---
+_get_input_activity() {
+	_get_screen_time_payload input-stats
 	return 0
 }
 
