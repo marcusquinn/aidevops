@@ -1211,10 +1211,8 @@ _pulse_run_deterministic_pipeline() {
 	else
 		_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$PRE_RUN_STAGE_TIMEOUT" \
 			refresh_blocked_status_from_graph || true
-		# GH#32689: release missing_files_scope holds once the brief is scoped,
-		# so repaired briefs never wait on a manual label change.
-		_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$PRE_RUN_STAGE_TIMEOUT" \
-			release_repaired_brief_holds || true
+		# GH#37501: repaired brief holds are released in the independently
+		# budgeted housekeeping lane, not before the next admission round.
 	fi
 
 	# Dispatch_max runs EVERY cycle — before the LLM session,
@@ -1524,7 +1522,7 @@ main() {
 	# t18678 (GH#34469): one dedicated handler (pulse-instance-lock.sh) owns all
 	# process-lifetime cleanup. Never move it onto the shared
 	# push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
-	trap '_pulse_exit_cleanup' EXIT
+	trap '_pulse_finish_post_dispatch_housekeeping; _pulse_exit_cleanup' EXIT
 
 	if ! acquire_instance_lock; then
 		_pulse_run_routines_while_busy "lock-busy"
@@ -1667,20 +1665,11 @@ main() {
 		fi
 	fi
 
-	# t2994: pre-warm L3 caches when sentinel is stale. Runs after lock,
-	# canary, session, and dedup gates have all passed (so a real cycle is
-	# about to run) and BEFORE prefetch_state inside the cycle. Steady-state
-	# launchd respawns skip via the staleness gate; first-cycle-after-deploy
-	# (or after a long quiet period) primes once. See helper comment for
-	# the launchd-bypass rationale.
-	# GH#33737: bound the prime and clamp it (plus the detector below) so the
-	# early dispatch keeps its first-wave admission reserve. A clamped or
-	# deferred prime is non-fatal: prefetch_state refreshes the same caches.
+	# GH#37501: prefetch_state already refreshes the conditional L3 snapshots.
+	# A stale prime must not add a second cold refresh before first admission;
+	# housekeeping warms it independently after early dispatch instead.
 	local _pulse_pre_dispatch_reserve_s=""
 	_pulse_pre_dispatch_reserve_s=$(_pulse_first_wave_dispatch_reserve_seconds)
-	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
-		_pulse_run_optional_stage_with_timeout "cache_prime" "${PULSE_CACHE_PRIME_TIMEOUT:-300}" \
-		_pulse_prime_caches_if_stale || true
 
 	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
 	# growing at MB/s from tight error loops (the GH#21729 failure mode).
@@ -1816,6 +1805,9 @@ main() {
 	# can run deterministic ops concurrently. Terminal publication briefly
 	# reacquires this lock and writes only when health still names this cycle,
 	# preventing a slow supervisor from overwriting a newer cycle (GH#28361).
+	# Linux owns this bounded background lane in the service cgroup. Join only
+	# after admission/refill, before service exit or source re-exec can kill it.
+	_pulse_finish_post_dispatch_housekeeping
 	release_instance_lock
 	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
 	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
