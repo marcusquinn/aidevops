@@ -13,6 +13,8 @@ name: Issue Triage Gate (reusable)
 #   - OWNER/MEMBER, repository bots, and write+ collaborators bypass triage.
 #     On `opened`, a stale needs-maintainer-review added by an issue form is
 #     removed for them.
+#   - Throughput-throttling reports (label or body marker) always keep
+#     needs-maintainer-review and are assigned to the repository owner.
 #   - Every other author gets needs-maintainer-review + external-contributor
 #     (plus a reported origin:* provenance label), loses machine-only debt,
 #     unproven origin:worker, auto-dispatch and status:available labels, and
@@ -146,13 +148,42 @@ jobs:
               }
             }
 
+            // #aidevops:trust-boundary — throughput-throttling reports are a
+            // maintainer decision by design. The marker/label only adds a hold
+            // and assigns the repository owner; it never grants dispatch.
+            // GitHub drops labels set by non-collaborators, so the body marker
+            // written by throttle-report-helper.sh is the durable signal.
+            const throttleReport = issueLabels.has('throughput-throttle-report') ||
+              /^<!-- aidevops:throttle-report -->$/m.test(issue.body || '');
+            if (throttleReport && action === 'opened') {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: ['throughput-throttle-report', 'needs-maintainer-review']
+                });
+                issueLabels.add('throughput-throttle-report');
+                issueLabels.add('needs-maintainer-review');
+                await github.rest.issues.addAssignees({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  assignees: [context.repo.owner]
+                });
+              } catch (error) {
+                core.warning(`Unable to apply throttle-report hold/assignee: ${error.message}`);
+              }
+            }
+
             if (authorIsTrusted) {
               console.log(`Author ${author} has role ${association} — bypassing triage`);
 
               // Remove needs-maintainer-review if the YAML form template added it.
               // Only on creation: a reopened trusted issue may carry a deliberate
-              // maintainer hold, which this gate must never clear.
-              if (action === 'opened' && issueLabels.has('needs-maintainer-review')) {
+              // maintainer hold, which this gate must never clear. Throttle
+              // reports always keep their deliberate maintainer hold.
+              if (action === 'opened' && !throttleReport && issueLabels.has('needs-maintainer-review')) {
                 try {
                   await github.rest.issues.removeLabel({
                     owner: context.repo.owner,

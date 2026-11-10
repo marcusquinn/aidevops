@@ -73,3 +73,31 @@ aidevops_worktree_capacity_check() {
 	AIDEVOPS_DISK_CAPACITY_REASON="available"
 	return 0
 }
+
+# Per-repo registered-worktree admission cap. Disk thresholds above are the
+# resource guard; this count cap is only a runaway backstop. GH#18987 used 200
+# as an illustrative value, which throttled real work while merged worktrees
+# waited for cleanup. Prefer cleanup over lowering this value.
+AIDEVOPS_DEFAULT_MAX_WORKTREES=1000
+AIDEVOPS_DEFAULT_WORKTREE_CLEANUP_THRESHOLD=150
+
+aidevops_worktree_count_cap() {
+	local cap="${AIDEVOPS_MAX_WORKTREES:-$AIDEVOPS_DEFAULT_MAX_WORKTREES}"
+	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap="$AIDEVOPS_DEFAULT_MAX_WORKTREES"
+	printf '%s\n' "$cap"
+	return 0
+}
+
+# Count at which pressure cleanup starts: the lower of 80% of the cap and an
+# absolute threshold, so raising the cap never delays redundant-tree cleanup.
+aidevops_worktree_cleanup_threshold() {
+	local cap="${1:-}"
+	local threshold="${AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD:-$AIDEVOPS_DEFAULT_WORKTREE_CLEANUP_THRESHOLD}"
+	local proportional=0
+	[[ "$cap" =~ ^[1-9][0-9]*$ ]] || cap=$(aidevops_worktree_count_cap)
+	[[ "$threshold" =~ ^[1-9][0-9]*$ ]] || threshold="$AIDEVOPS_DEFAULT_WORKTREE_CLEANUP_THRESHOLD"
+	proportional=$(((cap * 80 + 99) / 100))
+	[[ "$proportional" -ge "$threshold" ]] || threshold="$proportional"
+	printf '%s\n' "$threshold"
+	return 0
+}

@@ -93,7 +93,9 @@ verification blocks further removals until that original plan is reverified;
 replacement sources never inherit its authority. Failed probe trees are retained,
 not recursively erased. A later pass can reverify and resume.
 
-At 80% of `AIDEVOPS_MAX_WORKTREES`, or below existing disk thresholds, dispatch
+At the cleanup threshold (the lower of 80% of `AIDEVOPS_MAX_WORKTREES`, default
+1000, and `AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD`, default 150 registered
+worktrees), or below existing disk thresholds, dispatch
 kicks the existing isolated async cleanup launcher once per executor. Admission
 still fails closed at the cap/disk limit; it never spends its 60-second budget on
 heavy cleanup. Pressure bypasses routine cadence, not the cleanup lock or safety
