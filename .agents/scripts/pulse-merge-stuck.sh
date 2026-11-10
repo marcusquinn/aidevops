@@ -663,6 +663,8 @@ _pms_repair_queued_gate_refresh() {
 	local repo_slug="$1" head_sha="$2"
 	local runs="" run_id=""
 	runs=$(gh api "repos/${repo_slug}/actions/workflows/maintainer-gate.yml/runs?head_sha=${head_sha}&event=pull_request_target&per_page=100" 2>/dev/null) || return 1
+	# A previous recovery may already be running or queued. Never fan out reruns.
+	printf '%s' "$runs" | jq -e --arg sha "$head_sha" '[.workflow_runs[]? | select(.head_sha == $sha and .status != "completed")] | length == 1' >/dev/null 2>&1 || return 1
 	run_id=$(printf '%s' "$runs" | jq -r --arg sha "$head_sha" '[.workflow_runs[]? | select(.head_sha == $sha and .status == "completed")] | sort_by(.created_at) | last | .id // empty') || return 1
 	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
 	gh api -X POST "repos/${repo_slug}/actions/runs/${run_id}/rerun" >/dev/null 2>&1 || return 1
@@ -1330,8 +1332,8 @@ _pms_handle_classified_pr() {
 
 	# Pass is_saturated so the classifier can recognise QUEUED checks
 	# during a runner outage.
-	local classification
-	if _pms_queued_gate_refresh "$repo_slug" "$head_sha"; then
+	local classification="${5:-}"
+	if [[ "$classification" == "STUCK_QUEUED_GATE_REFRESH" ]] || _pms_queued_gate_refresh "$repo_slug" "$head_sha"; then
 		classification="STUCK_QUEUED_GATE_REFRESH"
 	else
 		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_meta")
@@ -1417,7 +1419,14 @@ _pms_classify_stuck_prs_within_budget() {
 		pr_updated=$(printf '%s' "$pr_obj" | jq -r '.updatedAt // empty' 2>/dev/null)
 		[[ -n "$pr_updated" ]] || continue
 		pr_age_secs=$((now_epoch - $(_pms_iso_to_epoch "$pr_updated")))
-		[[ "$pr_age_secs" -ge "$age_threshold_secs" ]] || continue
+		if [[ "$pr_age_secs" -lt "$age_threshold_secs" ]]; then
+			local gate_head=""
+			gate_head=$(_pms_head_sha_from_pr_json "$pr_obj")
+			if _pms_queued_gate_refresh "$repo_slug" "$gate_head"; then
+				_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_obj" STUCK_QUEUED_GATE_REFRESH >/dev/null
+			fi
+			continue
+		fi
 		_classified_eligible=$((_classified_eligible + 1))
 		_classified_stuck_numbers="${_classified_stuck_numbers}${pr_num}\n"
 		local route=""
