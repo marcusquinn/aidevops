@@ -402,6 +402,9 @@ _pulse_exit_cleanup() {
 	_pulse_cycle_index_record_once || true
 	_pulse_efficiency_cycle_finish || true
 	release_instance_lock || true
+	if declare -F _pulse_finish_post_dispatch_housekeeping >/dev/null 2>&1; then
+		_pulse_finish_post_dispatch_housekeeping || true
+	fi
 	aidevops_runtime_bundle_lease_release || true
 	return 0
 }
