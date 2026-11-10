@@ -43,7 +43,7 @@ _escalate_individual_stuck_pr() {
 	printf '%s\n' "$3" >"${TEST_DIR}/escalated"
 	return 0
 }
-_pms_handle_classified_pr 42 owner/repo 0 '{"headRefOid":"abc"}' >/dev/null
+_pms_handle_classified_pr 42 owner/repo 0 '{"headRefOid":"abc"}' STUCK_QUEUED_GATE_REFRESH >/dev/null
 [[ $(<"${TEST_DIR}/escalated") == STUCK_QUEUED_GATE_REFRESH ]]
 [[ $(grep -c 'POST.*runs/1/rerun' "$GH_LOG") -eq 1 ]]
 printf '%s\n' 'PASS: queued refresh detection and rerun'
