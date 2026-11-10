@@ -158,6 +158,16 @@ publication, network operations or mutation. Output is discarded. At most 32
 secrets and eight probes are allowed. Invalid requirements, missing executables,
 failed checks and timeouts fail closed.
 
+A local tool prerequisite (GH#37587) is a standalone issue-body line such as
+`requires-tools: docker, jq`, or a `"tools": ["docker"]` list in a dispatch
+class. Each name must be a bare lowercase command name (`[a-z][a-z0-9._-]{0,63}`),
+never a path, argument or shell text; at most eight per declaration and overall.
+The dispatcher only resolves each name on `PATH` (`shutil.which`) and never
+executes it. A missing tool defers with `tool_missing name=<name>`
+(`cooldown=eligible`); an invalid name defers with `invalid_requirements`. Use
+this, not a gitignored per-runner dispatch class, when every runner in the fleet
+must enforce the gate.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming

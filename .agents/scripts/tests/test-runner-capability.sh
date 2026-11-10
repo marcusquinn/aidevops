@@ -181,6 +181,27 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     probe.write_text('#!/usr/bin/env bash\nexec sleep 10\n')
     check('probe timeout defers', issue, {'publish': {'probe': 'probe'}}, False,
           'check_timeout path=probe')
+    # GH#37587: requires-tools resolves bare names on PATH and never runs them.
+    marker = root / 'tool-ran'
+    tool = bin_dir / 'fixture-tool'
+    tool.write_text(f'#!/usr/bin/env bash\ntouch {marker}\n')
+    tool.chmod(0o700)
+    check('present PATH tool proceeds', {'body': 'requires-tools: sh, fixture-tool'})
+    assert not marker.exists(), 'requires-tools executed the tool'
+    check('missing PATH tool defers', {'body': 'requires-tools: sh definitely-not-installed-xyz'},
+          success=False, reason='tool_missing name=definitely-not-installed-xyz')
+    check('tool path is rejected', {'body': 'requires-tools: /bin/sh'}, success=False,
+          reason='invalid_requirements')
+    check('tool argument text is rejected', {'body': 'requires-tools: sh;touch'}, success=False,
+          reason='invalid_requirements')
+    check('empty tool list is rejected', {'body': 'requires-tools:'}, success=False,
+          reason='invalid_requirements')
+    check('more than eight tools is rejected',
+          {'body': 'requires-tools: ' + ' '.join(f't{n}' for n in range(9))}, success=False,
+          reason='invalid_requirements')
+    check('class tools combine with brief tools', issue,
+          {'publish': {'tools': ['definitely-not-installed-xyz']}}, False,
+          'tool_missing name=definitely-not-installed-xyz')
 
     # Exercise the actual dispatch entry function, stopping at the next gate.
     # A capability failure must never reach a scope write, dedup or claim.
@@ -259,6 +280,7 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
             ('malformed config without class label', dict(fresh_issue, labels=[]), malformed_config, True),
             ('malformed config with class label', fresh_issue, malformed_config, False),
             ('missing secret', dict(fresh_issue, body='requires-secrets: MISSING'), None, False),
+            ('missing tool', dict(fresh_issue, body='requires-tools: definitely-not-installed-xyz'), None, False),
             ('failed probe', fresh_issue, {'publish': {'probe': 'probe'}}, False),
             ('closed metadata', dict(fresh_issue, state='closed'), None, False),
         ):
@@ -297,8 +319,9 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
             if label == 'malformed config with class label':
                 assert 'reason=config_unreadable path=.aidevops.json' in diagnostics, diagnostics
                 assert 'signal=config_unreadable cooldown=none' in diagnostics, diagnostics
-            elif label in ('missing secret', 'failed probe'):
-                signal = 'secret_missing' if label == 'missing secret' else 'probe_failed'
+            elif label in ('missing secret', 'missing tool', 'failed probe'):
+                signal = {'missing secret': 'secret_missing', 'missing tool': 'tool_missing'}.get(
+                    label, 'probe_failed')
                 assert f'signal={signal} cooldown=eligible' in diagnostics, diagnostics
             print('PASS fresh gate', transport, label)
             passed += 1
