@@ -303,7 +303,7 @@ _archive_held_gate_recheck() {
 		local sid=""
 		while IFS= read -r sid; do
 			[[ -n "$sid" ]] || continue
-			if ! printf '%s\n' "$_ARCHIVE_HELD_SESSIONS" | grep -qxF -- "$sid"; then
+			if ! grep -qxF -- "$sid" <<<"$_ARCHIVE_HELD_SESSIONS"; then
 				OPENCODE_DB_IDLE_GATE_REASON="holder claimed new session ${sid}"
 				print_warning "Archive paused — ${OPENCODE_DB_IDLE_GATE_REASON}. Committed batches preserved; the rest resumes next cycle."
 				return 1
