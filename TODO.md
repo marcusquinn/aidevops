@@ -1999,6 +1999,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 pr:#37497 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md] completed:2026-11-10
 
+- [ ] t18950 macOS input sampler: run at standard priority so HID idle reads are not starved under load #bug ref:GH#37588
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
