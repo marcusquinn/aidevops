@@ -5,6 +5,7 @@
 import re
 import shlex
 import subprocess
+import time
 
 from tabby_session_config import SessionError, ssh_argv
 from tabby_session_protocol import extract_response, framed_command
@@ -12,6 +13,10 @@ from tabby_session_protocol import extract_response, framed_command
 
 class CreationCollision(SessionError):
     """Only a verified tmux duplicate-name response authorizes a new attempt."""
+
+
+class TransientSSHError(SessionError):
+    """A transport failure that permits retrying read-only inventory, not creation."""
 
 
 INVENTORY = r"""
@@ -37,16 +42,50 @@ def remote(host, script):
                                 ssh_argv(host) + [host["sshHost"], "sh -c " + shlex.quote(wrapped)],
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                 timeout=45, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        raise SessionError("SSH probe failed or timed out (no authentication logs retained)") from None
+    except subprocess.TimeoutExpired:
+        raise TransientSSHError("SSH probe timed out (no authentication logs retained)") from None
+    except OSError:
+        raise SessionError("Cannot start local SSH probe") from None
     if result.returncode == 127:
         raise SessionError("Remote tmux is unavailable")
     if result.returncode == 75:
         extract_response(result.stdout, begin, end)
         raise CreationCollision("Concurrent tmux creation collision")
     if result.returncode:
-        raise SessionError("SSH/tmux probe failed; prepare agent/MFA or SSH multiplexing privately")
+        raise probe_error(result.returncode, result.stderr)
     return extract_response(result.stdout, begin, end)
+
+
+def probe_error(returncode, stderr):
+    """Classify privately; never include server/user/key paths or raw SSH logs."""
+    if returncode == 255:
+        diagnostic = stderr.lower()
+        if "too many authentication failures" in diagnostic:
+            return SessionError("SSH rejected too many identities; select the correct key and enable identitiesOnly")
+        if "permission denied" in diagnostic or "authentication failed" in diagnostic:
+            return SessionError("SSH authentication failed; prepare agent/MFA privately")
+        if "host key verification failed" in diagnostic or "remote host identification has changed" in diagnostic:
+            return SessionError("SSH host key verification failed; verify the host key privately")
+        if any(text in diagnostic for text in (
+                "connection reset", "connection closed", "connection timed out",
+                "operation timed out", "session open refused by peer", "administratively prohibited",
+                "exceeded maxstartups", "too many unauthenticated connections")):
+            return TransientSSHError("SSH connection/channel unavailable; check server connection limits or multiplexing if persistent")
+    if returncode == 71:
+        return SessionError("Remote tmux inventory command failed (SSH reached the host)")
+    return SessionError("SSH/tmux probe failed (exit {}); prepare agent/MFA or SSH multiplexing privately".format(returncode))
+
+
+def inventory_response(host):
+    # Tab restoration may overlap SSH handshakes/channel creation. Retry only
+    # read-only probes: retrying an uncertain new-session command can create work twice.
+    for attempt in range(4):
+        try:
+            return remote(host, INVENTORY)
+        except TransientSSHError as exc:
+            if attempt == 3:
+                raise SessionError(str(exc) + "; inventory failed after 4 attempts") from None
+            time.sleep(2 ** (attempt + 1))
 
 
 def natural_key(name, prefix):
@@ -67,7 +106,7 @@ def parse_session(fields, host):
 
 def inventory(host):
     sessions, clients = [], set()
-    for line in remote(host, INVENTORY).splitlines():
+    for line in inventory_response(host).splitlines():
         # Keep the complete name for filtering/validation, even if an unrelated
         # session contains the delimiter. Managed names cannot contain pipes.
         fields = line.split("|", 4)

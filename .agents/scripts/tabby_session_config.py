@@ -42,7 +42,7 @@ def load_hosts(path, selected=None):
 
 def validate_host(source, index):
     allowed = {"id", "sshHost", "titlePrefix", "sessionPrefix", "restoreOrder", "enabled",
-               "connectIntervalSeconds", "port", "user", "identityFile", "endpointId"}
+               "connectIntervalSeconds", "port", "user", "identityFile", "identitiesOnly", "endpointId"}
     if not isinstance(source, dict) or set(source) - allowed:
         raise SessionError("Unknown host fields; arbitrary SSH options/hooks are not supported")
     host = dict(source)
@@ -54,6 +54,8 @@ def validate_host(source, index):
     host.setdefault("enabled", True)
     if type(host["enabled"]) is not bool:
         raise SessionError("enabled must be boolean")
+    if "identitiesOnly" in host and type(host["identitiesOnly"]) is not bool:
+        raise SessionError("identitiesOnly must be boolean")
     for field, default, low, high in (("restoreOrder", index, 0, 1000000),
                                      ("connectIntervalSeconds", 5, 0, 60),
                                      ("port", None, 1, 65535)):
@@ -91,6 +93,9 @@ def equivalent_aliases(hosts, selected, endpoint_id):
 
 def ssh_argv(host, probe=True):
     args = [required_executable("ssh"), "-o", "ConnectTimeout=15"]
+    identities_only = host.get("identitiesOnly", True if host.get("identityFile") else None)
+    if identities_only is not None:
+        args += ["-o", "IdentitiesOnly=" + ("yes" if identities_only else "no")]
     if probe:
         args += ["-o", "BatchMode=yes", "-T"]
     else:
