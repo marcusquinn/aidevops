@@ -149,9 +149,15 @@ _project_config_write_migration_issue() {
 	local body_file="$2"
 	local helper_dir="${BASH_SOURCE[0]%/*}"
 	[[ "$helper_dir" == "${BASH_SOURCE[0]}" ]] && helper_dir="."
+	local labels=() label=""
+	for label in auto-dispatch tier:simple; do
+		if "${helper_dir}/../label-sync-helper.sh" ensure "$repo_slug" "$label"; then
+			labels+=(--label "$label")
+		fi
+	done
 	"${helper_dir}/../gh-write-helper.sh" issue create --repo "$repo_slug" \
 		--title "chore: stop tracking local .aidevops.json" --body-file "$body_file" \
-		--label "auto-dispatch" --label "tier:simple" >/dev/null
+		${labels[@]+"${labels[@]}"} >/dev/null
 	return $?
 }
 
