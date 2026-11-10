@@ -26,7 +26,7 @@ _resolve_native_git() {
 	local -a path_dirs=()
 	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
 	for dir in "${path_dirs[@]}"; do
-		[[ -n "$dir" ]] || dir="."
+		[[ "$dir" == /* ]] || continue
 		candidate="${dir}/git"
 		[[ -f "$candidate" && -x "$candidate" ]] || continue
 		# Skip the aidevops git wrapper.

@@ -11,7 +11,7 @@ _resolve_native_git() {
 	local -a path_dirs=()
 	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
 	for dir in "${path_dirs[@]}"; do
-		[[ -n "$dir" ]] || dir="."
+		[[ "$dir" == /* ]] || continue
 		candidate="${dir}/git"
 		[[ -f "$candidate" && -x "$candidate" ]] || continue
 		# Skip the aidevops git wrapper.
@@ -34,10 +34,14 @@ TEST_NATIVE_GIT=$(_resolve_native_git) || {
 }
 export TEST_NATIVE_GIT
 # Fixture repositories are disposable; bypass interactive canonical-repo guards.
-# Fixed PATH plus the native Git directory so bare fixture `git` calls resolve
-# even when Git lives outside the standard directories (e.g. Nix).
+# A fixture bin dir holding a `git` symlink to the native Git is placed first on
+# the fixed PATH, so bare fixture `git` calls never select another executable
+# (including the wrapper) and work even when Git lives outside standard dirs.
 TEST_COREUTILS_DIR=$(dirname "$(command -v dirname)") || TEST_COREUTILS_DIR=/usr/bin
-PATH="/usr/bin:/bin:/usr/sbin:/sbin:$(dirname "$TEST_NATIVE_GIT"):${TEST_COREUTILS_DIR}"
+TEST_GIT_BIN_DIR=$(mktemp -d) || exit 1
+ln -s "$TEST_NATIVE_GIT" "${TEST_GIT_BIN_DIR}/git" || exit 1
+trap 'rm -rf "$TEST_GIT_BIN_DIR"' EXIT
+PATH="${TEST_GIT_BIN_DIR}:/usr/bin:/bin:/usr/sbin:/sbin:${TEST_COREUTILS_DIR}"
 export PATH
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 PUBLISHER="${SCRIPT_DIR_TEST}/../planning-publisher.sh"
