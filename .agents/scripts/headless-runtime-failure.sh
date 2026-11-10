@@ -1188,6 +1188,15 @@ classify_worker_exit() {
 		return 0
 	fi
 
+	_hrff_classify_nonzero_worker_exit "$start_epoch_ms" "$persisted_session_id"
+	return 0
+}
+
+# Classify an ordinary non-zero exit after sentinel, signal and clean handling.
+_hrff_classify_nonzero_worker_exit() {
+	local start_epoch_ms="$1"
+	local persisted_session_id="${2:-}"
+
 	# Finalization can discard the only DB containing execution evidence.
 	# A zero/missing snapshot is inconclusive: a fresh boot-only session still
 	# counts as execution for non-zero exits, so retain the session query below.
