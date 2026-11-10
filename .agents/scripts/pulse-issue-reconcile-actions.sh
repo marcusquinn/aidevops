@@ -26,6 +26,7 @@
 # Exports — single-pass stage predicates:
 #   _should_reconcile_persistent_issue — stage 0a non-task predicate
 #   _should_reconcile_external_issue_gate — stage 0 trust predicate
+#   _should_reconcile_stranded_consolidated — stage 0c predicate
 #   _should_ciw   — stage 1 predicate (status:available)
 #   _should_rsd   — stage 2 predicate (status:done)
 #   _should_oimp  — stage 3 predicate (not a parent-task)
@@ -35,6 +36,7 @@
 # Exports — single-pass per-issue action helpers:
 #   _action_reconcile_persistent_issue_labels — stage 0a label hygiene
 #   _action_reconcile_external_issue_gate — stage 0 trust repair/block
+#   _action_reconcile_stranded_consolidated — stage 0c consolidated hygiene
 #   _action_ciw_single   — close issue with merged PR (stage 1)
 #   _action_rsd_single   — reconcile stale-done issue (stage 2)
 #   _action_oimp_single  — close open issue with merged PR (stage 3)
@@ -67,6 +69,9 @@ source "${SCRIPT_DIR}/pulse-issue-reconcile-actions-parent.sh"
 # shellcheck source=./pulse-issue-reconcile-actions-repair.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/pulse-issue-reconcile-actions-repair.sh"
+# shellcheck source=./dependency-supersession-lib.sh
+# shellcheck disable=SC1091  # trusted "Superseded by #N" parser (GH#37600)
+source "${SCRIPT_DIR}/dependency-supersession-lib.sh"
 
 
 #######################################
@@ -614,6 +619,381 @@ _pir_successor_scope_is_fully_inherited() {
 		return 1
 	done <<<"$issue_body"
 	return 0
+}
+
+#######################################
+# GH#37600: stranded consolidated issues (stage 0c).
+#
+# An open `consolidated` issue that the dispatch management-label gate
+# (_has_consolidated_label) always rejects is either a superseded original
+# whose consolidation task never closed it, or a legacy successor whose body
+# predates the canonical marker line. The dispatch candidate filter already
+# keeps both out of worker launches; this stage repairs their lifecycle:
+#   1. trusted "Superseded by #N" comment and an existing successor issue:
+#      close the original as not planned, link the successor, repoint
+#      dependants (dependency-supersession-repoint-helper.sh);
+#   2. exactly one legacy "Supersedes #N" body line and a closed predecessor:
+#      rewrite only that line to the canonical marker;
+#   3. otherwise one deduplicated hygiene anomaly and no mutation.
+# Hold/recovery labels, untrusted body authors, a reopen after the
+# supersession comment and unreadable evidence never mutate. A runner-local
+# stamp bounds lookups to one per issue per TTL and deduplicates anomalies
+# per label/body revision.
+#######################################
+_PIR_STRANDED_TTL_SECONDS="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_TTL_SECONDS:-3600}"
+[[ "$_PIR_STRANDED_TTL_SECONDS" =~ ^[0-9]+$ ]] || _PIR_STRANDED_TTL_SECONDS=3600
+_PIR_STRANDED_HOLD_LABELS=",status:blocked,status:in-progress,status:queued,status:claimed,status:in-review,needs-maintainer-review,needs-maintainer-permissions,hold-for-review,persistent,parent-task,consolidation-in-progress,"
+_PIR_STRANDED_TRUSTED_ASSOCIATIONS=",OWNER,MEMBER,COLLABORATOR,"
+_PIR_STRANDED_DEFERRED="deferred"
+_PIR_STRANDED_CLOSED_ISSUE="false closed"
+_PIR_STRANDED_LOOKUP_USED=0
+_PIR_STRANDED_REASON=""
+
+# Stage 0c predicate: consolidated label present and the shared dispatch gate
+# rejects the issue. Fails closed (no action) when the shared gate is absent.
+# Args: $1=labels CSV, $2=issue body
+_should_reconcile_stranded_consolidated() {
+	local labels_csv="$1"
+	local issue_body="${2:-}"
+	local meta=""
+	_pir_labels_csv_contains "$labels_csv" consolidated || return 1
+	declare -F _has_consolidated_label >/dev/null 2>&1 || return 1
+	meta=$(printf '%s' "$issue_body" | jq -Rsc --arg labels "$labels_csv" \
+		'{labels: ($labels | split(",")), body: .}' 2>/dev/null) || return 1
+	_has_consolidated_label "$meta" || return 1
+	return 0
+}
+
+_pir_stranded_stamp_path() {
+	local slug="$1"
+	local issue_num="$2"
+	printf '%s/.aidevops/logs/reconcile-stranded-consolidated/%s--%s--%s\n' \
+		"$HOME" "${slug%%/*}" "${slug##*/}" "$issue_num"
+	return 0
+}
+
+# Fingerprint of the cached labels and body; any change re-arms lookups.
+_pir_stranded_fingerprint() {
+	local labels_csv="$1"
+	local issue_body="$2"
+	local sum=""
+	sum=$(printf '%s\n%s' "$labels_csv" "$issue_body" | cksum 2>/dev/null) || sum=""
+	printf '%s\n' "${sum%% *}"
+	return 0
+}
+
+# Returns 0 while this fingerprint's stamp is younger than the TTL (skip).
+_pir_stranded_stamp_fresh() {
+	local slug="$1"
+	local issue_num="$2"
+	local fingerprint="$3"
+	local stamp_file="" stamp_ts="" stamp_fp="" stamp_reason="" now=""
+	[[ "$_PIR_STRANDED_TTL_SECONDS" -gt 0 ]] || return 1
+	stamp_file=$(_pir_stranded_stamp_path "$slug" "$issue_num")
+	[[ -f "$stamp_file" && ! -L "$stamp_file" ]] || return 1
+	read -r stamp_ts stamp_fp stamp_reason <"$stamp_file" || return 1
+	[[ "$stamp_ts" =~ ^[0-9]+$ && -n "$stamp_reason" && "$stamp_fp" == "$fingerprint" ]] || return 1
+	now=$(date +%s)
+	((now >= stamp_ts && now - stamp_ts < _PIR_STRANDED_TTL_SECONDS)) || return 1
+	return 0
+}
+
+#######################################
+# Stamp a stage 0c outcome. An anomaly is logged and counted once per
+# fingerprint and reason; TTL re-checks of an unchanged issue stay silent.
+# Args: $1=slug, $2=issue, $3=fingerprint, $4=anomaly reason or "ok"
+#######################################
+_pir_stranded_record() {
+	local slug="$1"
+	local issue_num="$2"
+	local fingerprint="$3"
+	local reason="$4"
+	local stamp_file="" prev_ts="" prev_fp="" prev_reason=""
+	stamp_file=$(_pir_stranded_stamp_path "$slug" "$issue_num")
+	[[ -L "$stamp_file" ]] && return 0
+	if [[ -f "$stamp_file" ]]; then
+		read -r prev_ts prev_fp prev_reason <"$stamp_file" || true
+	fi
+	if [[ "$reason" != "ok" && ! ("$prev_fp" == "$fingerprint" && "$prev_reason" == "$reason") ]]; then
+		echo "[pulse-wrapper] CONSOLIDATED_HYGIENE_ANOMALY #${issue_num} (${slug}) reason=${reason} — open consolidated issue has no safe automatic lineage repair; the dispatch candidate filter keeps it out of worker launches until its brief owner closes it or restores the canonical marker (GH#37600)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "reconcile_consolidated_hygiene_anomaly" 2>/dev/null || true
+		fi
+	fi
+	mkdir -p "${stamp_file%/*}" 2>/dev/null || return 0
+	printf '%s %s %s\n' "$(date +%s)" "$fingerprint" "$reason" >"$stamp_file" 2>/dev/null || true
+	return 0
+}
+
+# Returns 0 when any label is a review, recovery, lifecycle or lock hold.
+_pir_stranded_hold_label() {
+	local labels_csv="$1"
+	local label=""
+	local -a labels=()
+	IFS=',' read -r -a labels <<<"$labels_csv"
+	for label in ${labels[@]+"${labels[@]}"}; do
+		[[ -n "$label" && "$_PIR_STRANDED_HOLD_LABELS" == *",${label},"* ]] && return 0
+	done
+	return 1
+}
+
+# Prints "<is_pull_request> <state>" for an issue number, e.g. "false closed".
+_pir_stranded_issue_kind_state() {
+	local slug="$1"
+	local number="$2"
+	gh api "repos/${slug}/issues/${number}" \
+		--jq '[(has("pull_request") | tostring), (.state // "")] | join(" ")' 2>/dev/null || return 1
+	return 0
+}
+
+# Prints the live body of an issue (empty string when the body is null).
+_pir_stranded_live_body() {
+	local slug="$1"
+	local number="$2"
+	gh api "repos/${slug}/issues/${number}" --jq '.body // ""' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
+# Newest trusted comment time whose first non-blank line names the successor.
+# aidevops:trust-boundary — same author/first-line rule as _dep_supersession_fetch.
+# Args: $1=slug, $2=issue, $3=successor
+# Stdout: ISO-8601 UTC time, or empty when no such comment is visible
+# Returns: 0 on a complete read, 1 when comments are unavailable
+#######################################
+_pir_stranded_supersession_at() {
+	local slug="$1"
+	local issue_num="$2"
+	local successor="$3"
+	local comments="" latest=""
+	comments=$(gh api --paginate "repos/${slug}/issues/${issue_num}/comments?per_page=100" 2>/dev/null) || return 1
+	latest=$(printf '%s' "$comments" | jq -rs --arg n "$successor" '
+		[flatten[] | select(type == "object")
+			| select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+			| select((.body // "") | gsub("\r"; "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")
+				| test("^\\s*Superseded by #" + $n + "\\b"; "i"))
+			| (.created_at // empty)] | max // ""' 2>/dev/null) || return 1
+	printf '%s\n' "$latest"
+	return 0
+}
+
+#######################################
+# Close a superseded original whose trusted successor issue exists, then
+# verify the close and repoint dependants. Sets _PIR_STRANDED_REASON when
+# nothing was closed ("deferred" means retry without an anomaly).
+# Args: $1=slug, $2=issue, $3=successor
+# Returns: 0 when the original is verified closed, 1 otherwise
+#######################################
+_pir_stranded_close_superseded() {
+	local slug="$1"
+	local issue_num="$2"
+	local successor="$3"
+	local successor_info="" reopen_at="" superseded_at="" state="" helper=""
+	_PIR_STRANDED_REASON=""
+	if [[ "$successor" == "$issue_num" ]]; then
+		_PIR_STRANDED_REASON="self_supersession"
+		return 1
+	fi
+	if ! successor_info=$(_pir_stranded_issue_kind_state "$slug" "$successor"); then
+		_PIR_STRANDED_REASON="successor_unverified"
+		return 1
+	fi
+	if [[ "$successor_info" != "false open" && "$successor_info" != "$_PIR_STRANDED_CLOSED_ISSUE" ]]; then
+		_PIR_STRANDED_REASON="successor_not_issue"
+		return 1
+	fi
+	# A reopen after the supersession comment is a deliberate new lifecycle.
+	if ! reopen_at=$(_pir_latest_reopen_at "$slug" "$issue_num"); then
+		_PIR_STRANDED_REASON="$_PIR_STRANDED_DEFERRED"
+		return 1
+	fi
+	if [[ -n "$reopen_at" ]]; then
+		if ! superseded_at=$(_pir_stranded_supersession_at "$slug" "$issue_num" "$successor"); then
+			_PIR_STRANDED_REASON="$_PIR_STRANDED_DEFERRED"
+			return 1
+		fi
+		if [[ ! "$superseded_at" =~ $_PIR_ISO_UTC_RE || "$superseded_at" < "$reopen_at" ]]; then
+			_PIR_STRANDED_REASON="reopened_after_supersession"
+			return 1
+		fi
+	fi
+	if ! gh issue close "$issue_num" --repo "$slug" --reason "not planned" \
+		--comment "Closing as not planned: this \`consolidated\` issue was superseded by #${successor} (trusted supersession comment), but its consolidation handoff left it open. Continue on #${successor}. Detected by reconcile pass (GH#37600)." \
+		>/dev/null 2>&1; then
+		echo "[pulse-wrapper] Reconcile consolidated: deferred close #${issue_num} in ${slug} — close call failed (GH#37600)" >>"$LOGFILE"
+		_PIR_STRANDED_REASON="$_PIR_STRANDED_DEFERRED"
+		return 1
+	fi
+	state=$(_pir_stranded_issue_kind_state "$slug" "$issue_num") || state=""
+	if [[ "$state" != "$_PIR_STRANDED_CLOSED_ISSUE" ]]; then
+		echo "[pulse-wrapper] Reconcile consolidated: close of #${issue_num} in ${slug} not verified (state='${state}') (GH#37600)" >>"$LOGFILE"
+		_PIR_STRANDED_REASON="close_unverified"
+		return 1
+	fi
+	helper="${SCRIPT_DIR}/dependency-supersession-repoint-helper.sh"
+	if [[ -f "$helper" ]] && bash "$helper" repoint "$slug" "$issue_num" "$successor" >>"$LOGFILE" 2>&1; then
+		echo "[pulse-wrapper] Reconcile consolidated: closed #${issue_num} in ${slug} as not planned — superseded by #${successor}; dependants repointed (GH#37600)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Reconcile consolidated: closed #${issue_num} in ${slug} as not planned — superseded by #${successor}; WARN dependant repoint failed, readiness still follows the supersession chain (GH#34341/GH#37600)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Replace one legacy marker line with the canonical marker, keeping any
+# trailing lineage prose on the following line and every other line intact.
+# Args: $1=issue body, $2=legacy line (CR stripped), $3=predecessor
+# Stdout: rewritten body
+#######################################
+_pir_stranded_rewrite_legacy_line() {
+	local issue_body="$1"
+	local legacy_line="$2"
+	local predecessor="$3"
+	local marker="_Supersedes #${predecessor} — this issue is the consolidated spec._"
+	local line="" rest="" previous="" italic="" out="" replaced=0
+	[[ "$legacy_line" == _* ]] && italic="_"
+	rest="${legacy_line#*"#${predecessor}"}"
+	[[ -n "$italic" ]] && rest="${rest%_}"
+	while [[ "$rest" != "$previous" ]]; do
+		previous="$rest"
+		rest="${rest#[[:space:].,:;-]}"
+		rest="${rest#—}"
+		rest="${rest#–}"
+	done
+	rest="${rest%"${rest##*[![:space:]]}"}"
+	while IFS= read -r line; do
+		if [[ "$replaced" -eq 0 && "${line%$'\r'}" == "$legacy_line" ]]; then
+			replaced=1
+			out+="${marker}"$'\n'
+			[[ -n "$rest" ]] && out+="${italic}${rest}${italic}"$'\n'
+			continue
+		fi
+		out+="${line}"$'\n'
+	done <<<"$issue_body"
+	printf '%s' "${out%$'\n'}"
+	return 0
+}
+
+#######################################
+# Normalise exactly one legacy "Supersedes #N" line when the trusted body
+# names a closed predecessor issue. Sets _PIR_STRANDED_REASON on refusal.
+# Args: $1=slug, $2=issue, $3=cached body, $4=cached author association
+# Returns: 0 when the canonical marker is verified live, 1 otherwise
+#######################################
+_pir_stranded_normalize_legacy_marker() {
+	local slug="$1"
+	local issue_num="$2"
+	local issue_body="$3"
+	local author_association="$4"
+	local legacy_regex='^_?Supersedes #([0-9]+)([^0-9].*)?$'
+	local line="" legacy_line="" predecessor="" predecessor_info="" live_body=""
+	local new_body="" body_file="" edit_rc=0 legacy_count=0
+	_PIR_STRANDED_REASON=""
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		[[ "$line" =~ $legacy_regex ]] || continue
+		legacy_count=$((legacy_count + 1))
+		legacy_line="$line"
+		predecessor="${BASH_REMATCH[1]}"
+	done <<<"$issue_body"
+	if [[ "$legacy_count" -ne 1 ]]; then
+		_PIR_STRANDED_REASON="no_verifiable_lineage"
+		[[ "$legacy_count" -gt 1 ]] && _PIR_STRANDED_REASON="ambiguous_legacy_marker"
+		return 1
+	fi
+	#aidevops:trust-boundary -- only a write-authorized body author can assert lineage.
+	if [[ "$_PIR_STRANDED_TRUSTED_ASSOCIATIONS" != *",${author_association:-NONE},"* ]]; then
+		_PIR_STRANDED_REASON="untrusted_body_author"
+		return 1
+	fi
+	if [[ "$predecessor" == "$issue_num" ]]; then
+		_PIR_STRANDED_REASON="self_supersession"
+		return 1
+	fi
+	if ! predecessor_info=$(_pir_stranded_issue_kind_state "$slug" "$predecessor"); then
+		_PIR_STRANDED_REASON="predecessor_unverified"
+		return 1
+	fi
+	if [[ "$predecessor_info" != "$_PIR_STRANDED_CLOSED_ISSUE" ]]; then
+		_PIR_STRANDED_REASON="predecessor_not_closed"
+		return 1
+	fi
+	# Compare-and-swap against the cached body so a concurrent edit is kept.
+	_PIR_STRANDED_REASON="$_PIR_STRANDED_DEFERRED"
+	live_body=$(_pir_stranded_live_body "$slug" "$issue_num") || return 1
+	[[ "$live_body" == "$issue_body" ]] || return 1
+	new_body=$(_pir_stranded_rewrite_legacy_line "$issue_body" "$legacy_line" "$predecessor")
+	[[ -n "$new_body" && "$new_body" != "$issue_body" ]] || return 1
+	# Body edits go only through the validating, audited wrapper.
+	declare -F gh_issue_edit_safe >/dev/null 2>&1 || return 1
+	body_file=$(mktemp -t pir-consolidated-body.XXXXXX) || return 1
+	printf '%s\n' "$new_body" >"$body_file"
+	gh_issue_edit_safe "$issue_num" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 || edit_rc=$?
+	rm -f "$body_file"
+	if [[ "$edit_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] Reconcile consolidated: legacy marker repair failed for #${issue_num} in ${slug} (GH#37600)" >>"$LOGFILE"
+		return 1
+	fi
+	live_body=$(_pir_stranded_live_body "$slug" "$issue_num") || live_body=""
+	local verified_nums=""
+	verified_nums=$(_pir_extract_superseded_issue_nums "$live_body") || verified_nums=""
+	if ! grep -qx "$predecessor" <<<"$verified_nums"; then
+		echo "[pulse-wrapper] Reconcile consolidated: legacy marker repair for #${issue_num} in ${slug} not verified (GH#37600)" >>"$LOGFILE"
+		_PIR_STRANDED_REASON="marker_repair_unverified"
+		return 1
+	fi
+	echo "[pulse-wrapper] Reconcile consolidated: normalised legacy marker on #${issue_num} in ${slug} to canonical _Supersedes #${predecessor}_ (closed predecessor) (GH#37600)" >>"$LOGFILE"
+	_PIR_STRANDED_REASON=""
+	return 0
+}
+
+#######################################
+# Stage 0c action: reconcile one stranded consolidated issue.
+# Args: $1=slug, $2=issue, $3=labels CSV, $4=cached body,
+#       $5=cached author association
+# Sets: _PIR_STRANDED_LOOKUP_USED=1 when GitHub lookups ran (caller's cap)
+# Returns: 0=original closed (terminal), 2=legacy marker normalised,
+#          1=no mutation (fresh stamp, hold, anomaly or deferral)
+#######################################
+_action_reconcile_stranded_consolidated() {
+	local slug="$1"
+	local issue_num="$2"
+	local labels_csv="$3"
+	local issue_body="$4"
+	local author_association="${5:-}"
+	local fingerprint="" row="" state="" successor=""
+	_PIR_STRANDED_LOOKUP_USED=0
+	_PIR_STRANDED_REASON=""
+	[[ "$slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	fingerprint=$(_pir_stranded_fingerprint "$labels_csv" "$issue_body")
+	_pir_stranded_stamp_fresh "$slug" "$issue_num" "$fingerprint" && return 1
+	#aidevops:trust-boundary -- review, recovery, lifecycle and lock holds stay mutation-free.
+	if _pir_stranded_hold_label "$labels_csv"; then
+		_pir_stranded_record "$slug" "$issue_num" "$fingerprint" "hold_label_present"
+		return 1
+	fi
+	_pir_budget_allows_mutation || return 1
+	_PIR_STRANDED_LOOKUP_USED=1
+	if ! row=$(_dep_supersession_fetch "$slug" "$issue_num"); then
+		echo "[pulse-wrapper] Reconcile consolidated: deferred #${issue_num} in ${slug} — supersession lookup unavailable (GH#37600)" >>"$LOGFILE"
+		return 1
+	fi
+	IFS='|' read -r state _ successor <<<"$row"
+	[[ "$state" == "OPEN" ]] || return 1
+	if [[ "$successor" =~ ^[1-9][0-9]*$ ]]; then
+		_pir_stranded_close_superseded "$slug" "$issue_num" "$successor" && return 0
+	elif [[ -n "$(_pir_extract_superseded_issue_nums "$issue_body")" ]]; then
+		# A canonical successor without the auto-dispatch handoff is an explicit
+		# owner hold; stranded draft checkpoints get their own attention record.
+		_pir_stranded_record "$slug" "$issue_num" "$fingerprint" "ok"
+		return 1
+	else
+		_pir_stranded_normalize_legacy_marker "$slug" "$issue_num" "$issue_body" \
+			"$author_association" && return 2
+	fi
+	[[ "$_PIR_STRANDED_REASON" == "$_PIR_STRANDED_DEFERRED" ]] && return 1
+	_pir_stranded_record "$slug" "$issue_num" "$fingerprint" "${_PIR_STRANDED_REASON:-no_verifiable_lineage}"
+	return 1
 }
 
 #######################################
