@@ -1333,9 +1333,7 @@ _pms_handle_classified_pr() {
 	# Pass is_saturated so the classifier can recognise QUEUED checks
 	# during a runner outage.
 	local classification="${5:-}"
-	if [[ "$classification" == "STUCK_QUEUED_GATE_REFRESH" ]] || _pms_queued_gate_refresh "$repo_slug" "$head_sha"; then
-		classification="STUCK_QUEUED_GATE_REFRESH"
-	else
+	if [[ "$classification" != "STUCK_QUEUED_GATE_REFRESH" ]]; then
 		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_meta")
 	fi
 
@@ -1430,7 +1428,10 @@ _pms_classify_stuck_prs_within_budget() {
 		_classified_eligible=$((_classified_eligible + 1))
 		_classified_stuck_numbers="${_classified_stuck_numbers}${pr_num}\n"
 		local route=""
-		route=$(_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_obj")
+		local over_gate_head="" over_class=""
+		over_gate_head=$(_pms_head_sha_from_pr_json "$pr_obj")
+		if _pms_queued_gate_refresh "$repo_slug" "$over_gate_head"; then over_class="STUCK_QUEUED_GATE_REFRESH"; fi
+		route=$(_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_obj" "$over_class")
 		if [[ "$route" == "SATURATED" ]]; then
 			_classified_saturation_prs="${_classified_saturation_prs}${pr_num},"
 			_classified_saturation_count=$((_classified_saturation_count + 1))
