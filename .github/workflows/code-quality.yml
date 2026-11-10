@@ -556,6 +556,11 @@ jobs:
         bash .agents/scripts/tests/test-large-file-dependency-lifecycle-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Auto-decomposer Scanner Regression Tests (GH#37557)
+      run: |
+        bash .agents/scripts/tests/test-auto-decomposer-scanner.sh
+        bash .agents/scripts/tests/test-auto-decomposer-per-parent-gate.sh
+
     - name: Approve Collaborator Author Guard (GH#17671, t2933)
       run: |
         # Pins the function-level supply-chain defense in approve_collaborator_pr.
