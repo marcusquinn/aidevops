@@ -103,7 +103,11 @@ class DbActivityHeartbeat {
     this.sessions.delete(sessionID);
     this.sessions.add(sessionID);
     while (this.sessions.size > MAX_TRACKED_SESSIONS) {
-      this.sessions.delete(this.sessions.values().next().value);
+      // Evict the oldest idle session first so busy IDs stay listed.
+      const victim =
+        [...this.sessions].find((id) => !this.busy.has(id)) ??
+        this.sessions.values().next().value;
+      this.sessions.delete(victim);
     }
   }
 
@@ -116,6 +120,8 @@ class DbActivityHeartbeat {
       last_activity_epoch: Math.floor(this.lastActivityAt / 1000),
       updated_epoch: Math.floor(this.now() / 1000),
       sessions: [...this.sessions],
+      // False when a busy session is missing from `sessions` (cap eviction).
+      sessions_complete: [...this.busy].every((id) => this.sessions.has(id)),
     };
   }
 

@@ -46,6 +46,8 @@ readonly LOGFILE="${LOG_DIR}/opencode-db-archive.log"
 readonly LOCK_DIR="${LOG_DIR}/opencode-db-archive.lock"
 readonly PID_FILE="${LOCK_DIR}/pid"
 readonly LAST_RUN_FILE="${LOG_DIR}/opencode-db-archive.last-run"
+readonly DEFERRALS_FILE="${LOG_DIR}/opencode-db-archive.deferrals"
+readonly BLOCKED_NOTICE_FILE="${LOG_DIR}/opencode-db-archive.blocked-notice"
 readonly ARCHIVE_HELPER="${SCRIPT_DIR}/opencode-db-archive.sh"
 
 # Per-DB time budget. Larger than the inline 30s default — async runs are not
@@ -198,6 +200,52 @@ _completed_today() {
 	return $?
 }
 
+# GH#37656: escalation. Count consecutive deferrals; after N deferrals or more
+# than OPENCODE_DB_ARCHIVE_STALE_HOURS since the last rc=0, write one notice
+# naming the blocking holder (PID, command, age). Never kills holders.
+_blocking_holder_summary() {
+	local db="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
+	local pid="" comm="" age=""
+	command -v lsof >/dev/null 2>&1 || return 0
+	pid=$(lsof -t "$db" 2>/dev/null || true)
+	pid="${pid%%$'\n'*}"
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 0
+	comm=$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-80 || true)
+	age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+	printf 'PID %s (%s, up %s)' "$pid" "${comm:-unknown}" "${age:-unknown}"
+	return 0
+}
+
+_record_deferral() {
+	local max_deferrals="${OPENCODE_DB_ARCHIVE_ESCALATE_DEFERRALS:-24}"
+	local stale_hours="${OPENCODE_DB_ARCHIVE_STALE_HOURS:-72}"
+	local count=0 last_run="" now="" stale=0 holder=""
+	[[ "$max_deferrals" =~ ^[0-9]+$ ]] || max_deferrals=24
+	[[ "$stale_hours" =~ ^[0-9]+$ ]] || stale_hours=72
+	if [[ -f "$DEFERRALS_FILE" ]]; then
+		count=$(tr -cd '0-9' <"$DEFERRALS_FILE" 2>/dev/null || true)
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	count=$((10#$count + 1))
+	printf '%s\n' "$count" >"$DEFERRALS_FILE" 2>/dev/null || true
+	if [[ -f "$LAST_RUN_FILE" ]]; then
+		last_run=$(tr -cd '0-9' <"$LAST_RUN_FILE" 2>/dev/null || true)
+		now=$(date +%s)
+		if [[ "$last_run" =~ ^[0-9]+$ ]] && ((now - 10#$last_run > stale_hours * 3600)); then
+			stale=1
+		fi
+	fi
+	if ((count < max_deferrals && stale == 0)); then
+		return 0
+	fi
+	[[ ! -f "$BLOCKED_NOTICE_FILE" ]] || return 0
+	holder=$(_blocking_holder_summary)
+	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s. Safe action: close or restart that OpenCode session. Holders are never killed automatically.\n' \
+		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
+	echo "[opencode-db-archive-async] NOTICE: $(<"$BLOCKED_NOTICE_FILE")" >>"$LOGFILE"
+	return 0
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -230,10 +278,15 @@ main() {
 	_ARCHIVE_CHILD_PID=""
 
 	if [[ "$rc" -eq 0 ]]; then
+		rm -f "$DEFERRALS_FILE" "$BLOCKED_NOTICE_FILE" 2>/dev/null || true
 		_update_last_run
 		echo "[opencode-db-archive-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	elif [[ "$rc" -eq 2 ]]; then
 		echo "[opencode-db-archive-async] Protected skip/deferred: active holder, changing WAL, incomplete checkpoint evidence, or per-DB deadline — last-run NOT updated" >>"$LOGFILE"
+		_record_deferral
+		# GH#37656: a protected deferral is an expected outcome, not a failed
+		# scheduler unit (same mapping as opencode-db-maintenance-helper.sh).
+		return 0
 	elif [[ "$rc" -eq 3 ]]; then
 		echo "[opencode-db-archive-async] Unsupported OpenCode schema — active data left untouched and last-run NOT updated" >>"$LOGFILE"
 	else
