@@ -1981,7 +1981,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18935 fix: stop dispatching workers on already-satisfied rollout issues #bug #interactive tier:standard ref:GH#37510 assignee:marcusquinn pr:#37512 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18935-brief.md] completed:2026-11-10
 
-- [ ] t18936 fix(worker): credit verified already-satisfied no-PR closes with an evidence-bound receipt #auto-dispatch #bug ref:GH#37515 logged:2026-11-10 -> [todo/tasks/t18936-brief.md]
+- [x] t18936 fix(worker): credit verified already-satisfied no-PR closes with an evidence-bound receipt #auto-dispatch #bug ref:GH#37515 pr:#37590 logged:2026-11-10 -> [todo/tasks/t18936-brief.md] completed:2026-11-10
 
 - [x] t18938 fix(pulse): dead-stamp reaper starves every claim stamp after the first 100 #bug #interactive tier:standard ref:GH#37524 assignee:marcusquinn pr:#37529 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18938-brief.md] completed:2026-11-10
 
@@ -1999,25 +1999,25 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 pr:#37497 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md] completed:2026-11-10
 
-- [ ] t18952 session ask rules: own-PR placement and merge order are decisions, not asks #documentation ref:GH#37594
+- [x] t18952 session ask rules: own-PR placement and merge order are decisions, not asks #documentation ref:GH#37594 pr:#37596 completed:2026-11-10
 
-- [ ] t18950 macOS input sampler: run at standard priority so HID idle reads are not starved under load #bug ref:GH#37588
+- [x] t18950 macOS input sampler: run at standard priority so HID idle reads are not starved under load #bug ref:GH#37588 pr:#37593 completed:2026-11-10
 
-- [ ] t18951 profile README publication still retains one worktree per run after #37184 (coverage-gap: enrolled without a registered owner) #auto-dispatch #bug ref:GH#37591
+- [x] t18951 profile README publication still retains one worktree per run after #37184 (coverage-gap: enrolled without a registered owner) #auto-dispatch #bug ref:GH#37591 pr:#37602 completed:2026-11-10
 
 - [x] t18953 feat(bounded-op): return terminal output inline from start/status to cut 3-turn polling #feat #interactive tier:standard ref:GH#37605 pr:#37606 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18953-brief.md] completed:2026-11-10
 
-- [ ] t18954 routing: Luna first on simple tier and compaction (free OpenAI account), Haiku 5.5 fallback #chore #interactive tier:simple ref:GH#37611 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18954-brief.md]
+- [x] t18954 routing: Luna first on simple tier and compaction (free OpenAI account), Haiku 5.5 fallback #chore #interactive tier:simple ref:GH#37611 pr:#37628 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18954-brief.md] completed:2026-11-10
 
-- [ ] t18955 fix(availability): OpenAI OAuth probe rejects free ChatGPT accounts that OpenCode can still use for Luna #bug #auto-dispatch tier:standard ref:GH#37627 logged:2026-11-10 -> [todo/tasks/t18955-brief.md]
+- [x] t18955 fix(availability): OpenAI OAuth probe rejects free ChatGPT accounts that OpenCode can still use for Luna #bug #auto-dispatch tier:standard ref:GH#37627 pr:#37640 logged:2026-11-10 -> [todo/tasks/t18955-brief.md] completed:2026-11-10
 
-- [ ] t18957 fix(compaction): recover Luna compaction entitlement rejection onto a fitting credentialed Haiku candidate #bug #auto-dispatch tier:standard ref:GH#37634 logged:2026-11-10 -> [todo/tasks/t18957-brief.md]
+- [x] t18957 fix(compaction): recover Luna compaction entitlement rejection onto a fitting credentialed Haiku candidate #bug #auto-dispatch tier:standard ref:GH#37634 pr:#37646 logged:2026-11-10 -> [todo/tasks/t18957-brief.md] completed:2026-11-10
 
-- [ ] t18956 feat(session-bus): show addressable session-ID token in session and terminal titles #feat #interactive ref:GH#37630 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18956-brief.md]
+- [x] t18956 feat(session-bus): show addressable session-ID token in session and terminal titles #feat #interactive ref:GH#37630 pr:#37633 logged:2026-11-10 started:2026-11-10 -> [todo/tasks/t18956-brief.md] completed:2026-11-10
 
 - [x] t18958 Sidebar Messages rows open the full session-bus message in a TUI dialog #feat ref:GH#37645 pr:#37647 completed:2026-11-10
 
-- [ ] t18959 fix(update): .aidevops.json migration issue fails when target repo lacks tier:simple label #bug #auto-dispatch tier:simple ref:GH#37650 logged:2026-11-10 -> [todo/tasks/t18959-brief.md]
+- [x] t18959 fix(update): .aidevops.json migration issue fails when target repo lacks tier:simple label #bug #auto-dispatch tier:simple ref:GH#37650 pr:#37653 logged:2026-11-10 -> [todo/tasks/t18959-brief.md] completed:2026-11-10
 
 - [ ] t18960 feat(opencode-test-helper): add mouse-click injection to tui-capture #feat #auto-dispatch tier:standard ref:GH#37651 logged:2026-11-10 -> [todo/tasks/t18960-brief.md]
 
