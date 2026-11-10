@@ -62,6 +62,7 @@ cat >"$BIN/tmux" <<'EOF'
 printf '%s\n' "$*" >>"$FAKE_LOG_DIR/tmux.log"
 [[ "${1:-}" != "-S" ]] || shift 2
 if [[ "${1:-}" == list-panes && -f "$FAKE_LOG_DIR/panes" ]]; then cat "$FAKE_LOG_DIR/panes"; fi
+if [[ "${1:-}" == display-message && "$*" == *pane_current_command* ]]; then echo bash; fi
 exit 0
 EOF
 cat >"$BIN/bus" <<'EOF'
