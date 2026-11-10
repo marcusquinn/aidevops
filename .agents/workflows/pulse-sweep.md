@@ -137,14 +137,18 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 
 1. **Create a todo batch** for this cycle (drift prevention, e.g. `- [x] Dispatch worker for issue #3567`, `- [ ] Monitor cycle N+1`).
 
-2. **Sleep 60 seconds** — write a heartbeat log line first:
+2. **Wait about 60 seconds without repeating an identical tool call.** OpenCode's `doom_loop` guard rejects the same call issued three times in a row, and the permission broker cannot grant it, so the session dies with rc=1 (GH#37625). Rules:
+
+   - Never issue the same command or tool call three times in a row, and never run parallel sleeps.
+   - Prefer `aidevops_bounded_operation` `start` with a short distinct command, then `status` with `wait_seconds=60`; this blocks without a bare `sleep`.
+   - Otherwise make each wait command unique by embedding the cycle number and elapsed seconds as literals, and run it as a single call:
 
    ```bash
-   echo "[pulse] Monitoring cycle N: sleeping 60s (active WORKER_COUNT/MAX_WORKERS, elapsed ELAPSED_SECONDS)"
-   sleep 60
+   sleep 60 # pulse monitoring cycle N, elapsed ELAPSED_SECONDS
    ```
 
    Replace the uppercase placeholders with literal numbers before running.
+   - If this supervisor owns no live work (dispatch is owned by the deterministic wrapper), skip the wait and take the exit condition in step 6 instead of sleep-polling.
 
 3. **Check capacity**:
 
@@ -450,7 +454,7 @@ In your end-of-session summary: how many duplicates caught (intelligence layer) 
 3. NEVER use `claude` CLI. Always dispatch via `headless-runtime-helper.sh run`.
 4. NEVER include private repo names in public issue titles/bodies/comments.
 5. NEVER exceed MAX_WORKERS. Count before dispatching.
-6. Run the monitoring loop — dispatch, sleep 60s, check slots, backfill. Exit after 55 minutes or when no work remains.
+6. Run the monitoring loop — dispatch, wait ~60s (never identical consecutive calls; see Monitoring Loop step 2), check slots, backfill. Exit after 55 minutes or when no work remains.
 7. NEVER create "pulse summary" or "supervisor log" issues. Your output IS the log.
 8. NEVER create duplicate issues. Search before creating: `gh issue list --search "tNNN" --state all`.
 9. NEVER ask the user anything. You are headless. Decide and act.
