@@ -150,9 +150,10 @@ export function candidateRateLimitedUntil(candidate, availability = {}, now = Da
 }
 
 function candidateRoutable(candidate, scope) {
-  // GH#36698: skip a model with a live entitlement rejection for this auth.
-  if (isModelUnavailable(candidate, scope.authSignature)) return false;
-  if (candidateRateLimitedUntil(candidate, scope.availability, scope.now)) return false;
+  // GH#36698/GH#37649: skip a model with a live entitlement rejection for this
+  // auth, or whose provider OAuth pool is exhausted until its reset.
+  if (isModelUnavailable(candidate, scope.authSignature)
+    || candidateRateLimitedUntil(candidate, scope.availability, scope.now)) return false;
   const { providerID, modelID } = routingModelIdentity(candidate);
   if (providerID === "openai" && scope.openAIAuthType === "oauth"
     && scope.chatgptOAuthUnsupported.includes(modelID)) return false;
