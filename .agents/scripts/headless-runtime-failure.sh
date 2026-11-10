@@ -1188,6 +1188,17 @@ classify_worker_exit() {
 		return 0
 	fi
 
+	# Finalization can discard the only DB containing execution evidence.
+	# A zero/missing snapshot is inconclusive: a fresh boot-only session still
+	# counts as execution for non-zero exits, so retain the session query below.
+	if [[ "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 &&
+		"${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" == "$start_epoch_ms" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-}" =~ ^[0-9]+$ &&
+		"${_WORKER_ATTEMPT_ACTIVITY_COUNT:-0}" -gt 0 ]]; then
+		printf '%s' "crash_during_execution"
+		return 0
+	fi
+
 	# Session creation check: count sessions created since worker started.
 	# Primary: isolated worker DB (still present when EXIT fires during _invoke_opencode).
 	# Fallback: shared DB (~/.local/share/opencode/opencode.db) after merge completes.

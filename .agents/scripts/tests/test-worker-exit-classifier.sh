@@ -284,6 +284,34 @@ test_clean_exit_discarded_isolated_db_uses_snapshot() {
 	return 0
 }
 
+test_nonzero_exit_uses_matching_positive_snapshot() {
+	local home_dir="${TMPDIR_TEST}/nonzero-snapshot-home"
+	mkdir -p "${home_dir}/.local/share/opencode"
+	local result
+	result=$(
+		HOME="$home_dir"
+		_WORKER_ISOLATED_DB_PATH=""
+		_WORKER_ATTEMPT_ACTIVITY_START_MS=1000
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=1
+		# Positive evidence survives even when neither DB remains.
+		assert_eq "nonzero snapshot without DB" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		assert_eq "signal retains precedence over snapshot" "$(classify_worker_exit 143 1000)" "signal_killed:15"
+		_make_db "${home_dir}/.local/share/opencode/opencode.db"
+		assert_eq "nonzero snapshot with empty shared DB" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		assert_eq "stale positive snapshot ignored" "$(classify_worker_exit 1 2000)" "crash_during_startup"
+		assert_eq "unknown start ignores snapshot" "$(classify_worker_exit 1 0)" "crash_during_startup"
+		_WORKER_ATTEMPT_ACTIVITY_COUNT=0
+		assert_eq "zero snapshot with empty DB" "$(classify_worker_exit 1 1000)" "crash_during_startup"
+		_insert_session "${home_dir}/.local/share/opencode/opencode.db" 1000 "boot-only"
+		assert_eq "zero snapshot preserves boot session query" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		unset _WORKER_ATTEMPT_ACTIVITY_COUNT _WORKER_ATTEMPT_ACTIVITY_START_MS
+		assert_eq "missing snapshot preserves boot session query" "$(classify_worker_exit 1 1000)" "crash_during_execution"
+		printf 'snapshot_failures=%s' "$TESTS_FAILED"
+	)
+	assert_eq "nonzero snapshot classification cases" "${result##*snapshot_failures=}" "$TESTS_FAILED"
+	return 0
+}
+
 test_clean_retry_class_requires_typed_terminal_outcome() {
 	local clean_class=""
 	local complete_class=""
@@ -1021,6 +1049,7 @@ main() {
 	test_clean_exit_fresh_session_with_assistant_message
 	test_clean_exit_fresh_session_with_assistant_part
 	test_clean_exit_discarded_isolated_db_uses_snapshot
+	test_nonzero_exit_uses_matching_positive_snapshot
 	test_clean_retry_class_requires_typed_terminal_outcome
 	test_exit_trap_terminal_accounting
 	test_clean_exit_session_before_start
