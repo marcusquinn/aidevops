@@ -25,6 +25,14 @@
 #   - Assert section membership and proof-log presence.
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 export AIDEVOPS_TASK_COMPLETE_ALLOW_CANONICAL=1 # disposable fixture repos
 
 # Fixture repositories are disposable; use native Git rather than the runtime
@@ -122,7 +130,8 @@ make_path_format_rejecting_git() {
 		# shellcheck disable=SC2016 # Writing literal shell code into the proxy.
 		printf '%s\n' '  [[ "$argument" == --path-format=* ]] && exit 129'
 		printf '%s\n' 'done'
-		printf '%s\n' 'exec /usr/bin/git "$@"'
+		# shellcheck disable=SC2016 # Writing literal shell code into the proxy.
+		printf '%s\n' 'exec "$TEST_NATIVE_GIT" "$@"'
 	} >"$mock_dir/git"
 	chmod +x "$mock_dir/git"
 	return 0

@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -uo pipefail
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/canonical-recovery-helper.sh"
 # shellcheck source=.agents/scripts/portable-stat.sh
@@ -15,37 +23,37 @@ REMOTE="${ROOT}/remote.git"
 UPDATER="${ROOT}/updater"
 OCCUPIED="${ROOT}/main-worktree"
 mkdir -p "$HOME" "$REPO"
-/usr/bin/git init -q --bare "$REMOTE"
-/usr/bin/git -C "$REPO" init -q -b main
-/usr/bin/git -C "$REPO" config user.name Test
-/usr/bin/git -C "$REPO" config user.email test@example.invalid
-/usr/bin/git -C "$REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$REMOTE"
+"$TEST_NATIVE_GIT" -C "$REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$REPO" config commit.gpgsign false
 printf 'seed\n' >"${REPO}/README.md"
-/usr/bin/git -C "$REPO" add README.md
-/usr/bin/git -C "$REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$REPO" commit -q -m seed
 REPO_URL="ssh://git@github.com:22/Example/Recovery-Fixture.git"
-/usr/bin/git -C "$REPO" config "url.${REMOTE}.insteadOf" "$REPO_URL"
-/usr/bin/git -C "$REPO" remote add origin "$REPO_URL"
+"$TEST_NATIVE_GIT" -C "$REPO" config "url.${REMOTE}.insteadOf" "$REPO_URL"
+"$TEST_NATIVE_GIT" -C "$REPO" remote add origin "$REPO_URL"
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/fixture-repos.json"
 printf '{"initialized_repos":[{"slug":"example/recovery-fixture","path":"%s"},{"slug":"example/stale-fixture","path":"%s"},{"slug":"example/abandoned-fixture","path":"%s"}]}\n' \
 	"$REPO" "${ROOT}/stale-repo" "${ROOT}/abandoned-repo" >"$AIDEVOPS_REPOS_CONFIG"
-/usr/bin/git -C "$REPO" push -q -u origin main
-/usr/bin/git -C "$REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$REPO" remote set-head origin main
-/usr/bin/git -C "$REPO" switch -q -c safety/test
-/usr/bin/git -C "$REPO" worktree add -q "$OCCUPIED" main
+"$TEST_NATIVE_GIT" -C "$REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$REPO" remote set-head origin main
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q -c safety/test
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q "$OCCUPIED" main
 
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null 2>&1; then
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null 2>&1; then
 	printf 'FAIL recovery ignored occupied default branch\n'
 	exit 1
 fi
 printf 'PASS recovery refuses occupied default branch\n'
 
-/usr/bin/git -C "$REPO" worktree remove "$OCCUPIED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree remove "$OCCUPIED"
 printf 'invalid global audit chain\n' >"${ROOT}/broken-global-audit.jsonl"
-if AUDIT_LOG_FILE="${ROOT}/broken-global-audit.jsonl" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AUDIT_LOG_FILE="${ROOT}/broken-global-audit.jsonl" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "main" ]] &&
 	[[ -s "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" ]]; then
 	printf 'PASS audited recovery restores only default branch\n'
 else
@@ -53,17 +61,17 @@ else
 	exit 1
 fi
 
-/usr/bin/git -C "$REPO" switch -q safety/test
-/usr/bin/git clone -q "$REMOTE" "$UPDATER"
-/usr/bin/git -C "$UPDATER" config user.name Test
-/usr/bin/git -C "$UPDATER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q safety/test
+"$TEST_NATIVE_GIT" clone -q "$REMOTE" "$UPDATER"
+"$TEST_NATIVE_GIT" -C "$UPDATER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UPDATER" config user.email test@example.invalid
 printf 'remote ahead\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote ahead'
-/usr/bin/git -C "$UPDATER" push -q origin main
-remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/main)
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$remote_tip" ]]; then
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote ahead'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin main
+remote_tip=$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/main)
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "main" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$remote_tip" ]]; then
 	printf 'PASS audited recovery fast-forwards to exact origin default tip\n'
 else
 	printf 'FAIL audited recovery did not reach exact origin default tip\n'
@@ -76,50 +84,50 @@ RENAMED_UPDATER="${ROOT}/renamed-updater"
 RENAMED_CONFIG="${ROOT}/renamed-repos.json"
 RENAMED_URL="https://github.com/Example/Canonical-Remote.git"
 mkdir -p "$RENAMED_REPO"
-/usr/bin/git init -q --bare "$RENAMED_REMOTE"
-/usr/bin/git -C "$RENAMED_REPO" init -q -b main
-/usr/bin/git -C "$RENAMED_REPO" config user.name Test
-/usr/bin/git -C "$RENAMED_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$RENAMED_REPO" config commit.gpgsign false
-/usr/bin/git -C "$RENAMED_REPO" config "url.${RENAMED_REMOTE}.insteadOf" "$RENAMED_URL"
+"$TEST_NATIVE_GIT" init -q --bare "$RENAMED_REMOTE"
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config "url.${RENAMED_REMOTE}.insteadOf" "$RENAMED_URL"
 printf 'renamed seed\n' >"${RENAMED_REPO}/README.md"
-/usr/bin/git -C "$RENAMED_REPO" add README.md
-/usr/bin/git -C "$RENAMED_REPO" commit -q -m seed
-/usr/bin/git -C "$RENAMED_REPO" remote add github "$RENAMED_URL"
-/usr/bin/git -C "$RENAMED_REPO" push -q github main
-/usr/bin/git -C "$RENAMED_REPO" remote set-url --push github \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote add github "$RENAMED_URL"
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" push -q github main
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote set-url --push github \
 	ssh://git@github.com/example/canonical-remote.git
-/usr/bin/git -C "$RENAMED_REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$RENAMED_REPO" remote set-head github main
-/usr/bin/git clone -q "$RENAMED_REMOTE" "$RENAMED_UPDATER"
-/usr/bin/git -C "$RENAMED_UPDATER" config user.name Test
-/usr/bin/git -C "$RENAMED_UPDATER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$RENAMED_REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote set-head github main
+"$TEST_NATIVE_GIT" clone -q "$RENAMED_REMOTE" "$RENAMED_UPDATER"
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" config user.email test@example.invalid
 printf 'renamed remote ahead\n' >>"${RENAMED_UPDATER}/README.md"
-/usr/bin/git -C "$RENAMED_UPDATER" commit -q -am 'renamed remote ahead'
-/usr/bin/git -C "$RENAMED_UPDATER" push -q origin main
-renamed_remote_tip=$(/usr/bin/git -C "$RENAMED_REMOTE" rev-parse refs/heads/main)
-renamed_before=$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" commit -q -am 'renamed remote ahead'
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" push -q origin main
+renamed_remote_tip=$("$TEST_NATIVE_GIT" -C "$RENAMED_REMOTE" rev-parse refs/heads/main)
+renamed_before=$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)
 unregistered_output=""
-if unregistered_output=$(AIDEVOPS_REPOS_CONFIG="${ROOT}/missing-repos.json" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if unregistered_output=$(AIDEVOPS_REPOS_CONFIG="${ROOT}/missing-repos.json" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL unregistered GitHub recovery was accepted\n'
 	exit 1
 elif [[ "$unregistered_output" == *"BLOCKED: repository is not registered in repos.json; register it with: aidevops repos add --slug OWNER/REPO --confirm REGISTER_CANONICAL_REPOSITORY"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS ordinary recovery rejects an unregistered GitHub repository\n'
 else
 	printf 'FAIL unregistered GitHub recovery did not fail before mutation\n'
 	exit 1
 fi
 update_identity_output=""
-if update_identity_output=$(AIDEVOPS_REPOS_CONFIG="${ROOT}/missing-repos.json" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if update_identity_output=$(AIDEVOPS_REPOS_CONFIG="${ROOT}/missing-repos.json" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL framework update accepted a non-framework GitHub remote\n'
 	exit 1
 elif [[ "$update_identity_output" == *"BLOCKED: official aidevops GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS framework update rejects a non-framework GitHub remote\n'
 else
 	printf 'FAIL framework update identity rejection was not actionable or non-destructive\n'
@@ -137,77 +145,77 @@ if [[ "${3:-}" == "config" && "${4:-}" == "--get-all" &&
 	case "${AIDEVOPS_TEST_CONFIG_FAILURE_MODE:-}" in
 	before-output) exit "${AIDEVOPS_TEST_FAIL_STATUS:-2}" ;;
 	after-valid-output)
-		/usr/bin/git "$@" || status=$?
+		"$TEST_NATIVE_GIT" "$@" || status=$?
 		[[ "$status" -eq 0 ]] || exit "$status"
 		exit "${AIDEVOPS_TEST_FAIL_STATUS:-2}"
 		;;
 	esac
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 SH
 chmod +x "$CONFIG_FAILURE_GIT"
-if AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_remote_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse refs/remotes/github/main)" == "$renamed_remote_tip" ]] &&
-	! /usr/bin/git -C "$RENAMED_REPO" remote get-url origin >/dev/null 2>&1; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_remote_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse refs/remotes/github/main)" == "$renamed_remote_tip" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote get-url origin >/dev/null 2>&1; then
 	printf 'PASS matching renamed GitHub remote drives default-branch fast-forward\n'
 else
 	printf 'FAIL matching renamed GitHub remote did not drive default-branch fast-forward\n'
 	exit 1
 fi
 
-/usr/bin/git -C "$RENAMED_REPO" remote add origin git://github.com/Other/Repository.git
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote add origin git://github.com/Other/Repository.git
 printf 'renamed remote ahead again\n' >>"${RENAMED_UPDATER}/README.md"
-/usr/bin/git -C "$RENAMED_UPDATER" commit -q -am 'renamed remote ahead again'
-/usr/bin/git -C "$RENAMED_UPDATER" push -q origin main
-renamed_remote_tip=$(/usr/bin/git -C "$RENAMED_REMOTE" rev-parse refs/heads/main)
-if AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" commit -q -am 'renamed remote ahead again'
+"$TEST_NATIVE_GIT" -C "$RENAMED_UPDATER" push -q origin main
+renamed_remote_tip=$("$TEST_NATIVE_GIT" -C "$RENAMED_REMOTE" rev-parse refs/heads/main)
+if AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_remote_tip" ]] &&
-	! /usr/bin/git -C "$RENAMED_REPO" show-ref --verify --quiet refs/remotes/origin/main; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_remote_tip" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$RENAMED_REPO" show-ref --verify --quiet refs/remotes/origin/main; then
 	printf 'PASS matching alternate remote wins over mismatched origin\n'
 else
 	printf 'FAIL mismatched origin displaced the matching alternate remote\n'
 	exit 1
 fi
 
-renamed_before=$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.url \
+renamed_before=$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.url \
 	https://github.com/Other/Repository.git
 multi_url_output=""
-if multi_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if multi_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL mixed matching and mismatched fetch URLs were accepted\n'
 	exit 1
 elif [[ "$multi_url_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS mixed matching and mismatched fetch URLs fail before canonical mutation\n'
 else
 	printf 'FAIL mixed fetch URL rejection did not prove remote identity failure\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" config --unset-all remote.github.url
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.url "$RENAMED_URL"
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.url ""
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --unset-all remote.github.url
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.url "$RENAMED_URL"
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.url ""
 empty_url_output=""
-if empty_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if empty_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL empty fetch URL member was accepted\n'
 	exit 1
 elif [[ "$empty_url_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS empty fetch URL member fails before canonical mutation\n'
 else
 	printf 'FAIL empty fetch URL rejection did not prove remote identity failure\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" config --unset-all remote.github.url
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.url "$RENAMED_URL"
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --unset-all remote.github.url
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.url "$RENAMED_URL"
 for failure_mode in before-output after-valid-output; do
 	config_failure_output=""
 	if config_failure_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" \
@@ -219,7 +227,7 @@ for failure_mode in before-output after-valid-output; do
 		printf 'FAIL fetch URL enumeration accepted the %s config failure\n' "$failure_mode"
 		exit 1
 	elif [[ "$config_failure_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-		[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+		[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 		printf 'PASS fetch URL enumeration rejects the %s config failure before mutation\n' "$failure_mode"
 	else
 		printf 'FAIL %s fetch URL config failure was not fail-closed\n' "$failure_mode"
@@ -236,111 +244,111 @@ if config_failure_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" \
 	printf 'FAIL push URL output plus absent status was accepted as an absent key\n'
 	exit 1
 elif [[ "$config_failure_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS push URL output plus absent status fails before canonical mutation\n'
 else
 	printf 'FAIL push URL output plus absent status was not fail-closed\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.pushurl \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.pushurl \
 	git@github.com:Other/Repository.git
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.pushurl \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.pushurl \
 	ssh://git@github.com/example/canonical-remote.git
 multi_url_output=""
-if multi_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if multi_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL mixed mismatched and matching push URLs were accepted\n'
 	exit 1
 elif [[ "$multi_url_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS mixed mismatched and matching push URLs fail before canonical mutation\n'
 else
 	printf 'FAIL mixed push URL rejection did not prove remote identity failure\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.pushurl \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.pushurl \
 	ssh://git@github.com:22/example/canonical-remote.git
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.pushurl ""
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.pushurl ""
 empty_url_output=""
-if empty_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if empty_url_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL empty push URL member was accepted\n'
 	exit 1
 elif [[ "$empty_url_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS empty push URL member fails before canonical mutation\n'
 else
 	printf 'FAIL empty push URL rejection did not prove remote identity failure\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
-/usr/bin/git -C "$RENAMED_REPO" config --add remote.github.pushurl \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --unset-all remote.github.pushurl
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" config --add remote.github.pushurl \
 	ssh://git@github.com:22/example/canonical-remote.git
-/usr/bin/git -C "$RENAMED_REPO" remote add duplicate \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote add duplicate \
 	ssh://git@github.com:22/EXAMPLE/CANONICAL-REMOTE.git
 remote_rejection_output=""
-if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL ambiguous matching GitHub remotes were accepted\n'
 	exit 1
 elif [[ "$remote_rejection_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS ambiguous matching GitHub remotes fail before canonical mutation\n'
 else
 	printf 'FAIL ambiguous remote rejection did not prove identity failure before mutation\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" remote remove duplicate
-/usr/bin/git -C "$RENAMED_REPO" remote remove github
-/usr/bin/git -C "$RENAMED_REPO" remote set-url origin \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote remove duplicate
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote remove github
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote set-url origin \
 	ssh://git@github.com:22/Other/Repository.git
 remote_rejection_output=""
-if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL mismatched-only GitHub remote was accepted\n'
 	exit 1
 elif [[ "$remote_rejection_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS mismatched-only GitHub remote fails before canonical mutation\n'
 else
 	printf 'FAIL mismatched remote rejection did not prove identity failure before mutation\n'
 	exit 1
 fi
-/usr/bin/git -C "$RENAMED_REPO" remote set-url origin \
+"$TEST_NATIVE_GIT" -C "$RENAMED_REPO" remote set-url origin \
 	https://github.com:443@evil.example/example/canonical-remote.git
 remote_rejection_output=""
-if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if remote_rejection_output=$(AIDEVOPS_REPOS_CONFIG="$RENAMED_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$RENAMED_REPO" --branch main \
 	--issue 28865 --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL userinfo-confused GitHub authority was accepted\n'
 	exit 1
 elif [[ "$remote_rejection_output" == *"BLOCKED: registered GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$RENAMED_REPO" rev-parse HEAD)" == "$renamed_before" ]]; then
 	printf 'PASS userinfo-confused GitHub authority cannot activate origin fallback\n'
 else
 	printf 'FAIL userinfo-confused authority rejection did not prove identity failure\n'
 	exit 1
 fi
 
-/usr/bin/git -C "$REPO" switch -q -c develop
-/usr/bin/git -C "$REPO" push -q -u origin develop
-/usr/bin/git -C "$UPDATER" fetch -q origin develop
-/usr/bin/git -C "$UPDATER" switch -q -c develop origin/develop
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q -c develop
+"$TEST_NATIVE_GIT" -C "$REPO" push -q -u origin develop
+"$TEST_NATIVE_GIT" -C "$UPDATER" fetch -q origin develop
+"$TEST_NATIVE_GIT" -C "$UPDATER" switch -q -c develop origin/develop
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/repos.json"
 printf '{"initialized_repos":[{"slug":"example/recovery-fixture","path":"%s","pr_base_branch":"develop"}]}\n' "$REPO" >"$AIDEVOPS_REPOS_CONFIG"
 printf 'remote develop ahead\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote develop ahead'
-/usr/bin/git -C "$UPDATER" push -q origin develop
-develop_remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/develop)
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "develop" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]] &&
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote develop ahead'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin develop
+develop_remote_tip=$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/develop)
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "develop" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]] &&
 	grep -q 'Canonical current-branch fast-forward authorized' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
 	printf 'PASS audited fast-forward updates the current non-default branch without switching\n'
 else
@@ -349,27 +357,27 @@ else
 fi
 
 update_local_mirror_output=""
-if update_local_mirror_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if update_local_mirror_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop \
 	--reason aidevops-update --confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1); then
 	printf 'FAIL framework update accepted a local mirror without official GitHub identity\n'
 	exit 1
 elif [[ "$update_local_mirror_output" == *"BLOCKED: official aidevops GitHub remote is missing, mismatched, or ambiguous"* ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
 	printf 'PASS framework update rejects a local mirror without official GitHub identity\n'
 else
 	printf 'FAIL local-mirror framework update rejection was not actionable or non-destructive\n'
 	exit 1
 fi
 
-develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
+develop_local_tip=$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)
 mkdir "${REPO}/.git/aidevops-canonical-recovery.lock"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward ignored concurrent recovery lock\n'
 	exit 1
 fi
 rmdir "${REPO}/.git/aidevops-canonical-recovery.lock"
-if [[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]]; then
+if [[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]]; then
 	printf 'PASS current-branch fast-forward refuses concurrent recovery\n'
 else
 	printf 'FAIL concurrent recovery refusal changed canonical state\n'
@@ -377,75 +385,75 @@ else
 fi
 
 printf 'remote develop race window\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote develop race window'
-/usr/bin/git -C "$UPDATER" push -q origin develop
-develop_remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/develop)
-/usr/bin/git -C "$REPO" branch race-window "$develop_local_tip"
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote develop race window'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin develop
+develop_remote_tip=$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/develop)
+"$TEST_NATIVE_GIT" -C "$REPO" branch race-window "$develop_local_tip"
 race_hook="${ROOT}/switch-canonical-branch.sh"
 printf '%s\n' \
 	'#!/usr/bin/env bash' \
 	"repo_path=\"\${1:-}\"" \
-	"/usr/bin/git -C \"\$repo_path\" switch -q race-window" >"$race_hook"
+	"\"${TEST_NATIVE_GIT}\" -C \"\$repo_path\" switch -q race-window" >"$race_hook"
 chmod +x "$race_hook"
-if AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$race_hook" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$race_hook" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward ignored a concurrent branch switch\n'
 	exit 1
-elif [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "race-window" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse develop)" == "$develop_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse race-window)" == "$develop_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/develop)" == "$develop_remote_tip" ]]; then
+elif [[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "race-window" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse develop)" == "$develop_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse race-window)" == "$develop_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/develop)" == "$develop_remote_tip" ]]; then
 	printf 'PASS compare-and-swap refuses a concurrent branch switch without advancing either local branch\n'
 else
 	printf 'FAIL concurrent branch switch advanced or rewrote a local branch\n'
 	exit 1
 fi
-/usr/bin/git -C "$REPO" switch -q develop
-/usr/bin/git -C "$REPO" branch -d race-window >/dev/null
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q develop
+"$TEST_NATIVE_GIT" -C "$REPO" branch -d race-window >/dev/null
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
 	printf 'PASS audited fast-forward succeeds after a refused concurrent branch switch\n'
 else
 	printf 'FAIL audited fast-forward did not recover after the refused concurrent branch switch\n'
 	exit 1
 fi
 
-develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
+develop_local_tip=$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)
 printf 'remote develop post-CAS race window\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote develop post-CAS race window'
-/usr/bin/git -C "$UPDATER" push -q origin develop
-develop_remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/develop)
-/usr/bin/git -C "$REPO" branch race-window "$develop_local_tip"
-if AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$race_hook" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote develop post-CAS race window'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin develop
+develop_remote_tip=$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/develop)
+"$TEST_NATIVE_GIT" -C "$REPO" branch race-window "$develop_local_tip"
+if AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$race_hook" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward ignored a post-CAS branch switch\n'
 	exit 1
-elif [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "race-window" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse develop)" == "$develop_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse race-window)" == "$develop_local_tip" ]] &&
-	[[ -z "$(/usr/bin/git -C "$REPO" status --porcelain)" ]] &&
-	[[ "$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/develop)" == "$develop_remote_tip" ]]; then
+elif [[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "race-window" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse develop)" == "$develop_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse race-window)" == "$develop_local_tip" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$REPO" status --porcelain)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/develop)" == "$develop_remote_tip" ]]; then
 	printf 'PASS post-CAS branch switch restores both the named ref and concurrent branch worktree\n'
 else
 	printf 'FAIL post-CAS branch switch left a local ref or worktree inconsistent\n'
 	exit 1
 fi
-/usr/bin/git -C "$REPO" switch -q develop
-/usr/bin/git -C "$REPO" branch -d race-window >/dev/null
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q develop
+"$TEST_NATIVE_GIT" -C "$REPO" branch -d race-window >/dev/null
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_remote_tip" ]]; then
 	printf 'PASS audited fast-forward succeeds after restoring a post-CAS branch switch\n'
 else
 	printf 'FAIL audited fast-forward did not recover after restoring a post-CAS branch switch\n'
 	exit 1
 fi
 
-develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch main --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
+develop_local_tip=$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch main --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward ignored the expected branch mismatch\n'
 	exit 1
-elif [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "develop" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]]; then
+elif [[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "develop" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]]; then
 	printf 'PASS current-branch fast-forward refuses an expected branch mismatch\n'
 else
 	printf 'FAIL expected branch mismatch changed canonical state\n'
@@ -453,33 +461,33 @@ else
 fi
 
 printf 'tracked dirt\n' >>"${REPO}/README.md"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward accepted a tracked-dirty canonical worktree\n'
 	exit 1
 fi
-/usr/bin/git -C "$REPO" checkout -q -- README.md
+"$TEST_NATIVE_GIT" -C "$REPO" checkout -q -- README.md
 printf 'PASS current-branch fast-forward refuses a tracked-dirty canonical worktree\n'
 
-/usr/bin/git -C "$REPO" switch -q --detach
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q --detach
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward accepted a detached canonical worktree\n'
 	exit 1
 fi
-/usr/bin/git -C "$REPO" switch -q develop
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q develop
 printf 'PASS current-branch fast-forward refuses a detached canonical worktree\n'
 
 printf 'local develop divergence\n' >>"${REPO}/README.md"
-/usr/bin/git -C "$REPO" commit -q -am 'local develop divergence'
-develop_local_tip=$(/usr/bin/git -C "$REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$REPO" commit -q -am 'local develop divergence'
+develop_local_tip=$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)
 printf 'remote develop divergence\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote develop divergence'
-/usr/bin/git -C "$UPDATER" push -q origin develop
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote develop divergence'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin develop
 printf 'untracked during divergence\n' >"${REPO}/diverge-untracked.txt"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" fast-forward-current --repo "$REPO" --branch develop --issue 28032 --confirm FAST_FORWARD_CANONICAL_BRANCH >/dev/null 2>&1; then
 	printf 'FAIL current-branch fast-forward accepted divergence\n'
 	exit 1
-elif [[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "develop" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]] &&
+elif [[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "develop" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse HEAD)" == "$develop_local_tip" ]] &&
 	[[ "$(<"${REPO}/diverge-untracked.txt")" == "untracked during divergence" ]]; then
 	printf 'PASS current-branch fast-forward refuses divergence without changing refs or moving untracked files\n'
 else
@@ -487,25 +495,25 @@ else
 	exit 1
 fi
 rm "${REPO}/diverge-untracked.txt"
-/usr/bin/git -C "$UPDATER" switch -q main
+"$TEST_NATIVE_GIT" -C "$UPDATER" switch -q main
 
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/fixture-repos.json"
-/usr/bin/git -C "$REPO" switch -q safety/test
-/usr/bin/git -C "$REPO" worktree add -q "$OCCUPIED" main
+"$TEST_NATIVE_GIT" -C "$REPO" switch -q safety/test
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q "$OCCUPIED" main
 printf 'local divergence\n' >>"${OCCUPIED}/README.md"
-/usr/bin/git -C "$OCCUPIED" commit -q -am 'local divergence'
-/usr/bin/git -C "$REPO" worktree remove "$OCCUPIED"
-local_tip=$(/usr/bin/git -C "$REPO" rev-parse main)
+"$TEST_NATIVE_GIT" -C "$OCCUPIED" commit -q -am 'local divergence'
+"$TEST_NATIVE_GIT" -C "$REPO" worktree remove "$OCCUPIED"
+local_tip=$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse main)
 printf 'remote divergence\n' >>"${UPDATER}/README.md"
-/usr/bin/git -C "$UPDATER" commit -q -am 'remote divergence'
-/usr/bin/git -C "$UPDATER" push -q origin main
+"$TEST_NATIVE_GIT" -C "$UPDATER" commit -q -am 'remote divergence'
+"$TEST_NATIVE_GIT" -C "$UPDATER" push -q origin main
 preservation_ref="refs/aidevops/canonical-recovery/issue-27014/${local_tip}"
-remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/main)
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse main)" == "$remote_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$REPO" rev-parse "$preservation_ref")" == "$local_tip" ]] &&
-	/usr/bin/git -C "$REPO" merge-base --is-ancestor "$local_tip" "$preservation_ref"; then
+remote_tip=$("$TEST_NATIVE_GIT" -C "$REMOTE" rev-parse refs/heads/main)
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" branch --show-current)" == "main" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse main)" == "$remote_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REPO" rev-parse "$preservation_ref")" == "$local_tip" ]] &&
+	"$TEST_NATIVE_GIT" -C "$REPO" merge-base --is-ancestor "$local_tip" "$preservation_ref"; then
 	printf 'PASS recovery preserves divergent tip and restores exact origin default\n'
 else
 	printf 'FAIL divergent recovery did not preserve local tip or restore origin\n'
@@ -516,22 +524,22 @@ STALE_REPO="${ROOT}/stale-repo"
 STALE_REMOTE="${ROOT}/stale-remote.git"
 STALE_RECOVERY="${ROOT}/stale-recovery"
 mkdir -p "$STALE_REPO"
-/usr/bin/git init -q --bare "$STALE_REMOTE"
-/usr/bin/git -C "$STALE_REPO" init -q -b main
-/usr/bin/git -C "$STALE_REPO" config user.name Test
-/usr/bin/git -C "$STALE_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$STALE_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$STALE_REMOTE"
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" config commit.gpgsign false
 printf 'stale seed\n' >"${STALE_REPO}/README.md"
-/usr/bin/git -C "$STALE_REPO" add README.md
-/usr/bin/git -C "$STALE_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" commit -q -m seed
 STALE_URL="ssh://git@github.com:22/Example/Stale-Fixture.git"
-/usr/bin/git -C "$STALE_REPO" config "url.${STALE_REMOTE}.insteadOf" "$STALE_URL"
-/usr/bin/git -C "$STALE_REPO" remote add origin "$STALE_URL"
-/usr/bin/git -C "$STALE_REPO" push -q -u origin main
-/usr/bin/git -C "$STALE_REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$STALE_REPO" remote set-head origin main
-stale_tip=$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)
-/usr/bin/git -C "$STALE_REPO" switch -q --detach "$stale_tip"
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" config "url.${STALE_REMOTE}.insteadOf" "$STALE_URL"
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" remote add origin "$STALE_URL"
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$STALE_REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" remote set-head origin main
+stale_tip=$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$STALE_REPO" switch -q --detach "$stale_tip"
 stale_metadata="${STALE_REPO}/.git/rebase-merge"
 mkdir "$stale_metadata"
 printf 'refs/heads/main\n' >"${stale_metadata}/head-name"
@@ -541,20 +549,20 @@ printf '%s\n' "$stale_tip" >"${stale_metadata}/orig-head"
 printf 'pick %s seed\n' "$stale_tip" >"${stale_metadata}/done"
 printf '1\n' >"${stale_metadata}/msgnum"
 printf '1\n' >"${stale_metadata}/end"
-stale_index_tree=$(/usr/bin/git -C "$STALE_REPO" write-tree)
+stale_index_tree=$("$TEST_NATIVE_GIT" -C "$STALE_REPO" write-tree)
 stale_output=""
-if stale_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if stale_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
 	--confirm CLEAR_CONVERGED_STALE_REBASE) &&
 	[[ "$stale_output" == *"CLEARED_CONVERGED_STALE_REBASE=true"* ]] &&
 	[[ ! -e "$stale_metadata" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse main)" == "$stale_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" write-tree)" == "$stale_index_tree" ]] &&
-	[[ -z "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse "refs/aidevops/canonical-recovery/issue-28503/stale-rebase/${stale_tip}")" == "$stale_tip" ]] &&
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$STALE_REPO" --issue 28503 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" branch --show-current)" == "main" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse main)" == "$stale_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" write-tree)" == "$stale_index_tree" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" status --porcelain)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse "refs/aidevops/canonical-recovery/issue-28503/stale-rebase/${stale_tip}")" == "$stale_tip" ]] &&
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" restore-default --repo "$STALE_REPO" --issue 28503 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" branch --show-current)" == "main" ]]; then
 	printf 'PASS converged stale rebase is preserved, cleared without tree changes, and restore-default succeeds\n'
 else
 	printf 'FAIL converged stale rebase recovery did not preserve invariant state\n'
@@ -563,13 +571,13 @@ fi
 
 cp -R "${STALE_RECOVERY}/28503/stale-rebase-${stale_tip}" "$stale_metadata"
 printf 'pick %s still-active\n' "$stale_tip" >"${stale_metadata}/git-rebase-todo"
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
 	--confirm CLEAR_CONVERGED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL stale rebase cleanup accepted active todo entries\n'
 	exit 1
 elif [[ -s "${stale_metadata}/git-rebase-todo" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
 	printf 'PASS stale rebase cleanup rejects active state without mutation\n'
 else
 	printf 'FAIL active stale rebase refusal changed repository state\n'
@@ -583,13 +591,13 @@ stale_race_hook="${ROOT}/mutate-stale-rebase.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'printf "2\n" >"$2/msgnum"' >"$stale_race_hook"
 chmod +x "$stale_race_hook"
 if AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK="$stale_race_hook" \
-	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$STALE_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-stale-rebase --repo "$STALE_REPO" --issue 28503 \
 	--confirm CLEAR_CONVERGED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL stale rebase cleanup accepted concurrently changing metadata\n'
 	exit 1
 elif [[ -d "$stale_metadata" ]] && [[ "$(<"${stale_metadata}/msgnum")" == "2" ]] &&
-	[[ "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)" == "$stale_tip" ]]; then
 	printf 'PASS stale rebase cleanup rejects concurrent metadata changes without cleanup\n'
 else
 	printf 'FAIL concurrent stale rebase refusal removed or changed canonical state\n'
@@ -671,14 +679,14 @@ add_file(rebase_head_path, "REBASE_HEAD")
 print(digest.hexdigest())
 PY
 	) || return 1
-	current_head_ref=$(/usr/bin/git -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null || true)
+	current_head_ref=$("$TEST_NATIVE_GIT" -C "$repo" symbolic-ref --quiet HEAD 2>/dev/null || true)
 	printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
 		"$content_fingerprint" \
-		"$(/usr/bin/git -C "$repo" rev-parse HEAD)" \
+		"$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD)" \
 		"${current_head_ref:-detached}" \
-		"$(/usr/bin/git -C "$repo" rev-parse main)" \
-		"$(/usr/bin/git -C "$repo" rev-parse origin/main)" \
-		"$(/usr/bin/git -C "$repo" write-tree)"
+		"$("$TEST_NATIVE_GIT" -C "$repo" rev-parse main)" \
+		"$("$TEST_NATIVE_GIT" -C "$repo" rev-parse origin/main)" \
+		"$("$TEST_NATIVE_GIT" -C "$repo" write-tree)"
 	return 0
 }
 
@@ -687,52 +695,52 @@ ABANDONED_REMOTE="${ROOT}/abandoned-remote.git"
 ABANDONED_UPDATER="${ROOT}/abandoned-updater"
 ABANDONED_RECOVERY="${ROOT}/abandoned-recovery"
 mkdir -p "$ABANDONED_REPO"
-/usr/bin/git init -q --bare "$ABANDONED_REMOTE"
-/usr/bin/git -C "$ABANDONED_REPO" init -q -b main
-/usr/bin/git -C "$ABANDONED_REPO" config user.name Test
-/usr/bin/git -C "$ABANDONED_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$ABANDONED_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$ABANDONED_REMOTE"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" config commit.gpgsign false
 printf 'abandoned seed\n' >"${ABANDONED_REPO}/README.md"
-/usr/bin/git -C "$ABANDONED_REPO" add README.md
-/usr/bin/git -C "$ABANDONED_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit -q -m seed
 ABANDONED_URL="ssh://git@github.com:22/Example/Abandoned-Fixture.git"
-/usr/bin/git -C "$ABANDONED_REPO" config "url.${ABANDONED_REMOTE}.insteadOf" "$ABANDONED_URL"
-/usr/bin/git -C "$ABANDONED_REPO" remote add origin "$ABANDONED_URL"
-/usr/bin/git -C "$ABANDONED_REPO" push -q -u origin main
-/usr/bin/git -C "$ABANDONED_REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$ABANDONED_REPO" remote set-head origin main
-abandoned_local_tip=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)
-/usr/bin/git -C "$ABANDONED_REPO" switch -q -c abandoned-sequence
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" config "url.${ABANDONED_REMOTE}.insteadOf" "$ABANDONED_URL"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" remote add origin "$ABANDONED_URL"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" remote set-head origin main
+abandoned_local_tip=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse main)
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" switch -q -c abandoned-sequence
 printf 'stopped sequence\n' >"${ABANDONED_REPO}/sequence.txt"
-/usr/bin/git -C "$ABANDONED_REPO" add sequence.txt
-/usr/bin/git -C "$ABANDONED_REPO" commit -q -m 'stopped sequence'
-abandoned_stopped_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" add sequence.txt
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit -q -m 'stopped sequence'
+abandoned_stopped_sha=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)
 printf 'remaining sequence\n' >"${ABANDONED_REPO}/remaining.txt"
-/usr/bin/git -C "$ABANDONED_REPO" add remaining.txt
-/usr/bin/git -C "$ABANDONED_REPO" commit -q -m 'remaining sequence'
-abandoned_todo_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)
-abandoned_todo_abbrev=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse --short "$abandoned_todo_sha")
-/usr/bin/git -C "$ABANDONED_REPO" switch -q main
-/usr/bin/git clone -q "$ABANDONED_REMOTE" "$ABANDONED_UPDATER"
-/usr/bin/git -C "$ABANDONED_UPDATER" config user.name Test
-/usr/bin/git -C "$ABANDONED_UPDATER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" add remaining.txt
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit -q -m 'remaining sequence'
+abandoned_todo_sha=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)
+abandoned_todo_abbrev=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse --short "$abandoned_todo_sha")
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" switch -q main
+"$TEST_NATIVE_GIT" clone -q "$ABANDONED_REMOTE" "$ABANDONED_UPDATER"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_UPDATER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$ABANDONED_UPDATER" config user.email test@example.invalid
 printf 'remote recovery tip\n' >>"${ABANDONED_UPDATER}/README.md"
-/usr/bin/git -C "$ABANDONED_UPDATER" commit -q -am 'remote recovery tip'
-/usr/bin/git -C "$ABANDONED_UPDATER" push -q origin main
-/usr/bin/git -C "$ABANDONED_REPO" fetch -q origin main
-abandoned_target_sha=$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)
-/usr/bin/git -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
-abandoned_index_tree=$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)
+"$TEST_NATIVE_GIT" -C "$ABANDONED_UPDATER" commit -q -am 'remote recovery tip'
+"$TEST_NATIVE_GIT" -C "$ABANDONED_UPDATER" push -q origin main
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" fetch -q origin main
+abandoned_target_sha=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse origin/main)
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
+abandoned_index_tree=$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" write-tree)
 abandoned_rewritten_sha=$(printf 'rewritten sequence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
 abandoned_amend_sha=$(printf 'amend sequence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
 abandoned_squash_sha=$(printf 'squash sequence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
 abandoned_update_ref_sha=$(printf 'update-ref sequence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
 abandoned_fixup_sha=$(printf 'current fixup sequence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_local_tip")
 abandoned_metadata="${ABANDONED_REPO}/.git/rebase-merge"
 abandoned_rebase_head="${ABANDONED_REPO}/.git/REBASE_HEAD"
 mkdir "$abandoned_metadata"
@@ -754,7 +762,7 @@ printf '%s\n' "$abandoned_stopped_sha" >"${abandoned_metadata}/stopped-sha"
 printf '%s\n' "$abandoned_stopped_sha" >"$abandoned_rebase_head"
 
 fresh_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted fresh active metadata\n'
@@ -769,10 +777,10 @@ fi
 
 age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
 
-/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/ambiguous-recovery "$abandoned_target_sha"
-/usr/bin/git -C "$ABANDONED_REPO" symbolic-ref HEAD refs/heads/ambiguous-recovery
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" update-ref refs/heads/ambiguous-recovery "$abandoned_target_sha"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" symbolic-ref HEAD refs/heads/ambiguous-recovery
 attached_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted an attached non-default HEAD\n'
@@ -784,13 +792,13 @@ else
 	printf 'FAIL attached-HEAD refusal changed abandoned rebase state\n'
 	exit 1
 fi
-/usr/bin/git -C "$ABANDONED_REPO" update-ref --no-deref HEAD "$abandoned_target_sha"
-/usr/bin/git -C "$ABANDONED_REPO" update-ref -d refs/heads/ambiguous-recovery "$abandoned_target_sha"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" update-ref --no-deref HEAD "$abandoned_target_sha"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" update-ref -d refs/heads/ambiguous-recovery "$abandoned_target_sha"
 
 printf '%s\n' "$abandoned_target_sha" >"$abandoned_rebase_head"
 age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
 malformed_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted mismatched stopped commit metadata\n'
@@ -806,7 +814,7 @@ printf '%s\n' "$abandoned_stopped_sha" >"$abandoned_rebase_head"
 age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
 
 abandoned_output=""
-abandoned_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+abandoned_output=$(AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE)
 abandoned_preserved_dir="${ABANDONED_RECOVERY}/28549/abandoned-rebase-${abandoned_target_sha}"
@@ -815,37 +823,37 @@ if [[ "$abandoned_output" == *"CLEARED_ABANDONED_STALE_REBASE=true"* ]] &&
 	[[ ! -e "$abandoned_metadata" && ! -e "$abandoned_rebase_head" ]] &&
 	[[ -d "${abandoned_preserved_dir}/rebase-merge" && -f "${abandoned_preserved_dir}/REBASE_HEAD" ]] &&
 	[[ "$(<"${abandoned_preserved_dir}/rebase-merge/.hidden-marker")" == "hidden marker" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
-	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_local_tip}")" == "$abandoned_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_target_sha}")" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_stopped_sha}")" == "$abandoned_stopped_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_todo_sha}")" == "$abandoned_todo_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_rewritten_sha}")" == "$abandoned_rewritten_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_amend_sha}")" == "$abandoned_amend_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_squash_sha}")" == "$abandoned_squash_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_update_ref_sha}")" == "$abandoned_update_ref_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_fixup_sha}")" == "$abandoned_fixup_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" status --porcelain)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_local_tip}")" == "$abandoned_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_target_sha}")" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_stopped_sha}")" == "$abandoned_stopped_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_todo_sha}")" == "$abandoned_todo_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_rewritten_sha}")" == "$abandoned_rewritten_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_amend_sha}")" == "$abandoned_amend_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_squash_sha}")" == "$abandoned_squash_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_update_ref_sha}")" == "$abandoned_update_ref_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse "${abandoned_ref_base}/${abandoned_fixup_sha}")" == "$abandoned_fixup_sha" ]] &&
 	grep -q 'Abandoned stale rebase cleanup authorized' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" &&
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$ABANDONED_REPO" --issue 28549 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" branch --show-current)" == "main" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" restore-default --repo "$ABANDONED_REPO" --issue 28549 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" branch --show-current)" == "main" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
 	printf 'PASS abandoned active rebase is preserved, cleared without tree changes, and restored\n'
 else
 	printf 'FAIL abandoned active rebase recovery violated preservation invariants\n'
 	exit 1
 fi
 
-/usr/bin/git -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" switch -q --detach "$abandoned_target_sha"
 mkdir "$abandoned_metadata"
 cp -R "${abandoned_preserved_dir}/rebase-merge/." "$abandoned_metadata/"
 cp "${abandoned_preserved_dir}/REBASE_HEAD" "$abandoned_rebase_head"
 age_rebase_state_fixture "$abandoned_metadata" "$abandoned_rebase_head"
 printf 'dirty\n' >"${ABANDONED_REPO}/DIRTY.md"
 dirty_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted a dirty canonical worktree\n'
@@ -858,10 +866,10 @@ rm "${ABANDONED_REPO}/DIRTY.md"
 printf 'PASS abandoned rebase cleanup rejects a dirty canonical worktree\n'
 
 abandoned_diverged_tip=$(printf 'local divergence\n' |
-	/usr/bin/git -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_target_sha")
-/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_diverged_tip" "$abandoned_target_sha"
+	"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" commit-tree "$abandoned_index_tree" -p "$abandoned_target_sha")
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_diverged_tip" "$abandoned_target_sha"
 diverged_abandoned_snapshot=$(rebase_fixture_snapshot "$ABANDONED_REPO" "$abandoned_metadata" "$abandoned_rebase_head")
-if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted local default divergence\n'
@@ -873,7 +881,7 @@ else
 	printf 'FAIL divergence refusal changed abandoned rebase state\n'
 	exit 1
 fi
-/usr/bin/git -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_target_sha" "$abandoned_diverged_tip"
+"$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" update-ref refs/heads/main "$abandoned_target_sha" "$abandoned_diverged_tip"
 
 abandoned_race_hook="${ROOT}/mutate-abandoned-rebase.sh"
 # Generated hook expands its own positional argument.
@@ -881,13 +889,13 @@ abandoned_race_hook="${ROOT}/mutate-abandoned-rebase.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'printf "2\n" >"$2/msgnum"' >"$abandoned_race_hook"
 chmod +x "$abandoned_race_hook"
 if AIDEVOPS_CANONICAL_BEFORE_REBASE_CLEANUP_HOOK="$abandoned_race_hook" \
-	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted concurrently changing metadata\n'
 	exit 1
 elif [[ -d "$abandoned_metadata" ]] && [[ "$(<"${abandoned_metadata}/msgnum")" == "2" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]]; then
 	printf 'PASS abandoned rebase cleanup rejects concurrent metadata changes without cleanup\n'
 else
 	printf 'FAIL concurrent abandoned rebase refusal changed repository state\n'
@@ -903,7 +911,7 @@ printf '%s\n' '#!/usr/bin/env bash' 'printf "changed after validation\n" >"$2/.h
 	>"$abandoned_quarantine_race_hook"
 chmod +x "$abandoned_quarantine_race_hook"
 if AIDEVOPS_CANONICAL_BEFORE_REBASE_QUARANTINE_HOOK="$abandoned_quarantine_race_hook" \
-	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted a post-validation metadata race\n'
@@ -918,11 +926,11 @@ done
 if [[ -d "$abandoned_metadata" && -f "$abandoned_rebase_head" ]] &&
 	[[ "$(<"${abandoned_metadata}/.hidden-marker")" == "changed after validation" ]] &&
 	[[ "$abandoned_quarantine_count" -eq 0 ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
-	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" status --porcelain)" ]]; then
 	printf 'PASS post-validation metadata races are quarantined, detected, and restored\n'
 else
 	printf 'FAIL post-validation race recovery lost or changed canonical state\n'
@@ -937,7 +945,7 @@ abandoned_inter_move_hook="${ROOT}/replace-rebase-head-before-directory-quaranti
 printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$4" >"$3"' >"$abandoned_inter_move_hook"
 chmod +x "$abandoned_inter_move_hook"
 if AIDEVOPS_CANONICAL_BEFORE_REBASE_DIRECTORY_QUARANTINE_HOOK="$abandoned_inter_move_hook" \
-	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	AIDEVOPS_CANONICAL_RECOVERY_ROOT="$ABANDONED_RECOVERY" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	bash "$HELPER" clear-abandoned-rebase --repo "$ABANDONED_REPO" --issue 28549 \
 	--confirm CLEAR_ABANDONED_STALE_REBASE >/dev/null 2>&1; then
 	printf 'FAIL abandoned rebase cleanup accepted a replacement REBASE_HEAD race\n'
@@ -952,11 +960,11 @@ done
 if [[ -d "$abandoned_metadata" && -f "$abandoned_rebase_head" ]] &&
 	[[ "$(<"$abandoned_rebase_head")" == "$abandoned_target_sha" ]] &&
 	[[ "$abandoned_quarantine_count" -eq 0 ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
-	[[ "$(/usr/bin/git -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
-	[[ -z "$(/usr/bin/git -C "$ABANDONED_REPO" status --porcelain)" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse HEAD)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse main)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" rev-parse origin/main)" == "$abandoned_target_sha" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" write-tree)" == "$abandoned_index_tree" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$ABANDONED_REPO" status --porcelain)" ]]; then
 	printf 'PASS replacement REBASE_HEAD races are preserved without marker theft\n'
 else
 	printf 'FAIL replacement REBASE_HEAD race lost concurrent canonical state\n'
@@ -971,36 +979,36 @@ SYNC_REGISTRY_DIR="${ROOT}/sync-registry"
 SYNC_REGISTRY_DB="${SYNC_REGISTRY_DIR}/worktree-registry.db"
 DIRTY_HELPER="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
 mkdir -p "$SYNC_REPO" "$SYNC_REGISTRY_DIR"
-/usr/bin/git init -q --bare "$SYNC_REMOTE"
-/usr/bin/git -C "$SYNC_REPO" init -q -b develop
-/usr/bin/git -C "$SYNC_REPO" config user.name Test
-/usr/bin/git -C "$SYNC_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$SYNC_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$SYNC_REMOTE"
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" init -q -b develop
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" config commit.gpgsign false
 printf 'sync seed\n' >"${SYNC_REPO}/README.md"
-/usr/bin/git -C "$SYNC_REPO" add README.md
-/usr/bin/git -C "$SYNC_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" commit -q -m seed
 SYNC_URL="ssh://git@github.com:22/Example/Sync-Mirror.git"
-/usr/bin/git -C "$SYNC_REPO" config "url.${SYNC_REMOTE}.insteadOf" "$SYNC_URL"
-/usr/bin/git -C "$SYNC_REPO" remote add github "$SYNC_URL"
-/usr/bin/git -C "$SYNC_REPO" push -q -u github develop
-/usr/bin/git -C "$SYNC_REMOTE" symbolic-ref HEAD refs/heads/develop
-/usr/bin/git -C "$SYNC_REPO" remote set-head github develop
-/usr/bin/git clone -q "$SYNC_REMOTE" "$SYNC_UPDATER"
-/usr/bin/git -C "$SYNC_UPDATER" config user.name Test
-/usr/bin/git -C "$SYNC_UPDATER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" config "url.${SYNC_REMOTE}.insteadOf" "$SYNC_URL"
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" remote add github "$SYNC_URL"
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" push -q -u github develop
+"$TEST_NATIVE_GIT" -C "$SYNC_REMOTE" symbolic-ref HEAD refs/heads/develop
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" remote set-head github develop
+"$TEST_NATIVE_GIT" clone -q "$SYNC_REMOTE" "$SYNC_UPDATER"
+"$TEST_NATIVE_GIT" -C "$SYNC_UPDATER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$SYNC_UPDATER" config user.email test@example.invalid
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/sync-repos.json"
 printf '{"initialized_repos":[{"slug":"example/sync-mirror","path":"%s","pr_base_branch":"develop"}]}\n' \
 	"$SYNC_REPO" >"$AIDEVOPS_REPOS_CONFIG"
 
 printf 'accidental local commit\n' >"${SYNC_REPO}/local-only.txt"
-/usr/bin/git -C "$SYNC_REPO" add local-only.txt
-/usr/bin/git -C "$SYNC_REPO" commit -q -m 'accidental local commit'
-sync_local_tip=$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" add local-only.txt
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" commit -q -m 'accidental local commit'
+sync_local_tip=$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse HEAD)
 # GH#35149: staged deletion plus recreated untracked bytes at the same path.
-/usr/bin/git -C "$SYNC_REPO" rm -q local-only.txt
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" rm -q local-only.txt
 printf 'recreated local-only bytes\n' >"${SYNC_REPO}/local-only.txt"
 printf 'staged state\n' >"${SYNC_REPO}/staged.txt"
-/usr/bin/git -C "$SYNC_REPO" add staged.txt
+"$TEST_NATIVE_GIT" -C "$SYNC_REPO" add staged.txt
 printf 'unstaged state\n' >>"${SYNC_REPO}/README.md"
 mkdir -p "${SYNC_REPO}/todo/tasks"
 printf 'untracked state\n' >"${SYNC_REPO}/todo/tasks/recovery.md"
@@ -1012,10 +1020,10 @@ chmod 640 "${SYNC_REPO}/local-state/runtime/nested/payload.bin"
 ln -s payload.bin "${SYNC_REPO}/local-state/runtime/nested/payload-link"
 
 printf 'remote divergence\n' >"${SYNC_UPDATER}/remote-only.txt"
-/usr/bin/git -C "$SYNC_UPDATER" add remote-only.txt
-/usr/bin/git -C "$SYNC_UPDATER" commit -q -m 'remote divergence'
-/usr/bin/git -C "$SYNC_UPDATER" push -q origin develop
-sync_remote_tip=$(/usr/bin/git -C "$SYNC_REMOTE" rev-parse refs/heads/develop)
+"$TEST_NATIVE_GIT" -C "$SYNC_UPDATER" add remote-only.txt
+"$TEST_NATIVE_GIT" -C "$SYNC_UPDATER" commit -q -m 'remote divergence'
+"$TEST_NATIVE_GIT" -C "$SYNC_UPDATER" push -q origin develop
+sync_remote_tip=$("$TEST_NATIVE_GIT" -C "$SYNC_REMOTE" rev-parse refs/heads/develop)
 
 sqlite3 "$SYNC_REGISTRY_DB" "
 CREATE TABLE worktree_owners (
@@ -1038,7 +1046,7 @@ printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$sync_failure_hook"
 chmod +x "$sync_failure_hook"
 clean_failure_output=""
 clean_failure_rc=0
-clean_failure_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+clean_failure_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
 	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
@@ -1054,7 +1062,7 @@ done <<<"$clean_failure_output"
 if [[ "$clean_failure_rc" -ne 0 ]] && [[ -n "$clean_failure_backup_id" ]] &&
 	[[ "$clean_failure_output" == *"RECOVER_CLEAN_COMMAND="* ]] &&
 	[[ "$clean_failure_output" == *"pre-clean state was restored"* ]] &&
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 		bash "$DIRTY_HELPER" matches --repo "$SYNC_REPO" --backup "$clean_failure_backup_id" >/dev/null &&
 	[[ -f "${SYNC_REPO}/local-state/runtime/nested/payload.bin" ]] &&
 	[[ "$(readlink "${SYNC_REPO}/local-state/runtime/nested/payload-link")" == "payload.bin" ]]; then
@@ -1066,7 +1074,7 @@ fi
 
 sync_output=""
 sync_rc=0
-sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+sync_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
 	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
@@ -1082,9 +1090,9 @@ done <<<"$sync_output"
 sync_preservation_ref="refs/aidevops/canonical-recovery/issue-28065/${sync_local_tip}"
 if [[ "$sync_rc" -ne 0 ]] && [[ -n "$sync_backup_id" ]] &&
 	[[ "$sync_output" == *"RESTORE_COMMAND="* ]] &&
-	[[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1)" ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse "$sync_preservation_ref")" == "$sync_local_tip" ]]; then
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" status --porcelain=v1)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse "$sync_preservation_ref")" == "$sync_local_tip" ]]; then
 	printf 'PASS interrupted synchronization leaves verified recovery evidence and a clean original tip\n'
 else
 	printf 'FAIL interrupted synchronization lost evidence or changed canonical state\n'
@@ -1099,31 +1107,31 @@ else
 	exit 1
 fi
 
-sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+sync_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
 	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
 	bash "$HELPER" sync-mirror --repo "$SYNC_REPO" --issue 28065 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
 if [[ "$sync_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
-	[[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1)" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" status --porcelain=v1)" ]]; then
 	printf 'PASS safe retry converges the canonical mirror to the exact resolved remote tip\n'
 else
 	printf 'FAIL safe retry did not converge to the exact remote tip\n%s\n' "$sync_output"
 	exit 1
 fi
 
-AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	bash "$DIRTY_HELPER" restore --repo "$SYNC_REPO" --backup "$sync_backup_id" \
 	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	bash "$DIRTY_HELPER" matches --repo "$SYNC_REPO" --backup "$sync_backup_id" >/dev/null &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" diff --cached --name-only --diff-filter=D)" == "local-only.txt" ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" ls-files --others --exclude-standard -- local-only.txt)" == "local-only.txt" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_local_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" diff --cached --name-only --diff-filter=D)" == "local-only.txt" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" ls-files --others --exclude-standard -- local-only.txt)" == "local-only.txt" ]] &&
 	[[ "$(<"${SYNC_REPO}/local-only.txt")" == "recreated local-only bytes" ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" check-ignore local-state/runtime/nested/payload.bin)" == "local-state/runtime/nested/payload.bin" ]] &&
 	[[ "$(_file_perms "${SYNC_REPO}/local-state/runtime/nested/payload.bin")" == "640" ]]; then
 	printf 'PASS emitted backup ID restores byte-identical content and index state\n'
 else
@@ -1131,7 +1139,7 @@ else
 	exit 1
 fi
 
-sync_retry_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+sync_retry_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_DIRTY_BACKUP_ROOT="$SYNC_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" \
 	WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
@@ -1144,14 +1152,14 @@ for backup_path in "$SYNC_BACKUPS"/*; do
 done
 if [[ "$sync_retry_output" == *"PRESERVED_BACKUP_ID=${sync_backup_id}"* ]] &&
 	[[ "$backup_count" -eq 1 ]] &&
-	[[ "$(/usr/bin/git -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" rev-parse HEAD)" == "$sync_remote_tip" ]] &&
 	grep -q 'Canonical mirror synchronization authorized' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
 	printf 'PASS repeated synchronization reuses durable evidence and remains auditable\n'
 else
 	printf 'FAIL repeated synchronization duplicated evidence or lost auditability\n'
 	exit 1
 fi
-if [[ -z "$(/usr/bin/git -C "$SYNC_REPO" status --porcelain=v1 --untracked-files=no)" ]] &&
+if [[ -z "$("$TEST_NATIVE_GIT" -C "$SYNC_REPO" status --porcelain=v1 --untracked-files=no)" ]] &&
 	[[ ! -e "${SYNC_REPO}/staged.txt" ]] &&
 	[[ "$(<"${SYNC_REPO}/todo/tasks/recovery.md")" == "untracked state" ]] &&
 	[[ -f "${SYNC_REPO}/local-state/runtime/nested/payload.bin" ]] &&
@@ -1170,38 +1178,38 @@ UNBORN_UPDATER="${ROOT}/unborn-updater"
 UNBORN_CONFIG="${ROOT}/unborn-repos.json"
 UNBORN_URL="ssh://git@github.com:22/Example/Unborn-Mirror.git"
 mkdir -p "$UNBORN_REPO" "$UNBORN_UPDATER"
-/usr/bin/git init -q --bare "$UNBORN_REMOTE"
-/usr/bin/git -C "$UNBORN_UPDATER" init -q -b develop
-/usr/bin/git -C "$UNBORN_UPDATER" config user.name Test
-/usr/bin/git -C "$UNBORN_UPDATER" config user.email test@example.invalid
-/usr/bin/git -C "$UNBORN_UPDATER" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$UNBORN_REMOTE"
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" init -q -b develop
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" config commit.gpgsign false
 printf 'unborn remote seed\n' >"${UNBORN_UPDATER}/README.md"
-/usr/bin/git -C "$UNBORN_UPDATER" add README.md
-/usr/bin/git -C "$UNBORN_UPDATER" commit -q -m seed
-unborn_parent_tip=$(/usr/bin/git -C "$UNBORN_UPDATER" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" add README.md
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" commit -q -m seed
+unborn_parent_tip=$("$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" rev-parse HEAD)
 printf 'unborn remote target\n' >"${UNBORN_UPDATER}/remote-only.txt"
-/usr/bin/git -C "$UNBORN_UPDATER" add remote-only.txt
-/usr/bin/git -C "$UNBORN_UPDATER" commit -q -m target
-/usr/bin/git -C "$UNBORN_UPDATER" remote add origin "$UNBORN_REMOTE"
-/usr/bin/git -C "$UNBORN_UPDATER" push -q origin develop
-/usr/bin/git -C "$UNBORN_REMOTE" symbolic-ref HEAD refs/heads/develop
-unborn_remote_tip=$(/usr/bin/git -C "$UNBORN_REMOTE" rev-parse refs/heads/develop)
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" add remote-only.txt
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" commit -q -m target
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" remote add origin "$UNBORN_REMOTE"
+"$TEST_NATIVE_GIT" -C "$UNBORN_UPDATER" push -q origin develop
+"$TEST_NATIVE_GIT" -C "$UNBORN_REMOTE" symbolic-ref HEAD refs/heads/develop
+unborn_remote_tip=$("$TEST_NATIVE_GIT" -C "$UNBORN_REMOTE" rev-parse refs/heads/develop)
 
-/usr/bin/git -C "$UNBORN_REPO" init -q -b develop
-/usr/bin/git -C "$UNBORN_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
-/usr/bin/git -C "$UNBORN_REPO" remote add github "$UNBORN_URL"
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" init -q -b develop
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" remote add github "$UNBORN_URL"
 printf '{"initialized_repos":[{"slug":"example/unborn-mirror","path":"%s","pr_base_branch":"develop"}]}\n' \
 	"$UNBORN_REPO" >"$UNBORN_CONFIG"
 export AIDEVOPS_REPOS_CONFIG="$UNBORN_CONFIG"
 
 unborn_restore_output=""
 unborn_restore_rc=0
-unborn_restore_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_restore_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	restore-default --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm RESTORE_CANONICAL_DEFAULT 2>&1) || unborn_restore_rc=$?
 if [[ "$unborn_restore_rc" -ne 0 ]] &&
 	[[ "$unborn_restore_output" == *"BLOCKED: local develop tip cannot be resolved"* ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
 	printf 'PASS non-synchronizing recovery continues to reject an unborn local branch\n'
 else
 	printf 'FAIL non-synchronizing recovery accepted or changed an unborn local branch\n'
@@ -1214,13 +1222,13 @@ fi
 printf 'unborn untracked state\n' >"${UNBORN_REPO}/ff-untracked.txt"
 unborn_ff_dirty_output=""
 unborn_ff_dirty_rc=0
-unborn_ff_dirty_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_ff_dirty_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	fast-forward-current --repo "$UNBORN_REPO" --branch develop --issue 36289 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_ff_dirty_rc=$?
 if [[ "$unborn_ff_dirty_rc" -ne 0 ]] &&
 	[[ "$unborn_ff_dirty_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
 	[[ "$(<"${UNBORN_REPO}/ff-untracked.txt")" == "unborn untracked state" ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
 	printf 'PASS unborn fast-forward refuses and preserves untracked state in place\n'
 else
 	printf 'FAIL unborn fast-forward accepted or moved untracked state\n'
@@ -1242,11 +1250,11 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 		exit 1
 	fi
 	if [[ "$unborn_dirty_kind" == hidden-untracked ]]; then
-		if ! /usr/bin/git -C "$UNBORN_REPO" config status.showUntrackedFiles no; then
+		if ! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" config status.showUntrackedFiles no; then
 			printf 'FAIL could not configure hidden-untracked fixture\n'
 			exit 1
 		fi
-		if ! unborn_visible_status=$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1 --untracked-files=all) ||
+		if ! unborn_visible_status=$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --porcelain=v1 --untracked-files=all) ||
 			[[ "$unborn_visible_status" != "?? ${unborn_dirty_path}" ]]; then
 			printf 'FAIL hidden-untracked fixture is not visible with explicit untracked reporting\n'
 			exit 1
@@ -1256,12 +1264,12 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 			printf 'FAIL could not configure %s fixture\n' "$unborn_dirty_kind"
 			exit 1
 		fi
-		if ! /usr/bin/git -C "$UNBORN_REPO" check-ignore -q -- "$unborn_dirty_path"; then
+		if ! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" check-ignore -q -- "$unborn_dirty_path"; then
 			printf 'FAIL %s fixture is not ignored\n' "$unborn_dirty_kind"
 			exit 1
 		fi
 	fi
-	if ! unborn_hidden_status=$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1) ||
+	if ! unborn_hidden_status=$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --porcelain=v1) ||
 		[[ -n "$unborn_hidden_status" ]]; then
 		printf 'FAIL %s fixture is not hidden from default status\n' "$unborn_dirty_kind"
 		exit 1
@@ -1276,13 +1284,13 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 		fi
 		unborn_dirty_output=""
 		unborn_dirty_rc=0
-		unborn_dirty_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+		unborn_dirty_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 			"$unborn_dirty_cmd" --repo "$UNBORN_REPO" "${unborn_dirty_args[@]}" --issue 36326 \
 			--confirm "$unborn_dirty_confirm" 2>&1) || unborn_dirty_rc=$?
 		if [[ "$unborn_dirty_rc" -ne 0 ]] &&
 			[[ "$unborn_dirty_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
 			[[ "$(<"${UNBORN_REPO}/${unborn_dirty_path}")" == "keep local data" ]] &&
-			! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+			! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
 			printf 'PASS unborn %s refuses and preserves %s\n' "$unborn_dirty_cmd" "$unborn_dirty_kind"
 		else
 			printf 'FAIL unborn %s accepted or changed %s\n%s\n' "$unborn_dirty_cmd" "$unborn_dirty_kind" "$unborn_dirty_output"
@@ -1291,45 +1299,45 @@ for unborn_dirty_kind in ignored-collision ignored-noncollision hidden-untracked
 	done
 	rm "${UNBORN_REPO}/${unborn_dirty_path}"
 done
-/usr/bin/git -C "$UNBORN_REPO" config --unset status.showUntrackedFiles
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" config --unset status.showUntrackedFiles
 printf '' >"${UNBORN_REPO}/.git/info/exclude"
 
 printf 'untracked state\n' >"${UNBORN_REPO}/untracked.txt"
 unborn_untracked_output=""
 unborn_untracked_rc=0
-unborn_untracked_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_untracked_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_untracked_rc=$?
 rm "${UNBORN_REPO}/untracked.txt"
 printf 'staged state\n' >"${UNBORN_REPO}/staged.txt"
-/usr/bin/git -C "$UNBORN_REPO" add staged.txt
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" add staged.txt
 unborn_staged_output=""
 unborn_staged_rc=0
-unborn_staged_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_staged_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_staged_rc=$?
-/usr/bin/git -C "$UNBORN_REPO" rm -q --cached staged.txt
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" rm -q --cached staged.txt
 rm "${UNBORN_REPO}/staged.txt"
 if [[ "$unborn_untracked_rc" -ne 0 && "$unborn_staged_rc" -ne 0 ]] &&
 	[[ "$unborn_untracked_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
 	[[ "$unborn_staged_output" == *"BLOCKED: unborn canonical worktree is not clean"* ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
 	printf 'PASS unborn synchronization refuses untracked and staged state\n'
 else
 	printf 'FAIL unborn synchronization accepted dirty canonical state\n'
 	exit 1
 fi
 
-/usr/bin/git -C "$UNBORN_REPO" update-ref --no-deref HEAD "$unborn_parent_tip"
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" update-ref --no-deref HEAD "$unborn_parent_tip"
 unborn_detached_output=""
 unborn_detached_rc=0
-unborn_detached_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_detached_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_detached_rc=$?
-/usr/bin/git -C "$UNBORN_REPO" symbolic-ref HEAD refs/heads/develop
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" symbolic-ref HEAD refs/heads/develop
 if [[ "$unborn_detached_rc" -ne 0 ]] &&
 	[[ "$unborn_detached_output" == *"BLOCKED: canonical worktree is detached"* ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop; then
 	printf 'PASS unborn synchronization refuses detached HEAD\n'
 else
 	printf 'FAIL unborn synchronization accepted detached HEAD\n'
@@ -1338,35 +1346,35 @@ fi
 
 unborn_ref_drift_hook="${ROOT}/unborn-ref-drift.sh"
 printf '%s\n' '#!/usr/bin/env bash' \
-	"/usr/bin/git -C \"${UNBORN_REPO}\" update-ref refs/heads/develop \"${unborn_parent_tip}\"" >"$unborn_ref_drift_hook"
+	"\"${TEST_NATIVE_GIT}\" -C \"${UNBORN_REPO}\" update-ref refs/heads/develop \"${unborn_parent_tip}\"" >"$unborn_ref_drift_hook"
 chmod +x "$unborn_ref_drift_hook"
 unborn_ref_drift_output=""
 unborn_ref_drift_rc=0
-unborn_ref_drift_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+unborn_ref_drift_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_CANONICAL_BEFORE_REF_UPDATE_HOOK="$unborn_ref_drift_hook" \
 	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_ref_drift_rc=$?
 if [[ "$unborn_ref_drift_rc" -ne 0 ]] &&
 	[[ "$unborn_ref_drift_output" == *"canonical local or github ref changed"* ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse refs/heads/develop)" == "$unborn_parent_tip" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" rev-parse refs/heads/develop)" == "$unborn_parent_tip" ]]; then
 	printf 'PASS unborn compare-and-swap preserves a concurrently created local ref\n'
 else
 	printf 'FAIL unborn compare-and-swap overwrote or missed concurrent local ref creation\n'
 	exit 1
 fi
-/usr/bin/git -C "$UNBORN_REPO" update-ref -d refs/heads/develop "$unborn_parent_tip"
+"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" update-ref -d refs/heads/develop "$unborn_parent_tip"
 
 unborn_hook_failure_output=""
 unborn_hook_failure_rc=0
-unborn_hook_failure_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+unborn_hook_failure_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$sync_failure_hook" \
 	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_hook_failure_rc=$?
 if [[ "$unborn_hook_failure_rc" -ne 0 ]] &&
 	[[ "$unborn_hook_failure_output" == *"BLOCKED: canonical pre-worktree-update hook failed"* ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
-	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --porcelain=v1)" ]]; then
 	printf 'PASS interrupted unborn initialization rolls back to a clean absent local ref\n'
 else
 	printf 'FAIL interrupted unborn initialization did not restore the original state\n'
@@ -1375,18 +1383,18 @@ fi
 
 unborn_remote_drift_hook="${ROOT}/unborn-remote-drift.sh"
 printf '%s\n' '#!/usr/bin/env bash' \
-	"/usr/bin/git -C \"${UNBORN_REPO}\" update-ref -d refs/remotes/github/develop \"${unborn_remote_tip}\"" >"$unborn_remote_drift_hook"
+	"\"${TEST_NATIVE_GIT}\" -C \"${UNBORN_REPO}\" update-ref -d refs/remotes/github/develop \"${unborn_remote_tip}\"" >"$unborn_remote_drift_hook"
 chmod +x "$unborn_remote_drift_hook"
 unborn_remote_drift_output=""
 unborn_remote_drift_rc=0
-unborn_remote_drift_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+unborn_remote_drift_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	AIDEVOPS_CANONICAL_BEFORE_WORKTREE_UPDATE_HOOK="$unborn_remote_drift_hook" \
 	bash "$HELPER" sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unborn_remote_drift_rc=$?
 if [[ "$unborn_remote_drift_rc" -ne 0 ]] &&
 	[[ "$unborn_remote_drift_output" == *"changed before the worktree update; local ref rolled back"* ]] &&
-	! /usr/bin/git -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
-	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref --verify --quiet refs/heads/develop &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
 	[[ ! -e "${UNBORN_REPO}/README.md" ]]; then
 	printf 'PASS remote-tip drift rolls unborn initialization back before materialization\n'
 else
@@ -1394,23 +1402,23 @@ else
 	exit 1
 fi
 
-unborn_sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_sync_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	sync-mirror --repo "$UNBORN_REPO" --issue 31755 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
 if [[ "$unborn_sync_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
 	[[ "$unborn_sync_output" == *"OLD_STATE=unborn"* ]] &&
 	[[ "$unborn_sync_output" == *"OLD_SHA=none"* ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_REPO" rev-parse refs/remotes/github/develop)" == "$unborn_remote_tip" ]] &&
-	[[ -z "$(/usr/bin/git -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" rev-parse refs/remotes/github/develop)" == "$unborn_remote_tip" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --porcelain=v1)" ]] &&
 	[[ -f "${UNBORN_REPO}/README.md" && -f "${UNBORN_REPO}/remote-only.txt" ]] &&
 	grep -q '"local_state":"unborn"' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
 	printf 'PASS clean unborn synchronization initializes the exact pinned remote tip with audit evidence\n'
 else
 	printf 'FAIL clean unborn synchronization did not initialize and verify the canonical branch\n'
 	printf '%s\n' "$unborn_sync_output"
-	/usr/bin/git -C "$UNBORN_REPO" status --short --branch
-	if ! /usr/bin/git -C "$UNBORN_REPO" show-ref; then
+	"$TEST_NATIVE_GIT" -C "$UNBORN_REPO" status --short --branch
+	if ! "$TEST_NATIVE_GIT" -C "$UNBORN_REPO" show-ref; then
 		printf 'No refs found in failed unborn synchronization fixture\n'
 	fi
 	exit 1
@@ -1421,21 +1429,21 @@ fi
 UNBORN_FF_REPO="${ROOT}/unborn-ff-repo"
 UNBORN_FF_CONFIG="${ROOT}/unborn-ff-repos.json"
 mkdir -p "$UNBORN_FF_REPO"
-/usr/bin/git -C "$UNBORN_FF_REPO" init -q -b develop
-/usr/bin/git -C "$UNBORN_FF_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
-/usr/bin/git -C "$UNBORN_FF_REPO" remote add github "$UNBORN_URL"
+"$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" init -q -b develop
+"$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" config "url.${UNBORN_REMOTE}.insteadOf" "$UNBORN_URL"
+"$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" remote add github "$UNBORN_URL"
 printf '{"initialized_repos":[{"slug":"example/unborn-mirror","path":"%s","pr_base_branch":"develop"}]}\n' \
 	"$UNBORN_FF_REPO" >"$UNBORN_FF_CONFIG"
 unborn_ff_output=""
 unborn_ff_rc=0
-unborn_ff_output=$(AIDEVOPS_REPOS_CONFIG="$UNBORN_FF_CONFIG" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" \
+unborn_ff_output=$(AIDEVOPS_REPOS_CONFIG="$UNBORN_FF_CONFIG" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" bash "$HELPER" \
 	fast-forward-current --repo "$UNBORN_FF_REPO" --branch develop --issue 36289 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unborn_ff_rc=$?
 if [[ "$unborn_ff_rc" -eq 0 ]] &&
 	[[ "$unborn_ff_output" == *"Fast-forwarded canonical develop to github/develop"* ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_FF_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
-	[[ "$(/usr/bin/git -C "$UNBORN_FF_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
-	[[ -z "$(/usr/bin/git -C "$UNBORN_FF_REPO" status --porcelain=v1)" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" symbolic-ref HEAD)" == "refs/heads/develop" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" rev-parse HEAD)" == "$unborn_remote_tip" ]] &&
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$UNBORN_FF_REPO" status --porcelain=v1)" ]] &&
 	[[ -f "${UNBORN_FF_REPO}/README.md" && -f "${UNBORN_FF_REPO}/remote-only.txt" ]] &&
 	grep -q '"operation":"fast-forward-current".*"local_state":"unborn"\|"local_state":"unborn".*"operation":"fast-forward-current"' \
 		"$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
@@ -1451,29 +1459,29 @@ UPDATE_REPO="${ROOT}/update-repo"
 UPDATE_PEER="${ROOT}/update-peer"
 UPDATE_BACKUPS="${ROOT}/update-backups"
 mkdir -p "$UPDATE_REPO"
-/usr/bin/git init -q --bare "$UPDATE_REMOTE"
-/usr/bin/git -C "$UPDATE_REPO" init -q -b main
-/usr/bin/git -C "$UPDATE_REPO" config user.name Test
-/usr/bin/git -C "$UPDATE_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$UPDATE_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$UPDATE_REMOTE"
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" config commit.gpgsign false
 UPDATE_FRAMEWORK_URL="https://github.com/marcusquinn/aidevops.git"
-/usr/bin/git -C "$UPDATE_REPO" config "url.${UPDATE_REMOTE}.insteadOf" "$UPDATE_FRAMEWORK_URL"
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" config "url.${UPDATE_REMOTE}.insteadOf" "$UPDATE_FRAMEWORK_URL"
 printf 'update seed\n' >"${UPDATE_REPO}/README.md"
-/usr/bin/git -C "$UPDATE_REPO" add README.md
-/usr/bin/git -C "$UPDATE_REPO" commit -q -m seed
-/usr/bin/git -C "$UPDATE_REPO" remote add origin "$UPDATE_FRAMEWORK_URL"
-/usr/bin/git -C "$UPDATE_REPO" push -q -u origin main
-/usr/bin/git -C "$UPDATE_REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$UPDATE_REPO" remote set-head origin main
-/usr/bin/git clone -q "$UPDATE_REMOTE" "$UPDATE_PEER"
-/usr/bin/git -C "$UPDATE_PEER" config user.name Test
-/usr/bin/git -C "$UPDATE_PEER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" remote add origin "$UPDATE_FRAMEWORK_URL"
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$UPDATE_REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$UPDATE_REPO" remote set-head origin main
+"$TEST_NATIVE_GIT" clone -q "$UPDATE_REMOTE" "$UPDATE_PEER"
+"$TEST_NATIVE_GIT" -C "$UPDATE_PEER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UPDATE_PEER" config user.email test@example.invalid
 
 printf 'old retained state\n' >"${UPDATE_REPO}/old-untracked.txt"
-old_backup_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
+old_backup_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
 	bash "$DIRTY_HELPER" backup --repo "$UPDATE_REPO" --operation-id old-update --machine)
 IFS='|' read -r old_backup_id old_backup_dir <<<"$old_backup_output"
-AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
+AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
 	bash "$DIRTY_HELPER" clean --repo "$UPDATE_REPO" --backup "$old_backup_id" \
 	--confirm CLEAN_VERIFIED_DIRTY_WORKTREE_BACKUP >/dev/null
 AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" bash "$DIRTY_HELPER" acknowledge \
@@ -1481,13 +1489,13 @@ AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" bash "$DIRTY_HELPER" acknowledge \
 touch -t 202001010000 "$old_backup_dir"
 
 printf 'remote update\n' >"${UPDATE_PEER}/remote.txt"
-/usr/bin/git -C "$UPDATE_PEER" add remote.txt
-/usr/bin/git -C "$UPDATE_PEER" commit -q -m 'remote update'
-/usr/bin/git -C "$UPDATE_PEER" push -q origin main
-update_remote_tip=$(/usr/bin/git -C "$UPDATE_REMOTE" rev-parse refs/heads/main)
+"$TEST_NATIVE_GIT" -C "$UPDATE_PEER" add remote.txt
+"$TEST_NATIVE_GIT" -C "$UPDATE_PEER" commit -q -m 'remote update'
+"$TEST_NATIVE_GIT" -C "$UPDATE_PEER" push -q origin main
+update_remote_tip=$("$TEST_NATIVE_GIT" -C "$UPDATE_REMOTE" rev-parse refs/heads/main)
 printf 'current retained state\n' >"${UPDATE_REPO}/current-untracked.txt"
 
-update_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
+update_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
 	bash "$HELPER" sync-mirror --repo "$UPDATE_REPO" --reason aidevops-update \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1)
 update_backup_id=""
@@ -1499,8 +1507,8 @@ done <<<"$update_output"
 update_backup_dir="${UPDATE_BACKUPS}/${update_backup_id}"
 if [[ "$update_output" == *"SYNCHRONIZED_CANONICAL_MIRROR=true"* ]] &&
 	[[ "$update_output" == *"RESTORE_COMMAND="* ]] &&
-	[[ "$(/usr/bin/git -C "$UPDATE_REPO" rev-parse HEAD)" == "$update_remote_tip" ]] &&
-	[[ "$(/usr/bin/git -C "$UPDATE_REPO" status --porcelain=v1)" == "?? current-untracked.txt" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UPDATE_REPO" rev-parse HEAD)" == "$update_remote_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UPDATE_REPO" status --porcelain=v1)" == "?? current-untracked.txt" ]] &&
 	[[ "$update_output" == *"UNTRACKED_RESTORED=1"* ]] &&
 	[[ "$(awk -F '\t' '$1 == "state" { print $2 }' "$update_backup_dir/manifest.tsv")" == "acknowledged" ]] &&
 	[[ ! -d "$old_backup_dir" ]]; then
@@ -1510,11 +1518,11 @@ else
 	exit 1
 fi
 
-AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
+AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
 	bash "$DIRTY_HELPER" restore --repo "$UPDATE_REPO" --backup "$update_backup_id" \
 	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null
 if [[ -f "${UPDATE_REPO}/current-untracked.txt" ]] &&
-	AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
+	AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UPDATE_BACKUPS" \
 		bash "$DIRTY_HELPER" matches --repo "$UPDATE_REPO" --backup "$update_backup_id" >/dev/null; then
 	printf 'PASS routine update backup remains byte-restorable during the retention window\n'
 else
@@ -1550,23 +1558,23 @@ UNT_REPO="${ROOT}/untracked-repo"
 UNT_PEER="${ROOT}/untracked-peer"
 UNT_BACKUPS="${ROOT}/untracked-backups"
 mkdir -p "$UNT_REPO"
-/usr/bin/git init -q --bare "$UNT_REMOTE"
-/usr/bin/git -C "$UNT_REPO" init -q -b main
-/usr/bin/git -C "$UNT_REPO" config user.name Test
-/usr/bin/git -C "$UNT_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$UNT_REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" init -q --bare "$UNT_REMOTE"
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" config commit.gpgsign false
 UNT_URL="ssh://git@github.com:22/Example/Untracked-Sync.git"
-/usr/bin/git -C "$UNT_REPO" config "url.${UNT_REMOTE}.insteadOf" "$UNT_URL"
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" config "url.${UNT_REMOTE}.insteadOf" "$UNT_URL"
 printf 'untracked seed\n' >"${UNT_REPO}/README.md"
-/usr/bin/git -C "$UNT_REPO" add README.md
-/usr/bin/git -C "$UNT_REPO" commit -q -m seed
-/usr/bin/git -C "$UNT_REPO" remote add origin "$UNT_URL"
-/usr/bin/git -C "$UNT_REPO" push -q -u origin main
-/usr/bin/git -C "$UNT_REMOTE" symbolic-ref HEAD refs/heads/main
-/usr/bin/git -C "$UNT_REPO" remote set-head origin main
-/usr/bin/git clone -q "$UNT_REMOTE" "$UNT_PEER"
-/usr/bin/git -C "$UNT_PEER" config user.name Test
-/usr/bin/git -C "$UNT_PEER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" remote add origin "$UNT_URL"
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" push -q -u origin main
+"$TEST_NATIVE_GIT" -C "$UNT_REMOTE" symbolic-ref HEAD refs/heads/main
+"$TEST_NATIVE_GIT" -C "$UNT_REPO" remote set-head origin main
+"$TEST_NATIVE_GIT" clone -q "$UNT_REMOTE" "$UNT_PEER"
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" config user.email test@example.invalid
 export AIDEVOPS_REPOS_CONFIG="${ROOT}/untracked-repos.json"
 printf '{"initialized_repos":[{"slug":"example/untracked-sync","path":"%s"}]}\n' \
 	"$UNT_REPO" >"$AIDEVOPS_REPOS_CONFIG"
@@ -1575,9 +1583,9 @@ unt_push_peer_commit() {
 	local file_name="$1"
 	local content="$2"
 	printf '%s\n' "$content" >"${UNT_PEER}/${file_name}"
-	/usr/bin/git -C "$UNT_PEER" add "$file_name"
-	/usr/bin/git -C "$UNT_PEER" commit -q -m "peer adds ${file_name}"
-	/usr/bin/git -C "$UNT_PEER" push -q origin main
+	"$TEST_NATIVE_GIT" -C "$UNT_PEER" add "$file_name"
+	"$TEST_NATIVE_GIT" -C "$UNT_PEER" commit -q -m "peer adds ${file_name}"
+	"$TEST_NATIVE_GIT" -C "$UNT_PEER" push -q origin main
 	return 0
 }
 
@@ -1585,16 +1593,16 @@ unt_push_peer_commit() {
 mkdir -p "${UNT_REPO}/assets"
 printf 'local image bytes\n' >"${UNT_REPO}/assets/image.txt"
 unt_push_peer_commit merged.txt 'merged change'
-unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_tip=$("$TEST_NATIVE_GIT" -C "$UNT_REMOTE" rev-parse refs/heads/main)
 unt_ff_rc=0
-unt_ff_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+unt_ff_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_ff_rc=$?
 unt_ff_backup=$(backup_id_from_output "$unt_ff_output" || true)
 if [[ "$unt_ff_rc" -eq 0 ]] &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
 	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" status --porcelain=v1)" == "?? assets/" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" status --porcelain=v1)" == "?? assets/" ]] &&
 	[[ "$unt_ff_output" == *"UNTRACKED_RESTORED=1"* ]] &&
 	[[ -n "$unt_ff_backup" && "$(backup_state "$UNT_BACKUPS" "$unt_ff_backup")" == "acknowledged" ]]; then
 	printf 'PASS untracked-only fast-forward-current converges and keeps the untracked file in place\n'
@@ -1606,14 +1614,14 @@ fi
 # 2. A colliding incoming path is never overwritten; the local copy stays in an open backup.
 printf 'local collide\n' >"${UNT_REPO}/collide.txt"
 unt_push_peer_commit collide.txt 'remote collide'
-unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_tip=$("$TEST_NATIVE_GIT" -C "$UNT_REMOTE" rev-parse refs/heads/main)
 unt_collide_rc=0
-unt_collide_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+unt_collide_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_collide_rc=$?
 unt_collide_backup=$(backup_id_from_output "$unt_collide_output" || true)
 if [[ "$unt_collide_rc" -eq 0 ]] &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
 	[[ "$(<"${UNT_REPO}/collide.txt")" == "remote collide" ]] &&
 	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
 	[[ "$unt_collide_output" == *"UNTRACKED_LEFT_IN_BACKUP=collide.txt"* ]] &&
@@ -1626,17 +1634,17 @@ else
 fi
 
 # 3. sync-mirror reinstates the file; RESTORE_COMMAND still rolls back the full pre-sync snapshot.
-unt_pre_sync=$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)
+unt_pre_sync=$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)
 unt_push_peer_commit synced.txt 'synced change'
-unt_tip=$(/usr/bin/git -C "$UNT_REMOTE" rev-parse refs/heads/main)
+unt_tip=$("$TEST_NATIVE_GIT" -C "$UNT_REMOTE" rev-parse refs/heads/main)
 unt_sync_rc=0
-unt_sync_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+unt_sync_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
 	bash "$HELPER" sync-mirror --repo "$UNT_REPO" --issue 34770 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR 2>&1) || unt_sync_rc=$?
 unt_sync_backup=$(backup_id_from_output "$unt_sync_output" || true)
 if [[ "$unt_sync_rc" -eq 0 ]] &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]] &&
 	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]] &&
 	[[ -n "$unt_sync_backup" ]]; then
 	printf 'PASS sync-mirror reinstates untracked files on the synchronized tip without a manual restore\n'
@@ -1644,10 +1652,10 @@ else
 	printf 'FAIL sync-mirror did not reinstate untracked files on the synchronized tip\n%s\n' "$unt_sync_output"
 	exit 1
 fi
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_sync_backup" \
 	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_pre_sync" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)" == "$unt_pre_sync" ]] &&
 	[[ "$(<"${UNT_REPO}/assets/image.txt")" == "local image bytes" ]]; then
 	printf 'PASS restore accepts reinstated copies and remains a full pre-sync rollback\n'
 else
@@ -1656,18 +1664,18 @@ else
 fi
 
 # 4. Restore refuses when a reinstated file was edited after reinstatement.
-AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	WORKTREE_REGISTRY_DIR="$SYNC_REGISTRY_DIR" WORKTREE_REGISTRY_DB="$SYNC_REGISTRY_DB" \
 	bash "$HELPER" sync-mirror --repo "$UNT_REPO" --issue 34770 \
 	--confirm SYNCHRONIZE_CANONICAL_MIRROR >/dev/null 2>&1
 printf 'edited after reinstatement\n' >"${UNT_REPO}/assets/image.txt"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_sync_backup" \
 	--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1; then
 	printf 'FAIL restore overwrote an untracked file edited after reinstatement\n'
 	exit 1
 elif [[ "$(<"${UNT_REPO}/assets/image.txt")" == "edited after reinstatement" ]] &&
-	[[ "$(/usr/bin/git -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" rev-parse HEAD)" == "$unt_tip" ]]; then
 	printf 'PASS restore refuses to overwrite an untracked file edited after reinstatement\n'
 else
 	printf 'FAIL refused restore changed canonical state\n'
@@ -1678,18 +1686,18 @@ rm "${UNT_REPO}/assets/image.txt"
 # 5. A reinstated file that the new tip ignores is still protected from restore.
 printf 'local scratch\n' >"${UNT_REPO}/scratch.txt"
 printf 'scratch.txt\n' >"${UNT_PEER}/.gitignore"
-/usr/bin/git -C "$UNT_PEER" pull -q --ff-only origin main
-/usr/bin/git -C "$UNT_PEER" add .gitignore
-/usr/bin/git -C "$UNT_PEER" commit -q -m 'peer ignores scratch'
-/usr/bin/git -C "$UNT_PEER" push -q origin main
-unt_ignore_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" pull -q --ff-only origin main
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" add .gitignore
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" commit -q -m 'peer ignores scratch'
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" push -q origin main
+unt_ignore_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || true
 unt_ignore_backup=$(backup_id_from_output "$unt_ignore_output" || true)
 printf 'edited while ignored\n' >"${UNT_REPO}/scratch.txt"
 if [[ -n "$unt_ignore_backup" ]] &&
-	[[ -z "$(/usr/bin/git -C "$UNT_REPO" status --porcelain=v1)" ]] &&
-	! AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+	[[ -z "$("$TEST_NATIVE_GIT" -C "$UNT_REPO" status --porcelain=v1)" ]] &&
+	! AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 		bash "$DIRTY_HELPER" restore --repo "$UNT_REPO" --backup "$unt_ignore_backup" \
 		--confirm RESTORE_DIRTY_WORKTREE_BACKUP >/dev/null 2>&1 &&
 	[[ "$(<"${UNT_REPO}/scratch.txt")" == "edited while ignored" ]]; then
@@ -1706,11 +1714,11 @@ printf 'local linked\n' >"${UNT_REPO}/linked/note.txt"
 mkdir -p "${UNT_PEER}/actual"
 printf 'tracked\n' >"${UNT_PEER}/actual/tracked.txt"
 ln -s actual "${UNT_PEER}/linked"
-/usr/bin/git -C "$UNT_PEER" add actual linked
-/usr/bin/git -C "$UNT_PEER" commit -q -m 'peer adds directory symlink'
-/usr/bin/git -C "$UNT_PEER" push -q origin main
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" add actual linked
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" commit -q -m 'peer adds directory symlink'
+"$TEST_NATIVE_GIT" -C "$UNT_PEER" push -q origin main
 unt_link_rc=0
-unt_link_output=$(AIDEVOPS_REAL_GIT_BIN=/usr/bin/git AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
+unt_link_output=$(AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" AIDEVOPS_DIRTY_BACKUP_ROOT="$UNT_BACKUPS" \
 	bash "$HELPER" fast-forward-current --repo "$UNT_REPO" --branch main --issue 34770 \
 	--confirm FAST_FORWARD_CANONICAL_BRANCH 2>&1) || unt_link_rc=$?
 unt_link_backup=$(backup_id_from_output "$unt_link_output" || true)

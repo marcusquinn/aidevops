@@ -25,6 +25,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
@@ -82,17 +90,17 @@ teardown_test_env() {
 create_git_fixture_repo() {
 	local repo_path="$1"
 	mkdir -p "$repo_path"
-	/usr/bin/git -C "$repo_path" init -q
-	/usr/bin/git -C "$repo_path" config user.name "Triage Test"
-	/usr/bin/git -C "$repo_path" config user.email "triage-test@example.invalid"
+	"$TEST_NATIVE_GIT" -C "$repo_path" init -q
+	"$TEST_NATIVE_GIT" -C "$repo_path" config user.name "Triage Test"
+	"$TEST_NATIVE_GIT" -C "$repo_path" config user.email "triage-test@example.invalid"
 	return 0
 }
 
 commit_git_fixture() {
 	local repo_path="$1"
 	local commit_message="$2"
-	/usr/bin/git -C "$repo_path" add -A
-	/usr/bin/git -C "$repo_path" -c commit.gpgSign=false commit -q -m "$commit_message"
+	"$TEST_NATIVE_GIT" -C "$repo_path" add -A
+	"$TEST_NATIVE_GIT" -C "$repo_path" -c commit.gpgSign=false commit -q -m "$commit_message"
 	return 0
 }
 
@@ -174,7 +182,7 @@ run_cited_evidence_status() {
 	esac
 	commit_git_fixture "$fake_repo" "test: add bounded evidence fixture"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	load_evidence_helpers
 
 	local issue_json='{"title":"bounded evidence","createdAt":"2000-01-01T00:00:00Z"}'
@@ -267,7 +275,7 @@ test_fetch_evidence_populates_recent_commits() {
 	issue_json='{"title":"update foo logic","createdAt":"2026-04-01T00:00:00Z"}'
 	local issue_body="Issue at scripts/foo.sh:5"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 
 	local merged_prs="" recent_commits="" file_contents=""
 	_triage_fetch_evidence_sections \
@@ -307,7 +315,7 @@ test_fetch_evidence_populates_file_contents() {
 	issue_json='{"title":"check fixture content","createdAt":"2026-04-01T00:00:00Z"}'
 	local issue_body="Problem at scripts/fixture.sh:5"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 
 	local merged_prs="" recent_commits="" file_contents=""
 	_triage_fetch_evidence_sections \
@@ -421,7 +429,7 @@ test_fetch_evidence_rejects_traversal_and_symlinks() {
 	ln -s "$outside_dir" "${fake_repo}/linked-dir"
 	commit_git_fixture "$fake_repo" "test: add symlink fixtures"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 
 	load_evidence_helpers
 
@@ -455,19 +463,19 @@ test_fetch_evidence_excludes_unpublished_head() {
 	printf '%s\n' 'SAFE_PUBLIC_CONTENT' >"${fake_repo}/scripts/public.sh"
 	commit_git_fixture "$fake_repo" "test: public commit"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	local public_blob=""
-	public_blob=$(/usr/bin/git -C "$fake_repo" rev-parse \
+	public_blob=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse \
 		"${public_revision}:scripts/public.sh")
 	printf '%s\n' 'UNPUBLISHED_LOCAL_CONTENT_SENTINEL' >"${fake_repo}/scripts/public.sh"
 	commit_git_fixture "$fake_repo" "UNPUBLISHED_LOCAL_COMMIT_SENTINEL"
 	local unpublished_revision=""
-	unpublished_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	unpublished_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	local unpublished_blob=""
-	unpublished_blob=$(/usr/bin/git -C "$fake_repo" rev-parse \
+	unpublished_blob=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse \
 		"${unpublished_revision}:scripts/public.sh")
-	/usr/bin/git -C "$fake_repo" replace "$public_revision" "$unpublished_revision"
-	/usr/bin/git -C "$fake_repo" replace "$public_blob" "$unpublished_blob"
+	"$TEST_NATIVE_GIT" -C "$fake_repo" replace "$public_revision" "$unpublished_revision"
+	"$TEST_NATIVE_GIT" -C "$fake_repo" replace "$public_blob" "$unpublished_blob"
 
 	load_evidence_helpers
 	local issue_json='{"title":"public revision pin","createdAt":"2000-01-01T00:00:00Z"}'
@@ -502,13 +510,13 @@ test_fetch_evidence_ignores_local_grafts() {
 	printf '%s\n' 'SAFE_PUBLIC_CONTENT' >"${fake_repo}/scripts/public.sh"
 	commit_git_fixture "$fake_repo" "test: public graft anchor"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	printf '%s\n' 'UNPUBLISHED_GRAFT_CONTENT_SENTINEL' >"${fake_repo}/scripts/public.sh"
-	/usr/bin/git -C "$fake_repo" add -A
+	"$TEST_NATIVE_GIT" -C "$fake_repo" add -A
 	local graft_tree="" graft_revision=""
-	graft_tree=$(/usr/bin/git -C "$fake_repo" write-tree)
+	graft_tree=$("$TEST_NATIVE_GIT" -C "$fake_repo" write-tree)
 	graft_revision=$(printf '%s\n' 'UNPUBLISHED_GRAFT_HISTORY_SENTINEL' \
-		| /usr/bin/git -C "$fake_repo" commit-tree "$graft_tree")
+		| "$TEST_NATIVE_GIT" -C "$fake_repo" commit-tree "$graft_tree")
 	mkdir -p "${fake_repo}/.git/info"
 	printf '%s %s\n' "$public_revision" "$graft_revision" \
 		>"${fake_repo}/.git/info/grafts"
@@ -549,7 +557,7 @@ test_fetch_evidence_ignores_shallow_boundaries() {
 	printf '%s\n' 'SAFE_CURRENT_CONTENT' >"${fake_repo}/scripts/public.sh"
 	commit_git_fixture "$fake_repo" "test: current public revision"
 	local public_revision=""
-	public_revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	public_revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	printf '%s\n' "$public_revision" >"${fake_repo}/.git/shallow"
 
 	load_evidence_helpers
@@ -623,7 +631,7 @@ test_fetch_evidence_rejects_post_validation_symlink_swap() {
 
 	load_evidence_helpers
 	local revision=""
-	revision=$(/usr/bin/git -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
+	revision=$("$TEST_NATIVE_GIT" -C "$fake_repo" rev-parse --verify 'HEAD^{commit}')
 	rm -f "$race_target"
 	ln -s "$outside_file" "$race_target"
 	local file_contents=""

@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 GIT_SHIM="${SCRIPT_DIR}/git"
 TEST_ROOT=$(mktemp -d)
@@ -45,28 +53,28 @@ teardown() {
 trap teardown EXIT
 
 mkdir -p "$REPO" "$SHIM_BIN"
-/usr/bin/git -C "$REPO" init -q -b main
-/usr/bin/git -C "$REPO" config user.name Test
-/usr/bin/git -C "$REPO" config user.email test@example.invalid
-/usr/bin/git -C "$REPO" config commit.gpgsign false
+"$TEST_NATIVE_GIT" -C "$REPO" init -q -b main
+"$TEST_NATIVE_GIT" -C "$REPO" config user.name Test
+"$TEST_NATIVE_GIT" -C "$REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$REPO" config commit.gpgsign false
 # The canonical Git guard identifies managed roots via .aidevops.json or the
 # repository registry. Keep this fixture explicitly managed so the direct-prune
 # assertion does not depend on the developer's personal repos.json.
 printf '{}\n' >"${REPO}/.aidevops.json"
 printf 'seed\n' >"${REPO}/README.md"
-/usr/bin/git -C "$REPO" add README.md
-/usr/bin/git -C "$REPO" commit -q -m seed
-/usr/bin/git -C "$REPO" worktree add -q -b feature/prune-test "$LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/prune-failure "$FAILED_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-success "$RECOVERABLE_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-missing "$RECOVERABLE_MISSING_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-move-failure "$MOVE_FAILED_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-prune-failure "$PRUNE_FAILED_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-remove-failure "$REMOVE_FAILED_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-dirty "$DIRTY_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-ownership "$OWNERSHIP_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-integration "$INTEGRATION_LINKED"
-/usr/bin/git -C "$REPO" worktree add -q -b feature/recoverable-home-archive "$RECOVERABLE_FALLBACK_SOURCE"
+"$TEST_NATIVE_GIT" -C "$REPO" add README.md
+"$TEST_NATIVE_GIT" -C "$REPO" commit -q -m seed
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/prune-test "$LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/prune-failure "$FAILED_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-success "$RECOVERABLE_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-missing "$RECOVERABLE_MISSING_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-move-failure "$MOVE_FAILED_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-prune-failure "$PRUNE_FAILED_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-remove-failure "$REMOVE_FAILED_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-dirty "$DIRTY_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-ownership "$OWNERSHIP_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-integration "$INTEGRATION_LINKED"
+"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-home-archive "$RECOVERABLE_FALLBACK_SOURCE"
 ln -s "$GIT_SHIM" "${SHIM_BIN}/git"
 
 if PATH="$TEST_PATH" git -C "$REPO" worktree prune >/dev/null 2>&1; then
@@ -84,7 +92,7 @@ if ! output=$(
 	exit 1
 fi
 
-if /usr/bin/git -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $LINKED" >/dev/null; then
 	printf 'FAIL linked worktree metadata remains after helper removal\n'
 	exit 1
 fi
@@ -97,11 +105,11 @@ if [[ "$*" == *"worktree prune"* ]]; then
 	exit 1
 fi
 if [[ "$*" == *"worktree list --porcelain -z"* ]]; then
-	/usr/bin/git "$@" || exit 1
+	"$TEST_NATIVE_GIT" "$@" || exit 1
 	printf 'worktree %s\n\n' "${FAILED_LINKED_FOR_TEST:?}"
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 chmod +x "$FAILING_GIT"
 
@@ -125,7 +133,7 @@ cat >"$QUERY_FAILING_GIT" <<'EOF'
 if [[ "$*" == *"worktree list --porcelain"* ]]; then
 	exit 1
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 chmod +x "$QUERY_FAILING_GIT"
 # shellcheck source=../audit-worktree-removal-helper.sh
@@ -153,7 +161,7 @@ if [[ "$*" == *"worktree list --porcelain -z"* ]]; then
 	esac
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 chmod +x "$MALFORMED_QUERY_GIT"
 for malformed_query_mode in missing-identity empty-head empty-branch whitespace-head invalid-head \
@@ -182,7 +190,7 @@ if [[ "$*" == *"worktree list --porcelain -z"* ]]; then
 		"${ALIAS_QUERY_PHYSICAL:?}"
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 chmod +x "$ALIAS_QUERY_GIT"
 if ! ALIAS_QUERY_PHYSICAL="$alias_physical_target" \
@@ -223,7 +231,7 @@ if [[ "$*" == *"worktree prune"* ]]; then
 	: >"${POST_PRUNE_MARKER_FOR_TEST:?}"
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 chmod +x "$POST_PRUNE_QUERY_FAILING_GIT"
 if AIDEVOPS_REAL_GIT_BIN="$POST_PRUNE_QUERY_FAILING_GIT" \
@@ -246,7 +254,7 @@ printf 'PASS post-prune metadata query failure cannot report cleanup success\n'
 # candidate must be moved recoverably, metadata must be proven absent, and only
 # then may the stable completion event be emitted.
 git() {
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 is_registered_canonical() {
@@ -256,7 +264,7 @@ is_registered_canonical() {
 }
 worktree_has_changes() {
 	local worktree_path="$1"
-	if /usr/bin/git -C "$worktree_path" status --porcelain 2>/dev/null | grep -q .; then
+	if "$TEST_NATIVE_GIT" -C "$worktree_path" status --porcelain 2>/dev/null | grep . >/dev/null; then
 		return 0
 	fi
 	return 1
@@ -349,7 +357,7 @@ missing_recovery_output=$(
 	printf 'FAIL absent recoverable source did not complete metadata cleanup: %s\n' "$missing_recovery_output"
 	exit 1
 }
-if /usr/bin/git -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $RECOVERABLE_MISSING_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $RECOVERABLE_MISSING_LINKED" >/dev/null; then
 	printf 'FAIL absent recoverable source left exact Git worktree metadata registered\n'
 	exit 1
 fi
@@ -369,7 +377,7 @@ recovery_output=$(
 	printf 'FAIL recoverable cleanup left original candidate path in place\n'
 	exit 1
 }
-if /usr/bin/git -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $RECOVERABLE_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $RECOVERABLE_LINKED" >/dev/null; then
 	printf 'FAIL recoverable cleanup left exact Git worktree metadata registered\n'
 	exit 1
 fi
@@ -436,7 +444,7 @@ fi
 	printf 'FAIL metadata prune failure emitted completion or left an irreversible state\n'
 	exit 1
 }
-if /usr/bin/git -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $PRUNE_FAILED_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $PRUNE_FAILED_LINKED" >/dev/null; then
 	printf 'FAIL native Git removal left stale metadata before verification failed\n'
 	exit 1
 fi
@@ -463,7 +471,7 @@ fi
 	printf 'FAIL native removal failure lost its source or emitted completion\n'
 	exit 1
 }
-remove_failure_metadata=$(/usr/bin/git -C "$REPO" worktree list --porcelain) || exit 1
+remove_failure_metadata=$("$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain) || exit 1
 printf '%s\n' "$remove_failure_metadata" | grep -Fqx "worktree $REMOVE_FAILED_LINKED" || {
 	printf 'FAIL native removal failure pruned exact metadata\n'
 	exit 1
@@ -569,7 +577,7 @@ integration_output=$(
 	printf 'FAIL integrated degraded cleanup did not emit one verified completion event: %s\n' "$integration_output"
 	exit 1
 }
-if /usr/bin/git -C "$REPO" worktree list --porcelain | grep -Fqx "worktree $INTEGRATION_LINKED"; then
+if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree $INTEGRATION_LINKED" >/dev/null; then
 	printf 'FAIL integrated degraded cleanup left exact metadata registered\n'
 	exit 1
 fi

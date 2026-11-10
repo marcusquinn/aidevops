@@ -17,6 +17,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh"
 
@@ -153,7 +161,7 @@ if [[ "\${1:-}" == "clone" ]]; then
 fi
 
 # Pass-through for other git commands
-/usr/bin/git "\$@"
+"$TEST_NATIVE_GIT" "\$@"
 GITEOF
 	chmod +x "${TEST_ROOT}/bin/git"
 	return 0

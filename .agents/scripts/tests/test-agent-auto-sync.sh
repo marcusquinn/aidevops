@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit
 GITHUB_HELPER="$REPO_ROOT/.agents/scripts/github-cli-helper.sh"
@@ -197,7 +205,7 @@ fi
 if [[ "${MOCK_GIT_STATUS_FAIL:-0}" == "1" && "$repo_root" == "${SYNC_FIXTURE_REPO:-}" && "$*" == *" status "* ]]; then
 	exit 128
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 EOF
 	chmod +x "$git_path"
 	return 0
@@ -608,11 +616,11 @@ test_merge_sync_skips_dirty_canonical_mirror() {
 	local output=""
 	active_before=$(cd "$TEST_HOME/.aidevops/agents" && pwd -P)
 	printf '%s\n' '# unexpected canonical edit' >>"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh"
-	dirty_blob_before=$(/usr/bin/git hash-object "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh")
+	dirty_blob_before=$("$TEST_NATIVE_GIT" hash-object "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh")
 	output=$(invoke_github_sync "marcusquinn/aidevops" 2>&1)
 	active_after=$(cd "$TEST_HOME/.aidevops/agents" && pwd -P)
-	dirty_blob_after=$(/usr/bin/git hash-object "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh")
-	/usr/bin/git -C "$TEST_DIR/repo" checkout -- .agents/scripts/deploy-agents-on-merge.sh
+	dirty_blob_after=$("$TEST_NATIVE_GIT" hash-object "$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh")
+	"$TEST_NATIVE_GIT" -C "$TEST_DIR/repo" checkout -- .agents/scripts/deploy-agents-on-merge.sh
 
 	if [[ ! -s "$TEST_DIR/sync.log" && ! -s "$TEST_DIR/recovery.log" &&
 		"$active_before" == "$active_after" && "$dirty_blob_before" == "$dirty_blob_after" &&

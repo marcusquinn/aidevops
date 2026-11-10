@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${TEST_DIR}/../local-branch-cleanup-helper.sh"
 ROOT="${PWD}/.agents/tmp/test-local-branch-cleanup.$$"
@@ -106,9 +114,9 @@ git -C "$REPO" branch race
 cat >"$BIN/git" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == *'update-ref -d refs/heads/race'* ]]; then
-  "${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}" -C "$TEST_REPO" update-ref refs/heads/race "$TEST_NEW_SHA"
+  "${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}" -C "$TEST_REPO" update-ref refs/heads/race "$TEST_NEW_SHA"
 fi
-exec "${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}" "$@"
+exec "${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}" "$@"
 STUB
 chmod +x "$BIN/git"
 test_commit advance

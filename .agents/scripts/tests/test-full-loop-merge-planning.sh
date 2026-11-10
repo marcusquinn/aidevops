@@ -19,12 +19,12 @@ fi
 handoff_state_digest() {
 	local repo="$1"
 	{
-		/usr/bin/git -C "$repo" rev-parse HEAD
-		/usr/bin/git -C "$repo" ls-files -s
-		/usr/bin/git -C "$repo" diff --binary
-		/usr/bin/git -C "$repo" diff --cached --binary
-		/usr/bin/git -C "$repo" status --porcelain=v1 --untracked-files=all
-	} | /usr/bin/git -C "$repo" hash-object --stdin
+		"$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD
+		"$TEST_NATIVE_GIT" -C "$repo" ls-files -s
+		"$TEST_NATIVE_GIT" -C "$repo" diff --binary
+		"$TEST_NATIVE_GIT" -C "$repo" diff --cached --binary
+		"$TEST_NATIVE_GIT" -C "$repo" status --porcelain=v1 --untracked-files=all
+	} | "$TEST_NATIVE_GIT" -C "$repo" hash-object --stdin
 	return $?
 }
 
@@ -39,23 +39,23 @@ create_planning_handoff_fixture() {
 	HANDOFF_SOURCE_HEAD=""
 	HANDOFF_PUBLISHED_COMMIT=""
 	mkdir -p "$HANDOFF_ROOT" || return 1
-	/usr/bin/git init --bare --initial-branch=main "${HANDOFF_ROOT}/remote.git" >/dev/null 2>&1 || return 1
-	/usr/bin/git clone "${HANDOFF_ROOT}/remote.git" "$HANDOFF_REPO" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$HANDOFF_REPO" config user.email test@test.local || return 1
-	/usr/bin/git -C "$HANDOFF_REPO" config user.name Test || return 1
-	/usr/bin/git -C "$HANDOFF_REPO" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" init --bare --initial-branch=main "${HANDOFF_ROOT}/remote.git" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" clone "${HANDOFF_ROOT}/remote.git" "$HANDOFF_REPO" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" config user.email test@test.local || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" config commit.gpgsign false || return 1
 	printf '# Tasks\n' >"${HANDOFF_REPO}/TODO.md"
 	printf 'base\n' >"${HANDOFF_REPO}/README.md"
-	/usr/bin/git -C "$HANDOFF_REPO" add TODO.md README.md || return 1
-	/usr/bin/git -C "$HANDOFF_REPO" commit -q -m seed || return 1
-	/usr/bin/git -C "$HANDOFF_REPO" push -q origin main || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" add TODO.md README.md || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" commit -q -m seed || return 1
+	"$TEST_NATIVE_GIT" -C "$HANDOFF_REPO" push -q origin main || return 1
 	printf '%s\n' '- [ ] t900 checkout-free handoff ref:GH#900' >>"${HANDOFF_REPO}/TODO.md"
 	cp "${HANDOFF_REPO}/TODO.md" "${HANDOFF_ROOT}/expected-TODO.md" || return 1
 	publication_output=$(
 		SCRIPT_DIR="$scripts_dir"
 		# shellcheck source=../planning-publisher.sh
 		source "${scripts_dir}/planning-publisher.sh"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$HANDOFF_RECEIPT_DIR" \
 			AIDEVOPS_PLANNING_WRITE_RECEIPT=true \
@@ -98,6 +98,14 @@ run_handoff_readiness() {
 	cat >"$tmp_runner" <<RUNNER_EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR='${scripts_dir}'
 HEADLESS=true
 source '${scripts_dir}/shared-constants.sh'
@@ -125,7 +133,7 @@ RUNNER_EOF
 	chmod +x "$tmp_runner"
 	env PATH="${TEST_ROOT}/bin:/usr/bin:/bin:/opt/homebrew/bin:${PATH}" \
 		HANDOFF_EXPECTED_HEAD="$expected_head" \
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 		AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -159,8 +167,8 @@ test_checkout_free_publication_readiness_handoff() {
 	ordinary_receipts="$HANDOFF_RECEIPT_DIR"
 	ordinary_head="$HANDOFF_PUBLISHED_COMMIT"
 	printf 'ordinary local commit\n' >>"${ordinary_repo}/README.md"
-	/usr/bin/git -C "$ordinary_repo" add README.md
-	/usr/bin/git -C "$ordinary_repo" commit -q -m 'ordinary local drift'
+	"$TEST_NATIVE_GIT" -C "$ordinary_repo" add README.md
+	"$TEST_NATIVE_GIT" -C "$ordinary_repo" commit -q -m 'ordinary local drift'
 	run_handoff_readiness "$ordinary_repo" "$ordinary_receipts" "$ordinary_head" >/dev/null 2>&1 || ordinary_rc=$?
 	print_result "planning handoff: ordinary unpushed local commit remains blocked" "$((ordinary_rc == 0 ? 1 : 0))"
 
@@ -168,14 +176,14 @@ test_checkout_free_publication_readiness_handoff() {
 	advanced_repo="$HANDOFF_REPO"
 	advanced_receipts="$HANDOFF_RECEIPT_DIR"
 	advanced_root="$HANDOFF_ROOT"
-	/usr/bin/git clone "${advanced_root}/remote.git" "${advanced_root}/competitor" >/dev/null 2>&1 || return 0
-	/usr/bin/git -C "${advanced_root}/competitor" config user.email test@test.local
-	/usr/bin/git -C "${advanced_root}/competitor" config user.name Test
-	/usr/bin/git -C "${advanced_root}/competitor" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" clone "${advanced_root}/remote.git" "${advanced_root}/competitor" >/dev/null 2>&1 || return 0
+	"$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" config user.email test@test.local
+	"$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" config user.name Test
+	"$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" config commit.gpgsign false
 	printf 'remote advancement\n' >>"${advanced_root}/competitor/README.md"
-	/usr/bin/git -C "${advanced_root}/competitor" commit -q -am 'advance remote head'
-	/usr/bin/git -C "${advanced_root}/competitor" push -q origin main
-	advanced_head=$(/usr/bin/git -C "${advanced_root}/competitor" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" commit -q -am 'advance remote head'
+	"$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" push -q origin main
+	advanced_head=$("$TEST_NATIVE_GIT" -C "${advanced_root}/competitor" rev-parse HEAD)
 	run_handoff_readiness "$advanced_repo" "$advanced_receipts" "$advanced_head" >/dev/null 2>&1 || advanced_rc=$?
 	print_result "planning handoff: advanced remote PR head makes receipt stale" "$((advanced_rc == 0 ? 1 : 0))"
 	return 0
@@ -189,7 +197,7 @@ run_prospective_todo_guard() {
 	local remote_url="${5:-https://github.com/testorg/testrepo.git}"
 	local reported_repo="${6:-testorg/testrepo}"
 	local caller_context="${7:-$fixture_dir}"
-	local real_git_bin="${8:-/usr/bin/git}"
+	local real_git_bin="${8:-${TEST_NATIVE_GIT}}"
 	local scripts_dir="${SCRIPT_DIR}/.."
 	local tmp_runner=""
 	local verification_tmp="${fixture_dir}/verification-tmp"
@@ -211,7 +219,7 @@ run_prospective_todo_guard() {
 	# shellcheck disable=SC2016  # The generated driver expands this at execution time.
 	printf '%s\n' '#!/usr/bin/env bash' ': >"${AIDEVOPS_TEST_MERGE_DRIVER_MARKER:?}"' 'exit 1' >"$driver_script"
 	chmod +x "$driver_script"
-	HOME="$attacker_home" /usr/bin/git config --global merge.aidevops-test.driver \
+	HOME="$attacker_home" "$TEST_NATIVE_GIT" config --global merge.aidevops-test.driver \
 		"${driver_script} %O %A %B"
 	rm -f "$driver_marker"
 	tmp_runner=$(mktemp)
@@ -260,9 +268,9 @@ prospective_hostile_git_environment_clean() {
 prospective_git_storage_digest() {
 	local fixture_dir="$1"
 	{
-		/usr/bin/git -C "$fixture_dir" count-objects -v
-		/usr/bin/git -C "$fixture_dir" for-each-ref --format='%(refname) %(objectname)'
-	} | /usr/bin/git -C "$fixture_dir" hash-object --stdin
+		"$TEST_NATIVE_GIT" -C "$fixture_dir" count-objects -v
+		"$TEST_NATIVE_GIT" -C "$fixture_dir" for-each-ref --format='%(refname) %(objectname)'
+	} | "$TEST_NATIVE_GIT" -C "$fixture_dir" hash-object --stdin
 	return $?
 }
 
@@ -272,27 +280,27 @@ create_prospective_fixture() {
 	mkdir -p "$fixture_dir"
 	(
 		cd "$fixture_dir" || exit 1
-		/usr/bin/git init -q
-		/usr/bin/git config user.email test@test.local
-		/usr/bin/git config user.name Test
-		/usr/bin/git config commit.gpgsign false
+		"$TEST_NATIVE_GIT" init -q
+		"$TEST_NATIVE_GIT" config user.email test@test.local
+		"$TEST_NATIVE_GIT" config user.name Test
+		"$TEST_NATIVE_GIT" config commit.gpgsign false
 		printf 'TODO.md merge=aidevops-test\n' >.gitattributes
 		printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n' >TODO.md
-		/usr/bin/git add .gitattributes TODO.md
-		/usr/bin/git commit -q -m root
+		"$TEST_NATIVE_GIT" add .gitattributes TODO.md
+		"$TEST_NATIVE_GIT" commit -q -m root
 		local root_sha=""
-		root_sha=$(/usr/bin/git rev-parse HEAD)
+		root_sha=$("$TEST_NATIVE_GIT" rev-parse HEAD)
 		printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n- [ ] t2 Base addition ref:GH#2\n\n## Branch tasks\n' >TODO.md
-		/usr/bin/git commit -q -am base
-		/usr/bin/git rev-parse HEAD >base.sha
-		/usr/bin/git checkout -q --detach "$root_sha"
+		"$TEST_NATIVE_GIT" commit -q -am base
+		"$TEST_NATIVE_GIT" rev-parse HEAD >base.sha
+		"$TEST_NATIVE_GIT" checkout -q --detach "$root_sha"
 		if [[ "$mode" == "collision" ]]; then
 			printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n- [ ] t2 Head addition ref:GH#2\n' >TODO.md
 		else
 			printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n- [ ] t3 Unique head addition ref:GH#3\n' >TODO.md
 		fi
-		/usr/bin/git commit -q -am head
-		/usr/bin/git rev-parse HEAD >head.sha
+		"$TEST_NATIVE_GIT" commit -q -am head
+		"$TEST_NATIVE_GIT" rev-parse HEAD >head.sha
 	)
 	printf '%s\n' "$fixture_dir"
 	return 0
@@ -307,49 +315,49 @@ create_prospective_fetch_fixture() {
 	local caller="${fixture_root}/caller"
 	local root_sha="" base_sha="" head_sha=""
 	mkdir -p "$fixture_root" || return 1
-	/usr/bin/git init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
 	# Mirror GitHub: partial-clone filters and object-ID wants are supported.
-	/usr/bin/git -C "$remote_repo" config uploadpack.allowFilter true || return 1
-	/usr/bin/git -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
-	/usr/bin/git clone "$remote_repo" "$fixture_dir" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$fixture_dir" config user.email test@test.local || return 1
-	/usr/bin/git -C "$fixture_dir" config user.name Test || return 1
-	/usr/bin/git -C "$fixture_dir" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" -C "$remote_repo" config uploadpack.allowFilter true || return 1
+	"$TEST_NATIVE_GIT" -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
+	"$TEST_NATIVE_GIT" clone "$remote_repo" "$fixture_dir" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" config user.email test@test.local || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" config commit.gpgsign false || return 1
 	# Large history the PR never touches: neither blob may be transferred (GH#32641).
 	head -c 1048576 /dev/urandom >"${fixture_dir}/large.bin" || return 1
-	/usr/bin/git -C "$fixture_dir" add large.bin || return 1
-	/usr/bin/git -C "$fixture_dir" commit -q -m 'large history v1' || return 1
-	/usr/bin/git -C "$fixture_dir" rev-parse HEAD:large.bin >"${fixture_root}/unrelated.blobs" || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" add large.bin || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" commit -q -m 'large history v1' || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" rev-parse HEAD:large.bin >"${fixture_root}/unrelated.blobs" || return 1
 	head -c 1048576 /dev/urandom >"${fixture_dir}/large.bin" || return 1
-	/usr/bin/git -C "$fixture_dir" commit -q -am 'large history v2' || return 1
-	/usr/bin/git -C "$fixture_dir" rev-parse HEAD:large.bin >>"${fixture_root}/unrelated.blobs" || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" commit -q -am 'large history v2' || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" rev-parse HEAD:large.bin >>"${fixture_root}/unrelated.blobs" || return 1
 	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n' >"${fixture_dir}/TODO.md"
-	/usr/bin/git -C "$fixture_dir" add TODO.md || return 1
-	/usr/bin/git -C "$fixture_dir" commit -q -m root || return 1
-	root_sha=$(/usr/bin/git -C "$fixture_dir" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$fixture_dir" push -q origin main || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" add TODO.md || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" commit -q -m root || return 1
+	root_sha=$("$TEST_NATIVE_GIT" -C "$fixture_dir" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" push -q origin main || return 1
 	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n- [ ] t2 Base addition ref:GH#2\n\n## Branch tasks\n' >"${fixture_dir}/TODO.md"
-	/usr/bin/git -C "$fixture_dir" commit -q -am base || return 1
-	base_sha=$(/usr/bin/git -C "$fixture_dir" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$fixture_dir" push -q origin main || return 1
-	/usr/bin/git clone "$remote_repo" "$competitor" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$competitor" config user.email test@test.local || return 1
-	/usr/bin/git -C "$competitor" config user.name Test || return 1
-	/usr/bin/git -C "$competitor" config commit.gpgsign false || return 1
-	/usr/bin/git -C "$competitor" checkout -q --detach "$root_sha" || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" commit -q -am base || return 1
+	base_sha=$("$TEST_NATIVE_GIT" -C "$fixture_dir" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$fixture_dir" push -q origin main || return 1
+	"$TEST_NATIVE_GIT" clone "$remote_repo" "$competitor" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" config user.email test@test.local || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" checkout -q --detach "$root_sha" || return 1
 	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n\n## Branch tasks\n- [ ] t3 Unique head addition ref:GH#3\n' >"${competitor}/TODO.md"
-	/usr/bin/git -C "$competitor" commit -q -am head || return 1
-	head_sha=$(/usr/bin/git -C "$competitor" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$competitor" push -q origin "${head_sha}:refs/pull/42/head" || return 1
-	/usr/bin/git init --bare --initial-branch=main "$caller_remote" >/dev/null 2>&1 || return 1
-	/usr/bin/git clone "$caller_remote" "$caller" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$caller" config user.email test@test.local || return 1
-	/usr/bin/git -C "$caller" config user.name Test || return 1
-	/usr/bin/git -C "$caller" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" commit -q -am head || return 1
+	head_sha=$("$TEST_NATIVE_GIT" -C "$competitor" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$competitor" push -q origin "${head_sha}:refs/pull/42/head" || return 1
+	"$TEST_NATIVE_GIT" init --bare --initial-branch=main "$caller_remote" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" clone "$caller_remote" "$caller" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" config user.email test@test.local || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" config commit.gpgsign false || return 1
 	printf 'unrelated caller repository\n' >"${caller}/README.md"
-	/usr/bin/git -C "$caller" add README.md || return 1
-	/usr/bin/git -C "$caller" commit -q -m root || return 1
-	/usr/bin/git -C "$caller" push -q origin main || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" add README.md || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" commit -q -m root || return 1
+	"$TEST_NATIVE_GIT" -C "$caller" push -q origin main || return 1
 	printf '%s\n' "$base_sha" >"${fixture_root}/base.sha"
 	printf '%s\n' "$head_sha" >"${fixture_root}/head.sha"
 	printf '%s\n' "$remote_repo" >"${fixture_root}/remote.url"
@@ -366,36 +374,36 @@ create_prospective_crisscross_fixture() {
 	local work="${fixture_root}/work"
 	local root_sha="" x_sha="" y_sha="" base_sha="" head_sha=""
 	mkdir -p "${fixture_root}/caller" || return 1
-	/usr/bin/git init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$remote_repo" config uploadpack.allowFilter true || return 1
-	/usr/bin/git -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
-	/usr/bin/git clone "$remote_repo" "$work" >/dev/null 2>&1 || return 1
-	/usr/bin/git -C "$work" config user.email test@test.local || return 1
-	/usr/bin/git -C "$work" config user.name Test || return 1
-	/usr/bin/git -C "$work" config commit.gpgsign false || return 1
+	"$TEST_NATIVE_GIT" init --bare --initial-branch=main "$remote_repo" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$remote_repo" config uploadpack.allowFilter true || return 1
+	"$TEST_NATIVE_GIT" -C "$remote_repo" config uploadpack.allowAnySHA1InWant true || return 1
+	"$TEST_NATIVE_GIT" clone "$remote_repo" "$work" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$work" config user.email test@test.local || return 1
+	"$TEST_NATIVE_GIT" -C "$work" config user.name Test || return 1
+	"$TEST_NATIVE_GIT" -C "$work" config commit.gpgsign false || return 1
 	printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n' >"${work}/TODO.md"
 	printf '{\n "a": 0,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 0\n}\n' >"${work}/settings.json"
-	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m root || return 1
-	root_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$work" add -A && "$TEST_NATIVE_GIT" -C "$work" commit -q -m root || return 1
+	root_sha=$("$TEST_NATIVE_GIT" -C "$work" rev-parse HEAD) || return 1
 	printf '{\n "a": 1,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 0\n}\n' >"${work}/settings.json"
-	/usr/bin/git -C "$work" commit -q -am x || return 1
-	x_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$work" checkout -q --detach "$root_sha" || return 1
+	"$TEST_NATIVE_GIT" -C "$work" commit -q -am x || return 1
+	x_sha=$("$TEST_NATIVE_GIT" -C "$work" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$work" checkout -q --detach "$root_sha" || return 1
 	printf '{\n "a": 0,\n "pad1": 1,\n "pad2": 2,\n "pad3": 3,\n "b": 1\n}\n' >"${work}/settings.json"
-	/usr/bin/git -C "$work" commit -q -am y || return 1
-	y_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$work" checkout -q --detach "$x_sha" || return 1
-	/usr/bin/git -C "$work" merge -q --no-edit "$y_sha" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$work" commit -q -am y || return 1
+	y_sha=$("$TEST_NATIVE_GIT" -C "$work" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$work" checkout -q --detach "$x_sha" || return 1
+	"$TEST_NATIVE_GIT" -C "$work" merge -q --no-edit "$y_sha" >/dev/null 2>&1 || return 1
 	printf 'base side\n' >"${work}/base.txt"
-	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m base || return 1
-	base_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$work" checkout -q --detach "$y_sha" || return 1
-	/usr/bin/git -C "$work" merge -q --no-edit "$x_sha" >/dev/null 2>&1 || return 1
+	"$TEST_NATIVE_GIT" -C "$work" add -A && "$TEST_NATIVE_GIT" -C "$work" commit -q -m base || return 1
+	base_sha=$("$TEST_NATIVE_GIT" -C "$work" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$work" checkout -q --detach "$y_sha" || return 1
+	"$TEST_NATIVE_GIT" -C "$work" merge -q --no-edit "$x_sha" >/dev/null 2>&1 || return 1
 	printf 'head side\n' >"${work}/head.txt"
-	/usr/bin/git -C "$work" add -A && /usr/bin/git -C "$work" commit -q -m head || return 1
-	head_sha=$(/usr/bin/git -C "$work" rev-parse HEAD) || return 1
-	/usr/bin/git -C "$work" push -q origin "${base_sha}:refs/heads/main" || return 1
-	/usr/bin/git -C "$work" push -q origin "${head_sha}:refs/pull/42/head" || return 1
+	"$TEST_NATIVE_GIT" -C "$work" add -A && "$TEST_NATIVE_GIT" -C "$work" commit -q -m head || return 1
+	head_sha=$("$TEST_NATIVE_GIT" -C "$work" rev-parse HEAD) || return 1
+	"$TEST_NATIVE_GIT" -C "$work" push -q origin "${base_sha}:refs/heads/main" || return 1
+	"$TEST_NATIVE_GIT" -C "$work" push -q origin "${head_sha}:refs/pull/42/head" || return 1
 	printf '%s\n' "$base_sha" >"${fixture_root}/base.sha"
 	printf '%s\n' "$head_sha" >"${fixture_root}/head.sha"
 	printf '%s\n' "$remote_repo" >"${fixture_root}/remote.url"
@@ -429,12 +437,12 @@ fi
 if [[ "$subcommand" == "merge-tree" && -n "${AIDEVOPS_TEST_TRANSFER_LOG:-}" ]]; then
 	printf 'checked\n' >>"$AIDEVOPS_TEST_TRANSFER_LOG"
 	while IFS= read -r oid; do
-		if GIT_NO_LAZY_FETCH=1 /usr/bin/git -C "$repo" cat-file -e "$oid" 2>/dev/null; then
+		if GIT_NO_LAZY_FETCH=1 "$TEST_NATIVE_GIT" -C "$repo" cat-file -e "$oid" 2>/dev/null; then
 			printf 'transferred %s\n' "$oid" >>"$AIDEVOPS_TEST_TRANSFER_LOG"
 		fi
 	done <"$AIDEVOPS_TEST_UNRELATED_BLOBS"
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 PROBE_EOF
 	chmod +x "$probe" || return 1
 	printf '%s\n' "$probe"
@@ -562,9 +570,9 @@ test_prospective_todo_merge_guard() {
 	fixture_dir=$(create_prospective_fixture collision)
 	base_sha=$(<"${fixture_dir}/base.sha")
 	head_sha=$(<"${fixture_dir}/head.sha")
-	objects_before=$(/usr/bin/git -C "$fixture_dir" count-objects -v)
+	objects_before=$("$TEST_NATIVE_GIT" -C "$fixture_dir" count-objects -v)
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha") || rc=$?
-	objects_after=$(/usr/bin/git -C "$fixture_dir" count-objects -v)
+	objects_after=$("$TEST_NATIVE_GIT" -C "$fixture_dir" count-objects -v)
 	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
 	prospective_hostile_git_environment_clean "$fixture_dir" || environment_rc=$?
 	[[ "$cleanup_rc" -eq 0 && "$objects_before" == "$objects_after" ]] || isolation_rc=1
@@ -582,9 +590,9 @@ test_prospective_todo_merge_guard() {
 	fixture_dir=$(create_prospective_fixture unique)
 	base_sha=$(<"${fixture_dir}/base.sha")
 	head_sha=$(<"${fixture_dir}/head.sha")
-	objects_before=$(/usr/bin/git -C "$fixture_dir" count-objects -v)
+	objects_before=$("$TEST_NATIVE_GIT" -C "$fixture_dir" count-objects -v)
 	run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" >/dev/null || rc=$?
-	objects_after=$(/usr/bin/git -C "$fixture_dir" count-objects -v)
+	objects_after=$("$TEST_NATIVE_GIT" -C "$fixture_dir" count-objects -v)
 	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
 	prospective_hostile_git_environment_clean "$fixture_dir" || environment_rc=$?
 	[[ "$cleanup_rc" -eq 0 && "$environment_rc" -eq 0 && "$objects_before" == "$objects_after" ]] || isolation_rc=1
@@ -613,10 +621,10 @@ test_prospective_todo_live_fetch_guard() {
 	head_sha=$(<"${fixture_root}/head.sha")
 	remote_url=$(<"${fixture_root}/remote.url")
 	printf 'advance target default branch after PR snapshot\n' >>"${fixture_root}/work/TODO.md"
-	/usr/bin/git -C "${fixture_root}/work" commit -q -am 'advance target main after PR snapshot' || return 0
-	/usr/bin/git -C "${fixture_root}/work" push -q origin main || return 0
+	"$TEST_NATIVE_GIT" -C "${fixture_root}/work" commit -q -am 'advance target main after PR snapshot' || return 0
+	"$TEST_NATIVE_GIT" -C "${fixture_root}/work" push -q origin main || return 0
 	storage_before=$(prospective_git_storage_digest "$fixture_dir")
-	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_before=1; fi
+	if "$TEST_NATIVE_GIT" -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_before=1; fi
 	supervisor_workspace="${fixture_root}/supervisor-workspace"
 	mkdir -p "$supervisor_workspace" || return 0
 	git_probe=$(create_prospective_git_probe) || return 0
@@ -626,7 +634,7 @@ test_prospective_todo_live_fetch_guard() {
 		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
 		"$supervisor_workspace" "$git_probe") || rc=$?
 	storage_after=$(prospective_git_storage_digest "$fixture_dir")
-	if /usr/bin/git -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_after=1; fi
+	if "$TEST_NATIVE_GIT" -C "$fixture_dir" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then absent_after=1; fi
 	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
 	prospective_hostile_git_environment_clean "$fixture_dir" || environment_rc=$?
 	[[ "$rc" -eq 0 && "$cleanup_rc" -eq 0 && "$environment_rc" -eq 0 &&
@@ -649,10 +657,10 @@ test_prospective_todo_live_fetch_guard() {
 		"output=$output"
 
 	rc=0
-	/usr/bin/git -C "$remote_url" config uploadpack.allowFilter false || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" config uploadpack.allowFilter false || return 0
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
 		"$supervisor_workspace") || rc=$?
-	/usr/bin/git -C "$remote_url" config uploadpack.allowFilter true || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" config uploadpack.allowFilter true || return 0
 	print_result "prospective TODO: remote without partial fetch support fails closed" \
 		"$([[ "$rc" -ne 0 && "$output" == *"does not support partial fetch"* ]] && printf '0' || printf '1')" \
 		"output=$output"
@@ -673,8 +681,8 @@ test_prospective_todo_live_fetch_guard() {
 	# remains reachable from an ordinary branch on the same remote.
 	rc=0
 	cleanup_rc=0
-	/usr/bin/git -C "$remote_url" update-ref refs/heads/pr-head-copy "$head_sha" || return 0
-	/usr/bin/git -C "$remote_url" update-ref -d refs/pull/42/head || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref refs/heads/pr-head-copy "$head_sha" || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref -d refs/pull/42/head || return 0
 	: >"$transfer_log"
 	output=$(AIDEVOPS_TEST_TRANSFER_LOG="$transfer_log" AIDEVOPS_TEST_UNRELATED_BLOBS="${fixture_root}/unrelated.blobs" \
 		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
@@ -698,8 +706,8 @@ test_prospective_todo_live_fetch_guard() {
 	print_result "prospective TODO: absent pull ref with an unavailable pinned head fails closed" \
 		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"unable to materialize pinned PR commits"* ]] && printf '0' || printf '1')" \
 		"rc=$rc output=$output"
-	/usr/bin/git -C "$remote_url" update-ref refs/pull/42/head "$head_sha" || return 0
-	/usr/bin/git -C "$remote_url" update-ref -d refs/heads/pr-head-copy || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref refs/pull/42/head "$head_sha" || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref -d refs/heads/pr-head-copy || return 0
 	return 0
 }
 
@@ -711,7 +719,7 @@ test_prospective_todo_stale_pull_ref() {
 	# GH#35304: a successful pull-ref fetch can still return an older commit.
 	rc=0
 	cleanup_rc=0
-	/usr/bin/git -C "$remote_url" update-ref refs/pull/42/head "$base_sha" || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref refs/pull/42/head "$base_sha" || return 0
 	: >"$transfer_log"
 	output=$(AIDEVOPS_TEST_TRANSFER_LOG="$transfer_log" AIDEVOPS_TEST_UNRELATED_BLOBS="${fixture_root}/unrelated.blobs" \
 		run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" live "$remote_url" 'testorg/testrepo' \
@@ -732,7 +740,7 @@ test_prospective_todo_stale_pull_ref() {
 	print_result "prospective TODO: stale pull ref with an unavailable pinned head reports both SHAs" \
 		"$([[ "$rc" -ne 0 && "$cleanup_rc" -eq 0 && "$output" == *"Stale pull ref head ${base_sha} differs from pinned head $(printf 'a%.0s' {1..40}); direct pinned-head fetch failed"* ]] && printf '0' || printf '1')" \
 		"rc=$rc output=$output"
-	/usr/bin/git -C "$remote_url" update-ref -d refs/pull/42/head || return 0
+	"$TEST_NATIVE_GIT" -C "$remote_url" update-ref -d refs/pull/42/head || return 0
 	return 0
 }
 

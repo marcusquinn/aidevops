@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="${SCRIPT_DIR}/../lint-helper.sh"
 TEST_TMP_DIR=""
@@ -26,13 +34,13 @@ assert_equal() {
 make_repo() {
 	local repo_root="$1"
 	mkdir -p "$repo_root"
-	/usr/bin/git -C "$repo_root" init -q
-	/usr/bin/git -C "$repo_root" config user.email test@example.com
-	/usr/bin/git -C "$repo_root" config user.name Test
-	/usr/bin/git -C "$repo_root" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" -C "$repo_root" init -q
+	"$TEST_NATIVE_GIT" -C "$repo_root" config user.email test@example.com
+	"$TEST_NATIVE_GIT" -C "$repo_root" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo_root" config commit.gpgsign false
 	printf '%s\n' '{"scripts":{"lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
 	printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$repo_root/.aidevops.json"
-	/usr/bin/git -C "$repo_root" add package.json
+	"$TEST_NATIVE_GIT" -C "$repo_root" add package.json
 	return 0
 }
 
@@ -46,8 +54,8 @@ main() {
 	make_repo "$repo_one"
 	make_repo "$repo_two"
 	make_repo "$canonical"
-	/usr/bin/git -C "$canonical" add .aidevops.json
-	/usr/bin/git -C "$canonical" commit -q -m fixture
+	"$TEST_NATIVE_GIT" -C "$canonical" add .aidevops.json
+	"$TEST_NATIVE_GIT" -C "$canonical" commit -q -m fixture
 	mkdir -p "${fake_home}/.config/aidevops"
 	jq -n --arg one "$repo_one" --arg two "$repo_two" --arg canonical "$canonical" \
 		'{initialized_repos:[{path:$one,features:[]},{path:$two,features:[]},{path:$canonical,features:["code-quality"]}]}' >"${fake_home}/.config/aidevops/repos.json"
@@ -77,7 +85,7 @@ main() {
 	assert_equal "600" "$(stat -f '%Lp' "$plan_path" 2>/dev/null || stat -c '%a' "$plan_path")" "PR plan protects private repository paths"
 	rm -f "$plan_stderr"
 	local repo_two_common
-	repo_two_common=$(/usr/bin/git -C "$repo_two" rev-parse --git-common-dir)
+	repo_two_common=$("$TEST_NATIVE_GIT" -C "$repo_two" rev-parse --git-common-dir)
 	mkdir -p "${repo_two}/${repo_two_common}/hooks"
 	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${repo_two}/${repo_two_common}/hooks/pre-push"
 	chmod +x "${repo_two}/${repo_two_common}/hooks/pre-push"

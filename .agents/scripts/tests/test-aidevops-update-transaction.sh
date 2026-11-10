@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
@@ -135,7 +143,7 @@ git() {
 			return 42
 		fi
 	done
-	/usr/bin/git "$@"
+	"$TEST_NATIVE_GIT" "$@"
 	return $?
 }
 
@@ -248,20 +256,20 @@ fi
 # stamps and activation stubs stay in the disposable fixture (GH#36372).
 run_lifecycle_only_update_test() (
 	INSTALL_DIR="$TEST_ROOT/lifecycle-repo"
-	/usr/bin/git init -q "$INSTALL_DIR"
-	/usr/bin/git -C "$INSTALL_DIR" config user.name Test
-	/usr/bin/git -C "$INSTALL_DIR" config user.email test@test.local
-	/usr/bin/git -C "$INSTALL_DIR" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" init -q "$INSTALL_DIR"
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" config user.email test@test.local
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" config commit.gpgsign false
 	mkdir -p "$INSTALL_DIR/.agents/worker-lifecycle"
 	printf '1.0.0\n' >"$INSTALL_DIR/VERSION"
 	printf 'SCHEMA_VERSION = 1\n' >"$INSTALL_DIR/.agents/worker-lifecycle/registry.py"
-	/usr/bin/git -C "$INSTALL_DIR" add -A
-	/usr/bin/git -C "$INSTALL_DIR" commit -qm baseline
-	baseline_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" add -A
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -qm baseline
+	baseline_sha=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
 	printf 'SCHEMA_VERSION = 2\n' >"$INSTALL_DIR/.agents/worker-lifecycle/registry.py"
-	/usr/bin/git -C "$INSTALL_DIR" add -A
-	/usr/bin/git -C "$INSTALL_DIR" commit -qm lifecycle
-	lifecycle_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" add -A
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -qm lifecycle
+	lifecycle_sha=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
 	_update_repo_verify_files_changed() { return 1; }
 	_update_check_workflow_drift() { return 0; }
 	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
@@ -276,9 +284,9 @@ run_lifecycle_only_update_test() (
 	VERIFY_SHA=""
 	_update_already_current "$lifecycle_sha" compact || return 1
 	printf '# documentation\n' >"$INSTALL_DIR/README.md"
-	/usr/bin/git -C "$INSTALL_DIR" add -A
-	/usr/bin/git -C "$INSTALL_DIR" commit -qm docs
-	docs_sha=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" add -A
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -qm docs
+	docs_sha=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
 	_update_already_current "$docs_sha" compact || return 1
 	[[ -z "$VERIFY_SHA" ]] || return 1
 	[[ "$(<"$HOME/.aidevops/.deployed-sha")" == "$lifecycle_sha" ]] || return 1
@@ -295,8 +303,8 @@ run_lifecycle_only_update_test() (
 
 	# Exercise the real caller under suppressed errexit, as in the install path.
 	# Keep fetching local and make both hashes equal without touching a remote.
-	/usr/bin/git -C "$INSTALL_DIR" branch -M main
-	/usr/bin/git -C "$INSTALL_DIR" update-ref refs/remotes/origin/main "$docs_sha"
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" branch -M main
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" update-ref refs/remotes/origin/main "$docs_sha"
 	_update_fetch_main() { return 0; }
 	printf '%s\n' "$baseline_sha" >"$HOME/.aidevops/.deployed-sha"
 	SETUP_SHA="$docs_sha"
@@ -334,9 +342,9 @@ VERIFY_FIXTURE_REPO="$TEST_ROOT/verifier-repo"
 VERIFY_FIXTURE_HOME="$TEST_ROOT/verifier-home"
 VERIFY_OLD_ROOT="$VERIFY_FIXTURE_HOME/.aidevops/runtime-bundles/0.9.0-old-fixture/agents"
 mkdir -p "$VERIFY_FIXTURE_REPO/.agents/scripts/setup/modules" "$VERIFY_OLD_ROOT"
-/usr/bin/git init -q -b main "$VERIFY_FIXTURE_REPO"
-/usr/bin/git -C "$VERIFY_FIXTURE_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$VERIFY_FIXTURE_REPO" config user.name Test
+"$TEST_NATIVE_GIT" init -q -b main "$VERIFY_FIXTURE_REPO"
+"$TEST_NATIVE_GIT" -C "$VERIFY_FIXTURE_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$VERIFY_FIXTURE_REPO" config user.name Test
 printf '1.0.0\n' >"$VERIFY_FIXTURE_REPO/VERSION"
 printf '#!/usr/bin/env bash\n' >"$VERIFY_FIXTURE_REPO/aidevops.sh"
 printf 'release helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/version-manager-release.sh"
@@ -344,9 +352,9 @@ printf 'deploy helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/deploy-agents-on
 printf 'manifest helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/runtime-bundle-manifest.sh"
 printf 'verifier helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/runtime-bundle-verifier.sh"
 printf 'agent deploy helper\n' >"$VERIFY_FIXTURE_REPO/.agents/scripts/setup/modules/agent-deploy.sh"
-/usr/bin/git -C "$VERIFY_FIXTURE_REPO" add .
-/usr/bin/git -C "$VERIFY_FIXTURE_REPO" commit -qm "fixture"
-VERIFY_FIXTURE_SHA=$(/usr/bin/git -C "$VERIFY_FIXTURE_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$VERIFY_FIXTURE_REPO" add .
+"$TEST_NATIVE_GIT" -C "$VERIFY_FIXTURE_REPO" commit -qm "fixture"
+VERIFY_FIXTURE_SHA=$("$TEST_NATIVE_GIT" -C "$VERIFY_FIXTURE_REPO" rev-parse HEAD)
 VERIFY_BUNDLE_ID="1.0.0-${VERIFY_FIXTURE_SHA:0:12}-fixture"
 VERIFY_NEW_ROOT="$VERIFY_FIXTURE_HOME/.aidevops/runtime-bundles/$VERIFY_BUNDLE_ID/agents"
 mkdir -p "$VERIFY_NEW_ROOT/scripts/setup/modules"
@@ -419,13 +427,13 @@ verify_aidevops_runtime_bundle_convergence() {
 	return $?
 }
 
-/usr/bin/git init -q -b main "$INSTALL_DIR"
-/usr/bin/git -C "$INSTALL_DIR" config user.email test@example.invalid
-/usr/bin/git -C "$INSTALL_DIR" config user.name Test
+"$TEST_NATIVE_GIT" init -q -b main "$INSTALL_DIR"
+"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" config user.name Test
 printf '0\n' >"$INSTALL_DIR/change.txt"
-/usr/bin/git -C "$INSTALL_DIR" add change.txt VERSION
-/usr/bin/git -C "$INSTALL_DIR" commit -qm "initial"
-OLD_SHA=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" add change.txt VERSION
+"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -qm "initial"
+OLD_SHA=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
 
 if _update_render_changelog "$OLD_SHA" "$OLD_SHA" 1.0.0 >/dev/null; then
 	pass "empty changelog range is non-fatal"
@@ -435,9 +443,9 @@ fi
 
 for commit_number in $(seq 1 25); do
 	printf '%s\n' "$commit_number" >"$INSTALL_DIR/change.txt"
-	/usr/bin/git -C "$INSTALL_DIR" commit -am "t$commit_number: task-prefixed change" -q
+	"$TEST_NATIVE_GIT" -C "$INSTALL_DIR" commit -am "t$commit_number: task-prefixed change" -q
 done
-NEW_SHA=$(/usr/bin/git -C "$INSTALL_DIR" rev-parse HEAD)
+NEW_SHA=$("$TEST_NATIVE_GIT" -C "$INSTALL_DIR" rev-parse HEAD)
 if changelog_output=$(_update_render_changelog "$OLD_SHA" "$NEW_SHA" 1.0.0) &&
 	[[ "$changelog_output" == *"t25: task-prefixed change"* ]] &&
 	[[ "$changelog_output" == *"... and more"* ]]; then
@@ -504,45 +512,45 @@ REAL_HELPER_REPO="$TEST_ROOT/real-helper-repo"
 SETUP_CALLS="$TEST_ROOT/setup-calls"
 CANONICAL_HELPER_CALLS="$TEST_ROOT/canonical-helper-calls"
 UPDATE_HELPER_DIR="$TEST_ROOT/update-helper"
-/usr/bin/git init -q --bare -b main "$INTEGRATION_REMOTE"
-/usr/bin/git init -q -b main "$INTEGRATION_REPO"
-/usr/bin/git -C "$INTEGRATION_REPO" config user.email test@example.invalid
-/usr/bin/git -C "$INTEGRATION_REPO" config user.name Test
+"$TEST_NATIVE_GIT" init -q --bare -b main "$INTEGRATION_REMOTE"
+"$TEST_NATIVE_GIT" init -q -b main "$INTEGRATION_REPO"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" config user.name Test
 printf '1.0.0\n' >"$INTEGRATION_REPO/VERSION"
 printf 'base\n' >"$INTEGRATION_REPO/runtime.txt"
-/usr/bin/git -C "$INTEGRATION_REPO" add VERSION runtime.txt
-/usr/bin/git -C "$INTEGRATION_REPO" commit -qm "initial"
-/usr/bin/git -C "$INTEGRATION_REPO" remote add origin "$INTEGRATION_REMOTE"
-/usr/bin/git -C "$INTEGRATION_REPO" push -qu origin main
-BASE_SHA=$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)
-/usr/bin/git clone -q "$INTEGRATION_REMOTE" "$INTEGRATION_PEER"
-/usr/bin/git -C "$INTEGRATION_PEER" config user.email test@example.invalid
-/usr/bin/git -C "$INTEGRATION_PEER" config user.name Test
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" add VERSION runtime.txt
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" commit -qm "initial"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" remote add origin "$INTEGRATION_REMOTE"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" push -qu origin main
+BASE_SHA=$("$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" rev-parse HEAD)
+"$TEST_NATIVE_GIT" clone -q "$INTEGRATION_REMOTE" "$INTEGRATION_PEER"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" config user.name Test
 printf 'updated\n' >"$INTEGRATION_PEER/runtime.txt"
-/usr/bin/git -C "$INTEGRATION_PEER" commit -am "t18162: task-prefixed update" -q
-/usr/bin/git -C "$INTEGRATION_PEER" push -q origin main
-REMOTE_SHA=$(/usr/bin/git -C "$INTEGRATION_PEER" rev-parse HEAD)
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" commit -am "t18162: task-prefixed update" -q
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" push -q origin main
+REMOTE_SHA=$("$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" rev-parse HEAD)
 
-/usr/bin/git clone -q "$INTEGRATION_REMOTE" "$REAL_HELPER_REPO"
-/usr/bin/git -C "$REAL_HELPER_REPO" reset -q --hard "$BASE_SHA"
-/usr/bin/git -C "$INTEGRATION_PEER" tag -a v1.0.0 -m "release 1.0.0"
-/usr/bin/git -C "$INTEGRATION_PEER" push -q origin refs/tags/v1.0.0
-RELEASE_TAG_OBJECT=$(/usr/bin/git -C "$INTEGRATION_REMOTE" rev-parse refs/tags/v1.0.0)
+"$TEST_NATIVE_GIT" clone -q "$INTEGRATION_REMOTE" "$REAL_HELPER_REPO"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" reset -q --hard "$BASE_SHA"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" tag -a v1.0.0 -m "release 1.0.0"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_PEER" push -q origin refs/tags/v1.0.0
+RELEASE_TAG_OBJECT=$("$TEST_NATIVE_GIT" -C "$INTEGRATION_REMOTE" rev-parse refs/tags/v1.0.0)
 FRAMEWORK_URL="https://github.com/marcusquinn/aidevops.git"
 FRAMEWORK_SSH_URL="ssh://git@github.com/marcusquinn/aidevops.git"
-/usr/bin/git -C "$REAL_HELPER_REPO" config "url.${INTEGRATION_REMOTE}.insteadOf" "$FRAMEWORK_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" config --add "url.${INTEGRATION_REMOTE}.insteadOf" "$FRAMEWORK_SSH_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" remote set-url origin "$FRAMEWORK_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" remote add official-ssh "$FRAMEWORK_SSH_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" remote set-head origin main
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" config "url.${INTEGRATION_REMOTE}.insteadOf" "$FRAMEWORK_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" config --add "url.${INTEGRATION_REMOTE}.insteadOf" "$FRAMEWORK_SSH_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote set-url origin "$FRAMEWORK_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote add official-ssh "$FRAMEWORK_SSH_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote set-head origin main
 INSTALL_DIR="$REAL_HELPER_REPO"
 _AIDEVOPS_UPDATE_HELPER_DIR="$REPO_ROOT/.agents/scripts"
-if AIDEVOPS_REPOS_CONFIG="$TEST_ROOT/missing-repos.json" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_REPOS_CONFIG="$TEST_ROOT/missing-repos.json" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	_update_fetch_main main &&
-	[[ "$(/usr/bin/git -C "$REAL_HELPER_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
-	[[ "$(/usr/bin/git -C "$REAL_HELPER_REPO" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]] &&
-	[[ "$(/usr/bin/git -C "$REAL_HELPER_REPO" rev-parse refs/tags/v1.0.0)" == "$RELEASE_TAG_OBJECT" ]] &&
-	! /usr/bin/git -C "$REAL_HELPER_REPO" show-ref --verify --quiet refs/remotes/official-ssh/main &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" rev-parse refs/tags/v1.0.0)" == "$RELEASE_TAG_OBJECT" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" show-ref --verify --quiet refs/remotes/official-ssh/main &&
 	grep -q '"reason":"aidevops-update"' \
 		"$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" &&
 	grep -q '"expected_slug":"marcusquinn/aidevops"' \
@@ -555,20 +563,20 @@ else
 		"deterministic official identity did not reach the remote tip"
 fi
 
-/usr/bin/git -C "$REAL_HELPER_REPO" reset -q --hard "$BASE_SHA"
-/usr/bin/git -C "$REAL_HELPER_REPO" remote remove origin
-/usr/bin/git -C "$REAL_HELPER_REPO" remote remove official-ssh
-/usr/bin/git -C "$REAL_HELPER_REPO" remote add zeta-official "$FRAMEWORK_SSH_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" remote add alpha-official "$FRAMEWORK_URL"
-/usr/bin/git -C "$REAL_HELPER_REPO" symbolic-ref \
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" reset -q --hard "$BASE_SHA"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote remove origin
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote remove official-ssh
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote add zeta-official "$FRAMEWORK_SSH_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" remote add alpha-official "$FRAMEWORK_URL"
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" symbolic-ref \
 	refs/remotes/alpha-official/HEAD refs/remotes/alpha-official/main
-/usr/bin/git -C "$REAL_HELPER_REPO" symbolic-ref \
+"$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" symbolic-ref \
 	refs/remotes/zeta-official/HEAD refs/remotes/zeta-official/main
-if AIDEVOPS_REPOS_CONFIG="$TEST_ROOT/missing-repos.json" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+if AIDEVOPS_REPOS_CONFIG="$TEST_ROOT/missing-repos.json" AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" \
 	_update_fetch_main main &&
-	[[ "$(/usr/bin/git -C "$REAL_HELPER_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
-	[[ "$(/usr/bin/git -C "$REAL_HELPER_REPO" rev-parse refs/remotes/alpha-official/main)" == "$REMOTE_SHA" ]] &&
-	! /usr/bin/git -C "$REAL_HELPER_REPO" show-ref --verify --quiet refs/remotes/zeta-official/main &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" rev-parse refs/remotes/alpha-official/main)" == "$REMOTE_SHA" ]] &&
+	! "$TEST_NATIVE_GIT" -C "$REAL_HELPER_REPO" show-ref --verify --quiet refs/remotes/zeta-official/main &&
 	grep -q '"remote":"alpha-official"' \
 		"$HOME/.aidevops/logs/canonical-recovery-audit.jsonl"; then
 	pass "framework update selects the first C-locale alias without origin"
@@ -601,13 +609,13 @@ if [[ "$command_name" == "sync-mirror" ]]; then
 		[[ -n "$untracked_path" ]] || continue
 	cp "$repo/$untracked_path" "$HOME/untracked-update-backup/${untracked_path##*/}"
 	rm "$repo/$untracked_path"
-	done < <(/usr/bin/git -C "$repo" ls-files --others --exclude-standard)
+	done < <("$TEST_NATIVE_GIT" -C "$repo" ls-files --others --exclude-standard)
 fi
-/usr/bin/git -C "$repo" fetch --no-tags origin "$branch" --quiet
+"$TEST_NATIVE_GIT" -C "$repo" fetch --no-tags origin "$branch" --quiet
 IFS= read -r version <"$repo/VERSION"
-/usr/bin/git -C "$repo" fetch --no-tags origin \
+"$TEST_NATIVE_GIT" -C "$repo" fetch --no-tags origin \
 	"refs/tags/v${version}:refs/tags/v${version}" --quiet
-/usr/bin/git -C "$repo" merge --ff-only "origin/$branch" --quiet
+"$TEST_NATIVE_GIT" -C "$repo" merge --ff-only "origin/$branch" --quiet
 EOF
 chmod +x "$UPDATE_HELPER_DIR/canonical-recovery-helper.sh"
 export CANONICAL_HELPER_CALLS
@@ -641,10 +649,10 @@ export EDITOR="$EDITOR_SENTINEL" VISUAL="$EDITOR_SENTINEL"
 export GIT_EDITOR="$EDITOR_SENTINEL" GIT_SEQUENCE_EDITOR="$EDITOR_SENTINEL"
 
 INTEGRATION_LINKED="$TEST_ROOT/integration-linked"
-/usr/bin/git -C "$INTEGRATION_REPO" worktree add -q -b linked-update-test "$INTEGRATION_LINKED"
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" worktree add -q -b linked-update-test "$INTEGRATION_LINKED"
 INSTALL_DIR="$INTEGRATION_LINKED"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git _update_fetch_main main &&
-	[[ "$(/usr/bin/git -C "$INTEGRATION_LINKED" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]]; then
+if AIDEVOPS_REAL_GIT_BIN="$TEST_NATIVE_GIT" _update_fetch_main main &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$INTEGRATION_LINKED" rev-parse refs/remotes/origin/main)" == "$REMOTE_SHA" ]]; then
 	pass "linked checkout fetch bypasses the canonical Git guard shim"
 else
 	fail "linked checkout fetch bypasses the canonical Git guard shim" "fetch did not use the resolved Git binary"
@@ -652,7 +660,7 @@ fi
 INSTALL_DIR="$INTEGRATION_REPO"
 
 if integration_output=$(cmd_update --skip-project-sync --compact) &&
-	[[ "$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
+	[[ "$("$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]] &&
 	grep -q -- '--reason aidevops-update' "$CANONICAL_HELPER_CALLS" &&
 	[[ -s "$SETUP_CALLS" ]] &&
 	[[ "$integration_output" == *"t18162: task-prefixed update"* ]] &&
@@ -688,12 +696,12 @@ if dirty_output=$(cmd_update --skip-project-sync --compact 2>&1); then
 	fail "dirty canonical checkout remains non-destructive" "unexpected success"
 elif [[ "$dirty_output" == *"tracked local changes exist"* ]] &&
 	[[ "$(wc -l <"$CANONICAL_HELPER_CALLS")" -eq "$helper_calls_before" ]] &&
-	[[ "$(/usr/bin/git -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]]; then
+	[[ "$("$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" rev-parse HEAD)" == "$REMOTE_SHA" ]]; then
 	pass "dirty canonical checkout remains non-destructive"
 else
 	fail "dirty canonical checkout remains non-destructive" "$dirty_output"
 fi
-/usr/bin/git -C "$INTEGRATION_REPO" checkout -q -- runtime.txt
+"$TEST_NATIVE_GIT" -C "$INTEGRATION_REPO" checkout -q -- runtime.txt
 
 rm "$UPDATE_HELPER_DIR/canonical-recovery-helper.sh"
 if missing_helper_output=$(_update_fetch_main main 2>&1); then

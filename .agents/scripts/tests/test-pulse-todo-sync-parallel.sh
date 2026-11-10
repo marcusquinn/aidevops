@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${TEST_DIR}/.."
 TEST_TMP_PARENT="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
@@ -237,16 +245,16 @@ legacy_remote="${TEST_ROOT}/legacy-remote.git"
 legacy_clone="${TEST_ROOT}/legacy-clone"
 for fixture in "absent:$absent_remote:$absent_clone:README.md" "legacy:$legacy_remote:$legacy_clone:TODO.md"; do
 	IFS=: read -r _fx_name fx_remote fx_clone fx_file <<<"$fixture"
-	/usr/bin/git init --bare --quiet --initial-branch=main "$fx_remote"
-	/usr/bin/git clone --quiet "$fx_remote" "$fx_clone" 2>/dev/null
-	/usr/bin/git -C "$fx_clone" config user.email test@example.com
-	/usr/bin/git -C "$fx_clone" config user.name Test
-	/usr/bin/git -C "$fx_clone" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" init --bare --quiet --initial-branch=main "$fx_remote"
+	"$TEST_NATIVE_GIT" clone --quiet "$fx_remote" "$fx_clone" 2>/dev/null
+	"$TEST_NATIVE_GIT" -C "$fx_clone" config user.email test@example.com
+	"$TEST_NATIVE_GIT" -C "$fx_clone" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$fx_clone" config commit.gpgsign false
 	printf '%s\n' '- [ ] t1 fixture' >"${fx_clone}/${fx_file}"
-	/usr/bin/git -C "$fx_clone" add "$fx_file"
-	/usr/bin/git -C "$fx_clone" commit --quiet -m seed
-	/usr/bin/git -C "$fx_clone" push --quiet origin main
-	/usr/bin/git --git-dir="$fx_remote" symbolic-ref HEAD refs/heads/main
+	"$TEST_NATIVE_GIT" -C "$fx_clone" add "$fx_file"
+	"$TEST_NATIVE_GIT" -C "$fx_clone" commit --quiet -m seed
+	"$TEST_NATIVE_GIT" -C "$fx_clone" push --quiet origin main
+	"$TEST_NATIVE_GIT" --git-dir="$fx_remote" symbolic-ref HEAD refs/heads/main
 done
 STAGE_LOG="${TEST_ROOT}/stages.log"
 export REPOS_JSON="${TEST_ROOT}/planning-repos.json"
