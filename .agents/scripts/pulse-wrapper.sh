@@ -1463,7 +1463,7 @@ main() {
 
 	# GH#4513/t18678: EXIT handler BEFORE the mkdir lock; never on the shared
 	# push_cleanup stack. Rationale: the "main() phase helpers" block below.
-	trap 'release_instance_lock; _pulse_finish_post_dispatch_housekeeping; _pulse_exit_cleanup' EXIT
+	trap '_pulse_exit_cleanup' EXIT
 
 	if ! acquire_instance_lock; then
 		_pulse_run_routines_while_busy "lock-busy"
