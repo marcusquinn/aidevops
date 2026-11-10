@@ -7,12 +7,30 @@ This history covers supported one-point GETs only, not opaque native commands or
 other machines. Server cooldowns remain authoritative for those shared consumers.
 """
 
+import os
+
 
 PRIMARY_PACING = "local primary pacing: time to reset divided by remaining quota"
 # Short parallel bursts may run ahead of the even schedule by at most this many
 # admissions at full quota. The allowance shrinks with the remaining share, so
 # a scarce window is spaced strictly rather than spent in one burst.
 PACING_BURST = 10
+# GH#37570: low-volume, latency-sensitive reads (the worker-bus relay delivering
+# human feedback to live workers) opt in with AIDEVOPS_GH_ADMISSION_CLASS. Bulk
+# demand keeps the shared slot ahead of any short admission wait, so without a
+# class those reads were deferred almost every cycle. The exemption covers only
+# the even-spacing schedule, and only while the available share is at least
+# 1/DELIVERY_FLOOR_DIVISOR of the window; scarce windows pace every caller.
+DELIVERY_CLASS = "delivery"
+DELIVERY_FLOOR_DIVISOR = 4
+
+
+def delivery_exempt(row, reserved):
+    """True when a delivery-class read may skip primary pacing."""
+    if os.environ.get("AIDEVOPS_GH_ADMISSION_CLASS", "") != DELIVERY_CLASS:
+        return False
+    limit = row[4] if row[4] and row[4] > 0 else row[0]
+    return row[0] - reserved >= max(1, limit // DELIVERY_FLOOR_DIVISOR)
 
 
 def capacity_wait(budget, resource, row, reserved, now):
@@ -31,6 +49,10 @@ def capacity_wait(budget, resource, row, reserved, now):
     if count >= 900:
         return "local REST points at GitHub secondary ceiling", oldest + 60
     if not row or row[1] <= now or row[2] > now:
+        return "", now
+    # Delivery reads leave the shared slot untouched; their spend still lowers
+    # the server-reported remaining, which tightens the bulk interval.
+    if delivery_exempt(row, reserved):
         return "", now
     return primary_wait(budget, resource, row, reserved, now)
 

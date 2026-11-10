@@ -139,7 +139,10 @@ _relay_get() {
 	RELAY_FAILURE=""
 	: >"$output"
 	_relay_api_allowed "$context" || return 1
-	if timeout_sec "$RELAY_CALL_TIMEOUT" gh api "$endpoint" >"$output" 2>"$error_file"; then
+	# GH#37570: a few reads per cycle that deliver human feedback to live
+	# workers; the governor exempts them from even-spacing pacing while quota
+	# is healthy (secondary ceilings, cooldowns and exhaustion still apply).
+	if AIDEVOPS_GH_ADMISSION_CLASS=delivery timeout_sec "$RELAY_CALL_TIMEOUT" gh api "$endpoint" >"$output" 2>"$error_file"; then
 		rm -f "$error_file"
 	else
 		rc=$?
