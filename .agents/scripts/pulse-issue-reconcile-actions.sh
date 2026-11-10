@@ -935,7 +935,9 @@ _pir_stranded_normalize_legacy_marker() {
 		return 1
 	fi
 	live_body=$(_pir_stranded_live_body "$slug" "$issue_num") || live_body=""
-	if ! _pir_extract_superseded_issue_nums "$live_body" | grep -qx "$predecessor"; then
+	local verified_nums=""
+	verified_nums=$(_pir_extract_superseded_issue_nums "$live_body") || verified_nums=""
+	if ! grep -qx "$predecessor" <<<"$verified_nums"; then
 		echo "[pulse-wrapper] Reconcile consolidated: legacy marker repair for #${issue_num} in ${slug} not verified (GH#37600)" >>"$LOGFILE"
 		_PIR_STRANDED_REASON="marker_repair_unverified"
 		return 1
