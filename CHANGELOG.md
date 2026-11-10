@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.158] - 2026-11-10
+
+### Fixed
+
+- retain structured transport deferral tokens (#37563)
+
 ## [3.39.157] - 2026-11-10
 
 ### Fixed
