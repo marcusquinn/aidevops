@@ -28,6 +28,7 @@ class CleanupTests(unittest.TestCase):
         self.root.mkdir(mode=0o700)
         self.env = dict(os.environ, AIDEVOPS_TEMP_DIR=str(self.root),
                         AIDEVOPS_LOG_DIR=str(self.base / 'logs'),
+                        XDG_DATA_HOME=str(self.base / 'data'),
                         AIDEVOPS_TMP_MIN_FREE_PERCENT='0', AIDEVOPS_TMP_MIN_FREE_GB='0')
         self.owner = subprocess.Popen(['bash', '-c', 'read -r line'], stdin=subprocess.PIPE)
         # A backend double confines all moves to this test's private directory.
@@ -58,6 +59,15 @@ class CleanupTests(unittest.TestCase):
                                 env=self.env, check=True, text=True, capture_output=True)
         return Path(result.stdout.strip())
 
+    def cross_device_trash(self):
+        if sys.platform.startswith('linux'):
+            # Only device evidence uses this path; the backend double still
+            # confines every move to self.base, never the real user Trash.
+            other = Path('/dev/shm')
+            if not other.is_dir() or other.stat().st_dev == self.root.stat().st_dev:
+                self.skipTest('cross-device Trash requires a second filesystem')
+            self.env['XDG_DATA_HOME'] = str(other)
+
     def cleanup(self, *args):
         return subprocess.run(['bash', str(SCRIPTS / 'system-cleanup.sh'), *args],
                               env=self.env, check=True, text=True, capture_output=True, timeout=10).stdout
@@ -75,11 +85,35 @@ class CleanupTests(unittest.TestCase):
         data = json.loads((path / MANIFEST).read_text())
         self.assertEqual(data['expires'] - data['created'], 86400)
         self.stop_owner()
-        self.assertIn(f'Would trash: {path}', self.cleanup('--dry-run'))
+        linux = sys.platform.startswith('linux')
+        action = 'delete' if linux else 'trash'
+        self.assertIn(f'Would {action}: {path}', self.cleanup('--dry-run'))
         self.assertTrue(path.exists())
+        result = self.cleanup('--force')
+        self.assertIn('pressure=0', result)
+        self.assertIn('deleted=1' if linux else 'trashed=1', result)
+        self.assertFalse(path.exists())
+        self.assertEqual((self.base / 'trash' / path.name).exists(), not linux)
+
+    def test_cross_device_keeps_trash(self):
+        self.cross_device_trash()
+        path = self.create()
+        self.stop_owner()
+        self.assertIn(f'Would trash: {path}', self.cleanup('--dry-run'))
+        result = self.cleanup('--force')
+        self.assertIn('trashed=1 deleted=0', result)
+        self.assertTrue((self.base / 'trash' / path.name).exists())
+
+    def test_existing_same_device_trash_is_not_emptied(self):
+        trash = Path(self.env['XDG_DATA_HOME']) / 'Trash'
+        trash.mkdir(parents=True)
+        unrelated = trash / 'unrelated'
+        unrelated.write_text('user-owned Trash is not ours to empty')
+        path = self.create()
+        self.stop_owner()
         self.cleanup('--force')
         self.assertFalse(path.exists())
-        self.assertTrue((self.base / 'trash' / path.name).exists())
+        self.assertTrue(unrelated.exists())
 
     def test_live_owner_expiry_and_pressure_veto(self):
         path = self.create(age='1s')
@@ -190,6 +224,7 @@ class CleanupTests(unittest.TestCase):
         self.cleanup('--force', '--max-seconds', '1', '--batch-size', '2')
         self.assertFalse(any(self.root.iterdir()))
         # A hung trash process must not consume the pulse's whole preflight.
+        self.cross_device_trash()
         self.owner = subprocess.Popen(['bash', '-c', 'read -r line'], stdin=subprocess.PIPE)
         path = self.create('slow')
         self.stop_owner()
@@ -199,6 +234,7 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(path.exists())
 
     def test_failed_partial_batch_uses_gio(self):
+        self.cross_device_trash()
         paths = [self.create(f'fallback-{n}') for n in range(3)]
         self.stop_owner()
         (self.base / 'bin/trash').write_text(
@@ -217,6 +253,7 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(all((self.base / 'trash' / path.name).exists() for path in paths))
 
     def test_failed_batches_retry_individually_and_retain_failure(self):
+        self.cross_device_trash()
         paths = [self.create(name) for name in ('good', 'blocked')]
         self.stop_owner()
         (self.base / 'bin/trash').write_text(
@@ -233,6 +270,7 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(paths[1].exists())
 
     def test_fallback_rechecks_live_owner(self):
+        self.cross_device_trash()
         path = self.create('revived')
         (path / MANIFEST).rename(self.base / 'live-owner.json')
         self.old(path)
