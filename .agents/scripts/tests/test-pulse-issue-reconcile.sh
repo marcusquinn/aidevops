@@ -211,7 +211,7 @@ test_single_pass_cache_consolidation() {
 	fi
 
 	# (c) all seven _should_* predicates defined in the actions sub-library
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local pred_count
 	pred_count=$(grep -c '^_should_reconcile_persistent_issue()\|^_should_reconcile_external_issue_gate()\|^_should_ciw()\|^_should_rsd()\|^_should_oimp()\|^_should_cpt()\|^_should_lia()' \
 		"${actions_sh}" 2>/dev/null || true)
@@ -268,7 +268,7 @@ test_should_predicates() {
 	# We extract the five _should_* function definitions then call each.
 
 	# Extract all five predicate definitions (stop before the first _action_* helper)
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local pred_defs
 	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${actions_sh}" |
 		grep -v '^_action_ciw_single()' || true)
@@ -349,7 +349,7 @@ test_should_predicates() {
 # Parent mutation gate: live labels and cached holds fail closed.
 # ---------------------------------------------------------------------------
 test_parent_live_hold_gate() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local result=""
 	result=$(ACTIONS_SH="$actions_sh" bash -c '
 		_PIR_NMR_LABEL="needs-maintainer-review"
@@ -430,7 +430,7 @@ test_parent_live_hold_gate() {
 # went stale through lifecycle drift may be closed (only) with graph children.
 # ---------------------------------------------------------------------------
 test_parent_stale_approval_terminal_close() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local stub_dir="" result=""
 	stub_dir=$(mktemp -d)
 	cat >"${stub_dir}/approval-helper.sh" <<'STUB'
@@ -501,7 +501,7 @@ STUB
 # consumed it first, so the stale-approved close basis was unreachable.
 # ---------------------------------------------------------------------------
 test_stage0b_routes_stale_approved_parent_to_stage4() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local stages_fn="" result=""
 	stages_fn=$(sed -n '/^_pir_reconcile_issue_stages()/,/^}/p' "$RECONCILE_SH")
 	result=$(ACTIONS_SH="$actions_sh" STAGES_FN="$stages_fn" bash -c '
@@ -561,7 +561,7 @@ test_stage0b_routes_stale_approved_parent_to_stage4() {
 # Test 8b: mergedAt helper prefers gh_pr_view wrapper when available
 # ---------------------------------------------------------------------------
 test_pr_merged_at_prefers_wrapper() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local helper_defs
 	helper_defs=$(sed -n '/^_pir_pr_merged_at()/,/^}/p' "${actions_sh}")
 
@@ -652,7 +652,7 @@ test_recent_parent_repair_reachable_from_single_pass() {
 }
 
 test_recent_parent_repair_cursor_and_candidate_bounds() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local helper_defs="" tmp_dir="" repos_json="" cursor_file="" result=""
 	local actual_candidates="" expected_candidates="" actual_scans="" expected_scans="" candidate_fixture=""
 	local cycle=0
@@ -1130,7 +1130,7 @@ test_t2985_oimp_lookup_no_prefix_collision() {
 # still uses the 3-arg form.
 # ---------------------------------------------------------------------------
 test_t2985_action_oimp_single_signature() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local all_ok=1
 
 	# 1. _action_oimp_single body must read the 4th arg as oimp_lookup.
@@ -1173,7 +1173,7 @@ test_t2985_action_oimp_single_signature() {
 # Test 15b (GH#25896): consolidated successor closes when superseded issue was fixed
 # ---------------------------------------------------------------------------
 test_gh25896_oimp_closes_consolidated_successor() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir out_file log_file result
 	tmp_dir=$(mktemp -d)
 	out_file="${tmp_dir}/gh.out"
@@ -1221,7 +1221,7 @@ test_gh25896_oimp_closes_consolidated_successor() {
 # Test 15c (GH#32213): superseded evidence requires complete inherited coverage
 # ---------------------------------------------------------------------------
 test_gh32213_oimp_requires_complete_inherited_coverage() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir out_file log_file verify_file verify_log result
 	tmp_dir=$(mktemp -d)
 	out_file="${tmp_dir}/gh.out"
@@ -1278,7 +1278,7 @@ EOF
 # Test 15c2 (GH#33687): merged-PR closes respect the latest reopen lifecycle
 # ---------------------------------------------------------------------------
 test_gh33687_reconcile_close_respects_reopen_lifecycle() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir fix out_file stub dedup result
 	tmp_dir=$(mktemp -d)
 	fix="${tmp_dir}/fix"
@@ -1372,7 +1372,7 @@ EOF
 # Test 15d (GH#27444): recurrent file-size debt uses current outcome
 # ---------------------------------------------------------------------------
 test_gh27444_recurrent_file_size_debt_current_outcome() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir repo_dir repos_json out_file log_file result
 	tmp_dir=$(mktemp -d)
 	repo_dir="${tmp_dir}/repo"
@@ -1480,7 +1480,7 @@ _gh32640_run() {
 }
 
 test_gh32640_ciw_rsd_recurrent_file_size_debt_gate() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
 	local tmp_dir repo_dir repos_json out_file dedup_helper result
 	local debt_body='<!-- aidevops:generator=large-file-simplification-gate cited_file=large.sh threshold=3 -->'
 	tmp_dir=$(mktemp -d)
@@ -1725,7 +1725,7 @@ test_pr_lookup_uncertainty_preserves_issue_state() {
 	local dedup_helper=""
 	local mutation_log=""
 	local action_log=""
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local result=""
 	tmp_dir=$(mktemp -d)
 	dedup_helper="${tmp_dir}/dedup-helper.sh"
@@ -1777,7 +1777,7 @@ EOF
 # is below the mutation reserve (outer stage kill would land mid-action).
 # ---------------------------------------------------------------------------
 test_gh34289_parent_close_deferred_near_budget() {
-	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local logfile=""
 	logfile=$(mktemp)
 	local result=""

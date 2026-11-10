@@ -6,7 +6,7 @@
 set -u
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-target="${script_dir}/pulse-issue-reconcile-actions.sh"
+target="$("${script_dir}/tests/pira-combined-source.sh")"
 failures=0
 
 assert_source() {
