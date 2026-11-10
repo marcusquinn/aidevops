@@ -141,6 +141,61 @@ class AdmissionTests(unittest.TestCase):
         self.budget.finish(probe, "core", headers(), started=1002, now=1003)
         self.assertEqual(self.budget.db.execute("SELECT COUNT(*) FROM reservation").fetchone()[0], 0)
 
+    def test_expired_uncertain_debt_is_retired_before_capacity_check(self):
+        self.seed(1, 1060, "search")
+        for identity, started, state in (("old", 939, 1), ("boundary", 941, 1),
+                                         ("live", 800, 2)):
+            self.budget.db.execute(
+                "INSERT INTO reservation VALUES(?,?,?,?,?,?,?,?)",
+                (identity, "owner-one", "search", started, os.getpid(),
+                 self.budget.birth, "other", state),
+            )
+        with self.assertRaisesRegex(Deferred, "capacity exhausted"):
+            self.budget.acquire("search", now=1001)
+        self.assertEqual({row[0] for row in self.budget.db.execute(
+            "SELECT id FROM reservation")}, {"boundary", "live"})
+
+    def test_missing_quota_expires_only_full_window_old_uncertain_debt(self):
+        for identity, started in (("old", 939), ("boundary", 940)):
+            self.budget.db.execute(
+                "INSERT INTO reservation VALUES(?,?,?,?,?,?,?,1)",
+                (identity, "owner-one", "search", started, os.getpid(),
+                 self.budget.birth, "other"),
+            )
+        self.budget.acquire("search", now=1000)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT COUNT(*) FROM reservation WHERE id='old'").fetchone()[0], 0)
+        self.assertEqual(self.budget.db.execute(
+            "SELECT COUNT(*) FROM reservation WHERE id='boundary'").fetchone()[0], 1)
+
+    def test_stale_reset_still_retires_full_window_old_uncertain_debt(self):
+        self.seed(5, 500, "search")
+        for identity, started in (("old", 939), ("live", 940)):
+            self.budget.db.execute(
+                "INSERT INTO reservation VALUES(?,?,?,?,?,?,?,1)",
+                (identity, "owner-one", "search", started, os.getpid(),
+                 self.budget.birth, "other"),
+            )
+        self.budget.acquire("search", now=1000)
+        self.assertEqual({r[0] for r in self.budget.db.execute(
+            "SELECT id FROM reservation WHERE id IN ('old','live')")}, {"live"})
+
+    def test_foreign_debt_requires_causally_later_same_owner_observation(self):
+        token = self.budget.acquire("core", now=1000)
+        for identity, started, credential in (("covered", 999, "same-owner"),
+                                               ("concurrent", 1000, "same-owner"),
+                                               ("unknown", 999, "unknown-owner")):
+            self.budget.db.execute(
+                "INSERT INTO reservation VALUES(?,?,?,?,?,?,?,1)",
+                (identity, "owner-one", "core", started, os.getpid(),
+                 self.budget.birth, credential),
+            )
+        with patch("gh_transport_budget.credentials_share_proven_owner",
+                   side_effect=lambda directory, pair: pair[1] == "same-owner"):
+            self.budget.finish(token, "core", headers(), started=1000, now=1001)
+        self.assertEqual({row[0] for row in self.budget.db.execute(
+            "SELECT id FROM reservation")}, {"concurrent", "unknown"})
+
     def test_late_header_never_increases_remaining(self):
         self.seed(150)
         token = self.budget.acquire("core", now=1002)
