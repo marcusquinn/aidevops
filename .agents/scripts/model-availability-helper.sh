@@ -64,7 +64,10 @@ RESOLVED_API_KEY_SOURCE=""
 
 # Known providers list (opencode is a meta-provider routing through its gateway;
 # local/ollama are local inference providers with no API key requirement)
-readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode local ollama"
+# claudecli is the Claude Code CLI subscription proxy in OpenCode (not a
+# public HTTP API key provider). Availability is auth.json / runtime, not
+# api.anthropic.com key probes — see model-availability-probe-lib.sh.
+readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode claudecli local ollama"
 
 # OpenCode models cache (from models.dev, refreshed by opencode CLI)
 readonly OPENCODE_MODELS_CACHE="${HOME}/.cache/opencode/models.json"
@@ -103,7 +106,8 @@ get_provider_key_vars() {
 	groq) echo "GROQ_API_KEY" ;;
 	deepseek) echo "DEEPSEEK_API_KEY" ;;
 	opencode) echo "OPENCODE_API_KEY" ;;
-	local | ollama) echo "" ;;
+	# claudecli: Claude CLI subscription via OpenCode plugin/proxy — no env API key.
+	claudecli | local | ollama) echo "" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -113,7 +117,7 @@ get_provider_key_vars() {
 is_known_provider() {
 	local provider="$1"
 	case "$provider" in
-	anthropic | openai | google | openrouter | groq | deepseek | zai-coding-plan | opencode-go | local | ollama) return 0 ;;
+	anthropic | openai | google | openrouter | groq | deepseek | zai-coding-plan | opencode-go | claudecli | local | ollama) return 0 ;;
 	*) return 1 ;;
 	esac
 }

@@ -756,7 +756,11 @@ probe_provider() {
 		_probe_opencode "$quiet"
 		return $?
 	fi
-	if [[ "$provider" == "zai-coding-plan" || "$provider" == "opencode-go" ]]; then
+	# Subscription / CLI-proxy providers: auth lives in OpenCode auth.json (or
+	# the runtime plugin). Do not HTTP-probe public API key endpoints.
+	# claudecli = Claude Code CLI seat used for pulse/OpenCode workers
+	# (2026-11-09 Claude vs GPT bake-off).
+	if [[ "$provider" == "zai-coding-plan" || "$provider" == "opencode-go" || "$provider" == "claudecli" ]]; then
 		_probe_opencode_subscription_provider "$provider" "$quiet"
 		return $?
 	fi
