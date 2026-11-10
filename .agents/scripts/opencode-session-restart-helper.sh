@@ -356,10 +356,14 @@ _manifest_read() {
 _manifest_write() {
 	local json="$1"
 	local tmp cutoff
+	if [[ -z "${json//[[:space:]]/}" ]]; then
+		print_error "Refusing to write an empty restart manifest"
+		return 1
+	fi
 	mkdir -p "$RESTART_STATE_DIR"
 	cutoff=$(($(date +%s) - RESTART_MANIFEST_MAX_AGE))
 	tmp=$(mktemp "${RESTART_STATE_DIR}/manifest.XXXXXX")
-	if ! jq --argjson cutoff "$cutoff" '.entries |= map(select((.stopped_epoch // 0) >= $cutoff))' <<<"$json" >"$tmp"; then
+	if ! jq --argjson cutoff "$cutoff" '.entries |= map(select((.stopped_epoch // 0) >= $cutoff))' <<<"$json" >"$tmp" || [[ ! -s "$tmp" ]]; then
 		rm -f "$tmp"
 		return 1
 	fi
@@ -556,9 +560,19 @@ _parse_stop_args() {
 		case "$arg" in
 		--yes | -y) STOP_YES=true; shift ;;
 		--all) STOP_ALL=true; shift ;;
-		--reason) STOP_REASON="${2:-$RESTART_DEFAULT_REASON}"; shift 2 ;;
-		--session) STOP_SESSIONS+=" ${2:-}"; shift 2 ;;
-		--wait-timeout) OPENCODE_RESTART_WAIT_TIMEOUT=$(_uint_or "${2:-}" "$OPENCODE_RESTART_WAIT_TIMEOUT"); shift 2 ;;
+		--reason | --session | --wait-timeout)
+			if [[ $# -lt 2 ]]; then
+				print_error "Option ${arg} requires a value"
+				return 1
+			fi
+			local optval="${2}"
+			case "$arg" in
+			--reason) STOP_REASON="$optval" ;;
+			--session) STOP_SESSIONS+=" ${optval}" ;;
+			--wait-timeout) OPENCODE_RESTART_WAIT_TIMEOUT=$(_uint_or "$optval" "$OPENCODE_RESTART_WAIT_TIMEOUT") ;;
+			esac
+			shift 2
+			;;
 		--) shift; STOP_REST=("$@"); return 0 ;;
 		*) print_error "Unknown option: $arg"; return 1 ;;
 		esac
@@ -576,7 +590,7 @@ cmd_stop() {
 
 # _stop_targets — body of stop using the parsed STOP_* options.
 _stop_targets() {
-	local rows targets="" row pid sid status last quiet skipped=0 stopped=0 auth=0
+	local rows targets="" row pid sid status last quiet fresh skipped=0 stopped=0 auth=0
 	command -v jq >/dev/null 2>&1 || { print_error "jq is required"; return 1; }
 	rows=$(_inventory_rows "$STOP_ALL")
 	while IFS= read -r row; do
@@ -617,7 +631,16 @@ _stop_targets() {
 			skipped=$((skipped + 1))
 			continue
 		fi
-		if _stop_one "$(_current_row "$pid" "$quiet")" "$STOP_REASON"; then
+		# Re-check idleness right before the signal: a prompt may have arrived
+		# while earlier sessions were being stopped.
+		fresh=$(_current_row "$pid" "$(_inventory_rows "$STOP_ALL")")
+		IFS="$SEP" read -r _ _ status _ last _ <<<"$fresh"
+		if [[ -z "$fresh" ]] || ! _row_is_quiet "$status" "$last"; then
+			print_warning "Session ${sid} (PID ${pid}) became busy before the stop; not stopped"
+			skipped=$((skipped + 1))
+			continue
+		fi
+		if _stop_one "$fresh" "$STOP_REASON"; then
 			stopped=$((stopped + 1))
 		else
 			skipped=$((skipped + 1))
@@ -657,7 +680,7 @@ _tmux() {
 # _relaunch_entry <entry-json> — print the new status for one manifest entry.
 _relaunch_entry() {
 	local entry="$1"
-	local sid kind pane socket cmd
+	local sid kind pane socket cmd pane_cmd
 	sid=$(jq -r '.session_id' <<<"$entry")
 	kind=$(jq -r '.pane_kind // "tty"' <<<"$entry")
 	pane=$(jq -r '.pane // ""' <<<"$entry")
@@ -669,7 +692,9 @@ _relaunch_entry() {
 	fi
 	case "$kind" in
 	tmux)
-		if _tmux "$socket" display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 &&
+		# Only type into a pane that is back at a shell prompt.
+		pane_cmd=$(_tmux "$socket" display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || true)
+		if [[ "$pane_cmd" =~ ^-?(bash|zsh|fish|sh|dash|ksh)$ ]] &&
 			_tmux "$socket" send-keys -t "$pane" -l "$cmd" >/dev/null 2>&1 &&
 			_tmux "$socket" send-keys -t "$pane" Enter >/dev/null 2>&1; then
 			printf 'resumed'
@@ -687,17 +712,32 @@ _relaunch_entry() {
 	return 0
 }
 
+# _entry_still_running <entry-json> — true when a stopping/stop_failed entry's
+# recorded PID is still alive (the TUI has not exited, so nothing to resume).
+_entry_still_running() {
+	local entry="$1"
+	local st pid
+	st=$(jq -r '.status' <<<"$entry")
+	[[ "$st" == stop_failed || "$st" == stop* ]] || return 1
+	[[ "$st" != stopped ]] || return 1
+	pid=$(jq -r '.pid // empty' <<<"$entry")
+	[[ -n "$pid" ]] || return 1
+	_pid_alive "$pid"
+	return $?
+}
+
 cmd_resume() {
 	local manifest entries entry sid status reason stopped when pending=0 resumed=0
 	command -v jq >/dev/null 2>&1 || { print_error "jq is required"; return 1; }
 	manifest=$(_manifest_read)
-	entries=$(jq -c '.entries[] | select(.status == "stopped")' <<<"$manifest")
+	entries=$(jq -c '.entries[] | select(.status | test("^(stopped|stopping|stop_failed)$"))' <<<"$manifest")
 	if [[ -z "$entries" ]]; then
 		print_info "No stopped interactive sessions to resume"
 		return 0
 	fi
 	while IFS= read -r entry; do
 		[[ -n "$entry" ]] || continue
+		_entry_still_running "$entry" && continue
 		sid=$(jq -r '.session_id' <<<"$entry")
 		reason=$(jq -r --arg d "$RESTART_DEFAULT_REASON" '.reason // $d' <<<"$entry")
 		stopped=$(jq -r '.stopped_epoch // 0' <<<"$entry")
@@ -780,9 +820,10 @@ cmd_notice() {
 	local entries entry sid count=0 first=""
 	command -v jq >/dev/null 2>&1 || return 0
 	[[ -f "$RESTART_MANIFEST" ]] || return 0
-	entries=$(jq -c '.entries[]? | select(.status == "pending_manual" or .status == "stopped")' "$RESTART_MANIFEST" 2>/dev/null || true)
+	entries=$(jq -c '.entries[]? | select(.status | test("^(pending_manual|stopped|stopping|stop_failed)$"))' "$RESTART_MANIFEST" 2>/dev/null || true)
 	while IFS= read -r entry; do
 		[[ -n "$entry" ]] || continue
+		_entry_still_running "$entry" && continue
 		sid=$(jq -r '.session_id' <<<"$entry")
 		if _session_live "$sid"; then
 			_manifest_set_status "$sid" resumed >/dev/null 2>&1 || true
