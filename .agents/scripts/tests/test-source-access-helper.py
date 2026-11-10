@@ -49,8 +49,9 @@ class SourceAccessHelperTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        subprocess.run(  # nosec B603 -- fixed Git binary and local fixture path
-            [NATIVE_GIT, "-C", str(self.repo), "init", "--quiet"], check=True
+        subprocess.run(  # nosec B603 nosemgrep -- fixed Git binary and local fixture path
+            [NATIVE_GIT, "-C", str(self.repo), "init", "--quiet"],  # nosemgrep
+            check=True,
         )
         self.source = self.repo / "secret-helper.sh"
         self.other_source = self.repo / "secret-other.sh"
