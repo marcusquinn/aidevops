@@ -131,18 +131,37 @@ done
 # enumeration window stays known-public: enumeration never refreshes the cache,
 # so expiring it at PRIVACY_CACHE_TTL turned every public pulse repo private.
 printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 3600))" >"$PRIVACY_CACHE_FILE"
-slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=604800 privacy_enumerate_private_slugs 2>/dev/null)
 if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
 	fail "enumerate treated a 1-hour-old public observation as private"
 else
 	pass "enumerate keeps a 1-hour-old public observation known-public"
 fi
 printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 8 * 86400))" >"$PRIVACY_CACHE_FILE"
-slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=604800 privacy_enumerate_private_slugs 2>/dev/null)
 if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
 	pass "enumerate fails closed on an 8-day-old public observation"
 else
 	fail "enumerate trusted a public observation beyond PRIVACY_ENUM_PUBLIC_TTL"
+fi
+
+# A non-numeric TTL must not make jq drop the whole cached-visibility class.
+printf '{"testorg/public-repo":{"private":true,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=7d privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate keeps cached-private coverage with an invalid TTL"
+else
+	fail "invalid PRIVACY_ENUM_PUBLIC_TTL dropped cached-private slugs"
+fi
+
+# An explicit repos.json private flag wins over a fresh public cache entry.
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+printf '{"initialized_repos":[{"slug":"testorg/public-repo","private":true,"pulse":false}]}\n' >"${TMP}/explicit-private.json"
+slugs=$(PRIVACY_REPOS_CONFIG="${TMP}/explicit-private.json" privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate honours explicit private:true despite a public cache entry"
+else
+	fail "fresh public cache entry overrode explicit private:true"
 fi
 
 printf '{"testorg/public-repo":{"private":true,"checked_at":1}}\n' >"$PRIVACY_CACHE_FILE"
