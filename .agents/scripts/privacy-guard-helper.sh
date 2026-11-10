@@ -363,7 +363,7 @@ privacy_scan_public_text() {
 	local entities_file="$2"
 	local aidevops_script_basenames_provided="${3+x}"
 	local aidevops_script_basenames="${3:-}"
-	local hits=0 class value secret_hits path_hits
+	local hits=0 class value secret_hits path_hits basename escaped scan_text
 
 	[[ -f "$entities_file" ]] || return 2
 	[[ -z "$text" ]] && return 0
@@ -386,6 +386,20 @@ privacy_scan_public_text() {
 		if [[ "$text" == *"$value"* ]]; then
 			printf '[private-%s]\n' "$class"
 			hits=$((hits + 1))
+		elif [[ "$class" == "repo" ]]; then
+			basename="${value##*/}"
+			if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+				scan_text="$text"
+				if [[ "$basename" == "aidevops" ]]; then
+					scan_text="${scan_text//<!-- aidevops:sig -->/ }"
+					scan_text="${scan_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
+				fi
+				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
+					printf '[private-repo]\n'
+					hits=$((hits + 1))
+				fi
+			fi
 		fi
 	done <"$entities_file"
 	[[ "$hits" -gt 0 ]] && return 1
@@ -614,7 +628,7 @@ privacy_scan_bare_basenames() {
 				scan_text="$framework_text"
 			fi
 			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
-			if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+			if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped_basename}([^a-zA-Z0-9-]|$)" 2>/dev/null; then
 				if [[ -n "$owner" ]]; then
 					printf '%s (basename of %s)\n' "$basename" "$slug"
 				else
@@ -965,6 +979,9 @@ _privacy_custom_candidate_ordinals() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		printf '%s\n' "$value" >>"$values"
+		if [[ "$class" == "repo" && ${#value} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			printf '%s\n' "${value##*/}" >>"$values"
+		fi
 	done <"$entities_file"
 	if [[ -f "$patterns_file" ]]; then
 		while IFS= read -r pattern || [[ -n "$pattern" ]]; do

@@ -250,6 +250,26 @@ else
 	fail "diff with private slug not flagged (rc=$rc hits=$hits)"
 fi
 
+# The public push fast path must retain lines containing only a basename.
+(
+	cd "$REPO" || exit 1
+	printf '%s\n' 'gettext_private-mirror' >README.md
+	git add README.md
+	git commit -m 'add private basename' --quiet
+) || fail "could not seed basename diff"
+base=$(git -C "$REPO" rev-parse HEAD~1)
+head=$(git -C "$REPO" rev-parse HEAD)
+printf 'repo\ttestorg/private-mirror\n' >"${TMP}/basename-entities.tsv"
+pushd "$REPO" >/dev/null || exit 1
+hits=$(privacy_scan_public_diff "$base" "$head" "${TMP}/basename-entities.tsv")
+rc=$?
+popd >/dev/null || exit 1
+if [[ "$rc" -eq 1 && "$hits" == *'[private-repo]'* ]]; then
+	pass "public README diff with identifier basename is flagged"
+else
+	fail "public README basename diff" "rc=$rc hits=$hits"
+fi
+
 # -----------------------------------------------------------------------------
 # Test 2: sanitised TODO.md → does not block
 # -----------------------------------------------------------------------------
