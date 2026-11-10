@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.155] - 2026-11-10
+
+### Fixed
+
+- keep known-public repos out of privacy enumeration between probes
+- log reasons for deferred GitHub reads (#37535)
+- rotate the dead-stamp reaper so every claim stamp is reached
+- warn about interactive-only routing providers (GH#37523) (#37528)
+
 ## [3.39.154] - 2026-11-10
 
 ### Fixed
