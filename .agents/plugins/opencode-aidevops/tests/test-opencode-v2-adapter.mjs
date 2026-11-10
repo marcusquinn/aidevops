@@ -15,7 +15,6 @@ import v2Plugin, {
   applyV2PermissionEvaluation,
   createCompatibilityClient,
   createV2CompletionNormalizer,
-  createV2SubagentFailover,
   defineAidevopsV2Adapter,
   detectOpenCodeV2RuntimeVersion,
   OPENCODE_V2_CAPABILITIES,
@@ -23,7 +22,8 @@ import v2Plugin, {
   startEventLoop,
 } from "../v2.mjs";
 import { createV2McpRuntime, toV2McpConfig } from "../v2-mcp-adapter.mjs";
-import { createV2ProviderAuthRuntime, createV2SubagentRateLimitFailover } from "../v2-provider-auth.mjs";
+import { createV2ProviderAuthRuntime } from "../v2-provider-auth.mjs";
+import { createV2SubagentFailover, createV2SubagentRateLimitFailover } from "../v2-subagent-failover.mjs";
 import { resolveRoutingAvailability } from "../provider-rate-limits.mjs";
 import { addV1ToolsToV2Editor, toV2ToolResult } from "../v2-tool-adapter.mjs";
 import { buildReplayParts, selectWithinBudget } from "../compaction-replay-budget.mjs";
@@ -872,9 +872,14 @@ test("V2 child failover never touches pinned, local, advisor, root or partial-po
   assert.deepEqual(event.decision, { retry: false });
 });
 
-test("V2 child failover binds only to hosts exposing the session, agent and model APIs", () => {
-  const routing = { tiers: { thinking: { models: ["anthropic/opus"] } } };
-  assert.equal(createV2SubagentFailover({ session: { get() {} } }, routing, () => {}), null);
+test("V2 child failover acts only on hosts exposing the session, agent and model APIs", async () => {
+  const routing = { tiers: { thinking: { models: ["anthropic/opus", "openai/sol"] } } };
+  const calls = [];
+  const partialHost = { session: { get: () => calls.push("get") } };
+  const retry = { sessionID: "child", model: { providerID: "anthropic", id: "opus" }, decision: { retry: true, delay: 30_000 } };
+  assert.equal(await createV2SubagentFailover(partialHost, routing, () => {})(retry), false);
+  assert.deepEqual(calls, [], "a host without switchModel/agent/model APIs is never queried");
+  assert.deepEqual(retry.decision, { retry: true, delay: 30_000 });
   const ctx = { session: { get() {}, switchModel() {} }, agent: { get() {} }, model: { list() {} } };
   assert.equal(typeof createV2SubagentFailover(ctx, routing, () => {}), "function");
   assert.deepEqual(resolveRoutingAvailability({

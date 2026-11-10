@@ -65,7 +65,8 @@ import { applyV2ContextBudget, readV2ContextBudget } from "./v2-context-budget.m
 import { applyV2PermissionEvaluation } from "./v2-permission-evaluation.mjs";
 import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
 import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
-import { createV2ProviderAuthRuntime, createV2SubagentRateLimitFailover } from "./v2-provider-auth.mjs";
+import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
+import { createV2SubagentFailover } from "./v2-subagent-failover.mjs";
 import {
   addV1ToolsToV2Editor,
   applyLegacyToolOutput,
@@ -73,23 +74,6 @@ import {
 } from "./v2-tool-adapter.mjs";
 
 export { applyV2PermissionEvaluation };
-
-/**
- * GH#37667: bind child rate-limit failover to the host session/agent/model
- * APIs; null when this host lacks any of them (no failover, no cancellation).
- */
-export function createV2SubagentFailover(ctx, routing, log) {
-  const required = [ctx.session?.get, ctx.session?.switchModel, ctx.agent?.get, ctx.model?.list];
-  if (!routing || required.some((method) => typeof method !== "function")) return null;
-  return createV2SubagentRateLimitFailover({
-    getSession: (input) => ctx.session.get(input),
-    getAgent: (input) => ctx.agent.get(input),
-    listModels: () => ctx.model.list(),
-    switchModel: (input) => ctx.session.switchModel(input),
-    routing,
-    log: (level, message) => log(level, message),
-  });
-}
 
 const HOME = homedir();
 const PLUGIN_ENTRY_PATH = fileURLToPath(import.meta.url);
@@ -575,7 +559,7 @@ export async function setupAidevopsV2(ctx) {
     const subagentFailover = createV2SubagentFailover(ctx, modelRouting, qualityLog);
     await register(registrations, ctx.session.hook("retry", async (event) => {
       providerAuth.retry(event);
-      if (subagentFailover) await subagentFailover(event);
+      await subagentFailover(event);
     }));
     await register(registrations, ctx.permission.hook("evaluate", async (event) => {
       applyV2PermissionEvaluation(permissionBroker, event);
