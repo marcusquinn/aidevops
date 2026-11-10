@@ -1901,7 +1901,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18881 review-bot-gate: fork PRs must run main's helper, not their own head revision #auto-dispatch #bug ref:GH#36954 pr:#36956 completed:2026-11-06 -> [todo/tasks/t18881-brief.md]
 
 - [x] t18882 review-bot-gate: fork PRs need a base-context status writer (pull_request_target) #bug ref:GH#36961 pr:#36962 completed:2026-11-06 -> [todo/tasks/t18882-brief.md]
-- [x] t18883 Plan and prototype a buzz-aidevops Desktop plugin #feat #interactive #no-auto-dispatch tier:thinking ~10h ref:GH#37233 pr:#36998 logged:2026-11-06 -> [todo/tasks/t18883-brief.md] completed:2026-11-10
+- [x] t18883 Plan and prototype a buzz-aidevops Desktop plugin #feat #interactive #no-auto-dispatch tier:thinking ~10h ref:GH#36976 pr:#36998 logged:2026-11-06 -> [todo/tasks/t18883-brief.md] completed:2026-11-10
 
 - [x] t18884 Skip the aidevops session greeting when OpenCode runs as an ACP server #auto-dispatch #feat ref:GH#36983 pr:#36987 completed:2026-11-10
 
