@@ -13,7 +13,7 @@ Let `aidevops_bounded_operation` return a terminal operation's stored output in 
 
 ## Why
 
-Request ledger (`~/.aidevops/.agent-workspace/observability/llm-requests.db`, `tool_calls`), 2026-11-06..10: `aidevops_bounded_operation` calls went from 2,000–2,600/day to 5,640 on 2026-11-09 (27–28% of all tool calls). Session traces show a fixed start (~2 s) → status → output cycle per command, even for commands that finish in under 3 s. Each extra call is a full Opus turn at ~160k cached prompt (~$0.06 API-equivalent), so about 2 of every 3 bounded-operation turns are pure overhead (~$200/day at the 2026-11-09 rate).
+Request ledger (`~/.aidevops/.agent-workspace/observability/llm-requests.db`, `tool_calls`), 2026-11-06..10: `aidevops_bounded_operation` calls went from 2,000–2,600/day to 5,640 on 2026-11-09 (about 20%: 5,640 of 28,574 recorded tool calls that day). Session traces show a fixed start (~2 s) → status → output cycle per command, even for commands that finish in under 3 s. Each extra call is a full Opus turn at ~160k cached prompt (~$0.06 API-equivalent), so about 2 of every 3 bounded-operation turns are overhead (an estimated ~$200/day at the 2026-11-09 rate, not measured).
 
 ## How
 
