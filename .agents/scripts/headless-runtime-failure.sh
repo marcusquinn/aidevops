@@ -761,6 +761,23 @@ _release_dispatch_claim() {
 	return "$rc"
 }
 
+# Persist bounded, non-secret lifecycle metadata even when detached output is lost.
+_hrff_log_prelaunch_abort() {
+	local session="$1" cause="$2"
+	local unknown="unavailable"
+	local stage="${_WORKER_PRELAUNCH_LAST_STAGE:-$unknown}"
+	local attempt="${AIDEVOPS_ATTEMPT_ID:-$unknown}"
+	local log_dir="${HOME}/.aidevops/logs"
+	[[ "$session" =~ ^[A-Za-z0-9._:-]+$ ]] || session="$unknown"
+	[[ "$cause" =~ ^[A-Za-z0-9._:-]+$ ]] || cause="$unknown"
+	[[ "$stage" =~ ^[A-Za-z0-9._:-]+$ ]] || stage="$unknown"
+	[[ "$attempt" =~ ^[A-Za-z0-9._:-]+$ ]] || attempt="$unknown"
+	if ! (umask 077; mkdir -p "$log_dir" && printf '[lifecycle] prelaunch_abort session=%s attempt_id=%s stage=%s cause=%s\n' "$session" "$attempt" "$stage" "$cause" >>"${log_dir}/headless-prelaunch.log"); then
+		print_warning "[lifecycle] unable to persist prelaunch abort session=${session} attempt_id=${attempt} stage=${stage} cause=${cause}"
+	fi
+	return 0
+}
+
 _hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
@@ -850,6 +867,8 @@ _hrff_release_dispatch_claim_attempt() {
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		terminal_blocker_fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
+	elif [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+		terminal_blocker_fragment=$'\nRuntime did not launch. The revision continuation approval was consumed; a new exact-head approval is required before another revision continuation.\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		terminal_blocker_fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
 	elif [[ "$reason" == worker_merged_partial_no_progress ]]; then
@@ -1552,7 +1571,7 @@ _hrff_retry_class_for_reason() {
 	case "$reason" in
 	opencode_version_pin_failed | canary_failed | worker_prepare_failed | duplicate_session | \
 		worker_noop_zero_output | crash_during_startup | access_denied | auth_error | rate_limit* | provider_error | model_unavailable | \
-		startup_no_model_activity | service_interruption_exhausted | worker_runtime_not_invoked | \
+		startup_no_model_activity | service_interruption_exhausted | worker_runtime_not_invoked | worker_not_launched | \
 		worker_sensitive_temp_preflight_failed | worker_ownership_lost | worker_ledger_ready_failed | \
 		worker_claim_ready_transition_failed | signal_terminated_continue | watchdog_stall_killed)
 		printf '%s\n' "$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
@@ -1999,6 +2018,7 @@ _exit_trap_handler() {
 			last_stage="${last_stage:-${_WORKER_PRELAUNCH_LAST_STAGE:-}}"
 			last_completed_stage="${last_completed_stage:-${_WORKER_PRELAUNCH_LAST_COMPLETED_STAGE:-}}"
 		fi
+		_hrff_log_prelaunch_abort "$session_key" "$reason"
 		print_warning "[exit-trap] runtime invocation never started after worker preparation; reason=${reason} last_stage=${last_stage:-unknown} last_completed_stage=${last_completed_stage:-unknown}"
 		if [[ ! "$exit_status" =~ ^[1-9][0-9]*$ ]]; then
 			exit_status=1

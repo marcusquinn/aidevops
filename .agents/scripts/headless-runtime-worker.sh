@@ -1223,6 +1223,10 @@ _hrw_finish_failed_run() {
 	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
+	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 ]]; then
+		_hrw_finish_not_launched "$session_key"
+		return 0
+	fi
 	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
 		_worker_external_terminal_complete "$session_key" "$work_dir"; then
 		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
@@ -1747,6 +1751,7 @@ _hrw_post_pr_handoff_gate() {
 
 _hrw_finish_not_launched() {
 	local session_key="$1"
+	_hrff_log_prelaunch_abort "$session_key" "${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_runtime_not_invoked}"
 	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; revision continuation requires a new approval"
 	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
 	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
