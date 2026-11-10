@@ -19,6 +19,15 @@ import {
   parseRetryAfterMs,
   transformOpenAIRequestBody,
 } from "./openai-provider-auth.mjs";
+import { activeLocalOnlyPolicy } from "./local-only-policy.mjs";
+import {
+  candidateRateLimitedUntil,
+  routingFailoverTier,
+  routingUnavailableDetail,
+  selectSameTierFailoverCandidate,
+} from "./model-routing.mjs";
+import { resolveRoutingAvailability } from "./provider-rate-limits.mjs";
+import { SPECIALIST_ADVISOR } from "./specialist-advisor.mjs";
 
 const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai"]);
 const DEFAULT_COOLDOWN_MS = 300_000;
@@ -179,5 +188,105 @@ export function createV2ProviderAuthRuntime(dependencies = {}) {
     httpRequest: createHttpRequestHook(runtime),
     httpResponse: createHttpResponseHook(runtime),
     retry: createRetryHook(runtime),
+  };
+}
+
+// GH#37667: agents whose model is the parent's exact route by design.
+const PARENT_ROUTE_AGENTS = new Set([SPECIALIST_ADVISOR, "domain-focused", "domain-light"]);
+const MAX_FAILOVER_SESSIONS = 64;
+
+function routingModelKey(model) {
+  const id = model?.id || model?.modelID;
+  return model?.providerID && id ? `${model.providerID}/${id}` : "";
+}
+
+// Host APIs return either the record or a `{ data }` envelope.
+function unwrapRecord(result) {
+  return result && typeof result === "object" && "data" in result ? result.data : result;
+}
+
+function modelList(result) {
+  const value = unwrapRecord(result);
+  return Array.isArray(value) ? value : [];
+}
+
+async function inheritedChildRoute(deps, event, current) {
+  const session = unwrapRecord(await deps.getSession({ sessionID: event.sessionID }));
+  if (!session?.parentID) return "root_session";
+  const agentID = session.agent || event.agent || "";
+  if (!agentID || PARENT_ROUTE_AGENTS.has(agentID)) return "parent_route_agent";
+  const agent = unwrapRecord(await deps.getAgent({ agentID }));
+  if (!agent) return "agent_unknown";
+  if (agent.model) return "pinned_agent";
+  const routed = deps.switched.get(event.sessionID);
+  if (routed) return routed.candidate === current ? "" : "pinned_model";
+  // A child not on its parent's model was spawned with an explicit model.
+  const parent = unwrapRecord(await deps.getSession({ sessionID: session.parentID }));
+  return routingModelKey(parent?.model) === current ? "" : "pinned_model";
+}
+
+function rememberFailover(switched, sessionID, state) {
+  switched.delete(sessionID);
+  switched.set(sessionID, state);
+  while (switched.size > MAX_FAILOVER_SESSIONS) switched.delete(switched.keys().next().value);
+}
+
+/**
+ * GH#37667: move a running Task child off a provider whose OAuth pool is fully
+ * rate limited. OpenCode V2 reloads the session model before every retry
+ * attempt (SessionRunner.runStep → SessionContext.load → resolveModel), so
+ * switching the child session's model inside the `retry` hook makes the next
+ * attempt run on the next routable same-tier model within the same Task run;
+ * the parent receives that child's normal result. Nothing is cancelled: when
+ * no candidate qualifies, the host's own retry decision stands.
+ * @returns {(event: object) => Promise<boolean>} true when the child switched
+ */
+export function createV2SubagentRateLimitFailover({
+  getSession,
+  getAgent,
+  listModels,
+  switchModel,
+  routing,
+  resolvePolicy = activeLocalOnlyPolicy,
+  resolveAvailability = resolveRoutingAvailability,
+  log = () => {},
+  now = Date.now,
+} = {}) {
+  const deps = { getSession, getAgent, switched: new Map() };
+  return async function subagentRateLimitFailover(event) {
+    // Only a retry the host already scheduled; a terminal decision stays terminal.
+    if (event?.decision?.retry !== true || !routing || !event.sessionID) return false;
+    const current = routingModelKey(event.model);
+    const availability = resolveAvailability();
+    // API-key providers and partially limited pools are never reported here.
+    if (!current || !candidateRateLimitedUntil(current, availability, now())) return false;
+    if (resolvePolicy()?.bound) return false;
+    try {
+      const skip = await inheritedChildRoute(deps, event, current);
+      if (skip) return false;
+      // A repeated failover keeps the tier of the first one.
+      const tier = deps.switched.get(event.sessionID)?.tier
+        || routingFailoverTier(routing, current, event.model.variant || "");
+      if (!tier) return false;
+      const next = selectSameTierFailoverCandidate(routing, tier, {
+        exclude: [current],
+        available: modelList(await listModels()),
+        availability,
+        policy: resolvePolicy(),
+        now: now(),
+      });
+      if (!next) {
+        log("WARN", `[aidevops] Subagent rate-limit failover found no routable '${tier}' model for session ${event.sessionID}${routingUnavailableDetail(routing, tier, availability)}`);
+        return false;
+      }
+      await switchModel({ sessionID: event.sessionID, model: next.model });
+      rememberFailover(deps.switched, event.sessionID, { candidate: next.candidate, tier });
+      event.decision = { retry: true, delay: 0 };
+      log("INFO", `[aidevops] Subagent rate-limit failover: session ${event.sessionID} ${current} -> ${next.candidate} ('${tier}' tier)`);
+      return true;
+    } catch (error) {
+      log("WARN", `[aidevops] Subagent rate-limit failover skipped: ${error?.message || error}`);
+      return false;
+    }
   };
 }

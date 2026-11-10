@@ -2,14 +2,13 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import {
-  candidateRateLimitedUntil,
   routingCandidateIndex,
   routingCandidates,
   routingModelIdentity,
+  routingUnavailableDetail,
   nextRoutingTier,
   selectConnectedRoutingCandidate,
 } from "./model-routing.mjs";
-import { isModelUnavailable } from "./model-unavailability.mjs";
 import { loadDelegatedDomainKnowledge } from "./agent-loader.mjs";
 import { SPECIALIST_ADVISOR, validateSpecialistRequest } from "./specialist-advisor.mjs";
 import { loadChildSessionWithParent, routeCreativeMessage } from "./subagent-parent-routing.mjs";
@@ -70,19 +69,6 @@ async function routeDomainMessage(context, output, registry, agentName) {
   output.parts = output.parts.filter((part) => part.type !== "text" || part === target);
 }
 
-function unavailableDetail(routing, tier, availability) {
-  const candidates = routingCandidates(routing, tier);
-  const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
-  const limited = candidates
-    .map((candidate) => [candidate, candidateRateLimitedUntil(candidate, availability)])
-    .filter(([, until]) => until)
-    .map(([candidate, until]) => `${candidate}@${new Date(until).toISOString()}`);
-  const parts = [];
-  if (rejected.length) parts.push(`rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`);
-  if (limited.length) parts.push(`rate_limited=${limited.join(",")} (provider rate limit; routable again after the listed reset)`);
-  return parts.length ? `: requested=${candidates[0]} ${parts.join(" ")}` : "";
-}
-
 async function applyConnectedRoutingModel(context, route, message, policy) {
   const providerState = await context.resolveProviderState();
   if (!providerState) {
@@ -101,7 +87,7 @@ async function applyConnectedRoutingModel(context, route, message, policy) {
   if (!routedModel) {
     // GH#36698/GH#37649: name same-tier models rejected for the current auth or
     // rate limited so the failure is actionable; never substitute a lower tier.
-    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing${unavailableDetail(routing, route.effort, availability)}`);
+    throw new Error(`[aidevops] No connected model is available for '${route.effort}' routing${routingUnavailableDetail(routing, route.effort, availability)}`);
   }
   message.model = routingModelIdentity(routedModel);
   policy.routedModel = routedModel;

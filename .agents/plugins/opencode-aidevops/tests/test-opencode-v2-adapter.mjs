@@ -15,6 +15,7 @@ import v2Plugin, {
   applyV2PermissionEvaluation,
   createCompatibilityClient,
   createV2CompletionNormalizer,
+  createV2SubagentFailover,
   defineAidevopsV2Adapter,
   detectOpenCodeV2RuntimeVersion,
   OPENCODE_V2_CAPABILITIES,
@@ -22,7 +23,8 @@ import v2Plugin, {
   startEventLoop,
 } from "../v2.mjs";
 import { createV2McpRuntime, toV2McpConfig } from "../v2-mcp-adapter.mjs";
-import { createV2ProviderAuthRuntime } from "../v2-provider-auth.mjs";
+import { createV2ProviderAuthRuntime, createV2SubagentRateLimitFailover } from "../v2-provider-auth.mjs";
+import { resolveRoutingAvailability } from "../provider-rate-limits.mjs";
 import { addV1ToolsToV2Editor, toV2ToolResult } from "../v2-tool-adapter.mjs";
 import { buildReplayParts, selectWithinBudget } from "../compaction-replay-budget.mjs";
 import { createV2CompactionReplay } from "../compaction-replay-v2.mjs";
@@ -786,6 +788,99 @@ test("V2 provider responses retain request-specific account affinity", async () 
   const rateLimitPatch = patches.find(([, email, patch]) => email === "first@example.com" && patch.status === "rate-limited");
   assert.ok(rateLimitPatch);
   assert.equal(patches.some(([, email, patch]) => email === "second@example.com" && patch.status === "rate-limited"), false);
+});
+
+// GH#37667: a running child on an exhausted OAuth pool continues on the next
+// same-tier model; OpenCode V2 reloads the session model per retry attempt.
+function subagentFailoverFixture(overrides = {}) {
+  const until = Date.now() + 600_000;
+  const sessions = {
+    parent: { id: "parent", agent: "build-plus", model: { providerID: "anthropic", id: "opus", variant: "max" } },
+    child: { id: "child", parentID: "parent", agent: "general", model: { providerID: "anthropic", id: "opus", variant: "max" } },
+    ...overrides.sessions,
+  };
+  const switches = [];
+  const logs = [];
+  const failover = createV2SubagentRateLimitFailover({
+    getSession: async ({ sessionID }) => sessions[sessionID],
+    getAgent: async ({ agentID }) => ({ data: { id: agentID, ...(overrides.agents?.[agentID] || {}) } }),
+    listModels: async () => overrides.models || [
+      { providerID: "anthropic", id: "opus", variants: [{ id: "high" }, { id: "max" }] },
+      { providerID: "openai", id: "sol", variants: [{ id: "medium" }, { id: "high" }] },
+      { providerID: "openai", id: "terra", variants: [] },
+    ],
+    switchModel: async (input) => {
+      if (overrides.switchError) throw new Error(overrides.switchError);
+      switches.push(input);
+      sessions[input.sessionID] = { ...sessions[input.sessionID], model: input.model };
+    },
+    routing: overrides.routing || {
+      escalationOrder: ["simple", "standard", "thinking"],
+      tiers: {
+        standard: { models: ["anthropic/sonnet", "openai/sol"], reasoning: { "openai/sol": "medium" } },
+        thinking: { models: ["anthropic/opus", "openai/sol"], reasoning: { "anthropic/opus": "high", "openai/sol": "medium" } },
+      },
+    },
+    resolvePolicy: () => overrides.policy || { bound: false },
+    resolveAvailability: () => ({ rateLimitedProviders: overrides.limited || { anthropic: until } }),
+    log: (level, message) => logs.push([level, message]),
+  });
+  const retry = (model = sessions.child.model, decision = { retry: true, delay: 30_000 }) => ({
+    sessionID: "child", agent: sessions.child.agent, model, attempt: 2, error: { status: 429 }, decision,
+  });
+  return { failover, retry, sessions, switches, logs, until };
+}
+
+test("V2 child stuck on an exhausted OAuth pool continues on the next same-tier model (GH#37667)", async () => {
+  const fixture = subagentFailoverFixture();
+  const event = fixture.retry();
+  assert.equal(await fixture.failover(event), true);
+  assert.deepEqual(fixture.switches, [{ sessionID: "child", model: { providerID: "openai", id: "sol", variant: "medium" } }]);
+  assert.deepEqual(event.decision, { retry: true, delay: 0 }, "the same Task run retries now on the new model");
+
+  // The routed child may fail over again, but only within its original tier.
+  const exhausted = subagentFailoverFixture({ limited: { anthropic: Date.now() + 60_000, openai: Date.now() + 60_000 } });
+  const second = exhausted.retry();
+  assert.equal(await exhausted.failover(second), false);
+  assert.deepEqual(second.decision, { retry: true, delay: 30_000 }, "no candidate keeps the host retry");
+  assert.match(exhausted.logs.at(-1)[1], /no routable 'thinking' model .*rate_limited=anthropic\/opus@/);
+});
+
+test("V2 child failover never touches pinned, local, advisor, root or partial-pool routes (GH#37667)", async () => {
+  const cases = {
+    "partial pool or API key": { limited: {} },
+    "pinned agent": { agents: { general: { model: { providerID: "anthropic", id: "opus" } } } },
+    "explicit child model": { sessions: { child: { id: "child", parentID: "parent", agent: "general", model: { providerID: "anthropic", id: "sonnet" } } } },
+    "local-only session": { policy: { bound: true } },
+    "specialist advisor": { sessions: { child: { id: "child", parentID: "parent", agent: "specialist-advisor", model: { providerID: "anthropic", id: "opus" } } } },
+    "root session": { sessions: { child: { id: "child", agent: "build-plus", model: { providerID: "anthropic", id: "opus" } } } },
+    "lower tier only": { routing: { tiers: { standard: { models: ["openai/sol"] }, thinking: { models: ["anthropic/opus"] } } } },
+    "missing reasoning variant": { models: [{ providerID: "openai", id: "sol", variants: [{ id: "low" }] }] },
+    "switch failure": { switchError: "session busy" },
+  };
+  for (const [name, overrides] of Object.entries(cases)) {
+    const fixture = subagentFailoverFixture(overrides);
+    const event = fixture.retry({ providerID: "anthropic", id: name === "explicit child model" ? "sonnet" : "opus" });
+    assert.equal(await fixture.failover(event), false, name);
+    assert.deepEqual(fixture.switches, [], name);
+    assert.deepEqual(event.decision, { retry: true, delay: 30_000 }, `${name}: host decision unchanged`);
+  }
+
+  const terminal = subagentFailoverFixture();
+  const event = terminal.retry(undefined, { retry: false });
+  assert.equal(await terminal.failover(event), false, "a terminal host decision is never turned into a retry");
+  assert.deepEqual(event.decision, { retry: false });
+});
+
+test("V2 child failover binds only to hosts exposing the session, agent and model APIs", () => {
+  const routing = { tiers: { thinking: { models: ["anthropic/opus"] } } };
+  assert.equal(createV2SubagentFailover({ session: { get() {} } }, routing, () => {}), null);
+  const ctx = { session: { get() {}, switchModel() {} }, agent: { get() {} }, model: { list() {} } };
+  assert.equal(typeof createV2SubagentFailover(ctx, routing, () => {}), "function");
+  assert.deepEqual(resolveRoutingAvailability({
+    readRateLimits: () => ({ anthropic: 1 }),
+    readOpenAIAuth: () => ({ type: "api" }),
+  }), { rateLimitedProviders: { anthropic: 1 } });
 });
 
 test("V1 tool schemas still resolve across stable package layouts", async () => {

@@ -149,6 +149,23 @@ export function candidateRateLimitedUntil(candidate, availability = {}, now = Da
   return until > now ? until : 0;
 }
 
+/**
+ * GH#36698/GH#37649: actionable detail naming same-tier models rejected for
+ * the current auth or rate limited (`rate_limited=model@reset`); "" if none.
+ */
+export function routingUnavailableDetail(routing, tier, availability = {}) {
+  const candidates = routingCandidates(routing, tier);
+  const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
+  const limited = candidates
+    .map((candidate) => [candidate, candidateRateLimitedUntil(candidate, availability)])
+    .filter(([, until]) => until)
+    .map(([candidate, until]) => `${candidate}@${new Date(until).toISOString()}`);
+  const parts = [];
+  if (rejected.length) parts.push(`rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`);
+  if (limited.length) parts.push(`rate_limited=${limited.join(",")} (provider rate limit; routable again after the listed reset)`);
+  return parts.length ? `: requested=${candidates[0]} ${parts.join(" ")}` : "";
+}
+
 function candidateRoutable(candidate, scope) {
   // GH#36698/GH#37649: skip a model with a live entitlement rejection for this
   // auth, or whose provider OAuth pool is exhausted until its reset.
@@ -204,6 +221,51 @@ export function routingTierForModel(routing, model, variant = "") {
     .filter((tier) => routingCandidates(routing, tier).includes(model));
   const matching = variant ? tiers.find((tier) => routingVariant(routing, tier, model) === variant) : "";
   return matching || tiers[0] || "";
+}
+
+/**
+ * GH#37667: the highest tier listing a running model, preferring tiers whose
+ * configured variant matches. Failover from the highest listed tier can never
+ * drop a child below the tier it is already running at.
+ */
+export function routingFailoverTier(routing, model, variant = "") {
+  const tiers = (routing?.escalationOrder || DEFAULT_ESCALATION_ORDER)
+    .filter((tier) => routingCandidates(routing, tier).includes(model));
+  const matching = variant ? tiers.filter((tier) => routingVariant(routing, tier, model) === variant) : [];
+  return (matching.length ? matching : tiers).at(-1) || "";
+}
+
+function availableModelVariant(entry, required) {
+  const variants = Array.isArray(entry?.variants) ? entry.variants.map((item) => item?.id).filter(Boolean) : [];
+  if (!required || variants.length === 0) return { ok: true, variant: undefined };
+  return variants.includes(required) ? { ok: true, variant: required } : { ok: false };
+}
+
+/**
+ * GH#37667: next same-tier candidate for a running child whose provider OAuth
+ * pool is exhausted. `available` is the host's available-model list
+ * (`{ providerID, id, variants }`). Same-tier only: no candidate returns null,
+ * never a lower tier. A candidate lacking its configured reasoning variant is
+ * skipped rather than run at a lower effort.
+ */
+export function selectSameTierFailoverCandidate(routing, tier, {
+  exclude = [], available = [], availability = {}, policy = activeLocalOnlyPolicy(), now = Date.now(),
+} = {}) {
+  if (policy?.bound) return null;
+  const skipped = new Set(exclude);
+  const unsupported = routing?.chatgptOAuthUnsupported || [];
+  for (const candidate of routingCandidates(routing, tier)) {
+    if (skipped.has(candidate)) continue;
+    if (isModelUnavailable(candidate, availability?.authSignature)
+      || candidateRateLimitedUntil(candidate, availability, now)) continue;
+    const { providerID, modelID } = routingModelIdentity(candidate);
+    if (providerID === "openai" && availability?.openAIAuthType === "oauth" && unsupported.includes(modelID)) continue;
+    const entry = available.find((model) => model?.providerID === providerID && (model.id === modelID || model.modelID === modelID));
+    if (!entry) continue;
+    const variant = availableModelVariant(entry, routingVariant(routing, tier, candidate));
+    if (variant.ok) return { candidate, model: { providerID, id: modelID, ...(variant.variant ? { variant: variant.variant } : {}) } };
+  }
+  return null;
 }
 
 export function nextRoutingTier(routing, tier) {
