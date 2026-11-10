@@ -529,7 +529,11 @@ _validate_stack_base() {
 		print_error "--base must name a branch other than the current branch (${current_branch})"
 		return 1
 	fi
-	if ! git fetch origin "$stack_base" --quiet 2>/dev/null ||
+	if ! git check-ref-format --branch "$stack_base" >/dev/null 2>&1; then
+		print_error "--base '${stack_base}' is not a valid branch name"
+		return 1
+	fi
+	if ! git fetch origin "+refs/heads/${stack_base}:refs/remotes/origin/${stack_base}" --quiet 2>/dev/null ||
 		! git rev-parse --verify --quiet "refs/remotes/origin/${stack_base}" >/dev/null; then
 		print_error "--base branch '${stack_base}' does not exist on origin; push the parent branch first"
 		return 1
@@ -1613,6 +1617,18 @@ _create_or_continue_pr() {
 		print_info "Continuing existing issue-linked PR #${continuation_pr} at the final creation boundary"
 		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
 		_reconcile_recovered_pr_metadata "$continuation_pr" "$repo" "$pr_title" "$pr_body" || return 1
+		if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
+			local current_base=""
+			current_base=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${continuation_pr}" --jq '.base.ref') || return 1
+			if [[ "$current_base" != "$FULL_LOOP_STACK_BASE" ]]; then
+				print_info "Retargeting PR #${continuation_pr} base: ${current_base} -> ${FULL_LOOP_STACK_BASE}"
+				gh api "repos/${repo}/pulls/${continuation_pr}" --method PATCH \
+					--raw-field "base=${FULL_LOOP_STACK_BASE}" >/dev/null || {
+					print_error "Failed to retarget PR #${continuation_pr} to base ${FULL_LOOP_STACK_BASE}"
+					return 1
+				}
+			fi
+		fi
 		printf '%s\n' "$continuation_pr"
 		return 0
 	fi
