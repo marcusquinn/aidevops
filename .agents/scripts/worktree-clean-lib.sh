@@ -2135,10 +2135,8 @@ cmd_clean() {
 	# Capacity classification never uses closed-PR proof. Avoid a needless API
 	# request and do not let its failure veto otherwise proven candidates.
 	local closed_pr_branches=""
-	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]]; then
-		if ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
-			_clean_pr_proof_unknown_add "unknown:closed-pr-list-unavailable"
-		fi
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]] && ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
+		_clean_pr_proof_unknown_add "unknown:closed-pr-list-unavailable"
 	fi
 
 	local response="n"
