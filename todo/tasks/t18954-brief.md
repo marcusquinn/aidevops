@@ -32,7 +32,7 @@ Request ledger (`~/.aidevops/.agent-workspace/observability/llm-requests.db`, `l
 
 ## Context
 
-- Entitlement safety: a definite rejection (`model_not_found`, Codex "not supported") fails over to Haiku through the GH#36698 path; no config change is needed if free-tier Luna access ends.
+- Entitlement safety: a definite rejection (`model_not_found`, Codex "not supported") fails over to Haiku through the GH#36698 path for subagents and headless workers. Compaction has no such recovery (its model is fixed at config time); follow-up t18957. If free-tier Luna access ends before that lands, reorder the simple tier back to Haiku first.
 - Not changed: standard/thinking order, reasoning levels, specialist advisor.
 
 ### Files Scope
