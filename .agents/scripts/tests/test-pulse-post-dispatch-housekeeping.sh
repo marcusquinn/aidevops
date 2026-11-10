@@ -806,8 +806,17 @@ test_service_owned_lane_timeout_resumes() {
 		grep -q '^preflight_ownership_reconcile=' "$state_file" || exit 1
 		if grep -q '^post_merge_scanner=' "$state_file"; then exit 1; fi
 		# The dead-owner lock is reclaimed and successful stages are reused.
-		TEST_STAGE_SLEEP_ONCE=0
+		# A repeatedly slow scanner must still let later stages and cache prime
+		# finish within the lane, rather than consuming its whole budget again.
+		_pulse_run_optional_stage_with_timeout() { run_stage_with_timeout "$@"; return $?; }
+		_pulse_prime_caches_if_stale() { _record_stage "cache_prime"; return 0; }
 		PULSE_HOUSEKEEPING_BUDGET_SECONDS=30
+		_pulse_start_post_dispatch_housekeeping 7
+		_pulse_finish_post_dispatch_housekeeping
+		grep -q '^pr_review_thread_response=' "$state_file" || exit 1
+		grep -q '^cache_prime=' "$state_file" || exit 1
+		if grep -q '^post_merge_scanner=' "$state_file"; then exit 1; fi
+		TEST_STAGE_SLEEP_ONCE=0
 		_pulse_start_post_dispatch_housekeeping 7
 		_pulse_finish_post_dispatch_housekeeping
 		grep -q '^post_merge$' "$STAGE_LOG" || exit 1
