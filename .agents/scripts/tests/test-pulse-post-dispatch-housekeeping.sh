@@ -761,6 +761,8 @@ test_pre_dispatch_blocker_refresh_cycle_reserve() {
 		local AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=1
 		local PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
 		local _PULSE_MAIN_DISPATCH_RESERVE_S=900
+		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=300
+		local PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS=600
 		local PULSE_START_EPOCH="" now=""
 		now=$(date +%s)
 		# Reproduce late admission: dispatch already spent the available slice.
@@ -769,7 +771,8 @@ test_pre_dispatch_blocker_refresh_cycle_reserve() {
 		_pulse_finish_post_dispatch_housekeeping
 		grep -q '^dep_graph:1$' "$STAGE_LOG" || exit 1
 		grep -q '^brief_hold_release$' "$STAGE_LOG" || exit 1
-		grep -q 'Stage start: post_dispatch_housekeeping (timeout 300s)' "$LOGFILE" || exit 1
+		# Scanner lane (300s) plus the caller-capped ownership allowance (7s).
+		grep -q 'Stage start: post_dispatch_housekeeping (timeout 307s)' "$LOGFILE" || exit 1
 		[[ "$_PULSE_MAIN_DISPATCH_RESERVE_S" == "900" && "$AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP" == "1" ]] || exit 1
 	); then
 		failures=1
@@ -786,6 +789,7 @@ test_housekeeping_weighted_timeouts() {
 		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
 		local AIDEVOPS_PULSE_BLOCKER_REFRESH_MAX_AGE_S=1800
 		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=300
+		local PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS=600
 		local PULSE_CACHE_PRIME_TIMEOUT=300
 		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
 		_pulse_prime_caches_if_stale() { _record_stage "cache_prime"; return 0; }
@@ -793,7 +797,10 @@ test_housekeeping_weighted_timeouts() {
 		_pulse_finish_post_dispatch_housekeeping
 		# Heavy batches get six shares, but downstream recovery and scanners
 		# retain their own shares; the outer lane still bounds total runtime.
-		grep -q '^stage:post_dispatch_housekeeping:300$' "$STAGE_LOG" || exit 1
+		# GH#37549: ownership reconcile is not a scanner share; it gets its own
+		# allowance on top of the scanner lane instead of the 12s slice.
+		grep -q '^stage:post_dispatch_housekeeping:900$' "$STAGE_LOG" || exit 1
+		grep -q '^stage:preflight_ownership_reconcile:600$' "$STAGE_LOG" || exit 1
 		grep -q '^budget:build_dependency_graph_cache:72$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:72$' "$STAGE_LOG" || exit 1
 		grep -q '^budget:refresh_blocked_status_from_graph:12$' "$STAGE_LOG" || exit 1
@@ -804,6 +811,8 @@ test_housekeeping_weighted_timeouts() {
 		_pulse_finish_post_dispatch_housekeeping
 		grep -q '^budget:build_dependency_graph_cache:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:3$' "$STAGE_LOG" || exit 1
+		grep -q '^stage:preflight_ownership_reconcile:7$' "$STAGE_LOG" || exit 1
+		grep -q '^stage:post_dispatch_housekeeping:307$' "$STAGE_LOG" || exit 1
 	); then
 		failures=1
 	fi
@@ -824,6 +833,7 @@ test_service_owned_lane_timeout_resumes() {
 		source "${REPO_ROOT}/.agents/scripts/pulse-watchdog.sh"
 		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
 		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=4
+		local PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS=1
 		local TEST_STAGE_SLEEP_ONCE=10
 		local state_file="" start_seconds="$SECONDS"
 		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"

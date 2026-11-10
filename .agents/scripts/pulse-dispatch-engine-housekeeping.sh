@@ -369,6 +369,7 @@ _pulse_housekeeping_on_signal() {
 # Args:
 #   $1 - per-stage timeout seconds
 #   $2 - graph rebuild/cache prime timeout seconds (defaults to $1)
+#   $3 - ownership reconcile timeout seconds (defaults to $1)
 # Returns 0 always.
 #######################################
 _pulse_run_post_dispatch_housekeeping_stages() {
@@ -376,6 +377,8 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	local heavy_timeout="${2:-$stage_timeout}"
 	[[ "$heavy_timeout" =~ ^[0-9]+$ ]] || heavy_timeout="$stage_timeout"
+	local ownership_timeout="${3:-$stage_timeout}"
+	[[ "$ownership_timeout" =~ ^[0-9]+$ ]] || ownership_timeout="$stage_timeout"
 
 	local lockdir="" state_file=""
 	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
@@ -389,8 +392,8 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="startup"
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: started (timeout=${stage_timeout}s)" >>"$LOGFILE"
 	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
-		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
-		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
+		run_stage_with_timeout "preflight_ownership_reconcile" "$ownership_timeout" \
+		_preflight_ownership_reconcile "$ownership_timeout" || incomplete=1
 	local catchup_rc=0
 	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
 		_pulse_run_blocker_refresh_catchup "$stage_timeout" "$heavy_timeout" || catchup_rc=$?
@@ -445,6 +448,8 @@ _pulse_finish_post_dispatch_housekeeping() {
 
 #######################################
 # Start post-dispatch housekeeping in a bounded independent lane.
+# Lane watchdog = PULSE_HOUSEKEEPING_BUDGET_SECONDS (scanner shares, 300) +
+# PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS (ownership reconcile, 600).
 #
 # Args:
 #   $1 - per-stage timeout seconds
@@ -455,10 +460,19 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	local lane_budget="${PULSE_HOUSEKEEPING_BUDGET_SECONDS:-300}"
 	[[ "$lane_budget" =~ ^[1-9][0-9]{0,3}$ ]] || lane_budget=300
+	# GH#37549: ownership reconcile (intake, single-pass reconcile, then
+	# assignment normalization with the dead-stamp reaper and stranded-claim
+	# recovery) routinely needs minutes and returns 124 until normalization
+	# runs, so a scanner share starved it on every cycle. Give it its own
+	# allowance on top of the scanner lane; the caller's ceiling still wins.
+	local ownership_timeout="${PULSE_HOUSEKEEPING_OWNERSHIP_BUDGET_SECONDS:-600}"
+	[[ "$ownership_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || ownership_timeout=600
+	[[ "$ownership_timeout" -le "$stage_timeout" ]] || ownership_timeout="$stage_timeout"
+	local lane_watchdog=$((lane_budget + ownership_timeout))
 	# Weight graph rebuild and cache prime at six shares each: unlike cheap
-	# scanners they must finish a batch before checkpointing. Nine other leaf
+	# scanners they must finish a batch before checkpointing. Eight other leaf
 	# calls (including catch-up and standalone brief release) get one each;
-	# three shares remain for watchdog teardown. Keep the caller's ceiling.
+	# four shares remain for watchdog teardown. Keep the caller's ceiling.
 	local stage_slice=$((lane_budget / 24))
 	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
 	local heavy_timeout="$stage_timeout" heavy_slice=$((stage_slice * 6))
@@ -491,8 +505,8 @@ _pulse_start_post_dispatch_housekeeping() {
 		if [[ -z "$_PULSE_HOUSEKEEPING_SUPERVISOR_PID" ]]; then
 			_PULSE_HOUSEKEEPING_SUPERVISOR_PID="$(exec sh -c 'printf "%s" "$PPID"')"
 		fi
-		run_stage_with_timeout "post_dispatch_housekeeping" "$lane_budget" \
-			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout" "$heavy_timeout"
+		run_stage_with_timeout "post_dispatch_housekeeping" "$lane_watchdog" \
+			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout" "$heavy_timeout" "$ownership_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!
 	[[ "$monitor_was_on" == true ]] || set +m 2>/dev/null || true
