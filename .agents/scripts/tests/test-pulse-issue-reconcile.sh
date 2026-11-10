@@ -349,7 +349,7 @@ test_should_predicates() {
 # Parent mutation gate: live labels and cached holds fail closed.
 # ---------------------------------------------------------------------------
 test_parent_live_hold_gate() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local result=""
 	result=$(ACTIONS_SH="$actions_sh" bash -c '
 		_PIR_NMR_LABEL="needs-maintainer-review"
@@ -430,7 +430,7 @@ test_parent_live_hold_gate() {
 # went stale through lifecycle drift may be closed (only) with graph children.
 # ---------------------------------------------------------------------------
 test_parent_stale_approval_terminal_close() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local stub_dir="" result=""
 	stub_dir=$(mktemp -d)
 	cat >"${stub_dir}/approval-helper.sh" <<'STUB'
@@ -501,7 +501,7 @@ STUB
 # consumed it first, so the stale-approved close basis was unreachable.
 # ---------------------------------------------------------------------------
 test_stage0b_routes_stale_approved_parent_to_stage4() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local stages_fn="" result=""
 	stages_fn=$(sed -n '/^_pir_reconcile_issue_stages()/,/^}/p' "$RECONCILE_SH")
 	result=$(ACTIONS_SH="$actions_sh" STAGES_FN="$stages_fn" bash -c '
@@ -1173,7 +1173,7 @@ test_t2985_action_oimp_single_signature() {
 # Test 15b (GH#25896): consolidated successor closes when superseded issue was fixed
 # ---------------------------------------------------------------------------
 test_gh25896_oimp_closes_consolidated_successor() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir out_file log_file result
 	tmp_dir=$(mktemp -d)
 	out_file="${tmp_dir}/gh.out"
@@ -1221,7 +1221,7 @@ test_gh25896_oimp_closes_consolidated_successor() {
 # Test 15c (GH#32213): superseded evidence requires complete inherited coverage
 # ---------------------------------------------------------------------------
 test_gh32213_oimp_requires_complete_inherited_coverage() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir out_file log_file verify_file verify_log result
 	tmp_dir=$(mktemp -d)
 	out_file="${tmp_dir}/gh.out"
@@ -1278,7 +1278,7 @@ EOF
 # Test 15c2 (GH#33687): merged-PR closes respect the latest reopen lifecycle
 # ---------------------------------------------------------------------------
 test_gh33687_reconcile_close_respects_reopen_lifecycle() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir fix out_file stub dedup result
 	tmp_dir=$(mktemp -d)
 	fix="${tmp_dir}/fix"
@@ -1372,7 +1372,7 @@ EOF
 # Test 15d (GH#27444): recurrent file-size debt uses current outcome
 # ---------------------------------------------------------------------------
 test_gh27444_recurrent_file_size_debt_current_outcome() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local tmp_dir repo_dir repos_json out_file log_file result
 	tmp_dir=$(mktemp -d)
 	repo_dir="${tmp_dir}/repo"
@@ -1725,7 +1725,7 @@ test_pr_lookup_uncertainty_preserves_issue_state() {
 	local dedup_helper=""
 	local mutation_log=""
 	local action_log=""
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local result=""
 	tmp_dir=$(mktemp -d)
 	dedup_helper="${tmp_dir}/dedup-helper.sh"
@@ -1777,7 +1777,7 @@ EOF
 # is below the mutation reserve (outer stage kill would land mid-action).
 # ---------------------------------------------------------------------------
 test_gh34289_parent_close_deferred_near_budget() {
-	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh")"
+	local actions_sh; actions_sh="$("${SCRIPT_DIR}/pira-combined-source.sh" --module)"
 	local logfile=""
 	logfile=$(mktemp)
 	local result=""
