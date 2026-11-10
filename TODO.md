@@ -1989,15 +1989,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18940 fix(pulse): worker-bus relay logs which gate stopped a GitHub read #auto-dispatch #bug ref:GH#37533 pr:#37535 completed:2026-11-10
 
-- [ ] t18946 fix(relay): log gh-transport deferral tokens instead of redacted stderr #auto-dispatch #bug ref:GH#37561
+- [x] t18946 fix(relay): log gh-transport deferral tokens instead of redacted stderr #auto-dispatch #bug ref:GH#37561 pr:#37563 completed:2026-11-10
 
-- [ ] t18948 fix(pulse): persist per-pass repo cursor so killed normalization passes resume #bug ref:GH#37568
+- [x] t18948 fix(pulse): persist per-pass repo cursor so killed normalization passes resume #bug ref:GH#37568 pr:#37569 completed:2026-11-10
 
-- [ ] t18949 fix(gh-transport): bounded delivery admission class so worker-bus relay reads are not starved by pacing #bug ref:GH#37570
+- [x] t18949 fix(gh-transport): bounded delivery admission class so worker-bus relay reads are not starved by pacing #bug ref:GH#37570 pr:#37571 completed:2026-11-10
 
-- [ ] t18933 fix(screen-time): macOS screen time under-reports (inverted backlit spans, held pmset assertion, frozen snapshot) #bug #interactive ref:GH#37492 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18933-brief.md]
+- [x] t18933 fix(screen-time): macOS screen time under-reports (inverted backlit spans, held pmset assertion, frozen snapshot) #bug #interactive ref:GH#37492 pr:#37495 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18933-brief.md] completed:2026-11-10
 
-- [ ] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md]
+- [x] t18934 feat(screen-time): macOS input-activity row matching the Linux 5-minute input sampler #feat #interactive ref:GH#37496 pr:#37497 logged:2026-11-09 started:2026-11-09 -> [todo/tasks/t18934-brief.md] completed:2026-11-10
 
 ## In Progress
 
@@ -5616,3 +5616,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [-] t18814 fix(sync-workflows): re-pin legacy @main loc-badge callers to release SHA and keep pins current #auto-dispatch #bug ref:GH#36105 declined:2026-10-31
 
 - [-] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212 declined:2026-10-31
+
+- [ ] t18942 pulse-merge-routine: cut fork overhead in the merge pass (~0.45-0.5 core per user) #auto-dispatch #bug ref:GH#37538
+
+- [ ] t18941 pulse-wrapper: cut per-call fork overhead (~0.7-1.2 core per user) #auto-dispatch #bug ref:GH#37537
