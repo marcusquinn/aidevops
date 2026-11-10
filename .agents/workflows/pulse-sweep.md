@@ -140,8 +140,7 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 2. **Wait about 60 seconds without repeating an identical tool call.** OpenCode's `doom_loop` guard rejects the same call issued three times in a row, and the permission broker cannot grant it, so the session dies with rc=1 (GH#37625). Rules:
 
    - Never issue the same command or tool call three times in a row, and never run parallel sleeps.
-   - Prefer `aidevops_bounded_operation` `start` with a short distinct command, then `status` with `wait_seconds=60`; this blocks without a bare `sleep`.
-   - Otherwise make each wait command unique by embedding the cycle number and elapsed seconds as literals, and run it as a single call:
+   - Make each wait command unique by embedding the cycle number and elapsed seconds as literals, and run it as a single call:
 
    ```bash
    sleep 60 # pulse monitoring cycle N, elapsed ELAPSED_SECONDS
