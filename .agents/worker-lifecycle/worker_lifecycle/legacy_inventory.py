@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .enrollment import _git_directory
 from .legacy_options import reconstructible_path, unrecorded
-from .legacy_proc import require_ended, require_idle_proc
+from .legacy_proc import require_ended, require_idle_processes
 from .pull_requests import matches_open_pull_request
 from .retirement import _git, _id
 
@@ -75,7 +75,9 @@ def reconstructible(item, repositories, adapter, open_prs, managed_min_age=None)
         raise ValueError("invalid-repository-slug")
     if matches_open_pull_request(open_prs(slug), head, branch, slug):
         raise ValueError("open-pull-request")
-    require_idle_proc(path)
+    # Native census for this platform: Linux /proc, macOS lsof (GH#37101). A
+    # Linux-only call here retained every candidate on macOS Pulse hosts.
+    require_idle_processes(path)
     return {"source": str(path), "directory": _id(path), "admin": str(admin),
             "admin_identity": _id(admin), "common": common, "head": head,
             "branch": branch, "repo": slug}

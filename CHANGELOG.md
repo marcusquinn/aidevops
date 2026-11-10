@@ -10,6 +10,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.154] - 2026-11-10
+
+### Fixed
+
+- stop dispatching workers on already-satisfied rollout issues
+- privacy guard enumerates ordinary private repos (GH#37508) (#37513)
+- overlap maintenance with dispatch admission (GH#37501) (#37506)
+- raise worktree cap to 1000, clean before throttling, report throughput throttles
+
+## [3.39.153] - 2026-11-10
+
+### Added
+
+- t18893 Matrix session bus bridge (#37485)
+
+### Changed
+
+- Documentation: record the shipped session-relinquish fix in the 3.39.152 changelog
+- Documentation: tighten cleanup safety contract (#37491)
+
+### Fixed
+
+- refuse gh comment --edit-last and add comment-edit by ID
+- mark unobserved stale periods unavailable (#37475)
+- sign issue body edits in gh write helper (#37489)
+- preserve trailing = in injected secret values
+- release floor-path product hold when only blocked or retry product rows remain (GH#37478) (#37484)
+- detect launched browser left stale by on-disk update
+- exclude successful PR handoffs from failures (#37477)
+- verify PR-less review-triage completion (#37470)
+
+## [3.39.152] - 2026-11-09
+
+### Changed
+
+- Maintenance: add t18929 and t18930 briefs (worktree ownership relinquish)
+
+### Fixed
+
+- relinquish a finished interactive session's worktree ownership at full-loop complete and finalize-receipt so Pulse can retire merged trees while the app runs (GH#37448) (#37473)
+- update STUCK_TRIPPED help text to match classifier (GH#37459) (#37464)
+- log starter-sync scope refusals (#37472)
+- scope stale worktree reaping to lane repository (#37447)
+- preserve release lane notices and message text (#37444)
+- validate combined brief dispatch scope (#37460)
+
+## [3.39.151] - 2026-11-09
+
+### Added
+
+- let a session relinquish its own run so explicit removal of its finished tree succeeds
+
+### Fixed
+
+- preserve loop identity during postflight (#37454)
+- fail closed when keychain probe fails (#37455)
+- normalize line endings before REQUEST_START match in gh_quota_debug_request (GH#37440) (#37451)
+- honour breaker bypass in relay gate and guard exit notices (#37453)
+- use bool-excluding isinstance for removal boundary check (#37441)
+
+## [3.39.150] - 2026-11-09
+
+### Changed
+
+- Documentation: preserve keychain items during recovery (#37416)
+- Tests: cover missing-isDraft snapshot REST fingerprint fallback (GH#37411) (#37420)
+- Documentation: tighten cleanup safety overview (#37401)
+- Documentation: hostinger.md cookie-skipping Cloudflare cache rule check (#37387)
+
+### Fixed
+
+- reap newest release trees first and ignore the Spotlight marker when judging idleness
+- reject repeated GraphQL pagination cursor (#37422)
+- bind deferred blocker context (#37426)
+- refresh remote-branch cache after prune fetch (#37428)
+- re-anchor window on each zero-attempt so slow-failing runners trip (#37419)
+- reject missing pulse merge gate extractions (GH#37413) (#37423)
+- isolate requested fallback injection
+- detect and rerun required checks whose workflow run never started (#37410)
+
+## [3.39.149] - 2026-11-09
+
+### Changed
+
+- Documentation: review Native SDK v0.11.1 (#37392)
+
+### Fixed
+
+- bound unchanged draft checkpoint hints (GH#37394) (#37396)
+- close quiescent admission in the observation-era managed takeover
+- run the worker bus relay on the worker-watchdog 2-minute cadence
+
+## [3.39.148] - 2026-11-09
+
+### Changed
+
+- Tests: pin starter-sync trust never bypasses other pulse-merge gates (GH#37373) (#37379)
+
+### Fixed
+
+- hold terminal-blocker circuits when revision or comment evidence is unavailable
+- prove open-PR state from GraphQL when REST is deferred
+- restore gh shim safe-body edit fixtures (#37378)
+- preserve systemd cycles and recognize split SSH sessions
+
+## [3.39.147] - 2026-11-09
+
+### Fixed
+
+- declare handoff PR issue identity in body
+- decline REST-first reads when REST core is spent and GraphQL has headroom
+- make the release executor the lifecycle owner of its worktrees
+
+## [3.39.146] - 2026-11-09
+
+### Fixed
+
+- resolve canonical dependency source (GH#37352)
+- preserve deferred blocker context
+
+## [3.39.145] - 2026-11-09
+
+### Fixed
+
+- self-heal a root-owned repo-privacy cache so privacy probes stop cold-calling the API
+- skip private repos and budget the redirect-spam sweep so it stops starving dispatch stages
+- recover claim-release persistence failures after GitHub quota resets (#37349)
+- retry owner admission while the lifecycle store is briefly locked
+
+## [3.39.144] - 2026-11-09
+
+### Fixed
+
+- fetch through native Git in canonical checkouts and log capacity-pass vetoes
+- reap stale release preparation and reconcile worktrees
+
+## [3.39.143] - 2026-11-09
+
+### Fixed
+
+- move resume helpers out of cleanup.py and age test fixtures past the clock slack
+- record endpoint labels for governed native REST attempts (GH#37333) (#37337)
+- probe canonical-checkout routines in an isolated signing repo (GH#37336) (#37338)
+- scale lifecycle cleanup budget under worktree capacity pressure so retirement keeps up and dispatch reopens
+- run the worker bus relay outside the cycle budget so pulse steering actually reaches workers
+- enforce GH#27137 review-bot thread gate in full-loop merge (#37324)
+
+## [3.39.142] - 2026-11-09
+
+### Fixed
+
+- use native process census for reconstructible worktree retirement on macOS
+- count startup failures in runner health
+
+## [3.39.141] - 2026-11-09
+
+### Fixed
+
+- preserve loop identity when merging foreign PRs (#37309)
+
+## [3.39.140] - 2026-11-09
+
+### Added
+
+- show Buzz plugin update availability (#37302)
+
+### Changed
+
+- Documentation: clarify Buzz agent mention requirements (#37304)
+
+## [3.39.139] - 2026-11-09
+
+### Fixed
+
+- explain and repair renamed TODO task/issue mappings
+
+## [3.39.138] - 2026-11-09
+
+### Added
+
+- add aidevops status --quick fast path (GH#37293) (#37296)
+- scoped trust for github-actions[bot] starter-sync issues in worker-briefed auto-merge (#37290)
+- t18898 session bus for Buzz-hosted agents (#37285)
+
+### Fixed
+
+- origin-block check and per-client model for LiteSpeed 403 refusals
+- add stats health dashboard recovery lane (GH#37283) (#37287)
+
+## [3.39.137] - 2026-11-09
+
+### Added
+
+- session bus chat ingest trust and owner wakes (#37277)
+- t18899 deploy Buzz plugin to stable folder (#37267)
+- t18897 ask wait for subagents and scripts (#37257)
+
+### Changed
+
+- Documentation: read bounded-operation output before recording claims (#37280)
+- Documentation: add macOS account and login-keychain recovery reference
+- Documentation: clean up backups already on web-served paths
+- Refactor: split runtime bundle functions out of agent-deploy.sh (GH#37253) (#37256)
+- Documentation: clarify qlty ratchet override gate refresh (#37261)
+
+### Fixed
+
+- t18903 style buzz-aidevops Conversation dropdown like the text fields
+- t18901 visible buzz-aidevops settings fields and Identity-tab guidance
+- guard background gh auth token against locked macOS keychain (GH#37232) (#37236)
+- refuse silent skip of WIP-committed planning files in planning-commit-helper (GH#37252) (#37255)
+- sequence review labels before approval (#37231)
+
 ## [3.39.136] - 2026-11-08
 
 ### Added

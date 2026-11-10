@@ -32,6 +32,22 @@ headless_signing_required() {
 	return 0
 }
 
+# headless_signing_is_main_worktree <dir> — 0 when <dir> is a repository's
+# main (non-linked) worktree, such as a canonical checkout. Its object store is
+# shared with every linked worktree, and the canonical Git guard shim blocks
+# object writes such as commit-tree there (GH#37336). Uses read-only rev-parse.
+headless_signing_is_main_worktree() {
+	local work_dir="$1"
+	local git_dirs="" git_dir="" common_dir=""
+	git_dirs=$(git -C "$work_dir" rev-parse --path-format=absolute \
+		--git-dir --git-common-dir 2>/dev/null) || return 1
+	git_dir="${git_dirs%%$'\n'*}"
+	[[ "$git_dirs" == *$'\n'* ]] || return 1
+	common_dir="${git_dirs#*$'\n'}"
+	[[ -n "$git_dir" && "$git_dir" == "$common_dir" ]] || return 1
+	return 0
+}
+
 # headless_signing_commit_probe <dir> [drop_agent]
 # Create a signed commit object without prompting, moving refs, or touching
 # the worktree. drop_agent=1 probes without the caller's ssh-agent (sandboxed
@@ -39,11 +55,20 @@ headless_signing_required() {
 # commit-tree ignores commit.gpgsign, so -S is passed whenever <dir> requires
 # signing; without it the probe never signs and cannot detect an unusable key
 # or agent (GH#36515). Directories without required signing stay unsigned.
+# GH#37336: a main worktree (canonical checkout, e.g. an LLM routine work_dir)
+# is probed in a private bare repository with the same effective signing
+# config, because the canonical Git guard rejects commit-tree there (rc=42)
+# and the swallowed rejection was misreported as worker_signing_unavailable.
 headless_signing_commit_probe() {
 	local work_dir="$1"
 	local drop_agent="${2:-0}"
 	local tree_id=""
 	local sign_args=()
+	if headless_signing_is_main_worktree "$work_dir"; then
+		headless_signing_required "$work_dir" || return 0
+		headless_signing_commit_probe_isolated "$work_dir" "$drop_agent" || return 1
+		return 0
+	fi
 	tree_id=$(git -C "$work_dir" rev-parse 'HEAD^{tree}' 2>/dev/null) || return 1
 	headless_signing_required "$work_dir" && sign_args=(-S)
 	(
@@ -60,13 +85,15 @@ headless_signing_commit_probe() {
 	return 0
 }
 
-# headless_signing_commit_probe_isolated <dir>
+# headless_signing_commit_probe_isolated <dir> [drop_agent]
 # Same proof for callers that hold only a canonical checkout: sign a commit in
 # a private temporary bare repository using <dir>'s effective identity and
 # signing configuration, so the canonical object store is never written.
 # commit-tree ignores commit.gpgsign, so -S is required to prove signing.
+# drop_agent=1 signs without the caller's ssh-agent, as sandboxed workers do.
 headless_signing_commit_probe_isolated() {
 	local work_dir="$1"
+	local drop_agent="${2:-0}"
 	local probe_root="" tree_id="" key="" value="" status=0
 	local config_args=()
 	for key in user.name user.email gpg.format user.signingkey gpg.program \
@@ -79,12 +106,17 @@ headless_signing_commit_probe_isolated() {
 	# caller's working directory.
 	if git -C "$probe_root" init -q --bare repo.git >/dev/null 2>&1 &&
 		tree_id=$(git -C "$probe_root/repo.git" hash-object -w -t tree --stdin </dev/null 2>/dev/null); then
-		GIT_TERMINAL_PROMPT=0 \
-			SSH_ASKPASS=/usr/bin/false \
-			SSH_ASKPASS_REQUIRE=force \
-			DISPLAY=aidevops-headless \
-			git -C "$probe_root/repo.git" "${config_args[@]}" commit-tree -S "$tree_id" \
-				-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1 || status=1
+		(
+			if [[ "$drop_agent" == "1" ]]; then
+				unset SSH_AUTH_SOCK SSH_AGENT_PID
+			fi
+			GIT_TERMINAL_PROMPT=0 \
+				SSH_ASKPASS=/usr/bin/false \
+				SSH_ASKPASS_REQUIRE=force \
+				DISPLAY=aidevops-headless \
+				git -C "$probe_root/repo.git" ${config_args[@]+"${config_args[@]}"} commit-tree -S "$tree_id" \
+					-m "aidevops headless signing preflight" </dev/null >/dev/null 2>&1
+		) || status=1
 	else
 		status=1
 	fi

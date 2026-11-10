@@ -70,7 +70,7 @@ import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
 import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
-import { createSessionBusHooks } from "./session-bus-plugin.mjs";
+import { createSessionBusHooks, remoteBusContext } from "./session-bus-plugin.mjs";
 import { createPermissionBroker } from "./permission-broker.mjs";
 import { createSubagentCancellationReceipt } from "./subagent-cancellation-receipt.mjs";
 import { createNativeDesktopFocusGuard } from "./native-desktop-focus-guard.mjs";
@@ -439,13 +439,14 @@ export async function AidevopsPlugin({ directory, client }) {
     readOutput: createOutputSandboxReader(join(SCRIPTS_DIR, "output-sandbox-helper.sh")),
   });
   process.once("exit", () => boundedOperationManager.dispose());
-  // t18886: presence for every root session; messaging only in interactive
-  // TUI/serve/ACP processes. Headless workers publish read-only presence.
-  // The loggers are defined below, so they are bound lazily.
+  // t18886: presence for every root session; the tool and wakes only in
+  // interactive TUI/serve/ACP processes. t18905: headless workers receive
+  // messages at tool results and turns. The loggers are bound lazily.
   const sessionBus = createSessionBusHooks({
     client,
     directory,
     headless: isHeadless(),
+    remote: remoteBusContext(conversation),
     onError: (label, err) => debugEventError(label, err),
     log: (level, message) => qualityLog(level, message),
   });
@@ -776,7 +777,10 @@ export async function AidevopsPlugin({ directory, client }) {
       permissionBroker.recordToolCall(input, output);
       cancellationReceipt.beforeTool(input, output);
       subagentEffortHooks.beforeTool(input, output);
-      return toolExecuteBefore(input, output);
+      const result = await toolExecuteBefore(input, output);
+      // t18905: after the gates, so only tools that will run are published.
+      sessionBus.toolBefore(input);
+      return result;
     },
     "tool.execute.after": async (input, output) => {
       normalizeMcpArtifactPaths(input, output, mcpRuntime.workspaces);

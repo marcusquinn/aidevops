@@ -1502,6 +1502,8 @@ _dsi_write_recovery_checkpoint() {
 	if [[ "$trigger" == *"reason=commit_permission_denied"* ]]; then
 		recovery_owner="human"
 		resume_condition="human-owned permission repair or capability context change; otherwise guarded recheck after the 900-second repository cooldown; commit evidence must remain complete"
+	elif [[ "$trigger" == *"reason=keychain_unavailable"* ]]; then
+		resume_condition="restore readiness helper readability and unlock or repair keychain/gh credentials as needed, or supply GH_TOKEN/GITHUB_TOKEN securely; guarded recheck after AIDEVOPS_KEYCHAIN_BACKOFF_SECS (default 600 seconds) when a marker is active"
 	fi
 
 	[[ -n "$_DSI_ARG_MODEL" ]] && resume_args+=(--model "$_DSI_ARG_MODEL")
@@ -1591,14 +1593,52 @@ _dsi_validate_dispatch_target() {
 _dsi_guard_cached_commit_denial() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	if (
+	local cache_rc=0
+	(
 		# shellcheck source=./dispatch-dedup-pr.sh
 		# shellcheck disable=SC1091
 		source "${_DSI_SCRIPT_DIR}/dispatch-dedup-pr.sh"
 		_ddpr_commit_denial_cache check "$repo_slug"
-	); then
+	) || cache_rc=$?
+	# 0 = cached denial; 3 = keychain unavailable (no safe gh read) -> uncertain
+	if [[ "$cache_rc" -eq 3 ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=keychain_unavailable scope=open_commits' 0 || true
+		return 75
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
 		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
 			'PR_LOOKUP_RESULT=uncertain reason=commit_permission_denied scope=open_commits' 0 || true
+		return 75
+	fi
+	return 0
+}
+
+# GH#37232: check keychain readiness before any gh metadata read, so a locked
+# macOS keychain cannot prompt or fail validation. Returns 75 (uncertain).
+_dsi_guard_keychain_ready() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local ready_rc=0
+	if [[ -r "${_DSI_SCRIPT_DIR}/background-keychain-helper.sh" ]]; then
+		(
+			# shellcheck source=./background-keychain-helper.sh
+			# shellcheck disable=SC1091
+			source "${_DSI_SCRIPT_DIR}/background-keychain-helper.sh"
+			background_keychain_gh_ready "dispatch-single-issue"
+		) || ready_rc=$?
+	elif [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+		# Fail closed on macOS (or unknown OS) when readiness cannot be checked.
+		local host_os=""
+		host_os=$(uname -s 2>/dev/null) || host_os=""
+		if [[ -z "$host_os" || "$host_os" == "Darwin" || -n "${AIDEVOPS_KEYCHAIN_FORCE_STATE:-}" ]]; then
+			_dsi_warn "background-keychain-helper.sh unreadable; cannot check keychain readiness"
+			ready_rc=1
+		fi
+	fi
+	if [[ "$ready_rc" -ne 0 ]]; then
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" \
+			'PR_LOOKUP_RESULT=uncertain reason=keychain_unavailable scope=dispatch_metadata' 0 || true
 		return 75
 	fi
 	return 0
@@ -1649,6 +1689,7 @@ cmd_dispatch() {
 	fi
 
 	# Step 1-2: validate + load + parent-task gate
+	_dsi_guard_keychain_ready "$issue_number" "$repo_slug" || return $?
 	_dsi_validate_dispatch_target "$issue_number" "$repo_slug" || return 1
 	_dsi_guard_cached_commit_denial "$issue_number" "$repo_slug" || return $?
 

@@ -122,7 +122,8 @@ shellcheck .agents/scripts/buzz-desktop-helper.sh .agents/tests/test-buzz-deskto
 
 ## Acceptance Criteria
 
-- [ ] Phase 0: spike installs via Git import in a debug Desktop, its review dialog shows only the declared grants, and the Settings card renders `aidevops buzz status`; findings recorded here.
+- [x] Phase 0: spike installs via Git import in a debug Desktop, its review dialog shows only the declared grants, and the Settings card renders `aidevops buzz status`; findings recorded here. Done in PR #36998 and tested 2026-11-08 in the official `v0.7.0-preview.254.1` build, installed from the deployed folder (`~/.aidevops/agents/plugins/buzz-aidevops`) rather than Git import: the review listed only `aidevops buzz status` and the card rendered live status.
+- [ ] Agent type (GH#37233): an `aidevops` agent type runs `aidevops buzz acp --member NAME --project DIR` per agent; a DM gets a threaded reply in the preview; the review lists the `aidevops buzz acp` process and MCP; Buzz 0.5 agents unaffected.
 - [ ] Phase 1: helper writes a valid `managed-plugins.json` (schema v1, pinned commit) atomically for each present new-Desktop identifier; legacy store byte-identical; fixtures pass.
 - [ ] Phase 2: read-only `aidevops_*` tools callable by a local agent; no secret in args/output.
 - [ ] Phase 3: decision recorded for channel templates and sidebar presentation, with upstream issues linked where the plugin API cannot cover it.
@@ -133,7 +134,7 @@ shellcheck .agents/scripts/buzz-desktop-helper.sh .agents/tests/test-buzz-deskto
 - Owner asks filed upstream: per-channel default agent (no @mention needed), block/buzz-app#2923; community rail back in the left sidebar, block/buzz-app#2922. ("Channel icons" meant the community rail.)
 - Channel templates in this build are local-only (`buzz.channel-templates.v1` in Desktop localStorage: name, agents, teams, starting Canvas ≤24 KiB; `src/features/channel-templates/local.ts`). Settings → Channel templates offers "New template" only; there is no template import/export (`docs/agents.md:1443`). Phase 3 must work within that or request export upstream.
 - Rejected: writing Desktop localStorage from the plugin to seed templates — not a contract.
-- Rejected for now: shipping our own OpenCode harness in the plugin — #2432 covers it; revisit only if #2432 stalls or rejects `mode` selection.
+- ~~Rejected for now: shipping our own OpenCode harness in the plugin — #2432 covers it; revisit only if #2432 stalls or rejects `mode` selection.~~ Reversed by the owner on 2026-11-08: the official 0.7 previews ship no OpenCode harness, and the #2432 review (tellaho, 2026-11-08) asks for it to be distributed externally. The plugin now adds an `aidevops` agent type (GH#37233) using the documented harness kit (`ctx.agents.harness`, `docs/plugin-architecture.md:578-606`), `host.spawn` and `host.serveMcp`. It reuses the aidevops roster, worktree, overlay and launcher, so each agent keeps its `<agent>-<host>` name and Claude models. If #2432 or a shared external OpenCode plugin ships with per-agent `mode`, compare and retire whichever duplicates the other.
 
 ## Relevant Files
 

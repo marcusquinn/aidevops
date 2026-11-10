@@ -98,6 +98,11 @@ _all_args=("$@")
 # PR head SHA read (bound before/after the file list)
 [[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"head.sha"* ]] && { printf '%s\n' "${MOCK_PR_HEAD_SHA:-0123456789abcdef0123456789abcdef01234567}"; exit 0; }
 
+# PR base SHA read (starter-sync scope, GH#37289)
+[[ "$*" == *"repos/"*"/pulls/"[0-9]* && "$*" == *"base.sha"* ]] && { [[ -f "${TEST_ROOT}/base-sha.txt" ]] || exit 1; cat "${TEST_ROOT}/base-sha.txt"; exit 0; }
+# Starter core-files list at the base ref (GH#37289); missing fixture = API failure
+[[ "$*" == *"/contents/scripts/core-files.txt?ref="* ]] && { cat "${TEST_ROOT}/core-files.txt" 2>/dev/null; exit $?; }
+
 # Issue API (author_association check)
 if [[ "$*" == *"repos/"*"/issues/"* ]] && [[ "$*" != *"/comments"* ]] && [[ "$*" != *"/labels"* ]]; then
 	_jq_filter=""
@@ -154,7 +159,11 @@ fi
 exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
+	write_approval_helper_stub
+	return 0
+}
 
+write_approval_helper_stub() {
 	cat >"${TEST_ROOT}/scripts/approval-helper.sh" <<'APPROVAL_EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "verify" ]]; then
@@ -213,6 +222,7 @@ define_helpers_under_test() {
 		/^_PM_OPENCODE_CANARY_ALLOWED_FILES=/,/^_PM_OPENCODE_CANARY_MAX_FILES=/ { print }
 		/^_pm_canary_shared_constants_patch_ok\(\) \{/,/^\}$/ { print }
 		/^_is_trusted_opencode_canary_issue_pr\(\) \{/,/^\}$/ { print }
+		/^_is_trusted_starter_sync_issue_pr\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
 		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
@@ -1025,6 +1035,193 @@ test_parent_planning_checkpoint_gates() {
 }
 
 # =============================================================================
+# GH#37289: scoped starter-sync bot-issue trust
+# =============================================================================
+# Args: $1=label, $2=expect pass|block, $3=issue title, $4=labels JSON array,
+#       $5=issue user type, $6=PR file, $7=core-files fixture mode (ok|missing)
+_run_starter_sync_case() {
+	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" pfile="$6" mode="${7:-ok}"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" \
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
+	[[ "$mode" == "ok" ]] && printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n --arg f "$pfile" '[{filename:$f,status:"modified"},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "103" "owner/repo" "origin:worker" "false" "45" && result=0 || result=$?
+	if [[ "$expect" == "pass" && "$result" -eq 0 ]] && grep -q "is a starter-sync issue" "$LOGFILE"; then
+		print_result "$label" 0
+	elif [[ "$expect" == "block" && "$result" -ne 0 ]] && ! grep -q "is a starter-sync issue" "$LOGFILE"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "expected ${expect}, exit=${result}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_starter_sync_scoped_trust() {
+	local ok_labels='[{"name":"starter-sync"}]'
+	local ttl="Core files differ from the starter"
+	_run_starter_sync_case "starter-sync: in-scope diff passes" pass "$ttl" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: wrong title blocked" block "Something else" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: missing label blocked" block "$ttl" '[{"name":"bug"}]' Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: non-Bot author blocked" block "$ttl" "$ok_labels" User "includes/core.php"
+	_run_starter_sync_case "starter-sync: out-of-scope file blocked" block "$ttl" "$ok_labels" Bot "includes/own-feature.php"
+	_run_starter_sync_case "starter-sync: scope-list API failure fails closed" block "$ttl" "$ok_labels" Bot "includes/core.php" missing
+	return 0
+}
+
+# =============================================================================
+# GH#37373: starter-sync trust replaces ONLY the linked-issue author check.
+# Runs the REAL gate chain (_check_pr_merge_gates and its _pm_gate_* stages plus
+# the final trust gate's live-state check) around a starter-sync-trusted fixture
+# and pins that every other gate still blocks. Only external I/O is stubbed.
+# Why not test-pulse-merge-pr-context.sh: its harness never evaluates
+# _check_pr_merge_gates, so it cannot pin gate order.
+# =============================================================================
+_define_starter_gate_chain() {
+	local src="" fn="" part=""
+	for fn in _check_pr_merge_gates _pm_gate_review_mode _pm_gate_author_trust \
+		_pm_gate_route_ineligible_author _pm_gate_repository_and_issue \
+		_pm_gate_origin_authority _pm_gate_review_bot _pulse_merge_final_trust_gate; do
+		part=$(awk -v f="$fn" '$0 ~ "^" f "\\(\\) \\{" , /^}$/ { print }' "$MERGE_SCRIPT")
+		if [[ -z "$part" ]]; then
+			printf 'ERROR: could not extract %s from %s\n' "$fn" "$MERGE_SCRIPT" >&2
+			return 1
+		fi
+		src+=$'\n'"$part"
+	done
+	part=$(awk '/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-gates.sh")
+	if [[ -z "$part" ]]; then
+		printf 'ERROR: could not extract _pulse_merge_live_state_gate from %s\n' "${SCRIPT_DIR}/../pulse-merge-gates.sh" >&2
+		return 1
+	fi
+	src+=$'\n'"$part"
+	# shellcheck disable=SC1090
+	eval "$src"
+
+	# External I/O stubs; SC_* variables select the scenario per case.
+	_OW_LABEL_PAT=",origin:worker,"
+	PULSE_REVIEW_EVIDENCE_SCHEMA="test-schema"
+	PULSE_UNKNOWN_STATE="unknown"
+	PULSE_REVIEW_DECISION_CHANGES_REQUESTED="CHANGES_REQUESTED"
+	_interactive_claim_fence_blocks_merge() { return 1; }
+	# Real handler routes CHANGES_REQUESTED to workers and blocks the merge.
+	_handle_changes_requested_review_gate() {
+		[[ "$3" != "CHANGES_REQUESTED" ]] && return 0
+		echo "[test] changes-requested blocks merge" >>"$LOGFILE"
+		return 1
+	}
+	_pulse_is_trusted_issue_sync_pr() { return 1; }
+	_is_collaborator_author() { _PULSE_AUTHOR_PERMISSION_VALUE="write"; return "${SC_COLLAB_RC:-0}"; }
+	_is_trusted_dependabot_update_pr() { return 1; }
+	_has_maintainer_crypto_approval() { return 1; }
+	_pulse_route_dependabot_pr_to_worker_issue() { return 1; }
+	check_pr_modifies_workflows() { return 1; }
+	_external_pr_has_linked_issue() { return 0; }
+	_external_pr_linked_issue_crypto_approved() { return "${SC_EXT_ISSUE_RC:-1}"; }
+	_external_pr_current_head_crypto_approved() { return "${SC_EXT_HEAD_RC:-1}"; }
+	_gh_pr_merge_closure_check() { return 0; }
+	_pulse_recover_external_review() { return 0; }
+	_pulse_merge_refresh_review_gate_evidence() { return 0; }
+	_pulse_merge_preflight_snapshot_gate() { return 0; }
+	# Final-boundary stand-in for _pulse_merge_admin_safety_check: it reads the
+	# same live PR metadata the real one feeds to _pulse_merge_live_state_gate.
+	_pulse_merge_admin_safety_check() {
+		_pulse_merge_live_state_gate "$1" "$2" "$(_sc_pr_meta_json)" "${SC_PR_LABELS:-origin:worker}"
+		return $?
+	}
+	_extract_pr_work_issue() { printf '45'; return 0; }
+	TEST_CLOSING_ISSUE=45
+	PMRC_BLOCKER_MERGE_AUTHORITY="merge-authority"
+	PMRC_BLOCKER_REVIEW_GATE="review-gate"
+	gh_pr_view() {
+		local labels="${SC_PR_LABELS:-origin:worker}"
+		if [[ "$*" == *"labels,isDraft,headRefOid,body"* ]]; then
+			_sc_pr_meta_json | jq -c '. + {headRefOid:"head",body:"Resolves #45"}'
+		elif [[ "$*" == *"labels,isDraft"* ]]; then
+			_sc_pr_meta_json
+		elif [[ "$*" == *"body,closingIssuesReferences"* ]]; then
+			printf '%s' '{"body":"Resolves #45","closingIssuesReferences":[]}'
+		else
+			printf '%s' "$labels"
+		fi
+		return 0
+	}
+	_sc_pr_meta_json() {
+		jq -nc --arg l "${SC_PR_LABELS:-origin:worker}" --argjson d "${SC_DRAFT:-false}" --arg r "${SC_REVIEW:-NONE}" \
+			'{state:"OPEN",isDraft:$d,reviewDecision:$r,autoMergeRequest:null,labels:($l|split(",")|map(select(length>0))|map({name:.}))}'
+		return 0
+	}
+	return 0
+}
+
+# Args: $1=label, $2=expect pass|block, $3=expected log substring, $4=mutation
+_run_starter_gate_chain_case() {
+	local label="$1" expect="$2" needle="$3" mutation="${4:-none}"
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	_define_starter_gate_chain || { print_result "$label" 1 "could not extract gate chain"; teardown_test_env; return 0; }
+	local issue_labels='[{"name":"starter-sync"}]'
+	SC_PR_LABELS="origin:worker" SC_DRAFT=false SC_REVIEW=NONE SC_COLLAB_RC=0 SC_EXT_ISSUE_RC=1 SC_EXT_HEAD_RC=1
+	local bot_evidence='{"schema":"test-schema","repo":"owner/repo","pr":103,"head_sha":"head","permitted":true,"state":"pass","merge_gate":"clear","status":"PASS"}'
+	case "$mutation" in
+	issue-nmr) issue_labels='[{"name":"starter-sync"},{"name":"needs-maintainer-review"}]' ;;
+	pr-nmr) SC_PR_LABELS="origin:worker,needs-maintainer-review" ;;
+	external-no-issue-approval) SC_PR_LABELS="origin:worker,external-contributor" ;;
+	external-no-head-approval) SC_PR_LABELS="origin:worker,external-contributor" SC_EXT_ISSUE_RC=0 ;;
+	non-collaborator) SC_COLLAB_RC=1 ;;
+	draft) SC_DRAFT=true ;;
+	hold) SC_PR_LABELS="origin:worker,hold-for-review" ;;
+	changes-requested) SC_REVIEW=CHANGES_REQUESTED ;;
+	bot-missing) bot_evidence='{}' ;;
+	none) ;;
+	esac
+	jq -n --argjson l "$issue_labels" \
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:$l}' >"${TEST_ROOT}/issue.json"
+	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
+	printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
+	printf '[{"filename":"includes/core.php","status":"modified"},{"filename":"changelog.txt","status":"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	printf '#!/usr/bin/env bash\nprintf "%%s" %q\n' "$bot_evidence" >"${TEST_ROOT}/scripts/review-bot-gate-helper.sh"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	{ _check_pr_merge_gates "103" "owner/repo" "worker" "$SC_REVIEW" "45" "$SC_PR_LABELS" "head" &&
+		_pulse_merge_final_trust_gate "103" "owner/repo" "head"; } || result=$?
+	local starter_logged=1
+	grep -q "is a starter-sync issue" "$LOGFILE" && starter_logged=0
+	if [[ "$expect" == "pass" && "$result" -eq 0 && "$starter_logged" -eq 0 ]]; then
+		print_result "$label" 0
+	elif [[ "$expect" == "block" && "$result" -ne 0 ]] && grep -qF -- "$needle" "$LOGFILE"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "expected ${expect}, exit=${result}, starter_logged=${starter_logged}, log: $(tr '\n' '|' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_starter_sync_does_not_bypass_other_gates() {
+	local p="starter-sync gate order (GH#37373):"
+	_run_starter_gate_chain_case "$p clean fixture passes every gate" pass "" none
+	_run_starter_gate_chain_case "$p linked-issue needs-maintainer-review blocks" block "has needs-maintainer-review" issue-nmr
+	_run_starter_gate_chain_case "$p PR needs-maintainer-review blocks at final trust gate" block "PR carries needs-maintainer-review" pr-nmr
+	_run_starter_gate_chain_case "$p external-contributor without issue approval blocks" block "lacks crypto approval (t1958)" external-no-issue-approval
+	_run_starter_gate_chain_case "$p external-contributor without head approval blocks" block "lacks V2 crypto approval for current head" external-no-head-approval
+	_run_starter_gate_chain_case "$p non-collaborator author blocks" block "is not a collaborator" non-collaborator
+	_run_starter_gate_chain_case "$p draft PR blocks" block "PR is draft or has hold-for-review" draft
+	_run_starter_gate_chain_case "$p hold-for-review blocks" block "PR is draft or has hold-for-review" hold
+	_run_starter_gate_chain_case "$p CHANGES_REQUESTED blocks" block "changes-requested blocks merge" changes-requested
+	_run_starter_gate_chain_case "$p missing review-bot evidence blocks" block "missing or unpermitted current-head evidence" bot-missing
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -1059,6 +1256,8 @@ main() {
 	test_partial_worker_association_reaches_authority_gate
 	test_non_closing_reference_gates
 	test_parent_planning_checkpoint_gates
+	test_starter_sync_scoped_trust
+	test_starter_sync_does_not_bypass_other_gates
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

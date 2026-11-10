@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.136
+# Version: 3.39.154
 
 set -euo pipefail
 
@@ -2140,7 +2140,7 @@ _main_dispatch() {
 	project-config) _dispatch_helper "project-config-restore-helper.sh" "project-config-restore-helper.sh" "$@" ;;
 	setup) cmd_setup "$@" ;;
 	features | f) cmd_features ;;
-	status | s) cmd_status ;;
+	status | s) cmd_status "$@" ;;
 	update | upgrade | u) cmd_update "$@" ;;
 	runtime-bundle | runtime_bundle) AIDEVOPS_INSTALL_DIR="$INSTALL_DIR" _dispatch_helper "runtime-bundle-rollback-helper.sh" "runtime-bundle-rollback-helper.sh" "$@" ;;
 	release) _dispatch_helper "full-loop-release-helper.sh" "full-loop-release-helper.sh" "$@" ;;

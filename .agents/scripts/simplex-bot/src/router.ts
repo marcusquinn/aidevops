@@ -30,7 +30,7 @@ export class CommandRouter {
   parse(text: string): { command: string; args: string[] } | null {
     const trimmed = text.trim();
     if (!trimmed.startsWith("/")) return null;
-    const parts = trimmed.slice(1).split(/\\s+/);
+    const parts = trimmed.slice(1).split(/\s+/);
     const command = parts[0]?.toLowerCase() ?? "";
     const args = parts.slice(1);
     return { command, args };

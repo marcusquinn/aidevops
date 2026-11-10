@@ -382,7 +382,7 @@ The simplification debt count has not decreased in the last $((${COMPLEXITY_LLM_
 
 1. Are the open function-complexity-debt issues actionable? Check for issues that are blocked, stale, or need maintainer review.
 2. Are workers dispatching on function-complexity-debt issues? Check recent pulse logs for dispatch activity.
-3. Is the open debt cap (500) or the local worktree cap (\`AIDEVOPS_MAX_WORKTREES\`, default 200) being hit? Check pulse logs for \`local_capacity_gate\` and verify cleanup liveness before changing either safety cap.
+3. Is the open debt cap (500) or the local worktree cap (\`AIDEVOPS_MAX_WORKTREES\`, default 1000) being hit? Check pulse logs for \`local_capacity_gate\`; fix cleanup liveness rather than lowering either cap or throttling dispatch.
 4. Are there systemic blockers (e.g., all remaining issues require architectural decisions)?
 
 ### Suggested actions

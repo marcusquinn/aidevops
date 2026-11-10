@@ -30,6 +30,7 @@ export const VALID_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "responseTimeout",
   "dataDir",
   "leakDetection",
+  "sessionBus",
 ]);
 
 /** Valid log levels */
@@ -81,9 +82,18 @@ export function warnUnknownKeys(parsed: Record<string, unknown>, configPath: str
   }
 }
 
+/** A configured session bus must explicitly enable or disable the bridge. */
+function isSessionBusConfig(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return "enabled" in value && typeof value.enabled === "boolean";
+}
+
 /** Validate and sanitize parsed config values, removing invalid entries */
 export function validateParsedConfig(parsed: Record<string, unknown>): void {
   validateLogLevel(parsed);
   validatePort(parsed);
   validateNumericFields(parsed);
+  if (parsed.sessionBus !== undefined && !isSessionBusConfig(parsed.sessionBus)) {
+    removeInvalid(parsed, "sessionBus", "session bus disabled");
+  }
 }

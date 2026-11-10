@@ -76,6 +76,18 @@ check_classification() {
 
 echo "${TEST_BLUE}=== headless runtime failure classification tests ===${TEST_NC}"
 
+# Record only positively classified zero-activity failures, not general failures.
+_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE="$FIXTURE_DIR/health-helper"
+export _HRFF_RUNNER_HEALTH_HELPER_OVERRIDE
+# shellcheck disable=SC2016 # Variables are expanded by the fixture at runtime.
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >>"$FIXTURE_HEALTH_LOG"' >"$_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE"
+chmod +x "$_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE"
+export FIXTURE_HEALTH_LOG="$FIXTURE_DIR/health.log"
+_hrff_record_runner_health_failure issue-123 crash_during_startup
+_hrff_record_runner_health_failure issue-123 worker_noop_zero_output
+_hrff_record_runner_health_failure issue-123 crash_during_execution
+assert_eq "only zero-activity startup outcomes recorded" "2" "$(wc -l <"$FIXTURE_HEALTH_LOG" | tr -d ' ')"
+
 check_classification \
 	"openai_rate_limit" \
 	'{"provider":"openai","error":{"type":"rate_limit","message":"Too many requests"},"status":429}' \

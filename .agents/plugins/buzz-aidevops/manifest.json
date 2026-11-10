@@ -2,8 +2,8 @@
   "id": "sh.aidevops.buzz",
   "name": "aidevops",
   "apiVersion": 1,
-  "description": "Shows this computer's aidevops Buzz setup status in Settings.",
-  "discovery": { "category": "developer-tools", "tags": ["aidevops", "setup"] },
+  "description": "Shows this computer's aidevops Buzz setup in Settings and adds an aidevops agent type that runs aidevops OpenCode agents on this computer.",
+  "discovery": { "category": "developer-tools", "tags": ["aidevops", "setup", "agents", "opencode"] },
   "host": {
     "commands": [
       {
@@ -12,6 +12,14 @@
         "args": ["buzz", "status"],
         "maxOutputBytes": 16384
       }
-    ]
+    ],
+    "processes": [
+      {
+        "id": "acp",
+        "program": "aidevops",
+        "args": ["buzz", "acp"]
+      }
+    ],
+    "mcp": true
   }
 }

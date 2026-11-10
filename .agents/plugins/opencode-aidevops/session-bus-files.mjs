@@ -31,7 +31,10 @@ export const LIMITS = Object.freeze({
   deliverPerBatch: 5,
 });
 export const MESSAGE_TYPES = Object.freeze(["info", "ask", "reply", "idle-notice"]);
-export const MESSAGEABLE_KINDS = Object.freeze(["tui", "serve", "acp"]);
+// t18905: headless workers receive messages at tool results and turns, but
+// are never woken (an idle worker has finished its run) and get no tool.
+export const MESSAGEABLE_KINDS = Object.freeze(["tui", "serve", "acp", "headless"]);
+export const WAKEABLE_KINDS = Object.freeze(["tui", "serve", "acp"]);
 export const FRAME_PREFIX = "[aidevops session-bus]";
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -94,12 +97,17 @@ export const deliveredDir = (root, sessionID) => join(inboxDir(root, sessionID),
 export const sentDir = (root, senderKey) => join(root, "sent", senderKey);
 export const subsDir = (root, sessionID) => join(root, "subs", sessionID);
 export const outboxDir = (root, app) => join(root, "outbox", app);
+// t18896: release watches are keyed by repository, unlike subs/ (keyed by the watched session).
+export const releaseWatchDir = (root, repoKey) => join(root, "release-watch", repoKey);
+export const releaseNoticeDir = (root, repoKey) => join(releaseWatchDir(root, repoKey), "notices");
+export const bindingsDir = (root) => join(root, "bindings");
 
 // ---------------------------------------------------------------------------
 // Retention
 // ---------------------------------------------------------------------------
 
-function pruneTemp(file) {
+/** Remove a temp file left by an interrupted atomic write, once it is an hour old. */
+export function pruneTemp(file) {
   try {
     if (statSync(file).mtimeMs < Date.now() - TMP_MAX_AGE_MS) rmSync(file, { force: true });
   } catch {
@@ -118,8 +126,46 @@ function pruneFiles(dir, cutoff, removed) {
   }
 }
 
-/** Remove messages past retention from every inbox, delivered/ and sent/ directory. */
-export function pruneBus(root, now = Date.now()) {
+/** t18895: overlap notice markers (overlaps/<digest>.json) past retention. */
+function pruneOverlapMarkers(root, cutoff, removed) {
+  const dir = join(root, "overlaps");
+  for (const name of listDir(dir)) {
+    const file = join(dir, name);
+    try {
+      if (statSync(file).mtimeMs >= cutoff) continue;
+      rmSync(file, { force: true });
+      removed.count += 1;
+    } catch {
+      // Removed by a concurrent prune.
+    }
+  }
+}
+
+// t18896: a release watch ends when it expires or its session has no
+// presence; a sent-once notice marker ends with message retention.
+function pruneReleaseWatches(root, now, cutoff) {
+  for (const key of listDir(join(root, "release-watch"))) {
+    const dir = releaseWatchDir(root, key);
+    for (const name of listDir(dir).filter((file) => file.endsWith(".json"))) {
+      const record = readJson(join(dir, name));
+      const expired = !Number.isFinite(record?.expires_ms) || record.expires_ms <= now;
+      if (expired || !readJson(join(presenceDir(root), name))) rmSync(join(dir, name), { force: true });
+    }
+    for (const name of listDir(releaseNoticeDir(root, key))) {
+      const file = join(releaseNoticeDir(root, key), name);
+      if (name.endsWith(".tmp")) pruneTemp(file);
+      else if (!(readJson(file)?.created_ms >= cutoff)) rmSync(file, { force: true });
+    }
+  }
+}
+
+/**
+ * Remove messages past retention from every inbox, delivered/ and sent/
+ * directory, old overlap markers, release watches and stale chat-wake
+ * settings. Returns the number of messages and markers removed. Callers use
+ * pruneBus from session-bus-store.mjs, which also prunes t18892 bindings.
+ */
+export function pruneBusFiles(root, now = Date.now()) {
   const cutoff = now - LIMITS.retentionMs;
   const removed = { count: 0 };
   for (const sessionID of listDir(join(root, "inbox"))) {
@@ -127,5 +173,15 @@ export function pruneBus(root, now = Date.now()) {
     pruneFiles(deliveredDir(root, sessionID), cutoff, removed);
   }
   for (const key of listDir(join(root, "sent"))) pruneFiles(sentDir(root, key), cutoff, removed);
+  pruneOverlapMarkers(root, cutoff, removed);
+  for (const name of listDir(join(root, "chat-wake"))) {
+    const sessionID = name.replace(/\.json$/, "");
+    if (!name.endsWith(".json") || !isSafeId(sessionID)) continue;
+    const file = join(root, "chat-wake", name);
+    const setting = readJson(file);
+    const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
+    if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
+  }
+  pruneReleaseWatches(root, now, cutoff);
   return removed.count;
 }

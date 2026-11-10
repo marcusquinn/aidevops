@@ -224,6 +224,24 @@ else
 		"exit=$auth_exit, output=$auth_output"
 fi
 
+# Test 6c-2 (GH#37232): a locked keychain skips the cycle without `gh auth token`
+kc_test_home=$(mktemp -d)
+kc_output=""
+kc_exit=0
+kc_output=$(HOME="$kc_test_home" GH_TOKEN="" GITHUB_TOKEN="" AIDEVOPS_KEYCHAIN_FORCE_STATE=locked \
+	LC_ALL=C timeout 30 "$ROUTINE_FILE" --repo example/repo 2>&1) || kc_exit=$?
+kc_marker_ok=0
+[[ -f "$kc_test_home/.aidevops/.agent-workspace/tmp/keychain-locked.marker" ]] && kc_marker_ok=1
+rm -rf "$kc_test_home"
+
+if [[ "$kc_exit" -ne 0 && "$kc_marker_ok" -eq 1 ]] && grep -qF -- 'skipping cycle without prompting' <<<"$kc_output" &&
+	! grep -qF -- 'refusing unauthenticated API access' <<<"$kc_output"; then
+	pass "6c-2: locked keychain skips cycle with backoff marker"
+else
+	fail "6c-2: locked keychain skips cycle with backoff marker" \
+		"exit=$kc_exit, marker=$kc_marker_ok, output=$kc_output"
+fi
+
 # =============================================================================
 # Test 6d: standalone bootstrap creates the persistent PR-view cache
 # =============================================================================

@@ -11,6 +11,21 @@ Reference for diagnosing headless worker failures. Workers are OpenCode instance
 
 <!-- AI-CONTEXT-END -->
 
+## macOS user lookup outage: restart, do not retry
+
+If `id -un` prints a numeric UID (for example `501`), tools report
+`No user exists for uid`, or Directory Services cannot read the current
+account's `UniqueID`, stop retrying operations and polling for recovery.
+Checkpoint the session locally (Git/SSH may already be unusable), then tell
+the user to restart the Mac. Pulse and scheduled routine evaluation skip work
+while this check fails; `~/.aidevops/advisories/macos-user-lookup.advisory`
+records the restart warning and last notification attempt (at most hourly).
+
+The lock screen may reject the correct password during this outage. Restart
+before entering the password there. Do not reset the password in Recovery mode
+to work around the outage: that sets the login keychain aside rather than fixing
+user lookup. Restart first, then reassess any remaining account problem.
+
 ## Worker Lifecycle
 
 ```text

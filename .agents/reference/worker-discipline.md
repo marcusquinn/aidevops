@@ -29,7 +29,7 @@ When you identify a fixable issue (bug, gap, improvement, framework debt, recurr
 
 When dispatched against an auto-generated issue body (review-followup, quality-debt, contribution-watch, framework-routing, any scanner output), YOU are the triager. Verify the factual premise before acting — bot findings can be wrong (hallucinated line refs, false assumptions about codebase structure, template sweeps without measurements). End in exactly one of three outcomes:
 
-- **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter.
+- **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter. Work already satisfied on the default branch (for example a duplicate rollout issue) is also Outcome A. Headless workers first confirm a clean worktree with no commits ahead, nothing pushed and no PR (otherwise keep the issue open, preserve the work and take the PR path), then close and end with `<promise>TASK_COMPLETE</promise>` (`workflows/full-loop.md` criterion 5); an interactive `What next` block is not a completion signal (GH#37510). Exception: generated `## Unactioned Review Feedback` issues close only with the receipt in "PR-less review-triage completion" below; the runtime rejects the bare marker for that shape.
 - **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
 - **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then exit `BLOCKED` as `input_required` with `TERMINAL_BLOCKER_INPUT_OWNER=maintainer` (see "Terminal-blocker recovery") and stop: supplying the answer in the brief re-arms dispatch automatically. Never label your own issue or draft PR `hold-for-review`; nothing lifts that label when the answer arrives, so the checkpoint stalls (GH#36138). The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
 
@@ -108,6 +108,39 @@ approval it describes.
   exception, and never treat an audit as execution authority.
 - Do not delete or exempt an existing comment to restore approval. Preserve the
   content-binding failure and follow the normal approval path.
+
+### PR-less review-triage completion (GH#37431)
+
+For trusted generated `## Unactioned Review Feedback` issues from
+`quality-feedback-helper.sh scan-merged`, a false/obsolete inline finding can be
+resolved without claiming implementation delivery. This version supports exactly
+one captured finding (`**Findings**: 1` and one `[View comment]` link); the fetched
+review URL and full body must match that captured finding. Issues with appended
+`Additional Review Feedback` comments are not eligible for this version. Investigate first;
+do not use this contract for implementation work or unresolved feedback.
+Post one trusted comment before closing the assigned issue. Its first line is
+`<!-- aidevops:review-triage-completion:v1 -->`; its second line is a JSON object:
+
+```json
+{"schema":1,"repository":"owner/repo","issue":123,"attempt_id":"current-attempt","attempt_started_at":"current-19-digit-nanosecond-start","disposition":"obsolete","source_pr":100,"review_comment_id":456,"evidence_pr":101,"path":"src/example.sh","blob":"40-character-git-blob-sha","rationale":"Explain why every captured finding is obsolete or false, citing the reviewed code."}
+```
+
+Use runtime-provided attempt values, not invented IDs. `disposition` is `obsolete`
+or `premise_falsified`. The inline review must belong to the generated Source PR
+and File; the supporting merged PR must deliver that file/blob, still present on
+live default. For an original false positive, the source PR itself can supply
+that code evidence. The rationale is the trusted triager's semantic judgment;
+the runtime independently fetches the review, merged PR files and live blob,
+not a model's `verified` assertion. Unsupported review shapes remain rejected.
+
+The comment's forge author must be OWNER/MEMBER/COLLABORATOR, the authenticated
+runner identity, and the actual closer; the trusted generated issue must be
+closed as completed or not planned. Receipt creation must be in the current
+attempt and its last edit no later than closure. No ordinary closed-issue
+exemption applies. Permission/provider failures retain their existing precedence.
+Untracked/dirty files, unpublished commits, orphan remote branches and branch
+PRs still prohibit this outcome. Only successful verification reconciles labels.
+Historical witnesses/metrics must not be rewritten to manufacture this receipt.
 
 ### Missing Files Scope (GH#33243)
 

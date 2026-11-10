@@ -19,6 +19,15 @@ edits Buzz identity/team stores, downloads or loads a model, or calls a relay.
 The earlier `aidevops-conversation-v1` runtime remains available as a read-only
 diagnostic profile. Team snapshots do not select it.
 
+Buzz Desktop 0.7+ (the `block/buzz-app` previews) has no custom-runtime store
+for these snapshots to target. There, the `buzz-aidevops` plugin
+(`.agents/plugins/buzz-aidevops/README.md`) adds an **aidevops** agent type: the
+owner creates each agent with its per-computer `role-host` name and a registered
+project, and the plugin starts `aidevops buzz acp --member NAME --project DIR`.
+That launcher reuses the roster selection, linked worktree, remote-interactive
+overlay and launcher below; Buzz's harness kit replaces the 0.5 owner-only
+environment checks and reply publishing.
+
 ## Recommended virtual-assistant topology
 
 Each VA server is one execution principal with its own local aidevops runtime,

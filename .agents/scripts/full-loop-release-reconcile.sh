@@ -1310,6 +1310,9 @@ _full_loop_release_dispatch_recovery() {
 	return 8
 }
 
+# Prepare a verified checkout for the requested release tag, re-pointing a
+# retained checkout when lifecycle ownership prevented its earlier removal.
+# Args: $1=version tag; sets _FULL_LOOP_RELEASE_PATH on success.
 _full_loop_release_prepare_tag_worktree() {
 	local tag_name="$1"
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
@@ -1326,7 +1329,12 @@ _full_loop_release_prepare_tag_worktree() {
 		[[ "$checkout_commit" == "$tag_commit" ]] || return 1
 		return 0
 	fi
-	worktree_create_registered "$REPO_ROOT" "$release_path" "$tag_name" --detach >/dev/null || return 1
+	case "${_FULL_LOOP_RELEASE_RETAINED_TAG_PATHS:-}" in
+	*"|${release_path}|"*)
+		_full_loop_release_repoint_tag_worktree "$REPO_ROOT" "$release_path" "$tag_commit" || return 1
+		;;
+	*) worktree_create_registered "$REPO_ROOT" "$release_path" "$tag_name" --detach >/dev/null || return 1 ;;
+	esac
 	checkout_commit=$(git -C "$release_path" rev-parse HEAD 2>/dev/null) || {
 		_full_loop_release_remove_worktree "$release_path" release-tag-unverified || true
 		return 1
@@ -1340,13 +1348,18 @@ _full_loop_release_prepare_tag_worktree() {
 	return 0
 }
 
+# Reset the active tag checkout without removing the control worktree.
+# A checkout that cannot be removed stays registered for post-exit retirement
+# and is re-pointed by a later prepare; clears _FULL_LOOP_RELEASE_PATH.
 _full_loop_release_reset_tag_worktree() {
 	local release_path="${_FULL_LOOP_RELEASE_PATH:-}"
 	local control_path="${_FULL_LOOP_RELEASE_CONTROL_PATH:-}"
 	[[ -n "$release_path" ]] || return 0
 	[[ -z "$control_path" || "$release_path" != "$control_path" ]] || return 1
-	if [[ -d "$release_path" ]]; then
-		_full_loop_release_remove_worktree "$release_path" release-tag-reset || return 1
+	# GH#37365: a refused removal keeps the tree registered for post-exit
+	# retirement; a later prepare of the same path re-points it.
+	if [[ -d "$release_path" ]] && ! _full_loop_release_remove_worktree "$release_path" release-tag-reset; then
+		_FULL_LOOP_RELEASE_RETAINED_TAG_PATHS="${_FULL_LOOP_RELEASE_RETAINED_TAG_PATHS:-}|${release_path}|"
 	fi
 	_FULL_LOOP_RELEASE_PATH=""
 	return 0

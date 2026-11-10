@@ -506,7 +506,21 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		rc=0
 		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
 		[[ "$rc" -eq 124 ]] || exit 16
-		grep -q 'owner/slow (rc=124 stage=data-gather)' "$LOGFILE" || exit 17
+		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=1s)' "$LOGFILE" || exit 17
+		# Recovery lane: at most one stale+failed repo follows the priority repo.
+		local c t entries ordered
+		t=$(date +%s)
+		for c in owner/p:0:0 owner/a:$((t - 200000)):$((t - 100)) owner/b:$((t - 300000)):$((t - 50)) owner/c:$((t - 100)):$((t - 100)); do
+			local rs ep at f
+			IFS=: read -r rs ep at <<<"$c"
+			f=$(_health_schedule_cache_file "$rs" tester)
+			printf 'ok|%s\n' "$ep" >"${f}.refresh-state"
+			printf '%s\n' "$at" >"${f}.attempt"
+		done
+		entries=$'owner/p|/p\nowner/c|/c\nowner/a|/a\nowner/b|/b'
+		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
+		[[ "$ordered" == 'owner/p owner/b owner/c owner/a ' ]] || exit 18
+		if _health_repo_needs_recovery owner/c tester >/dev/null; then exit 19; fi
 	); then
 		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
 	else

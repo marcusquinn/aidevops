@@ -172,6 +172,78 @@ _is_trusted_opencode_canary_issue_pr() {
 }
 
 #######################################
+# Check whether a linked issue is a plugin starter-sync issue and the PR stays
+# inside the repo's scripts/core-files.txt (plus changelog.txt).
+#
+#aidevops:trust-boundary — the starter-sync workflow files one issue as
+# github-actions[bot] titled exactly "Core files differ from the starter" with
+# label starter-sync. Trust is bound to that issue shape AND the PR diff: every
+# changed file must be listed in scripts/core-files.txt read at the PR BASE sha
+# (a PR cannot widen its own scope) or be changelog.txt; renames are rejected.
+# API errors, truncated file lists (>= 100) or missing data fail closed. All
+# other merge gates (checks, reviews, review-bot, NMR) still apply. The gate
+# order is pinned by test_starter_sync_does_not_bypass_other_gates in
+# tests/test-pulse-merge-worker-briefed.sh (GH#37373); keep it passing when
+# moving this check.
+# Blob-equality hardening against the starter was not implemented: files with
+# plugin-own marker blocks legitimately differ and the starter commit is not
+# machine-readable from the issue, so the base-ref scope list is the bound.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=issue API path
+# Returns: 0=trusted starter-sync brief with in-scope diff, 1=not trusted
+#######################################
+_is_trusted_starter_sync_issue_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local issue_api="$3"
+	local issue_meta="" login="" user_type="" title="" labels=""
+	local required_title="Core files differ from the starter"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
+	issue_meta=$(gh api "$issue_api" \
+		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
+		2>/dev/null) || return 1
+	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
+	[[ "$login" == "$_PM_WORKFLOW_BOT_LOGIN" && "$user_type" == "Bot" ]] || return 1
+	[[ "$title" == "$required_title" ]] || return 1
+	[[ ",${labels}," == *",starter-sync,"* ]] || return 1
+
+	local base_sha="" scope_list="" files_json=""
+	local file_count='' path=''
+	local pr_api="repos/${repo_slug}/pulls"
+	pr_api+="/${pr_number}"
+	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
+	[[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	scope_list=$(gh api -H "Accept: application/vnd.github.raw" \
+		"repos/${repo_slug}/contents/scripts/core-files.txt?ref=${base_sha}" 2>/dev/null) || {
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync scope fetch failed (GH#37289)" >>"$LOGFILE"
+		return 1
+	}
+	if [[ -z "$scope_list" ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync scope list is empty (GH#37289)" >>"$LOGFILE"
+		return 1
+	fi
+
+	files_json=$(gh api "${pr_api}/files?per_page=100" 2>/dev/null) || return 1
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$file_count" -eq 0 || "$file_count" -ge 100 ]]; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync file count ${file_count} is empty or potentially truncated (GH#37289)" >>"$LOGFILE"
+		return 1
+	fi
+
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || return 1
+		[[ "$path" == "changelog.txt" ]] && continue
+		if ! grep -Fxq -- "$path" <<<"$scope_list"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync PR changes out-of-scope file ${path} (GH#37289)" >>"$LOGFILE"
+			return 1
+		fi
+	done < <(printf '%s' "$files_json" | jq -r '.[] | (if .status == "renamed" then "<renamed>" else .filename end)')
+	return 0
+}
+
+#######################################
 # Check whether an issue author has maintainer-equivalent repository access.
 #
 # GitHub can expose maintainer-operated issues/PRs as COLLABORATOR rather than
@@ -443,6 +515,8 @@ _worker_briefed_trust_check() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
 		elif _is_trusted_opencode_canary_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a scheduled OpenCode pin-canary brief and the diff stays in canary scope (GH#35752)" >>"$LOGFILE"
+		elif _is_trusted_starter_sync_issue_pr "$pr_number" "$repo_slug" "$_issue_api"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a starter-sync issue and the diff stays within scripts/core-files.txt (GH#37289)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"

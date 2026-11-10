@@ -10,11 +10,12 @@ import sqlite3
 import subprocess  # nosec B404 # fixed creator program in disposable repositories
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle import pull_requests, retirement
+from worker_lifecycle import interrupted_removal, pull_requests, retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
 from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id
@@ -25,6 +26,15 @@ from worker_lifecycle.refusal import refusal_code
 from worker_lifecycle.retirement_proof import verify_retirement
 from worker_lifecycle.runtime import adapter_for
 from worker_lifecycle.storage import LifecycleRegistry, StoreConflict
+
+
+def age_past_clock_slack():
+    """Let fixture content predate the backdated deletion-only boundary.
+
+    The boundary sits one clock slack before the snapshot check (GH#37326), so
+    content a fast runner wrote inside that window would count as a late change.
+    """
+    time.sleep(interrupted_removal.CLOCK_SLACK_NS / 1e9)
 
 
 class RetirementContract(unittest.TestCase):
@@ -667,26 +677,77 @@ class RetirementContract(unittest.TestCase):
         private = Path(plan["container"]) / "tree"
         self.assertEqual((private / "work.txt").read_text(), "unfinished result")
 
-    def test_partial_remove_keeps_remaining_data(self):
-        self.create()
+    def interrupt_removal(self, late=None):
+        """Delete part of the private tree, then fail as a timed-out native removal."""
+        age_past_clock_slack()
         native = retirement._git
 
         def interrupted(*arguments):
             if "remove" in arguments:
                 (Path(arguments[-1]) / "work.txt").unlink()
+                if late is not None:
+                    late(Path(arguments[-1]))
                 raise OSError("fixture interruption during removal")
             return native(*arguments)
 
         with patch.object(retirement, "_git", side_effect=interrupted):
             with self.assertRaisesRegex(OSError, "fixture interruption"):
                 self.retire()
-        with self.assertRaisesRegex(StoreConflict, "private-worktree-changed"):
+
+    def test_partial_remove_resumes_when_only_deletions_followed(self):
+        self.create()
+        self.interrupt_removal()
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+        self.assertNotIn(".lifecycle-retire-", self.git("worktree", "list", "--porcelain"))
+        restored = self.root / "restored"
+        _helper("restore", report["results"][0]["archive"], "--target", str(restored),
+                "--verification-copy")
+        self.assertEqual((restored / "work.txt").read_text(), "unfinished result")
+
+    def test_partial_remove_keeps_data_written_after_removal_began(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".gitignore").write_text("late\n"))
+        with self.assertRaisesRegex(ValueError, "interrupted-removal-content-changed"):
             self.retire()
         plan = retirement._event(
             self.store, retirement._event_id(self.generation, "planned"),
         )
         private = Path(plan["container"]) / "tree"
-        self.assertTrue((private / ".gitignore").exists())
+        self.assertEqual((private / ".gitignore").read_text(), "late\n")
+
+    def test_partial_remove_resumes_after_git_deleted_its_link(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".git").unlink())
+        report = cleanup_pass(self.store, self.cleanup_config(), self.output)
+        self.assertEqual((report["retired"], report["failed"]), (1, 0), report)
+        self.assertEqual(list(self.root.glob(".lifecycle-retire-*")), [])
+
+    def test_partial_remove_keeps_data_written_before_removal_was_journaled(self):
+        self.create()
+        record = retirement._record
+
+        def late(store, generation, phase, data):
+            if phase == "removing":
+                plan = retirement._event(store, retirement._event_id(generation, "planned"))
+                (Path(plan["container"]) / "tree" / ".gitignore").write_text("late\n")
+            record(store, generation, phase, data)
+
+        with patch.object(retirement, "_record", side_effect=late):
+            self.interrupt_removal()
+        with self.assertRaisesRegex(ValueError, "interrupted-removal-content-changed"):
+            self.retire()
+
+    def test_failed_resume_backs_off_instead_of_holding_the_slot(self):
+        self.create()
+        self.interrupt_removal(lambda tree: (tree / ".gitignore").write_text("late\n"))
+        config = self.cleanup_config()
+        report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual(report["failed"], 1, report)
+        self.assertTrue(report["results"][0]["quarantined"], report)
+        report = cleanup_pass(self.store, config, self.output)
+        self.assertEqual((report["examined"], report["quarantined"]), (0, 1), report)
 
     def cleanup_config(self, **settings):
         config = self.root / "repos.json"

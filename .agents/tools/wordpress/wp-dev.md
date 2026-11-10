@@ -48,6 +48,11 @@ and copies of `wp-config.php` or `.htaccess`) in `~/backups/`, verified to be
 outside the web root. Use directory mode `700` and file mode `600`. Never put
 backups under `public_html`, `wp-content/uploads`, or any other web-served path;
 web-server or security-plugin blocking is not a substitute for private storage.
+Treat backups already on a web-served path as findings, whether older aidevops
+ones (`wp-content/uploads/aidevops-backups/`) or a plugin's leftovers (such as
+an old updater's plugin backups): move them to `~/backups/` with the same modes,
+or delete stale ones after the user confirms. Integrity alerts about PHP in
+uploads often point to them.
 
 For readable addresses in schema, plugin settings or contact links, follow
 [Email Exposure Audit](../../seo/email-exposure-audit.md). Back up exact serialized

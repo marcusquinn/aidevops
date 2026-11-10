@@ -14,6 +14,7 @@ from tests import test_retirement as fixtures
 from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
 from worker_lifecycle import legacy_probe as probe
+from worker_lifecycle import legacy_proc
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
 from worker_lifecycle.legacy_options import CleanupOptions
@@ -43,8 +44,8 @@ class ReconstructibleContract(unittest.TestCase):
         # A synthetic kernel view isolates unrelated runner permission restrictions.
         self.proc = self.root / "proc"
         (self.proc / "self").mkdir(parents=True)
-        self.real_census = inventory.require_idle_proc
-        census = patch.object(inventory, "require_idle_proc",
+        self.real_census = legacy_proc.require_idle_proc
+        census = patch.object(inventory, "require_idle_processes",
                               side_effect=lambda path: self.real_census(path, self.proc))
         census.start()
         self.addCleanup(census.stop)
@@ -141,6 +142,26 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(prepared["admission"], "closed")
         with self.store.connection() as connection:
             self.item = inventory.inventory(connection)[0]
+        result, _, attempted = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(attempted, 1)
+        self.assertFalse(self.target.exists())
+
+    def test_managed_takeover_closes_quiescent_admission_only_when_applying(self):
+        # GH#37101 cause 2: ended runs left admission open, so takeover never retired.
+        self.git("worktree", "remove", str(self.target))
+        fixtures.RetirementContract.create(self)
+        for name in ("work.txt", ".gitignore", "cache.ignored"):
+            (self.target / name).unlink()
+        with self.store.connection() as connection:
+            self.item = inventory.inventory(connection)[0]
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        self.assert_retained("managed-admission-not-closed")
+        with self.store.connection() as connection:
+            states = {row[0] for row in connection.execute(
+                "SELECT state FROM generation_admissions")}
+        self.assertEqual(states, {"open"})
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
         result, _, attempted = self.retire()
         self.assertEqual(result["status"], "retired", result)
         self.assertEqual(attempted, 1)
@@ -311,6 +332,29 @@ class ReconstructibleContract(unittest.TestCase):
             process.terminate()
             process.wait(timeout=10)
 
+    def test_census_uses_native_platform_observer(self):
+        """A Linux-only census retained every macOS candidate as unobservable."""
+        with patch.object(inventory, "require_idle_processes",
+                          legacy_proc.require_idle_processes), \
+                patch.object(legacy_proc.platform, "system", return_value="Darwin"), \
+                patch.object(legacy_proc, "require_idle_macos",
+                             side_effect=ValueError("live-process-reference")) as observer:
+            self.assert_retained("live-process-reference")
+        observer.assert_called_with(self.target)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS lsof process observation")
+    def test_real_macos_live_process_cwd_is_observed(self):
+        program = "import time; time.sleep(300)"
+        process = subprocess.Popen(  # nosec B603 # fixed disposable fixture argv
+            [sys.executable, "-c", program], cwd=self.target)
+        try:
+            with self.assertRaisesRegex(ValueError, "live-process-reference"):
+                legacy_proc.require_idle_processes(self.target)
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+        legacy_proc.require_idle_processes(self.target)
+
     def test_unreadable_proc_fails_closed(self):
         task = self.task(self.root)
         original = Path.iterdir
@@ -363,7 +407,7 @@ class ReconstructibleContract(unittest.TestCase):
             if calls == 2:
                 raise ValueError("live-process-reference")
 
-        with patch.object(inventory, "require_idle_proc", side_effect=census):
+        with patch.object(inventory, "require_idle_processes", side_effect=census):
             self.assert_retained("live-process-reference")
 
     def test_github_lookups_do_not_block_unrelated_admission(self):

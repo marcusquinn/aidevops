@@ -409,9 +409,17 @@ test_revision_attention_guidance() (
 		"$body" != *'Push a corrected commit'* && "$body" != *'a new head re-arms'* &&
 		"$body" != *'each runner that has not tried this head gets one'* ]] || return 1
 	# Ordinary, approval-free attention retains its useful automatic recovery.
-	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 2 key >/dev/null || return 1
+	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 2 key false "" attempt:a1 >/dev/null || return 1
 	body="$(<"$post_file")"
-	[[ "$body" == *'a new head re-arms one automatic continuation'* ]] || return 1
+	[[ "$body" == *'a new head re-arms one automatic continuation'* &&
+		"$body" == *'once every runner has tried it Pulse continues it once per window'* &&
+		"$body" == *'approval-template owner/repo 42 123 31 attempt:a1`'* ]] || return 1
+	# GH#37514: the resume route survives the per-PR fuse; the attempt falls
+	# back to a placeholder when no ready lease was found.
+	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 6 key true >/dev/null || return 1
+	body="$(<"$post_file")"
+	[[ "$body" == *'per-PR automatic continuation limit'* &&
+		"$body" == *'approval-template owner/repo 42 123 31 attempt:<RELEASED_ATTEMPT_ID>`'* ]] || return 1
 	return 0
 )
 for approval_case in older_head expired_older_head current_head; do
@@ -1242,7 +1250,7 @@ stall_comments() {
 	return 0
 }
 if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key) &&
-	[[ "$output" == $'31\tno_activity\t1\tfalse\t0\tfalse\t0' ]]; then
+	[[ "$output" == $'31\tno_activity\t1\tfalse\t0\tfalse\t0\t1790731800\t-' ]]; then
 	print_result "released attempt's own terminal lease keeps stall release evidence" 0
 else
 	print_result "released attempt's own terminal lease keeps stall release evidence" 1 "output=${output:-missing}"
@@ -1443,6 +1451,18 @@ else
 		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
+# GH#37514: pin `date +%s` so the fleet re-arm window is deterministic.
+date() {
+	if [[ "${1:-}" == +%s && -n "${PCC_TEST_NOW:-}" ]]; then
+		printf '%s\n' "$PCC_TEST_NOW"
+		return 0
+	fi
+	command date "$@"
+	return $?
+}
+# The newest stall release (02:00) anchors the fleet window: one minute before
+# it closes, runners that already tried the head stay paused.
+PCC_TEST_NOW=1790776740
 for tried_runner in pulse-runner worker-bot; do
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 	STUB_COMMENTS_JSON="$rearm_comments"
@@ -1452,12 +1472,88 @@ for tried_runner in pulse-runner worker-bot; do
 	output="$(<"$output_file")"
 	if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" &&
 		"$(post_count)" -eq "$posts_before" ]]; then
-		print_result "aged attention does not re-arm ${tried_runner}, which already tried the head" 0
+		print_result "aged attention does not re-arm ${tried_runner} before the fleet window" 0
 	else
-		print_result "aged attention does not re-arm ${tried_runner}, which already tried the head" 1 "output=${output:-missing}"
+		print_result "aged attention does not re-arm ${tried_runner} before the fleet window" 1 "output=${output:-missing}"
 	fi
 	PCC_ALLOW_RELEASED=false
 done
+# GH#37514: once every runner has tried the head, the fleet window re-arms one
+# exact-head continuation through the normal fenced claim.
+PCC_TEST_NOW=1790776800
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$rearm_comments"
+printf '[]' >"$STUB_CLAIM_FILE"
+DISPATCH_ARGS=""
+STATUS_CALLS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 pulse-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"STALLED_CHECKPOINT_REARMED: PR #42 in owner/repo head=${blocked_head} runner=pulse-runner stalls=2"*"mode=fleet window=43200s"* &&
+	"$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 ${blocked_head} worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee pulse-runner' &&
+	"$(post_count)" -eq "$posts_before" ]]; then
+	print_result "fleet window re-arms one continuation after every runner tried the head" 0
+else
+	print_result "fleet window re-arms one continuation after every runner tried the head" 1 \
+		"output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+# The winner's claim owns the draft, so a second runner in the same window
+# finds no current stall release and launches nothing.
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$(jq -c 'map(. + [{id:36,created_at:"2026-09-30T14:00:05Z",author_association:"OWNER",
+	user:{login:"pulse-runner"},body:"DISPATCH_CLAIM nonce=n3 runner=pulse-runner"}])' <<<"$rearm_comments")"
+DISPATCH_ARGS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 worker-bot >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *"has no current stall release"* && -z "$DISPATCH_ARGS" ]]; then
+	print_result "fleet re-arm launches exactly one continuation per window" 0
+else
+	print_result "fleet re-arm launches exactly one continuation per window" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+# A further stall of the same head doubles the window from its release.
+doubled_comments="$(jq -c 'map(. + [{id:37,created_at:"2026-09-30T15:00:00Z",author_association:"OWNER",
+	user:{login:"pulse-runner"},body:"CLAIM_RELEASED reason=no_activity runner=pulse-runner"}])' <<<"$rearm_comments")"
+for doubled_case in 1790866740:closed 1790866800:open; do
+	PCC_TEST_NOW="${doubled_case%%:*}"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	STUB_COMMENTS_JSON="$doubled_comments"
+	printf '[]' >"$STUB_CLAIM_FILE"
+	DISPATCH_ARGS=""
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 pulse-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "${doubled_case#*:}" == closed && "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && -z "$DISPATCH_ARGS" ]] ||
+		[[ "${doubled_case#*:}" == open && "$output" == *"stalls=3"*"mode=fleet window=86400s"* &&
+			"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 ${blocked_head} worker-bot"* ]]; then
+		print_result "third stall doubles the fleet window (${doubled_case#*:})" 0
+	else
+		print_result "third stall doubles the fleet window (${doubled_case#*:})" 1 "output=${output:-missing}"
+	fi
+	PCC_ALLOW_RELEASED=false
+done
+# The per-PR fuse stays the hard stop for the fleet re-arm.
+saved_pr_json="$STUB_PR_JSON"
+saved_max_releases="$_PCC_MAX_PR_RELEASES"
+_PCC_MAX_PR_RELEASES=3
+STUB_PR_JSON="$(jq -c '. + {createdAt:"2026-09-29T23:00:00Z"}' <<<"$saved_pr_json")"
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+STUB_COMMENTS_JSON="$doubled_comments"
+printf '[]' >"$STUB_CLAIM_FILE"
+DISPATCH_ARGS=""
+_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 pulse-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ "$output" == *STALLED_CHECKPOINT_ATTENTION_EXISTS* && "$output" != *STALLED_CHECKPOINT_REARMED* &&
+	-z "$DISPATCH_ARGS" ]]; then
+	print_result "per-PR fuse stops the fleet re-arm" 0
+else
+	print_result "per-PR fuse stops the fleet re-arm" 1 "output=${output:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
+_PCC_MAX_PR_RELEASES="$saved_max_releases"
+STUB_PR_JSON="$saved_pr_json"
+unset PCC_TEST_NOW
 # A runner whose only claim predates the head commit has not tried this head.
 STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 STUB_COMMENTS_JSON="$(jq -c 'map(. + [{id:5,created_at:"2026-09-30T00:10:00Z",author_association:"COLLABORATOR",
@@ -1746,6 +1842,12 @@ if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-unattributed.py"; then
 	print_result "unattributed releases require exact maintainer acknowledgement" 0
 else
 	print_result "unattributed releases require exact maintainer acknowledgement" 1
+fi
+
+if python3 "${TEST_SCRIPT_DIR}/test-pr-checkpoint-stall-approval.py"; then
+	print_result "stalled draft checkpoints accept exact maintainer resume approvals" 0
+else
+	print_result "stalled draft checkpoints accept exact maintainer resume approvals" 1
 fi
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then

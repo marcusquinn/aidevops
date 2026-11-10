@@ -339,6 +339,21 @@ esac
 
 export _AIDEVOPS_GH_SHIM_ACTIVE=1
 
+# GH#37406: refuse --edit-last/--delete-last/--create-if-none before any API
+# call. Optional module so partial shim fixtures keep loading.
+case "${1:-}:${2:-}" in
+issue:comment | pr:comment)
+	if [[ -f "${_SHIM_DIR}/shared-gh-wrappers-comment-selector.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-comment-selector.sh
+		# shellcheck disable=SC1091
+		source "${_SHIM_DIR}/shared-gh-wrappers-comment-selector.sh"
+		if gh_comment_selector_refused "$1" "${@:3}"; then
+			exit 2
+		fi
+	fi
+	;;
+esac
+
 REAL_GH="$(_find_real_gh)" || {
 	_shim_report_missing_native_gh 'real gh binary not found; aborting'
 	exit 127

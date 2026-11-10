@@ -21,6 +21,7 @@ import { setupPromptsSlot } from "../tui-prompts.mjs";
 const ENV_KEYS = [
   "AIDEVOPS_SESSION_BUS_DIR", "AIDEVOPS_WORKER_ID", "FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS",
   "OPENCODE_HEADLESS", "CLAUDE_HEADLESS", "Claude_HEADLESS", "HEADLESS", "GITHUB_ACTIONS",
+  "WORKER_ISSUE_NUMBER", "WORKER_REPO_SLUG", "AIDEVOPS_DISPATCH_TIER", "AIDEVOPS_ATTEMPT_ID", "AIDEVOPS_ATTEMPT_STARTED_AT",
 ];
 let root;
 let savedEnv;
@@ -147,26 +148,52 @@ test("V2 publishes root presence and delivers through tool results, prompts and 
   assert.equal(store.readPresence(root).length, 0);
 });
 
-test("headless V2 processes publish read-only presence, get no tool and refuse sends", async () => {
+test("headless V2 workers receive at tool results, get no tool or poll and are never woken (t18905)", async () => {
+  Object.assign(process.env, { WORKER_ISSUE_NUMBER: "321", WORKER_REPO_SLUG: "o/r", AIDEVOPS_DISPATCH_TIER: "standard" });
   const ctx = fakeCtx({ ses_v2head1: { id: "ses_v2head1", title: "", location: { directory: root } } });
   const hooks = v2Hooks(ctx, { headless: true });
-  assert.equal(hooks.bus.messageable, false);
+  assert.equal(hooks.bus.messageable, true);
+  assert.equal(hooks.bus.wakeable, false);
+  assert.equal(hooks.bus.timer, null, "workers run no poll timer");
   const tools = {};
   hooks.addTool(tools, Object.assign((definition) => definition, { schema: fakeSchema() }));
-  assert.equal(tools.aidevops_sessions, undefined);
+  assert.equal(tools.aidevops_sessions, undefined, "workers get no tool schema");
   await hooks.handleEvent(v2Event("session.created", { sessionID: "ses_v2head1", info: { id: "ses_v2head1", location: { directory: root } } }));
   const [record] = store.readPresence(root);
   assert.equal(record.kind, "headless");
-  assert.equal(store.isMessageable(record), false);
-  assert.equal(store.readPresence(root).filter(store.isMessageable).length, 0);
+  assert.equal(store.isWorker(record), true);
+  assert.equal(record.issue, 321);
+  assert.match(record.handle, /-321-worker$/);
+  assert.equal(record.worker.repo, "o/r");
+  assert.equal(record.worker.tier, "standard");
+  assert.match(store.formatPresenceRow(record), /\[worker\]/);
+
+  // The running tool is published with the record and cleared after it.
+  hooks.toolBefore({ sessionID: "ses_v2head1", tool: "bash" });
+  assert.equal(hooks.bus.record(hooks.bus.state("ses_v2head1")).tool.name, "bash");
 
   const sender = v2Hooks(fakeCtx({ ses_v2send1: { id: "ses_v2send1", title: "", location: { directory: root } } }));
   const senderTools = {};
   sender.addTool(senderTools, Object.assign((definition) => definition, { schema: fakeSchema() }));
-  await assert.rejects(
-    senderTools.aidevops_sessions.execute({ action: "send", to: "ses_v2head1", text: "hi" }, { sessionID: "ses_v2send1" }),
-    /cannot be messaged/,
-  );
+  const sent = await senderTools.aidevops_sessions.execute({ action: "ask", to: "ses_v2head1", text: "still retrying?" }, { sessionID: "ses_v2send1" });
+  assert.match(sent, /pulse worker[\s\S]*never woken/);
+
+  // Idle is the end of a worker's run: nothing wakes it.
+  await hooks.handleEvent(v2Event("session.execution.succeeded", { sessionID: "ses_v2head1" }));
+  await hooks.bus.tick();
+  assert.equal(ctx.calls.synthetic.length, 0);
+  assert.equal(store.pendingMessages(root, "ses_v2head1").length, 1);
+
+  // A failed result carries nothing; the next completed one carries the ask with CLI reply guidance.
+  hooks.toolBefore({ sessionID: "ses_v2head1", tool: "bash" });
+  const failed = { output: "boom" };
+  hooks.toolAfter({ sessionID: "ses_v2head1", tool: "bash", status: "error" }, failed);
+  assert.equal(failed.output, "boom");
+  assert.equal(hooks.bus.record(hooks.bus.state("ses_v2head1")).tool, undefined, "a failed tool clears the running tool");
+  const done = { output: "ok" };
+  hooks.toolAfter({ sessionID: "ses_v2head1", tool: "bash", status: "completed" }, done);
+  assert.match(done.output, /answer from your shell: aidevops sessions reply msg_\w+/);
+  assert.match(done.output, /you run without a user/);
   assert.equal(store.pendingMessages(root, "ses_v2head1").length, 0);
 });
 
@@ -268,6 +295,6 @@ test("V2 Messages registers under Prompts, shows root-session rows and honours t
 });
 
 function fakeSchema() {
-  const chain = () => ({ optional: chain });
-  return { enum: chain, string: chain };
+  const chain = () => ({ optional: chain, int: chain, min: chain, max: chain });
+  return { enum: chain, string: chain, number: chain };
 }

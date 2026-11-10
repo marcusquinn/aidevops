@@ -140,9 +140,9 @@ Before investigating a non-task blocker, run `prework-discovery-helper.sh --bloc
 2. **README gate (t099):** update if user-facing features change; skip for refactor/bugfix.
 3. Conventional commits; headless rules observed; deferred findings → tracked tasks (`findings-to-tasks-helper.sh create`).
 4. **Runtime testing gate (t1660.7):** risk-appropriate verification (see below).
-5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.
+5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR. Sole exception, a verified no-PR close (GH#37510): when the premise is falsified or the issue is already satisfied on the default branch, first confirm the worktree is clean with no commits ahead, nothing pushed and no PR (otherwise keep the issue open and take the PR path), then close it under gate 7 with an evidence comment, then end with `<promise>TASK_COMPLETE</promise>`. Without the marker the runtime records `premature_exit` and continues against a closed issue. Generated review-feedback issues need the review-triage receipt instead (`reference/worker-discipline.md`).
 6. **Managed-repo signature footer gate (GH#12805 — MANDATORY):** Managed PR bodies and issue closing comments MUST contain the `aidevops.sh` footer. External contributions follow upstream templates and MUST NOT add internal audit/signature boilerplate.
-7. **Pre-close verification gate (GH#17372 — MANDATORY):** NEVER close an issue citing an existing PR unless: (a) the PR was created by this session, OR (b) `verify-issue-close-helper.sh check <issue> <pr> <slug>` returns exit 0. If verification fails, leave the issue open and comment with your analysis.
+7. **Pre-close verification gate (GH#17372 — MANDATORY):** NEVER close an issue citing an existing PR unless: (a) the PR was created by this session, OR (b) `verify-issue-close-helper.sh check <issue> <pr> <slug>` returns exit 0, OR (c) for an Outcome A no-code close against a merged prerequisite PR, `verify-issue-close-helper.sh check-no-code <issue> <pr> <slug> <parent>` returns exit 0 (`reference/worker-discipline.md`). If verification fails, leave the issue open and comment with your analysis.
 8. **Worktree edit verification gate (GH#22816):** After file edits in a linked worktree, verify the worktree still exists and the changes are visible before reporting completion or asking to push. Minimum evidence: `git status --short --branch` from the worktree plus a diff/stat or the intended commit. If the worktree vanished or the files are not visible, stop, reconstruct from evidence, and do not claim the edit succeeded.
 9. **Review evidence gate:** Apply `reference/review-core.md` before PR readiness. Low-risk changes receive direct diff inspection; medium-risk changes receive closeout review when it reduces uncertainty; high/critical changes require independent review. Verify and repair in-scope findings autonomously, reuse unchanged bundle evidence, and route additive findings to follow-up work.
 10. **Interactive close-out:** after merge/handoff, run the Capture Check in `reference/session.md` and end the final reply with its `What next` block (needed from user, left to capture, close readiness).
@@ -377,6 +377,10 @@ Loops with local lifecycle state finalize with `full-loop-helper.sh complete`
 after terminal release evidence (`published`, `superseded`, or recorded
 `not-requested`); while a matching receipt remains `FINALIZATION_PENDING`,
 `status --json` reports `next_action: complete` until executor finalization.
+In an interactive session, `complete` and `finalize-receipt` also end that
+session's own registry run and record `owner_relinquished` on its receipt
+(GH#37448), so Pulse can retire the merged tree while the shared app PID lives.
+Run them last: re-admission then refuses with `session-owner-already-ended`.
 
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence

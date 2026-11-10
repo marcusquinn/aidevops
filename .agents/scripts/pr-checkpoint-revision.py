@@ -14,7 +14,7 @@ import json
 import re
 import sys
 
-from pr_checkpoint_events import (EVENTS, events, release_for, released_attempt_token,
+from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
@@ -100,12 +100,19 @@ def history_approved(data, comments, approval, approval_id, closing):
     return not data.get("lease") or data["lease"] not in used_tokens
 
 
+def released_lease(comments, approval, release, trusted_logins):
+    """(owner, token) of the attempt the release closed; owner is the poster
+    except for a stall-class release by another trusted runner (GH#37514)."""
+    return (attempt_owner(comments, approval, release, trusted_logins),
+            released_attempt_token(comments, approval, release, trusted_logins))
+
+
 def approved_release(data, comments, approval, comment):
     trusted_logins = data.get("trusted_logins", ())
     release = release_for(comments, approval, comment, trusted_logins)
     if release is None:
         return None
-    closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
+    closing = released_lease(comments, approval, release, trusted_logins)
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
@@ -214,10 +221,11 @@ def template(data):
     release = release_for(comments, approval, {"id": float("inf")}, trusted_logins)
     if release is None:
         raise ValueError(
-            f"release {approval['release_id']} is not a trusted blocked/clean/worker_complete "
-            f"release closing {approval['attempt']} with its poster's ready lease; dispatch-approved would "
+            f"release {approval['release_id']} is not a trusted blocked/clean/worker_complete release "
+            f"closing {approval['attempt']} with its poster's ready lease, or a trusted stall-class release "
+            f"closing {approval['attempt']} with one runner's ready lease; dispatch-approved would "
             "reject this approval, so none was generated")
-    closing = (release["user"]["login"], released_attempt_token(comments, approval, release, trusted_logins))
+    closing = released_lease(comments, approval, release, trusted_logins)
     terminal_ids = acknowledgement_ids(data.get("acknowledge_terminal_without_release", []))
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     history, rejection = explain_reviewed_successor_history(

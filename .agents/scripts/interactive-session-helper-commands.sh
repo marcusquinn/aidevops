@@ -396,6 +396,27 @@ _isc_resolve_claim_user() {
 	return 0
 }
 
+# t18895: advisory only. Lists other live OpenCode sessions and pulse workers
+# already presenting the issue (from the local session bus) before the claim
+# proceeds. Silent when the bus helper is missing, fails or exceeds 5 s.
+_isc_claim_live_sessions_warning() {
+	local issue="$1"
+	local slug="$2"
+	local helper="${AIDEVOPS_SESSION_BUS_HELPER:-${SCRIPT_DIR}/session-bus-helper.sh}"
+	[[ -x "$helper" && "$issue" =~ ^[0-9]+$ ]] || return 0
+	local out="" row=""
+	out=$(mktemp) || return 0
+	timeout_sec 5 "$helper" who "#${issue}" --repo "$slug" >"$out" 2>/dev/null || : >"$out"
+	if [[ -s "$out" ]]; then
+		_isc_warn "claim: other live session(s) already on #$issue; compare approaches before continuing (aidevops sessions show <handle>):"
+		while IFS= read -r row; do
+			_isc_warn "  $row"
+		done <"$out"
+	fi
+	rm -f "$out"
+	return 0
+}
+
 _isc_cmd_claim() {
 	local issue="" slug="" worktree_path="" implementing=0 defer_comment=0
 	local replacement_pr="" replacement_reason=""
@@ -447,6 +468,7 @@ _isc_cmd_claim() {
 
 	_isc_validate_claim_request "$issue" "$slug" "$replacement_pr" "$replacement_reason" "$implementing" || return $?
 	_isc_validate_worktree_origin "$slug" "$worktree_path" || return 1
+	_isc_claim_live_sessions_warning "$issue" "$slug"
 
 	local user="" resolve_rc=0
 	user=$(_isc_resolve_claim_user "$issue" "$slug" "$implementing") || resolve_rc=$?

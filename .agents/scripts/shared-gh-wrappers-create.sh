@@ -49,6 +49,9 @@ if ! command -v privacy_guard_public_write >/dev/null 2>&1; then
 	printf 'shared-gh-wrappers-create: privacy_guard_public_write did not load\n' >&2
 	return 1
 fi
+# shellcheck source=shared-gh-wrappers-comment-selector.sh
+# shellcheck disable=SC1091  # resolved from this module's directory at runtime
+source "${_GH_WRAPPERS_CREATE_DIR}/shared-gh-wrappers-comment-selector.sh" || return 1
 
 #######################################
 # Scan normalized GitHub write arguments before public transport.
@@ -366,6 +369,12 @@ _gh_ci_prepare_trusted_nmr_labels() {
 	# being mistaken for a self-review hold.
 	if _gh_wrapper_args_have_label "external-contributor" "$@"; then
 		print_info "[INFO] GH#29394: preserving external-origin needs-maintainer-review"
+		return 0
+	fi
+	# #aidevops:trust-boundary — throughput-throttling reports are maintainer
+	# decisions by design (reference/throughput-throttling-policy.md).
+	if _gh_wrapper_args_have_label "throughput-throttle-report" "$@"; then
+		print_info "[INFO] preserving throughput-throttle-report needs-maintainer-review"
 		return 0
 	fi
 
@@ -1351,6 +1360,10 @@ _gh_recover_pr_if_exists() {
 # are not double-signed.
 gh_issue_comment() {
 	_gh_wrapper_enter_cleanup_scope
+	# Before any transport, so the REST fallback cannot turn it into a new comment.
+	if gh_comment_selector_refused issue "$@"; then
+		return 1
+	fi
 	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
 		_gh_edit_audit_rejection "gh issue comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
@@ -1397,6 +1410,9 @@ gh_issue_comment() {
 
 gh_pr_comment() {
 	_gh_wrapper_enter_cleanup_scope
+	if gh_comment_selector_refused pr "$@"; then
+		return 1
+	fi
 	if ! _gh_wrapper_normalize_stdin_body_file "$@"; then
 		_gh_edit_audit_rejection "gh pr comment" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1

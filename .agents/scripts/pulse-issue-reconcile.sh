@@ -646,6 +646,143 @@ _normalize_mark_pass_started() {
 	return 0
 }
 
+#######################################
+# Resolve the runner's GitHub login once per process, with a small file cache
+# keyed by the auth fingerprint (TTL ~1h; override PULSE_RUNNER_LOGIN_TTL).
+# Prints the login (empty on failure). Always returns 0.
+#######################################
+_PULSE_RUNNER_LOGIN_MEMO=""
+_pulse_resolve_runner_login() {
+	if [[ -n "$_PULSE_RUNNER_LOGIN_MEMO" ]]; then
+		printf '%s\n' "$_PULSE_RUNNER_LOGIN_MEMO"
+		return 0
+	fi
+	local ttl="${PULSE_RUNNER_LOGIN_TTL:-3600}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=3600
+	local cache_dir="${HOME}/.aidevops/cache"
+	local fp_src="${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_HOST:-}${GH_CONFIG_DIR:-}"
+	local hosts_file="${GH_CONFIG_DIR:-${HOME}/.config/gh}/hosts.yml"
+	if [[ -f "$hosts_file" ]]; then
+		fp_src="${fp_src}$(cksum <"$hosts_file" 2>/dev/null)"
+	fi
+	local fp
+	fp=$(printf '%s' "$fp_src" | cksum | tr -d ' \t' | cut -c1-24)
+	local cache_file="${cache_dir}/runner-login-${fp}"
+	local login="" now mtime
+	now=$(date +%s)
+	if [[ -f "$cache_file" ]]; then
+		mtime=$(_file_mtime_epoch "$cache_file" 2>/dev/null || echo 0)
+		[[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+		if [[ $((now - mtime)) -lt "$ttl" ]]; then
+			login=$(head -n 1 "$cache_file" 2>/dev/null || echo "")
+		fi
+	fi
+	if [[ -z "$login" ]]; then
+		login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$login" ]]; then
+			mkdir -p "$cache_dir" 2>/dev/null || true
+			printf '%s\n' "$login" >"$cache_file" 2>/dev/null || true
+		fi
+	fi
+	_PULSE_RUNNER_LOGIN_MEMO="$login"
+	printf '%s\n' "$login"
+	return 0
+}
+
+#######################################
+# Per-run shared live open-issue listing for the normalization passes.
+# Fetched lazily once per repo (union of fields every pass needs), cached
+# under _NORMALIZE_LISTING_DIR for the duration of one
+# normalize_active_issue_assignments run. A failed fetch is remembered so no
+# other pass retries it this run.
+#
+# The listing is deliberately wider than PULSE_QUEUED_SCAN_LIMIT
+# (PULSE_NORMALIZE_LISTING_LIMIT, default 5x) so client-side filtered passes
+# are not starved by non-matching issues; each consumer applies
+# PULSE_QUEUED_SCAN_LIMIT after its own filter (unfiltered passes slice first).
+#
+# Args: $1 slug
+# Output: JSON array on stdout.
+# Returns: 0 ok; 1 listing failed; 2 no run active (caller must fetch itself).
+#######################################
+_NORMALIZE_LISTING_DIR=""
+_normalize_repo_listing() {
+	local slug="$1"
+	local dir="$_NORMALIZE_LISTING_DIR"
+	[[ -n "$dir" && -d "$dir" ]] || return 2
+	local key="${slug//\//-}"
+	if [[ -f "${dir}/${key}.failed" ]]; then
+		return 1
+	fi
+	if [[ ! -f "${dir}/${key}.json" ]]; then
+		local json=""
+		json=$(gh_issue_list --repo "$slug" --state open \
+			--json number,assignees,labels,createdAt,updatedAt \
+			--limit "${PULSE_NORMALIZE_LISTING_LIMIT:-$((PULSE_QUEUED_SCAN_LIMIT * 5))}" 2>"${dir}/${key}.err") || json=""
+		if [[ -z "$json" || "$json" == "null" ]]; then
+			local err_msg
+			err_msg=$(cat "${dir}/${key}.err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+			: >"${dir}/${key}.failed"
+			return 1
+		fi
+		printf '%s' "$json" >"${dir}/${key}.json"
+	fi
+	cat "${dir}/${key}.json"
+	return 0
+}
+
+#######################################
+# Listing for _normalize_reassign_self: the shared per-run listing, or (when no
+# run is active, e.g. a direct call) a per-pass fetch. Prints JSON; returns 1
+# on failure (logged).
+#######################################
+_normalize_reassign_fetch() {
+	local slug="$1"
+	local rc=0 json="" err_file="" err_msg=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json" | jq -c --argjson n "$PULSE_QUEUED_SCAN_LIMIT" '.[0:$n]' 2>/dev/null || return 1
+		return 0
+	fi
+	[[ "$rc" -eq 2 ]] || return 1
+	err_file=$(mktemp)
+	# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
+	json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$err_file") || json=""
+	if [[ -z "$json" || "$json" == "null" ]]; then
+		err_msg=$(cat "$err_file" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+		rm -f "$err_file"
+		return 1
+	fi
+	rm -f "$err_file"
+	printf '%s' "$json"
+	return 0
+}
+
+#######################################
+# Listing for _normalize_unassign_stampless_interactive: issues assigned to the
+# runner with origin:interactive. Shared per-run listing filtered client-side,
+# or a filtered per-pass fetch when no run is active. Prints JSON ("" on
+# failure). Always returns 0.
+#######################################
+_normalize_stampless_fetch() {
+	local slug="$1"
+	local runner_user="$2"
+	local rc=0 json=""
+	json=$(_normalize_repo_listing "$slug") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		# t2773: gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
+		gh_issue_list --repo "$slug" --assignee "$runner_user" --label origin:interactive \
+			--state open --json number,updatedAt,labels \
+			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null || true
+	elif [[ "$rc" -eq 0 ]]; then
+		printf '%s' "$json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+			'[.[] | select((.assignees // [] | map(.login) | index($u)) and (.labels // [] | map(.name) | index("origin:interactive")))] | .[0:$n]' 2>/dev/null || true
+	fi
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -660,20 +797,11 @@ _normalize_reassign_self() {
 		local _repo_start=$SECONDS _repo_gh_calls=0
 		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
-		local issue_rows="" issue_rows_json="" issue_rows_err=""
-		issue_rows_err=$(mktemp)
-		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion)
-		_repo_gh_calls=$((_repo_gh_calls + 1))
-		issue_rows_json=$(gh_issue_list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$issue_rows_err") || issue_rows_json=""
-		if [[ -z "$issue_rows_json" || "$issue_rows_json" == "null" ]]; then
-			local _issue_rows_err_msg
-			_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] normalize_active_issue_assignments: gh_issue_list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
-			rm -f "$issue_rows_err"
+		local issue_rows_json=""
+		if ! issue_rows_json=$(_normalize_reassign_fetch "$slug"); then
 			_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 1
 			continue
 		fi
-		rm -f "$issue_rows_err"
 
 		# Pass 1: status:queued or status:in-progress with no assignees (original)
 		local issue_rows
@@ -835,16 +963,10 @@ _normalize_unassign_stampless_interactive() {
 			continue
 		fi
 
-		# t2773: route through gh_issue_list wrapper (REST fallback on rate-limit exhaustion).
-		# This fetch is assignee-filtered, so it cannot use the prefetch cache
-		# (which holds all open issues without per-assignee partitioning).
+		# Live (non-cache) listing: shared per-run listing filtered to the
+		# runner's origin:interactive issues (see _normalize_stampless_fetch).
 		local json
-		json=$(gh_issue_list --repo "$slug" \
-			--assignee "$runner_user" \
-			--label origin:interactive \
-			--state open \
-			--json number,updatedAt,labels \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || json=""
+		json=$(_normalize_stampless_fetch "$slug" "$runner_user")
 		[[ -n "$json" && "$json" != "null" ]] || continue
 
 		# GH#20048: filter out non-task issues (routine-tracking, supervisor, etc.)
@@ -941,6 +1063,7 @@ _normalize_unassign_stampless_interactive() {
 normalize_active_issue_assignments() {
 	local repos_json="$REPOS_JSON"
 	local _phase_start=$SECONDS
+	local _listing_dir=""
 
 	# Pass 0 (GH#28211): scan the authoritative local stamp index directly.
 	# Run before repos.json and GitHub-user gates so recovery does not depend on
@@ -951,7 +1074,7 @@ normalize_active_issue_assignments() {
 	[[ -f "$repos_json" ]] || return 0
 
 	local runner_user
-	runner_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	runner_user=$(_pulse_resolve_runner_login)
 	if [[ -z "$runner_user" ]]; then
 		echo "[pulse-wrapper] Assignment normalization skipped: unable to resolve runner user" >>"$LOGFILE"
 		return 0
@@ -983,9 +1106,21 @@ normalize_active_issue_assignments() {
 	# Pass 3 (label_invariants, t2040): enforce label invariants (at most one
 	# status:*, at most one tier:*); bounded by PULSE_QUEUED_SCAN_LIMIT per repo.
 	#
-	# Passes are independent; each re-lists its own issues. Run them
-	# least-recently-started first and stamp the start before running, so a
-	# pass interrupted by the stage watchdog yields first place next cycle.
+	# Passes are independent but share one live open-issue listing per repo
+	# per run (fetched lazily by the first pass that reaches the repo; see
+	# _normalize_repo_listing). Run them least-recently-started first and stamp
+	# the start before running, so a pass interrupted by the stage watchdog
+	# yields first place next cycle.
+	_listing_dir=$(mktemp -d 2>/dev/null) || _listing_dir=""
+	if [[ -z "$_listing_dir" ]]; then
+		# No shared cache: skip listing-dependent passes rather than listing
+		# each repo once per pass. Independent cleanups still run.
+		echo "[pulse-wrapper] normalize_active_issue_assignments: mktemp -d failed; skipping listing-dependent passes this run" >>"$LOGFILE"
+		_normalize_stale_close_pending_checkpoint_leases
+		_normalize_deferred_claim_releases
+		return 0
+	fi
+	_NORMALIZE_LISTING_DIR="$_listing_dir"
 	local pass_state_dir="${HOME}/.aidevops/cache/normalize-pass-started"
 	local pass="" pass_order=""
 	# Resolve the order up front: passes read their own stdin streams.
@@ -999,6 +1134,7 @@ normalize_active_issue_assignments() {
 			;;
 		unassign_stale)
 			_normalize_stale_close_pending_checkpoint_leases
+			_normalize_deferred_claim_releases
 			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
 			;;
 		unassign_stampless_interactive)
@@ -1011,6 +1147,9 @@ normalize_active_issue_assignments() {
 		esac
 		_normalize_log_timing "substage:normalize/${pass}" "$_phase_start" 0
 	done
+
+	_NORMALIZE_LISTING_DIR=""
+	[[ -n "$_listing_dir" ]] && rm -rf "$_listing_dir"
 
 	return 0
 }

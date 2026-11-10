@@ -340,8 +340,11 @@ for action in create edit merge; do
 		'Not a deployment. Fixes #987654' 'Do not deploy; resolves #987654' \
 		"Example: \`Do not close #987654\`" $'```\nNever closes #987654\n```'; do
 		_reset_log
-		if "$SHIM_RUN" pr "$action" --repo owner/repo --body "$safe" 2>"$TMP/closing.err" &&
-			[[ -s "$STUB_GH_LOG" ]]; then
+		# Body edits inspect the target PR's origin labels before transport.
+		safe_target=()
+		[[ "$action" != edit ]] || safe_target=(42)
+		if "$SHIM_RUN" pr "$action" ${safe_target[@]+"${safe_target[@]}"} --repo owner/repo --body "$safe" 2>"$TMP/closing.err" &&
+			grep -Fxq "$action" "$STUB_GH_LOG"; then
 			_pass "pr $action preserves positive resolution or non-closing mention"
 		else
 			_fail "pr $action safe body" "$safe"

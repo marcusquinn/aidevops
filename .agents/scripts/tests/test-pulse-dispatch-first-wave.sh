@@ -39,12 +39,19 @@ advance_clock() {
 	printf '%s\n' "$((now + seconds))" >"$CLOCK"
 	return 0
 }
-_pulse_cycle_remaining_seconds() {
-	local reserve="${1:-0}" now=0
-	read -r now <"$CLOCK"
-	printf '%s\n' "$((1800 - now - reserve))"
+# Clock/timing stubs are installed by a function so they can be restored
+# after sourcing production libraries that define the same names.
+_install_fixture_clock_stubs() {
+	_pulse_cycle_remaining_seconds() {
+		local reserve="${1:-0}" now=0
+		read -r now <"$CLOCK"
+		printf '%s\n' "$((1800 - now - reserve))"
+		return 0
+	}
+	_log_substage_timing() { return 0; }
 	return 0
 }
+_install_fixture_clock_stubs
 _dispatch_now_ms() {
 	local now=0
 	read -r now <"$CLOCK"
@@ -141,7 +148,6 @@ _pulse_run_budget_priority_stage() {
 	return $?
 }
 _pulse_run_budget_priority_stage_with_timeout() { return 0; }
-_log_substage_timing() { return 0; }
 _pulse_start_post_dispatch_housekeeping() { return 0; }
 _pulse_should_defer_budget_priority_stage() { return 0; }
 _pulse_defer_budget_priority_stage() { return 0; }
@@ -157,7 +163,8 @@ scan_events() {
 
 _run_preflight_stages
 actual=$(tr '\n' ';' <"$EVENTS")
-async_events='async:worktrees;async:stashes;async:remote-branches;'
+# t18911: the steering relay starts with the async cleanups, outside the budget.
+async_events='async:worktrees;async:stashes;async:remote-branches;async:worker-bus-relay;'
 [[ "$actual" == "${async_events}host-capacity;$(scan_events 1 20)launch;cleanup;host-capacity;" ]] || {
 	printf 'FAIL first-wave ordering: %s\n' "$actual" >&2
 	exit 1
@@ -176,10 +183,9 @@ printf 'PASS first wave registers dispatch before paced housekeeping; timing/sna
 	printf '0\n' >"$CLOCK"
 	: >"$EVENTS"
 	# Use the production deferral gate while keeping the fixture clock/timings.
-	fixture_stubs=$(declare -f _pulse_cycle_remaining_seconds _log_substage_timing)
 	# shellcheck source=../pulse-watchdog.sh
 	source "${SCRIPT_DIR}/pulse-watchdog.sh"
-	eval "$fixture_stubs"
+	_install_fixture_clock_stubs
 	_preflight_early_dispatch() { printf 'long-dispatch\n' >>"$EVENTS"; advance_clock 1800; return 0; }
 	run_stage_with_timeout() {
 		local stage="$1" timeout="$2"

@@ -20,17 +20,8 @@ env:
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
-    # t2220/t3403: suppress concurrency-cancellation cascade on docs-only PRs.
-    # `gh pr create --label "a,b,c,d"` fires one `labeled` event per label
-    # after the initial `opened`; each event can trigger a new run. When this
-    # workflow used `cancel-in-progress: true`, label runs cancelled the
-    # in-flight required check before job-level guards could skip them. Docs-only
-    # PRs observed 15+ cancelled runs per workflow, which `gh pr checks`
-    # then surfaces as `fail` (it displays `cancelled` conclusions as
-    # `fail` in its TSV output). Filtering docs-only at the trigger
-    # level reduces no-op runs; keeping cancel-in-progress disabled prevents
-    # label events on mixed PRs from cancelling required checks. In-workflow
-    # `detect-new-files` still runs as a belt-and-suspenders check.
+    # Keep docs-only no-op runs out; label refreshes use unique concurrency
+    # groups below so a skipped unrelated label cannot cancel a required scan.
     paths-ignore:
       - '**/*.md'
       - 'todo/**'
@@ -40,17 +31,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.run_id || 'head' }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' && github.event.action != 'unlabeled' }}
 
 jobs:
   detect-new-files:
     name: Detect new files
     runs-on: ubuntu-latest
-    # t2231/t3403: fast-fail gate — skip entirely when a labeled event is
-    # unrelated to 'new-file-smell-ok'. Cascade can still fire N workflow runs
-    # on bulk label application, but cancel-in-progress is disabled so these
-    # cheap skipped runs cannot cancel the required scan from opened/synchronize.
+    # Skip unrelated label events. Their unique concurrency groups cannot
+    # replace or cancel the head-validation run (t2231/t3403).
     # unlabeled non-relevant events are handled by the shell guard inside the
     # step (inherited from t2068).
     if: >-

@@ -190,6 +190,7 @@ _gh_transport_run_rest() {
 	local metadata="" error_file="" start_ms="" end_ms="" elapsed="" rc=0
 	local status="" resource="" remaining="" reset="" retry_after="" cost="" attempted="" deferred_by="" pool="" response="" outcome=success
 	local used="" fingerprint="" sampled_at=""
+	local request_method="" endpoint_class="" endpoint_family=""
 	mkdir -p "$temp_dir" || return 75
 	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
 	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
@@ -202,8 +203,8 @@ _gh_transport_run_rest() {
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
 	# Parse only the bounded governor metadata; reuse it for the final log.
-	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
-		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
+	IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at request_method endpoint_class endpoint_family < <(jq -r \
+		'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at,.request_method,.endpoint_class,.endpoint_family] |
 		map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 	[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 	# The governor has not executed the native request when durable quota state is
@@ -224,8 +225,8 @@ _gh_transport_run_rest() {
 			: >"$error_file"
 			rc=0
 			python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
-			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at < <(jq -r \
-				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at] |
+			IFS='|' read -r attempted deferred_by status resource remaining reset retry_after cost used fingerprint sampled_at request_method endpoint_class endpoint_family < <(jq -r \
+				'[.attempted,.deferred_by,.status,.resource,.remaining,.reset,.retry_after,.cost,.used,.auth_fingerprint,.sampled_at,.request_method,.endpoint_class,.endpoint_family] |
 				map(if . == null then "x" else tostring end) | join("|")' "$metadata" 2>/dev/null)
 			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
@@ -259,7 +260,8 @@ _gh_transport_run_rest() {
 			gh_record_attempt "$path" "$caller" "$AIDEVOPS_GH_LOGICAL_ID" "" \
 			"$(_shim_transport_page "$@")" "$retry" "$outcome" "$status" "$elapsed" "$cost" \
 			"${AIDEVOPS_GH_AUTH_MODE:-}" "$pool" "${AIDEVOPS_GH_ROUTE_DECISION:-rest-response-owned}" "$remaining" \
-			"$fingerprint" "$series_reset" "$sampled_at" "$used"
+			"$fingerprint" "$series_reset" "$sampled_at" "$used" \
+			"${request_method:-unknown}" "${endpoint_class:-unknown}" "${endpoint_family:-unknown}"
 		_shim_timing rest_attempt_log
 		[[ "$status" == x ]] || response="HTTP/1.1 ${status}"$'\n'
 		[[ "$resource" == x ]] || response="${response}x-ratelimit-resource: ${resource}"$'\n'

@@ -36,6 +36,7 @@ import { createQualityHooks } from "./quality-hooks.mjs";
 import { releasePreEditSessionOwnership } from "./pre-edit-check-process.mjs";
 import { createSessionContinuationGuard } from "./session-continuation-guard.mjs";
 import { createV2SessionBusHooks } from "./session-bus-v2.mjs";
+import { remoteBusContext } from "./session-bus-plugin.mjs";
 import { createSessionModelStore, createShellEnvHook } from "./shell-env.mjs";
 import {
   appendConversationSystemContext,
@@ -374,6 +375,7 @@ export async function setupAidevopsV2(ctx) {
       ctx,
       directory,
       headless: isHeadless(),
+      remote: remoteBusContext(conversation),
       log: (level, message) => qualityLog(level, message),
     });
     const baseTools = createSchemaGatedTools(tool, () => {
@@ -482,6 +484,8 @@ export async function setupAidevopsV2(ctx) {
       permissionBroker.recordToolCall(input, output);
       await toolExecuteBefore(input, output);
       event.input = output.args;
+      // t18905: after the gates, so only tools that will run are published.
+      sessionBus.toolBefore(event);
     }));
     await register(registrations, ctx.tool.hook("execute.after", async (event) => {
       const output = legacyToolOutput(event.result || {});

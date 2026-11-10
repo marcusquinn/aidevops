@@ -15,15 +15,19 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
+from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
+from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
+from .interrupted_removal import restore_git_link, validation_boundary
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
-from .legacy_probe import checkpoint, host_probe, interrupted_probe
+from .legacy_probe import checkpoint, event_id, host_probe, interrupted_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
+from .legacy_proc import require_idle_processes
 from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
@@ -118,6 +122,14 @@ def archive_source(store, connection, operation, plan, adapter):
     return previous
 
 
+def _restore_link(target, plan):
+    """Bind tree and administration to the plan before restoring a deleted `.git`."""
+    admin = Path(plan["admin"])
+    if _id(target) != plan["directory"] or _id(admin) != plan["admin_identity"]:
+        raise ValueError("worktree-replaced")
+    restore_git_link(target, admin)
+
+
 def finish(store, connection, operation, plan, adapter):
     """Only the journaled private pathname is ever passed to native removal."""
     root = Path(plan["output_root"])
@@ -141,11 +153,26 @@ def finish(store, connection, operation, plan, adapter):
         if _snapshot(source) != plan["snapshot"]:
             raise ValueError("source-changed")
         _git("--git-dir", plan["common"], "worktree", "move", str(source), str(target))
+    started = removal_started(connection, event_id(operation, "removing"))
+    if started is not None:
+        # Census before opening our own handle on the private tree.
+        require_idle_processes(target)
     with DirectoryHandle(target):
+        if started is not None:
+            _restore_link(target, plan)
         same_tree(target, plan)
         unchanged(connection, plan, adapter)
-        if _snapshot(target) != plan["snapshot"]:
-            raise ValueError("relocated-source-changed")
+        if started is None:
+            boundary = validation_boundary()
+            if _snapshot(target) != plan["snapshot"]:
+                raise ValueError("relocated-source-changed")
+            # Journal removal start so an interrupted delete can resume (GH#37326).
+            checkpoint(store, connection, operation, "removing",
+                       {"type": "legacy-worktree-removing", "archive": plan["archive"],
+                        BOUNDARY: boundary})
+            unchanged(connection, plan, adapter)
+        else:
+            require_deletion_only(target, started, _git)
         _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
     checkpoint(store, connection, operation, "retired",
                {"type": "legacy-worktree-retired", "archive": plan["archive"]})
@@ -204,7 +231,23 @@ def take_over_managed(store, item, repositories, adapter, options):
     """
     require_managed_takeover(reconstructible, item, repositories, adapter,
                              pass_pull_requests(options), managed_min_age=options.min_age)
+    if options.apply:
+        close_quiescent_admission(store, item)
     return process_reconstructible(store, item, repositories, adapter, options)
+
+
+def close_quiescent_admission(store, item):
+    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
+
+    Uses the admission pass's own primitive, which re-samples bound runs and
+    closes only when every run is admitted and ended. Unenrolled, changed, empty
+    or unfinished generations stay open, so the authority check that follows
+    still reports `managed-admission-not-closed`. Never called in preview.
+    """
+    try:
+        prepare_cleanup(store, Path(item["path"]))
+    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
+        return
 
 
 def process_item(store, item, repositories, adapter, options):

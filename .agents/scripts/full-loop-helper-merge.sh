@@ -1276,7 +1276,7 @@ _merge_finalize_post_merge() {
 	_merge_reconcile_provenance_release "$pr_number" "$repo" ||
 		print_warning "Protected release reconciliation deferred; inspect the matching source lane with aidevops release status"
 	if declare -F _full_loop_record_merged_pr >/dev/null 2>&1; then
-		_full_loop_record_merged_pr "$pr_number" || return 1
+		_full_loop_record_merged_pr "$pr_number" "$repo" || return 1
 	fi
 	if [[ "$has_auto" -eq 0 && -n "$linked_issue" ]]; then
 		auto_file_next_phase "$linked_issue" "$repo" || true
@@ -1780,7 +1780,7 @@ cmd_merge() {
 	_merge_record_post_merge_audits "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
-		_full_loop_record_phase "postflight" "$pr_number" || return 1
+		_full_loop_record_phase "postflight" "$pr_number" "$repo" || return 1
 	fi
 	_merge_finalize_post_merge "$pr_number" "$repo" "$has_auto" "$_cleanup_target"
 

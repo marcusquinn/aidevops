@@ -402,6 +402,7 @@ cmd_resume() {
 _full_loop_record_phase() {
 	local phase="$1"
 	local pr_number="$2"
+	local merge_repo="${3:-}"
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -f "$STATE_FILE" ]] || return 0
 	_full_loop_acquire_transition_lock || return 1
@@ -409,6 +410,15 @@ _full_loop_record_phase() {
 		_full_loop_release_transition_lock
 		return 1
 	}
+	if [[ -n "$merge_repo" && -n "${PR_NUMBER:-}" && "$PR_NUMBER" != "$pr_number" ]]; then
+		local branch="" head_ref=""
+		branch=$(git symbolic-ref --quiet --short HEAD) || branch=""
+		head_ref=$(gh pr view "$pr_number" --repo "$merge_repo" --json headRefName --jq '.headRefName' 2>/dev/null) || head_ref=""
+		if [[ -z "$branch" || -z "$head_ref" || "$branch" != "$head_ref" ]]; then
+			_full_loop_release_transition_lock
+			return 0
+		fi
+	fi
 	PR_NUMBER="$pr_number"
 	if ! save_state "$phase" "$SAVED_PROMPT" "$PR_NUMBER" "$STARTED_AT"; then
 		_full_loop_release_transition_lock
@@ -420,7 +430,8 @@ _full_loop_record_phase() {
 
 _full_loop_record_merged_pr() {
 	local pr_number="$1"
-	_full_loop_record_phase "pr-review" "$pr_number"
+	local repo="$2"
+	_full_loop_record_phase "pr-review" "$pr_number" "$repo"
 	return $?
 }
 
@@ -718,9 +729,37 @@ cmd_complete() {
 			return 1
 		}
 	fi
+	_full_loop_relinquish_completed_session "$repo" "$PR_NUMBER" "$current_root" "$owner_pid" "$owner_session"
 	print_warning "LIFECYCLE_STATE=CLEANUP_DEFERRED worktree=${current_root}"
 	print_info "Executor complete; guarded cleanup supervisor owns the remaining CLEANED transition"
 	echo "<promise>FULL_LOOP_CLEANUP_DEFERRED</promise>"
+	return 0
+}
+
+# GH#37448: hand both of this interactive session's holds on its finished tree
+# to guarded cleanup. One OpenCode app PID serves every session, so otherwise
+# the registry run and the receipt owner keep the tree until the app quits.
+# Runs after the durable receipt, so it is best-effort: any failure leaves the
+# 4-hour lease and every registry check in force. Headless runtimes exit at
+# completion and keep the unchanged path. The session must not use the tree
+# afterwards; re-admission refuses with session-owner-already-ended.
+_full_loop_relinquish_completed_session() {
+	local repo="$1"
+	local pr_number="$2"
+	local worktree="$3"
+	local owner_pid="$4"
+	local owner_session="$5"
+	local registry_status="unavailable"
+	local lease_status="kept"
+	is_headless && return 0
+	# shellcheck source=./worker-lifecycle-state.sh
+	if source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" 2>/dev/null; then
+		registry_status=$(worker_lifecycle_relinquish_session "$worktree" 2>/dev/null) || registry_status="unavailable"
+	fi
+	if full_loop_mark_cleanup_owner_relinquished "$repo" "$pr_number" "$owner_pid" "$owner_session" 2>/dev/null; then
+		lease_status="relinquished"
+	fi
+	print_info "Session handoff: registry-run=${registry_status} cleanup-lease=${lease_status}"
 	return 0
 }
 
@@ -1309,6 +1348,27 @@ cmd_finalize_receipt() {
 		return 1
 	}
 	print_success "Cleanup receipt finalized for merged PR #${pr_number} (release:${release_status})"
+	_full_loop_relinquish_finalized_session "$repo" "$pr_number"
+	return 0
+}
+
+# GH#37448: `finalize-receipt` ends direct merge-wrapper flows the way
+# `complete` ends lifecycle flows, so hand off the same session holds on the
+# receipt's worktree. Only the exact receipt owner and registry run owner can
+# release anything; every other caller leaves both holds unchanged.
+_full_loop_relinquish_finalized_session() {
+	local repo="$1"
+	local pr_number="$2"
+	local receipt_path="" worktree=""
+	local owner_pid="${PPID:-}"
+	local owner_session="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-$_FULL_LOOP_OWNER_SESSION_FALLBACK}}}"
+	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
+		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || printf '%s' "${PPID:-}")
+	fi
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number" 2>/dev/null) || return 0
+	worktree=$(jq -r '.worktree | strings' "$receipt_path" 2>/dev/null) || return 0
+	[[ -n "$worktree" ]] || return 0
+	_full_loop_relinquish_completed_session "$repo" "$pr_number" "$worktree" "$owner_pid" "$owner_session"
 	return 0
 }
 

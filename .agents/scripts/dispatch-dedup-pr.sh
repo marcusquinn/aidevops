@@ -26,6 +26,9 @@ _ddpr_gh_read() {
 
 _DDPR_LOOKUP_RC_RESPONSE_INVALID=13
 _DDPR_LOOKUP_RC_COMMIT_PERMISSION=77
+# Distinct from cache miss (1): keychain locked, so no gh read may run (GH#37232).
+_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE=3
+_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE=78
 _DDPR_LOOKUP_RESULT_UNCERTAIN="PR_LOOKUP_RESULT=uncertain"
 _DDPR_LOOKUP_SCOPE_TASK_ID_TITLE="task_id_title"
 _DDPR_LOOKUP_SCOPE_OPEN_COMMITS="open_commits"
@@ -40,6 +43,14 @@ _ddpr_commit_denial_cache() {
 	local cache_dir="${AIDEVOPS_DDPR_PERMISSION_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dispatch-pr-permissions}"
 	local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" key="" file="" denied_at="" now=""
 	if [[ -z "$token" ]]; then
+		# GH#37232: skip the keychain read when it would open a GUI dialog.
+		local _ddpr_dir
+		_ddpr_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+		if [[ -r "${_ddpr_dir}/background-keychain-helper.sh" ]]; then
+			# shellcheck source=./background-keychain-helper.sh
+			source "${_ddpr_dir}/background-keychain-helper.sh"
+			background_keychain_gh_ready "dispatch-dedup-pr" || return "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE"
+		fi
 		token=$(gh auth token 2>/dev/null) || token=""
 	fi
 	key=$(printf '%s\n' "$repo_slug" "${GH_HOST:-github.com}" "${GH_CONFIG_DIR:-}" \
@@ -144,7 +155,7 @@ _ddpr_bounded_gh_read() {
 		fi
 		# Exit 75 is a local budget/cooldown refusal. Retrying it would add
 		# pressure without obtaining new evidence.
-		[[ "$rc" -eq 75 || "$rc" -eq "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION" ]] && return "$rc"
+		[[ "$rc" -eq 75 || "$rc" -eq "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION" || "$rc" -eq "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE" ]] && return "$rc"
 		if [[ "$attempt" -lt "$max_attempts" && "$retry_delay" -gt 0 ]]; then
 			sleep "$retry_delay"
 		fi
@@ -157,6 +168,7 @@ _ddpr_lookup_failure_reason() {
 	local rc="$1"
 	case "$rc" in
 	"$_DDPR_LOOKUP_RC_COMMIT_PERMISSION") printf 'commit_permission_denied' ;;
+	"$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE") printf 'keychain_unavailable' ;;
 	75) printf 'local_budget_or_cooldown' ;;
 	124) printf 'timeout' ;;
 	"$_DDPR_LOOKUP_RC_RESPONSE_INVALID") printf 'response_validation_failed' ;;
@@ -493,7 +505,12 @@ _ddpr_graphql_open_commits() {
 	local page_count=0 max_pages="${AIDEVOPS_DEDUP_COMMIT_MAX_PAGES:-10}"
 	[[ "$max_pages" =~ ^[1-9][0-9]*$ && "$max_pages" -le 20 ]] || max_pages=10
 	[[ -n "$owner" && -n "$repo" && "$repo_slug" == */* && "$repo" != */* ]] || return 1
-	if _ddpr_commit_denial_cache check "$repo_slug"; then
+	local cache_rc=0
+	_ddpr_commit_denial_cache check "$repo_slug" || cache_rc=$?
+	if [[ "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+		return "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
 		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
 	fi
 
@@ -1054,6 +1071,21 @@ _has_open_pr_check_superseded_issue_pr() {
 #   evidence reason, or sanitized PR_LOOKUP_RESULT=uncertain diagnostics
 # CALLERS: For issue closing, verify mergedAt after this returns 0.
 #######################################
+# Map the denial-cache check to a lookup rc: 1 = no denial (proceed),
+# keychain-unavailable or commit-permission rc = uncertain.
+_ddpr_denial_lookup_rc() {
+	local repo_slug="$1"
+	local cache_rc=0
+	_ddpr_commit_denial_cache check "$repo_slug" || cache_rc=$?
+	if [[ "$cache_rc" -eq "$_DDPR_CACHE_RC_KEYCHAIN_UNAVAILABLE" ]]; then
+		return "$_DDPR_LOOKUP_RC_KEYCHAIN_UNAVAILABLE"
+	fi
+	if [[ "$cache_rc" -eq 0 ]]; then
+		return "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	fi
+	return 1
+}
+
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1065,8 +1097,10 @@ has_open_pr() {
 
 	# A repository-wide evidence denial applies to every candidate, not just the
 	# issue that discovered it. Do not repeat any admission scan during cooldown.
-	if _ddpr_commit_denial_cache check "$repo_slug"; then
-		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$_DDPR_LOOKUP_RC_COMMIT_PERMISSION"
+	local denial_rc=0
+	_ddpr_denial_lookup_rc "$repo_slug" || denial_rc=$?
+	if [[ "$denial_rc" -ne 1 ]]; then
+		_ddpr_emit_lookup_uncertain "$_DDPR_LOOKUP_SCOPE_OPEN_COMMITS" "$issue_number" "$repo_slug" "$denial_rc"
 		return 0
 	fi
 

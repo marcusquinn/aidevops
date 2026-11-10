@@ -391,23 +391,70 @@ configured_context_missing_from_checks() {
 	return 1
 }
 
+# Print "<workflow name> (run <id>)" for each latest-per-workflow run at the
+# exact head that ended failure/startup_failure with zero jobs. Such a run
+# creates no check run, so its required context is simply absent. Read-only.
+# Fixture mode reads ${AIDEVOPS_GH_CHECKS_FIXTURE_DIR}/runs.json (entries carry
+# total_jobs); live mode reads the runs list and then jobs.total_count.
+zero_job_runs() {
+	local repo="$1"
+	local head="$2"
+	local fixture_dir="${AIDEVOPS_GH_CHECKS_FIXTURE_DIR:-}"
+	local runs_json="" candidates="" run_id="" run_name="" total="" separator="" output=""
+	if [[ -n "$fixture_dir" ]]; then
+		[[ -f "${fixture_dir}/runs.json" ]] || return 1
+		runs_json=$(<"${fixture_dir}/runs.json")
+	else
+		[[ -n "$head" ]] || return 1
+		runs_json=$(gh api -X GET "repos/${repo}/actions/runs" -f head_sha="$head" -f per_page=100 2>/dev/null) || return 1
+	fi
+	candidates=$(printf '%s' "$runs_json" | jq -r --arg head "$head" '
+		(.workflow_runs // [])
+		| map(select(.head_sha == $head or .head_sha == null))
+		| group_by(.workflow_id // .name)
+		| map(max_by(.run_number // 0))
+		| .[]
+		| select(.status == "completed" and (.conclusion == "failure" or .conclusion == "startup_failure"))
+		| [.id, .name, (.total_jobs // "")] | @tsv') || return 1
+	while IFS=$'\t' read -r run_id run_name total; do
+		[[ "$run_id" =~ ^[0-9]+$ ]] || continue
+		if [[ -z "$total" ]]; then
+			total=$(gh api -X GET "repos/${repo}/actions/runs/${run_id}/jobs" -f per_page=1 --jq '.total_count' 2>/dev/null) || continue
+		fi
+		[[ "$total" == "0" ]] || continue
+		output+="${separator}${run_name} (run ${run_id})"
+		separator=", "
+	done <<<"$candidates"
+	[[ -n "$output" ]] || return 1
+	printf '%s\n' "$output"
+	return 0
+}
+
 classify_state() {
 	local checks="$1"
 	local required_only="$2"
 	local pr_number="$3"
 	local repo="$4"
 	local elapsed="$5"
+	local head="${6:-}"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
-	if [[ "$required_only" -eq 1 ]]; then
-		local configured_contexts="" configured_rc=0
-		local missing_contexts=""
-		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
-		if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
-			missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
-			printf 'pending\t%s\n' "$missing_contexts"
+	# Absent configured required contexts are never success, in required-only
+	# and --all mode alike.
+	local configured_contexts="" configured_rc=0
+	local missing_contexts="" zero_runs=""
+	configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
+	if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
+		missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
+		if [[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] &&
+			zero_runs=$(zero_job_runs "$repo" "$head"); then
+			printf 'zero-job\t%s\t%s\n' "$missing_contexts" "$zero_runs"
 			return 0
 		fi
+		printf 'pending\t%s\n' "$missing_contexts"
+		return 0
+	fi
+	if [[ "$required_only" -eq 1 ]]; then
 		if [[ "$count" -eq 0 && "$configured_rc" -ne 0 && "$elapsed" -lt "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]]; then
 			printf 'pending\n'
 			return 0
@@ -474,6 +521,18 @@ emit_failure_details() {
 	printf 'FAIL: required checks reached a terminal failure\n'
 	printf '%s' "$checks" | jq -r --arg pass "$_GCW_BUCKET_PASS" --arg pending "$_GCW_BUCKET_PENDING" --arg skipping "$_GCW_BUCKET_SKIPPING" \
 		'.[] | select(.bucket != $pass and .bucket != $pending and .bucket != $skipping) | "  \(.name): \(.bucket)\(if .link == "" then "" else " " + .link end)"'
+	return 0
+}
+
+emit_terminal_failure() {
+	local classification="$1" checks="$2" runs="$3" missing="$4" repo="$5"
+	if [[ "$classification" != "zero-job" ]]; then
+		emit_failure_details "$checks"
+		return 0
+	fi
+	printf 'FAIL: required contexts absent because workflow runs ended with zero jobs: %s\n' "$runs"
+	printf '  missing: %s\n' "$missing"
+	printf '  hint: gh run rerun <id> --repo %s (run IDs above; this helper does not rerun)\n' "$repo"
 	return 0
 }
 
@@ -607,7 +666,7 @@ wait_for_checks() {
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
 		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head="" state_summary=""
-		local missing_contexts=""
+		local missing_contexts="" zero_job_detail=""
 		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
 		raw=$(fetch_checks "$pr_number" "$repo" "$required_only" "$poll_number" "$initial_head" 2>"$fetch_diagnostic_file") || fetch_rc=$?
 		fetch_diagnostic=$(<"$fetch_diagnostic_file")
@@ -632,7 +691,7 @@ wait_for_checks() {
 			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
-		IFS=$'\t' read -r classification missing_contexts <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed")"
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
@@ -653,8 +712,8 @@ wait_for_checks() {
 		fi
 
 		case "$classification" in
-		failure)
-			emit_failure_details "$current"
+		failure | zero-job)
+			emit_terminal_failure "$classification" "$current" "$zero_job_detail" "$missing_contexts" "$repo"
 			return 1
 			;;
 		success | no-required | no-checks)

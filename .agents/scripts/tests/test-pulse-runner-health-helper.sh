@@ -364,6 +364,89 @@ else
 fi
 _teardown_sandbox
 
+# A successful update check with unchanged deployment must not resume dispatch.
+_setup_sandbox
+mkdir -p "$HOME/.aidevops/agents/scripts"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+chmod +x "$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+printf '%s\n' 'unchanged' >"$HOME/.aidevops/agents/VERSION"
+for i in 1 2 3; do
+	_h record-outcome no_worker_process "owner/repo#$i" >/dev/null 2>&1
+done
+rc=0
+_h is-paused || rc=$?
+outcome=$(jq -r '.circuit_breaker.last_update_outcome' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$rc" -eq 0 && "$outcome" == "no_change" ]]; then
+	print_result "no-op update keeps breaker paused" "PASS"
+else
+	print_result "no-op update keeps breaker paused" "FAIL" "rc=$rc outcome=$outcome"
+fi
+_teardown_sandbox
+
+# --- Streak tests (t18927): window measures idleness, not streak age ---
+_rh_epoch_ts() {
+	local epoch="$1"
+	date -u -d "@${epoch}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| date -u -r "$epoch" '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+# Record zero-attempt outcomes at a fixed gap (minutes); optionally one
+# overridden gap at index N and one real-attempt outcome at index M.
+_rh_run_streak() {
+	local gap_min="$1"
+	local count="$2"
+	local gap_override_idx="${3:-0}"
+	local gap_override_min="${4:-0}"
+	local real_idx="${5:-0}"
+	local t=1800000000 i signal ts
+	for ((i = 1; i <= count; i++)); do
+		if [[ "$i" -gt 1 ]]; then
+			if [[ "$i" -eq "$gap_override_idx" ]]; then
+				t=$((t + gap_override_min * 60))
+			else
+				t=$((t + gap_min * 60))
+			fi
+		fi
+		signal="no_worker_process"
+		[[ "$i" -eq "$real_idx" ]] && signal="real_attempt_with_commit"
+		ts=$(_rh_epoch_ts "$t") || return 1
+		[[ -n "$ts" ]] || return 1
+		RUNNER_HEALTH_TEST_NOW="$ts" _h record-outcome "$signal" "owner/repo#$i" >/dev/null 2>&1
+	done
+	return 0
+}
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10
+if _h is-paused; then
+	print_result "10 zero-attempts 50min apart trip the breaker" "PASS"
+else
+	print_result "10 zero-attempts 50min apart trip the breaker" "FAIL"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10 5 420
+if _h is-paused; then
+	print_result "idle gap beyond window decays streak (no trip)" "FAIL"
+else
+	print_result "idle gap beyond window decays streak (no trip)" "PASS"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10 RUNNER_HEALTH_WINDOW_HOURS=6
+_rh_run_streak 50 10 0 0 5
+if _h is-paused; then
+	print_result "real attempt mid-streak resets it (no trip)" "FAIL"
+else
+	print_result "real attempt mid-streak resets it (no trip)" "PASS"
+fi
+_teardown_sandbox
+
 echo ""
 echo "Tests run: $TESTS_RUN, failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] && exit 0 || exit 1

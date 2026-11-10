@@ -33,6 +33,72 @@ _PREFLIGHT_CLEANUP_SYSTEMD_UNIT_SEQUENCE=0
 
 # --- Preflight helper functions (extracted) ---
 
+# Local Directory Services can stop resolving the logged-in account (GH#37260).
+# Bound both lookups: dscl itself may hang during the outage. No process scans.
+_preflight_macos_user_lookup_ok() {
+	[[ "$(uname -s)" == "Darwin" ]] || return 0
+	if ! declare -F timeout_sec >/dev/null; then
+		# Independently sourced routine callers also need the portable timeout.
+		# shellcheck source=./shared-constants.sh
+		source "${BASH_SOURCE[0]%/*}/shared-constants.sh" || return 1
+	fi
+	local name="" record_type="/Users"
+	name=$(timeout_sec 3 id -un 2>/dev/null) || return 1
+	[[ -n "$name" && ! "$name" =~ ^[0-9]+$ ]] || return 1
+	timeout_sec 3 dscl . -read "${record_type}/$name" UniqueID >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# One WARN per rejected invocation; one persistent advisory also holds the last
+# notification attempt. Reserve it under a kernel file lock before notifying so
+# simultaneous routine/pulse ticks cannot duplicate notifications. Fail closed
+# on unwritable state, but never turn a skipped cycle into a scheduler error.
+_preflight_macos_user_lookup_gate() {
+	_preflight_macos_user_lookup_ok && return 0
+	local message="macOS cannot look up your user account; restart the Mac before entering your password at the lock screen"
+	printf '[pulse-wrapper] WARN: %s; skipping cycle\n' "$message" >>"${LOGFILE:-/dev/stderr}" || true
+	_preflight_macos_user_lookup_advisory "$message" || true
+	return 1
+}
+
+# macOS ships Perl with flock; no extra lock files, stale PID recovery, or Bash
+# 4-only descriptors. The kernel releases the lock even on process termination.
+_preflight_macos_user_lookup_advisory() {
+	local message="$1"
+	local dir="${HOME}/.aidevops/advisories"
+	local marker="$dir/macos-user-lookup.advisory"
+	mkdir -p "$dir" 2>/dev/null || return 1
+	timeout_sec 5 perl -MFcntl=:DEFAULT,:flock - "$marker" "$message" >/dev/null 2>&1 <<'PERL' || true
+		my ($path, $message) = @ARGV;
+		sysopen(my $fh, $path, O_RDWR | O_CREAT, 0600) or exit 0;
+		flock($fh, LOCK_EX | LOCK_NB) or exit 0;
+		my $last = <$fh> // 0;
+		chomp $last;
+		$last = 0 unless $last =~ /^\d+$/;
+		exit 0 if time - $last < 3600;
+		sub stamp {
+			seek($fh, 0, 0) or exit 0;
+			truncate($fh, 0) or exit 0;
+			my $text = time . "\n$message\n";
+			syswrite($fh, $text) == length($text) or exit 0;
+		}
+		stamp();
+		my $pid = fork();
+		exit 0 unless defined $pid;
+		if ($pid == 0) {
+			exec "osascript", "-e", "display notification \"$message\" with title \"AI DevOps\"";
+			exit 0;
+		}
+		local $SIG{ALRM} = sub { kill "KILL", $pid; };
+		alarm 3;
+		my $waited = waitpid($pid, 0);
+		alarm 0;
+		waitpid($pid, 0) if $waited == -1;
+		stamp();
+PERL
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Helpers for _run_preflight_stages (GH#18656)
 # -----------------------------------------------------------------------------
@@ -65,12 +131,13 @@ _preflight_cleanup_systemd_unit_name() {
 # Submit one cleanup helper to a bounded transient user service. The child is
 # started without shell evaluation and receives only non-secret operational
 # settings needed by the cleanup helpers; credentials are resolved from HOME.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_systemd_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 	local runtime_max="${AIDEVOPS_CLEANUP_SYSTEMD_RUNTIME_MAX_SEC:-3600}"
 	[[ "$runtime_max" =~ ^[1-9][0-9]*$ ]] || runtime_max=3600
 
@@ -87,6 +154,7 @@ _preflight_launch_systemd_cleanup() {
 		XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
 		AIDEVOPS_LOG_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKTREE_BASE_DIR
 		AIDEVOPS_WORKTREE_PRESERVE_PATTERNS AIDEVOPS_MAX_WORKTREES
+		AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD
 		AIDEVOPS_MIN_WORKTREE_FREE_KB AIDEVOPS_MIN_WORKTREE_FREE_PERCENT
 		AIDEVOPS_HEADLESS_METRICS_FILE AIDEVOPS_ORPHAN_TRASH_ROOT
 		AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION
@@ -106,6 +174,8 @@ _preflight_launch_systemd_cleanup() {
 		ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS PULSE_IDLE_CPU_THRESHOLD
 		WORKTREE_UNATTRIBUTED_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_MODE
 		AIDEVOPS_WORKTREE_ARCHIVE_RETENTION_DAYS AIDEVOPS_WORKTREE_ARCHIVE_MAX_TOTAL_SIZE
+		AIDEVOPS_WORKER_BUS_RELAY WORKER_BUS_RELAY_MIN_INTERVAL WORKER_BUS_RELAY_STATE_DIR
+		WORKER_BUS_RELAY_CALL_TIMEOUT AIDEVOPS_SESSION_BUS_DIR
 	)
 	local -a child_env=("HOME=${HOME}" "PATH=${PATH:-/usr/local/bin:/usr/bin:/bin}")
 	local env_name="" env_value=""
@@ -125,7 +195,7 @@ _preflight_launch_systemd_cleanup() {
 		--property=IOSchedulingClass=idle \
 		--property="StandardOutput=append:${log_file}" \
 		--property="StandardError=append:${log_file}" \
-		"$env_bin" -i "${child_env[@]}" "$helper" </dev/null >/dev/null 2>>"$log_file"
+		"$env_bin" -i "${child_env[@]}" "$helper" "$@" </dev/null >/dev/null 2>>"$log_file"
 	return $?
 }
 
@@ -136,15 +206,16 @@ _preflight_launch_systemd_cleanup() {
 # GH#32528: the fallback starts a new session (setsid, else perl POSIX::setsid).
 # launchd tears down the job's process group when pulse-wrapper.sh exits, so a
 # plain nohup child was killed mid-run and cleanup never reached most repos.
-# Args: $1=helper path, $2=log path, $3=stable cleanup name
+# Args: $1=helper path, $2=log path, $3=stable cleanup name, $4..=helper args
 #######################################
 _preflight_launch_async_cleanup() {
 	local helper="$1"
 	local log_file="$2"
 	local cleanup_name="$3"
+	shift 3
 
 	if _preflight_cleanup_systemd_user_service_available; then
-		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name"; then
+		if _preflight_launch_systemd_cleanup "$helper" "$log_file" "$cleanup_name" "$@"; then
 			echo "[pulse-wrapper] ${cleanup_name} cleanup started in an isolated transient user service" >>"${LOGFILE:-/dev/null}"
 			return 0
 		fi
@@ -152,13 +223,13 @@ _preflight_launch_async_cleanup() {
 	fi
 
 	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$helper" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		setsid nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	elif command -v perl >/dev/null 2>&1; then
 		# Stock macOS lacks setsid(1); perl's POSIX::setsid is always present.
-		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" \
+		perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' nohup "$helper" "$@" \
 			</dev/null >>"$log_file" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 	else
-		nohup "$helper" </dev/null >>"$log_file" 2>&1 &
+		nohup "$helper" "$@" </dev/null >>"$log_file" 2>&1 &
 	fi
 	local helper_pid=$!
 	disown "$helper_pid" 2>/dev/null || true
@@ -233,6 +304,27 @@ _preflight_start_async_cleanups() {
 		_preflight_launch_async_cleanup "$remote_branches_helper" \
 			"${logs_dir}/cleanup_remote_branches.log" "remote-branches" || true
 	fi
+	_preflight_start_worker_bus_relay || true
+	return 0
+}
+
+#######################################
+# t18911/GH#37327: start the session-bus steering relay (t18905) detached,
+# outside the cycle budget. As a budgeted pipeline stage it was deferred on
+# every cycle, so running workers never received maintainer-steering
+# pointers. Pulse calls this at cycle start and on every busy-lock tick
+# (_pulse_run_routines_while_busy). The helper owns its single-runner lock,
+# per-worker interval, per-call timeouts, stop/rate-limit/circuit checks and
+# the REST-core deferrable gate, so a run that finds another run, no live
+# worker or no budget exits at once. AIDEVOPS_WORKER_BUS_RELAY=0 disables it.
+#######################################
+_preflight_start_worker_bus_relay() {
+	[[ "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]] || return 0
+	[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || return 0
+	local relay_helper="${SCRIPT_DIR}/worker-bus-relay-helper.sh"
+	[[ -x "$relay_helper" ]] || return 0
+	_preflight_launch_async_cleanup "$relay_helper" \
+		"${HOME}/.aidevops/logs/worker-bus-relay.log" "worker-bus-relay" relay || true
 	return 0
 }
 

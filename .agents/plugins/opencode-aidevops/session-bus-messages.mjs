@@ -49,7 +49,7 @@ export function pendingCount(root, sessionID) {
 
 const clip = (value, width) => String(value || "").slice(0, width);
 
-function validBody(text) {
+export function validBody(text) {
   const body = cleanText(text).trim();
   if (!body) throw new Error("message text is empty");
   if (Array.from(body).length > LIMITS.textChars) {
@@ -69,20 +69,27 @@ function checkRate(root, from, now) {
   }
 }
 
+function viaFields(via) {
+  if (!isSafeId(via?.session_id)) return {};
+  return { via: { session_id: via.session_id, agent: clip(via.agent, 80) } };
+}
+
 function senderFields(from) {
   return {
+    ...(parseChatOrigin(from?.origin) && from?.trust ? { trust: from.trust } : {}),
+    ...viaFields(from?.via),
     session_id: isSafeId(from?.session_id) ? from.session_id : "",
     handle: clip(from?.handle, 80),
     repo: clip(from?.repo, 120),
     branch: clip(from?.branch, 120),
-    origin: String(from?.origin || "opencode").slice(0, 160),
+    origin: parseChatOrigin(from?.origin) ? from.origin : String(from?.origin || "opencode").slice(0, 160),
   };
 }
 
-function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops = 0, now = Date.now() }) {
+function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops = 0, now = Date.now() }, releaseNotice = false) {
   validateRoute({ from, to, type });
   const body = validBody(text);
-  checkRate(root, from, now);
+  if (!releaseNotice) checkRate(root, from, now);
   return {
     v: BUS_VERSION,
     id: newMessageId(),
@@ -102,11 +109,21 @@ function buildMessage(root, { from, to, toHandle = "", type, text, re = "", hops
  * Throws on any limit or validation failure, so the caller can surface it.
  */
 export function sendMessage(root, options) {
+  return writeMessage(root, options, false);
+}
+
+// Internal advisory fan-out: fixed sender and info type, still subject to inbox limits.
+export function sendReleaseNotice(root, { to, toHandle, text, now }) {
+  const from = { session_id: "", handle: "release-lane", repo: "", branch: "", origin: "cli:release-lane" };
+  return writeMessage(root, { from, to, toHandle, type: "info", text, now }, true);
+}
+
+function writeMessage(root, options, releaseNotice) {
   if (!isSafeId(options?.to)) throw new Error("invalid recipient session ID");
   if (pendingCount(root, options.to) >= LIMITS.inboxPending) {
     throw new Error(`recipient inbox is full (${LIMITS.inboxPending} undelivered messages); try later`);
   }
-  const message = buildMessage(root, options);
+  const message = buildMessage(root, options, releaseNotice);
   const name = messageFileName(message);
   writeJsonAtomic(join(inboxDir(root, message.to), name), message);
   writeJsonAtomic(join(sentDir(root, senderKey(message.from)), name), message);

@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
+# shellcheck source=portable-stat.sh
+source "${SCRIPT_DIR}/portable-stat.sh"
 readonly NODE_SCRIPT="${SCRIPT_DIR}/chromium-debug-use.mjs"
 # Dedicated, aidevops-owned browser profiles (GH#36511). Never the user's
 # default profile: Chromium ignores --remote-debugging-port there (Chrome 136+).
@@ -23,7 +25,8 @@ Launch commands (dedicated aidevops-owned profile; no Node required):
   launch [url]                       Start (or reuse) a plain-process Brave/Chrome on a
                                      dedicated persistent profile with CDP on a free
                                      127.0.0.1 port; prints BROWSER_URL for connectOverCDP
-  launch-status                      Show launched profiles: pid, endpoint, page count, orphan
+  launch-status                      Show launched profiles: pid, endpoint, page count, orphan,
+                                     stale (browser updated on disk since launch)
   launch-stop [--all]                Stop the launched browser for --profile (or all)
 
 Commands:
@@ -209,6 +212,146 @@ endpoint_ok() {
 	return 0
 }
 
+# --- On-disk update detection (GH#37446) ---
+# A launched browser keeps running after its app is updated on disk. Brave
+# removes the previous versioned framework, so the old process can no longer
+# start renderers and every new tab crashes; Chrome keeps the old version until
+# relaunch. Record the install identity at launch and compare it on reuse.
+
+# "<inode>:<mtime>" of a file after resolving symlinks (/usr/bin/<browser>
+# usually points into the package directory that upgrades replace).
+file_identity() {
+	local path="$1"
+	local resolved="" identity=""
+	resolved="$(readlink -f "$path" 2>/dev/null)" || resolved="$path"
+	identity="$(_stat_batch '%i:%Y' "$resolved")" || return 1
+	[[ "$identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+	printf '%s\n' "$identity"
+	return 0
+}
+
+# macOS bundle framework that new renderers load from, e.g.
+# "Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework".
+browser_framework_dir() {
+	local browser="$1"
+	[[ "$browser" == *.app/Contents/MacOS/* ]] || return 1
+	local app="${browser%%.app/Contents/MacOS/*}.app"
+	local framework="${app}/Contents/Frameworks/${browser##*/} Framework.framework"
+	[[ -L "${framework}/Versions/Current" ]] || return 1
+	printf '%s\n' "$framework"
+	return 0
+}
+
+# Install identity: "framework:<version dir>" for macOS bundles, otherwise
+# "exe:<inode>:<mtime>" of the executable (package upgrades replace it).
+browser_disk_marker() {
+	local browser="$1"
+	local framework="" version="" identity=""
+	if framework="$(browser_framework_dir "$browser")"; then
+		version="$(readlink "${framework}/Versions/Current" 2>/dev/null)" || return 1
+		[[ -n "$version" ]] || return 1
+		printf 'framework:%s\n' "${version##*/}"
+		return 0
+	fi
+	identity="$(file_identity "$browser")" || return 1
+	printf 'exe:%s\n' "$identity"
+	return 0
+}
+
+# Human-readable side of a marker for warnings.
+disk_marker_label() {
+	local marker="$1"
+	case "$marker" in
+	framework:*) printf '%s\n' "${marker#framework:}" ;;
+	exe:*) printf 'executable %s\n' "${marker#exe:}" ;;
+	*) printf 'unknown\n' ;;
+	esac
+	return 0
+}
+
+# Prints "<state>\t<launched>\t<installed>"; state is one of:
+#   current        install unchanged since launch (or nothing to compare)
+#   stale-missing  the running version's files are gone; new tabs will fail
+#   stale-updated  install changed since launch; restart to use it
+launch_disk_state() {
+	local name="$1"
+	local state_file browser recorded current framework
+	state_file="$(state_file_for "$name")"
+	browser="$(state_value "$state_file" browser || true)"
+	if [[ -z "$browser" ]]; then
+		printf 'current\t-\t-\n'
+		return 0
+	fi
+	recorded="$(state_value "$state_file" disk_marker || true)"
+	current="$(browser_disk_marker "$browser" || true)"
+	framework="$(browser_framework_dir "$browser" || true)"
+
+	if [[ -z "$recorded" ]]; then
+		# State written before GH#37446: compare the install's change time
+		# with the launch record's own write time.
+		# _file_mtime_epoch does not follow symlinks: Versions/Current is
+		# re-pointed by an update, so its own mtime is the update time.
+		local artifact_mtime="" state_mtime=""
+		if [[ -n "$framework" ]]; then
+			artifact_mtime="$(_file_mtime_epoch "${framework}/Versions/Current" || true)"
+		else
+			artifact_mtime="$(file_identity "$browser" || true)"
+			artifact_mtime="${artifact_mtime#*:}"
+		fi
+		state_mtime="$(_file_mtime_epoch "$state_file" || true)"
+		if [[ "$artifact_mtime" =~ ^[0-9]+$ && "$state_mtime" =~ ^[0-9]+$ ]] &&
+			((artifact_mtime > state_mtime)); then
+			printf 'stale-updated\tbefore update\t%s\n' "$(disk_marker_label "$current")"
+			return 0
+		fi
+		printf 'current\t-\t-\n'
+		return 0
+	fi
+
+	local launched installed
+	launched="$(disk_marker_label "$recorded")"
+	installed="$(disk_marker_label "$current")"
+	if [[ "$recorded" == framework:* && -n "$framework" &&
+		! -d "${framework}/Versions/${recorded#framework:}" ]]; then
+		printf 'stale-missing\t%s\t%s\n' "$launched" "$installed"
+		return 0
+	fi
+	if [[ -z "$current" ]]; then
+		if [[ ! -e "$browser" ]]; then
+			printf 'stale-missing\t%s\tremoved\n' "$launched"
+			return 0
+		fi
+		printf 'current\t-\t-\n'
+		return 0
+	fi
+	if [[ "$current" != "$recorded" ]]; then
+		printf 'stale-updated\t%s\t%s\n' "$launched" "$installed"
+		return 0
+	fi
+	printf 'current\t-\t-\n'
+	return 0
+}
+
+# Sets LAUNCH_DISK_STATE for the profile and, when its browser is stale,
+# prints a restart warning on stderr and returns 0. Returns 1 when current.
+LAUNCH_DISK_STATE="current"
+report_if_stale() {
+	local name="$1"
+	local disk="" launched="" installed=""
+	IFS=$'\t' read -r disk launched installed < <(launch_disk_state "$name") || true
+	LAUNCH_DISK_STATE="${disk:-current}"
+	[[ "$LAUNCH_DISK_STATE" == stale-* ]] || return 1
+	local impact="new tabs may fail until it is restarted"
+	if [[ "$LAUNCH_DISK_STATE" == "stale-missing" ]]; then
+		impact="new tabs will crash or stay blank"
+	fi
+	printf 'Warning: browser for profile %s was updated on disk since launch (%s -> %s); %s.\n' \
+		"$name" "$launched" "$installed" "$impact" >&2
+	printf 'Restart it (logins persist): %s --profile %s launch-stop && %s --profile %s launch\n' \
+		"$(basename "$0")" "$name" "$(basename "$0")" "$name" >&2
+	return 0
+}
+
 page_count() {
 	local url="$1"
 	local body=""
@@ -297,10 +440,15 @@ launch_browser() {
 
 	if existing_url="$(profile_browser_url "$name")" && endpoint_ok "$existing_url"; then
 		pid="$(state_value "$state_file" pid)"
+		# Never restart automatically: another session may be attached.
+		local launch_state="reused"
+		if report_if_stale "$name"; then
+			launch_state="reused-stale"
+		fi
 		if [[ "$url" != "about:blank" ]]; then
 			curl -fsS --max-time 5 -X PUT "${existing_url}/json/new?${url}" >/dev/null 2>&1 || true
 		fi
-		print_launch_result "$name" reused "$existing_url" "$pid"
+		print_launch_result "$name" "$launch_state" "$existing_url" "$pid"
 		return 0
 	fi
 
@@ -331,7 +479,10 @@ launch_browser() {
 		return 1
 	fi
 
-	printf 'pid=%s\nbrowser=%s\nstarted=%s\n' "$pid" "$browser" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state_file"
+	local disk_marker=""
+	disk_marker="$(browser_disk_marker "$browser" || true)"
+	printf 'pid=%s\nbrowser=%s\nstarted=%s\ndisk_marker=%s\n' "$pid" "$browser" \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$disk_marker" >"$state_file"
 	chmod 600 "$state_file" 2>/dev/null || true
 	print_launch_result "$name" started "$endpoint" "$pid"
 	return 0
@@ -355,7 +506,10 @@ launch_status_one() {
 	pages="$(page_count "$url")"
 	state="running"
 	[[ "$pages" == "0" ]] && state="orphan"
-	printf '%s\t%s\tpid=%s\turl=%s\tpages=%s\n' "$name" "$state" "$pid" "$url" "$pages"
+	if report_if_stale "$name"; then
+		state="stale"
+	fi
+	printf '%s\t%s\tpid=%s\turl=%s\tpages=%s\tdisk=%s\n' "$name" "$state" "$pid" "$url" "$pages" "$LAUNCH_DISK_STATE"
 	return 0
 }
 
@@ -484,6 +638,7 @@ main() {
 			print_error "Launched profile '${profile}' is not running; start it with: launch --profile ${profile}"
 			return 1
 		fi
+		report_if_stale "$profile" || true
 		ws_endpoint=""
 	fi
 

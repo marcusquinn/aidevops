@@ -553,19 +553,93 @@ _order_health_repo_entries() {
 	return 0
 }
 
+# Print "<refresh_epoch> <attempt_epoch>" for a repo's schedule cache.
+_health_repo_times() {
+	local slug="$1" runner="$2" cache state epoch=0 attempted=0
+	cache=$(_health_schedule_cache_file "$slug" "$runner")
+	if [[ -f "${cache}.refresh-state" ]]; then
+		IFS='|' read -r state epoch <"${cache}.refresh-state" || true
+	fi
+	[[ "$epoch" =~ ^[0-9]{1,11}$ ]] || epoch=0
+	if [[ -f "${cache}.attempt" ]]; then
+		read -r attempted <"${cache}.attempt" || true
+	fi
+	[[ "$attempted" =~ ^[0-9]{1,11}$ ]] || attempted=0
+	printf '%s %s\n' "$((10#$epoch))" "$((10#$attempted))"
+	return 0
+}
+
+# Recovery lane: succeed when the last successful refresh is older than
+# STATS_HEALTH_RECOVERY_AGE_SECONDS (default 24h) and the latest attempt did
+# not succeed. Prints the refresh epoch on success.
+_health_repo_needs_recovery() {
+	local slug="$1" runner="$2" epoch attempted age times
+	[[ -n "$slug" ]] || return 1
+	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
+	times=$(_health_repo_times "$slug" "$runner")
+	read -r epoch attempted <<<"$times"
+	[[ "$epoch" -gt 0 && "$attempted" -gt "$epoch" ]] || return 1
+	[[ "$(($(date +%s) - epoch))" -ge "$age" ]] || return 1
+	printf '%s\n' "$epoch"
+	return 0
+}
+
+# Move at most one recovery candidate (oldest successful refresh) to just
+# after the first (priority) entry; all other ordering is unchanged.
+_apply_health_recovery_lane() {
+	local entries="$1" runner="$2" first="" slug path epoch best_slug="" best_epoch=0
+	first=$(printf '%s\n' "$entries" | awk 'NR == 1 { print; exit }')
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" && "$slug|$path" != "$first" ]] || continue
+		epoch=$(_health_repo_needs_recovery "$slug" "$runner") || continue
+		if [[ -z "$best_slug" || "$epoch" -lt "$best_epoch" ]]; then
+			best_slug="$slug" best_epoch="$epoch"
+		fi
+	done <<<"$entries"
+	if [[ -z "$best_slug" ]]; then
+		printf '%s\n' "$entries"
+		return 0
+	fi
+	printf '%s\n' "$first"
+	while IFS='|' read -r slug path; do
+		[[ "$slug" == "$best_slug" ]] && printf '%s|%s\n' "$slug" "$path"
+	done <<<"$entries"
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" && "$slug" != "$best_slug" && "$slug|$path" != "$first" ]] && printf '%s|%s\n' "$slug" "$path"
+	done <<<"$entries"
+	return 0
+}
+
+# Print the slug of the second ordered entry when it qualifies for recovery.
+_health_recovery_slug() {
+	local entries="$1" runner="$2" entry slug
+	entry=$(printf '%s\n' "$entries" | awk 'NR == 2 { print; exit }')
+	slug="${entry%%|*}"
+	if _health_repo_needs_recovery "$slug" "$runner" >/dev/null; then
+		printf '%s\n' "$slug"
+	fi
+	return 0
+}
+
 _refresh_health_repo_bounded() {
-	local slug="$1" cache repo_timeout result=0 stage="unknown"
+	local slug="$1" cache repo_timeout result=0 stage="unknown" started
 	cache=$(_health_schedule_cache_file "$slug" "$_HEALTH_SCHEDULE_RUNNER")
+	started=$(date +%s)
 	[[ "$(date +%s)" -lt "$((_HEALTH_WORK_DEADLINE - 2))" ]] || return 124
 	mkdir -p "${cache%/*}" || return 1
 	date +%s >"${cache}.attempt" || return 1
 	repo_timeout=$(_stats_seconds "${STATS_HEALTH_REPO_TIMEOUT:-60}" 60)
 	[[ "$repo_timeout" -gt 0 ]] || repo_timeout=60
+	if [[ "$slug" == "${_HEALTH_RECOVERY_SLUG:-}" ]]; then
+		local recovery_timeout
+		recovery_timeout=$(_stats_seconds "${STATS_HEALTH_RECOVERY_REPO_TIMEOUT:-120}" 120)
+		[[ "$recovery_timeout" -le "$repo_timeout" ]] || repo_timeout="$recovery_timeout"
+	fi
 	_stats_run_bounded "$repo_timeout" \
 		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@" "${cache}.stage" || result=$?
 	if [[ "$result" -ne 0 && -f "${cache}.stage" ]]; then
 		IFS='|' read -r stage _ <"${cache}.stage" || stage="unknown"
-		echo "[stats] Health issue update stopped for ${slug} (rc=${result} stage=${stage:-unknown})" >>"$LOGFILE"
+		echo "[stats] Health issue update stopped for ${slug} (rc=${result} stage=${stage:-unknown} elapsed=$(($(date +%s) - started))s timeout=${repo_timeout}s)" >>"$LOGFILE"
 	fi
 	return "$result"
 }
@@ -683,7 +757,8 @@ _health_routine_repo_entries() {
 		return 1
 	}
 	entries=$(_order_health_repo_entries "$entries" "$runner")
-	_prioritize_health_repo_entries "$entries"
+	entries=$(_prioritize_health_repo_entries "$entries")
+	_apply_health_recovery_lane "$entries" "$runner"
 	return 0
 }
 
@@ -720,7 +795,7 @@ _update_health_issues_with_session_cache() {
 		return 0
 	fi
 	# _health_routine_repo_entries applies `.maintenance != false` before work.
-	local _HEALTH_WORK_DEADLINE _HEALTH_SCHEDULE_RUNNER=""
+	local _HEALTH_WORK_DEADLINE _HEALTH_SCHEDULE_RUNNER="" _HEALTH_RECOVERY_SLUG=""
 	_HEALTH_WORK_DEADLINE=$(_stats_work_deadline)
 	_HEALTH_WORK_DEADLINE=$((_HEALTH_WORK_DEADLINE - $(_stats_seconds "${STATS_OPTIONAL_WORK_RESERVE_SECONDS:-120}" 120)))
 	command -v gh &>/dev/null || return 0
@@ -737,6 +812,7 @@ _update_health_issues_with_session_cache() {
 	repo_entries=$(_health_routine_repo_entries "$routine_runner_user") || return 0
 	[[ -n "$repo_entries" ]] || return 0
 	_HEALTH_SCHEDULE_RUNNER="$routine_runner_user"
+	_HEALTH_RECOVERY_SLUG=$(_health_recovery_slug "$repo_entries" "$routine_runner_user")
 
 	local refresh_start_epoch
 	refresh_start_epoch=$(date +%s)

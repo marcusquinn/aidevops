@@ -67,9 +67,12 @@ class CleanupQuarantine:
                  if self.entries.get(row["generation_id"], {}).get("until", 0) <= now]
         return ready, len(rows) - len(ready)
 
-    def record(self, generation: str, result: dict) -> None:
-        """Back off exponentially on archive failure; clear on any other outcome."""
-        if not result.get("archive_failure", False):
+    def record(self, generation: str, result: dict, retry_later: bool = False) -> None:
+        """Back off exponentially on archive failure or a caller-requested retry.
+
+        Clear on any other outcome.
+        """
+        if not (result.get("archive_failure", False) or retry_later):
             self.changed |= self.entries.pop(generation, None) is not None
             return
         count = int(self.entries.get(generation, {}).get("count", 0)) + 1

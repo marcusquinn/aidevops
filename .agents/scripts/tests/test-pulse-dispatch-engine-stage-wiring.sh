@@ -990,6 +990,24 @@ assert_order \
 	'run_stage_with_timeout "reap_orphan_workers"' \
 	'_pulse_run_optional_stage_with_timeout "stale_queued_runs"' \
 	"$WRAPPER"
+assert_not_grep \
+	"11e2: t18911 worker bus relay is not a budgeted pipeline stage" \
+	'_stage_with_timeout "worker_bus_relay"' \
+	"$WRAPPER"
+assert_order \
+	"11e3: t18911 worker bus relay starts with the cycle-start async launches" \
+	'^_preflight_start_async_cleanups\(\) \{' \
+	'^[[:space:]]+_preflight_start_worker_bus_relay \|\| true' \
+	"$PREFLIGHT_LIB"
+assert_grep \
+	"11e4: t18911 worker bus relay uses the detached launcher with the relay command" \
+	'"worker-bus-relay" relay \|\| true' \
+	"$PREFLIGHT_LIB"
+assert_order \
+	"11e5: t18911 busy-lock ticks start the relay before the routines-only gate" \
+	'_preflight_start_worker_bus_relay \|\| true' \
+	'AIDEVOPS_PULSE_BUSY_ROUTINES:-1\}" == "1" \]\] \|\| return 0' \
+	"$WRAPPER"
 assert_grep \
 	"11f: degraded prefetch skips only the STATE_FILE-reading LLM supervisor" \
 	'_PULSE_PREFETCH_DEGRADED:-0\}" == "1"' \

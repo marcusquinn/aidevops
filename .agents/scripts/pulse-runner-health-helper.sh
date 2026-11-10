@@ -6,7 +6,7 @@
 #
 # When N consecutive "zero-attempt" worker dispatches happen on this runner,
 # the breaker pauses dispatch on this machine and synchronously runs
-# `aidevops update`. If the update leaves the deployed agents aligned with
+# `aidevops update`. If the update changes the deployment and leaves it aligned with
 # the local repo, the next pause check auto-resumes the breaker before pulse
 # skips dispatch. If the update fails, the runner has a real local problem
 # (broken install, gh auth, MCP failures, network) — stay paused and post a
@@ -379,9 +379,11 @@ cmd_record_outcome() {
 	if [[ "$routine_signing" -eq 1 ]]; then
 		: # Audit-only: do not change the issue-worker failure streak.
 	elif [[ "$is_zero" -eq 1 ]]; then
-		# Counter increments; the window may need to be re-anchored if it
-		# was idle through expiry above (already done) — otherwise keep it.
-		_rh_state_apply ".consecutive_zero_attempts += 1" || true
+		# Counter increments and the window re-anchors on every zero-attempt
+		# outcome, so expiry measures idleness of the streak (time since the
+		# last zero-attempt outcome), not its age. Slow failures still trip.
+		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
+		_rh_state_apply '.consecutive_zero_attempts += 1 | .window_started_at = $now' --arg now "$now" || true
 	else
 		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
@@ -419,10 +421,8 @@ cmd_record_outcome() {
 
 #######################################
 # Trip the breaker: write `tripped` state, post an advisory, and
-# synchronously run `aidevops update`. If the update changed VERSION
-# (exit 0 from cmd_check) the t2579 restart hook fires and the next
-# cycle will pick up new code; we leave the state as `tripped` and let
-# the resume path (next cmd_record_outcome non-zero) reopen it.
+# synchronously run `aidevops update`. Only a changed deployment can be
+# considered for automatic recovery; a successful check may be a no-op.
 # Args: $1 = triggering issue (audit only)
 #       $2 = reason string
 #######################################
@@ -450,14 +450,23 @@ _rh_trip_breaker() {
 	local update_helper="${HOME}/.aidevops/agents/scripts/auto-update-helper.sh"
 	local update_outcome="error"
 	if [[ -x "$update_helper" ]]; then
+		local version_before="" sha_before="" version_after="" sha_after=""
+		version_before=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_VERSION_FILE")
+		sha_before=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
 		# Run check synchronously. Output to log only — never the user's
 		# session — to avoid noise from a per-issue trigger.
 		local update_log="${HOME}/.aidevops/logs/runner-health-update.log"
 		mkdir -p "$(dirname "$update_log")" 2>/dev/null || true
 		local update_rc=0
 		"$update_helper" check >>"$update_log" 2>&1 || update_rc=$?
+		version_after=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_VERSION_FILE")
+		sha_after=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
 		if [[ "$update_rc" -eq 0 ]]; then
-			update_outcome="ran"
+			update_outcome="no_change"
+			if [[ -n "$version_after" && "$version_after" != "$version_before" ]] ||
+				[[ -n "$sha_after" && "$sha_after" != "$sha_before" ]]; then
+				update_outcome="ran"
+			fi
 		else
 			update_outcome="failed"
 		fi
@@ -995,8 +1004,10 @@ DIAGNOSE FINDINGS (categories surfaced for operator action):
                      (recorder being skipped — likely caller-side bug).
   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
                      (trip path or signal predicate broken).
-  STUCK_TRIPPED    — breaker tripped >24h ago and last update failed;
-                     manual resume required after fixing the install.
+  STUCK_TRIPPED    — breaker tripped longer than RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS
+                     (default 24) ago and the last update outcome is empty,
+                     never, failed, or helper_missing; manual resume required
+                     after fixing the install.
 
 ZERO-ATTEMPT SIGNALS (reset counter when not one of these):
   no_worker_process          — worker process never spawned.

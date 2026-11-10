@@ -10,6 +10,7 @@
 // as `bus`.
 
 import * as store from "./session-bus-store.mjs";
+import { chatWakeEnabled } from "./session-bus-chat-trust.mjs";
 import { canPrompt, liveStatuses, promptSession, showToast, warn } from "./session-bus-client.mjs";
 import { setStatus, statusFromType } from "./session-bus-events.mjs";
 
@@ -18,26 +19,29 @@ const WAKE_RETRY_MS = 30 * 1000;
 const WAKE_RETRY_MAX_MS = 15 * 60 * 1000;
 const WAKE_TYPES = new Set(["ask", "reply", "idle-notice"]);
 
-export function isWakeEligible(message) {
+export function isWakeEligible(message, chatWake = false) {
   if (!message || message.hops >= store.LIMITS.maxWakeHops) return false;
-  return !store.parseChatOrigin(message.from?.origin) && WAKE_TYPES.has(message.type);
+  if (store.parseChatOrigin(message.from?.origin)) {
+    return chatWake && message.type === "ask" && message.from?.trust?.verified === true && message.from?.trust?.owner === true;
+  }
+  return WAKE_TYPES.has(message.type);
 }
 
-const eligibleEntry = (entry) => isWakeEligible(entry.message);
-const framed = (claimed) => claimed.map((entry) => store.frameMessage(entry.message)).join("\n\n");
+const eligibleEntry = (chatWake) => (entry) => isWakeEligible(entry.message, chatWake);
+const framed = (claimed, options = {}) => claimed.map((entry) => store.frameMessage(entry.message, options)).join("\n\n");
 
 /** Busy channel: claimed messages follow the tool's own output. */
-export function appendToolMessages(output, claimed) {
-  if (claimed.length > 0) output.output = `${output.output}\n\n${framed(claimed)}`;
+export function appendToolMessages(output, claimed, frameOptions = {}) {
+  if (claimed.length > 0) output.output = `${output.output}\n\n${framed(claimed, frameOptions)}`;
   return claimed.length;
 }
 
 /** Turn channel: one synthetic text part per claimed message. */
-export function appendTurnMessages(output, claimed, sessionID) {
+export function appendTurnMessages(output, claimed, sessionID, frameOptions = {}) {
   const base = output.parts.find((part) => part?.type === "text") || output.parts[0] || {};
   const messageID = output.message?.id || base.messageID;
   claimed.forEach((entry, index) => {
-    const part = { type: "text", text: store.frameMessage(entry.message), synthetic: true, sessionID, messageID };
+    const part = { type: "text", text: store.frameMessage(entry.message, frameOptions), synthetic: true, sessionID, messageID };
     if (base.id) part.id = `${base.id}zb${index}`;
     output.parts.push(part);
   });
@@ -52,16 +56,19 @@ function hasWakeBudget(state, now) {
   return state.wakeTimes.length < store.LIMITS.wakesPerHour;
 }
 
-function canWake(bus, state, pending, now) {
+function canWake(bus, state, pending, now, chatWake) {
+  // #aidevops:trust-boundary t18898: a turn the chat app did not start has no channel to answer in.
+  // t18905: a worker is never woken; its idle means the dispatched run is over.
+  if (bus.remote || bus.wakeable === false) return false;
   if (state.status !== "idle" || now < state.wakeRetryAt) return false;
-  return pending.some(eligibleEntry) && hasWakeBudget(state, now) && canPrompt(bus.client);
+  return pending.some(eligibleEntry(chatWake)) && hasWakeBudget(state, now) && canPrompt(bus.client);
 }
 
 // The oldest batch, unless it holds nothing that may wake the session.
-function wakeBatch(pending) {
+function wakeBatch(pending, chatWake) {
   const limit = store.LIMITS.deliverPerBatch;
   const batch = pending.slice(0, limit);
-  return batch.some(eligibleEntry) ? batch : pending.filter(eligibleEntry).slice(0, limit);
+  return batch.some(eligibleEntry(chatWake)) ? batch : pending.filter(eligibleEntry(chatWake)).slice(0, limit);
 }
 
 function wakeBody(state, claimed) {
@@ -92,10 +99,13 @@ function rollbackWake(bus, sessionID, state, claimed) {
 }
 
 /** Wake an idle session with its pending messages. True once OpenCode accepts the prompt. */
-export async function deliverToIdle(bus, sessionID, state, pending = store.pendingMessages(bus.root, sessionID)) {
+export async function deliverToIdle(bus, sessionID, state, allPending = store.pendingMessages(bus.root, sessionID)) {
   const now = bus.now();
-  if (!canWake(bus, state, pending, now)) return false;
-  const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending));
+  // A reply reserved by a waiting ask call (t18897) neither wakes nor is delivered here.
+  const pending = bus.unreserved(allPending);
+  const chatWake = chatWakeEnabled(bus.root, sessionID);
+  if (!canWake(bus, state, pending, now, chatWake)) return false;
+  const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending, chatWake));
   if (claimed.length === 0) return false;
   beginWake(state, claimed, now);
   const failure = await promptSession(bus.client, sessionID, wakeBody(state, claimed));
@@ -115,15 +125,24 @@ export async function deliverToIdle(bus, sessionID, state, pending = store.pendi
 // notify-when-idle
 // ---------------------------------------------------------------------------
 
-function idleNoticeText(state, sessionID) {
+function idleNoticeText(bus, state, sessionID, exited) {
   const what = [state.title && `title: ${state.title}`, state.task && `last task: ${state.task}`].filter(Boolean).join("; ");
-  return `Session ${state.handle || sessionID} is now idle${what ? ` (${what})` : ""}.`;
+  const worker = bus.presence?.worker;
+  if (bus.kind === "headless") {
+    // t18905: a worker's idle is the end of its run; GitHub holds the outcome.
+    const issue = worker ? ` for ${worker.repo}#${worker.issue}` : "";
+    const check = worker ? ` Check the outcome with: gh issue view ${worker.issue} --repo ${worker.repo} --comments` : "";
+    return `Worker ${state.handle || sessionID}${issue} ${exited ? "exited" : "finished its run"}${what ? ` (${what})` : ""}.${check}`;
+  }
+  return `Session ${state.handle || sessionID} ${exited ? "exited" : "is now idle"}${what ? ` (${what})` : ""}.`;
 }
 
 /** One-shot notices from this session to every notify-when-idle subscriber. */
-export function sendIdleNotices(bus, sessionID, state) {
-  const text = idleNoticeText(state, sessionID);
-  for (const subscription of store.takeIdleSubscriptions(bus.root, sessionID)) {
+export function sendIdleNotices(bus, sessionID, state, { exited = false } = {}) {
+  const subscriptions = store.takeIdleSubscriptions(bus.root, sessionID);
+  if (subscriptions.length === 0) return;
+  const text = idleNoticeText(bus, state, sessionID, exited);
+  for (const subscription of subscriptions) {
     try {
       store.sendMessage(bus.root, {
         from: bus.fromFor(sessionID),
@@ -149,7 +168,7 @@ async function refreshUnknownStatus(bus, sessionID, state, live) {
 }
 
 async function pollSession(bus, sessionID, state, live) {
-  const pending = store.pendingMessages(bus.root, sessionID);
+  const pending = bus.unreserved(store.pendingMessages(bus.root, sessionID));
   if (pending.length === 0) return;
   void bus.toasts.announce(state.handle, pending);
   if (state.status === "unknown") await refreshUnknownStatus(bus, sessionID, state, live);

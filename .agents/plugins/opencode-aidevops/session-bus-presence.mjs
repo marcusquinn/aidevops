@@ -34,6 +34,36 @@ export function parseRepoSlug(url) {
   return match ? match[1] : "";
 }
 
+const REPO_SLUG = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+const SAFE_LABEL = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+function attemptStartEpoch(value, now) {
+  const text = String(value || "");
+  if (/^\d{19}$/.test(text)) return Math.floor(Number(text.slice(0, 10)));
+  if (/^\d{10}$/.test(text)) return Number(text);
+  return Math.floor((now - process.uptime() * 1000) / 1000);
+}
+
+/**
+ * t18905: the dispatch facts of a pulse worker, from the environment
+ * pulse-dispatch-worker-launch.sh sets, or null outside a dispatched worker.
+ * Readers (the pulse relay, `list`) use them to find the worker's issue.
+ */
+export function workerContext(env = process.env, now = Date.now()) {
+  const issue = Number(env.WORKER_ISSUE_NUMBER);
+  const repo = String(env.WORKER_REPO_SLUG || "");
+  if (!Number.isSafeInteger(issue) || issue <= 0 || !REPO_SLUG.test(repo)) return null;
+  const label = (value) => (SAFE_LABEL.test(String(value || "")) ? String(value) : "");
+  return {
+    issue,
+    repo,
+    worker_id: label(env.AIDEVOPS_WORKER_ID),
+    attempt_id: label(env.AIDEVOPS_ATTEMPT_ID),
+    tier: label(env.AIDEVOPS_DISPATCH_TIER),
+    started_epoch: attemptStartEpoch(env.AIDEVOPS_ATTEMPT_STARTED_AT, now),
+  };
+}
+
 const emptyGit = (worktree = "") => ({ worktree, branch: "", repo: "" });
 
 const gitChanged = (left, right) =>
@@ -85,8 +115,8 @@ export class GitInfoCache {
 
 /** Builds and writes this process's presence records; one writer per record. */
 export class PresencePublisher {
-  constructor({ root, kind, messageable, directory, now, timers, gitInfo }) {
-    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo });
+  constructor({ root, kind, messageable, directory, now, timers, gitInfo, remote = null, worker = null, onWrite = () => {} }) {
+    Object.assign(this, { root, kind, messageable, directory, now, timers, gitInfo, remote, worker, onWrite });
     this.token = null;
     this.disposed = false;
   }
@@ -112,11 +142,16 @@ export class PresencePublisher {
       worktree: git.worktree,
       branch: git.branch,
       directory,
-      issue: refs.issue,
+      issue: refs.issue ?? this.worker?.issue ?? null,
       pr: refs.pr,
       status: state.status,
       current_task: state.task,
       last_activity_epoch: Math.floor(state.lastActivityMs / 1000),
+      // t18898: additive, only for remote-hosted sessions so local records stay unchanged.
+      ...(this.remote ? { interface: this.remote.interface, ...(this.remote.agent ? { agent: this.remote.agent } : {}) } : {}),
+      // t18905: additive; dispatch facts for pulse workers, and the tool running now.
+      ...(this.worker ? { worker: this.worker } : {}),
+      ...(state.tool ? { tool: { name: state.tool.name, since_epoch: Math.floor(state.tool.sinceMs / 1000) } } : {}),
     };
     return { ...base, handle: store.deriveHandle(base), updated_epoch: Math.floor(this.now() / 1000) };
   }
@@ -135,11 +170,13 @@ export class PresencePublisher {
       store.writePresence(this.root, record);
       state.lastWriteMs = this.now();
       state.handle = record.handle;
-      return true;
     } catch (error) {
       warn("presence write", error);
       return false;
     }
+    // t18895: overlap detection reads the record just written; it never fails the write.
+    this.onWrite(record);
+    return true;
   }
 
   /** Write now when urgent; otherwise at most once per throttle window. */

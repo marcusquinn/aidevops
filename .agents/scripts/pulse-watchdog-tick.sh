@@ -141,7 +141,9 @@ _revive_pulse() {
 	fi
 	_log_revival_once "$_msg"
 	if _systemd_owns_pulse; then
-		systemctl --user start "$_SYSTEMD_PULSE_UNIT" >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "systemd revival exit=$?"
+		# The oneshot remains activating until the full Pulse cycle exits.
+		# Queue revival without keeping this 60-second watchdog unit waiting.
+		systemctl --user start --no-block "$_SYSTEMD_PULSE_UNIT" >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "systemd revival exit=$?"
 		return 0
 	fi
 	"$_LIFECYCLE_HELPER" start >>"$_WATCHDOG_LOG" 2>&1 || _wd_log "revival exit=$?"

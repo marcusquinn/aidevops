@@ -49,6 +49,8 @@ source "${_HRFF_SCRIPT_DIR}/terminal-blocker-circuit.sh"
 source "${_HRFF_SCRIPT_DIR}/fast-fail-release-policy.sh"
 # shellcheck source=headless-runtime-release-claim.sh
 source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-claim.sh"
+# shellcheck source=headless-runtime-release-retry.sh
+source "${_HRFF_SCRIPT_DIR}/headless-runtime-release-retry.sh"
 # shellcheck source=aidevops-cli/aidevops-project-config-lib.sh
 source "${_HRFF_SCRIPT_DIR}/aidevops-cli/aidevops-project-config-lib.sh"
 unset _HRFF_SCRIPT_DIR
@@ -223,6 +225,8 @@ _hrff_release_repo_state_is_managed() {
 		return 1
 		;;
 	esac
+	# Replay keeps its retry row on denial so restored authority can still publish.
+	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || _HRFF_RELEASE_AUTHORITY_SKIP_RC=1
 	print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
 	return 1
 }
@@ -616,6 +620,11 @@ _hrff_handle_terminal_blocker_release() {
 			print_warning "Could not persist runner-local rejected-secret cooldown"
 	fi
 	_hrff_prepare_terminal_blocker_release "$issue_number" "$repo_slug" "$machine_readable_part" "$release_reason"
+	# A classified replay must not degrade to a dispatchable unrecorded exit.
+	if [[ "${_HRRR_REPLAY:-0}" == 1 && -n "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" &&
+		-z "${_HRFF_TERMINAL_BLOCKER_FRAGMENT:-}" && -z "${_HRFF_TERMINAL_BLOCKER_EVIDENCE:-}" ]]; then
+		return 11
+	fi
 	_hrff_apply_terminal_permission_hold "$issue_number" "$repo_slug" || return 11
 	case "${_HRFF_TERMINAL_BLOCKER_MODE:-normal}" in
 	circuit)
@@ -679,7 +688,23 @@ ${machine_readable_part}${terminal_blocker_fragment}
 #   $3 = exit_code (optional — included in comment when provided by exit trap)
 #   $4 = session_count (optional — session_count from worker DB for exit trap)
 #######################################
+# GH#37344: a release that cannot be published (for example GitHub admission
+# deferred) leaves private retry evidence for the Pulse recovery consumer.
 _release_dispatch_claim() {
+	local session_key="$1" reason="${2:-worker_failed}" rc=0
+	local issue_number="" repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+
+	_hrff_release_dispatch_claim_attempt "$@" || rc=$?
+	issue_number=$(_hrff_release_issue_number "$session_key")
+	if [[ "$rc" -eq 0 ]]; then
+		_hrrr_clear "$session_key" "$issue_number" "$repo_slug"
+	else
+		_hrrr_record "$session_key" "$reason" "${3:-}" "${4:-}" "$issue_number" "$repo_slug"
+	fi
+	return "$rc"
+}
+
+_hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
 	local exit_code_arg="${3:-}"
@@ -1674,7 +1699,7 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
-# Record deterministic launch capability failures in the local runner-health
+# Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
 # Args: $1=session key, $2=terminal reason
@@ -1682,7 +1707,11 @@ _worker_secure_branch_commits() {
 _hrff_record_runner_health_failure() {
 	local session_key="$1"
 	local reason="$2"
-	[[ "$reason" == "worker_signing_unavailable" ]] || return 0
+	case "$reason" in
+	worker_signing_unavailable) ;;
+	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	*) return 0 ;;
+	esac
 
 	local helper="${_HRFF_RUNNER_HEALTH_HELPER_OVERRIDE:-${BASH_SOURCE[0]%/*}/pulse-runner-health-helper.sh}"
 	local issue_number=""

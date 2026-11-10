@@ -35,6 +35,11 @@
 #   DRY_RUN=1                              print actions only
 #   REDIRECT_SPAM_SWEEP_INTERVAL=900       pulse cadence gate (seconds)
 #   REDIRECT_SPAM_SWEEP_LOOKBACK=604800    first-run lookback (seconds)
+#   REDIRECT_SPAM_SWEEP_BUDGET_SECONDS=120 per-run pulse sweep budget; the next
+#                                          run resumes after the last repo (0 = no limit)
+#   REDIRECT_SPAM_SWEEP_VISIBILITY_TTL=86400  cached repo visibility lifetime;
+#                                          the pulse sweep skips private repos,
+#                                          where untrusted authors cannot post (t18916)
 
 [[ -n "${_REDIRECT_LINK_GUARD_LOADED:-}" ]] && return 0 2>/dev/null
 _REDIRECT_LINK_GUARD_LOADED=1
@@ -50,6 +55,10 @@ _RLG_STATE_DIR="${REDIRECT_SPAM_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/su
 REDIRECT_SPAM_SWEEP_INTERVAL="${REDIRECT_SPAM_SWEEP_INTERVAL:-900}"
 REDIRECT_SPAM_SWEEP_LOOKBACK="${REDIRECT_SPAM_SWEEP_LOOKBACK:-604800}"
 REDIRECT_SPAM_SWEEP_LAST_RUN="${REDIRECT_SPAM_SWEEP_LAST_RUN:-${HOME}/.aidevops/logs/redirect-spam-sweep-last-run}"
+REDIRECT_SPAM_SWEEP_BUDGET_SECONDS="${REDIRECT_SPAM_SWEEP_BUDGET_SECONDS:-120}"
+REDIRECT_SPAM_SWEEP_VISIBILITY_TTL="${REDIRECT_SPAM_SWEEP_VISIBILITY_TTL:-86400}"
+_RLG_VISIBILITY_PRIVATE="private"
+_RLG_SWEEP_REPOS=()
 _RLG_ADMIN_ORGS=""
 _RLG_ADMIN_ORGS_LOADED=0
 
@@ -383,11 +392,92 @@ _rlg_mark_run() {
 	return 0
 }
 
-# Pulse entry point: interval-gated sweep over maintainer-role repos.
+# Private repositories only accept content from users with access, who carry
+# OWNER/MEMBER/COLLABORATOR association, so the sweep cannot act there (t18916).
+# Visibility is cached per repo; a failed probe counts as public so the sweep
+# fails toward enforcement.
+_rlg_repo_is_private() {
+	local repo="$1"
+	local cache_file="" visibility="" checked_at="" now="" ttl="" private=""
+	cache_file="${_RLG_STATE_DIR}/redirect-spam-sweep-${repo//\//__}.visibility"
+	now="$(date +%s)"
+	ttl="$REDIRECT_SPAM_SWEEP_VISIBILITY_TTL"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=86400
+	if [[ -f "$cache_file" ]] && read -r visibility checked_at <"$cache_file" &&
+		[[ "$checked_at" =~ ^[0-9]+$ && $((now - checked_at)) -lt "$ttl" ]]; then
+		[[ "$visibility" == "$_RLG_VISIBILITY_PRIVATE" ]]
+		return $?
+	fi
+	private="$(gh api "repos/${repo}" --jq '.private | tostring' 2>/dev/null || true)"
+	case "$private" in
+	true) visibility="$_RLG_VISIBILITY_PRIVATE" ;;
+	false) visibility="public" ;;
+	*) return 1 ;;
+	esac
+	mkdir -p "$_RLG_STATE_DIR" 2>/dev/null || true
+	printf '%s %s\n' "$visibility" "$now" >"$cache_file" 2>/dev/null || true
+	[[ "$visibility" == "$_RLG_VISIBILITY_PRIVATE" ]]
+	return $?
+}
+
+# Load pulse-visible repo slugs into _RLG_SWEEP_REPOS.
+_rlg_load_sweep_repos() {
+	local repos_json="$1"
+	local repo=""
+	_RLG_SWEEP_REPOS=()
+	while IFS= read -r repo; do
+		[[ -n "$repo" ]] || continue
+		_RLG_SWEEP_REPOS+=("$repo")
+	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and (.slug // "") != "") | .slug' "$repos_json" 2>/dev/null)
+	return 0
+}
+
+# Print the index after the last visited repo so budgeted runs rotate through
+# every repo; per-repo since checkpoints keep the rotation gap-free.
+_rlg_sweep_start_index() {
+	local cursor="" index=0
+	local total="${#_RLG_SWEEP_REPOS[@]}"
+	cursor="$(cat "${_RLG_STATE_DIR}/redirect-spam-sweep.cursor" 2>/dev/null || true)"
+	while [[ -n "$cursor" && "$index" -lt "$total" ]]; do
+		if [[ "${_RLG_SWEEP_REPOS[$index]}" == "$cursor" ]]; then
+			printf '%s\n' "$(((index + 1) % total))"
+			return 0
+		fi
+		index=$((index + 1))
+	done
+	printf '0\n'
+	return 0
+}
+
+_rlg_write_sweep_cursor() {
+	local repo="$1"
+	_rlg_dry_run && return 0
+	mkdir -p "$_RLG_STATE_DIR" 2>/dev/null || true
+	printf '%s\n' "$repo" >"${_RLG_STATE_DIR}/redirect-spam-sweep.cursor" 2>/dev/null || true
+	return 0
+}
+
+# Sweep one rotated repo unless it is not pulse-writable or private.
+# Returns 0 when swept, 1 when skipped as private, 2 when otherwise skipped.
+_rlg_sweep_visit() {
+	local repo="$1"
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo"; then
+		return 2
+	fi
+	_rlg_repo_is_private "$repo" && return 1
+	rlg_sweep_repo "$repo" || true
+	return 0
+}
+
+# Pulse entry point: interval-gated, time-budgeted sweep over maintainer-role
+# public repos. A run stops starting repos once REDIRECT_SPAM_SWEEP_BUDGET_SECONDS
+# is spent so it cannot starve dispatch-critical pulse stages (t18916).
 redirect_spam_sweep_all_repos() {
 	local force="${1:-0}"
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo=""
+	local repo="" total=0 start_index=0 offset=0 budget="" started="" visit_rc=0
+	local swept=0 skipped_private=0 remaining=0
 	if [[ -n "${STOP_FLAG:-}" && -f "$STOP_FLAG" ]]; then
 		return 0
 	fi
@@ -395,17 +485,34 @@ redirect_spam_sweep_all_repos() {
 		return 0
 	fi
 	[[ -f "$repos_json" ]] || return 0
-	while IFS= read -r repo; do
-		[[ -n "$repo" ]] || continue
-		if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
-			! repo_allows_pulse_write_actions "$repo"; then
-			continue
+	_rlg_load_sweep_repos "$repos_json"
+	total="${#_RLG_SWEEP_REPOS[@]}"
+	budget="$REDIRECT_SPAM_SWEEP_BUDGET_SECONDS"
+	[[ "$budget" =~ ^[0-9]+$ ]] || budget=120
+	started="$(date +%s)"
+	if [[ "$total" -gt 0 ]]; then
+		start_index="$(_rlg_sweep_start_index)"
+	fi
+	while [[ "$offset" -lt "$total" ]]; do
+		if [[ "$budget" -gt 0 && $(($(date +%s) - started)) -ge "$budget" ]]; then
+			remaining=$((total - offset))
+			break
 		fi
-		rlg_sweep_repo "$repo" || true
+		repo="${_RLG_SWEEP_REPOS[$(((start_index + offset) % total))]}"
+		offset=$((offset + 1))
+		visit_rc=0
+		_rlg_sweep_visit "$repo" || visit_rc=$?
+		case "$visit_rc" in
+		0) swept=$((swept + 1)) ;;
+		1) skipped_private=$((skipped_private + 1)) ;;
+		*) ;;
+		esac
+		_rlg_write_sweep_cursor "$repo"
 		if [[ -n "${STOP_FLAG:-}" && -f "$STOP_FLAG" ]]; then
 			break
 		fi
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and (.slug // "") != "") | .slug' "$repos_json" 2>/dev/null)
+	done
+	_rlg_log "sweep: swept=${swept} skipped_private=${skipped_private} remaining=${remaining} elapsed=$(($(date +%s) - started))s"
 	_rlg_mark_run
 	return 0
 }

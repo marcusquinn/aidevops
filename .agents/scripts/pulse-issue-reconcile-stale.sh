@@ -34,6 +34,19 @@ _normalize_stale_close_pending_checkpoint_leases() {
 	return 0
 }
 
+# GH#37344: replay terminal claim releases that GitHub admission deferred. The
+# consumer revalidates authority, claim, owner and worker liveness per row and
+# is bounded per cycle; deferral keeps the private retry row for a later pass.
+_normalize_deferred_claim_releases() {
+	local helper="${BASH_SOURCE[0]%/*}/headless-runtime-release-retry.sh"
+	local summary=""
+	[[ -x "$helper" ]] || return 0
+	summary=$(timeout 120 "$helper" drain 2>/dev/null) || return 0
+	[[ "$summary" == "candidates=0 resolved=0 retained=0" ]] ||
+		printf '[pulse-wrapper] Deferred claim releases: %s\n' "$summary" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # (Phase 12 helper) Reset a single stale issue's labels and assignee.
 #
@@ -565,9 +578,18 @@ _normalize_unassign_stale() {
 		fi
 
 		# Find issues assigned to runner_user with active-dispatch labels
-		local stale_json
-		stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
-			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		local stale_json="" _listing_rc=0
+		stale_json=$(_normalize_repo_listing "$slug") || _listing_rc=$?
+		if [[ "$_listing_rc" -eq 2 ]]; then
+			stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
+				--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		elif [[ "$_listing_rc" -eq 0 ]]; then
+			# Shared listing is unfiltered: keep only issues assigned to this runner.
+			stale_json=$(printf '%s' "$stale_json" | jq -c --arg u "$runner_user" --argjson n "$PULSE_QUEUED_SCAN_LIMIT" \
+				'[.[] | select(.assignees // [] | map(.login) | index($u))] | .[0:$n]' 2>/dev/null) || stale_json=""
+		else
+			stale_json=""
+		fi
 		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
 
 		# Filter: has status:queued or status:in-progress, updatedAt older than _stale_threshold

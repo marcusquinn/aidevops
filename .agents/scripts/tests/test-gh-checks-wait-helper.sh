@@ -129,6 +129,23 @@ assert_contains "all-check mode reports scoped terminal success" "PASS: all chec
 all_empty_output=$(run_fixture_wait "$empty_dir" --all)
 assert_contains "empty all-check selection is explicit terminal success" "PASS: verified no checks reported" "$all_empty_output"
 
+# t18926: --all must not succeed while a configured required context is absent,
+# and zero-job workflow runs are named as a distinct terminal failure.
+zero_job_dir="${TMPDIR_TEST}/zero-job"
+write_fixture "$zero_job_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+printf '%s\n' '{"workflow_runs":[{"id":111,"name":"Complexity","workflow_id":1,"run_number":2,"head_sha":"fixture-head","status":"completed","conclusion":"failure","total_jobs":0},{"id":112,"name":"Format","workflow_id":2,"run_number":1,"head_sha":"fixture-head","status":"completed","conclusion":"success","total_jobs":3}]}' >"${zero_job_dir}/runs.json"
+set +e
+all_pending_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nComplexity' run_fixture_wait "$empty_dir" --all --timeout 0 2>&1)
+all_pending_rc=$?
+zero_job_output=$(AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS=0 AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nComplexity' run_fixture_wait "$zero_job_dir" --all --timeout 0 2>&1)
+zero_job_rc=$?
+set -e
+assert_eq "--all with an absent required context does not exit 0" "8" "$all_pending_rc"
+assert_eq "zero-job runs are a terminal failure" "1" "$zero_job_rc"
+assert_contains "zero-job failure names workflow and run ID" "Complexity (run 111)" "$zero_job_output"
+assert_contains "zero-job failure gives rerun hint" "gh run rerun <id> --repo example/repo" "$zero_job_output"
+[[ "$zero_job_output" != *'(run 112)'* ]] && pass "healthy run is not reported as zero-job" || fail "healthy run is not reported as zero-job"
+
 live_bin="${TMPDIR_TEST}/live-bin"
 mkdir -p "$live_bin"
 cat >"${live_bin}/gh" <<'STUB'

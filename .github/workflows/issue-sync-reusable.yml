@@ -417,8 +417,16 @@ jobs:
         if: steps.check-author.outputs.skip != 'true'
         run: |
           echo "=== Enriching plan-linked issues ==="
+          # GH#37294: the checkout is shallow; fetch only the push base commit so
+          # bounded enrich can process tasks changed by this push first. A
+          # missing base (force push, new branch) keeps plain TODO order.
+          if [[ "$AIDEVOPS_ENRICH_CHANGED_SINCE" =~ ^[0-9a-f]{40}$ && ! "$AIDEVOPS_ENRICH_CHANGED_SINCE" =~ ^0+$ ]]; then
+            git fetch --no-tags --depth=1 origin "$AIDEVOPS_ENRICH_CHANGED_SINCE" ||
+              echo "::notice::Push base unavailable; enrich keeps TODO order"
+          fi
           bash __aidevops/.agents/scripts/issue-sync-helper.sh enrich --verbose || true
         env:
+          AIDEVOPS_ENRICH_CHANGED_SINCE: ${{ github.event.before }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Resolve the trusted human actor once at workflow scope; bot actors
           # retain the command's authenticated-login fallback.

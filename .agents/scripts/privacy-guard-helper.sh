@@ -170,19 +170,32 @@ privacy_is_target_public() {
 _privacy_cache_write() {
 	local slug="$1"
 	local private="$2"
-	local now
+	local now tmp
 	now=$(date +%s)
 
 	mkdir -p "$(dirname "$PRIVACY_CACHE_FILE")" 2>/dev/null || true
-	if [[ ! -f "$PRIVACY_CACHE_FILE" ]]; then
-		printf '{}\n' >"$PRIVACY_CACHE_FILE"
+	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX" 2>/dev/null) || return 0
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	local -a jq_args=(--arg slug "$slug" --arg private "$private" --argjson now "$now"
+		'.[$slug] = {private: ($private == "true"), checked_at: $now}')
+	# t18917: a sudo-run caller can leave the cache root-owned (unreadable) or
+	# it can be corrupt; either way the merge fails and the cache would never
+	# recover. Rebuild from an empty object instead. The mv below replaces an
+	# unreadable file because the cache directory is user-owned.
+	if ! { [[ -r "$PRIVACY_CACHE_FILE" ]] && jq "${jq_args[@]}" "$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null; }; then
+		if ! printf '{}\n' | jq "${jq_args[@]}" >"$tmp" 2>/dev/null; then
+			rm -f "$tmp"
+			return 0
+		fi
 	fi
-
-	local tmp
-	tmp=$(mktemp "${PRIVACY_CACHE_FILE}.XXXXXX")
-	jq --arg slug "$slug" --arg private "$private" --argjson now "$now" \
-		'.[$slug] = {private: ($private == "true"), checked_at: $now}' \
-		"$PRIVACY_CACHE_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PRIVACY_CACHE_FILE" || rm -f "$tmp"
+	if ! mv -f "$tmp" "$PRIVACY_CACHE_FILE" 2>/dev/null; then
+		rm -f "$tmp"
+		return 0
+	fi
+	# Hand a sudo-written cache back to the real user (approval-helper.sh pattern).
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		chown "$SUDO_USER" "$PRIVACY_CACHE_FILE" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -197,7 +210,8 @@ _privacy_cache_write() {
 #   - local_only: true (no remote, definitionally not public)
 #   - the slug's owner is the current gh user AND the repo is private on GH
 #
-# For speed, we use structural markers only (mirror_upstream, local_only).
+# Also: cached private visibility (repo-privacy.json) or `private: true`;
+# unknown visibility on pulse-enabled repos fails closed.
 # We do NOT probe every slug with gh api — that would cost N network calls
 # on every push. Users who want additional slugs covered can add them to
 # ~/.aidevops/configs/privacy-guard-extra-slugs.txt (one per line).
@@ -222,6 +236,36 @@ privacy_enumerate_private_slugs() {
 		)
 		| .slug // empty
 	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null)
+
+	# Ordinary private repos: cached GitHub visibility (never a live API call).
+	# A repos.json `private: true` field also counts. Unknown visibility (no
+	# cache entry or expired public entry) fails closed only for pulse-enabled
+	# repos; fresh public entries stay out so self-references remain allowed.
+	# Cached private entries remain protected even after expiry.
+	local cache_json='{}'
+	if [[ -r "$PRIVACY_CACHE_FILE" ]]; then
+		cache_json=$(jq -c 'if type == "object" then . else {} end' "$PRIVACY_CACHE_FILE" 2>/dev/null) || cache_json='{}'
+		[[ -n "$cache_json" ]] || cache_json='{}'
+	fi
+	local vis_slugs
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	vis_slugs=$(jq -r --argjson cache "$cache_json" \
+		--argjson now "$(date +%s)" --argjson ttl "$PRIVACY_CACHE_TTL" '
+		.initialized_repos[]?
+		| select((.slug // "") != "")
+		| . as $r
+		| (($cache[$r.slug] // null)
+			| if .private == false and ($now - (.checked_at // 0)) >= $ttl
+			  then null else . end) as $c
+		| select(
+			($c != null and ($c.private // false) == true)
+			or ($c == null and (($r.private // false) == true or ($r.pulse // false) == true))
+		)
+		| .slug
+	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null || true)
+	if [[ -n "$vis_slugs" ]]; then
+		slugs=$(printf '%s\n%s\n' "$slugs" "$vis_slugs")
+	fi
 
 	# Also include extra user-configured slugs
 	local extra_file="$HOME/.aidevops/configs/privacy-guard-extra-slugs.txt"

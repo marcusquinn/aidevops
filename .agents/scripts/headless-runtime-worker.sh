@@ -788,6 +788,8 @@ _hrw_pr_less_terminal_complete() {
 	local repo_slug="$4"
 	# Internal constant predicate names only: never retain API output or prose.
 	_HRW_PR_LESS_REJECTION="invalid_context"
+	_HRW_REVIEW_TRIAGE_VERIFIED=""
+	_HRW_REVIEW_TRIAGE_CANDIDATE=""
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" == */* ]] || return 1
 	[[ "${WORKER_ISSUE_NUMBER:-$issue_number}" == "$issue_number" ]] || return 1
 	[[ -d "$work_dir" ]] || return 1
@@ -813,15 +815,22 @@ _hrw_pr_less_terminal_complete() {
 	_HRW_SCOPED_DELIVERY_RECEIPT=""
 	_HRW_PR_LESS_REJECTION="issue_evidence_unavailable"
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	# Detect the shape before closure/trust checks: neither an open issue nor a
+	# spoofed author may fall back to a bare completion token after rejection.
+	if jq -e '.body // "" | startswith("## Unactioned Review Feedback\n")' \
+		<<<"$issue_json" >/dev/null 2>&1; then
+		_HRW_REVIEW_TRIAGE_CANDIDATE=1
+	fi
 	_HRW_PR_LESS_REJECTION="issue_not_closed"
 	jq -e '.state == "closed"' <<<"$issue_json" >/dev/null 2>&1 || return 1
 	if _hrw_data_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_report_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
-		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
+		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_review_triage_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
 		_hrw_pr_less_normalize_labels "$issue_number" "$repo_slug" "$issue_json" || return 1
 		# Scoped evidence is freshly regenerated, never replayed from this cache.
-		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" ]]; then
+		if [[ -z "$_HRW_SCOPED_DELIVERY_RECEIPT" && -z "$_HRW_REVIEW_TRIAGE_VERIFIED" ]]; then
 			_HRW_PR_LESS_VERIFIED_CONTEXT="$context"
 		fi
 		_HRW_PR_LESS_REJECTION=""
@@ -841,6 +850,97 @@ _hrw_pr_less_normalize_labels() {
 	done < <(jq -r '.labels[]?.name | select(. == "auto-dispatch" or (startswith("status:") and . != "status:done"))' <<<"$issue_json")
 	_HRW_PR_LESS_REJECTION="completion_labels_unavailable"
 	gh issue edit "$issue_number" --repo "$repo_slug" "${args[@]}" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# A trusted triager's semantic disposition is not implementation delivery. Bind
+# its structured receipt to this attempt, authenticated closer and original
+# inline review, then independently verify the cited merged file on live default.
+# No labels, final prose or historical receipts establish this outcome.
+_hrw_review_triage_terminal_complete() {
+	local session_key="$1" work_dir="$2" issue_number="$3" repo_slug="$4" issue_json="$5"
+	local source_pr path comments receipt actor review evidence_pr pr_json files blob review_id default_blob
+	local comments_endpoint issue_url="https://github.com/${repo_slug}/issues/${issue_number}"
+	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
+	local writer_def='def writer: .author_association | strings | test("^(OWNER|MEMBER|COLLABORATOR)$");'
+	# Non-generated implementation issues retain their original rejection reason.
+	jq -e "${writer_def}"'
+		writer and ((.body // "")
+		| startswith("## Unactioned Review Feedback\n")
+		and contains("quality-feedback-helper.sh scan-merged"))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	_HRW_REVIEW_TRIAGE_CANDIDATE=1
+	_HRW_PR_LESS_REJECTION="triage_context_invalid"
+	[[ "${DISPATCH_REPO_SLUG:-}" == "$repo_slug" && "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" &&
+		-n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	jq -e --argjson issue "$issue_number" --arg url "$issue_url" --arg completed completed '
+		.number == $issue and .pull_request == null and .state == "closed"
+		and (.state_reason == $completed or .state_reason == "not_planned")
+		and .html_url == $url
+		and (.body | test("(?m)^\\*\\*Findings\\*\\*: 1$"))
+		and ([.body | scan("\\[View comment\\]\\(")] | length) == 1' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	source_pr=$(jq -er '.body | capture("(?m)^\\*\\*Source PR\\*\\*: #(?<pr>[1-9][0-9]*)$").pr' <<<"$issue_json") || return 1
+	path=$(jq -er '.body | capture("(?m)^\\*\\*File\\*\\*: `(?<path>[^`\\n]+)`$").path
+		| select(test("^([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$") and (split("/") | all(.[]; . != ".." and . != ".")))' \
+		<<<"$issue_json") || return 1
+	_HRW_PR_LESS_REJECTION="triage_receipt_unavailable"
+	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ -n "$actor" ]] || return 1
+	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="triage_receipt_invalid"
+	# aidevops:trust-boundary — trust forge metadata, not receipt author claims.
+	receipt=$(jq -rse --arg repo "$repo_slug" --argjson issue "$issue_number" --arg actor "$actor" \
+		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
+		--arg url "$issue_url" --arg numeric number --arg text string \
+		--argjson source "$source_pr" --arg path "$path" --argjson task "$issue_json" "${writer_def}"'
+		def positive_id: type == $numeric and . > 0 and floor == .;
+		[.[][]] as $comments
+		| select(all($comments[]; ((.body // "")
+			| startswith("## Additional Review Feedback (PR #")) | not))
+		| [$comments[] | select(writer and .user.login == $actor and $task.closed_by.login == $actor)
+		| select((.body // "")
+			| startswith("<!-- aidevops:review-triage-completion:v1 -->\n"))
+		| . as $comment | (try (.body | split("\n")[1] | fromjson) catch {})
+		| select(.schema == 1 and .repository == $repo and .issue == $issue
+			and .attempt_id == $attempt and .attempt_started_at == $started
+			and (.disposition == "obsolete" or .disposition == "premise_falsified")
+			and (.rationale | type == $text and length >= 20)
+			and .source_pr == $source and .path == $path
+			and (.review_comment_id | positive_id) and (.evidence_pr | positive_id)
+			and (.blob | type == $text and test("^[0-9a-f]{40}$"))
+			and $comment.html_url == ($url + "#issuecomment-" + ($comment.id | tostring))
+			and ($comment.created_at | fromdateiso8601) >= (($started | tonumber) / 1000000000 | floor)
+			and ($comment.updated_at | fromdateiso8601) <= ($task.closed_at | fromdateiso8601))]
+		| select(length == 1) | .[0]' <<<"$comments" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="triage_review_invalid"
+	review_id=$(jq -r '.review_comment_id' <<<"$receipt")
+	review=$(gh api "repos/${repo_slug}/pulls/comments/${review_id}" 2>/dev/null) || return 1
+	jq -e --arg repo "$repo_slug" --arg pr "$source_pr" --arg path "$path" --arg id "$review_id" \
+		--arg body "$(jq -r '.body' <<<"$issue_json")" '
+		.pull_request_url == ("https://api.github.com/repos/" + $repo + "/pulls/" + $pr)
+		and .html_url == ("https://github.com/" + $repo + "/pull/" + $pr + "#discussion_r" + $id)
+		and .path == $path and (.body | strings | length > 0)
+		and (.body as $review | $body | contains($review))
+		and (.html_url as $url | $body | contains("[View comment](" + $url + ")"))' \
+		<<<"$review" >/dev/null 2>&1 || return 1
+	_HRW_PR_LESS_REJECTION="triage_support_invalid"
+	evidence_pr=$(jq -r '.evidence_pr' <<<"$receipt")
+	pr_json=$(gh api "repos/${repo_slug}/pulls/${evidence_pr}" 2>/dev/null) || return 1
+	jq -e --arg repo "$repo_slug" --argjson pr "$evidence_pr" '
+		.number == $pr and .state == "closed" and .merged_at != null
+		and .base.repo.full_name == $repo' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	files=$(gh api --paginate "repos/${repo_slug}/pulls/${evidence_pr}/files?per_page=100" 2>/dev/null) || return 1
+	blob=$(jq -r '.blob' <<<"$receipt")
+	jq -se --arg path "$path" --arg blob "$blob" \
+		'any(.[][]; .filename == $path and .sha == $blob and .status != "removed")' \
+		<<<"$files" >/dev/null 2>&1 || return 1
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	_HRW_PR_LESS_REJECTION="triage_default_blob_mismatch"
+	default_blob=$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null) || return 1
+	[[ "$default_blob" == "$blob" ]] || return 1
+	_HRW_REVIEW_TRIAGE_VERIFIED=1
+	print_info "[lifecycle] worker_review_triage complete session=${session_key} issue=${issue_number} implementation=none"
 	return 0
 }
 
