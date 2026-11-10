@@ -50,6 +50,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate trusted runner routing
+        run: node --test .agents/scripts/tests/test-ci-runner-routing.mjs
+
       - name: Determine scope
         id: scope
         env:
