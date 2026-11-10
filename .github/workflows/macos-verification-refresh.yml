@@ -19,7 +19,7 @@ jobs:
     steps:
       # Metadata only: never check out or execute the untrusted PR head.
       # aidevops:trust-boundary - this can only add a verification handoff label.
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;

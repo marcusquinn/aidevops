@@ -34,7 +34,8 @@ _platform_trigger_text() {
 	printf '%s\n' "$title"
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		[[ "$line" == *'<!-- aidevops:sig -->'* ]] && break
-		if printf '%s\n' "$line" | grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+(Runtime[[:space:]]+Testing|Testing|Test[[:space:]]+Plan|Verification|Regression[[:space:]]+Evidence)[[:space:]]*:?[[:space:]]*$'; then
+		# File inventories can name platforms without claiming a platform fix.
+		if grep -qiE '^[[:space:]]*#{1,6}[[:space:]]+(Files[[:space:]]+Changed|Runtime[[:space:]]+Testing|Testing|Test[[:space:]]+Plan|Verification|Regression[[:space:]]+Evidence)[[:space:]]*:?[[:space:]]*$' <<<"$line"; then
 			skip_section=1
 			continue
 		fi

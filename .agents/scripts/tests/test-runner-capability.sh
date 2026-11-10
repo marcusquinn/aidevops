@@ -202,6 +202,43 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     check('class tools combine with brief tools', issue,
           {'publish': {'tools': ['definitely-not-installed-xyz']}}, False,
           'tool_missing name=definitely-not-installed-xyz')
+    # GH#37638: requires-loopback-health probes a fixed 127.0.0.1 port only.
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == '/health' else 503)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    live = server.server_address[1]
+    if live < 1024:
+        raise SystemExit('ephemeral port below 1024')
+    with socket.socket() as closed_socket:
+        closed_socket.bind(('127.0.0.1', 0))
+        closed = closed_socket.getsockname()[1]
+    check('healthy loopback service proceeds', {'body': f'requires-loopback-health: {live}/health'})
+    check('closed loopback port defers', {'body': f'requires-loopback-health: {closed}/health'},
+          success=False, reason=f'service_unhealthy port={closed}')
+    check('non-2xx loopback response defers', {'body': f'requires-loopback-health: {live}/other'},
+          success=False, reason=f'service_unhealthy port={live}')
+    check('class loopback_health combines', issue, {'publish': {'loopback_health': [f'{closed}/health']}},
+          False, f'service_unhealthy port={closed}')
+    for bad in (f'127.0.0.1:{live}/health', f'{live}/../health', '80/health',
+                f'http://127.0.0.1:{live}/health', f'{live}/health?x=1', '70000/health',
+                f'{live}/' + 'a' * 65, ''):
+        check(f'invalid loopback value {bad[:20]!r} is rejected',
+              {'body': f'requires-loopback-health: {bad}'}, success=False,
+              reason='invalid_requirements')
+    check('more than four loopback entries is rejected',
+          {'body': 'requires-loopback-health: ' + ' '.join(f'{live + n}/h' for n in range(5))},
+          success=False, reason='invalid_requirements')
+    server.shutdown()
 
     # Exercise the actual dispatch entry function, stopping at the next gate.
     # A capability failure must never reach a scope write, dedup or claim.
