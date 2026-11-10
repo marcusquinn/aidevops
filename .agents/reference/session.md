@@ -89,6 +89,10 @@ Rules:
   file an issue, add a follow-up, or check something the agent can do; never
   ask "shall I…?" about safe in-scope work. Decide scope/policy questions the
   repo already answers (for example the test policy) instead of asking.
+  Routine engineering choices within the session's own authority are
+  decisions, not asks: which of its own PRs carries a change, merge or stack
+  order, and splitting or combining commits. Pick the recommended option and
+  record the rationale in the PR body.
   A check skipped by policy (for example qlty out of credits,
   `reference/ci-gate-policy.md` rule 14) is a reported fact, not an ask: never
   ask whether to top up, rerun or remove the tool.
