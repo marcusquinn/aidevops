@@ -93,6 +93,11 @@ worker_lifecycle_cleanup_worktree() {
 	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
 		--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "$archive_root") || rc=$?
+	if [[ "$rc" -eq 0 ]] && _worker_lifecycle_relinquish_caller "$result" "$python" "$entry" "$state_dir" "$worktree"; then
+		result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
+			--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
+			--output-root "$archive_root") || rc=$?
+	fi
 	if [[ "$rc" -ne 0 ]]; then
 		_worker_lifecycle_report_refusal "$result" "$rc" "$worktree" "$state_dir" "$archive_root"
 		return 1
@@ -103,6 +108,74 @@ worker_lifecycle_cleanup_worktree() {
 		return 1
 	fi
 	return 0
+}
+
+# GH#37432: an OpenCode app keeps one PID for all its sessions, so a session's
+# run on a finished tree otherwise lasts until the app quits. When a caller
+# opts in (explicit removal) and the registry names this caller as the only
+# owner (waiting-for-caller), end this session's own run and retry once. The
+# registry requires the runtime PID to be this command's ancestor; any other
+# refusal, or a run held by a sibling session, is left unchanged.
+# Returns: 0 when this session's run was just ended (retry), 1 otherwise.
+_worker_lifecycle_relinquish_caller() {
+	local result="$1"
+	local python="$2"
+	local entry="$3"
+	local state_dir="$4"
+	local worktree="$5"
+	local status=""
+	[[ "${WORKER_LIFECYCLE_RELINQUISH_CALLER:-0}" == 1 ]] || return 1
+	jq -e '.status == "waiting-for-runs" and .detail == "waiting-for-caller"' \
+		>/dev/null 2>&1 <<<"$result" || return 1
+	status=$(_worker_lifecycle_relinquish_status "$python" "$entry" "$state_dir" "$worktree") || return 1
+	[[ "$status" == relinquished ]] || return 1
+	printf '[worker-lifecycle] relinquished the run of this session; retrying retirement once\n' >&2
+	return 0
+}
+
+# Ask the registry to end this session's own run on WORKTREE. The session is
+# the plugin-declared AIDEVOPS_LIFECYCLE_SESSION_ID under the runtime PID
+# AIDEVOPS_LIFECYCLE_RUNTIME_PID; the registry also requires that PID to be an
+# ancestor of this command.
+# Outputs: relinquished, already-ended or not-owner.
+# Returns: 0 when the registry answered with one of those, 1 otherwise.
+_worker_lifecycle_relinquish_status() {
+	local python="$1"
+	local entry="$2"
+	local state_dir="$3"
+	local worktree="$4"
+	local pid="${AIDEVOPS_LIFECYCLE_RUNTIME_PID:-}"
+	local session="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
+	local result="" status=""
+	[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$session" && -n "$worktree" ]] || return 1
+	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
+		--path "$worktree" --pid "$pid" --session-id "$session" 2>/dev/null) || return 1
+	status=$(jq -r '.status // empty' 2>/dev/null <<<"$result") || return 1
+	case "$status" in
+	relinquished | already-ended | not-owner) printf '%s\n' "$status" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# GH#37448: the full-loop `complete` handoff ends this session's own registry
+# run on its finished worktree, so guarded cleanup no longer waits for the
+# shared OpenCode app PID to exit. Best-effort and never removes anything:
+# retirement keeps every registry check.
+# Outputs: the registry status from _worker_lifecycle_relinquish_status.
+# Returns: 0 when the registry answered, 1 when unavailable or refused.
+worker_lifecycle_relinquish_session() {
+	local worktree="$1"
+	local entry="${BASH_SOURCE[0]%/*}/../worker-lifecycle/worker-registry.py"
+	local state_dir=""
+	local python=""
+	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 && -n "$worktree" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	python=$(type -P python3) || return 1
+	state_dir=$(worker_lifecycle_state_dir 2>/dev/null) || return 1
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 1
+	_worker_lifecycle_relinquish_status "$python" "$entry" "$state_dir" "$worktree"
+	return $?
 }
 
 # One-line refusal for local prerequisites that never reach the registry.
@@ -173,7 +246,7 @@ _worker_lifecycle_refusal_next_step() {
 		printf '[worker-lifecycle] next: a registered owner is still running or unconfirmed; retry after it exits (Pulse cleanup retries automatically).\n' >&2
 		;;
 	waiting-for-caller)
-		printf '[worker-lifecycle] next: this session is the registered owner of the worktree because it ran commands or edits there, so it cannot retire the tree itself. Retirement completes after this session exits (Pulse cleanup retries automatically), or from a session that never worked in it; --force cannot override ownership.\n' >&2
+		printf '[worker-lifecycle] next: this runtime is the registered owner of the worktree because one of its sessions ran commands or edits there. worktree-helper.sh remove from the owning session relinquishes the run of that session and retries once; if this remains, another session of the same runtime still owns it. Retirement then completes after that runtime exits (Pulse cleanup retries automatically); --force cannot override ownership.\n' >&2
 		;;
 	outside-maintenance-scope)
 		printf '[worker-lifecycle] next: explicit retirement requires a registered, non-local_only repository with a valid canonical path and slug. Register the canonical checkout with aidevops repos add <path>, then set pulse: false, maintenance: false in ~/.config/aidevops/repos.json to keep automatic maintenance disabled; retry removal.\n' >&2

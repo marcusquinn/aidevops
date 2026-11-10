@@ -66,6 +66,7 @@ const REASON_GUIDANCE = {
   "target-classification-unavailable": "a write target could not be classified. Recovery: use an absolute path inside an existing directory",
   "explicit-absolute-context-required": "the working directory must be absolute. Recovery: pass an absolute workdir",
   "invalid-session-identity": "the runtime supplied no valid session identity. Recovery: run the tool from an OpenCode session or open a new tab",
+  "session-owner-already-ended": "this session relinquished its ownership of the worktree for removal (GH#37432), so it cannot write there again. Recovery: work in a fresh worktree; canonical and other worktree targets remain available",
 };
 
 /** Accept only short protocol tokens from the helper, never free-form text. */

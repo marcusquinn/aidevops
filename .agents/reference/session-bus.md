@@ -177,11 +177,18 @@ interactive sessions (owner decision 2026-11-09).
 
 ### Pulse steering relay
 
-Pulse starts `worker-bus-relay-helper.sh relay` detached at each cycle start
-and on each busy-lock tick (about every 2 minutes), outside the cycle budget
-(t18911; as a budgeted stage, the cycle budget deferred it every time). A
-single-runner lock collapses overlapping starts, and each `gh` or bus call has
-a timeout (`WORKER_BUS_RELAY_CALL_TIMEOUT`, default 30 s). It sends one `info`
+`worker-watchdog.sh --check` runs `worker-bus-relay-helper.sh relay` every 2
+minutes on launchd, systemd and cron, after its worker checks and bounded by
+`WORKER_WATCHDOG_RELAY_TIMEOUT` (default 90 s), capped to the time the checks
+left before the 120 s service deadline minus 10 s (t18922). Pulse also starts the
+relay detached at each cycle start and on each busy-lock tick, outside the
+cycle budget (t18911). Those pulse starts alone are too sparse: the KeepAlive
+pulse supervisor runs cycles back to back, so no tick loses the instance lock
+and a long cycle left workers unsteered. A single-runner lock collapses
+overlapping starts, and each `gh` or bus call has a timeout
+(`WORKER_BUS_RELAY_CALL_TIMEOUT`, default 30 s). The helper puts its own
+scripts directory first on `PATH`, so reads go through the `gh` shim under any
+scheduler. It sends one `info`
 message from `cli:pulse` per change on the worker's issue since its run started:
 
 - new comments from OWNER, MEMBER or COLLABORATOR authors that are not bots and
@@ -205,7 +212,9 @@ next run. The sender rate limit (10 per minute) bounds bursts.
   (override `WORKER_BUS_RELAY_STATE_DIR`). Pruned when the worker leaves presence.
 - Inspect: `worker-bus-relay-helper.sh status`. Log lines carry the
   `[worker-bus-relay]` prefix in `~/.aidevops/logs/pulse.log`; launcher stderr
-  goes to `~/.aidevops/logs/worker-bus-relay.log`.
+  goes to `~/.aidevops/logs/worker-bus-relay.log`. The relay logs only sends,
+  failed sends and deferred listings, so an empty log is normal; tracked
+  workers in `status` show that it runs.
 - Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
 
 ## Overlap visibility (t18895)

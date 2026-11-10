@@ -379,9 +379,11 @@ cmd_record_outcome() {
 	if [[ "$routine_signing" -eq 1 ]]; then
 		: # Audit-only: do not change the issue-worker failure streak.
 	elif [[ "$is_zero" -eq 1 ]]; then
-		# Counter increments; the window may need to be re-anchored if it
-		# was idle through expiry above (already done) — otherwise keep it.
-		_rh_state_apply ".consecutive_zero_attempts += 1" || true
+		# Counter increments and the window re-anchors on every zero-attempt
+		# outcome, so expiry measures idleness of the streak (time since the
+		# last zero-attempt outcome), not its age. Slow failures still trip.
+		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
+		_rh_state_apply '.consecutive_zero_attempts += 1 | .window_started_at = $now' --arg now "$now" || true
 	else
 		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
@@ -1002,8 +1004,10 @@ DIAGNOSE FINDINGS (categories surfaced for operator action):
                      (recorder being skipped — likely caller-side bug).
   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
                      (trip path or signal predicate broken).
-  STUCK_TRIPPED    — breaker tripped >24h ago and last update failed;
-                     manual resume required after fixing the install.
+  STUCK_TRIPPED    — breaker tripped longer than RUNNER_HEALTH_NO_UPDATE_PAUSE_HOURS
+                     (default 24) ago and the last update outcome is empty,
+                     never, failed, or helper_missing; manual resume required
+                     after fixing the install.
 
 ZERO-ATTEMPT SIGNALS (reset counter when not one of these):
   no_worker_process          — worker process never spawned.

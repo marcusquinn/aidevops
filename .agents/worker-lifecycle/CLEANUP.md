@@ -2,45 +2,39 @@
 
 ## Status and authority
 
-All supported launchers (Pulse, interactive and others) supply registration facts,
-not separate safety rules. Only the new registry and native OS adapter supply
-lifecycle evidence; legacy registries, dispatch ledgers and old owner statuses
-cannot fill gaps or authorize operations. Git/filesystem evidence proves content,
-not process liveness.
+Registering launchers, including Pulse and interactive launchers, supply facts, not separate safety rules.
+Private or disabled workloads remain unobserved; standalone commands are outside the registered-writer
+contract. Only the new registry and native OS adapter supply lifecycle evidence: legacy registries, dispatch
+ledgers and old owner statuses cannot fill gaps or authorize operations. Git/filesystem evidence proves
+content, not process liveness.
 
-The [managed launch contract](DESIGN.md#managed-launch-contract) defines ownership
-coverage. Independent writers, including jobs outliving their launcher, must
-register separate runs before writing. Ordinary child commands remain the runtime's
-responsibility. Lifecycle neither discovers nor controls process trees: unregistered
-independent writers are outside the contract, not owners inferred from PID, PPID or cwd.
+The [managed launch contract](DESIGN.md#managed-launch-contract) defines ownership coverage.
+Independent writers, including jobs outliving their launcher, must register separate runs before writing;
+ordinary children remain the runtime's responsibility. Lifecycle neither discovers nor controls process
+trees: unregistered independent writers are outside the contract, not owners inferred from PID, PPID or cwd.
 
-`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O,
-always `cleanup_authorized=False`. Its assertions are inputs for future verified
-collectors, not CLI flags or proof objects. No production collector or destructive
-executor is connected to this policy; its tests do not validate archive/restore.
+`worker_lifecycle/cleanup_policy.py` is a **report-only decision table**: no I/O, always `cleanup_authorized=False`.
+Its assertions are inputs for future verified collectors, not CLI flags or proof objects. No production
+collector or destructive executor is connected; its tests do not validate archive/restore.
 
-`directory_handle.py` compares a read-only descriptor's device/inode with the canonical
-path for one operation. Observed replacement, lost access, process change or closure
-invalidates it. It is not persistent generation identity, a snapshot, a Git identity
-check or an admission lock: matching identity neither freezes content nor prevents
-later pathname races. Re-establish evidence after crash/restart; saved device/inode
-values are insufficient. Retained reports qualify only their recorded Linux/macOS
-Intel artifacts and environments.
+`directory_handle.py` compares a read-only descriptor's device/inode with the canonical path for one operation.
+Replacement, lost access, process change or closure invalidates it. It is not persistent generation identity,
+a snapshot, Git identity check or admission lock: matching identity neither freezes content nor prevents
+later pathname races. Re-establish evidence after crash/restart; saved device/inode values are insufficient.
+Retained reports qualify only their recorded Linux/macOS Intel artifacts and environments.
 
-Default observe-only bindings use per-attempt UUIDs, not verified physical generations.
-Enrollment lookup must confirm an unregistered, unmarked path; failure denies execution.
-Subsequent `record()` failure reports `observation-gap` but deliberately executes the
-original command. These bindings cannot supply `generation_verified`, `ownership_complete`
-or `admission_closed`. Future active admission must deny closed/unavailable managed
+Default observe-only bindings use per-attempt UUIDs, not verified physical generations. Enrollment lookup
+must confirm an unregistered, unmarked path; failure denies execution. Subsequent `record()` failure reports
+`observation-gap` but executes the original command. These bindings cannot supply `generation_verified`,
+`ownership_complete` or `admission_closed`. Future active admission must deny closed/unavailable managed
 launches without silently changing the observe-only contract.
 
 ## Simple algorithm
 
 1. Verify physical generation and complete ownership; missing registration or path reuse means hold.
-2. Require every admitted run to be ended. Independently registered jobs remain
-   owners after launcher exit; shared runtimes also need explicit session-completion
-   semantics, not just PID polling. Close admission only if the exact nonempty run
-   set remains ended in the admission transaction. A racing new owner means retry,
+2. Require every admitted run to be ended. Independently registered jobs remain owners after launcher exit;
+   shared runtimes need explicit session-completion semantics, not just PID polling. Close admission only if
+   the exact nonempty run set remains ended in the admission transaction; a racing new owner means retry,
    not closure over live work.
 3. Inventory all results; incomplete inventory means hold, not an empty worktree.
 4. Propose archive for unpreserved results, removal for verified preservation, hold for unknowns.
@@ -54,9 +48,9 @@ launches without silently changing the observe-only contract.
 | All safety preconditions proved; unique local results | Archive candidate |
 | All safety preconditions proved; results demonstrably preserved | Remove candidate |
 
-`ended` means process termination, not task success. Without a push/PR, local work
-may be the only copy; a push/PR still does not prove the latest work preserved.
-With squash merges, ancestry alone cannot prove loss or unpublished work.
+`ended` means process termination, not task success. Without a push/PR, local work may be the only copy;
+a push/PR still does not prove the latest work preserved. With squash merges, ancestry alone cannot prove
+loss or unpublished work.
 
 ## Transactional admission core
 
@@ -253,23 +247,26 @@ for terminal absence reconciliation.
 
 ## Preparation and WIP preservation commands
 
-The registry CLI provides two non-destructive operations:
+The registry CLI provides three non-destructive operations:
 
-- `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs.
-  Empty registrations and observation-only bindings report `coverage-gap`; active or unknown runs report
-  `waiting-for-runs`, adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the
-  invoking command (still blocking: one runtime process can serve several sessions; GH#37022). Read-only
-  git inspection of another tree (`READ_ONLY_VERBS` in `worker_lifecycle_command_targets.py`) admits no
-  owner. These outcomes leave open admission open, so preparation cannot strand a newly created worktree
-  before its first launch. Once all runs are ended, closure rechecks their exact set in the admission
-  transaction; a racing new owner reports `retry-required` without closing admission. Successful closure
-  is permanent. `registered-runs-ended` describes registered runs, not coverage of unregistered writers or
+- `prepare-cleanup --path PATH` validates the physical generation and reconciles its registered runs. Empty
+  registrations and observation-only bindings report `coverage-gap`; active or unknown runs report `waiting-for-runs`,
+  adding `detail: waiting-for-caller` when every unfinished run is an ancestor of the invoking command (still blocking:
+  one runtime process can serve several sessions; GH#37022). Read-only git inspection of another tree (`READ_ONLY_VERBS`
+  in `worker_lifecycle_command_targets.py`) admits no owner. These outcomes leave open admission open, so preparation
+  cannot strand a newly created worktree before its first launch. Once all runs are ended, closure rechecks their exact
+  set in the admission transaction; a racing new owner reports `retry-required` without closing admission. Successful
+  closure is permanent. `registered-runs-ended` describes registered runs, not coverage of unregistered writers or
   permission to remove anything.
-- `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR`
-  performs preparation, creates a WIP archive and verifies its captured payloads
-  against the source fingerprint and retained base. `DIR` must already exist,
-  be canonical, owned and outside the source worktree and its administration
-  directory. Missing evidence or failed verification leaves the source intact.
+- `relinquish-session --path PATH --pid PID --session-id ID` ends only the caller's own run: the PID must be an ancestor
+  of the command and the session ID selects one run of it (`relinquished`, `already-ended` or `not-owner`). Ending is
+  permanent (re-admission of that session refuses with `session-owner-already-ended`) and never closes admission,
+  archives or removes. Explicit `worktree-helper.sh remove` opts in (`WORKER_LIFECYCLE_RELINQUISH_CALLER=1`), relinquishing
+  only on `waiting-for-caller` and retrying once; Pulse and release cleanup do not (GH#37432).
+- `preserve-wip --path PATH --repo OWNER/REPO --base-branch BRANCH --output-root DIR` performs preparation, creates a
+  WIP archive and verifies its captured payloads against the source fingerprint and retained base. `DIR` must already
+  exist, be canonical, owned and outside the source worktree and its administration directory. Missing evidence or
+  failed verification leaves the source intact.
 
 `archive_path.validate_archive_path` is shared by preservation, retirement and both cleanup passes; it checks every component without following symlinks or changing permissions.
 The root and descendant directories must belong to the current user and deny group/other writes. Root/intermediate mode 0755 is allowed; individual archives must deny all group/other access.
@@ -277,11 +274,10 @@ Ancestors must belong to root/current user and deny external writes, except stic
 These POSIX ownership/mode-bit checks do not evaluate extended macOS/NFSv4 ACLs; effective access must match the mode-bit policy for these guarantees to hold.
 The archive producer remains unchanged. Unsafe paths prevent source retirement rather than triggering permission repair.
 
-Both require `--state-dir` before the subcommand; neither initializes/migrates state,
-reopens admission, removes worktrees nor consults legacy ownership. Closure survives
-failure: do not use on trees needing more launches. Repeating preservation for the
-same generation/content/destination rechecks the archive; old registry receipts are
-not current proof. Results retain `cleanup_authorized=false` and `common_repository_required=true`.
+All three require `--state-dir` before the subcommand; none initializes/migrates state, reopens admission, removes worktrees nor consults
+legacy ownership. Closure survives failure: do not use on trees needing more launches. Repeating preservation for the same
+generation/content/destination rechecks the archive; old registry receipts are not current proof. Results retain `cleanup_authorized=false`
+(preparation and preservation also `common_repository_required=true`).
 
 Archives pin `refs/aidevops/wip-base/OPERATION_ID` through branch deletion/Git GC but
 still need the common repository. Retain pins while dependent archives exist; neither

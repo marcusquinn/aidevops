@@ -73,6 +73,8 @@ export HOME="$TEST_ROOT"
 LOGFILE="$TEST_ROOT/pulse.log"
 # shellcheck source=../pulse-dispatch-lib.sh
 source "$SCRIPT_DIR/../pulse-dispatch-lib.sh"
+# Keep the production fingerprint function; later sections stub the public name.
+eval "_prod$(declare -f _dispatch_negative_pr_fingerprint)"
 _dispatch_stats_increment() { return 0; }
 _dispatch_stats_increment_candidate_failed() { return 0; }
 _dispatch_mark_benign_blocked_candidate() { return 0; }
@@ -183,7 +185,56 @@ printf '%s\t%s\t%s\t123\t%s\ttest-head\n' "$((now - 86400))" \
 [[ "$(AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=999999 _dispatch_filter_capability_cooled_candidates example/repo '' "[$candidate]")" != '[]' ]]
 rm -f "$cache"
 # A successful old PR-cache lookup must not mask routed-continuation safety.
-_dispatch_negative_pr_fingerprint() { printf 'test-pr-fingerprint\n'; return 0; }
+PR_FINGERPRINT=test-pr-fingerprint
+_dispatch_negative_pr_fingerprint() { printf '%s\n' "$PR_FINGERPRINT"; return 0; }
+timeout_sec() { shift; "$@"; return $?; }
+gh() { printf '%s\n' "$BOUNDARY_COMMENTS"; return 0; }
+BOUNDARY_COMMENTS='[[]]'
+[[ "$(_dispatch_draft_hint_boundary "$candidate" example/repo 34526)" == 0:43200 ]]
+now=$(date +%s)
+attention_date=$(jq -nr --argjson epoch "$((now - 43100))" '$epoch | todateiso8601')
+BOUNDARY_COMMENTS=$(jq -nc --arg date "$attention_date" --arg expiry "$((now + 200))" \
+	'[[{body:("DISPATCH_LEASE expires_at=" + $expiry)},
+	{body:"<!-- aidevops:stalled-checkpoint-attention -->",created_at:$date}]]')
+[[ "$(_dispatch_draft_hint_boundary "$candidate" example/repo 34526)" == "$((now + 100)):43200" ]]
+BOUNDARY_COMMENTS='invalid'
+if _dispatch_draft_hint_boundary "$candidate" example/repo 34526; then exit 1; fi
+BOUNDARY_COMMENTS='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"test-head"}}'
+[[ "$(_dispatch_negative_pr_rest_fingerprint example/repo 123)" == 2026-10-13T00:00:00Z_test-head ]]
+BOUNDARY_COMMENTS=$(jq -c '.draft = false' <<<"$BOUNDARY_COMMENTS")
+if _dispatch_negative_pr_rest_fingerprint example/repo 123; then exit 1; fi
+BOUNDARY_COMMENTS='[[]]'
+for draft_reason in worker_draft_checkpoint_blocked stale_draft_checkpoint; do
+	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 DISPATCH_BLOCK_REASON reason=$draft_reason"
+	_dispatch_cache_confirmed_block "$candidate" 34526 example/repo
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == "$draft_reason" ]]
+	# Unchanged hints survive the old 30-minute TTL across repeated cycles.
+	printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$((now - 3600))" \
+		'2026-10-13T00:00:00Z' "$draft_reason" "$PR_FINGERPRINT" "$((now + 100))" >"$cache"
+	for cycle in 1 2; do
+		[[ "$(_dispatch_negative_cache_reason "$candidate")" == "$draft_reason" ]]
+		_dispatch_max_prefilter_cached_block "$candidate" "$TEST_ROOT/outcomes"
+	done
+	grep -q "cross-cycle block:$draft_reason" "$LOGFILE"
+	grep -q 'eligibility=ineligible' "$TEST_ROOT/outcomes"
+	assigned=$(jq -c '.assignees = [{login:"runner"}]' <<<"$candidate")
+	if _dispatch_negative_cache_reason "$assigned"; then exit 1; fi
+	changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$candidate")
+	if _dispatch_negative_cache_reason "$changed"; then exit 1; fi
+	PR_FINGERPRINT=new-head
+	if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	PR_FINGERPRINT=test-pr-fingerprint
+	if AIDEVOPS_PCC_ATTENTION_REARM_SECONDS=60 _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	# Crossing the recorded boundary wakes even with the same PR and issue.
+	printf '%s\t%s\t%s\t123\t%s\t%s:43200\n' "$now" \
+		'2026-10-13T00:00:00Z' "$draft_reason" "$PR_FINGERPRINT" "$now" >"$cache"
+	if _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	printf '%s\t%s\t%s\t123\t%s\t0:43200\n' "$((now - 21600))" \
+		'2026-10-13T00:00:00Z' "$draft_reason" "$PR_FINGERPRINT" >"$cache"
+	if AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS=999999 _dispatch_negative_cache_reason "$candidate"; then exit 1; fi
+	rm -f "$cache"
+done
+printf 'PASS draft hints: stale recording, extended ceiling, revision/head/config wake and age boundary\n'
 for signal in 'checkpoint_routed' 'CONTINUATION_ROUTED'; do
 	ATTEMPT_LINES="WORKER_DRAFT_CHECKPOINT: draft PR #123 BLOCKED_CHECKPOINT_ATTENTION_EXISTS $signal"
 	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$candidate"
@@ -221,5 +272,29 @@ _dispatch_capability_cooldown_record "$capability_candidate" 'DISPATCH_BLOCK_REA
 changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$capability_candidate")
 [[ "$(_dispatch_filter_capability_cooled_candidates example/repo '' "[$changed]")" != '[]' ]]
 printf 'PASS existing runner-capability cooldown remains independent\n'
+
+# Production snapshots omit isDraft: fall back to the exact-PR REST fingerprint.
+(
+	STUB_DIR="$TEST_ROOT/prefetch-stub"
+	mkdir -p "$STUB_DIR"
+	# shellcheck disable=SC2016  # expanded by the generated stub, not here
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$SNAPSHOT_JSON"\nexit 0\n' >"$STUB_DIR/pulse-batch-prefetch-helper.sh"
+	chmod +x "$STUB_DIR/pulse-batch-prefetch-helper.sh"
+	_PULSE_DISPATCH_LIB_DIR="$STUB_DIR"
+	timeout_sec() { shift; "$@"; return $?; }
+	gh() { printf '%s\n' "$REST_JSON"; return 0; }
+	fresh=$(jq -nr 'now | todateiso8601')
+	SNAPSHOT_JSON=$(jq -nc --arg ts "$fresh" '{complete:true,timestamp:$ts,items:[{number:123,updatedAt:"2026-10-13T00:00:00Z",headRefOid:"snap-head"}]}')
+	export SNAPSHOT_JSON
+	REST_JSON='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"rest-head"}}'
+	[[ "$(_prod_dispatch_negative_pr_fingerprint example/repo 123)" == 2026-10-13T00:00:00Z_rest-head ]]
+	# A changed REST fingerprint yields a different hint, so the cached one is rejected.
+	REST_JSON='{"state":"open","draft":true,"updated_at":"2026-10-13T00:00:01Z","head":{"sha":"new-head"}}'
+	[[ "$(_prod_dispatch_negative_pr_fingerprint example/repo 123)" == 2026-10-13T00:00:01Z_new-head ]]
+	# A ready PR is rejected.
+	REST_JSON='{"state":"open","draft":false,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"rest-head"}}'
+	if _prod_dispatch_negative_pr_fingerprint example/repo 123; then exit 1; fi
+) || exit 1
+printf 'PASS missing-isDraft snapshot falls back to REST fingerprint\n'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'

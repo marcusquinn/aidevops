@@ -495,6 +495,106 @@ _pmrs_head_commit_age_seconds() {
 }
 
 #######################################
+# List latest-per-workflow runs at the exact head that ended failure or
+# startup_failure with zero jobs (no check run is ever created for them).
+# Args: $1=repo slug, $2=head SHA
+# Stdout: one "<run id><TAB><workflow name>" line per run; returns 1 when none
+#######################################
+_pmrs_zero_job_runs() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local runs_json="" candidates="" run_id="" run_name="" total="" found=1
+
+	runs_json=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-zero-job-runs-rest" \
+		_pmrs_gh_call read gh api -X GET "repos/${repo_slug}/actions/runs" \
+		-f head_sha="$head_sha" -f per_page=100 2>/dev/null) || return 1
+	candidates=$(jq -r --arg head "$head_sha" '
+		(.workflow_runs // [])
+		| map(select(.head_sha == $head))
+		| group_by(.workflow_id)
+		| map(max_by(.run_number // 0))
+		| .[]
+		| select(.status == "completed" and (.conclusion == "failure" or .conclusion == "startup_failure"))
+		| [.id, (.name // "workflow")] | @tsv' <<<"$runs_json" 2>/dev/null) || return 1
+	while IFS=$'\t' read -r run_id run_name; do
+		[[ "$run_id" =~ ^[0-9]+$ ]] || continue
+		total=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-zero-job-runs-jobs-rest" \
+			_pmrs_gh_call read gh api -X GET "repos/${repo_slug}/actions/runs/${run_id}/jobs" \
+			-f per_page=1 --jq '.total_count' 2>/dev/null) || continue
+		[[ "$total" == "0" ]] || continue
+		printf '%s\t%s\n' "$run_id" "$run_name"
+		found=0
+	done <<<"$candidates"
+	return "$found"
+}
+
+#######################################
+# Request one rerun of a zero-job run. The reservation is written before the
+# write and survives restarts: a run ID is never replayed, and an ambiguous or
+# failed request escalates once.
+# Args: $1=repo slug, $2=PR number, $3=head SHA, $4=run id
+# Returns: 0=rerun requested, 2=already handled earlier, 1=request failed
+#######################################
+_pmrs_rerun_zero_job_run() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local run_id="$4"
+	local state_root="${AIDEVOPS_TEMP_DIR:-${HOME:+$HOME/.aidevops/.agent-workspace/tmp}}"
+	local state_dir="${PULSE_MERGE_ZERO_JOB_RERUN_STATE_DIR:-${state_root:+$state_root/pulse-zero-job-reruns}}"
+	local reservation=""
+
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$head_sha" =~ ^[A-Za-z0-9_-]+$ && "$run_id" =~ ^[0-9]+$ && -n "$state_dir" ]] || return 1
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	reservation="${state_dir}/${repo_slug//\//-}-${pr_number}-${head_sha}-${run_id}"
+	if ! mkdir "$reservation" 2>/dev/null; then
+		if mkdir "$reservation/escalated" 2>/dev/null; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: zero-job run=${run_id} on head ${head_sha:0:12} already had a rerun requested; no further automatic reruns (t18926)" >>"$LOGFILE"
+		fi
+		return 2
+	fi
+	#aidevops:trust-boundary — the run ID comes from an API listing filtered to
+	# the gated head SHA, and the caller already passed pulse write policy.
+	if gh run rerun "$run_id" --repo "$repo_slug" >/dev/null 2>&1; then
+		: >"$reservation/submitted" 2>/dev/null || true
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: requested rerun of zero-job workflow run=${run_id} on head ${head_sha:0:12} (t18926)" >>"$LOGFILE"
+		return 0
+	fi
+	mkdir "$reservation/escalated" 2>/dev/null || true
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: rerun request failed for zero-job workflow run=${run_id} on head ${head_sha:0:12}; no further automatic reruns (t18926)" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Rerun zero-job workflow runs for the gated head before any update-branch.
+# Args: $1=repo slug, $2=PR number, $3=head SHA
+# Returns: 0=zero-job runs exist and were handled (caller must not
+#          update-branch), 1=none exist or reruns are not permitted
+#######################################
+_pmrs_remediate_zero_job_runs() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local runs="" run_id="" run_name=""
+
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		return 1
+	fi
+	if declare -F _pmrc_actions_incident_blocks_rerun >/dev/null 2>&1 &&
+		_pmrc_actions_incident_blocks_rerun; then
+		return 1
+	fi
+	runs=$(_pmrs_zero_job_runs "$repo_slug" "$head_sha") || return 1
+	while IFS=$'\t' read -r run_id run_name; do
+		[[ -n "$run_id" ]] || continue
+		_pmrs_rerun_zero_job_run "$repo_slug" "$pr_number" "$head_sha" "$run_id" || true
+	done <<<"$runs"
+	return 0
+}
+
+#######################################
 # Remediate required contexts that will never report on the current head
 # (GH#32951). GitHub can drop a workflow run for a PR event; the required
 # context then stays "expected" forever, native auto-merge can never finish,
@@ -544,6 +644,13 @@ _pmp_remediate_missing_required_checks() {
 	if [[ "$attempts" -ge "$max_attempts" ]]; then
 		printf '%s %s exhausted\n' "$head_sha" "$now_epoch" >>"$state_file"
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# A zero-job run created no check run; rerunning it needs no new commit and
+	# keeps passing checks, unlike update-branch on an up-to-date head (t18926).
+	if _pmrs_remediate_zero_job_runs "$repo_slug" "$pr_number" "$head_sha"; then
+		printf '%s %s rerun\n' "$head_sha" "$now_epoch" >>"$state_file"
 		return 0
 	fi
 

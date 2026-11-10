@@ -8,6 +8,7 @@
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_PULSE_DISPATCH_ENGINE_HOUSEKEEPING_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_HOUSEKEEPING_LOADED=1
+_PULSE_BRIEF_HOLD_RELEASE_STAGE="release_repaired_brief_holds"
 
 #######################################
 # Return the async post-dispatch housekeeping lock directory path.
@@ -31,7 +32,8 @@ _pulse_post_dispatch_housekeeping_lockdir() {
 # follow the cycle instead of the run. The async run also writes async-pid:
 # it outlives the cycle with the bare wrapper argv, and that marker is how
 # pulse-lifecycle-helper.sh keeps it out of the main-cycle PID set. A
-# synchronous run is the cycle itself and records only pid.
+	# direct run records only pid. With an outer lane watchdog, async-pid names
+	# the supervisor that can outlive the cycle; pid still owns the stage lock.
 #
 # Args:
 #   $1 - lock directory path
@@ -46,7 +48,7 @@ _pulse_record_post_dispatch_housekeeping_owner() {
 	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || owner_pid="$$"
 	printf '%s\n' "$owner_pid" >"${lockdir}/pid" 2>/dev/null || true
 	if [[ "${_PULSE_HOUSEKEEPING_ASYNC:-0}" == "1" ]]; then
-		printf '%s\n' "$owner_pid" >"${lockdir}/async-pid" 2>/dev/null || true
+		printf '%s\n' "${_PULSE_HOUSEKEEPING_SUPERVISOR_PID:-$owner_pid}" >"${lockdir}/async-pid" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -135,12 +137,15 @@ _pulse_blocker_refresh_starved() {
 #
 # Args:
 #   $1 - per-stage timeout seconds
+#   $2 - graph rebuild timeout seconds (defaults to $1)
 # Returns 0 when no catch-up is needed or all available steps succeed;
 # returns 1 when a prerequisite fails or is deferred.
 #######################################
 _pulse_run_blocker_refresh_catchup() {
 	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+	local graph_timeout="${2:-$stage_timeout}"
+	[[ "$graph_timeout" =~ ^[0-9]+$ ]] || graph_timeout="$stage_timeout"
 	_pulse_blocker_refresh_starved || return 0
 	declare -F build_dependency_graph_cache >/dev/null 2>&1 || return 0
 	local pending_file="" progress_file="" graph_stage="build_dependency_graph_cache"
@@ -163,40 +168,26 @@ _pulse_run_blocker_refresh_catchup() {
 	fi
 	echo "[pulse-wrapper] Blocker refresh catch-up: dependency graph cache stale, missing or recovery pending — running starved stages (GH#33246)" >>"$LOGFILE"
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_resumable_housekeeping_stage "$graph_stage" "$progress_file" \
-		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$stage_timeout" build_dependency_graph_cache || return 1
+		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$graph_timeout" build_dependency_graph_cache || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
 		_pulse_run_resumable_housekeeping_stage "refresh_blocked_status_from_graph" "$progress_file" \
 			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" refresh_blocked_status_from_graph || return 1
 	fi
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
-		_pulse_run_resumable_housekeeping_stage "release_repaired_brief_holds" "$progress_file" \
-			_pulse_run_budget_priority_stage_with_timeout "release_repaired_brief_holds" "$stage_timeout" release_repaired_brief_holds || return 1
+		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$progress_file" \
+			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || return 1
+		_pulse_housekeeping_mark_stage_done "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$(_pulse_post_dispatch_housekeeping_statefile)"
 	fi
 	rm -f "$pending_file" "$progress_file" || return 1
 	return 0
 }
 
 #######################################
-# Give overdue synchronous blocker recovery a bounded admission opportunity.
-#
-# Linux synchronous housekeeping otherwise starts after dispatch passes which
-# can spend the entire non-reserved cycle budget. Merely moving recovery ahead
-# of optional scans cannot prevent that starvation. Only stale/pending recovery
-# runs here; fresh-cache and async cycles retain their dispatch-first ordering.
-# The shared watchdog still protects the main-dispatch reserve and all nested
-# API-budget gates. The whole attempt is capped at 180s, not 180s per step.
-#
-# Args: $1 - stage timeout ceiling
-# Returns 0 always; recovery failure must not block dispatch.
+# Compatibility entrypoint: recovery now has its own background budget on
+# Linux as well as launchd. Never spend up to 180s recovering briefs before
+# dispatch; the locked post-dispatch lane cannot be starved by the cycle clamp.
 #######################################
 _pulse_run_pre_dispatch_blocker_refresh() {
-	local stage_timeout="${1:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
-	[[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]] || return 0
-	_pulse_blocker_refresh_starved || return 0
-	[[ "$stage_timeout" =~ ^[1-9][0-9]{0,8}$ ]] || stage_timeout=180
-	[[ "$stage_timeout" -le 180 ]] || stage_timeout=180
-	run_stage_with_timeout "preflight_blocker_refresh_catchup" "$stage_timeout" \
-		_pulse_run_locked_blocker_refresh_catchup "$stage_timeout" || true
 	return 0
 }
 
@@ -377,11 +368,14 @@ _pulse_housekeeping_on_signal() {
 #
 # Args:
 #   $1 - per-stage timeout seconds
+#   $2 - graph rebuild/cache prime timeout seconds (defaults to $1)
 # Returns 0 always.
 #######################################
 _pulse_run_post_dispatch_housekeeping_stages() {
 	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+	local heavy_timeout="${2:-$stage_timeout}"
+	[[ "$heavy_timeout" =~ ^[0-9]+$ ]] || heavy_timeout="$stage_timeout"
 
 	local lockdir="" state_file=""
 	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
@@ -397,8 +391,16 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_resumable_housekeeping_stage "preflight_ownership_reconcile" "$state_file" \
 		run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
 		_preflight_ownership_reconcile "$stage_timeout" || incomplete=1
+	local catchup_rc=0
 	_pulse_run_resumable_housekeeping_stage "blocker_refresh_catchup" "$state_file" \
-		_pulse_run_blocker_refresh_catchup "$stage_timeout" || incomplete=1
+		_pulse_run_blocker_refresh_catchup "$stage_timeout" "$heavy_timeout" || catchup_rc=$?
+	[[ "$catchup_rc" -eq 0 ]] || incomplete=1
+	# Brief edits need recovery even when the dependency graph is fresh. The
+	# catch-up's inner checkpoint alone must not leave them on admission's path.
+	if [[ "$catchup_rc" -eq 0 ]] && declare -F release_repaired_brief_holds >/dev/null 2>&1; then
+		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
+			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
+	fi
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
@@ -409,6 +411,13 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || incomplete=1
+	if declare -F _pulse_prime_caches_if_stale >/dev/null 2>&1; then
+		local prime_timeout="${PULSE_CACHE_PRIME_TIMEOUT:-300}"
+		[[ "$prime_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || prime_timeout=300
+		[[ "$prime_timeout" -le "$heavy_timeout" ]] || prime_timeout="$heavy_timeout"
+		_pulse_run_resumable_housekeeping_stage "cache_prime" "$state_file" \
+			_pulse_run_optional_stage_with_timeout "cache_prime" "$prime_timeout" _pulse_prime_caches_if_stale || incomplete=1
+	fi
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="finishing"
 	if [[ "$incomplete" -eq 0 ]]; then
 		rm -f "$state_file" 2>/dev/null || true
@@ -422,7 +431,20 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 }
 
 #######################################
-# Start post-dispatch housekeeping synchronously or asynchronously.
+# Join service-owned housekeeping after dispatch, never during admission.
+# The lane has its own total watchdog, so this wait is bounded independently
+# of the number of scanner stages. Detached launchd lanes are not joined.
+#######################################
+_pulse_finish_post_dispatch_housekeeping() {
+	local housekeeping_pid="${_PULSE_OWNED_HOUSEKEEPING_PID:-}"
+	[[ "$housekeeping_pid" =~ ^[1-9][0-9]*$ ]] || return 0
+	wait "$housekeeping_pid" 2>/dev/null || true
+	_PULSE_OWNED_HOUSEKEEPING_PID=""
+	return 0
+}
+
+#######################################
+# Start post-dispatch housekeeping in a bounded independent lane.
 #
 # Args:
 #   $1 - per-stage timeout seconds
@@ -431,12 +453,20 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 _pulse_start_post_dispatch_housekeeping() {
 	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
-
-	if [[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]]; then
-		# GH#34000: synchronous housekeeping (the Linux systemd default) shares
-		# the cycle clock, so leave the deterministic pipeline its reserve.
-		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$(_preflight_prefetch_reserved_finalise_seconds)" \
-			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+	local lane_budget="${PULSE_HOUSEKEEPING_BUDGET_SECONDS:-300}"
+	[[ "$lane_budget" =~ ^[1-9][0-9]{0,3}$ ]] || lane_budget=300
+	# Weight graph rebuild and cache prime at six shares each: unlike cheap
+	# scanners they must finish a batch before checkpointing. Nine other leaf
+	# calls (including catch-up and standalone brief release) get one each;
+	# three shares remain for watchdog teardown. Keep the caller's ceiling.
+	local stage_slice=$((lane_budget / 24))
+	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
+	local heavy_timeout="$stage_timeout" heavy_slice=$((stage_slice * 6))
+	[[ "$heavy_timeout" -le "$heavy_slice" ]] || heavy_timeout="$heavy_slice"
+	[[ "$stage_timeout" -le "$stage_slice" ]] || stage_timeout="$stage_slice"
+	# Repeated preflight calls in one service cycle must not lose the PID that
+	# owns the join, or launch another lane before the first acquires its lock.
+	if [[ "${_PULSE_OWNED_HOUSEKEEPING_PID:-}" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_PULSE_OWNED_HOUSEKEEPING_PID" 2>/dev/null; then
 		return 0
 	fi
 
@@ -457,11 +487,22 @@ _pulse_start_post_dispatch_housekeeping() {
 		trap '_pulse_housekeeping_on_signal HUP' HUP
 		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
 		_PULSE_HOUSEKEEPING_ASYNC=1
-		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+		_PULSE_HOUSEKEEPING_SUPERVISOR_PID="${BASHPID:-}"
+		if [[ -z "$_PULSE_HOUSEKEEPING_SUPERVISOR_PID" ]]; then
+			_PULSE_HOUSEKEEPING_SUPERVISOR_PID="$(exec sh -c 'printf "%s" "$PPID"')"
+		fi
+		run_stage_with_timeout "post_dispatch_housekeeping" "$lane_budget" \
+			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout" "$heavy_timeout"
 	) >>"$LOGFILE" 2>&1 &
 	local housekeeping_pid=$!
 	[[ "$monitor_was_on" == true ]] || set +m 2>/dev/null || true
 	echo "[pulse-wrapper] Async post-dispatch housekeeping: launched pid=${housekeeping_pid}" >>"$LOGFILE"
+	if [[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]]; then
+		# systemd kills service cgroup descendants at wrapper exit. Keep the
+		# lane owned and join at cycle end rather than serialising admission.
+		_PULSE_OWNED_HOUSEKEEPING_PID="$housekeeping_pid"
+		return 0
+	fi
 	disown "$housekeeping_pid" 2>/dev/null || true
 	return 0
 }

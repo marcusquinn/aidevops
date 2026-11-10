@@ -94,6 +94,13 @@ def argument_parser() -> argparse.ArgumentParser:
     session.add_argument("--pid", required=True, type=int)
     session.add_argument("--session-id", required=True)
     session.add_argument("--initialize", action="store_true")
+    relinquish = commands.add_parser(
+        "relinquish-session",
+        help="end the calling session's own run on a tree; never closes, archives or removes",
+    )
+    relinquish.add_argument("--path", required=True, type=Path)
+    relinquish.add_argument("--pid", required=True, type=int)
+    relinquish.add_argument("--session-id", required=True)
     create = commands.add_parser("create-worktree", help="create and admit a fresh tree")
     create.add_argument("--repo", required=True, type=Path)
     create.add_argument("--path", required=True, type=Path)
@@ -173,10 +180,11 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
             store, WorktreeSpec(args.repo, args.path, args.ref, tuple(options)),
             args.pid, args.session_id,
         )
-    if args.operation == "admit-session":
-        from .session import admit_session
+    if args.operation in {"admit-session", "relinquish-session"}:
+        from .session import admit_session, relinquish_session
 
-        return admit_session(store, args.path, args.pid, args.session_id)
+        session_operation = admit_session if args.operation == "admit-session" else relinquish_session
+        return session_operation(store, args.path, args.pid, args.session_id)
     if args.operation == "preserve-wip":
         from .preservation import preserve_wip
 
@@ -236,7 +244,8 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
         return _cleanup_operation(store, args)
     if args.operation in {
-        "create-worktree", "admit-session", "preserve-wip", "prepare-cleanup", "retire-worktree",
+        "create-worktree", "admit-session", "relinquish-session", "preserve-wip",
+        "prepare-cleanup", "retire-worktree",
     }:
         return _worktree_operation(store, args)
     if args.operation == "register":

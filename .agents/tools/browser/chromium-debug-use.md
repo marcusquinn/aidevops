@@ -49,7 +49,7 @@ Security boundaries:
 .agents/scripts/chromium-debug-use-helper.sh launch https://x.com/login
 # LAUNCH=started  PROFILE=cdp  PID=…  BROWSER_URL=http://127.0.0.1:<port>
 .agents/scripts/chromium-debug-use-helper.sh --profile cdp list
-.agents/scripts/chromium-debug-use-helper.sh launch-status   # running | orphan (0 pages) | stopped
+.agents/scripts/chromium-debug-use-helper.sh launch-status   # running | orphan (0 pages) | stale | stopped
 .agents/scripts/chromium-debug-use-helper.sh launch-stop     # or: launch-stop --all
 ```
 
@@ -197,6 +197,7 @@ When an isolated browser renders while the user profile is blank, verify the lis
 | `ECONNREFUSED` on `9222` | Browser was not started with the debug flag; use `launch` (free port) or pass its `BROWSER_URL` |
 | Debug flag ignored after relaunching the everyday browser | Expected: Chromium refuses remote debugging on the default profile. Use `launch` |
 | Debug port listens only on `[::1]` | `127.0.0.1:<port>` was taken (often 9222 by `dev-browser` or another instance). Stop the other owner or use `launch` |
+| New tabs crash or stay blank; `navigate` times out on `Page.enable` | The browser was updated on disk after `launch` (Brave deletes the old version). `launch-status` shows `stale`, and `launch`/`--profile` commands warn. Run `launch-stop` then `launch`; logins persist |
 | Stray tab-less instance hijacks AppleScript targeting | `launch-status` shows it as `orphan`; run `launch-stop` (or `--all`). Unknown instances: identify by PID/command line before stopping |
 | Site blocks or flags automation | Playwright-launched browsers set `navigator.webdriver`; use `launch` for user-assisted logins on bot-defended sites |
 | No pages found | Open a tab manually or create one with `context.newPage()` |

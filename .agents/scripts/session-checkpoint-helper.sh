@@ -708,12 +708,9 @@ _gather_continuation_state() {
 	# Open PRs
 	_cont_open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "none")"
 
-	# Supervisor batch state
-	_cont_batch_state="none"
-	local supervisor_helper="${SCRIPT_DIR}/pulse-wrapper.sh"
-	if [[ -x "$supervisor_helper" ]]; then
-		_cont_batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
-	fi
+	# Pulse has no read-only batch-list interface. Do not invoke its lifecycle
+	# launcher while collecting optional checkpoint state.
+	_cont_batch_state="unavailable (no read-only batch observer)"
 
 	# TODO.md in-progress tasks
 	_cont_todo_tasks="none"
@@ -875,12 +872,9 @@ cmd_auto_save() {
 	local worktree
 	worktree="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 
-	# Auto-detect batch from supervisor if not provided
-	local batch=""
-	local supervisor_helper="${SCRIPT_DIR}/pulse-wrapper.sh"
-	if [[ -x "$supervisor_helper" ]]; then
-		batch="$(bash "$supervisor_helper" list --active --format=id 2>/dev/null | head -1 || echo "")"
-	fi
+	# Pulse does not expose a read-only batch ID observer. Record that the
+	# observer was unavailable rather than starting the lifecycle launcher.
+	local batch="unavailable (no read-only batch observer)"
 
 	# Auto-detect next tasks from TODO.md if not provided
 	if [[ -z "$next_tasks" ]]; then

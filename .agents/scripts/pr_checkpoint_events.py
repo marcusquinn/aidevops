@@ -3,6 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Pure authenticated coordination-event predicates for checkpoint recovery."""
 
+import re
+
 from pr_checkpoint_event_fields import (
     EVENTS as EVENTS,
     TRUSTED as TRUSTED,
@@ -21,14 +23,46 @@ __all__ = (
     "original_lease", "intervening_event_bound", "intervening_events_valid",
     "CHECKPOINT_RELEASE_REASONS", "checkpoint_release_fields", "release_for",
     "own_claim_matches", "own_renewal_matches", "released_attempt_token",
-    "closes_released_attempt", "successors_valid",
+    "closes_released_attempt", "successors_valid", "STALL_RELEASE_REASONS",
+    "STALL_RELEASE_PATTERN", "release_reason", "stall_release", "attempt_owner",
 )
+
+
+def release_reason(release):
+    lines = [line for line in release["body"].splitlines() if line.startswith("CLAIM_RELEASED ")]
+    return fields(lines[0]).get("reason", "") if len(lines) == 1 else ""
+
+
+def stall_release(release):
+    """GH#37514: stall-class releases record no worker decision about the draft."""
+    reason = release_reason(release)
+    return reason in STALL_RELEASE_REASONS or bool(STALL_RELEASE_PATTERN.fullmatch(reason))
+
+
+def attempt_owner(comments, approval, release, trusted_logins=()):
+    """Return the login whose ready lease this release closes, or None.
+
+    #aidevops:trust-boundary — blocked and completed exits must close the
+    poster's own ready lease. A stall-class release is posted by whichever
+    trusted runner observed the stall (for example a stale-assignment reset), so
+    the attempt owner is the single login with a ready lease for that attempt;
+    several candidate logins, including edited leases, refuse.
+    """
+    poster = release["user"]["login"]
+    if not stall_release(release):
+        return poster
+    owners = {comment["user"]["login"] for comment, line, f in
+              events(comments, -1, release["id"], trusted_logins)
+              if line.startswith("DISPATCH_LEASE ") and f.get("phase") == "ready"
+              and normalized_attempt(f.get("attempt_id")) == approval["attempt"]}
+    return next(iter(owners)) if len(owners) == 1 else None
 
 
 def ready_leases(comments, approval, release, trusted_logins=()):
     ready = []
+    owner = attempt_owner(comments, approval, release, trusted_logins)
     for comment, line, f in events(comments, -1, release["id"], trusted_logins):
-        if not trusted(comment, trusted_logins) or comment["user"]["login"] != release["user"]["login"]:
+        if not trusted(comment, trusted_logins) or owner is None or comment["user"]["login"] != owner:
             continue
         if (line.startswith("DISPATCH_LEASE ")
                 and normalized_attempt(f.get("attempt_id")) == approval["attempt"]
@@ -48,8 +82,8 @@ def original_lease(comments, approval, release, released, trusted_logins=()):
     if normalized_attempt(released.get("attempt_id", approval["attempt"])) != approval["attempt"]:
         return False
     between = events(comments, ready[-1][0], release["id"], trusted_logins)
-    return intervening_events_valid(between, release["user"]["login"], token,
-                                    approval["attempt"], trusted_logins)
+    return intervening_events_valid(between, attempt_owner(comments, approval, release, trusted_logins),
+                                    token, approval["attempt"], trusted_logins)
 
 
 def intervening_event_bound(comment, line, f, binding, trusted_logins=()):
@@ -70,6 +104,16 @@ def intervening_events_valid(between, runner, token, attempt, trusted_logins=())
 
 
 CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete"}
+# GH#37514: stall-class releases (pr-checkpoint-continuation-helper.sh
+# _PCC_STALL_RELEASE_PATTERN, minus worker decisions and the push/network policy
+# terminal-blocker classes) also leave the preserved draft without a recorded
+# decision, so a maintainer may approve resuming their exact head.
+STALL_RELEASE_REASONS = frozenset({
+    "no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
+    "worker_noop_zero_output", "worker_incomplete_exit"})
+STALL_RELEASE_PATTERN = re.compile(
+    r"(?!(?:push|network)_policy_timeout$)"
+    r"(?:watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)")
 
 
 def checkpoint_release_fields(release, checkpoint_author):
@@ -79,8 +123,10 @@ def checkpoint_release_fields(release, checkpoint_author):
     poster = release["user"]["login"]
     #aidevops:trust-boundary — completed exits grant nothing by themselves. The
     # poster must authenticate their own ready lease, never the PR author's lease;
-    # a blocked release must also be the checkpoint author's own.
-    valid = all((reason in CHECKPOINT_RELEASE_REASONS, released.get("runner") == poster,
+    # a blocked release must also be the checkpoint author's own. A stall-class
+    # release must name its own poster; attempt_owner binds the closed lease.
+    supported = reason in CHECKPOINT_RELEASE_REASONS or stall_release(release)
+    valid = all((supported, released.get("runner") == poster,
                  reason != "blocked" or poster == checkpoint_author))
     return released if valid else None
 

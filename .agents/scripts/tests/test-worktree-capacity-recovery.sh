@@ -112,6 +112,8 @@ extract_gate_function() {
 	awk -v name="$name" '$0 ~ "^" name "\\(\\) \\{" {capture=1} capture {print} capture && /^}$/ {exit}' "$SCRIPTS/pulse-dispatch-core.sh"
 	return 0
 }
+# shellcheck source=../disk-capacity-lib.sh
+source "$SCRIPTS/disk-capacity-lib.sh"
 eval "$(extract_gate_function _dispatch_registered_worktree_count)"
 eval "$(extract_gate_function _dispatch_worktree_capacity_gate)"
 _dispatch_launch_pressure_cleanup() { return 0; }

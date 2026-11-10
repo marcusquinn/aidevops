@@ -105,8 +105,14 @@ class SessionBus {
     if (this.disposed) return;
     // t18905: subscribers still waiting (the run ended without an idle event,
     // or the process is exiting) get their one notice before presence goes.
+    // A failure for one session must not skip the others or the teardown.
     for (const [sessionID, state] of this.sessions) {
-      if (this.tree.isKnownRoot(sessionID)) sendIdleNotices(this, sessionID, state, { exited: true });
+      if (!this.tree.isKnownRoot(sessionID)) continue;
+      try {
+        sendIdleNotices(this, sessionID, state, { exited: true });
+      } catch (error) {
+        warn("exit notice", error);
+      }
     }
     this.presence.disposed = true;
     if (this.timer) this.timers.clearInterval(this.timer);

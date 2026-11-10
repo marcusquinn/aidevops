@@ -11,7 +11,7 @@
 # clause in V7.
 #
 # References:
-#   - headless-runtime-lib.sh::append_worker_headless_contract
+#   - headless-runtime-contract.sh::append_worker_headless_contract
 #   - reference/worker-branch-classification.md "Mode B", "Fix C"
 
 set -euo pipefail

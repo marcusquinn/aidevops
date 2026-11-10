@@ -189,14 +189,23 @@ _run_result_terminal_completion_confirmed() {
 		_run_classification_pattern="verified_prior_merged_objective"
 		return 0
 	fi
-	output_has_completion_signal "$output_file" && return 0
 	if _hrw_pr_less_terminal_complete "$session_key" "${work_dir:-}" \
 		"$(_hrw_issue_number_for_session "$session_key")" "${DISPATCH_REPO_SLUG:-}"; then
 		if [[ -n "${_HRW_SCOPED_DELIVERY_RECEIPT:-}" ]]; then
 			_run_failure_reason=""
 			_run_classification_source="scoped_delivery_receipt"
 			_run_classification_pattern="verified_already_delivered_scope"
+		elif [[ -n "${_HRW_REVIEW_TRIAGE_VERIFIED:-}" ]]; then
+			_run_failure_reason=""
+			_run_classification_source="review_triage_receipt"
+			_run_classification_pattern="verified_no_code_review_triage"
 		fi
+		return 0
+	fi
+	# A triage receipt cannot be replaced by a model's completion token. Keep the
+	# existing implementation marker path for other outcomes and merged receipts.
+	if [[ -z "${_HRW_REVIEW_TRIAGE_CANDIDATE:-}" &&
+		"${_HRW_PR_LESS_REJECTION:-}" != issue_evidence_unavailable ]] && output_has_completion_signal "$output_file"; then
 		return 0
 	fi
 	if [[ -n "${_HRW_PR_LESS_REJECTION:-}" ]]; then

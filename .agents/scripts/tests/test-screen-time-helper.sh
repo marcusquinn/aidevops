@@ -171,6 +171,16 @@ PY
 	[[ "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0" || "$(printf '%s' "$zero_json" | jq -r '.today_hours')" == "0.0" ]] || fail "explicit OFF observation was not preserved as legitimate zero: ${zero_json}"
 	[[ "$(printf '%s' "$zero_json" | jq -r '.periods.day.status')" == "ok" ]] || fail "explicit zero observation was marked unavailable"
 
+	local stale_db="${tmpdir}/unobserved-stale.db"
+	create_knowledge_db "$stale_db"
+	insert_backlit_pair "$stale_db" "$((now - 6 * 86400))" "$((now - 6 * 86400 + 3600))"
+	local stale_json
+	mkdir -p "${tmpdir}/unobserved-stale-home"
+	stale_json=$(HOME="${tmpdir}/unobserved-stale-home" AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" profile_stats "$stale_db")
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.status')" == "unavailable" ]] || fail "unobserved stale day was not unavailable: ${stale_json}"
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.reason')" == "no-observations-in-period" ]] || fail "unobserved stale day reason missing: ${stale_json}"
+	[[ "$(printf '%s' "$stale_json" | jq -r '.periods.day.hours')" == "null" ]] || fail "unobserved stale day was rendered as zero: ${stale_json}"
+
 	# Midday anchor: 4h app spans from a wall-clock "now" after 20:00 would cross
 	# local midnight into the excluded current day and break the 32h expectation.
 	local sparse_now

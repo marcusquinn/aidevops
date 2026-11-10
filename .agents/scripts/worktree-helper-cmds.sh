@@ -593,7 +593,9 @@ cmd_remove() {
 	# shellcheck source=./worker-lifecycle-state.sh
 	source "${BASH_SOURCE[0]%/*}/worker-lifecycle-state.sh" || return 1
 	# GH#36494: an explicit operator request prints the refusal's next step.
-	if ! WORKER_LIFECYCLE_EXPLAIN_REFUSAL=1 worker_lifecycle_cleanup_worktree "$path_to_remove"; then
+	# GH#37432: an explicit removal may end the calling session's own run.
+	if ! WORKER_LIFECYCLE_EXPLAIN_REFUSAL=1 WORKER_LIFECYCLE_RELINQUISH_CALLER=1 \
+		worker_lifecycle_cleanup_worktree "$path_to_remove"; then
 		printf 'Retirement refused; worktree retained: %s\n' "$path_to_remove" >&2
 		printf '%s\n' '--force cannot override lifecycle registry checks.' >&2
 		return 1

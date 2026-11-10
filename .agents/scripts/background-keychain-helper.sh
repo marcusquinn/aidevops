@@ -35,8 +35,8 @@ _bkc_probe() {
 	[[ "$forced" == "unlocked" ]] && return 0
 	local rc=0
 	python3 "${_BKC_DIR}/background-keychain.py" >/dev/null 2>&1 || rc=$?
-	# 2 = probe unsupported: do not block work on an unknown state.
-	[[ "$rc" -eq 1 ]] && return 1
+	# An unavailable or failed probe cannot establish that access is safe.
+	[[ "$rc" -ne 0 ]] && return 1
 	return 0
 }
 

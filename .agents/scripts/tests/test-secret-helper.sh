@@ -400,6 +400,59 @@ test_specific_injection_fails_closed() {
 	return 0
 }
 
+test_specific_injection_excludes_unrequested_fallback_secrets() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	cat >"$TEST_DIR/home/.config/aidevops/credentials.sh" <<'EOF'
+export REQUESTED_KEY="requested-placeholder-value"
+export UNRELATED_KEY="unrelated-placeholder-value"
+EOF
+	chmod 600 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local output="" exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" REQUESTED_KEY -- bash -c '
+[[ "$REQUESTED_KEY" == "requested-placeholder-value" && -z "${UNRELATED_KEY+x}" ]] && printf "%s" "child-ok"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 && "$output" == "child-ok" ]]; then
+		print_result "specific injection excludes unrequested fallback secrets" 0
+	else
+		print_result "specific injection excludes unrequested fallback secrets" 1 "Expected only the requested fallback name in the child environment"
+	fi
+	return 0
+}
+
+# GH#37408: IFS='=' read dropped one trailing '=' (base64 padding).
+test_injection_preserves_trailing_equals() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	mkdir -p "$TEST_DIR/home/.config/aidevops"
+	cat >"$TEST_DIR/home/.config/aidevops/credentials.sh" <<'EOF'
+export PAD_ONE="padded-placeholder-value="
+export PAD_TWO="padded-placeholder-value=="
+EOF
+	chmod 600 "$TEST_DIR/home/.config/aidevops/credentials.sh"
+	local output="" exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" PAD_ONE PAD_TWO -- bash -c '
+[[ "$PAD_ONE" == "padded-placeholder-value=" && "$PAD_TWO" == "padded-placeholder-value==" ]] &&
+printf "%s|%s" "child-ok" "$PAD_ONE"' 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 && "$output" == "child-ok|[REDACTED]" ]]; then
+		print_result "injection preserves trailing = and redacts the padded value" 0
+	else
+		print_result "injection preserves trailing = and redacts the padded value" 1 \
+			"rc=$exit_code; expected exact padded values in the child and redacted echo"
+	fi
+	return 0
+}
+
 test_empty_fallback_secret_fails_closed() {
 	setup
 	trap 'teardown' RETURN
@@ -1330,6 +1383,8 @@ main() {
 	test_multiline_gopass_injection_preserves_embedded_newlines
 	test_get_distinguishes_unreadable_from_missing
 	test_specific_injection_fails_closed
+	test_specific_injection_excludes_unrequested_fallback_secrets
+	test_injection_preserves_trailing_equals
 	test_empty_fallback_secret_fails_closed
 	test_locked_injection_exits_bounded
 	test_list_resolves_tenants_without_reading_values

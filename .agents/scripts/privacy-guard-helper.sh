@@ -38,6 +38,10 @@ set -u
 PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-${HOME:-}/.config/aidevops/repos.json}"
 PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-${HOME:-}/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
+# Private-slug enumeration needs last-known visibility, not push-time
+# freshness: nothing on the enumeration path refreshes the cache, so a short
+# TTL turns every known-public repo "private" minutes after its last probe.
+PRIVACY_ENUM_PUBLIC_TTL="${PRIVACY_ENUM_PUBLIC_TTL:-604800}" # 7 days
 # Optional local-only inventory. One `person: value`, `client: value`, or
 # `repo: owner/repo` entry per line; tabs are also accepted after the class.
 PRIVACY_ENTITY_CONFIG="${PRIVACY_ENTITY_CONFIG:-${HOME:-}/.aidevops/configs/privacy-guard-private-entities.txt}"
@@ -210,7 +214,8 @@ _privacy_cache_write() {
 #   - local_only: true (no remote, definitionally not public)
 #   - the slug's owner is the current gh user AND the repo is private on GH
 #
-# For speed, we use structural markers only (mirror_upstream, local_only).
+# Also: cached private visibility (repo-privacy.json) or `private: true`;
+# unknown visibility on pulse-enabled repos fails closed.
 # We do NOT probe every slug with gh api — that would cost N network calls
 # on every push. Users who want additional slugs covered can add them to
 # ~/.aidevops/configs/privacy-guard-extra-slugs.txt (one per line).
@@ -235,6 +240,46 @@ privacy_enumerate_private_slugs() {
 		)
 		| .slug // empty
 	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null)
+
+	# Ordinary private repos: cached GitHub visibility (never a live API call).
+	# A repos.json `private: true` field always counts, whatever the cache says.
+	# Unknown visibility (no cache entry, or a public entry older than
+	# PRIVACY_ENUM_PUBLIC_TTL) fails closed only for pulse-enabled repos;
+	# known-public entries stay out so self-references and the public site name
+	# in signature footers remain allowed. Cached private entries remain
+	# protected even after expiry.
+	# A non-numeric TTL would make jq reject --argjson and silently drop this
+	# whole class of slugs, so fall back to the documented default instead.
+	local enum_ttl="$PRIVACY_ENUM_PUBLIC_TTL"
+	if [[ ! "$enum_ttl" =~ ^[0-9]{1,10}$ ]]; then
+		privacy_log WARN "PRIVACY_ENUM_PUBLIC_TTL must be whole seconds; using 604800"
+		enum_ttl=604800
+	fi
+	local cache_json='{}'
+	if [[ -r "$PRIVACY_CACHE_FILE" ]]; then
+		cache_json=$(jq -c 'if type == "object" then . else {} end' "$PRIVACY_CACHE_FILE" 2>/dev/null) || cache_json='{}'
+		[[ -n "$cache_json" ]] || cache_json='{}'
+	fi
+	local vis_slugs
+	# shellcheck disable=SC2016 # jq variables must reach jq literally.
+	vis_slugs=$(jq -r --argjson cache "$cache_json" \
+		--argjson now "$(date +%s)" --argjson ttl "$enum_ttl" '
+		.initialized_repos[]?
+		| select((.slug // "") != "")
+		| . as $r
+		| (($cache[$r.slug] // null)
+			| if .private == false and ($now - (.checked_at // 0)) >= $ttl
+			  then null else . end) as $c
+		| select(
+			($r.private // false) == true
+			or ($c != null and ($c.private // false) == true)
+			or ($c == null and ($r.pulse // false) == true)
+		)
+		| .slug
+	' "$PRIVACY_REPOS_CONFIG" 2>/dev/null || true)
+	if [[ -n "$vis_slugs" ]]; then
+		slugs=$(printf '%s\n%s\n' "$slugs" "$vis_slugs")
+	fi
 
 	# Also include extra user-configured slugs
 	local extra_file="$HOME/.aidevops/configs/privacy-guard-extra-slugs.txt"

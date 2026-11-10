@@ -93,7 +93,11 @@ printf '%sRunning privacy-guard tests%s\n' "$BLUE" "$NC"
 # -----------------------------------------------------------------------------
 # Test 5: enumerate
 # -----------------------------------------------------------------------------
+# Known-public visibility keeps a pulse-enabled repo out of the list
+# (unknown visibility on pulse-enabled repos fails closed).
+printf '{"testorg/public-repo": {"private": false, "checked_at": %s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
 slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+rm -f "$PRIVACY_CACHE_FILE"
 if printf '%s\n' "$slugs" | grep -q '^testorg/private-mirror$' &&
 	printf '%s\n' "$slugs" | grep -q '^testorg/local-only$'; then
 	pass "enumerate picks up mirror_upstream and local_only entries"
@@ -107,6 +111,68 @@ if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
 else
 	pass "enumerate excludes non-private testorg/public-repo slug"
 fi
+
+# Expired public entries must not suppress the pulse-enabled fallback. Private
+# cache entries remain protected regardless of age (including non-pulse repos).
+for cache_entry in \
+	'{"private":false,"checked_at":1}' \
+	'{"private":false}' \
+	'{"private":true,"checked_at":1}'; do
+	printf '{"testorg/public-repo":%s}\n' "$cache_entry" >"$PRIVACY_CACHE_FILE"
+	slugs=$(privacy_enumerate_private_slugs 2>/dev/null)
+	if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+		pass "enumerate protects pulse repo with stale visibility: $cache_entry"
+	else
+		fail "enumerate missed pulse repo with stale visibility: $cache_entry"
+	fi
+done
+
+# A public observation older than the 10-minute push-probe TTL but inside the
+# enumeration window stays known-public: enumeration never refreshes the cache,
+# so expiring it at PRIVACY_CACHE_TTL turned every public pulse repo private.
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 3600))" >"$PRIVACY_CACHE_FILE"
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=604800 privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	fail "enumerate treated a 1-hour-old public observation as private"
+else
+	pass "enumerate keeps a 1-hour-old public observation known-public"
+fi
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(($(date +%s) - 8 * 86400))" >"$PRIVACY_CACHE_FILE"
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=604800 privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate fails closed on an 8-day-old public observation"
+else
+	fail "enumerate trusted a public observation beyond PRIVACY_ENUM_PUBLIC_TTL"
+fi
+
+# A non-numeric TTL must not make jq drop the whole cached-visibility class.
+printf '{"testorg/public-repo":{"private":true,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+slugs=$(PRIVACY_ENUM_PUBLIC_TTL=7d privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate keeps cached-private coverage with an invalid TTL"
+else
+	fail "invalid PRIVACY_ENUM_PUBLIC_TTL dropped cached-private slugs"
+fi
+
+# An explicit repos.json private flag wins over a fresh public cache entry.
+printf '{"testorg/public-repo":{"private":false,"checked_at":%s}}\n' "$(date +%s)" >"$PRIVACY_CACHE_FILE"
+printf '{"initialized_repos":[{"slug":"testorg/public-repo","private":true,"pulse":false}]}\n' >"${TMP}/explicit-private.json"
+slugs=$(PRIVACY_REPOS_CONFIG="${TMP}/explicit-private.json" privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate honours explicit private:true despite a public cache entry"
+else
+	fail "fresh public cache entry overrode explicit private:true"
+fi
+
+printf '{"testorg/public-repo":{"private":true,"checked_at":1}}\n' >"$PRIVACY_CACHE_FILE"
+printf '{"initialized_repos":[{"slug":"testorg/public-repo","pulse":false}]}\n' >"${TMP}/nonpulse.json"
+slugs=$(PRIVACY_REPOS_CONFIG="${TMP}/nonpulse.json" privacy_enumerate_private_slugs 2>/dev/null)
+if printf '%s\n' "$slugs" | grep -q '^testorg/public-repo$'; then
+	pass "enumerate retains expired private entries for non-pulse repos"
+else
+	fail "enumerate dropped expired private entry for non-pulse repo"
+fi
+rm -f "$PRIVACY_CACHE_FILE"
 
 # -----------------------------------------------------------------------------
 # Test 4: extra slug file

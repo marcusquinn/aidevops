@@ -10,7 +10,8 @@
 
 import { resolve } from "node:path";
 import pkg from "../package.json";
-import type { CommandContext, CommandDefinition } from "./types";
+import { busCommand } from "./session-bus";
+import type { BotConfig, CommandContext, CommandDefinition } from "./types";
 
 // Re-export exec approval manager from extracted module
 export { getApprovalManager, setApprovalManager } from "./exec-commands";
@@ -317,3 +318,21 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
   // Session management
   sessionsCommand,
 ];
+
+/** Build an adapter-local registry without changing the disabled scaffolds. */
+export function createBuiltinCommands(config: BotConfig): CommandDefinition[] {
+  if (!config.sessionBus?.enabled) return BUILTIN_COMMANDS;
+  const names = ["ask", "send", "sessions", "bind", "unbind", "launch"];
+  const bus = names.map((name): CommandDefinition => ({
+    name,
+    description: `Session bus ${name}`,
+    groupEnabled: true,
+    dmEnabled: true,
+    handler: (ctx) => busCommand(ctx, name, config.dataDir),
+  }));
+  const commands = [...BUILTIN_COMMANDS.filter(cmd => cmd.name !== "ask" && cmd.name !== "sessions"), ...bus];
+  return commands.map(cmd => cmd.name === "help" ? {
+    ...cmd,
+    handler: async () => ["Available commands:", "", ...commands.map(item => `/${item.name} — ${item.description}`)].join("\n"),
+  } : cmd);
+}

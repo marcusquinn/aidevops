@@ -465,6 +465,131 @@ _isc_print_auto_release_summary() {
 	return 0
 }
 
+# Examine one stamp with the Phase 1 safety gates. Sets _ISC_STAMP_OUTCOME to:
+#   ignored  — invalid metadata, another host, or no owner PID (fail closed)
+#   alive    — the owner process still runs
+#   progress — the claim worktree holds dirty/ahead or unverifiable work
+#   stale    — dead and releasable, report-only mode (fields in _ISC_STAMP_*)
+#   or an _ISC_DEAD_STAMP_OUTCOME value when auto-release ran.
+_ISC_STAMP_OUTCOME=""
+_ISC_STAMP_ISSUE=""
+_ISC_STAMP_SLUG=""
+_ISC_STAMP_WORKTREE=""
+_ISC_STAMP_PID=""
+_isc_examine_dead_stamp() {
+	local stamp="$1"
+	local auto_release_flag="$2"
+	local local_host="$3"
+	_ISC_STAMP_OUTCOME="ignored"
+	local issue slug worktree pid hostname stored_hash
+	issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
+	slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
+	worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
+	pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
+	hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
+	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	# Only consider current-hostname stamps — cross-machine stamps
+	# can't have their PID verified and must not be surfaced as stale.
+	[[ "$hostname" == "$local_host" ]] || return 0
+	# Missing owner metadata cannot prove that a claim is abandoned.
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 0
+
+	# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
+	# Read stored argv hash from stamp for higher precision.
+	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
+	if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+		_ISC_STAMP_OUTCOME="alive"
+		return 0
+	fi
+
+	local progress_rc=0
+	_isc_worktree_has_recoverable_progress "$worktree" || progress_rc=$?
+	# Dirty/ahead work is a durable recovery checkpoint. Unknown Git
+	# state also fails closed rather than releasing possible work.
+	if [[ "$progress_rc" -eq 0 || "$progress_rc" -eq 2 ]]; then
+		_ISC_STAMP_OUTCOME="progress"
+		return 0
+	fi
+
+	_ISC_STAMP_ISSUE="$issue"
+	_ISC_STAMP_SLUG="$slug"
+	_ISC_STAMP_WORKTREE="$worktree"
+	_ISC_STAMP_PID="$pid"
+	if [[ "$auto_release_flag" == "1" ]]; then
+		# Open lockdowns and GitHub lookup failures fail closed.
+		_isc_auto_release_dead_stamp "$stamp" "$issue" "$slug"
+		_ISC_STAMP_OUTCOME="$_ISC_DEAD_STAMP_OUTCOME"
+		return 0
+	fi
+	_ISC_STAMP_OUTCOME="stale"
+	return 0
+}
+
+# Rotation cursor for the bounded pulse reaper (GH#37524). A fixed cap over a
+# fixed glob order examined the same first N stamps every cycle, so dead claims
+# sorting later were never released and kept blocking dispatch. The cursor holds
+# the basename of the last stamp a capped cycle examined; the next cycle resumes
+# after it and wraps. The dotfile is invisible to the *.json enumerators.
+_isc_reap_cursor_path() {
+	printf '%s/.reap-cursor\n' "$CLAIM_STAMP_DIR"
+	return 0
+}
+
+# Print the stored cursor, or nothing when absent or malformed (restart).
+_isc_read_reap_cursor() {
+	local cursor_file cursor=""
+	cursor_file=$(_isc_reap_cursor_path)
+	if [[ -f "$cursor_file" ]]; then
+		IFS= read -r cursor <"$cursor_file" 2>/dev/null || true
+	fi
+	[[ "$cursor" =~ ^[A-Za-z0-9_.-]+\.json$ ]] || cursor=""
+	printf '%s\n' "$cursor"
+	return 0
+}
+
+# Persist the resume point after a capped cycle; clear it after a full pass.
+# Args: $1 capped (0|1), $2 last examined stamp basename
+_isc_write_reap_cursor() {
+	local capped="$1"
+	local last_examined="$2"
+	local cursor_file
+	cursor_file=$(_isc_reap_cursor_path)
+	if [[ "$capped" != "1" || -z "$last_examined" ]]; then
+		rm -f "$cursor_file" 2>/dev/null || true
+		return 0
+	fi
+	local tmp_file="${cursor_file}.tmp.$$"
+	if printf '%s\n' "$last_examined" >"$tmp_file" 2>/dev/null; then
+		mv -f "$tmp_file" "$cursor_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Print stamp paths, one per line: names after the cursor first, then the
+# wrapped remainder. Byte order keeps glob order and [[ > ]] consistent.
+_isc_ordered_stamp_paths() {
+	local cursor="$1"
+	local LC_ALL=C
+	local stamp name
+	for stamp in "$CLAIM_STAMP_DIR"/*.json; do
+		[[ -f "$stamp" ]] || continue
+		name="${stamp##*/}"
+		if [[ -z "$cursor" || "$name" > "$cursor" ]]; then
+			printf '%s\n' "$stamp"
+		fi
+	done
+	[[ -n "$cursor" ]] || return 0
+	for stamp in "$CLAIM_STAMP_DIR"/*.json; do
+		[[ -f "$stamp" ]] || continue
+		name="${stamp##*/}"
+		if [[ ! "$name" > "$cursor" ]]; then
+			printf '%s\n' "$stamp"
+		fi
+	done
+	return 0
+}
+
 _isc_scan_dead_stamps_phase() {
 	local auto_release_flag="${1:-0}"
 	local stamp_limit="${2:-0}"
@@ -473,70 +598,47 @@ _isc_scan_dead_stamps_phase() {
 	local auto_released=0
 	local closed_reaped=0
 	local skip_lockdown=0 skip_progress=0 skip_lookup=0
-	local stamps_examined=0
+	local stamps_examined=0 capped=0 last_examined="" cursor=""
 	local local_host
 	local_host=$(hostname 2>/dev/null || echo "unknown")
+	# Only the bounded reaper rotates; unbounded scan-stale never touches it.
+	[[ "$stamp_limit" -gt 0 ]] && cursor=$(_isc_read_reap_cursor)
 
 	if [[ -d "$CLAIM_STAMP_DIR" ]]; then
 		local stamp
-		for stamp in "$CLAIM_STAMP_DIR"/*.json; do
+		# fd 3 keeps gh/jq calls in the loop body from consuming the list.
+		while IFS= read -r stamp <&3; do
 			[[ -f "$stamp" ]] || continue
 			if [[ "$stamp_limit" -gt 0 && "$stamps_examined" -ge "$stamp_limit" ]]; then
+				capped=1
 				break
 			fi
 			stamps_examined=$((stamps_examined + 1))
-			local issue slug worktree pid hostname
-			issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
-			slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
-			worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
-			pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
-			hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
-			[[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
-			[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
-			# Only consider current-hostname stamps — cross-machine stamps
-			# can't have their PID verified and must not be surfaced as stale.
-			[[ "$hostname" == "$local_host" ]] || continue
-			# Missing owner metadata cannot prove that a claim is abandoned.
-			[[ "$pid" =~ ^[0-9]+$ ]] || continue
-
-			local pid_alive=0
-			# t2421: command-aware liveness — bare kill -0 lies on macOS PID reuse.
-			# Read stored argv hash from stamp for higher precision.
-			local stored_hash
-			stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp" 2>/dev/null || echo "")
-			if [[ -n "$pid" ]] && _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
-				pid_alive=1
-			fi
-
-			if [[ $pid_alive -eq 0 ]]; then
-				local progress_rc=0
-				_isc_worktree_has_recoverable_progress "$worktree" || progress_rc=$?
-				# Dirty/ahead work is a durable recovery checkpoint. Unknown Git
-				# state also fails closed rather than releasing possible work.
-				if [[ "$progress_rc" -eq 0 || "$progress_rc" -eq 2 ]]; then
-					skip_progress=$((skip_progress + 1))
-					continue
-				fi
-				if [[ "$auto_release_flag" == "1" ]]; then
-					# Open lockdowns and GitHub lookup failures fail closed.
-					_isc_auto_release_dead_stamp "$stamp" "$issue" "$slug"
-					case "$_ISC_DEAD_STAMP_OUTCOME" in
-					released) auto_released=$((auto_released + 1)) ;;
-					closed-reaped) closed_reaped=$((closed_reaped + 1)) ;;
-					no-auto-dispatch) skip_lockdown=$((skip_lockdown + 1)) ;;
-					*) skip_lookup=$((skip_lookup + 1)) ;;
-					esac
-				else
-					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead session — PID gone or recycled by unrelated process):\n\n'
-					printf '  #%s in %s\n' "$issue" "$slug"
-					printf '    worktree: %s\n' "${worktree:-unknown}"
-					printf '    pid:      %s (dead or argv-hash mismatch)\n' "${pid:-unknown}"
-					printf '    release:  aidevops issue release %s\n' "$issue"
-					printf '\n'
-					stale_count=$((stale_count + 1))
-				fi
-			fi
-		done
+			last_examined="${stamp##*/}"
+			_isc_examine_dead_stamp "$stamp" "$auto_release_flag" "$local_host"
+			case "$_ISC_STAMP_OUTCOME" in
+			ignored | alive) ;;
+			progress) skip_progress=$((skip_progress + 1)) ;;
+			released) auto_released=$((auto_released + 1)) ;;
+			closed-reaped) closed_reaped=$((closed_reaped + 1)) ;;
+			no-auto-dispatch) skip_lockdown=$((skip_lockdown + 1)) ;;
+			stale)
+				[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead session — PID gone or recycled by unrelated process):\n\n'
+				printf '  #%s in %s\n' "$_ISC_STAMP_ISSUE" "$_ISC_STAMP_SLUG"
+				printf '    worktree: %s\n' "${_ISC_STAMP_WORKTREE:-unknown}"
+				printf '    pid:      %s (dead or argv-hash mismatch)\n' "${_ISC_STAMP_PID:-unknown}"
+				printf '    release:  aidevops issue release %s\n' "$_ISC_STAMP_ISSUE"
+				printf '\n'
+				stale_count=$((stale_count + 1))
+				;;
+			*) skip_lookup=$((skip_lookup + 1)) ;;
+			esac
+		done 3< <(_isc_ordered_stamp_paths "$cursor")
+	fi
+	if [[ "$stamp_limit" -gt 0 ]]; then
+		_isc_write_reap_cursor "$capped" "$last_examined"
+		[[ "$capped" -eq 1 ]] &&
+			printf 'Phase 1: examined %d stamp(s) this cycle; rotation resumes after %s.\n' "$stamps_examined" "$last_examined"
 	fi
 
 	if [[ "$auto_release_flag" == "1" ]]; then

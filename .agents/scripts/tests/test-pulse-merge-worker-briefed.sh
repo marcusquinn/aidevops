@@ -1085,14 +1085,23 @@ test_starter_sync_scoped_trust() {
 # _check_pr_merge_gates, so it cannot pin gate order.
 # =============================================================================
 _define_starter_gate_chain() {
-	local src="" fn=""
+	local src="" fn="" part=""
 	for fn in _check_pr_merge_gates _pm_gate_review_mode _pm_gate_author_trust \
 		_pm_gate_route_ineligible_author _pm_gate_repository_and_issue \
 		_pm_gate_origin_authority _pm_gate_review_bot _pulse_merge_final_trust_gate; do
-		src+=$'\n'$(awk -v f="$fn" '$0 ~ "^" f "\\(\\) \\{" , /^}$/ { print }' "$MERGE_SCRIPT")
+		part=$(awk -v f="$fn" '$0 ~ "^" f "\\(\\) \\{" , /^}$/ { print }' "$MERGE_SCRIPT")
+		if [[ -z "$part" ]]; then
+			printf 'ERROR: could not extract %s from %s\n' "$fn" "$MERGE_SCRIPT" >&2
+			return 1
+		fi
+		src+=$'\n'"$part"
 	done
-	src+=$'\n'$(awk '/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-gates.sh")
-	[[ -n "$src" ]] || return 1
+	part=$(awk '/^_pulse_merge_live_state_gate\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-gates.sh")
+	if [[ -z "$part" ]]; then
+		printf 'ERROR: could not extract _pulse_merge_live_state_gate from %s\n' "${SCRIPT_DIR}/../pulse-merge-gates.sh" >&2
+		return 1
+	fi
+	src+=$'\n'"$part"
 	# shellcheck disable=SC1090
 	eval "$src"
 

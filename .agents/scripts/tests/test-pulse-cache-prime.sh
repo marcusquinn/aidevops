@@ -172,6 +172,18 @@ main() {
 	test_missing_helper
 	test_success
 	test_failure
+	# Cycle entry must not pay a second cold refresh before admission. The
+	# standalone restart prime remains supported; cycles use housekeeping.
+	if grep -q '_pulse_run_optional_stage_with_timeout "cache_prime"' "${SCRIPT_DIR}/../pulse-wrapper.sh"; then
+		_print_result "cycle entry does not synchronously prime caches" 0
+	else
+		_print_result "cycle entry does not synchronously prime caches" 1
+	fi
+	if grep -q '_pulse_run_optional_stage_with_timeout "cache_prime"' "${SCRIPT_DIR}/../pulse-dispatch-engine-housekeeping.sh"; then
+		_print_result "housekeeping retains stale cache prime" 1
+	else
+		_print_result "housekeeping retains stale cache prime" 0
+	fi
 	_teardown
 
 	echo ""

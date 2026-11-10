@@ -9,7 +9,9 @@ from .storage import StoreCapacity, StoreConflict
 def error_details(error: Exception, operation: str) -> dict:
     """Translate CLI failures without exposing arbitrary system error text."""
     reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
-    if operation in {"retire-worktree", "cleanup", "upgrade", "retire-enrolled-only"} and isinstance(error, StoreConflict):
+    if operation in {
+        "retire-worktree", "cleanup", "upgrade", "retire-enrolled-only", "relinquish-session",
+    } and isinstance(error, StoreConflict):
         reason = str(error)
     retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only")
     mode = "retirement" if operation in retirement else "observe-only"

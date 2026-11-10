@@ -233,7 +233,7 @@ write_pr_snapshot() {
 		date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ) || return 1
 	jq -n --arg ts "$timestamp" \
 		--arg oid "$oid" --arg updated "$updated" --argjson pr "$pr" --argjson complete "$complete" \
-		'{complete:$complete,timestamp:$ts,items:[{number:$pr,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
+		'{complete:$complete,timestamp:$ts,items:[{number:$pr,isDraft:true,updatedAt:$updated,headRefOid:$oid}]}' >"$SNAPSHOT_FILE"
 	return 0
 }
 # GH#34402: stub the bounded exact-PR REST read. Fingerprints are read inside
@@ -247,6 +247,11 @@ timeout_sec() {
 	return $?
 }
 gh() {
+	# Boundary comments are fetched once when recording, not on cache hits.
+	if [[ "$*" == *'/comments?per_page=100'* ]]; then
+		printf '[[]]\n'
+		return 0
+	fi
 	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
 	[[ -n "$STUB_PR_REST_JSON" ]] || return 1
 	printf '%s\n' "$STUB_PR_REST_JSON"
@@ -371,7 +376,7 @@ else
 	print_result "incomplete snapshot records and reuses the exact PR revision" 1
 fi
 : >"$GH_CALLS_FILE"
-printf '%s\t%s\t%s\t%s\t%s\t\n' "$(($(date +%s) - _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS - 1))" \
+printf '%s\t%s\t%s\t%s\t%s\t0:43200\n' "$(($(date +%s) - 21600))" \
 	"2026-09-29T12:01:00Z" worker_draft_checkpoint_blocked 29519 "2026-09-29T12:00:00Z_rest-head" >"$cache_file"
 if ! _dispatch_negative_cache_reason "$candidate" >/dev/null && [[ ! -s "$GH_CALLS_FILE" ]]; then
 	print_result "expired hint is rejected before any exact-PR read" 0

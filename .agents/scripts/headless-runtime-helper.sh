@@ -201,6 +201,11 @@ _finalize_isolated_runtime_data() {
 	local runtime_role="$2"
 	local ephemeral_run=0
 	[[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]] || return 0
+	# GH#37527: count attempt activity before merge/discard so exit
+	# classification cannot read a false zero from the shared DB.
+	if declare -F _hrff_snapshot_attempt_activity >/dev/null 2>&1; then
+		_hrff_snapshot_attempt_activity "${isolated_data_dir}/opencode/opencode.db"
+	fi
 	if _headless_run_is_ephemeral "$runtime_role"; then
 		ephemeral_run=1
 		print_info "[lifecycle] ephemeral_db_discarded role=$runtime_role pid=$$"

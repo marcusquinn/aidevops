@@ -10,6 +10,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.154] - 2026-11-10
+
+### Fixed
+
+- stop dispatching workers on already-satisfied rollout issues
+- privacy guard enumerates ordinary private repos (GH#37508) (#37513)
+- overlap maintenance with dispatch admission (GH#37501) (#37506)
+- raise worktree cap to 1000, clean before throttling, report throughput throttles
+
+## [3.39.153] - 2026-11-10
+
+### Added
+
+- t18893 Matrix session bus bridge (#37485)
+
+### Changed
+
+- Documentation: record the shipped session-relinquish fix in the 3.39.152 changelog
+- Documentation: tighten cleanup safety contract (#37491)
+
+### Fixed
+
+- refuse gh comment --edit-last and add comment-edit by ID
+- mark unobserved stale periods unavailable (#37475)
+- sign issue body edits in gh write helper (#37489)
+- preserve trailing = in injected secret values
+- release floor-path product hold when only blocked or retry product rows remain (GH#37478) (#37484)
+- detect launched browser left stale by on-disk update
+- exclude successful PR handoffs from failures (#37477)
+- verify PR-less review-triage completion (#37470)
+
+## [3.39.152] - 2026-11-09
+
+### Changed
+
+- Maintenance: add t18929 and t18930 briefs (worktree ownership relinquish)
+
+### Fixed
+
+- relinquish a finished interactive session's worktree ownership at full-loop complete and finalize-receipt so Pulse can retire merged trees while the app runs (GH#37448) (#37473)
+- update STUCK_TRIPPED help text to match classifier (GH#37459) (#37464)
+- log starter-sync scope refusals (#37472)
+- scope stale worktree reaping to lane repository (#37447)
+- preserve release lane notices and message text (#37444)
+- validate combined brief dispatch scope (#37460)
+
+## [3.39.151] - 2026-11-09
+
+### Added
+
+- let a session relinquish its own run so explicit removal of its finished tree succeeds
+
+### Fixed
+
+- preserve loop identity during postflight (#37454)
+- fail closed when keychain probe fails (#37455)
+- normalize line endings before REQUEST_START match in gh_quota_debug_request (GH#37440) (#37451)
+- honour breaker bypass in relay gate and guard exit notices (#37453)
+- use bool-excluding isinstance for removal boundary check (#37441)
+
+## [3.39.150] - 2026-11-09
+
+### Changed
+
+- Documentation: preserve keychain items during recovery (#37416)
+- Tests: cover missing-isDraft snapshot REST fingerprint fallback (GH#37411) (#37420)
+- Documentation: tighten cleanup safety overview (#37401)
+- Documentation: hostinger.md cookie-skipping Cloudflare cache rule check (#37387)
+
+### Fixed
+
+- reap newest release trees first and ignore the Spotlight marker when judging idleness
+- reject repeated GraphQL pagination cursor (#37422)
+- bind deferred blocker context (#37426)
+- refresh remote-branch cache after prune fetch (#37428)
+- re-anchor window on each zero-attempt so slow-failing runners trip (#37419)
+- reject missing pulse merge gate extractions (GH#37413) (#37423)
+- isolate requested fallback injection
+- detect and rerun required checks whose workflow run never started (#37410)
+
+## [3.39.149] - 2026-11-09
+
+### Changed
+
+- Documentation: review Native SDK v0.11.1 (#37392)
+
+### Fixed
+
+- bound unchanged draft checkpoint hints (GH#37394) (#37396)
+- close quiescent admission in the observation-era managed takeover
+- run the worker bus relay on the worker-watchdog 2-minute cadence
+
+## [3.39.148] - 2026-11-09
+
+### Changed
+
+- Tests: pin starter-sync trust never bypasses other pulse-merge gates (GH#37373) (#37379)
+
+### Fixed
+
+- hold terminal-blocker circuits when revision or comment evidence is unavailable
+- prove open-PR state from GraphQL when REST is deferred
+- restore gh shim safe-body edit fixtures (#37378)
+- preserve systemd cycles and recognize split SSH sessions
+
 ## [3.39.147] - 2026-11-09
 
 ### Fixed

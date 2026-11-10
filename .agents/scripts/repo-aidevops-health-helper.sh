@@ -729,6 +729,35 @@ EOF
 }
 
 #######################################
+# Confirm a workflow caller on the remote default branch (GH#37510).
+# check-workflows-helper.sh is a no-network local audit, so a canonical
+# checkout behind its upstream reports NO-WORKFLOW for a caller that is
+# already merged remotely. Only an explicit HTTP 404 proves absence.
+# Echoes: present | absent | unknown
+# Args: $1 slug, $2 workflow
+#######################################
+_trust_remote_workflow_state() {
+	local slug="$1"
+	local workflow="$2"
+	local err_file rc=0
+	err_file=$(mktemp)
+	gh api "repos/${slug}/contents/.github/workflows/${workflow}.yml" --silent 2>"$err_file" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		rm -f "$err_file"
+		echo present
+		return 0
+	fi
+	if grep -q 'HTTP 404' "$err_file"; then
+		rm -f "$err_file"
+		echo absent
+		return 0
+	fi
+	rm -f "$err_file"
+	echo unknown
+	return 0
+}
+
+#######################################
 # Install one required workflow on one repo.
 # Echoes: installed-pr | present | skipped | failed
 # Args: $1 slug, $2 workflow, $3 dry_run
@@ -751,6 +780,22 @@ _trust_install_one() {
 		echo present
 		return 0
 	fi
+	# Never file a tracking issue (and a worker dispatch) on stale local evidence.
+	local remote_state
+	remote_state=$(_trust_remote_workflow_state "$slug" "$workflow")
+	case "$remote_state" in
+	present)
+		log_info "trust-workflows: $slug — $workflow present on remote default branch; local checkout is stale"
+		echo present
+		return 0
+		;;
+	absent) ;;
+	*)
+		log_warn "trust-workflows: $slug — remote $workflow state unverified; not filing this run"
+		echo skipped
+		return 0
+		;;
+	esac
 
 	local now last
 	now=$(date +%s)

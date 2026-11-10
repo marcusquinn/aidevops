@@ -243,8 +243,8 @@ Phases 1–2 proved the bus (released in v3.39.136; owner test with two live ses
 | --- | --- | --- |
 | t18891 | Chat ingest: prompt-guard scan, verified `--actor`, opt-in owner wakes, `list --redact` (steps 2–3 above) | — |
 | t18892 | Channel bindings (`bind`/`unbind`/`channel:` targets) and per-task `launch` on `opencode serve` | t18891 |
-| t18893 | Matrix bot adapter: room commands, bound rooms, outbox relay | t18892 |
-| t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds | t18892 |
+| t18893 | Matrix bot adapter: room commands, bound rooms, outbox relay (implemented; live homeserver verification pending) | t18892 |
+| t18894 | SimpleX bot adapter: replaces the `/sessions` and `/ask` scaffolds (GH#37247) | t18892 |
 | t18898 | Buzz-hosted (remote-interactive) agents as bus endpoints: `interface`/`agent` presence labels, `chat:` sender origin so they never wake local sessions, no wakes into them | t18891 |
 
 t18892 status (2026-11-09, GH#37245): built. `bind`, `unbind`, `bindings [--app] [--json]`,

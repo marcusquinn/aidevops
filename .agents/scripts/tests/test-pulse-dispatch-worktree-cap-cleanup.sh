@@ -11,7 +11,9 @@ LOGFILE="${TEST_ROOT}/pulse.log"
 AIDEVOPS_WORKTREE_CAPACITY_HELPER="${SCRIPT_DIR}/../cleanup-worktrees-async-helper.sh"
 _PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN='^[0-9]+$'
 LAUNCHES=0
-COUNT=159
+COUNT=149
+# shellcheck source=../disk-capacity-lib.sh
+source "${SCRIPT_DIR}/../disk-capacity-lib.sh"
 
 extract_helper() {
 	local name="$1"
@@ -53,7 +55,8 @@ run_stage_with_timeout() { INLINE_RUNS=$((INLINE_RUNS + 1)); return 99; }
 
 _dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
 [[ "$LAUNCHES" == 0 ]]
-COUNT=160
+# Absolute cleanup threshold (150) applies before 80% of the cap (160).
+COUNT=150
 _dispatch_worktree_capacity_gate "$TEST_ROOT" 36626 owner/repo 200
 [[ "$LAUNCHES" == 1 ]]
 COUNT=199
@@ -72,7 +75,7 @@ if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 1
 if _dispatch_cleanup_disk_pressure 36626 owner/repo "$TEST_ROOT" below-minimum 100 1; then exit 1; fi
 [[ "$LAUNCHES" == 2 ]]
 [[ "$INLINE_RUNS" == 0 ]]
-printf 'PASS: prunable exclusion, 80%% trigger, launch deduplication, cap/unknown/disk fail-closed, no inline cleanup\n'
+printf 'PASS: prunable exclusion, cleanup-threshold trigger, launch deduplication, cap/unknown/disk fail-closed, no inline cleanup\n'
 
 # Exercise the production systemd command builder without starting a service.
 # shellcheck source=../pulse-dispatch-preflight-lib.sh
@@ -91,6 +94,7 @@ _preflight_launch_systemd_cleanup "$AIDEVOPS_WORKTREE_CAPACITY_HELPER" "$LOGFILE
 printf 'PASS: systemd retains custom preservation and pressure settings\n'
 
 CORE_SCRIPT="${SCRIPT_DIR}/../cleanup-worktrees-async-helper.sh"
+eval "$(extract_helper _worktree_cap_and_threshold)"
 eval "$(extract_helper _worktree_pressure_present)"
 _missing_metadata_repo_paths() { printf '/repo\n'; return 0; }
 DISK_OK=1

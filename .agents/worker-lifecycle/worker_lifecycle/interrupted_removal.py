@@ -138,7 +138,7 @@ def removal_started(
             "SELECT recorded_at FROM events WHERE event_id=?", (planned_id,),
         ).fetchone()
         boundary = _recorded_nanos((earlier or row)[0]) - CLOCK_SLACK_NS
-    if type(boundary) is not int or boundary <= 0:
+    if isinstance(boundary, bool) or not isinstance(boundary, int) or boundary <= 0:
         raise ValueError("interrupted-removal-time-unavailable")
     return boundary
 

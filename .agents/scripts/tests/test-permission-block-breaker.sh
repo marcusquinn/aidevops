@@ -353,8 +353,10 @@ bash "$SCRIPTS_DIR/pulse-runner-health-helper.sh" resume --reason 'breaker gate 
 # Main cycle: execute the real _pulse_run_deterministic_pipeline (extracted from
 # pulse-wrapper.sh, which is not safe to source) with every stage stubbed, so a
 # removed main-path permission check cannot pass while apply_dispatch_max runs.
+# GH#37476: the pipeline's phases live in top-level _pulse_pipeline_* helpers,
+# so extract the orchestrator plus every helper definition.
 # shellcheck disable=SC2016 # awk program, not shell expansion
-PIPELINE_AWK='index($0, "_pulse_run_deterministic_pipeline() {") == 1 { p = 1 } p { print } p && $0 == "}" { exit }'
+PIPELINE_AWK='index($0, "_pulse_run_deterministic_pipeline() {") == 1 || index($0, "_pulse_pipeline_") == 1 { p = 1 } p { print } p && $0 == "}" { p = 0 }'
 PIPELINE_SRC=$(awk "$PIPELINE_AWK" "$SCRIPTS_DIR/pulse-wrapper.sh")
 if [[ -z "$PIPELINE_SRC" ]]; then
 	printf 'FAIL: pipeline function not found\n' >&2

@@ -122,9 +122,10 @@ _clean_legacy_marker_matches_process_generation() {
 }
 
 # GH#32528: Decide whether a live deferred owner's post-merge lease has expired
-# because it aged out or its session registered a newer worktree. On expiry,
-# release only the exact post-merge registry contract written by
-# full-loop-helper.sh merge; any other live registry owner still blocks.
+# because its session relinquished the tree at `complete` (GH#37448), it aged
+# out, or its session registered a newer worktree. On expiry, release only the
+# exact post-merge registry contract written by full-loop-helper.sh merge; any
+# other live registry owner, and every registry retirement check, still blocks.
 # Returns 0 when expired, 1 when the owner keeps the worktree.
 _clean_deferred_owner_lease_expired() {
 	local wt_path="$1"
@@ -140,7 +141,10 @@ _clean_deferred_owner_lease_expired() {
 	IFS=$'\t' read -r owner_pid owner_session deferred_at <<<"$owner_record"
 	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
 
-	if declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
+	if declare -F full_loop_cleanup_owner_relinquished >/dev/null 2>&1 &&
+		full_loop_cleanup_owner_relinquished "$receipt_path"; then
+		reason="session-relinquished"
+	elif declare -F full_loop_cleanup_owner_lease_aged >/dev/null 2>&1 &&
 		full_loop_cleanup_owner_lease_aged "$receipt_path"; then
 		reason="lease-aged"
 	elif [[ -n "$owner_session" && "$owner_session" != "${_FULL_LOOP_OWNER_SESSION_FALLBACK:-full-loop-lifecycle}" ]] &&
@@ -764,6 +768,16 @@ _clean_prepare_git_branch_caches() {
 		_WT_CLEAN_PUSHED_BRANCHES="$pushed_branches"
 		_WT_CLEAN_REMOTE_BRANCHES="$remote_branches"
 		_WT_CLEAN_REMOTE_BRANCH_CACHE_READY=true
+	fi
+	return 0
+}
+
+# Refresh only the remote-existence cache after a prune fetch. The pushed-branch
+# cache keeps its pre-fetch evidence. Returns 1 when the refresh fails.
+_clean_refresh_remote_branch_cache() {
+	[[ "$_WT_CLEAN_REMOTE_BRANCH_CACHE_READY" == "true" ]] || return 0
+	if ! _WT_CLEAN_REMOTE_BRANCHES=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/ 2>/dev/null); then
+		return 1
 	fi
 	return 0
 }
@@ -2091,6 +2105,9 @@ cmd_clean() {
 	# Prune all remotes, not just origin (GH#3797)
 	local remote_state_unknown
 	remote_state_unknown=$(_clean_fetch_remotes)
+	if ! _clean_refresh_remote_branch_cache; then
+		remote_state_unknown=true
+	fi
 
 	# Build PR branch lists for squash-merge detection and open-PR safety check.
 	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.

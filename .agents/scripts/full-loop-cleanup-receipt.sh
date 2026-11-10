@@ -1163,6 +1163,69 @@ full_loop_cleanup_owner_lease_aged() {
 	return 0
 }
 
+# GH#37448: one OpenCode app PID serves every session, so a live owner PID
+# cannot show whether the session that ran `complete` still needs its tree.
+# That session records its explicit end on its own receipt. Only the exact
+# receipt owner (PID, process identity and a declared, non-fallback session)
+# can record it; any mismatch leaves the receipt unchanged.
+# Args: repo, PR number, owner PID, owner session
+# Returns: 0 when recorded (or already recorded), 1 otherwise.
+full_loop_mark_cleanup_owner_relinquished() {
+	local repo="$1"
+	local pr_number="$2"
+	local owner_pid="$3"
+	local owner_session="$4"
+	local receipt_path="" owner_identity="" now=""
+
+	[[ "$pr_number" =~ ^[0-9]+$ && "$owner_pid" =~ ^[0-9]+$ && -n "$owner_session" ]] || return 1
+	[[ "$owner_session" != "$_FULL_LOOP_OWNER_SESSION_FALLBACK" ]] || return 1
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	owner_identity=$(_full_loop_process_identity "$owner_pid") || return 1
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+	_full_loop_receipt_lock_acquire || return 1
+	if ! jq -e --arg repo "$repo" --argjson pr "$pr_number" --argjson pid "$owner_pid" \
+		--arg identity "$owner_identity" --arg session "$owner_session" '
+		.repository == $repo and .pr_number == $pr and .owner.pid == $pid
+		and .owner.process_identity == $identity and .owner.session == $session
+	' "$receipt_path" >/dev/null 2>&1; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	if full_loop_cleanup_owner_relinquished "$receipt_path"; then
+		_full_loop_receipt_lock_release
+		return 0
+	fi
+	if ! jq --arg now "$now" '
+		.owner_relinquished = {pid: .owner.pid, process_identity: .owner.process_identity,
+			session: .owner.session, at: $now}
+		| .updated_at = $now
+	' "$receipt_path" >"${receipt_path}.tmp.$$" || ! mv "${receipt_path}.tmp.$$" "$receipt_path"; then
+		rm -f "${receipt_path}.tmp.$$" 2>/dev/null || true
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	_full_loop_receipt_lock_release
+	return 0
+}
+
+# Succeeds only when the receipt carries a relinquish record that names its
+# own owner exactly. Missing, partial or mismatched records fail closed.
+full_loop_cleanup_owner_relinquished() {
+	local receipt_path="$1"
+	[[ -f "$receipt_path" ]] || return 1
+	# Type selectors yield nothing on a wrong type, so jq -e fails closed.
+	jq -e --arg fallback "$_FULL_LOOP_OWNER_SESSION_FALLBACK" '
+		(.owner_relinquished | objects) as $record
+		| (.owner.process_identity | strings) as $identity
+		| (.owner.session | strings) as $session
+		| ($identity | length) > 0 and ($session | length) > 0 and $session != $fallback
+		and (.owner.pid | numbers) == $record.pid
+		and $record.process_identity == $identity and $record.session == $session
+	' "$receipt_path" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 full_loop_transition_cleanup_receipt() {
 	local receipt_path="$1"
 	local target_state="$2"

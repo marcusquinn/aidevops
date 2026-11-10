@@ -142,13 +142,27 @@ _dispatch_negative_pr_fingerprint() {
 	if snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) &&
 		jq -e '.complete == true and ((now - (.timestamp | fromdateiso8601)) >= 0)
 			and ((now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
-		jq -er --argjson pr "$pr" '
-			.items[] | select(.number == $pr) |
-			select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
-			select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
-			[.updatedAt, .headRefOid] | join("_")
-		' <<<"$snapshot" 2>/dev/null
-		return $?
+		# Production snapshot items may omit isDraft: use the exact-PR REST
+		# fingerprint then. Absent PRs and explicit non-drafts are rejected.
+		local draft_state=""
+		draft_state=$(jq -r --argjson pr "$pr" '
+			[.items[] | select(.number == $pr)] | first |
+			if . == null then "absent"
+			elif has("isDraft") and .isDraft != null then (.isDraft | tostring)
+			else "unknown" end
+		' <<<"$snapshot" 2>/dev/null) || draft_state="$_DISPATCH_VALUE_UNKNOWN"
+		case "$draft_state" in
+		true)
+			jq -er --argjson pr "$pr" '
+				.items[] | select(.number == $pr) |
+				select((.updatedAt | type) == "string" and (.headRefOid | type) == "string") |
+				select((.updatedAt | length) > 0 and (.headRefOid | length) > 0) |
+				[.updatedAt, .headRefOid] | join("_")
+			' <<<"$snapshot" 2>/dev/null
+			return $?
+			;;
+		absent | false) return 1 ;;
+		esac
 	fi
 	_dispatch_negative_pr_rest_fingerprint "$repo" "$pr"
 	return $?
@@ -279,11 +293,38 @@ _dispatch_checkpoint_decimal() {
 	return 0
 }
 
+# Read boundary evidence once per ceremony, not on cache hits. Conservatively
+# include every claim/lease expiry and attention re-arm, even obsolete or
+# untrusted records: extra wakeups are safe, delayed continuations are not.
+# GH#37514: the fleet re-arm in pr-checkpoint-continuation-helper.sh
+# (_pcc_fleet_rearm_allowed) is anchored on an attention record or a stall
+# release and doubles up to _PCC_ATTENTION_REARM_MAX_DOUBLINGS (6) times, so
+# every such anchor contributes each doubled deadline.
+# Assigned issues must retain the live/stale-owner checks on every cycle.
+_dispatch_draft_hint_boundary() {
+	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed=""
+	jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+	rearm=$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)
+	# A deadline crossed during the bounded read must still invalidate the hint.
+	observed=$(date +%s)
+	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	jq -er --argjson rearm "$rearm" --argjson observed "$observed" '
+		if type != "array" then error("invalid comments") else flatten end |
+		[.[] | (.body // "") as $body |
+			($body | scan("expires_at=([0-9]+)") | .[0] | tonumber),
+			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))) |
+				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor)] |
+		map(select(. >= $observed)) | (min // 0) | tostring + ":" + ($rearm | tostring)
+	' <<<"$comments" 2>/dev/null
+	return $?
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -301,8 +342,9 @@ _dispatch_negative_cache_record() {
 		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
 		return 0
 	fi
-	if [[ "$reason" == worker_draft_checkpoint_blocked ]]; then
+	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
+		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
@@ -340,7 +382,7 @@ _dispatch_negative_cache_reason() {
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
 		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
-		"$reason" != worker_draft_checkpoint_blocked &&
+		"$reason" != worker_draft_checkpoint_blocked && "$reason" != stale_draft_checkpoint &&
 		"$reason" != worker_draft_checkpoint_cooldown &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
 		! _dispatch_maintainer_gate_reason "$reason"; then
@@ -387,11 +429,19 @@ _dispatch_negative_cache_reason() {
 		# Empty worker pools must retain the authoritative active-claim recheck.
 		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
 		;;
-	worker_draft_checkpoint_blocked)
+	worker_draft_checkpoint_blocked | stale_draft_checkpoint)
 		[[ -n "$fingerprint" ]] || return 1
+		# Older records lack boundary evidence and must run the ceremony once.
+		[[ "$owner_path" =~ ^([0-9]+):([0-9]+)$ ]] || return 1
+		local boundary="${BASH_REMATCH[1]}" rearm="${BASH_REMATCH[2]}"
+		[[ "$rearm" == "$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)" ]] || return 1
+		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+		ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
+		((ttl <= 21600)) || ttl=21600
 		# GH#34402: the PR read can cost an API call, so expire first.
 		now=$(date +%s)
 		((now >= stamp && now - stamp < ttl)) || return 1
+		((boundary == 0 || now < boundary)) || return 1
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;
@@ -443,7 +493,9 @@ _dispatch_cache_confirmed_block() {
 	if [[ "$lines" != *"checkpoint_routed"* &&
 		"$lines" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]]; then
 		pr="${BASH_REMATCH[1]}"
-		_dispatch_negative_cache_record "$candidate" worker_draft_checkpoint_blocked "$pr"
+		reason=worker_draft_checkpoint_blocked
+		[[ "$lines" != *"stale_draft_checkpoint"* ]] || reason=stale_draft_checkpoint
+		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
 		return 0
 	fi
 	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
@@ -1252,6 +1304,26 @@ _dispatch_priority_product_outcomes() {
 	return $?
 }
 
+# GH#37478: a held product slot waits only for product work this round can
+# still assess, i.e. a fresh (non-retry) product candidate without an outcome.
+# Blocked or skipped rows (ineligible outcomes) and recent unlaunched retries,
+# which no reserved pool attempts, never hold it; the caller keeps holding for
+# unknown outcomes and incomplete discovery. Fails closed (pending) on errors.
+# Args: candidates, accumulated outcomes, retry-key file
+# Returns: 0 when a fresh unassessed product candidate remains, 1 otherwise
+_dispatch_priority_product_pending() {
+	local candidates="$1" outcomes="$2" retry_keys="$3" phase="" rows="" rc=0
+	for phase in urgent "$_DISPATCH_PRIORITY_PRODUCT"; do
+		rows=$(_dispatch_priority_phase_candidates "$candidates" "$outcomes" "$phase" "$retry_keys") || return 0
+		[[ -n "$rows" ]] || continue
+		rc=0
+		jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' \
+			<<<"$rows" >/dev/null 2>&1 || rc=$?
+		((rc == 1)) || return 0
+	done
+	return 1
+}
+
 # Start disjoint reserved/unreserved pools together, sharing one ceremony cap.
 # Join before any borrowing: slow product probes cannot idle unreserved slots.
 # Args: candidates, accumulated outcomes, capacity, reserved, login, parallelism,
@@ -1314,7 +1386,7 @@ _dispatch_priority_loop() {
 		((held >= 0)) || held=0
 		if [[ "$phase" == pools ]]; then
 			if [[ "$complete" == true && "$product_unknown" -eq 0 ]] &&
-				! jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' "$candidates" >/dev/null; then
+				! _dispatch_priority_product_pending "$candidates" "$outcomes" "$phase_dir/retry.keys"; then
 				held=0
 			fi
 			_dispatch_priority_reserved_pools "$candidates" "$outcomes" "$phase_budget" "$held" "$login" "$parallel" "$phase_dir" || {
@@ -1328,8 +1400,10 @@ _dispatch_priority_loop() {
 			rm -rf "$phase_dir"; return 1;
 		}
 		if [[ "$phase" == remainder && "$held" -gt 0 ]]; then
+			# GH#37478: release once the product phase ends with no verified
+			# launch and no unknown outcome, even while blocked/retry rows remain.
 			if [[ "$complete" == true && "$product_unknown" -eq 0 ]] &&
-				! jq -se --arg product "$_DISPATCH_PRIORITY_PRODUCT" 'any(.[]; .repo_priority == $product)' "$phase_dir/candidates" >/dev/null; then
+				! _dispatch_priority_product_pending "$candidates" "$outcomes" "$phase_dir/retry.keys"; then
 				held=0
 			fi
 			phase_budget=$((phase_budget - held))

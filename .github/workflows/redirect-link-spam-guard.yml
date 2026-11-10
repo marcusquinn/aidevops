@@ -43,6 +43,11 @@ permissions:
   pull-requests: write
   discussions: write
 
+concurrency:
+  # Each comment is an independent moderation target, not a superseded PR push.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.comment.id || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review_comment' }}
+
 jobs:
   guard:
     name: Redirect-link spam guard

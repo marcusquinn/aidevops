@@ -62,11 +62,12 @@ const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", 
 const VALUE_FLAGS = {
   "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
   "--repo": "repo",
-  // t18896 notify-release
-  "--source-pr": "sourcePr", "--event": "event", "--tag": "tag", "--receipt": "receipt",
-  "--executor-state": "executorState", "--recovery": "recovery", "--owner-session": "ownerSession", "--marker": "marker",
   // t18892 bindings and launch
   "--app": "app", "--server": "server", "--title": "title", "--bind": "bind", "--directory": "directory",
+};
+const RELEASE_VALUE_FLAGS = {
+  "--source-pr": "sourcePr", "--event": "event", "--tag": "tag", "--receipt": "receipt",
+  "--executor-state": "executorState", "--recovery": "recovery", "--owner-session": "ownerSession", "--marker": "marker",
 };
 
 function parseWait(value) {
@@ -82,11 +83,12 @@ export function parseArgs(argv) {
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    const valueFlags = options.positional[0] === "notify-release" ? { ...VALUE_FLAGS, ...RELEASE_VALUE_FLAGS } : VALUE_FLAGS;
     if (Object.hasOwn(BOOLEAN_FLAGS, arg)) options[BOOLEAN_FLAGS[arg]] = true;
-    else if (Object.hasOwn(VALUE_FLAGS, arg)) {
+    else if (Object.hasOwn(valueFlags, arg)) {
       index += 1;
       if (index >= argv.length) throw new Error(`${arg} requires a value`);
-      options[VALUE_FLAGS[arg]] = arg === "--wait" ? parseWait(argv[index]) : argv[index];
+      options[valueFlags[arg]] = arg === "--wait" ? parseWait(argv[index]) : argv[index];
     } else options.positional.push(arg);
   }
   return options;

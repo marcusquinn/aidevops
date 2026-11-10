@@ -77,6 +77,152 @@ run_worker_no_output_classification_tests() {
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_manual_issue_no_commits_returns_noop
 	test_pr_less_rejection_evidence
+	test_review_triage_completion_evidence
+	return 0
+}
+
+# All forge calls are synthetic; local unpublished-work checks use real Git.
+_review_triage_fixture_gh() {
+	local request="$*"
+	case "$request" in
+	"api user --jq .login") printf 'triager\n' ;;
+	"api repos/owner/repo/issues/456")
+		[[ "$shape" != api_marker ]] || return 1
+		jq -cn --arg shape "$shape" '{number:456,state:"closed",state_reason:"not_planned",
+			author_association:"COLLABORATOR",closed_by:{login:"triager"},closed_at:"2026-10-25T12:01:00Z",
+			html_url:"https://github.com/owner/repo/issues/456",labels:[{name:"auto-dispatch"},{name:"status:in-progress"}],
+			body:"## Unactioned Review Feedback\n**Source PR**: #40\n**File**: `README.md`\n**Findings**: 1\nIndentation should be fixed.\n[View comment](https://github.com/owner/repo/pull/40#discussion_r7)\nquality-feedback-helper.sh scan-merged"}
+			| if $shape == "ordinary" then .body = "Implement the new feature"
+			elif $shape == "untrusted_issue" then .author_association = "NONE"
+			elif $shape == "open" or $shape == "open_marker" then .state = "open"
+			elif $shape == "completed" then .state_reason = "completed"
+			elif $shape == "wrong_closer" then .closed_by.login = "other"
+			elif $shape == "multiple_findings" then .body |= sub("Findings\\*\\*: 1"; "Findings**: 2")
+			else . end'
+		;;
+	"api --paginate repos/owner/repo/issues/456/comments?per_page=100")
+		jq -cn --arg shape "$shape" --arg blob "$fixture_blob" '
+			{schema:1,repository:"owner/repo",issue:456,attempt_id:"fixture",attempt_started_at:"1792929600000000000",
+			 disposition:"obsolete",source_pr:40,review_comment_id:7,evidence_pr:42,path:"README.md",blob:$blob,
+			 rationale:"The cited merged change fixes the captured indentation finding."}
+			| if $shape == "wrong_attempt" or $shape == "forged_marker" then .attempt_id = "old"
+			elif $shape == "wrong_repo" then .repository = "other/repo"
+			elif $shape == "wrong_issue" then .issue = 789
+			elif $shape == "false_premise" then .disposition = "premise_falsified"
+			elif $shape == "implementation" then .disposition = "implemented" else . end
+			| [{id:9,html_url:"https://github.com/owner/repo/issues/456#issuecomment-9",user:{login:"triager"},
+			 author_association:"COLLABORATOR",created_at:"2026-10-25T12:00:01Z",updated_at:"2026-10-25T12:00:01Z",
+			 body:("<!-- aidevops:review-triage-completion:v1 -->\n" + tojson)}]
+			| if $shape == "untrusted_receipt" then .[0].author_association = "NONE"
+			elif $shape == "wrong_author" then .[0].user.login = "other"
+			elif $shape == "old_receipt" then .[0].created_at = "2026-10-24T12:00:00Z"
+			elif $shape == "edited_after_close" then .[0].updated_at = "2026-10-25T12:02:00Z"
+			elif $shape == "spoofed_url" then .[0].html_url = "https://example.invalid/comment"
+			elif $shape == "prose_only" then .[0].body = "The premise was falsified; issue closed."
+			elif $shape == "appended_findings" then . + [{body:"## Additional Review Feedback (PR #41)\nAn unresolved finding"}]
+			else . end'
+		;;
+	"api repos/owner/repo/pulls/comments/7")
+		jq -cn --arg shape "$shape" '{pull_request_url:"https://api.github.com/repos/owner/repo/pulls/40",
+			html_url:"https://github.com/owner/repo/pull/40#discussion_r7",path:"README.md",body:"Indentation should be fixed."}
+			| if $shape == "wrong_review" then .pull_request_url += "1"
+			elif $shape == "uncaptured_review" then .body = "Unrelated suggestion" else . end'
+		;;
+	"api repos/owner/repo/pulls/42")
+		jq -cn --arg shape "$shape" '{number:42,state:"closed",merged_at:"2026-10-24T00:00:00Z",base:{repo:{full_name:"owner/repo"}}}
+			| if $shape == "unmerged" then .merged_at = null else . end'
+		;;
+	"api --paginate repos/owner/repo/pulls/42/files?per_page=100")
+		jq -cn --arg blob "$fixture_blob" '[{filename:"README.md",sha:$blob,status:"modified"}]'
+		;;
+	"issue edit 456 --repo owner/repo "*)
+		[[ "$shape" != label_failure ]] || return 1
+		printf '%s\n' "$request" >>"$label_log"
+		;;
+	"pr list"*) [[ "$request" != *--head* ]] || printf '0\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_review_triage_fixture_result() {
+	local shape="$1"
+	local WORKER_ISSUE_NUMBER=456 DISPATCH_REPO_SLUG=owner/repo
+	local AIDEVOPS_ATTEMPT_ID=fixture AIDEVOPS_ATTEMPT_STARTED_AT=1792929600000000000
+	local work_dir="${TEST_ROOT}/triage-${shape}" output_file="${TEST_ROOT}/triage-output"
+	local role=worker provider=openai session_key=issue-456 selected_model=openai/fixture
+	local permission_request_file="${TEST_ROOT}/permission" metric_work_dir="$work_dir"
+	local _metric_kill_reason=natural _metric_session_id="" _metric_output_file=""
+	local _metric_excerpt_candidate="${TEST_ROOT}/triage-excerpt" resource_sampler_pid=""
+	local _run_failure_reason="" _run_permission_request_file=""
+	local exit_code=0 start_ms=0 end_ms=0 duration_ms=0 rc=0 fixture_blob label_log="${TEST_ROOT}/triage-labels-${shape}"
+	_setup_test_git_repo "$work_dir" 0
+	fixture_blob=$(git -C "$work_dir" rev-parse HEAD:README.md)
+	_HRW_PR_LESS_VERIFIED_CONTEXT=""
+	_hrw_own_merged_terminal_complete() { return 1; }
+	_hrw_continued_merged_terminal_complete() { return 1; }
+	_hrw_post_merge_permission_completion_evidence() { return 1; }
+	_hrw_resolve_default_branch() { printf main; return 0; }
+	_hrw_reconcile_session_permission_blockers() { return 0; }
+	gh() { _review_triage_fixture_gh "$@"; return $?; }
+	append_runtime_metric() { printf 'metric=%s|%s|%s|%s\n' "$5" "$6" "${18}" "${19}"; return 0; }
+	case "$shape" in
+	missing_attempt) AIDEVOPS_ATTEMPT_ID="" ;;
+	dirty) touch "$work_dir/unpublished" ;;
+	ahead)
+		touch "$work_dir/unpublished"
+		git -C "$work_dir" add unpublished
+		git -C "$work_dir" commit -qm unpublished
+		;;
+	stale_blob)
+		printf 'changed\n' >"$work_dir/README.md"
+		git -C "$work_dir" add README.md
+		git -C "$work_dir" commit -qm changed
+		git -C "$work_dir" push -q origin HEAD:main
+		;;
+	permission) _run_permission_request_file="${TEST_ROOT}/triage-permission-event.json"; touch "$_run_permission_request_file" ;;
+	provider) exit_code=1 ;;
+	esac
+	printf '%s\n' '{"type":"text","text":"Investigated and closed the obsolete review finding without code changes."}' >"$output_file"
+	if [[ "$shape" == *_marker ]]; then
+		printf '%s\n' '{"type":"text","text":"FULL_LOOP_COMPLETE"}' >>"$output_file"
+	fi
+	[[ "$shape" != provider ]] || printf '%s\n' '{"type":"error","error":{"name":"APIError","data":{"message":"Too Many Requests","statusCode":429,"isRetryable":true}}}' >>"$output_file"
+	printf 'process exit\n' >"$_metric_excerpt_candidate"
+	_finish_run_attempt_result || rc=$?
+	printf 'rc=%s normalized=%s\n' "$rc" "$([[ -f "$label_log" ]] && printf yes || printf no)"
+	return 0
+}
+
+test_review_triage_completion_evidence() {
+	local shape evidence result expected
+	for shape in obsolete false_premise completed completion_marker forged_marker api_marker open_marker ordinary untrusted_issue open wrong_closer multiple_findings appended_findings wrong_attempt wrong_repo wrong_issue implementation untrusted_receipt wrong_author old_receipt edited_after_close spoofed_url prose_only wrong_review uncaptured_review unmerged missing_attempt dirty ahead stale_blob label_failure permission provider; do
+		evidence=$(_review_triage_fixture_result "$shape")
+		result=1
+		expected=triage_receipt_invalid
+		case "$shape" in
+		ordinary | untrusted_issue) expected=issue_not_trusted_completed ;;
+		open | open_marker) expected=issue_not_closed ;;
+		api_marker) expected=issue_evidence_unavailable ;;
+		multiple_findings | missing_attempt) expected=triage_context_invalid ;;
+		wrong_review | uncaptured_review) expected=triage_review_invalid ;;
+		unmerged) expected=triage_support_invalid ;;
+		dirty) expected=unpublished_worktree_changes ;;
+		ahead) expected=unpublished_local_commits ;;
+		stale_blob) expected=triage_default_blob_mismatch ;;
+		label_failure) expected=completion_labels_unavailable ;;
+		esac
+		case "$shape" in
+		obsolete | false_premise | completed | completion_marker)
+			[[ "$evidence" == *'metric=success|0|review_triage_receipt|verified_no_code_review_triage'* &&
+				"$evidence" == *'rc=0 normalized=yes'* ]] && result=0
+			;;
+		permission) [[ "$evidence" == *'metric=permission_required|84|opencode_permission_event|'* && "$evidence" == *'normalized=no'* ]] && result=0 ;;
+		provider) [[ "$evidence" == *'metric=rate_limit|'* && "$evidence" == *'normalized=no'* ]] && result=0 ;;
+		*) [[ "$evidence" == *"metric=premature_exit|77|pr_less_completion_rejected|${expected}"* && "$evidence" == *'normalized=no'* ]] && result=0 ;;
+		esac
+		print_result "Review triage ${shape}: authenticated no-code outcome preserves guards" "$result" "$evidence"
+	done
 	return 0
 }
 

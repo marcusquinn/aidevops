@@ -10,6 +10,11 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  # Label enforcement is not superseded head validation; preserve each event.
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   dedup:
     if: startsWith(github.event.label.name, 'tier:')
