@@ -9,7 +9,8 @@
 // can serve a request; it becomes routable again once the earliest cooldown
 // expires, with no configuration change.
 
-import { getAccounts, readCurrentProviderAuth } from "./oauth-pool.mjs";
+import { getAccounts, readCurrentOpenAIAuth, readCurrentProviderAuth } from "./oauth-pool.mjs";
+import { openAIAuthSignature } from "./model-unavailability.mjs";
 
 export const POOL_RATE_LIMIT_PROVIDERS = Object.freeze(["anthropic", "openai"]);
 
@@ -50,4 +51,18 @@ export function rateLimitedProviders({
     }
   }
   return limited;
+}
+
+/**
+ * Routing availability read fresh on every decision: exhausted OAuth pools
+ * plus the current OpenAI OAuth signature for entitlement rejections.
+ */
+export function resolveRoutingAvailability({
+  readRateLimits = rateLimitedProviders,
+  readOpenAIAuth = readCurrentOpenAIAuth,
+} = {}) {
+  const availability = { rateLimitedProviders: readRateLimits() };
+  const auth = readOpenAIAuth();
+  if (auth?.type !== "oauth" || !auth.access) return availability;
+  return { ...availability, authSignature: openAIAuthSignature(auth.access), openAIAuthType: auth.type };
 }

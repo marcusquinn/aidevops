@@ -149,6 +149,23 @@ export function candidateRateLimitedUntil(candidate, availability = {}, now = Da
   return until > now ? until : 0;
 }
 
+/**
+ * GH#36698/GH#37649: actionable detail naming same-tier models rejected for
+ * the current auth or rate limited (`rate_limited=model@reset`); "" if none.
+ */
+export function routingUnavailableDetail(routing, tier, availability = {}) {
+  const candidates = routingCandidates(routing, tier);
+  const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
+  const limited = candidates
+    .map((candidate) => [candidate, candidateRateLimitedUntil(candidate, availability)])
+    .filter(([, until]) => until)
+    .map(([candidate, until]) => `${candidate}@${new Date(until).toISOString()}`);
+  const parts = [];
+  if (rejected.length) parts.push(`rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`);
+  if (limited.length) parts.push(`rate_limited=${limited.join(",")} (provider rate limit; routable again after the listed reset)`);
+  return parts.length ? `: requested=${candidates[0]} ${parts.join(" ")}` : "";
+}
+
 function candidateRoutable(candidate, scope) {
   // GH#36698/GH#37649: skip a model with a live entitlement rejection for this
   // auth, or whose provider OAuth pool is exhausted until its reset.

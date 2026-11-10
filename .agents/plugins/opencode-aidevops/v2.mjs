@@ -66,6 +66,7 @@ import { applyV2PermissionEvaluation } from "./v2-permission-evaluation.mjs";
 import { registerV2SubagentProfiles } from "./v2-subagent-profiles.mjs";
 import { registerV2OnDemandMcpAgents } from "./v2-on-demand-mcp-agents.mjs";
 import { createV2ProviderAuthRuntime } from "./v2-provider-auth.mjs";
+import { createV2SubagentFailover } from "./v2-subagent-failover.mjs";
 import {
   addV1ToolsToV2Editor,
   applyLegacyToolOutput,
@@ -552,7 +553,14 @@ export async function setupAidevopsV2(ctx) {
       assertLocalOnlyEgress(localOnlyPolicy, event, "http");
     }));
     await register(registrations, ctx.session.hook("http.response", providerAuth.httpResponse));
-    await register(registrations, ctx.session.hook("retry", providerAuth.retry));
+    // GH#37667: after account rotation, move a child whose provider OAuth pool
+    // is exhausted to the next same-tier model; the switch applies to the next
+    // retry attempt of the same Task run.
+    const subagentFailover = createV2SubagentFailover(ctx, modelRouting, qualityLog);
+    await register(registrations, ctx.session.hook("retry", async (event) => {
+      providerAuth.retry(event);
+      await subagentFailover(event);
+    }));
     await register(registrations, ctx.permission.hook("evaluate", async (event) => {
       applyV2PermissionEvaluation(permissionBroker, event);
     }));
