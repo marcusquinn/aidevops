@@ -4,15 +4,40 @@
 
 set -u
 
-# Resolve native Git once from the system default PATH (portable to non-FHS
-# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
-TEST_NATIVE_GIT=$(command -p -v git) || {
-	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+# Resolve native Git once as an executable on the caller PATH (portable to
+# non-FHS hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+_resolve_native_git() {
+	local dir candidate target
+	local -a path_dirs=()
+	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
+	for dir in "${path_dirs[@]}"; do
+		[[ -n "$dir" ]] || dir="."
+		candidate="${dir}/git"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		# Skip the aidevops git wrapper.
+		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -aq 'aidevops'; then
+			continue
+		fi
+		while [[ -L "$candidate" ]]; do
+			target=$(readlink "$candidate") || break
+			[[ "$target" == /* ]] || target="$(dirname "$candidate")/${target}"
+			candidate="$target"
+		done
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+TEST_NATIVE_GIT=$(_resolve_native_git) || {
+	printf '%s\n' 'Native Git (non-wrapper executable) not found on PATH' >&2
 	exit 1
 }
 export TEST_NATIVE_GIT
 # Fixture repositories are disposable; bypass interactive canonical-repo guards.
-PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+# Fixed PATH plus the native Git directory so bare fixture `git` calls resolve
+# even when Git lives outside the standard directories (e.g. Nix).
+TEST_COREUTILS_DIR=$(dirname "$(command -v dirname)") || TEST_COREUTILS_DIR=/usr/bin
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:$(dirname "$TEST_NATIVE_GIT"):${TEST_COREUTILS_DIR}"
 export PATH
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 PUBLISHER="${SCRIPT_DIR_TEST}/../planning-publisher.sh"
