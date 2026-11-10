@@ -207,7 +207,8 @@ _blocking_holder_summary() {
 	local db="${OPENCODE_DB_PATH:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}"
 	local pid="" comm="" age=""
 	command -v lsof >/dev/null 2>&1 || return 0
-	pid=$(lsof -t "$db" 2>/dev/null | head -n 1 || true)
+	pid=$(lsof -t "$db" 2>/dev/null || true)
+	pid="${pid%%$'\n'*}"
 	[[ "$pid" =~ ^[0-9]+$ ]] || return 0
 	comm=$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-80 || true)
 	age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ' || true)
