@@ -32,7 +32,8 @@ _pulse_post_dispatch_housekeeping_lockdir() {
 # follow the cycle instead of the run. The async run also writes async-pid:
 # it outlives the cycle with the bare wrapper argv, and that marker is how
 # pulse-lifecycle-helper.sh keeps it out of the main-cycle PID set. A
-# synchronous run is the cycle itself and records only pid.
+	# direct run records only pid. With an outer lane watchdog, async-pid names
+	# the supervisor that can outlive the cycle; pid still owns the stage lock.
 #
 # Args:
 #   $1 - lock directory path
@@ -47,7 +48,7 @@ _pulse_record_post_dispatch_housekeeping_owner() {
 	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || owner_pid="$$"
 	printf '%s\n' "$owner_pid" >"${lockdir}/pid" 2>/dev/null || true
 	if [[ "${_PULSE_HOUSEKEEPING_ASYNC:-0}" == "1" ]]; then
-		printf '%s\n' "$owner_pid" >"${lockdir}/async-pid" 2>/dev/null || true
+		printf '%s\n' "${_PULSE_HOUSEKEEPING_SUPERVISOR_PID:-$owner_pid}" >"${lockdir}/async-pid" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -405,8 +406,11 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || incomplete=1
 	if declare -F _pulse_prime_caches_if_stale >/dev/null 2>&1; then
+		local prime_timeout="${PULSE_CACHE_PRIME_TIMEOUT:-300}"
+		[[ "$prime_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || prime_timeout=300
+		[[ "$prime_timeout" -le "$stage_timeout" ]] || prime_timeout="$stage_timeout"
 		_pulse_run_resumable_housekeeping_stage "cache_prime" "$state_file" \
-			_pulse_run_optional_stage_with_timeout "cache_prime" "${PULSE_CACHE_PRIME_TIMEOUT:-300}" _pulse_prime_caches_if_stale || incomplete=1
+			_pulse_run_optional_stage_with_timeout "cache_prime" "$prime_timeout" _pulse_prime_caches_if_stale || incomplete=1
 	fi
 	_PULSE_HOUSEKEEPING_CURRENT_STAGE="finishing"
 	if [[ "$incomplete" -eq 0 ]]; then
@@ -445,6 +449,12 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
 	local lane_budget="${PULSE_HOUSEKEEPING_BUDGET_SECONDS:-300}"
 	[[ "$lane_budget" =~ ^[1-9][0-9]{0,3}$ ]] || lane_budget=300
+	# Reserve a fair slice for every leaf stage (including the three catch-up
+	# steps) and watchdog teardown. Otherwise a repeatably slow first scanner
+	# consumes the whole lane on every retry and later stages never get a turn.
+	local stage_slice=$((lane_budget / 16))
+	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
+	[[ "$stage_timeout" -le "$stage_slice" ]] || stage_timeout="$stage_slice"
 	# Repeated preflight calls in one service cycle must not lose the PID that
 	# owns the join, or launch another lane before the first acquires its lock.
 	if [[ "${_PULSE_OWNED_HOUSEKEEPING_PID:-}" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_PULSE_OWNED_HOUSEKEEPING_PID" 2>/dev/null; then
@@ -468,6 +478,10 @@ _pulse_start_post_dispatch_housekeeping() {
 		trap '_pulse_housekeeping_on_signal HUP' HUP
 		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
 		_PULSE_HOUSEKEEPING_ASYNC=1
+		_PULSE_HOUSEKEEPING_SUPERVISOR_PID="${BASHPID:-}"
+		if [[ -z "$_PULSE_HOUSEKEEPING_SUPERVISOR_PID" ]]; then
+			_PULSE_HOUSEKEEPING_SUPERVISOR_PID="$(exec sh -c 'printf "%s" "$PPID"')"
+		fi
 		run_stage_with_timeout "post_dispatch_housekeeping" "$lane_budget" \
 			_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
 	) >>"$LOGFILE" 2>&1 &

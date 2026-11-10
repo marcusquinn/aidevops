@@ -790,13 +790,18 @@ test_service_owned_lane_timeout_resumes() {
 		# shellcheck disable=SC1091
 		source "${REPO_ROOT}/.agents/scripts/pulse-watchdog.sh"
 		local AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0
-		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=1
+		local PULSE_HOUSEKEEPING_BUDGET_SECONDS=4
 		local TEST_STAGE_SLEEP_ONCE=10
 		local state_file="" start_seconds="$SECONDS"
 		state_file="$(_pulse_post_dispatch_housekeeping_statefile)"
 		_pulse_start_post_dispatch_housekeeping 30
+		local supervisor_pid="$_PULSE_OWNED_HOUSEKEEPING_PID" marker="" lock_owner="" lockdir=""
+		lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
 		_pulse_finish_post_dispatch_housekeeping
 		[[ $((SECONDS - start_seconds)) -lt 10 ]] || exit 1
+		read -r marker <"${lockdir}/async-pid" || exit 1
+		read -r lock_owner <"${lockdir}/pid" || exit 1
+		[[ "$marker" == "$supervisor_pid" && "$marker" != "$lock_owner" ]] || exit 1
 		grep -q 'Stage timeout: post_dispatch_housekeeping' "$LOGFILE" || exit 1
 		grep -q '^preflight_ownership_reconcile=' "$state_file" || exit 1
 		if grep -q '^post_merge_scanner=' "$state_file"; then exit 1; fi
