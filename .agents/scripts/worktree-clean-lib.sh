@@ -2132,11 +2132,13 @@ cmd_clean() {
 		_clean_pr_proof_unknown_add "unknown:open-pr-list-unavailable"
 	fi
 
-	# Closed (abandoned) PRs: closed without merging. Remote branch may linger
-	# because auto-delete only fires on merge.
-	local closed_pr_branches
-	if ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
-		_clean_pr_proof_unknown_add "unknown:closed-pr-list-unavailable"
+	# Capacity classification never uses closed-PR proof. Avoid a needless API
+	# request and do not let its failure veto otherwise proven candidates.
+	local closed_pr_branches=""
+	if [[ "$_WT_CLEAN_CAPACITY_MODE" != true ]]; then
+		if ! closed_pr_branches=$(_clean_build_closed_pr_branches); then
+			_clean_pr_proof_unknown_add "unknown:closed-pr-list-unavailable"
+		fi
 	fi
 
 	local response="n"
