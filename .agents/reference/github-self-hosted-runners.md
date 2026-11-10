@@ -46,34 +46,23 @@ operator-owned. `github-runner-org-helper.sh` prepares and verifies its inputs.
 
 ### Public repository exception: trusted aidevops CI
 
-Issue #37499 authorizes a dedicated pool for trusted `marcusquinn/aidevops`
-jobs, not general public-repository enrollment. This personal-account repository
-needs repository-level registration; organization runner groups and
-`github-runner-org-helper.sh repo-ensure` do not apply. Keep the private-only
-group restrictions above unchanged.
+Issue #37499 authorizes only a dedicated `marcusquinn/aidevops` pool. Personal-account
+repo-level registration is required; org groups and `repo-ensure` do not apply.
 
-**Checkpoint, not deployed capacity:** Code Quality Analysis has guarded
-`vars.CI_RUNNER` selectors for its 11 eligible jobs. The required ShellCheck
-matrix name stays unchanged; the Ubuntu 22.04 model-replay boundary verifier
-stays hosted because its host policy is part of the verification. Other workflows
-and reusable `inputs.runner` hooks remain unchanged pending their own trust audit.
-No runner registration, host disk check, variable activation, live routing result,
-or 24-hour queue improvement is established by these repository changes.
+**Checkpoint, not deployed capacity:** 11 Code Quality jobs have guarded selectors;
+the ShellCheck context is unchanged and the host-sensitive Ubuntu 22.04 job stays
+hosted. Remaining workflows/inputs await audit. Provisioning, disk, activation,
+live routing and 24-hour queue improvement are unverified.
 
 #### Trust boundary before activation
 
-A `runs-on` expression is routing policy, **not an access-control boundary**.
-A fork can edit workflow YAML to request a self-hosted label directly. A
-repository-scoped runner will accept matching jobs; labels and `--ephemeral`
-alone do not restrict which workflows may request it. First-time-contributor
-approval is insufficient, and approving an external workflow does not sandbox
-it. Do not enable this exception until an infrastructure owner demonstrates a
-non-bypassable admission boundary for untrusted workflow changes, including an
-already-approved external contributor. If the personal-account runner model
-cannot enforce that boundary, keep public jobs hosted and the exception inactive.
-Never use a fork PR against a registered sensitive pool as the first security test.
+A selector is **not access control**: fork-edited YAML can request a runner label
+directly. Labels, ephemeral lifetime and first-time-contributor approval do not
+prevent this. Require an independently verified, non-bypassable admission boundary,
+including already-approved external contributors; otherwise keep the pool inactive.
+Test adversarial workflow changes in isolation, never against a sensitive pool.
 
-The selector in `.github/workflows/code-quality.yml` allows only:
+`.github/workflows/code-quality.yml` routes as follows:
 
 | Event | Required evidence | Runner |
 |-------|-------------------|--------|
@@ -81,69 +70,33 @@ The selector in `.github/workflows/code-quality.yml` allows only:
 | `pull_request` | `toJSON(head.repo.fork) == 'false'` and `head.repo.full_name == github.repository` | Dedicated pool when configured |
 | Fork PR, `pull_request_target`, unknown/missing PR metadata, other events | Not eligible | Existing GitHub-hosted fallback |
 
-`toJSON(...fork) == 'false'` deliberately requires Boolean false: plain
-`fork == false` also accepts null through Actions' numeric coercion. An empty
-`CI_RUNNER` falls back to hosted. A nonempty but offline label queues jobs; it
-does not automatically fall back. A same-repository branch is explicitly trusted,
-including its workflow changes: restrict branch-creation and automation accounts
-accordingly.
+`toJSON(...fork) == 'false'` requires Boolean false; plain `fork == false` also
+accepts null via Actions coercion. Empty `CI_RUNNER` falls back; an offline label
+queues indefinitely. Same-repo branch writers and their workflow changes are trusted.
 
-Before opting issue/comment automation or reusable jobs in, audit the content
-execution path as well as the event name. Public users can open issues and post
-comments. Require positive write-author evidence for the triggering action, never
-execute an external issue/PR body or fork checkout on the pool, and keep
-`pull_request_target` hosted regardless of approval. Put a fail-closed guard
-inside the reusable workflow too; caller-provided `inputs.runner` must not let a
-fork or target event bypass it. Schedules, dispatches and workflow-run events
-remain hosted until separately authorized and audited. Do not mass-replace the
-approximately 106 runner expressions without these checks.
+Audit content execution before opting issue/comment automation in: public users
+can trigger it. Require positive write-author evidence, never execute external
+body content or fork checkouts, and keep `pull_request_target` hosted regardless
+of approval. Guard reusable workflows internally too: `inputs.runner` must not
+bypass the boundary. Other event types stay hosted pending authorization/audit;
+do not blindly replace all approximately 106 runner expressions.
 
 #### Isolated ephemeral pool prerequisites
 
-The infrastructure executor must record these checks before registration:
+Record before registration:
 
-1. Inspect the **actual runner host**, not the worker's local filesystem:
-   `df -Pk / <RUNNER_DATA_PARENT> <CACHE_PARENT>` and `df -Pi /`.
-   Budget free bytes/inodes for the proposed concurrency, image extraction,
-   per-job Docker layers, workspace and cache growth plus an explicit reserve
-   for the existing private pool. Account for different mount points and quotas.
-   Record observed values, projected peak and minimum reserve; refuse capacity
-   additions when the reserve is unknown or insufficient. No automatic pruning
-   of other pools is authorized.
-2. Use a separate unprivileged runner user, service/container names, workspaces,
-   Docker storage and cache directories. Do not mount the host Docker socket,
-   private caches, credentials, SSH agents, vault, or other pool directories.
-   Separate users/cache paths alone do not isolate a privileged container: do not
-   reuse the legacy privileged DinD host as the public security boundary. Use an
-   independently isolated disposable VM/host boundary and prevent access to
-   private services and registration credentials.
-3. Register only to `marcusquinn/aidevops` with a unique capability label, using
-   `config.sh --ephemeral --unattended` or equivalent one-job JIT registration.
-   Keep the registration broker and its long-lived credential outside the job
-   environment; never inject a PAT or App private key into the runner container.
-   Mint short-lived registration data outside the job and discard it after use.
-   Forward runner diagnostics before destruction, excluding tokens and secrets.
-4. Destroy the entire execution environment after **one** job, including writable
-   layers and workspace. Do not merely restart the listener. Jobs may receive
-   explicitly scoped workflow secrets, but must never inherit persistent host or
-   private-repository secrets. Rebuild the baseline image with the tools these
-   workflows expect (Node/Bun, Docker, ShellCheck and other existing CI tools);
-   a label is not proof of GitHub-hosted image compatibility.
-5. Independently verify the admission boundary and disposable cleanup before
-   advertising the label. Preserve evidence of both trusted-job admission and
-   rejection of malicious workflow changes. Registration/listing permission is
-   distinct from ordinary repository push permission; an API 403 stops this
-   operational path, not a reason to reuse another pool or request a PAT in chat.
+1. **Host disk:** `df -Pk / <RUNNER_DATA_PARENT> <CACHE_PARENT>` and `df -Pi /` on the actual host. Budget concurrent jobs, images, layers, workspaces and caches across mounts/quotas. Record free bytes/inodes, peak usage and private-pool reserve. Unknown/insufficient headroom stops provisioning; do not prune other pools.
+2. **Isolation:** separate unprivileged user, services, containers, workspaces, Docker storage and caches. No host Docker socket, private mounts/secrets, SSH agents or vault. Require a disposable VM/host boundary, not privileged DinD, with private services and registration credentials unreachable.
+3. **Registration:** repo-only unique label, `config.sh --ephemeral --unattended` or one-job JIT. Keep broker/PAT/App key outside execution; mint short-lived registration data externally and discard it. Export secret-free diagnostics.
+4. **Disposal:** destroy the entire environment after **one job**, including writable layers, not just the listener. Only explicitly scoped job secrets; no persistent host/private credentials. Verify existing CI image/tool compatibility, including Node/Bun, Docker and ShellCheck.
+5. **Admission:** independently prove trusted admission, malicious-YAML rejection and teardown before advertising the label. Runner administration differs from push access; API 403 stops provisioning, never authorizes another pool or a PAT request in chat.
 
-The existing `/usr/local/sbin/github-runner-dind-start` launcher is host-owned,
-not a source file in this repository. Do not invent a host target or copy private
-deployment configuration into an issue. Apply the prerequisites using the approved
-infrastructure inventory and securely provisioned administration access.
+The legacy `/usr/local/sbin/github-runner-dind-start` is host-owned, not tracked.
+Use approved inventory/access; never invent a host or publish private configuration.
 
 #### Activation, acceptance evidence and rollback
 
-Only after all prerequisites pass, set a repository variable with the dedicated
-single capability label (not a JSON array):
+Only after prerequisites pass, set the dedicated single label (not a JSON array):
 
 ```bash
 gh variable set CI_RUNNER --repo marcusquinn/aidevops --body <PUBLIC_POOL_LABEL>
@@ -151,28 +104,16 @@ gh api repos/marcusquinn/aidevops/actions/runners \
   --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
 ```
 
-Use `node --test .agents/scripts/tests/test-ci-runner-routing.mjs` for local
-selector regression evidence. It models the expressions; it does not replace
-Actions evaluation or prove host isolation. Before claiming delivery, record:
+`node --test .agents/scripts/tests/test-ci-runner-routing.mjs` models selectors;
+it does not prove Actions semantics or isolation. Acceptance requires:
 
-- A same-repository PR and main push whose job API reports the dedicated pool's
-  runner IDs/names/labels: `gh run view <RUN_ID> --repo marcusquinn/aidevops --json jobs`
-  and `gh api repos/marcusquinn/aidevops/actions/runs/<RUN_ID>/jobs`.
-- A controlled fork PR with ordinary YAML showing only hosted runners, plus an
-  isolated adversarial test showing modified YAML cannot gain admission. Keep
-  target workflows hosted; never approve a self-hosted request to make a test pass.
-- Comparable pre/post 24-hour samples with workflow/job identity, run attempt,
-  creation/start timestamps, sample size and queue-wait median/p95/max. Exclude
-  cancellation, provider outages and job-less runs explicitly; separate queue
-  delay from execution duration. The issue's historical snapshot is not a fresh
-  baseline and the 24-minute runtime is not queue-wait evidence.
+- Same-repo PR and main-push runner IDs/names/labels from `gh run view <RUN_ID> --repo marcusquinn/aidevops --json jobs` and `gh api repos/marcusquinn/aidevops/actions/runs/<RUN_ID>/jobs`.
+- Ordinary fork jobs hosted, plus isolated malicious-YAML rejection. Never approve self-hosted fork requests to make a test pass; target workflows stay hosted.
+- Comparable pre/post 24-hour queue samples: workflow/job/run-attempt identity, created/start timestamps, sample count, median/p95/max. Explicitly exclude cancellations, outages and job-less runs; distinguish queue delay from execution. Historical snapshots and 24-minute runtime are not a fresh queue baseline.
 
 Rollback routing with `gh variable delete CI_RUNNER --repo marcusquinn/aidevops`.
-New eligible jobs then use hosted fallback. Already queued jobs retain their
-selected label; cancel/rerun affected runs only after verifying their exact
-identity and purpose. Drain existing jobs before stopping/removing the public
-pool; do not touch private-pool services or caches. Keep the issue open until
-provisioning, routing security and measured queue results are verified.
+New jobs fall back; verify queued jobs' identity/purpose before cancel/rerun.
+Drain before removal; leave private services/caches untouched. Keep the issue open.
 
 ### New private plugin repositories
 
