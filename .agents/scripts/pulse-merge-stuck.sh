@@ -639,6 +639,36 @@ _pms_failing_check_bullets() {
 # ── Classifier ───────────────────────────────────────────────────────────────
 
 #######################################
+# Detect the specific Job 1 refresh that GitHub accepted but never started.
+# Fail closed on incomplete API responses; status timestamps are authoritative.
+_pms_queued_gate_refresh() {
+	local repo_slug="$1" head_sha="$2"
+	[[ -n "$head_sha" ]] || return 1
+	local statuses="" updated="" runs="" run_id="" jobs="" now=0 epoch=0
+	statuses=$(gh api "repos/${repo_slug}/commits/${head_sha}/status" 2>/dev/null) || return 1
+	updated=$(printf '%s' "$statuses" | jq -r '[.statuses[]? | select(.context == "maintainer-gate")] | first | select(.state == "pending" and .description == "Refreshing via Job 1 rerun...") | .updated_at // empty') || return 1
+	[[ -n "$updated" ]] || return 1
+	now=$(date +%s) || return 1
+	epoch=$(_pms_iso_to_epoch "$updated")
+	[[ "$epoch" =~ ^[0-9]+$ && "$epoch" -gt 0 && $((now - epoch)) -ge 1800 ]] || return 1
+	runs=$(gh api "repos/${repo_slug}/actions/workflows/maintainer-gate.yml/runs?head_sha=${head_sha}&event=pull_request_target&per_page=100" 2>/dev/null) || return 1
+	run_id=$(printf '%s' "$runs" | jq -r --arg sha "$head_sha" '[.workflow_runs[]? | select(.head_sha == $sha)] | sort_by(.created_at) | last | select(.status == "queued") | .id // empty') || return 1
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	jobs=$(gh api "repos/${repo_slug}/actions/runs/${run_id}/jobs?per_page=1" 2>/dev/null) || return 1
+	printf '%s' "$jobs" | jq -e '.total_count == 0 and (.jobs | type == "array" and length == 0)' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_pms_repair_queued_gate_refresh() {
+	local repo_slug="$1" head_sha="$2"
+	local runs="" run_id=""
+	runs=$(gh api "repos/${repo_slug}/actions/workflows/maintainer-gate.yml/runs?head_sha=${head_sha}&event=pull_request_target&per_page=100" 2>/dev/null) || return 1
+	run_id=$(printf '%s' "$runs" | jq -r --arg sha "$head_sha" '[.workflow_runs[]? | select(.head_sha == $sha and .status == "completed")] | sort_by(.created_at) | last | .id // empty') || return 1
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	gh api -X POST "repos/${repo_slug}/actions/runs/${run_id}/rerun" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # Classify why a stuck PR is stuck. Echoes one of:
 #   STUCK_RUNNER_QUEUE_SATURATION  (only when caller passes is_saturated=1)
 #   STUCK_CHECKS_FAILING
@@ -1301,7 +1331,11 @@ _pms_handle_classified_pr() {
 	# Pass is_saturated so the classifier can recognise QUEUED checks
 	# during a runner outage.
 	local classification
-	classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_meta")
+	if _pms_queued_gate_refresh "$repo_slug" "$head_sha"; then
+		classification="STUCK_QUEUED_GATE_REFRESH"
+	else
+		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated" "$pr_meta")
+	fi
 
 	# Fetch linked issue once for the escalation comment.
 	local linked_issue=""
@@ -1310,6 +1344,12 @@ _pms_handle_classified_pr() {
 	fi
 
 	case "$classification" in
+	STUCK_QUEUED_GATE_REFRESH)
+		if ! _pms_repair_queued_gate_refresh "$repo_slug" "$head_sha"; then
+			_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue" "$head_sha"
+		fi
+		printf 'HANDLED'
+		;;
 	STUCK_RUNNER_QUEUE_SATURATION)
 		# Suppress per-PR escalation — caller aggregates for meta-issue.
 		echo "[pulse-merge-stuck] _pms_handle_classified_pr: PR #${pr_num} (${repo_slug}) classified STUCK_RUNNER_QUEUE_SATURATION — suppressing per-PR escalation, will aggregate to meta-issue" >>"$LOGFILE"
