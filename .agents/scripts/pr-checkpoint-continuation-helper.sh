@@ -68,9 +68,18 @@ _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
 # Per-head attention is a pause, not a permanent stop: once the newest attention
 # record for the head is this old with no human change, each runner that has
 # not tried the head gets one exact-head continuation (_pcc_attention_rearm_allowed).
-# 0 disables the re-arm. The per-PR fuse above still bounds the total.
+# GH#37514: once every runner has tried the head, the fleet still re-arms one
+# exact-head continuation per window measured from the newest attention record
+# or release, doubling per further stall of the same head
+# (_pcc_fleet_rearm_allowed); the fenced claim picks the single runner.
+# 0 disables both re-arms. The per-PR fuse above still bounds the total.
 _PCC_ATTENTION_REARM_SECONDS="${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}"
-[[ "$_PCC_ATTENTION_REARM_SECONDS" =~ ^[0-9]+$ ]] || _PCC_ATTENTION_REARM_SECONDS=43200
+[[ "$_PCC_ATTENTION_REARM_SECONDS" =~ ^[0-9]{1,10}$ ]] || _PCC_ATTENTION_REARM_SECONDS=43200
+_PCC_ATTENTION_REARM_SECONDS=$((10#$_PCC_ATTENTION_REARM_SECONDS))
+# Same signed 32-bit bound as pulse-dispatch-lib.sh _dispatch_checkpoint_decimal.
+((_PCC_ATTENTION_REARM_SECONDS < 2147483648)) || _PCC_ATTENTION_REARM_SECONDS=43200
+# Doubling cap; pulse-dispatch-lib.sh _dispatch_draft_hint_boundary mirrors it.
+_PCC_ATTENTION_REARM_MAX_DOUBLINGS=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
@@ -1283,7 +1292,10 @@ _pcc_unknown_digest() {
 # existing blocked-checkpoint attention record for the head also counts as
 # posted so one head never collects two attention records.
 # The newest attention record's age drives the per-runner re-arm
-# (_pcc_attention_rearm_allowed).
+# (_pcc_attention_rearm_allowed); with the release epoch it also anchors the
+# fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The newest ready-lease
+# attempt before the release only prefills the attention record's
+# approval-template command; approval-template revalidates it.
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key, $4=trusted logins JSON,
 #       $5=PR creation ISO date (optional; empty disables the per-PR count),
@@ -1291,7 +1303,8 @@ _pcc_unknown_digest() {
 #       $7=per-PR fuse dedup key (optional)
 # Output: release_id<TAB>reason<TAB>stalls_since_head<TAB>attention_posted
 #         <TAB>releases_since_pr_creation<TAB>fuse_attention_posted
-#         <TAB>newest_attention_epoch (0 when none)
+#         <TAB>newest_attention_epoch (0 when none)<TAB>release_epoch
+#         <TAB>released attempt (attempt:<id>, or - when unknown)
 # Returns: 0 when a stall release owns the draft, 1 otherwise
 #######################################
 _pcc_stall_release_evidence() {
@@ -1307,6 +1320,7 @@ _pcc_stall_release_evidence() {
 			| ([$stalls[] | select(capability_release | not)] | length) +
 				(if any($stalls[]; capability_release) then 1 else 0 end);
 		def head_attention: (.body // "") | contains($key) or ($alt_key != "" and contains($alt_key));
+		def ready_lease_line: select(startswith("DISPATCH_LEASE ") and field("phase") == "ready");
 		($head_date | epoch) as $head_epoch
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
@@ -1317,7 +1331,11 @@ _pcc_stall_release_evidence() {
 			(any($c[]; head_attention) | tostring),
 			(if $pr_epoch == null then "0" else (count_since($c; $pr_epoch) | tostring) end),
 			($fuse_key != "" and any($c[]; (.body // "") | contains($fuse_key)) | tostring),
-			([$c[] | select(head_attention) | (.created_at // "") | (try epoch catch 0)] | max // 0 | tostring)]
+			([$c[] | select(head_attention) | (.created_at // "") | (try epoch catch 0)] | max // 0 | tostring),
+			($release.created_at // "" | (try epoch catch 0) | tostring),
+			([$c[] | select(.id < $release.id) | body_lines | ready_lease_line | field("attempt_id")
+				| ltrimstr("attempt:") | select(test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
+				| "attempt:\(.)"] | last // "-")]
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -1400,21 +1418,60 @@ _pcc_attention_rearm_allowed() {
 }
 
 #######################################
+# GH#37514: fleet-wide re-arm once every runner has tried the head. Without it
+# a two- or three-runner fleet paused the head permanently within a day even
+# though the per-PR fuse was not reached, and one runner's local capacity
+# decided whether shared work continued. The window starts at the newer of the
+# head's attention record and the current stall release and doubles for each
+# further stall of the same head: stalls 2 -> 1x, 3 -> 2x, 4 -> 4x, capped at
+# 2^_PCC_ATTENTION_REARM_MAX_DOUBLINGS. Every runner sees the same deadline;
+# the fenced checkpoint claim admits exactly one, and its claim then owns the
+# draft, so later runners see no current stall release.
+# Args: $1=newest attention epoch, $2=current release epoch, $3=stalls since head
+# Output: effective window in seconds
+# Returns: 0 when the fleet re-arm is due, 1 otherwise
+#######################################
+_pcc_fleet_rearm_allowed() {
+	local attention_epoch="$1" release_epoch="$2" stalls="$3"
+	local anchor="" doublings="" window="" now=""
+	[[ "$_PCC_ATTENTION_REARM_SECONDS" -gt 0 && "$attention_epoch" =~ ^[1-9][0-9]{0,11}$ &&
+		"$stalls" =~ ^[0-9]{1,6}$ ]] || return 1
+	[[ "$release_epoch" =~ ^[0-9]{1,12}$ ]] || return 1
+	anchor="$attention_epoch"
+	((release_epoch <= anchor)) || anchor="$release_epoch"
+	doublings=$((stalls > 2 ? stalls - 2 : 0))
+	((doublings <= _PCC_ATTENTION_REARM_MAX_DOUBLINGS)) || doublings="$_PCC_ATTENTION_REARM_MAX_DOUBLINGS"
+	window=$((_PCC_ATTENTION_REARM_SECONDS << doublings))
+	now=$(date +%s) || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	((now - anchor >= window)) || return 1
+	printf '%s\n' "$window"
+	return 0
+}
+
+#######################################
 # Post one attention record when an exact-head continuation of a stall-released
 # draft also stalled (GH#33654). Same shape as the GH#33132 blocked record:
 # never a coordination-event line, grants nothing, never dispatches.
-# Args: repo, issue, pr, head, release_id, reason, stalls, dedup key
+# GH#37514: like BLOCKED_CHECKPOINT_ATTENTION, it names the approval-template
+# command that resumes the preserved head sooner; running it revalidates the
+# release, attempt, head and brief, and only a published approval grants.
+# Args: repo, issue, pr, head, release_id, reason, stalls, dedup key,
+#       fuse (true/false), note, released attempt (attempt:<id>, optional)
 #######################################
 _pcc_post_stall_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
-	local fuse="${9:-false}" note="${10:-}"
+	local fuse="${9:-false}" note="${10:-}" attempt="${11:-}"
 	local rearm_window="$((_PCC_ATTENTION_REARM_SECONDS / 3600))h"
 	[[ "$_PCC_ATTENTION_REARM_SECONDS" -ge 3600 ]] || rearm_window="${_PCC_ATTENTION_REARM_SECONDS}s"
 	local scope="after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse pauses this head"
 	if [[ "$_PCC_ATTENTION_REARM_SECONDS" -gt 0 ]]; then
-		scope="${scope}; after ${rearm_window} without a human change, each runner that has not tried this head gets one exact-head continuation"
+		scope="${scope}; after ${rearm_window} without a human change, each runner that has not tried this head gets one exact-head continuation, and once every runner has tried it Pulse continues it once per window (${rearm_window}, doubling for each further stall of this head) until the per-PR limit (${_PCC_MAX_PR_RELEASES})"
 	fi
 	local push_step="2. Push a corrected commit to the PR branch; a new head re-arms one automatic continuation."
+	local resume_step="4. To resume this exact head sooner without changing it, publish the single line printed by
+   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt:-attempt:<RELEASED_ATTEMPT_ID>}\`
+   as a new issue comment. The approval binds this head, release and the current brief, expires after 24 hours, and Pulse then continues the head through the fenced claim."
 	local fuse_marker="" posted_scope="Posted once per PR head."
 	if [[ "$fuse" == true ]]; then
 		scope="since draft PR #${pr} was opened, reaching the per-PR automatic continuation limit (${_PCC_MAX_PR_RELEASES}) at head \`${head}\`. Pulse will not continue this draft automatically again"
@@ -1427,6 +1484,7 @@ _pcc_post_stall_attention() {
 		# head change or expiry. Neither an aged record nor a push bypasses it.
 		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling; neither a new head nor an aged attention record re-arms automatic continuation"
 		push_step="2. Revalidate the existing revision approval after retrying unavailable metadata or permission checks. If it expired or no longer matches the head or brief, generate a fresh approval with \`pr-checkpoint-continuation-helper.sh approval-template\` and publish the generated approval as a new issue comment."
+		resume_step=""
 	fi
 	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} release=${release_id} -->${fuse_marker}
@@ -1441,6 +1499,7 @@ Next action for the brief owner (write access required), one of:
 1. Review draft PR #${pr}. If the work is complete, mark it ready for review so the normal merge flow takes over.
 ${push_step}
 3. Close draft PR #${pr} to discard the checkpoint; ordinary dispatch then restarts from the current brief.
+${resume_step}
 
 See \`reference/checkpoint-revision-recovery.md\`. ${posted_scope}
 <!-- ops:end -->"
@@ -1516,6 +1575,8 @@ _pcc_dispatch_expired_recovery_draft() {
 # post one attention record instead of looping. After the record has aged past
 # _PCC_ATTENTION_REARM_SECONDS, runners that never tried the head each get one
 # continuation, so a stall on one runner does not freeze the work for all.
+# GH#37514: once every runner has tried it, _pcc_fleet_rearm_allowed re-arms
+# one continuation per doubling window until the per-PR fuse.
 # Args: $1=repo slug, $2=repo path, $3=linked issue, $4=draft PR, $5=login
 # Returns: 0 dispatched, deduplicated or attention recorded; 1 not applicable
 #          or failed; 2 invalid arguments
@@ -1526,6 +1587,7 @@ _pcc_dispatch_stalled() {
 	local pr_json="" head="" head_date="" pr_created="" assignees="" comments="" evidence="" key=""
 	local trusted_logins=""
 	local release_id="" reason="" stalls="" posted="" pr_releases="" fuse_posted="" attention_epoch=""
+	local release_epoch="" attempt=""
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
@@ -1558,9 +1620,12 @@ _pcc_dispatch_stalled() {
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: PR #%s in %s has no current stall release issue=#%s\n' "$pr" "$repo" "$issue"
 		return 1
 	}
-	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch <<<"$evidence"
+	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
+		release_epoch attempt <<<"$evidence"
 	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
 	[[ "$pr_releases" =~ ^[0-9]+$ ]] || pr_releases=0
+	[[ "$release_epoch" =~ ^[0-9]+$ ]] || release_epoch=0
+	[[ "$attempt" =~ ^attempt:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || attempt=""
 	if [[ "$stalls" -ge 2 || "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]]; then
 		# GH#36019: a fuse-only stop reports the per-PR count in the record and
 		# is posted once per PR, so later human-pushed heads add no comments.
@@ -1571,22 +1636,31 @@ _pcc_dispatch_stalled() {
 			[[ "$fuse_posted" != true ]] || posted=true
 		fi
 		if [[ "$posted" != true ]]; then
-			_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" "$fuse" || return 1
+			_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" \
+				"$fuse" "" "$attempt" || return 1
 			printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s\n' \
 				"$pr" "$repo" "$head" "$release_id" "$stalls"
 			return 0
 		fi
 		# The per-head record is a pause. After the re-arm window with no human
 		# change, a runner that never tried this head gets one continuation;
-		# the per-PR fuse remains a hard stop.
-		if [[ "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]] ||
-			! _pcc_attention_rearm_allowed "${attention_epoch:-0}" ||
-			_pcc_runner_tried_head "$comments" "$head_date" "$login"; then
+		# once every runner tried it, the fleet re-arm (GH#37514) continues it
+		# on a doubling schedule. The per-PR fuse remains a hard stop.
+		local rearm_mode="" fleet_window=""
+		if [[ "$pr_releases" -lt "$_PCC_MAX_PR_RELEASES" ]]; then
+			if _pcc_attention_rearm_allowed "${attention_epoch:-0}" &&
+				! _pcc_runner_tried_head "$comments" "$head_date" "$login"; then
+				rearm_mode="untried_runner"
+			elif fleet_window=$(_pcc_fleet_rearm_allowed "${attention_epoch:-0}" "$release_epoch" "$stalls"); then
+				rearm_mode="fleet window=${fleet_window}s"
+			fi
+		fi
+		if [[ -z "$rearm_mode" ]]; then
 			printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
 			return 0
 		fi
-		printf 'STALLED_CHECKPOINT_REARMED: PR #%s in %s head=%s runner=%s stalls=%s pr_releases=%s issue=#%s\n' \
-			"$pr" "$repo" "$head" "$login" "$stalls" "$pr_releases" "$issue"
+		printf 'STALLED_CHECKPOINT_REARMED: PR #%s in %s head=%s runner=%s stalls=%s pr_releases=%s issue=#%s mode=%s\n' \
+			"$pr" "$repo" "$head" "$login" "$stalls" "$pr_releases" "$issue" "$rearm_mode"
 	fi
 	local self_release=""
 	if self_release=$(_pcc_self_capability_release "$comments" "$head_date" "$login" 2>/dev/null); then
