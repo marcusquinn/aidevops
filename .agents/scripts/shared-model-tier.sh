@@ -145,6 +145,41 @@ model_routing_custom_table_validation_findings() {
 }
 
 #######################################
+# Print custom-table entries using providers unavailable to headless workers.
+# Google is excluded because it is also a native API-key provider.
+#######################################
+model_routing_custom_table_interactive_only_findings() {
+	local custom_table="$1"
+	local framework_table="$2"
+	[[ -n "$custom_table" && "$custom_table" != "$framework_table" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -r '
+		(.tiers // {}) | to_entries[]
+		| select((.value | type) == "object" and (.value.models | type) == "array")
+		| .key as $tier
+		| .value.models[] | strings
+		| select(test("^(claudecli|cursor)/"))
+		| "\($tier): \(.)"
+	' "$custom_table" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Warn once about interactive-only providers in custom routing tables.
+#######################################
+model_routing_warn_interactive_only_providers() {
+	local custom_table="$1"
+	local framework_table="$2"
+	local findings=""
+	[[ "${_MODEL_ROUTING_INTERACTIVE_ONLY_WARNING_EMITTED:-0}" != "1" ]] || return 0
+	findings=$(model_routing_custom_table_interactive_only_findings "$custom_table" "$framework_table") || return 0
+	[[ -n "$findings" ]] || return 0
+	_MODEL_ROUTING_INTERACTIVE_ONLY_WARNING_EMITTED=1
+	printf 'WARNING: custom model routing table lists interactive-only providers; headless workers cannot use them and fall through to the next candidate (use anthropic/* via the OAuth pool for Claude subscriptions): %s\n' "${findings//$'\n'/; }" >&2
+	return 0
+}
+
+#######################################
 # Warn once when a custom routing-table tier cannot supply candidates.
 #######################################
 model_routing_warn_invalid_custom_table() {
@@ -180,6 +215,7 @@ model_tier_candidates() {
 	framework_table=$(model_routing_framework_table_path 2>/dev/null) || framework_table=""
 	if command -v jq >/dev/null 2>&1; then
 		model_routing_warn_invalid_custom_table "$routing_table" "$framework_table"
+		model_routing_warn_interactive_only_providers "$routing_table" "$framework_table"
 		local table=""
 		local previous_table=""
 		for table in "$routing_table" "$framework_table"; do

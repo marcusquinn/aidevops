@@ -350,6 +350,15 @@ diagnose_model_routing_table() {
 		return 0
 	fi
 
+	if declare -F model_routing_custom_table_interactive_only_findings >/dev/null 2>&1; then
+		findings=$(model_routing_custom_table_interactive_only_findings "$routing_table" "$framework_table") || findings=""
+		if [[ -n "$findings" ]]; then
+			print_warning "Model routing override: interactive-only providers listed (headless workers skip them): ${findings//$'\n'/; }"
+			CONFLICTS_FOUND=1
+			return 0
+		fi
+	fi
+
 	print_success "Model routing override: found and parsed; configured tiers are active"
 	return 0
 }
