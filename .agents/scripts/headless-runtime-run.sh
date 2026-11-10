@@ -533,6 +533,7 @@ _cmd_run_attempt_loop() {
 	local _run_metric_output_file="" _run_metric_session_id="" completion_state="complete"
 	local _cmd_run_disposition="" _cmd_run_return_status=1
 	local routing_attempt=0 routing_reason="headless_dispatch" routing_escalated=0 routing_candidate_index=-1
+	_HRW_PRIOR_ATTEMPT_ACTIVITY=0
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		routing_attempt=$((routing_attempt + 1))
 		routing_candidate_index=$(model_tier_candidate_index "$tier_override" "$selected_model" 2>/dev/null) || routing_candidate_index=-1
@@ -550,6 +551,11 @@ _cmd_run_attempt_loop() {
 			attempt_exit=0
 		else
 			attempt_exit=$?
+		fi
+		# GH#37597: process-scoped proof that a runtime attempt already ran with
+		# activity, read by the EXIT trap's runner-health attribution.
+		if [[ "${_run_activity_detected:-0}" == "1" ]]; then
+			_HRW_PRIOR_ATTEMPT_ACTIVITY=1
 		fi
 		_cmd_run_disposition=""
 		_handle_cmd_run_terminal_attempt

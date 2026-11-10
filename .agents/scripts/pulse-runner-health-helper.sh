@@ -317,6 +317,30 @@ _rh_failure_threshold_for_signal() {
 }
 
 #######################################
+# Audit-only outcomes: recorded in the ledger without incrementing OR
+# resetting the issue-worker failure streak, so they can never trip the
+# breaker. Routine launches use a different checkout/signing context;
+# a signing preflight failure on a continuation retry, after an earlier
+# attempt in the same worker process already ran with activity, does not
+# prove this runner cannot sign (GH#37597).
+# Args: $1 = outcome signal, $2 = issue identifier
+#######################################
+_rh_is_audit_only_outcome() {
+	local signal="$1"
+	local issue="$2"
+	case "$signal" in
+	worker_signing_unavailable_after_activity)
+		return 0
+		;;
+	worker_signing_unavailable)
+		# Repository-qualified issue identifiers contain #; routine session IDs do not.
+		[[ "$issue" != *'#'* && "$issue" == routine-* ]] && return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
 # Determine if a window is expired vs the recorded window_started_at.
 # Returns 0 (expired) if more than RUNNER_HEALTH_WINDOW_HOURS have passed.
 #######################################
@@ -358,25 +382,24 @@ cmd_record_outcome() {
 	now=$(_rh_now)
 	local is_zero=0
 	if _rh_is_zero_attempt_signal "$signal"; then is_zero=1; fi
-	# Routine launches can use a different checkout/signing context. Keep their
-	# failure in the audit ledger without incrementing OR resetting issue health.
-	local routine_signing=0
-	# Repository-qualified issue identifiers contain #; routine session IDs do not.
-	if [[ "$signal" == "worker_signing_unavailable" && "$issue" != *'#'* && "$issue" == routine-* ]]; then
-		routine_signing=1
+	# Audit-only outcomes stay in the ledger without incrementing OR resetting
+	# issue health (routine signing, post-activity continuation signing).
+	local audit_only=0
+	if _rh_is_audit_only_outcome "$signal" "$issue"; then
+		audit_only=1
 	fi
 
 	# Window expiry: if the rolling window has elapsed without tripping,
 	# zero out the counter and re-anchor the window. Done BEFORE applying
 	# the new outcome so a stale window doesn't carry an old counter.
-	if [[ "$routine_signing" -eq 0 ]] && _rh_window_expired; then
+	if [[ "$audit_only" -eq 0 ]] && _rh_window_expired; then
 		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
 	fi
 
 	# Append outcome to ledger and update counter.
 	local new_counter="" signal_threshold=""
-	if [[ "$routine_signing" -eq 1 ]]; then
+	if [[ "$audit_only" -eq 1 ]]; then
 		: # Audit-only: do not change the issue-worker failure streak.
 	elif [[ "$is_zero" -eq 1 ]]; then
 		# Counter increments and the window re-anchors on every zero-attempt
@@ -411,7 +434,7 @@ cmd_record_outcome() {
 	current_state=$(_rh_get_field '.circuit_breaker.state')
 	[[ -z "$current_state" ]] && current_state="closed"
 
-	if [[ "$is_zero" -eq 1 && "$routine_signing" -eq 0 ]] \
+	if [[ "$is_zero" -eq 1 && "$audit_only" -eq 0 ]] \
 		&& [[ "$current_state" == "closed" ]] \
 		&& [[ "$new_counter" -ge "$signal_threshold" ]]; then
 		_rh_trip_breaker "$issue" "signal=${signal} consecutive_zero_attempts=${new_counter}"
