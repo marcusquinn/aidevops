@@ -9,6 +9,8 @@ import { activeLocalOnlyPolicy, configuredLocalProviders, isLocalProvider } from
 import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 import { routingCandidates, routingModelIdentity } from "./model-routing.mjs";
 import { compactionReasoning } from "./model-routing-variant.mjs";
+import { isModelUnavailable, openAIAuthSignature } from "./model-unavailability.mjs";
+import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
 import { optionsHaveCredentials } from "./provider-credentials.mjs";
 
 // Fixed compaction effort (GH#36169) lives in compaction-effort.mjs.
@@ -113,6 +115,7 @@ export function applyCompactionRouting(config, routing, {
   policy = activeLocalOnlyPolicy(),
   localProviders = () => configuredLocalProviders(),
   hasCredentials = createCompactionCredentialCheck(config, { localProviders }),
+  isUnavailable = currentAuthModelUnavailable,
 } = {}) {
   if (!config || !routing) return false;
   config.agent ??= {};
@@ -120,15 +123,64 @@ export function applyCompactionRouting(config, routing, {
   if (String(compaction.model || "") || String(compaction.variant || "")) return false;
 
   const allowed = allowedCompactionProvider(config, policy, localProviders);
-  for (const model of routingCandidates(routing, "simple")) {
+  const usable = (model) => {
     const { providerID } = routingModelIdentity(model);
-    if (!allowed(providerID) || !hasCredentials(providerID)) continue;
-    if (inputLimit(config, model) < DEFAULT_COMPACTION_TARGET) continue;
-    compaction.model = model;
-    // Informational: OpenCode ignores it for compaction; chat.params applies it.
-    compaction.variant = compactionReasoning(routing.compactionReasoning);
-    return true;
-  }
+    // t18957: isUnavailable skips a definite entitlement rejection for the current auth.
+    return allowed(providerID) && hasCredentials(providerID) && !isUnavailable(model)
+      && inputLimit(config, model) >= DEFAULT_COMPACTION_TARGET;
+  };
+  const model = routingCandidates(routing, "simple").find(usable);
+  if (!model) return false;
+  compaction.model = model;
+  // Informational: OpenCode ignores it for compaction; chat.params applies it.
+  compaction.variant = compactionReasoning(routing.compactionReasoning);
+  trackAutoRouted(config, { routing, opts: { policy, localProviders, hasCredentials, isUnavailable }, model });
+  return true;
+}
+
+function trackAutoRouted(config, state) {
+  autoRouted.delete(config);
+  autoRouted.set(config, state);
+  while (autoRouted.size > MAX_TRACKED_CONFIGS) autoRouted.delete(autoRouted.keys().next().value);
+}
+
+// t18957: only definite rejections (GH#36698 records) are consulted, keyed by
+// the current OpenAI OAuth token signature; rate limits, 5xx and expired
+// tokens never write a record, so they cannot cause a switch.
+function currentAuthModelUnavailable(model) {
+  const auth = readCurrentOpenAIAuth();
+  if (auth?.type !== "oauth" || !auth.access) return false;
+  return isModelUnavailable(model, openAIAuthSignature(auth.access));
+}
+
+// Configs whose compaction model was chosen here (never explicit pins).
+const autoRouted = new Map();
+const MAX_TRACKED_CONFIGS = 8;
+
+/**
+ * After a definite entitlement rejection of `model`, re-route any config whose
+ * auto-selected compaction model it was onto the next fitting candidate.
+ * Explicit pins are never in `autoRouted`, so they are untouched.
+ * @returns {number} configs re-routed
+ */
+export function rerouteCompactionAfterRejection(model) {
+  const matching = [...autoRouted].filter(([config, state]) =>
+    state.model === model && config.agent?.compaction?.model === model);
+  return matching.filter(([config, state]) => rerouteOne(config, state, model)).length;
+}
+
+function rerouteOne(config, state, model) {
+  const compaction = config.agent.compaction;
+  const previous = { ...compaction };
+  delete compaction.model;
+  delete compaction.variant;
+  // The request that was rejected is authoritative even if the stored auth
+  // signature cannot be read back identically.
+  const isUnavailable = (candidate) => candidate === model || state.opts.isUnavailable(candidate);
+  if (applyCompactionRouting(config, state.routing, { ...state.opts, isUnavailable })) return true;
+  // No fitting alternative: keep the previous route rather than none.
+  Object.assign(compaction, previous);
+  autoRouted.set(config, state);
   return false;
 }
 

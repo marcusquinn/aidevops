@@ -25,6 +25,7 @@ import {
   applyCompactionRouting,
   createCompactionCredentialCheck,
   createCompactionResidencyWarning,
+  rerouteCompactionAfterRejection,
 } from "../compaction-routing.mjs";
 import { authSignatureFromHeaders, clearModelUnavailable, isModelUnavailable, markModelUnavailable } from "../model-unavailability.mjs";
 
@@ -458,4 +459,36 @@ test("compaction preserves explicit user model and variant pins", () => {
   const config = { agent: { compaction: { model: "anthropic/pinned", variant: "high" } } };
   assert.equal(applyCompactionRouting(config, routing), false);
   assert.deepEqual(config.agent.compaction, { model: "anthropic/pinned", variant: "high" });
+});
+
+test("compaction skips a model rejected for the current auth and re-routes live (t18957)", () => {
+  // Unique model ID: re-routing tracks every auto-routed config in the process.
+  const routing = { tiers: { simple: { models: ["openai/gpt-t18957-a", "anthropic/claude-haiku-5-5"] } } };
+  const config = { provider: { openai: { models: { "gpt-t18957-a": { limit: { input: 260000 } } } } } };
+  const rejected = new Set();
+  const opts = { policy: null, localProviders: [], hasCredentials: () => true, isUnavailable: (m) => rejected.has(m) };
+  assert.equal(applyCompactionRouting(config, routing, opts), true);
+  assert.equal(config.agent.compaction.model, "openai/gpt-t18957-a");
+  rejected.add("openai/gpt-t18957-a");
+  assert.equal(rerouteCompactionAfterRejection("openai/other"), 0);
+  assert.equal(rerouteCompactionAfterRejection("openai/gpt-t18957-a"), 1);
+  assert.equal(config.agent.compaction.model, "anthropic/claude-haiku-5-5");
+  const fresh = { provider: config.provider };
+  assert.equal(applyCompactionRouting(fresh, routing, opts), true);
+  assert.equal(fresh.agent.compaction.model, "anthropic/claude-haiku-5-5");
+});
+
+test("compaction re-route never overrides pins and keeps the route without an alternative (t18957)", () => {
+  const routing = { tiers: { simple: { models: ["openai/gpt-t18957-b"] } } };
+  const pinned = { agent: { compaction: { model: "openai/gpt-t18957-b" } } };
+  assert.equal(applyCompactionRouting(pinned, routing, { isUnavailable: () => true }), false);
+  assert.equal(rerouteCompactionAfterRejection("openai/gpt-t18957-b"), 0);
+  assert.equal(pinned.agent.compaction.model, "openai/gpt-t18957-b");
+  const config = { provider: { openai: { models: { "gpt-t18957-b": { limit: { input: 260000 } } } } } };
+  let down = false;
+  const opts = { policy: null, localProviders: [], hasCredentials: () => true, isUnavailable: () => down };
+  assert.equal(applyCompactionRouting(config, routing, opts), true);
+  down = true;
+  assert.equal(rerouteCompactionAfterRejection("openai/gpt-t18957-b"), 0);
+  assert.equal(config.agent.compaction.model, "openai/gpt-t18957-b");
 });
