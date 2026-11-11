@@ -1346,6 +1346,7 @@ _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_METHOD="--squash"
 	FULL_LOOP_MERGE_PARSED_ADMIN=0
 	FULL_LOOP_MERGE_PARSED_AUTO=0
+	FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=0
 	FULL_LOOP_MERGE_PARSED_BODY_FILE=""
 	FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON=""
 	local arg=""
@@ -1372,6 +1373,9 @@ _merge_parse_command_args() {
 			;;
 		--auto)
 			FULL_LOOP_MERGE_PARSED_AUTO=1
+			;;
+		--allow-parent-close)
+			FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=1
 			;;
 		"$FULL_LOOP_MERGE_BODY_FILE_FLAG")
 			if [[ $# -eq 0 || "$1" == -* || -n "$FULL_LOOP_MERGE_PARSED_BODY_FILE" ]]; then
@@ -1698,6 +1702,31 @@ _merge_check_closure_metadata() {
 	return 0
 }
 
+# Check both the body and GitHub's repository-qualified closing references.
+_merge_check_parent_task_keywords() {
+	local pr_number="$1" repo="$2" allow="$3" metadata="" refs="" ref_repo="" ref_number="" tmp="" rc=0
+	[[ "$allow" -eq 1 ]] && return 0
+	local guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
+	[[ -x "$guard" ]] || { print_error "Parent-task keyword guard unavailable"; return 1; }
+	metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || return 1
+	refs=$(printf '%s' "$metadata" | jq -r '
+		if ([.body | strings] | length) != 1 or ([.closingIssuesReferences | arrays] | length) != 1 then error("invalid metadata") else
+		.closingIssuesReferences[] | select(.number != null and .repository.owner.login != null and .repository.name != null)
+		| "\(.repository.owner.login)/\(.repository.name) \(.number)" end') || return 1
+	_merge_closing_refs_have_repository "$metadata" || return 1
+	tmp=$(mktemp) || return 1
+	printf '%s' "$metadata" | jq -r '.body' >"$tmp"
+	"$guard" check-body --body-file "$tmp" --repo "$repo" --strict || rc=$?
+	while read -r ref_repo ref_number; do
+		[[ -n "$ref_repo" && "$ref_number" =~ ^[0-9]+$ ]] || continue
+		printf 'Resolves #%s\n' "$ref_number" >"$tmp"
+		"$guard" check-body --body-file "$tmp" --repo "$ref_repo" --strict || rc=$?
+	done <<<"$refs"
+	rm -f "$tmp"
+	[[ "$rc" -eq 0 ]] || return 1
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1736,6 +1765,7 @@ cmd_merge() {
 	fi
 
 	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_parent_task_keywords "$pr_number" "$repo" "$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE" || return 1
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
