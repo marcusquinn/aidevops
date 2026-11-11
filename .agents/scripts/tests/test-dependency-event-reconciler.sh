@@ -621,7 +621,7 @@ _run_repoint_case() (
 			json=$(jq -cn --arg state "$SUCCESSOR_STATE" --arg reason "$SUCCESSOR_REASON" \
 				'{id:9912,state:($state | ascii_downcase),state_reason:($reason | ascii_downcase),body:""}')
 			;;
-		repos/owner/repo/issues/*) json='{"id":9930,"state":"open","body":"Intro #10 text\nBlocked by: #10 and #7\n"}' ;;
+		repos/owner/repo/issues/*) json=$(jq -cn --arg body "${REPOINT_BODY:-$'Intro #10 text\nBlocked by: #10 and #7\n'}" '{id:9930,state:"open",body:$body}') ;;
 		*) return 1 ;;
 		esac
 		if [[ -n "$jq_filter" ]]; then
@@ -653,6 +653,12 @@ assert_eq 1 "$(grep -c '^POST .*issue_id=9912' "$REPOINT_LOG")" "superseded-only
 assert_eq 1 "$(grep -c 'Blocked by: #12 and #7' "$REPOINT_LOG")" "superseded-only dependant has its Blocked-by line rewritten"
 assert_eq 1 "$(grep -c 'Intro #10 text' "$REPOINT_LOG")" "non Blocked-by prose keeps the original reference"
 assert_eq 1 "$(grep -c 'superseded by #12' "$REPOINT_LOG")" "superseded-only dependant gets one pointer comment"
+: >"$REPOINT_LOG"
+REPOINT_BODY='Decoupled <!-- aidevops:no-supersession-repoint -->' _run_repoint_case 30 >/dev/null 2>&1
+assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "opted-out sweep leaves historical edges alone"
+: >"$REPOINT_LOG"
+REPOINT_BODY='Decoupled <!-- aidevops:no-supersession-repoint -->' _run_repoint_case 30 consolidation >/dev/null 2>&1
+assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "opted-out consolidation does not mutate the dependant"
 : >"$REPOINT_LOG"
 _run_repoint_case 31 >/dev/null 2>&1
 assert_eq 0 "$(wc -c <"$REPOINT_LOG" | tr -d ' ')" "dependant with an open blocker is left alone"
