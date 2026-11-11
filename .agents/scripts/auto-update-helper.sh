@@ -1400,8 +1400,11 @@ _cmd_status_scheduler() {
 		if ! command -v systemctl &>/dev/null; then
 			echo -e "  Scheduler: systemd (not available on this host)"
 		else
-			local enabled_state
-			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || echo "unknown")
+			local enabled_state active_state
+			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			enabled_state=${enabled_state:-unknown}
+			active_state=$(systemctl --user is-active "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			active_state=${active_state:-unknown}
 			local timer_props next_elapse last_trigger
 			# Request all NextElapse variants: NextElapse (pre-255) and
 			# NextElapseUSecRealtime/NextElapseUSecMonotonic (systemd 255+)
@@ -1422,6 +1425,7 @@ _cmd_status_scheduler() {
 			else
 				echo -e "  Status:    ${YELLOW}${enabled_state}${NC}"
 			fi
+			echo "  Active:    $active_state"
 			echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
 			if [[ -n "$next_elapse" ]] && [[ "$next_elapse" != "0" ]]; then
 				echo "  Next fire: $next_elapse"
@@ -1526,7 +1530,7 @@ _cmd_status_state() {
 _resolve_status_backend() {
 	local backend="$1"
 
-	if [[ "$backend" != "systemd" && "$backend" != "launchd" ]] && command -v systemctl &>/dev/null; then
+	if [[ "$backend" != "systemd" && "$backend" != "launchd" && -z "${AIDEVOPS_SCHEDULER:-}" ]] && command -v systemctl &>/dev/null; then
 		local timer_state
 		timer_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
 		case "$timer_state" in
