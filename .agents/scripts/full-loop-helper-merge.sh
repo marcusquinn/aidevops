@@ -1730,7 +1730,7 @@ _merge_check_parent_task_keywords() {
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH] [--override-review-bot-gate=REASON]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--allow-parent-close] [--body-file PATH] [--override-review-bot-gate=REASON]"
 		return 1
 	fi
 	shift
