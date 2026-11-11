@@ -223,10 +223,21 @@ the same account, replacing `<docroot>` with each site's WordPress document root
 for every check. Include the age of pending updates and check the site's setting
 in hPanel. A backlog is a signal to investigate, not proof of a specific cause.
 
-When creating WordPress sites through the hPanel API, explicitly set and verify each
-site's auto-update setting as well as its cron job. Use the current documented API
-if it exposes the setting; otherwise configure and verify it in hPanel. Do not infer
-the setting from WordPress's plugin column or remove the vendor safeguard.
+When creating WordPress sites through the hPanel API, configure and verify each
+site's cron job. For auto-updates, configure and verify the setting through the
+current documented API if it exposes it, and also verify it in hPanel where
+available; if the API does not expose it, use hPanel. Do not infer
+that updates work from WordPress's plugin column or remove the vendor safeguard.
+
+On Agency plans, Hostinger's [Agency plugin documentation](https://docs.hostinger.com/wordpress/hostinger-plugins/must-use-plugins/agency.md)
+says Hostinger manages core versions and its Agency must-use plugin runs background
+updates twice daily for plugins and themes selected for auto-update in WordPress.
+The plugin has no settings. Hostinger says [dashboard automatic WordPress
+updates](https://www.hostinger.com/support/8409305-how-to-enable-automatic-wordpress-updates-in-hostinger/)
+are unavailable on Agency Hosting plans. Check the installed must-use plugins and
+configure plugin and theme auto-updates in WordPress; verify updates actually run. Smart Auto Updates can disable native
+updates, so investigate conflicting controls or ask Hostinger rather than assuming
+the WordPress selection alone is effective.
 
 ```bash
 # Replace <domain>; pass only installed target slugs.
