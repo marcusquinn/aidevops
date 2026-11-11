@@ -1336,7 +1336,7 @@ _dispatch_capability_cooldown_record() {
 	local stamp="${3:-$(date +%s)}"
 	local owner="${4:-}"
 	local fields="" issue="" repo="" repo_path="" signal="" file="" tmp=""
-	local updated='' classes='' fingerprint=''
+	local updated='' classes='' fingerprint='' config_fp=''
 	[[ "$_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS" -gt 0 && -n "$candidate" ]] || return 0
 	[[ "$recent_lines" =~ DISPATCH_BLOCK_REASON\ reason=runner_capability_unmet\ signal=([a-z_]+)\ cooldown=eligible ]] || return 0
 	signal="${BASH_REMATCH[1]}"
@@ -1346,21 +1346,26 @@ _dispatch_capability_cooldown_record() {
 	repo=$(jq -r '.repo_slug // ""' <<<"$candidate" 2>/dev/null) || return 0
 	repo_path=$(jq -r '.repo_path // ""' <<<"$candidate" 2>/dev/null) || return 0
 	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 0
-	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" \
-		"$(_dispatch_capability_config_fingerprint "$repo_path")") || return 0
+	config_fp=$(_dispatch_capability_config_fingerprint "$repo_path") || return 0
+	fingerprint=$(_dispatch_capability_fingerprint "$updated" "$classes" "$config_fp") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
 	if printf '%s\t%s\t%s\t%s\n' "$stamp" "$fingerprint" "$signal" "$owner" >"$tmp" && mv -f "$tmp" "$file"; then
-		# GH#37752: a fresh worker verdict anchors the capability it was made under.
-		# Preserve any capability-change cutoff until a newer observation replaces it.
+		# GH#37752: a fresh local verdict anchors the capability it was made under.
+		# Preserve any capability-change cutoff until a newer observation replaces
+		# it. If the inputs changed since the anchor (the observation import was
+		# skipped, e.g. a failed fetch), advance the cutoff exactly as
+		# _dispatch_capability_anchor_unchanged does, so pre-change observations
+		# never hold under the new capability once this record's TTL expires.
 		if [[ "$signal" != worker_observation ]]; then
 			local prev_fp="" prev_cut=0
 			if [[ -f "${file}.capability" && ! -L "${file}.capability" ]]; then
 				IFS=$'\t' read -r prev_fp prev_cut <"${file}.capability" || true
 			fi
 			[[ "$prev_cut" =~ ^[0-9]+$ ]] || prev_cut=0
-			printf '%s\t%s\n' "$(_dispatch_capability_config_fingerprint "$repo_path")" "$prev_cut" >"${file}.capability" 2>/dev/null || true
+			[[ -z "$prev_fp" || "$prev_fp" == "$config_fp" ]] || prev_cut=$(date +%s)
+			printf '%s\t%s\n' "$config_fp" "$prev_cut" >"${file}.capability" 2>/dev/null || true
 		fi
 		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) runner_capability_unmet cooldown recorded signal=${signal} ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_capability_cooldown_recorded"
