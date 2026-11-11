@@ -142,12 +142,9 @@ all-checks-green, non-closing `For #N` draft is marked ready so the guarded Puls
 it as a partial checkpoint (the issue stays open); any other draft is closed with its branch kept
 and a salvage pointer on the issue. Fresh-evidence gates (labels, assignment, ownership, dedupe
 marker) are listed in the `pr-checkpoint-terminal-action.sh` header; pending or unreadable state
-defers. The terminal write competes in the same distributed claim consensus as continuation,
-revalidates ownership under the winning lease, and removes its claim when finished. Before
-closing, it must persist the branch/head salvage pointer on the issue; a failed pointer post
-leaves the draft open for retry. If the final audit post fails after closure, the pointer is
-already durable and `STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED` reports the incomplete audit
-instead of reporting success. Signals: `terminal_action=<ready_for_merge|closed>`, `terminal_deferred=<reason>`.
+defers. Terminal writes compete in continuation's distributed claim consensus, revalidate ownership under the winning lease, and remove the claim on exit.
+Closing first persists the branch/head salvage pointer on the issue; a failed pointer post leaves the draft open for retry. A failed final audit post reports `STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED`, not success; the pointer is already durable.
+Signals: `terminal_action=<ready_for_merge|closed>`, `terminal_deferred=<reason>`.
 `dispatch` re-verifies a `STALE_PR_CONTINUATION` whose issue was already released unassigned
 through `dispatch-stalled`.
 
