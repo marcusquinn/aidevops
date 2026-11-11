@@ -782,7 +782,7 @@ _hrff_release_fragment() {
 	local reason="$1" fragment="$2"
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
-	elif [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+	elif [[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" && "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
 		fragment=$'\nRuntime did not launch, so the approved head is unchanged. The revision continuation approval stays reusable for this exact head (bounded retries within its validity window); no new approval is needed unless the head, brief or approval window changes.\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
