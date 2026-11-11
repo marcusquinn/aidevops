@@ -59,7 +59,10 @@ do not read or rely on the old snapshot. This overrides all pre-fetched-state
 instructions below. Run `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope`
 to obtain current schedule-filtered repository slugs from configuration. Limit
 triage and `list-candidates SLUG 100` to those slugs; use the named helpers and
-targeted `gh` reads for current evidence. Do not infer absent data from the old
+targeted `gh` reads for current evidence. `list-candidates` returns issues, not
+PRs, so in stale mode only, discover live PRs with one bounded call per scoped
+slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the "do NOT run `gh pr list`" rule below. Do not infer absent data from the old
 snapshot. If scope lookup fails or returns no slugs, log a diagnostic and exit
 cleanly rather than using persisted scope or broadening to all repositories.
 
