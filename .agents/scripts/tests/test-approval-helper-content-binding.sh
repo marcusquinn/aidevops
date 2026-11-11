@@ -61,7 +61,14 @@ graphql)
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
 repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
-	repos/owner/repo/issues/41) cat "${FIXTURES}/issue-41.json" ;;
+	repos/owner/repo/issues/41)
+		if [[ "${GH_RACE_FIRST_ISSUE:-0}" == 1 && ! -f "${FIXTURES}/race-read" ]]; then
+			: >"${FIXTURES}/race-read"
+			cat "${FIXTURES}/issue-41-before-race.json"
+		else
+			cat "${FIXTURES}/issue-41.json"
+		fi
+		;;
 repos/owner/repo/issues/41/comments*) cat "${FIXTURES}/comments-41.json" ;;
 repos/owner/repo/issues/41/timeline*) cat "${FIXTURES}/timeline-41.json" ;;
 repos/owner/repo/issues/42) cat "${FIXTURES}/issue-42.json" ;;
@@ -484,7 +491,9 @@ test_canonical_review_bot_retry() {
 Review bots were rate-limited when this PR was created (affected: coderabbitai copilot). Requesting a review retry."
 	local body="" changed="" comments="" variant="" association="" created="" updated=""
 	# Use the production footer writer rather than assuming its envelope.
-	body=$(AIDEVOPS_SESSION_TYPE=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
+	# AIDEVOPS_SESSION_ORIGIN outranks runtime detection (GH#37763), so the
+	# fixture stays a worker retry even when run from an interactive session.
+	body=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
 		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$retry_body") || return 1
 	body="${retry_body}${body}"
 	for variant in exact contributor extra altered marker-only edited preexisting wrong-head malformed-head issue inline; do
@@ -719,8 +728,9 @@ test_post_approval_linked_references() {
 write_locked_issue_fixture() {
 	local include_tier="${1:-true}"
 	local initial_status="${2:-}"
+	local extra_label="${3:-}"
 	write_baseline_fixtures
-	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" --arg extra_label "$extra_label" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end + if $extra_label != "" then [{id:13,node_id:"L_13",name:$extra_label}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
 	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
 	return 0
@@ -861,6 +871,72 @@ test_locked_issue_tier_backfill_continuity() {
 	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4215,"node_id":"EV_4215","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"fix-the-fixer"}}'
 	assert_verify "untrusted fix-the-fixer classification remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+# GH#37762: signed permission requests add, and signed grants/withdrawals
+# remove, the needs-maintainer-permissions hold. That dispatch hold is not
+# scope-bearing, so authorized toggles must not stale a prior issue approval.
+test_locked_issue_permission_hold_continuity() {
+	local hold="needs-maintainer-permissions"
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4221,"node_id":"EV_4221","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold removal preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq --arg hold "$hold" '.labels += [{id:13,node_id:"L_13",name:$hold}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4222,"node_id":"EV_4222","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold request preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4223,"node_id":"EV_4223","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "untrusted permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
+
+	# A timeline that omits the hold removal (visibility lag or truncation) must
+	# not verify on the strength of another visible authorized mutation.
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4224,"node_id":"EV_4224","event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	assert_verify "hidden permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+test_locked_issue_label_replay() {
+	local label="" output="" rc=0
+	for label in needs-maintainer-review status:available; do
+		write_locked_issue_fixture true "" "$label"
+		jq --arg label "$label" '.labels |= map(select(.name != $label)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+		append_issue_timeline_event '{"id":4225,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+		assert_verify "hidden ${label} removal remains stale after retry" issue 41 STALE_APPROVAL 4
+	done
+
+	write_locked_issue_fixture
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	cp "${FIXTURES}/issue-41.json" "${FIXTURES}/issue-41-before-race.json"
+	jq '.labels += [{id:10,node_id:"L_10",name:"status:queued"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4226,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4227,"event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"status:queued"}}'
+	rm -f "${FIXTURES}/race-read"
+	output=$(GH_RACE_FIRST_ISSUE=1 run_verify issue 41) || rc=$?
+	if [[ "$output" == VERIFIED && "$rc" -eq 0 ]]; then
+		print_result "snapshot timeline race verifies after fresh read" 0
+	else
+		print_result "snapshot timeline race verifies after fresh read" 1 "expected=VERIFIED/0, actual=${output}/${rc}"
+	fi
+	return 0
+}
+
+run_locked_issue_continuity_tests() {
+	test_locked_issue_continuity
+	test_unanchored_lock_signature
+	test_locked_issue_trusted_comment_continuity
+	test_locked_issue_trusted_content_edits
+	test_locked_issue_tier_backfill_continuity
+	test_locked_issue_permission_hold_continuity
+	test_locked_issue_label_replay
+	test_signed_tier_self_hosting_continuity
 	return 0
 }
 
@@ -1304,12 +1380,7 @@ main() {
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
-	test_locked_issue_continuity
-	test_unanchored_lock_signature
-	test_locked_issue_trusted_comment_continuity
-	test_locked_issue_trusted_content_edits
-	test_locked_issue_tier_backfill_continuity
-	test_signed_tier_self_hosting_continuity
+	run_locked_issue_continuity_tests
 
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"

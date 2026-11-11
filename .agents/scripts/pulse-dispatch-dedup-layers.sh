@@ -19,6 +19,7 @@
 #   - _dedup_layer5_dispatch_comment
 #   - _dispatch_blocked_checkpoint_attention
 #   - _dispatch_stalled_checkpoint_continuation
+#   - _dispatch_stalled_checkpoint_signal
 #   - _dispatch_interactive_hold_gate
 #   - _dedup_layer6_assignee_and_stale
 #   - _dedup_layer7_claim_lock
@@ -321,7 +322,9 @@ _dedup_layer4_pr_evidence() {
 					"$dedup_helper_output" "${self_login:-}"; then
 					# The continuation helper verifies released/expired ownership;
 					# preserve that distinction through the outer dedup classifier.
-					printf 'stale_draft_checkpoint: %s\n' "$dedup_helper_output"
+					# GH#37779: name a re-arm block or terminal action in the signal.
+					printf 'stale_draft_checkpoint: %s%s\n' \
+						"${_DEDUP_STALLED_CHECKPOINT_SIGNAL:+${_DEDUP_STALLED_CHECKPOINT_SIGNAL} }" "$dedup_helper_output"
 					return 0
 				fi
 				printf '%s\n' "$dedup_helper_output"
@@ -478,6 +481,7 @@ _dispatch_stalled_checkpoint_continuation() {
 	local checkpoint_output="$3"
 	local self_login="$4"
 	local pr_number="" repo_path=""
+	_DEDUP_STALLED_CHECKPOINT_SIGNAL=""
 	[[ -n "$self_login" ]] || return 1
 	[[ "$checkpoint_output" =~ WORKER_DRAFT_CHECKPOINT:[[:space:]]draft[[:space:]]PR[[:space:]]#([0-9]+) ]] || return 1
 	pr_number="${BASH_REMATCH[1]}"
@@ -487,12 +491,56 @@ _dispatch_stalled_checkpoint_continuation() {
 	declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1 || return 1
 	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || return 1
 	[[ -n "$repo_path" && -d "$repo_path" ]] || return 1
-	if "${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-stalled \
-		"$repo_slug" "$repo_path" "$issue_number" "$pr_number" "$self_login" >>"$LOGFILE" 2>&1; then
-		echo "[pulse-wrapper] Dedup: routed stall-released worker draft PR #${pr_number} for issue #${issue_number} in ${repo_slug} (GH#33654)" >>"$LOGFILE"
+	# GH#37779: keep the helper output in a file, never a pipe: a detached
+	# continuation worker may inherit the descriptor. The output names the
+	# re-arm block or terminal action so the dispatch signal can carry it.
+	local output_file="" helper_rc=0 helper_output=""
+	output_file=$(mktemp "${TMPDIR:-/tmp}/pcc-dispatch-stalled.XXXXXX") || output_file=""
+	if [[ -z "$output_file" ]]; then
+		"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-stalled \
+			"$repo_slug" "$repo_path" "$issue_number" "$pr_number" "$self_login" >>"$LOGFILE" 2>&1 || helper_rc=$?
+	else
+		"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-stalled \
+			"$repo_slug" "$repo_path" "$issue_number" "$pr_number" "$self_login" >"$output_file" 2>&1 || helper_rc=$?
+		helper_output=$(<"$output_file") || helper_output=""
+		rm -f "$output_file"
+		[[ -z "$helper_output" ]] || printf '%s\n' "$helper_output" >>"$LOGFILE"
+		_DEDUP_STALLED_CHECKPOINT_SIGNAL=$(_dispatch_stalled_checkpoint_signal "$helper_output")
+	fi
+	if [[ "$helper_rc" -eq 0 ]]; then
+		echo "[pulse-wrapper] Dedup: routed stall-released worker draft PR #${pr_number} for issue #${issue_number} in ${repo_slug} (GH#33654)${_DEDUP_STALLED_CHECKPOINT_SIGNAL:+ ${_DEDUP_STALLED_CHECKPOINT_SIGNAL}}" >>"$LOGFILE"
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# GH#37779: summarise why a routed stalled checkpoint is still held, so the
+# DISPATCH_BLOCK_REASON signal distinguishes the per-PR fuse, a pending
+# all-runners-tried window and a terminal action from a silent hold.
+# Arguments: dispatch-stalled helper output
+# Output: terminal_action=<action> | terminal_deferred=<reason> |
+#         rearm_blocked=<reason> | empty
+#######################################
+_dispatch_stalled_checkpoint_signal() {
+	local output="$1"
+	local line="" rearm="" terminal=""
+	local action_re='^STALLED_CHECKPOINT_TERMINAL_ACTION: .* action=([a-z_]+)'
+	local held_re='^STALLED_CHECKPOINT_TERMINAL_(DEFERRED|SKIPPED): .* reason=([a-z_]+)'
+	local rearm_re='^STALLED_CHECKPOINT_REARM_BLOCKED: .* reason=([a-z_]+)( window=([0-9]+s|unknowns))?'
+	while IFS= read -r line; do
+		if [[ "$line" =~ $action_re ]]; then
+			terminal="terminal_action=${BASH_REMATCH[1]}"
+		elif [[ "$line" =~ $held_re ]]; then
+			terminal="terminal_skipped=${BASH_REMATCH[2]}"
+			[[ "${BASH_REMATCH[1]}" != DEFERRED ]] || terminal="terminal_deferred=${BASH_REMATCH[2]}"
+		elif [[ "$line" =~ $rearm_re ]]; then
+			rearm="rearm_blocked=${BASH_REMATCH[1]}${BASH_REMATCH[3]:+:${BASH_REMATCH[3]}}"
+		fi
+	done <<<"$output"
+	# A terminal outcome is the more specific signal for the same sweep.
+	[[ -z "${terminal:-$rearm}" ]] || printf '%s\n' "${terminal:-$rearm}"
+	return 0
 }
 
 _dispatch_interactive_worker_checkpoint_continuation() {

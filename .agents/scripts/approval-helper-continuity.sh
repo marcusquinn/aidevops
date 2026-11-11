@@ -14,6 +14,8 @@ _APPROVAL_HELPER_CONTINUITY_LOADED=1
 _APPROVAL_LABELED_EVENT="labeled"
 # Worker-observability classification (t3077); not scope-bearing.
 _APPROVAL_OBSERVABILITY_LABEL="fix-the-fixer"
+# GH#37762: dispatch hold toggled by signed permission requests/decisions.
+_APPROVAL_PERMISSION_HOLD_LABEL="needs-maintainer-permissions"
 _APPROVAL_CONTINUITY_JSON_NUMBER="number"
 _APPROVAL_CONTINUITY_JSON_STRING="string"
 
@@ -96,6 +98,45 @@ _approval_continuity_ordered_mutation_rows() {
 	return $?
 }
 
+# #aidevops:trust-boundary — GH#37762: an allowlisted hold label must be
+# explained by the visible replay, as auto-dispatch is. Rebuild its state from
+# the signed lifecycle plus visible labeled/unlabeled events and require it to
+# equal the current state, so a timeline that omits a toggle (visibility lag or
+# truncation) fails continuity instead of verifying on other mutations.
+_approval_continuity_label_replay_matches() {
+	local signed_lifecycle="$1"
+	local current_snapshot="$2"
+	local mutation_rows="$3"
+	local label="$4"
+	local active=0 current=0 event="" _actor="" subject="" _rest=""
+	if jq -e --arg label "$label" 'any(.labels[]?.name; . == $label)' <<<"$signed_lifecycle" >/dev/null 2>&1; then
+		active=1
+	fi
+	if jq -e --arg label "$label" 'any(.lifecycle.labels[]?.name; . == $label)' <<<"$current_snapshot" >/dev/null 2>&1; then
+		current=1
+	fi
+	while IFS=$'\t' read -r event _actor subject _rest; do
+		[[ "$subject" == "$label" ]] || continue
+		case "$event" in
+		"$_APPROVAL_LABELED_EVENT") active=1 ;;
+		unlabeled) active=0 ;;
+		esac
+	done <<<"$mutation_rows"
+	[[ "$active" -eq "$current" ]] || return 1
+	return 0
+}
+
+# Tier and fix-the-fixer labels retain their separate backfill/observability
+# rules; their legitimate pre-anchor transitions are not necessarily visible.
+_approval_continuity_reconciled_labels_match() {
+	local signed="$1" snapshot="$2" rows="$3" label=""
+	for label in auto-dispatch needs-maintainer-permissions needs-maintainer-review \
+		status:available status:queued status:claimed status:in-progress status:in-review status:done status:blocked; do
+		_approval_continuity_label_replay_matches "$signed" "$snapshot" "$rows" "$label" || return 1
+	done
+	return 0
+}
+
 _approval_continuity_lifecycle_change_allowed() {
 	local signed_lifecycle="$1"
 	local current_snapshot="$2"
@@ -106,11 +147,13 @@ _approval_continuity_lifecycle_change_allowed() {
 	# resulting timeline mutation still requires authorization during replay.
 	# GH#36746: the fix-the-fixer classification only enables worker
 	# observability; it never widens scope or grants authority.
+	# GH#37762: needs-maintainer-permissions is a dispatch hold toggled by
+	# separately signed permission requests/decisions; it never widens scope.
 	jq -e --argjson signed "$signed_lifecycle" --argjson self_hosting "$self_hosting" \
 		--arg observability "$_APPROVAL_OBSERVABILITY_LABEL" \
 		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
 		def tier_label: . as $label | $tiers | index($label) != null;
-		def allowed_label: . == "needs-maintainer-review" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label;
+		def allowed_label: . == "needs-maintainer-review" or . == "needs-maintainer-permissions" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label;
 		.lifecycle as $current |
 		($current.labels | map(.name)) as $current_labels |
 		($signed.labels | map(.name)) as $signed_labels |
@@ -285,7 +328,7 @@ _approval_verify_locked_issue_continuity() {
 	local approval_comment_id="$7"
 	local signed_lifecycle="" current_anchor="" signed_anchor="" candidate="" candidate_digest="" filtered_snapshot=""
 	local timeline_pages="" mutation_rows="" event="" actor="" subject="" actor_id="" actor_type="" actor_rc=0
-	local signed_has_status=0 auto_dispatch_active=0 current_auto_dispatch=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
+	local signed_has_status=0 auto_dispatch_active=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
 	local content_changes="" title_changed=0 body_changed=0 body_rc=0
 
 	# #aidevops:trust-boundary — no embedded lifecycle proof means this is a
@@ -301,9 +344,6 @@ _approval_verify_locked_issue_continuity() {
 	fi
 	if jq -e --arg auto "$_APPROVAL_AUTO_DISPATCH_LABEL" 'any(.labels[]?.name; . == $auto)' <<<"$signed_lifecycle" >/dev/null 2>&1; then
 		auto_dispatch_active=1
-	fi
-	if jq -e --arg auto "$_APPROVAL_AUTO_DISPATCH_LABEL" 'any(.lifecycle.labels[]?.name; . == $auto)' <<<"$current_snapshot" >/dev/null 2>&1; then
-		current_auto_dispatch=1
 	fi
 	current_anchor=$(jq -c '.lifecycle.lock_anchor // empty' <<<"$current_snapshot") || return 1
 	[[ -n "$current_anchor" && "$current_anchor" == "$signed_anchor" ]] || return 1
@@ -342,7 +382,7 @@ _approval_verify_locked_issue_continuity() {
 		case "$event:$subject" in
 		renamed:title) [[ "$title_changed" -eq 1 ]] || return 1 ;;
 		labeled:"$_APPROVAL_OBSERVABILITY_LABEL" | unlabeled:"$_APPROVAL_OBSERVABILITY_LABEL") ;;
-		assigned:* | unassigned:* | labeled:needs-maintainer-review | unlabeled:needs-maintainer-review | labeled:auto-dispatch | unlabeled:auto-dispatch | labeled:status:available | unlabeled:status:available | labeled:status:queued | unlabeled:status:queued | labeled:status:claimed | unlabeled:status:claimed | labeled:status:in-progress | unlabeled:status:in-progress | labeled:status:in-review | unlabeled:status:in-review | labeled:status:done | unlabeled:status:done | labeled:status:blocked | unlabeled:status:blocked | labeled:tier:simple | unlabeled:tier:simple | labeled:tier:standard | unlabeled:tier:standard | labeled:tier:thinking | unlabeled:tier:thinking) ;;
+		assigned:* | unassigned:* | labeled:needs-maintainer-review | unlabeled:needs-maintainer-review | labeled:needs-maintainer-permissions | unlabeled:needs-maintainer-permissions | labeled:auto-dispatch | unlabeled:auto-dispatch | labeled:status:available | unlabeled:status:available | labeled:status:queued | unlabeled:status:queued | labeled:status:claimed | unlabeled:status:claimed | labeled:status:in-progress | unlabeled:status:in-progress | labeled:status:in-review | unlabeled:status:in-review | labeled:status:done | unlabeled:status:done | labeled:status:blocked | unlabeled:status:blocked | labeled:tier:simple | unlabeled:tier:simple | labeled:tier:standard | unlabeled:tier:standard | labeled:tier:thinking | unlabeled:tier:thinking) ;;
 		*) return 1 ;;
 		esac
 		# #aidevops:trust-boundary — GitHub's official Actions bot has no
@@ -367,13 +407,30 @@ _approval_verify_locked_issue_continuity() {
 		[[ "$subject" == status:* ]] && saw_status_mutation=1
 		[[ "$event" == renamed ]] && saw_rename=1
 	done <<<"$mutation_rows"
-	[[ "$auto_dispatch_active" -eq "$current_auto_dispatch" ]] || return 1
 	[[ "$title_changed" -eq 0 || "$saw_rename" -eq 1 ]] || return 1 # title edits need an authorized rename
 	if [[ "$body_changed" -eq 1 ]]; then
 		_approval_continuity_body_edits_authorized "$slug" "$target_number" "$timeline_pages" "$approval_comment_id" || body_rc=$?
 		[[ "$body_rc" -eq 0 ]] || return "$body_rc"
 	fi
+	# A distinct result permits a single fresh snapshot/timeline read, but only
+	# after every content and actor authorization check has passed.
+	_approval_continuity_reconciled_labels_match "$signed_lifecycle" "$current_snapshot" "$mutation_rows" || return 3
 	return 0
+}
+
+# Retry only a replay mismatch, rebuilding the same snapshot profile and
+# repeating all authorization checks. A second mismatch remains stale.
+_approval_continuity_with_retry() {
+	local payload="$1" snapshot="$2" digest="$3" slug="$4" number="$5" issued="$6" comment="$7" profile="$8" lifecycle_profile="$9"
+	local rc=0
+	_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+	if [[ "$rc" -eq 3 ]]; then
+		snapshot=$(approval_snapshot_v2_build "$APPROVAL_TARGET_ISSUE" "$number" "$slug" "$comment" "$issued" "$profile" "$lifecycle_profile") || return 2
+		rc=0
+		_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+	fi
+	[[ "$rc" -ne 3 ]] || return 1
+	return "$rc"
 }
 
 # Prints TRUSTED_SOURCES_MATCH, STABLE_MATCH or LEGACY_MATCH when an older
@@ -434,16 +491,16 @@ _approval_classify_digest_mismatch() {
 		return 0
 	fi
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
-		_approval_verify_locked_issue_continuity "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+		_approval_continuity_with_retry "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND" "$issue_lifecycle_profile" || continuity_rc=$?
 		# Approvals signed before GH#34266 / GH#32455 used the trusted-sources /
 		# stable linked-source profiles; prove continuity against that exact profile.
 		if [[ "$continuity_rc" -eq 1 ]]; then
 			continuity_rc=0
-			_approval_verify_locked_issue_continuity "$payload" "$trusted_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+			_approval_continuity_with_retry "$payload" "$trusted_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$issue_lifecycle_profile" || continuity_rc=$?
 		fi
 		if [[ "$continuity_rc" -eq 1 ]]; then
 			continuity_rc=0
-			_approval_verify_locked_issue_continuity "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+			_approval_continuity_with_retry "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_STABLE" "$issue_lifecycle_profile" || continuity_rc=$?
 		fi
 		if [[ "$continuity_rc" -eq 0 ]]; then
 			printf 'APPROVAL_REASON: proven-locked-continuity\n' >&2
