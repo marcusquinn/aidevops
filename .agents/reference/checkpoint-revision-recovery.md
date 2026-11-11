@@ -19,19 +19,19 @@ It grants nothing, starts no line with an event prefix and never dispatches.
 
 ### Unknown-blocker triage (GH#36525)
 
-Before publishing an unclassified blocked release, the releasing runner makes
-one bounded (45-second, simple-tier) inference over its protected final-assistant
-report. Tool output and public PR prose are not classification evidence. An
-explicit class always wins. Known dependency, permission, input, access,
-scope-exclusion and runner-prerequisite findings use the normal class/owner
-release path; they are never automatically approved by this feature.
+Before publishing an unclassified blocked release, the runner performs one bounded
+(45-second, simple-tier) inference over the protected final report and logs its
+sanitized outcome. Tool output and public PR prose are not evidence. Explicit
+classes win; inferred external triggers require a named event, owner or date quoted from the report.
+Known dependencies, access, input, scope and runner prerequisites use the normal class/owner path, never automatic approval by this feature.
 
-Only a complete, nonempty report positively establishing unfinished authorised
-in-scope work with no unresolved prerequisite can emit `CHECKPOINT_UNKNOWN_TRIAGE
-pending_work brief=... head=...` (a classification, not approval). Missing tooling,
-timeout, invalid JSON, conflicting declarations, truncation or uncertainty retain
-the ordinary unknown hold. Releases lacking this runner-produced evidence are not
-promoted by interpreting a draft body.
+Continue in-scope work where possible. If execution must stop with a pushed draft
+and only in-scope work remaining, report it without `BLOCKED:` for the runtime's
+`worker_draft_checkpoint` continuation path; remaining work alone is not a blocker.
+Only a complete report positively establishing unfinished authorised work without a
+prerequisite emits `CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`.
+Missing tooling, timeout, invalid JSON, conflicting declarations, truncation or
+uncertainty retain the unknown hold; draft prose is not a substitute for evidence.
 
 Automatic approval is **off by default**. An operator with current repository
 write/maintain/admin permission can configure the registered `repos.json` entry:
