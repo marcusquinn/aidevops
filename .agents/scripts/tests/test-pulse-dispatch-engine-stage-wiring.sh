@@ -501,7 +501,7 @@ assert_ownership_deadline_contract() {
 }
 
 assert_stage_cycle_budget_contract() {
-	local test_root="" actual="" expected="reserved:67;nested:67;maximum:60;protected:124;admission:0;dispatch:600;released:600;clamp:1;defer:124;optout:1;unset:1;"
+	local test_root="" actual="" expected="reserved:67;nested:67;maximum:60;protected:124;admission:0;unadmittable:600;dispatch:600;released:600;clamp:1;defer:124;optout:1;unset:1;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-cycle-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
@@ -529,6 +529,11 @@ assert_stage_cycle_budget_contract() {
 			protected_rc=0
 			_dispatch_cycle_budget_admits_round Dispatch_max before || protected_rc=$?
 			printf 'admission:%s;' "$protected_rc"
+			# GH#37811: 710s left cannot admit even a bounded round (780s), so
+			# the reserve protects nothing and the stage keeps finalisation only.
+			TEST_EPOCH=2000
+			printf 'unadmittable:%s;' "$(_pulse_stage_cycle_timeout dirty_pr_sweep 600)"
+			TEST_EPOCH=1500
 			printf 'dispatch:%s;' "$(_PULSE_MAIN_DISPATCH_RESERVE_S=0 _pulse_stage_cycle_timeout dispatch_candidate_1 600)"
 			_PULSE_MAIN_DISPATCH_RESERVE_S=0
 			printf 'released:%s;' "$(_pulse_stage_cycle_timeout auto_decomposer_scanner 600)"
@@ -549,6 +554,8 @@ assert_stage_cycle_budget_contract() {
 	)
 	if [[ "$actual" == "$expected" ]] && grep -q 'clamped 600s -> 210s' "$test_root/stages.log" &&
 		grep -q 'Stage deferred: deferred cycle budget exhausted' "$test_root/stages.log" &&
+		grep -q 'Stage dispatch reserve released: dirty_pr_sweep' "$test_root/stages.log" &&
+		! grep -q 'reserve released: cache_prime' "$test_root/stages.log" &&
 		grep -q 'Stage start: optout (timeout 600s)' "$test_root/stages.log"; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: stages clamp, defer and opt out of cycle deadline"
 	else

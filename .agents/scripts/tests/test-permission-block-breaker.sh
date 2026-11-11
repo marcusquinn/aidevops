@@ -402,6 +402,7 @@ bash "$SCRIPTS_DIR/worker-activity-helper.sh" summary --since 6h --json |
 	jq -e '.pulse_stats.pulse_dispatch_permission_block_breaker_tripped == 1' >/dev/null
 bash "$SCRIPTS_DIR/worker-activity-helper.sh" summary --since 6h |
 	grep 'pulse_dispatch_permission_block_breaker_tripped: 1' >/dev/null
-grep -q 'unclassifiable_shell_read or classification_unavailable' "$SCRIPTS_DIR/headless-runtime-lib.sh"
-grep -q 'protected_read, classification_mutation, and owner-signed SSH or network grant denials remain permission_required' "$SCRIPTS_DIR/headless-runtime-lib.sh"
+# GH#37817: GH#37519 moved the worker guidance into the contract module.
+grep -q 'unclassifiable_shell_read or classification_unavailable' "$SCRIPTS_DIR/headless-runtime-contract.sh"
+grep -q 'protected_read, classification_mutation, and owner-signed SSH or network grant denials remain permission_required' "$SCRIPTS_DIR/headless-runtime-contract.sh"
 printf '%s breaker cases passed; no_work, refill, reporter and guidance checks passed\n' "$PASSED"

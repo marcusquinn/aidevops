@@ -13,7 +13,7 @@
 export const inject = ["react", "settingsCards", "host", "agents"];
 
 // Bump only when plugin files change; Buzz revisions are content hashes.
-const PLUGIN_VERSION = "1.2.0";
+const PLUGIN_VERSION = "1.3.0";
 const TYPE_ID = "aidevops";
 /** An empty project folder means the aidevops repository registered on this
  * computer: the launcher resolves it from `repos.json`. Agents for a project
@@ -378,6 +378,14 @@ class Runner {
     return this.runtimes.get(key);
   }
 
+  /** Reads a file the agent's Buzz tools send or upload (attachments, a
+   * profile picture): absolute, `~/…`, or relative to its project folder, as
+   * Buzz's bundled agent types read relative to their workspace. */
+  read(project, path) {
+    if (!this.host.readFile) throw new Error("aidevops agents run only in the desktop app");
+    return this.host.readFile(path, { cwd: project || DEFAULT_PROJECT });
+  }
+
   /** Answers one Buzz tools MCP message. OpenCode registers MCP servers per
    * directory, so every session of the process shares this server: a call
    * goes to the session OpenCode names (`ai.opencode/sessionID`, OpenCode
@@ -395,7 +403,9 @@ class Runner {
         id,
         error: { code: -32603, message: "This aidevops agent has not started a turn" },
       };
-    const answer = await this.kit.tools(handle, session?.conversation)(message);
+    const answer = await this.kit.tools(handle, session?.conversation, {
+      read: (path) => this.read(runtime.project, path),
+    })(message);
     if (session && answeredPeople(message, answer)) session.acted = true;
     return answer;
   }
@@ -429,6 +439,7 @@ class Runner {
     );
     runtime.acp = acp;
     runtime.launch = launch;
+    runtime.project = config.project;
     void acp.exited.then(() => {
       if (runtime.acp !== acp) return;
       runtime.acp = undefined;
@@ -895,5 +906,10 @@ export function apply(ctx) {
     ],
     timeoutMs: 30 * 60_000,
     run: (delivery) => runner.run(delivery),
+    // Reads outside turns, as for an approved external connection's tools.
+    readFile: async (agent, path, signal) => {
+      signal.throwIfAborted();
+      return runner.read(settings(agent.config).project, path);
+    },
   });
 }
