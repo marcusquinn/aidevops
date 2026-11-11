@@ -168,7 +168,7 @@ _pulse_stats_recover_locked() {
 _pulse_stats_mutate_locked() {
 	local filter="$1"
 	shift
-	local tmp_file validation rc
+	local tmp_file="" validation="" rc=0
 	if [[ -z "$_PULSE_STATS_JQ" ]]; then
 		_PULSE_STATS_JQ=$(command -v jq 2>/dev/null) || _PULSE_STATS_JQ=""
 		if [[ ! -x "$_PULSE_STATS_JQ" && -x /run/current-system/sw/bin/jq ]]; then
@@ -349,7 +349,7 @@ pulse_stats_status() {
 		return 0
 	fi
 
-	local name count
+	local name="" count=""
 	while IFS= read -r name; do
 		[[ -z "$name" ]] && continue
 		count=$(jq -r --arg name "$name" --argjson cutoff "$cutoff" \
@@ -385,7 +385,7 @@ pulse_stats_gauge_status() {
 		return 0
 	fi
 
-	local name_with_colon value ts
+	local name_with_colon="" value="" ts=""
 	while IFS=$'\t' read -r name_with_colon value ts; do
 		[[ -z "$name_with_colon" ]] && continue
 		printf '  %-40s %s (ts=%s)\n' "$name_with_colon" "${value:-0}" "${ts:-0}"
