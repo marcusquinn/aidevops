@@ -73,6 +73,35 @@ def read_response(args, data):
     print(responses[key])
 
 
+def issue_update_request(args, data, state):
+    mode = os.environ.get("CHECKPOINT_TEST_DRIFT", "")
+    if args[3] == "in-progress" and mode.startswith("transfer-"):
+        labels = data["issue"]["labels"][:]
+        owners = data["issue"]["assignees"][:]
+        if mode != "transfer-before":
+            set_issue(args, data)
+            if mode == "transfer-status":
+                data["issue"]["assignees"] = owners
+            else:
+                data["issue"]["labels"] = labels
+        state.write_text(json.dumps(data))
+        sys.exit(1)
+    failure = data.pop("transfer_failure", None)
+    if failure:
+        if failure == "status":
+            data["issue"]["labels"] = [label for label in data["issue"]["labels"]
+                                       if not label["name"].startswith("status:")]
+            data["issue"]["labels"].append({"name": "status:in-progress"})
+        elif failure == "add":
+            data["issue"]["assignees"].append({"login": "next-worker"})
+        elif failure == "remove":
+            data["issue"]["assignees"] = []
+        state.write_text(json.dumps(data))
+        sys.exit(1)
+    set_issue(args, data)
+    state.write_text(json.dumps(data))
+
+
 def main(args):
     state = pathlib.Path(os.environ["CHECKPOINT_TEST_STATE"])
     data = json.loads(state.read_text())
@@ -91,32 +120,7 @@ def main(args):
             raise ValueError("Unknown checkpoint drift")
         state.write_text(json.dumps(data))
     elif args[0] == "--set-issue":
-        mode = os.environ.get("CHECKPOINT_TEST_DRIFT", "")
-        if args[3] == "in-progress" and mode.startswith("transfer-"):
-            labels = data["issue"]["labels"][:]
-            owners = data["issue"]["assignees"][:]
-            if mode != "transfer-before":
-                set_issue(args, data)
-                if mode == "transfer-status":
-                    data["issue"]["assignees"] = owners
-                else:
-                    data["issue"]["labels"] = labels
-            state.write_text(json.dumps(data))
-            sys.exit(1)
-        failure = data.pop("transfer_failure", None)
-        if failure:
-            if failure == "status":
-                data["issue"]["labels"] = [label for label in data["issue"]["labels"]
-                                           if not label["name"].startswith("status:")]
-                data["issue"]["labels"].append({"name": "status:in-progress"})
-            elif failure == "add":
-                data["issue"]["assignees"].append({"login": "next-worker"})
-            elif failure == "remove":
-                data["issue"]["assignees"] = []
-            state.write_text(json.dumps(data))
-            sys.exit(1)
-        set_issue(args, data)
-        state.write_text(json.dumps(data))
+        issue_update_request(args, data, state)
     elif args[0] == "api" and "/comments" in args[1]:
         comments_request(args, data, state)
     else:
