@@ -134,7 +134,9 @@ gopass_owns_secret() {
 	local name="$1"
 	local listing=""
 	listing=$(gopass ls --flat 2>/dev/null) || return 0
-	if printf '%s\n' "$listing" | grep -Fxq -- "${GOPASS_PREFIX}/${name}"; then
+	# Here-string, not a pipe: with pipefail, grep -q exiting early on a large
+	# whole-store listing could SIGPIPE printf and report a listed name as unowned.
+	if grep -Fxq -- "${GOPASS_PREFIX}/${name}" <<<"$listing"; then
 		return 0
 	fi
 	return 1
