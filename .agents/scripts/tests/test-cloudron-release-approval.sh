@@ -901,8 +901,25 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 			  state: "open", closed_at: null, updated_at: "2026-11-11T00:00:00Z", labels: [{name: "release-standing-policy"}]}'
 		return 0
 	}
+	# Base64 file contents at the merge base or exact head ("<path>?ref=<sha>").
+	policy_contents_stub() {
+		local path="${1%%\?ref=*}" ref="${1##*\?ref=}" docker="$HEAD_DOCKERFILE" check="$HEAD_CHECK"
+		[[ "$POLICY_CASE" != docker_tamper ]] || docker="${HEAD_DOCKERFILE/abc/def}"
+		[[ "$POLICY_CASE" != check_tamper ]] || check="${HEAD_CHECK/m || return 1/m || true}"
+		case "${path}@${ref}" in
+		"CloudronManifest.json@${BASE_SHA}") b64 "$BASE_MANIFEST" ;;
+		"CloudronManifest.json@${HEAD_SHA}") b64 "$HEAD_MANIFEST" ;;
+		"Dockerfile@${BASE_SHA}") b64 "$BASE_DOCKERFILE" ;;
+		"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
+		"test/package-test.sh@${BASE_SHA}") b64 "$BASE_CHECK" ;;
+		"test/package-test.sh@${HEAD_SHA}") b64 "$check" ;;
+		*) return 1 ;;
+		esac
+		printf '\n'
+		return 0
+	}
 	gh() {
-		local command="$1" target="${2:-}" path="" ref="" docker="" check=""
+		local command="$1" target="${2:-}"
 		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
 		case "$command $target" in
 		'api repos/owner/app/issues/50')
@@ -945,25 +962,7 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 				         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}]
 				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}] else [] end)}'
 			;;
-		'api repos/owner/app/contents/'*)
-			path="${target#repos/owner/app/contents/}"
-			ref="${path##*\?ref=}"
-			path="${path%%\?ref=*}"
-			docker="$HEAD_DOCKERFILE"
-			[[ "$POLICY_CASE" != docker_tamper ]] || docker="${HEAD_DOCKERFILE/abc/def}"
-			check="$HEAD_CHECK"
-			[[ "$POLICY_CASE" != check_tamper ]] || check="${HEAD_CHECK/m || return 1/m || true}"
-			case "${path}@${ref}" in
-			"CloudronManifest.json@${BASE_SHA}") b64 "$BASE_MANIFEST" ;;
-			"CloudronManifest.json@${HEAD_SHA}") b64 "$HEAD_MANIFEST" ;;
-			"Dockerfile@${BASE_SHA}") b64 "$BASE_DOCKERFILE" ;;
-			"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
-			"test/package-test.sh@${BASE_SHA}") b64 "$BASE_CHECK" ;;
-			"test/package-test.sh@${HEAD_SHA}") b64 "$check" ;;
-			*) return 1 ;;
-			esac
-			printf '\n'
-			;;
+		'api repos/owner/app/contents/'*) policy_contents_stub "${target#repos/owner/app/contents/}" || return 1 ;;
 		'api repos/owner/app/labels?per_page=100') printf 'bug\n' ;;
 		'label create') return 0 ;;
 		*)
