@@ -226,14 +226,23 @@ jobs:
       run: |
         # Bubblewrap comes from Ubuntu, not the runner's browser/vendor repos.
         # Keep unrelated mirror/signature failures out of boundary verification.
+        # Avoid the hosted image's Azure mirror indirection when its DNS fails.
+        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          [ -e "$source_file" ] || continue
+          sudo sed -i \
+            -e 's|mirror+file:/etc/apt/apt-mirrors.txt|https://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            "$source_file"
+        done
         for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
           [ -e "$source_file" ] || continue
           if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
             sudo mv "$source_file" "${source_file}.disabled"
           fi
         done
-        sudo apt-get update -qq
-        sudo apt-get install -y bubblewrap
+        apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+        sudo apt-get "${apt_options[@]}" update --error-on=any -qq
+        sudo apt-get install -y bubblewrap "${apt_options[@]}"
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
