@@ -4,6 +4,13 @@
 # Sealed-generation recovery. Removal always delegates to the archive-backed
 # helper (including its fresh process/ownership checks); never force removal.
 
+_dispatch_skip_for_sealed_generation() {
+	local repo_path="$1" issue="$2" repo="$3"
+	declare -F _dlw_sealed_hold_active >/dev/null 2>&1 || return 1
+	_dlw_sealed_hold_active "$repo_path" "$issue" "$repo" || return 1
+	return 0
+}
+
 _dlw_sealed_hold_file() {
 	local issue="$1" repo="$2"
 	[[ "$issue" =~ ^[0-9]+$ && "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
