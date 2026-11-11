@@ -103,7 +103,7 @@ _pcc_terminal_pr_additive() {
 	# Not jq -e: the additive answer is `false`, which -e reports as failure.
 	removed=$(jq -r 'if type != "array" then error("unreadable file pages") else flatten end |
 		if all(.[]; type == "object" and (.status | type) == "string") then . else error("unreadable file entry") end |
-		any(.[]; .status == "removed")' <<<"$files" 2>/dev/null) || return 2
+		any(.[]; .status == "removed" or .status == "renamed")' <<<"$files" 2>/dev/null) || return 2
 	[[ "$removed" == true || "$removed" == false ]] || return 2
 	[[ "$removed" == false ]] || return 1
 	return 0
@@ -213,7 +213,8 @@ _pcc_terminal_checkpoint_action() {
 		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=pr_metadata_unavailable\n' "$prefix"
 		return 1
 	}
-	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo" "$pr" "$issue" "$head" "" ""; then
+	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo" "$pr" "$issue" "$head" "" "" ||
+		jq -e '[.labels[]? | (.name? // empty) | select(startswith("needs-maintainer-"))] | length > 0' <<<"$pr_json" >/dev/null 2>&1; then
 		printf 'STALLED_CHECKPOINT_TERMINAL_SKIPPED: %s reason=pr_not_eligible\n' "$prefix"
 		return 1
 	fi
@@ -246,9 +247,10 @@ _pcc_terminal_checkpoint_action() {
 	checks=$(_pcc_terminal_checks_state "$pr_json") || checks="unreadable"
 	mergeable=$(jq -r '.mergeable // "" | ascii_upcase' <<<"$pr_json" 2>/dev/null) || mergeable=""
 	merge_state=$(jq -r '.mergeStateStatus // "" | ascii_upcase' <<<"$pr_json" 2>/dev/null) || merge_state=""
-	if [[ "$checks" == pending || "$checks" == unreadable || "$mergeable" == UNKNOWN || -z "$mergeable" ]]; then
-		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=checks_or_mergeability_pending checks=%s mergeable=%s\n' \
-			"$prefix" "$checks" "${mergeable:-unknown}"
+	if [[ "$checks" == pending || "$checks" == unreadable || "$mergeable" == UNKNOWN || -z "$mergeable" ||
+		"$merge_state" == UNKNOWN || -z "$merge_state" ]]; then
+		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=checks_or_mergeability_pending checks=%s mergeable=%s merge_state=%s\n' \
+			"$prefix" "$checks" "${mergeable:-unknown}" "${merge_state:-unknown}"
 		return 1
 	fi
 	if [[ "$checks" == success && "$mergeable" == MERGEABLE &&
@@ -262,14 +264,24 @@ _pcc_terminal_checkpoint_action() {
 		[[ "$additive_rc" -ne 0 ]] || action="ready_for_merge"
 	fi
 	ref=$(jq -r '.headRefName // ""' <<<"$pr_json" 2>/dev/null) || ref=""
+	# Narrow the claim race: re-read ownership right before the write. A claim
+	# or lease acquired since the first snapshot makes the state non-current.
+	comments=$(_pcc_issue_comments "$repo" "$issue" 2>/dev/null) &&
+		trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo" 2>/dev/null) &&
+		state=$(_pcc_terminal_comment_state "$comments" "$trusted_logins" "$release_id" \
+			"<!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} ") && [[ "$state" == current ]] || {
+		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=ownership_changed_before_write\n' "$prefix"
+		return 1
+	}
 	if ! _pcc_terminal_apply "$repo" "$issue" "$pr" "$action"; then
 		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=%s_failed\n' "$prefix" "$action"
 		return 1
 	fi
 	[[ "$action" == ready_for_merge ]] || action="closed"
-	# The write above already ended the hold; a lost audit record only means
-	# the next sweep finds a non-draft or closed PR and takes no second action.
+	# The write above already ended the hold; retry the audit record once so
+	# the salvage pointer is not lost to a transient API failure.
 	_pcc_terminal_post_record "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref" ||
+		{ sleep 2 && _pcc_terminal_post_record "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref"; } ||
 		printf 'STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED: %s\n' "$prefix"
 	printf 'STALLED_CHECKPOINT_TERMINAL_ACTION: %s action=%s cause=%s checks=%s mergeable=%s\n' \
 		"$prefix" "$action" "$cause" "$checks" "$mergeable"

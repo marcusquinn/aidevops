@@ -1544,7 +1544,12 @@ _pcc_stalled_rearm_or_block() {
 	printf 'STALLED_CHECKPOINT_REARM_BLOCKED: PR #%s in %s head=%s reason=%s stalls=%s pr_releases=%s issue=#%s\n' \
 		"$pr" "$repo" "$head" "$rearm_block" "$stalls" "$pr_releases" "$issue"
 	if [[ "$rearm_block" == per_pr_fuse ]] && _pcc_terminal_action_due "$attention_epoch" "$release_epoch"; then
-		_pcc_terminal_checkpoint_action "$repo" "$issue" "$pr" "$head" "$release_id" per_pr_fuse || true
+		# A current trusted revision approval owns scheduling; never act then.
+		local fuse_logins=""
+		if fuse_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo" 2>/dev/null) &&
+			! _pcc_comments_have_revision_approval "$comments" "$fuse_logins"; then
+			_pcc_terminal_checkpoint_action "$repo" "$issue" "$pr" "$head" "$release_id" per_pr_fuse || true
+		fi
 	fi
 	return 1
 }
