@@ -14,7 +14,7 @@ import json
 import re
 import sys
 
-from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, released_attempt_token,
+from pr_checkpoint_events import (EVENTS, attempt_owner, events, fields, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
@@ -116,6 +116,82 @@ def approved_release(data, comments, approval, comment):
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
+NOT_LAUNCHED_REASON = "worker_not_launched"
+# Bound reuse so a persistent prelaunch fault cannot redispatch indefinitely.
+MAX_NOT_LAUNCHED_REUSES = 3
+LEASE_FIELD = "lease_token"
+
+
+def single_event(comment):
+    return sum(1 for line in comment["body"].splitlines() if line.startswith(EVENTS)) == 1
+
+
+def not_launched_claim(data, approval_id, comment, line, f):
+    lease = f.get(LEASE_FIELD)
+    if not all((line.startswith("DISPATCH_CLAIM "), bool(lease), lease != data.get("lease"),
+                f.get("nonce") == lease, f.get("checkpoint_mode", "revision") == "revision",
+                f.get("checkpoint_approval") == str(approval_id),
+                f.get("runner") == comment["user"]["login"], bool(f.get("session")))):
+        return None
+    return {"runner": f["runner"], "lease": lease, "session": f["session"], "ids": [comment["id"]]}
+
+
+def not_launched_step(episode, comment, line, f):
+    """Return 'open', 'released' or None for one event of an approved attempt."""
+    if comment["user"]["login"] != episode["runner"]:
+        return None
+    if line.startswith("CLAIM_RELEASED "):
+        bound = all((f.get("reason") == NOT_LAUNCHED_REASON, f.get("runner") == episode["runner"],
+                     f.get(LEASE_FIELD) == episode["lease"]))
+        return "released" if bound else None
+    if line.startswith("Dispatching worker"):
+        return "open" if fields(comment["body"]).get(LEASE_FIELD) == episode["lease"] else None
+    bound = all((line.startswith("DISPATCH_LEASE "), f.get(LEASE_FIELD) == episode["lease"],
+                 f.get("session") == episode["session"], f.get("phase") in {"prelaunch", "ready"}))
+    return "open" if bound else None
+
+
+def closes_not_launched(closed, comment, line, f):
+    return any(all((line.startswith("DISPATCH_LEASE "), f.get("phase") == "terminal",
+                    f.get(LEASE_FIELD) == lease, comment["user"]["login"] == runner))
+               for runner, lease in closed)
+
+
+def not_launched_reuse_ids(data, comments, approval_id):
+    """Comment IDs of closed approved attempts whose runtime never launched.
+
+    #aidevops:trust-boundary — GH#37669: a revision attempt that released
+    `worker_not_launched` changed nothing on the approved exact head, so the
+    approval stays reusable for that head. Only a sequential, unedited episode
+    by one trusted runner (claim bound to this approval, its own leases or
+    launch notice, its own not-launched release, then its own terminal lease)
+    is skipped. Any other or interleaved event keeps fencing the approval.
+    Returns None when more than MAX_NOT_LAUNCHED_REUSES episodes exist.
+    """
+    trusted_logins = data.get("trusted_logins", ())
+    skipped, closed, episode, count = set(), [], None, 0
+    for comment, line, f in events(comments, approval_id, float("inf"), trusted_logins):
+        usable = trusted(comment, trusted_logins) and single_event(comment)
+        if usable and closes_not_launched(closed, comment, line, f):
+            skipped.add(comment["id"])
+            continue
+        if episode is None:
+            episode = not_launched_claim(data, approval_id, comment, line, f) if usable else None
+            continue
+        step = not_launched_step(episode, comment, line, f) if usable else None
+        if step is None:
+            # Leave the interleaved episode visible; successors_valid rejects it.
+            episode = None
+            continue
+        episode["ids"].append(comment["id"])
+        if step == "released":
+            skipped.update(episode["ids"])
+            closed.append((episode["runner"], episode["lease"]))
+            count += 1
+            episode = None
+    return None if count > MAX_NOT_LAUNCHED_REUSES else skipped
+
+
 def candidate(data, comments, comment, now):
     approval = approved_comment(data, comment, now)
     if approval is None:
@@ -123,9 +199,12 @@ def candidate(data, comments, comment, now):
     closing = approved_release(data, comments, approval, comment)
     if closing is None:
         return None
+    reused = not_launched_reuse_ids(data, comments, comment["id"])
+    if reused is None:
+        return None
     # The complete earlier history is checked above; the unchanged guard fences
     # only events after the approval and never grants authority from closure.
-    later = [c for c in comments if c["id"] >= comment["id"]]
+    later = [c for c in comments if c["id"] >= comment["id"] and c["id"] not in reused]
     if not successors_valid({**data, "released_lease": closing}, later, approval["release_id"],
                             comment["id"], now):
         return None

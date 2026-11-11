@@ -309,6 +309,18 @@ The exact expired owner abort is still required; edited or foreign diagnostics,
 identity-bearing releases, a second diagnostic, and ready/launch/renewal events
 after the diagnostic remain rejecting cases. No published evidence is removed.
 
+### Approved attempts whose runtime never launched (GH#37669)
+
+When an approval-bound attempt releases `worker_not_launched`, the runtime never
+started and the approved exact head is unchanged, so the same approval stays
+reusable. The validator skips only a sequential, unedited episode by one trusted
+runner: a claim naming this `checkpoint_approval`, its own prelaunch/ready
+leases or launch notice, its own `CLAIM_RELEASED reason=worker_not_launched`
+with the same lease, then its own terminal lease. Any other release reason,
+foreign or edited event, or interleaved coordination still fences the approval.
+At most three such episodes are skipped per approval; after that, and after the
+24-hour approval window, head change or brief change, a new approval is needed.
+
 ### Releases with no open episode (GH#36593)
 
 A trusted, unedited `CLAIM_RELEASED` can follow fully closed attempts with no

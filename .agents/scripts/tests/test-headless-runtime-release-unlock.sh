@@ -664,8 +664,8 @@ fi
 	AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=revision
 	release_note=""
 	_hrff_release_dispatch_claim_attempt issue-12345 worker_not_launched
-	[[ "$release_note" == *'new exact-head approval is required'* ]]
-	printf 'PASS unlaunched revision release states a new approval is required\n'
+	[[ "$release_note" == *'stays reusable for this exact head'* ]]
+	printf 'PASS unlaunched revision release keeps the exact-head approval reusable\n'
 )
 (
 	export HOME="$TMP_HOME"
