@@ -27,9 +27,11 @@ def _rank(entry):
     return 2 if Path(entry["path"].rstrip("/")).name == "aidevops" else None
 
 
-def aidevops_project_root(repos_path):
-    """The registered aidevops checkout: upstream slug, then a fork, then a
-    slugless `aidevops` folder."""
+def aidevops_project_root(repos_path, validate):
+    """The first registered aidevops checkout that `validate(path, repos_path)`
+    accepts, trying upstream slug, then forks, then slugless `aidevops`
+    folders. Paths are resolved first, so a symlinked registration validates,
+    and a stale registration falls through to the next candidate."""
     try:
         data = json.loads(Path(os.path.expanduser(repos_path)).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -40,4 +42,12 @@ def aidevops_project_root(repos_path):
         raise BuzzRuntimeError(
             "no aidevops repository is registered in repos.json; set the agent's project folder"
         )
-    return min(ranked, key=lambda item: item[0])[1]
+    last_error = None
+    for _rank_value, path in sorted(ranked, key=lambda item: item[0]):
+        try:
+            return validate(os.path.realpath(os.path.expanduser(path)), repos_path)
+        except BuzzRuntimeError as error:
+            last_error = error
+    raise BuzzRuntimeError(
+        "no registered aidevops repository is usable; set the agent's project folder"
+    ) from last_error

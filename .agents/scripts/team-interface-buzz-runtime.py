@@ -258,10 +258,10 @@ def main(argv=None):
     args = parse_args(argv)
     if args.command in {"prune", "prepare", "verify-anchor"}:
         return anchor_command(args)
-    requested = args.project_root
-    if args.command == "prepare-desktop" and not requested:
-        requested = aidevops_project_root(args.repos)
-    project_root = registered_project_root(requested, args.repos)
+    if args.command == "prepare-desktop" and not args.project_root:
+        project_root = aidevops_project_root(args.repos, registered_project_root)
+    else:
+        project_root = registered_project_root(args.project_root, args.repos)
     if args.command == "prepare-desktop":
         agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
         output_dir = Path(os.path.expanduser(args.output_dir))
