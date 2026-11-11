@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.171] - 2026-11-11
+
+### Added
+
+- approval-bound organization (company page) posting (#37715)
+
+### Fixed
+
+- record Cloudron release merge authority across routine passes (#37714)
+- respect supersession repoint opt-out (#37705)
+
 ## [3.39.170] - 2026-11-11
 
 ### Changed
