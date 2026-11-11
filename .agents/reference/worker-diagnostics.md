@@ -303,6 +303,7 @@ Safety boundaries:
   Actions incident suppresses the rerun and classifies delayed queued checks as
   provider saturation; an unavailable status feed fails open. Use
   `AIDEVOPS_SKIP_GITHUB_ACTIONS_STATUS=1` only as an explicit emergency bypass.
+  For runs still stranded after recovery, see [orphaned queued runs](#orphaned-queued-runs-after-a-github-incident).
 
 Diagnosis commands:
 
@@ -321,6 +322,32 @@ required checks limited to fast core gates where possible and run broad E2E at
 staging/release boundaries. If advisory E2E finds a real defect, file a focused
 follow-up task with the failing check/artifact evidence instead of closing the
 current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
+
+### Orphaned queued runs after a GitHub incident
+
+Ordinary pending checks are not failures. Suspect an orphan only when a run
+remains queued long after `gh-status-helper.sh check-actions` reports Actions
+operational, newer runs in the same repository finish, and cancellation or
+rerun requests return contradictory run states. Check the PR head and workflow
+definitions before taking action; an unavailable status feed is not evidence of
+recovery.
+
+If each affected `pull_request` workflow includes `ready_for_review` and the PR
+is already ready, an authorized operator can re-trigger it once without changing
+the head:
+
+```bash
+gh pr ready <pr-number> --repo <owner/repo> --undo
+gh pr ready <pr-number> --repo <owner/repo>
+```
+
+Confirm new runs target the same head and satisfy the required check names;
+normal CI and merge protections still apply. If the workflow instead supports
+`workflow_dispatch`, dispatch it on the PR branch only when its resulting check
+names and association satisfy the PR's required checks. Otherwise leave the PR
+pending and escalate the provider issue; do not create an empty commit or bypass
+a gate. Avoid closing and reopening the PR, which can change issue and automation
+state. Do not repeat the toggle while replacement runs are pending.
 
 ### Review-thread remediation
 
