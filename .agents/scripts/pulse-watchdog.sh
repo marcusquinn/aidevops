@@ -217,6 +217,21 @@ _pulse_cycle_remaining_seconds() {
 	return 0
 }
 
+# GH#37811: report whether the main dispatch round can no longer be admitted
+# this cycle, using the round's own admission plan (full, bounded or skip).
+# The cycle clock only moves forward, so a skip now stays a skip. Without the
+# dispatch library or a cycle clock the plan is unknown; report admittable so
+# callers keep the GH#37051 reserve.
+# Returns: 0 when the round would be skipped, 1 otherwise
+_pulse_main_dispatch_round_unadmittable() {
+	local plan=""
+	declare -F _dispatch_round_budget_plan >/dev/null 2>&1 || return 1
+	declare -F _dispatch_round_plan_skips >/dev/null 2>&1 || return 1
+	plan=$(_dispatch_round_budget_plan before 2>/dev/null) || return 1
+	_dispatch_round_plan_skips "$plan" || return 1
+	return 0
+}
+
 _pulse_stage_cycle_timeout() {
 	local stage_name="$1" timeout_seconds="$2" remaining=""
 	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
@@ -225,8 +240,14 @@ _pulse_stage_cycle_timeout() {
 	# GH#37051: every pre-dispatch stage, including nested cleanup and graph
 	# work, must leave the main round its enumeration + candidate budget.
 	# Dispatch itself shadows this internal reserve, not its admission gates.
+	# GH#37811: once the round cannot be admitted, the reserve protects
+	# nothing; stages keep only the finalisation reserve instead of deferring.
 	if [[ "$reserve" =~ ^[0-9]+$ && "$dispatch_reserve" =~ ^[0-9]+$ && "$dispatch_reserve" -gt "$reserve" ]]; then
-		reserve="$dispatch_reserve"
+		if _pulse_main_dispatch_round_unadmittable; then
+			echo "[pulse-wrapper] Stage dispatch reserve released: ${stage_name} main dispatch round cannot be admitted this cycle (GH#37811)" >>"$LOGFILE"
+		else
+			reserve="$dispatch_reserve"
+		fi
 	fi
 	remaining=$(_pulse_cycle_remaining_seconds "$reserve") || { printf '%s\n' "$timeout_seconds"; return 0; }
 	if [[ "$remaining" -lt 15 ]]; then
