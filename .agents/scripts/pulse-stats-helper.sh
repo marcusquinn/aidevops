@@ -120,7 +120,7 @@ _pulse_stats_recover_locked() {
 	shopt -s nullglob
 	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
 	((nullglob_was_set)) || shopt -u nullglob
-	for existing in "${quarantines[@]}"; do
+	for existing in ${quarantines[@]+"${quarantines[@]}"}; do
 		count=$((count + 1))
 		if cmp -s "$PULSE_STATS_FILE" "$existing"; then
 			duplicate=1
@@ -184,7 +184,7 @@ _pulse_stats_mutate_locked() {
 	# shellcheck disable=SC2016 # jq variables are expanded by jq.
 	validation=$("$_PULSE_STATS_JQ" -s --arg object_type object 'length == 1 and (.[0] | type == $object_type) and (.[0].counters | type == $object_type) and ((.[0].gauges // {}) | type == $object_type) and ((.[0].invocation_sources // {}) | type == $object_type)' "$PULSE_STATS_FILE" 2>&1) || {
 		rc=$?
-		[[ "$rc" -eq 5 && ( "$validation" == 'parse error:'* || "$validation" == 'jq: parse error:'* ) ]] && return 2
+		[[ ( "$rc" -eq 4 || "$rc" -eq 5 ) && ( "$validation" == 'parse error:'* || "$validation" == 'jq: parse error:'* ) ]] && return 2
 		return 1
 	}
 	[[ "$validation" == false ]] && return 2
