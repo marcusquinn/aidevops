@@ -60,10 +60,29 @@ def check_session_owner(resolve_helper, run_helper, paths, session_id, command="
         except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
             reason = "helper-failed"
     # The helper's reason is a fixed protocol token; never host paths (GH#36430).
+    message = f"BLOCKED: lifecycle owner admission unavailable ({reason})"
+    if reason in REASON_GUIDANCE:
+        message = f"{message}; {REASON_GUIDANCE[reason]}"
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": f"BLOCKED: lifecycle owner admission unavailable ({reason})",
+        "permissionDecisionReason": message,
     }}
+
+
+# Recovery guidance per safe helper reason; never host paths or secrets.
+REASON_GUIDANCE = {
+    # GH#37827: copied/migrated worktrees keep a marker bound to the old host.
+    "generation-directory-mismatch": (
+        "this worktree's lifecycle marker belongs to another installation, path or "
+        "directory, usually because the folder was copied from another machine or "
+        "restored from backup. Its files and Git data are intact; no write is "
+        "authorized here. Recovery: from a workdir outside it, inspect read-only with "
+        "git -C <worktree> status, then run worktree-rescue-helper.sh export <worktree>, "
+        "create a fresh worktree at the reported commit and import there (see "
+        "reference/machine-migration.md). Do not delete markers, reset the registry "
+        "or bypass the gate"
+    ),
+}
 
 
 def _safe_reason(value):
