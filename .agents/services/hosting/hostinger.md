@@ -218,9 +218,10 @@ Hostinger Smart Auto Updates 1.0.9's `hostinger-auto-updates.php` disables WordP
 own background core updater and plugin/theme automatic updates. Hostinger applies
 updates according to the individual site's hPanel auto-update setting instead. The
 WP-CLI `auto_update=on` plugin column does not prove updates are being installed.
-Compare `wp plugin list --update=available` with sibling sites on the same account,
-including the age of pending updates, and check the site's setting in hPanel. A
-backlog is a signal to investigate, not proof of a specific cause.
+Compare `wp --path="<docroot>" plugin list --update=available` with sibling sites on
+the same account, replacing `<docroot>` with each site's WordPress document root
+for every check. Include the age of pending updates and check the site's setting
+in hPanel. A backlog is a signal to investigate, not proof of a specific cause.
 
 When creating WordPress sites through the hPanel API, explicitly set and verify each
 site's auto-update setting as well as its cron job. Use the current documented API
