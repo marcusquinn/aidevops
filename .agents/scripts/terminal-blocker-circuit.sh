@@ -509,6 +509,60 @@ terminal_blocker_fetch_trusted_comments() {
 	return 0
 }
 
+# A claim must name its authenticated author, not merely mention another runner.
+# shellcheck disable=SC2016 # jq definitions, not shell expansions.
+_TBC_PEER_CLAIM_JQ='
+def capability_trusted:
+  .author_association as $a | '"$_TBC_AUTHORITATIVE_ASSOCIATIONS"' | index($a) != null;
+def peer_claim($self; $at):
+  (.author // .user.login // "") as $login
+  | select($login != "" and $login != $self)
+  | select((try (.created_at | fromdateiso8601) catch 0) > $at)
+  | select((try ((.body // "") | capture("(?m)^DISPATCH_CLAIM [^\\r\\n]*?runner=(?<runner>[A-Za-z0-9-]+)(?:[ \\t]|\\r?$)").runner) catch "") == $login);
+'
+
+# Fetch once, keeping ordinary trusted evidence plus narrowly authorized claims.
+terminal_blocker_fetch_capability_comments() {
+	local issue="$1" repo="$2" self="$3"
+	local comments='' observation_at='' claims='' login='' permission='' authorized='[]'
+	comments=$(terminal_blocker_fetch_comments "$repo" "$issue") || return 1
+	comments=$(jq -c '
+		[flatten[]
+		| {id:.id, author:(.user.login // ""), body:(.body // ""),
+		   created_at:.created_at, author_association:(.author_association // "")}]
+	' <<<"$comments") || return 1
+	observation_at=$(jq -r --arg self "$self" --arg marker "$_TBC_OBSERVATION_MARKER revision=" '
+		[.[] | select(.author == $self and (.body | contains($marker)))
+		| try (.created_at | fromdateiso8601) catch empty] | max // 0
+	' <<<"$comments") || return 1
+	if [[ "$observation_at" != 0 ]]; then
+		claims=$(jq -c --arg self "$self" --argjson at "$observation_at" "${_TBC_PEER_CLAIM_JQ}"'
+			[.[] | peer_claim($self; $at)
+			| select(capability_trusted | not)]
+		' <<<"$comments") || return 1
+		# aidevops:trust-boundary — non-authoritative associations require write
+		# permission. Check each distinct later claimant once; errors never lift.
+		while IFS= read -r login; do
+			[[ "$login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || continue
+			permission=$(gh api "repos/${repo}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || continue
+			case "$permission" in
+			admin | maintain | write)
+				authorized=$(jq -c --arg login "$login" '. + [$login]' <<<"$authorized") || return 1
+				;;
+			esac
+		done < <(jq -r '[.[].author] | unique[]' <<<"$claims")
+	fi
+	# Never promote the author's association: permission only authorizes the
+	# claim supersede check, not retry directives, observations or other holds.
+	jq -c --arg self "$self" --argjson at "$observation_at" --argjson authorized "$authorized" "${_TBC_PEER_CLAIM_JQ}"'
+		map(if (.author as $a | $authorized | index($a)) != null
+			then (if ([peer_claim($self; $at)] | length) > 0 then .capability_peer_authorized=true else . end) else . end)
+		| map(select(.author == $self or capability_trusted or .author_association == "COLLABORATOR"
+			or .capability_peer_authorized == true))
+	' <<<"$comments" || return 1
+	return 0
+}
+
 # GH#35037: return the original observation time, never a refreshed timestamp.
 # aidevops:trust-boundary — only this authenticated runner's latest
 # observation may suppress local dispatch; other runners remain eligible.
@@ -533,13 +587,13 @@ terminal_blocker_runner_capability_observation_epoch() {
 	blocker=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	_terminal_blocker_retry_after "$retry" "$observation" && return 1
-	# GH#37752: another runner's later claim supersedes this observation.
-	jq -en --argjson obs "$observation" --argjson comments "$comments_json" --arg self "$self" '
-		($obs.created_at | fromdateiso8601) as $at
-		| [$comments[] | (.body // "") as $b
-		| select(($b | test("(?m)^DISPATCH_CLAIM ")) and ($b | contains("runner=" + $self + " ") | not))
-		| select((.created_at | fromdateiso8601) > $at)] | length > 0
-	' >/dev/null 2>&1 && return 1
+	# aidevops:trust-boundary — only trusted or permission-validated peer claims
+	# supersede this runner's observation. Self claims cannot clear the hold.
+	jq -e --arg self "$self" --argjson observation "$observation" "${_TBC_PEER_CLAIM_JQ}"'
+		($observation.created_at | fromdateiso8601) as $at
+		| [.[] | peer_claim($self; $at)
+		| select(capability_trusted or .capability_peer_authorized == true)] | length > 0
+	' <<<"$comments_json" >/dev/null 2>&1 && return 1
 	jq -er --arg self "$self" --arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${blocker} -->" '
 		select((.author // .user.login // "") == $self)
 		| select((.body // "") | contains($marker))

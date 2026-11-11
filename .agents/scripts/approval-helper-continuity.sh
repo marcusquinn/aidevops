@@ -126,6 +126,17 @@ _approval_continuity_label_replay_matches() {
 	return 0
 }
 
+# Tier and fix-the-fixer labels retain their separate backfill/observability
+# rules; their legitimate pre-anchor transitions are not necessarily visible.
+_approval_continuity_reconciled_labels_match() {
+	local signed="$1" snapshot="$2" rows="$3" label=""
+	for label in auto-dispatch needs-maintainer-permissions needs-maintainer-review \
+		status:available status:queued status:claimed status:in-progress status:in-review status:done status:blocked; do
+		_approval_continuity_label_replay_matches "$signed" "$snapshot" "$rows" "$label" || return 1
+	done
+	return 0
+}
+
 _approval_continuity_lifecycle_change_allowed() {
 	local signed_lifecycle="$1"
 	local current_snapshot="$2"
@@ -396,14 +407,30 @@ _approval_verify_locked_issue_continuity() {
 		[[ "$subject" == status:* ]] && saw_status_mutation=1
 		[[ "$event" == renamed ]] && saw_rename=1
 	done <<<"$mutation_rows"
-	_approval_continuity_label_replay_matches "$signed_lifecycle" "$current_snapshot" "$mutation_rows" "$_APPROVAL_AUTO_DISPATCH_LABEL" || return 1
-	_approval_continuity_label_replay_matches "$signed_lifecycle" "$current_snapshot" "$mutation_rows" "$_APPROVAL_PERMISSION_HOLD_LABEL" || return 1
 	[[ "$title_changed" -eq 0 || "$saw_rename" -eq 1 ]] || return 1 # title edits need an authorized rename
 	if [[ "$body_changed" -eq 1 ]]; then
 		_approval_continuity_body_edits_authorized "$slug" "$target_number" "$timeline_pages" "$approval_comment_id" || body_rc=$?
 		[[ "$body_rc" -eq 0 ]] || return "$body_rc"
 	fi
+	# A distinct result permits a single fresh snapshot/timeline read, but only
+	# after every content and actor authorization check has passed.
+	_approval_continuity_reconciled_labels_match "$signed_lifecycle" "$current_snapshot" "$mutation_rows" || return 3
 	return 0
+}
+
+# Retry only a replay mismatch, rebuilding the same snapshot profile and
+# repeating all authorization checks. A second mismatch remains stale.
+_approval_continuity_with_retry() {
+	local payload="$1" snapshot="$2" digest="$3" slug="$4" number="$5" issued="$6" comment="$7" profile="$8" lifecycle_profile="$9"
+	local rc=0
+	_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+	if [[ "$rc" -eq 3 ]]; then
+		snapshot=$(approval_snapshot_v2_build "$APPROVAL_TARGET_ISSUE" "$number" "$slug" "$comment" "$issued" "$profile" "$lifecycle_profile") || return 2
+		rc=0
+		_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+	fi
+	[[ "$rc" -ne 3 ]] || return 1
+	return "$rc"
 }
 
 # Prints TRUSTED_SOURCES_MATCH, STABLE_MATCH or LEGACY_MATCH when an older
@@ -464,16 +491,16 @@ _approval_classify_digest_mismatch() {
 		return 0
 	fi
 	if [[ "$target_type" == "$APPROVAL_TARGET_ISSUE" ]]; then
-		_approval_verify_locked_issue_continuity "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+		_approval_continuity_with_retry "$payload" "$snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND" "$issue_lifecycle_profile" || continuity_rc=$?
 		# Approvals signed before GH#34266 / GH#32455 used the trusted-sources /
 		# stable linked-source profiles; prove continuity against that exact profile.
 		if [[ "$continuity_rc" -eq 1 ]]; then
 			continuity_rc=0
-			_approval_verify_locked_issue_continuity "$payload" "$trusted_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+			_approval_continuity_with_retry "$payload" "$trusted_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$issue_lifecycle_profile" || continuity_rc=$?
 		fi
 		if [[ "$continuity_rc" -eq 1 ]]; then
 			continuity_rc=0
-			_approval_verify_locked_issue_continuity "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" || continuity_rc=$?
+			_approval_continuity_with_retry "$payload" "$stable_snapshot_json" "$signed_digest" "$slug" "$target_number" "$issued_at" "$comment_id" "$APPROVAL_SNAPSHOT_PROFILE_STABLE" "$issue_lifecycle_profile" || continuity_rc=$?
 		fi
 		if [[ "$continuity_rc" -eq 0 ]]; then
 			printf 'APPROVAL_REASON: proven-locked-continuity\n' >&2
