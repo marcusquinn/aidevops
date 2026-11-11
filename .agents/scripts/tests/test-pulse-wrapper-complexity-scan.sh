@@ -665,6 +665,65 @@ test_release_creation_holds() {
 	return 0
 }
 
+# Run the backfill with one failing dependency. Arguments: $1 - mode
+# (list|timeline|perm). Output: edit log, "---", then diagnostic log lines.
+run_failure_fixture() {
+	local mode="$1"
+	local edit_log="${TEST_ROOT}/failure-edits.log"
+	local diag_log="${TEST_ROOT}/failure-diag.log"
+	: >"$edit_log"
+	: >"$diag_log"
+	(
+		LOGFILE="$diag_log"
+		FIXTURE_HELD=$(jq -cn '[{number:7,body:"<!-- aidevops:generator=agent-doc-simplification-gate cited_file=x.md -->",author:{login:"co-admin"},createdAt:"2026-11-10T23:00:57Z"}]')
+		gh_issue_list() { [[ "$mode" == list ]] && return 1; printf '%s\n' "$FIXTURE_HELD"; return 0; }
+		gh() { [[ "$mode" == timeline ]] && return 1; printf 'co-admin|2026-11-10T23:00:58Z\n'; return 0; }
+		_gh_collaborator_permission_lookup() {
+			if [[ "$mode" != perm ]]; then
+				printf -v "$3" '%s' write
+				return 0
+			fi
+			AIDEVOPS_GH_COLLAB_PERMISSION_HTTP=502
+			AIDEVOPS_GH_COLLAB_PERMISSION_REASON=bad-gateway
+			return 1
+		}
+		gh_issue_edit_safe() { printf '%s\n' "$*" >>"$edit_log"; return 0; }
+		gh_issue_comment() { return 0; }
+		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
+		_complexity_release_creation_holds "owner/repo"
+	) || {
+		echo "NONZERO"
+		return 0
+	}
+	cat "$edit_log"
+	echo "---"
+	cat "$diag_log"
+	return 0
+}
+
+test_release_creation_hold_failure_logging() {
+	local out=""
+	out=$(run_failure_fixture list)
+	if [[ "$out" == *"issue list read failed"* && "$out" != *NONZERO* ]]; then
+		print_result "creation-hold backfill: list failure is logged, returns 0" 0
+	else
+		print_result "creation-hold backfill: list failure is logged, returns 0" 1 "out=${out}"
+	fi
+	out=$(run_failure_fixture timeline)
+	if [[ "$out" == "---"* && "$out" == *"timeline read failed for #7"* && "$out" == *"timeline_failed=1"* ]]; then
+		print_result "creation-hold backfill: timeline failure logs retry, no release" 0
+	else
+		print_result "creation-hold backfill: timeline failure logs retry, no release" 1 "out=${out}"
+	fi
+	out=$(run_failure_fixture perm)
+	if [[ "$out" == "---"* && "$out" == *"http=502 reason=bad-gateway"* ]]; then
+		print_result "creation-hold backfill: permission failure logs HTTP/reason, no release" 0
+	else
+		print_result "creation-hold backfill: permission failure logs HTTP/reason, no release" 1 "out=${out}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -696,6 +755,7 @@ main() {
 	test_check_interval_due_when_elapsed
 	test_permission_gate_fails_closed
 	test_release_creation_holds
+	test_release_creation_hold_failure_logging
 
 	echo ""
 	echo "Results: ${TESTS_RUN} run, $((TESTS_RUN - TESTS_FAILED)) passed, ${TESTS_FAILED} failed"
