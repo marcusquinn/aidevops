@@ -719,8 +719,9 @@ test_post_approval_linked_references() {
 write_locked_issue_fixture() {
 	local include_tier="${1:-true}"
 	local initial_status="${2:-}"
+	local extra_label="${3:-}"
 	write_baseline_fixtures
-	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" --arg extra_label "$extra_label" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end + if $extra_label != "" then [{id:13,node_id:"L_13",name:$extra_label}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
 	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
 	return 0
@@ -861,6 +862,28 @@ test_locked_issue_tier_backfill_continuity() {
 	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4215,"node_id":"EV_4215","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"fix-the-fixer"}}'
 	assert_verify "untrusted fix-the-fixer classification remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+# GH#37762: signed permission requests add, and signed grants/withdrawals
+# remove, the needs-maintainer-permissions hold. That dispatch hold is not
+# scope-bearing, so authorized toggles must not stale a prior issue approval.
+test_locked_issue_permission_hold_continuity() {
+	local hold="needs-maintainer-permissions"
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4221,"node_id":"EV_4221","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold removal preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq --arg hold "$hold" '.labels += [{id:13,node_id:"L_13",name:$hold}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4222,"node_id":"EV_4222","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "trusted permission-hold request preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4223,"node_id":"EV_4223","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
+	assert_verify "untrusted permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
 	return 0
 }
 
@@ -1309,6 +1332,7 @@ main() {
 	test_locked_issue_trusted_comment_continuity
 	test_locked_issue_trusted_content_edits
 	test_locked_issue_tier_backfill_continuity
+	test_locked_issue_permission_hold_continuity
 	test_signed_tier_self_hosting_continuity
 
 	reset_and_sign pr 42
