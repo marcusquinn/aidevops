@@ -201,6 +201,12 @@ _worker_lifecycle_owner_summary() {
 	snapshot=$(check_worktree_owner_snapshot "$worktree" 2>/dev/null) || return 1
 	IFS='|' read -r pid session batch task created start <<<"$snapshot"
 	[[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+	if [[ -n "$start" ]]; then
+		local current_start=""
+		declare -F _wt_process_start_token_for_pid >/dev/null 2>&1 || return 1
+		current_start=$(_wt_process_start_token_for_pid "$pid" 2>/dev/null) || return 1
+		[[ "$current_start" == "$start" ]] || return 1
+	fi
 	printf 'pid=%s liveness=alive session=%s task=%s\n' "$pid" "${session:-none}" "${task:-none}"
 	return 0
 }
@@ -216,17 +222,10 @@ _worker_lifecycle_report_refusal() {
 	reason=$(jq -r '.reason // empty' 2>/dev/null <<<"$result") || reason=""
 	detail=$(jq -r '.detail // empty' 2>/dev/null <<<"$result") || detail=""
 	# GH#37740: a bare exception class (for example CalledProcessError) names no
-	# condition. Prefer the live registry owner; otherwise label it unexpected.
+	# condition. Keep the error primary; a live registry owner is only context.
 	if [[ -z "$detail" && "$reason" =~ ^[A-Z][A-Za-z0-9]*(Error|Exception|Conflict|Expired)$ ]]; then
 		owner=$(_worker_lifecycle_owner_summary "$worktree") || owner=""
-		if [[ -n "$owner" ]]; then
-			printf '[worker-lifecycle] retirement-refused status=refused detail=owner-alive %s rc=%s\n' "$owner" "$rc" >&2
-			if [[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]]; then
-				printf '[worker-lifecycle] next: the registry owner above is still running; retry after it exits (Pulse cleanup retries automatically). --force cannot override registry checks.\n' >&2
-			fi
-			return 0
-		fi
-		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s rc=%s\n' "$reason" "$rc" >&2
+		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s%s rc=%s\n' "$reason" "${owner:+ $owner}" "$rc" >&2
 		if [[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]]; then
 			printf '[worker-lifecycle] next: unexpected registry failure with no named condition; inspect worktree-helper.sh registry list and worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
 		fi
