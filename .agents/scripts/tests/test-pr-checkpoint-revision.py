@@ -228,6 +228,14 @@ class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.Test
                                     "expires_at=0", author),
         ]
 
+    def test_not_launched_release_with_attempt_log_keeps_approval_reusable(self):
+        data = fixture()
+        data["issue"]["assignees"] = []
+        attempt = self.not_launched_attempt(4, "failed1")
+        attempt[2]["body"] += " attempt_log=worker-checkpoint-42.log.ABC123"
+        data["comments"] += attempt
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+
     def test_not_launched_attempt_keeps_exact_head_approval_reusable(self):
         # GH#37669: a revision attempt whose runtime never launched changed
         # nothing on the approved head, so the same approval stays usable.
