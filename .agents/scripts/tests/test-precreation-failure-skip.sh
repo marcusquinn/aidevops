@@ -1306,13 +1306,25 @@ test_sealed_generation_recovery() (
 	mkdir -p "$sandbox/helpers" "$sandbox/repo" || return 1
 	local SCRIPT_DIR="$sandbox/helpers"
 	export AIDEVOPS_DISPATCH_SEALED_HOLD_DIR="$sandbox/holds"
-	local LOGFILE="$sandbox/diagnostic.log" reuse_class="sealed" test_prs='[]' removal_allowed=1
+	local LOGFILE="$sandbox/diagnostic.log" reuse_class="sealed" removal_allowed=1
+	local PATH="$SCRIPT_DIR:$PATH"
+	export PATH SEALED_TEST_PRS='[[]]' SEALED_TEST_UPSTREAM_PRS='[[]]'
+	# The lifecycle PR lookup invokes gh as a process, not a shell function.
+	cat >"$SCRIPT_DIR/gh" <<'SEALED_GH'
+#!/usr/bin/env bash
+case "$*" in
+"api repos/owner/repo") printf '%s\n' '{"fork":true,"parent":{"full_name":"owner/upstream"},"source":{"full_name":"owner/upstream"}}' ;;
+"api --paginate --slurp repos/owner/repo/pulls?state=open&per_page=100") printf '%s\n' "$SEALED_TEST_PRS" ;;
+"api --paginate --slurp repos/owner/upstream/pulls?state=open&per_page=100") printf '%s\n' "$SEALED_TEST_UPSTREAM_PRS" ;;
+*) exit 1 ;;
+esac
+SEALED_GH
+	chmod +x "$SCRIPT_DIR/gh"
 	# Earlier cases deliberately replace these functions. Restore only the
 	# production entry points exercised here, following the lease fixture above.
 	eval "$(awk '/^_dlw_precreate_worktree\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh")"
 	eval "$(awk '/^dispatch_with_dedup\(\) \{/,/^}$/ { print } /^_release_dispatch_claim_on_abort\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-core.sh")"
 	git() { command -p git "$@"; return $?; }
-	gh() { printf '%s\n' "$test_prs"; return 0; }
 	unset _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED
 	source "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh"
 	_dlw_classify_reuse_candidate() { printf '%s\n' "$reuse_class"; return 0; }
@@ -1347,6 +1359,9 @@ SEALED_HELPER
 	[[ "$(tr '\n' ' ' <"$SEALED_TEST_CALLS")" == 'remove add ' ]] || return 1
 	# Recreate a sealed checkpoint with a real unpublished commit.
 	ahead=$(printf 'checkpoint\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	# Git retains missing worktrees. They must not poison another tree's hold.
+	git -C "$sandbox/repo" worktree add -q -b feature/missing-gh37806 "$sandbox/missing" "$initial" || return 1
+	mv "$sandbox/missing" "$sandbox/moved" || return 1
 	git -C "$sandbox/repo" worktree add -q -b feature/checkpoint-gh37806 "$sandbox/checkpoint" "$ahead" || return 1
 	: >"$SEALED_TEST_CALLS"
 	_dlw_precreate_worktree 37806 "$sandbox/repo" && return 1
@@ -1381,13 +1396,30 @@ SEALED_HELPER
 	rm "$sandbox/checkpoint/untracked"
 	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
 	# A live owner/process (guard refusal) and an open PR both preserve source.
-	gh() { printf '%s\n' "$test_prs"; return 0; }
-	test_prs='[{"number":1}]'
+	SEALED_TEST_PRS='[[{"head":{"sha":"other","ref":"feature/checkpoint-gh37806","repo":{"full_name":"owner/repo"}}}]]'
 	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
 	[[ "$_DLW_SEALED_REASON" == open_pr && ! -s "$SEALED_TEST_CALLS" ]] || return 1
-	test_prs='[]' SEALED_TEST_REMOVE_ALLOWED=0
+	SEALED_TEST_PRS='[[]]'
+	SEALED_TEST_UPSTREAM_PRS="[[{\"head\":{\"sha\":\"$ahead\",\"ref\":\"another-name\"}}]]"
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == open_pr && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	SEALED_TEST_UPSTREAM_PRS='invalid'
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == evidence_unavailable && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	SEALED_TEST_UPSTREAM_PRS='[[]]' SEALED_TEST_REMOVE_ALLOWED=0
 	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
 	[[ -d "$sandbox/checkpoint" && "$_DLW_SEALED_REASON" == guarded_retirement_refused ]] || return 1
+	# A silent classification failure alongside a sealed candidate still logs.
+	git -C "$sandbox/repo" worktree add -q -b feature/unknown-gh37806 "$sandbox/unknown" "$initial" || return 1
+	_dlw_classify_reuse_candidate() {
+		local path="$1"
+		[[ "$path" != "$sandbox/unknown" ]] || return 1
+		printf 'sealed\n'
+		return 0
+	}
+	_dlw_select_issue_worktree "$sandbox/repo" 37806 "$repo_slug" && return 1
+	[[ "$_DLW_REUSE_REFUSAL" == worktree_reuse_evidence_unavailable ]] || return 1
+	grep -q 'worktree_reuse_evidence_unavailable.*sealed=1 unavailable=1' "$LOGFILE" || return 1
 	local sealed_log=""
 	sealed_log=$(grep 'path_class=sealed_issue_generation' "$LOGFILE" || true)
 	[[ "$sealed_log" != *"$sandbox"* ]] || return 1
@@ -1432,7 +1464,7 @@ test_sealed_evidence_fences() (
 	git() {
 		local operation="${3:-}"
 		case "$operation" in
-		worktree) printf 'worktree /fixture\nHEAD abc\nbranch refs/heads/feature/gh37806\n' ;;
+		worktree) printf 'worktree %s\nHEAD abc\nbranch refs/heads/feature/gh37806\n' "$TMP" ;;
 		rev-parse) [[ "${4:-}" != --verify ]] || return 1; printf 'abc\n' ;;
 		status) printf '?? valuable\n' ;;
 		hash-object) command -p git hash-object --stdin; return $? ;;

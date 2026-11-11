@@ -188,7 +188,7 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_REFUSAL="worktree_reuse_ambiguous"
 	fi
 	if [[ -n "$_DLW_REUSE_REFUSAL" ]]; then
-		if [[ "$sealed" -eq 0 ]]; then
+		if [[ "$_DLW_REUSE_REFUSAL" != "worktree_reuse_sealed_generation" ]]; then
 			echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
 		fi
 		_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION=""

@@ -53,7 +53,7 @@ _dlw_sealed_snapshot() {
 		"branch refs/heads/"*) branch="${line#branch refs/heads/}" ;;
 		*) continue ;;
 		esac
-		[[ "$branch" =~ gh-?${issue}([^0-9]|$) ]] || continue
+		[[ "$branch" =~ gh-?${issue}([^0-9]|$) && -n "$path" && -d "$path" ]] || continue
 		class=$(_dlw_classify_reuse_candidate "$path" "$issue" "$repo") || return 1
 		status=$(git -C "$path" status --porcelain --ignored --untracked-files=all) || return 1
 		head=$(git -C "$path" rev-parse HEAD) || return 1
@@ -110,7 +110,7 @@ _dlw_sealed_hold_record() {
 # are preserved. Unknown Git/GitHub evidence is never evidence of emptiness.
 _dlw_retire_empty_sealed() {
 	local path="$1" branch="$2" repo="$3"
-	local status="" base="" ahead="" prs="" output="" entry=""
+	local status="" base="" ahead="" prs="" output="" entry="" head=""
 	_DLW_SEALED_REASON="evidence_unavailable"
 	status=$(git -C "$path" status --porcelain --ignored --untracked-files=all) || return 1
 	while IFS= read -r entry; do
@@ -127,8 +127,17 @@ _dlw_retire_empty_sealed() {
 		return 1
 	fi
 	[[ -n "$repo" ]] || return 1
-	prs=$(gh pr list --repo "$repo" --state open --head "$branch" --json number 2>/dev/null) || return 1
-	jq -e 'type == "array" and length == 0' <<<"$prs" >/dev/null || { _DLW_SEALED_REASON="open_pr"; return 1; }
+	head=$(git -C "$path" rev-parse HEAD) || return 1
+	# Share the lifecycle's complete fork/parent/source lookup and exact HEAD
+	# matching. A failed lookup must hold, never authorize retirement.
+	prs=$(python3 -E -s -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from worker_lifecycle.pull_requests import open_pull_requests, matches_open_pull_request
+repo, head, branch = sys.argv[2:]
+print("open_pr" if matches_open_pull_request(open_pull_requests(repo), head, branch, repo) else "")
+' "${_DLW_SYSTEMD_MODULE_DIR}/../worker-lifecycle" "$repo" "$head" "refs/heads/$branch" 2>/dev/null) || return 1
+	[[ -z "$prs" ]] || { _DLW_SEALED_REASON="open_pr"; return 1; }
 	_DLW_SEALED_REASON="guarded_retirement_refused"
 	output=$("${SCRIPT_DIR}/worktree-helper.sh" remove "$path" 2>/dev/null) || return 1
 	# Exit zero alone is not proof: require the guarded retirement receipt and
