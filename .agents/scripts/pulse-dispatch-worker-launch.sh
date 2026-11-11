@@ -814,6 +814,10 @@ _dlw_capture_live_owner_refusal() {
 _dlw_report_precreate_failure() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == worktree_reuse_sealed_generation ]]; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_reuse_sealed_generation" 2
+		return $?
+	fi
 	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == "$DLW_LIVE_OWNER_REFUSED_REASON" ]]; then
 		pulse_stats_increment "worktree_live_owner_refused_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#${issue_number} repo=${repo_slug} owner_pid=${_DLW_REFUSING_OWNER_PID} owner_start=${_DLW_REFUSING_OWNER_START} action=hold_until_owner_exits_or_changes worktree=${_DLW_WORKTREE_PATH}" >>"$LOGFILE"
@@ -1722,6 +1726,18 @@ _dlw_append_canary_preflight_env() {
 	return 0
 }
 
+_dlw_append_worker_policy_env() {
+	# systemd services do not inherit the launching client's environment.
+	# Preserve explicitly empty scope as well as populated scope values.
+	if [[ -n "${PULSE_SCOPE_REPOS+x}" ]]; then
+		worker_cmd+=(PULSE_SCOPE_REPOS="$PULSE_SCOPE_REPOS")
+	fi
+	_dlw_append_trusted_release_env
+	_dlw_append_worktree_transfer_env
+	_dlw_append_canary_preflight_env
+	return 0
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1784,9 +1800,7 @@ _dlw_nohup_launch() {
 	)
 	_dlw_append_model_ab_env
 	_dlw_append_node_tool_env "$worker_worktree_path"
-	_dlw_append_trusted_release_env
-	_dlw_append_worktree_transfer_env
-	_dlw_append_canary_preflight_env
+	_dlw_append_worker_policy_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1

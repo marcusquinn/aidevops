@@ -1299,6 +1299,199 @@ else
 	fail "launch boundary rejects a missing worker worktree before setsid" "rc=$launch_rc"
 fi
 
+test_sealed_generation_recovery() (
+	# Real Git state with only lifecycle classification, GitHub and the guarded
+	# removal boundary stubbed. Never touch the runner's registries or caches.
+	local sandbox="${TMP}/sealed-recovery" repo_slug="owner/repo" rc=0
+	mkdir -p "$sandbox/helpers" "$sandbox/repo" || return 1
+	local SCRIPT_DIR="$sandbox/helpers"
+	export AIDEVOPS_DISPATCH_SEALED_HOLD_DIR="$sandbox/holds"
+	local LOGFILE="$sandbox/diagnostic.log" reuse_class="sealed" removal_allowed=1
+	local PATH="$SCRIPT_DIR:$PATH"
+	export PATH SEALED_TEST_PRS='[[]]' SEALED_TEST_UPSTREAM_PRS='[[]]'
+	# The lifecycle PR lookup invokes gh as a process, not a shell function.
+	cat >"$SCRIPT_DIR/gh" <<'SEALED_GH'
+#!/usr/bin/env bash
+case "$*" in
+"api repos/owner/repo") printf '%s\n' '{"fork":true,"parent":{"full_name":"owner/upstream"},"source":{"full_name":"owner/upstream"}}' ;;
+"api --paginate --slurp repos/owner/repo/pulls?state=open&per_page=100") printf '%s\n' "$SEALED_TEST_PRS" ;;
+"api --paginate --slurp repos/owner/upstream/pulls?state=open&per_page=100") printf '%s\n' "$SEALED_TEST_UPSTREAM_PRS" ;;
+*) exit 1 ;;
+esac
+SEALED_GH
+	chmod +x "$SCRIPT_DIR/gh"
+	# Earlier cases deliberately replace these functions. Restore only the
+	# production entry points exercised here, following the lease fixture above.
+	eval "$(awk '/^_dlw_precreate_worktree\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh")"
+	eval "$(awk '/^dispatch_with_dedup\(\) \{/,/^}$/ { print } /^_release_dispatch_claim_on_abort\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-core.sh")"
+	git() { command -p git "$@"; return $?; }
+	unset _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED
+	source "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh"
+	_dlw_classify_reuse_candidate() { printf '%s\n' "$reuse_class"; return 0; }
+	git -C "$sandbox/repo" init -q || return 1
+	local tree="" initial="" ahead=""
+	tree=$(git -C "$sandbox/repo" mktree </dev/null) || return 1
+	initial=$(printf 'initial\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree") || return 1
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$initial" || return 1
+	git -C "$sandbox/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main || return 1
+	git -C "$sandbox/repo" worktree add -q -b feature/gh37806 "$sandbox/sealed" "$initial" || return 1
+	# Removal spy also emulates the helper's process/ownership safety refusal.
+	export SEALED_TEST_CALLS="$sandbox/calls" SEALED_TEST_REMOVE_ALLOWED="$removal_allowed"
+	cat >"$SCRIPT_DIR/worktree-helper.sh" <<'SEALED_HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$SEALED_TEST_CALLS"
+if [[ "$1" == remove ]]; then
+	[[ "$SEALED_TEST_REMOVE_ALLOWED" == 1 ]] || exit 1
+	command -p git -C "$2" worktree remove "$2" || exit 1
+	printf '{"status":"retired"}\n'
+else
+	mkdir -p "$STUB_WT_SUCCESS_PATH"
+	printf 'Created worktree at %s\n' "$STUB_WT_SUCCESS_PATH"
+fi
+SEALED_HELPER
+	chmod +x "$SCRIPT_DIR/worktree-helper.sh"
+	# A clean empty generation is retired and fresh creation happens in the
+	# same precreation invocation, rather than returning a reuse refusal.
+	_dlw_restore_worktree_deps() { return 0; }
+	export STUB_WT_SUCCESS_PATH="$sandbox/fresh"
+	_dlw_precreate_worktree 37806 "$sandbox/repo" || return 1
+	[[ ! -d "$sandbox/sealed" && "$_DLW_WORKTREE_PATH" == "$sandbox/fresh" ]] || return 1
+	[[ "$(tr '\n' ' ' <"$SEALED_TEST_CALLS")" == 'remove add ' ]] || return 1
+	# Recreate a sealed checkpoint with a real unpublished commit.
+	ahead=$(printf 'checkpoint\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	# Git retains missing worktrees. They must not poison another tree's hold.
+	git -C "$sandbox/repo" worktree add -q -b feature/missing-gh37806 "$sandbox/missing" "$initial" || return 1
+	mv "$sandbox/missing" "$sandbox/moved" || return 1
+	git -C "$sandbox/repo" worktree add -q -b feature/checkpoint-gh37806 "$sandbox/checkpoint" "$ahead" || return 1
+	: >"$SEALED_TEST_CALLS"
+	_dlw_precreate_worktree 37806 "$sandbox/repo" && return 1
+	[[ "$_DLW_PRECREATE_FAILURE_REASON" == worktree_reuse_sealed_generation && -d "$sandbox/checkpoint" && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
+	# Direct dispatch must skip before metadata/dedup can claim or spend a slot.
+	_dispatch_load_and_validate_metadata() { return 99; }
+	dispatch_with_dedup 37806 "$repo_slug" title issue user "$sandbox/repo" prompt || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	# The deterministic pre-publication abort releases its exact claim without
+	# requiring a queued-ownership rollback that never occurred.
+	local _claim_comment_id=123
+	_rollback_prelaunch_ownership() { return 1; }
+	gh() { printf '%s\n' "$*" >>"$sandbox/gh-calls"; return 0; }
+	_release_dispatch_claim_on_abort 37806 "$repo_slug" user worker_launch_rc_2:worktree_reuse_sealed_generation || return 1
+	[[ -z "$_claim_comment_id" ]] || return 1
+	grep -q -- '--method DELETE' "$sandbox/gh-calls" || return 1
+	# Normal default-branch traffic cannot re-arm the same ahead checkpoint.
+	local unrelated=""
+	unrelated=$(printf 'unrelated\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$unrelated" || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
+	# Advancing the default to include the checkpoint invalidates the hold.
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$ahead" || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
+	# Dirty and ignored files are never auto-removed; only the sentinel may be
+	# ignored. Clearing dirt wakes the candidate without a time-based retry.
+	printf 'valuable\n' >"$sandbox/checkpoint/untracked"
+	_dlw_select_issue_worktree "$sandbox/repo" 37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == dirty && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
+	rm "$sandbox/checkpoint/untracked"
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
+	# A live owner/process (guard refusal) and an open PR both preserve source.
+	SEALED_TEST_PRS='[[{"head":{"sha":"other","ref":"feature/checkpoint-gh37806","repo":{"full_name":"owner/repo"}}}]]'
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == open_pr && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	SEALED_TEST_PRS='[[]]'
+	SEALED_TEST_UPSTREAM_PRS="[[{\"head\":{\"sha\":\"$ahead\",\"ref\":\"another-name\"}}]]"
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == open_pr && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	SEALED_TEST_UPSTREAM_PRS='invalid'
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == evidence_unavailable && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	SEALED_TEST_UPSTREAM_PRS='[[]]' SEALED_TEST_REMOVE_ALLOWED=0
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ -d "$sandbox/checkpoint" && "$_DLW_SEALED_REASON" == guarded_retirement_refused ]] || return 1
+	# A silent classification failure alongside a sealed candidate still logs.
+	git -C "$sandbox/repo" worktree add -q -b feature/unknown-gh37806 "$sandbox/unknown" "$initial" || return 1
+	_dlw_classify_reuse_candidate() {
+		local path="$1"
+		[[ "$path" != "$sandbox/unknown" ]] || return 1
+		printf 'sealed\n'
+		return 0
+	}
+	_dlw_select_issue_worktree "$sandbox/repo" 37806 "$repo_slug" && return 1
+	[[ "$_DLW_REUSE_REFUSAL" == worktree_reuse_evidence_unavailable ]] || return 1
+	grep -q 'worktree_reuse_evidence_unavailable.*sealed=1 unavailable=1' "$LOGFILE" || return 1
+	local sealed_log=""
+	sealed_log=$(grep 'path_class=sealed_issue_generation' "$LOGFILE" || true)
+	[[ "$sealed_log" != *"$sandbox"* ]] || return 1
+	return 0
+)
+if test_sealed_generation_recovery; then
+	pass "sealed empty generation retires and creates fresh; unpublished/dirty checkpoints hold before claim and deterministic refusal releases claim"
+else
+	fail "sealed generation recovery and state-aware preclaim hold"
+fi
+
+test_sealed_evidence_fences() (
+	local stored_record='{"task":{"issue":"99","repo":"owner/repo"}}' python_rc=0
+	local legacy_branch='feature/gh37806'
+	python3() { printf '%s\n' "$stored_record"; return "$python_rc"; }
+	git() { printf '%s\n' "$legacy_branch"; return 0; }
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	stored_record='{"task":{"issue":"37806","repo":"other/repo"}}'
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	stored_record='{"task":{"issue":"37806","repo":"owner/repo"}}'
+	[[ "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" == sealed ]] || return 1
+	python_rc=3
+	[[ "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" == sealed ]] || return 1
+	legacy_branch='feature/gh37806-other-task'
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	# A clean snapshot after a dirty refusal must not acquire a permanent hold.
+	export AIDEVOPS_DISPATCH_SEALED_HOLD_DIR="${TMP}/sealed-fences"
+	local LOGFILE="${TMP}/sealed-fences.log" snapshot_value=clean file=""
+	_dlw_sealed_snapshot() { printf '%s\n' "$snapshot_value"; return 0; }
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty && return 1
+	file=$(_dlw_sealed_hold_file 37806 owner/repo)
+	[[ ! -e "$file" ]] || return 1
+	snapshot_value=dirty
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty || return 1
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty || return 1
+	[[ "$(wc -l <"$LOGFILE" | tr -d ' ')" == 1 ]] || return 1
+	_dlw_sealed_hold_active /fixture 37806 owner/repo || return 1
+	snapshot_value=clean
+	_dlw_sealed_hold_active /fixture 37806 owner/repo && return 1
+	# Missing origin/HEAD is cacheable evidence, never permission for removal.
+	source "${SCRIPTS_DIR}/pulse-dispatch-sealed-worktree.sh"
+	git() {
+		local operation="${3:-}"
+		case "$operation" in
+		worktree) printf 'worktree %s\nHEAD abc\nbranch refs/heads/feature/gh37806\n' "$TMP" ;;
+		rev-parse) [[ "${4:-}" != --verify ]] || return 1; printf 'abc\n' ;;
+		status) printf '?? valuable\n' ;;
+		hash-object) command -p git hash-object --stdin; return $? ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_dlw_classify_reuse_candidate() { printf 'sealed\n'; return 0; }
+	[[ -n "$(_dlw_sealed_snapshot /fixture 37806 owner/repo)" ]] || return 1
+	# A failed or partial enumeration is not proof that no generation exists.
+	eval "$(awk '/^_dlw_select_issue_worktree\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh")"
+	local partial_output="" selection_rc=0
+	git() { printf '%s' "$partial_output"; return 1; }
+	_dlw_select_issue_worktree /fixture 37806 owner/repo || selection_rc=$?
+	[[ "$selection_rc" == 2 && "$_DLW_REUSE_REFUSAL" == worktree_reuse_evidence_unavailable ]] || return 1
+	partial_output=$'worktree /fixture\nbranch refs/heads/feature/gh37806\n'
+	selection_rc=0
+	_dlw_select_issue_worktree /fixture 37806 owner/repo || selection_rc=$?
+	[[ "$selection_rc" == 2 && -z "$_DLW_REUSE_PATH" ]] || return 1
+	return 0
+)
+if test_sealed_evidence_fences; then
+	pass "sealed identity, refusal/snapshot race, diagnostic dedup and missing-default evidence fences"
+else
+	fail "sealed identity and snapshot evidence fences"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================
