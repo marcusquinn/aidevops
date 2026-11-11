@@ -399,15 +399,24 @@ PR title: ${safe_title}
    and covering CI job in the PR body (GH#34758).
 4. Make all continuation commits locally, including intermediate data artifacts;
    do not push them mid-run. If publication evidence must be durable mid-run,
-   record receipts in the private workspace and include them in the final commit.
+    record receipts in the private workspace and include them in the final commit.
+    Interruption recovery: a later dispatch rejects a worktree whose local head is
+    ahead of the PR head, so after each local commit save a recovery copy with
+    \`git bundle create "\${AIDEVOPS_TEMP_DIR:-\$HOME/.aidevops/.agent-workspace/tmp}/pr-${pr_number}-continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`.
+    If you resume with unpushed local commits ahead of the starting head, keep
+    them, verify them, and continue; never reset them away.
+
    Once all work and verification are complete, before the single final push,
    run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
 5. Push exactly once, without force, to the existing remote branch using
    \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
-   replacement PR. Do not make another push in this attempt: the fence is
-   bound to the starting head and becomes stale after this push.
+replacement PR. After a successful push, make no further push: the fence is
+    bound to the starting head and becomes stale. If the push fails or its result
+    is ambiguous, first check the remote branch head; retry only if it still
+    equals \`\$AIDEVOPS_PR_REPAIR_HEAD_SHA\`, and rerun the fence before retrying.
+    If the remote head changed, do not push again.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
    \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
