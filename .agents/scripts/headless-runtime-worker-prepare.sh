@@ -65,6 +65,13 @@ _hrw_runtime_launch_confirmed() {
 	local activity_count="0"
 	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == 1 ]] || return 1
 	[[ -n "${_run_metric_session_id:-}" ]] && return 0
+	# Isolated runs must not borrow shared-DB activity from other workers when
+	# isolation failed before spawn: require this attempt's live DB or snapshot.
+	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" != "${_WORKER_START_EPOCH_MS:-0}" &&
+		! -f "${_WORKER_ISOLATED_DB_PATH:-}" ]]; then
+		return 1
+	fi
 	activity_count=$(_hrff_worker_session_count)
 	[[ "$activity_count" =~ ^[0-9]+$ && "$activity_count" -gt 0 ]] || return 1
 	return 0
