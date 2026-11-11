@@ -26,6 +26,18 @@ in several cron rows without changing site context still targets the parent.
    in the assessment. A successful update check does not prove installation or
    notification works.
 
+On sites with `hostinger-auto-updates.php` (Hostinger Smart Auto Updates 1.0.9
+observed), WordPress's own background updater and plugin/theme automatic updates
+are disabled; Hostinger's updater follows the site's hPanel auto-update setting.
+`wp --path="<docroot>" plugin list --fields=name,auto_update` can still show `on` and is not evidence
+of installation. Check the setting in hPanel and compare
+`wp --path="<docroot>" plugin list --update=available` and the age of pending updates
+with sibling sites on the account. Replace `<docroot>` with each site's WordPress
+document root for every check. A backlog warrants investigation rather than proving its cause.
+For site creation via the hPanel API, explicitly set and verify the per-site update
+setting alongside cron using the current documented API where available, or hPanel
+otherwise. Preserve the must-use plugin and existing update policy during a cron audit.
+
 Do not infer a failure from a missing standalone `wp_maybe_auto_update` event: the
 installed WordPress version-check cron can invoke the auto-update action directly.
 Confirm the installed scheduler's behavior before drawing conclusions.
