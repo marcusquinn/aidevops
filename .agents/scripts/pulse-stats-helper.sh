@@ -56,6 +56,7 @@ LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 PULSE_STATS_RETENTION_SECONDS="${PULSE_STATS_RETENTION_SECONDS:-691200}"
 _PULSE_STATS_RECOVERY_FAILURE_REPORTED=""
 _PULSE_STATS_STALE_TEMPS_SWEPT=""
+_PULSE_STATS_JQ=""
 
 _pulse_stats_acquire_lock() {
 	local output_var="$1"
@@ -112,7 +113,20 @@ _pulse_stats_report_recovery_failure() {
 
 _pulse_stats_recover_locked() {
 	local quarantine="" tmp_file="" old_umask=""
-	if [[ -s "$PULSE_STATS_FILE" ]]; then
+	local existing count=0 duplicate=0 nullglob_was_set=0
+	local -a quarantines=()
+	# Preserve existing evidence; stop making copies once the cap is reached.
+	shopt -q nullglob && nullglob_was_set=1
+	shopt -s nullglob
+	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
+	((nullglob_was_set)) || shopt -u nullglob
+	for existing in ${quarantines[@]+"${quarantines[@]}"}; do
+		count=$((count + 1))
+		if cmp -s "$PULSE_STATS_FILE" "$existing"; then
+			duplicate=1
+		fi
+	done
+	if [[ -s "$PULSE_STATS_FILE" ]] && ((count < 5 && duplicate == 0)); then
 		old_umask=$(umask)
 		umask 077
 		quarantine=$(mktemp "${PULSE_STATS_FILE}.corrupt.$(date +%s 2>/dev/null || printf '0').XXXXXX") || {
@@ -154,10 +168,29 @@ _pulse_stats_recover_locked() {
 _pulse_stats_mutate_locked() {
 	local filter="$1"
 	shift
-	local tmp_file
+	local tmp_file="" validation="" rc=0
+	if [[ -z "$_PULSE_STATS_JQ" ]]; then
+		_PULSE_STATS_JQ=$(command -v jq 2>/dev/null) || _PULSE_STATS_JQ=""
+		if [[ ! -x "$_PULSE_STATS_JQ" && -x /run/current-system/sw/bin/jq ]]; then
+			_PULSE_STATS_JQ=/run/current-system/sw/bin/jq
+		fi
+	fi
+	if [[ ! -x "$_PULSE_STATS_JQ" ]] || ! "$_PULSE_STATS_JQ" -n -e 'true' >/dev/null 2>&1; then
+		_pulse_stats_report_recovery_failure "jq-unavailable"
+		return 1
+	fi
+	# Only a recognizable parse error or an invalid structure permits recovery.
+	# Other jq failures, including I/O errors, must leave the original intact.
+	# shellcheck disable=SC2016 # jq variables are expanded by jq.
+	validation=$("$_PULSE_STATS_JQ" -s --arg object_type object 'length == 1 and (.[0] | type == $object_type) and (.[0].counters | type == $object_type) and ((.[0].gauges // {}) | type == $object_type) and ((.[0].invocation_sources // {}) | type == $object_type)' "$PULSE_STATS_FILE" 2>&1) || {
+		rc=$?
+		[[ ( "$rc" -eq 4 || "$rc" -eq 5 ) && ( "$validation" == 'parse error:'* || "$validation" == 'jq: parse error:'* ) ]] && return 2
+		return 1
+	}
+	[[ "$validation" == false ]] && return 2
+	[[ "$validation" == true ]] || return 1
 	tmp_file=$(mktemp "${PULSE_STATS_FILE}.write-XXXXXX") || return 1
-	if jq -e -s --arg object_type object "$@" \
-		'if length == 1 and (.[0] | type == $object_type) and (.[0].counters | type == $object_type) and ((.[0].gauges // {}) | type == $object_type) and ((.[0].invocation_sources // {}) | type == $object_type) then .[0] | '"$filter"' else error("invalid pulse stats document") end' \
+	if "$_PULSE_STATS_JQ" -e "$@" "$filter" \
 		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null; then
 		mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || {
 			rm -f "$tmp_file"
@@ -167,6 +200,19 @@ _pulse_stats_mutate_locked() {
 	fi
 	rm -f "$tmp_file"
 	return 1
+}
+
+_pulse_stats_apply_locked() {
+	local rc=0
+	_pulse_stats_mutate_locked "$@" || rc=$?
+	if ((rc == 2)); then
+		_pulse_stats_recover_locked || return 1
+		_pulse_stats_mutate_locked "$@" || return 1
+	elif ((rc != 0)); then
+		_pulse_stats_report_recovery_failure "mutation"
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -247,13 +293,8 @@ pulse_stats_increment() {
 		return 0
 	}
 	_pulse_stats_sweep_stale_temps_locked
-	if ! _pulse_stats_mutate_locked "$increment_filter" \
-		--arg name "$counter_name" --argjson ts "$now_epoch" --argjson cutoff "$cutoff"; then
-		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked "$increment_filter" \
-			--arg name "$counter_name" --argjson ts "$now_epoch" --argjson cutoff "$cutoff"; then
-			_pulse_stats_report_recovery_failure "increment-retry"
-		fi
-	fi
+	_pulse_stats_apply_locked "$increment_filter" \
+		--arg name "$counter_name" --argjson ts "$now_epoch" --argjson cutoff "$cutoff" || _pulse_stats_report_recovery_failure "increment"
 	_pulse_stats_release_lock "$lock_dir"
 	return 0
 }
@@ -308,7 +349,7 @@ pulse_stats_status() {
 		return 0
 	fi
 
-	local name count
+	local name="" count=""
 	while IFS= read -r name; do
 		[[ -z "$name" ]] && continue
 		count=$(jq -r --arg name "$name" --argjson cutoff "$cutoff" \
@@ -344,7 +385,7 @@ pulse_stats_gauge_status() {
 		return 0
 	fi
 
-	local name_with_colon value ts
+	local name_with_colon="" value="" ts=""
 	while IFS=$'\t' read -r name_with_colon value ts; do
 		[[ -z "$name_with_colon" ]] && continue
 		printf '  %-40s %s (ts=%s)\n' "$name_with_colon" "${value:-0}" "${ts:-0}"
@@ -396,14 +437,8 @@ pulse_stats_set_gauge() {
 		return 0
 	}
 	# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
-	if ! _pulse_stats_mutate_locked '.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
-		--arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch"; then
-		# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
-		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked '.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
-			--arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch"; then
-			_pulse_stats_report_recovery_failure "gauge-retry"
-		fi
-	fi
+	_pulse_stats_apply_locked '.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
+		--arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch" || _pulse_stats_report_recovery_failure "gauge"
 	_pulse_stats_release_lock "$lock_dir"
 	return 0
 }
@@ -450,12 +485,9 @@ pulse_stats_reset() {
 	local lock_dir=""
 	_pulse_stats_acquire_lock lock_dir || return 1
 	# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
-	if ! _pulse_stats_mutate_locked 'del(.counters[$name])' --arg name "$counter_name"; then
-		# shellcheck disable=SC2016 # jq variables are expanded by jq, not Bash.
-		if ! _pulse_stats_recover_locked || ! _pulse_stats_mutate_locked 'del(.counters[$name])' --arg name "$counter_name"; then
-			_pulse_stats_release_lock "$lock_dir"
-			return 1
-		fi
+	if ! _pulse_stats_apply_locked 'del(.counters[$name])' --arg name "$counter_name"; then
+		_pulse_stats_release_lock "$lock_dir"
+		return 1
 	fi
 	_pulse_stats_release_lock "$lock_dir"
 	echo "Counter '${counter_name}' reset."
