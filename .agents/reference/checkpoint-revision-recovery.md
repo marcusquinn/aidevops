@@ -28,10 +28,10 @@ release path; they are never automatically approved by this feature.
 
 Only a complete, nonempty report positively establishing unfinished authorised
 in-scope work with no unresolved prerequisite can emit `CHECKPOINT_UNKNOWN_TRIAGE
-pending_work brief=... head=...`. This is a classification, not approval. Missing
-inference tooling, timeout, invalid JSON, conflicting declarations, truncation
-or uncertainty retain the ordinary unknown hold. Existing releases without this
-runner-produced evidence are not promoted by interpreting a draft body.
+pending_work brief=... head=...` (a classification, not approval). Missing tooling,
+timeout, invalid JSON, conflicting declarations, truncation or uncertainty retain
+the ordinary unknown hold. Releases lacking this runner-produced evidence are not
+promoted by interpreting a draft body.
 
 Automatic approval is **off by default**. An operator with current repository
 write/maintain/admin permission can configure the registered `repos.json` entry:
@@ -58,25 +58,25 @@ owns scheduling; approval-looking text from an untrusted commenter does not.
 
 Without the policy, eligible drafts go into one `UNKNOWN_CHECKPOINT_DIGEST` comment
 per repository/UTC day. Native creation of the unassigned repository label
-`checkpoint-digest:YYYY-MM-DD` reserves publication atomically across runners;
-it never attaches a label or alters an issue's holds. Only the reservation's
-creator posts the digest. The label description identifies the anchor issue.
-Reservations are retained as an audit trail, including when an ambiguous failed
-publication cannot safely be retried that day.
+`checkpoint-digest:YYYY-MM-DD` reserves publication atomically across runners; it
+never attaches a label or alters holds. Only the reservation's creator posts the
+digest; the label description identifies the anchor issue. Reservations are kept
+as an audit trail, including when an ambiguous failed publication cannot safely
+be retried that day.
 
 The winner collects a bounded snapshot (100 blocked auto-dispatch issues, 100
-worker drafts, 40-second enrichment budget). Each entry contains a fresh validated
-`approval-template` command, not an approval. Snapshots are immutable: simultaneous
-writers cannot lose entries through competing comment updates. Candidates arriving
-later, beyond the bounds, or unreadable during collection are reconsidered in the
-next UTC day's snapshot. No protected report text is posted. The digest remains
-informational if the head/brief later changes; running a command revalidates it.
+worker drafts, 40-second enrichment budget). Each entry holds a fresh validated
+`approval-template` command, not an approval. Snapshots are immutable, so
+simultaneous writers cannot lose entries. Candidates arriving later, beyond the
+bounds, or unreadable are reconsidered in the next UTC day's snapshot. No
+protected report text is posted. The digest stays informational if the head/brief
+changes; running a command revalidates it.
 
-Pulse check reports the observed unknown triage backlog, oldest release age in
-minutes, and unreadable/unscanned count. Age is measured from the trusted release,
-never from `updatedAt`, attention comments or lease renewals. These are bounded
-observations of unassigned blocked auto-dispatch issues, not a complete fleet
-inventory or authority to clear holds.
+Pulse check reports the unknown triage backlog, oldest release age in minutes, and
+unreadable/unscanned count. Age is measured from the trusted release, never from
+`updatedAt`, attention comments or lease renewals. These are bounded observations
+of unassigned blocked auto-dispatch issues, not a fleet inventory or authority to
+clear holds.
 
 ### Non-blocked releases with an open draft (GH#33850, GH#36019)
 
@@ -124,14 +124,14 @@ project `status:blocked` unless the blocker is `runner_capability_unmet`. Existi
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
 Once an issue has a trusted `CHECKPOINT_CONTINUATION_APPROVED` record, the
-revision-approval route owns scheduling, even if that record has expired or binds
-an older head. A push or an aged attention record does not reopen the legacy
-automatic continuation route. If revision target validation fails, the stall
-attention record offers no new-head or age-based re-arm promise: retry unavailable
-metadata/permission checks first. If the approval expired or the head/brief changed,
-generate a fresh approval with `pr-checkpoint-continuation-helper.sh approval-template`
-and publish it as a new issue comment, as described below. An unexpired exact-head
-approval still requires the full revision validation and fenced claim.
+revision-approval route owns scheduling, even if that record expired or binds an
+older head. A push or aged attention record does not reopen the legacy automatic
+continuation route. If revision target validation fails, the stall attention
+record offers no new-head or age-based re-arm promise: retry unavailable
+metadata/permission checks first. If the approval expired or the head/brief
+changed, generate a fresh one with `pr-checkpoint-continuation-helper.sh
+approval-template` and publish it as a new issue comment (below). An unexpired
+exact-head approval still requires full revision validation and a fenced claim.
 
 ### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
 
@@ -227,10 +227,10 @@ authorized credential-bearing invocation. Capacity, provisioning, ownership and 
 Run only the separately authorized read-only observation: no source edits,
 commit/push/ready/merge or business writes. Keep the brief's locks, authentication
 budget, evidence privacy and cleanup requirements. Report sanitized results and
-unknowns, then use `mark-blocked` for remaining original acceptance or safety blockers;
-diagnostic success is not enrichment completion. This dedicated prompt replaces
-generic full-loop augmentation, not runtime security/ownership/lease enforcement.
-Normal runner release/teardown owns coordination; selecting this option starts no browser or historical repair.
+unknowns, then `mark-blocked` for remaining acceptance or safety blockers;
+diagnostic success is not enrichment completion. This prompt replaces generic
+full-loop augmentation, not runtime security/ownership/lease enforcement. Runner
+release/teardown owns coordination; this option starts no browser or historical repair.
 
 ### Intervening attempts that have fully released
 
@@ -247,11 +247,10 @@ Publish a new generated approval rather than editing an old one. Approvals
 without the historical list do not authorize skipping intervening attempts.
 Open or overlapping attempts, an unmatched release or terminal lease (except an
 explicitly acknowledged release with no open episode, below), interactive
-ownership, edited evidence and any new unrelated coordination after approval
-still reject continuation. A fully released attempt that occurs after approval
-requires a fresh assessment and approval; expiry alone is never closure evidence.
-The template refuses incomplete histories instead of printing an unusable line.
-Its existing `intervening coordination is not fully released; no approval generated`
+ownership, edited evidence and new unrelated coordination after approval still
+reject continuation. A fully released attempt after approval requires a fresh
+assessment and approval; expiry alone is never closure evidence. The template
+refuses incomplete histories instead of printing an unusable line. Its existing `intervening coordination is not fully released; no approval generated`
 error now appends one sanitized `rejected comment=... event=... runner=...
 episode_claim=... reason=...` diagnostic. `comment` identifies the first rejected
 coordination record; for `open_at_end`, it identifies the last scanned event.
@@ -479,10 +478,10 @@ for the approved pair with no conflicting structural closing links.
 
 Failed launches compensate assignment/status only while that same live envelope
 still owns the target, then terminate the lease. Newer human/worker evidence stops
-compensation as well as takeover. An unchanged consumed approval is not retried;
-reassess the new evidence and issue a fresh bounded approval when authorised.
-Never forge `worker_draft_checkpoint` releases or remove the generic assignment
-guard. A dispatch message proves launch initiation, not model startup or delivery.
+compensation as well as takeover. A consumed unchanged approval is not retried;
+reassess and issue a fresh bounded approval when authorised. Never forge
+`worker_draft_checkpoint` releases or remove the generic assignment guard. A
+dispatch message proves launch initiation, not model startup or delivery.
 
 ## Aged objectives
 
