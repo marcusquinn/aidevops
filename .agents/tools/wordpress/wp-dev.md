@@ -37,6 +37,8 @@ tools:
 
 **New plugin**: `wp-plugin-new.md` (`/new-wp-plugin`) makes it from the latest WP Plugin Starter release; use `wp scaffold plugin` only for a bare one.
 
+**Site-specific code** (an experiment, a client-only change, an override of a theme or plugin you cannot change upstream): a SEO Pro Custom file, not a new mu-plugin or `functions.php` snippet. An inactive `seoprocustom` on a site is intentional. See [Site-specific code](#site-specific-code).
+
 **Subagents**: `@localwp` (DB), `@wp-admin` (content), `@browser-automation` (E2E), `@code-standards` (quality). **Always use Context7** for latest WP/WP-CLI/PHP docs.
 
 <!-- AI-CONTEXT-END -->
@@ -53,6 +55,18 @@ ones (`wp-content/uploads/aidevops-backups/`) or a plugin's leftovers (such as
 an old updater's plugin backups): move them to `~/backups/` with the same modes,
 or delete stale ones after the user confirms. Integrity alerts about PHP in
 uploads often point to them.
+
+## Site-specific code
+
+Where a change to one site's behaviour goes, first match wins:
+
+1. **A setting** in the theme or plugin.
+2. **The theme or plugin repository**, when you control it: a PR, then a release.
+3. **SEO Pro Custom** ([`wpallstars/seoprocustom`](https://github.com/wpallstars/seoprocustom)) for code with no home in a repository you control: experiments, client-only changes, overrides of third-party themes and plugins. Add one file per change to `customizations/` in the site's fork (the client's own fork, or yours for your own sites), with its `Sites:`, `Requires:`, `Upstream:` and `Retire-When:` headers. Then release the fork and update the site from it. Follow the plugin's `AGENTS.md`: a documented filter or action first, then CSS, then code. The plugin reports each file as loaded, skipped, retired or failed (`wp seoprocustom list`). A file with a PHP error is skipped, and the site keeps working.
+
+Do not reach for a new mu-plugin, a `functions.php` edit or a code-snippets plugin entry instead. Do not edit the installed copy of the blank build either: its updates replace the files. Mu-plugins remain for code that must load before normal plugins or must never be deactivated, such as hosting shims, early constants and fixes to plugin loading.
+
+Sites delivered with SEO Pro Stack products carry `seoprocustom` installed, often **inactive**, so that experiments can start without an install step. This is intentional: do not remove it or ask about it. Activate it (network-activate on a multisite) when the first customisation lands. A change every site would want goes upstream as an issue or PR on the theme or plugin. The custom file's `Retire-When:` header switches it off once that ships.
 
 For readable addresses in schema, plugin settings or contact links, follow
 [Email Exposure Audit](../../seo/email-exposure-audit.md). Back up exact serialized
