@@ -769,6 +769,11 @@ _dispatch_process_candidate() {
 		return 1
 	fi
 	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
+	# Local sealed holds precede claims, model/class reservations and wave slots.
+	if declare -F _dlw_sealed_hold_active >/dev/null 2>&1 &&
+		_dlw_sealed_hold_active "$repo_path" "$issue_number" "$repo_slug"; then
+		return 1
+	fi
 	# GH#33743: unchanged runner_capability_unmet candidates from a pre-record snapshot.
 	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" "$self_login" && return 1
 

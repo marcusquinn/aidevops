@@ -20,6 +20,8 @@
 _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
 _DLW_SYSTEMD_MODULE_DIR="${BASH_SOURCE[0]%/*}"
 _DLW_MANAGED_WORKTREE_MANAGER="pulse-cgroup-v1"
+# shellcheck source=pulse-dispatch-sealed-worktree.sh
+source "${_DLW_SYSTEMD_MODULE_DIR}/pulse-dispatch-sealed-worktree.sh"
 
 # Shared managed-launch contract (GH#35295). Automatic Pulse and manual
 # dispatch both use these adapters; each caller keeps its own task selection,
@@ -160,8 +162,10 @@ _dlw_select_issue_worktree() {
 		fi
 		[[ -n "$class" ]] || continue
 		if [[ "$class" == "sealed" ]]; then
-			# A closed generation may still hold unpublished work for this
-			# task; do not start a parallel generation beside it.
+			if _dlw_retire_empty_sealed "$wt_path" "$wt_branch" "$repo_slug"; then
+				continue
+			fi
+			_dlw_sealed_hold_record "$repo_path" "$issue_number" "$repo_slug" "$_DLW_SEALED_REASON" || true
 			sealed=$((sealed + 1))
 			continue
 		fi
@@ -179,7 +183,9 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_REFUSAL="worktree_reuse_ambiguous"
 	fi
 	if [[ -n "$_DLW_REUSE_REFUSAL" ]]; then
-		echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		if [[ "$sealed" -eq 0 ]]; then
+			echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		fi
 		_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION=""
 		return 2
 	fi

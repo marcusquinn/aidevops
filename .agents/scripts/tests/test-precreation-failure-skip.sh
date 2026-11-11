@@ -1299,6 +1299,99 @@ else
 	fail "launch boundary rejects a missing worker worktree before setsid" "rc=$launch_rc"
 fi
 
+test_sealed_generation_recovery() (
+	# Real Git state with only lifecycle classification, GitHub and the guarded
+	# removal boundary stubbed. Never touch the runner's registries or caches.
+	local sandbox="${TMP}/sealed-recovery" repo_slug="owner/repo" rc=0
+	mkdir -p "$sandbox/helpers" "$sandbox/repo" || return 1
+	local SCRIPT_DIR="$sandbox/helpers"
+	export AIDEVOPS_DISPATCH_SEALED_HOLD_DIR="$sandbox/holds"
+	local LOGFILE="$sandbox/diagnostic.log" reuse_class="sealed" test_prs='[]' removal_allowed=1
+	# Earlier cases deliberately replace these functions. Restore only the
+	# production entry points exercised here, following the lease fixture above.
+	eval "$(awk '/^_dlw_precreate_worktree\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh")"
+	eval "$(awk '/^dispatch_with_dedup\(\) \{/,/^}$/ { print } /^_release_dispatch_claim_on_abort\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-core.sh")"
+	git() { command -p git "$@"; return $?; }
+	gh() { printf '%s\n' "$test_prs"; return 0; }
+	unset _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED
+	source "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh"
+	_dlw_classify_reuse_candidate() { printf '%s\n' "$reuse_class"; return 0; }
+	git -C "$sandbox/repo" init -q || return 1
+	local tree="" initial="" ahead=""
+	tree=$(git -C "$sandbox/repo" mktree </dev/null) || return 1
+	initial=$(printf 'initial\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree") || return 1
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$initial" || return 1
+	git -C "$sandbox/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main || return 1
+	git -C "$sandbox/repo" worktree add -q -b feature/gh37806 "$sandbox/sealed" "$initial" || return 1
+	# Removal spy also emulates the helper's process/ownership safety refusal.
+	export SEALED_TEST_CALLS="$sandbox/calls" SEALED_TEST_REMOVE_ALLOWED="$removal_allowed"
+	cat >"$SCRIPT_DIR/worktree-helper.sh" <<'SEALED_HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$SEALED_TEST_CALLS"
+if [[ "$1" == remove ]]; then
+	[[ "$SEALED_TEST_REMOVE_ALLOWED" == 1 ]] || exit 1
+	command -p git -C "$2" worktree remove "$2" || exit 1
+	printf '{"status":"retired"}\n'
+else
+	mkdir -p "$STUB_WT_SUCCESS_PATH"
+	printf 'Created worktree at %s\n' "$STUB_WT_SUCCESS_PATH"
+fi
+SEALED_HELPER
+	chmod +x "$SCRIPT_DIR/worktree-helper.sh"
+	# A clean empty generation is retired and fresh creation happens in the
+	# same precreation invocation, rather than returning a reuse refusal.
+	_dlw_restore_worktree_deps() { return 0; }
+	export STUB_WT_SUCCESS_PATH="$sandbox/fresh"
+	_dlw_precreate_worktree 37806 "$sandbox/repo" || return 1
+	[[ ! -d "$sandbox/sealed" && "$_DLW_WORKTREE_PATH" == "$sandbox/fresh" ]] || return 1
+	[[ "$(tr '\n' ' ' <"$SEALED_TEST_CALLS")" == 'remove add ' ]] || return 1
+	# Recreate a sealed checkpoint with a real unpublished commit.
+	ahead=$(printf 'checkpoint\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	git -C "$sandbox/repo" worktree add -q -b feature/checkpoint-gh37806 "$sandbox/checkpoint" "$ahead" || return 1
+	: >"$SEALED_TEST_CALLS"
+	_dlw_precreate_worktree 37806 "$sandbox/repo" && return 1
+	[[ "$_DLW_PRECREATE_FAILURE_REASON" == worktree_reuse_sealed_generation && -d "$sandbox/checkpoint" && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
+	# Direct dispatch must skip before metadata/dedup can claim or spend a slot.
+	_dispatch_load_and_validate_metadata() { return 99; }
+	dispatch_with_dedup 37806 "$repo_slug" title issue user "$sandbox/repo" prompt || rc=$?
+	[[ "$rc" == 1 ]] || return 1
+	# The deterministic pre-publication abort releases its exact claim without
+	# requiring a queued-ownership rollback that never occurred.
+	local _claim_comment_id=123
+	_rollback_prelaunch_ownership() { return 1; }
+	gh() { printf '%s\n' "$*" >>"$sandbox/gh-calls"; return 0; }
+	_release_dispatch_claim_on_abort 37806 "$repo_slug" user worker_launch_rc_2:worktree_reuse_sealed_generation || return 1
+	[[ -z "$_claim_comment_id" ]] || return 1
+	grep -q -- '--method DELETE' "$sandbox/gh-calls" || return 1
+	# Advancing the default to include the checkpoint invalidates the hold.
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$ahead" || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
+	# Dirty and ignored files are never auto-removed; only the sentinel may be
+	# ignored. Clearing dirt wakes the candidate without a time-based retry.
+	printf 'valuable\n' >"$sandbox/checkpoint/untracked"
+	_dlw_select_issue_worktree "$sandbox/repo" 37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == dirty && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
+	rm "$sandbox/checkpoint/untracked"
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
+	# A live owner/process (guard refusal) and an open PR both preserve source.
+	gh() { printf '%s\n' "$test_prs"; return 0; }
+	test_prs='[{"number":1}]'
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ "$_DLW_SEALED_REASON" == open_pr && ! -s "$SEALED_TEST_CALLS" ]] || return 1
+	test_prs='[]' SEALED_TEST_REMOVE_ALLOWED=0
+	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
+	[[ -d "$sandbox/checkpoint" && "$_DLW_SEALED_REASON" == guarded_retirement_refused ]] || return 1
+	! grep 'path_class=sealed_issue_generation' "$LOGFILE" | grep -qF "$sandbox" || return 1
+	return 0
+)
+if test_sealed_generation_recovery; then
+	pass "sealed empty generation retires and creates fresh; unpublished/dirty checkpoints hold before claim and deterministic refusal releases claim"
+else
+	fail "sealed generation recovery and state-aware preclaim hold"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================
