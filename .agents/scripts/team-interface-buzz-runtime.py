@@ -22,6 +22,7 @@ from _team_interface_buzz_runtime_install import (
     default_app_data_dir,
     install_payload,
 )
+from _team_interface_buzz_default_project import aidevops_project_root
 from _team_interface_buzz_runtime_io import RuntimeError, atomic_write, canonical_payload
 from _team_interface_buzz_runtime_prepare import prepare_desktop_runtime, prepare_runtime
 from _team_interface_buzz_runtime_prune import (
@@ -35,7 +36,6 @@ from _team_interface_buzz_runtime_prune import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SCRIPT_DIR.parent
 PROJECT_VALIDATOR = SCRIPT_DIR / "team-interface-opencode-overlay.mjs"
-AIDEVOPS_UPSTREAM_SLUG = "marcusquinn/aidevops"
 RUNTIME_PROFILES = {
     "conversation": {
         "command": "aidevops-buzz-acp",
@@ -102,29 +102,6 @@ def load_manifest(profile):
         return validate_manifest(json.loads(source.read_text(encoding="utf-8")), profile)
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError("canonical Buzz runtime manifest is unavailable or invalid") from error
-
-
-def aidevops_project_root(repos_path):
-    """The registered aidevops checkout, used by plugin agents with no project folder."""
-    try:
-        data = json.loads(Path(os.path.expanduser(repos_path)).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError("repos.json is unavailable; set the agent's project folder") from error
-    entries = data.get("initialized_repos", []) if isinstance(data, dict) else []
-    candidates = [
-        entry
-        for entry in entries
-        if isinstance(entry, dict)
-        and isinstance(entry.get("slug"), str)
-        and isinstance(entry.get("path"), str)
-        and (entry["slug"] == AIDEVOPS_UPSTREAM_SLUG or entry["slug"].endswith("/aidevops"))
-    ]
-    if not candidates:
-        raise RuntimeError(
-            "no aidevops repository is registered in repos.json; set the agent's project folder"
-        )
-    candidates.sort(key=lambda entry: entry["slug"] != AIDEVOPS_UPSTREAM_SLUG)
-    return candidates[0]["path"]
 
 
 def registered_project_root(requested, repos_path):
