@@ -11,6 +11,7 @@ deletes no files; immutable history and every Git object are retained.
 """
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID, uuid5
 
@@ -83,32 +84,57 @@ def release_replaced_path(store: LifecycleRegistry, path: Path, confirm: bool) -
     if not _present(path):
         return dict(result, status="path-absent", next="release-vacant-path")
     with _lock(store, generation):
-        if _event(store, _event_id(generation, "planned")) is not None:
-            return dict(result, status="retry-required", reason="retirement-planned")
-        directory = _git_directory(path)
-        if os.path.lexists(directory / MARKER):
-            return dict(result, status="path-holds-enrolled-tree")
+        candidate = _replacement_candidate(store, path, generation)
+        if candidate.refusal is None and confirm:
+            return _commit_release(store, candidate, result)
+    preview = {
+        "status": "replaced-path-preview", "confirm_required": True,
+        "registered_runs": sorted(row["run_id"] for row in candidate.rows),
+    }
+    return dict(result, **(candidate.refusal or preview))
+
+
+@dataclass
+class _Candidate:
+    """Reserving generation and evidence gathered under its retirement lock."""
+
+    path: Path
+    generation: str
+    rows: list = field(default_factory=list)
+    directory: Path | None = None
+    refusal: dict | None = None
+
+
+def _replacement_candidate(store: LifecycleRegistry, path: Path, generation: str) -> _Candidate:
+    candidate = _Candidate(path, generation)
+    if _event(store, _event_id(generation, "planned")) is not None:
+        candidate.refusal = {"status": "retry-required", "reason": "retirement-planned"}
+        return candidate
+    candidate.directory = _git_directory(path)
+    if os.path.lexists(candidate.directory / MARKER):
+        candidate.refusal = {"status": "path-holds-enrolled-tree"}
+    else:
+        candidate.rows, candidate.refusal = _settled_runs(store, generation)
+    return candidate
+
+
+def _settled_runs(store: LifecycleRegistry, generation: str) -> tuple[list, dict | None]:
+    """Return bound runs and a refusal unless every run was admitted and has ended."""
+    rows = _runs(store, generation)
+    if not all(row["admitted"] for row in rows):
+        return rows, {"status": "coverage-gap"}
+    if any(row["state"] != "ended" for row in rows):
+        adapter = adapter_for(store.installation_id())
+        require_ready(adapter)
+        _refresh_runs(store, rows, adapter)
         rows = _runs(store, generation)
-        if not all(row["admitted"] for row in rows):
-            return dict(result, status="coverage-gap")
-        if any(row["state"] != "ended" for row in rows):
-            adapter = adapter_for(store.installation_id())
-            require_ready(adapter)
-            _refresh_runs(store, rows, adapter)
-            rows = _runs(store, generation)
-        if not all(row["admitted"] and row["state"] == "ended" for row in rows):
-            return dict(result, status="waiting-for-runs")
-        runs = sorted(row["run_id"] for row in rows)
-        if not confirm:
-            return dict(result, status="replaced-path-preview", confirm_required=True,
-                        registered_runs=runs)
-        return _commit_release(store, path, generation, rows, directory, result)
+    settled = all(row["admitted"] and row["state"] == "ended" for row in rows)
+    return rows, None if settled else {"status": "waiting-for-runs"}
 
 
-def _commit_release(
-    store: LifecycleRegistry, path: Path, generation: str,
-    rows: list[dict], directory: Path, result: dict,
-) -> dict:
+def _commit_release(store: LifecycleRegistry, candidate: _Candidate, result: dict) -> dict:
+    path, generation, rows = candidate.path, candidate.generation, candidate.rows
+    directory = candidate.directory
     expected = sorted((row["run_id"], row["version"], "ended") for row in rows)
     with store.connection(write=True) as connection:
         admission = connection.execute(
