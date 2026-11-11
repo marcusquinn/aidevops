@@ -1,0 +1,39 @@
+object 2381c6efa379d1fc7b78ca66d9c7b7de12f2da8f
+type commit
+tag v3.39.173
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1794421116 +0000
+
+Release v3.39.173 - AI DevOps Framework
+
+Aidevops-Version: 3.39.173
+Aidevops-Source-PR: 37757
+Aidevops-Source-Merge: 6d5c1d286fe0fdb035f1bd3c59d73873f88fd4aa
+Aidevops-Snapshot-Base: 2716a1e217b336497c9f59736b54ed6bfc432787
+Aidevops-Aggregated-Source: 37721@24cc471cef2b9e2dff378fbe8323929187f1cc50
+Aidevops-Aggregated-Source: 37722@c8800578f69dd55ca7404e2dcaf790d3c67de316
+Aidevops-Aggregated-Source: 37724@895c4a64d73828d4ee715be062c7e737c5ac47da
+Aidevops-Aggregated-Source: 37727@f8c8208445842ceb0b7f3ae0713cd1953f07e02c
+Aidevops-Aggregated-Source: 37728@10bf01b7b12f9642dbf51fd4107eb12574a783f7
+Aidevops-Aggregated-Source: 37730@5e780375985231c7bc52ace4bf3c7f0543b95627
+Aidevops-Aggregated-Source: 37732@7eba8fd561bf41ed5c4c04411b74a4357f9f4ba2
+Aidevops-Aggregated-Source: 37736@972b31dcc2ca29767e2aa2b150add1465c25156a
+Aidevops-Aggregated-Source: 37737@0c2c9753c40a4dec655f122b8ea5a2800ae456c1
+Aidevops-Aggregated-Source: 37739@0029fef0bacdb33784469f876a88b3f0dabbfafc
+Aidevops-Aggregated-Source: 37741@9738438278a21fdedd7fc5c4651905736ec670d7
+Aidevops-Aggregated-Source: 37742@13fa9229467431df6b8b48bf69e827efc3da406c
+Aidevops-Aggregated-Source: 37745@250fff500229f08b48b1df5a9825066c1d32003c
+Aidevops-Aggregated-Source: 37747@059e2f9b71493432a2d84de12072756d1d3c8831
+Aidevops-Aggregated-Source: 37749@86eab859d15e8f5da4971b874bb62d0ca1062989
+Aidevops-Aggregated-Source: 37757@6d5c1d286fe0fdb035f1bd3c59d73873f88fd4aa
+Aidevops-Aggregated-Source: 37758@3c89ef210654d99791a80f861f9b75d32762e285
+Aidevops-Aggregated-Source: 37760@25b1cc46693903f6ebf016dd3ce92fdd72cad6ee
+Aidevops-Aggregated-Source: 37761@c6ce3c67f693c54ef6b002a2dff72235f849510d
+Aidevops-Aggregated-Source: 37764@60edc7f3aec5a1ecbef08c1b88f450a1429955c5
+Aidevops-Aggregated-Source: 37781@4ba1a990200e92b16babfe87f6b1ea2db6ac2399
+Aidevops-Aggregated-Source: 37783@b08f90d78cf22342d2fe61d3bb226e8f85b92c35
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQC4noGrpv+szI9J5PXj02c27hEPZjk4Xk4fJ0XS84Tz/E4i12keVN/QJ0xOYrcgfB+
+JGhBehnjfImRqQswo0zAo=
+-----END SSH SIGNATURE-----
