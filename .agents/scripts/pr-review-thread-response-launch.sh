@@ -17,16 +17,23 @@ _prrts_launch_detached_worker() {
 	shift 4
 	local launched_pid="" launched_mode="" launch_result=""
 	local attempt_log=""
-	attempt_log=$(_hrw_create_detached_log "pr-review-${repo_slug}-${pr_number}") || return 1
+	attempt_log=$(_hrw_create_detached_log "pr-review-${repo_slug}-${pr_number}") || {
+		PRRTS_WORKTREE_FAILURE_REASON="detached_log_creation_failed"
+		return 1
+	}
 	_prrts_log "dispatch: ${repo_slug}#${pr_number} attempt_log=${attempt_log}"
 	# env is part of the command for both systemd and nohup launch paths.
 	set -- env "AIDEVOPS_WORKER_ATTEMPT_LOG=$attempt_log" "$@"
 	if systemd_scope_available; then
 		launch_result=$(systemd_scope_launch \
 			"aidevops-pr-review-${pr_number}-$$-${RANDOM}" \
-			"aidevops review response ${repo_slug}#${pr_number}" "$attempt_log" "$@") || return 1
+			"aidevops review response ${repo_slug}#${pr_number}" "$attempt_log" "$@") || {
+			PRRTS_WORKTREE_FAILURE_REASON="worker_scope_launch_failed"
+			return 1
+		}
 		read -r launched_pid launched_mode <<<"$launch_result"
 	elif [[ -n "${INVOCATION_ID:-}" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="worker_scope_unavailable"
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} blocked — systemd scope unavailable inside a managed unit"
 		return 1
 	elif command -v setsid >/dev/null 2>&1; then
@@ -49,6 +56,9 @@ _prrts_launch_reserved_worker() {
 	local worker_pid="" detach_mode=""
 	shift 6
 	_prrts_launch_detached_worker "$repo_slug" "$pr_number" worker_pid detach_mode "$@" || return 1
+	# A failed capacity activation does not prove that the detached worker never
+	# ran. Leave its claim to worker/runtime reconciliation, not approval reuse.
+	PRRTS_WORKER_LAUNCH_STARTED=1
 	if ! _prrts_activate_global_capacity "$reservation_file" "$worker_pid" "$session_key"; then
 		kill "$worker_pid" 2>/dev/null || true
 		_prrts_release_global_capacity "$reservation_file" "$$" || true

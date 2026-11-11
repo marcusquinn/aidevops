@@ -19,6 +19,8 @@ source "${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
 source "${SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=pr-checkpoint-diagnostic-tooling.sh
 source "${SCRIPT_DIR}/pr-checkpoint-diagnostic-tooling.sh"
+# shellcheck source=pr-checkpoint-compensation.sh
+source "${SCRIPT_DIR}/pr-checkpoint-compensation.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -159,6 +161,7 @@ _pcc_claim_revised_checkpoint() {
 _pcc_claim_checkpoint() {
 	local repo="$1" pr="$2" ref="$3" head="$4" mode="$5"
 	local claim="" session="" helper="${SCRIPT_DIR}/dispatch-claim-helper.sh" previous_owner="$PCC_EXPECTED_ASSIGNEE"
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_claim_failed"
 	session=$(_pcc_session_key "$repo" "$pr") || return 1
 	if [[ "$mode" == revision ]]; then
 		claim=$("$helper" claim-pr-checkpoint "$PCC_LINKED_ISSUE" "$repo" "$pr" "$head" "$ref" \
@@ -192,8 +195,10 @@ _pcc_claim_checkpoint() {
 		owner_args+=(--remove-assignee "$PCC_PREVIOUS_ASSIGNEE")
 	fi
 	PCC_OWNERSHIP_TRANSFERRED=1
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_ownership_transfer_failed"
 	set_issue_status "$PCC_LINKED_ISSUE" "$repo" in-progress "${owner_args[@]}" >/dev/null || return 1
 	PCC_ISSUE_ASSIGNEE="$PCC_AUTHENTICATED_LOGIN"
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_post_transfer_verification_failed"
 	"$helper" verify-pr-checkpoint-target "$pr" "$repo" "$head" "$ref" \
 		"$PCC_LINKED_ISSUE" "$PCC_ISSUE_ASSIGNEE" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
 	# Worker startup renews prelaunch before transitioning ready. Pre-transitioning
@@ -592,22 +597,45 @@ _pcc_restore_issue_ownership() {
 _pcc_restore_transferred_ownership() {
 	local repo_slug="$1"
 	local pr_number="$2"
-	[[ "$PCC_OWNERSHIP_TRANSFERRED" -eq 1 ]] || return 0
+	if [[ "$PCC_OWNERSHIP_TRANSFERRED" -ne 1 ]]; then
+		_prrts_log "dispatch: restore skipped — ownership was not transferred"
+		return 0
+	fi
 	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
 		local helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
-		# Compensate only while the exact admission and our live lease still own
-		# the target. A changed head, human claim or replacement owner stops writes.
+		if [[ "${PRRTS_WORKER_LAUNCH_STARTED:-0}" == 1 ]]; then
+			_prrts_log "dispatch: restore skipped — detached worker may already be running"
+			return 1
+		fi
+		# This verifies the original claim itself, even without a separate lease
+		# renewal. It rejects ready leases, head drift and intervening ownership.
+		# Keep the array non-empty in both modes (Bash 3.2 + set -u safe).
+		local -a verification_args=(verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF"
+			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE")
+		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
+			verification_args+=("$PCC_PREVIOUS_ASSIGNEE" "$PCC_ORIGINAL_STATUS")
+		fi
 		AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH=1 \
-			"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
-			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
+			"$helper" "${verification_args[@]}" >/dev/null || {
+			_prrts_log "dispatch: restore skipped — checkpoint claim or target no longer valid"
+			return 1
+		}
 		local -a restore_args=()
 		[[ -z "$PCC_PREVIOUS_ASSIGNEE" ]] || restore_args+=(--add-assignee "$PCC_PREVIOUS_ASSIGNEE")
 		if [[ "$PCC_PREVIOUS_ASSIGNEE" != "$PCC_AUTHENTICATED_LOGIN" ]]; then
 			restore_args+=(--remove-assignee "$PCC_AUTHENTICATED_LOGIN")
 		fi
-		set_issue_status "$PCC_LINKED_ISSUE" "$repo_slug" "$PCC_ORIGINAL_STATUS" "${restore_args[@]}" >/dev/null || return 1
-		"$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
-			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null || return 1
+		set_issue_status "$PCC_LINKED_ISSUE" "$repo_slug" "$PCC_ORIGINAL_STATUS" "${restore_args[@]}" >/dev/null || {
+			_prrts_log "dispatch: restore skipped — issue ownership restoration failed"
+			return 1
+		}
+		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
+			_pcc_release_not_launched_claim "$repo_slug" "$pr_number" || return 1
+		elif ! "$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
+			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null; then
+			_prrts_log "dispatch: restore skipped — terminal lease publication failed"
+			return 1
+		fi
 		PCC_OWNERSHIP_TRANSFERRED=0
 		PCC_ISSUE_ASSIGNEE="$PCC_PREVIOUS_ASSIGNEE"
 		return 0
@@ -647,6 +675,8 @@ _pcc_dispatch() {
 	PCC_EXPECTED_ASSIGNEE="$expected_assignee"
 	PCC_AUTHENTICATED_LOGIN="$authenticated_login"
 	PCC_TARGET_REJECTED=0
+	# Reconcile a failed/uncertain release before admission can consume a new claim.
+	_pcc_retry_compensation "$repo_slug" "$pr_number" || return 1
 	# Retry saved audit publication even if target/dispatch gates below keep the
 	# completed blocked continuation held. This does not start another worker.
 	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1
@@ -675,6 +705,7 @@ _pcc_dispatch() {
 	PCC_ORIGINAL_STATUS="$issue_status"
 	PCC_OWNERSHIP_TRANSFERRED=0
 	PCC_CLAIM_ACQUIRED=0
+	PRRTS_WORKER_LAUNCH_STARTED=0
 	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
 		# Exact revision validation preserves the PR author while authenticating
 		# the releasing runner. Transfer only the owner returned by that fence.
