@@ -386,6 +386,13 @@ test_revision_attention_guidance() (
 		id:77,author_association:"OWNER",user:{login:"maintainer"},created_at:$created,updated_at:$created,
 		body:("CHECKPOINT_CONTINUATION_APPROVED " + ({repo:"owner/repo",issue:123,pr:42,head:$head} | tojson))
 	}]')
+	if [[ "$approval_case" == expired_older_head ]]; then
+		# GH#37779: an expired approval can never launch, so it no longer
+		# fences the legacy route, its re-arm windows or the per-PR fuse.
+		_pcc_comments_have_revision_approval "$comments" '["maintainer"]' && return 1
+		_pr_checkpoint_issue_metadata_is_eligible "$STUB_ISSUE_JSON" 123 worker-bot "$comments" worker-bot || return 1
+		return 0
+	fi
 	_pcc_comments_have_revision_approval "$comments" '["maintainer"]' || return 1
 	# The real metadata predicate must still reject legacy scheduling, including
 	# an unexpired current-head approval; dispatch-approved owns that route.
@@ -1632,7 +1639,153 @@ else
 	print_result "below the per-PR fuse a new head still gets one continuation" 1 "output=${output:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
+
+# GH#37779 (b): the fuse is the one block no re-arm lifts. Once the window has
+# passed, dispatch-stalled names the block and takes one terminal action per
+# head instead of holding the issue: land an additive passing For #N
+# checkpoint, close anything else keeping the branch, never act twice.
+fuse_terminal_comments="$(jq -c --arg body "$fuse_body" 'map(. + [{id:70,created_at:"2026-09-30T00:06:00Z",
+	author_association:"OWNER",user:{login:"pulse-runner"},body:$body}])' <<<"$fuse_comments")"
+test_fuse_terminal_action() (
+	# Distinct names: the helper's own locals (e.g. `files`) shadow these
+	# inside the gh stub through bash dynamic scoping.
+	local fixture_pr_files="$1" expected="$2" comments="$3" window="${4:-43200}"
+	local fixture_writes_file="${TEST_ROOT}/terminal-writes" output="" writes="" record=""
+	: >"$fixture_writes_file"
+	# Record terminal writes and serve the PR file list; delegate the rest.
+	# Args: gh argv. Returns: the stub's status.
+	gh() {
+		case "$1 $2" in
+		"pr ready" | "pr close") printf '%s\n' "$2" >>"$fixture_writes_file" ;;
+		"api repos/owner/repo/pulls/42/files?per_page=100") printf '%s\n' "$fixture_pr_files" ;;
+		*) command gh "$@" || return $? ;;
+		esac
+		return 0
+	}
+	_PCC_TERMINAL_ACTION_SECONDS="$window"
+	STUB_COMMENTS_JSON="$comments"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	STUB_PR_JSON="$(valid_pr_json 'Partial checkpoint.\nFor #123' '' '[]' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
+		mergeable:"MERGEABLE",mergeStateStatus:"DRAFT",
+		statusCheckRollup:[{__typename:"CheckRun",status:"COMPLETED",conclusion:"SUCCESS"}],
+		commits:[{oid:"1111111111111111111111111111111111111111",committedDate:"2026-09-30T00:04:30Z"}]}')"
+	export STUB_COMMENTS_JSON STUB_ISSUE_JSON STUB_PR_JSON
+	DISPATCH_ARGS=""
+	local posts_before="" posts_after=""
+	posts_before="$(post_count)"
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	posts_after="$(post_count)"
+	writes="$(<"$fixture_writes_file")"
+	local ok=true
+	[[ -z "$DISPATCH_ARGS" && "$output" == *"STALLED_CHECKPOINT_REARM_BLOCKED:"*"reason=per_pr_fuse"* ]] || ok=false
+	case "$expected" in
+	none)
+		[[ -z "$writes" && "$posts_after" -eq "$posts_before" &&
+			"$output" != *STALLED_CHECKPOINT_TERMINAL_ACTION* ]] || ok=false
+		;;
+	exists)
+		[[ -z "$writes" && "$posts_after" -eq "$posts_before" &&
+			"$output" == *STALLED_CHECKPOINT_TERMINAL_EXISTS* ]] || ok=false
+		;;
+	*)
+		[[ "$posts_after" -eq $((posts_before + 1)) ]] && record="$(<"${STUB_POST_DIR}/post-${posts_after}")"
+		[[ "$output" == *"STALLED_CHECKPOINT_TERMINAL_ACTION:"*"action=${expected}"*"cause=per_pr_fuse"* &&
+			"$writes" == "$([[ "$expected" == closed ]] && printf close || printf ready)" &&
+			"$record" == *"<!-- aidevops:stalled-checkpoint-terminal pr=42 head=1111111111111111111111111111111111111111 release=65 -->"* &&
+			"$record" == *"action=${expected} cause=per_pr_fuse"* ]] || ok=false
+		[[ "$expected" != closed || "$record" == *"Preserved checkpoint: branch \`worker/issue-123\`"* ]] || ok=false
+		;;
+	esac
+	[[ "$ok" == true ]] && return 0
+	printf '     output=[%s] writes=[%s] posts=%s->%s\n' "$output" "$writes" "$posts_before" "$posts_after" >&2
+	return 1
+)
+additive_files='[[{"status":"added"},{"status":"modified"}]]'
+if test_fuse_terminal_action "$additive_files" ready_for_merge "$fuse_terminal_comments"; then
+	print_result "fused additive passing For #N checkpoint is marked ready once its window passes" 0
+else
+	print_result "fused additive passing For #N checkpoint is marked ready once its window passes" 1
+fi
+if test_fuse_terminal_action '[[{"status":"removed"}]]' closed "$fuse_terminal_comments"; then
+	print_result "fused checkpoint that removes files is closed with its branch kept" 0
+else
+	print_result "fused checkpoint that removes files is closed with its branch kept" 1
+fi
+terminal_record='<!-- aidevops:stalled-checkpoint-terminal pr=42 head=1111111111111111111111111111111111111111 release=65 -->'
+if test_fuse_terminal_action "$additive_files" exists "$(jq -c --arg body "$terminal_record" \
+	'map(. + [{id:71,created_at:"2026-09-30T00:07:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}])' \
+	<<<"$fuse_terminal_comments")"; then
+	print_result "terminal action is taken at most once per PR head" 0
+else
+	print_result "terminal action is taken at most once per PR head" 1
+fi
+if test_fuse_terminal_action "$additive_files" none "$fuse_terminal_comments" 0; then
+	print_result "a zero terminal window keeps the fuse a visible permanent stop" 0
+else
+	print_result "a zero terminal window keeps the fuse a visible permanent stop" 1
+fi
+PCC_ALLOW_RELEASED=false
 STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"
+
+# GH#37779 (a): a worker_draft_checkpoint release cannot be re-approved, so an
+# expired approval must stop owning scheduling; an unexpired one still fences.
+approval_stall_comments() {
+	local created="$1" reason="$2"
+	stall_comments stall-lease | jq -c --arg created "$created" --arg reason "$reason" '
+		map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=" + $reason) else . end) +
+			(if $created == "" then [] else [{id:33,created_at:$created,updated_at:$created,
+				author_association:"OWNER",user:{login:"maintainer"},
+				body:("CHECKPOINT_CONTINUATION_APPROVED " + ({repo:"owner/repo",issue:123,pr:42,
+					head:"1111111111111111111111111111111111111111"} | tojson))}] end))'
+	return 0
+}
+for approval_age in expired current; do
+	approval_created="2026-09-30T01:31:00Z"
+	[[ "$approval_age" == expired ]] || approval_created="$(command date -u +%Y-%m-%dT%H:%M:%SZ)"
+	STUB_COMMENTS_JSON="$(approval_stall_comments "$approval_created" worker_draft_checkpoint)"
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	printf '[]' >"$STUB_CLAIM_FILE"
+	DISPATCH_ARGS=""
+	STATUS_CALLS=""
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$approval_age" == expired && "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+		"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* ]] ||
+		[[ "$approval_age" == current && -z "$DISPATCH_ARGS" ]]; then
+		print_result "${approval_age} approval on an unapprovable release: legacy route $([[ "$approval_age" == expired ]] && printf resumes || printf 'stays fenced')" 0
+	else
+		print_result "${approval_age} approval on an unapprovable release: legacy route $([[ "$approval_age" == expired ]] && printf resumes || printf 'stays fenced')" 1 \
+			"output=${output:-missing} args=${DISPATCH_ARGS:-missing}"
+	fi
+	PCC_ALLOW_RELEASED=false
+done
+
+# GH#37779 (c): STALE_PR_CONTINUATION names the original assignee, but the
+# issue may already be released unassigned; `dispatch` must re-verify it
+# through dispatch-stalled instead of rejecting the missing assignee.
+STUB_COMMENTS_JSON="$(approval_stall_comments "" stale_assignment_reset)"
+STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+printf '[]' >"$STUB_CLAIM_FILE"
+DISPATCH_ARGS=""
+_pcc_dispatch owner/repo "${TEST_ROOT}/repo" 42 123 worker-bot current-runner >"$output_file" 2>&1 || true
+legacy_args="$DISPATCH_ARGS"
+PCC_ALLOW_RELEASED=false
+printf '[]' >"$STUB_CLAIM_FILE"
+DISPATCH_ARGS=""
+STATUS_CALLS=""
+_pcc_dispatch_command owner/repo "${TEST_ROOT}/repo" 42 123 worker-bot current-runner >"$output_file" || true
+output="$(<"$output_file")"
+if [[ -z "$legacy_args" && "$output" == *"STALE_PR_CONTINUATION_RELEASED: issue #123"* &&
+	"$output" == *"release=31 reason=stale_assignment_reset"* && "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* &&
+	"$DISPATCH_ARGS" == *"continue-pr worker/issue-123 1111111111111111111111111111111111111111 worker-bot"* &&
+	"$STATUS_CALLS" == '123 owner/repo in-progress --add-assignee current-runner' ]]; then
+	print_result "dispatch routes an already-released unassigned issue through dispatch-stalled" 0
+else
+	print_result "dispatch routes an already-released unassigned issue through dispatch-stalled" 1 \
+		"legacy=${legacy_args:-none} output=${output:-missing} args=${DISPATCH_ARGS:-missing} calls=${STATUS_CALLS:-missing}"
+fi
+PCC_ALLOW_RELEASED=false
 
 ownership_comments="$(stall_comments stall-lease | jq -c '
 	map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=worker_ownership_lost") else . end))')"
