@@ -683,7 +683,8 @@ if grep -A25 'if ! _merge_verify_completed_state' "${SCRIPTS_DIR}/full-loop-help
 else
 	fail "full-loop hook follows verified merge state"
 fi
-if grep -A4 'if _gh_with_timeout write gh issue close' "${SCRIPTS_DIR}/pulse-merge.sh" | grep -q 'reconcile_dependants_after_verified_closure'; then
+# The post-merge close path moved from pulse-merge.sh to pulse-merge-issue-closeout.sh.
+if grep -A6 'if _gh_with_timeout write gh issue close' "${SCRIPTS_DIR}/pulse-merge-issue-closeout.sh" | grep -q 'reconcile_dependants_after_verified_closure'; then
 	pass "pulse hook runs only after close command success"
 else
 	fail "pulse hook runs only after close command success"
