@@ -7,33 +7,37 @@ import json
 import os
 from pathlib import Path
 
-from _team_interface_buzz_runtime_io import RuntimeError
+from _team_interface_buzz_runtime_io import RuntimeError as BuzzRuntimeError
 
 
 AIDEVOPS_UPSTREAM_SLUG = "marcusquinn/aidevops"
 
 
-def _is_aidevops_entry(entry):
-    """Whether one repos.json entry is an aidevops checkout (upstream or fork)."""
-    if not isinstance(entry, dict):
-        return False
+def _rank(entry):
+    """Match rank for one repos.json entry: 0 upstream, 1 fork, 2 slugless
+    checkout in an `aidevops` folder (slug detection can fail at registration),
+    or None when it is not an aidevops checkout."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+        return None
     slug = entry.get("slug")
-    if not isinstance(slug, str) or not isinstance(entry.get("path"), str):
-        return False
-    return slug == AIDEVOPS_UPSTREAM_SLUG or slug.endswith("/aidevops")
+    if isinstance(slug, str) and slug:
+        if slug == AIDEVOPS_UPSTREAM_SLUG:
+            return 0
+        return 1 if slug.endswith("/aidevops") else None
+    return 2 if Path(entry["path"].rstrip("/")).name == "aidevops" else None
 
 
 def aidevops_project_root(repos_path):
-    """The registered aidevops checkout: the upstream slug first, then a fork."""
+    """The registered aidevops checkout: upstream slug, then a fork, then a
+    slugless `aidevops` folder."""
     try:
         data = json.loads(Path(os.path.expanduser(repos_path)).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError("repos.json is unavailable; set the agent's project folder") from error
+        raise BuzzRuntimeError("repos.json is unavailable; set the agent's project folder") from error
     entries = data.get("initialized_repos", []) if isinstance(data, dict) else []
-    candidates = [entry for entry in entries if _is_aidevops_entry(entry)]
-    if not candidates:
-        raise RuntimeError(
+    ranked = [(rank, entry["path"]) for entry in entries if (rank := _rank(entry)) is not None]
+    if not ranked:
+        raise BuzzRuntimeError(
             "no aidevops repository is registered in repos.json; set the agent's project folder"
         )
-    candidates.sort(key=lambda entry: entry["slug"] != AIDEVOPS_UPSTREAM_SLUG)
-    return candidates[0]["path"]
+    return min(ranked, key=lambda item: item[0])[1]
