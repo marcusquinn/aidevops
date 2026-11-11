@@ -19,6 +19,8 @@ source "${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
 source "${SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=pr-checkpoint-diagnostic-tooling.sh
 source "${SCRIPT_DIR}/pr-checkpoint-diagnostic-tooling.sh"
+# shellcheck source=pr-checkpoint-compensation.sh
+source "${SCRIPT_DIR}/pr-checkpoint-compensation.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -592,31 +594,6 @@ _pcc_restore_issue_ownership() {
 	return 0
 }
 
-# Called only after the live exact-claim/prelaunch fence and owner restoration.
-#aidevops:trust-boundary — close only this dispatcher's never-launched episode.
-_pcc_release_not_launched_claim() {
-	local repo_slug="$1"
-	local release="" terminal="" release_ts="" endpoint="repos/${repo_slug}/issues/${PCC_LINKED_ISSUE}/comments"
-	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) || {
-		_prrts_log "dispatch: restore skipped — release timestamp unavailable"
-		return 1
-	}
-	# Machine coordination uses the same REST transport as DISPATCH_CLAIM.
-	release="CLAIM_RELEASED reason=worker_not_launched runner=${PCC_AUTHENTICATED_LOGIN} ts=${release_ts} claim_id=${AIDEVOPS_PR_CHECKPOINT_CLAIM_ID} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN} device=${AIDEVOPS_DISPATCH_LEASE_DEVICE} session=${AIDEVOPS_PR_CHECKPOINT_SESSION}"
-	gh api "$endpoint" --method POST --field body="$release" --jq '.id' >/dev/null || {
-		_prrts_log "dispatch: restore skipped — claim release publication failed"
-		return 1
-	}
-	# The release removes the claim from the active-claims view, so transition
-	# cannot find it now. Close the token already verified above, not a new claim.
-	terminal="DISPATCH_LEASE phase=terminal lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN} device=${AIDEVOPS_DISPATCH_LEASE_DEVICE} session=${AIDEVOPS_PR_CHECKPOINT_SESSION} expires_at=0 ts=${release_ts}"
-	gh api "$endpoint" --method POST --field body="$terminal" >/dev/null || {
-		_prrts_log "dispatch: restore skipped — terminal lease publication failed"
-		return 1
-	}
-	return 0
-}
-
 _pcc_restore_transferred_ownership() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -634,7 +611,8 @@ _pcc_restore_transferred_ownership() {
 		# renewal. It rejects ready leases, head drift and intervening ownership.
 		AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH=1 \
 			"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
-			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || {
+			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null ||
+			_pcc_verify_untransferred_revision "$repo_slug" "$pr_number" || {
 			_prrts_log "dispatch: restore skipped — checkpoint claim or target no longer valid"
 			return 1
 		}
@@ -648,7 +626,7 @@ _pcc_restore_transferred_ownership() {
 			return 1
 		}
 		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
-			_pcc_release_not_launched_claim "$repo_slug" || return 1
+			_pcc_release_not_launched_claim "$repo_slug" "$pr_number" || return 1
 		elif ! "$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
 			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null; then
 			_prrts_log "dispatch: restore skipped — terminal lease publication failed"
@@ -693,6 +671,8 @@ _pcc_dispatch() {
 	PCC_EXPECTED_ASSIGNEE="$expected_assignee"
 	PCC_AUTHENTICATED_LOGIN="$authenticated_login"
 	PCC_TARGET_REJECTED=0
+	# Reconcile a failed/uncertain release before admission can consume a new claim.
+	_pcc_retry_compensation "$repo_slug" "$pr_number" || return 1
 	# Retry saved audit publication even if target/dispatch gates below keep the
 	# completed blocked continuation held. This does not start another worker.
 	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1

@@ -16,7 +16,9 @@ import tempfile
 
 class LaunchFailureCases:
     def test_claim_only_launch_failure_compensation_fences(self):
-        for drift in ("none", "head", "owner", "human", "launched"):
+        for drift in ("none", "head", "owner", "human", "launched",
+                      "transfer-before", "transfer-status", "transfer-owner",
+                      "fail-release-before", "fail-release-after", "fail-terminal-before", "fail-terminal-after"):
             with self.subTest(drift=drift), tempfile.TemporaryDirectory() as root:
                 data = self.fixture()
                 # Discovery requires a non-empty title in its TSV target row.
@@ -51,10 +53,22 @@ if _pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker; then exit 99; fi
                                         capture_output=True, text=True, timeout=30, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("launch failed rc=13", result.stdout, result.stderr)
+                if drift.startswith("fail-"):
+                    pending = list(pathlib.Path(root).rglob("*.compensation.json"))
+                    self.assertEqual(len(pending), 1)
+                    # A new process has no claim globals. Recover only the saved
+                    # exact episode, checking uncertain POSTs before retrying.
+                    retry = 'source "$1/pr-checkpoint-continuation-helper.sh"; _pcc_retry_compensation owner/repo 42'
+                    if drift == "fail-release-before":
+                        self.assert_compensation_retry_fences(state, pending[0], env, retry)
+                    result = subprocess.run([self.bash, "-c", retry, "test", str(self.scripts)], env=env,  # nosec B603
+                                            capture_output=True, text=True, timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertFalse(pending[0].exists())
                 saved = json.loads(state.read_text())
                 releases = [c for c in saved["comments"] if c["body"].startswith("CLAIM_RELEASED reason=worker_not_launched")]
                 terminals = [c for c in saved["comments"] if c["body"].startswith("DISPATCH_LEASE phase=terminal")]
-                if drift == "none":
+                if drift == "none" or drift.startswith(("transfer-", "fail-")):
                     self.assertEqual(saved["issue"], data["issue"] | {"updated_at": saved["issue"]["updated_at"]})
                     self.assertEqual(len(releases), 1)
                     self.assertEqual(len(terminals), 1)
@@ -67,6 +81,26 @@ if _pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker; then exit 99; fi
                     owner = "replacement-owner" if drift == "owner" else "next-worker"
                     self.assertEqual(saved["issue"]["assignees"], [{"login": owner}])
                     self.assertIn({"name": "status:in-progress"}, saved["issue"]["labels"])
+
+    def assert_compensation_retry_fences(self, state, pending, env, retry):
+        original = state.read_text()
+        for change in ("head", "owner", "human", "claim-edit"):
+            changed = json.loads(original)
+            if change == "head":
+                changed["pr"]["headRefOid"] = "2" * 40
+            elif change == "owner":
+                changed["issue"]["assignees"] = [{"login": "replacement-owner"}]
+            elif change == "human":
+                changed["comments"].append(self.comment(999, "Interactive session claimed", "maintainer", "OWNER"))
+            else:
+                changed["comments"][-1]["body"] += " edited"
+            state.write_text(json.dumps(changed))
+            result = subprocess.run([self.bash, "-c", retry, "test", str(self.scripts)], env=env,  # nosec B603
+                                    capture_output=True, text=True, timeout=30, check=False)
+            self.assertNotEqual(result.returncode, 0, change)
+            self.assertTrue(pending.exists(), change)
+            self.assertEqual(json.loads(state.read_text()), changed, change)
+        state.write_text(original)
 
     def test_detached_launch_failure_reasons_and_activation_fence(self):
         command = r'''
