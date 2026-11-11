@@ -83,11 +83,11 @@ def collect_path_references(directory, path, result):
         try:
             # Non-dumpable same-UID tasks have root-owned proc directories.
             # Read credentials, not proc inode ownership; include saved/fs UIDs.
-            rows = [line.split()[1:] for line in (task / "status").read_text().splitlines()
-                    if line.startswith("Uid:")]
-            owner.require(len(rows) == 1 and len(rows[0]) == 4 and
-                          all(value.isdecimal() for value in rows[0]), "task UID unavailable")
-            if str(os.getuid()) not in rows[0]:
+            (uids,) = [line.split()[1:] for line in (task / "status").read_text().splitlines()
+                       if line.startswith("Uid:")]
+            owner.require(len(uids) == 4 and all(map(str.isdecimal, uids)),
+                          "task UID unavailable")
+            if str(os.getuid()) not in uids:
                 continue
             try:
                 result["references"] += int(inspect_path_references(task, path))
@@ -95,13 +95,10 @@ def collect_path_references(directory, path, result):
                 # Unknown unreadable tasks stay uncertain: they may be inside the
                 # worktree. Permanent systemd user-session helpers (GH#37729,
                 # GH#36422) never run user work, so they are counted separately.
-                if session_helper(task):
-                    result["excluded_nondumpable"] += 1
-                else:
-                    result["uncertain"] += 1
+                counter = ("uncertain", "excluded_nondumpable")[session_helper(task)]
+                result[counter] += 1
         except FileNotFoundError:
-            if os.path.lexists(task):
-                result["uncertain"] += 1
+            result["uncertain"] += int(os.path.lexists(task))
         except (OSError, ValueError, IndexError):
             result["uncertain"] += 1
 
@@ -126,8 +123,7 @@ def path_census(path, source_inode=None):
                 seen_self |= int(directory.name) == os.getpid()
                 collect_path_references(directory, path, result)
             except FileNotFoundError:
-                if os.path.lexists(directory):
-                    result["uncertain"] += 1
+                result["uncertain"] += int(os.path.lexists(directory))
             except (OSError, ValueError, IndexError):
                 result["uncertain"] += 1
         owner.require(seen_self and owner.boot_id() == boot, "incomplete path census")
