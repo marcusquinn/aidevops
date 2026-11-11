@@ -609,10 +609,14 @@ _pcc_restore_transferred_ownership() {
 		fi
 		# This verifies the original claim itself, even without a separate lease
 		# renewal. It rejects ready leases, head drift and intervening ownership.
+		local -a verification_args=()
+		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
+			verification_args=("$PCC_PREVIOUS_ASSIGNEE" "$PCC_ORIGINAL_STATUS")
+		fi
 		AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH=1 \
 			"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
-			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null ||
-			_pcc_verify_untransferred_revision "$repo_slug" "$pr_number" || {
+			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" \
+			"${verification_args[@]}" >/dev/null || {
 			_prrts_log "dispatch: restore skipped — checkpoint claim or target no longer valid"
 			return 1
 		}
