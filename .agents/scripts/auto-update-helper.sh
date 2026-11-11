@@ -1515,6 +1515,34 @@ _cmd_status_state() {
 }
 
 #######################################
+# Resolve the scheduler backend for status output (GH#37751).
+# platform-detect.sh falls back to "cron" when `systemctl --user status`
+# exits non-zero (degraded user manager, minimal env), even though enable
+# installed a working systemd user timer. If the detected backend is cron
+# but the timer unit is installed, report systemd instead.
+# Args: $1 = detected backend
+# Returns: backend name on stdout
+#######################################
+_resolve_status_backend() {
+	local backend="$1"
+
+	if [[ "$backend" != "systemd" && "$backend" != "launchd" ]] && command -v systemctl &>/dev/null; then
+		local timer_state
+		timer_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+		case "$timer_state" in
+		enabled | enabled-runtime) backend="systemd" ;;
+		*)
+			if systemctl --user is-active --quiet "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
+				backend="systemd"
+			fi
+			;;
+		esac
+	fi
+	echo "$backend"
+	return 0
+}
+
+#######################################
 # Show status (platform-aware)
 #######################################
 cmd_status() {
@@ -1524,7 +1552,7 @@ cmd_status() {
 	current=$(get_local_version)
 
 	local backend
-	backend="$(_get_scheduler_backend)"
+	backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
 
 	echo ""
 	echo -e "${BOLD:-}Auto-Update Status${NC}"
@@ -1570,7 +1598,7 @@ cmd_status() {
 #######################################
 _daemon_is_loaded() {
 	local backend
-	backend="$(_get_scheduler_backend)"
+	backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
 
 	if [[ "$backend" == "launchd" ]]; then
 		_launchd_is_loaded
