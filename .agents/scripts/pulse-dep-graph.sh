@@ -676,6 +676,27 @@ _refresh_ensure_unresolved_is_blocked() {
 	local current_labels=""
 	_dep_validate_issue_target "$slug" "$issue_num" || return 1
 
+	# GH#37684: callers can carry an old cache/supersession verdict. Recheck
+	# at the write boundary; a removed edge or a now-closed native blocker
+	# must not turn an available issue back into a persistent dependency hold.
+	local native_rc=0 block_reason="dependency_native_unresolved" issue_body=""
+	_blocked_by_check_native_relationships "$slug" "$issue_num" || native_rc=$?
+	case "$native_rc" in
+	2 | 3)
+		printf '[pulse-wrapper] DEPENDENCY_BLOCK_DEFERRED issue=#%s repo=%s native_rc=%s reason=clear_or_unavailable\n' \
+			"$issue_num" "$slug" "$native_rc" >>"$LOGFILE"
+		return 1
+		;;
+	1)
+		# No native edges: only a current structured declaration can justify
+		# a body fallback. Secret declarations and free prose are not edges.
+		issue_body=$(gh issue view "$issue_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || return 1
+		[[ -n "$(_blocked_by_structured_lines "$issue_body")" ]] || return 1
+		is_blocked_by_unresolved "$issue_body" "$slug" "$issue_num" || return 1
+		block_reason="dependency_structured_unresolved"
+		;;
+	esac
+
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" || return 1
@@ -696,7 +717,8 @@ _refresh_ensure_unresolved_is_blocked() {
 		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1 || true
 		return 1
 	fi
-	echo "[pulse-wrapper] dep-graph-cache: normalized #${issue_num} in ${slug} available -> blocked — unresolved dependency evidence; retryable relationship normalization pending" >>"$LOGFILE"
+	printf '[pulse-wrapper] dep-graph-cache: normalized #%s in %s available -> blocked DISPATCH_BLOCK_APPLIED reason=%s source=dependency_normalization native_rc=%s\n' \
+		"$issue_num" "$slug" "$block_reason" "$native_rc" >>"$LOGFILE"
 	return 0
 }
 
