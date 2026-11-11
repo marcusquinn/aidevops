@@ -363,16 +363,35 @@ release_policy_authorizes() {
 	return 0
 }
 
+# Trusted record of the authority that drove a merge, written by the pass that
+# merged so a later pass can report it. Evidence only; it authorizes nothing.
+# Prints the recorded authority (e.g. "policy #50") for the exact head, or nothing.
+release_recorded_merge_authority() {
+	local repo="$1" issue="$2" head="$3" comments=''
+	comments=$(gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate 2>/dev/null) || return 0
+	#aidevops:trust-boundary — only an OWNER/MEMBER-authored marker for the exact head counts.
+	jq -rs --arg head "$head" --arg trusted "$RELEASE_TRUSTED_AUTHOR" '
+		[add // [] | .[] | select((.author_association // "") | test($trusted))
+		 | ((.body // "") | capture("(?m)^<!-- aidevops:cloudron-release-merge-authority (?<head>[a-f0-9]{40}) (?<kind>policy #[1-9][0-9]*) -->$")?)
+		 | select(. != null and .head == $head) | .kind] | last // empty' <<<"$comments" 2>/dev/null || true
+	return 0
+}
+
 # Authority for an unsigned request: the policy for an open PR, or an already
 # merged exact head (publication verification only; nothing is authorized).
 release_policy_for_request() {
-	local repo="$1" pr="$2" head="$3" snapshot='' active='' number=''
+	local repo="$1" pr="$2" head="$3" issue="${4:-}" snapshot='' number='' recorded=''
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
 	if jq -e --arg head "$head" '.merged == true and .head.sha == $head' <<<"$snapshot" >/dev/null; then
-		# Nothing is authorized here, so the evidence must not claim the policy.
-		active=$(release_policy_active "$repo") || return 1
-		number="${active%%$'\t'*}"
-		printf 'publication verification only; merged outside standing policy #%s\n' "$number"
+		# Nothing is authorized here, so the evidence must not claim the policy
+		# unless a trusted record shows the policy drove the earlier merge.
+		release_policy_active "$repo" >/dev/null || return 1
+		[[ -z "$issue" ]] || recorded=$(release_recorded_merge_authority "$repo" "$issue" "$head")
+		if [[ -n "$recorded" ]]; then
+			printf 'standing %s (merge recorded at %s); publication verified\n' "$recorded" "$head"
+		else
+			printf 'publication verification only; merge authority not recorded\n'
+		fi
 		return 0
 	fi
 	number=$(release_policy_authorizes "$repo" "$pr" "$head") || return 1
@@ -479,7 +498,7 @@ release_resolve_authority() {
 	# standing policy; stale or unverifiable signatures keep their own path.
 	if [[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] &&
 		jq -e --arg trusted "$RELEASE_TRUSTED_AUTHOR" '(.author_association // "") | test($trusted)' <<<"$request" >/dev/null &&
-		policy_authority=$(release_policy_for_request "$repo" "$pr" "$head"); then
+		policy_authority=$(release_policy_for_request "$repo" "$pr" "$head" "$issue"); then
 		RELEASE_RESOLVED_AUTHORITY="$policy_authority"
 		return 0
 	fi
@@ -489,6 +508,17 @@ release_resolve_authority() {
 	fi
 	[[ "$verdict" == NO_APPROVAL || "$verdict" == STALE_APPROVAL ]] && return 3
 	return 1
+}
+
+# Persist the policy authority so a later resume pass reports it. A signed
+# approval is verified again on resume, so only the policy needs a record.
+release_record_merge_authority() {
+	local repo="$1" issue="$2" head="$3" authority="$4"
+	[[ "$authority" == "standing policy #"* ]] || return 0
+	release_comment "$repo" "$issue" "<!-- aidevops:cloudron-release-merge-authority ${head} policy #${authority##*#} -->
+Merged exact head ${head} under ${authority}. Publication verification resumes next routine." ||
+		printf 'WARN: %s issue %s: merge authority record not written\n' "$repo" "$issue" >&2
+	return 0
 }
 
 release_process_issue() {
@@ -549,6 +579,7 @@ PR head changed after approval. No merge occurred. Update this issue's exact hea
 			return 1
 		fi
 		snapshot=$(release_pr "$repo" "$pr") || return 1
+		release_record_merge_authority "$repo" "$issue" "$head" "$authority"
 	fi
 	jq -e --arg head "$head" '.merged == true and .head.sha == $head' <<<"$snapshot" >/dev/null || return 1
 	# Later invocations resume verification without merging again. GH#35649

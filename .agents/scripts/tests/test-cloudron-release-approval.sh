@@ -57,7 +57,7 @@ pull_request_json() {
 		labels=$(<"${TEST_ROOT}/held-labels")
 	fi
 	[[ "$SCENARIO" != changed && "$SCENARIO" != policy_changed ]] || head="$OTHER_SHA"
-	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed || "$SCENARIO" == policy_resumed ]]; then
+	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed || "$SCENARIO" == policy_resumed* ]]; then
 		merged=true
 		state=closed
 	fi
@@ -80,6 +80,21 @@ request_issue_json() {
 	body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
 	[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
 	jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
+	return 0
+}
+
+# Comments on request issue #12; the merge-authority record is OWNER-trusted
+# unless the scenario plants an outsider copy.
+request_comments_json() {
+	local author=OWNER
+	case "$SCENARIO" in
+	policy_resumed_recorded | policy_resumed_outsider_record)
+		[[ "$SCENARIO" != policy_resumed_outsider_record ]] || author=CONTRIBUTOR
+		jq -cn --arg head "$HEAD_SHA" --arg author "$author" \
+			'[{author_association:$author,body:("<!-- aidevops:cloudron-release-merge-authority " + $head + " policy #50 -->\nMerged")}]'
+		;;
+	*) printf '[]\n' ;;
+	esac
 	return 0
 }
 
@@ -115,7 +130,7 @@ gh() {
 	'api repos/owner/app/issues?'*)
 		request_issues
 		;;
-	'api repos/owner/app/issues/12/comments?'*) printf '[]\n' ;;
+	'api repos/owner/app/issues/12/comments?'*) request_comments_json ;;
 	'api repos/owner/app/issues/12') request_issue_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'pr checks')
@@ -445,9 +460,16 @@ printf 'PASS common release authorization requires signature and matching head\n
 	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
 	printf 'PASS policy: an outsider-authored request never reaches the policy\n'
 	run_case policy_resumed 0 false true true
-	grep -q 'authority: publication verification only; merged outside standing policy #50' "${TEST_ROOT}/calls"
+	grep -q 'authority: publication verification only; merge authority not recorded' "${TEST_ROOT}/calls"
+	if grep -qi 'outside' "${TEST_ROOT}/calls"; then exit 1; fi
 	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
-	printf 'PASS policy: a merged exact head resumes publication verification only and does not claim the policy\n'
+	run_case policy_resumed_outsider_record 0 false true true
+	grep -q 'authority: publication verification only; merge authority not recorded' "${TEST_ROOT}/calls"
+	run_case policy_resumed_recorded 0 false true true
+	grep -q "authority: standing policy #50 (merge recorded at ${HEAD_SHA}); publication verified" "${TEST_ROOT}/calls"
+	if grep -qi 'outside' "${TEST_ROOT}/calls"; then exit 1; fi
+	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS policy: a merged exact head reports a trusted recorded authority, else neutral wording, and never authorizes\n'
 	run_case policy_changed 0 false true true
 	grep -q 'issue close 12 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
 	printf 'PASS policy: an unsigned request whose head moved is retired for a fresh request\n'
