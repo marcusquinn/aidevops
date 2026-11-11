@@ -495,6 +495,9 @@ _gh_ci_prepare_parent_close_contract() {
 	[[ -n "$body" ]] || return 0
 	[[ "$body" == *"<!-- parent-close-contract:"* ]] && return 0
 
+	# needs-decomposition is a provisional default meaning "no decomposition
+	# was declared at creation". It blocks closure only until the parent
+	# declares its children (GH#37679); use keep-open for an explicit hold.
 	local marker='<!-- parent-close-contract: needs-decomposition -->'
 	if grep -qE '^##[[:space:]]+Phases([[:space:]]|$)' <<<"$body"; then
 		local phase_rows="" phase_lib=""

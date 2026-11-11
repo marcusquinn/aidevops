@@ -15,7 +15,9 @@
 #   PARENT_STATUS_STUB_DIR   — directory containing stub JSON files (test mode)
 #
 # Rate-limit budget per invocation:
-#   ~1 REST call for parent body, 1 for sub-issues, 1 per child for PR state.
+#   ~1 REST call for parent body, 1 for sub-issues, 1 per child for PR state,
+#   plus 1 paginated comments read only for a provisional needs-decomposition
+#   contract (GH#37679).
 #   For a 7-phase parent: ~9 REST calls, 0 GraphQL points.
 #
 # t2741: https://github.com/marcusquinn/aidevops/issues/20477
@@ -39,6 +41,9 @@ set -euo pipefail
 
 readonly PARENT_STATUS_STATE_UNKNOWN="UNKNOWN"
 readonly PARENT_STATUS_VALUE_UNKNOWN="unknown"
+readonly PARENT_STATUS_NEEDS_DECOMPOSITION_MARKER='<!-- parent-close-contract: needs-decomposition -->'
+readonly PARENT_STATUS_KEEP_OPEN_MARKER='<!-- parent-close-contract: keep-open -->'
+readonly PARENT_STATUS_COMPLETE_MARKER='<!-- parent-close-contract: complete -->'
 
 # =============================================================================
 # Helpers — gh API wrappers (offline-aware)
@@ -332,10 +337,21 @@ _derive_next_action() {
 		return 0
 	fi
 
-	if [[ -n "$contract_reason" ]]; then
+	case "$contract_reason" in
+	"") ;;
+	needs-decomposition)
+		echo "Parent close contract is incomplete (needs-decomposition) — keep the parent open. The marker is the provisional creation-time default: add a '## Children' section to the parent body listing every child issue (one '- #NNN' line each, including every native sub-issue), then replace '${PARENT_STATUS_NEEDS_DECOMPOSITION_MARKER}' with '<!-- parent-close-contract: expected-children=N -->' (N = number of children), or with '${PARENT_STATUS_COMPLETE_MARKER}' if no more children are planned."
+		return 0
+		;;
+	keep-open)
+		echo "Parent close contract is keep-open — keep the parent open. When the objective is finished, replace '${PARENT_STATUS_KEEP_OPEN_MARKER}' with '${PARENT_STATUS_COMPLETE_MARKER}' and close the parent."
+		return 0
+		;;
+	*)
 		echo "Parent close contract is incomplete (${contract_reason}) — keep the parent open."
 		return 0
-	fi
+		;;
+	esac
 
 	if [[ "$phases_filed" -eq 0 ]]; then
 		echo "No child issues are filed — keep the parent open."
@@ -607,20 +623,97 @@ _summarize_child_readiness() {
 	return 0
 }
 
+# Extract the explicitly declared child list: the body's `## Children` /
+# `## Child issues` / `## Sub-tasks` section plus trusted roadmap comments.
+# Mirrors the pulse reconciler's declaration sources (GH#37679).
+# Arguments: $1=parent_body $2=trusted roadmap comment bodies
+# Echo: sorted unique child numbers, one per line
+_declared_child_nums() {
+	local parent_body="$1"
+	local roadmap_bodies="${2:-}"
+	local body_section="" comment_sections=""
+	# Body: the reconciler's _extract_children_section heading set, first
+	# section only, so the body never bleeds into comment text.
+	body_section=$(printf '%s\n' "$parent_body" | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ { in_section = 1; next }
+		in_section && /^##[[:space:]]/ { exit }
+		in_section { print }
+	')
+	# Comments: the reconciler's trusted roadmap heading set. Each comment
+	# body ends with a "## " sentinel line (see _fetch_trusted_roadmap_bodies).
+	comment_sections=$(printf '%s\n' "$roadmap_bodies" | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+(Dispatch roadmap|Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ { in_section = 1; next }
+		in_section && /^##[[:space:]]/ { in_section = 0 }
+		in_section { print }
+	')
+	printf '%s\n%s\n' "$body_section" "$comment_sections" |
+		grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un || true
+	return 0
+}
+
+# Fetch trusted (OWNER/MEMBER/COLLABORATOR) roadmap comment bodies that carry
+# an explicit children heading. Unavailable comments yield no declaration,
+# which keeps the provisional contract blocking (fail closed).
+# Arguments: $1=issue_num $2=repo
+# Echo: matching comment bodies
+_fetch_trusted_roadmap_bodies() {
+	local num="$1"
+	local repo="$2"
+	local heading_filter='(?im)^##[[:space:]]+(Dispatch roadmap|Children|Child issues|Sub-tasks)[[:space:]]*$'
+	local comments_json="[]"
+	if [[ "${PARENT_STATUS_GH_OFFLINE:-0}" == "1" ]]; then
+		local stub="${PARENT_STATUS_STUB_DIR:-}/comments-${num}.json"
+		[[ -f "$stub" ]] || return 0
+		comments_json=$(cat "$stub")
+	elif ! comments_json=$(gh api --paginate "repos/${repo}/issues/${num}/comments" 2>/dev/null |
+		jq -s 'add // []' 2>/dev/null); then
+		return 0
+	fi
+	printf '%s' "$comments_json" | jq -r --arg heading "$heading_filter" \
+		'.[]? | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") and ((.body // "") | test($heading))) | (.body + "\n## ")' \
+		2>/dev/null || true
+	return 0
+}
+
+# Report whether the declared child list covers every native sub-issue, which
+# satisfies the provisional needs-decomposition contract (GH#37679). Children
+# being terminal is enforced separately by _derive_next_action.
+# Arguments: $1=declared child numbers $2=native graph child numbers
+# Returns: 0=declared, 1=otherwise
+_decomposition_declared() {
+	local declared_nums="$1"
+	local graph_nums="$2"
+	local graph_num="" declared_set=""
+	[[ "$declared_nums" =~ [0-9] ]] || return 1
+	declared_set=$'\n'"${declared_nums}"$'\n'
+	while IFS= read -r graph_num; do
+		[[ "$graph_num" =~ ^[0-9]+$ ]] || continue
+		[[ "$declared_set" == *$'\n'"${graph_num}"$'\n'* ]] || return 1
+	done <<< "$graph_nums"
+	return 0
+}
+
 # Read deterministic parent close-contract constraints from the body.
 # Arguments: $1=parent_body $2=phase_plan $3=native_graph_count
+#            $4=declared child numbers $5=native graph child numbers
 # Echo: "<expected_children>|<incomplete_reason>"
 _read_close_contract() {
 	local parent_body="$1"
 	local phase_plan="$2"
 	local native_graph_count="${3:-0}"
+	local declared_nums="${4:-}"
+	local graph_nums="${5:-}"
 	local expected_children="" reason=""
 	local declared_phase_count=0
 	declared_phase_count=$(printf '%s\n' "$phase_plan" | grep -c '|' 2>/dev/null || true)
 	expected_children=$(printf '%s\n' "$parent_body" |
 		sed -nE 's/.*<!-- parent-close-contract: expected-children=([0-9]+) -->.*/\1/p' | head -n1)
-	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* ||
-		"$parent_body" == *"<!-- parent-close-contract: keep-open -->"* ]]; then
+	if [[ "$parent_body" == *"$PARENT_STATUS_KEEP_OPEN_MARKER"* ]]; then
+		reason="keep-open"
+	elif [[ "$parent_body" == *"$PARENT_STATUS_NEEDS_DECOMPOSITION_MARKER"* ]] &&
+		! _decomposition_declared "$declared_nums" "$graph_nums"; then
 		reason="needs-decomposition"
 	elif [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && -z "$phase_plan" ]]; then
 		reason="invalid-phase-plan"
@@ -633,6 +726,42 @@ _read_close_contract() {
 		reason="unchecked-criteria"
 	fi
 	printf '%s|%s\n' "$expected_children" "$reason"
+	return 0
+}
+
+# Gather the declared child list (body children section, plus trusted roadmap
+# comments when the provisional marker needs them) for GH#37679. Declared
+# children join the state-checked child set, so a child declared only in a
+# comment can never be reported closed without being read.
+# Arguments: $1=issue_num $2=repo $3=parent_body
+# Echo: sorted unique declared child numbers, one per line
+_parent_declared_children() {
+	local issue_num="$1"
+	local repo="$2"
+	local parent_body="$3"
+	local roadmap_bodies=""
+	if [[ "$parent_body" == *"$PARENT_STATUS_NEEDS_DECOMPOSITION_MARKER"* ]]; then
+		roadmap_bodies=$(_fetch_trusted_roadmap_bodies "$issue_num" "$repo")
+	fi
+	# A self-reference is never a child declaration (mirrors the reconciler).
+	_declared_child_nums "$parent_body" "$roadmap_bodies" | grep -vx "$issue_num" || true
+	return 0
+}
+
+# Read the close contract against declared and native graph children.
+# Arguments: $1=parent_body $2=phase_plan $3=native_graph_count
+#            $4=sub-issues JSON $5=declared child numbers
+# Echo: "<expected_children>|<incomplete_reason>"
+_resolve_close_contract() {
+	local parent_body="$1"
+	local phase_plan="$2"
+	local native_graph_count="${3:-0}"
+	local sub_issues_json="${4:-[]}"
+	local declared_nums="${5:-}"
+	local graph_child_nums=""
+	graph_child_nums=$(printf '%s' "$sub_issues_json" | jq -r '.[].number' 2>/dev/null | sort -un) || graph_child_nums=""
+	_read_close_contract "$parent_body" "$phase_plan" "$native_graph_count" \
+		"$declared_nums" "$graph_child_nums"
 	return 0
 }
 
@@ -760,6 +889,9 @@ cmd_parent_status() {
 	if ! all_child_nums=$(_gather_child_nums "$issue_num" "$repo" "$parent_body" "$sub_issues_json"); then
 		retrieval_incomplete=1
 	fi
+	local declared_nums
+	declared_nums=$(_parent_declared_children "$issue_num" "$repo" "$parent_body")
+	all_child_nums=$(printf '%s\n%s\n' "$all_child_nums" "$declared_nums" | grep -E '^[0-9]+$' | sort -un || true)
 	if ! children_state_lines=$(_resolve_children_state "$all_child_nums" "$repo"); then
 		retrieval_incomplete=1
 	fi
@@ -782,7 +914,8 @@ cmd_parent_status() {
 	if [[ -z "$phase_plan" ]]; then phases_total="${total_line#TOTAL:}"; fi
 
 	local close_contract expected_children contract_reason next_action
-	close_contract=$(_read_close_contract "$parent_body" "$phase_plan" "$native_graph_count")
+	close_contract=$(_resolve_close_contract "$parent_body" "$phase_plan" \
+		"$native_graph_count" "$sub_issues_json" "$declared_nums")
 	IFS='|' read -r expected_children contract_reason <<< "$close_contract"
 	next_action=$(_derive_next_action \
 		"$phases_total" "$phases_filed" "$in_flight_pr_num" "$phases_merged" \

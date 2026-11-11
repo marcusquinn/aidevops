@@ -142,6 +142,27 @@ The `<!-- phase-auto-fire:on -->` HTML comment is the opt-in for narrative phase
 
 The close guard (t2755 Phase 2) prevents premature parent-task closure while any declared phase is still unfiled or open. If a PR uses a closing keyword (`Closes #NNN`) on a parent-task issue that still has pending phases, the merge is accepted but the issue is re-opened with an explanatory comment. Deterministic incomplete close-contract repairs use `hold-for-review`; the ordinary 7-day decomposition escalation remains advisory-only.
 
+## Close Contract Markers
+
+Parent creation through the issue wrappers (`_gh_ci_prepare_parent_close_contract` in `shared-gh-wrappers-create.sh`) appends one machine-readable marker. Reconciliation (`_parent_close_contract_incomplete` in `pulse-issue-reconcile-actions-parent.sh`) and `aidevops parent-status` read it after every known child is terminal:
+
+| Marker | Meaning | Closure |
+|--------|---------|---------|
+| `<!-- parent-close-contract: needs-decomposition -->` | Provisional default: no decomposition was declared at creation. | Blocks only until the decomposition is declared: a `## Children` / `## Child issues` / `## Sub-tasks` section in the body, or in a trusted (OWNER/MEMBER/COLLABORATOR) roadmap comment, lists child references; every known child is terminal; and every native sub-issue appears in that list. Graph-only children never satisfy it. (GH#37679) |
+| `<!-- parent-close-contract: keep-open -->` | Explicit hold. | Always blocks. |
+| `<!-- parent-close-contract: expected-children=N -->` | N children are planned. | Blocks while fewer than N children are known. |
+| `<!-- parent-close-contract: phase-plan -->` | The `## Phases` section is the plan. | Blocks while phases are unfiled or no phase line parses. |
+| `<!-- parent-close-contract: complete -->` | No more children are planned. | Closes once every known child is terminal. |
+
+Unchecked `- [ ]` criteria also block closure unless a complete native sub-issue graph exists.
+
+**Closing a finished parent from an interactive session:**
+
+1. Run `aidevops parent-status <N> --repo <owner/repo>`; every child must be closed.
+2. Add a `## Children` section to the parent body listing every child (`- #NNN`), including every native sub-issue.
+3. Replace `needs-decomposition` with `expected-children=N` (N = the number of children), or with `complete` if no more children are planned. Leave `keep-open` only on a parent that must stay open.
+4. Rerun `parent-status`; when it reports "close the parent issue", close it as completed. Reconciliation does not reopen a parent whose contract is satisfied.
+
 ## Use Cases
 
 **Use `#parent` for:** decomposition epics with child implementation tasks, roadmap trackers, research summaries that spawn separate work items, any investigation or "think-before-acting" issue.

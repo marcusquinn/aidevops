@@ -245,6 +245,8 @@ _pir_collect_parent_child_evidence() {
 	_PIR_CPT_CHILD_NUMS=""
 	_PIR_CPT_CHILD_SOURCE="unavailable"
 	_PIR_CPT_KNOWN_CHILD_COUNT=0
+	_PIR_CPT_DECLARED_NUMS=""
+	_PIR_CPT_GRAPH_NUMS=""
 
 	graph_nums=$(_fetch_subissue_numbers "$slug" "$issue_num") || return 1
 	graph_nums=$(printf '%s\n' "$graph_nums" | sort -un | grep -v "$self_issue_pattern" | grep -v '^$' || true)
@@ -264,6 +266,12 @@ _pir_collect_parent_child_evidence() {
 	_PIR_CPT_CHILD_SOURCE="${source_parts:-none}"
 	_PIR_CPT_KNOWN_CHILD_COUNT=$(printf '%s\n' "$_PIR_CPT_CHILD_NUMS" |
 		awk '$0 ~ /^[0-9]+$/ { c++ } END { print c+0 }')
+	# GH#37679: the explicitly declared list (body ## Children section plus
+	# trusted roadmap comments) and the native graph are kept separately so the
+	# close contract can check that the declaration covers every graph child.
+	_PIR_CPT_DECLARED_NUMS=$(printf '%s\n%s\n' "$body_nums" "$comment_nums" |
+		grep -E '^[0-9]+$' | sort -un || true)
+	_PIR_CPT_GRAPH_NUMS="$graph_nums"
 	return 0
 }
 
