@@ -21,6 +21,7 @@ RELEASE_POLICY_KIND='cloudron-standing-upstream-release'
 RELEASE_POLICY_MAX_FILES=20
 RELEASE_SIGNED_AUTHORITY='signed approval'
 RELEASE_TRUSTED_AUTHOR='^(OWNER|MEMBER)$'
+RELEASE_RESOLVED_AUTHORITY=''
 
 release_error() {
 	local message="$1"
@@ -461,6 +462,33 @@ release_published() {
 	return 0
 }
 
+# Set RELEASE_RESOLVED_AUTHORITY for a request issue. Returns 0 to proceed,
+# 3 when no merge is authorized yet (a wait state), and 1 on error.
+release_resolve_authority() {
+	local repo="$1" issue="$2" request="$3" pr="$4" head="$5" apply="$6" verdict='' rc=0 policy_authority=''
+	RELEASE_RESOLVED_AUTHORITY=''
+	verdict=$(release_verify "$repo" "$issue") || rc=$?
+	if [[ "$rc" -eq 0 && "$verdict" == VERIFIED ]]; then
+		RELEASE_RESOLVED_AUTHORITY="$RELEASE_SIGNED_AUTHORITY"
+		return 0
+	fi
+	#aidevops:trust-boundary — trusted authors and labels cannot replace a signature.
+	# Only an unsigned request from a trusted author may rely on the signed
+	# standing policy; stale or unverifiable signatures keep their own path.
+	if [[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] &&
+		jq -e --arg trusted "$RELEASE_TRUSTED_AUTHOR" '(.author_association // "") | test($trusted)' <<<"$request" >/dev/null &&
+		policy_authority=$(release_policy_for_request "$repo" "$pr" "$head"); then
+		RELEASE_RESOLVED_AUTHORITY="$policy_authority"
+		return 0
+	fi
+	printf '%s issue %s: approval %s; no merge\n' "$repo" "$issue" "$verdict"
+	if [[ "$verdict" == NO_APPROVAL && "$apply" == true ]]; then
+		release_retire_moved_request "$repo" "$issue" "$pr" "$head" || return 1
+	fi
+	[[ "$verdict" == NO_APPROVAL || "$verdict" == STALE_APPROVAL ]] && return 3
+	return 1
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
 	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
@@ -473,25 +501,11 @@ release_process_issue() {
 	pr=$(jq -r '.pr' <<<"$metadata")
 	head=$(jq -r '.head' <<<"$metadata")
 	version=$(jq -r '.version' <<<"$metadata")
-	local authority="$RELEASE_SIGNED_AUTHORITY" policy_authority=''
-	verdict=$(release_verify "$repo" "$issue") || rc=$?
-	#aidevops:trust-boundary — trusted authors and labels cannot replace a signature.
-	# Only an unsigned request from a trusted author may rely on the signed
-	# standing policy; stale or unverifiable signatures keep their own path.
-	if [[ "$rc" -ne 0 || "$verdict" != VERIFIED ]]; then
-		if [[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] &&
-			jq -e --arg trusted "$RELEASE_TRUSTED_AUTHOR" '(.author_association // "") | test($trusted)' <<<"$before" >/dev/null &&
-			policy_authority=$(release_policy_for_request "$repo" "$pr" "$head"); then
-			authority="$policy_authority"
-		else
-			printf '%s issue %s: approval %s; no merge\n' "$repo" "$issue" "$verdict"
-			if [[ "$verdict" == NO_APPROVAL && "$apply" == true ]]; then
-				release_retire_moved_request "$repo" "$issue" "$pr" "$head" || return 1
-			fi
-			[[ "$verdict" == NO_APPROVAL || "$verdict" == STALE_APPROVAL ]] && return 0
-			return 1
-		fi
-	fi
+	local authority=''
+	release_resolve_authority "$repo" "$issue" "$before" "$pr" "$head" "$apply" || rc=$?
+	[[ "$rc" -ne 3 ]] || return 0
+	[[ "$rc" -eq 0 ]] || return 1
+	authority="$RELEASE_RESOLVED_AUTHORITY"
 	after=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	[[ "$before" == "$after" ]] || return 1
 	local manifest=""
