@@ -51,6 +51,16 @@ def _allowed() -> bool:
     return bool(identifier) and identifier != "nixos"
 
 
+def _matches_report_identity(report: object, expected: dict[str, object]) -> bool:
+    """Require the exact schema and integer identities, rejecting boolean aliases."""
+    if not isinstance(report, dict) or set(report) != {*expected, "status"}:
+        return False
+    if any(type(report[key]) is not type(value) or report[key] != value
+           for key, value in expected.items()):
+        return False
+    return all(type(value) is int for value in report["directory"])
+
+
 def require_protected_references(path: Path, task: Path, proc: Path) -> None:
     """Require bound full-reference evidence; never accept legacy CWD output."""
     pid = task.parent.parent.name
@@ -81,12 +91,7 @@ def require_protected_references(path: Path, task: Path, proc: Path) -> None:
         current_directory = path.lstat()
         expected = {"version": 1, "pid": int(pid), "start_ticks": start,
                     "directory": [directory.st_dev, directory.st_ino]}
-        if not isinstance(report, dict) or set(report) != {*expected, "status"}:
-            raise unavailable
-        if any(type(report[key]) is not type(value) or report[key] != value
-               for key, value in expected.items()):
-            raise unavailable
-        if any(type(value) is not int for value in report["directory"]):
+        if not _matches_report_identity(report, expected):
             raise unavailable
         if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino) or start != current_start:
             raise unavailable
