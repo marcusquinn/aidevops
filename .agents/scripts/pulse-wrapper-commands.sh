@@ -102,21 +102,29 @@ _pulse_wrapper_capacity() {
 }
 
 _pulse_wrapper_dispatch_current_scope() {
-	local target_slug="$2"
+	local target_slug="$2" target_path="$6"
 	local scope_entries="" scope_slug="" scope_path="" scope_slugs="" target_found=0
+	local target_common_dir="" scope_common_dir=""
 	scope_entries=$(_pulse_wrapper_list_scope) || return 1
 	while IFS='|' read -r scope_slug scope_path; do
 		[[ -n "$scope_slug" ]] || continue
 		[[ -z "$scope_slugs" ]] || scope_slugs+=","
 		scope_slugs+="$scope_slug"
-		[[ "$scope_slug" != "$target_slug" ]] || target_found=1
+		if [[ "$scope_slug" == "$target_slug" ]]; then
+			# Linked worktrees share the common Git directory with their scoped repo.
+			target_common_dir=$(git -C "$target_path" rev-parse --path-format=absolute --git-common-dir) || return 1
+			scope_common_dir=$(git -C "$scope_path" rev-parse --path-format=absolute --git-common-dir) || return 1
+			target_common_dir=$(cd "$target_common_dir" && pwd -P) || return 1
+			scope_common_dir=$(cd "$scope_common_dir" && pwd -P) || return 1
+			[[ "$target_common_dir" != "$scope_common_dir" ]] || target_found=1
+		fi
 	done <<<"$scope_entries"
 	if [[ "$target_found" -ne 1 ]]; then
-		printf 'dispatch deferred: repository is outside current pulse scope\n' >&2
+		printf 'dispatch deferred: repository or path is outside current pulse scope\n' >&2
 		return 1
 	fi
 	export PULSE_SCOPE_REPOS="$scope_slugs"
-	_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_admitted "$@"
+	_pulse_wrapper_dispatch_admitted "$@"
 	return $?
 }
 
@@ -156,7 +164,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		_pulse_wrapper_dispatch_current_scope "$@"
+		_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_current_scope "$@"
 		;;
 	approve-pr)
 		[[ "$#" -eq 3 ]] || {

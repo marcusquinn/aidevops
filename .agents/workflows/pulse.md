@@ -102,7 +102,7 @@ Skip when: all slots occupied, issue created <5 min ago, or maintainer already c
 # Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger.
 # Model selection is automatic via the runtime resolver; there is no model argument.
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER PATH \
+  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER "PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION"
 ```
 
@@ -316,7 +316,7 @@ resolver default. See [Task Taxonomy](../reference/task-taxonomy.md) for tier pu
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap "PATH"` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
 
 Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
 
@@ -325,10 +325,10 @@ Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: Ope
 Quality-debt workers MUST use pre-created worktrees:
 
 ```bash
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree "PATH" NUMBER TITLE
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
+  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER "QD_WT_PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- TITLE"
 ```
 

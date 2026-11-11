@@ -1782,6 +1782,11 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
+	# systemd services do not inherit the launching client's environment.
+	# Preserve explicitly empty scope as well as populated scope values.
+	if [[ -n "${PULSE_SCOPE_REPOS+x}" ]]; then
+		worker_cmd+=(PULSE_SCOPE_REPOS="$PULSE_SCOPE_REPOS")
+	fi
 	_dlw_append_model_ab_env
 	_dlw_append_node_tool_env "$worker_worktree_path"
 	_dlw_append_trusted_release_env
