@@ -507,8 +507,31 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
 		[[ "$rc" -eq 124 ]] || exit 16
 		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=1s)' "$LOGFILE" || exit 17
+	); then
+		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
+	else
+		fail "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_health_recovery_lane_candidates() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-recovery.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts"
+		# shellcheck source=../shared-constants.sh
+		source "$scripts/shared-constants.sh"
+		# shellcheck source=../worker-lifecycle-common.sh
+		source "$scripts/worker-lifecycle-common.sh"
+		# shellcheck source=../stats-functions.sh
+		source "$scripts/stats-functions.sh"
 		# Recovery lane: at most one stale+failed repo follows the priority repo.
 		local c t entries ordered
+		mkdir -p "$HOME/.aidevops/logs"
 		t=$(date +%s)
 		for c in owner/p:0:0 owner/a:$((t - 200000)):$((t - 100)) owner/b:$((t - 300000)):$((t - 50)) owner/c:$((t - 100)):$((t - 100)); do
 			local rs ep at f
@@ -521,10 +544,19 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
 		[[ "$ordered" == 'owner/p owner/b owner/c owner/a ' ]] || exit 18
 		if _health_repo_needs_recovery owner/c tester >/dev/null; then exit 19; fi
+		# Attempted but never refreshed (no .refresh-state) is recovered first.
+		local nf
+		nf=$(_health_schedule_cache_file owner/n tester)
+		rm -f "${nf}.refresh-state"
+		printf '%s\n' "$((t - 10))" >"${nf}.attempt"
+		entries=$'owner/p|/p\nowner/c|/c\nowner/a|/a\nowner/n|/n'
+		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
+		[[ "$ordered" == 'owner/p owner/n owner/c owner/a ' ]] || exit 20
+		[[ "$(_health_recovery_slug $'owner/p|/p\nowner/n|/n' tester)" == owner/n ]] || exit 21
 	); then
-		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
+		pass "recovery lane promotes stale-failed and never-refreshed repos, one per cycle"
 	else
-		fail "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence" "fixture exit=$?"
+		fail "recovery lane promotes stale-failed and never-refreshed repos, one per cycle" "fixture exit=$?"
 	fi
 	rm -rf "$batch_home"
 	return 0
@@ -596,6 +628,7 @@ main_test() {
 	test_quality_sweep_publishes_completed_tools_after_timeout
 	test_quality_sweep_expired_budget_retries_and_publishes
 	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
+	test_health_recovery_lane_candidates
 	test_health_dashboard_reserves_publication_time_from_history
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
