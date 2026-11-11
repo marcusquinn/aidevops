@@ -68,7 +68,7 @@ def require_protected_references(path: Path, task: Path, proc: Path) -> None:
         process = proc / pid
         before = process.stat()
         start = int((process / "stat").read_text(encoding="ascii").rsplit(")", 1)[1].split()[19])
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 # validated root-owned executables, fixed flags, paths as argv only
             [str(sudo), "-n", "--", str(INSPECTOR), "--references", pid, str(path)],
             stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=False,
             env={"PATH": "/usr/bin:/bin", "LANG": "C"},
@@ -81,13 +81,16 @@ def require_protected_references(path: Path, task: Path, proc: Path) -> None:
         current_directory = path.lstat()
         expected = {"version": 1, "pid": int(pid), "start_ticks": start,
                     "directory": [directory.st_dev, directory.st_ino]}
-        if (not isinstance(report, dict) or set(report) != {*expected, "status"}
-                or any(type(report[key]) is not type(value) or report[key] != value
-                       for key, value in expected.items())
-                or any(type(value) is not int for value in report["directory"])
-                or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
-                or start != current_start
-                or (directory.st_dev, directory.st_ino) != (current_directory.st_dev, current_directory.st_ino)):
+        if not isinstance(report, dict) or set(report) != {*expected, "status"}:
+            raise unavailable
+        if any(type(report[key]) is not type(value) or report[key] != value
+               for key, value in expected.items()):
+            raise unavailable
+        if any(type(value) is not int for value in report["directory"]):
+            raise unavailable
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino) or start != current_start:
+            raise unavailable
+        if (directory.st_dev, directory.st_ino) != (current_directory.st_dev, current_directory.st_ino):
             raise unavailable
         status = report["status"]
         if status not in ("held", "clear"):
