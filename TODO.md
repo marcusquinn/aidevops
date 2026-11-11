@@ -2019,9 +2019,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18959 fix(update): .aidevops.json migration issue fails when target repo lacks tier:simple label #bug #auto-dispatch tier:simple ref:GH#37650 pr:#37653 logged:2026-11-10 -> [todo/tasks/t18959-brief.md] completed:2026-11-10
 
-- [ ] t18960 feat(opencode-test-helper): add mouse-click injection to tui-capture #feat #auto-dispatch tier:standard ref:GH#37651 logged:2026-11-10 -> [todo/tasks/t18960-brief.md]
+- [x] t18960 feat(opencode-test-helper): add mouse-click injection to tui-capture #feat #auto-dispatch tier:standard ref:GH#37651 pr:#37655 logged:2026-11-10 -> [todo/tasks/t18960-brief.md] completed:2026-11-11
 
-- [ ] t18961 GH#37649 follow-up: fail over subagents stuck in provider rate-limit retry #auto-dispatch #feat ref:GH#37667
+- [x] t18961 GH#37649 follow-up: fail over subagents stuck in provider rate-limit retry #auto-dispatch #feat ref:GH#37667 pr:#37670 completed:2026-11-11
 
 ## In Progress
 
