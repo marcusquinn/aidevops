@@ -213,31 +213,27 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation == "cleanup-worktree":
-        from .cleanup import cleanup_worktree
+    from . import cleanup, path_release
 
-        return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
-    if args.operation == "retire-enrolled-only":
-        from .cleanup import retire_enrolled_only
-
-        return retire_enrolled_only(
+    operations = {
+        "cleanup-worktree": lambda: cleanup.cleanup_worktree(
+            store, args.repos_config, args.output_root, args.path,
+        ),
+        "retire-enrolled-only": lambda: cleanup.retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
-        )
-    if args.operation == "release-vacant-path":
-        from .path_release import release_vacant_path
-
-        return release_vacant_path(store, args.path)
-    if args.operation == "release-replaced-path":
-        from .path_release import release_replaced_path
-
-        return release_replaced_path(store, args.path, args.confirm)
-    if args.operation == "cleanup":
-        from .cleanup import cleanup_pass
-
-        return cleanup_pass(
+        ),
+        "release-vacant-path": lambda: path_release.release_vacant_path(store, args.path),
+        "release-replaced-path": lambda: path_release.release_replaced_path(
+            store, args.path, args.confirm,
+        ),
+        "cleanup": lambda: cleanup.cleanup_pass(
             store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
-        )
-    raise ValueError("unsupported-cleanup-operation")
+        ),
+    }
+    operation = operations.get(args.operation)
+    if operation is None:
+        raise ValueError("unsupported-cleanup-operation")
+    return operation()
 
 
 def _maintenance_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
