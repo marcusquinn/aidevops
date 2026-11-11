@@ -11,11 +11,8 @@ Part of t18883. The plugin adds:
   OpenCode agents on this computer, each in its own linked worktree of a
   registered project, using your normal OpenCode models and logins.
 
-It needs a Buzz Desktop build with plugins: the `block/buzz-app` desktop preview
-releases (0.7.0 previews, tested on `v0.7.0-preview.254.1`). Stable Buzz 0.5.x
-has no plugin support. The preview uses its own data folder
-(`xyz.block.buzz.desktop`), so it can be installed beside 0.5.x as
-`/Applications/Buzz Preview.app`.
+It needs Buzz Desktop 1.0 or later (tested on 1.0.0), or a 0.7.0 desktop
+preview. Buzz 0.5.x has no plugin support.
 
 ## Install (owner action)
 
@@ -122,8 +119,12 @@ How a turn runs:
 | Command `aidevops buzz status` | The Settings card; no shell, 5 s deadline, 16 KiB of output |
 | Process `aidevops buzz acp` | One aidevops OpenCode ACP process per agent; the plugin appends `--member <name> --project <folder>` |
 | MCP | Serves each agent's Buzz tools to its OpenCode process on a loopback address |
+| Files | Reads a file an agent's Buzz tools send or upload (attachments, a proposed profile picture): absolute, `~/…`, or relative to its project folder |
 
-No network origins, files or agent hooks. No Buzz key reaches the process: the
+Buzz refuses those tool calls with "This agent cannot read …" when the agent
+type has no file reader. The agent's OpenCode process can already read the
+same files, so this adds no reach beyond it. No network origins or agent hooks.
+No Buzz key reaches the process: the
 Buzz tools arrive over the loopback MCP server, and the plugin clears
 `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG` and `BUZZ_RELAY_URL` from its environment.
 
