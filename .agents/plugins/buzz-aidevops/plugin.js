@@ -13,8 +13,11 @@
 export const inject = ["react", "settingsCards", "host", "agents"];
 
 // Bump only when plugin files change; Buzz revisions are content hashes.
-const PLUGIN_VERSION = "1.1.0";
+const PLUGIN_VERSION = "1.2.0";
 const TYPE_ID = "aidevops";
+/** aidevops main agents work in the aidevops repository unless an agent's
+ * settings name another project, such as `~/Git/<project>`. */
+const DEFAULT_PROJECT = "~/Git/aidevops";
 /** The MCP server name each session declares; Buzz tools arrive as `buzz_*`. */
 const TOOL_SERVER = "buzz";
 /** Buzz tools that answer where people see it, so no fallback reply is due. */
@@ -63,7 +66,7 @@ function settings(raw) {
     typeof value[field] === "string" ? value[field].trim() : "";
   return {
     member: text("member"),
-    project: text("project"),
+    project: text("project") || DEFAULT_PROJECT,
     scope: value.scope === "channel" ? "channel" : "thread",
   };
 }
@@ -696,7 +699,7 @@ function fields(h, { value, onChange, disabled, agentName }) {
         type: "text",
         style: inputStyle,
         value: value.project ?? "",
-        placeholder: "e.g. /path/to/your/repo",
+        placeholder: DEFAULT_PROJECT,
         disabled,
         spellCheck: false,
         onChange: set("project"),
@@ -704,7 +707,7 @@ function fields(h, { value, onChange, disabled, agentName }) {
       h(
         "p",
         { style: hintStyle },
-        "Required. Full path (or ~/ path) to a repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
+        `aidevops main agents use ${DEFAULT_PROJECT} (the default when empty). An agent for a project uses that project's folder, such as ~/Git/<project>. It must be a repository registered with aidevops; the agent works in its own linked worktree of it, never in the folder itself.`,
       ),
     ),
     h(
@@ -874,7 +877,7 @@ export function apply(ctx) {
     title: "aidevops",
     description:
       "aidevops agents in OpenCode on this computer, each in its own worktree of a registered project.",
-    defaults: () => ({ config: { member: "", project: "", scope: "thread" } }),
+    defaults: () => ({ config: { member: "", project: DEFAULT_PROJECT, scope: "thread" } }),
     summary,
     Create: ({ config, onChange, disabled }) =>
       fields(h, { value: config ?? {}, onChange, disabled }),
