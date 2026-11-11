@@ -11,18 +11,21 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
-from .absence import reconcile_absence
+from .absence import _absent, path_reservations, reconcile_absence, reconcile_path
+from .absence import reservation_blocker
 from .archive_path import create_archive_root, validate_archive_path
 from .admission import AdmissionRegistry
 from .cleanup_failure import failure_details as _failure_details
 from .cleanup_plan import enrolled_only_event_id
 from .cleanup_quarantine import CleanupQuarantine
-from .enrollment import GenerationEnrollment, _git_directory
+from .enrollment import MARKER, GenerationEnrollment, _git_directory
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import journaled_removals, resume_failed, resume_first
+from .legacy_proc import require_idle_processes
 from .permissions import FilePolicy, read_owned_file
+from .preservation import _helper, _retain_base, _snapshot, _verify
 from .pull_requests import OpenPullRequestCache
-from .retirement import ArchiveTarget, _event, _event_id, _git, _lock, retire_worktree
+from .retirement import ArchiveTarget, _event, _event_id, _git, _id, _lock, retire_worktree
 from .storage import LifecycleRegistry, identifier
 
 # Group write is accepted only for the owner's user-private group (umask 002).
@@ -235,6 +238,115 @@ def retire_enrolled_only(
         enrolled_only_event_id(generation), generation,
     )
     return _candidate(store, repositories, root, generation, path)
+
+
+def _stale_reservation(store: LifecycleRegistry, path: Path) -> tuple[str | None, str]:
+    """Return (generation, "") for a reused path, else (None, refusal reason).
+
+    The tree's own Git admin must have no marker, and exactly one closed
+    reservation by another generation may hold the pathname.
+    """
+    if os.path.lexists(_git_directory(path) / MARKER):
+        return None, "generation-marker-present"
+    rows = path_reservations(store, path)
+    if len(rows) != 1:
+        return None, "single-reservation-required" if rows else "no-reservation"
+    if rows[0]["state"] != "closed":
+        return None, "closed-reservation-required"
+    return identifier(rows[0]["generation_id"]), ""
+
+
+def _archive_and_remove(
+    store: LifecycleRegistry, path: Path, generation: str,
+    target: ArchiveTarget, common: str,
+) -> dict[str, object]:
+    """Archive and verify the unenrolled tree, journal it, then remove it natively.
+
+    The idle census runs before and after capture; any content or identity
+    change after capture refuses removal and keeps the tree.
+    """
+    identity = _id(path)
+    require_idle_processes(path)
+    snapshot = _snapshot(path)
+    archive = Path(_helper(
+        "archive", str(path), "--repo", target.repository, "--unattributed",
+        "--reason", "unattributed-worktree", "--base-branch", target.base_branch,
+        "--output-root", str(target.root),
+    ))
+    manifest = _verify(archive, path, target.root, snapshot)
+    operation = str(uuid5(UUID(generation), "reused-path-archive:" + str(archive)))
+    base_reference = _retain_base(path, operation, manifest["base_sha"])
+    receipt: dict[str, object] = {
+        "type": "reused-path-archived", "generation_id": generation, "path": str(path),
+        "archive": str(archive), "snapshot": snapshot, "base_sha": manifest["base_sha"],
+        "base_ref": base_reference, "operator_confirmed": True,
+        "common_repository_required": True,
+    }
+    with store.connection(write=True) as connection:
+        store._event(connection, operation, receipt)
+    require_idle_processes(path)
+    if (_id(path) != identity or _snapshot(path) != snapshot
+            or os.path.lexists(_git_directory(path) / MARKER)):
+        raise ValueError("reused-source-changed")
+    _git("--git-dir", common, "worktree", "remove", "--force", str(path))
+    return dict(receipt, operation_id=operation)
+
+
+def recover_reused_path(
+    store: LifecycleRegistry, config: Path, root: Path, path: Path, confirm: bool,
+) -> dict[str, object]:
+    """Operator-confirmed recovery of a fixed path re-created over a stale reservation.
+
+    GH#37706: a linked tree without a generation marker occupies a path still
+    reserved by one closed generation with no retirement plan, so neither
+    enrollment nor absence reconciliation can proceed. Without `confirm` this
+    only previews. Confirmation archives and verifies the unenrolled tree
+    (ignored files are not captured), removes it natively, then releases the
+    stale reservation through the fenced `reconcile_absence`. Branch is kept.
+    An absent path (for example after an interrupted recovery) only reconciles.
+    """
+    if not root.is_absolute() or root.resolve() != root:
+        raise ValueError("canonical-archive-root-required")
+    if not path.is_absolute():
+        raise ValueError("absolute-path-required")
+    if _absent(path):
+        return reconcile_path(store, path)
+    repositories = _repositories(config, explicit=True)
+    result: dict[str, object] = {"path": str(path), "cleanup_authorized": False}
+    generation, reason = _stale_reservation(store, path)
+    if generation is None:
+        return dict(result, status="not-reused-path", reason=reason)
+    result["generation_id"] = generation
+    blocker = reservation_blocker(store, path, generation)
+    if blocker is not None:
+        return dict(result, status=blocker)
+    common = _git("-C", str(path), "rev-parse", "--path-format=absolute",
+                  "--git-common-dir")
+    if common not in repositories:
+        return dict(result, status="outside-maintenance-scope")
+    slug, base = repositories[common]
+    if not confirm:
+        return dict(result, status="reused-path-preview", confirm_required=True,
+                    repo=slug, base_branch=base, ignored_files="not-archived")
+    if root.is_relative_to(path) or root.is_relative_to(_git_directory(path)):
+        raise ValueError("archive-output-must-be-outside-worktree")
+    create_archive_root(root)
+    validate_archive_path(root)
+    with _lock(store, generation):
+        # Recheck under the generation lock shared with retirement and reconciliation.
+        if (_stale_reservation(store, path)[0] != generation
+                or reservation_blocker(store, path, generation) is not None):
+            raise ValueError("reused-path-changed")
+        archived = _archive_and_remove(
+            store, path, generation, ArchiveTarget(slug, base, root), common,
+        )
+    reconciliation = reconcile_absence(store, path, generation)
+    status = ("reused-path-recovered"
+              if reconciliation.get("status") == "source-absent-reconciled"
+              else "reused-tree-archived-reservation-retained")
+    return dict(result, status=status, archive=archived["archive"],
+                operation_id=archived["operation_id"], base_ref=archived["base_ref"],
+                reconciliation=reconciliation)
 
 
 def cleanup_pass(

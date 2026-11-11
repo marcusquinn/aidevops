@@ -262,7 +262,12 @@ def process_item(store, item, repositories, adapter, options):
             pending = receipt(connection, operation, "plan")
             if not done:
                 require_confirmation(connection, operation, confirmed)
-        if done:
+        if done and os.path.lexists(item["path"]):
+            # A retired source cannot reappear: this is a new tree at a reused
+            # path, which the path-derived receipt must not claim (GH#37706).
+            outcome.update(status="retained", reason="path-reused-after-retirement",
+                           next="worker-registry.py recover-reused-path")
+        elif done:
             outcome["status"] = "already-retired"
         elif not pending and not os.path.lexists(item["path"]):
             # No removal or preservation is claimed. Admission cleanup separately

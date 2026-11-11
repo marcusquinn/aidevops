@@ -34,6 +34,28 @@ directory produces a retry, not a terminal outcome. Journal and admission releas
 commit together; failures roll back both. A replay returns its historical outcome
 without inspecting or modifying a replacement generation at the same pathname.
 
+## Fixed-path re-creation (GH#37706)
+
+Producers that reuse a fixed pathname (for example persistent Buzz agent trees)
+can find a closed admission for a tree that disappeared before the cleanup pass
+reconciled it. Absence is provable immediately before re-creation, so:
+
+- `worktree_create_registered` calls `worker-registry.py reconcile-path --path P`
+  while `P` is absent, and native `create-worktree` does the same before its
+  reservation check. `absence.reconcile_path` runs `reconcile_absence` for every
+  admission of that exact path. All fences above still apply; a retained
+  reservation keeps refusing enrollment. A present path is never reconciled.
+- An already re-used path (a linked tree without a marker in its own Git admin
+  while one closed generation without a retirement plan reserves the path) uses
+  the operator route `worker-registry.py recover-reused-path --path P
+  --repos-config C --output-root R`. It previews first. `--confirm` runs an idle
+  census, archives and verifies the tree (ignored files are not captured), pins
+  the archive base, journals `reused-path-archived`, rechecks the content and
+  identity, removes the tree natively, then reconciles the stale generation.
+  The branch is kept. Re-running after an interrupted recovery only reconciles.
+- Legacy cleanup no longer reports such a tree as `already-retired`; it is
+  `retained` with reason `path-reused-after-retirement`.
+
 ## Reporting
 
 `cleanup` returns `reconciled` separately from `retired`, `held` and `failed`.

@@ -236,8 +236,13 @@ _worker_lifecycle_refusal_next_step() {
 		printf '  python3 -E -s -B %q --state-dir %q retire-enrolled-only --repos-config %q --output-root %q --path %q\n' \
 			"$legacy_cli" "$state_dir" "${HOME}/.config/aidevops/repos.json" "$archive_root" "$worktree" >&2
 		;;
-	generation-marker-missing)
-		printf '[worker-lifecycle] next: registry history records enrollment but the generation marker is missing. Retain the tree and inspect its Git admin metadata and registry history; legacy retirement is not applicable.\n' >&2
+	generation-marker-missing | reserved-path-without-enrollment-marker)
+		legacy_cli=$(cd -- "${BASH_SOURCE[0]%/*}/../worker-lifecycle" 2>/dev/null && pwd -P) ||
+			legacy_cli="${BASH_SOURCE[0]%/*}/../worker-lifecycle"
+		legacy_cli="${legacy_cli}/worker-registry.py"
+		printf '[worker-lifecycle] next: registry history records enrollment but this tree has no generation marker; legacy retirement is not applicable. If the path was re-created after an earlier closed generation (GH#37706), stop any process using it and preview archive-first recovery (add --confirm to archive, verify, remove the unenrolled tree and release the stale reservation; branch kept). The preview refuses any other state; then retain the tree and inspect its Git admin metadata and registry history:\n' >&2
+		printf '  python3 -E -s -B %q --state-dir %q recover-reused-path --repos-config %q --output-root %q --path %q\n' \
+			"$legacy_cli" "$state_dir" "${HOME}/.config/aidevops/repos.json" "$archive_root" "$worktree" >&2
 		;;
 	worktree-locked)
 		printf '[worker-lifecycle] next: inspect the Git worktree lock and its reason with git worktree list --porcelain. After confirming the lock is no longer needed, use git worktree unlock PATH on the listed path (the private path if relocation occurred). If relocation already occurred, leave its registry state intact: the registry cleanup pass resumes it with the stored generation, repository, base branch and archive target. Otherwise retry retirement.\n' >&2

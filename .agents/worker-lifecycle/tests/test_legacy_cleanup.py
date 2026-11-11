@@ -418,7 +418,9 @@ class LegacyCleanupContract(unittest.TestCase):
         self.target.mkdir()
         (self.target / "replacement").write_text("keep")
         again = self.cleanup()
-        self.assertEqual(again["results"][0]["status"], "already-retired")
+        # A reused path is not claimed by the old receipt (GH#37706).
+        self.assertEqual(again["results"][0]["status"], "retained")
+        self.assertEqual(again["results"][0]["reason"], "path-reused-after-retirement")
         self.assertEqual((self.target / "replacement").read_text(), "keep")
 
     def test_group_writable_caller_umask_keeps_new_archives_private(self):

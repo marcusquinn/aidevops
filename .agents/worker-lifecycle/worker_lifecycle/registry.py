@@ -147,6 +147,19 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    reconcile_path = commands.add_parser(
+        "reconcile-path",
+        help="release stale reservations of an absent path before re-creation; never deletes",
+    )
+    reconcile_path.add_argument("--path", required=True, type=Path)
+    reused = commands.add_parser(
+        "recover-reused-path",
+        help="preview or confirm archive-first recovery of an unenrolled tree on a stale reserved path",
+    )
+    reused.add_argument("--path", required=True, type=Path)
+    reused.add_argument("--repos-config", required=True, type=Path)
+    reused.add_argument("--output-root", required=True, type=Path)
+    reused.add_argument("--confirm", action="store_true")
     proof = commands.add_parser(
         "verify-retirement", help="verify dated cleanup-receipt evidence; never delete",
     )
@@ -212,6 +225,16 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
         return retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
         )
+    if args.operation == "recover-reused-path":
+        from .cleanup import recover_reused_path
+
+        return recover_reused_path(
+            store, args.repos_config, args.output_root, args.path, args.confirm,
+        )
+    if args.operation == "reconcile-path":
+        from .absence import reconcile_path
+
+        return reconcile_path(store, args.path)
     if args.operation == "cleanup":
         from .cleanup import cleanup_pass
 
@@ -241,7 +264,8 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
-    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
+    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
+                          "recover-reused-path", "reconcile-path"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",

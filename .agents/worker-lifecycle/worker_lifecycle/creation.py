@@ -12,6 +12,7 @@ import sys
 import tempfile
 from uuid import UUID, uuid5
 
+from .absence import reconcile_path
 from .directory_handle import DirectoryHandle
 from .enrollment import GenerationEnrollment
 from .runtime import adapter_for, require_ready
@@ -94,6 +95,9 @@ def create_worktree(
     identity = adapter.capture(pid)
     if adapter.observe(identity).status != "alive":
         raise StoreConflict("creator-not-alive")
+    # A stale reservation of this absent path is released through the fenced
+    # absence reconciliation; any retained reservation still refuses (GH#37706).
+    reconcile_path(store, path)
     with store.connection() as connection:
         if connection.execute(
             "SELECT 1 FROM generation_admissions WHERE path=?", (str(path),),

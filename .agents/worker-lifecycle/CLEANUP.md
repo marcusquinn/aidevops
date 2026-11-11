@@ -445,7 +445,10 @@ scanning unrelated candidates. For an already moved source, use `retire-worktree
 to retry, never guess from a missing public path. A linked tree without a marker or modern history
 refuses with `detail: not-enrolled`; manual removal prints the operator-confirmed
 [LEGACY-CLEANUP.md](LEGACY-CLEANUP.md) command (GH#36494). With modern history, the refusal is
-`generation-marker-missing`: inspect metadata/history instead of using legacy retirement.
+`generation-marker-missing`: inspect metadata/history instead of using legacy retirement. When the
+path was re-created after an earlier closed generation (enrollment refuses with
+`reserved-path-without-enrollment-marker`), preview `recover-reused-path --path PATH --repos-config
+CONFIG --output-root ROOT`, then add `--confirm`; see [ABSENCE.md](ABSENCE.md) (GH#37706).
 `worktree-locked` requires inspecting Git's lock reason; unlock the listed path only when the
 lock is no longer needed, then retry. Neither refusal overrides the registry checks.
 

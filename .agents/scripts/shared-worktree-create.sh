@@ -52,6 +52,35 @@ _worktree_enroll_generation() {
 	return 0
 }
 
+# Release a stale lifecycle reservation of an absent fixed path before Git
+# re-creates it (GH#37706). Best effort and never destructive: the registry's
+# fenced absence reconciliation decides, and a retained reservation still
+# refuses enrollment with its remediation.
+_worktree_reconcile_absent_path() {
+	local path="$1"
+	local helper_dir="${BASH_SOURCE[0]%/*}"
+	local state_dir=""
+	local interpreter=""
+	local parent=""
+	local result=""
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ]]; then
+		return 0
+	fi
+	[[ ! -e "$path" && ! -L "$path" ]] || return 0
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${helper_dir}/worker-lifecycle-state.sh" || return 0
+	state_dir=$(worker_lifecycle_state_dir) || return 0
+	[[ -n "$state_dir" && -d "$state_dir" ]] || return 0
+	interpreter=$(type -P python3) || return 0
+	parent=$(cd -- "$(dirname -- "$path")" 2>/dev/null && pwd -P) || return 0
+	result=$("$interpreter" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" reconcile-path --path "${parent}/$(basename -- "$path")" 2>/dev/null) || return 0
+	if [[ "$result" == *'"status": "reservation-retained"'* ]]; then
+		printf 'Lifecycle reservation of this path was retained; enrollment may refuse: %s\n' "$path" >&2
+	fi
+	return 0
+}
+
 # Shell-safe path for a pasteable command; reports are often pasted into
 # issues, so the home directory is abbreviated to ~ (GH#36370).
 _worktree_display_path() {
@@ -85,6 +114,13 @@ _worktree_refusal_remediation() {
 		;;
 	ref-already-checked-out)
 		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
+		;;
+	reserved-path-without-enrollment-marker)
+		# GH#37706: a stale closed generation still reserves this re-created path.
+		printf 'Refusal cause: %s; an earlier generation still reserves this path. Stop any process using the tree, preview archive-first recovery, then add --confirm: python3 %s --state-dir %s recover-reused-path --repos-config %s --output-root %s --path PATH\n' \
+			"$code" "$(_worktree_display_path "$registry_cli")" "$(_worktree_display_path "$state_dir")" \
+			"$(_worktree_display_path "${HOME}/.config/aidevops/repos.json")" \
+			"$(_worktree_display_path "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}")" >&2
 		;;
 	upgrade-* | schema-*)
 		printf 'Refusal cause: %s; upgrade the registry: %s\n' "$code" "$upgrade_cmd" >&2
@@ -163,6 +199,7 @@ worktree_create_registered() {
 	creation_token=$(python3 "${registry_helper%.sh}-owner.py" begin-create \
 		"$WORKTREE_REGISTRY_DB" "$path") || return 1
 	_ds_substage_record precreate.registry_begin_create "$stage_t0"
+	_worktree_reconcile_absent_path "$path"
 	_ds_substage_run precreate.git_worktree_add _worktree_create_native "$repo" "$path" "$ref" "$@" || return 1
 	branch=$(git -C "$path" symbolic-ref --quiet --short HEAD) || branch="HEAD"
 	# Generic producers inside a managed run belong to its invocation leader,

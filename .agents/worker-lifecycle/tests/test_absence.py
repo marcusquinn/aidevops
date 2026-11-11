@@ -1,19 +1,29 @@
 """Reconcile disappearance in disposable repositories without claiming a backup."""
 
+from contextlib import redirect_stdout
 import errno
+import io
+import json
 import os
 import subprocess  # nosec B404 # exception fixtures only, no process launch
+import sys
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
 from tests import test_retirement as fixtures
-from worker_lifecycle import absence
+from worker_lifecycle import absence, retirement
+from worker_lifecycle.absence import reconcile_path
 from worker_lifecycle.admission import AdmissionRegistry
-from worker_lifecycle.cleanup import _failure_details, cleanup_pass
+from worker_lifecycle.cleanup import _failure_details, cleanup_pass, recover_reused_path
+from worker_lifecycle.cleanup_plan import prepare_cleanup
 from worker_lifecycle.enrollment import GenerationEnrollment
+from worker_lifecycle.preservation import _helper
 from worker_lifecycle.process import ProcessObservation
+from worker_lifecycle.registry import main
+from worker_lifecycle.retirement import _event_id
 from worker_lifecycle.session import admit_session
+from worker_lifecycle.storage import StoreConflict
 
 
 class AbsenceContract(unittest.TestCase):
@@ -202,6 +212,103 @@ class AbsenceContract(unittest.TestCase):
         self.assertEqual((report["reconciled"], report["failed"]), (0, 1))
         self.assertTrue(self.reserved())
         self.assertTrue((self.target / "work.txt").exists())
+
+
+class ReusedPathContract(unittest.TestCase):
+    """GH#37706: a fixed path re-created after an unfinished retirement."""
+
+    setUp = fixtures.RetirementContract.setUp
+    git = fixtures.RetirementContract.git
+    create = fixtures.RetirementContract.create
+    cleanup_config = fixtures.RetirementContract.cleanup_config
+    reserved = AbsenceContract.reserved
+
+    def stale(self):
+        """Closed admission, ended owner, tree gone without retirement."""
+        self.create()
+        self.generation = GenerationEnrollment(self.store).inspect(self.target)
+        self.assertEqual(prepare_cleanup(self.store, self.target)["admission"], "closed")
+        self.git("worktree", "remove", "--force", str(self.target))
+
+    def registry(self, *arguments):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["registry", "--state-dir", str(self.store.directory),
+                                       *arguments]), redirect_stdout(output):
+            code = main()
+        return code, json.loads(output.getvalue())
+
+    def reconciled_event(self):
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT payload FROM events WHERE event_id=?",
+                (_event_id(self.generation, "absence-reconciled"),),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def reuse(self):
+        """Re-create the path outside the registry, as a deadlocked producer did."""
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        (self.target / "new-work.txt").write_text("replacement result")
+        with self.assertRaisesRegex(StoreConflict, "reserved-path-without-enrollment-marker"):
+            GenerationEnrollment(self.store).resolve(self.target, create=True)
+
+    def recover(self, confirm):
+        return recover_reused_path(self.store, self.cleanup_config(), self.output,
+                                   self.target, confirm)
+
+    def test_reconcile_path_cli_releases_absent_closed_reservation(self):
+        self.stale()
+        code, result = self.registry("reconcile-path", "--path", str(self.target))
+        self.assertEqual((code, result["status"]), (0, "path-released"), result)
+        self.assertFalse(self.reserved())
+        self.assertEqual(self.reconciled_event()["outcome"], "source-disappeared")
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        replacement = GenerationEnrollment(self.store).resolve(self.target, create=True)
+        self.assertNotEqual(replacement, self.generation)
+        self.assertEqual(self.registry("reconcile-path", "--path", str(self.target))[1]["status"],
+                         "path-present")
+
+    def test_controlled_creation_reconciles_stale_reservation_first(self):
+        self.stale()
+        self.create()
+        self.assertNotEqual(GenerationEnrollment(self.store).inspect(self.target), self.generation)
+        self.assertEqual(self.reconciled_event()["status"], "source-absent-reconciled")
+
+    def test_planned_relocation_keeps_reservation(self):
+        self.stale()
+        retirement._record(self.store, self.generation, "planned", {"type": "fixture-plan"})
+        self.assertEqual(reconcile_path(self.store, self.target)["status"], "reservation-retained")
+        self.assertTrue(self.reserved())
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        self.assertEqual(self.recover(confirm=True)["status"], "retry-required")
+        self.assertTrue(self.target.is_dir())
+
+    def test_recovery_previews_then_archives_before_removal(self):
+        self.stale()
+        self.reuse()
+        preview = self.recover(confirm=False)
+        self.assertEqual(preview["status"], "reused-path-preview", preview)
+        self.assertEqual(preview["generation_id"], self.generation)
+        self.assertTrue((self.target / "new-work.txt").is_file())
+        self.assertTrue(self.reserved())
+        result = self.recover(confirm=True)
+        self.assertEqual(result["status"], "reused-path-recovered", result)
+        self.assertFalse(os.path.lexists(self.target))
+        self.assertFalse(self.reserved())
+        restored = self.root / "restored"
+        _helper("restore", str(result["archive"]), "--target", str(restored),
+                "--verification-copy")
+        self.assertEqual((restored / "new-work.txt").read_text(), "replacement result")
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        GenerationEnrollment(self.store).resolve(self.target, create=True)
+
+    def test_recovery_refuses_enrolled_tree(self):
+        self.create()
+        result = self.recover(confirm=True)
+        self.assertEqual((result["status"], result["reason"]),
+                         ("not-reused-path", "generation-marker-present"))
+        self.assertTrue((self.target / "work.txt").is_file())
+
 
 class FailureDiagnostics(unittest.TestCase):
     def test_archive_validation_code_without_raw_arguments_or_stderr(self):
