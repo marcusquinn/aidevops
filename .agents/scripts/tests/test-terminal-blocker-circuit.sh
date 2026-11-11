@@ -112,6 +112,23 @@ _terminal_blocker_target_revision() {
 	return 0
 }
 
+test_older_input_circuit_survives_other_reason() {
+	local issue='{"title":"Decision","body":"unchanged"}' revision="" fp="" other="" comments="" status=0
+	revision=$(terminal_blocker_task_revision "$issue" owner/repo 42 "$TEST_ROOT" input_required)
+	fp=$(_terminal_blocker_hash 'v2:input_required')
+	other=$(_terminal_blocker_hash 'v2:runner_capability_unmet')
+	comments=$(jq -nc --arg rev "$revision" --arg fp "$fp" --arg other "$other" '[
+		{body:("<!-- aidevops:terminal-blocker-circuit revision="+$rev+" blocker="+$fp+" -->"),created_at:"2026-01-01T00:00:00Z",author_association:"OWNER"},
+		{body:("<!-- aidevops:terminal-blocker-circuit revision="+$rev+" blocker="+$other+" -->"),created_at:"2026-01-02T00:00:00Z",author_association:"MEMBER"}]')
+	terminal_blocker_input_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" || status=1
+	terminal_blocker_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" >/dev/null || status=1
+	terminal_blocker_input_circuit_active "$comments" '{"title":"Decision","body":"changed"}' owner/repo 42 "$TEST_ROOT" && status=1
+	comments=$(jq -c '. + [{body:"terminal-blocker-circuit:retry",created_at:"2026-01-03T00:00:00Z",author_association:"OWNER"}]' <<<"$comments")
+	terminal_blocker_input_circuit_active "$comments" "$issue" owner/repo 42 "$TEST_ROOT" && status=1
+	print_result "older input circuit survives differing reason until brief change or trusted retry" "$status"
+	return 0
+}
+
 # GH#36126: the recovery helper loads pulse-dep-graph.sh only when this is
 # undefined. Default to no declared dependency so release cases never reach
 # native GraphQL; TEST_BLOCKED_BY=unresolved holds a re-armed release.
@@ -1933,6 +1950,7 @@ main() {
 	test_push_policy_timeout_checkpoint
 	test_normalized_blocker_fingerprint
 	test_worker_contract_reason_protocol
+	test_older_input_circuit_survives_other_reason
 	test_task_revision_inputs
 	test_release_modes_and_retry
 	test_dispatch_hold_revalidates_revision
