@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.172] - 2026-11-11
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#37717)
+
+### Fixed
+
+- initialise detached log root for pulse-side callers
+
 ## [3.39.171] - 2026-11-11
 
 ### Added
