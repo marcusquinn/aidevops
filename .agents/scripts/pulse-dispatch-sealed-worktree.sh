@@ -4,6 +4,28 @@
 # Sealed-generation recovery. Removal always delegates to the archive-backed
 # helper (including its fresh process/ownership checks); never force removal.
 
+_dlw_classify_sealed_candidate() {
+	local path="$1" issue="$2" repo="$3"
+	local record="" rc=0 branch=""
+	record=$(python3 "$(_dlw_lifetime_helper)" status "$path" 2>/dev/null) || rc=$?
+	if [[ "$rc" == 3 ]]; then
+		# Lifecycle-only generations have no old managed enrollment. Preserve
+		# legacy branch identity, tightened to an explicit terminal issue suffix.
+		branch=$(git -C "$path" symbolic-ref --short HEAD) || return 1
+		[[ "$branch" =~ (^|[/_-])gh-?${issue}$ ]] && printf 'sealed\n'
+		return 0
+	fi
+	[[ "$rc" == 0 ]] || return 1
+	# Branch names only nominate enrolled candidates. Never retire a generation
+	# with a missing/different enrolled task, even if its Git tree is empty.
+	jq -e '.task.issue != null and .task.repo != null' <<<"$record" >/dev/null || return 1
+	if jq -e --arg issue "$issue" --arg repo "$repo" \
+		'.task.issue == $issue and .task.repo == $repo' <<<"$record" >/dev/null; then
+		printf 'sealed\n'
+	fi
+	return 0
+}
+
 _dispatch_skip_for_sealed_generation() {
 	local repo_path="$1" issue="$2" repo="$3"
 	declare -F _dlw_sealed_hold_active >/dev/null 2>&1 || return 1
@@ -22,10 +44,9 @@ _dlw_sealed_hold_file() {
 # Include lifecycle admission so unsealing/replacing a generation wakes it too.
 _dlw_sealed_snapshot() {
 	local repo_path="$1" issue="$2" repo="$3"
-	local line="" path="" branch="" class="" status="" head="" snapshot="" listing="" base=""
+	local line="" path="" branch="" class="" status="" head="" snapshot="" listing="" base="" ahead=""
 	listing=$(git -C "$repo_path" worktree list --porcelain) || return 1
-	base=$(git -C "$repo_path" rev-parse refs/remotes/origin/HEAD) || return 1
-	snapshot="$base"
+	base=$(git -C "$repo_path" rev-parse --verify refs/remotes/origin/HEAD 2>/dev/null) || base="default_unavailable"
 	while IFS= read -r line; do
 		case "$line" in
 		"worktree "*) path="${line#worktree }"; continue ;;
@@ -36,7 +57,10 @@ _dlw_sealed_snapshot() {
 		class=$(_dlw_classify_reuse_candidate "$path" "$issue" "$repo") || return 1
 		status=$(git -C "$path" status --porcelain --ignored --untracked-files=all) || return 1
 		head=$(git -C "$path" rev-parse HEAD) || return 1
-		snapshot+=$'\n'"${path}|${branch}|${class}|${head}|${status}"
+		# Unrelated default-branch commits must not wake a protected checkpoint.
+		# Only integration of its commits changes its ahead evidence.
+		ahead=$(git -C "$path" rev-list --count "${base}..HEAD" 2>/dev/null) || ahead="default_unavailable"
+		snapshot+=$'\n'"${path}|${branch}|${class}|${head}|${ahead}|${status}"
 	done <<<"$listing"
 	printf '%s' "$snapshot" | git -C "$repo_path" hash-object --stdin
 	return "${PIPESTATUS[1]}"
@@ -51,7 +75,8 @@ _dlw_sealed_hold_active() {
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	# Unavailable APIs/process evidence can recover without a Git change.
 	case "$reason" in
-	dirty|unpublished_commits) ;;
+	dirty|unpublished_commits)
+		now=$(date +%s); [[ $((now - stamp)) -lt 86400 ]] || return 1 ;;
 	*) now=$(date +%s); [[ $((now - stamp)) -lt 300 ]] || return 1 ;;
 	esac
 	fingerprint=$(_dlw_sealed_snapshot "$repo_path" "$issue" "$repo") || return 1
@@ -60,15 +85,24 @@ _dlw_sealed_hold_active() {
 }
 
 _dlw_sealed_hold_record() {
-	local repo_path="$1" issue="$2" repo="$3" reason="$4"
-	local file="" fingerprint="" temporary=""
+	local repo_path="$1" issue="$2" repo="$3" reason="$4" expected="$5"
+	local file="" fingerprint="" temporary="" unchanged=0
 	file=$(_dlw_sealed_hold_file "$issue" "$repo") || return 1
 	fingerprint=$(_dlw_sealed_snapshot "$repo_path" "$issue" "$repo") || return 1
+	# Refusal evidence must describe this snapshot, not a state that changed
+	# between the dirt/ahead probe and persistence (which could hold an empty tree).
+	[[ -n "$expected" && "$fingerprint" == "$expected" ]] || return 1
+	if [[ -f "$file" ]] && jq -e --arg fingerprint "$fingerprint" --arg reason "$reason" \
+		'.fingerprint == $fingerprint and .reason == $reason' "$file" >/dev/null 2>&1; then
+		unchanged=1
+	fi
 	mkdir -p "${file%/*}" || return 1
 	temporary=$(mktemp "${file}.XXXXXX") || return 1
 	jq -cn --arg fingerprint "$fingerprint" --arg reason "$reason" --argjson stamp "$(date +%s)" \
 		'{fingerprint:$fingerprint,reason:$reason,stamp:$stamp}' >"$temporary" && mv "$temporary" "$file" || return 1
-	echo "[dispatch_worker_launch] worktree_reuse_sealed_generation issue=#${issue} path_class=sealed_issue_generation reason=${reason} action=hold_until_state_changes no_wave_slot_spent=true" >>"${LOGFILE:-/dev/null}"
+	if [[ "$unchanged" == 0 ]]; then
+		echo "[dispatch_worker_launch] worktree_reuse_sealed_generation issue=#${issue} path_class=sealed_issue_generation reason=${reason} action=hold_until_state_changes no_wave_slot_spent=true" >>"${LOGFILE:-/dev/null}"
+	fi
 	return 0
 }
 

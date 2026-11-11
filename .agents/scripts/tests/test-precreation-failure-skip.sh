@@ -1364,6 +1364,11 @@ SEALED_HELPER
 	_release_dispatch_claim_on_abort 37806 "$repo_slug" user worker_launch_rc_2:worktree_reuse_sealed_generation || return 1
 	[[ -z "$_claim_comment_id" ]] || return 1
 	grep -q -- '--method DELETE' "$sandbox/gh-calls" || return 1
+	# Normal default-branch traffic cannot re-arm the same ahead checkpoint.
+	local unrelated=""
+	unrelated=$(printf 'unrelated\n' | GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$unrelated" || return 1
+	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" || return 1
 	# Advancing the default to include the checkpoint invalidates the hold.
 	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$ahead" || return 1
 	_dlw_sealed_hold_active "$sandbox/repo" 37806 "$repo_slug" && return 1
@@ -1390,6 +1395,67 @@ if test_sealed_generation_recovery; then
 	pass "sealed empty generation retires and creates fresh; unpublished/dirty checkpoints hold before claim and deterministic refusal releases claim"
 else
 	fail "sealed generation recovery and state-aware preclaim hold"
+fi
+
+test_sealed_evidence_fences() (
+	local stored_record='{"task":{"issue":"99","repo":"owner/repo"}}' python_rc=0
+	local legacy_branch='feature/gh37806'
+	python3() { printf '%s\n' "$stored_record"; return "$python_rc"; }
+	git() { printf '%s\n' "$legacy_branch"; return 0; }
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	stored_record='{"task":{"issue":"37806","repo":"other/repo"}}'
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	stored_record='{"task":{"issue":"37806","repo":"owner/repo"}}'
+	[[ "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" == sealed ]] || return 1
+	python_rc=3
+	[[ "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" == sealed ]] || return 1
+	legacy_branch='feature/gh37806-other-task'
+	[[ -z "$(_dlw_classify_sealed_candidate /fixture 37806 owner/repo)" ]] || return 1
+	# A clean snapshot after a dirty refusal must not acquire a permanent hold.
+	export AIDEVOPS_DISPATCH_SEALED_HOLD_DIR="${TMP}/sealed-fences"
+	local LOGFILE="${TMP}/sealed-fences.log" snapshot_value=clean file=""
+	_dlw_sealed_snapshot() { printf '%s\n' "$snapshot_value"; return 0; }
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty && return 1
+	file=$(_dlw_sealed_hold_file 37806 owner/repo)
+	[[ ! -e "$file" ]] || return 1
+	snapshot_value=dirty
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty || return 1
+	_dlw_sealed_hold_record /fixture 37806 owner/repo dirty dirty || return 1
+	[[ "$(wc -l <"$LOGFILE" | tr -d ' ')" == 1 ]] || return 1
+	_dlw_sealed_hold_active /fixture 37806 owner/repo || return 1
+	snapshot_value=clean
+	_dlw_sealed_hold_active /fixture 37806 owner/repo && return 1
+	# Missing origin/HEAD is cacheable evidence, never permission for removal.
+	source "${SCRIPTS_DIR}/pulse-dispatch-sealed-worktree.sh"
+	git() {
+		local operation="${3:-}"
+		case "$operation" in
+		worktree) printf 'worktree /fixture\nHEAD abc\nbranch refs/heads/feature/gh37806\n' ;;
+		rev-parse) [[ "${4:-}" != --verify ]] || return 1; printf 'abc\n' ;;
+		status) printf '?? valuable\n' ;;
+		hash-object) command -p git hash-object --stdin; return $? ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	_dlw_classify_reuse_candidate() { printf 'sealed\n'; return 0; }
+	[[ -n "$(_dlw_sealed_snapshot /fixture 37806 owner/repo)" ]] || return 1
+	# A failed or partial enumeration is not proof that no generation exists.
+	eval "$(awk '/^_dlw_select_issue_worktree\(\) \{/,/^}$/ { print }' "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh")"
+	local partial_output="" selection_rc=0
+	git() { printf '%s' "$partial_output"; return 1; }
+	_dlw_select_issue_worktree /fixture 37806 owner/repo || selection_rc=$?
+	[[ "$selection_rc" == 2 && "$_DLW_REUSE_REFUSAL" == worktree_reuse_evidence_unavailable ]] || return 1
+	partial_output=$'worktree /fixture\nbranch refs/heads/feature/gh37806\n'
+	selection_rc=0
+	_dlw_select_issue_worktree /fixture 37806 owner/repo || selection_rc=$?
+	[[ "$selection_rc" == 2 && -z "$_DLW_REUSE_PATH" ]] || return 1
+	return 0
+)
+if test_sealed_evidence_fences; then
+	pass "sealed identity, refusal/snapshot race, diagnostic dedup and missing-default evidence fences"
+else
+	fail "sealed identity and snapshot evidence fences"
 fi
 
 # =============================================================================
