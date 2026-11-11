@@ -174,7 +174,7 @@ extract_process_stage_functions() {
 	local fn_name=""
 	for fn_name in _pmp_stage_parse_and_validate _pmp_stage_handle_conflict \
 		_pmp_stage_review_and_gates _pmp_stage_required_checks _pmp_stage_pre_merge \
-		_pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
+		_pmp_admin_final_gate_or_route _pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
 		extract_function "$fn_name" "$source_file"
 	done
 	return 0

@@ -188,6 +188,7 @@ define_function_under_test() {
 		/^_pmp_stage_review_and_gates\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_required_checks\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_pre_merge\(\) \{/,/^\}$/ { print }
+		/^_pmp_admin_final_gate_or_route\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_admin_merge\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_ruleset_fallback\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_finalize_merge\(\) \{/,/^\}$/ { print }

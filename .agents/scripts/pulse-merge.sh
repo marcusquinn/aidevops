@@ -1471,7 +1471,7 @@ _pmp_stage_required_checks() {
 }
 
 _pmp_stage_pre_merge() {
-	local preflight_route_rc=0 native_auto_rc=0
+	local native_auto_rc=0
 	if [[ "${DRY_RUN:-0}" == "1" ]]; then
 		_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid" || return 1
 		echo "[pulse-wrapper] DRY-RUN: would merge PR #${pr_number} in ${repo_slug} (linked_issue=#${linked_issue:-none})" >>"$LOGFILE"
@@ -1488,15 +1488,15 @@ _pmp_stage_pre_merge() {
 	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
 	merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
 	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name"
+	# GH#37795: the full final gate (admin safety, review refresh, worker-briefed
+	# verdict, REST snapshot) runs once, immediately before each mutation
+	# (_pmp_stage_admin_merge, native auto-merge, ruleset fallbacks). Here only the
+	# cheap admin-authority check runs: it sets _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE,
+	# which native auto-merge handling needs before it retains or arms auto-merge.
 	# #aidevops:trust-boundary — revalidate exact-head authority before mutation.
-	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
 		_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
-		if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" || preflight_route_rc=$?
-			if [[ "$preflight_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" || "$preflight_route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
-				echo "[pulse-wrapper] Merge pass: preflight feedback route for PR #${pr_number} in ${repo_slug} remains partial" >>"$LOGFILE"
-			fi
-		fi
 		return 1
 	fi
 	if ! _pmp_approve_issue_sync_action_required_runs "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
@@ -1507,17 +1507,32 @@ _pmp_stage_pre_merge() {
 	fi
 	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" "$pr_review" "$pr_head_ref_oid" || native_auto_rc=$?
 	case "$native_auto_rc" in 0) return 4 ;; 2 | 3) return 1 ;; esac
-	if ! _pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid"; then
-		_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
-		return 1
-	fi
 	return 10
+}
+
+# GH#37795: the single full final gate before the admin merge, timed as
+# <prefix>trust_gate_s. A failure routes blocking checks to a fix worker (this
+# routing formerly ran at the first pre-merge gate).
+_pmp_admin_final_gate_or_route() {
+	local _tg_start=0 _tg_rc=0 route_rc=0
+	[[ -n "$timing_prefix" ]] && _tg_start=$(_pmp_now_epoch)
+	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid" || _tg_rc=$?
+	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}trust_gate_s" "$_tg_start"
+	[[ "$_tg_rc" -eq 0 ]] && return 0
+	_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
+	if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
+		_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" || route_rc=$?
+		if [[ "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" || "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
+			echo "[pulse-wrapper] Merge pass: preflight feedback route for PR #${pr_number} in ${repo_slug} remains partial" >>"$LOGFILE"
+		fi
+	fi
+	return 1
 }
 
 _pmp_stage_admin_merge() {
 	local original_output="" missing_output="" missing_exit=0
 	# #aidevops:trust-boundary — revalidate at the mutation, not only selection.
-	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid" || return 1
+	_pmp_admin_final_gate_or_route || return 1
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin --match-head-commit "$pr_head_ref_oid" 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
