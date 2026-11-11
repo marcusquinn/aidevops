@@ -280,46 +280,34 @@ release; unsupported histories remain blocked pending supported reconciliation.
 ### Expired claims that never reached ready (GH#35331)
 
 An approval-bound `claim-pr-checkpoint` can expire before the executor renews
-its prelaunch lease (`transition prelaunch` then reports `lease_unmatched`). The
-output's `prelaunch_expires_at` is the renewal deadline; an interactive executor
-should renew right after the claim. If it still expires, the claim owner, on the
-same authenticated account, device and session, closes it explicitly:
-
-```bash
-dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION
-```
-
-The command refuses a live lease, a ready lease or worker launch, an existing
-release, edited or other-actor events, and mismatched identity. It posts the
-existing `CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…` marker,
-which already retires the claim generation. That release grants nothing: the
-consumed approval stays rejected, and recovery needs a new generated approval
+its prelaunch lease (`transition prelaunch` reports `lease_unmatched`); renew
+before the output's `prelaunch_expires_at`. If it still expires, the claim owner
+(same account, device and session) runs
+`dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION`.
+It refuses a live or ready lease, a worker launch, an existing release, edited
+or other-actor events and mismatched identity, then posts
+`CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…`. That grants
+nothing: the consumed approval stays rejected; recovery needs a new approval
 whose `released_successors` entry (`outcome: claim_only_no_worker`) binds the
-claim and release comment IDs. History accepts that closure only when every
-claim and renewal expiry is known and elapsed before the release comment, so the
-automatic orphan release cannot close a live or unknown lease. Any later renewal
-or reuse of the closed token rejects the history.
+claim and release IDs. History accepts it only when every claim and renewal
+expiry is known and elapsed before the release; later renewal or token reuse
+rejects it.
 
-One older same-runner `worker_ownership_lost` diagnostic may precede the exact
-abort when it reports `exit=1 session_count=0` and contains no claim, nonce,
-lease, session or attempt identity. It does not close the claim or prove that
-another executor is inactive. Historical reconstruction retains its comment ID
-in `unbound_release_ids`, which the new approval must explicitly acknowledge.
-The exact expired owner abort is still required; edited or foreign diagnostics,
-identity-bearing releases, a second diagnostic, and ready/launch/renewal events
-after the diagnostic remain rejecting cases. No published evidence is removed.
+One older same-runner `worker_ownership_lost` diagnostic (`exit=1
+session_count=0`, no claim, nonce, lease, session or attempt identity) may
+precede the abort. It neither closes the claim nor proves inactivity; its ID is
+kept in `unbound_release_ids`, which the new approval must acknowledge. Edited
+or foreign diagnostics, identity-bearing releases, a second diagnostic, and
+later ready/launch/renewal events still reject. No evidence is removed.
 
 ### Approved attempts whose runtime never launched (GH#37669)
 
-When an approval-bound attempt releases `worker_not_launched`, the runtime never
-started and the approved exact head is unchanged, so the same approval stays
-reusable. The validator skips only a sequential, unedited episode by one trusted
-runner: a claim naming this `checkpoint_approval`, its own prelaunch/ready
-leases or launch notice, its own `CLAIM_RELEASED reason=worker_not_launched`
-with the same lease, then its own terminal lease. Any other release reason,
-foreign or edited event, or interleaved coordination still fences the approval.
-At most three such episodes are skipped per approval; after that, and after the
-24-hour approval window, head change or brief change, a new approval is needed.
+A `worker_not_launched` release leaves the approved head unchanged, so the
+approval stays reusable: the validator skips a sequential, unedited episode by
+one trusted runner (claim naming this `checkpoint_approval`, own leases or launch
+notice, own same-lease `worker_not_launched` release and terminal lease). Other
+reasons and foreign, edited or interleaved events still fence. Past three such
+episodes, the 24-hour window, or a head or brief change, a new approval is needed.
 
 ### Releases with no open episode (GH#36593)
 
