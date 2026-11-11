@@ -14,6 +14,8 @@ _APPROVAL_HELPER_CONTINUITY_LOADED=1
 _APPROVAL_LABELED_EVENT="labeled"
 # Worker-observability classification (t3077); not scope-bearing.
 _APPROVAL_OBSERVABILITY_LABEL="fix-the-fixer"
+# GH#37762: dispatch hold toggled by signed permission requests/decisions.
+_APPROVAL_PERMISSION_HOLD_LABEL="needs-maintainer-permissions"
 _APPROVAL_CONTINUITY_JSON_NUMBER="number"
 _APPROVAL_CONTINUITY_JSON_STRING="string"
 
@@ -94,6 +96,34 @@ _approval_continuity_ordered_mutation_rows() {
 		end
 	' <<<"$timeline_pages"
 	return $?
+}
+
+# #aidevops:trust-boundary — GH#37762: an allowlisted hold label must be
+# explained by the visible replay, as auto-dispatch is. Rebuild its state from
+# the signed lifecycle plus visible labeled/unlabeled events and require it to
+# equal the current state, so a timeline that omits a toggle (visibility lag or
+# truncation) fails continuity instead of verifying on other mutations.
+_approval_continuity_label_replay_matches() {
+	local signed_lifecycle="$1"
+	local current_snapshot="$2"
+	local mutation_rows="$3"
+	local label="$4"
+	local active=0 current=0 event="" _actor="" subject="" _rest=""
+	if jq -e --arg label "$label" 'any(.labels[]?.name; . == $label)' <<<"$signed_lifecycle" >/dev/null 2>&1; then
+		active=1
+	fi
+	if jq -e --arg label "$label" 'any(.lifecycle.labels[]?.name; . == $label)' <<<"$current_snapshot" >/dev/null 2>&1; then
+		current=1
+	fi
+	while IFS=$'\t' read -r event _actor subject _rest; do
+		[[ "$subject" == "$label" ]] || continue
+		case "$event" in
+		"$_APPROVAL_LABELED_EVENT") active=1 ;;
+		unlabeled) active=0 ;;
+		esac
+	done <<<"$mutation_rows"
+	[[ "$active" -eq "$current" ]] || return 1
+	return 0
 }
 
 _approval_continuity_lifecycle_change_allowed() {
@@ -287,7 +317,7 @@ _approval_verify_locked_issue_continuity() {
 	local approval_comment_id="$7"
 	local signed_lifecycle="" current_anchor="" signed_anchor="" candidate="" candidate_digest="" filtered_snapshot=""
 	local timeline_pages="" mutation_rows="" event="" actor="" subject="" actor_id="" actor_type="" actor_rc=0
-	local signed_has_status=0 auto_dispatch_active=0 current_auto_dispatch=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
+	local signed_has_status=0 auto_dispatch_active=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
 	local content_changes="" title_changed=0 body_changed=0 body_rc=0
 
 	# #aidevops:trust-boundary — no embedded lifecycle proof means this is a
@@ -303,9 +333,6 @@ _approval_verify_locked_issue_continuity() {
 	fi
 	if jq -e --arg auto "$_APPROVAL_AUTO_DISPATCH_LABEL" 'any(.labels[]?.name; . == $auto)' <<<"$signed_lifecycle" >/dev/null 2>&1; then
 		auto_dispatch_active=1
-	fi
-	if jq -e --arg auto "$_APPROVAL_AUTO_DISPATCH_LABEL" 'any(.lifecycle.labels[]?.name; . == $auto)' <<<"$current_snapshot" >/dev/null 2>&1; then
-		current_auto_dispatch=1
 	fi
 	current_anchor=$(jq -c '.lifecycle.lock_anchor // empty' <<<"$current_snapshot") || return 1
 	[[ -n "$current_anchor" && "$current_anchor" == "$signed_anchor" ]] || return 1
@@ -369,7 +396,8 @@ _approval_verify_locked_issue_continuity() {
 		[[ "$subject" == status:* ]] && saw_status_mutation=1
 		[[ "$event" == renamed ]] && saw_rename=1
 	done <<<"$mutation_rows"
-	[[ "$auto_dispatch_active" -eq "$current_auto_dispatch" ]] || return 1
+	_approval_continuity_label_replay_matches "$signed_lifecycle" "$current_snapshot" "$mutation_rows" "$_APPROVAL_AUTO_DISPATCH_LABEL" || return 1
+	_approval_continuity_label_replay_matches "$signed_lifecycle" "$current_snapshot" "$mutation_rows" "$_APPROVAL_PERMISSION_HOLD_LABEL" || return 1
 	[[ "$title_changed" -eq 0 || "$saw_rename" -eq 1 ]] || return 1 # title edits need an authorized rename
 	if [[ "$body_changed" -eq 1 ]]; then
 		_approval_continuity_body_edits_authorized "$slug" "$target_number" "$timeline_pages" "$approval_comment_id" || body_rc=$?

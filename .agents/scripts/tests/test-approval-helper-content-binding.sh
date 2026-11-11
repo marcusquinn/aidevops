@@ -886,6 +886,13 @@ test_locked_issue_permission_hold_continuity() {
 	jq --arg hold "$hold" '.labels |= map(select(.name != $hold))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4223,"node_id":"EV_4223","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"needs-maintainer-permissions"}}'
 	assert_verify "untrusted permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
+
+	# A timeline that omits the hold removal (visibility lag or truncation) must
+	# not verify on the strength of another visible authorized mutation.
+	write_locked_issue_fixture true "" "$hold"
+	jq --arg hold "$hold" '.labels |= map(select(.name != $hold)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4224,"node_id":"EV_4224","event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	assert_verify "hidden permission-hold removal remains stale" issue 41 STALE_APPROVAL 4
 	return 0
 }
 
