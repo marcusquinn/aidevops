@@ -33,281 +33,22 @@ Output: one summary line, then details. Exit 0 = pure move, 1 = FAIL,
 2 = usage or git error. Local git only: no network, no GitHub API.
 
 Merged squash PR: `--base <merge>^ --head <merge>`.
+
+Implementation lives in sibling `_file_split_*.py` modules (git, diff, residue,
+moves, gate); this file is the CLI entry point.
 """
 
 import argparse
 import collections
-import re
-import shutil
-import subprocess  # nosec B404 -- resolved local Git only, argv lists, never a shell
 import sys
 
-SHELL_SUFFIXES = (".sh", ".bash", ".zsh")
-FUNC_DEF_RES = (
-    re.compile(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_:.-]*)\s*(?:\(\s*\))?\s*(?:\{.*)?$"),
-    re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.-]*)\s*\(\s*\)\s*(?:\{.*)?$"),
-)
-HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-RESIDUE_RES = tuple(
-    re.compile(pattern)
-    for pattern in (
-        r"^$",
-        r"^#",
-        # Include guards: a complete test or assignment of a guard variable.
-        r"^(?:readonly\s+|export\s+|declare\s+-\S+\s+)?[A-Za-z0-9_]*_(?:LOADED|INCLUDED|SOURCED)=[\w\"']*;?$",
-        r"^(?:if\s+)?\[\[?(?!.*(?:\$\(|`))[^;&|]*_(?:LOADED|INCLUDED|SOURCED)\b[^;&|]*\]\]?"
-        r"(?:\s*&&\s*(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null)?)?(?:;\s*then)?;?$",
-        r"^(?:if\s+!?\s*)?(?:source|\.)\s+(?!.*(?:\$\(|`))[^;&|<>]+(?:\s+2>\s*/dev/null)?"
-        r"(?:\s*\|\|\s*(?:return|exit)\s+\d+)?(?:;\s*then)?;?$",
-        # Directory resolution: `X="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`.
-        r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z_]\w*=\"?\$\(\s*cd\s+\"?\$\(\s*dirname\s+\"?"
-        r"\$\{BASH_SOURCE(?:\[0\])?(?::-[^}]*)?\}\"?\s*\)\"?\s*(?:&>\s*/dev/null\s*)?&&\s*pwd(?:\s+-P)?\s*\)\"?"
-        r"(?:\s*\|\|\s*(?:return|exit)\s+\d+)?;?$",
-        # Plain *_DIR assignment of a literal/variable-only value.
-        r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z0-9_]*(?:_DIR|_dir)="
-        r"(?:\"(?:[^\"`$]|\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*)*\"|[^\s;&|<>`$()\"']*);?$",
-        # Directory existence tests.
-        r"^(?:if\s+)?\[\[?\s+-[a-z]\s+\"\$\{?\w+_DIR\}?[^\"`$;&|]*\"\s+\]\]?(?:;\s*then)?;?$",
-        r"^unset\s+[^;&|<>`$()]+;?$",
-        r"^(?:fi|then|else)$",
-        r"^(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null\s*\|\|\s*exit\s+\d+)?;?$",
-        r"^(?:printf|echo)\b(?!.*\$\()[^;&|<>`]*\b(?:failed to (?:load|source)|cannot (?:load|source))\b"
-        r"[^;&|<>`]*>&2;?$",
-    )
-)
-PIN_GREP = r'caller_function"?[[:space:]]*=='
-SCRIPT_REF_RE = re.compile(r"framework_script\(|caller_script")
-SCRIPT_LITERAL_RE = re.compile(r"([A-Za-z0-9_.+-]+\.(?:sh|bash|zsh|jq|py))\b")
-SCRIPT_VARIABLE_RE = re.compile(
-    r'framework_script\(\s*\$|caller_script"?\s*==\s*"?\$'
-)
-PIN_WINDOW_BEFORE = 3
-PIN_WINDOW_AFTER = 4
+from _file_split_diff import binary_changes, mode_changes, parse_diff, unmatched
+from _file_split_gate import gate_findings, stale_pointers
+from _file_split_git import GitError, git
+from _file_split_moves import moved_functions
+from _file_split_residue import is_residue
 
-
-class GitError(Exception):
-    """A git invocation failed."""
-
-
-def git(*args, ok_codes=(0,)):
-    """Run git and return decoded stdout; raise GitError on failure."""
-    executable = shutil.which("git")
-    if not executable:
-        raise GitError("git executable not found on PATH")
-    proc = subprocess.run(  # nosec B603 -- resolved Git, fixed subcommands, refs/paths are argv data
-        [executable, "-c", "core.quotePath=false", *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if proc.returncode not in ok_codes:
-        message = proc.stderr.decode("utf-8", "replace").strip()
-        raise GitError(f"git {' '.join(args)}: {message or proc.returncode}")
-    return proc.stdout.decode("utf-8", "surrogateescape")
-
-
-def diff_path(header_line, prefix):
-    """Return the path from a `--- a/x` or `+++ b/x` header, or None."""
-    value = header_line[4:].rstrip("\t")
-    if value == "/dev/null":
-        return None
-    return value[len(prefix):] if value.startswith(prefix) else value
-
-
-BINARY_RE = re.compile(r"^(?:Binary files .* differ|GIT binary patch)$")
-
-
-def binary_changes(text):
-    """Return diff lines reporting binary changes the line parser cannot verify."""
-    return [line for line in text.split("\n") if BINARY_RE.match(line)]
-
-
-def mode_changes(text):
-    """Return diff headers for mode changes on existing files (e.g. lost +x)."""
-    changes, current = [], None
-    for line in text.split("\n"):
-        if line.startswith("diff --git "):
-            current = line[len("diff --git "):]
-        elif line.startswith("old mode "):
-            changes.append(f"{current}: {line}")
-        elif line.startswith("new mode ") and changes:
-            changes[-1] += f"; {line}"
-    return changes
-
-
-def parse_diff(text):
-    """Return (removed, added) lists of (path, line_no, content)."""
-    removed, added = [], []
-    old_path = new_path = None
-    old_no = new_no = 0
-    in_hunk = False
-    for line in text.split("\n"):
-        if line.startswith("diff --git "):
-            old_path = new_path = None
-            in_hunk = False
-            continue
-        if not in_hunk and line.startswith("--- "):
-            old_path = diff_path(line, "a/")
-            continue
-        if not in_hunk and line.startswith("+++ "):
-            new_path = diff_path(line, "b/")
-            continue
-        match = HUNK_RE.match(line)
-        if match:
-            in_hunk = True
-            old_no, new_no = int(match.group(1)), int(match.group(2))
-            continue
-        if not in_hunk:
-            continue
-        if line.startswith("-"):
-            removed.append((old_path, old_no, line[1:].rstrip()))
-            old_no += 1
-        elif line.startswith("+"):
-            added.append((new_path, new_no, line[1:].rstrip()))
-            new_no += 1
-    return removed, added
-
-
-def is_residue(content):
-    """Return True when an added-only line is split scaffolding."""
-    stripped = content.strip()
-    return any(pattern.search(stripped) for pattern in RESIDUE_RES)
-
-
-def unmatched(entries, surplus):
-    """Return entries whose content is in the surplus multiset, in order."""
-    remaining = collections.Counter(surplus)
-    result = []
-    for entry in entries:
-        if remaining[entry[2]] > 0:
-            remaining[entry[2]] -= 1
-            result.append(entry)
-    return result
-
-
-def function_defs(entries):
-    """Map shell path -> set of function names defined in the entries."""
-    defs = collections.defaultdict(set)
-    for path, _line_no, content in entries:
-        if not path or not path.endswith(SHELL_SUFFIXES):
-            continue
-        for pattern in FUNC_DEF_RES:
-            match = pattern.match(content)
-            if match:
-                defs[path].add(match.group(1))
-                break
-    return defs
-
-
-def moved_functions(removed, added):
-    """Return sorted (fn, old_path, new_path) for cross-file moves."""
-    removed_defs, added_defs = function_defs(removed), function_defs(added)
-    moves = set()
-    for old_path, names in removed_defs.items():
-        for name in names - added_defs.get(old_path, set()):
-            for new_path, new_names in added_defs.items():
-                if new_path != old_path and name in new_names:
-                    moves.add((name, old_path, new_path))
-    return sorted(moves)
-
-
-def grep_head(head, args, pathspecs=(":/",)):
-    """Run git grep at HEAD and return root-relative (path, line_no, content) hits.
-
-    `:/` searches from the repository root even when run from a subdirectory;
-    `--full-name` keeps result paths root-relative for `git show HEAD:<path>`.
-    """
-    output = git("grep", "-n", "-I", "--full-name", *args, head, "--", *pathspecs, ok_codes=(0, 1))
-    prefix = f"{head}:"
-    hits = []
-    for line in output.splitlines():
-        if line.startswith(prefix):
-            line = line[len(prefix):]
-        match = re.match(r"^(.*?):(\d+):(.*)$", line)
-        if match:
-            hits.append((match.group(1), int(match.group(2)), match.group(3)))
-    return hits
-
-
-def file_lines(head, path, cache):
-    """Return the lines of path at HEAD (cached)."""
-    if path not in cache:
-        cache[path] = git("show", f"{head}:{path}").split("\n")
-    return cache[path]
-
-
-def basename_re(name):
-    """Match a file basename not embedded in a longer file name."""
-    return re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(name) + r"(?![A-Za-z0-9_-])")
-
-
-def pin_is_gate_for(head, path, line_no, old_base, cache):
-    """Decide whether a caller_function pin at path:line_no binds old_base."""
-    lines = file_lines(head, path, cache)
-    start = max(0, line_no - 1 - PIN_WINDOW_BEFORE)
-    window = lines[start:line_no + PIN_WINDOW_AFTER]
-    literals, variable = set(), False
-    for text in window:
-        if text.lstrip().startswith("#") or not SCRIPT_REF_RE.search(text):
-            continue
-        if SCRIPT_VARIABLE_RE.search(text):
-            variable = True
-        literals.update(SCRIPT_LITERAL_RE.findall(text))
-    if old_base in literals or variable:
-        return True
-    # No script reference near the pin: fail closed.
-    return not literals
-
-
-def gate_findings(head, moves):
-    """Return {(fn, old, new): [(path, line_no, content)]} for gated moves."""
-    if not moves:
-        return {}
-    # Documentation can quote a pin without enforcing it.
-    pins = [hit for hit in grep_head(head, ["-E", "-e", PIN_GREP]) if not hit[0].endswith(".md") and not hit[2].lstrip().startswith("#")]
-    cache, findings = {}, {}
-    for move in moves:
-        name, old_path = move[0], move[1]
-        old_base = old_path.rsplit("/", 1)[-1]
-        quoted = re.escape(name)
-        pin_re = re.compile(
-            r'caller_function"?\s*==\s*(?:"' + quoted + r'"|\'' + quoted + r"\'|" + quoted + r"(?![A-Za-z0-9_.:-]))"
-        )
-        sites = []
-        for path, line_no, content in pins:
-            if pin_re.search(content) and pin_is_gate_for(head, path, line_no, old_base, cache):
-                sites.append((path, line_no, content.strip()))
-        if sites:
-            old_re = basename_re(old_base)
-            for path, line_no, content in sites[:]:
-                for offset, text in enumerate(file_lines(head, path, cache)[line_no:line_no + PIN_WINDOW_AFTER], 1):
-                    if SCRIPT_REF_RE.search(text) and old_re.search(text):
-                        sites.append((path, line_no + offset, text.strip()))
-            findings[move] = sorted(set(sites))
-    return findings
-
-
-def stale_pointers(head, moves):
-    """Return sorted (path, line_no, content, fn, new_path) WARN entries."""
-    warnings = {}
-    edit_lines = grep_head(head, ["-F", "-e", "EDIT:"]) if moves else []
-    for name, old_path, new_path in moves:
-        old_base = old_path.rsplit("/", 1)[-1]
-        old_re = basename_re(old_base)
-        pointer_re = re.compile(
-            r"(?<![A-Za-z0-9_.-])" + re.escape(f"{old_base}::{name}") + r"(?![A-Za-z0-9_])"
-        )
-        pointer_files = set()
-        for path, line_no, content in grep_head(head, ["-F", "-e", f"{old_base}::{name}"]):
-            if pointer_re.search(content):
-                pointer_files.add(path)
-                warnings[(path, line_no)] = (content.strip(), name, new_path)
-        for path, line_no, content in edit_lines:
-            if not old_re.search(content) or (path, line_no) in warnings:
-                continue
-            if path in pointer_files or re.search(r"\b" + re.escape(name) + r"\b", content):
-                warnings[(path, line_no)] = (content.strip(), name, new_path)
-    return sorted((path, line_no, *rest) for (path, line_no), rest in warnings.items())
+BLOCKING_KEYS = ("removed_only", "review", "gated", "binary", "modes")
 
 
 def location(entry):
@@ -316,8 +57,8 @@ def location(entry):
     return f"{path or '/dev/null'}:{line_no}: {content}"
 
 
-def main(argv=None):
-    """Run the verifier; return the process exit code."""
+def parse_args(argv):
+    """Parse and validate command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Verify that a file-split commit range is a pure move.",
         epilog="Exit 0 = pure move, 1 = FAIL, 2 = usage or git error.",
@@ -331,56 +72,94 @@ def main(argv=None):
         parser.error("--max-details must be >= 0")
     if args.base.startswith("-") or args.head.startswith("-"):
         parser.error("--base and --head must be refs, not options")
+    return args
 
-    try:
-        base = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}").strip()
-        head = git("rev-parse", "--verify", "--end-of-options", f"{args.head}^{{commit}}").strip()
-        diff = git("diff", "--no-color", "--no-renames", "--no-ext-diff", "--no-textconv",
-                   "-U0", f"{base}...{head}", "--")
-        removed, added = parse_diff(diff)
-        binary = binary_changes(diff)
-        modes = mode_changes(diff)
-        removed_counter = collections.Counter(entry[2] for entry in removed)
-        added_counter = collections.Counter(entry[2] for entry in added)
-        removed_only = unmatched(removed, removed_counter - added_counter)
-        added_only = unmatched(added, added_counter - removed_counter)
-        review = [entry for entry in added_only if not is_residue(entry[2])]
-        residue = len(added_only) - len(review)
-        moves = moved_functions(removed, added)
-        gated = gate_findings(head, moves)
-        warnings = stale_pointers(head, moves)
-    except GitError as error:
-        print(f"file-split-verify: {error}", file=sys.stderr)
-        return 2
 
-    failed = bool(removed_only or review or gated or binary or modes)
-    print(
-        f"removed={len(removed)} added={len(added)} removed-only={len(removed_only)} "
-        f"review={len(review)} binary={len(binary)} mode={len(modes)} gated={len(gated)} warn={len(warnings)} "
-        f"residue={residue} moved-functions={len(moves)} "
+def analyse(args):
+    """Run all checks and return a dict of findings; raise GitError on failure."""
+    base = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}").strip()
+    head = git("rev-parse", "--verify", "--end-of-options", f"{args.head}^{{commit}}").strip()
+    diff = git("diff", "--no-color", "--no-renames", "--no-ext-diff", "--no-textconv",
+               "-U0", f"{base}...{head}", "--")
+    removed, added = parse_diff(diff)
+    removed_counter = collections.Counter(entry[2] for entry in removed)
+    added_counter = collections.Counter(entry[2] for entry in added)
+    added_only = unmatched(added, added_counter - removed_counter)
+    review = [entry for entry in added_only if not is_residue(entry[2])]
+    moves = moved_functions(removed, added)
+    return {
+        "removed": removed,
+        "added": added,
+        "removed_only": unmatched(removed, removed_counter - added_counter),
+        "review": review,
+        "residue": len(added_only) - len(review),
+        "binary": binary_changes(diff),
+        "modes": mode_changes(diff),
+        "moves": moves,
+        "gated": gate_findings(head, moves),
+        "warnings": stale_pointers(head, moves),
+    }
+
+
+def has_failure(result):
+    """Return True when any blocking finding is present."""
+    return any(result[key] for key in BLOCKING_KEYS)
+
+
+def summary_line(result, failed):
+    """Format the one-line summary."""
+    return (
+        f"removed={len(result['removed'])} added={len(result['added'])} "
+        f"removed-only={len(result['removed_only'])} review={len(result['review'])} "
+        f"binary={len(result['binary'])} mode={len(result['modes'])} "
+        f"gated={len(result['gated'])} warn={len(result['warnings'])} "
+        f"residue={result['residue']} moved-functions={len(result['moves'])} "
         f"result={'FAIL' if failed else 'PASS'}"
     )
 
-    def emit(label, entries):
-        limit = args.max_details or len(entries)
-        for entry in entries[:limit]:
-            print(f"{label} {entry}")
-        if len(entries) > limit:
-            print(f"{label} ... {len(entries) - limit} more (use --max-details 0)")
 
-    emit("REMOVED-ONLY", [location(entry) for entry in removed_only])
-    emit("REVIEW", [location(entry) for entry in review])
-    emit("BINARY", binary)
-    emit("MODE", modes)
+def emit(label, entries, max_details):
+    """Print up to max_details lines (0 = all) for one section."""
+    limit = max_details or len(entries)
+    for entry in entries[:limit]:
+        print(f"{label} {entry}")
+    if len(entries) > limit:
+        print(f"{label} ... {len(entries) - limit} more (use --max-details 0)")
+
+
+def emit_gated(gated):
+    """Print gated moves with the pin sites that bind the old file."""
     for (name, old_path, new_path), sites in gated.items():
         print(f"GATED {name}: moved {old_path} -> {new_path}; file-identity gate pins it at:")
         for site in sites:
             print(f"GATED   {location(site)}")
+
+
+def report(result, max_details):
+    """Print detail sections after the summary line."""
+    emit("REMOVED-ONLY", [location(entry) for entry in result["removed_only"]], max_details)
+    emit("REVIEW", [location(entry) for entry in result["review"]], max_details)
+    emit("BINARY", result["binary"], max_details)
+    emit("MODE", result["modes"], max_details)
+    emit_gated(result["gated"])
     emit("WARN", [
         f"{path}:{line_no}: stale pointer for {name} (now in {new_path}): {content}"
-        for path, line_no, content, name, new_path in warnings
-    ])
-    emit("MOVED", [f"{name}: {old_path} -> {new_path}" for name, old_path, new_path in moves])
+        for path, line_no, content, name, new_path in result["warnings"]
+    ], max_details)
+    emit("MOVED", [f"{name}: {old} -> {new}" for name, old, new in result["moves"]], max_details)
+
+
+def main(argv=None):
+    """Run the verifier; return the process exit code."""
+    args = parse_args(argv)
+    try:
+        result = analyse(args)
+    except GitError as error:
+        print(f"file-split-verify: {error}", file=sys.stderr)
+        return 2
+    failed = has_failure(result)
+    print(summary_line(result, failed))
+    report(result, args.max_details)
     return 1 if failed else 0
 
 
