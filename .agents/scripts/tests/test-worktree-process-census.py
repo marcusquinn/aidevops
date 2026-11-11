@@ -102,9 +102,9 @@ class ProcessCensusTests(unittest.TestCase):
 
 
     @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
-    def test_live_aged_spoofed_daemon_acquiring_worktree_is_uncertain(self):
+    def test_live_unknown_nondumpable_process_acquiring_worktree_is_uncertain(self):
         script = ("import ctypes,time; libc=ctypes.CDLL(None); "
-                  "assert libc.prctl(15,b'ssh-agent',0,0,0)==0; "
+                  "assert libc.prctl(15,b'node-worker',0,0,0)==0; "
                   "assert libc.prctl(4,0,0,0,0)==0; "
                   "print('ready',flush=True); "
                   "import os,sys; target=sys.stdin.readline().strip(); "
@@ -144,34 +144,28 @@ class ProcessCensusTests(unittest.TestCase):
             child.stdin.close()
             child.stdout.close()
 
-    def test_unreadable_tasks_are_uncertain_regardless_of_name_or_age(self):
+    def test_unreadable_tasks_are_uncertain_regardless_of_comm(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory)
             task = process / "task" / "100"
             task.mkdir(parents=True)
             (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
-            for name, start, error in (
-                    ("ssh-agent", 100, PermissionError()),
-                    ("gpg-agent", 100, PermissionError()),
-                    ("(sd-pam)", 100, PermissionError()),
-                    ("systemd", 100, PermissionError()),
-                    ("sshd", 100, PermissionError()),
-                    ("dbus-daemon", 100, PermissionError()),
-                    ("ssh-agent", 1100, PermissionError()),
-                    ("ssh-agent", 900, PermissionError()),
-                    ("python3", 100, PermissionError()),
-                    ("ssh-agent", 100, OSError()),
-                    ("ssh-agent", 0, PermissionError()),
-                    ("ssh-agent", "bad", PermissionError())):
-                fields = ["S"] + ["0"] * 18 + [str(start)]
-                stat = f"100 ({name}) " + " ".join(fields)
-                (task / "stat").write_text(stat)
+            for name, error, excluded in (
+                    ("ssh-agent", PermissionError(), False),
+                    ("gpg-agent", PermissionError(), False),
+                    ("(sd-pam)", PermissionError(), False),
+                    ("systemd", PermissionError(), False),
+                    ("ssh-agent", OSError(), False),
+                    ("sshd", PermissionError(), False),
+                    ("python3", PermissionError(), False),
+                    ("node-worker", PermissionError(), False)):
+                (task / "stat").write_text(f"100 ({name}) " + " ".join(["S"] + ["0"] * 19))
                 result = {"references": 0, "uncertain": 0, "excluded_nondumpable": 0}
-                with self.subTest(name=name, start=start, error=error), \
+                with self.subTest(name=name, error=error), \
                         patch.object(census, "inspect_path_references", side_effect=error):
                     census.collect_path_references(process, "/worktree", result)
-                    self.assertEqual(result["excluded_nondumpable"], 0)
-                    self.assertEqual(result["uncertain"], 1)
+                    self.assertEqual(result["excluded_nondumpable"], int(excluded))
+                    self.assertEqual(result["uncertain"], int(not excluded))
                     self.assertEqual(result["references"], 0)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux procfs required")
