@@ -56,6 +56,18 @@ shift || true
 case "$cmd" in
 	ls)
 		if [[ "${1:-}" == "--flat" ]]; then
+			if [[ "${AIDEVOPS_TEST_EMPTY_NAMESPACE:-}" == "true" ]]; then
+				# Fully migrated store: the aidevops/ folder no longer exists,
+				# so a prefix listing fails while the store itself still lists
+				# unrelated entries. Resolution must treat that as "gopass owns
+				# nothing" and fall through to credentials.sh.
+				if [[ -n "${2:-}" ]]; then
+					printf '%s\n' 'Error: Entry "aidevops" not found' >&2
+					exit 1
+				fi
+				printf '%s\n' 'misc/UNRELATED_KEY'
+				exit 0
+			fi
 			printf '%s\n' 'aidevops/ZETA_KEY' 'aidevops/ALPHA_KEY' 'aidevops/ALPHA_KEY'
 			if [[ "${AIDEVOPS_TEST_STORED:-}" == "true" && -f "${AIDEVOPS_TEST_DIR}/stored_path" ]]; then
 				cat "${AIDEVOPS_TEST_DIR}/stored_path"
@@ -153,6 +165,33 @@ EOF
 		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 0
 	else
 		print_result "list resolves tenant names without sourcing, decrypting, or exposing values" 1 "Names-only listing or silent check assertion failed"
+	fi
+	return 0
+}
+
+# After every secret is migrated out of gopass, `gopass ls --flat aidevops/`
+# fails with a not-found error while the store itself still lists. That must
+# mean "gopass owns nothing", not "store unreadable", or resolution and
+# injection break for the plaintext store that now holds the values.
+test_empty_gopass_namespace_uses_plaintext() {
+	setup
+	trap 'teardown' RETURN
+	local config_dir="$TEST_DIR/home/.config/aidevops"
+	mkdir -p "$config_dir"
+	printf '%s\n' 'export MIGRATED_KEY="migrated-placeholder-value"' >"$config_dir/credentials.sh"
+	chmod 600 "$config_dir/credentials.sh"
+	local check_rc=0 run_rc=0 injected=""
+	AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" check MIGRATED_KEY || check_rc=$?
+	injected=$(AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" MIGRATED_KEY -- \
+		sh -c 'test -n "${MIGRATED_KEY:-}" && echo injected-present' 2>&1) || run_rc=$?
+	if [[ "$check_rc" -eq 0 && "$run_rc" -eq 0 &&
+		"$injected" == *"injected-present"* &&
+		"$injected" != *"Unable to list gopass secrets"* &&
+		"$injected" != *"migrated-placeholder-value"* ]]; then
+		print_result "emptied gopass namespace resolves from the plaintext store" 0
+	else
+		print_result "emptied gopass namespace resolves from the plaintext store" 1 \
+			"check_rc=$check_rc run_rc=$run_rc output=$injected"
 	fi
 	return 0
 }
@@ -1388,6 +1427,7 @@ main() {
 	test_empty_fallback_secret_fails_closed
 	test_locked_injection_exits_bounded
 	test_list_resolves_tenants_without_reading_values
+	test_empty_gopass_namespace_uses_plaintext
 	test_list_preserves_direct_credentials
 	test_list_rejects_unsafe_tenant_files
 	test_inventory_is_names_only_deterministic_json
