@@ -11,6 +11,7 @@ import platform
 
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
+from .protected_proc import ProcessCensusUnavailable, require_protected_references
 
 
 NON_HOLDER_DAEMONS = frozenset({
@@ -82,8 +83,9 @@ def live_owned_proc_task(task):
 
 
 def require_idle_reference(path, reference):
-    target = Path(os.readlink(reference).removesuffix(" (deleted)"))
-    if target == path or path in target.parents:
+    raw = os.readlink(reference)
+    targets = (Path(raw), Path(raw.removesuffix(" (deleted)")))
+    if any(target == path or path in target.parents for target in targets):
         raise ValueError("live-process-reference")
 
 
@@ -126,12 +128,24 @@ def inspect_proc_task(path, task, proc=Path("/proc")):
 
 
 def inspect_proc_references(path, task, proc):
+    stage = "cwd"
     try:
         require_idle_reference(path, task / "cwd")
+        stage = "fd"
         for fd in (task / "fd").iterdir():
             try:
                 require_idle_reference(path, fd)
             except FileNotFoundError:
                 continue  # An independently closed descriptor grants no authority.
     except PermissionError:
-        require_predating_daemon(path, task, proc)
+        try:
+            require_predating_daemon(path, task, proc)
+        except ValueError as error:
+            cause = str(error.__cause__)
+            if cause not in {"unknown-daemon", "daemon-not-older", "invalid-process-clock"}:
+                cause = "daemon-evidence-unavailable"
+            try:
+                require_protected_references(path, task, proc)
+            except ProcessCensusUnavailable as unavailable:
+                unavailable.observation.update({"stage": stage, "daemon_cause": cause})
+                raise unavailable from error

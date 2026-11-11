@@ -231,8 +231,9 @@ Do not propose this installation when the operator has no privilege authority:
    ```
 
    With no argument list, both sudo.ws and sudo-rs allow any arguments; the
-   executable is the argument validator. It requires exactly one
-   `[1-9][0-9]*` PID and refuses cross-user process reads. Do not add an
+   executable is the argument validator. Legacy mode requires exactly one
+   `[1-9][0-9]*` PID; the separately enabled reference mode below takes
+   `--references PID CANDIDATE`. Both refuse cross-user process reads. Do not add an
    argument pattern such as `[1-9]*`: sudo-rs (the default `sudo` on Ubuntu
    25.10+ and 26.04 LTS) rejects wildcards in command arguments and ignores
    the whole line, and sudo.ws wildcards match more than digits anyway (GH#34621).
@@ -256,3 +257,35 @@ process cannot be proved foreign or zombie. Uninstalled, rejected, timed-out,
 or empty privileged reads retain `cwd-visibility-degraded`. No global `/proc`
 permission or ptrace setting changes are needed. Revoke the sudoers rule and
 remove the installed copy when privileged inspection is no longer needed.
+
+### Registry full-reference inspection (separate opt-in)
+
+The registry retirement observer is stricter than the legacy CWD provider: it
+checks every thread's CWD and open-file references before planning, relocating
+and removing a tree. A successful legacy CWD diagnostic or sealed legacy receipt
+is not substitute evidence. Its path-free `process_observation` refusal identifies
+the actual PID/TID, failed stage, inspector status and daemon-exemption failure.
+Do not stop an SSH session or weaken the daemon-age check merely to clear this hold.
+
+After explicit operator review and installation of the updated root-owned inspector,
+`AIDEVOPS_PROTECTED_PROC_INSPECTION=1` enables its `--references PID CANDIDATE` mode
+for the normal guarded registry operation. This flag does not install anything or
+grant privilege. The new mode is disabled by default, on NixOS and during explicit
+maintenance. It uses only the validated fixed inspector path and resolved trusted
+sudo executable; no PATH-selected executable, interactive prompt or broad sudo fallback.
+
+The inspector accepts only a canonical directory owned by the invoking user. It
+rechecks process/thread start identities, the thread inventory and candidate identity;
+it returns versioned `clear`/`held` evidence bound to PID, start ticks and directory
+device/inode. It emits no CWDs, descriptor targets, arguments or environment data.
+The child arms its own two-second deadline; the caller bounds the sudo wait to three seconds.
+The caller validates the binding again. This is a fresh bounded census, not an
+atomic snapshot, future-writer exclusion, reusable lifetime proof or deletion permit.
+Unknown, partial, timed-out, mismatched or legacy-only output retains the worktree.
+The existing owner, admission, preservation and repeated retirement checks still apply.
+
+Existing root-owned copies are not updated by a source merge or ordinary user-space
+deployment. Review the expanded privilege scope before any operator-owned upgrade;
+an older installed copy simply refuses the new mode. Do not invoke a source-checkout
+copy through sudo. Remove the opt-in flag to disable reference inspection. Actual
+protected-process verification and retirement require their own operation authority.
