@@ -63,20 +63,6 @@ def require_proc_visibility():
                           for option in mounts[0]), "filtered proc mount")
 
 
-SESSION_HELPERS = frozenset(("systemd", "(sd-pam)", "ssh-agent", "gpg-agent"))
-
-
-def session_helper(task):
-    """True for a same-user systemd session helper with unreadable CWD/fds."""
-    try:
-        text = (task / "stat").read_text()
-        comm = text[text.index("(") + 1:text.rindex(")")]
-        state = text.rsplit(")", 1)[1].split()[0]
-    except (OSError, ValueError, IndexError):
-        return False
-    return comm in SESSION_HELPERS and bool(state)
-
-
 def collect_path_references(directory, path, result):
     """Inspect all threads: unshared CWD and descriptor tables can differ."""
     for task in (directory / "task").iterdir():
@@ -92,11 +78,9 @@ def collect_path_references(directory, path, result):
             try:
                 result["references"] += int(inspect_path_references(task, path))
             except PermissionError:
-                # Unknown unreadable tasks stay uncertain: they may be inside the
-                # worktree. Permanent systemd user-session helpers (GH#37729,
-                # GH#36422) never run user work, so they are counted separately.
-                counter = ("uncertain", "excluded_nondumpable")[session_helper(task)]
-                result[counter] += 1
+                # Unreadable tasks stay uncertain: comm is mutable, so a name
+                # such as ssh-agent cannot prove the absence of worktree references.
+                result["uncertain"] += 1
         except FileNotFoundError:
             result["uncertain"] += int(os.path.lexists(task))
         except (OSError, ValueError, IndexError):

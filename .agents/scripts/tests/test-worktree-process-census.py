@@ -144,20 +144,19 @@ class ProcessCensusTests(unittest.TestCase):
             child.stdin.close()
             child.stdout.close()
 
-    def test_unreadable_tasks_are_uncertain_unless_session_helper(self):
+    def test_unreadable_tasks_are_uncertain_regardless_of_comm(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory)
             task = process / "task" / "100"
             task.mkdir(parents=True)
             (task / "status").write_text("Uid:\t" + "\t".join([str(os.getuid())] * 4) + "\n")
             for name, error, excluded in (
-                    ("ssh-agent", PermissionError(), True),
-                    ("gpg-agent", PermissionError(), True),
-                    ("(sd-pam)", PermissionError(), True),
-                    ("systemd", PermissionError(), True),
+                    ("ssh-agent", PermissionError(), False),
+                    ("gpg-agent", PermissionError(), False),
+                    ("(sd-pam)", PermissionError(), False),
+                    ("systemd", PermissionError(), False),
                     ("ssh-agent", OSError(), False),
                     ("sshd", PermissionError(), False),
-                    ("dbus-daemon", PermissionError(), False),
                     ("python3", PermissionError(), False),
                     ("node-worker", PermissionError(), False)):
                 (task / "stat").write_text(f"100 ({name}) " + " ".join(["S"] + ["0"] * 19))
