@@ -99,6 +99,25 @@ _pulse_wrapper_capacity() {
 	return 0
 }
 
+_pulse_wrapper_dispatch_current_scope() {
+	local target_slug="$2"
+	local scope_entries="" scope_slug="" scope_path="" scope_slugs="" target_found=0
+	scope_entries=$(_pulse_wrapper_list_scope) || return 1
+	while IFS='|' read -r scope_slug scope_path; do
+		[[ -n "$scope_slug" ]] || continue
+		[[ -z "$scope_slugs" ]] || scope_slugs+=","
+		scope_slugs+="$scope_slug"
+		[[ "$scope_slug" != "$target_slug" ]] || target_found=1
+	done <<<"$scope_entries"
+	if [[ "$target_found" -ne 1 ]]; then
+		printf 'dispatch deferred: repository is outside current pulse scope\n' >&2
+		return 1
+	fi
+	export PULSE_SCOPE_REPOS="$scope_slugs"
+	_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_admitted "$@"
+	return $?
+}
+
 _pulse_wrapper_run_command() {
 	local command_name="${1:-}"
 	[[ -n "$command_name" ]] || {
@@ -135,21 +154,7 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
-		local scope_entries="" scope_slug="" scope_path="" scope_slugs="" target_found=0
-		local target_slug="$2"
-		scope_entries=$(_pulse_wrapper_list_scope) || return 1
-		while IFS='|' read -r scope_slug scope_path; do
-			[[ -n "$scope_slug" ]] || continue
-			[[ -z "$scope_slugs" ]] || scope_slugs+=","
-			scope_slugs+="$scope_slug"
-			[[ "$scope_slug" != "$target_slug" ]] || target_found=1
-		done <<<"$scope_entries"
-		if [[ "$target_found" -ne 1 ]]; then
-			printf 'dispatch deferred: repository is outside current pulse scope\n' >&2
-			return 1
-		fi
-		export PULSE_SCOPE_REPOS="$scope_slugs"
-		_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_admitted "$@"
+		_pulse_wrapper_dispatch_current_scope "$@"
 		;;
 	approve-pr)
 		[[ "$#" -eq 3 ]] || {
