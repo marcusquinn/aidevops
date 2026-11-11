@@ -551,6 +551,9 @@ _hrw_detach_systemd_scope() {
 # fallback. Logs stay flat in the root so system-cleanup.sh ages each file.
 # mktemp creates the file exclusively with mode 600: a planted symlink is never
 # followed and repeated attempts for one session key never truncate each other.
+# Pulse-side callers (revised checkpoint dispatch, PR review launch) are not
+# managed session entry points, so an unset root is initialised here from the
+# same contract. An explicitly set but unusable root still fails closed.
 # Args: $1 = session key
 # Output: absolute log path
 # Returns: 0 created, 1 unusable root (caller must not spawn)
@@ -559,6 +562,14 @@ _hrw_create_detached_log() {
 	local session_key="$1"
 	local root="${AIDEVOPS_TEMP_DIR:-}"
 	local safe_key="" log_file=""
+	if [[ -z "$root" ]]; then
+		if ! declare -F aidevops_init_temp_workspace >/dev/null 2>&1; then
+			# shellcheck source=./shared-temp-workspace.sh
+			source "${BASH_SOURCE[0]%/*}/shared-temp-workspace.sh" || return 1
+		fi
+		aidevops_init_temp_workspace || return 1
+		root="${AIDEVOPS_TEMP_DIR:-}"
+	fi
 	if [[ "$root" != /* || -L "$root" || ! -d "$root" || ! -O "$root" || ! -w "$root" ]]; then
 		print_error "Detached worker log root is unusable: ${root:-<unset>} (must be an owned, writable, non-symlink directory; set AIDEVOPS_WORKSPACE_DIR to an approved location)"
 		return 1
