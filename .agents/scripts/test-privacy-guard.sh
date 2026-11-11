@@ -711,6 +711,33 @@ fi
 # privacy_scan_text tests (GH#21004 — review feedback on PR #20974)
 # =============================================================================
 
+# Public target paths are narrow exemptions; other scanners remain active.
+for path in \~/Git/public-repo/.agents \~/Git/testorg/public-repo/subdir; do
+	hits=$(privacy_scan_local_paths "$path" 'testorg/public-repo' 2>"${TMP}/allow-log")
+	rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q '\[privacy-scan\]\[ALLOW\]' "${TMP}/allow-log"; then
+		pass "target repository path allowed with audit log"
+	else
+		fail "target repository path should be allowed (rc=$rc)"
+	fi
+done
+for path in \~/Git/private-repo \~/Git/public-repo-extra \~/Git/public-repo/../private-repo /ho"me"/example/Git/public-repo /Us"ers"/example/Git/public-repo; do
+	hits=$(privacy_scan_local_paths "$path" 'testorg/public-repo')
+	rc=$?
+	if [[ "$rc" -eq 1 && "$hits" == *'[local-path]'* ]]; then
+		pass "non-exempt local path blocked"
+	else
+		fail "non-exempt local path must be blocked (rc=$rc)"
+	fi
+done
+tilde='~'
+redacted=$(privacy_redact_local_paths "${tilde}/Git/public-repo/docs ${tilde}/Git/private-repo" 'testorg/public-repo')
+if [[ "$redacted" == "${tilde}/Git/public-repo/docs [local-path]" ]]; then
+	pass "redaction preserves only target repository path"
+else
+	fail "redaction should preserve target repository path"
+fi
+
 TEXT_SLUGS_FILE="${TMP}/text-slugs.txt"
 printf 'testorg/private-mirror\ntestorg/local-only\n' >"$TEXT_SLUGS_FILE"
 
