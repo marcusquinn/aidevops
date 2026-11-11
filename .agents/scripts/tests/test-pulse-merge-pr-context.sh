@@ -667,10 +667,11 @@ test_final_gate_blocks_merge_transports() {
 		(
 			install_stubs
 			: >"$GH_CALL_LOG"
-			local fn_src="" pr_number=123 repo_slug=owner/repo pr_head_ref_oid=deadbeef
+			local fn_src="" pr_number=123 repo_slug=owner/repo pr_head_ref_oid=deadbeef timing_prefix=""
 			local _merge_exit=1 merge_output='Repository rule violations found' merge_failure_context=""
 			local _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
 			fn_src=$(awk '
+				/^_pmp_admin_final_gate_or_route\(\) \{/,/^}$/ { print }
 				/^_pmp_stage_admin_merge\(\) \{/,/^}$/ { print }
 				/^_pmp_stage_ruleset_fallback\(\) \{/,/^}$/ { print }
 			' "${SCRIPT_DIR}/../pulse-merge.sh")

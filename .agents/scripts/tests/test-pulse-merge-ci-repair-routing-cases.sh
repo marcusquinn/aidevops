@@ -247,6 +247,7 @@ define_process_helper() {
 	DUPLICATE_CLOSE_CALLS=0
 	PREFLIGHT_RC=0
 	PREFLIGHT_EVIDENCE="[]"
+	NATIVE_AUTO_RC=0
 	REFRESHED_MERGEABLE="UNKNOWN"
 	REFRESHED_REVIEW_DECISION="NONE"
 	REVIEW_REFRESH_CALLS=0
@@ -275,7 +276,7 @@ define_process_helper() {
 	_extract_merge_summary() { printf 'test summary'; return 0; }
 	_retarget_stacked_children() { return 0; }
 	_pulse_merge_admin_safety_check() { return 0; }
-	_set_native_auto_merge_or_skip() { return 0; }
+	_set_native_auto_merge_or_skip() { return "$NATIVE_AUTO_RC"; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
 	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
@@ -819,6 +820,9 @@ test_preflight_terminal_blocker_routes_supplied_evidence() {
 	PR_REQUIRED_CHECKS_RC=0
 	PREFLIGHT_RC=1
 	PREFLIGHT_EVIDENCE="$expected_evidence"
+	# GH#37795: with no pending required checks, native auto-merge declines (rc 1)
+	# so the admin stage runs the single final gate, which routes the evidence.
+	NATIVE_AUTO_RC=1
 	_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
