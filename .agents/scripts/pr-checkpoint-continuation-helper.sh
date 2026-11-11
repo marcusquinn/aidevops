@@ -397,12 +397,17 @@ PR title: ${safe_title}
    unavailable on this runner whose check the PR's CI also runs (for example
    ShellCheck or markdownlint) is delegated to CI, not a blocker: name the tool
    and covering CI job in the PR body (GH#34758).
-4. Before pushing, run the exact-target fence:
+4. Make all continuation commits locally, including intermediate data artifacts;
+   do not push them mid-run. If publication evidence must be durable mid-run,
+   record receipts in the private workspace and include them in the final commit.
+   Once all work and verification are complete, before the single final push,
+   run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
-5. Commit the continuation and push without force to the existing remote branch
-   using \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
-   replacement PR.
+5. Push exactly once, without force, to the existing remote branch using
+   \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
+   replacement PR. Do not make another push in this attempt: the fence is
+   bound to the starting head and becomes stale after this push.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
    \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
