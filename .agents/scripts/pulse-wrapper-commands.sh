@@ -66,20 +66,22 @@ _pulse_wrapper_observe_command() (
 _pulse_wrapper_list_scope() {
 	# Recompute from current config, not the scope persisted by an old prefetch.
 	# Exclude expired entries here so this read does not auto-disable repos.
-	local scope_entries="" slug="" ph_start="" ph_end="" expires=""
+	local scope_entries="" slug="" path="" ph_start="" ph_end="" expires=""
 	scope_entries=$(jq -r --arg today "$(date +%Y-%m-%d)" '
 		.initialized_repos[] |
 		select(.maintenance != false and .pulse == true and (.local_only // false) == false and (.slug // "") != "") |
 		select((.pulse_expires // "") == "" or .pulse_expires >= $today) |
-		[.slug,
+		[.slug, (.path // ""),
 		 (if (.pulse_hours | type) == "array" then .pulse_hours[0] else .pulse_hours.start end // "" | tostring),
 		 (if (.pulse_hours | type) == "array" then .pulse_hours[1] else .pulse_hours.end end // "" | tostring),
 		 (.pulse_expires // "")] | join("|")
 	' "$REPOS_JSON") || return 1
-	while IFS='|' read -r slug ph_start ph_end expires; do
+	while IFS='|' read -r slug path ph_start ph_end expires; do
 		[[ -n "$slug" ]] || continue
 		if check_repo_pulse_schedule "$slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
-			printf '%s\n' "$slug"
+			[[ "$path" != '~' ]] || path="$HOME"
+			[[ "$path" != '~/'* ]] || path="$HOME/${path#\~/}"
+			printf '%s|%s\n' "$slug" "$path"
 		fi
 	done <<<"$scope_entries"
 	return 0
@@ -133,6 +135,20 @@ _pulse_wrapper_run_command() {
 			_pulse_wrapper_command_usage
 			return 2
 		}
+		local scope_entries="" scope_slug="" scope_path="" scope_slugs="" target_found=0
+		local target_slug="$2"
+		scope_entries=$(_pulse_wrapper_list_scope) || return 1
+		while IFS='|' read -r scope_slug scope_path; do
+			[[ -n "$scope_slug" ]] || continue
+			[[ -z "$scope_slugs" ]] || scope_slugs+=","
+			scope_slugs+="$scope_slug"
+			[[ "$scope_slug" != "$target_slug" ]] || target_found=1
+		done <<<"$scope_entries"
+		if [[ "$target_found" -ne 1 ]]; then
+			printf 'dispatch deferred: repository is outside current pulse scope\n' >&2
+			return 1
+		fi
+		export PULSE_SCOPE_REPOS="$scope_slugs"
 		_pulse_wrapper_observe_command dispatch _pulse_wrapper_dispatch_admitted "$@"
 		;;
 	approve-pr)

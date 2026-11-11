@@ -72,9 +72,12 @@ yourself from printed output. The launcher already provides `PATH`.
 do not read or rely on the old snapshot. This overrides all pre-fetched-state
 instructions below, including snapshot-derived repository scope. Run
 `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope` to obtain
-current schedule-filtered repository slugs from configuration. Limit triage and
+current schedule-filtered `slug|path` pairs from configuration (use the path for
+`repo-cap` and dispatch). Limit triage and
 `list-candidates SLUG 100` to those slugs; use the named helpers and targeted `gh`
-reads for current evidence. Skip snapshot-only checks without equivalent live
+reads for current evidence. In stale mode only, discover live PRs with one bounded
+call per scoped slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the `gh pr list` prohibition below. Skip snapshot-only checks without equivalent live
 evidence. If scope lookup fails or returns no slugs, log a diagnostic and exit
 cleanly rather than using persisted scope or broadening to all repositories.
 

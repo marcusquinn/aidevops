@@ -57,7 +57,8 @@ yourself from printed output. The launcher already provides `PATH`.
 **Stale-state override:** if the launch prompt says no current snapshot exists,
 do not read or rely on the old snapshot. This overrides all pre-fetched-state
 instructions below. Run `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope`
-to obtain current schedule-filtered repository slugs from configuration. Limit
+to obtain current schedule-filtered `slug|path` pairs from configuration (use the
+path for `repo-cap` and dispatch). Limit
 triage and `list-candidates SLUG 100` to those slugs; use the named helpers and
 targeted `gh` reads for current evidence. `list-candidates` returns issues, not
 PRs, so in stale mode only, discover live PRs with one bounded call per scoped
