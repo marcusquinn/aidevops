@@ -401,12 +401,7 @@ labelled interrupted requests without an open approval issue, including PRs
 without `origin:worker`, once checks pass. An existing request for a different
 head is retained for explicit re-approval, never silently rewritten.
 
-The maintainer's single action is:
-
-```bash
-sudo aidevops approve issue <N> <repo>
-```
-
+The maintainer's single action is `sudo aidevops approve issue <N> <repo>`.
 Routine `r924` runs `cloudron-release-approval-helper.sh process --apply` every
 30 minutes. Only `approval-helper.sh verify issue <N> <repo> --require-authority`
 returning `VERIFIED` can release this helper's PR hold and merge the approved
@@ -415,7 +410,10 @@ verification/API errors fail closed. The helper waits boundedly for the main
 catalog run, resumes on subsequent invocations, and closes the release issue
 only after the catalog version, `v<version>` tag and GitHub release are verified.
 Catalog race recovery/reconciliation remains owned by the publishing workflow
-and upstream monitor (GH#35649).
+and upstream monitor (GH#35649). Optionally, one signed `release-standing-policy`
+issue (`policy-request <repo>`) lets `r924` publish unsigned requests that
+`cloudron_routine_bump.py` proves are routine upstream-only bumps; every other
+change keeps per-release signing (see `cloudron-app-publishing-skill.md`).
 
 This dedicated label does not change `needs-maintainer-review` semantics and
 trusted authors alone cannot satisfy it. Signing authorizes only this release's
