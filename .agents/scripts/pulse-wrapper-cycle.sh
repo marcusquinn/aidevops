@@ -196,20 +196,64 @@ _pulse_refresh_repo() {
 	return 0
 }
 
+# Print "<generated_epoch>" for a pulse state file: header timestamp
+# ("Pre-fetched Repo State (<ISO8601Z>)") first, file mtime as fallback.
+_pulse_state_file_epoch() {
+	local state_file="$1"
+	local header_ts="" epoch=""
+	header_ts=$(sed -n '1s/.*(\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9:]\{8\}Z\)).*/\1/p' "$state_file" 2>/dev/null) || header_ts=""
+	if [[ -n "$header_ts" ]]; then
+		epoch=$(date -u -d "$header_ts" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$header_ts" +%s 2>/dev/null) || epoch=""
+	fi
+	if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+		if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+			# shellcheck source=portable-stat.sh
+			source "${BASH_SOURCE[0]%/*}/portable-stat.sh" 2>/dev/null || true
+		fi
+		epoch=$(_file_mtime_epoch "$state_file" 2>/dev/null) || epoch=""
+	fi
+	[[ "$epoch" =~ ^[0-9]+$ && "$epoch" -gt 0 ]] || return 1
+	printf '%s\n' "$epoch"
+	return 0
+}
+
 _pulse_supervisor_prompt() {
 	local pulse_command="$1"
 	local state_file="$2"
 	local prompt="$pulse_command"
+	local max_age="${PULSE_SUPERVISOR_STATE_MAX_AGE_S:-7200}"
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200
+	max_age=$((10#$max_age))
+	local state_epoch="" state_age="" state_iso="" state_age_h=""
+	if [[ -f "$state_file" ]] && state_epoch=$(_pulse_state_file_epoch "$state_file"); then
+		state_age=$(($(date +%s) - state_epoch))
+		[[ "$state_age" -ge 0 ]] || state_age=0
+		state_iso=$(date -u -d "@${state_epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$state_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$state_epoch")
+		state_age_h=$((state_age / 3600))
+	fi
 
 	prompt="${pulse_command}
 
 Runtime sandbox rule: supervisor-pulse is launched from the aidevops agent workspace. Do not run Bash tool calls with workdir set to managed repository paths or any other directory outside that workspace. Use the pre-fetched state file and wrapper/helper functions from the current workspace instead. If repo/worktree data is missing, record a diagnostic and exit cleanly rather than requesting external_directory permission."
-	if [[ -f "$state_file" ]]; then
+	if [[ -z "$state_age" || "$state_age" -gt "$max_age" ]]; then
+		prompt="${prompt}
+
+No current pre-fetched state snapshot exists: the snapshot is missing, its timestamp is unavailable, or it exceeds the ${max_age}s age limit."
+		if [[ -n "$state_age" ]]; then
+			prompt="${prompt} Last generated ${state_iso} (${state_age_h}h ago)."
+		fi
+		prompt="${prompt}
+Stale-state override for /pulse and /pulse-sweep: do not read or rely on the old snapshot, including for repository scope. This overrides workflow instructions to read pre-fetched state. Run bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope for current schedule-filtered repository slugs; use only those slugs for triage and list-candidates <slug> <N>. Use targeted live reads via list-candidates, the recovery helpers named below, and gh for specific issues/PRs within that scope. If scope lookup fails or returns no slugs, record a diagnostic and exit cleanly; never substitute the persisted scope or stale snapshot."
+	elif [[ -f "$state_file" ]]; then
 		prompt="${prompt}
 
 Pre-fetched state file: ${state_file}
 Read this file before proceeding — it contains the current repo/PR/issue state
 gathered by pulse-wrapper.sh BEFORE this session started."
+		if [[ -n "$state_age" ]]; then
+			prompt="${prompt}
+State file generated ${state_iso} (${state_age_h}h ago)."
+		fi
 		if [[ "${_PULSE_SUPERVISOR_STATE_INCOMPLETE:-0}" == "1" ]]; then
 			prompt="${prompt}
 WARNING: this cycle's prefetch timed out, so the state file is INCOMPLETE and may be stale or missing repositories. Treat it as hints only: verify current issue/PR state with gh or the named helpers before any decision or write, and never infer that absent items do not exist."
