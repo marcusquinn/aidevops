@@ -814,6 +814,10 @@ _dlw_capture_live_owner_refusal() {
 _dlw_report_precreate_failure() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == worktree_reuse_sealed_generation ]]; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "worktree_reuse_sealed_generation" 2
+		return $?
+	fi
 	if [[ "${_DLW_PRECREATE_FAILURE_REASON:-}" == "$DLW_LIVE_OWNER_REFUSED_REASON" ]]; then
 		pulse_stats_increment "worktree_live_owner_refused_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] WORKTREE_LIVE_OWNER_REFUSED issue=#${issue_number} repo=${repo_slug} owner_pid=${_DLW_REFUSING_OWNER_PID} owner_start=${_DLW_REFUSING_OWNER_START} action=hold_until_owner_exits_or_changes worktree=${_DLW_WORKTREE_PATH}" >>"$LOGFILE"
