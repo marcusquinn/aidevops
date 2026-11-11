@@ -1310,8 +1310,13 @@ _dispatch_capability_cooldown_active() {
 	[[ -f "$file" && ! -L "$file" ]] || return 1
 	IFS=$'\t' read -r stamp cached signal owner <"$file" || return 1
 	now=$(date +%s)
+	# GH#37752: a record imported from this runner's own release observation
+	# is bound to the brief revision, not a clock; the TTL only bounds
+	# log-derived records.
 	if [[ ! "$stamp" =~ ^[0-9]+$ || "$cached" != "$fingerprint" ]] ||
-		((now < stamp || now - stamp >= _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)); then
+		((now < stamp)) ||
+		{ [[ "$signal" != worker_observation ]] &&
+			((now - stamp >= _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)); }; then
 		rm -f "$file" 2>/dev/null || true
 		return 1
 	fi
@@ -1347,11 +1352,41 @@ _dispatch_capability_cooldown_record() {
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
 	if printf '%s\t%s\t%s\t%s\n' "$stamp" "$fingerprint" "$signal" "$owner" >"$tmp" && mv -f "$tmp" "$file"; then
+		# GH#37752: a fresh worker verdict anchors the capability it was made under.
+		[[ "$signal" == worker_observation ]] ||
+			printf '%s\t0\n' "$(_dispatch_capability_config_fingerprint "$repo_path")" >"${file}.capability" 2>/dev/null || true
 		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) runner_capability_unmet cooldown recorded signal=${signal} ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_capability_cooldown_recorded"
 	else
 		rm -f "$tmp"
 	fi
+	return 0
+}
+
+# GH#37752: sidecar holding the runner-local capability fingerprint seen when
+# an observation was first honoured. Returns 0 to honour the observation;
+# returns 1 (and clears the anchor) when the runner's capability inputs
+# changed since, so the probe re-runs. A fresh worker verdict re-anchors.
+_dispatch_capability_anchor_unchanged() {
+	local issue="$1" repo="$2" repo_path="$3" stamp="$4"
+	local file="" anchor="" current="" saved="" changed_at=""
+	file=$(_dispatch_capability_cooldown_path "$issue" "$repo") || return 0
+	anchor="${file}.capability"
+	current=$(_dispatch_capability_config_fingerprint "$repo_path") || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	if [[ -f "$anchor" && ! -L "$anchor" ]]; then
+		IFS=$'\t' read -r saved changed_at <"$anchor" || saved=""
+		if [[ "$saved" != "$current" ]]; then
+			# Capability inputs changed: re-probe, and ignore every observation
+			# made before this change (only a newer release re-arms the hold).
+			printf '%s\t%s\n' "$current" "$(date +%s)" >"$anchor" 2>/dev/null || true
+			return 1
+		fi
+		[[ "$changed_at" =~ ^[0-9]+$ ]] || changed_at=0
+		((stamp > changed_at)) || return 1
+		return 0
+	fi
+	printf '%s\t0\n' "$current" >"$anchor" 2>/dev/null || true
 	return 0
 }
 
@@ -1373,7 +1408,11 @@ _dispatch_capability_cooldown_from_observation() {
 		"$comments" "$issue_json" "$repo" "$issue") || return 0
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 0
 	now=$(date +%s)
-	((now >= stamp && now - stamp < _DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS)) || return 0
+	((now >= stamp)) || return 0
+	# GH#37752: the observation holds until the brief revision changes or a
+	# trusted retry follows (both checked by the epoch helper), or this
+	# runner's capability inputs change. The anchor remembers those inputs.
+	_dispatch_capability_anchor_unchanged "$issue" "$repo" "$(jq -r '.repo_path // ""' <<<"$candidate" 2>/dev/null)" "$stamp" || return 0
 	_dispatch_capability_cooldown_record "$candidate" \
 		'DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=worker_observation cooldown=eligible' "$stamp" "$self"
 	return 0
