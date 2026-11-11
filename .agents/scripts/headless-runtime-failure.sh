@@ -796,6 +796,29 @@ _hrff_release_fragment() {
 	return 0
 }
 
+# Fence direct release/EXIT callers as well as _cmd_run_finish. Supervisor
+# callers without worker launch state retain their existing recovery rules.
+_hrff_verified_release_reason() {
+	local reason="$1"
+	if [[ "$reason" == worker_complete && -n "${_WORKER_RUNTIME_LAUNCH_STARTED+x}" ]] &&
+		declare -F _hrw_runtime_launch_confirmed >/dev/null 2>&1 &&
+		! _hrw_runtime_launch_confirmed; then
+		reason="worker_not_launched"
+	fi
+	printf '%s\n' "$reason"
+	return 0
+}
+
+# Public audit records carry only the managed log ID, never a private path.
+_hrff_attempt_log_field() {
+	local attempt_log_id="${AIDEVOPS_WORKER_ATTEMPT_LOG:-}"
+	attempt_log_id="${attempt_log_id##*/}"
+	if [[ "$attempt_log_id" =~ ^worker-[A-Za-z0-9_.-]+\.log\.[A-Za-z0-9]+$ ]]; then
+		printf ' attempt_log=%s' "$attempt_log_id"
+	fi
+	return 0
+}
+
 _hrff_release_dispatch_claim_attempt() {
 	local session_key="$1"
 	local reason="${2:-worker_failed}"
@@ -839,13 +862,7 @@ _hrff_release_dispatch_claim_attempt() {
 	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
 
-	# Fence direct release/EXIT callers as well as _cmd_run_finish. Supervisor
-	# callers without worker launch state retain their existing recovery rules.
-	if [[ "$reason" == worker_complete && -n "${_WORKER_RUNTIME_LAUNCH_STARTED+x}" ]] &&
-		declare -F _hrw_runtime_launch_confirmed >/dev/null 2>&1 &&
-		! _hrw_runtime_launch_confirmed; then
-		reason="worker_not_launched"
-	fi
+	reason=$(_hrff_verified_release_reason "$reason")
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then
@@ -870,12 +887,7 @@ _hrff_release_dispatch_claim_attempt() {
 	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
 	machine_readable_part+=" claim_id=${claim_id} nonce=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-} lease_token=${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}"
 	machine_readable_part+=" device=${AIDEVOPS_DISPATCH_LEASE_DEVICE:-${AIDEVOPS_DEVICE_ID:-}} session=${AIDEVOPS_DISPATCH_LEASE_SESSION:-$session_key}"
-	# Public audit records carry only the managed log ID, never a private path.
-	local attempt_log_id="${AIDEVOPS_WORKER_ATTEMPT_LOG:-}"
-	attempt_log_id="${attempt_log_id##*/}"
-	if [[ "$attempt_log_id" =~ ^worker-[A-Za-z0-9_.-]+\.log\.[A-Za-z0-9]+$ ]]; then
-		machine_readable_part+=" attempt_log=${attempt_log_id}"
-	fi
+	machine_readable_part+="$(_hrff_attempt_log_field)"
 	local terminal_blocker_fragment=""
 	case "$reason" in
 	blocked | push_policy_timeout | network_policy_timeout)
