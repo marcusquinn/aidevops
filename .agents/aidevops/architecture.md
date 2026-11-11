@@ -160,8 +160,8 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 2. **Per-agent permission only** (`globallyEnabled: false`): tool patterns stay hidden globally and are exposed only on the owning agent profile.
 
 Stagehand v4 follows a different bounded route: `stagehand-v4-helper.sh` pins an
-isolated local SDK, not a globally registered MCP. It is opt-in for adaptive
-flows after model/data/cost consent; deterministic headless Playwright stays the
+isolated local SDK, not a globally registered MCP. It is not recommended; use it
+only when the user explicitly asks to try it, after model/data/cost consent. Headless Playwright stays the
 default. The v4 route does not inherit a user-selected tab's consent/profile
 boundary or replace legacy Playwriter. Decision evidence and versioned probes:
 `tools/browser/stagehand.md` and `tools/browser/browser-benchmark.md`.

@@ -177,6 +177,8 @@ store API keys with `aidevops secret` or `~/.config/aidevops/credentials.sh`.
 
 ## Comparison with Other Tools
 
+Stagehand is not recommended; use it only when the user explicitly asks to try it.
+
 | Feature | browser-use | Playwright | Stagehand |
 |---------|-------------|------------|-----------|
 | AI-native | Yes | No | Yes |
@@ -204,12 +206,11 @@ route is faster or more reliable.
 - **Persistent browser sessions**: Use dev-browser
 - **Bulk scraping**: Use Crawl4AI
 - **Testing your app**: Use Playwright with ARIA snapshots
-- **Natural language selectors in JS/Browserbase stacks**: Use Stagehand
 - **Vision-only/canvas-heavy or CAPTCHA-heavy tasks**: Use Skyvern or Browser Use Cloud
 
 ## Related
 
 - `tools/browser/browser-automation.md` - Browser tool decision tree
 - `tools/browser/playwright.md` - Playwright direct automation
-- `tools/browser/stagehand.md` - Stagehand AI browser automation
+- `tools/browser/stagehand.md` - Stagehand is not recommended; only when the user explicitly asks to try it
 - `tools/browser/skyvern.md` - Computer vision browser automation

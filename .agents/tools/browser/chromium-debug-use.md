@@ -178,7 +178,7 @@ Rule of thumb: inspect and gather facts with `chromium-debug-use`, then formaliz
 | Inspection/perf analysis without reusing your active session | `tools/browser/chrome-devtools.md` |
 | Persistent local profile managed by aidevops | `tools/browser/dev-browser.md` |
 | Fast isolated headed/headless automation / repeatable scripts / CI | `tools/browser/playwright.md` with Brave preferred |
-| Natural-language experimentation before locking in selectors | `tools/browser/stagehand.md` |
+| Unknown selectors | `tools/browser/playwright.md` with bounded DOM/ARIA discovery; `tools/browser/browser-use.md` if needed |
 
 CDP needs a browser started with the debug flag on a dedicated profile; the everyday default profile cannot be attached even after a relaunch. Microsoft's Playwright Extension instead uses connection approval and selected tab groups in Chrome/Edge/Chromium, but only belongs in an interactive user-present session. Both routes are local and user-approved; upstream does not document Brave extension support, so Brave users get `launch`.
 
