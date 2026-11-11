@@ -1530,7 +1530,7 @@ _cmd_status_state() {
 _resolve_status_backend() {
 	local backend="$1"
 
-	if [[ "$backend" != "systemd" && "$backend" != "launchd" && -z "${AIDEVOPS_SCHEDULER:-}" ]] && command -v systemctl &>/dev/null; then
+	if [[ "$backend" != "systemd" && "$backend" != "launchd" && ( -z "${AIDEVOPS_SCHEDULER:-}" || "${AIDEVOPS_SCHEDULER:-}" == "${AIDEVOPS_SCHEDULER_DETECTED:-}" ) ]] && command -v systemctl &>/dev/null; then
 		local timer_state
 		timer_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
 		case "$timer_state" in
