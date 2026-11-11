@@ -52,6 +52,42 @@ _worktree_enroll_generation() {
 	return 0
 }
 
+# GH#37706: fixed-path producers (Buzz host agents) re-create a tree where an
+# earlier generation vanished before retirement finished. While the path is
+# absent, release its stale reservation through fenced absence reconciliation.
+# Best-effort: an unreleased reservation still refuses at enrollment, with cause.
+_worktree_release_vacant_path() {
+	local path="$1"
+	local helper_dir="${BASH_SOURCE[0]%/*}"
+	local state_dir=""
+	local python=""
+	local result=""
+	local parent=""
+	if [[ "${AIDEVOPS_PRIVATE_WORKLOAD:-0}" == 1 || "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" == 1 ||
+		-e "$path" || -L "$path" ]]; then
+		return 0
+	fi
+	# Reservations use the canonical parent spelling (see _worktree_create_native).
+	parent=$(cd -- "$(dirname -- "$path")" 2>/dev/null && pwd -P) || return 0
+	path="${parent}/$(basename -- "$path")"
+	# shellcheck source=worker-lifecycle-state.sh
+	source "${helper_dir}/worker-lifecycle-state.sh" || return 0
+	state_dir=$(worker_lifecycle_state_dir 2>/dev/null) || return 0
+	[[ -n "$state_dir" && -f "${state_dir}/registry.sqlite3" ]] || return 0
+	python=$(type -P python3) || return 0
+	result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
+		--state-dir "$state_dir" release-vacant-path --path "$path" 2>/dev/null) || result=""
+	case "$result" in
+	*'"status": "no-reservation"'* | *'"status": "source-absent-reconciled"'*) ;;
+	'') printf 'Stale reservation check unavailable: %s\n' "$path" >&2 ;;
+	*)
+		[[ "$result" =~ \"status\":\ \"([a-z-]+)\" ]] &&
+			printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2
+		;;
+	esac
+	return 0
+}
+
 # Shell-safe path for a pasteable command; reports are often pasted into
 # issues, so the home directory is abbreviated to ~ (GH#36370).
 _worktree_display_path() {
@@ -85,6 +121,12 @@ _worktree_refusal_remediation() {
 		;;
 	ref-already-checked-out)
 		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
+		;;
+	reserved-path-without-enrollment-marker | generation-path-reserved)
+		# GH#37706: an earlier generation still reserves this path. Preview first;
+		# --confirm releases the reservation only and never deletes files.
+		printf 'Refusal cause: %s; an earlier generation still reserves this path. Preview, then add --confirm if this tree replaced it: python3 %s --state-dir %s release-replaced-path --path <worktree>\n' \
+			"$code" "$(_worktree_display_path "${registry_cli}")" "$(_worktree_display_path "$state_dir")" >&2
 		;;
 	upgrade-* | schema-*)
 		printf 'Refusal cause: %s; upgrade the registry: %s\n' "$code" "$upgrade_cmd" >&2
@@ -157,6 +199,7 @@ worktree_create_registered() {
 	if [[ -e "$path" || -L "$path" ]]; then
 		[[ -d "$path" && ! -L "$path" && "${AIDEVOPS_WORKTREE_CREATE_RESERVED_PATH:-}" == "$path" ]] || return 1
 	fi
+	_worktree_release_vacant_path "$path"
 	stage_t0=$(_ds_substage_start)
 	# shellcheck source=shared-worktree-registry.sh
 	source "$registry_helper" || return 1

@@ -243,7 +243,7 @@ Implement enrollment and identity propagation before switching cleanup consumers
 or persistent physical identity. Never use fresh UUIDs per launch, infer generation
 from path equality or automatically reopen closed paths. Interrupted creation and
 intentional path reuse need explicit recovery contracts; see [ABSENCE.md](ABSENCE.md)
-for terminal absence reconciliation.
+for terminal absence reconciliation and fixed-path reuse recovery (GH#37706).
 
 ## Preparation and WIP preservation commands
 
