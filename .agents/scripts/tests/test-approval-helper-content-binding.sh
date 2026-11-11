@@ -484,7 +484,9 @@ test_canonical_review_bot_retry() {
 Review bots were rate-limited when this PR was created (affected: coderabbitai copilot). Requesting a review retry."
 	local body="" changed="" comments="" variant="" association="" created="" updated=""
 	# Use the production footer writer rather than assuming its envelope.
-	body=$(AIDEVOPS_SESSION_TYPE=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
+	# AIDEVOPS_SESSION_ORIGIN outranks runtime detection (GH#37763), so the
+	# fixture stays a worker retry even when run from an interactive session.
+	body=$(AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_CLI_NAME="" AIDEVOPS_CLI_VERSION="" \
 		"${SCRIPT_DIR}/../gh-signature-helper.sh" footer --body "$retry_body") || return 1
 	body="${retry_body}${body}"
 	for variant in exact contributor extra altered marker-only edited preexisting wrong-head malformed-head issue inline; do
