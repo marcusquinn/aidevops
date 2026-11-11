@@ -37,7 +37,8 @@ Merged squash PR: `--base <merge>^ --head <merge>`.
 import argparse
 import collections
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 -- resolved local Git only, argv lists, never a shell
 import sys
 
 SHELL_SUFFIXES = (".sh", ".bash", ".zsh")
@@ -78,8 +79,11 @@ class GitError(Exception):
 
 def git(*args, ok_codes=(0,)):
     """Run git and return decoded stdout; raise GitError on failure."""
-    proc = subprocess.run(
-        ["git", "-c", "core.quotePath=false", *args],
+    executable = shutil.which("git")
+    if not executable:
+        raise GitError("git executable not found on PATH")
+    proc = subprocess.run(  # nosec B603 -- resolved Git, fixed subcommands, refs/paths are argv data
+        [executable, "-c", "core.quotePath=false", *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -285,12 +289,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.max_details < 0:
         parser.error("--max-details must be >= 0")
+    if args.base.startswith("-") or args.head.startswith("-"):
+        parser.error("--base and --head must be refs, not options")
 
     try:
-        git("rev-parse", "--verify", f"{args.base}^{{commit}}")
-        head = git("rev-parse", "--verify", f"{args.head}^{{commit}}").strip()
-        diff = git("diff", "--no-color", "--no-renames", "--no-ext-diff", "-U0",
-                   f"{args.base}...{head}")
+        base = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}").strip()
+        head = git("rev-parse", "--verify", "--end-of-options", f"{args.head}^{{commit}}").strip()
+        diff = git("diff", "--no-color", "--no-renames", "--no-ext-diff", "--no-textconv",
+                   "-U0", f"{base}...{head}", "--")
         removed, added = parse_diff(diff)
         removed_counter = collections.Counter(entry[2] for entry in removed)
         added_counter = collections.Counter(entry[2] for entry in added)
