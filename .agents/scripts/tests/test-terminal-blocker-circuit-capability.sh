@@ -231,7 +231,7 @@ _capability_cooldown_peer_claim_cases() {
 		done
 	done
 	# A verified peer does not gain retry authority or promote unrelated rows.
-	peer_permission=write
+	peer_permission="write"
 	fetched=$(terminal_blocker_fetch_capability_comments 42 owner/repo runner-one) || return 1
 	jq -e '[.[] | select(.author == "runner-two")] | length == 2 and all(.author_association == "NONE" and .capability_peer_authorized == true)' <<<"$fetched" >/dev/null || return 1
 	[[ -z "$(_terminal_blocker_latest_retry_comment "$fetched")" ]] || return 1
