@@ -178,6 +178,41 @@ if ! unset_accumulator_regression; then
   exit 1
 fi
 
+# Exercise the shared final gate, so every call site inherits cumulative timing
+# without relying on a caller-specific timer or wall-clock sleeps.
+final_gate_timing_regression() {
+  local timing_prefix="gate_" gate_trust_gate_s=0 fake_epoch=100
+  local failure="" rc=0
+  _pmp_now_epoch() { printf '%s' "$fake_epoch"; return 0; }
+  _pulse_merge_admin_safety_check() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != authority ]]; return $?; }
+  _pulse_merge_refresh_review_gate_evidence() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != review ]]; return $?; }
+  worker_briefed_trust_verdict() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != worker ]]; return $?; }
+  _pulse_merge_preflight_snapshot_gate() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != snapshot ]]; return $?; }
+  for failure in authority review worker snapshot; do
+    rc=0
+    _pulse_merge_final_trust_gate 7 owner/repo sha-reviewed || rc=$?
+    [[ "$rc" -eq 1 ]] || return 1
+  done
+  [[ "$gate_trust_gate_s" -eq 10 ]] || return 1
+  failure=""
+  _pulse_merge_final_trust_gate 7 owner/repo sha-reviewed || return 1
+  [[ "$gate_trust_gate_s" -eq 14 ]] || return 1
+  # A real native-auto enable uses the same shared timer.
+  _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0
+  _enable_native_auto_merge_for_head 7 owner/repo sha-reviewed 1 || return 1
+  [[ "$gate_trust_gate_s" -eq 18 ]] || return 1
+  # Disabling telemetry must not change authorization or add elapsed time.
+  timing_prefix=""
+  _pulse_merge_final_trust_gate 7 owner/repo sha-reviewed || return 1
+  [[ "$gate_trust_gate_s" -eq 18 ]] || return 1
+  return 0
+}
+
+if ! (final_gate_timing_regression); then
+  printf 'FAIL: final-gate timing is not cumulative across success/failure/native calls\n'
+  exit 1
+fi
+
 unset LOGFILE
 _pmp_log_repo_timing_summary "owner/fallback"
 if ! grep -q 'deterministic_merge_pass timing: repo=owner/fallback' "${HOME}/.aidevops/logs/pulse.log"; then

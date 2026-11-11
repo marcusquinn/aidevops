@@ -188,6 +188,8 @@ define_function_under_test() {
 		/^_pmp_stage_review_and_gates\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_required_checks\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_pre_merge\(\) \{/,/^\}$/ { print }
+		/^_pmp_route_preflight_ci_failures\(\) \{/,/^\}$/ { print }
+		/^_pmp_active_checks_allow_native_defer\(\) \{/,/^\}$/ { print }
 		/^_pmp_admin_final_gate_or_route\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_admin_merge\(\) \{/,/^\}$/ { print }
 		/^_pmp_stage_ruleset_fallback\(\) \{/,/^\}$/ { print }
@@ -248,6 +250,7 @@ _resolve_pr_mergeable_status() { return 0; }
 _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }
 _pr_required_checks_pass() { return 0; }
+_check_required_checks_passing() { return 0; }
 approve_collaborator_pr() { return 0; }
 manual_release_hold_check() { return 0; }
 # These fixtures are not Issue Sync PRs; the extracted approval helper must

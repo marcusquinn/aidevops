@@ -779,27 +779,28 @@ _pulse_merge_final_trust_gate() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local expected_head_sha="$3"
-
+	local trust_gate_start=0 trust_gate_rc=0
+	[[ -n "${timing_prefix:-}" ]] && trust_gate_start=$(_pmp_now_epoch)
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha"; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
-		return 1
-	fi
-	if ! _pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		trust_gate_rc=1
+	elif ! _pulse_merge_refresh_review_gate_evidence "$pr_number" "$repo_slug" "$expected_head_sha"; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_REVIEW_GATE"
-		return 1
-	fi
+		trust_gate_rc=1
 	# GH#36922: re-run the worker-briefed verdict pinned to the exact head being
 	# merged, so a planning-checkpoint classification of another head is void.
-	if declare -F worker_briefed_trust_verdict >/dev/null 2>&1; then
-		WORKER_BRIEFED_EXPECTED_HEAD="$expected_head_sha" \
-			worker_briefed_trust_verdict "$pr_number" "$repo_slug" >/dev/null || {
-			_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
-			return 1
-		}
+	elif declare -F worker_briefed_trust_verdict >/dev/null 2>&1 \
+		&& ! WORKER_BRIEFED_EXPECTED_HEAD="$expected_head_sha" \
+			worker_briefed_trust_verdict "$pr_number" "$repo_slug" >/dev/null; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
+		trust_gate_rc=1
+	else
+		_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || trust_gate_rc=1
 	fi
-	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || return 1
-	return 0
+	# Time every native/admin/direct invocation, including blocked gates and retries.
+	[[ -n "${timing_prefix:-}" ]] && _pmp_add_elapsed_seconds "${timing_prefix}trust_gate_s" "$trust_gate_start"
+	return "$trust_gate_rc"
 }
 
 #######################################
@@ -1419,8 +1420,12 @@ _pmp_stage_required_checks() {
 				echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has non-passing required checks; would evaluate CI-drift rebase or repair routing" >>"$LOGFILE"
 				return 1
 			fi
-			# Never use old ledger evidence while current required checks are active.
-			_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$pr_head_ref_oid" && return 1
+			# Never use old ledger evidence while checks are active, but do route
+			# terminal failures from a fresh exact-head snapshot alongside them.
+			if _check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+				_pmp_active_checks_allow_native_defer || true
+				return 1
+			fi
 			if drift_names=$(_required_checks_terminal_failure_names "$repo_slug" "$pr_number" "$pr_head_ref_oid"); then
 				if [[ -n "$drift_names" ]]; then
 					drift_signature=$(printf '%s\n' "$drift_names" | shasum -a 256 | cut -d ' ' -f 1) || drift_signature=""
@@ -1505,27 +1510,43 @@ _pmp_stage_pre_merge() {
 	if [[ "${_PULSE_ISSUE_SYNC_RUNS_APPROVED:-0}" -gt 0 ]]; then
 		return 1
 	fi
+	# Existing native auto-merge can return without a mutation-time gate. A
+	# required check may have failed since selection; route it even with CI active.
+	if ! _check_required_checks_passing "$repo_slug" "$pr_number" "$pr_head_ref_oid"; then
+		_pmp_active_checks_allow_native_defer || return 1
+	fi
 	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" "${_PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE:-0}" "$pr_review" "$pr_head_ref_oid" || native_auto_rc=$?
 	case "$native_auto_rc" in 0) return 4 ;; 2 | 3) return 1 ;; esac
 	return 10
 }
 
-# GH#37795: the single full final gate before the admin merge, timed as
-# <prefix>trust_gate_s. A failure routes blocking checks to a fix worker (this
-# routing formerly ran at the first pre-merge gate).
-_pmp_admin_final_gate_or_route() {
-	local _tg_start=0 _tg_rc=0 route_rc=0
-	[[ -n "$timing_prefix" ]] && _tg_start=$(_pmp_now_epoch)
-	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid" || _tg_rc=$?
-	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}trust_gate_s" "$_tg_start"
-	[[ "$_tg_rc" -eq 0 ]] && return 0
-	_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
+_pmp_route_preflight_ci_failures() {
+	local route_rc=0
 	if [[ "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}" != "[]" ]]; then
 		_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" || route_rc=$?
 		if [[ "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" || "$route_rc" -eq "${PULSE_FEEDBACK_ROUTE_MAINTAINER_RC:-76}" ]]; then
 			echo "[pulse-wrapper] Merge pass: preflight feedback route for PR #${pr_number} in ${repo_slug} remains partial" >>"$LOGFILE"
 		fi
 	fi
+	return 0
+}
+
+# Inspect only the exact-head snapshot, not the full authority/review gate.
+# Pending-only CI may retain native auto-merge; terminal failures must route now.
+_pmp_active_checks_allow_native_defer() {
+	_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$pr_head_ref_oid" && return 0
+	_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
+	_pmp_route_preflight_ci_failures
+	[[ "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" == "$PMRC_BLOCKER_CHECKS_ACTIVE" ]] && return 0
+	return 1
+}
+
+# GH#37795: the single full final gate before the admin merge. A failure
+# routes blocking checks to a fix worker, using current exact-head evidence.
+_pmp_admin_final_gate_or_route() {
+	_pulse_merge_final_trust_gate "$pr_number" "$repo_slug" "$pr_head_ref_oid" && return 0
+	_pulse_merge_maybe_dispatch_preflight_remediation "$pr_number" "$repo_slug"
+	_pmp_route_preflight_ci_failures
 	return 1
 }
 
