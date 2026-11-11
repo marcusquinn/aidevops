@@ -1655,9 +1655,43 @@ _pir_initialize_backfill_gates() {
 	return 0
 }
 
+# Repair only signed, unambiguous PR provenance from write-authorized authors.
+# Re-read each candidate before mutation: a stale list must not replace an origin.
+_pir_backfill_pr_origin() {
+	local slug="$1" pr_json="" candidates="" number="" live="" origin="" author="" assoc=""
+	pr_json=$(gh api "repos/${slug}/pulls?state=open&per_page=100" 2>/dev/null) || return 0
+	candidates=$(printf '%s' "$pr_json" | jq -r '.[] | select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) | .number' 2>/dev/null) || return 0
+	local checked=0
+	while IFS= read -r number; do
+		[[ "$number" =~ ^[0-9]+$ ]] || continue
+		[[ "$checked" -lt 10 ]] || break
+		live=$(gh api "repos/${slug}/issues/${number}" 2>/dev/null) || continue
+		origin=$(printf '%s' "$live" | jq -r '
+			select(.state == "open" and has("pull_request")) |
+			select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) |
+			(.body // "" | split("\n")) as $lines |
+			[$lines[] | select(test("^<!-- aidevops:origin:(worker|interactive) -->$"))] as $markers |
+			select(($markers | length) == 1 and ($lines | index("<!-- aidevops:sig -->") != null)) |
+			$markers[0] | capture("origin:(?<origin>worker|interactive)").origin' 2>/dev/null) || continue
+		[[ -n "$origin" ]] || continue
+		checked=$((checked + 1))
+		author=$(printf '%s' "$live" | jq -r '.user.login // ""')
+		assoc=$(printf '%s' "$live" | jq -r '.author_association // ""')
+		# #aidevops:trust-boundary: fail closed on unknown authority or missing helper.
+		[[ -n "$author" && -n "$assoc" ]] || continue
+		declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1 || continue
+		_gh_actor_has_repo_write_authority "$slug" "$author" "$assoc" || continue
+		if set_origin_label "$number" "$slug" "$origin" --pr; then
+			printf '[pulse-wrapper] PR origin backfill: applied origin:%s to PR #%s (author=%s, assoc=%s)\n' "$origin" "$number" "$author" "$assoc" >>"$LOGFILE"
+		fi
+	done <<<"$candidates"
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
+	_pir_backfill_pr_origin "$slug"
 	# Per-repo caps (reset each slug)
 	local ciw_per_repo=0 ciw_max_repo=20
 	local rsd_per_repo=0 rsd_max_repo=20

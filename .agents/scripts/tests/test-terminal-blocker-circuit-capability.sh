@@ -201,6 +201,53 @@ _capability_cooldown_own_contributor_replay() {
 	return 0
 }
 
+# Exercise raw comment import through the real cooldown gate, not just epoch jq.
+_capability_cooldown_peer_claim_cases() {
+	local original_comments="$fixture_comments" permission='' association='' fetched=''
+	local peer_permission='' peer_requests="$TEST_ROOT/peer-permission-requests"
+	for association in COLLABORATOR CONTRIBUTOR NONE; do
+		for permission in write maintain admin read error; do
+			peer_permission="$permission"
+			fixture_comments=$(jq -c --arg association "$association" '. + [
+				{id:2,user:{login:"runner-two"},author_association:$association,
+				created_at:(now + 10 | todateiso8601),body:"DISPATCH_CLAIM runner=runner-two attempt=peer"},
+				{id:3,user:{login:"runner-two"},author_association:$association,
+				created_at:(now + 11 | todateiso8601),body:"DISPATCH_CLAIM runner=runner-two attempt=again"},
+				{id:4,user:{login:"old-peer"},author_association:$association,
+				created_at:"2020-01-01T00:00:00Z",body:"DISPATCH_CLAIM runner=old-peer attempt=old"},
+				{id:5,user:{login:"outsider"},author_association:$association,
+				created_at:(now + 10 | todateiso8601),body:"DISPATCH_CLAIM runner=someone-else attempt=spoof"},
+				{id:6,user:{login:"runner-two"},author_association:$association,
+				created_at:(now + 12 | todateiso8601),body:"terminal-blocker-circuit:retry"}]
+			' <<<"$original_comments") || return 1
+			: >"$peer_requests"
+			rm -f "$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42"
+			if _dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo ''; then
+				[[ "$permission" == read || "$permission" == error ]] || return 1
+			else
+				[[ "$permission" == write || "$permission" == maintain || "$permission" == admin ]] || return 1
+			fi
+			[[ "$(<"$peer_requests")" == runner-two ]] || return 1
+		done
+	done
+	# A verified peer does not gain retry authority or promote unrelated rows.
+	peer_permission="write"
+	fetched=$(terminal_blocker_fetch_capability_comments 42 owner/repo runner-one) || return 1
+	jq -e '[.[] | select(.author == "runner-two")] | length == 2 and all(.author_association == "NONE" and .capability_peer_authorized == true)' <<<"$fetched" >/dev/null || return 1
+	[[ -z "$(_terminal_blocker_latest_retry_comment "$fetched")" ]] || return 1
+	# Self claims and claims at/before the observation never trigger a lookup.
+	fixture_comments=$(jq -c '. + [(.[0] | .id=7 | .body="DISPATCH_CLAIM runner=runner-one attempt=self"),
+		(.[0] | .id=8 | .user.login="runner-two" | .author_association="NONE" | .body="DISPATCH_CLAIM runner=runner-two attempt=same-time")]' <<<"$original_comments") || return 1
+	: >"$peer_requests"
+	fetched=$(terminal_blocker_fetch_capability_comments 42 owner/repo runner-one) || return 1
+	[[ ! -s "$peer_requests" ]] || return 1
+	TERMINAL_BLOCKER_SELF_LOGIN=runner-one terminal_blocker_runner_capability_observation_epoch \
+		"$fetched" "$fixture_issue" owner/repo 42 >/dev/null || return 1
+	fixture_comments="$original_comments"
+	rm -f "$HOME/.aidevops/logs/dispatch-capability-cooldown/owner--repo--42"
+	return 0
+}
+
 # GH#37752 capability-anchor cases. Runs inside test_worker_capability_cooldown's
 # subshell with a fresh HOME and uses its candidate, fixture_comments (recent
 # observation on entry; left recent on return) and gh stub through dynamic scope.
@@ -270,6 +317,11 @@ test_worker_capability_cooldown() {
 			user) printf '%s\n' "$login" ;;
 			repos/owner/repo/issues/42) printf '%s\n' "$fixture_issue" ;;
 			repos/owner/repo/issues/42/comments*) printf '%s\n' "$fixture_comments" ;;
+			repos/owner/repo/collaborators/*/permission)
+				printf '%s\n' "${endpoint#repos/owner/repo/collaborators/}" | cut -d/ -f1 >>"$peer_requests"
+				[[ "$peer_permission" != error ]] || return 1
+				printf '%s\n' "$peer_permission"
+				;;
 			*) return 1 ;;
 			esac
 			return 0
@@ -292,6 +344,7 @@ test_worker_capability_cooldown() {
 		login=runner-one
 		fixture_reads=true
 		_capability_cooldown_own_contributor_replay || exit 1
+		_capability_cooldown_peer_claim_cases || exit 1
 		# Selection rejects a different runner, edited brief, later different
 		# blocker, and explicit retry without a global hold; it accepts the
 		# runner's own comment whatever association GitHub reports.
