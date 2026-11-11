@@ -337,6 +337,7 @@ _prrts_write_prompt_file() {
 	local _fingerprint="$6"
 	local _preview="$7"
 	local prompt_file=""
+	local recovery_dir=""
 	local safe_slug=""
 	local safe_title=""
 	local scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
@@ -359,6 +360,7 @@ _prrts_write_prompt_file() {
 		printf '%s\n' "$prompt_file"
 		return 0
 	fi
+	recovery_dir=$(mktemp -d "${STATE_DIR}/${safe_slug}-${pr_number}-recovery.XXXXXXXX") || return 1
 	cat >"$prompt_file" <<PROMPT_EOF
 # STALE WORKER DRAFT CONTINUATION — BOUNDED WORKER
 
@@ -400,7 +402,9 @@ PR title: ${safe_title}
 4. Make all continuation commits locally, including intermediate data artifacts;
    do not push them mid-run. If publication evidence must be durable mid-run,
    record receipts in the private workspace and include them in the final commit.
-   After each commit save a recovery copy: \`git bundle create "\${AIDEVOPS_TEMP_DIR:-\$HOME/.aidevops/.agent-workspace/tmp}/pr-${pr_number}-continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`; on resume keep and verify unpushed local commits, never reset them away.
+   Recovery bundle for this repository and attempt: ${recovery_dir}/continuation.bundle
+   Retain this path in the continuation checkpoint for recovery after a restart.
+   After each commit save a recovery copy: \`git bundle create "${recovery_dir}/continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`; on resume keep and verify unpushed local commits, never reset them away.
    Once all work and verification are complete, before the single final push,
    run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
