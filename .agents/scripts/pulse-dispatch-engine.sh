@@ -706,6 +706,10 @@ dispatch_max() {
 		echo 0
 		return 0
 	fi
+	# GH#37780: lets cross-cycle active-claim hints tell own claims from other
+	# runners' claims while the local worker pool is empty.
+	_DISPATCH_SELF_LOGIN="$self_login"
+	export _DISPATCH_SELF_LOGIN
 
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 

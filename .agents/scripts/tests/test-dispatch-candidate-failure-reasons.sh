@@ -327,4 +327,26 @@ printf 'PASS existing runner-capability cooldown remains independent\n'
 ) || exit 1
 printf 'PASS missing-isDraft snapshot falls back to REST fingerprint\n'
 
+# GH#37780: an empty local pool rechecks only claims this runner could own.
+(
+	claimed=$(jq -c '.labels = ["status:in-progress"]' <<<"$candidate")
+	foreign=$(jq -c '.assignees = [{login:"Other-Runner"}]' <<<"$claimed")
+	printf '%s\t%s\t%s\t\t\t\t\n' "$(date +%s)" '2026-10-13T00:00:00Z' dedup_active_claim >"$cache"
+	_DISPATCH_ACTIVE_WORKERS=0
+	_DISPATCH_SELF_LOGIN='self-runner'
+	[[ "$(_dispatch_negative_cache_reason "$foreign")" == dedup_active_claim ]]
+	for owners in '[{"login":"Self-Runner"}]' '[{"login":"other-runner"},{"login":"self-runner"}]' '[]'; do
+		owned=$(jq -c --argjson owners "$owners" '.assignees = $owners' <<<"$claimed")
+		if _dispatch_negative_cache_reason "$owned"; then exit 1; fi
+	done
+	for self in '' 'bad login'; do
+		_DISPATCH_SELF_LOGIN="$self"
+		if _dispatch_negative_cache_reason "$foreign"; then exit 1; fi
+	done
+	_DISPATCH_ACTIVE_WORKERS=2
+	[[ "$(_dispatch_negative_cache_reason "$foreign")" == dedup_active_claim ]]
+	rm -f "$cache"
+) || exit 1
+printf 'PASS empty-pool active-claim hints: foreign owners cached, own/mixed/unknown rechecked\n'
+
 printf 'PASS dispatch-candidate-failure-reasons\n'
