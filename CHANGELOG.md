@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.174] - 2026-11-11
+
+### Fixed
+
+- backfill trusted PR origins (#37800)
+- validate peer capability claim permissions (#37791)
+- preserve stats on mutation failures (#37777)
+- install pinned bubblewrap deb instead of apt update in model replay CI job (#37798)
+- reconcile approval lifecycle labels (#37790)
+- allow public target repository paths (#37794)
+
 ## [3.39.173] - 2026-11-11
 
 ### Changed
