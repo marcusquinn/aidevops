@@ -35,7 +35,7 @@ tools:
 1. **Read before write.** Start with `list`/`get` and quote current values. Memberships, payments and products drive real billing.
 2. **Money and messages need explicit intent.** Creating or completing a payment, changing a membership's status, amount or products, refunding, cancelling or sending a broadcast can charge, refund, email, or block a customer's site. Present the exact command and its effect. Run it only when the operator asked for that action.
 3. **Test mode first.** Check `stripe_sandbox_mode` / `stripe_checkout_sandbox_mode` in settings before any test order. Never take a live payment to "test".
-4. **Templates and copies.** Site templates (`site_template`) are cloned into customer sites, so changing a template changes future sites, not existing ones. A clone or review copy of a network keeps the source's settings, including support addresses and API credentials: check them before launch.
+4. **Templates and copies.** Site templates (`site_template`) are cloned into customer sites, so changing a template changes future sites, not existing ones. A copied network keeps the source's queued work: Ultimate Multisite sends delayed system emails from its scheduler (`wu_send_schedule_system_email`, group `wu_system_emails`), and gateways and integrations call out. Block outbound mail and HTTP and pause cron and queues **before** the copy first runs, not at launch; the procedure is in `../../workflows/wordpress-local-clone.md` section 4. A clone or review copy of a network also keeps the source's settings, including support addresses and API credentials: check them before launch.
 5. **Personal data.** Customers, payments and tickets contain PII. Summarise them; keep exports out of repos and issues.
 6. **Caches.** After changing products or checkout forms, purge the page cache for the checkout and pricing pages (see `../../services/hosting/hostinger.md` for LiteSpeed on Hostinger).
 
@@ -48,6 +48,15 @@ wp wu payment list --status=pending --fields=id,membership_id,total,status,gatew
 wp wu product list --fields=id,slug,name,type,amount,setup_fee,active --url="$URL"
 wp wu checkout_form list --fields=id,slug,name,active --url="$URL"
 ```
+
+`wp wu <object> list` returns at most 100 records (the BerlinDB default `number`), and has no limit or offset option. Count first, and page through larger sets with the REST collection (`page` and `per_page`; default 10):
+
+```bash
+wp eval 'echo wu_get_payments(["status" => "pending", "count" => true]);' --url="$URL"   # count has no limit
+curl -s --config "$WU_CURL_CONFIG" "$URL/wp-json/wu/v2/payment?status=pending&per_page=100&page=2"
+```
+
+`$WU_CURL_CONFIG` is a private file (mode 600, outside the repository) holding one line, `user = "API_KEY:API_SECRET"`, so the credentials stay out of the command line and shell history.
 
 The status values you see (for example `pending`, `active`, `on-hold`, `expired` and `cancelled` for memberships; `pending`, `completed`, `refunded` and `failed` for payments) are the plugin's own. Confirm them on the site before filtering.
 
@@ -71,7 +80,7 @@ Before the first real order, run the whole loop once in test mode. Check that th
 
 ## Setup checklist for a selling network
 
-- Payment gateway connected in test mode, webhook URL added in the gateway (`stripe_webhook_listener_explanation` shows it), then live mode.
+- Payment gateway connected in test mode, webhook URL added in the gateway (the active gateway's **Webhook Listener URL** in its settings: `stripe_webhook_listener_explanation` for Stripe, `stripe_checkout_webhook_listener_explanation` for Stripe Checkout), then live mode.
 - Products: names, descriptions, prices, setup fees, currency, and what the customer must provide.
 - Checkout forms: fields, consent checkbox for marketing, terms link.
 - Invoices: company details and numbering (`invoice_*` settings), PDF attachment.
