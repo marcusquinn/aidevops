@@ -706,6 +706,7 @@ dispatch_max() {
 		echo 0
 		return 0
 	fi
+	export _DISPATCH_SELF_LOGIN="$self_login" # GH#37780: own vs foreign claim hints on empty pools
 
 	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, candidates=${candidate_count}" >>"$LOGFILE"
 

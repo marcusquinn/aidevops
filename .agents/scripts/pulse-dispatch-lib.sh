@@ -404,6 +404,17 @@ _dispatch_checkpoint_cooldown_ttl() {
 	return 0
 }
 
+# GH#37780: return 0 only when the candidate has assignees and none of them is
+# this runner. An unset or malformed self login fails closed (returns 1).
+_dispatch_claim_owned_elsewhere() {
+	local candidate="$1" self="${_DISPATCH_SELF_LOGIN:-}"
+	[[ "$self" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || return 1
+	jq -e --arg self "$self" '
+		[.assignees // [] | .[] | (.login? // .) | strings | ascii_downcase] as $owners |
+		($owners | length) > 0 and all($owners[]; . != ($self | ascii_downcase))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
@@ -464,8 +475,13 @@ _dispatch_negative_cache_reason() {
 		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
-		# Empty worker pools must retain the authoritative active-claim recheck.
-		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
+		# Empty worker pools must retain the authoritative active-claim recheck
+		# for claims this runner could own. GH#37780: an empty local pool says
+		# nothing about another runner's claim, and rechecking those every cycle
+		# spent the dispatch reserve and kept the pool empty.
+		if [[ "${_DISPATCH_ACTIVE_WORKERS:-0}" == 0 ]]; then
+			_dispatch_claim_owned_elsewhere "$candidate" || return 1
+		fi
 		;;
 	worker_draft_checkpoint_blocked | stale_draft_checkpoint)
 		[[ -n "$fingerprint" ]] || return 1
