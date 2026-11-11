@@ -12,7 +12,7 @@ stdin JSON:
   finding_upstream  X.Y.Z from the PR's trusted upstream monitor finding
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
-                    every changed pinned file (merge-base and exact head)
+                    every changed pinned or check file (merge-base and exact head)
 
 Prints ROUTINE_BUMP and exits 0, or prints NOT_ROUTINE: <reason> and exits 1.
 """
@@ -20,6 +20,7 @@ Prints ROUTINE_BUMP and exits 0, or prints NOT_ROUTINE: <reason> and exits 1.
 import argparse
 import base64
 import binascii
+import difflib
 import json
 import re
 import sys
@@ -29,9 +30,11 @@ POLICY_KIND = "cloudron-standing-upstream-release"
 POLICY_FILE_CLASSES = ("changelog_files", "pinned_files", "check_files")
 VERSION_KEYS = ("version", "upstreamVersion")
 MAX_FILES = 20
-PACKAGE_VERSION = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-UPSTREAM_VERSION = re.compile(r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-REPO_PATH = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
+MAX_PATTERN = 500
+# Patterns are applied with fullmatch, so a trailing newline never qualifies.
+PACKAGE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+UPSTREAM_VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 
 
 class NotRoutine(Exception):
@@ -60,7 +63,7 @@ def decode_json(text):
 
 def version_tuple(value, pattern, label):
     require(isinstance(value, str), label + " must be a string")
-    match = pattern.match(value)
+    match = pattern.fullmatch(value)
     require(match is not None, label + " must be X.Y.Z")
     return tuple(int(part) for part in match.groups())
 
@@ -71,7 +74,7 @@ def policy_paths(policy, key):
     for value in values:
         # aidevops:trust-boundary — only plain repository-relative paths; the
         # manifest has its own fixed rule and can never join a looser class.
-        require(isinstance(value, str) and REPO_PATH.match(value) is not None
+        require(isinstance(value, str) and REPO_PATH.fullmatch(value) is not None
                 and ".." not in value.split("/") and value != MANIFEST,
                 "policy " + key + " contains an invalid path")
     require(len(set(values)) == len(values), "policy " + key + " contains duplicates")
@@ -89,10 +92,46 @@ def file_text(contents, path, side):
 
 
 def substitute_versions(text, mapping):
-    """Replace every old version with its new value in one non-overlapping pass."""
+    """Replace each whole old version token with its new value in one pass.
+
+    Boundaries stop 0.20.3 matching inside 10.20.3 or 3.39.8 inside 3.39.87.
+    """
     olds = sorted(mapping, key=len, reverse=True)
-    pattern = re.compile("|".join(re.escape(old) for old in olds))
+    pattern = re.compile(r"(?<![0-9.])(?:" + "|".join(re.escape(old) for old in olds) + r")(?![0-9]|\.[0-9])")
     return pattern.sub(lambda match: mapping[match.group(0)], text)
+
+
+def insertion_pattern(policy):
+    value = policy.get("check_insertion_pattern")
+    if value is None:
+        return None
+    require(isinstance(value, str) and 0 < len(value) <= MAX_PATTERN, "policy check_insertion_pattern is invalid")
+    try:
+        return re.compile(value)
+    except re.error as error:
+        raise NotRoutine("policy check_insertion_pattern does not compile") from error
+
+
+def check_file_changes(name, base_text, head_text, mapping, pattern):
+    """Existing lines may change only by version substitution; new lines must
+    fully match the signed insertion pattern (none are allowed without one)."""
+    expected = substitute_versions(base_text, mapping).splitlines()
+    actual = head_text.splitlines()
+    matcher = difflib.SequenceMatcher(None, expected, actual, autojunk=False)
+    for tag, _, _, start, end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        # aidevops:trust-boundary — check files decide the preflight verdict;
+        # removing or rewriting an existing line could weaken it.
+        require(tag == "insert", name + ": check file changes beyond version substitution and insertions")
+        for line in actual[start:end]:
+            require(pattern is not None and pattern.fullmatch(line) is not None,
+                    name + ": inserted line does not match the signed insertion pattern")
+
+
+def canonical(value):
+    """Type-exact comparison: Python treats True == 1 and 1 == 1.0."""
+    return json.dumps(value, sort_keys=True, allow_nan=False)
 
 
 def check(doc, repository):
@@ -103,6 +142,7 @@ def check(doc, repository):
     classes = {key: policy_paths(policy, key) for key in POLICY_FILE_CLASSES}
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
+    check_pattern = insertion_pattern(policy)
 
     files = doc.get("files")
     require(isinstance(files, list) and 0 < len(files) <= MAX_FILES, "changed file list is empty or too large")
@@ -128,14 +168,16 @@ def check(doc, repository):
     old_tuple = version_tuple(old_version, PACKAGE_VERSION, "base package version")
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
-    require(version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
-            > version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion"), "upstreamVersion must increase")
+    new_up_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
+    old_up_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
+    require(new_up_tuple > old_up_tuple, "upstreamVersion must increase")
+    require(new_up_tuple[0] == old_up_tuple[0], "a major upstream bump needs a per-release signature")
     finding = doc.get("finding_upstream")
     version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
     require(old_up != old_version, "package and upstream versions are ambiguous")
     unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
-    require(unchanged == {key: value for key, value in head_manifest.items() if key not in VERSION_KEYS},
+    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
             "manifest changes beyond version and upstreamVersion")
 
     mapping = {old_up: new_up, old_version: new_version}
@@ -153,6 +195,9 @@ def check(doc, repository):
             # replacing the old package/upstream versions with the new ones.
             require(head_text != base_text and substitute_versions(base_text, mapping) == head_text,
                     name + ": pinned file changes beyond version substitution")
+        elif name in checks:
+            check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
+                               mapping, check_pattern)
     require(changelog_changed, "a changelog entry is required")
     return True
 

