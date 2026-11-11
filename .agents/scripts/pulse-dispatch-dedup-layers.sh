@@ -422,6 +422,7 @@ _dispatch_stale_pr_checkpoint_continuation() {
 #######################################
 _dispatch_revised_checkpoint() {
 	local issue="$1" repo="$2" login="$3" path=""
+	local attempt_log=""
 	[[ -n "$login" ]] || return 1
 	if declare -F has_worker_for_repo_issue >/dev/null 2>&1 && has_worker_for_repo_issue "$issue" "$repo"; then
 		return 1
@@ -429,8 +430,15 @@ _dispatch_revised_checkpoint() {
 	declare -F _pulse_merge_repo_path_for_slug >/dev/null 2>&1 || return 1
 	path=$(_pulse_merge_repo_path_for_slug "$repo" 2>/dev/null) || return 1
 	[[ -d "$path" ]] || return 1
+	if ! declare -F _hrw_create_detached_log >/dev/null 2>&1; then
+		# shellcheck source=./headless-runtime-worker-prepare.sh
+		source "${BASH_SOURCE[0]%/*}/headless-runtime-worker-prepare.sh"
+	fi
+	attempt_log=$(_hrw_create_detached_log "pr-checkpoint-continuation-${repo}-${issue}") || return 2
+	printf '[pulse-wrapper] revision dispatch issue=%s repo=%s attempt_log=%s\n' "$issue" "$repo" "$attempt_log" >>"$LOGFILE"
+	local -x AIDEVOPS_WORKER_ATTEMPT_LOG="$attempt_log"
 	"${SCRIPT_DIR}/pr-checkpoint-continuation-helper.sh" dispatch-approved \
-		"$repo" "$path" "$issue" "$login" >>"$LOGFILE" 2>&1
+		"$repo" "$path" "$issue" "$login" >>"$attempt_log" 2>&1
 	return $?
 }
 

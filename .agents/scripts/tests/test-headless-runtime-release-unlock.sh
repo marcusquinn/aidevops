@@ -688,11 +688,73 @@ fi
 	_hrw_finish_failed_run issue-12345 "" 1
 	[[ "$released_reason" == worker_not_launched ]]
 	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	_hrff_worker_session_count() { printf '0\n'; return 0; }
+	# A runtime returning before it creates a session used to consume approval.
+	_run_metric_session_id=""
+	_WORKER_PERSISTED_SESSION_ID="old-session-is-not-launch-proof"
+	_HRW_TERMINAL_OUTCOME=""
+	released_reason=""
+	_hrw_finish_success_run issue-12345 ""
+	[[ "$released_reason" == worker_not_launched ]]
+	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_not_launched ]]
+	released_reason=""
+	_hrw_finish_failed_run issue-12345 "" 1
+	[[ "$released_reason" == worker_not_launched ]]
+	_hrff_release_repo_state_is_managed() { return 0; }
+	_hrff_check_release_claim() { _HRFF_RELEASE_CLAIM_OWNED=1; _HRFF_RELEASE_CLAIM_ID=100; return 0; }
+	_hrff_persist_and_project_release() { released_reason="$4"; release_line="$8"; release_note="$9"; return 0; }
+	AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=revision
+	AIDEVOPS_WORKER_ATTEMPT_LOG="${TMP_HOME}/worker-checkpoint-42.log.ABC123"
+	_hrff_release_dispatch_claim_attempt issue-12345 worker_complete
+	[[ "$released_reason" == worker_not_launched && "$release_note" == *'stays reusable for this exact head'* ]]
+	[[ "$release_line" == *'attempt_log=worker-checkpoint-42.log.ABC123'* && "$release_line" != *"$TMP_HOME"* ]]
+	# Even a caller omitting final classification must not default to complete.
+	_hrff_write_external_outcome() { external_reason_seen="$2"; external_retry_seen="$4"; return 0; }
+	_HRW_FINAL_RUNTIME_CLASSIFICATION=""
+	_HRW_FINAL_RUNTIME_STATUS="success"
+	_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
+	_hrw_write_external_final_outcome issue-12345 success
+	[[ "$external_reason_seen" == worker_not_launched && "$external_retry_seen" == retryable_infrastructure ]]
+	# Output-derived IDs work for both runtimes; positive activity also proves
+	# an invocation when an isolated DB was finalized before finish runs.
+	_run_metric_session_id="current-invocation-session"
 	_HRW_TERMINAL_OUTCOME=""
 	released_reason=""
 	_hrw_finish_success_run issue-12345 ""
 	[[ "$released_reason" == worker_complete ]]
+	_run_metric_session_id=""
+	_hrff_worker_session_count() { printf '1\n'; return 0; }
+	_hrw_runtime_launch_confirmed
 	printf 'PASS no-launch success and failure are infrastructure outcomes; launched success completes\n'
+)
+
+# Exercise allocation and command/env routing without launching a detached worker.
+(
+	# shellcheck source=../pr-review-thread-response-launch.sh
+	source "${SCRIPT_DIR}/pr-review-thread-response-launch.sh"
+	export AIDEVOPS_TEMP_DIR="$TMP_HOME"
+	_prrts_log() { return 0; }
+	systemd_scope_available() { return 0; }
+	systemd_scope_launch() {
+		local unit="$1" description="$2" output="$3"
+		shift 3
+		"$@" >>"$output" 2>&1 || true
+		printf '123 scope\n'
+		return 0
+	}
+	worker_pid="" detach_mode=""
+	_prrts_launch_detached_worker owner/repo 42 worker_pid detach_mode \
+		bash -c "printf 'runtime failed before session log=%s\n' \"\$AIDEVOPS_WORKER_ATTEMPT_LOG\"; exit 7"
+	[[ "$worker_pid" == 123 && "$detach_mode" == scope ]]
+	logs=("$TMP_HOME"/worker-pr-review-owner-repo-42.log.*)
+	[[ "${#logs[@]}" == 1 && -f "${logs[0]}" ]]
+	grep -Fq "runtime failed before session log=${logs[0]}" "${logs[0]}"
+	[[ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "${logs[0]}")" == 0o600 ]]
+	# A repeated attempt must create a new log rather than overwrite the first.
+	_prrts_launch_detached_worker owner/repo 42 worker_pid detach_mode bash -c 'exit 0'
+	logs=("$TMP_HOME"/worker-pr-review-owner-repo-42.log.*)
+	[[ "${#logs[@]}" == 2 ]]
+	printf 'PASS review launches retain private unique per-attempt logs and propagate their identity\n'
 )
 
 : >"$CALL_LOG"
