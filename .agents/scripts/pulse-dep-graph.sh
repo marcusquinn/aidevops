@@ -692,7 +692,7 @@ _refresh_ensure_unresolved_is_blocked() {
 		# a body fallback. Secret declarations and free prose are not edges.
 		issue_body=$(gh issue view "$issue_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || return 1
 		[[ -n "$(_blocked_by_structured_lines "$issue_body")" ]] || return 1
-		is_blocked_by_unresolved "$issue_body" "$slug" "$issue_num" || return 1
+		_dep_structured_has_open_blocker "$issue_body" "$slug" "$issue_num" || return 1
 		block_reason="dependency_structured_unresolved"
 		;;
 	esac
@@ -1299,9 +1299,11 @@ _blocked_by_check_task_id() {
 	local repo_slug="$2"
 	local issue_number="$3"
 	local cache_state="$4"
+	# Dispatch fails closed by default; label writers request a distinct unknown.
+	local unknown_rc="${5:-0}"
 	if ! task_identity_validate "$task_id"; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} malformed blocked-by task ID — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 
 	local use_cache
@@ -1335,7 +1337,7 @@ _blocked_by_check_task_id() {
 	if ! live_matches=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "${task_id} in:title" --json number,title,state 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference ${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 	blocker_state=$(printf '%s' "$live_matches" | jq -r \
 		--arg current_issue "$issue_number" \
@@ -1361,7 +1363,7 @@ _blocked_by_check_task_id() {
 			;;
 	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference ${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
-	return 0
+	return "$unknown_rc"
 }
 
 #######################################
@@ -1408,12 +1410,13 @@ _blocked_by_check_issue_num_live() {
 	local blocker_num="$1"
 	local repo_slug="$2"
 	local issue_number="$3"
+	local unknown_rc="${4:-0}"
 
 	local blocker_state="" blocker_reason=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state,stateReason --jq '"\(.state // ""):\(.stateReason // "")"' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 	IFS=':' read -r blocker_state blocker_reason <<<"$blocker_state"
 	case "$blocker_state" in
@@ -1427,7 +1430,36 @@ _blocked_by_check_issue_num_live() {
 			;;
 	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
-	return 0
+	return "$unknown_rc"
+}
+
+#######################################
+# Confirm structured fallback evidence for a label write, not dispatch gating.
+# Unknown/malformed references must not create persistent dependency holds.
+# Bypass cached state and do not repeat the already-completed native lookup.
+# Args: $1=body $2=repo slug $3=issue number
+# Returns: 0 for a live unresolved blocker; 1 for clear or unknown evidence.
+#######################################
+_dep_structured_has_open_blocker() {
+	local body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local task_ids="" issue_nums="" ref=""
+	task_ids=$(_blocked_by_extract_tids "$body")
+	issue_nums=$(_blocked_by_extract_nums "$body")
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		if _blocked_by_check_task_id "$ref" "$repo_slug" "$issue_number" "$DEP_CACHE_EMPTY_JSON" 2; then
+			return 0
+		fi
+	done <<<"$task_ids"
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		if _blocked_by_check_issue_num_live "$ref" "$repo_slug" "$issue_number" 2; then
+			return 0
+		fi
+	done <<<"$issue_nums"
+	return 1
 }
 
 #######################################

@@ -15,6 +15,8 @@ source "${SCRIPTS_DIR}/pulse-dispatch-lib-candidates.sh"
 
 native_state=CLOSED
 lookup_unavailable=0
+issue_lookup_unavailable=0
+live_blocker_state=OPEN
 fixture_labels=status:available
 writes=0
 stats=0
@@ -60,7 +62,8 @@ gh() {
 			printf '%s\n' "$fixture_labels"
 		fi
 	elif [[ "$args" == 'issue view 10 '* ]]; then
-		printf 'OPEN:\n'
+		[[ "$issue_lookup_unavailable" == 0 ]] || return 1
+		printf '%s:\n' "$live_blocker_state"
 	elif [[ "$args" == 'issue edit 20 '* ]]; then
 		writes=$((writes + 1))
 		fixture_labels=status:blocked
@@ -108,3 +111,56 @@ _refresh_ensure_unresolved_is_blocked owner/repo 20
 [[ "$writes" == 2 && "$fixture_labels" == status:blocked ]]
 grep -q 'DISPATCH_BLOCK_APPLIED reason=dependency_structured_unresolved' "$LOGFILE"
 printf 'PASS: current structured fallback still blocks with an audit reason\n'
+
+# Unknown live evidence must still block dispatch, but cannot justify a write.
+fixture_labels=status:available
+issue_lookup_unavailable=1
+is_blocked_by_unresolved "$fixture_body" owner/repo 20
+if _refresh_ensure_unresolved_is_blocked owner/repo 20; then
+	printf 'FAIL: unavailable structured blocker caused a label write\n' >&2
+	exit 1
+fi
+[[ "$writes" == 2 && "$fixture_labels" == status:available ]]
+issue_lookup_unavailable=0
+live_blocker_state=UNKNOWN
+is_blocked_by_unresolved "$fixture_body" owner/repo 20
+if _refresh_ensure_unresolved_is_blocked owner/repo 20; then
+	printf 'FAIL: inconclusive structured blocker caused a label write\n' >&2
+	exit 1
+fi
+[[ "$writes" == 2 && "$fixture_labels" == status:available ]]
+printf 'PASS: unknown issue evidence blocks dispatch without persisting a hold\n'
+
+gh_issue_list() {
+	printf '%s\n' "$task_matches"
+	return 0
+}
+task_matches='[]'
+fixture_body='Blocked by: t10'
+is_blocked_by_unresolved "$fixture_body" owner/repo 20
+if _refresh_ensure_unresolved_is_blocked owner/repo 20; then
+	printf 'FAIL: unresolved task identity caused a label write\n' >&2
+	exit 1
+fi
+[[ "$writes" == 2 && "$fixture_labels" == status:available ]]
+task_matches='[{"number":10,"title":"t10: blocker","state":"OPEN"}]'
+_refresh_ensure_unresolved_is_blocked owner/repo 20
+[[ "$writes" == 3 && "$fixture_labels" == status:blocked ]]
+printf 'PASS: task fallback requires live unresolved evidence for label writes\n'
+
+# Model the reported race: absent first lookup, unavailable on a repeat.
+native_calls=0
+_blocked_by_check_native_relationships() {
+	native_calls=$((native_calls + 1))
+	[[ "$native_calls" == 1 ]] || return 3
+	return 1
+}
+fixture_labels=status:available
+fixture_body='Blocked by: #10'
+issue_lookup_unavailable=1
+if _refresh_ensure_unresolved_is_blocked owner/repo 20; then
+	printf 'FAIL: changing native availability caused a label write\n' >&2
+	exit 1
+fi
+[[ "$writes" == 3 && "$fixture_labels" == status:available && "$native_calls" == 1 ]]
+printf 'PASS: write fallback does not repeat the native lookup or persist unknown evidence\n'
