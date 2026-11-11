@@ -148,7 +148,8 @@ def _commit_release(store: LifecycleRegistry, candidate: _Candidate, result: dic
         ).fetchall()
         if [tuple(row) for row in current] != expected:
             return dict(result, status="retry-required")
-        if os.path.lexists(directory / MARKER) or _git_directory(path) != directory:
+        if (directory is None or os.path.lexists(directory / MARKER)
+                or _git_directory(path) != directory):
             return dict(result, status="retry-required")
         evidence = dict(
             result, type="replaced-path-released", status="replaced-path-released",
