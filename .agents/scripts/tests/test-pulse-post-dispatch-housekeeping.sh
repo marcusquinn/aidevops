@@ -795,28 +795,31 @@ test_housekeeping_weighted_timeouts() {
 		_pulse_prime_caches_if_stale() { _record_stage "cache_prime"; return 0; }
 		_pulse_start_post_dispatch_housekeeping 600
 		_pulse_finish_post_dispatch_housekeeping
-		# Heavy batches get six shares, but downstream recovery and scanners
-		# retain their own shares; the outer lane still bounds total runtime.
+		# Batch stages must not inherit the cheap 12s scanner ceiling. The outer
+		# lane still bounds total runtime and preserves completed checkpoints.
 		# GH#37549: ownership reconcile is not a scanner share; it gets its own
 		# allowance on top of the scanner lane instead of the 12s slice.
 		grep -q '^stage:post_dispatch_housekeeping:900$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:preflight_ownership_reconcile:600$' "$STAGE_LOG" || exit 1
 		grep -q '^budget:build_dependency_graph_cache:72$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:72$' "$STAGE_LOG" || exit 1
-		grep -q '^budget:refresh_blocked_status_from_graph:12$' "$STAGE_LOG" || exit 1
+		grep -q '^budget:refresh_blocked_status_from_graph:72$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:auto_decomposer_scanner:72$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:post_merge_scanner:12$' "$STAGE_LOG" || exit 1
 		# Explicit caller and cache-prime ceilings must still win.
 		PULSE_CACHE_PRIME_TIMEOUT=3
 		_pulse_start_post_dispatch_housekeeping 7
 		_pulse_finish_post_dispatch_housekeeping
 		grep -q '^budget:build_dependency_graph_cache:7$' "$STAGE_LOG" || exit 1
+		grep -q '^budget:refresh_blocked_status_from_graph:7$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:auto_decomposer_scanner:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:3$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:preflight_ownership_reconcile:7$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:post_dispatch_housekeeping:307$' "$STAGE_LOG" || exit 1
 	); then
 		failures=1
 	fi
-	print_result "heavy housekeeping batches receive weighted shares without starving other stages" "$failures"
+	print_result "batch housekeeping ceilings preserve caller and total lane limits" "$failures"
 	teardown_test_env
 	return 0
 }
