@@ -18,7 +18,7 @@ assert.equal(replayJob['runs-on'], 'ubuntu-22.04', 'Keep the enforcing Bubblewra
 const installStep = replayJob.steps.find(step => step.name === 'Install Bubblewrap');
 assert.ok(installStep, 'Keep the Bubblewrap installation step');
 assert.equal(installStep['timeout-minutes'], 8, 'Bubblewrap installation must stop after 8 minutes');
-assert.match(installStep.run, /sudo apt-get install -y bubblewrap/, 'Keep the enforcing sandbox installation');
+assert.match(installStep.run, /sudo apt-get .*install -y bubblewrap/, 'Keep the enforcing sandbox installation');
 
 const replayStep = replayJob.steps.find(step => step.name === 'Run model replay boundary suite');
 assert.ok(replayStep, 'Keep the replay boundary suite step');

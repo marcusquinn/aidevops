@@ -279,7 +279,19 @@ test_worker_capability_cooldown() {
 		HOME="$TEST_ROOT/other-runner"
 		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
 		fixture_comments=$(jq -c 'map(.created_at="2020-01-01T00:00:00Z")' <<<"$fixture_comments")
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
+		# GH#37752: an old observation of an unchanged brief still holds; no TTL.
+		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || exit 1
+		# A changed runner capability re-probes and ignores pre-change observations.
+		local cap_repo="$TEST_ROOT/cap-repo" cap_candidate=""
+		mkdir -p "$cap_repo"
+		printf '{"x":1}\n' >"$cap_repo/.aidevops.json"
+		cap_candidate=$(jq -c --arg p "$cap_repo" '.repo_path=$p' <<<"$candidate")
+		rm -rf "$HOME/.aidevops/logs/dispatch-capability-cooldown"
+		_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" || exit 1
+		printf '{"x":2}\n' >"$cap_repo/.aidevops.json"
+		_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" && exit 1
+		_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" && exit 1
+		rm -rf "$HOME/.aidevops/logs/dispatch-capability-cooldown"
 		fixture_comments=$(jq -c 'map(.created_at="2999-01-01T00:00:00Z")' <<<"$fixture_comments")
 		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
 		exit 0
