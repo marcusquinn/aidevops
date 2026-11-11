@@ -127,10 +127,13 @@ stranded_loader_names() {
 # Whether gopass should own NAME. A listed entry stays gopass-only, so a locked
 # store fails closed instead of reading a stale plaintext value. An unreadable
 # listing also counts as owned, preserving the historical gopass-first result.
+# List the whole store, not the prefix: `gopass ls PREFIX/` fails once the
+# prefix folder is empty, which made every name look gopass-owned and broke
+# credentials.sh fallback after all secrets were moved out of gopass.
 gopass_owns_secret() {
 	local name="$1"
 	local listing=""
-	listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null) || return 0
+	listing=$(gopass ls --flat 2>/dev/null) || return 0
 	if printf '%s\n' "$listing" | grep -Fxq -- "${GOPASS_PREFIX}/${name}"; then
 		return 0
 	fi
@@ -463,7 +466,8 @@ build_secret_env() {
 		if [[ ${#specific_names[@]} -gt 0 ]]; then
 			# Inject only specific secrets
 			local available_secrets=""
-			if ! available_secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+			# Whole-store listing: an empty prefix folder is not an error.
+			if ! available_secrets=$(gopass ls --flat 2>/dev/null); then
 				print_error "Unable to list gopass secrets for injection" >&2
 				return 1
 			fi
@@ -1425,17 +1429,15 @@ cmd_inventory() (
 	if command -v gopass &>/dev/null; then
 		gopass_status="error"
 		local listing=""
-		if listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+		# Whole-store listing: an empty prefix folder is "available", not an error.
+		if listing=$(gopass ls --flat 2>/dev/null); then
 			gopass_status="available"
 			local secret_path=""
 			while IFS= read -r secret_path; do
 				[[ -z "$secret_path" ]] && continue
 				case "$secret_path" in
 				"${GOPASS_PREFIX}/"*) inventory_add_name "${secret_path#"${GOPASS_PREFIX}/"}" "$names_file" || return 1 ;;
-				*)
-					print_error "Invalid gopass inventory path" >&2
-					return 1
-					;;
+				*) continue ;;
 				esac
 			done <<<"$listing"
 		fi
