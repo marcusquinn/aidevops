@@ -631,12 +631,25 @@ _summarize_child_readiness() {
 _declared_child_nums() {
 	local parent_body="$1"
 	local roadmap_bodies="${2:-}"
-	printf '%s\n%s\n' "$parent_body" "$roadmap_bodies" | awk '
+	local body_section="" comment_sections=""
+	# Body: the reconciler's _extract_children_section heading set, first
+	# section only, so the body never bleeds into comment text.
+	body_section=$(printf '%s\n' "$parent_body" | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ { in_section = 1; next }
+		in_section && /^##[[:space:]]/ { exit }
+		in_section { print }
+	')
+	# Comments: the reconciler's trusted roadmap heading set. Each comment
+	# body ends with a "## " sentinel line (see _fetch_trusted_roadmap_bodies).
+	comment_sections=$(printf '%s\n' "$roadmap_bodies" | awk '
 		BEGIN { in_section = 0 }
 		/^##[[:space:]]+(Dispatch roadmap|Children|Child [Ii]ssues|Sub-?[Tt]asks)[[:space:]]*$/ { in_section = 1; next }
 		in_section && /^##[[:space:]]/ { in_section = 0 }
 		in_section { print }
-	' | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un || true
+	')
+	printf '%s\n%s\n' "$body_section" "$comment_sections" |
+		grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un || true
 	return 0
 }
 
@@ -659,7 +672,7 @@ _fetch_trusted_roadmap_bodies() {
 		return 0
 	fi
 	printf '%s' "$comments_json" | jq -r --arg heading "$heading_filter" \
-		'.[]? | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") and ((.body // "") | test($heading))) | .body' \
+		'.[]? | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") and ((.body // "") | test($heading))) | (.body + "\n## ")' \
 		2>/dev/null || true
 	return 0
 }
@@ -716,26 +729,37 @@ _read_close_contract() {
 	return 0
 }
 
-# Gather declaration evidence (body children section, trusted roadmap comments
-# and native graph children), then read the close contract (GH#37679).
-# Comments are fetched only when the provisional marker needs them.
-# Arguments: $1=issue_num $2=repo $3=parent_body $4=phase_plan
-#            $5=native_graph_count $6=sub-issues JSON
-# Echo: "<expected_children>|<incomplete_reason>"
-_resolve_close_contract() {
+# Gather the declared child list (body children section, plus trusted roadmap
+# comments when the provisional marker needs them) for GH#37679. Declared
+# children join the state-checked child set, so a child declared only in a
+# comment can never be reported closed without being read.
+# Arguments: $1=issue_num $2=repo $3=parent_body
+# Echo: sorted unique declared child numbers, one per line
+_parent_declared_children() {
 	local issue_num="$1"
 	local repo="$2"
 	local parent_body="$3"
-	local phase_plan="$4"
-	local native_graph_count="${5:-0}"
-	local sub_issues_json="${6:-[]}"
-	local graph_child_nums="" declared_nums="" roadmap_bodies=""
-	graph_child_nums=$(printf '%s' "$sub_issues_json" | jq -r '.[].number' 2>/dev/null | sort -un) || graph_child_nums=""
+	local roadmap_bodies=""
 	if [[ "$parent_body" == *"$PARENT_STATUS_NEEDS_DECOMPOSITION_MARKER"* ]]; then
 		roadmap_bodies=$(_fetch_trusted_roadmap_bodies "$issue_num" "$repo")
 	fi
 	# A self-reference is never a child declaration (mirrors the reconciler).
-	declared_nums=$(_declared_child_nums "$parent_body" "$roadmap_bodies" | grep -vx "$issue_num" || true)
+	_declared_child_nums "$parent_body" "$roadmap_bodies" | grep -vx "$issue_num" || true
+	return 0
+}
+
+# Read the close contract against declared and native graph children.
+# Arguments: $1=parent_body $2=phase_plan $3=native_graph_count
+#            $4=sub-issues JSON $5=declared child numbers
+# Echo: "<expected_children>|<incomplete_reason>"
+_resolve_close_contract() {
+	local parent_body="$1"
+	local phase_plan="$2"
+	local native_graph_count="${3:-0}"
+	local sub_issues_json="${4:-[]}"
+	local declared_nums="${5:-}"
+	local graph_child_nums=""
+	graph_child_nums=$(printf '%s' "$sub_issues_json" | jq -r '.[].number' 2>/dev/null | sort -un) || graph_child_nums=""
 	_read_close_contract "$parent_body" "$phase_plan" "$native_graph_count" \
 		"$declared_nums" "$graph_child_nums"
 	return 0
@@ -865,6 +889,9 @@ cmd_parent_status() {
 	if ! all_child_nums=$(_gather_child_nums "$issue_num" "$repo" "$parent_body" "$sub_issues_json"); then
 		retrieval_incomplete=1
 	fi
+	local declared_nums
+	declared_nums=$(_parent_declared_children "$issue_num" "$repo" "$parent_body")
+	all_child_nums=$(printf '%s\n%s\n' "$all_child_nums" "$declared_nums" | grep -E '^[0-9]+$' | sort -un || true)
 	if ! children_state_lines=$(_resolve_children_state "$all_child_nums" "$repo"); then
 		retrieval_incomplete=1
 	fi
@@ -887,8 +914,8 @@ cmd_parent_status() {
 	if [[ -z "$phase_plan" ]]; then phases_total="${total_line#TOTAL:}"; fi
 
 	local close_contract expected_children contract_reason next_action
-	close_contract=$(_resolve_close_contract "$issue_num" "$repo" "$parent_body" \
-		"$phase_plan" "$native_graph_count" "$sub_issues_json")
+	close_contract=$(_resolve_close_contract "$parent_body" "$phase_plan" \
+		"$native_graph_count" "$sub_issues_json" "$declared_nums")
 	IFS='|' read -r expected_children contract_reason <<< "$close_contract"
 	next_action=$(_derive_next_action \
 		"$phases_total" "$phases_filed" "$in_flight_pr_num" "$phases_merged" \

@@ -291,6 +291,11 @@ jq -n '[{author_association:"OWNER",body:"## Children\n\n- #30601\n- #30701"}]' 
 	>"$STUB_DIR/comments-31100.json"
 jq -n '[{author_association:"NONE",body:"## Children\n\n- #30601\n- #30701"}]' \
 	>"$STUB_DIR/comments-31150.json"
+jq -n '{number:31170,title:"Provisional marker with comment-only open child",state:"OPEN",body:"## Notes\n\nTracker.\n\n<!-- parent-close-contract: needs-decomposition -->",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-31170.json"
+printf '%s\n' '[{"number":30601}]' >"$STUB_DIR/sub-issues-31170.json"
+jq -n '[{author_association:"OWNER",body:"## Children\n\n- #30601\n- #30501"}]' \
+	>"$STUB_DIR/comments-31170.json"
 jq -n '{number:31200,title:"Provisional marker with graph children only",state:"OPEN",body:"Graph-only tracker.\n\n<!-- parent-close-contract: needs-decomposition -->",labels:[{name:"parent-task"}]}' \
 	>"$STUB_DIR/issue-31200.json"
 printf '%s\n' '[{"number":30601},{"number":30701}]' >"$STUB_DIR/sub-issues-31200.json"
@@ -567,6 +572,14 @@ if printf '%s' "$untrusted_comment_output" | grep -q '(needs-decomposition)' &&
 	pass "28: untrusted roadmap comment does not satisfy the provisional marker"
 else
 	fail "28: untrusted roadmap comment satisfied the provisional marker"
+fi
+
+comment_open_output=$(run_helper 31170 --repo marcusquinn/aidevops)
+if printf '%s' "$comment_open_output" | grep -q '#30501' &&
+	! printf '%s' "$comment_open_output" | grep -q 'close the parent issue'; then
+	pass "31: open child declared only in a trusted comment is state-checked and blocks closure"
+else
+	fail "31: comment-only declared open child was not state-checked"
 fi
 
 graph_only_output=$(run_helper 31200 --repo marcusquinn/aidevops)

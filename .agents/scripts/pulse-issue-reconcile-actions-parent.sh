@@ -685,6 +685,11 @@ _repair_closed_parent_contract() {
 	final_child_count="$_PIR_CPT_KNOWN_CHILD_COUNT"
 	[[ "$final_child_nums" == "$first_child_nums" && \
 		"$final_child_source" == "$first_child_source" ]] || return 1
+	# Re-read child terminality from the final snapshot so a child changing
+	# state between snapshots cannot flip the reopen decision (GH#37679).
+	local final_children_terminal=0
+	final_children_terminal=$(_pir_cpt_children_terminal_flag "$slug" "$final_child_nums" "$final_body")
+	[[ "$final_children_terminal" == "$children_terminal" ]] || return 1
 
 	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed || return 1
 	[[ "$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON")" == "$final_body" ]] || return 1
