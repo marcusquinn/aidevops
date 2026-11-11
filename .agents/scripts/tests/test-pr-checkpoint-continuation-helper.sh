@@ -75,7 +75,7 @@ if [[ -n "${STUB_CLAIM_FILE:-}" ]]; then
 		exit 0
 	fi
 	if [[ "$1 $2 $3 $4" == "api repos/owner/repo/issues/123/comments --method POST" &&
-		"$6" == *DISPATCH_* ]]; then
+		( "$6" == body=DISPATCH_* || "$6" == *$'\n'DISPATCH_* ) ]]; then
 		if [[ ! -r "${STUB_CLAIM_FILE}.base" || "$(<"${STUB_CLAIM_FILE}.base")" != "${STUB_COMMENTS_JSON:-[]}" ]]; then
 			printf '[]' >"$STUB_CLAIM_FILE"
 			printf '%s' "${STUB_COMMENTS_JSON:-[]}" >"${STUB_CLAIM_FILE}.base"
