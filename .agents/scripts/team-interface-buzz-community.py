@@ -4,13 +4,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+# Subprocess use is limited to read-only Buzz CLI calls with fixed argv and no shell.
 import argparse
 import json
 import os
-from pathlib import Path
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
+from pathlib import Path
 
 from _team_interface_buzz_runtime_install import default_app_data_dir
 
@@ -44,6 +45,8 @@ def template_channels(template):
             channels[channel["name"]] = channel.get("visibility", "open")
     for channel in template.get("unsectioned_channels", []):
         channels[channel["name"]] = channel.get("visibility", "open")
+    for name in template.get("agents", {}).get("repo_channels", {}):
+        channels.setdefault(name, "open")
     return channels
 
 
@@ -123,14 +126,21 @@ def member_pubkeys(members):
 
 
 def compute_plan(template, host_slug, identities, live_channels, live_members):
-    """Compute the four plan sections without any side effect."""
+    """Compute the community plan sections without any side effect."""
     wanted = template_channels(template)
     missing_channels = sorted(name for name in wanted if name not in live_channels)
     agents = template.get("agents", {})
-    agent_channels = agents.get("channels", {})
+    agent_channels = {role: list(channels) for role, channels in agents.get("channels", {}).items()}
+    for channel, roles in agents.get("repo_channels", {}).items():
+        for role in roles:
+            channels = agent_channels.setdefault(role, [])
+            if channel not in channels:
+                channels.append(channel)
     missing_agents = []
     requests = []
     owner_actions = []
+    unreadable_memberships = []
+    executing_pubkey = identities.get(f"aidevops-{host_slug}")
     per_channel = {}
     for role, channels in agent_channels.items():
         name = f"{role}-{host_slug}"
@@ -144,7 +154,10 @@ def compute_plan(template, host_slug, identities, live_channels, live_members):
         if channel not in live_channels:
             continue
         current = live_members.get(channel)
-        pending = [pk for _, pk in per_channel[channel] if current is None or pk not in current]
+        if current is None:
+            unreadable_memberships.append(channel)
+            continue
+        pending = [pk for _, pk in per_channel[channel] if pk not in current]
         if not pending:
             continue
         request = {
@@ -155,7 +168,7 @@ def compute_plan(template, host_slug, identities, live_channels, live_members):
             "role": "bot",
         }
         requests.append(request)
-        if wanted.get(channel) == "private":
+        if wanted.get(channel) == "private" and executing_pubkey not in current:
             owner_actions.append(channel)
     return {
         "host_slug": host_slug,
@@ -163,6 +176,7 @@ def compute_plan(template, host_slug, identities, live_channels, live_members):
         "missing_agents": sorted(missing_agents),
         "member_add_requests": requests,
         "private_channels_needing_owner": owner_actions,
+        "unreadable_memberships": unreadable_memberships,
     }
 
 
@@ -180,8 +194,10 @@ def render_text(plan):
     if not plan["member_add_requests"]:
         lines.append("   none")
     lines += ["", "4. Private channels where the owner must first add that agent",
-              "   (member_add is refused with 'restricted: not a channel member'):"]
+               "   (member_add is refused with 'restricted: not a channel member'):"]
     lines += [f"   - {name}" for name in plan["private_channels_needing_owner"]] or ["   none"]
+    lines += ["", "5. Unreadable memberships (unknown; no member_add requests planned):"]
+    lines += [f"   - {name}" for name in plan["unreadable_memberships"]] or ["   none"]
     return "\n".join(lines)
 
 
@@ -225,7 +241,7 @@ def main(argv=None):
             try:
                 payload = run_buzz_json(buzz_bin, ["channels", "members", channel_id])
             except PlanError:
-                continue  # not readable: treated as unknown, so all agents stay pending
+                continue  # unknown memberships are reported without member_add requests
             live_members[name] = member_pubkeys(payload)
         plan = compute_plan(template, host_slug, identities, live_channels, live_members)
     except (PlanError, RuntimeError) as error:

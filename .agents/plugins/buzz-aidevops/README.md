@@ -117,8 +117,16 @@ How a turn runs:
 
 ## Set up a community
 
-Run `buzz-team-provision-helper.sh community plan` for a read-only plan of
-missing channels, agent drafts and `member_add` requests from the base layout in
+For the macOS preview, use its app-data directory and the same normalized host
+slug used in your agent names (replace `my-mac-01`):
+
+```bash
+buzz-team-provision-helper.sh community plan --host-slug my-mac-01 \
+  --app-data-dir "$HOME/Library/Application Support/xyz.block.buzz.desktop"
+```
+
+This prints a read-only plan of missing channels, agent drafts and `member_add`
+requests from the base layout in
 `.agents/configs/buzz-community-base.json`. Limits and the membership route:
 `.agents/reference/team-interface-buzz-provisioning.md`.
 

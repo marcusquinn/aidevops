@@ -327,6 +327,13 @@ prints: missing channels, missing agent drafts, one `member_add` request per
 channel (channel id, pubkeys, role `bot`), and private channels where the owner
 must first add the sending agent.
 
+Repository mappings in `agents.repo_channels` also contribute channels and agent
+memberships. Failed membership reads are listed as `unreadable_memberships`, not
+treated as missing members; no `member_add` requests are emitted for those
+channels until membership can be read successfully. Private channels only need
+owner action when the executing `aidevops-<host-slug>` agent is not already a
+member.
+
 Membership route and limits (observed on Buzz 1.0.0, plugin 1.2.x):
 
 - The local `buzz` CLI cannot add members: `channels add-member` is refused with
