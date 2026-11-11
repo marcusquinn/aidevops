@@ -362,6 +362,36 @@ _parent_comments_api_path() {
 	return 0
 }
 
+_PARENT_CLOSE_CONTRACT_NEEDS_DECOMPOSITION_MARKER='<!-- parent-close-contract: needs-decomposition -->'
+_PARENT_CLOSE_CONTRACT_KEEP_OPEN_MARKER='<!-- parent-close-contract: keep-open -->'
+# Exact recovery steps for the provisional creation-time marker (GH#37679).
+_PARENT_CLOSE_CONTRACT_DECOMPOSITION_STEPS="This parent still carries the provisional creation-time marker \`<!-- parent-close-contract: needs-decomposition -->\`. To let it close: (1) add a \`## Children\` section to the parent body listing every child issue, one \`- #NNN\` line each, and include every native sub-issue in that list; (2) replace the marker with \`<!-- parent-close-contract: expected-children=N -->\`, where N is the number of children, or with \`<!-- parent-close-contract: complete -->\` if no more children are planned. Reconciliation then closes the parent once every child is closed."
+_PARENT_CLOSE_CONTRACT_KEEP_OPEN_STEPS="This parent is explicitly marked \`<!-- parent-close-contract: keep-open -->\`, so it never closes automatically. When the objective is finished, replace that marker with \`<!-- parent-close-contract: complete -->\` and rerun reconciliation or close the parent."
+
+#######################################
+# GH#37679: decide whether a parent has declared its decomposition, which
+# satisfies the provisional needs-decomposition marker. The declaration must be
+# an explicit child list (body `## Children` / `## Child issues` /
+# `## Sub-tasks` section or a trusted roadmap comment), every known child must
+# already be verified terminal, and every native sub-issue must appear in the
+# declared list. Graph-only children never satisfy the marker.
+# Args: $1=declared child numbers, $2=native graph child numbers,
+#       $3=children terminal flag (1 = every known child verified terminal)
+# Returns: 0=declared and terminal, 1=otherwise
+#######################################
+_parent_decomposition_declared() {
+	local declared_nums="$1" graph_nums="$2" children_terminal="${3:-0}"
+	local graph_num="" declared_set=""
+	[[ "$children_terminal" == "1" ]] || return 1
+	[[ "$declared_nums" =~ [0-9] ]] || return 1
+	declared_set=$'\n'"${declared_nums}"$'\n'
+	while IFS= read -r graph_num; do
+		[[ "$graph_num" =~ ^[0-9]+$ ]] || continue
+		[[ "$declared_set" == *$'\n'"${graph_num}"$'\n'* ]] || return 1
+	done <<<"$graph_nums"
+	return 0
+}
+
 #######################################
 # Decide whether deterministic parent-body evidence blocks closure.
 # Backward compatibility is deliberate: legacy parents with no contract and
@@ -371,20 +401,27 @@ _parent_comments_api_path() {
 #   - canonical ## Phases rows (every row must contain a child reference)
 #   - <!-- parent-close-contract: expected-children=N -->
 #   - <!-- parent-close-contract: complete -->
-#   - <!-- parent-close-contract: needs-decomposition|keep-open -->
+#   - <!-- parent-close-contract: keep-open --> (explicit, always blocks)
+#   - <!-- parent-close-contract: needs-decomposition --> (provisional
+#     creation-time default; satisfied once the decomposition is declared, see
+#     _parent_decomposition_declared)
 # Unchecked Markdown task-list criteria also block closure.
 #
 # A complete native sub-issue graph is the authoritative decomposition record.
 # Once every graph child is terminal (verified by the caller), stale unchecked
 # tracker criteria do not keep the parent open. Explicit keep-open and expected
 # child contracts still win.
-# Args: $1=parent_body, $2=known_child_count, $3=child evidence source
+# Args: $1=parent_body, $2=known_child_count, $3=child evidence source,
+#       $4=declared child numbers, $5=native graph child numbers,
+#       $6=children terminal flag (1 only when the caller verified every known
+#          child is terminal). Omitted declaration evidence fails closed.
 # Returns: 0=incomplete, 1=complete or legacy-unknown
 #######################################
 _parent_close_contract_incomplete() {
 	local parent_body="$1"
 	local known_child_count="${2:-0}"
 	local child_source="${3:-}"
+	local declared_nums="${4:-}" graph_nums="${5:-}" children_terminal="${6:-0}"
 	local native_graph_complete=0
 	_PARENT_CLOSE_CONTRACT_REASON=""
 	_PARENT_CLOSE_CONTRACT_DECLARED=0
@@ -425,8 +462,12 @@ _parent_close_contract_incomplete() {
 		_PARENT_CLOSE_CONTRACT_REASON="invalid-phase-plan"
 		return 0
 	fi
-	if [[ "$parent_body" == *"<!-- parent-close-contract: needs-decomposition -->"* ||
-		"$parent_body" == *"<!-- parent-close-contract: keep-open -->"* ]]; then
+	if [[ "$parent_body" == *"$_PARENT_CLOSE_CONTRACT_KEEP_OPEN_MARKER"* ]]; then
+		_PARENT_CLOSE_CONTRACT_REASON="keep-open"
+		return 0
+	fi
+	if [[ "$parent_body" == *"$_PARENT_CLOSE_CONTRACT_NEEDS_DECOMPOSITION_MARKER"* ]] &&
+		! _parent_decomposition_declared "$declared_nums" "$graph_nums" "$children_terminal"; then
 		_PARENT_CLOSE_CONTRACT_REASON="needs-decomposition"
 		return 0
 	fi
@@ -472,13 +513,16 @@ _pir_parent_revision_from_json() {
 # Apply the parent close contract to a freshly fetched issue object. A missing
 # or non-string body is ambiguous and therefore blocks closure, while an
 # explicitly empty body preserves the legacy compatibility contract.
-# Args: $1=live_issue_json, $2=known_child_count, $3=child evidence source
+# Args: $1=live_issue_json, $2=known_child_count, $3=child evidence source,
+#       $4=declared child numbers, $5=native graph child numbers,
+#       $6=children terminal flag (see _parent_close_contract_incomplete)
 # Returns: 0=incomplete or ambiguous, 1=complete or legacy-unknown
 #######################################
 _parent_live_close_contract_incomplete() {
 	local live_issue_json="$1"
 	local known_child_count="${2:-0}"
 	local child_source="${3:-}"
+	local declared_nums="${4:-}" graph_nums="${5:-}" children_terminal="${6:-0}"
 	local live_body=""
 	if ! live_body=$(_pir_parent_body_from_json "$live_issue_json"); then
 		_PARENT_CLOSE_CONTRACT_REASON="$_PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE"
@@ -486,7 +530,8 @@ _parent_live_close_contract_incomplete() {
 		_PARENT_CLOSE_CONTRACT_UNFILED=""
 		return 0
 	fi
-	_parent_close_contract_incomplete "$live_body" "$known_child_count" "$child_source"
+	_parent_close_contract_incomplete "$live_body" "$known_child_count" "$child_source" \
+		"$declared_nums" "$graph_nums" "$children_terminal"
 	return $?
 }
 
@@ -509,6 +554,12 @@ _post_parent_close_contract_nudge() {
 
 	local guidance="Complete the declared decomposition and update the parent close contract before closure."
 	case "$reason" in
+	needs-decomposition)
+		guidance="$_PARENT_CLOSE_CONTRACT_DECOMPOSITION_STEPS"
+		;;
+	keep-open)
+		guidance="$_PARENT_CLOSE_CONTRACT_KEEP_OPEN_STEPS"
+		;;
 	expected-children:*)
 		guidance="Link all ${reason#expected-children:} expected child issues, then rerun reconciliation."
 		;;
@@ -548,11 +599,14 @@ _mark_parent_review_hold() {
 # Verify that a live parent is still an automation-completed close whose body
 # deterministically requires repair. Intentional or unknown close reasons fail
 # closed. Sets _PIR_CPT_REPAIR_REASON on success.
-# Args: $1=live issue JSON, $2=known child count, $3=child evidence source
+# Args: $1=live issue JSON, $2=known child count, $3=child evidence source,
+#       $4=declared child numbers, $5=native graph child numbers,
+#       $6=children terminal flag (see _parent_close_contract_incomplete)
 # Returns: 0=repairable, 1=not repairable or ambiguous
 #######################################
 _pir_closed_parent_repair_reason() {
 	local live_issue_json="$1" known_child_count="$2" child_source="${3:-}"
+	local declared_nums="${4:-}" graph_nums="${5:-}" children_terminal="${6:-0}"
 	_PIR_CPT_REPAIR_REASON=""
 	printf '%s' "$live_issue_json" | jq -e --arg string_type "$_PIR_JSON_TYPE_STRING" '
 		(.state_reason // .stateReason) as $reason |
@@ -560,9 +614,28 @@ _pir_closed_parent_repair_reason() {
 		($reason | type) == $string_type and
 		($reason | ascii_downcase | . == "completed")
 	' >/dev/null 2>&1 || return 1
-	_parent_live_close_contract_incomplete "$live_issue_json" "$known_child_count" "$child_source" || return 1
+	_parent_live_close_contract_incomplete "$live_issue_json" "$known_child_count" "$child_source" \
+		"$declared_nums" "$graph_nums" "$children_terminal" || return 1
 	[[ "$_PARENT_CLOSE_CONTRACT_REASON" != "$_PARENT_CLOSE_CONTRACT_LIVE_BODY_UNAVAILABLE" ]] || return 1
 	_PIR_CPT_REPAIR_REASON="$_PARENT_CLOSE_CONTRACT_REASON"
+	return 0
+}
+
+#######################################
+# Report whether every known child of a closed parent is terminal, for the
+# provisional needs-decomposition contract only (GH#37679). Other contracts do
+# not depend on it, so their repair decisions spend no extra child reads.
+# Args: $1=slug, $2=newline-separated child numbers, $3=parent body
+# Stdout: 1 when the marker is present and every child verifies closed, else 0
+#######################################
+_pir_cpt_children_terminal_flag() {
+	local slug="$1" child_nums="$2" parent_body="$3"
+	if [[ "$parent_body" == *"$_PARENT_CLOSE_CONTRACT_NEEDS_DECOMPOSITION_MARKER"* ]] &&
+		_pir_verify_parent_children_closed "$slug" "$child_nums"; then
+		printf '1\n'
+		return 0
+	fi
+	printf '0\n'
 	return 0
 }
 
@@ -579,7 +652,7 @@ _repair_closed_parent_contract() {
 	local existing="" existing_ids="" comments_api="" reason=""
 	local first_body="" first_revision="" first_child_nums="" first_child_source=""
 	local final_body="" final_revision="" final_child_nums="" final_child_source=""
-	local final_child_count=0
+	local final_child_count=0 children_terminal=0
 	comments_api=$(_parent_comments_api_path "$slug" "$parent_num")
 	existing_ids=$(gh api --paginate "$comments_api" \
 		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
@@ -597,8 +670,10 @@ _repair_closed_parent_contract() {
 	_pir_collect_parent_child_evidence "$slug" "$parent_num" "$first_body" || return 1
 	first_child_nums="$_PIR_CPT_CHILD_NUMS"
 	first_child_source="$_PIR_CPT_CHILD_SOURCE"
+	children_terminal=$(_pir_cpt_children_terminal_flag "$slug" "$first_child_nums" "$first_body")
 	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$_PIR_CPT_KNOWN_CHILD_COUNT" \
-		"$_PIR_CPT_CHILD_SOURCE" || return 1
+		"$_PIR_CPT_CHILD_SOURCE" "$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" \
+		"$children_terminal" || return 1
 
 	_pir_parent_mutation_is_allowed "$slug" "$parent_num" closed || return 1
 	final_body=$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON") || return 1
@@ -615,7 +690,8 @@ _repair_closed_parent_contract() {
 	[[ "$(_pir_parent_body_from_json "$_PIR_LIVE_PARENT_JSON")" == "$final_body" ]] || return 1
 	[[ "$(_pir_parent_revision_from_json "$_PIR_LIVE_PARENT_JSON")" == "$final_revision" ]] || return 1
 	_pir_closed_parent_repair_reason "$_PIR_LIVE_PARENT_JSON" "$final_child_count" \
-		"$final_child_source" || return 1
+		"$final_child_source" "$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" \
+		"$children_terminal" || return 1
 	reason="$_PIR_CPT_REPAIR_REASON"
 	gh issue reopen "$parent_num" --repo "$slug" >/dev/null 2>&1 || return 1
 	_post_parent_close_contract_nudge "$slug" "$parent_num" "$reason" "$marker" || true
@@ -703,7 +779,7 @@ _pir_parent_close_snapshot_is_stable() {
 	_pir_verify_parent_children_closed "$slug" "$_PIR_CPT_CHILD_NUMS" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	if _parent_close_contract_incomplete "$live_parent_body" "$child_count" \
-		"$_PIR_CPT_CHILD_SOURCE"; then
+		"$_PIR_CPT_CHILD_SOURCE" "$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" 1; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" live
 		return 1
 	fi
@@ -757,7 +833,7 @@ _pir_parent_close_postcondition_is_stable() {
 	_pir_verify_parent_children_closed "$slug" "$_PIR_CPT_CHILD_NUMS" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	_parent_close_contract_incomplete "$live_parent_body" "$child_count" \
-		"$_PIR_CPT_CHILD_SOURCE" && return 1
+		"$_PIR_CPT_CHILD_SOURCE" "$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" 1 && return 1
 	return 0
 }
 

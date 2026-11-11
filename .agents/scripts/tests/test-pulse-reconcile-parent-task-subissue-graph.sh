@@ -78,6 +78,13 @@ case "$1" in
 		if [[ "$*" == *"/comments"* && -n "${GH_COMMENTS_EXIT_CODE:-}" ]]; then
 			exit "${GH_COMMENTS_EXIT_CODE}"
 		fi
+		# Trusted roadmap comment bodies, already filtered as the production
+		# --jq expression would emit them (GH#37679).
+		if [[ "$*" == *"/comments"* && "$*" == *"Dispatch roadmap"* && \
+			-f "${TEST_ROOT}/gh-roadmap-comments.txt" ]]; then
+			cat "${TEST_ROOT}/gh-roadmap-comments.txt"
+			exit 0
+		fi
 		if [[ "${1:-}" == "graphql" ]]; then
 			printf 'graphql-cost-from-response=%s\n' "${AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE:-}" >>"${GH_CALLS}"
 			# Per-scenario override: non-zero exit simulates a GraphQL
@@ -303,7 +310,8 @@ reset_scenario() {
 		"${TEST_ROOT}/gh-issue-list.json" "${TEST_ROOT}/gh-closed-issue-list.json" \
 		"${TEST_ROOT}/gh-live-parent.json" "${TEST_ROOT}/gh-live-parent-after-first.json" \
 		"${TEST_ROOT}/gh-live-parent-after-close.json" "${TEST_ROOT}"/gh-parent-closed-* \
-		"${TEST_ROOT}"/gh-live-parent-*.reads "${TEST_ROOT}"/gh-child-state-*.reads
+		"${TEST_ROOT}"/gh-live-parent-*.reads "${TEST_ROOT}"/gh-child-state-*.reads \
+		"${TEST_ROOT}/gh-roadmap-comments.txt"
 	unset GH_LIVE_PARENT_EXIT_CODE GH_LIVE_PARENT_TRANSITION_AFTER GH_GRAPHQL_TRANSITION_AFTER
 	unset GH_COMMENTS_EXIT_CODE GH_GRAPHQL_SHAPE
 	return 0
@@ -1104,6 +1112,133 @@ if grep -q "issue close 1610" "$GH_CALLS"; then
 	print_result "numbered phase plan: complete contract closes parent" 0
 else
 	print_result "numbered phase plan: complete contract closes parent" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 14 (GH#37679): needs-decomposition is a provisional creation-time
+# default. A declared child list whose children are all terminal and cover the
+# native graph satisfies it; keep-open and expected-children keep blocking.
+# -----------------------------------------------------------------------------
+NEEDS_DECOMPOSITION_MARKER='<!-- parent-close-contract: needs-decomposition -->'
+
+reset_scenario
+set_parent_list 1700 "t1700: provisional marker with body children" \
+	$'## Children\n\n- #1701\n- #1702\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1701:CLOSED" "1702:CLOSED"
+set_child_states "1701:closed:child-a" "1702:closed:child-b"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1700" "$GH_CALLS"; then
+	print_result "provisional marker: declared body children all closed closes parent" 0
+else
+	print_result "provisional marker: declared body children all closed closes parent" 1 \
+		"(log: $(tr '\n' '|' <"$LOGFILE" | head -c 400))"
+fi
+
+reset_scenario
+set_parent_list 1710 "t1710: provisional marker with roadmap comment" \
+	$'Tracker created before its children.\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+printf '%s\n' '## Children' '' '- #1711' '- #1712' >"${TEST_ROOT}/gh-roadmap-comments.txt"
+set_subissues "1711:CLOSED" "1712:CLOSED"
+set_child_states "1711:closed:child-a" "1712:closed:child-b"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1710" "$GH_CALLS"; then
+	print_result "provisional marker: trusted roadmap comment declaration closes parent" 0
+else
+	print_result "provisional marker: trusted roadmap comment declaration closes parent" 1 \
+		"(log: $(tr '\n' '|' <"$LOGFILE" | head -c 400))"
+fi
+
+reset_scenario
+set_parent_list 1720 "t1720: provisional marker with graph children only" \
+	$'Graph-only tracker.\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1721:CLOSED" "1722:CLOSED"
+set_child_states "1721:closed:child-a" "1722:closed:child-b"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1720" "$GH_CALLS"; then
+	print_result "provisional marker: graph-only children keep the parent open" 1
+elif grep -q "issue comment 1720" "$GH_CALLS" && \
+	grep -q 'expected-children=N' "$GH_CALLS" && grep -q '## Children' "$GH_CALLS"; then
+	print_result "provisional marker: graph-only children keep the parent open with exact steps" 0
+else
+	print_result "provisional marker: graph-only children keep the parent open with exact steps" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 600))"
+fi
+
+reset_scenario
+set_parent_list 1730 "t1730: declaration misses a graph child" \
+	$'## Children\n\n- #1731\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1731:CLOSED" "1732:CLOSED"
+set_child_states "1731:closed:child-a" "1732:closed:child-b"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1730" "$GH_CALLS"; then
+	print_result "provisional marker: declaration that omits a graph child stays open" 1
+else
+	print_result "provisional marker: declaration that omits a graph child stays open" 0
+fi
+
+reset_scenario
+set_parent_list 1740 "t1740: expected three, two known" \
+	$'## Children\n\n- #1741\n- #1742\n\n<!-- parent-close-contract: expected-children=3 -->'
+set_subissues "1741:CLOSED" "1742:CLOSED"
+set_child_states "1741:closed:child-a" "1742:closed:child-b"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1740" "$GH_CALLS"; then
+	print_result "expected-children=3 with two closed children stays open" 1
+else
+	print_result "expected-children=3 with two closed children stays open" 0
+fi
+
+reset_scenario
+set_parent_list 1750 "t1750: explicit hold" \
+	$'## Children\n\n- #1751\n\n<!-- parent-close-contract: keep-open -->'
+set_subissues "1751:CLOSED"
+set_child_states "1751:closed:child-a"
+reconcile_completed_parent_tasks >/dev/null 2>&1
+if grep -q "issue close 1750" "$GH_CALLS"; then
+	print_result "keep-open: declared closed children never close the parent" 1
+elif grep -q "incomplete close contract (keep-open" "$LOGFILE"; then
+	print_result "keep-open: declared closed children never close the parent" 0
+else
+	print_result "keep-open: declared closed children never close the parent" 1 \
+		"(log: $(tr '\n' '|' <"$LOGFILE" | head -c 400))"
+fi
+
+reset_scenario
+set_closed_parent_list 1760 "t1760: manually closed finished tracker" \
+	$'## Children\n\n- #1761\n- #1762\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1761:CLOSED" "1762:CLOSED"
+set_child_states "1761:closed:child-a" "1762:closed:child-b"
+_repair_recently_closed_parents_for_slug test/repo 1 >/dev/null 2>&1
+if grep -q "issue reopen 1760" "$GH_CALLS"; then
+	print_result "provisional marker: manual close of a declared finished parent is not reopened" 1
+else
+	print_result "provisional marker: manual close of a declared finished parent is not reopened" 0
+fi
+
+reset_scenario
+set_closed_parent_list 1770 "t1770: closed with an open declared child" \
+	$'## Children\n\n- #1771\n- #1772\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1771:CLOSED" "1772:OPEN"
+set_child_states "1771:closed:child-a" "1772:open:child-b"
+_repair_recently_closed_parents_for_slug test/repo 1 >/dev/null 2>&1
+if grep -q "issue reopen 1770" "$GH_CALLS"; then
+	print_result "provisional marker: premature close with an open declared child is reopened" 0
+else
+	print_result "provisional marker: premature close with an open declared child is reopened" 1 \
+		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+fi
+
+reset_scenario
+set_closed_parent_list 1780 "t1780: closed graph-only tracker" \
+	$'Graph-only tracker.\n\n'"$NEEDS_DECOMPOSITION_MARKER"
+set_subissues "1781:CLOSED"
+set_child_states "1781:closed:child-a"
+_repair_recently_closed_parents_for_slug test/repo 1 >/dev/null 2>&1
+if grep -q "issue reopen 1780" "$GH_CALLS" && grep -q 'expected-children=N' "$GH_CALLS"; then
+	print_result "provisional marker: undeclared closed parent is reopened with exact steps" 0
+else
+	print_result "provisional marker: undeclared closed parent is reopened with exact steps" 1 \
 		"(calls: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
 fi
 

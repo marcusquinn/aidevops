@@ -361,7 +361,15 @@ assert_grep_fixed \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
 	'B7b: close path checks the contract with child provenance after terminality' \
-	'if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source"; then' \
+	'if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source"' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7b2: close path passes declared and graph children with verified terminality (GH#37679)' \
+	'"$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" 1; then' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7b3: keep-open is an explicit blocker separate from the provisional marker (GH#37679)' \
+	'_PARENT_CLOSE_CONTRACT_REASON="keep-open"' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
 	'B7c: incomplete canonical phases post the idempotent phase nudge' \

@@ -275,6 +275,29 @@ jq -n '{number:30900,title:"Body-only incomplete parent",state:"OPEN",body:"## A
 	>"$STUB_DIR/issue-30900.json"
 printf '%s\n' '[]' >"$STUB_DIR/sub-issues-30900.json"
 
+# GH#37679: needs-decomposition is a provisional creation-time default. A
+# declared child list (body or trusted roadmap comment) covering the graph
+# satisfies it; graph-only children and keep-open still block closure.
+jq -n '{number:31000,title:"Provisional marker with body children",state:"OPEN",body:"## Children\n\n- #30601\n- #30701\n\n<!-- parent-close-contract: needs-decomposition -->",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-31000.json"
+printf '%s\n' '[{"number":30601},{"number":30701}]' >"$STUB_DIR/sub-issues-31000.json"
+for parent_num in 31100 31150; do
+	jq -n --argjson number "$parent_num" \
+		'{number:$number,title:"Provisional marker with roadmap comment",state:"OPEN",body:"Tracker created before its children.\n\n<!-- parent-close-contract: needs-decomposition -->",labels:[{name:"parent-task"}]}' \
+		>"$STUB_DIR/issue-${parent_num}.json"
+	printf '%s\n' '[{"number":30601},{"number":30701}]' >"$STUB_DIR/sub-issues-${parent_num}.json"
+done
+jq -n '[{author_association:"OWNER",body:"## Children\n\n- #30601\n- #30701"}]' \
+	>"$STUB_DIR/comments-31100.json"
+jq -n '[{author_association:"NONE",body:"## Children\n\n- #30601\n- #30701"}]' \
+	>"$STUB_DIR/comments-31150.json"
+jq -n '{number:31200,title:"Provisional marker with graph children only",state:"OPEN",body:"Graph-only tracker.\n\n<!-- parent-close-contract: needs-decomposition -->",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-31200.json"
+printf '%s\n' '[{"number":30601},{"number":30701}]' >"$STUB_DIR/sub-issues-31200.json"
+jq -n '{number:31300,title:"Explicit hold",state:"OPEN",body:"## Children\n\n- #30601\n\n<!-- parent-close-contract: keep-open -->",labels:[{name:"parent-task"}]}' \
+	>"$STUB_DIR/issue-31300.json"
+printf '%s\n' '[{"number":30601}]' >"$STUB_DIR/sub-issues-31300.json"
+
 # =============================================================================
 # Test runner
 # =============================================================================
@@ -522,6 +545,46 @@ if printf '%s' "$body_only_output" | grep -q 'Parent close contract is incomplet
 	pass "25: body-only child evidence preserves unchecked parent work"
 else
 	fail "25: body-only child evidence bypassed unchecked parent work"
+fi
+
+provisional_body_output=$(run_helper 31000 --repo marcusquinn/aidevops)
+if printf '%s' "$provisional_body_output" | grep -q 'close the parent issue'; then
+	pass "26: declared body children satisfy the provisional needs-decomposition marker"
+else
+	fail "26: declared body children did not satisfy the provisional marker"
+fi
+
+provisional_comment_output=$(run_helper 31100 --repo marcusquinn/aidevops)
+if printf '%s' "$provisional_comment_output" | grep -q 'close the parent issue'; then
+	pass "27: trusted roadmap comment satisfies the provisional needs-decomposition marker"
+else
+	fail "27: trusted roadmap comment did not satisfy the provisional marker"
+fi
+
+untrusted_comment_output=$(run_helper 31150 --repo marcusquinn/aidevops)
+if printf '%s' "$untrusted_comment_output" | grep -q '(needs-decomposition)' &&
+	! printf '%s' "$untrusted_comment_output" | grep -q 'close the parent issue'; then
+	pass "28: untrusted roadmap comment does not satisfy the provisional marker"
+else
+	fail "28: untrusted roadmap comment satisfied the provisional marker"
+fi
+
+graph_only_output=$(run_helper 31200 --repo marcusquinn/aidevops)
+if printf '%s' "$graph_only_output" | grep -q '(needs-decomposition)' &&
+	printf '%s' "$graph_only_output" | grep -q 'expected-children=N' &&
+	printf '%s' "$graph_only_output" | grep -q "## Children" &&
+	! printf '%s' "$graph_only_output" | grep -q 'close the parent issue'; then
+	pass "29: graph-only children keep the parent open and name the marker fix"
+else
+	fail "29: graph-only provisional parent produced unsafe or vague advice"
+fi
+
+keep_open_output=$(run_helper 31300 --repo marcusquinn/aidevops)
+if printf '%s' "$keep_open_output" | grep -q 'keep-open' &&
+	! printf '%s' "$keep_open_output" | grep -q 'close the parent issue'; then
+	pass "30: keep-open blocks closure after every child closes"
+else
+	fail "30: keep-open parent recommended closure"
 fi
 
 # =============================================================================

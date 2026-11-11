@@ -115,7 +115,10 @@ _try_close_parent_tracker() {
 	# child set it false), and produce the absurd close-comment
 	# "All 0 filed child task(s) are resolved." Require at least
 	# one real child issue (Gemini review of PR #22605, t3544).
-	if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source"; then
+	# The caller collected child evidence for this parent immediately before
+	# this call, and every known child was verified terminal just above.
+	if _parent_close_contract_incomplete "$parent_body" "$child_count" "$child_source" \
+		"$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" 1; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" cached
 		return 1
 	fi
@@ -143,7 +146,8 @@ _try_close_parent_tracker() {
 	_pir_verify_parent_children_closed "$slug" "$child_nums" || return 1
 	child_count="$_PIR_CPT_VERIFIED_CHILD_COUNT"
 	child_summary="$_PIR_CPT_VERIFIED_CHILD_SUMMARY"
-	if _parent_close_contract_incomplete "$live_parent_body" "$child_count" "$child_source"; then
+	if _parent_close_contract_incomplete "$live_parent_body" "$child_count" "$child_source" \
+		"$_PIR_CPT_DECLARED_NUMS" "$_PIR_CPT_GRAPH_NUMS" 1; then
 		_hold_parent_for_incomplete_close_contract "$slug" "$parent_num" "$child_count" live
 		return 1
 	fi
@@ -1481,6 +1485,8 @@ _SP_CPT_REOPENED=0
 _PIR_CPT_CHILD_NUMS=""
 _PIR_CPT_CHILD_SOURCE="none"
 _PIR_CPT_KNOWN_CHILD_COUNT=0
+_PIR_CPT_DECLARED_NUMS=""
+_PIR_CPT_GRAPH_NUMS=""
 
 
 #######################################
