@@ -13,7 +13,7 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import EVENTS, fields, normalized_attempt, trusted
+from pr_checkpoint_events import EVENTS, fields, normalized_attempt, timestamp, trusted
 
 
 def require(condition):
@@ -49,6 +49,17 @@ def authorizes(comment, logins):
     # Positive edit metadata is supplied by the shared GraphQL collector. REST
     # second-resolution timestamps alone cannot exclude a same-second edit.
     return trusted(comment, logins) and comment.get("_release_body_unedited") is True
+
+
+APPROVAL_TTL_SECONDS = 86400  # pr-checkpoint-revision.py approval_matches
+
+
+def approval_unexpired(comment, now):
+    """Unreadable creation times fail closed: the approval still fences."""
+    try:
+        return now - timestamp(comment["created_at"]) <= APPROVAL_TTL_SECONDS
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return True
 
 
 def own_events(data, comments, claim, claim_fields):
@@ -87,8 +98,11 @@ def admission(data):
     comments = sorted(comments, key=lambda comment: comment["id"])
     logins = data.get("trusted_logins", ())
     # A recorded revision request is never interpreted as automatic admission,
-    # even if expired, edited, malformed or permission evidence is unavailable.
-    require(not any(line.startswith("CHECKPOINT_CONTINUATION_APPROVED ")
+    # even if edited, malformed or permission evidence is unavailable. GH#37779:
+    # once it is past the 24-hour revision expiry it no longer owns scheduling,
+    # so the legacy automatic route may admit again.
+    now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
+    require(not any(line.startswith("CHECKPOINT_CONTINUATION_APPROVED ") and approval_unexpired(comment, now)
                     for comment in comments for line in comment["body"].splitlines()))
     # Never erase edited or foreign coordination while constructing the view.
     require(all(authorizes(comment, logins) for comment in comments if coordination(comment)))
