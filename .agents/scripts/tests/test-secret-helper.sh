@@ -182,10 +182,12 @@ test_empty_gopass_namespace_uses_plaintext() {
 	chmod 600 "$config_dir/credentials.sh"
 	local check_rc=0 run_rc=0 injected=""
 	AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" check MIGRATED_KEY || check_rc=$?
+	# Compare the exact value inside the child, printing only a marker: a
+	# nonempty-only assertion would also accept a wrong or truncated value.
 	injected=$(AIDEVOPS_TEST_EMPTY_NAMESPACE=true HOME="$TEST_DIR/home" bash "$HELPER" MIGRATED_KEY -- \
-		sh -c 'test -n "${MIGRATED_KEY:-}" && echo injected-present' 2>&1) || run_rc=$?
+		sh -c 'test "${MIGRATED_KEY:-}" = "migrated-placeholder-value" && echo injected-value-matches' 2>&1) || run_rc=$?
 	if [[ "$check_rc" -eq 0 && "$run_rc" -eq 0 &&
-		"$injected" == *"injected-present"* &&
+		"$injected" == *"injected-value-matches"* &&
 		"$injected" != *"Unable to list gopass secrets"* &&
 		"$injected" != *"migrated-placeholder-value"* ]]; then
 		print_result "emptied gopass namespace resolves from the plaintext store" 0
