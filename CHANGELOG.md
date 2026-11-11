@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.169] - 2026-11-11
+
+### Fixed
+
+- auto-unblock issues gated on an upstream release tag
+- re-verify answered terminal blockers before restating them (GH#37686) (#37688)
+- improve health dashboard scheduling (#37687)
+
 ## [3.39.168] - 2026-11-11
 
 ### Fixed
