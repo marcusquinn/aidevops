@@ -820,7 +820,9 @@ _fast_fail_age_out_locked() {
 			echo "[pulse-wrapper] fast_fail_age_out: #${issue_number} (${repo_slug}) reached ${max_resets} capacity resets — retaining bounded automatic recovery" >>"$LOGFILE"
 			;;
 		*)
-			echo "[pulse-wrapper] fast_fail_age_out: #${issue_number} (${repo_slug}) exceeded ${max_resets} auto-resets without success — applying status:blocked" >>"$LOGFILE"
+			printf '[pulse-wrapper] fast_fail_age_out: #%s (%s) DISPATCH_BLOCK_REASON reason=fast_fail_age_out_ceiling source=runner_local failure_reason=%q crash_type=%q count=%s reset_count=%s max_resets=%s age_seconds=%s action=apply_status_blocked\n' \
+				"$issue_number" "$repo_slug" "$existing_reason" "$existing_crash_type" \
+				"$existing_count" "$existing_reset_count" "$max_resets" "$age" >>"$LOGFILE"
 			if declare -F set_issue_status >/dev/null 2>&1; then
 				set_issue_status "$issue_number" "$repo_slug" "blocked" >>"$LOGFILE" 2>&1 || true
 			else

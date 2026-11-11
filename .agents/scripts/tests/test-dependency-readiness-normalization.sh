@@ -203,6 +203,11 @@ assert_eq "active lifecycle wins blocked available conflict" "in-review" "$(_pic
 
 status_write=""
 current_status="status:available"
+# Label-write tests below assume a live unresolved native dependency. Exercise
+# the real native verifier separately in test-pulse-ready-block-audit.sh.
+_blocked_by_check_native_relationships() {
+	return 0
+}
 gh() {
 	local command="$1"
 	local target="${2:-}"

@@ -287,6 +287,15 @@ else
 		"calls=${CONSOLIDATION_CALLS} payload=${LAST_CONSOLIDATION}"
 fi
 
+# GH#37684: dependency-ready issues may be held by runner-local fast-fail
+# state. The write must name that independent reason and its stored evidence.
+if grep -q '#105 (test/repo) DISPATCH_BLOCK_REASON reason=fast_fail_age_out_ceiling source=runner_local failure_reason=' "$LOGFILE" &&
+	grep -q 'count=6 reset_count=3 max_resets=3 age_seconds=' "$LOGFILE"; then
+	pass "age-out ceiling records structured runner-local blocking evidence"
+else
+	fail "age-out ceiling records structured runner-local blocking evidence"
+fi
+
 # =============================================================================
 # Test 7 — issue comment posted once per age-out event
 # =============================================================================
