@@ -250,6 +250,12 @@ launches() {
 	return 0
 }
 
+# Scope admission is covered elsewhere; route straight to the breaker gate.
+_pulse_wrapper_dispatch_current_scope() {
+	_pulse_wrapper_dispatch_admitted "$@"
+	return $?
+}
+
 run_command_dispatch() {
 	local rc=0
 	_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt \
