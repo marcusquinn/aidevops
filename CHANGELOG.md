@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.173] - 2026-11-11
+
+### Changed
+
+- Refactor: extract exit classification and WIP preservation from headless-runtime-failure.sh (GH#37744)
+- Refactor: split terminal-blocker circuit test below 2000 lines
+- CI: install pinned shfmt release binary instead of apt in Complexity Analysis
+- Refactor: split secret-helper.sh verify/migration functions into secret-verify-lib.sh (GH#37726) (#37728)
+
+### Fixed
+
+- hold runner_capability_unmet issues on the releasing runner until the blocker changes
+- permission-hold toggles no longer stale a prior issue approval; GH#37763 retry fixture origin
+- honour foreign-owned active-claim hints on empty-pool runners
+- pulse supervisor prompt omits stale pulse-state.txt (GH#37746)
+- distinguish checkpoint attention from dispatch claims
+- parse static-auth presence checks as data
+- name the registry condition that refuses worktree retirement (GH#37740) (#37741)
+- give batch housekeeping stages usable timeouts
+- add opt-in protected process inspection
+- require one final checkpoint continuation push (GH#37731) (#37732)
+- exclude systemd session helpers from worktree path census (GH#37729) (#37730)
+- resolve credentials.sh secrets when the gopass aidevops/ folder is empty
+
 ## [3.39.172] - 2026-11-11
 
 ### Changed
