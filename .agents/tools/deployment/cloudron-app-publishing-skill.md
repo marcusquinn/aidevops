@@ -62,10 +62,12 @@ then `sudo aidevops approve issue <policy-issue> <repo>`. While that
 publishes an **unsigned** request without another signature only when
 `cloudron_routine_bump.py` proves, at the exact PR head and merge-base diff:
 one open, trusted linked monitor finding equal to `upstreamVersion` (same
-major); a patch-only package bump with no other manifest change;
-additions-only changelogs; pinned files changed only by whole-token old→new
-version substitution; check files whose existing lines change only by that
-substitution, with inserted lines fully matching the signed
+major, and same minor under 0.x); a patch-only package bump with no other
+manifest change; additions-only changelogs; pinned files changed only by
+whole-token old→new upstream-version substitution; check files without hidden
+line-break characters whose existing lines change only by package/upstream
+version substitution, with inserted lines (never after a continued line) fully
+matching the signed
 `check_insertion_pattern` (default: expansion-free changelog assertions); no
 other, added, removed or renamed files; an OWNER/MEMBER request and
 same-repository PR with green checks and preflight, its release hold, no

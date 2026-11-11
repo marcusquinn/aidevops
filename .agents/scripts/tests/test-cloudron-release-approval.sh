@@ -796,8 +796,8 @@ POLICY_JSON=$(
 )
 BASE_MANIFEST='{"id":"io.example.app","version":"0.1.43","upstreamVersion":"3.39.87","changelog":"file://CHANGELOG"}'
 HEAD_MANIFEST='{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}'
-BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.87\nLABEL version="0.1.43"\n'
-HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.87\n'
+HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG NODE_VERSION=10.1.43\nARG AIDEVOPS_VERSION=3.39.114\n'
 CHECK_PREFIX=$'main() {\n\tjq -e \'.version == "'
 BASE_CHECK="${CHECK_PREFIX}"$'0.1.43" and .upstreamVersion == "3.39.87"\' m || return 1\n\tassert_contains CHANGELOG \'[0.1.43]\' || return 1\n\tassert_contains Dockerfile \'ARG AIDEVOPS_VERSION=3.39.87\' || return 1\n}\n'
 CHECK_INSERTED=$'\tassert_contains CHANGELOG \'* Update the bundled aidevops CLI to 3.39.114.\' || return 1\n\tassert_contains CHANGELOG.md "- Updated and pinned the bundled aidevops CLI to \\`3.39.114\\`." || return 1\n'
@@ -870,6 +870,9 @@ assert_routine not 'pinned file beyond substitution' "$(dockerfile_head "${HEAD_
 assert_routine not 'pinned base image change' "$(dockerfile_head "${HEAD_DOCKERFILE/abc/def}")" 'pinned file changes beyond version substitution'
 assert_routine not 'pinned substring of another version' "$(dockerfile_head "${HEAD_DOCKERFILE/10.1.43/10.1.44}")" 'pinned file changes beyond version substitution'
 assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)' 'missing base content'
+# A pinned token equal to the package version may be an unrelated dependency.
+assert_routine not 'pinned package-version token' ".contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'ARG DEP=0.1.43\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG DEP=0.1.44\n')" 'pinned file changes beyond version substitution'
+assert_routine not '0.x minor upstream bump' "$(manifest_base '{"id":"io.example.app","version":"0.1.43","upstreamVersion":"0.5.3","changelog":"file://CHANGELOG"}') | $(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"0.6.0","changelog":"file://CHANGELOG"}') | .finding_upstream = \"0.6.0\"" '0.x minor upstream bump'
 check_with_first_line() {
 	local line="$1" first='main() {'
 	printf '%s\n%s%s' "$first" "$line" "${HEAD_CHECK#"$first"}"
@@ -882,6 +885,9 @@ assert_routine not 'check file inserted command' "$(check_head "$(check_with_fir
 assert_routine not 'check file inserted expansion' "$(check_head "$(check_with_first_line "$EXPANSION_LINE")")" 'inserted line does not match'
 assert_routine not 'check file assertion removed' "$(check_head "${HEAD_CHECK/"$DOCKER_ASSERT"/}")" 'check file changes beyond'
 assert_routine not 'check file assertion weakened' "$(check_head "${HEAD_CHECK/m || return 1/m || true}")" 'check file changes beyond'
+# A vertical tab joins two shell lines that str.splitlines() would still split.
+assert_routine not 'check file joined by a hidden line break' "$(check_head "${HEAD_CHECK/"m || return 1"$'\n'/"m || return 1"$'\v'}")" 'hidden line-break'
+assert_routine not 'check file insertion after a continued line' ".contents[\"test/package-test.sh\"].base = \"$(b64 "${BASE_CHECK/"'[0.1.43]' || return 1"/"'[0.1.43]' ||"}")\" | $(check_head "${HEAD_CHECK/"'[0.1.44]' || return 1"/"'[0.1.44]' ||"}")" 'insertion after a continued line'
 assert_routine not 'check insertions without a signed pattern' 'del(.policy.check_insertion_pattern)' 'inserted line does not match'
 assert_routine not 'check content missing' 'del(.contents["test/package-test.sh"])' 'missing base content'
 assert_routine not 'policy for another repository' '.policy.repository = "owner/other"' 'policy identity'
@@ -987,6 +993,10 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 		stale) printf 'STALE_APPROVAL\n'; return 2 ;;
 		api_error) printf 'API_ERROR\n'; return 6 ;;
 		unsigned | create | unfinished) printf 'NO_APPROVAL\n'; return 1 ;;
+		revoked)
+			# Signed at the start of the proof, revoked before its end.
+			if [[ "$(grep -c '^verify ' "${TEST_ROOT}/calls")" -gt 1 ]]; then printf 'NO_APPROVAL\n'; return 1; fi
+			;;
 		esac
 		printf 'VERIFIED\n'
 		return 0
@@ -1011,6 +1021,7 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	assert_policy check_tamper 1
 	grep -q 'check file changes beyond version substitution' "${TEST_ROOT}/policy-err"
 	assert_policy swapped 1
+	assert_policy revoked 1
 	assert_policy finding_closed 1
 	assert_policy auto_merge 1
 	assert_policy maintainer_brake 1

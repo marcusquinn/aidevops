@@ -357,6 +357,8 @@ release_policy_authorizes() {
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2
 		return 1
 	fi
+	# Revocation (close, edit or comment) during the proof must still win.
+	[[ "$(release_policy_active "$repo")" == "$active" ]] || return 1
 	printf '%s\n' "$number"
 	return 0
 }

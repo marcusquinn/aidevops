@@ -35,6 +35,11 @@ MAX_PATTERN = 500
 PACKAGE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 UPSTREAM_VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
+# Characters Python treats as line breaks (or that hide content) but a shell
+# reads as ordinary bytes; a check file containing any of them is not routine.
+CHECK_FILE_HIDDEN = re.compile("[\x00\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
+# An inserted line after one of these would join the previous command.
+CONTINUATION = ("\\", "&&", "||", "|")
 
 
 class NotRoutine(Exception):
@@ -115,15 +120,22 @@ def insertion_pattern(policy):
 def check_file_changes(name, base_text, head_text, mapping, pattern):
     """Existing lines may change only by version substitution; new lines must
     fully match the signed insertion pattern (none are allowed without one)."""
-    expected = substitute_versions(base_text, mapping).splitlines()
-    actual = head_text.splitlines()
+    # aidevops:trust-boundary — compare physical lines exactly as a shell reads
+    # them; str.splitlines() would hide a joined line behind a Unicode break.
+    require(CHECK_FILE_HIDDEN.search(base_text) is None and CHECK_FILE_HIDDEN.search(head_text) is None,
+            name + ": check file contains hidden line-break or control characters")
+    require(head_text != base_text, name + ": check file is unchanged")
+    expected = substitute_versions(base_text, mapping).split("\n")
+    actual = head_text.split("\n")
     matcher = difflib.SequenceMatcher(None, expected, actual, autojunk=False)
-    for tag, _, _, start, end in matcher.get_opcodes():
+    for tag, base_start, _, start, end in matcher.get_opcodes():
         if tag == "equal":
             continue
         # aidevops:trust-boundary — check files decide the preflight verdict;
         # removing or rewriting an existing line could weaken it.
         require(tag == "insert", name + ": check file changes beyond version substitution and insertions")
+        require(base_start == 0 or not expected[base_start - 1].rstrip().endswith(CONTINUATION),
+                name + ": insertion after a continued line")
         for line in actual[start:end]:
             require(pattern is not None and pattern.fullmatch(line) is not None,
                     name + ": inserted line does not match the signed insertion pattern")
@@ -172,6 +184,9 @@ def check(doc, repository):
     old_up_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
     require(new_up_tuple > old_up_tuple, "upstreamVersion must increase")
     require(new_up_tuple[0] == old_up_tuple[0], "a major upstream bump needs a per-release signature")
+    # Under 0.x a minor bump is breaking by semver convention.
+    require(old_up_tuple[0] > 0 or new_up_tuple[1] == old_up_tuple[1],
+            "a 0.x minor upstream bump needs a per-release signature")
     finding = doc.get("finding_upstream")
     version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
@@ -180,6 +195,9 @@ def check(doc, repository):
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
             "manifest changes beyond version and upstreamVersion")
 
+    # Shipped build inputs may change only the upstream version; an equal
+    # package-version token there could be an unrelated dependency pin.
+    pinned_mapping = {old_up: new_up}
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
@@ -192,8 +210,8 @@ def check(doc, repository):
         elif name in pinned:
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
-            # replacing the old package/upstream versions with the new ones.
-            require(head_text != base_text and substitute_versions(base_text, mapping) == head_text,
+            # replacing the old upstream version with the new one.
+            require(head_text != base_text and substitute_versions(base_text, pinned_mapping) == head_text,
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
