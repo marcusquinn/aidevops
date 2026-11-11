@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.176] - 2026-11-11
+
+### Changed
+
+- Documentation: explain recovery of orphaned queued CI runs (#37820)
+
+### Fixed
+
+- preserve input blocker circuits across runners (#37819)
+- give aidevops agents a file reader for Buzz tools
+- point permission-block-breaker guidance greps at headless-runtime-contract.sh
+- release an unadmittable main-dispatch reserve so pre-dispatch stages stop starving
+- end stalled worker draft checkpoint holds with a bounded terminal action (#37796)
+
 ## [3.39.175] - 2026-11-11
 
 ### Changed

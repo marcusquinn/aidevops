@@ -540,10 +540,17 @@ _hrff_prepare_terminal_blocker_release() {
 	_HRFF_TERMINAL_BLOCKER_CIRCUIT_BODY=""
 	# Empty until this release's observation, or an earlier one, is evidence.
 	_HRFF_TERMINAL_BLOCKER_EVIDENCE=""
-	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
 		--jq '{title: (.title // ""), body: (.body // "")}' 2>/dev/null) || return 0
 	comments_json=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
+	local input_hold_rc=0
+	terminal_blocker_input_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path" || input_hold_rc=$?
+	if [[ "$input_hold_rc" -ne 1 ]]; then
+		_HRFF_TERMINAL_BLOCKER_MODE=open
+		_HRFF_TERMINAL_BLOCKER_EVIDENCE=circuit
+		return 0
+	fi
+	[[ -n "$repo_path" && "$blocker_fingerprint" =~ ^[a-f0-9]{24}$ ]] || return 0
 	task_revision=$(terminal_blocker_task_revision \
 		"$issue_json" "$repo_slug" "$issue_number" "$repo_path") || return 0
 	# GH#33025: the login that authors this runner's releases also recognises

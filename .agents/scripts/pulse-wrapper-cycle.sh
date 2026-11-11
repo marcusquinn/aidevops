@@ -200,7 +200,12 @@ _pulse_refresh_repo() {
 # ("Pre-fetched Repo State (<ISO8601Z>)") first, file mtime as fallback.
 _pulse_state_file_epoch() {
 	local state_file="$1"
-	local header_ts="" epoch=""
+	local header_ts="" epoch="" first_line=""
+	[[ -s "$state_file" ]] || return 1
+	IFS= read -r first_line <"$state_file" || [[ -n "$first_line" ]] || return 1
+	case "$first_line" in
+	ERROR:* | "No pulse-enabled repos in schedule window"*) return 1 ;;
+	esac
 	header_ts=$(sed -n '1s/.*(\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9:]\{8\}Z\)).*/\1/p' "$state_file" 2>/dev/null) || header_ts=""
 	if [[ -n "$header_ts" ]]; then
 		epoch=$(date -u -d "$header_ts" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$header_ts" +%s 2>/dev/null) || epoch=""
@@ -243,7 +248,7 @@ No current pre-fetched state snapshot exists: the snapshot is missing, its times
 			prompt="${prompt} Last generated ${state_iso} (${state_age_h}h ago)."
 		fi
 		prompt="${prompt}
-Stale-state override for /pulse and /pulse-sweep: do not read or rely on the old snapshot, including for repository scope. This overrides workflow instructions to read pre-fetched state. Run bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope for current schedule-filtered repository slugs; use only those slugs for triage and list-candidates <slug> <N>. Use targeted live reads via list-candidates, the recovery helpers named below, and gh for specific issues/PRs within that scope. If scope lookup fails or returns no slugs, record a diagnostic and exit cleanly; never substitute the persisted scope or stale snapshot."
+Stale-state override for /pulse and /pulse-sweep: do not read or rely on the old snapshot, including for repository scope. This overrides workflow instructions to read pre-fetched state. Run bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope for current schedule-filtered slug|path pairs; use only those slugs for triage and list-candidates <slug> <N>. Use targeted live reads via list-candidates, the recovery helpers named below, and gh for specific issues/PRs within that scope. If scope lookup fails or returns no slugs, record a diagnostic and exit cleanly; never substitute the persisted scope or stale snapshot."
 	elif [[ -f "$state_file" ]]; then
 		prompt="${prompt}
 

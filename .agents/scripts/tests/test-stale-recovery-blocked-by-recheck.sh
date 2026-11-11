@@ -93,6 +93,26 @@ is_blocked_by_unresolved() {
 # shellcheck source=../dispatch-dedup-stale.sh
 source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 
+TEST_CIRCUIT_ACTIVE=0
+_stale_recovery_has_input_circuit() {
+	[[ "$TEST_CIRCUIT_ACTIVE" -eq 1 ]] && return 0
+	return 1
+}
+
+test_input_circuit_preserves_labels() {
+	reset_logs
+	TEST_CIRCUIT_ACTIVE=1
+	local output=""
+	output=$(_stale_recovery_apply "126" "owner/repo" "runner-a" "stale_timeout")
+	TEST_CIRCUIT_ACTIVE=0
+	if [[ "$output" == *STALE_CIRCUIT_HOLD* && ! -s "$STATUS_LOG" ]]; then
+		pass "input circuit prevents stale label writes"
+	else
+		fail "input circuit prevents stale label writes" "$output"
+	fi
+	return 0
+}
+
 test_blocked_by_dependency_keeps_issue_blocked() {
 	reset_logs
 	TEST_ISSUE_BODY="blocked-by:t1000"
@@ -160,6 +180,7 @@ test_failed_transition_emits_no_recovery_success() {
 	return 0
 }
 
+test_input_circuit_preserves_labels
 test_blocked_by_dependency_keeps_issue_blocked
 test_clear_dependency_state_requeues_available
 test_failed_transition_emits_no_recovery_success

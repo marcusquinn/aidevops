@@ -20,6 +20,8 @@
 _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED=1
 _DLW_SYSTEMD_MODULE_DIR="${BASH_SOURCE[0]%/*}"
 _DLW_MANAGED_WORKTREE_MANAGER="pulse-cgroup-v1"
+# shellcheck source=pulse-dispatch-sealed-worktree.sh
+source "${_DLW_SYSTEMD_MODULE_DIR}/pulse-dispatch-sealed-worktree.sh"
 
 # Shared managed-launch contract (GH#35295). Automatic Pulse and manual
 # dispatch both use these adapters; each caller keeps its own task selection,
@@ -117,7 +119,7 @@ _dlw_classify_reuse_candidate() {
 	fi
 	reuse=$(jq -er '.reuse' <<<"$lifecycle" 2>/dev/null) || reuse=""
 	case "$reuse" in
-	sealed) printf 'sealed\n'; return 0 ;;
+	sealed) _dlw_classify_sealed_candidate "$wt_path" "$issue_number" "$repo_slug"; return $? ;;
 	eligible) ;;
 	*)
 		_dlw_log_reuse_status_failure "$issue_number" 0 "" "reuse_status_unrecognized"
@@ -130,7 +132,7 @@ _dlw_classify_reuse_candidate() {
 	0) printf 'managed %s\n' "${output%% *}" ;;
 	3) printf 'legacy\n' ;;
 	4) ;;
-	5) printf 'sealed\n' ;;
+	5) _dlw_classify_sealed_candidate "$wt_path" "$issue_number" "$repo_slug"; return $? ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -145,8 +147,12 @@ _dlw_classify_reuse_candidate() {
 # the largest dispatcher-side precreate_worktree residual under load.
 _dlw_select_issue_worktree() {
 	local repo_path="$1" issue_number="$2" repo_slug="${3:-}"
-	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0
+	local line="" wt_path="" wt_branch="" class="" count=0 unknown=0 sealed=0 sealed_snapshot="" listing=""
 	_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION="" _DLW_REUSE_REFUSAL=""
+	if ! listing=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null); then
+		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
+		return 2
+	fi
 	while IFS= read -r line; do
 		case "$line" in
 		"worktree "*) wt_path="${line#worktree }"; continue ;;
@@ -160,8 +166,11 @@ _dlw_select_issue_worktree() {
 		fi
 		[[ -n "$class" ]] || continue
 		if [[ "$class" == "sealed" ]]; then
-			# A closed generation may still hold unpublished work for this
-			# task; do not start a parallel generation beside it.
+			sealed_snapshot=$(_dlw_sealed_snapshot "$repo_path" "$issue_number" "$repo_slug") || sealed_snapshot=""
+			if _dlw_retire_empty_sealed "$wt_path" "$wt_branch" "$repo_slug"; then
+				continue
+			fi
+			_dlw_sealed_hold_record "$repo_path" "$issue_number" "$repo_slug" "$_DLW_SEALED_REASON" "$sealed_snapshot" || true
 			sealed=$((sealed + 1))
 			continue
 		fi
@@ -170,7 +179,7 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_BRANCH="$wt_branch"
 		_DLW_REUSE_GENERATION=""
 		[[ "$class" != managed\ * ]] || _DLW_REUSE_GENERATION="${class#managed }"
-	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+	done <<<"$listing"
 	if [[ "$unknown" -gt 0 ]]; then
 		_DLW_REUSE_REFUSAL="worktree_reuse_evidence_unavailable"
 	elif [[ "$sealed" -gt 0 ]]; then
@@ -179,7 +188,9 @@ _dlw_select_issue_worktree() {
 		_DLW_REUSE_REFUSAL="worktree_reuse_ambiguous"
 	fi
 	if [[ -n "$_DLW_REUSE_REFUSAL" ]]; then
-		echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		if [[ "$_DLW_REUSE_REFUSAL" != "worktree_reuse_sealed_generation" ]]; then
+			echo "[dispatch_worker_launch] ${_DLW_REUSE_REFUSAL} issue=#${issue_number} candidates=${count} sealed=${sealed} unavailable=${unknown}; refusing first-match reuse. Inspect: git -C <repo> worktree list; worktree-managed-lifetime.py status <path>" >>"${LOGFILE:-/dev/null}"
+		fi
 		_DLW_REUSE_PATH="" _DLW_REUSE_BRANCH="" _DLW_REUSE_GENERATION=""
 		return 2
 	fi

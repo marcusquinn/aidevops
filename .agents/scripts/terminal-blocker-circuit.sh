@@ -1354,6 +1354,30 @@ _terminal_blocker_revision_needs_checkout() {
 	return 0
 }
 
+# An older input decision remains authoritative even if a later runner reports
+# a different blocker. Keep the existing reason-bound revision for compatibility
+# with already-published circuit markers.
+terminal_blocker_input_circuit_active() {
+	local comments="$1" issue_json="$2" repo="$3" issue="$4" path="$5"
+	local fingerprint="" input_event="" input_retry="" revision="" input_revision=""
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required') || return 2
+	# Select the latest input circuit, not the latest circuit of any class.
+	local self_login=""
+	self_login=$(_terminal_blocker_self_login)
+	input_event=$(printf '%s' "$comments" | jq -c --arg fp "$fingerprint" --arg self "$self_login" \
+		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($authoritative; $self))
+		| select(.body | test("aidevops:terminal-blocker-circuit revision=[a-f0-9]{24} blocker=" + $fp + " -->"))]
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty') || return 2
+	[[ -n "$input_event" ]] || return 1
+	input_retry=$(_terminal_blocker_latest_retry_comment "$comments") || return 2
+	_terminal_blocker_retry_after "$input_retry" "$input_event" && return 1
+	input_revision=$(jq -er '.body | capture("revision=(?<r>[a-f0-9]{24}) blocker=").r' <<<"$input_event") || return 2
+	revision=$(terminal_blocker_task_revision "$issue_json" "$repo" "$issue" "$path" input_required) || return 2
+	[[ "$input_revision" == "$revision" ]] || return 1
+	return 0
+}
+
 terminal_blocker_circuit_active() {
 	local comments_json="$1"
 	local issue_json="$2"
@@ -1361,6 +1385,9 @@ terminal_blocker_circuit_active() {
 	local issue_number="$4"
 	local repo_path="$5"
 	local circuit="" retry="" current_revision="" fingerprint="" reason=""
+	local input_rc=0
+	terminal_blocker_input_circuit_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path" || input_rc=$?
+	[[ "$input_rc" -eq 1 ]] || return 0
 	_terminal_blocker_report_ignored_evidence "$comments_json"
 	if terminal_blocker_fleet_hold_active "$comments_json" "$issue_json" "$repo_slug" "$issue_number" "$repo_path"; then
 		return 0

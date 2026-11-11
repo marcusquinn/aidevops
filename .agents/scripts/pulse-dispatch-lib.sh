@@ -34,6 +34,8 @@ _PULSE_DISPATCH_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PULSE_DISPATCH_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PULSE_DISPATCH_LIB_DIR="."
 # shellcheck source=shared-runner-identity.sh
 source "${_PULSE_DISPATCH_LIB_DIR}/shared-runner-identity.sh"
+# shellcheck source=pulse-dispatch-sealed-worktree.sh
+source "${_PULSE_DISPATCH_LIB_DIR}/pulse-dispatch-sealed-worktree.sh"
 if ! command -v _file_mtime_epoch >/dev/null 2>&1; then
 	# shellcheck source=portable-stat.sh
 	source "${_PULSE_DISPATCH_LIB_DIR}/portable-stat.sh"
@@ -769,6 +771,8 @@ _dispatch_process_candidate() {
 		return 1
 	fi
 	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
+	# Local sealed holds precede claims, model/class reservations and wave slots.
+	_dispatch_skip_for_sealed_generation "$repo_path" "$issue_number" "$repo_slug" && return 1
 	# GH#33743: unchanged runner_capability_unmet candidates from a pre-record snapshot.
 	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" "$self_login" && return 1
 
