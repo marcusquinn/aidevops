@@ -178,6 +178,8 @@ _hrw_release_dispatch_claim() {
 }
 _hrw_pr_less_terminal_complete() { return 1; }
 _worker_post_pr_handoff_confirmed() { return 1; }
+# These finish-path cases model a launched runtime (GH#37669).
+_WORKER_RUNTIME_LAUNCH_STARTED=1
 API_FAIL=0
 ISSUE_JSON='{"state":"open","labels":[{"name":"status:blocked"}]}'
 for _run_result_label in task_complete post_pr_handoff; do
