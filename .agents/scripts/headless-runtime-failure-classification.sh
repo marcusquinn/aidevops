@@ -321,4 +321,3 @@ classify_worker_kill_reason() {
 	printf '%s' "natural"
 	return 0
 }
-
