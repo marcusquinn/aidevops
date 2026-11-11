@@ -315,6 +315,31 @@ To materialize or retain the diagnostic read-only runtime, explicitly use
 `--runtime conversation`. Its launcher remains `aidevops-buzz-acp` and its label
 is **Aidevops Restricted Conversation V1**.
 
+## Community layout and channel membership
+
+`.agents/configs/buzz-community-base.json` is a reusable layout: sections,
+channels with visibility, and which `<role>-<host-slug>` agents join which
+channels. `buzz-team-provision-helper.sh community plan [--host-slug S]` is
+read-only. It compares the template with the local identity store
+(`agents/identities.json` under the Buzz app-data directory, type
+`sh.aidevops.buzz/aidevops`) and `buzz channels list` / `channels members`, then
+prints: missing channels, missing agent drafts, one `member_add` request per
+channel (channel id, pubkeys, role `bot`), and private channels where the owner
+must first add the sending agent.
+
+Membership route and limits (observed on Buzz 1.0.0, plugin 1.2.x):
+
+- The local `buzz` CLI cannot add members: `channels add-member` is refused with
+  `Kind 9000 can't be signed by a local tool; use Buzz`.
+- An existing aidevops Buzz agent's `member_add {channel, pubkeys, role}` tool
+  works for channels it belongs to. Send it the planned request with
+  `buzz messages send --mention`.
+- For private channels the agent has not joined it is refused with
+  `restricted: not a channel member`; the owner adds that agent first.
+- `buzz-ctl` in a Cloudron container manages relay membership only.
+- Sidebar sections are per user: they can be captured, not pushed to others.
+- Do not work around these limits by editing the relay database.
+
 ## Safety and lifecycle
 
 - Imported records receive fresh Buzz identities only after confirmation. No

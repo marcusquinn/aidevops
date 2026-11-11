@@ -111,6 +111,13 @@ How a turn runs:
   person at the computer, which nobody can approve from Buzz. (Buzz's bundled
   harnesses allow instead.)
 
+## Set up a community
+
+Run `buzz-team-provision-helper.sh community plan` for a read-only plan of
+missing channels, agent drafts and `member_add` requests from the base layout in
+`.agents/configs/buzz-community-base.json`. Limits and the membership route:
+`.agents/reference/team-interface-buzz-provisioning.md`.
+
 ## Host access
 
 | Access | Purpose |
