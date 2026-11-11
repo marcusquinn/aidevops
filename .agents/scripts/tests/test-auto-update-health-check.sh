@@ -213,7 +213,14 @@ fi
 # enabled even though detection fell back to cron. Platform-independent.
 _resolve_body=$(sed -n '/^_resolve_status_backend() {/,/^}/p' "$HELPER")
 _resolve_shim_dir=$(mktemp -d)
-printf '#!/usr/bin/env bash\ncase "$2" in is-enabled) echo "${FAKE_TIMER_STATE:-disabled}";; is-active) exit 3;; esac\nexit 0\n' >"${_resolve_shim_dir}/systemctl"
+cat >"${_resolve_shim_dir}/systemctl" <<'SYSTEMCTL_STUB'
+#!/usr/bin/env bash
+case "$2" in
+is-enabled) echo "${FAKE_TIMER_STATE:-disabled}" ;;
+is-active) exit 3 ;;
+esac
+exit 0
+SYSTEMCTL_STUB
 chmod +x "${_resolve_shim_dir}/systemctl"
 _resolve_cron=$(PATH="${_resolve_shim_dir}:$PATH" FAKE_TIMER_STATE=enabled bash -c "SYSTEMD_UNIT_NAME=aidevops-auto-update; ${_resolve_body}; _resolve_status_backend cron")
 _resolve_off=$(PATH="${_resolve_shim_dir}:$PATH" FAKE_TIMER_STATE=disabled bash -c "SYSTEMD_UNIT_NAME=aidevops-auto-update; ${_resolve_body}; _resolve_status_backend cron")
