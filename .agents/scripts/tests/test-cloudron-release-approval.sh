@@ -74,6 +74,15 @@ pull_request_json() {
 	return 0
 }
 
+# Release request issue #12; an outsider author must never reach the policy.
+request_issue_json() {
+	local body="" author=OWNER
+	body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
+	[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
+	jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
+	return 0
+}
+
 gh() {
 	local command="$1" target="${2:-}"
 	printf '%s\n' "$*" >>"${TEST_ROOT}/calls"
@@ -107,13 +116,7 @@ gh() {
 		request_issues
 		;;
 	'api repos/owner/app/issues/12/comments?'*) printf '[]\n' ;;
-	'api repos/owner/app/issues/12')
-		local body=""
-		body=$(jq -cn --arg head "$HEAD_SHA" '{schema:1,repository:"owner/app",pr:7,head:$head,version:"1.2.3",upstream:"4.5.6",owns_hold:true}')
-		local author=OWNER
-		[[ "$SCENARIO" != policy_outsider_request ]] || author=CONTRIBUTOR
-		jq -cn --arg body "$body" --arg author "$author" '{state:"open",author_association:$author,body:$body,labels:[{name:"release-approval-required"}]}'
-		;;
+	'api repos/owner/app/issues/12') request_issue_json ;;
 	'api repos/owner/app/pulls/7') pull_request_json || return 1 ;;
 	'pr checks')
 		[[ "$SCENARIO" != checks_error ]] || return 1
