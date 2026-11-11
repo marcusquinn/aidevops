@@ -17,9 +17,9 @@ tools:
 
 # Stagehand AI Browser Automation Integration
 
-**Not recommended.** Available only when the user explicitly asks to try it; Playwright is the default.
-
 <!-- AI-CONTEXT-START -->
+
+**Not recommended.** Available only when the user explicitly asks to try it; Playwright is the default.
 
 ## Quick Reference
 
