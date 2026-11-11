@@ -1353,8 +1353,15 @@ _dispatch_capability_cooldown_record() {
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
 	if printf '%s\t%s\t%s\t%s\n' "$stamp" "$fingerprint" "$signal" "$owner" >"$tmp" && mv -f "$tmp" "$file"; then
 		# GH#37752: a fresh worker verdict anchors the capability it was made under.
-		[[ "$signal" == worker_observation ]] ||
-			printf '%s\t0\n' "$(_dispatch_capability_config_fingerprint "$repo_path")" >"${file}.capability" 2>/dev/null || true
+		# Preserve any capability-change cutoff until a newer observation replaces it.
+		if [[ "$signal" != worker_observation ]]; then
+			local prev_fp="" prev_cut=0
+			if [[ -f "${file}.capability" && ! -L "${file}.capability" ]]; then
+				IFS=$'\t' read -r prev_fp prev_cut <"${file}.capability" || true
+			fi
+			[[ "$prev_cut" =~ ^[0-9]+$ ]] || prev_cut=0
+			printf '%s\t%s\n' "$(_dispatch_capability_config_fingerprint "$repo_path")" "$prev_cut" >"${file}.capability" 2>/dev/null || true
+		fi
 		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) runner_capability_unmet cooldown recorded signal=${signal} ttl=${_DISPATCH_CAPABILITY_COOLDOWN_TTL_SECONDS}s" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_capability_cooldown_recorded"
 	else
@@ -1385,6 +1392,12 @@ _dispatch_capability_anchor_unchanged() {
 		[[ "$changed_at" =~ ^[0-9]+$ ]] || changed_at=0
 		((stamp > changed_at)) || return 1
 		return 0
+	fi
+	# No anchor: capability at release is unknown. Honour only a recent
+	# observation (bounded fallback); an older one re-probes once.
+	if (($(date +%s) - stamp > 3600)); then
+		printf '%s\t%s\n' "$current" "$(date +%s)" >"$anchor" 2>/dev/null || true
+		return 1
 	fi
 	printf '%s\t0\n' "$current" >"$anchor" 2>/dev/null || true
 	return 0
