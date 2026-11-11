@@ -232,8 +232,25 @@ jobs:
             sudo mv "$source_file" "${source_file}.disabled"
           fi
         done
-        sudo apt-get update -qq
-        sudo apt-get install -y bubblewrap
+        if command -v bwrap >/dev/null 2>&1; then
+          bwrap --version
+          exit 0
+        fi
+        # Bound each apt attempt so a stalled mirror retries instead of
+        # consuming the whole step with no log output (GH#37769).
+        apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+        for attempt in 1 2 3; do
+          echo "Installing bubblewrap (attempt ${attempt}/3)"
+          # shellcheck disable=SC2086
+          if timeout 120 sudo apt-get update -qq $apt_opts \
+            && timeout 120 sudo apt-get install -y $apt_opts bubblewrap; then
+            bwrap --version
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "::error::Unable to install bubblewrap after 3 bounded attempts"
+        exit 1
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
