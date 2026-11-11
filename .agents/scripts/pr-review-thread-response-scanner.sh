@@ -1691,6 +1691,18 @@ _prrts_dispatch_worker() {
 		"AIDEVOPS_ATTEMPT_STATE_ROOT=${STATE_DIR}"
 		"AIDEVOPS_ATTEMPT_STATE_FILE=${attempt_state_file}"
 		"${cmd[@]}")
+	_prrts_final_dispatch_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" "$repair_linked_issue" || return $?
+	# Persist the generation immediately before the detached worker becomes
+	# runnable, so immediate terminal callbacks cannot be overwritten.
+	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
+	PRRTS_WORKTREE_FAILURE_REASON="detached_worker_launch_failed"
+	_prrts_launch_reserved_worker "$repo_slug" "$pr_number" "$worker_worktree_path" "$session_key" \
+		"$outcome_id" "$reservation_file" "${worker_cmd[@]}" || return 1
+	return 0
+}
+
+_prrts_final_dispatch_fence() {
+	local repo_slug="$1" pr_number="$2" head_ref="$3" head_oid="$4" repair_linked_issue="$5"
 	# Recheck after worktree preparation: a release label may have been added
 	# since the initial dispatch gate. Propagate failure to release capacity.
 	PRRTS_WORKTREE_FAILURE_REASON="review_worker_release_gate_failed"
@@ -1699,12 +1711,6 @@ _prrts_dispatch_worker() {
 		PRRTS_WORKTREE_FAILURE_REASON="checkpoint_final_target_verification_failed"
 		_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
 	fi
-	# Persist the generation immediately before the detached worker becomes
-	# runnable, so immediate terminal callbacks cannot be overwritten.
-	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
-	PRRTS_WORKTREE_FAILURE_REASON="detached_worker_launch_failed"
-	_prrts_launch_reserved_worker "$repo_slug" "$pr_number" "$worker_worktree_path" "$session_key" \
-		"$outcome_id" "$reservation_file" "${worker_cmd[@]}" || return 1
 	return 0
 }
 
