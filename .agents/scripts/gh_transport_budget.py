@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from gh_transport_capacity import capacity_wait
-from gh_transport_identity import quota_owner
+from gh_transport_identity import credentials_share_proven_owner, quota_owner
 from gh_transport_observation import (
     QuotaResponse,
     accepted_balance,
@@ -218,6 +218,15 @@ class Budget:
                 "SELECT remaining,reset,observed,blocked_until,quota_limit FROM quota "
                 "WHERE scope=? AND resource=?", (self.scope, resource)
             ).fetchone()
+            window = {"core": 3600, "graphql": 3600, "search": 60, "code_search": 60}.get(resource)
+            if window:
+                # A stale reset epoch must not pin the cutoff in the past. A full
+                # elapsed window from now keeps other credentials' live debt.
+                cutoff = now - window
+                self.db.execute(
+                    "DELETE FROM reservation WHERE scope=? AND resource=? "
+                    "AND uncertain=1 AND started<?", (self.scope, resource, cutoff),
+                )
             total, active = self.db.execute(
                 "SELECT COUNT(*),COALESCE(SUM(uncertain=0),0) FROM reservation "
                 "WHERE scope=? AND resource=?",
@@ -292,6 +301,21 @@ class Budget:
                 "AND uncertain=1 AND credential=? AND started<?",
                 (self.scope, resource, self.credential, started)
             )
+            # Only a causally later response from the same proven owner can
+            # cover another credential's debt. Receipt time alone is not proof:
+            # requests may overlap, and unresolved scopes may contain many owners.
+            foreign = self.db.execute(
+                "SELECT DISTINCT credential FROM reservation WHERE scope=? AND resource=? "
+                "AND uncertain=1 AND credential<>? AND started<?",
+                (self.scope, resource, self.credential, started),
+            ).fetchall()
+            for (credential,) in foreign:
+                if credentials_share_proven_owner(self.path.parent, [self.credential, credential]):
+                    self.db.execute(
+                        "DELETE FROM reservation WHERE scope=? AND resource=? "
+                        "AND uncertain=1 AND credential=? AND started<?",
+                        (self.scope, resource, credential, started),
+                    )
             self.db.execute("DELETE FROM reservation WHERE id=?", (reservation,))
         record_budget_transition(
             self,

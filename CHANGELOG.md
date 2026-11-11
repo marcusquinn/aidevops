@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.166] - 2026-11-11
+
+### Added
+
+- safe interrupt-maintain-resume for interactive TUI sessions (#37665)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#37675)
+
+### Fixed
+
+- fail closed on unverified simplification creator instead of filing held issues
+- avoid identical sleep calls in pulse-sweep monitoring loop (#37626)
+- retire stale uncertain quota debt (#37674)
+- opencode-db-archive per-session holder gate, deferral exit 0, escalation (#37662)
+- detect private repository basenames (#37666)
+- detect unsupported npm attestation output (#37660)
+- ensure migration issue labels (#37653)
+
 ## [3.39.165] - 2026-11-10
 
 ### Added
