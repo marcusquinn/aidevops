@@ -211,9 +211,13 @@ def moved_functions(removed, added):
     return sorted(moves)
 
 
-def grep_head(head, args, pathspecs=(".",)):
-    """Run git grep at HEAD and return (path, line_no, content) hits."""
-    output = git("grep", "-n", "-I", *args, head, "--", *pathspecs, ok_codes=(0, 1))
+def grep_head(head, args, pathspecs=(":/",)):
+    """Run git grep at HEAD and return root-relative (path, line_no, content) hits.
+
+    `:/` searches from the repository root even when run from a subdirectory;
+    `--full-name` keeps result paths root-relative for `git show HEAD:<path>`.
+    """
+    output = git("grep", "-n", "-I", "--full-name", *args, head, "--", *pathspecs, ok_codes=(0, 1))
     prefix = f"{head}:"
     hits = []
     for line in output.splitlines():
