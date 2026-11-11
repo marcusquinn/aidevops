@@ -357,7 +357,15 @@ _PCTL_COORDINATION_JQ_DEFS='
 		| sort_by(.created_at, .id)
 		| last
 		| (.body // "");
+	# GH#37779: an approval comment fences scheduling only inside the same
+	# 24-hour window pr-checkpoint-revision.py accepts. An unreadable creation
+	# time fails closed (still unexpired).
+	def pctl_approval_unexpired($ttl):
+		((.created_at // "") | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $created |
+		($created == null or (now - $created) <= $ttl);
 '
+# Revision approvals expire after this many seconds (pr-checkpoint-revision.py).
+_PCTL_APPROVAL_TTL_SECONDS=86400
 
 #######################################
 # Verify that the newest trusted coordination event is the worker's explicit
@@ -419,8 +427,12 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	# release is still the newest coordination event, so an exception limited to
 	# the released state stopped every capability continuation before launch.
 	# Assignment, lifecycle and protective labels are still enforced below.
-	if jq -e "${_PCTL_COORDINATION_JQ_DEFS}"'
-		(pctl_trusted_comments | any((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))) or
+	# GH#37779: only an unexpired approval owns scheduling. Past its 24-hour
+	# expiry the revision route can no longer launch, so the legacy route and
+	# its re-arm windows apply again; a newer approval re-fences it.
+	if jq -e --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" "${_PCTL_COORDINATION_JQ_DEFS}"'
+		(pctl_trusted_comments | any(((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED ")) and
+			pctl_approval_unexpired($ttl))) or
 		(pctl_newest_coordination_body |
 			test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
 			(test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ") | not))

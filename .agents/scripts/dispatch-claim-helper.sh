@@ -2211,4 +2211,6 @@ if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
 	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0\n' \
 		"$((SECONDS - _DCH_STARTUP_SECONDS))" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
 fi
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

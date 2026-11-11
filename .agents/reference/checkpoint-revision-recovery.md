@@ -103,8 +103,8 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   claim stops other runners in that window. A new head re-arms one continuation until a
   per-PR fuse (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible releases since PR
   creation) posts one attention record per PR instead; later heads and aged records never
-  re-arm continuation or repeat that record. To resume sooner or after the fuse, a
-  maintainer publishes the line printed by the record's `approval-template` command.
+  re-arm continuation or repeat that record (see the terminal action below). To resume sooner
+  or after the fuse, a maintainer publishes the line printed by the record's `approval-template` command.
   Stall-class releases and a continuation's `clean`/`worker_complete` exit are approvable;
   the released attempt is the single ready lease before the release, so Pulse may release
   another runner's stale attempt. `worker_draft_checkpoint`, `capability_limit` and
@@ -123,23 +123,37 @@ project `status:blocked` unless the blocker is `runner_capability_unmet`. Existi
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
-Once an issue has a trusted `CHECKPOINT_CONTINUATION_APPROVED` record, the
-revision-approval route owns scheduling, even if that record expired or binds an
-older head. A push or aged attention record does not reopen the legacy automatic
-continuation route. If revision target validation fails, the stall attention
-record offers no new-head or age-based re-arm promise: retry unavailable
-metadata/permission checks first. If the approval expired or the head/brief
-changed, generate a fresh one with `pr-checkpoint-continuation-helper.sh
-approval-template` and publish it as a new issue comment (below). An unexpired
-exact-head approval still requires full revision validation and a fenced claim.
+While a trusted `CHECKPOINT_CONTINUATION_APPROVED` record is younger than its 24-hour
+expiry, the revision-approval route owns scheduling, even for an older head; neither a push
+nor an aged attention record reopens the legacy route. If revision target validation fails,
+retry unavailable metadata/permission checks first, or publish a fresh `approval-template`
+approval as a new issue comment (below); an exact-head approval still needs full revision
+validation and a fenced claim. An expired approval with no newer one stops owning scheduling
+(GH#37779): it can never launch and `worker_draft_checkpoint` releases cannot be re-approved,
+so the re-arm windows and fuse apply again. A paused head that does not re-arm logs
+`STALLED_CHECKPOINT_REARM_BLOCKED` and signals `stale_draft_checkpoint: rearm_blocked=<reason>`
+(`per_pr_fuse`, `rearm_disabled`, `rearm_window_pending`, `fleet_window_pending:<window>s`).
+
+**Bounded terminal action (GH#37779).** A draft held by the fuse, or whose exact-head target is
+confirmed ineligible after its attention record, would otherwise hold redispatch forever. After
+`AIDEVOPS_PCC_TERMINAL_ACTION_SECONDS` (default 43200; `0` disables) from the newer of that record
+and the stall release, `dispatch-stalled` acts once per PR head: an additive, `MERGEABLE`,
+all-checks-green, non-closing `For #N` draft is marked ready so the guarded Pulse merge pass lands
+it as a partial checkpoint (the issue stays open); any other draft is closed with its branch kept
+and a salvage pointer on the issue. Fresh-evidence gates (labels, assignment, ownership, dedupe
+marker) are listed in the `pr-checkpoint-terminal-action.sh` header; pending or unreadable state
+defers. Terminal writes compete in continuation's distributed claim consensus, revalidate ownership under the winning lease, and remove the claim on exit.
+Closing first persists the branch/head salvage pointer on the issue; a failed pointer post leaves the draft open for retry. A failed final audit post reports `STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED`, not success; the pointer is already durable.
+Signals: `terminal_action=<ready_for_merge|closed>`, `terminal_deferred=<reason>`.
+`dispatch` re-verifies a `STALE_PR_CONTINUATION` whose issue was already released unassigned
+through `dispatch-stalled`.
 
 ### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
 
-Runners before v3.39.89 projected `status:blocked` after a continuable release,
-which the dispatch candidate filter skips, so those drafts were never continued.
-On the stale-blocked cadence (own stamp `draft-checkpoint-unblock-complete`),
-`pulse-draft-checkpoint-unblock.sh` restores `status:available` only when all of
-these hold; any unreadable or ambiguous read leaves the issue unchanged:
+Runners before v3.39.89 projected `status:blocked` after a continuable release, which the dispatch
+candidate filter skips, so those drafts were never continued. On the stale-blocked cadence (own
+stamp `draft-checkpoint-unblock-complete`), `pulse-draft-checkpoint-unblock.sh` restores
+`status:available` only when all of these hold; any unreadable or ambiguous read leaves the issue unchanged:
 
 - The open issue's only status label is `status:blocked`, it has
   `auto-dispatch`, and it has no protective label (`hold-for-review`,
@@ -157,12 +171,11 @@ these hold; any unreadable or ambiguous read leaves the issue unchanged:
 - No `kind=draft-checkpoint-unblock` marker exists for that release, and fewer
   than `PULSE_DRAFT_UNBLOCK_MAX_PER_PR` (3) exist for the PR.
 
-This is evidence of an old release projection, not authority to clear a
-deliberate hold. The single audit comment names the PR, head and release, and
-the Pulse log records one `draft-checkpoint-unblock:` line per decision.
-Dispatch then routes the draft through `dispatch-stalled` as above; the draft is
-never closed. Listings are fully paginated and evidence is piped to jq, so busy
-issues (timelines over Linux's 128 KiB argument limit) are still evaluated.
+This is evidence of an old release projection, not authority to clear a deliberate hold. One audit
+comment names the PR, head and release; the Pulse log records one `draft-checkpoint-unblock:` line
+per decision. Dispatch then routes the draft through `dispatch-stalled` as above, never closing it.
+Listings are fully paginated and evidence is piped to jq, so busy issues (timelines over Linux's
+128 KiB argument limit) are still evaluated.
 
 ### Approving a corrected released checkpoint
 
@@ -191,16 +204,14 @@ issues (timelines over Linux's 128 KiB argument limit) are still evaluated.
    pr-checkpoint-continuation-helper.sh dispatch-approved OWNER/REPO REPO_PATH ISSUE AUTHENTICATED_RUNNER
    ```
 
-The approval binds repository, issue, PR, exact head/ref, the original PR author
-(`runner`), released attempt, release comment and SHA-256 of the complete corrected
-issue body. It expires after 24 hours; changed body/head/actor permissions invalidate it. A
-legacy release without a lease token is accepted only when its approved attempt
-has a unique prior authenticated ready lease with no intervening attempt.
-Raw launcher attempt IDs and their `attempt:`-prefixed form identify the same
-attempt; no other identity normalization is permitted. Approval records retain
-the prefixed form. Before claim transfer, the issue must be unassigned or assigned
-to the authenticated releasing runner, not an unrelated current owner. The exact
-PR-author binding remains unchanged when that runner differs from the author.
+The approval binds repository, issue, PR, exact head/ref, the original PR author (`runner`),
+released attempt, release comment and SHA-256 of the complete corrected issue body. It expires
+after 24 hours; changed body/head/actor permissions invalidate it. A legacy release without a lease
+token is accepted only when its approved attempt has a unique prior authenticated ready lease with
+no intervening attempt. Raw launcher attempt IDs and their `attempt:`-prefixed form identify the
+same attempt; no other identity normalization is permitted, and approval records retain the
+prefixed form. Before claim transfer, the issue must be unassigned or assigned to the authenticated
+releasing runner, not an unrelated owner; the exact PR-author binding stays when they differ.
 
 ### Read-only diagnostics requiring newer tooling
 
@@ -224,24 +235,22 @@ another session's checkout. Verify linked-repository identity, clean tracked sou
 HEAD and worker session/task ownership before execution and again immediately before any
 authorized credential-bearing invocation. Capacity, provisioning, ownership and source refusals stop.
 
-Run only the separately authorized read-only observation: no source edits,
-commit/push/ready/merge or business writes. Keep the brief's locks, authentication
-budget, evidence privacy and cleanup requirements. Report sanitized results and
-unknowns, then `mark-blocked` for remaining acceptance or safety blockers;
-diagnostic success is not enrichment completion. This prompt replaces generic
-full-loop augmentation, not runtime security/ownership/lease enforcement. Runner
-release/teardown owns coordination; this option starts no browser or historical repair.
+Run only the separately authorized read-only observation: no source edits, commit/push/ready/merge
+or business writes. Keep the brief's locks, authentication budget, evidence privacy and cleanup
+requirements. Report sanitized results and unknowns, then `mark-blocked` for remaining acceptance
+or safety blockers; diagnostic success is not enrichment completion. This prompt replaces generic
+full-loop augmentation, not runtime security/ownership/lease enforcement. Runner release/teardown
+owns coordination; this option starts no browser or historical repair.
 
 ### Intervening attempts that have fully released
 
-Later attempts do not silently invalidate a preserved checkpoint forever, but
-their release messages alone never authorize continuation. When the entire
-intervening history is sequential and fully closed, `approval-template` includes
-an explicit `released_successors` list in the new approval. Each entry binds the
-runner, attempt and claim/ready/release/terminal comment IDs. The source comments
-must remain trusted and unedited, with matching token/session/attempt identity;
-the new continuation must acquire a fresh token through the existing fenced
-claim path. Tokens are not copied into the approval.
+Later attempts do not silently invalidate a preserved checkpoint forever, but their release
+messages alone never authorize continuation. When the entire intervening history is sequential and
+fully closed, `approval-template` includes an explicit `released_successors` list in the new
+approval. Each entry binds the runner, attempt and claim/ready/release/terminal comment IDs. The
+source comments must remain trusted and unedited, with matching token/session/attempt identity; the
+new continuation must acquire a fresh token through the existing fenced claim path. Tokens are not
+copied into the approval.
 
 Publish a new generated approval rather than editing an old one. Approvals
 without the historical list do not authorize skipping intervening attempts.
@@ -250,25 +259,22 @@ explicitly acknowledged release with no open episode, below), interactive
 ownership, edited evidence and new unrelated coordination after approval still
 reject continuation. A fully released attempt after approval requires a fresh
 assessment and approval; expiry alone is never closure evidence. The template
-refuses incomplete histories instead of printing an unusable line. Its existing `intervening coordination is not fully released; no approval generated`
-error now appends one sanitized `rejected comment=... event=... runner=...
-episode_claim=... reason=...` diagnostic. `comment` identifies the first rejected
-coordination record; for `open_at_end`, it identifies the last scanned event.
-`event` is the recognized event name with spaces replaced by underscores, `runner`
-is the comment author's login (or `unknown`), and `episode_claim` identifies the
-open episode's claim (or `none`). Reasons are `edited`, `untrusted`,
-`transition_rejected`, or `open_at_end`. No lease token, nonce, session, or comment
-body is printed. These diagnostics do not change history acceptance.
-All current assignment, hold, permission, brief-revision and exact-head checks
-remain in force.
+refuses incomplete histories instead of printing an unusable line: its `intervening coordination
+is not fully released; no approval generated` error appends one sanitized `rejected comment=...
+event=... runner=... episode_claim=... reason=...` diagnostic. `comment` is the first rejected
+coordination record (for `open_at_end`, the last scanned event); `event` is the recognized event
+name with spaces replaced by underscores; `runner` is the comment author's login (or `unknown`);
+`episode_claim` is the open episode's claim (or `none`). Reasons are `edited`, `untrusted`,
+`transition_rejected`, or `open_at_end`. No lease token, nonce, session, or comment body is
+printed, and these diagnostics do not change history acceptance. All current assignment, hold,
+permission, brief-revision and exact-head checks remain in force.
 
-Hidden-but-unedited coordination is valid evidence (GH#36529). Dispatch comment
-hygiene minimizes a runner's old `DISPATCH_CLAIM`/`DISPATCH_LEASE` comments, which
-bumps REST `updated_at` without changing the body. The helper therefore reads
-GraphQL `lastEditedAt` for each comment whose `updated_at` differs from
-`created_at` and treats the comment as unedited only when it is `null`. A non-null
-value, a missing node or an unreadable GraphQL response keeps the comment edited
-(fail closed), so an edited body never counts as recovery evidence.
+Hidden-but-unedited coordination is valid evidence (GH#36529). Dispatch comment hygiene minimizes a
+runner's old `DISPATCH_CLAIM`/`DISPATCH_LEASE` comments, which bumps REST `updated_at` without
+changing the body. The helper therefore reads GraphQL `lastEditedAt` for each comment whose
+`updated_at` differs from `created_at` and treats it as unedited only when that is `null`. A non-null
+value, a missing node or an unreadable GraphQL response keeps the comment edited (fail closed), so
+an edited body never counts as recovery evidence.
 
 A stale-assignment release after prelaunch is not a completed history when the
 ready/terminal evidence is absent. Do not synthesize missing events, reinterpret
@@ -278,19 +284,16 @@ release; unsupported histories remain blocked pending supported reconciliation.
 
 ### Expired claims that never reached ready (GH#35331)
 
-An approval-bound `claim-pr-checkpoint` can expire before the executor renews
-its prelaunch lease (`transition prelaunch` reports `lease_unmatched`); renew
-before the output's `prelaunch_expires_at`. If it still expires, the claim owner
-(same account, device and session) runs
-`dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION`.
-It refuses a live or ready lease, a worker launch, an existing release, edited
-or other-actor events and mismatched identity, then posts
-`CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…`. That grants
-nothing: the consumed approval stays rejected; recovery needs a new approval
-whose `released_successors` entry (`outcome: claim_only_no_worker`) binds the
-claim and release IDs. History accepts it only when every claim and renewal
-expiry is known and elapsed before the release; later renewal or token reuse
-rejects it.
+An approval-bound `claim-pr-checkpoint` can expire before the executor renews its prelaunch lease
+(`transition prelaunch` reports `lease_unmatched`); renew before the output's `prelaunch_expires_at`.
+If it still expires, the claim owner (same account, device and session) runs
+`dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION`. It refuses a
+live or ready lease, a worker launch, an existing release, edited or other-actor events and
+mismatched identity, then posts `CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…`.
+That grants nothing: the consumed approval stays rejected; recovery needs a new approval whose
+`released_successors` entry (`outcome: claim_only_no_worker`) binds the claim and release IDs.
+History accepts it only when every claim and renewal expiry is known and elapsed before the
+release; later renewal or token reuse rejects it.
 
 One older same-runner `worker_ownership_lost` diagnostic (`exit=1
 session_count=0`, no claim, nonce, lease, session or attempt identity) may
@@ -320,14 +323,12 @@ comment IDs. After inspecting them, the maintainer accepts them explicitly:
 pr-checkpoint-continuation-helper.sh approval-template REPO PR ISSUE RELEASE_ID attempt:ID --acknowledge-unattributed=COMMENT_ID[,COMMENT_ID]
 ```
 
-The list must match the orphan releases exactly; missing, extra or other IDs
-refuse. Each becomes a `released_successors` entry with
-`outcome: unattributed_release` and `provenance: unrecovered`, which the
-published approval must list exactly. The entry opens and closes no episode.
-It is not evidence of a claim, lease, completion or absence of side effects,
-and any token it names stays fenced from reuse. Releases inside an open
-episode, edited or untrusted comments, and malformed reasons still reject.
-Automatic approval paths never pass the acknowledgement. Releases are no
+The list must match the orphan releases exactly; missing, extra or other IDs refuse. Each becomes a
+`released_successors` entry with `outcome: unattributed_release` and `provenance: unrecovered`,
+which the published approval must list exactly. The entry opens and closes no episode. It is not
+evidence of a claim, lease, completion or absence of side effects, and any token it names stays
+fenced from reuse. Releases inside an open episode, edited or untrusted comments, and malformed
+reasons still reject. Automatic approval paths never pass the acknowledgement. Releases are no
 longer published without an owned claim (`headless-runtime-release-claim.sh`).
 
 ### Terminal lease with a missing release
