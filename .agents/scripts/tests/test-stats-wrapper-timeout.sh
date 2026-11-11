@@ -521,6 +521,15 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
 		[[ "$ordered" == 'owner/p owner/b owner/c owner/a ' ]] || exit 18
 		if _health_repo_needs_recovery owner/c tester >/dev/null; then exit 19; fi
+		# Attempted but never refreshed (no .refresh-state) is recovered first.
+		local nf
+		nf=$(_health_schedule_cache_file owner/n tester)
+		rm -f "${nf}.refresh-state"
+		printf '%s\n' "$((t - 10))" >"${nf}.attempt"
+		entries=$'owner/p|/p\nowner/c|/c\nowner/a|/a\nowner/n|/n'
+		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
+		[[ "$ordered" == 'owner/p owner/n owner/c owner/a ' ]] || exit 20
+		[[ "$(_health_recovery_slug $'owner/p|/p\nowner/n|/n' tester)" == owner/n ]] || exit 21
 	); then
 		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
 	else

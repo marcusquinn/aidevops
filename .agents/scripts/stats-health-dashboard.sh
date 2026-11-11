@@ -571,13 +571,19 @@ _health_repo_times() {
 
 # Recovery lane: succeed when the last successful refresh is older than
 # STATS_HEALTH_RECOVERY_AGE_SECONDS (default 24h) and the latest attempt did
-# not succeed. Prints the refresh epoch on success.
+# not succeed. A repo attempted but never refreshed (epoch 0) qualifies at once.
+# Prints the refresh epoch on success.
 _health_repo_needs_recovery() {
 	local slug="$1" runner="$2" epoch attempted age times
 	[[ -n "$slug" ]] || return 1
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
 	read -r epoch attempted <<<"$times"
+	if [[ "$epoch" -eq 0 && "$attempted" -gt 0 ]]; then
+		# Attempted but never refreshed: eligible immediately, oldest candidate.
+		printf '0\n'
+		return 0
+	fi
 	[[ "$epoch" -gt 0 && "$attempted" -gt "$epoch" ]] || return 1
 	[[ "$(($(date +%s) - epoch))" -ge "$age" ]] || return 1
 	printf '%s\n' "$epoch"
