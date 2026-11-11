@@ -53,10 +53,11 @@ wp wu checkout_form list --fields=id,slug,name,active --url="$URL"
 
 ```bash
 wp eval 'echo wu_get_payments(["status" => "pending", "count" => true]);' --url="$URL"   # count has no limit
-curl -s --config "$WU_CURL_CONFIG" "$URL/wp-json/wu/v2/payment?status=pending&per_page=100&page=2"
+curl -s --config "$WU_CURL_CONFIG" "$URL/wp-json/wu/v2/payment?status=pending&per_page=100&page=2" \
+  | jq '[.[] | {id, status, total, gateway, date_created}]'
 ```
 
-`$WU_CURL_CONFIG` is a private file (mode 600, outside the repository) holding one line, `user = "API_KEY:API_SECRET"`, so the credentials stay out of the command line and shell history.
+`$WU_CURL_CONFIG` is a private file (mode 600, outside the repository) holding one line, `user = "API_KEY:API_SECRET"`, so the credentials stay out of the command line and shell history. Full records carry customer IDs and line items: keep the `jq` filter to the fields the task needs (rule 5).
 
 The status values you see (for example `pending`, `active`, `on-hold`, `expired` and `cancelled` for memberships; `pending`, `completed`, `refunded` and `failed` for payments) are the plugin's own. Confirm them on the site before filtering.
 
@@ -80,7 +81,7 @@ Before the first real order, run the whole loop once in test mode. Check that th
 
 ## Setup checklist for a selling network
 
-- Payment gateway connected in test mode, webhook URL added in the gateway (the active gateway's **Webhook Listener URL** in its settings: `stripe_webhook_listener_explanation` for Stripe, `stripe_checkout_webhook_listener_explanation` for Stripe Checkout), then live mode.
+- Payment gateway connected in test mode, webhook URL added in the gateway, then live mode. With direct API keys, the active gateway's settings show **Webhook Listener URL** (`stripe_webhook_listener_explanation` for Stripe, `stripe_checkout_webhook_listener_explanation` for Stripe Checkout). Connected through Stripe Connect (OAuth), that field is hidden; read the same URL without changing modes, `wp eval 'echo wu_get_gateway("stripe")->get_webhook_listener_url();' --url="$URL"` (`stripe-checkout` for Checkout; the main site address plus `?wu-gateway=<id>`, or `WU_GATEWAY_LISTENER_URL` when defined), and compare it with the endpoint listed in Stripe → Developers → Webhooks for the same mode (test or live).
 - Products: names, descriptions, prices, setup fees, currency, and what the customer must provide.
 - Checkout forms: fields, consent checkbox for marketing, terms link.
 - Invoices: company details and numbering (`invoice_*` settings), PDF attachment.
