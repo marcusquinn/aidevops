@@ -158,5 +158,4 @@ Custom scripts at `~/.macos-automator/knowledge_base/` override built-ins by mat
 
 ## Related
 
-- [Stagehand](../browser/stagehand.md) — Browser automation
 - [Playwright](../browser/playwright.md) — Cross-browser testing

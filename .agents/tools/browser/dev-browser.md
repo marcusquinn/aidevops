@@ -34,7 +34,7 @@ tools:
 |-----|-----------|
 | Local dev servers, multi-step workflows | Interactive access to selected tabs from YOUR browser → Playwright Extension |
 | Stay logged in across sessions | Parallel isolated sessions → Playwright direct |
-| Source code access for selectors | Natural language automation → Stagehand |
+| Source code access for selectors | Complex AI-native automation → browser-use |
 
 <!-- AI-CONTEXT-END -->
 
@@ -165,13 +165,15 @@ If the server doesn't expose `executablePath`, use Playwright direct with `launc
 
 ## Comparison with Other Browser Tools
 
+Stagehand is not recommended; use it only when the user explicitly asks to try it.
+
 | Feature | Dev-Browser | Chromium Debug Use | Playwright Extension | Playwright MCP | Stagehand |
 |---------|-------------|--------------------|----------------------|----------------|-----------|
 | **State** | Persistent aidevops profile | Existing live browser profile | Selected existing tabs | Fresh each call | Fresh |
 | **Speed** | Fast (batched) | Fast for live-session reuse | Browser-dependent | Slow (round-trips) | Medium |
 | **Context** | Low | Very low | Playwright MCP tools | High (17+ tools) | Low |
 | **Approach** | Scripts | CDP attach to current browser | MCP/CLI extension mode | Tool calls | Natural language |
-| **Best for** | Dev testing and managed persistent automation | Inspect first, then choose the right automation path | Existing sessions with selected-tab consent | Cross-browser | AI automation |
+| **Best for** | Dev testing and managed persistent automation | Inspect first, then choose the right automation path | Existing sessions with selected-tab consent | Cross-browser | Not recommended; explicit user request only |
 | **Requires** | Bun + server | Debug-enabled Chromium browser | Official extension | Nothing | API key |
 
 Use `chromium-debug-use` (`launch` for a logged-in session in Brave/Chrome without automation flags) when you need a real live session. Switch to dev-browser when that investigation turns into a repeatable workflow that should keep its own persistent state under aidevops control.

@@ -19,6 +19,8 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
+**Not recommended.** Available only when the user explicitly asks to try it; Playwright is the default.
+
 ## Quick Reference
 
 **Stagehand v4.1.0 (opt-in, isolated local browser):** `bash .agents/scripts/stagehand-v4-helper.sh setup`. This pins the reviewed JS SDK and Zod in a separate project, leaving existing v3 installs untouched. `status` verifies exact installed versions; `run-example` requires explicit `OPENAI_API_KEY` and `STAGEHAND_MODEL=openai/<supported-model>` and makes a model-backed call (provider charges may apply). The example launches its own headless Chrome instance, closes both the SDK and browser in `finally`, and never attaches to a live user profile. No globally exposed MCP tools are added.
@@ -64,13 +66,10 @@ tools:
 | Scenario | Preferred route | Evidence / boundary |
 |----------|-----------------|---------------------|
 | Repeatable isolated flow, stable selectors | Standalone Playwright | No per-step model cost; existing browser benchmarks favour Playwright. |
-| Unknown/changing page or typed AI extraction | Opt-in Stagehand v4 after model/cost consent | v4 separates deterministic `browser.context`/`page.locator()` from `act`/`extract`/`observe`; results contain `data` and `metadata` for token/caching diagnostics. |
+| Unknown/changing page or typed AI extraction | Playwright with bounded selector discovery; browser-use if needed | Stagehand is not recommended; only use it when the user explicitly asks to try it, with model/data/cost consent. |
 | User-selected existing authenticated tabs | Playwright Extension; Playwriter only for explicit legacy compatibility | v4 CDP connection does not demonstrate selected-tab consent/profile isolation, so no replacement or headless-worker access is approved. |
 
-Prefer v4 over selectors only when a representative **whole-workflow** comparison
-shows that adaptive actions can offset their model latency and cost—for example,
-when frequent layout changes, retry loops or selector maintenance make the
-deterministic path slower or less reliable overall. Compare completed tasks,
+For an explicitly requested experiment, compare completed tasks,
 retry/recovery behaviour, end-to-end time, provider spend and browser cleanup,
 not just a successful AI extraction against a single DOM query. The measured
 v4 heading probes showed no speed advantage and the private-page sample matched
