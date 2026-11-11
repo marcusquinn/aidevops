@@ -325,6 +325,27 @@ STUB
 		_merge_check_parent_task_keywords 42 test/repo "$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE"
 	' _ "$scripts_dir" || rc=$?
 	print_result "explicit parent close override passes merge guard" "$rc"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
+		_merge_pre_merge_gate_with_admission_retry() { return 0; }
+		_merge_release_lane_check() { return 0; }
+		_merge_release_provenance_method() { printf "%s\n" "$3"; return 0; }
+		_merge_canonical_dir_for_sync() { return 1; }
+		_merge_fresh_worktree_cleanup_target() { return 1; }
+		_merge_prepare_verified_head_aggregation_body() { FULL_LOOP_MERGE_BODY_SNAPSHOT=""; FULL_LOOP_MERGE_PREPARED_BODY_FILE=""; return 0; }
+		_retarget_stacked_children_interactive() { return 0; }
+		_merge_execute() { printf "%s\n" "merge transport reached"; return 1; }
+		_merge_remove_body_snapshot() { return 0; }
+		cmd_merge 42 test/repo --allow-parent-close
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent close override reaches merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'merge transport reached'* ]] && printf '0' || printf '1')" "$output"
 	return 0
 }
 
