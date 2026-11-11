@@ -41,7 +41,7 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 # Keep issue-body instructions aligned with the labels applied at creation.
-# Trusted-maintainer scans intentionally skip hold-for-review; telling those
+# Verified-admin scans intentionally skip hold-for-review; telling those
 # workers to wait for a later approval creates a dispatch/BLOCKED retry loop.
 _complexity_scan_review_instruction_block() {
 	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" == true ]]; then
@@ -426,8 +426,9 @@ _complexity_scan_process_single_md_file() {
 	local issue_body
 	issue_body=$(_complexity_scan_md_build_full_body "$file_path" "$line_count" "$topic_label" "$recheck_mode" "$state_file")
 
-	# Non-maintainer admins receive an explicit review hold; NMR is reserved for
-	# external-author trust gates (GH#16786/GH#29394).
+	# Only an unverified creator identity receives a review hold; verified admins
+	# dispatch directly (GH#37554). NMR is reserved for external-author trust
+	# gates (GH#16786/GH#29394).
 	local review_label=""
 	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != true ]]; then
 		review_label="--label hold-for-review"
@@ -612,7 +613,7 @@ _complexity_scan_sh_create_issue() {
 	issue_body=$(_complexity_scan_sh_build_issue_body_with_sig "$file_path" "$violation_count" "$details")
 
 	local issue_title="simplification: reduce function complexity in ${file_path} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
-	# Non-maintainer admins receive an explicit review hold.
+	# Only an unverified creator identity receives a review hold (GH#37554).
 	local review_label_sh=""
 	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != true ]]; then
 		review_label_sh="--label hold-for-review"

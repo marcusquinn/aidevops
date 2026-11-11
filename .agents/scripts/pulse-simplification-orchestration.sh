@@ -539,6 +539,8 @@ run_weekly_complexity_scan() {
 	_complexity_scan_check_interval "$now_epoch" || return 0
 
 	_complexity_scan_permission_gate "$aidevops_slug" || return 0
+	# GH#37554: lift legacy co-admin creation holds so held debt can dispatch.
+	_complexity_release_creation_holds "$aidevops_slug"
 
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
