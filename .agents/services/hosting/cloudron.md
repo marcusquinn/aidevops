@@ -159,6 +159,8 @@ Startup sequence (prevents premature intervention):
 | `Exited (137)` | SIGKILL; possibly OOM | Check kernel logs; distinguish container-limit from host-wide OOM below |
 | `Created` | Never started | Waiting in startup queue |
 
+- **Stopped app**: No vhost under `platformdata/nginx/applications/<app-id>/`; the domain serves the default certificate (TLS name mismatch). Check installed apps with `cloudron list` or the dashboard, not nginx configs or a TLS probe.
+
 ### OOM Triage
 
 Cloudron's "Out of memory: mysql service" notification identifies the victim, not necessarily the cause. Exit 137 alone does not prove OOM. Before increasing any limit, inspect kernel evidence around the incident (use `-b -1` for the previous boot if needed):
