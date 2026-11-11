@@ -53,6 +53,18 @@ PRUNED_KEY = "backups:database-pruned"
 DEFAULT_RETENTION_DAYS = 7
 RETENTION_ENV = "AIDEVOPS_REPO_LAYOUT_BACKUP_RETENTION_DAYS"
 
+# The scoped sibling has a hyphenated filename; load it relative to this script.
+_sqlite_spec = importlib.util.spec_from_file_location(
+    "repo_layout_migrate_sqlite", Path(__file__).with_name("repo_layout_migrate-sqlite.py")
+)
+assert _sqlite_spec is not None and _sqlite_spec.loader is not None
+_sqlite_module = importlib.util.module_from_spec(_sqlite_spec)
+_sqlite_spec.loader.exec_module(_sqlite_module)
+sqlite_schema = _sqlite_module.sqlite_schema
+validated_sql_target = _sqlite_module.validated_sql_target
+sqlite_consumer = _sqlite_module.sqlite_consumer
+sqlite_consumer_rows = _sqlite_module.sqlite_consumer_rows
+
 
 def nearest_existing_parent(path: Path) -> Path:
     """Find the nearest existing parent without creating anything."""
@@ -94,75 +106,6 @@ def path_is_inside(parent: Path, candidate: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def sqlite_schema(connection: sqlite3.Connection) -> dict[str, list[str]]:
-    """Return only the migration-relevant SQLite table columns."""
-    result: dict[str, list[str]] = {}
-    for table in ("project", "session"):
-        try:
-            rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
-        except sqlite3.Error as exc:
-            raise MigrationError(f"Could not inspect SQLite table: {table}") from exc
-        if rows:
-            result[table] = [str(row[1]) for row in rows]
-    return result
-
-
-def validated_sql_target(table: str, column: str) -> tuple[str, str]:
-    """Allow only the two fixed OpenCode path columns."""
-    if (table, column) not in {("project", "worktree"), ("session", "directory")}:
-        raise MigrationError("Receipt contains an unsupported database target")
-    return table, column
-
-
-def sqlite_consumer(path: Path, mappings: dict[str, str]) -> dict[str, Any]:
-    """Capture relevant exact-path SQLite rows and schema."""
-    if any((path.is_symlink(), not path.is_file(), path.stat().st_uid != os.getuid())):
-        raise MigrationError(f"Unsafe OpenCode database: {path}")
-    uri = f"file:{path}?mode=ro"
-    try:
-        connection = sqlite3.connect(uri, uri=True, timeout=2)
-        schema = sqlite_schema(connection)
-        rows = sqlite_consumer_rows(connection, schema, mappings)
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
-    except sqlite3.Error as exc:
-        raise MigrationError(f"Could not inspect OpenCode database: {path}") from exc
-    finally:
-        if "connection" in locals():
-            connection.close()
-    if not integrity or integrity[0] != "ok":
-        raise MigrationError(f"SQLite integrity check failed: {path}")
-    return {"path": str(path), "schema": schema, "rows": rows}
-
-
-def sqlite_consumer_rows(
-    connection: sqlite3.Connection,
-    schema: dict[str, list[str]],
-    mappings: dict[str, str],
-) -> list[dict[str, str]]:
-    """Read migration-relevant exact-path rows from a validated database."""
-    rows: list[dict[str, str]] = []
-    for table, column in (("project", "worktree"), ("session", "directory")):
-        if table not in schema or "id" not in schema[table] or column not in schema[table]:
-            continue
-        parent_clause = (
-            " AND parent_id IS NULL"
-            if table == "session" and "parent_id" in schema[table]
-            else ""
-        )
-        query = f"SELECT id, {column} FROM {table} WHERE {column} = ?{parent_clause}"
-        for old_path in mappings:
-            for row_id, value in connection.execute(query, (old_path,)).fetchall():
-                rows.append(
-                    {
-                        "table": table,
-                        "column": column,
-                        "id": str(row_id),
-                        "value": str(value),
-                    }
-                )
-    return rows
 
 
 def existing_optional_path(value: str | None, default: Path) -> Path | None:
