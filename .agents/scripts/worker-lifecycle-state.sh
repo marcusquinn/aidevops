@@ -202,6 +202,7 @@ _worker_lifecycle_report_refusal() {
 	summary=$(jq -r '[("status=" + (.status // "unknown" | tostring)),
 		(if .reason then "reason=" + (.reason | tostring) else empty end),
 		(if .detail then "detail=" + (.detail | tostring) else empty end),
+		(if .process_observation then "process_observation=" + (.process_observation | tojson) else empty end),
 		(if .filesystem_path then "path=" + (.filesystem_path | tostring) else empty end)]
 		| join(" ")' 2>/dev/null <<<"$result") || summary=""
 	printf '[worker-lifecycle] retirement-refused %s rc=%s\n' "${summary:-status=unparseable}" "$rc" >&2
