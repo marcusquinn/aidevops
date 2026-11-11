@@ -544,6 +544,13 @@ test_health_recovery_lane_candidates() {
 		ordered=$(_apply_health_recovery_lane "$entries" tester | cut -d'|' -f1 | tr '\n' ' ')
 		[[ "$ordered" == 'owner/p owner/b owner/c owner/a ' ]] || exit 18
 		if _health_repo_needs_recovery owner/c tester >/dev/null; then exit 19; fi
+		local aged
+		aged=$(_health_schedule_cache_file owner/aged tester)
+		printf 'ok|%s\n' "$((t - 90000))" >"${aged}.refresh-state"
+		printf '%s\n' "$((t - 90000))" >"${aged}.attempt"
+		entries=$'owner/p|/p\nowner/c|/c\nowner/aged|/aged'
+		ordered=$(_apply_health_recovery_lane "$entries" tester)
+		[[ "$(_health_recovery_slug "$ordered" tester)" == owner/aged ]] || exit 22
 		# Attempted but never refreshed (no .refresh-state) is recovered first.
 		local nf
 		nf=$(_health_schedule_cache_file owner/n tester)
@@ -557,6 +564,43 @@ test_health_recovery_lane_candidates() {
 		pass "recovery lane promotes stale-failed and never-refreshed repos, one per cycle"
 	else
 		fail "recovery lane promotes stale-failed and never-refreshed repos, one per cycle" "fixture exit=$?"
+	fi
+	rm -rf "$batch_home"
+	return 0
+}
+
+test_health_priority_backoff() {
+	local batch_home
+	batch_home=$(mktemp -d "${TMPDIR:-/tmp}/stats-health-priority.XXXXXX") || return 1
+	if (
+		export HOME="$batch_home" LOGFILE="$batch_home/stats.log"
+		local scripts="${SCRIPT_DIR}/.."
+		local SCRIPT_DIR="$scripts" _HEALTH_SCHEDULE_RUNNER=tester
+		source "$scripts/shared-constants.sh"
+		source "$scripts/worker-lifecycle-common.sh"
+		source "$scripts/stats-functions.sh"
+		_refresh_health_repo_bounded() { printf 'attempt\n' >>"$HOME/calls"; return 1; }
+		local i result slug
+		for i in 1 2 3; do
+			result=0
+			slug=$(_refresh_priority_health_issue 'owner/p|/p') || result=$?
+			[[ "$result" -eq 1 && "$slug" == owner/p ]] || exit 1
+		done
+		result=0
+		slug=$(_refresh_priority_health_issue 'owner/p|/p') || result=$?
+		[[ "$result" -eq 75 && "$slug" == owner/p ]] || exit 2
+		[[ "$(wc -l <"$HOME/calls" | tr -d ' ')" -eq 3 ]] || exit 3
+		result=0
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || result=$?
+		[[ "$result" -eq 1 && "$(wc -l <"$HOME/calls" | tr -d ' ')" -eq 4 ]] || exit 4
+		_refresh_health_repo_bounded() { return 0; }
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || [[ "$?" -eq 75 ]] || exit 5
+		_refresh_priority_health_issue 'owner/p|/p' >/dev/null || exit 6
+		[[ ! -f "$(_health_schedule_cache_file owner/p tester).priority-backoff" ]] || exit 7
+	); then
+		pass "priority failures back off alternate cycles until success"
+	else
+		fail "priority failures back off alternate cycles until success" "fixture exit=$?"
 	fi
 	rm -rf "$batch_home"
 	return 0
@@ -629,6 +673,7 @@ main_test() {
 	test_quality_sweep_expired_budget_retries_and_publishes
 	test_health_dashboard_slow_cross_repo_rates_are_bounded_once
 	test_health_recovery_lane_candidates
+	test_health_priority_backoff
 	test_health_dashboard_reserves_publication_time_from_history
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
