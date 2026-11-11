@@ -887,6 +887,17 @@ test_locked_issue_permission_hold_continuity() {
 	return 0
 }
 
+run_locked_issue_continuity_tests() {
+	test_locked_issue_continuity
+	test_unanchored_lock_signature
+	test_locked_issue_trusted_comment_continuity
+	test_locked_issue_trusted_content_edits
+	test_locked_issue_tier_backfill_continuity
+	test_locked_issue_permission_hold_continuity
+	test_signed_tier_self_hosting_continuity
+	return 0
+}
+
 test_locked_issue_stable_ordering() {
 	write_locked_issue_fixture
 	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
@@ -1327,13 +1338,7 @@ main() {
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
 	test_post_approval_linked_references
-	test_locked_issue_continuity
-	test_unanchored_lock_signature
-	test_locked_issue_trusted_comment_continuity
-	test_locked_issue_trusted_content_edits
-	test_locked_issue_tier_backfill_continuity
-	test_locked_issue_permission_hold_continuity
-	test_signed_tier_self_hosting_continuity
+	run_locked_issue_continuity_tests
 
 	reset_and_sign pr 42
 	local marker_drift="<!-- aidevops-signed-approval --> unsigned external drift"
