@@ -282,9 +282,56 @@ source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-planning.sh"
 
+test_parent_task_merge_guard() {
+	local scripts_dir="${SCRIPT_DIR}/.." rc=0 output=""
+	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "issue view" ]]; then
+	printf '%s\n' '{"labels":[{"name":"parent-task"}]}'
+	return_code=0
+else
+	return_code=1
+fi
+exit "$return_code"
+STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		_merge_check_parent_task_keywords 42 test/repo 0
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent-task closing keyword blocks merge guard with remedy" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		cmd_merge 42 test/repo
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "cmd_merge rejects parent before merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_parse_command_args test/repo --allow-parent-close || exit 1
+		_merge_check_parent_task_keywords 42 test/repo "$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE"
+	' _ "$scripts_dir" || rc=$?
+	print_result "explicit parent close override passes merge guard" "$rc"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
+	test_parent_task_merge_guard
 
 	echo "=== Admin merge fallback signaling tests (t2247) ==="
 	echo ""
