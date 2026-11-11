@@ -232,8 +232,10 @@ jobs:
             sudo mv "$source_file" "${source_file}.disabled"
           fi
         done
-        sudo apt-get update -qq
-        sudo apt-get install -y bubblewrap
+        # Retry transient Ubuntu mirror/DNS failures, but fail closed if index
+        # refresh is incomplete rather than proceeding with stale package lists.
+        sudo apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update -qq
+        sudo apt-get -o Acquire::Retries=3 install -y bubblewrap
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
