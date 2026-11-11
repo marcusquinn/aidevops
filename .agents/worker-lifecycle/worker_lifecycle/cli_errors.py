@@ -2,6 +2,7 @@
 
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .process import ObservationUnavailable
+from .protected_proc import ProcessCensusUnavailable
 from .refusal import failure_category, refusal_code
 from .storage import StoreCapacity, StoreConflict
 
@@ -17,6 +18,9 @@ def error_details(error: Exception, operation: str) -> dict:
     mode = "retirement" if operation in retirement else "observe-only"
     detail = {"mode": mode, "status": "unavailable", "reason": reason,
               "cleanup_authorized": False}
+    if isinstance(error, ProcessCensusUnavailable):
+        detail["reason"] = "ValueError"  # Keep the existing refusal classification.
+        detail["process_observation"] = error.observation
     if isinstance(error, FilesystemValidationError):
         detail.update(filesystem_error_details(error))
     # GH#36142: name the enrollment refusal; OSError text may carry paths.

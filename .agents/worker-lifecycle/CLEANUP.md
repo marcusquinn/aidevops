@@ -455,6 +455,9 @@ Legacy proof, archive and force arguments cannot authorize deletion or bypass a
 missing registry. Manual removal retains branches and external resources; their
 cleanup is a separate operation, not an unverified path-based post-removal step.
 
+Protected-reference refusals report path-free PID/TID and CWD/fd diagnostics.
+[Opt-in full-reference inspection](../reference/worktree-cwd-visibility.md#registry-full-reference-inspection-separate-opt-in) has its own privilege boundary; legacy CWD/lifetime evidence is not a substitute.
+
 Legacy candidate selectors still exist and may hold work before the registry gate;
 this is not their removal, a Git-invocation inventory, or rollout qualification.
 

@@ -170,8 +170,11 @@ _pulse_run_blocker_refresh_catchup() {
 	PULSE_DEP_GRAPH_FORCE_REBUILD=1 _pulse_run_resumable_housekeeping_stage "$graph_stage" "$progress_file" \
 		_pulse_run_budget_priority_stage_with_timeout "$graph_stage" "$graph_timeout" build_dependency_graph_cache || return 1
 	if declare -F refresh_blocked_status_from_graph >/dev/null 2>&1; then
+		# Refresh has its own 30s candidate budget before an in-flight safety
+		# check finishes. A cheap scanner slice (12s by default) kills the batch
+		# before it can checkpoint; retain the graph batch ceiling instead.
 		_pulse_run_resumable_housekeeping_stage "refresh_blocked_status_from_graph" "$progress_file" \
-			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$stage_timeout" refresh_blocked_status_from_graph || return 1
+			_pulse_run_budget_priority_stage_with_timeout "refresh_blocked_status_from_graph" "$graph_timeout" refresh_blocked_status_from_graph || return 1
 	fi
 	if declare -F release_repaired_brief_holds >/dev/null 2>&1; then
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$progress_file" \
@@ -409,7 +412,7 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "pr_review_thread_response" "$stage_timeout" _run_pr_review_thread_response_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "auto_decomposer_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner || incomplete=1
+		_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$heavy_timeout" _run_auto_decomposer_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "dedup_cleanup" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "fast_fail_prune_expired" "$state_file" \
@@ -469,10 +472,11 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$ownership_timeout" =~ ^[1-9][0-9]{0,3}$ ]] || ownership_timeout=600
 	[[ "$ownership_timeout" -le "$stage_timeout" ]] || ownership_timeout="$stage_timeout"
 	local lane_watchdog=$((lane_budget + ownership_timeout))
-	# Weight graph rebuild and cache prime at six shares each: unlike cheap
-	# scanners they must finish a batch before checkpointing. Eight other leaf
-	# calls (including catch-up and standalone brief release) get one each;
-	# four shares remain for watchdog teardown. Keep the caller's ceiling.
+	# Batch ceilings are six times the cheap scanner slice. Graph rebuild,
+	# blocked refresh, decomposition and cache prime need a full batch before
+	# checkpointing. These are per-call ceilings, not reserved time: the outer
+	# watchdog bounds the whole lane and successful checkpoints survive it.
+	# Keep the caller's ceiling, ownership allowance and total lane unchanged.
 	local stage_slice=$((lane_budget / 24))
 	[[ "$stage_slice" -ge 1 ]] || stage_slice=1
 	local heavy_timeout="$stage_timeout" heavy_slice=$((stage_slice * 6))
