@@ -159,7 +159,7 @@ Startup sequence (prevents premature intervention):
 | `Exited (137)` | SIGKILL; possibly OOM | Check kernel logs; distinguish container-limit from host-wide OOM below |
 | `Created` | Never started | Waiting in startup queue |
 
-- **Stopped app**: No vhost under `platformdata/nginx/applications/<app-id>/`; the domain serves the default certificate (TLS name mismatch). Check installed apps with `cloudron list` or the dashboard, not nginx configs or a TLS probe.
+- **Stopped app**: No vhost under `platformdata/nginx/applications/<app-id>/`; the domain may serve the default certificate, potentially causing a TLS name mismatch. Check installed apps with `cloudron list` or the dashboard, not nginx configs or a TLS probe.
 
 ### OOM Triage
 
