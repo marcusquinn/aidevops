@@ -25,8 +25,8 @@ const envelope = JSON.stringify({
   output: "Propose an invariant and parent-verifiable check",
 });
 
-test("shipped routes keep Anthropic primary and Astra outside automatic escalation", () => {
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "anthropic/claude-haiku-5-5", variant: "high" });
+test("shipped routes keep Luna-first simple, Anthropic-primary standard/thinking, and Astra outside automatic escalation", () => {
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
   assert.deepEqual(routingProfile(routing, "standard"), { tier: "standard", model: "anthropic/claude-sonnet-5-5", variant: "medium" });
   assert.deepEqual(routingProfile(routing, "thinking"), { tier: "thinking", model: "anthropic/claude-opus-5-5", variant: "high" });
   assert.equal(nextRoutingTier(routing, "thinking"), "");
@@ -38,7 +38,7 @@ test("shipped routes keep Anthropic primary and Astra outside automatic escalati
   assert.deepEqual(routingProfile(partial, "standard"), {
     tier: "standard", model: "openai/gpt-6.1-terra", variant: "medium",
   });
-  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "anthropic/claude-haiku-5-5", variant: "high" });
+  assert.deepEqual(routingProfile(routing, "simple"), { tier: "simple", model: "openai/gpt-6-luna", variant: "high" });
 });
 
 test("policy requires one bounded highest-capability consultation before an avoidable user decision", () => {

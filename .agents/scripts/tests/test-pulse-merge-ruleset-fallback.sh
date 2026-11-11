@@ -248,6 +248,7 @@ _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }
 _pr_required_checks_pass() { return 0; }
 approve_collaborator_pr() { return 0; }
+manual_release_hold_check() { return 0; }
 # These fixtures are not Issue Sync PRs; the extracted approval helper must
 # take its non-trusted, no-write path.
 _pulse_is_trusted_issue_sync_pr() { return 1; }

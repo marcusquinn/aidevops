@@ -118,7 +118,7 @@ The validator must pass before running the signed creation command below. It che
 
    Capture the new issue number as \$NEW_NUM.
 
-4. **Close every superseded parent.** Run all four commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing). Do not close this consolidation task until every parent's handoff is complete:
+4. **Close every superseded parent and verify each handoff.** Run all five commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing and the state check). Every command must succeed:
 
 \`\`\`bash
 gh issue comment ${parent_num} --repo "${repo_slug}" \\
@@ -128,9 +128,13 @@ gh issue edit ${parent_num} --repo "${repo_slug}" \\
 gh issue close ${parent_num} --repo "${repo_slug}" --reason "not planned"
 # Repoint open dependants' blockedBy edges and Blocked-by lines at the successor (GH#35130):
 ~/.aidevops/agents/scripts/dependency-supersession-repoint-helper.sh repoint "${repo_slug}" ${parent_num} \$NEW_NUM
+# Re-read the parent (GH#37600); this must print exactly: closed not_planned
+gh api "repos/${repo_slug}/issues/${parent_num}" --jq '.state + " " + (.state_reason // "")'
 \`\`\`
 
-5. **Close this consolidation-task issue** with a summary comment:
+   **Handoff verification (GH#37600):** a parent that still reads \`open\` keeps the \`consolidated\` label while the dispatch gate rejects it, so it consumes dispatch attempts every cycle. If any command above fails or refuses the write (for example a worker target-scope guard on a non-target issue), or any parent re-read is not \`closed not_planned\`, this task has FAILED: do not run step 5 and do not report success. Leave this consolidation task open, record the parent number, the failing command and its output in one comment here, and exit \`BLOCKED\`. Report a reopen observed after your close as evidence, with its event time; do not guess its cause.
+
+5. **Close this consolidation-task issue** only after every parent passed the step 4 verification, with a summary comment:
 
 \`\`\`bash
 gh issue comment \$THIS_ISSUE --repo "${repo_slug}" \\

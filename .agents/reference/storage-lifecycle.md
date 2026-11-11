@@ -78,8 +78,20 @@ pulse and repository-campaigns remain excluded.
 
 Below 10% free space (override `AIDEVOPS_TMP_MIN_FREE_PERCENT`) or
 `AIDEVOPS_TMP_MIN_FREE_GB` free GiB (default 0), eligible entries are processed
-largest first. Linux deletes them to actually free space; otherwise cleanup uses
-Trash. Neither threshold authorises deleting live or unidentified managed data.
+largest first. Linux deletes them to actually free space under pressure. Above
+the thresholds, Linux also deletes eligible entries when their `st_dev` matches
+the user Trash location (`$XDG_DATA_HOME/Trash`, default `~/.local/share/Trash`).
+For a not-yet-created Trash, compare its nearest existing ancestor. A move to
+same-filesystem Trash would free no space, so no Trash backend is needed in this
+case. Cross-filesystem entries and macOS retain Trash; unknown device evidence
+does not authorise same-filesystem deletion. Neither threshold nor device match
+authorises deleting live or unidentified managed data.
+
+`worktree-artefact-reclaim.sh` uses the same Linux same-device decision for
+already-verified ignored output in idle linked worktrees, preserving all owner,
+cwd, Git, nested-repository and mount vetoes. Other devices/platforms retain the
+native cleaner/Trash path. Neither helper empties existing user Trash or claims
+to recover space from earlier Trash copies.
 The scheduled pulse and `aidevops cleanup tmp --apply` share this policy and emit
 one summary line, with per-entry details in `system-cleanup.log`.
 
@@ -95,7 +107,7 @@ one summary line, with per-entry details in `system-cleanup.log`.
 | Pulse active logs and `~/.aidevops/logs/pulse-archive` | framework | active, archive | Pulse preserves active descriptors while gzip-rotating 50 MiB hot/wrapper logs and 1 MiB timing logs; cold archives converge under 1 GiB | Keep rotation producer-owned and never replace it with generic unlink-by-age cleanup |
 | OpenCode data under its application-data root | joint | active, recovery, archive, unknown | OpenCode owns session and DB formats; aidevops archive/maintenance helpers coordinate selected operations | Separate logical retention from WAL/fragmentation maintenance; report only classifications proven through OpenCode-aware queries |
 | npm and other package-manager caches | external | cache | Package manager owns lifecycle; npm cache status has a configurable 10 GiB advisory threshold | Context-only reporting; offer npm-owned verification or explicitly confirmed cleaning, never aidevops aggregate deletion |
-| OS temporary and Trash locations | external or joint | scratch, unknown | OS/runtime-specific | Reclaim only aidevops-attributable artifacts through an owner-aware migration; never broad-clean a directory |
+| OS temporary and Trash locations | external or joint | scratch, unknown | Eligible aidevops scratch and ignored worktree output bypass same-device Trash on Linux; existing Trash remains OS/user-owned | Reclaim only aidevops-attributable artifacts through an owner-aware migration; never broad-clean a directory |
 
 The inventory is intentionally conservative. A child implementation may split a
 row when one path contains artifacts with different owners or safety classes.

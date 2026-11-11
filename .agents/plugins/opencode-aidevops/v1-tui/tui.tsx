@@ -17,7 +17,7 @@ import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { homedir } from "node:os";
 import { createVersionReader, formatVersionLabel } from "../v2-plugin/tui.mjs";
 import { extractPromptRows, isPromptsEnabled, openPromptsTimeline } from "../tui-prompts.mjs";
-import { isMessagesEnabled, MESSAGES_POLL_MS, messageRows, rootSessionID } from "../tui-messages.mjs";
+import { isMessagesEnabled, MESSAGES_POLL_MS, messageRows, openMessageDialog, rootSessionID } from "../tui-messages.mjs";
 
 export const AIDEVOPS_V1_TUI_PLUGIN_ID = "aidevops-tui";
 const VERSION_POLL_MS = 5000;
@@ -65,6 +65,12 @@ function MessagesView(props: { api: TuiPluginApi; sessionID: string; tick: () =>
     const root = rootSessionID((id: string) => props.api.state.session.get(id), props.sessionID);
     return messageRows(root);
   });
+  // Full message in the native alert dialog; opened on mouse-up (see PromptsView).
+  const DialogAlert = props.api.ui.DialogAlert;
+  const alert = (input: { title: string; message: string }) =>
+    props.api.ui.dialog.replace(() => <DialogAlert title={input.title} message={input.message} />);
+  const showDetail = (row: ReturnType<typeof messageRows>[number]) => () =>
+    openMessageDialog(props.api.ui.dialog, row.detail, { alert });
   return (
     <Show when={rows().length > 0}>
       <box>
@@ -78,7 +84,11 @@ function MessagesView(props: { api: TuiPluginApi; sessionID: string; tick: () =>
         </box>
         <Show when={open()}>
           <For each={rows()}>
-            {(row) => <text fg={row.pending ? theme().text : theme().textMuted} wrapMode="none">{row.text}</text>}
+            {(row) => (
+              <text fg={row.pending ? theme().text : theme().textMuted} wrapMode="none" onMouseUp={showDetail(row)}>
+                {row.text}
+              </text>
+            )}
           </For>
         </Show>
       </box>

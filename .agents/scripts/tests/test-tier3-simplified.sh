@@ -241,14 +241,14 @@ test_fallback_chain_helper() {
 	# Test: resolve simple tier from the shipped routing table.
 	# Set a fake API key so the lightweight availability check passes
 	export OPENAI_API_KEY="test-key-for-testing"
-	# Anthropic is primary on every shipped tier; give it a fake key too so the
-	# lightweight check does not depend on host credentials.
+	# Anthropic is primary on the shipped standard/thinking tiers; give it a fake
+	# key too so the lightweight check does not depend on host credentials.
 	export ANTHROPIC_API_KEY="$OPENAI_API_KEY"
 	output=$("$helper" resolve simple --quiet 2>&1) || true
-	if grep -q "claude-haiku-5-5" <<<"$output"; then
-		print_result "fallback: resolve simple -> claude-haiku-5-5" 0
+	if grep -q "gpt-6-luna" <<<"$output"; then
+		print_result "fallback: resolve simple -> gpt-6-luna" 0
 	else
-		print_result "fallback: resolve simple -> claude-haiku-5-5" 1 "Got: $output"
+		print_result "fallback: resolve simple -> gpt-6-luna" 1 "Got: $output"
 	fi
 
 	# Test: resolve standard tier

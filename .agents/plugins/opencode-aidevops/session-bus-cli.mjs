@@ -55,7 +55,7 @@ Message text: positional words, --text-file <path>, or - for stdin (max ${store.
 --origin chat:<app>:<channel>  marks a scanned gateway message.
 --actor <entity-id>            verifies an exact confirmed app/channel link; never inferred from text.
 --server <url>                 default ${DEFAULT_SERVER}; any non-loopback server must use https.
-Targets: session ID, handle, #issue, PR#n, repo, worktree path, or channel:<app>:<channel>.
+Targets: session ID, @id (from the session title), handle, #issue, PR#n, repo, worktree path, or channel:<app>:<channel>.
 Exit codes: 0 ok, 1 error, 2 ask --wait timeout, 3 bound session not live, 4 launch created a session but did not finish.`;
 
 const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "-h": "help", "--help": "help" };

@@ -138,9 +138,39 @@ function providerRegistersModel(provider, modelID) {
   return Object.entries(models).some(([key, value]) => key === modelID || value?.id === modelID);
 }
 
+/**
+ * GH#37649: live rate-limit reset for a candidate whose provider OAuth pool is
+ * exhausted (`availability.rateLimitedProviders`); 0 when routable. Expired
+ * resets are ignored, so recovery needs no configuration change.
+ */
+export function candidateRateLimitedUntil(candidate, availability = {}, now = Date.now()) {
+  const { providerID } = routingModelIdentity(candidate);
+  const until = Number(availability?.rateLimitedProviders?.[providerID]) || 0;
+  return until > now ? until : 0;
+}
+
+/**
+ * GH#36698/GH#37649: actionable detail naming same-tier models rejected for
+ * the current auth or rate limited (`rate_limited=model@reset`); "" if none.
+ */
+export function routingUnavailableDetail(routing, tier, availability = {}) {
+  const candidates = routingCandidates(routing, tier);
+  const rejected = candidates.filter((candidate) => isModelUnavailable(candidate, availability.authSignature));
+  const limited = candidates
+    .map((candidate) => [candidate, candidateRateLimitedUntil(candidate, availability)])
+    .filter(([, until]) => until)
+    .map(([candidate, until]) => `${candidate}@${new Date(until).toISOString()}`);
+  const parts = [];
+  if (rejected.length) parts.push(`rejected=${rejected.join(",")} (entitlement rejected for current auth; retried after expiry or re-login)`);
+  if (limited.length) parts.push(`rate_limited=${limited.join(",")} (provider rate limit; routable again after the listed reset)`);
+  return parts.length ? `: requested=${candidates[0]} ${parts.join(" ")}` : "";
+}
+
 function candidateRoutable(candidate, scope) {
-  // GH#36698: skip a model with a live entitlement rejection for this auth.
-  if (isModelUnavailable(candidate, scope.authSignature)) return false;
+  // GH#36698/GH#37649: skip a model with a live entitlement rejection for this
+  // auth, or whose provider OAuth pool is exhausted until its reset.
+  if (isModelUnavailable(candidate, scope.authSignature)
+    || candidateRateLimitedUntil(candidate, scope.availability, scope.now)) return false;
   const { providerID, modelID } = routingModelIdentity(candidate);
   if (providerID === "openai" && scope.openAIAuthType === "oauth"
     && scope.chatgptOAuthUnsupported.includes(modelID)) return false;
@@ -154,6 +184,8 @@ function candidateRoutable(candidate, scope) {
 export function selectConnectedRoutingCandidate(routing, tier, providerState, policy = activeLocalOnlyPolicy(), availability = {}) {
   const scope = {
     authSignature: availability?.authSignature,
+    availability,
+    now: Date.now(),
     openAIAuthType: availability?.openAIAuthType,
     chatgptOAuthUnsupported: routing?.chatgptOAuthUnsupported || [],
     connected: new Set(Array.isArray(providerState?.connected) ? providerState.connected : []),

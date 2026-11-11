@@ -64,7 +64,7 @@ _runner_capability_log_deferral() {
 		fi
 	fi
 	case "$signal" in
-	secret_missing | probe_failed | tool_missing | invalid_requirements) cooldown="eligible" ;;
+	secret_missing | probe_failed | tool_missing | service_unhealthy | invalid_requirements) cooldown="eligible" ;;
 	esac
 	printf '[dispatch_with_dedup] #%s deferred: %s — DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=%s cooldown=%s issue=#%s repo=%s\n' \
 		"$issue_number" "$reason" "$signal" "$cooldown" "$issue_number" "$repo_slug" >&3
@@ -82,6 +82,7 @@ runner_capability_check() {
 		_runner_capability_python_cycle
 		_runner_capability_python_classes
 		_runner_capability_python_tools
+		_runner_capability_python_services
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -262,6 +263,79 @@ PY
 	return 0
 }
 
+# GH#37638: requires-loopback-health gates on a healthy local service. Only a
+# port and a safe path come from the issue; host, method and headers are fixed.
+_runner_capability_python_services() {
+	cat <<'PY'
+def requirement_services(requirements, body):
+    services = set()
+    declared = [requirement for requirement in requirements if 'loopback_health' in requirement]
+    for line in body.splitlines():
+        if line.startswith('requires-loopback-health:'):
+            declared.append({'loopback_health': re.split(r'[,\s]+', line.partition(':')[2].strip())})
+    for requirement in declared:
+        entries = requirement.get('loopback_health', [])
+        if not isinstance(entries, list) or len(entries) > 4:
+            unmet('invalid_requirements')
+        for entry in entries:
+            # <port>[/<path>] only: no scheme, host, query, fragment or '..'.
+            match = re.fullmatch(r'([0-9]{1,5})(?:/([A-Za-z0-9_./-]{0,64}))?', entry) if isinstance(entry, str) else None
+            if not match:
+                unmet('invalid_requirements')
+            port, path = int(match.group(1)), match.group(2) or ''
+            if not 1024 <= port <= 65535 or '..' in path:
+                unmet('invalid_requirements')
+            services.add((port, path))
+    if len(services) > 4:
+        unmet('invalid_requirements')
+    return services
+
+def probe_service(port, path):
+    import http.client
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+    try:
+        connection.request('GET', '/' + path)
+        response = connection.getresponse()
+        response.read(4096)
+        return 200 <= response.status < 300
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+def check_services(services, cycle):
+    # Per-cycle cache keyed by port and path so many issues probe a service once.
+    for port, path in sorted(services):
+        cache = None
+        if cycle:
+            base = Path(os.environ.get('AIDEVOPS_TEMP_DIR') or
+                        str(Path.home() / '.aidevops/.agent-workspace/tmp'))
+            directory = base / 'runner-capability'
+            digest = hashlib.sha256(f'{cycle}\0{port}\0{path}'.encode()).hexdigest()
+            cache = directory / f'health-{digest}.json'
+        healthy = None
+        if cache is not None:
+            try:
+                if not cache.is_symlink():
+                    healthy = bool(json.loads(cache.read_text()).get('healthy'))
+            except (OSError, ValueError, AttributeError):
+                healthy = None
+        if healthy is None:
+            healthy = probe_service(port, path)
+            if cache is not None:
+                try:
+                    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    if not directory.is_symlink():
+                        cache.write_text(json.dumps({'healthy': healthy}))
+                except OSError:
+                    pass
+        if not healthy:
+            unmet(f'service_unhealthy port={port}')
+
+PY
+	return 0
+}
+
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
@@ -320,6 +394,7 @@ try:
     if len(secrets) > 32 or len(probes) > 8 or len(ssh_commands) > 8:
         unmet()
     check_tools(tools)
+    check_services(requirement_services(requirements, issue.get('body', '')), sys.argv[4] if sys.argv[3] == 'fresh' else '')
     # Only analyze exact argv; never execute SSH or issue-provided shell text.
     # The same tier gate used inside the worker is authoritative before claim.
     network_timeout = int(os.environ.get('AIDEVOPS_NETWORK_POLICY_TIMEOUT_SECONDS', '30'))

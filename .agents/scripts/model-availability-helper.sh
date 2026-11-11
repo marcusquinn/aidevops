@@ -361,16 +361,23 @@ resolve_api_key() {
 			fi
 		done
 
-		# Source 3: credentials.sh (plaintext fallback)
+		# Source 3: credentials.sh (plaintext fallback). Reuse the shared
+		# non-executing parser, including its active-tenant lookup. Never source
+		# configuration: unrelated commands/redirections must not run in a probe.
+		# Bound each read to five seconds with the shared portable timeout.
+		# Failure/timeout discards partial output and leaves OAuth fallback intact.
 		local creds_file="${HOME}/.config/aidevops/credentials.sh"
 		if [[ -f "$creds_file" ]]; then
-			# Source the file to get variables (safe: we control this file)
-			# shellcheck disable=SC1090
-			source "$creds_file"
 			for var_name in "${var_names[@]}"; do
-				if [[ -n "${!var_name:-}" ]]; then
+				local key_val=""
+				key_val=$(timeout_sec 5 node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { credentialFileSecret } = await import(pathToFileURL(process.argv[1]).href);
+process.stdout.write(credentialFileSecret(process.argv[2]));
+' "${SCRIPT_DIR}/secret-resolver.mjs" "$var_name" 2>/dev/null) || key_val=""
+				if [[ -n "$key_val" ]]; then
 					RESOLVED_API_KEY_SOURCE="credentials:${var_name}"
-					echo "${!var_name}"
+					echo "$key_val"
 					return 0
 				fi
 			done

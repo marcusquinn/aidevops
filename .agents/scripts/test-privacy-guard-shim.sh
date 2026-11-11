@@ -442,6 +442,16 @@ else
 	fail "expected rc=1 for --body-file leak. rc=$rc out='$out'"
 fi
 
+printf 'scripts/build-banner.sh gettext_longprivate' >"$BF"
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body-file "$BF" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RECORD_FILE" ]]; then
+	pass "body with script reference and identifier basename is blocked"
+else
+	fail "body identifier basename" "rc=$rc out=$out"
+fi
+
 # -- Test 2.7: title-only leak → BLOCKED
 rm -f "$RECORD_FILE"
 out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "Bug in longprivate observed" --body "Clean body" 2>&1)

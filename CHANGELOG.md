@@ -10,6 +10,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.165] - 2026-11-10
+
+### Added
+
+- manual release merge hold and roll-out owner record (#37618)
+
+### Changed
+
+- Maintenance: add t18959 t18960 briefs; t18958 → done
+
+### Fixed
+
+- skip rate-limited providers in subagent routing
+- read credential configuration without shell execution
+- recover Luna entitlement rejection onto Haiku (t18957) (#37646)
+
+## [3.39.164] - 2026-11-10
+
+### Added
+
+- open full session-bus message from sidebar Messages rows
+
+### Changed
+
+- Maintenance: bump @vitejs/plugin-react from 6.1.2 to 6.2.1 (Supersedes #37608) (#37637)
+
+### Fixed
+
+- name executor host when tagless release lane is adopted from another host (#37643)
+- admit a bounded census when the full-census reserve does not fit (GH#37623) (#37641)
+- verify ChatGPT OAuth via Codex backend (GH#37627) (#37640)
+
+## [3.39.163] - 2026-11-10
+
+### Added
+
+- add requires-loopback-health runner prerequisite (#37639)
+- show addressable session-ID token in session and terminal titles
+- return terminal output inline from start/status
+
+### Changed
+
+- Maintenance: bump the actions group with 4 updates (#37619)
+- Maintenance: Luna first on simple tier and compaction, Haiku 5.5 fallback
+- Maintenance: bump hono from 4.13.14 to 4.13.16 (#37621)
+
+### Fixed
+
+- reconcile stranded consolidated issues and verify parent closure (#37629)
+- reclaim Linux same-filesystem Trash candidates (GH#37617) (#37624)
+- restore managed tabs without per-tab SSH probes
+- tolerate transient linked issue status errors (#37622)
+
+## [3.39.162] - 2026-11-10
+
+### Added
+
+- commit-and-pr --base for stacked PRs (#37581)
+
+### Changed
+
+- Refactor: split pulse-issue-reconcile-actions.sh into sub-libraries (GH#37574) (#37579)
+- Maintenance: promote OpenCode v2 pin to 2.2.7 (#37582)
+- Maintenance: sync GitHub issue refs to TODO.md (#37585)
+
+### Fixed
+
+- keep continuation signing failures audit-only and ignore deferred-cleanup marker (GH#37597) (#37603)
+- run macOS input sampler at standard priority (GH#37588)
+- register publication owner so its tree can be retired (GH#37591) (#37602)
+- credit verified already-satisfied no-PR closes with an evidence-bound receipt (#37590)
+- cache held draft checkpoints with stale PR snapshots (#37598)
+- patch effect dependency (#37599)
+- report stable SQLite code in owner-admission refusal (GH#37577) (#37583)
+
 ## [3.39.161] - 2026-11-10
 
 ### Changed

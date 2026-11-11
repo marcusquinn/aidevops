@@ -39,15 +39,25 @@ function matchesWorktree(record, query) {
 
 const repoName = (record) => String(record.repo || "").split("/").pop();
 
+// GH#37630: `@xxxxxx` is the session-ID tail shown in session titles; a bare
+// tail of 6+ characters also matches, after the repo and worktree tiers.
+function matchesSessionTail(record, query, requireAt) {
+  const match = /^(@?)([a-z0-9]{6,})$/i.exec(query);
+  if (!match || (requireAt && !match[1])) return false;
+  return String(record.session_id || "").toLowerCase().endsWith(match[2].toLowerCase());
+}
+
 // Exact tiers first; the first tier with any match wins. Several matches in
 // that tier are ambiguous: the caller gets the candidates, never a guess.
 const TARGET_TIERS = [
   (record, query) => record.session_id === query,
   (record, query) => sameText(record.handle, query),
+  (record, query) => matchesSessionTail(record, query, true),
   (record, query) => matchesNumber(/^(?:issue\s*|gh)?#(\d+)$/i, query, record.issue),
   (record, query) => matchesNumber(/^pr\s*#?(\d+)$/i, query, record.pr),
   matchesWorktree,
   (record, query) => sameText(record.repo, query) || sameText(repoName(record), query),
+  (record, query) => matchesSessionTail(record, query, false),
   (record, query) => query.length >= 4 && String(record.title || "").toLowerCase().includes(query.toLowerCase()),
 ];
 
@@ -95,7 +105,7 @@ function channelResult(records, query, selfID, root) {
  */
 export function resolveTarget(records, to, selfID = "", { root = busRoot() } = {}) {
   const query = String(to || "").trim();
-  if (!query) return { error: "missing target: pass `to` (session ID, handle, #issue, PR#n, repo, worktree or channel:<app>:<channel>)" };
+  if (!query) return { error: "missing target: pass `to` (session ID, @id, handle, #issue, PR#n, repo, worktree or channel:<app>:<channel>)" };
   if (isChannelTarget(query)) return channelResult(records, query, selfID, root);
   for (const matches of TARGET_TIERS) {
     const found = records.filter((record) => matches(record, query));
@@ -123,6 +133,7 @@ function worktreeContains(record, path) {
 function whoPredicate(query, cwd) {
   const checks = [
     (record) => record.session_id === query || sameText(record.handle, query),
+    (record) => matchesSessionTail(record, query, true),
     (record) => sameText(record.repo, query) || sameText(repoName(record), query),
   ];
   const issue = /^(?:issue\s*|gh)?#(\d+)$/i.exec(query);

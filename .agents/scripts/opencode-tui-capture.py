@@ -5,14 +5,12 @@
 
 import argparse
 from contextlib import closing, suppress
-import errno
 import fcntl
 import math
 import os
 from pathlib import Path
 import pty
 import re
-import select
 import signal
 import shutil
 import sqlite3
@@ -21,6 +19,8 @@ import sys
 import tempfile
 import termios
 import time
+
+from opencode_tui_terminal import capture_render
 
 
 def positive_seconds(value):
@@ -48,31 +48,6 @@ def exec_renderer(args, env):
     except OSError as error:
         os.write(2, f"tui-capture: {error}\n".encode())
         os._exit(127)
-
-
-def read_render(fd, seconds):
-    chunks = []
-    query_tail = b""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        remaining = max(0, deadline - time.monotonic())
-        ready, _, _ = select.select([fd], [], [], min(0.25, remaining))
-        if not ready:
-            continue
-        try:
-            data = os.read(fd, 65536)
-        except OSError as error:
-            if error.errno == errno.EIO:  # Linux PTYs signal child exit with EIO.
-                break
-            raise
-        if not data:
-            break
-        chunks.append(data)
-        queries = query_tail + data
-        for query in re.finditer(rb"\x1b\[(\??)6n", queries):
-            os.write(fd, b"\x1b[" + query.group(1) + b"1;1R")
-        query_tail = re.sub(rb"\x1b\[\??6n", b"", queries)[-4:]
-    return b"".join(chunks)
 
 
 def stop_renderer(pid, reaped):
@@ -111,7 +86,7 @@ def capture(args, data_dir):
         exec_renderer(args, env)
     waited = 0
     try:
-        raw = read_render(fd, args.seconds)
+        raw = capture_render(fd, args)
         waited, status = os.waitpid(pid, os.WNOHANG)
         return raw, status if waited else None
     finally:
@@ -211,7 +186,13 @@ def main():
     parser.add_argument("--rows", type=terminal_size, default=50)
     parser.add_argument("--binary", default="opencode", help="V2/opencode2 is best effort")
     parser.add_argument("--expect", action="append", default=[], help="Required text (repeatable)")
+    parser.add_argument("--click-text", help="Click the last rendered occurrence of text")
+    parser.add_argument("--keys", help="Unicode-escape encoded keys to send after clicking")
     args = parser.parse_args()
+    if args.keys is not None and args.click_text is None:
+        parser.error("--keys requires --click-text")
+    if args.click_text == "":
+        parser.error("--click-text must not be empty")
     try:
         args.cwd = str(Path(args.cwd).resolve(strict=True))
         inherited_tui = os.environ.get("OPENCODE_TUI_CONFIG")

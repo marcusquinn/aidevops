@@ -280,8 +280,8 @@
     // The first available model in the list is used.
     "tiers": {
       "simple": {
-        "models": ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"],
-        "reasoning": { "anthropic/claude-haiku-5-5": "high", "openai/gpt-6-luna": "high" }
+        "models": ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
+        "reasoning": { "openai/gpt-6-luna": "high", "anthropic/claude-haiku-5-5": "high" }
       },
       "standard": {
         "models": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"],
@@ -314,7 +314,7 @@
 
     // Fallback chain configuration for model-level failover.
     "fallback_chains": {
-      "simple":   ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"],
+      "simple":   ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"],
       "standard": ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"],
       "thinking": ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"],
       "default":  ["anthropic/claude-sonnet-5-5", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "opencode-go/deepseek-v4.1-flash"]

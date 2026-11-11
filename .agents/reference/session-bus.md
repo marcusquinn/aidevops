@@ -26,7 +26,9 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 
-`to` accepts a session ID, handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+`to` accepts a session ID, `@<id>` (the last 6 session-ID characters), handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
+
+Interactive root-session titles end with `· @<id>` (GH#37630), so the address shows in the OpenCode sidebar and the terminal tab; presence records store the title without it. Subagent and headless worker titles carry no token. `AIDEVOPS_SESSION_TITLE_ID=false` turns it off.
 
 ### Subagents and waiting for a reply
 
@@ -88,7 +90,7 @@ Each plugin process polls its root sessions' inboxes every 5 seconds and deliver
 | Starting a user turn | Synthetic text part on the user message (`chat.message`) | Appended to the prompt text (`session` hook `prompt`) |
 | Idle, and the message is an `ask`, a `reply` to its own `ask`, or a requested idle notice | Woken with `session.promptAsync`, using its last agent and model | Woken with a synthetic message (`session.synthetic`, `resume: true`), using the session's current agent and model |
 
-The OpenCode 1.x TUI shows a toast on arrival. The right sidebar shows a **Messages** section under **Prompts** in both runtimes: the latest 6 messages, `← handle: text` received, `→ handle: text` sent, `•` while undelivered. It is hidden when the session has no traffic. Disable it with `AIDEVOPS_TUI_MESSAGES=false`.
+The OpenCode 1.x TUI shows a toast on arrival. The right sidebar shows a **Messages** section under **Prompts** in both runtimes: the latest 6 messages, `← handle: text` received, `→ handle: text` sent, `•` while undelivered. Click a row to open the full message in a dialog with its sender or recipient, repo@branch, session ID, sent time, delivery status and message ID; Enter, Esc or `ok` closes it. Opening it does not change delivery. It is hidden when the session has no traffic. Disable it with `AIDEVOPS_TUI_MESSAGES=false`.
 
 OpenCode 2 gaps (2.0.18 server plugin): no toast API, so arrivals show only as `•` sidebar rows; no `session.status`, so busy/idle comes from `session.execution.*` events, and a session whose state is unknown (for example after a failed wake) is woken only after its next execution event. Hosts without `session.synthetic` cannot wake; messages then wait for the next tool result or turn. The V2 background service hosts every TUI session, so its sessions stay listed (`kind: serve`) until they are deleted or the service exits.
 
@@ -277,6 +279,16 @@ publication.
   the result. Exit codes and existing output lines are unchanged; a missing
   bus, older CLI or timeout prints nothing. Disable both with
   `AIDEVOPS_RELEASE_NOTICES=false`.
+
+### Manual release roll-out owner
+
+For manual releases of non-aidevops repos (`workflows/release.md` → Manual Release),
+`aidevops release owner OWNER/REPO TAG --session ID` records the session that owns
+the roll-out in a remote branch `aidevops/manual-release-owner/<tag>`. After the
+Release run and update test finish, `aidevops release owner-notify OWNER/REPO TAG`
+sends that session one `aidevops sessions send` info message (best effort, 5-second
+budget, never fails the caller). The same helper holds merges while the release PR
+waits for CI (`aidevops release hold`); both are advisory.
 
 ## Storage
 

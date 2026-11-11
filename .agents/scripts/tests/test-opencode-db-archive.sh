@@ -1165,8 +1165,9 @@ HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SAN
 rc=$?
 set -e
 async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
-if [[ "$rc" -eq 2 && "$async_log" == *"rc=2"* && "$async_log" != *"rc=0"* && ! -f "$async_home/.aidevops/logs/opencode-db-archive.last-run" ]]; then
-	_pass "async deferred outcome records nonzero terminal status without a successful last-run"
+if [[ "$rc" -eq 0 && "$async_log" == *"Protected skip/deferred"* && ! -f "$async_home/.aidevops/logs/opencode-db-archive.last-run" &&
+	"$(<"$async_home/.aidevops/logs/opencode-db-archive.deferrals")" == 1 ]]; then
+	_pass "async deferred outcome exits 0 (no failed unit), counts the deferral and skips last-run"
 else
 	_fail "async deferred terminal status mismatch: rc=$rc log=$async_log"
 fi
@@ -1289,6 +1290,24 @@ if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"VACUUM skippe
 	_pass "idle holders allow held-mode archive and protect heartbeat-listed sessions"
 else
 	_fail "held-mode archive mismatch: rc=$rc output=$out"
+fi
+
+# GH#37656: a busy holder that lists its sessions no longer blocks archiving of
+# other inactive sessions; its own sessions stay protected.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+_write_heartbeat "$hb_file" 2 "$(date +%s)" '["ses-1183-b"]'
+set +e
+out=$(_held_archive)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT id FROM session;')" == "ses-1183-b" &&
+	"$(sqlite3 "$ARCHIVE_DB" 'SELECT id FROM session;')" == "ses-1183" ]]; then
+	_pass "busy holder with listed sessions archives other sessions and keeps its own"
+else
+	_fail "busy-holder per-session archive mismatch: rc=$rc output=$out"
 fi
 
 # A holder waking up between batches stops the run with committed batches kept.

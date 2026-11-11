@@ -49,6 +49,7 @@ Options:
 The initial state is printed once. Later polls emit only state transitions,
 sparse heartbeats, and the terminal result. Pending timeouts return exit 8,
 terminal failures return exit 1, and indeterminate API failures return exit 2.
+Draft PRs with unchanged missing or skipped required checks return exit 9.
 EOF
 	return 0
 }
@@ -648,6 +649,50 @@ emit_recovered_state() {
 	return 0
 }
 
+# Uses the waiter's dynamically scoped observation and stability state.
+classify_draft_stall() {
+	if [[ "$required_only" -eq 1 && ( "$classification" == pending || "$classification" == success ) ]] &&
+		[[ -n "$missing_contexts" || "$current" == *'"bucket":"skipping"'* ]] &&
+		printf '%s' "$current" | jq -e 'all(.[]; .bucket == "pass" or .bucket == "skipping")' >/dev/null &&
+		[[ "$(read_draft_state "$pr_number" "$repo" 2>/dev/null || true)" == true ]]; then
+		if [[ -z "$draft_since" || "$draft_snapshot" != "$current|$missing_contexts" ]]; then
+			draft_since="$now_epoch"
+			draft_snapshot="$current|$missing_contexts"
+		fi
+		if [[ $((now_epoch - draft_since)) -ge "$draft_window" ]]; then
+			final_head=$(verified_head_sha "$pr_number" "$repo" 'before draft check result') || return 2
+			if [[ "$final_head" != "$initial_head" ]]; then
+				initial_head="$final_head"
+				previous="" draft_since=""
+				return 3
+			fi
+			printf 'WAIT_CHECKS=draft-required-missing: run gh pr ready %s --repo %s, then wait again\n' "$pr_number" "$repo"
+			return 9
+		fi
+		classification=pending
+	else
+		draft_since=""
+	fi
+	return 0
+}
+
+emit_wait_transition() {
+	if [[ -z "$previous" ]]; then
+		emit_initial_state "$current" "$missing_contexts"
+		changed=1
+	elif [[ "$current" != "$previous" ]]; then
+		emit_transitions "$previous" "$current"
+		changed=1
+	elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
+		printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	if [[ "$changed" -eq 1 ]]; then
+		next_heartbeat=$((now_epoch + heartbeat_interval))
+	fi
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -655,6 +700,8 @@ wait_for_checks() {
 	start_epoch=$(current_epoch)
 	local next_heartbeat=$((start_epoch + heartbeat_interval))
 	local interval="$initial_interval" previous="" initial_head="" qlty_credit_policy=""
+	local draft_since="" draft_snapshot="" draft_window="$heartbeat_interval"
+	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
 	_GCW_CANCEL_FIRST_EPOCH=""
 	_GCW_CANCEL_SET=""
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
@@ -697,19 +744,11 @@ wait_for_checks() {
 		state_summary=$(state_counts "$current" "$missing_contexts")
 		emit_recovered_state "$state_summary"
 		valid_state_seen=1
-		if [[ -z "$previous" ]]; then
-			emit_initial_state "$current" "$missing_contexts"
-			changed=1
-		elif [[ "$current" != "$previous" ]]; then
-			emit_transitions "$previous" "$current"
-			changed=1
-		elif [[ "$heartbeat_interval" -gt 0 && "$now_epoch" -ge "$next_heartbeat" ]]; then
-			printf 'heartbeat: required checks unchanged for %ss (%s)\n' "$elapsed" "$state_summary"
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
-		if [[ "$changed" -eq 1 ]]; then
-			next_heartbeat=$((now_epoch + heartbeat_interval))
-		fi
+		local draft_rc=0
+		classify_draft_stall || draft_rc=$?
+		[[ "$draft_rc" -ne 3 ]] || continue
+		[[ "$draft_rc" -eq 0 ]] || return "$draft_rc"
+		emit_wait_transition
 
 		case "$classification" in
 		failure | zero-job)
@@ -743,6 +782,9 @@ wait_for_checks() {
 			interval="$initial_interval"
 		else
 			interval=$(next_interval "$interval" "$max_interval")
+		fi
+		if [[ -n "$draft_since" && "$interval" -gt $((draft_window - (now_epoch - draft_since))) ]]; then
+			interval=$((draft_window - (now_epoch - draft_since)))
 		fi
 		poll_sleep "$interval"
 	done

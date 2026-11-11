@@ -1540,6 +1540,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 # Sub-stage order (short-circuit per issue — first action that fires skips rest):
 #   0a. persistent non-task label hygiene (_should/_action_reconcile_persistent_issue*)
 #   0b. external issue trust gate (_should/_action_reconcile_external_issue_gate)
+#   0c. stranded consolidated issues (_should/_action_reconcile_stranded_consolidated)
 #   1. close_issues_with_merged_prs  (_should_ciw + _action_ciw_single)
 #   2. reconcile_stale_done_issues   (_should_rsd + _action_rsd_single)
 #   3. reconcile_open_issues_with_merged_prs (_should_oimp + _action_oimp_single)
@@ -1817,6 +1818,16 @@ _pir_reconcile_issue_stages() {
 		fi
 	fi
 
+	# Stage 0c: stranded consolidated originals and legacy successors (GH#37600).
+	if [[ "$stranded_checked" -lt "$stranded_max" ]] &&
+		_should_reconcile_stranded_consolidated "$labels_csv" "$issue_body"; then
+		local _stranded_rc=0
+		_action_reconcile_stranded_consolidated "$slug" "$issue_num" "$labels_csv" \
+			"$issue_body" "$issue_author_association" || _stranded_rc=$?
+		stranded_checked=$((stranded_checked + _PIR_STRANDED_LOOKUP_USED))
+		[[ "$_stranded_rc" -eq 0 ]] && return 0
+	fi
+
 	# Stage 1: close issues whose dedup guard detects a merged PR
 	if [[ "$_ciw_rsd_enabled" == "1" ]] && \
 		[[ "$ciw_per_repo" -lt "$ciw_max_repo" ]] && \
@@ -1928,6 +1939,8 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
+	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
 	[[ "$(uname -s)" == "Darwin" ]] && _b64d_flag="-D"
 	local _t2984_start_ts=$SECONDS _t2984_budget=0 _t2984_aborted=0

@@ -119,6 +119,7 @@ _opencode_db_holder_heartbeats_idle() {
 	local busy=""
 	local last=""
 	local updated=""
+	local complete="1"
 	local sessions=""
 	local started=""
 
@@ -129,8 +130,8 @@ _opencode_db_holder_heartbeats_idle() {
 	fi
 	for file in "$dir/${pid}"-*.json; do
 		[[ -f "$file" ]] || continue
-		fields=$(jq -r '[(.pid // "" | tostring), (.busy_sessions // "" | tostring), (.last_activity_epoch // "" | tostring), (.updated_epoch // "" | tostring)] | join(" ")' "$file" 2>/dev/null || true)
-		read -r hb_pid busy last updated <<<"$fields"
+		fields=$(jq -r '[(.pid // "" | tostring), (.busy_sessions // "" | tostring), (.last_activity_epoch // "" | tostring), (.updated_epoch // "" | tostring), (if .sessions_complete == false then "0" else "1" end)] | join(" ")' "$file" 2>/dev/null || true)
+		read -r hb_pid busy last updated complete <<<"$fields"
 		if [[ "$hb_pid" != "$pid" || ! "$busy" =~ ^[0-9]+$ || ! "$last" =~ ^[0-9]+$ || ! "$updated" =~ ^[0-9]+$ ]]; then
 			_opencode_db_idle_gate_defer "holder PID ${pid} heartbeat is unreadable"
 			return 2
@@ -138,15 +139,19 @@ _opencode_db_holder_heartbeats_idle() {
 		# 2s tolerance: etime and epoch seconds round independently.
 		((updated + 2 >= started)) || continue
 		found=1
-		if ((busy > 0)); then
-			_opencode_db_idle_gate_defer "holder PID ${pid} has ${busy} busy session(s)"
-			return 2
-		fi
-		if ((now - last < quiet_seconds)); then
-			_opencode_db_idle_gate_defer "holder PID ${pid} was active $((now - last))s ago (need ${quiet_seconds}s)"
-			return 2
-		fi
 		sessions=$(jq -r '.sessions[]? | strings | select(test("^[A-Za-z0-9_-]{1,128}$"))' "$file" 2>/dev/null || true)
+		# GH#37656: a busy or recently active holder only blocks archiving of
+		# the sessions it owns. When its heartbeat names them, the caller
+		# excludes them, so the holder need not defer the whole archive.
+		if ((busy > 0 || now - last < quiet_seconds)) &&
+			! { [[ "${OPENCODE_DB_ARCHIVE_PER_SESSION_GATE:-1}" == 1 ]] && [[ -n "$sessions" && "$complete" == 1 ]]; }; then
+			if ((busy > 0)); then
+				_opencode_db_idle_gate_defer "holder PID ${pid} has ${busy} busy session(s)"
+			else
+				_opencode_db_idle_gate_defer "holder PID ${pid} was active $((now - last))s ago (need ${quiet_seconds}s)"
+			fi
+			return 2
+		fi
 		if [[ -n "$sessions" ]]; then
 			OPENCODE_DB_IDLE_GATE_SESSIONS="${OPENCODE_DB_IDLE_GATE_SESSIONS}${OPENCODE_DB_IDLE_GATE_SESSIONS:+$'\n'}${sessions}"
 		fi
