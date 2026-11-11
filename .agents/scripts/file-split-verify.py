@@ -57,25 +57,27 @@ RESIDUE_RES = tuple(
         r"^(?:readonly\s+|export\s+|declare\s+-\S+\s+)?[A-Za-z0-9_]*_(?:LOADED|INCLUDED|SOURCED)=[\w\"']*;?$",
         r"^(?:if\s+)?\[\[?(?!.*(?:\$\(|`))[^;&|]*_(?:LOADED|INCLUDED|SOURCED)\b[^;&|]*\]\]?"
         r"(?:\s*&&\s*(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null)?)?(?:;\s*then)?;?$",
-        r"^(?:if\s+!?\s*)?(?:source|\.)\s+\S",
+        r"^(?:if\s+!?\s*)?(?:source|\.)\s+(?!.*(?:\$\(|`))[^;&|<>]+(?:\s+2>\s*/dev/null)?"
+        r"(?:\s*\|\|\s*(?:return|exit)\s+\d+)?(?:;\s*then)?;?$",
         # Directory resolution: `X="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`.
         r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z_]\w*=\"?\$\(\s*cd\s+\"?\$\(\s*dirname\s+\"?"
         r"\$\{BASH_SOURCE(?:\[0\])?(?::-[^}]*)?\}\"?\s*\)\"?\s*(?:&>\s*/dev/null\s*)?&&\s*pwd(?:\s+-P)?\s*\)\"?"
         r"(?:\s*\|\|\s*(?:return|exit)\s+\d+)?;?$",
         # Plain *_DIR assignment of a literal/variable-only value.
         r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z0-9_]*(?:_DIR|_dir)="
-        r"(?:\"(?:[^\"`$]|\$\{[^}]*\}|\$[A-Za-z_]\w*)*\"|[^\s;&|`$()\"']*);?$",
+        r"(?:\"(?:[^\"`$]|\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*)*\"|[^\s;&|<>`$()\"']*);?$",
         # Directory existence tests.
         r"^(?:if\s+)?\[\[?\s+-[a-z]\s+\"\$\{?\w+_DIR\}?[^\"`$;&|]*\"\s+\]\]?(?:;\s*then)?;?$",
-        r"^unset\s",
+        r"^unset\s+[^;&|<>`$()]+;?$",
         r"^(?:fi|then|else)$",
         r"^(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null\s*\|\|\s*exit\s+\d+)?;?$",
-        r"^(?:printf|echo)\b.*\b(?:failed to (?:load|source)|cannot (?:load|source))\b.*>&2;?$",
+        r"^(?:printf|echo)\b(?!.*\$\()[^;&|<>`]*\b(?:failed to (?:load|source)|cannot (?:load|source))\b"
+        r"[^;&|<>`]*>&2;?$",
     )
 )
 PIN_GREP = r'caller_function"?[[:space:]]*=='
 SCRIPT_REF_RE = re.compile(r"framework_script\(|caller_script")
-SCRIPT_LITERAL_RE = re.compile(r"([A-Za-z0-9_.+-]+\.(?:sh|bash|jq|py))\b")
+SCRIPT_LITERAL_RE = re.compile(r"([A-Za-z0-9_.+-]+\.(?:sh|bash|zsh|jq|py))\b")
 SCRIPT_VARIABLE_RE = re.compile(
     r'framework_script\(\s*\$|caller_script"?\s*==\s*"?\$'
 )
@@ -118,6 +120,19 @@ BINARY_RE = re.compile(r"^(?:Binary files .* differ|GIT binary patch)$")
 def binary_changes(text):
     """Return diff lines reporting binary changes the line parser cannot verify."""
     return [line for line in text.split("\n") if BINARY_RE.match(line)]
+
+
+def mode_changes(text):
+    """Return diff headers for mode changes on existing files (e.g. lost +x)."""
+    changes, current = [], None
+    for line in text.split("\n"):
+        if line.startswith("diff --git "):
+            current = line[len("diff --git "):]
+        elif line.startswith("old mode "):
+            changes.append(f"{current}: {line}")
+        elif line.startswith("new mode ") and changes:
+            changes[-1] += f"; {line}"
+    return changes
 
 
 def parse_diff(text):
@@ -229,7 +244,7 @@ def pin_is_gate_for(head, path, line_no, old_base, cache):
     window = lines[start:line_no + PIN_WINDOW_AFTER]
     literals, variable = set(), False
     for text in window:
-        if not SCRIPT_REF_RE.search(text):
+        if text.lstrip().startswith("#") or not SCRIPT_REF_RE.search(text):
             continue
         if SCRIPT_VARIABLE_RE.search(text):
             variable = True
@@ -245,7 +260,7 @@ def gate_findings(head, moves):
     if not moves:
         return {}
     # Documentation can quote a pin without enforcing it.
-    pins = [hit for hit in grep_head(head, ["-E", "-e", PIN_GREP]) if not hit[0].endswith(".md")]
+    pins = [hit for hit in grep_head(head, ["-E", "-e", PIN_GREP]) if not hit[0].endswith(".md") and not hit[2].lstrip().startswith("#")]
     cache, findings = {}, {}
     for move in moves:
         name, old_path = move[0], move[1]
@@ -320,6 +335,7 @@ def main(argv=None):
                    "-U0", f"{base}...{head}", "--")
         removed, added = parse_diff(diff)
         binary = binary_changes(diff)
+        modes = mode_changes(diff)
         removed_counter = collections.Counter(entry[2] for entry in removed)
         added_counter = collections.Counter(entry[2] for entry in added)
         removed_only = unmatched(removed, removed_counter - added_counter)
@@ -333,10 +349,10 @@ def main(argv=None):
         print(f"file-split-verify: {error}", file=sys.stderr)
         return 2
 
-    failed = bool(removed_only or review or gated or binary)
+    failed = bool(removed_only or review or gated or binary or modes)
     print(
         f"removed={len(removed)} added={len(added)} removed-only={len(removed_only)} "
-        f"review={len(review)} binary={len(binary)} gated={len(gated)} warn={len(warnings)} "
+        f"review={len(review)} binary={len(binary)} mode={len(modes)} gated={len(gated)} warn={len(warnings)} "
         f"residue={residue} moved-functions={len(moves)} "
         f"result={'FAIL' if failed else 'PASS'}"
     )
@@ -351,6 +367,7 @@ def main(argv=None):
     emit("REMOVED-ONLY", [location(entry) for entry in removed_only])
     emit("REVIEW", [location(entry) for entry in review])
     emit("BINARY", binary)
+    emit("MODE", modes)
     for (name, old_path, new_path), sites in gated.items():
         print(f"GATED {name}: moved {old_path} -> {new_path}; file-identity gate pins it at:")
         for site in sites:
