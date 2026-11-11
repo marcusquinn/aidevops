@@ -311,6 +311,8 @@ def recover_reused_path(
         raise ValueError("absolute-path-required")
     if _absent(path):
         return reconcile_path(store, path)
+    if path.is_symlink() or path.parent.resolve(strict=True) != path.parent:
+        raise ValueError("canonical-path-required")
     repositories = _repositories(config, explicit=True)
     result: dict[str, object] = {"path": str(path), "cleanup_authorized": False}
     generation, reason = _stale_reservation(store, path)

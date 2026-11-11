@@ -15,6 +15,7 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
+from .absence import path_reservations
 from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
@@ -265,8 +266,10 @@ def process_item(store, item, repositories, adapter, options):
         if done and os.path.lexists(item["path"]):
             # A retired source cannot reappear: this is a new tree at a reused
             # path, which the path-derived receipt must not claim (GH#37706).
+            reserved = bool(path_reservations(store, Path(item["path"])))
             outcome.update(status="retained", reason="path-reused-after-retirement",
-                           next="worker-registry.py recover-reused-path")
+                           next=("worker-registry.py recover-reused-path" if reserved
+                                 else "inspect the replacement tree manually; no reservation exists"))
         elif done:
             outcome["status"] = "already-retired"
         elif not pending and not os.path.lexists(item["path"]):
