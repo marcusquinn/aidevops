@@ -1895,11 +1895,11 @@ _hrw_write_external_final_outcome() {
 	elif [[ "$external_reason" == "$_HRW_CRASH_NO_WORK" && "$external_session_count" == "0" ]]; then
 		external_reason="worker_noop_zero_output"
 		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
+	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" || "$external_reason" == "$_HRW_REASON_NOT_LAUNCHED" ]]; then
+		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
 		external_reason="${external_reason:-$_HRW_REASON_WORKER_COMPLETE}"
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
-	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" || "$external_reason" == "$_HRW_REASON_NOT_LAUNCHED" ]]; then
-		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_FINAL_RUNTIME_STATUS" == "$_HRW_STATUS_CHECKPOINTED" ]]; then
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
 	fi

@@ -782,7 +782,7 @@ _hrff_release_fragment() {
 	local reason="$1" fragment="$2"
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
 		fragment=$'\nDraft checkpoint: partial work is preserved on the draft PR. Next action: Pulse continues the exact head (bounded per head and per PR).\n'
-	elif [[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" && "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
+	elif [[ "$reason" == "${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" && "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision ]]; then
 		fragment=$'\nRuntime did not launch, so the approved head is unchanged. The revision continuation approval stays reusable for this exact head (bounded retries within its validity window); no new approval is needed unless the head, brief or approval window changes.\n'
 	elif [[ "$reason" == "${_HRW_REASON_MERGED_PARTIAL:-worker_merged_partial}" ]]; then
 		fragment=$'\nPartial PR merged; issue stays open for continuation from the brief ledger. Next action: dispatch a continuation worker.\n'
@@ -838,6 +838,14 @@ _hrff_release_dispatch_claim_attempt() {
 	[[ "$_HRFF_RELEASE_CLAIM_OWNED" -eq 1 ]] || return 0
 	local claim_id="${_HRFF_RELEASE_CLAIM_ID:-}"
 	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
+
+	# Fence direct release/EXIT callers as well as _cmd_run_finish. Supervisor
+	# callers without worker launch state retain their existing recovery rules.
+	if [[ "$reason" == worker_complete && -n "${_WORKER_RUNTIME_LAUNCH_STARTED+x}" ]] &&
+		declare -F _hrw_runtime_launch_confirmed >/dev/null 2>&1 &&
+		! _hrw_runtime_launch_confirmed; then
+		reason="worker_not_launched"
+	fi
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then
 		if ! _hrff_handle_rate_limit_release_circuit "$issue_number" "$repo_slug"; then
