@@ -61,7 +61,14 @@ graphql)
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
 repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
-	repos/owner/repo/issues/41) cat "${FIXTURES}/issue-41.json" ;;
+	repos/owner/repo/issues/41)
+		if [[ "${GH_RACE_FIRST_ISSUE:-0}" == 1 && ! -f "${FIXTURES}/race-read" ]]; then
+			: >"${FIXTURES}/race-read"
+			cat "${FIXTURES}/issue-41-before-race.json"
+		else
+			cat "${FIXTURES}/issue-41.json"
+		fi
+		;;
 repos/owner/repo/issues/41/comments*) cat "${FIXTURES}/comments-41.json" ;;
 repos/owner/repo/issues/41/timeline*) cat "${FIXTURES}/timeline-41.json" ;;
 repos/owner/repo/issues/42) cat "${FIXTURES}/issue-42.json" ;;
@@ -896,6 +903,31 @@ test_locked_issue_permission_hold_continuity() {
 	return 0
 }
 
+test_locked_issue_label_replay() {
+	local label="" output="" rc=0
+	for label in needs-maintainer-review status:available; do
+		write_locked_issue_fixture true "" "$label"
+		jq --arg label "$label" '.labels |= map(select(.name != $label)) | .assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+		append_issue_timeline_event '{"id":4225,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+		assert_verify "hidden ${label} removal remains stale after retry" issue 41 STALE_APPROVAL 4
+	done
+
+	write_locked_issue_fixture
+	jq '.assignees = [{id:1,node_id:"U_1",login:"maintainer",type:"User"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	cp "${FIXTURES}/issue-41.json" "${FIXTURES}/issue-41-before-race.json"
+	jq '.labels += [{id:10,node_id:"L_10",name:"status:queued"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4226,"event":"assigned","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"assignee":{"id":1,"login":"maintainer","type":"User"}}'
+	append_issue_timeline_event '{"id":4227,"event":"labeled","created_at":"2026-01-01T00:06:01Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"status:queued"}}'
+	rm -f "${FIXTURES}/race-read"
+	output=$(GH_RACE_FIRST_ISSUE=1 run_verify issue 41) || rc=$?
+	if [[ "$output" == VERIFIED && "$rc" -eq 0 ]]; then
+		print_result "snapshot timeline race verifies after fresh read" 0
+	else
+		print_result "snapshot timeline race verifies after fresh read" 1 "expected=VERIFIED/0, actual=${output}/${rc}"
+	fi
+	return 0
+}
+
 run_locked_issue_continuity_tests() {
 	test_locked_issue_continuity
 	test_unanchored_lock_signature
@@ -903,6 +935,7 @@ run_locked_issue_continuity_tests() {
 	test_locked_issue_trusted_content_edits
 	test_locked_issue_tier_backfill_continuity
 	test_locked_issue_permission_hold_continuity
+	test_locked_issue_label_replay
 	test_signed_tier_self_hosting_continuity
 	return 0
 }
