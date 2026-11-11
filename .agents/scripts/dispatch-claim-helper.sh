@@ -1685,7 +1685,7 @@ cmd_verify_pr_checkpoint_target() {
 		local previous_owner="$8" previous_status="$9"
 		[[ "${AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH:-0}" == 1 &&
 			"${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision &&
-			"$previous_owner" =~ ^[A-Za-z0-9._-]*$ && -n "$previous_status" ]] || return 1
+			"$previous_owner" =~ ^([A-Za-z0-9._-]+(\[bot\])?)?$ && -n "$previous_status" ]] || return 1
 		issue_json=$(jq -e --arg previous "$previous_owner" --arg runner "$expected_assignee" \
 			--arg status "$previous_status" '
 			[.assignees[].login] as $owners |
