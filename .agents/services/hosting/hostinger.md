@@ -214,6 +214,19 @@ On creation or first setup through hPanel, the Hostinger API, or an addon websit
 
 Deactivate the installed targets by default, without prompting; this is reversible and neither is needed to run the site. Leave Hostinger Tools (`hostinger`, maintenance mode/redirects) and the `hostinger-auto-updates.php` must-use plugin untouched.
 
+Hostinger Smart Auto Updates 1.0.9's `hostinger-auto-updates.php` disables WordPress's
+own background core updater and plugin/theme automatic updates. Hostinger applies
+updates according to the individual site's hPanel auto-update setting instead. The
+WP-CLI `auto_update=on` plugin column does not prove updates are being installed.
+Compare `wp plugin list --update=available` with sibling sites on the same account,
+including the age of pending updates, and check the site's setting in hPanel. A
+backlog is a signal to investigate, not proof of a specific cause.
+
+When creating WordPress sites through the hPanel API, explicitly set and verify each
+site's auto-update setting as well as its cron job. Use the current documented API
+if it exposes the setting; otherwise configure and verify it in hPanel. Do not infer
+the setting from WordPress's plugin column or remove the vendor safeguard.
+
 ```bash
 # Replace <domain>; pass only installed target slugs.
 wp --path="$HOME/domains/<domain>/public_html" plugin deactivate hostinger-ai-assistant hostinger-easy-onboarding
