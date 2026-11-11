@@ -449,6 +449,24 @@ refuses with `detail: not-enrolled`; manual removal prints the operator-confirme
 `worktree-locked` requires inspecting Git's lock reason; unlock the listed path only when the
 lock is no longer needed, then retry. Neither refusal overrides the registry checks.
 
+### Fixed-path reuse after unfinished retirement (GH#37706)
+
+Fixed-path producers (Buzz host agents) re-create a tree at the same path. A generation whose
+tree vanished before retirement finished keeps its unique path reservation, and enrollment of
+the replacement refuses with `reserved-path-without-enrollment-marker` (or `create-worktree`
+with `generation-path-reserved`). Neither command below deletes files or Git data.
+
+- `release-vacant-path --path P`: while P is absent, runs the fenced absence reconciliation for
+  its reserving generation. `worktree_create_registered` calls it before every creation;
+  `no-reservation` and `path-present` are no-ops.
+- `release-replaced-path --path P [--confirm]`: operator recovery once a replacement already
+  occupies P. Eligible only when P's linked tree has no generation marker, the reserving
+  generation has no planned retirement, and every bound run was admitted and has ended. It
+  previews by default; `--confirm` journals `replaced-path-released` evidence and releases the
+  reservation in one writer transaction. The operator confirms the tree at P is not the
+  reserving generation with its marker removed (that case is `generation-marker-missing`).
+  Then enroll the replacement normally.
+
 The shared native-removal compatibility entrypoint, manual `worktree-helper.sh
 remove`, and the central/temp Pulse removal primitives use this targeted command.
 Legacy proof, archive and force arguments cannot authorize deletion or bypass a

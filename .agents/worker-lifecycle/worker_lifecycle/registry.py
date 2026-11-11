@@ -147,6 +147,17 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    vacant = commands.add_parser(
+        "release-vacant-path",
+        help="release the stale reservation of an absent path before re-creating it; never deletes",
+    )
+    vacant.add_argument("--path", required=True, type=Path)
+    replaced = commands.add_parser(
+        "release-replaced-path",
+        help="preview or confirm releasing a reservation whose tree was replaced; never deletes",
+    )
+    replaced.add_argument("--path", required=True, type=Path)
+    replaced.add_argument("--confirm", action="store_true")
     proof = commands.add_parser(
         "verify-retirement", help="verify dated cleanup-receipt evidence; never delete",
     )
@@ -212,6 +223,14 @@ def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Ma
         return retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
         )
+    if args.operation == "release-vacant-path":
+        from .path_release import release_vacant_path
+
+        return release_vacant_path(store, args.path)
+    if args.operation == "release-replaced-path":
+        from .path_release import release_replaced_path
+
+        return release_replaced_path(store, args.path, args.confirm)
     if args.operation == "cleanup":
         from .cleanup import cleanup_pass
 
@@ -241,7 +260,8 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
-    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
+    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
+                          "release-vacant-path", "release-replaced-path"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",
