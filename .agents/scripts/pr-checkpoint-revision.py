@@ -18,6 +18,7 @@ from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, re
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
+from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
 
 PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
@@ -116,24 +117,29 @@ def approved_release(data, comments, approval, comment):
     return closing if history_approved(data, comments, approval, comment["id"], closing) else None
 
 
+def candidate_owners_valid(data, closing):
+    owners = [a["login"] for a in data["issue"].get("assignees", [])]
+    allowed_owners = [[data["assignee"]]]
+    if not data.get("lease") or data.get("claiming"):
+        allowed_owners = [[], [closing[0]]]
+    return owners in allowed_owners
+
+
 def candidate(data, comments, comment, now):
     approval = approved_comment(data, comment, now)
     if approval is None:
         return None
     closing = approved_release(data, comments, approval, comment)
-    if closing is None:
+    if closing is None or not candidate_owners_valid(data, closing):
+        return None
+    reused = not_launched_reuse_ids(data, comments, comment["id"])
+    if reused is None:
         return None
     # The complete earlier history is checked above; the unchanged guard fences
     # only events after the approval and never grants authority from closure.
-    later = [c for c in comments if c["id"] >= comment["id"]]
+    later = [c for c in comments if c["id"] >= comment["id"] and c["id"] not in reused]
     if not successors_valid({**data, "released_lease": closing}, later, approval["release_id"],
                             comment["id"], now):
-        return None
-    owners = [a["login"] for a in data["issue"].get("assignees", [])]
-    allowed_owners = [[data["assignee"]]]
-    if not data.get("lease") or data.get("claiming"):
-        allowed_owners = [[], [closing[0]]]
-    if owners not in allowed_owners:
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
 

@@ -35,6 +35,7 @@ _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_CRASH_OVERWHELMED="overwhelmed"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
+_HRW_REASON_NOT_LAUNCHED="worker_not_launched"
 _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
@@ -1222,6 +1223,10 @@ _hrw_finish_failed_run() {
 	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
+	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 ]]; then
+		_hrw_finish_not_launched "$session_key"
+		return 0
+	fi
 	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
 		_worker_external_terminal_complete "$session_key" "$work_dir"; then
 		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
@@ -1744,12 +1749,23 @@ _hrw_post_pr_handoff_gate() {
 	return 1
 }
 
+_hrw_finish_not_launched() {
+	local session_key="$1"
+	_hrff_log_prelaunch_abort "$session_key" "${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_runtime_not_invoked}"
+	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; exact-head revision approval remains reusable"
+	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
+	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
+	_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"
+	return 0
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
 	local finish_status=0
 	local permission_pending_file=""
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || { _hrw_finish_not_launched "$session_key"; return 0; }
 	if [[ "${_run_result_label:-}" == "$_HRW_STATUS_BLOCKED" ]]; then
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
@@ -1879,7 +1895,7 @@ _hrw_write_external_final_outcome() {
 	elif [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
 		external_reason="${external_reason:-$_HRW_REASON_WORKER_COMPLETE}"
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
-	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" ]]; then
+	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" || "$external_reason" == "$_HRW_REASON_NOT_LAUNCHED" ]]; then
 		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_FINAL_RUNTIME_STATUS" == "$_HRW_STATUS_CHECKPOINTED" ]]; then
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"

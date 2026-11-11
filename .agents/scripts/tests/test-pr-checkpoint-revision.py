@@ -216,6 +216,55 @@ class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.Test
             with self.subTest(key=key), self.assertRaises(ValueError):
                 revision.validate({**data, key: value})
 
+    def not_launched_attempt(self, first_id, lease, reason="worker_not_launched", author="next-worker"):
+        field = "lease_" + "token"
+        return [
+            comment(first_id, f"DISPATCH_CLAIM nonce={lease} {field}={lease} runner={author} "
+                              "checkpoint_approval=3 session=checkpoint-42 expires_at=1788620400", author),
+            comment(first_id + 0.1, f"DISPATCH_LEASE phase=ready {field}={lease} session=checkpoint-42 "
+                                    "attempt_id=attempt:failed expires_at=1788620400", author),
+            comment(first_id + 0.2, f"CLAIM_RELEASED reason={reason} runner={author} {field}={lease}", author),
+            comment(first_id + 0.3, f"DISPATCH_LEASE phase=terminal {field}={lease} session=checkpoint-42 "
+                                    "expires_at=0", author),
+        ]
+
+    def test_not_launched_attempt_keeps_exact_head_approval_reusable(self):
+        # GH#37669: a revision attempt whose runtime never launched changed
+        # nothing on the approved head, so the same approval stays usable.
+        field = "lease_" + "token"
+        data = fixture()
+        data["issue"]["assignees"] = []
+        data["comments"] += self.not_launched_attempt(4, "failed1")
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        data.update(lease="new", session="checkpoint-42", assignee="next-worker", claiming=True)
+        data["comments"].append(comment(9, f"DISPATCH_CLAIM nonce=new {field}=new runner=next-worker "
+                                           "checkpoint_approval=3 session=checkpoint-42 expires_at=1788620400",
+                                        "next-worker"))
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+
+        rejected = {
+            "launched_release": lambda d: d["comments"][5].update(
+                body=d["comments"][5]["body"].replace("worker_not_launched", "worker_complete")),
+            "foreign_release": lambda d: d["comments"][5]["user"].update(login="stranger"),
+            "other_approval": lambda d: d["comments"][3].update(
+                body=d["comments"][3]["body"].replace("checkpoint_approval=3", "checkpoint_approval=99")),
+            "edited_release": lambda d: d["comments"][5].update(updated_at="2026-09-05T12:01:00Z"),
+            "open_attempt": lambda d: d["comments"].__delitem__(slice(5, 7)),
+        }
+        base = fixture()
+        base["issue"]["assignees"] = []
+        base["comments"] += self.not_launched_attempt(4, "failed1")
+        self.assert_mutations_rejected(rejected, lambda: copy.deepcopy(base), revision.validate)
+
+        bounded = fixture()
+        bounded["issue"]["assignees"] = []
+        for index in range(revision.MAX_NOT_LAUNCHED_REUSES):
+            bounded["comments"] += self.not_launched_attempt(4 + index, f"failed{index}")
+        self.assertEqual(revision.validate(bounded)["approval_id"], 3)
+        bounded["comments"] += self.not_launched_attempt(20, "failed-extra")
+        with self.assertRaises(ValueError):
+            revision.validate(bounded)
+
     def test_shell_predicate_preserves_holds_and_linkage(self):
         data = unlabelled_blocked_fixture()
         # Supply current wall time for the shell boundary, avoiding date-dependent fixtures.

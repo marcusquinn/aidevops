@@ -655,6 +655,46 @@ fi
 	printf 'PASS old open circuit persists current release before projecting blocked\n'
 )
 
+# Exercise the actual finish path without contacting GitHub or the operator's logs.
+(
+	_hrff_release_repo_state_is_managed() { return 0; }
+	_hrff_check_release_claim() { _HRFF_RELEASE_CLAIM_OWNED=1; _HRFF_RELEASE_CLAIM_ID=100; return 0; }
+	_hrff_persist_and_project_release() { release_note="${9}"; return 0; }
+	_WORKER_RUNTIME_LAUNCH_STARTED=0
+	AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE=revision
+	release_note=""
+	_hrff_release_dispatch_claim_attempt issue-12345 worker_not_launched
+	[[ "$release_note" == *'stays reusable for this exact head'* ]]
+	printf 'PASS unlaunched revision release keeps the exact-head approval reusable\n'
+)
+(
+	export HOME="$TMP_HOME"
+	# shellcheck source=../headless-runtime-worker.sh
+	source "${SCRIPT_DIR}/headless-runtime-worker.sh"
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_reason="$2"; return 0; }
+	_hrw_permission_pending_path() { return 1; }
+	_WORKER_RUNTIME_LAUNCH_STARTED=0
+	_WORKER_PRELAUNCH_LAST_STAGE=pre_attempt_context_configure
+	AIDEVOPS_ATTEMPT_ID=attempt:fixture123
+	_HRW_TERMINAL_OUTCOME=""
+	released_reason="" fast_fail_reason=""
+	_hrw_finish_success_run issue-12345 ""
+	[[ "$released_reason" == worker_not_launched && "$fast_fail_reason" == worker_runtime_not_invoked ]]
+	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_not_launched ]]
+	[[ "$(_hrff_retry_class_for_reason worker_not_launched 0)" == retryable_infrastructure ]]
+	grep -q 'attempt_id=attempt:fixture123 stage=pre_attempt_context_configure' "$HOME/.aidevops/logs/headless-prelaunch.log"
+	released_reason=""
+	_hrw_finish_failed_run issue-12345 "" 1
+	[[ "$released_reason" == worker_not_launched ]]
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	_HRW_TERMINAL_OUTCOME=""
+	released_reason=""
+	_hrw_finish_success_run issue-12345 ""
+	[[ "$released_reason" == worker_complete ]]
+	printf 'PASS no-launch success and failure are infrastructure outcomes; launched success completes\n'
+)
+
 : >"$CALL_LOG"
 GH_UNLOCK_MODE=success _unlock_issue_after_dispatch_release "004" "owner/repo"
 if grep -q 'INFO Skipping release unlock for local task ID 004 in owner/repo: not a GitHub issue number' "$CALL_LOG" &&
