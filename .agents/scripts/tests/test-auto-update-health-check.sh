@@ -209,6 +209,22 @@ if grep -q 'health-check' "$HELPER" && grep -q 'idempotent' "$HELPER"; then
 	fi
 fi
 
+# Test (GH#37751): _resolve_status_backend reports systemd when the timer is
+# enabled even though detection fell back to cron. Platform-independent.
+_resolve_body=$(sed -n '/^_resolve_status_backend() {/,/^}/p' "$HELPER")
+_resolve_shim_dir=$(mktemp -d)
+printf '#!/usr/bin/env bash\ncase "$2" in is-enabled) echo "${FAKE_TIMER_STATE:-disabled}";; is-active) exit 3;; esac\nexit 0\n' >"${_resolve_shim_dir}/systemctl"
+chmod +x "${_resolve_shim_dir}/systemctl"
+_resolve_cron=$(PATH="${_resolve_shim_dir}:$PATH" FAKE_TIMER_STATE=enabled bash -c "SYSTEMD_UNIT_NAME=aidevops-auto-update; ${_resolve_body}; _resolve_status_backend cron")
+_resolve_off=$(PATH="${_resolve_shim_dir}:$PATH" FAKE_TIMER_STATE=disabled bash -c "SYSTEMD_UNIT_NAME=aidevops-auto-update; ${_resolve_body}; _resolve_status_backend cron")
+rm -rf "$_resolve_shim_dir"
+if [[ "$_resolve_cron" == "systemd" && "$_resolve_off" == "cron" ]]; then
+	print_result "status resolves systemd when timer enabled but detection says cron" "PASS"
+else
+	print_result "status resolves systemd when timer enabled but detection says cron" "FAIL" \
+		"got '$_resolve_cron' / '$_resolve_off'"
+fi
+
 # Skip platform-specific runtime tests on non-macOS for now: the launchctl
 # stub model is macOS-shaped. The structural checks above cover the
 # correctness of the function definitions; runtime tests below only run
