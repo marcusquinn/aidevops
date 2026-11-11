@@ -195,6 +195,72 @@ _pcc_terminal_apply() {
 }
 
 #######################################
+# Check for a protective maintainer label on a PR snapshot.
+# Args: $1=PR JSON. Returns: 0 held, 1 otherwise.
+#######################################
+_pcc_terminal_pr_held() {
+	local pr_json="$1"
+	jq -e '[.labels[]? | (.name? // empty) | select(startswith("needs-maintainer-"))] | length > 0' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Fence the terminal write with continuation's distributed claim protocol.
+# A subshell isolates the claim library's settings and guarantees claim cleanup.
+# Args: repo, issue, pr, head, release id, action, cause, head ref
+# Returns: 0 action and audit completed, 1 deferred or failed
+#######################################
+_pcc_terminal_fenced_apply() (
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" action="$6" cause="$7" ref="$8"
+	local runner="" nonce="" claim_id="" claims="" comments="" trusted="" state="" metadata="" expires=""
+	# shellcheck source=dispatch-claim-helper.sh
+	source "${BASH_SOURCE[0]%/*}/dispatch-claim-helper.sh"
+	runner=$(_resolve_runner "") || return 1
+	aidevops_can_manage_repo_issue_state "$repo" "$runner" || return 1
+	nonce=$(_generate_nonce) || return 1
+	claim_id=$(_post_claim "$issue" "$repo" "$runner" "$nonce" "$(_now_utc)" \
+		"checkpoint_mode=terminal" "terminal-${pr}") || return 1
+	[[ "$claim_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	trap '_delete_losing_claim_comment "$repo" "$claim_id"' EXIT
+	sleep "$DISPATCH_CLAIM_WINDOW"
+	claims=$(_fetch_claims "$issue" "$repo" "$runner") || return 1
+	_resolve_claim_race_result "$issue" "$repo" "$runner" "$nonce" "$claim_id" "$claims" >/dev/null || return 1
+	# The winning terminal claim alone may explain a new ownership event.
+	comments=$(_pcc_issue_comments "$repo" "$issue") &&
+		comments=$(jq -c --argjson id "$claim_id" '[flatten[] | select(.id != $id)]' <<<"$comments") &&
+		trusted=$(_pr_checkpoint_trusted_logins "$comments" "$repo") &&
+		state=$(_pcc_terminal_comment_state "$comments" "$trusted" "$release_id" \
+			"<!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} ") && [[ "$state" == current ]] || return 1
+	metadata=$(gh api "repos/${repo}/issues/${issue}") && _pcc_terminal_issue_eligible "$metadata" || return 1
+	metadata=$(gh pr view "$pr" --repo "$repo" --json number,state,isDraft,isCrossRepository,headRefOid,headRefName,author,labels,body,closingIssuesReferences) &&
+		_pr_checkpoint_pr_metadata_is_eligible "$metadata" "$repo" "$pr" "$issue" "$head" "$ref" "" || return 1
+	if _pcc_terminal_pr_held "$metadata"; then
+		return 1
+	fi
+	if _interactive_claim_fence_blocks_dispatch "$issue" "$repo"; then
+		return 1
+	fi
+	if [[ "$action" == close ]]; then
+		# Persist salvage context BEFORE closure: a failed post must leave the
+		# draft open and retryable, not strand its pointer behind eligibility.
+		local pointer="Preserved checkpoint: branch \`${ref}\` at \`${head}\` (draft PR #${pr}). Pulse is preparing to close this stalled checkpoint while keeping its branch. A new worker may salvage these commits; inspect the PR's current state before continuing."
+		gh api "repos/${repo}/issues/${issue}/comments" --method POST --raw-field body="$pointer" >/dev/null || return 1
+	fi
+	# Recheck consensus and remaining lease immediately before the terminal write.
+	claims=$(_fetch_claims "$issue" "$repo" "$runner") || return 1
+	_resolve_claim_race_result "$issue" "$repo" "$runner" "$nonce" "$claim_id" "$claims" >/dev/null || return 1
+	expires=$(jq -er --arg n "$nonce" '.[] | select(.nonce == $n) | .lease_expires_at | numbers' <<<"$claims") || return 1
+	((expires > $(_now_epoch) + 60)) || return 1
+	_pcc_terminal_apply "$repo" "$issue" "$pr" "$action" || return 1
+	[[ "$action" == ready_for_merge ]] || action="closed"
+	_pcc_terminal_post_record "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref" || {
+		printf 'STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED: PR #%s in %s issue=#%s\n' "$pr" "$repo" "$issue"
+		return 1
+	}
+	return 0
+)
+
+#######################################
 # Take the bounded terminal action for a stalled draft that can no longer be
 # continued. Never acts on unreadable, pending or protected state.
 # Args: $1=repo slug, $2=issue, $3=PR, $4=exact head SHA, $5=stall release id,
@@ -214,7 +280,7 @@ _pcc_terminal_checkpoint_action() {
 		return 1
 	}
 	if ! _pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo" "$pr" "$issue" "$head" "" "" ||
-		jq -e '[.labels[]? | (.name? // empty) | select(startswith("needs-maintainer-"))] | length > 0' <<<"$pr_json" >/dev/null 2>&1; then
+		_pcc_terminal_pr_held "$pr_json"; then
 		printf 'STALLED_CHECKPOINT_TERMINAL_SKIPPED: %s reason=pr_not_eligible\n' "$prefix"
 		return 1
 	fi
@@ -264,25 +330,11 @@ _pcc_terminal_checkpoint_action() {
 		[[ "$additive_rc" -ne 0 ]] || action="ready_for_merge"
 	fi
 	ref=$(jq -r '.headRefName // ""' <<<"$pr_json" 2>/dev/null) || ref=""
-	# Narrow the claim race: re-read ownership right before the write. A claim
-	# or lease acquired since the first snapshot makes the state non-current.
-	comments=$(_pcc_issue_comments "$repo" "$issue" 2>/dev/null) &&
-		trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo" 2>/dev/null) &&
-		state=$(_pcc_terminal_comment_state "$comments" "$trusted_logins" "$release_id" \
-			"<!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} ") && [[ "$state" == current ]] || {
-		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=ownership_changed_before_write\n' "$prefix"
-		return 1
-	}
-	if ! _pcc_terminal_apply "$repo" "$issue" "$pr" "$action"; then
+	if ! _pcc_terminal_fenced_apply "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref"; then
 		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=%s_failed\n' "$prefix" "$action"
 		return 1
 	fi
 	[[ "$action" == ready_for_merge ]] || action="closed"
-	# The write above already ended the hold; retry the audit record once so
-	# the salvage pointer is not lost to a transient API failure.
-	_pcc_terminal_post_record "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref" ||
-		{ sleep 2 && _pcc_terminal_post_record "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref"; } ||
-		printf 'STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED: %s\n' "$prefix"
 	printf 'STALLED_CHECKPOINT_TERMINAL_ACTION: %s action=%s cause=%s checks=%s mergeable=%s\n' \
 		"$prefix" "$action" "$cause" "$checks" "$mergeable"
 	return 0

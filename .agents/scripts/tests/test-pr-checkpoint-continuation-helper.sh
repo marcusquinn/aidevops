@@ -1652,11 +1652,30 @@ test_fuse_terminal_action() (
 	local fixture_pr_files="$1" expected="$2" comments="$3" window="${4:-43200}"
 	local fixture_writes_file="${TEST_ROOT}/terminal-writes" output="" writes="" record=""
 	: >"$fixture_writes_file"
+	printf '[]' >"$STUB_CLAIM_FILE"
 	# Record terminal writes and serve the PR file list; delegate the rest.
 	# Args: gh argv. Returns: the stub's status.
 	gh() {
 		case "$1 $2" in
-		"pr ready" | "pr close") printf '%s\n' "$2" >>"$fixture_writes_file" ;;
+		"pr ready" | "pr close")
+			# A close must never precede its durable issue salvage pointer.
+			[[ "$2" != close || "$(post_count)" -gt "$posts_before" ]] || return 1
+			printf '%s\n' "$2" >>"$fixture_writes_file"
+			;;
+		"api repos/owner/repo/issues/123/comments")
+			if [[ "$expected" == pointer_failed && "${6:-}" == body=Preserved* ]] ||
+				[[ "$expected" == audit_failed && "${6:-}" == *STALLED_CHECKPOINT_TERMINAL_ACTION* ]]; then
+				return 1
+			fi
+			command gh "$@" || return $?
+			if [[ "$expected" == contended && "${6:-}" == *DISPATCH_CLAIM* ]]; then
+				jq '. + [(last | .id -= 1 | .node_id = "fixture-rival" |
+					.body |= (sub("nonce=[^ ]+"; "nonce=00000000-0000-0000-0000-000000000001") |
+						sub("lease_token=[^ ]+"; "lease_token=00000000-0000-0000-0000-000000000001")))]' \
+					"$STUB_CLAIM_FILE" >"${STUB_CLAIM_FILE}.next"
+				mv "${STUB_CLAIM_FILE}.next" "$STUB_CLAIM_FILE"
+			fi
+			;;
 		"api repos/owner/repo/pulls/42/files?per_page=100") printf '%s\n' "$fixture_pr_files" ;;
 		*) command gh "$@" || return $? ;;
 		esac
@@ -1680,6 +1699,17 @@ test_fuse_terminal_action() (
 	local ok=true
 	[[ -z "$DISPATCH_ARGS" && "$output" == *"STALLED_CHECKPOINT_REARM_BLOCKED:"*"reason=per_pr_fuse"* ]] || ok=false
 	case "$expected" in
+	pointer_failed | contended)
+		[[ -z "$writes" && "$posts_after" -eq "$posts_before" &&
+			"$output" == *STALLED_CHECKPOINT_TERMINAL_DEFERRED* ]] || ok=false
+		;;
+	audit_failed)
+		[[ "$writes" == close && "$posts_after" -eq $((posts_before + 1)) &&
+			"$output" == *STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED* &&
+			"$output" != *'STALLED_CHECKPOINT_TERMINAL_ACTION:'* ]] || ok=false
+		record="$(<"${STUB_POST_DIR}/post-${posts_after}")"
+		[[ "$record" == *"Preserved checkpoint: branch \`worker/issue-123\` at \`1111111111111111111111111111111111111111\`"* ]] || ok=false
+		;;
 	none)
 		[[ -z "$writes" && "$posts_after" -eq "$posts_before" &&
 			"$output" != *STALLED_CHECKPOINT_TERMINAL_ACTION* ]] || ok=false
@@ -1689,7 +1719,9 @@ test_fuse_terminal_action() (
 			"$output" == *STALLED_CHECKPOINT_TERMINAL_EXISTS* ]] || ok=false
 		;;
 	*)
-		[[ "$posts_after" -eq $((posts_before + 1)) ]] && record="$(<"${STUB_POST_DIR}/post-${posts_after}")"
+		local expected_posts=1
+		[[ "$expected" != closed ]] || expected_posts=2
+		[[ "$posts_after" -eq $((posts_before + expected_posts)) ]] && record="$(<"${STUB_POST_DIR}/post-${posts_after}")"
 		[[ "$output" == *"STALLED_CHECKPOINT_TERMINAL_ACTION:"*"action=${expected}"*"cause=per_pr_fuse"* &&
 			"$writes" == "$([[ "$expected" == closed ]] && printf close || printf ready)" &&
 			"$record" == *"<!-- aidevops:stalled-checkpoint-terminal pr=42 head=1111111111111111111111111111111111111111 release=65 -->"* &&
@@ -1712,6 +1744,13 @@ if test_fuse_terminal_action '[[{"status":"removed"}]]' closed "$fuse_terminal_c
 else
 	print_result "fused checkpoint that removes files is closed with its branch kept" 1
 fi
+for failure in pointer_failed audit_failed contended; do
+	if test_fuse_terminal_action '[[{"status":"removed"}]]' "$failure" "$fuse_terminal_comments"; then
+		print_result "terminal close preserves salvage context when ${failure}" 0
+	else
+		print_result "terminal close preserves salvage context when ${failure}" 1
+	fi
+done
 terminal_record='<!-- aidevops:stalled-checkpoint-terminal pr=42 head=1111111111111111111111111111111111111111 release=65 -->'
 if test_fuse_terminal_action "$additive_files" exists "$(jq -c --arg body "$terminal_record" \
 	'map(. + [{id:71,created_at:"2026-09-30T00:07:00Z",author_association:"OWNER",user:{login:"pulse-runner"},body:$body}])' \
