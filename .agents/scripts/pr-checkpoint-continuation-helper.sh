@@ -336,9 +336,7 @@ _prrts_write_prompt_file() {
 	local _thread_count="$5"
 	local _fingerprint="$6"
 	local _preview="$7"
-	local prompt_file=""
-	local safe_slug=""
-	local safe_title=""
+	local prompt_file="" recovery_dir="" safe_slug="" safe_title=""
 	local scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	local ownership_helper="${HOME}/.aidevops/agents/scripts/dispatch-claim-helper.sh"
 	local repair_number_ref="\$AIDEVOPS_PR_REPAIR_NUMBER"
@@ -359,6 +357,7 @@ _prrts_write_prompt_file() {
 		printf '%s\n' "$prompt_file"
 		return 0
 	fi
+	recovery_dir=$(mktemp -d "${STATE_DIR}/${safe_slug}-${pr_number}-recovery.XXXXXXXX") || return 1
 	cat >"$prompt_file" <<PROMPT_EOF
 # STALE WORKER DRAFT CONTINUATION — BOUNDED WORKER
 
@@ -397,12 +396,19 @@ PR title: ${safe_title}
    unavailable on this runner whose check the PR's CI also runs (for example
    ShellCheck or markdownlint) is delegated to CI, not a blocker: name the tool
    and covering CI job in the PR body (GH#34758).
-4. Before pushing, run the exact-target fence:
+4. Make all continuation commits locally, including intermediate data artifacts;
+   do not push them mid-run. If publication evidence must be durable mid-run,
+   record receipts in the private workspace and include them in the final commit.
+   Recovery bundle for this repository and attempt: ${recovery_dir}/continuation.bundle
+   Retain this path in the continuation checkpoint for recovery after a restart.
+   After each commit save a recovery copy: \`git bundle create "${recovery_dir}/continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`; on resume keep and verify unpushed local commits, never reset them away.
+   Once all work and verification are complete, before the single final push,
+   run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
-5. Commit the continuation and push without force to the existing remote branch
-   using \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
-   replacement PR.
+5. Push exactly once, without force, to the existing remote branch using
+   \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
+   replacement PR. After a successful push make no further push (stale fence). Retry a failed or ambiguous push only if the remote head still equals \`\$AIDEVOPS_PR_REPAIR_HEAD_SHA\`, after rerunning the fence.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
    \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
