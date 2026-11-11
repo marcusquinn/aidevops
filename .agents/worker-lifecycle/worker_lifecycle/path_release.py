@@ -10,6 +10,8 @@ operator-confirmed recovery once a replacement already occupies the path. It
 deletes no files; immutable history and every Git object are retained.
 """
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
