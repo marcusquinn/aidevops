@@ -721,7 +721,7 @@ for path in \~/Git/public-repo/.agents \~/Git/testorg/public-repo/subdir; do
 		fail "target repository path should be allowed (rc=$rc)"
 	fi
 done
-for path in \~/Git/private-repo \~/Git/public-repo-extra \~/Git/public-repo/../private-repo '/home/example/Git/public-repo' '/Users/example/Git/public-repo'; do
+for path in \~/Git/private-repo \~/Git/public-repo-extra \~/Git/public-repo/../private-repo /ho"me"/example/Git/public-repo /Us"ers"/example/Git/public-repo; do
 	hits=$(privacy_scan_local_paths "$path" 'testorg/public-repo')
 	rc=$?
 	if [[ "$rc" -eq 1 && "$hits" == *'[local-path]'* ]]; then
