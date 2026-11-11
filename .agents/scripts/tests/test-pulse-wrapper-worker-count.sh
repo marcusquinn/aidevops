@@ -331,12 +331,13 @@ test_policy_compatible_command_router() {
 		expected_output=$(printf 'dispatch:7\nPULSE_COMMAND_RESULT command=dispatch rc=%s outcome=%s' "$expected_rc" "$outcome")
 		actual_rc=0
 		output=$(
+			_pulse_wrapper_list_scope() { printf 'owner/repo|%s\n' "$SCRIPT_DIR"; return 0; }
 			dispatch_with_dedup() {
 				printf 'dispatch:%s\n' "$#"
 				return "$stub_rc"
 			}
 			stub_rc="$expected_rc"
-			_pulse_wrapper_run_command dispatch 1 owner/repo "title" "Issue #1" gpt /tmp/repo "prompt"
+			_pulse_wrapper_run_command dispatch 1 owner/repo "title" "Issue #1" gpt "$SCRIPT_DIR" "prompt"
 		) || actual_rc=$?
 		if [[ "$actual_rc" == "$expected_rc" && "$output" == "$expected_output" ]]; then
 			print_result "command router propagates dispatch status ${expected_rc} in conditional context (GH#34323)" 0
@@ -366,11 +367,12 @@ test_command_router_outcomes_under_errexit() {
 			actual_rc=0
 			output=$(bash -euo pipefail -c '
 				source "$1/pulse-wrapper-commands.sh"
+				_pulse_wrapper_list_scope() { printf "owner/repo|%s\n" "$SCRIPT_DIR"; return 0; }
 				stub_rc="$3"
 				dispatch_with_dedup() { return "$stub_rc"; }
 				check_repo_worker_cap() { return "$stub_rc"; }
 				if [[ "$2" == dispatch ]]; then
-					_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt
+					_pulse_wrapper_run_command dispatch 1 owner/repo title issue user "$SCRIPT_DIR" prompt
 				else
 					_pulse_wrapper_run_command repo-cap /tmp/repo
 				fi
@@ -388,8 +390,9 @@ test_command_router_outcomes_under_errexit() {
 	actual_rc=0
 	output=$(bash -euo pipefail -c '
 		source "$1/pulse-wrapper-commands.sh"
+		_pulse_wrapper_list_scope() { printf "owner/repo|%s\n" "$SCRIPT_DIR"; return 0; }
 		dispatch_with_dedup() { false; printf "unsafe continuation\n"; return 0; }
-		_pulse_wrapper_run_command dispatch 1 owner/repo title issue user /tmp/repo prompt
+		_pulse_wrapper_run_command dispatch 1 owner/repo title issue user "$SCRIPT_DIR" prompt
 	' bash "$SCRIPT_DIR") || actual_rc=$?
 	if [[ "$actual_rc" == 1 && "$output" == 'PULSE_COMMAND_RESULT command=dispatch rc=1 outcome=deferred' ]]; then
 		print_result "command router preserves fail-closed internal errexit (GH#34329)" 0
