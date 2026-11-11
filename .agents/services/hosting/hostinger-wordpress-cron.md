@@ -23,8 +23,8 @@ in several cron rows without changing site context still targets the parent.
    `WP_AUTO_UPDATE_CORE`, selected plugin/theme auto-updates, and vendor or safety
    filters.
 4. Keep update-check scheduling, automatic installation, and mail delivery separate
-    in the assessment. A successful update check does not prove installation or
-    notification works.
+   in the assessment. A successful update check does not prove installation or
+   notification works.
 
 On sites with `hostinger-auto-updates.php` (Hostinger Smart Auto Updates 1.0.9
 observed), WordPress's own background updater and plugin/theme automatic updates
