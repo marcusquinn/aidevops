@@ -1589,6 +1589,7 @@ _prrts_prepare_dispatch_target() {
 		return 1
 	fi
 	_prrts_prepare_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" "$path_var" || return 1
+	PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
 	if ! _prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid"; then
 		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
 		[[ -n "$PRRTS_WORKTREE_FAILURE_REASON" ]] || PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
@@ -1621,6 +1622,7 @@ _prrts_dispatch_worker() {
 	_prrts_prepare_thread_batch "$repo_slug" "$pr_number" "$thread_count" "$fingerprint" \
 		batch_fingerprint batch_thread_count || return 1
 	_prrts_prepare_dispatch_target "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" worker_worktree_path || return 1
+	PRRTS_WORKTREE_FAILURE_REASON="review_worker_metadata_failed"
 	# The checkpoint fence may transfer the issue to this runner. Do not export
 	# the pre-transfer login captured before worktree preparation.
 	worker_login=$(_prrts_worker_login "$pr_number") || return 1
@@ -1637,10 +1639,12 @@ _prrts_dispatch_worker() {
 		[[ "$checkpoint_mode" =~ ^(automatic|revision)$ && -n "$checkpoint_lease" &&
 			-n "$checkpoint_session" && -n "$checkpoint_device" ]] || return 1
 	fi
-	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$worker_worktree_path" "$pr_number" "$title" "$batch_thread_count" "$batch_fingerprint" "$preview")"
+	PRRTS_WORKTREE_FAILURE_REASON="review_worker_prompt_failed"
+	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$worker_worktree_path" "$pr_number" "$title" "$batch_thread_count" "$batch_fingerprint" "$preview")" || return 1
 	session_key="$(_prrts_session_key "$repo_slug" "$pr_number")"
 	outcome_file="$(_prrts_outcome_file "$repo_slug" "$pr_number")"
 	_prrts_ensure_dirs
+	PRRTS_WORKTREE_FAILURE_REASON="review_worker_attempt_state_failed"
 	_prrts_initialize_attempt_state "$repo_slug" "$pr_number" "$outcome_id" "$session_key" attempt_state_file || return 1
 	rm -f "$outcome_file"
 	cmd=("$HEADLESS_RUNTIME_HELPER" run
@@ -1687,17 +1691,26 @@ _prrts_dispatch_worker() {
 		"AIDEVOPS_ATTEMPT_STATE_ROOT=${STATE_DIR}"
 		"AIDEVOPS_ATTEMPT_STATE_FILE=${attempt_state_file}"
 		"${cmd[@]}")
-	# Recheck after worktree preparation: a release label may have been added
-	# since the initial dispatch gate. Propagate failure to release capacity.
-	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
-	if [[ -n "$repair_linked_issue" ]]; then
-		_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
-	fi
+	_prrts_final_dispatch_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" "$repair_linked_issue" || return $?
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
 	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
+	PRRTS_WORKTREE_FAILURE_REASON="detached_worker_launch_failed"
 	_prrts_launch_reserved_worker "$repo_slug" "$pr_number" "$worker_worktree_path" "$session_key" \
 		"$outcome_id" "$reservation_file" "${worker_cmd[@]}" || return 1
+	return 0
+}
+
+_prrts_final_dispatch_fence() {
+	local repo_slug="$1" pr_number="$2" head_ref="$3" head_oid="$4" repair_linked_issue="$5"
+	# Recheck after worktree preparation: a release label may have been added
+	# since the initial dispatch gate. Propagate failure to release capacity.
+	PRRTS_WORKTREE_FAILURE_REASON="review_worker_release_gate_failed"
+	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
+	if [[ -n "$repair_linked_issue" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="checkpoint_final_target_verification_failed"
+		_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
+	fi
 	return 0
 }
 

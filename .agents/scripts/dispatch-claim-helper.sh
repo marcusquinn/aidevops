@@ -1677,6 +1677,25 @@ cmd_verify_pr_checkpoint_target() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 2
 	fi
+	# Compensation alone may encounter an unchanged or partially applied transfer.
+	# Validate that live metadata is within this exact transfer before checking the
+	# original claim against the intended owner state. All other metadata, history,
+	# head and prelaunch fences below remain intact.
+	if [[ $# -eq 9 ]]; then
+		local previous_owner="$8" previous_status="$9"
+		[[ "${AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH:-0}" == 1 &&
+			"${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision &&
+			"$previous_owner" =~ ^([A-Za-z0-9._-]+(\[bot\])?)?$ && -n "$previous_status" ]] || return 1
+		issue_json=$(jq -e --arg previous "$previous_owner" --arg runner "$expected_assignee" \
+			--arg status "$previous_status" '
+			[.assignees[].login] as $owners |
+			[.labels[].name | select(startswith("status:"))] as $statuses |
+			select(($owners | length) <= 2 and ($owners | unique | length) == ($owners | length) and
+				all($owners[]; . == $runner or ($previous != "" and . == $previous)) and
+				($statuses == ["status:" + $status] or $statuses == ["status:in-progress"])) |
+			.assignees = [{login:$runner}]
+		' <<<"$issue_json") || return 1
+	fi
 	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == automatic ]]; then
 		_dch_verify_automatic_checkpoint "$repo_slug" "$pr_json" "$issue_json" "$pr_number" \
 			"$linked_issue" "$expected_head_sha" "$expected_head_ref" "$expected_assignee" "$checkpoint_author"
