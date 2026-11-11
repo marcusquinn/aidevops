@@ -1388,7 +1388,9 @@ SEALED_HELPER
 	test_prs='[]' SEALED_TEST_REMOVE_ALLOWED=0
 	_dlw_retire_empty_sealed "$sandbox/checkpoint" feature/checkpoint-gh37806 "$repo_slug" && return 1
 	[[ -d "$sandbox/checkpoint" && "$_DLW_SEALED_REASON" == guarded_retirement_refused ]] || return 1
-	! grep 'path_class=sealed_issue_generation' "$LOGFILE" | grep -qF "$sandbox" || return 1
+	local sealed_log=""
+	sealed_log=$(grep 'path_class=sealed_issue_generation' "$LOGFILE" || true)
+	[[ "$sealed_log" != *"$sandbox"* ]] || return 1
 	return 0
 )
 if test_sealed_generation_recovery; then
