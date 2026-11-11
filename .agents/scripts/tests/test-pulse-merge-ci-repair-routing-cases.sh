@@ -174,7 +174,8 @@ extract_process_stage_functions() {
 	local fn_name=""
 	for fn_name in _pmp_stage_parse_and_validate _pmp_stage_handle_conflict \
 		_pmp_stage_review_and_gates _pmp_stage_required_checks _pmp_stage_pre_merge \
-		_pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
+		_pmp_route_preflight_ci_failures _pmp_active_checks_allow_native_defer \
+		_pmp_admin_final_gate_or_route _pmp_stage_admin_merge _pmp_stage_ruleset_fallback _pmp_stage_finalize_merge; do
 		extract_function "$fn_name" "$source_file"
 	done
 	return 0
@@ -247,6 +248,10 @@ define_process_helper() {
 	DUPLICATE_CLOSE_CALLS=0
 	PREFLIGHT_RC=0
 	PREFLIGHT_EVIDENCE="[]"
+	PREFLIGHT_KIND=""
+	PMRC_BLOCKER_CHECKS_ACTIVE="checks_active"
+	REQUIRED_PASSING_RC=1
+	NATIVE_AUTO_RC=0
 	REFRESHED_MERGEABLE="UNKNOWN"
 	REFRESHED_REVIEW_DECISION="NONE"
 	REVIEW_REFRESH_CALLS=0
@@ -261,7 +266,7 @@ define_process_helper() {
 	_check_pr_merge_gates() { local pr_number="$1" repo_slug="$2" pr_author="$3" pr_review="$4" linked_issue="$5" review_mode="${8:-merge}"; [[ -n "$pr_number$repo_slug$pr_author$pr_review$linked_issue" ]]; GATE_CALLS=$((GATE_CALLS + 1)); GATE_REVIEW_ARG="$pr_review"; GATE_REVIEW_MODE="$review_mode"; return 0; }
 	_pr_required_checks_pass() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; if [[ "$PR_REQUIRED_CHECKS_RC" -eq 0 ]]; then return 0; fi; return 1; }
 	manual_release_hold_check() { return 0; }
-	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return 1; }
+	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return "$REQUIRED_PASSING_RC"; }
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2" rebase_policy="${5:-standard}"; [[ -n "$pr_number$repo_slug" ]]; REBASE_RETRY_CALLS=$((REBASE_RETRY_CALLS + 1)); REBASE_RETRY_POLICY="$rebase_policy"; return "$REBASE_RETRY_RC"; }
@@ -275,9 +280,9 @@ define_process_helper() {
 	_extract_merge_summary() { printf 'test summary'; return 0; }
 	_retarget_stacked_children() { return 0; }
 	_pulse_merge_admin_safety_check() { return 0; }
-	_set_native_auto_merge_or_skip() { return 0; }
+	_set_native_auto_merge_or_skip() { return "$NATIVE_AUTO_RC"; }
 	_pulse_merge_changes_requested_thread_remediation_first_enabled() { return 1; }
-	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
+	_pulse_merge_preflight_snapshot_gate() { _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; _PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PREFLIGHT_KIND"; return "$PREFLIGHT_RC"; }
 	_pulse_merge_final_trust_gate() { _PULSE_FINAL_REQUIRES_SYNCHRONOUS_MERGE=0; _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$PREFLIGHT_EVIDENCE"; return "$PREFLIGHT_RC"; }
 	_pulse_is_trusted_issue_sync_pr() { return 1; }
 	_pmp_approve_issue_sync_action_required_runs() { return 0; }
@@ -819,6 +824,10 @@ test_preflight_terminal_blocker_routes_supplied_evidence() {
 	PR_REQUIRED_CHECKS_RC=0
 	PREFLIGHT_RC=1
 	PREFLIGHT_EVIDENCE="$expected_evidence"
+	REQUIRED_PASSING_RC=0
+	# GH#37795: with no pending required checks, native auto-merge declines (rc 1)
+	# so the admin stage runs the single final gate, which routes the evidence.
+	NATIVE_AUTO_RC=1
 	_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
 
 	if [[ "$rc" -ne 1 ]]; then
@@ -831,6 +840,44 @@ test_preflight_terminal_blocker_routes_supplied_evidence() {
 		print_result "head-bound preflight blocker reaches trusted CI repair route" 0
 	fi
 	teardown_test_env
+
+	local scenario="" expected_routes=0 expected_rc=1
+	for scenario in newly_failed mixed_active_failure pending_only head_changed; do
+		setup_test_env
+		define_process_helper || return 1
+		PR_REQUIRED_CHECKS_RC=0
+		PREFLIGHT_RC=1
+		PREFLIGHT_KIND="checks_failed"
+		PREFLIGHT_EVIDENCE="$expected_evidence"
+		expected_routes=1
+		expected_rc=1
+		case "$scenario" in
+		mixed_active_failure)
+			PR_REQUIRED_CHECKS_RC=1
+			DRIFT_PENDING_RC=0
+			;;
+		pending_only)
+			PREFLIGHT_KIND="$PMRC_BLOCKER_CHECKS_ACTIVE"
+			PREFLIGHT_EVIDENCE="[]"
+			expected_routes=0
+			expected_rc=4
+			;;
+		head_changed)
+			PREFLIGHT_KIND="head_changed"
+			PREFLIGHT_EVIDENCE="[]"
+			expected_routes=0
+			;;
+		esac
+		rc=0
+		_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
+		if [[ "$rc" -eq "$expected_rc" && "$ROUTE_CALLS" -eq "$expected_routes" && "$REBASE_RETRY_CALLS" -eq 0 ]] \
+			&& { [[ "$expected_routes" -eq 0 ]] || [[ "$ROUTE_EVIDENCE" == "$expected_evidence" ]]; }; then
+			print_result "native defer exact-head CI routing: ${scenario}" 0
+		else
+			print_result "native defer exact-head CI routing: ${scenario}" 1 "rc=${rc}, routes=${ROUTE_CALLS}, rebases=${REBASE_RETRY_CALLS}"
+		fi
+		teardown_test_env
+	done
 	return 0
 }
 
