@@ -34,7 +34,10 @@ class LaunchFailureCases:
                 gh = pathlib.Path(root) / "gh"
                 gh.write_text('#!/usr/bin/env bash\nexec python3 "$CHECKPOINT_TEST_FILE" --gh "$@"\n')
                 gh.chmod(0o700)
+                # Pin the state dir: the aggregate shell suite exports its own,
+                # which would leak compensation files across subtests.
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
+                       "AIDEVOPS_PR_CHECKPOINT_CONTINUATION_STATE_DIR": str(pathlib.Path(root) / "state"),
                        "CHECKPOINT_TEST_FILE": str(self.scripts / "tests" / "checkpoint_github_fixture.py"),
                        "CHECKPOINT_TEST_STATE": str(state), "CHECKPOINT_TEST_DRIFT": drift,
                        "AIDEVOPS_DISPATCH_LEASE_SESSION": "", "AIDEVOPS_TEST_MODE": "1",
