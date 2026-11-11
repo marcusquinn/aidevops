@@ -57,7 +57,8 @@ RETENTION_ENV = "AIDEVOPS_REPO_LAYOUT_BACKUP_RETENTION_DAYS"
 _sqlite_spec = importlib.util.spec_from_file_location(
     "repo_layout_migrate_sqlite", Path(__file__).with_name("repo_layout_migrate-sqlite.py")
 )
-assert _sqlite_spec is not None and _sqlite_spec.loader is not None
+if _sqlite_spec is None or _sqlite_spec.loader is None:
+    raise ImportError("Cannot load repo layout SQLite inspection module")
 _sqlite_module = importlib.util.module_from_spec(_sqlite_spec)
 _sqlite_spec.loader.exec_module(_sqlite_module)
 sqlite_schema = _sqlite_module.sqlite_schema

@@ -62,12 +62,12 @@ def sqlite_consumer_rows(
     for table, column in (("project", "worktree"), ("session", "directory")):
         if table not in schema or "id" not in schema[table] or column not in schema[table]:
             continue
-        parent_clause = (
-            " AND parent_id IS NULL"
-            if table == "session" and "parent_id" in schema[table]
-            else ""
-        )
-        query = f"SELECT id, {column} FROM {table} WHERE {column} = ?{parent_clause}"
+        if table == "project":
+            query = "SELECT id, worktree FROM project WHERE worktree = ?"
+        elif "parent_id" in schema[table]:
+            query = "SELECT id, directory FROM session WHERE directory = ? AND parent_id IS NULL"
+        else:
+            query = "SELECT id, directory FROM session WHERE directory = ?"
         for old_path in mappings:
             for row_id, value in connection.execute(query, (old_path,)).fetchall():
                 rows.append(
