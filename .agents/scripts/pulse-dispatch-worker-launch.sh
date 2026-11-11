@@ -1722,6 +1722,18 @@ _dlw_append_canary_preflight_env() {
 	return 0
 }
 
+_dlw_append_worker_policy_env() {
+	# systemd services do not inherit the launching client's environment.
+	# Preserve explicitly empty scope as well as populated scope values.
+	if [[ -n "${PULSE_SCOPE_REPOS+x}" ]]; then
+		worker_cmd+=(PULSE_SCOPE_REPOS="$PULSE_SCOPE_REPOS")
+	fi
+	_dlw_append_trusted_release_env
+	_dlw_append_worktree_transfer_env
+	_dlw_append_canary_preflight_env
+	return 0
+}
+
 #######################################
 # Launch a worker process detached from the pulse process group.
 # Stdout: worker PID
@@ -1782,16 +1794,9 @@ _dlw_nohup_launch() {
 		AIDEVOPS_DISPATCH_TIER="$dispatch_model_tier"
 		AIDEVOPS_DISPATCH_MODEL="$selected_model"
 	)
-	# systemd services do not inherit the launching client's environment.
-	# Preserve explicitly empty scope as well as populated scope values.
-	if [[ -n "${PULSE_SCOPE_REPOS+x}" ]]; then
-		worker_cmd+=(PULSE_SCOPE_REPOS="$PULSE_SCOPE_REPOS")
-	fi
 	_dlw_append_model_ab_env
 	_dlw_append_node_tool_env "$worker_worktree_path"
-	_dlw_append_trusted_release_env
-	_dlw_append_worktree_transfer_env
-	_dlw_append_canary_preflight_env
+	_dlw_append_worker_policy_env
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
