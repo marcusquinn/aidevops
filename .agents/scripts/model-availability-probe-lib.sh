@@ -104,10 +104,17 @@ _probe_has_static_auth_for_provider() {
 
 	local creds_file="${HOME}/.config/aidevops/credentials.sh"
 	if [[ -f "$creds_file" ]]; then
-		# shellcheck disable=SC1090
-		source "$creds_file"
+		# Presence checks must use the same bounded, non-executing parser as
+		# resolve_api_key. Sourcing here executes unrelated configuration before
+		# the OAuth cooldown/cache checks, even when no API key is resolved.
 		for var_name in "${var_names[@]}"; do
-			if [[ -n "${!var_name:-}" ]]; then
+			local key_val=""
+			key_val=$(timeout_sec 5 node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { credentialFileSecret } = await import(pathToFileURL(process.argv[1]).href);
+process.stdout.write(credentialFileSecret(process.argv[2]));
+' "${SCRIPT_DIR}/secret-resolver.mjs" "$var_name" 2>/dev/null) || key_val=""
+			if [[ -n "$key_val" ]]; then
 				return 0
 			fi
 		done

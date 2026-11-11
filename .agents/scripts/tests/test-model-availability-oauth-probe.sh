@@ -649,6 +649,73 @@ fi
 rm -f "$AUTH_FILE"
 
 # =============================================================================
+# Static-auth presence must never execute credential configuration.
+# All files and values below belong to this suite's synthetic HOME.
+# =============================================================================
+unset ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY
+mkdir -p "${HOME}/.config/aidevops"
+static_auth_credentials="${HOME}/.config/aidevops/credentials.sh"
+static_auth_expected=1
+command -v node >/dev/null 2>&1 && static_auth_expected=0
+cat >"$static_auth_credentials" <<'SH'
+export OPENAI_API_KEY='synthetic-static-key'
+printf unsafe >"${HOME}/static-auth-command-marker"
+SH
+output=$(
+	gopass() { return 1; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq "$static_auth_expected" && -z "$output" && ! -e "${HOME}/static-auth-command-marker" ]]; then
+	print_result "static-auth: parses a literal without executing commands or printing the value" 0
+else
+	print_result "static-auth: parses a literal without executing commands or printing the value" 1
+fi
+
+cat >"$static_auth_credentials" <<'SH'
+OPENAI_API_KEY=synthetic-static-key 2>"${HOME}/static-auth-redirection-marker"
+SH
+output=$(
+	gopass() { return 1; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq "$static_auth_expected" && -z "$output" && ! -e "${HOME}/static-auth-redirection-marker" ]]; then
+	print_result "static-auth: treats redirections as data without executing them" 0
+else
+	print_result "static-auth: treats redirections as data without executing them" 1
+fi
+
+printf '%s\n' "OPENAI_API_KEY='synthetic-static-key'" >"$static_auth_credentials"
+output=$(
+	gopass() { return 1; }
+	timeout_sec() {
+		printf '%s' 'synthetic-partial-value'
+		return 124
+	}
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq 1 && -z "$output" ]]; then
+	print_result "static-auth: discards partial parser output on timeout" 0
+else
+	print_result "static-auth: discards partial parser output on timeout" 1
+fi
+
+output=$(
+	export OPENAI_API_KEY=synthetic-env-key
+	gopass() { return 1; }
+	timeout_sec() { return 124; }
+	_probe_has_static_auth_for_provider openai 2>/dev/null
+)
+rc=$?
+if [[ "$rc" -eq 0 && -z "$output" ]]; then
+	print_result "static-auth: environment presence does not depend on the file parser" 0
+else
+	print_result "static-auth: environment presence does not depend on the file parser" 1
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%d test(s) run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
