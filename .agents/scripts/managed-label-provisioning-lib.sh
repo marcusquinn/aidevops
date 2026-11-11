@@ -46,6 +46,12 @@ _MANAGED_RELEASE_APPROVAL_LABEL_SPECS=(
 	"${_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS[@]}"
 )
 
+# GH#37697: the signed standing release policy is an approval-only issue.
+_MANAGED_RELEASE_POLICY_LABEL_SPECS=(
+	"release-standing-policy" "Signed standing authorization for routine Cloudron upstream releases" "B60205"
+	"${_MANAGED_NO_AUTO_DISPATCH_LABEL_SPECS[@]}"
+)
+
 _MANAGED_DEPENDABOT_INTAKE_LABEL_SPECS=(
 	"${_MANAGED_AUTO_DISPATCH_LABEL_SPECS[@]}"
 	# Reuse the origin:worker entry, without provisioning unrelated origins.
@@ -146,5 +152,14 @@ managed_labels_ensure_release_approval_set() {
 	local create_runner="$3"
 	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
 		"${_MANAGED_RELEASE_APPROVAL_LABEL_SPECS[@]}"
+	return $?
+}
+
+managed_labels_ensure_release_policy_set() {
+	local repo="$1"
+	local inventory_runner="$2"
+	local create_runner="$3"
+	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
+		"${_MANAGED_RELEASE_POLICY_LABEL_SPECS[@]}"
 	return $?
 }

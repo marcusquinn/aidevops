@@ -54,6 +54,24 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+**Standing release policy (GH#37697, optional).** To stop routine upstream
+bumps queuing behind per-release signatures, a maintainer may sign one policy
+per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,
+then `sudo aidevops approve issue <policy-issue> <repo>`. While that
+`release-standing-policy` issue is open with a `VERIFIED` signature, `r924`
+publishes an **unsigned** request without another signature only when
+`cloudron_routine_bump.py` proves, at the exact PR head and merge-base diff:
+one trusted linked monitor finding equal to `upstreamVersion`; a patch-only
+package bump with no other manifest change; additions-only changelogs; pinned
+files changed only by old→new version substitution; listed check files; no
+other, added, removed or renamed files; a same-repository OWNER/MEMBER PR with
+green checks and preflight. The policy is re-proved immediately before merge,
+and the closing comment records `authority: standing policy #N`. Anything else,
+and any stale or unverifiable per-release signature, keeps the per-release
+path. Under an active policy, an unsigned request whose head moved is closed so
+a fresh exact-head request follows. Close the policy issue to revoke it; any
+edit or comment makes its signature stale.
+
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
 Omit `--apply` to preview the same scope without merging or publishing. `--repo`

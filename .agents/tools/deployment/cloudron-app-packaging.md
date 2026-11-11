@@ -417,6 +417,12 @@ only after the catalog version, `v<version>` tag and GitHub release are verified
 Catalog race recovery/reconciliation remains owned by the publishing workflow
 and upstream monitor (GH#35649).
 
+A signed `release-standing-policy` issue (`cloudron-release-approval-helper.sh
+policy-request <repo>`, then one `sudo aidevops approve issue`) lets `r924`
+publish unsigned requests that `cloudron_routine_bump.py` proves are routine
+upstream-only bumps; every other change keeps per-release signing. Workers still
+file the normal request. See `cloudron-app-publishing-skill.md`.
+
 This dedicated label does not change `needs-maintainer-review` semantics and
 trusted authors alone cannot satisfy it. Signing authorizes only this release's
 merge and already-configured catalog publication, not deployment, changing

