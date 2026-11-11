@@ -48,6 +48,12 @@ normal TODO-to-GitHub relationship backfill and status normalization; Pulse
 changes the next leaf to `status:available` after all blockers close. Workers
 complete only their own leaf and do not manually edit successors.
 
+External upstream-release blockers use a body marker instead of prose:
+`<!-- aidevops:upstream-release-gate repo=OWNER/REPO commit=SHA -->` (full SHA,
+own line). Pulse's stale-blocked sweep unblocks the issue once a recent upstream
+tag contains that commit. Details: `workflows/brief.md` "Waiting on an upstream
+release"; implementation: `scripts/upstream-release-gate-lib.sh`.
+
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 ### Cross-repository child tasks

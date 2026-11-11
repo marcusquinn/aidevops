@@ -202,6 +202,25 @@ the completing worker closes only its own leaf and does not edit its successor.
 Independent children may remain `status:available` for parallel dispatch, while
 the roadmap parent keeps `parent-task` and never receives `#auto-dispatch`.
 
+### Waiting on an upstream release
+
+When a worker-ready issue must wait until a third-party upstream tags a release
+containing a specific commit, never leave the blocker as prose only. Keep
+`#auto-dispatch` with `status:blocked` and put this marker on its own line in
+the issue body, with the full 40-character commit SHA:
+
+```text
+<!-- aidevops:upstream-release-gate repo=OWNER/REPO commit=SHA -->
+```
+
+Pulse's stale-blocked sweep checks the highest version-sorted upstream tags (not
+GitHub Releases, so tag-only upstreams work) and moves the issue to
+`status:available` once every gate is in a tag and every native or declared
+blocker is closed. Holds still win. Untrusted-author issues, malformed markers
+and more than five gates stay blocked; an unreachable upstream or commit is
+reported as a sweep failure. Markers inside fenced code blocks are examples,
+not gates. Still describe the resume condition and verification in prose.
+
 ## Seeded Draft PR Decision
 
 When an issue or brief is created after enough discovery to know the likely implementation path, the author MAY open a seeded draft PR that gives the worker verified implementation context. This is opt-in. Issue-only remains the default when confidence is not high.
