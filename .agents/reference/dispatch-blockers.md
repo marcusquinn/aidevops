@@ -188,6 +188,18 @@ the next runner independently checks capabilities. It does not grant credentials
 or bypass permission/security guards. Repositories without declarations retain
 the existing behavior.
 
+Per-runner exclusion (GH#37752): the releasing runner's own
+`terminal-blocker-observation` is imported as a local cooldown with no TTL. It
+holds while the brief revision is unchanged and no OWNER/MEMBER retry follows.
+It is lifted by a brief edit, a trusted retry, a later trusted `DISPATCH_CLAIM`
+by another runner, or a change to this runner's capability inputs (repo
+registry, `.aidevops.json`, JS readiness), which discards earlier observations
+whether the observation import or a log-derived deferral sees the change first;
+a newer release re-arms it. Without a recorded capability anchor, only an
+observation under an hour old holds; an older one re-probes once. Other runners
+are unaffected. The 6h TTL (`AIDEVOPS_DISPATCH_CAPABILITY_COOLDOWN_SECONDS`)
+still bounds only log-derived records.
+
 Host binaries (GH#35576): the worker sandbox may not expose host tools such as
 `ip`, `xauth`, `Xtigervnc` or `docker`. A child using a sanitized PATH
 (`/usr/sbin:/usr/bin:/sbin:/bin`) fails with `ENOENT` where the worker shell resolves

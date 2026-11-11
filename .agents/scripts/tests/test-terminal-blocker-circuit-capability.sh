@@ -201,6 +201,46 @@ _capability_cooldown_own_contributor_replay() {
 	return 0
 }
 
+# GH#37752 capability-anchor cases. Runs inside test_worker_capability_cooldown's
+# subshell with a fresh HOME and uses its candidate, fixture_comments (recent
+# observation on entry; left recent on return) and gh stub through dynamic scope.
+_capability_cooldown_anchor_cases() {
+	local cooldown_dir="$HOME/.aidevops/logs/dispatch-capability-cooldown" recent_comments="$fixture_comments"
+	local cap_repo="$TEST_ROOT/cap-repo" cap_candidate=""
+	# A recent observation anchors this runner's capability inputs; once
+	# anchored, an old observation of an unchanged brief still holds (no TTL).
+	_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || return 1
+	rm -f "$cooldown_dir/owner--repo--42"
+	fixture_comments=$(jq -c 'map(.created_at="2020-01-01T00:00:00Z")' <<<"$recent_comments")
+	_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' || return 1
+	# Unanchored, the capability at release is unknown: an old observation
+	# re-probes once and stays ignored until a newer release re-arms it.
+	rm -rf "$cooldown_dir"
+	_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && return 1
+	_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && return 1
+	# A changed runner capability re-probes and ignores pre-change observations.
+	mkdir -p "$cap_repo"
+	printf '{"x":1}\n' >"$cap_repo/.aidevops.json"
+	cap_candidate=$(jq -c --arg p "$cap_repo" '.repo_path=$p' <<<"$candidate")
+	rm -rf "$cooldown_dir"
+	fixture_comments="$recent_comments"
+	_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" || return 1
+	printf '{"x":2}\n' >"$cap_repo/.aidevops.json"
+	_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" && return 1
+	_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" && return 1
+	# A log-derived deferral that is first to see a capability change also
+	# discards pre-change observations once its own TTL expires.
+	rm -rf "$cooldown_dir"
+	_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" || return 1
+	printf '{"x":3}\n' >"$cap_repo/.aidevops.json"
+	_dispatch_capability_cooldown_record "$cap_candidate" \
+		'DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=missing_secret cooldown=eligible'
+	rm -f "$cooldown_dir/owner--repo--42"
+	_dispatch_skip_for_capability_cooldown "$cap_candidate" 42 owner/repo "$cap_repo" && return 1
+	rm -rf "$cooldown_dir"
+	return 0
+}
+
 test_worker_capability_cooldown() {
 	local status=0
 	if ! (
@@ -278,8 +318,7 @@ test_worker_capability_cooldown() {
 			"$changed" "$fixture_issue" owner/repo 42 >/dev/null || exit 1
 		HOME="$TEST_ROOT/other-runner"
 		[[ "$(_dispatch_filter_capability_cooled_candidates owner/repo '' "[$candidate]")" == "[$candidate]" ]] || exit 1
-		fixture_comments=$(jq -c 'map(.created_at="2020-01-01T00:00:00Z")' <<<"$fixture_comments")
-		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
+		_capability_cooldown_anchor_cases || exit 1
 		fixture_comments=$(jq -c 'map(.created_at="2999-01-01T00:00:00Z")' <<<"$fixture_comments")
 		_dispatch_skip_for_capability_cooldown "$candidate" 42 owner/repo '' && exit 1
 		exit 0

@@ -533,6 +533,13 @@ terminal_blocker_runner_capability_observation_epoch() {
 	blocker=$(_terminal_blocker_hash "v2:${_TBC_RUNNER_CAPABILITY}") || return 1
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || retry=""
 	_terminal_blocker_retry_after "$retry" "$observation" && return 1
+	# GH#37752: another runner's later claim supersedes this observation.
+	jq -en --argjson obs "$observation" --argjson comments "$comments_json" --arg self "$self" '
+		($obs.created_at | fromdateiso8601) as $at
+		| [$comments[] | (.body // "") as $b
+		| select(($b | test("(?m)^DISPATCH_CLAIM ")) and ($b | contains("runner=" + $self + " ") | not))
+		| select((.created_at | fromdateiso8601) > $at)] | length > 0
+	' >/dev/null 2>&1 && return 1
 	jq -er --arg self "$self" --arg marker "<!-- $_TBC_OBSERVATION_MARKER revision=${revision} blocker=${blocker} -->" '
 		select((.author // .user.login // "") == $self)
 		| select((.body // "") | contains($marker))
