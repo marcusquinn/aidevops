@@ -19,6 +19,9 @@ const TYPE_ID = "aidevops";
  * computer: the launcher resolves it from `repos.json`. Agents for a project
  * name that project's folder instead. */
 const DEFAULT_PROJECT_LABEL = "the aidevops repository";
+/** Prefilled for new agents, including drafts other agents request: the
+ * standard aidevops checkout. Clearing it falls back to the registered one. */
+const DEFAULT_PROJECT = "~/Git/aidevops";
 /** The MCP server name each session declares; Buzz tools arrive as `buzz_*`. */
 const TOOL_SERVER = "buzz";
 /** Buzz tools that answer where people see it, so no fallback reply is due. */
@@ -708,7 +711,7 @@ function fields(h, { value, onChange, disabled, agentName }) {
       h(
         "p",
         { style: hintStyle },
-        `Leave empty for aidevops main agents: they use ${DEFAULT_PROJECT_LABEL} registered on this computer. An agent for a project uses that project's folder in your Git folder: a full path, or one starting with ~/. It must be a repository registered with aidevops; the agent works in its own linked worktree of it, never in the folder itself.`,
+        `aidevops main agents use ${DEFAULT_PROJECT} (empty means ${DEFAULT_PROJECT_LABEL} registered on this computer). An agent for a project uses that project's folder in your Git folder: a full path, or one starting with ~/. It must be a repository registered with aidevops; the agent works in its own linked worktree of it, never in the folder itself.`,
       ),
     ),
     h(
@@ -878,7 +881,7 @@ export function apply(ctx) {
     title: "aidevops",
     description:
       "aidevops agents in OpenCode on this computer, each in its own worktree of a registered project.",
-    defaults: () => ({ config: { member: "", project: "", scope: "thread" } }),
+    defaults: () => ({ config: { member: "", project: DEFAULT_PROJECT, scope: "thread" } }),
     summary,
     Create: ({ config, onChange, disabled }) =>
       fields(h, { value: config ?? {}, onChange, disabled }),

@@ -69,8 +69,9 @@ changing plugin files, not for unchanged deployments.
    `<agent>-<LocalHostName>`. Each Mac needs a distinct `LocalHostName`
    (`scutil --get LocalHostName`); see
    `.agents/reference/team-interface-buzz-provisioning.md`.
-3. Leave **Project folder** empty for the aidevops main agents: they use the
-   aidevops repository registered in `repos.json` on this computer. For an
+3. **Project folder** is prefilled with `~/Git/aidevops` for the aidevops main
+   agents, including drafts another agent requests. Empty means the aidevops
+   repository registered in `repos.json` on this computer. For an
    agent that works on one project, set that project's folder in your Git
    folder. It must be a repository registered with aidevops (`repos.json`): a
    full path, or one starting with `~/`. The agent works in its own linked worktree
