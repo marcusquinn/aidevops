@@ -840,6 +840,9 @@ _tbr_release_circuit_hold() {
 		[[ "$fingerprint" == "$(_terminal_blocker_hash "v2:${_TBC_UNKNOWN}")" ]] || return 2
 	fi
 	repo_path=$(_tbr_repo_path "$repo")
+	local input_hold_rc=0
+	terminal_blocker_input_circuit_active "$comments" "$issue_json" "$repo" "$issue" "$repo_path" || input_hold_rc=$?
+	[[ "$input_hold_rc" -eq 1 ]] || return 2
 	# Retry-only holds include legacy timeout hashes: neither a changed brief
 	# nor changed code/dependencies may release those observations implicitly.
 	current_rev="$observed_rev"
