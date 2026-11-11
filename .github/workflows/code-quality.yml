@@ -232,18 +232,32 @@ jobs:
             sudo mv "$source_file" "${source_file}.disabled"
           fi
         done
-        # Retry transient Ubuntu mirror/DNS outages, including index refresh.
-        # apt-get update otherwise succeeds with stale indexes after fetch errors.
+        if command -v bwrap >/dev/null 2>&1; then
+          bwrap --version
+          exit 0
+        fi
+        # Hosted runners supply Ubuntu archive/security fallbacks in this file.
+        # Avoid the Azure mirror whose DNS stalls prevented failover (GH#37769),
+        # but never empty a mirror list without a known Ubuntu fallback.
+        if [ -f /etc/apt/apt-mirrors.txt ] &&
+          grep -qE '^https?://(archive|security)[.]ubuntu[.]com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+          sudo sed -i '/azure[.]archive[.]ubuntu[.]com/d' /etc/apt/apt-mirrors.txt
+        fi
+        # Run timeout as root so it can kill apt and its children even when
+        # they ignore TERM. At most 3 * (65 + 65 + 5) = 405s, below the 8m step.
+        apt_opts="-o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
         for attempt in 1 2 3; do
-          if sudo apt-get -o Acquire::Retries=1 -o APT::Update::Error-Mode=any update -qq &&
-             sudo apt-get -o Acquire::Retries=1 install -y bubblewrap; then
-            break
+          echo "Installing bubblewrap (attempt ${attempt}/3)"
+          # shellcheck disable=SC2086
+          if sudo timeout --kill-after=5s 60s apt-get update -qq -o APT::Update::Error-Mode=any $apt_opts \
+            && sudo timeout --kill-after=5s 60s apt-get install -y bubblewrap $apt_opts; then
+            bwrap --version
+            exit 0
           fi
-          if [ "$attempt" -eq 3 ]; then
-            exit 1
-          fi
-          sleep 10
+          sleep 5
         done
+        echo "::error::Unable to install bubblewrap after 3 bounded attempts"
+        exit 1
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs

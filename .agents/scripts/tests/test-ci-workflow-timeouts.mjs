@@ -18,7 +18,23 @@ assert.equal(replayJob['runs-on'], 'ubuntu-22.04', 'Keep the enforcing Bubblewra
 const installStep = replayJob.steps.find(step => step.name === 'Install Bubblewrap');
 assert.ok(installStep, 'Keep the Bubblewrap installation step');
 assert.equal(installStep['timeout-minutes'], 8, 'Bubblewrap installation must stop after 8 minutes');
-assert.match(installStep.run, /sudo apt-get install -y bubblewrap/, 'Keep the enforcing sandbox installation');
+assert.match(
+  installStep.run,
+  /sudo timeout --kill-after=5s 60s apt-get install -y bubblewrap/,
+  'Keep sandbox installation with a root-owned hard deadline',
+);
+assert.match(
+  installStep.run,
+  /sudo timeout --kill-after=5s 60s apt-get update -qq -o APT::Update::Error-Mode=any/,
+  'Bound index refresh and reject incomplete updates before installation',
+);
+assert.match(installStep.run, /for attempt in 1 2 3; do/, 'Keep retries within the step budget');
+assert.ok(3 * (65 + 65 + 5) < installStep['timeout-minutes'] * 60);
+assert.match(
+  installStep.run,
+  /sudo sed -i '\/azure\[\.\]archive\[\.\]ubuntu\[\.\]com\/d' \/etc\/apt\/apt-mirrors\.txt/,
+  'Use the runner-provided Ubuntu fallbacks instead of the failing Azure mirror',
+);
 
 const replayStep = replayJob.steps.find(step => step.name === 'Run model replay boundary suite');
 assert.ok(replayStep, 'Keep the replay boundary suite step');
