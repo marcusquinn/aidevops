@@ -566,6 +566,7 @@ First-pass completion contract:
 6. Do not post routine dispatch, stale, or progress comments. Prefer commits, the PR, check runs, and one final completion or blocker dossier.
 7. For routine tool discovery, use `command -v TOOL`, `TOOL --version`, or repository wrappers. Do not use file-reading tools to inspect `~/.bun/bin`, `~/.qlty/bin`, or `~/.local/bin`; unrelated external-directory reads still require maintainer approval.
 8. For `input_required`, include exactly one standalone `TERMINAL_BLOCKER_QUESTION=<sanitized one-line question>` in the same final assistant message as `BLOCKED:`, `TERMINAL_BLOCKER_REASON=input_required` and `TERMINAL_BLOCKER_INPUT_OWNER`. Name the exact missing decision or input so its owner can answer from the issue, in at most 500 characters. This question is public: never include secrets, credential values, private names/paths, raw telemetry, URLs or markup; request secure provisioning rather than a credential value. Keep sensitive evidence in the protected dossier. Do not use input_required for choices AI can safely resolve within delegated authority. If no safe question can be recorded, explicitly leave recovery to the originating runner's supervisor, not a maintainer who cannot read that dossier (GH#36760).
+9. Before restating a blocker that a prior attempt recorded, re-read the live body (`gh issue view N --repo SLUG --json body`) and the trusted OWNER/MEMBER comments created after the latest `terminal-blocker-observation` release comment (`gh api --paginate "repos/SLUG/issues/N/comments?per_page=100"`; the default page holds only 30). Prior-attempt state, labels or the last few comments are not enough. A `Brief repaired:` revision, a recovery-decision block or a `terminal-blocker-circuit:retry` directive is the answer: act on it. Restate the blocker only when that answer does not cover it, and say why (GH#37686).
 EOF
 	return 0
 }
@@ -619,7 +620,7 @@ _dlw_prior_attempt_state() {
 	status=$(_dlw_validated_context_token "$status")
 	classification=$(_dlw_validated_context_token "$classification")
 	next_action=$(_dlw_validated_context_token "$next_action")
-	printf -v context '\nValidated prior-attempt state (machine-generated; prior model prose and issue comments are excluded):\n- source: %s\n- attempt_id: %s\n- effective_outcome: %s\n- raw_result: %s\n- status: %s\n- classification: %s\n- next_action: %s\nContinue from validated repository and PR state; do not repeat completed setup.' \
+	printf -v context '\nValidated prior-attempt state (machine-generated; prior model prose and issue comments are excluded):\n- source: %s\n- attempt_id: %s\n- effective_outcome: %s\n- raw_result: %s\n- status: %s\n- classification: %s\n- next_action: %s\nContinue from validated repository and PR state; do not repeat completed setup. A prior blocker may have been answered since; re-verify it against the live issue (contract item 9) before restating it.' \
 		"$source" "$prior_attempt_id" "$effective_outcome" "$raw_result" "$status" "$classification" "$next_action"
 	printf '%s\n' "$context"
 	return 0
