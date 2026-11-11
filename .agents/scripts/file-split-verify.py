@@ -9,6 +9,7 @@ Reads `git diff --no-color --no-renames -U0 BASE...HEAD` and runs three checks:
    are compared as multisets. A removed-only line means logic was deleted or
    edited: FAIL. An added-only line is RESIDUE when it matches the scaffolding
    allowlist below, otherwise REVIEW, which is also a FAIL.
+   Binary changes (`Binary files differ`) cannot be line-verified: FAIL.
 2. Moved-function gate. A shell function definition removed from file A and
    added to file B (A != B) is "moved". `caller_script` is BASH_SOURCE[1] at
    the gh wrapper call, i.e. the file that DEFINES the calling function, so a
@@ -52,11 +53,20 @@ RESIDUE_RES = tuple(
     for pattern in (
         r"^$",
         r"^#",
-        r"\b[A-Za-z0-9_]*_(?:LOADED|INCLUDED|SOURCED)\b",
+        # Include guards: a complete test or assignment of a guard variable.
+        r"^(?:readonly\s+|export\s+|declare\s+-\S+\s+)?[A-Za-z0-9_]*_(?:LOADED|INCLUDED|SOURCED)=[\w\"']*;?$",
+        r"^(?:if\s+)?\[\[?(?!.*(?:\$\(|`))[^;&|]*_(?:LOADED|INCLUDED|SOURCED)\b[^;&|]*\]\]?"
+        r"(?:\s*&&\s*(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null)?)?(?:;\s*then)?;?$",
         r"^(?:if\s+!?\s*)?(?:source|\.)\s+\S",
-        r"BASH_SOURCE",
-        r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z0-9_]*(?:_DIR|_dir)=",
-        r"\bSCRIPT_DIR\b",
+        # Directory resolution: `X="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`.
+        r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z_]\w*=\"?\$\(\s*cd\s+\"?\$\(\s*dirname\s+\"?"
+        r"\$\{BASH_SOURCE(?:\[0\])?(?::-[^}]*)?\}\"?\s*\)\"?\s*(?:&>\s*/dev/null\s*)?&&\s*pwd(?:\s+-P)?\s*\)\"?"
+        r"(?:\s*\|\|\s*(?:return|exit)\s+\d+)?;?$",
+        # Plain *_DIR assignment of a literal/variable-only value.
+        r"^(?:readonly\s+|local\s+|export\s+)?[A-Za-z0-9_]*(?:_DIR|_dir)="
+        r"(?:\"(?:[^\"`$]|\$\{[^}]*\}|\$[A-Za-z_]\w*)*\"|[^\s;&|`$()\"']*);?$",
+        # Directory existence tests.
+        r"^(?:if\s+)?\[\[?\s+-[a-z]\s+\"\$\{?\w+_DIR\}?[^\"`$;&|]*\"\s+\]\]?(?:;\s*then)?;?$",
         r"^unset\s",
         r"^(?:fi|then|else)$",
         r"^(?:return|exit)\s+\d+(?:\s+2>\s*/dev/null\s*\|\|\s*exit\s+\d+)?;?$",
@@ -100,6 +110,14 @@ def diff_path(header_line, prefix):
     if value == "/dev/null":
         return None
     return value[len(prefix):] if value.startswith(prefix) else value
+
+
+BINARY_RE = re.compile(r"^(?:Binary files .* differ|GIT binary patch)$")
+
+
+def binary_changes(text):
+    """Return diff lines reporting binary changes the line parser cannot verify."""
+    return [line for line in text.split("\n") if BINARY_RE.match(line)]
 
 
 def parse_diff(text):
@@ -232,7 +250,10 @@ def gate_findings(head, moves):
     for move in moves:
         name, old_path = move[0], move[1]
         old_base = old_path.rsplit("/", 1)[-1]
-        pin_re = re.compile(r'caller_function"?\s*==\s*"' + re.escape(name) + r'"')
+        quoted = re.escape(name)
+        pin_re = re.compile(
+            r'caller_function"?\s*==\s*(?:"' + quoted + r'"|\'' + quoted + r"\'|" + quoted + r"(?![A-Za-z0-9_.:-]))"
+        )
         sites = []
         for path, line_no, content in pins:
             if pin_re.search(content) and pin_is_gate_for(head, path, line_no, old_base, cache):
@@ -298,6 +319,7 @@ def main(argv=None):
         diff = git("diff", "--no-color", "--no-renames", "--no-ext-diff", "--no-textconv",
                    "-U0", f"{base}...{head}", "--")
         removed, added = parse_diff(diff)
+        binary = binary_changes(diff)
         removed_counter = collections.Counter(entry[2] for entry in removed)
         added_counter = collections.Counter(entry[2] for entry in added)
         removed_only = unmatched(removed, removed_counter - added_counter)
@@ -311,10 +333,10 @@ def main(argv=None):
         print(f"file-split-verify: {error}", file=sys.stderr)
         return 2
 
-    failed = bool(removed_only or review or gated)
+    failed = bool(removed_only or review or gated or binary)
     print(
         f"removed={len(removed)} added={len(added)} removed-only={len(removed_only)} "
-        f"review={len(review)} gated={len(gated)} warn={len(warnings)} "
+        f"review={len(review)} binary={len(binary)} gated={len(gated)} warn={len(warnings)} "
         f"residue={residue} moved-functions={len(moves)} "
         f"result={'FAIL' if failed else 'PASS'}"
     )
@@ -328,6 +350,7 @@ def main(argv=None):
 
     emit("REMOVED-ONLY", [location(entry) for entry in removed_only])
     emit("REVIEW", [location(entry) for entry in review])
+    emit("BINARY", binary)
     for (name, old_path, new_path), sites in gated.items():
         print(f"GATED {name}: moved {old_path} -> {new_path}; file-identity gate pins it at:")
         for site in sites:
