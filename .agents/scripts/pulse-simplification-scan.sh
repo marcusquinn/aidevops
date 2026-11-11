@@ -696,19 +696,21 @@ _COMPLEXITY_GENERATOR_MARKER_RE='<!--\s*aidevops:generator=(function-complexity-
 # issue author within the creation window, i.e. the hold is the legacy
 # co-admin creation hold rather than a later deliberate decision hold.
 # Arguments: $1 - slug, $2 - issue number, $3 - author login, $4 - createdAt
+# Returns: 0 creation hold, 1 not a creation hold, 2 timeline read/parse failure
 _complexity_hold_is_creation_hold() {
 	local slug="$1"
 	local issue_number="$2"
 	local author="$3"
 	local created_at="$4"
-	local verdict=""
-	verdict=$(gh api "repos/${slug}/issues/${issue_number}/timeline" --paginate \
+	local events="" verdict=""
+	events=$(gh api "repos/${slug}/issues/${issue_number}/timeline" --paginate \
 		--jq '.[] | select(.event == "labeled" and .label.name == "hold-for-review") | "\(.actor.login // "")|\(.created_at)"' \
-		2>/dev/null | jq -R -s --arg author "$author" --arg created "$created_at" '
-			[split("\n")[] | select(length > 0) | split("|")] as $events |
-			($created | fromdateiso8601) as $c |
-			($events | length) > 0 and
-			($events | all(.[0] == $author and ((.[1] | fromdateiso8601) - $c) <= 300))' 2>/dev/null) || return 1
+		2>/dev/null) || return 2
+	verdict=$(printf '%s\n' "$events" | jq -R -s --arg author "$author" --arg created "$created_at" '
+		[split("\n")[] | select(length > 0) | split("|")] as $events |
+		($created | fromdateiso8601) as $c |
+		($events | length) > 0 and
+		($events | all(.[0] == $author and ((.[1] | fromdateiso8601) - $c) <= 300))' 2>/dev/null) || return 2
 	[[ "$verdict" == true ]] && return 0
 	return 1
 }
@@ -723,34 +725,62 @@ _complexity_hold_is_creation_hold() {
 _complexity_release_creation_holds() {
 	local slug="$1"
 	[[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" == true ]] || return 0
-	local held="" rows="" issue_number="" author="" created_at="" perm=""
+	local held="" rows="" issue_number="" author="" created_at="" perm="" rc=0
+	local n_candidates=0 n_released=0 n_not_creation=0 n_timeline_fail=0 n_perm_fail=0 n_no_write=0 n_edit_fail=0
 	held=$(gh_issue_list --repo "$slug" --state open --label hold-for-review \
-		--limit 100 --json number,body,author,createdAt 2>/dev/null) || return 0
+		--limit 100 --json number,body,author,createdAt 2>/dev/null) || {
+		echo "[pulse-wrapper] Complexity scan: creation-hold backfill skipped — hold-for-review issue list read failed on ${slug} (will retry next cycle)" >>"$LOGFILE"
+		return 0
+	}
 	rows=$(printf '%s' "$held" | jq -r --arg re "$_COMPLEXITY_GENERATOR_MARKER_RE" '.[] |
 		select((.body // "") | test($re)) |
-		"\(.number)\t\(.author.login // "")\t\(.createdAt // "")"' 2>/dev/null | sed -n '1,10p') || return 0
+		"\(.number)\t\(.author.login // "")\t\(.createdAt // "")"' 2>/dev/null | sed -n '1,10p') || {
+		echo "[pulse-wrapper] Complexity scan: creation-hold backfill skipped — could not parse hold-for-review issue list for ${slug} (will retry next cycle)" >>"$LOGFILE"
+		return 0
+	}
 	while IFS=$'\t' read -r issue_number author created_at; do
 		[[ "$issue_number" =~ ^[0-9]+$ && -n "$author" && -n "$created_at" ]] || continue
-		_complexity_hold_is_creation_hold "$slug" "$issue_number" "$author" "$created_at" || continue
+		n_candidates=$((n_candidates + 1))
+		rc=0
+		_complexity_hold_is_creation_hold "$slug" "$issue_number" "$author" "$created_at" || rc=$?
+		if [[ "$rc" -eq 2 ]]; then
+			n_timeline_fail=$((n_timeline_fail + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill timeline read failed for #${issue_number} — will retry next cycle" >>"$LOGFILE"
+			continue
+		elif [[ "$rc" -ne 0 ]]; then
+			n_not_creation=$((n_not_creation + 1))
+			continue
+		fi
 		# #aidevops:trust-boundary — the author's verified write authority (the
 		# same authority dispatch admits), not the generator marker in a public
 		# body, justifies releasing the hold. Such an author could already file
 		# an unheld auto-dispatch issue, so the release grants nothing new.
 		perm=""
-		_gh_collaborator_permission_lookup "$slug" "$author" perm 2>/dev/null || continue
+		if ! _gh_collaborator_permission_lookup "$slug" "$author" perm 2>/dev/null; then
+			n_perm_fail=$((n_perm_fail + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill permission lookup failed for #${issue_number} author ${author} (http=${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}) — hold kept" >>"$LOGFILE"
+			continue
+		fi
 		case "$perm" in
 		admin | maintain | write) ;;
-		*) continue ;;
+		*)
+			n_no_write=$((n_no_write + 1))
+			echo "[pulse-wrapper] Complexity scan: creation-hold backfill kept hold on #${issue_number} — author ${author} lacks write authority (permission=${perm:-unknown})" >>"$LOGFILE"
+			continue
+			;;
 		esac
 		if gh_issue_edit_safe "$issue_number" --repo "$slug" \
 			--remove-label hold-for-review --add-label auto-dispatch >/dev/null 2>&1; then
+			n_released=$((n_released + 1))
 			gh_issue_comment "$issue_number" --repo "$slug" --body "<!-- aidevops:complexity-creation-hold-released -->
 Released the creation-time \`hold-for-review\`: this generated simplification issue was filed by write-authorized @${author}, whose pulse applied the hold because its identity check failed open (GH#37554). That path now fails closed; the approval instructions in the body no longer apply, and this issue is ready for automated dispatch." >/dev/null 2>&1 || true
 			echo "[pulse-wrapper] Complexity scan: released creation hold on #${issue_number} (${perm} author ${author}, GH#37554)" >>"$LOGFILE"
 		else
+			n_edit_fail=$((n_edit_fail + 1))
 			echo "[pulse-wrapper] Complexity scan: failed to release creation hold on #${issue_number} — will retry next cycle" >>"$LOGFILE"
 		fi
 	done <<<"$rows"
+	echo "[pulse-wrapper] Complexity scan: creation-hold backfill summary candidates=${n_candidates} released=${n_released} not_creation_hold=${n_not_creation} timeline_failed=${n_timeline_fail} permission_failed=${n_perm_fail} no_write_authority=${n_no_write} edit_failed=${n_edit_fail}" >>"$LOGFILE"
 	return 0
 }
 
