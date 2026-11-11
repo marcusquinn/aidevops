@@ -782,6 +782,7 @@ _pulse_merge_final_trust_gate() {
 	local trust_gate_start=0 trust_gate_rc=0
 	[[ -n "${timing_prefix:-}" ]] && trust_gate_start=$(_pmp_now_epoch)
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="[]"
 	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug" "$expected_head_sha"; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
 		trust_gate_rc=1

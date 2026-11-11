@@ -183,15 +183,34 @@ fi
 final_gate_timing_regression() {
   local timing_prefix="gate_" gate_trust_gate_s=0 fake_epoch=100
   local failure="" rc=0
+  local pr_number=7 repo_slug="owner/repo" pr_head_ref_oid="sha-reviewed"
+  local linked_issue=101 pr_labels="origin:worker" pr_updated_at=""
+  local route_calls=0 routed_evidence=""
+  local fresh_evidence='[{"name":"current-check","bucket":"fail"}]'
   _pmp_now_epoch() { printf '%s' "$fake_epoch"; return 0; }
   _pulse_merge_admin_safety_check() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != authority ]]; return $?; }
   _pulse_merge_refresh_review_gate_evidence() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != review ]]; return $?; }
   worker_briefed_trust_verdict() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != worker ]]; return $?; }
-  _pulse_merge_preflight_snapshot_gate() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != snapshot ]]; return $?; }
+  _pulse_merge_preflight_snapshot_gate() {
+    fake_epoch=$((fake_epoch + 1))
+    if [[ "$failure" == snapshot ]]; then
+      _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON="$fresh_evidence"
+      return 1
+    fi
+    return 0
+  }
+  _pulse_merge_maybe_dispatch_preflight_remediation() { return 0; }
+  _route_pr_to_fix_worker() { local checks_json="${9:-}"; route_calls=$((route_calls + 1)); routed_evidence="$checks_json"; return 0; }
   for failure in authority review worker snapshot; do
+    _PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON='[{"name":"previous-pr-check","bucket":"fail"}]'
     rc=0
-    _pulse_merge_final_trust_gate 7 owner/repo sha-reviewed || rc=$?
+    _pmp_admin_final_gate_or_route || rc=$?
     [[ "$rc" -eq 1 ]] || return 1
+    if [[ "$failure" != snapshot ]]; then
+      [[ "$_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON" == "[]" && "$route_calls" -eq 0 ]] || return 1
+    else
+      [[ "$route_calls" -eq 1 && "$routed_evidence" == "$fresh_evidence" ]] || return 1
+    fi
   done
   [[ "$gate_trust_gate_s" -eq 10 ]] || return 1
   failure=""
@@ -209,7 +228,7 @@ final_gate_timing_regression() {
 }
 
 if ! (final_gate_timing_regression); then
-  printf 'FAIL: final-gate timing is not cumulative across success/failure/native calls\n'
+  printf 'FAIL: final-gate cumulative timing or stale-evidence isolation regressed\n'
   exit 1
 fi
 
