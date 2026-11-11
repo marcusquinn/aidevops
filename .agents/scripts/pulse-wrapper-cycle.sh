@@ -223,6 +223,7 @@ _pulse_supervisor_prompt() {
 	local prompt="$pulse_command"
 	local max_age="${PULSE_SUPERVISOR_STATE_MAX_AGE_S:-7200}"
 	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200
+	max_age=$((10#$max_age))
 	local state_epoch="" state_age="" state_iso="" state_age_h=""
 	if [[ -f "$state_file" ]] && state_epoch=$(_pulse_state_file_epoch "$state_file"); then
 		state_age=$(($(date +%s) - state_epoch))
@@ -234,10 +235,15 @@ _pulse_supervisor_prompt() {
 	prompt="${pulse_command}
 
 Runtime sandbox rule: supervisor-pulse is launched from the aidevops agent workspace. Do not run Bash tool calls with workdir set to managed repository paths or any other directory outside that workspace. Use the pre-fetched state file and wrapper/helper functions from the current workspace instead. If repo/worktree data is missing, record a diagnostic and exit cleanly rather than requesting external_directory permission."
-	if [[ -n "$state_age" && "$state_age" -gt "$max_age" ]]; then
+	if [[ -z "$state_age" || "$state_age" -gt "$max_age" ]]; then
 		prompt="${prompt}
 
-No current pre-fetched state snapshot exists: the last state file was generated ${state_iso} (${state_age_h}h ago, limit ${max_age}s) because prefetch has been deferred. Do not read or rely on it. Use targeted live reads instead: bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-candidates <slug> <N>, the recovery helpers named below, and gh for specific issues/PRs."
+No current pre-fetched state snapshot exists: the snapshot is missing, its timestamp is unavailable, or it exceeds the ${max_age}s age limit."
+		if [[ -n "$state_age" ]]; then
+			prompt="${prompt} Last generated ${state_iso} (${state_age_h}h ago)."
+		fi
+		prompt="${prompt}
+Stale-state override for /pulse and /pulse-sweep: do not read or rely on the old snapshot, including for repository scope. This overrides workflow instructions to read pre-fetched state. Run bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope for current schedule-filtered repository slugs; use only those slugs for triage and list-candidates <slug> <N>. Use targeted live reads via list-candidates, the recovery helpers named below, and gh for specific issues/PRs within that scope. If scope lookup fails or returns no slugs, record a diagnostic and exit cleanly; never substitute the persisted scope or stale snapshot."
 	elif [[ -f "$state_file" ]]; then
 		prompt="${prompt}
 

@@ -23,7 +23,7 @@ source "${_pulse_wrapper_commands_dir}/pulse-wrapper-dispatch-gates.sh"
 unset _pulse_wrapper_commands_dir
 
 _pulse_wrapper_command_usage() {
-	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
+	printf '%s\n' 'usage: pulse-wrapper.sh --command <capacity|list-scope|list-candidates|dispatch|approve-pr|relabel-needs-info|dispatch-foss|repo-cap|count-debt|create-debt-worktree|sync-todo> [args...]' >&2
 	return 2
 }
 
@@ -85,6 +85,31 @@ _pulse_wrapper_run_command() {
 		available=$((max_workers - active_workers))
 		[[ "$available" -ge 0 ]] || available=0
 		printf '%s|%s|%s\n' "$max_workers" "$active_workers" "$available"
+		;;
+	list-scope)
+		[[ "$#" -eq 0 ]] || {
+			_pulse_wrapper_command_usage
+			return 2
+		}
+		# Recompute from current config, not the scope persisted by an old prefetch.
+		# Exclude expired entries here so this read does not auto-disable repos.
+		local scope_entries="" slug="" ph_start="" ph_end="" expires=""
+		scope_entries=$(jq -r --arg today "$(date +%Y-%m-%d)" '
+			.initialized_repos[] |
+			select(.maintenance != false and .pulse == true and (.local_only // false) == false and (.slug // "") != "") |
+			select((.pulse_expires // "") == "" or .pulse_expires >= $today) |
+			[.slug,
+			 (if (.pulse_hours | type) == "array" then .pulse_hours[0] else .pulse_hours.start end // "" | tostring),
+			 (if (.pulse_hours | type) == "array" then .pulse_hours[1] else .pulse_hours.end end // "" | tostring),
+			 (.pulse_expires // "")] | join("|")
+		' "$REPOS_JSON") || return 1
+		while IFS='|' read -r slug ph_start ph_end expires; do
+			[[ -n "$slug" ]] || continue
+			if check_repo_pulse_schedule "$slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
+				printf '%s\n' "$slug"
+			fi
+		done <<<"$scope_entries"
+		return 0
 		;;
 	list-candidates)
 		[[ "$#" -ge 1 && "$#" -le 2 && -n "${1:-}" && "${2:-100}" =~ ^[0-9]+$ ]] || {

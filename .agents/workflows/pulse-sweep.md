@@ -68,6 +68,16 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below, including snapshot-derived repository scope. Run
+`bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope` to obtain
+current schedule-filtered repository slugs from configuration. Limit triage and
+`list-candidates SLUG 100` to those slugs; use the named helpers and targeted `gh`
+reads for current evidence. Skip snapshot-only checks without equivalent live
+evidence. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **t2041 read contract — summary first, deep reads on demand.**
@@ -306,7 +316,7 @@ When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a 
 
 ### Scope boundary
 
-Only dispatch workers for repos in the pre-fetched state (`pulse: true`). Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
+Only dispatch workers for repos in the pre-fetched state (`pulse: true`), or in the current `list-scope` output when the stale-state override applies. Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
 
 ## Quality-Debt and Simplification-Debt
 

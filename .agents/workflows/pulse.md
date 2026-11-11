@@ -54,6 +54,15 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below. Run `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope`
+to obtain current schedule-filtered repository slugs from configuration. Limit
+triage and `list-candidates SLUG 100` to those slugs; use the named helpers and
+targeted `gh` reads for current evidence. Do not infer absent data from the old
+snapshot. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 The wrapper already fetched all open PRs and issues. Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **Sandbox rule:** this unattended pulse runs from the aidevops agent workspace, not from each repo. Do NOT run Bash with `workdir` set to a managed repo path (for example to run `git worktree list`). OpenCode treats that as high-risk `external_directory` shell access and stalls for human permission. Use pre-fetched state or wrapper/helper functions from the current workspace; if required repo/worktree data is missing, log a diagnostic and exit cleanly.
