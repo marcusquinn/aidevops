@@ -688,10 +688,28 @@ fi
 	_hrw_finish_failed_run issue-12345 "" 1
 	[[ "$released_reason" == worker_not_launched ]]
 	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	_hrff_worker_session_count() { printf '0\n'; return 0; }
+	# A runtime returning before it creates a session used to consume approval.
+	_run_metric_session_id=""
+	_WORKER_PERSISTED_SESSION_ID="old-session-is-not-launch-proof"
+	_HRW_TERMINAL_OUTCOME=""
+	released_reason=""
+	_hrw_finish_success_run issue-12345 ""
+	[[ "$released_reason" == worker_not_launched ]]
+	[[ "$_HRW_FINAL_RUNTIME_CLASSIFICATION" == worker_not_launched ]]
+	released_reason=""
+	_hrw_finish_failed_run issue-12345 "" 1
+	[[ "$released_reason" == worker_not_launched ]]
+	# Output-derived IDs work for both runtimes; positive activity also proves
+	# an invocation when an isolated DB was finalized before finish runs.
+	_run_metric_session_id="current-invocation-session"
 	_HRW_TERMINAL_OUTCOME=""
 	released_reason=""
 	_hrw_finish_success_run issue-12345 ""
 	[[ "$released_reason" == worker_complete ]]
+	_run_metric_session_id=""
+	_hrff_worker_session_count() { printf '1\n'; return 0; }
+	_hrw_runtime_launch_confirmed
 	printf 'PASS no-launch success and failure are infrastructure outcomes; launched success completes\n'
 )
 

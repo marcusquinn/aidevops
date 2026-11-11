@@ -1223,7 +1223,7 @@ _hrw_finish_failed_run() {
 	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
-	if [[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" != 1 ]]; then
+	if ! _hrw_runtime_launch_confirmed; then
 		_hrw_finish_not_launched "$session_key"
 		return 0
 	fi
@@ -1765,7 +1765,7 @@ _hrw_finish_success_run() {
 	local release_needed=1
 	local finish_status=0
 	local permission_pending_file=""
-	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || { _hrw_finish_not_launched "$session_key"; return 0; }
+	_hrw_runtime_launch_confirmed || { _hrw_finish_not_launched "$session_key"; return 0; }
 	if [[ "${_run_result_label:-}" == "$_HRW_STATUS_BLOCKED" ]]; then
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
@@ -1885,6 +1885,9 @@ _hrw_write_external_final_outcome() {
 	[[ "${_WORKER_EXTERNAL_OUTCOME_WRITTEN:-0}" != "1" ]] || return 0
 	external_session_count=$(_hrff_worker_session_count)
 	external_reason="${_HRW_FINAL_RUNTIME_CLASSIFICATION:-worker_complete}"
+	if [[ "$external_reason" == worker_complete ]] && ! _hrw_runtime_launch_confirmed; then
+		external_reason="$_HRW_REASON_NOT_LAUNCHED"
+	fi
 	external_retry_class=$(_hrff_retry_class_for_reason "$external_reason" "$external_session_count")
 	if [[ "$ledger_status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
 		external_reason="$_HRW_STATUS_PERMISSION_REQUIRED"
