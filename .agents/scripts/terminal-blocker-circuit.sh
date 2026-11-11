@@ -513,7 +513,7 @@ terminal_blocker_fetch_trusted_comments() {
 # shellcheck disable=SC2016 # jq definitions, not shell expansions.
 _TBC_PEER_CLAIM_JQ='
 def capability_trusted:
-  .author_association as $a | ('"$_TBC_AUTHORITATIVE_ASSOCIATIONS"' + ["COLLABORATOR"]) | index($a) != null;
+  .author_association as $a | '"$_TBC_AUTHORITATIVE_ASSOCIATIONS"' | index($a) != null;
 def peer_claim($self; $at):
   (.author // .user.login // "") as $login
   | select($login != "" and $login != $self)
@@ -557,7 +557,8 @@ terminal_blocker_fetch_capability_comments() {
 	jq -c --arg self "$self" --argjson at "$observation_at" --argjson authorized "$authorized" "${_TBC_PEER_CLAIM_JQ}"'
 		map(if (.author as $a | $authorized | index($a)) != null
 			then (if ([peer_claim($self; $at)] | length) > 0 then .capability_peer_authorized=true else . end) else . end)
-		| map(select(.author == $self or capability_trusted or .capability_peer_authorized == true))
+		| map(select(.author == $self or capability_trusted or .author_association == "COLLABORATOR"
+			or .capability_peer_authorized == true))
 	' <<<"$comments" || return 1
 	return 0
 }

@@ -205,7 +205,7 @@ _capability_cooldown_own_contributor_replay() {
 _capability_cooldown_peer_claim_cases() {
 	local original_comments="$fixture_comments" permission='' association='' fetched=''
 	local peer_permission='' peer_requests="$TEST_ROOT/peer-permission-requests"
-	for association in CONTRIBUTOR NONE; do
+	for association in COLLABORATOR CONTRIBUTOR NONE; do
 		for permission in write maintain admin read error; do
 			peer_permission="$permission"
 			fixture_comments=$(jq -c --arg association "$association" '. + [
