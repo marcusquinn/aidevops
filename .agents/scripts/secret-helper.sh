@@ -1042,6 +1042,17 @@ parse_set_options() {
 	return 0
 }
 
+print_secret_input_guidance() {
+	print_warning "WARNING: Never paste secret values into AI chat"
+	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
+	echo ""
+	echo "  1) When prompted, paste ONLY a single-line secret value"
+	echo "  2) Do NOT paste the command, key name, or an export line"
+	echo "  3) Input is hidden; press Enter when done"
+	echo ""
+	return 0
+}
+
 # Set a secret (hidden single-line input, full stdin, or private file).
 # Optional metadata flags record which account the secret opens (GH#34680);
 # they are validated before the value is read so a rejection stores nothing.
@@ -1078,13 +1089,7 @@ cmd_set() {
 	fi
 
 	print_info "Setting secret: $name"
-	print_warning "WARNING: Never paste secret values into AI chat"
-	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
-	echo ""
-	echo "  1) When prompted, paste ONLY a single-line secret value"
-	echo "  2) Do NOT paste the command, key name, or an export line"
-	echo "  3) Input is hidden; press Enter when done"
-	echo ""
+	print_secret_input_guidance
 
 	local value
 	if ! value=$(read_secret_input "$name" "$source_file"); then
