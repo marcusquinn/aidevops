@@ -79,8 +79,10 @@ _pulse_wrapper_list_scope() {
 	while IFS='|' read -r slug path ph_start ph_end expires; do
 		[[ -n "$slug" ]] || continue
 		if check_repo_pulse_schedule "$slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
-			[[ "$path" != '~' ]] || path="$HOME"
-			[[ "$path" != '~/'* ]] || path="$HOME/${path#\~/}"
+			case "$path" in
+			\~) path="$HOME" ;;
+			\~/*) path="$HOME/${path#\~/}" ;;
+			esac
 			printf '%s|%s\n' "$slug" "$path"
 		fi
 	done <<<"$scope_entries"
