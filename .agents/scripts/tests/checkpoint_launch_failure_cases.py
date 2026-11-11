@@ -16,12 +16,15 @@ import tempfile
 
 class LaunchFailureCases:
     def test_claim_only_launch_failure_compensation_fences(self):
-        for drift in ("none", "head", "owner", "human", "launched"):
+        transfer_failures = ("before", "status", "add", "remove")
+        for drift in ("none", "head", "owner", "human", "launched", *transfer_failures):
             with self.subTest(drift=drift), tempfile.TemporaryDirectory() as root:
                 data = self.fixture()
                 # Discovery requires a non-empty title in its TSV target row.
                 data["pr"]["title"] = "Checkpoint compensation"
                 data["issue"]["title"] = "Checkpoint compensation"
+                if drift in transfer_failures:
+                    data["transfer_failure"] = drift
                 for c in data["comments"]:
                     c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
                 state = pathlib.Path(root) / "state.json"
@@ -54,7 +57,7 @@ if _pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker; then exit 99; fi
                 saved = json.loads(state.read_text())
                 releases = [c for c in saved["comments"] if c["body"].startswith("CLAIM_RELEASED reason=worker_not_launched")]
                 terminals = [c for c in saved["comments"] if c["body"].startswith("DISPATCH_LEASE phase=terminal")]
-                if drift == "none":
+                if drift == "none" or drift in transfer_failures:
                     self.assertEqual(saved["issue"], data["issue"] | {"updated_at": saved["issue"]["updated_at"]})
                     self.assertEqual(len(releases), 1)
                     self.assertEqual(len(terminals), 1)

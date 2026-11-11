@@ -81,6 +81,18 @@ def main(args):
             raise ValueError("Unknown checkpoint drift")
         state.write_text(json.dumps(data))
     elif args[0] == "--set-issue":
+        failure = data.pop("transfer_failure", None)
+        if failure:
+            if failure == "status":
+                data["issue"]["labels"] = [label for label in data["issue"]["labels"]
+                                           if not label["name"].startswith("status:")]
+                data["issue"]["labels"].append({"name": "status:in-progress"})
+            elif failure == "add":
+                data["issue"]["assignees"].append({"login": "next-worker"})
+            elif failure == "remove":
+                data["issue"]["assignees"] = []
+            state.write_text(json.dumps(data))
+            sys.exit(1)
         set_issue(args, data)
         state.write_text(json.dumps(data))
     elif args[0] == "api" and "/comments" in args[1]:
