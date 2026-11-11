@@ -116,7 +116,7 @@ _is_parent_task() {
 # check-body subcommand
 # =============================================================================
 cmd_check_body() {
-	local body_file="" repo="" strict=0 allow_parent_close=0
+	local body_file="" repo="" strict=0 allow_parent_close=0 fail_on_uncertain=0
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -130,6 +130,10 @@ cmd_check_body() {
 			;;
 		--strict)
 			strict=1
+			shift
+			;;
+		--fail-on-uncertain)
+			fail_on_uncertain=1
 			shift
 			;;
 		--allow-parent-close)
@@ -186,6 +190,10 @@ cmd_check_body() {
 		printf 'parent-task-keyword-guard: WARNING: could not check labels for #%s (gh API failure); skipping\n' \
 			"$unc" >&2
 	done
+	if [[ "$fail_on_uncertain" -eq 1 && "${#uncertain[@]}" -gt 0 ]]; then
+		printf '%s\n' 'parent-task-keyword-guard: refusing merge without verified issue labels' >&2
+		return 2
+	fi
 
 	if [[ "${#violations[@]}" -eq 0 ]]; then
 		return 0

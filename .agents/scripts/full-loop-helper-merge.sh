@@ -1710,17 +1710,17 @@ _merge_check_parent_task_keywords() {
 	[[ -x "$guard" ]] || { print_error "Parent-task keyword guard unavailable"; return 1; }
 	metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || return 1
 	refs=$(printf '%s' "$metadata" | jq -r '
-		if ([.body | strings] | length) != 1 or ([.closingIssuesReferences | arrays] | length) != 1 then error("invalid metadata") else
+		if ([.body // "" | strings] | length) != 1 or ([.closingIssuesReferences | arrays] | length) != 1 then error("invalid metadata") else
 		.closingIssuesReferences[] | select(.number != null and .repository.owner.login != null and .repository.name != null)
 		| "\(.repository.owner.login)/\(.repository.name) \(.number)" end') || return 1
 	_merge_closing_refs_have_repository "$metadata" || return 1
 	tmp=$(mktemp) || return 1
-	printf '%s' "$metadata" | jq -r '.body' >"$tmp"
-	"$guard" check-body --body-file "$tmp" --repo "$repo" --strict || rc=$?
+	printf '%s' "$metadata" | jq -r '.body // ""' >"$tmp"
+	"$guard" check-body --body-file "$tmp" --repo "$repo" --strict --fail-on-uncertain || rc=$?
 	while read -r ref_repo ref_number; do
 		[[ -n "$ref_repo" && "$ref_number" =~ ^[0-9]+$ ]] || continue
 		printf 'Resolves #%s\n' "$ref_number" >"$tmp"
-		"$guard" check-body --body-file "$tmp" --repo "$ref_repo" --strict || rc=$?
+		"$guard" check-body --body-file "$tmp" --repo "$ref_repo" --strict --fail-on-uncertain || rc=$?
 	done <<<"$refs"
 	rm -f "$tmp"
 	[[ "$rc" -eq 0 ]] || return 1
