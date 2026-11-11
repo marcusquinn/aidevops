@@ -60,7 +60,7 @@ _hrff_check_release_claim() {
 # Exercise the production triage parser with bounded inference responses, never
 # contact a provider from this suite (including the older unknown-release cases).
 test_unknown_triage() (
-	local captured='{"explicit_reason":false,"detail":"BLOCKED: Only unfinished authorized implementation remains; no external prerequisite exists."}'
+	local captured='{"explicit_reason":false,"detail":"BLOCKED: Only unfinished authorized implementation remains; no external prerequisite exists. Await model publication."}'
 	local issue='{"body":"### Files Scope\n- helper.sh"}' reason="" expected="" status=0
 	local WORKER_WORKTREE_PATH="$SCRIPT_DIR" TRIAGE_RESPONSE="" AIDEVOPS_TERMINAL_BLOCKER_TRIAGE=""
 	timeout() {
@@ -74,7 +74,7 @@ test_unknown_triage() (
 	_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
 	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]] || status=1
 	for reason in external_trigger_pending permission_required input_required files_scope_excluded source_access_blocked runner_capability_unmet; do
-		TRIAGE_RESPONSE=$(jq -nc --arg reason "$reason" '{reason:$reason,owner:"maintainer",pending_only:false}')
+		TRIAGE_RESPONSE=$(jq -nc --arg reason "$reason" '{reason:$reason,owner:"maintainer",pending_only:false,trigger_evidence:"Await model publication"}')
 		_terminal_blocker_triage_unknown "$captured" "$issue" || status=1
 		expected="known:${reason}"
 		[[ "$reason" != input_required ]] || expected="${expected}:maintainer"
@@ -86,6 +86,27 @@ test_unknown_triage() (
 	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
 	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
 	if _terminal_blocker_triage_unknown '{"explicit_reason":true,"detail":"BLOCKED: ambiguous reason declarations"}' "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"external_trigger_pending","owner":"","pending_only":false}'
+	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"unknown","owner":"","pending_only":true}'
+	local output="${TEST_ROOT}/long-triage.ndjson" log="${TEST_ROOT}/triage.log"
+	local WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG=owner/repo
+	gh() { printf '%s\n' "$issue"; return 0; }
+	python3 -c 'import json; print(json.dumps({"type":"text","text":"BLOCKED: " + "x" * 3000 + " remains incomplete, draft pushed, no external dependency"}))' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == pending_work\ brief=* ]] || status=1
+	if ! rg -q 'terminal_blocker_triage ran:pending_work' "$log"; then status=1; fi
+	if _terminal_blocker_triage_unknown '{"explicit_reason":true,"detail":"BLOCKED: ambiguous"}' "$issue" 2>"$log"; then status=1; fi
+	if ! rg -q 'terminal_blocker_triage skipped:explicit_or_empty' "$log"; then status=1; fi
+	python3 -c 'import json; print(json.dumps({"type":"text","text":"BLOCKED: " + "x" * 17000 + " permission denied"}))' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" ]] || status=1
+	if ! rg -q 'terminal_blocker_triage skipped:truncated_evidence' "$log"; then status=1; fi
+	TRIAGE_RESPONSE='{"reason":"source_access_blocked","owner":"","pending_only":false}'
+	printf '%s\n' '{"type":"text","text":"BLOCKED: official site returns 403"}' >"$output"
+	terminal_blocker_capture_output "$output" 2>"$log" || status=1
+	[[ "$(_terminal_blocker_reason "$AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT")" == source_access_blocked ]] || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == known:source_access_blocked ]] || status=1
 	[[ "$status" == 0 ]] || return 1
 	return 0
 )
