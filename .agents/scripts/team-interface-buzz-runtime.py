@@ -35,6 +35,7 @@ from _team_interface_buzz_runtime_prune import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SCRIPT_DIR.parent
 PROJECT_VALIDATOR = SCRIPT_DIR / "team-interface-opencode-overlay.mjs"
+AIDEVOPS_UPSTREAM_SLUG = "marcusquinn/aidevops"
 RUNTIME_PROFILES = {
     "conversation": {
         "command": "aidevops-buzz-acp",
@@ -101,6 +102,29 @@ def load_manifest(profile):
         return validate_manifest(json.loads(source.read_text(encoding="utf-8")), profile)
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError("canonical Buzz runtime manifest is unavailable or invalid") from error
+
+
+def aidevops_project_root(repos_path):
+    """The registered aidevops checkout, used by plugin agents with no project folder."""
+    try:
+        data = json.loads(Path(os.path.expanduser(repos_path)).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("repos.json is unavailable; set the agent's project folder") from error
+    entries = data.get("initialized_repos", []) if isinstance(data, dict) else []
+    candidates = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("slug"), str)
+        and isinstance(entry.get("path"), str)
+        and (entry["slug"] == AIDEVOPS_UPSTREAM_SLUG or entry["slug"].endswith("/aidevops"))
+    ]
+    if not candidates:
+        raise RuntimeError(
+            "no aidevops repository is registered in repos.json; set the agent's project folder"
+        )
+    candidates.sort(key=lambda entry: entry["slug"] != AIDEVOPS_UPSTREAM_SLUG)
+    return candidates[0]["path"]
 
 
 def registered_project_root(requested, repos_path):
@@ -204,7 +228,11 @@ def parse_args(argv=None):
     desktop.add_argument("--agents-dir", required=True)
     desktop.add_argument("--output-dir", required=True)
     desktop.add_argument("--member", required=True)
-    desktop.add_argument("--project-root", required=True)
+    desktop.add_argument(
+        "--project-root",
+        default="",
+        help="registered project; empty means the registered aidevops repository",
+    )
     desktop.add_argument("--repos", default="~/.config/aidevops/repos.json")
     verify = commands.add_parser("verify-anchor", help="verify an existing immutable runtime anchor")
     verify.add_argument("--root", required=True)
@@ -253,7 +281,10 @@ def main(argv=None):
     args = parse_args(argv)
     if args.command in {"prune", "prepare", "verify-anchor"}:
         return anchor_command(args)
-    project_root = registered_project_root(args.project_root, args.repos)
+    requested = args.project_root
+    if args.command == "prepare-desktop" and not requested:
+        requested = aidevops_project_root(args.repos)
+    project_root = registered_project_root(requested, args.repos)
     if args.command == "prepare-desktop":
         agents_dir = Path(os.path.expanduser(args.agents_dir)).resolve()
         output_dir = Path(os.path.expanduser(args.output_dir))

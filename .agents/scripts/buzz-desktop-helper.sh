@@ -818,14 +818,17 @@ cmd_acp() {
 		return 64
 	}
 	# The plugin passes a home-relative folder literally; expand it here.
+	# Without --project, prepare-desktop uses the registered aidevops repository.
 	case "$project" in
 	\~/*) project="${HOME}/${project:2}" ;;
 	*) ;;
 	esac
-	[[ "$project" == /* ]] || {
+	if [[ -n "$project" && "$project" != /* ]]; then
 		_buzz_acp_fail "--project must be an absolute path to a repository registered in repos.json"
 		return 64
-	}
+	fi
+	local -a project_args=()
+	[[ -z "$project" ]] || project_args=(--project-root "$project")
 
 	local agents_dir="${AIDEVOPS_BUZZ_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 	local runtime_helper="${agents_dir}/scripts/team-interface-buzz-runtime.py"
@@ -858,7 +861,7 @@ cmd_acp() {
 		--agents-dir "$agents_dir" \
 		--output-dir "$runtime_dir" \
 		--member "$member" \
-		--project-root "$project" >&2 || return 78
+		${project_args[@]+"${project_args[@]}"} >&2 || return 78
 
 	local agent_id=""
 	local host_slug=""
@@ -895,7 +898,7 @@ cmd_acp() {
 show_help() {
 	cat <<'EOF'
 Usage: aidevops buzz <status|apply|rollback|reconcile> [--quiet]
-       aidevops buzz acp --member NAME --project ABSOLUTE_PATH
+       aidevops buzz acp --member NAME [--project ABSOLUTE_PATH]
 
 Manage a reversible, structurally validated Buzz Desktop OpenCode ACP compatibility fix.
 
