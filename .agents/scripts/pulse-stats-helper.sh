@@ -113,12 +113,13 @@ _pulse_stats_report_recovery_failure() {
 
 _pulse_stats_recover_locked() {
 	local quarantine="" tmp_file="" old_umask=""
-	local existing count=0 duplicate=0
+	local existing count=0 duplicate=0 nullglob_was_set=0
 	local -a quarantines=()
 	# Preserve existing evidence; stop making copies once the cap is reached.
+	shopt -q nullglob && nullglob_was_set=1
 	shopt -s nullglob
 	quarantines=("${PULSE_STATS_FILE}".corrupt.*)
-	shopt -u nullglob
+	((nullglob_was_set)) || shopt -u nullglob
 	for existing in "${quarantines[@]}"; do
 		count=$((count + 1))
 		if cmp -s "$PULSE_STATS_FILE" "$existing"; then

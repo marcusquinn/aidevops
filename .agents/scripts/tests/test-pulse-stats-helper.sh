@@ -128,6 +128,26 @@ exit 42
 SH
 chmod +x "${FAKE_BIN}/jq"
 PATH="${FAKE_BIN}:${PATH}" _pulse_stats_ensure_file
+command cp "$PULSE_STATS_FILE" "${TMP_DIR}/valid-original"
+# Isolate quarantine accounting from earlier malformed fixtures.
+PULSE_STATS_FILE="${TMP_DIR}/failure-stats.json"
+command cp "${TMP_DIR}/valid-original" "$PULSE_STATS_FILE"
+_PULSE_STATS_JQ="${FAKE_BIN}/jq"
+_PULSE_STATS_RECOVERY_FAILURE_REPORTED=""
+for index in {1..3}; do
+	pulse_stats_set_gauge failing_gauge "$index" 2>>"${TMP_DIR}/jq-errors"
+done
+pulse_stats_increment failing_counter 2>>"${TMP_DIR}/jq-errors"
+if pulse_stats_reset failing_counter 2>>"${TMP_DIR}/jq-errors"; then
+	printf 'reset unexpectedly succeeded with failing jq\n' >&2
+	exit 1
+fi
+cmp "${TMP_DIR}/valid-original" "$PULSE_STATS_FILE"
+shopt -s nullglob
+quarantines=("${PULSE_STATS_FILE}".corrupt.*)
+shopt -u nullglob
+[[ ${#quarantines[@]} -eq 0 ]]
+[[ $(wc -l <"${TMP_DIR}/jq-errors") -eq 1 ]]
 python3 - "$PULSE_STATS_FILE" <<'PY'
 import json
 import sys
