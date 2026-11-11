@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.167] - 2026-11-11
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#37682)
+
+### Fixed
+
+- treat needs-decomposition as a provisional close contract
+- recover never-refreshed health dashboards (GH#37676) (#37678)
+
 ## [3.39.166] - 2026-11-11
 
 ### Added
