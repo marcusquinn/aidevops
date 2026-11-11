@@ -393,7 +393,8 @@ class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.Test
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
                        "CHECKPOINT_TEST_APPROVAL": str(approval_id),
-                       "CHECKPOINT_TEST_READY": str(build is fixture and not unassigned).lower(),
+                        "CHECKPOINT_TEST_READY": str(build is fixture and not unassigned).lower(),
+                        "CHECKPOINT_TEST_RENEW": str(not (build is fixture and unassigned)).lower(),
                        # Do not renew this fixture's lease under the invoking
                        # headless worker's real dispatch session.
                        "AIDEVOPS_DISPATCH_LEASE_SESSION": "",
@@ -415,7 +416,9 @@ export WORKER_ISSUE_NUMBER=123 WORKER_REPO_SLUG=owner/repo WORKER_GITHUB_LOGIN=n
 export DISPATCH_REPO_SLUG=owner/repo
 export AIDEVOPS_PR_REPAIR_NUMBER=42 AIDEVOPS_PR_REPAIR_LINKED_ISSUE=123 AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE=next-worker
 export AIDEVOPS_PR_CHECKPOINT_AUTHOR=worker AIDEVOPS_PR_REPAIR_HEAD_SHA="$PCC_HEAD_OID" AIDEVOPS_PR_REPAIR_HEAD_REF="$PCC_HEAD_REF"
-_hrw_renew_dispatch_prelaunch_lease "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+if [[ "$CHECKPOINT_TEST_RENEW" == true ]]; then
+    _hrw_renew_dispatch_prelaunch_lease "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+fi
 _hrw_verify_dispatch_ownership 123 owner/repo
 if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
     "$1/dispatch-claim-helper.sh" transition ready 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
@@ -424,6 +427,10 @@ if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
     "$1/dispatch-claim-helper.sh" transition terminal 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
 else
     _pcc_restore_transferred_ownership owner/repo 42
+    # GH#37735: no model ran and the exact head is unchanged. The real claim
+    # producer must accept the same approval after the compensating release.
+    "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEAD_OID" "$PCC_HEAD_REF" next-worker "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+    exit 0
 fi
 if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEAD_OID" "$PCC_HEAD_REF" next-worker "$AIDEVOPS_PR_CHECKPOINT_SESSION"; then exit 99; fi
 '''
@@ -438,6 +445,89 @@ if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEA
                 else:
                     self.assertEqual(restored["assignees"], data["issue"]["assignees"])
                     self.assertEqual(restored["labels"], data["issue"]["labels"])
+
+    def test_claim_only_launch_failure_compensation_fences(self):
+        for drift in ("none", "head", "owner", "human", "launched"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as root:
+                data = fixture()
+                # Discovery requires a non-empty title in its TSV target row.
+                data["pr"]["title"] = "Checkpoint compensation"
+                data["issue"]["title"] = "Checkpoint compensation"
+                for c in data["comments"]:
+                    c["created_at"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                state = pathlib.Path(root) / "state.json"
+                state.write_text(json.dumps(data))
+                gh = pathlib.Path(root) / "gh"
+                gh.write_text('#!/usr/bin/env bash\nexec python3 "$CHECKPOINT_TEST_FILE" --gh "$@"\n')
+                gh.chmod(0o700)
+                env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
+                       "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")),
+                       "CHECKPOINT_TEST_STATE": str(state), "CHECKPOINT_TEST_DRIFT": drift,
+                       "AIDEVOPS_DISPATCH_LEASE_SESSION": "", "AIDEVOPS_TEST_MODE": "1",
+                       "AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS": "1", "DISPATCH_CLAIM_WINDOW": "0",
+                       "AIDEVOPS_DEVICE_ID": "test-device"}
+                command = r'''
+set -euo pipefail
+source "$1/pr-checkpoint-continuation-helper.sh"
+set_issue_status() { python3 "$CHECKPOINT_TEST_FILE" --set-issue "$@"; }
+_prrts_dispatch_guarded() {
+    _pcc_claim_revised_checkpoint owner/repo 42 "$PCC_HEAD_REF" "$PCC_HEAD_OID" || return 13
+    python3 "$CHECKPOINT_TEST_FILE" --drift "$CHECKPOINT_TEST_DRIFT"
+    if [[ "$CHECKPOINT_TEST_DRIFT" == launched ]]; then PRRTS_WORKER_LAUNCH_STARTED=1; fi
+    return 13
+}
+if _pcc_dispatch owner/repo "$HOME" 42 123 worker next-worker; then exit 99; fi
+'''
+                result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS)], env=env,  # nosec B603
+                                        capture_output=True, text=True, timeout=30, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("launch failed rc=13", result.stdout, result.stderr)
+                saved = json.loads(state.read_text())
+                releases = [c for c in saved["comments"] if c["body"].startswith("CLAIM_RELEASED reason=worker_not_launched")]
+                terminals = [c for c in saved["comments"] if c["body"].startswith("DISPATCH_LEASE phase=terminal")]
+                if drift == "none":
+                    self.assertEqual(saved["issue"], data["issue"] | {"updated_at": saved["issue"]["updated_at"]})
+                    self.assertEqual(len(releases), 1)
+                    self.assertEqual(len(terminals), 1)
+                    self.assertLess(releases[0]["id"], terminals[0]["id"])
+                    self.assertEqual(revision.validate({**saved, "assignee": "next-worker",
+                                     "now": dt.datetime.now(dt.timezone.utc).timestamp()})["approval_id"], 3)
+                else:
+                    self.assertEqual(releases, [])
+                    self.assertEqual(terminals, [])
+                    owner = "replacement-owner" if drift == "owner" else "next-worker"
+                    self.assertEqual(saved["issue"]["assignees"], [{"login": owner}])
+                    self.assertIn({"name": "status:in-progress"}, saved["issue"]["labels"])
+
+    def test_detached_launch_failure_reasons_and_activation_fence(self):
+        command = r'''
+set -euo pipefail
+source "$1/pr-review-thread-response-launch.sh"
+_prrts_log() { return 0; }
+_hrw_create_detached_log() { return 1; }
+if _prrts_launch_detached_worker owner/repo 42 pid mode true; then exit 91; fi
+[[ "$PRRTS_WORKTREE_FAILURE_REASON" == detached_log_creation_failed ]]
+_hrw_create_detached_log() { printf '%s' /dev/null; return 0; }
+systemd_scope_available() { return 0; }
+systemd_scope_launch() { return 1; }
+if _prrts_launch_detached_worker owner/repo 42 pid mode true; then exit 92; fi
+[[ "$PRRTS_WORKTREE_FAILURE_REASON" == worker_scope_launch_failed ]]
+systemd_scope_available() { return 1; }
+INVOCATION_ID=test
+if _prrts_launch_detached_worker owner/repo 42 pid mode true; then exit 93; fi
+[[ "$PRRTS_WORKTREE_FAILURE_REASON" == worker_scope_unavailable ]]
+_prrts_launch_detached_worker() { printf -v "$3" '%s' 12345; return 0; }
+_prrts_activate_global_capacity() { return 1; }
+_prrts_release_global_capacity() { return 0; }
+kill() { return 0; }
+PRRTS_WORKER_LAUNCH_STARTED=0
+if _prrts_launch_reserved_worker owner/repo 42 worktree session attempt reservation true; then exit 94; fi
+[[ "$PRRTS_WORKTREE_FAILURE_REASON" == global_worker_reservation_activation_failed ]]
+[[ "$PRRTS_WORKER_LAUNCH_STARTED" == 1 ]]
+'''
+        result = subprocess.run([BASH, "-c", command, "test", str(SCRIPTS)],  # nosec B603
+                                capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 def released_successor_fixture():

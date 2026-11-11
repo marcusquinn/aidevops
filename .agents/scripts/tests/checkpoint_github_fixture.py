@@ -66,7 +66,21 @@ def read_response(args, data):
 def main(args):
     state = pathlib.Path(os.environ["CHECKPOINT_TEST_STATE"])
     data = json.loads(state.read_text())
-    if args[0] == "--set-issue":
+    if args[0] == "--drift":
+        mode = args[1]
+        if mode == "head":
+            data["pr"]["headRefOid"] = "2" * 40
+        elif mode == "owner":
+            data["issue"]["assignees"] = [{"login": "replacement-owner"}]
+        elif mode == "human":
+            number = max(c["id"] for c in data["comments"]) + 1
+            added = comment(number, "Interactive session claimed", "maintainer", "OWNER")
+            added["created_at"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            data["comments"].append(added)
+        elif mode not in {"none", "launched"}:
+            raise ValueError("Unknown checkpoint drift")
+        state.write_text(json.dumps(data))
+    elif args[0] == "--set-issue":
         set_issue(args, data)
         state.write_text(json.dumps(data))
     elif args[0] == "api" and "/comments" in args[1]:
