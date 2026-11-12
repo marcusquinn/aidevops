@@ -108,10 +108,9 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 		(checkpoint_protected | not) and
 		for_issue_line($issue);
 	def checkpoint_line_issues($keyword):
-		[(.body // "") | scan("(?m)^" + $keyword + " #([1-9][0-9]*)(?:[.](?:[ \\t]|$)|[ \\t]*$)") | .[0] | tonumber] | unique;
+		[(.body // "") | scan("(?i)(?:^|[^a-z0-9_])" + $keyword + "[ \\t]+#([1-9][0-9]*)(?![a-z0-9_])") | .[0] | tonumber] | unique;
 	def checkpoint_reference_issues:
-		checkpoint_line_issues("For") as $for |
-		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
+		(checkpoint_line_issues("For") + checkpoint_line_issues("Refs?")) | unique;
 	def worker_checkpoint_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
