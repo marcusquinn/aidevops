@@ -14,7 +14,7 @@ has_systemd_creds() {
 
 systemd_owns_secret() {
 	local name="$1"
-	[[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 1
+	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
 	[[ -e "$CONFIG_DIR/creds/$name.cred" || -L "$CONFIG_DIR/creds/$name.cred" ]] || return 1
 	return 0
 }
@@ -25,7 +25,7 @@ systemd_secret_names() {
 		[[ -e "$path" || -L "$path" ]] || continue
 		name="${path##*/}"
 		name="${name%.cred}"
-		[[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+		[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
 		printf '%s\n' "$name"
 	done
 	return 0
@@ -118,7 +118,13 @@ secret_env_tempfile() {
 		return 0
 	fi
 	local runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-	if [[ -d "$runtime" && ! -L "$runtime" && -O "$runtime" && $(stat -f -c %T "$runtime" 2>/dev/null) == tmpfs ]]; then
+	local runtime_fstype=""
+	case "$(uname -s)" in
+	Linux)
+		runtime_fstype=$(stat -f -c %T "$runtime" 2>/dev/null) || runtime_fstype=""
+		;;
+	esac
+	if [[ -d "$runtime" && ! -L "$runtime" && -O "$runtime" && "$runtime_fstype" == tmpfs ]]; then
 		mktemp "$runtime/aidevops-secret-env.XXXXXXXX" || return 1
 		return 0
 	fi
@@ -138,6 +144,18 @@ import sys
 from collections import Counter
 
 scripts, path = sys.argv[1:]
+
+
+def gopass_names():
+    try:
+        listing = subprocess.run(['gopass', 'ls', '--flat'], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if listing.returncode:
+        return set()
+    return {line.rsplit('/', 1)[-1].strip() for line in listing.stdout.decode(errors='replace').splitlines()}
+
+
 sys.path.insert(0, scripts)
 from credential_literals import SECRET_NAME, literal, parse, read_source
 
@@ -161,6 +179,8 @@ try:
         if result.returncode:
             raise ValueError('import failed')
         print('Imported and decrypt-verified: ' + name)
+        if name in gopass_names():
+            print('Warning: gopass entry ' + name + ' exists and its value still takes precedence over the imported credential', file=sys.stderr)
 except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
     print('Encrypted import failed safely; source retained', file=sys.stderr)
     sys.exit(1)

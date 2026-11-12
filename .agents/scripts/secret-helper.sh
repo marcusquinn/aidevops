@@ -1079,6 +1079,10 @@ cmd_set() {
 		print_error "Secret name must be a valid environment variable name"
 		return 1
 	fi
+	if [[ "$SET_BACKEND" == systemd-creds && ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "systemd-creds secret names must start with a letter (inventory/check/rm rule)"
+		return 1
+	fi
 	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
 		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
 		return 1

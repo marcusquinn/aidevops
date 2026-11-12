@@ -378,7 +378,7 @@ test_systemd_creds_round_trip() {
 		reason="$reason plaintext on disk"
 	fi
 	HOME="$home" bash "$HELPER" check ENC_TEST_KEY || { ok=1; reason="$reason check failed"; }
-	HOME="$home" bash "$HELPER" rm ENC_TEST_KEY --yes --skip-dependents >/dev/null 2>&1 || true
+	HOME="$home" bash "$HELPER" rm ENC_TEST_KEY --yes --skip-dependents >/dev/null 2>&1 || { ok=1; reason="$reason rm failed"; }
 	[[ ! -e "$cred" ]] || { ok=1; reason="$reason rm left ciphertext"; }
 	print_result "$name" "$ok" "$reason"
 	return 0
