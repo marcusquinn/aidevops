@@ -289,7 +289,7 @@ _routine_update_state() {
 			lock_held=1
 			break
 		fi
-		lock_mtime=$(stat -f %m "$write_lock" 2>/dev/null) || lock_mtime=$(stat -c %Y "$write_lock" 2>/dev/null) || lock_mtime=0
+		lock_mtime=$(_file_mtime_epoch "$write_lock") || lock_mtime=0
 		lock_now=$(date +%s)
 		if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && [[ "$lock_mtime" -gt 0 ]] && [[ $((lock_now - lock_mtime)) -gt 30 ]]; then
 			rmdir "$write_lock" 2>/dev/null || true
