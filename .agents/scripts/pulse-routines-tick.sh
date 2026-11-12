@@ -39,6 +39,21 @@ _pulse_routines_tick_interval() {
 }
 
 #######################################
+# Set _PULSE_ROUTINES_SELF_PID to the real PID of the calling shell (Bash 3.2
+# has no BASHPID, so $$ would be the cycle PID inside subshells). Sets a global
+# rather than printing, since command substitution would change BASHPID.
+#######################################
+_pulse_routines_self_pid() {
+	local pid="${BASHPID:-}"
+	if [[ -z "$pid" ]]; then
+		pid="$(exec sh -c 'printf "%s" "$PPID"')" || return 1
+	fi
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+	_PULSE_ROUTINES_SELF_PID="$pid"
+	return 0
+}
+
+#######################################
 # Ticker body: sleep one interval, then run the routines-only pass while the
 # owning cycle process is alive and no stop flag exists. TERM/INT/HUP end the
 # loop after the in-flight pass, so a routine start is never cut in half.
@@ -77,17 +92,24 @@ _pulse_start_routines_ticker() {
 		kill -0 "$_PULSE_ROUTINES_TICKER_PID" 2>/dev/null; then
 		return 0
 	fi
-	local owner_pid="${BASHPID:-$$}"
+	local owner_pid=""
+	_pulse_routines_self_pid || return 0
+	owner_pid="$_PULSE_ROUTINES_SELF_PID"
 	local interval=""
 	interval=$(_pulse_routines_tick_interval)
+	# Separate log: stage lines written to the supervisor LOGFILE would count
+	# as watchdog progress and mask a stalled supervisor.
+	local tick_log="${PULSE_ROUTINES_TICK_LOG:-${HOME}/.aidevops/logs/pulse-routines-tick.log}"
+	mkdir -p "${tick_log%/*}" 2>/dev/null || true
 	(
 		trap - EXIT
+		LOGFILE="$tick_log"
 		# shellcheck disable=SC2034 # read by sourced stage/lock helpers
 		AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP=0
 		# shellcheck disable=SC2034 # read by sourced stage/lock helpers
 		_LOCK_OWNED=false
 		_pulse_routines_ticker_loop "$owner_pid" "$interval"
-	) </dev/null >>"${LOGFILE:-/dev/null}" 2>&1 &
+	) </dev/null >>"$tick_log" 2>&1 &
 	_PULSE_ROUTINES_TICKER_PID=$!
 	_PULSE_ROUTINES_TICKER_OWNER="$owner_pid"
 	echo "[pulse-wrapper] Routines ticker: started pid=${_PULSE_ROUTINES_TICKER_PID} interval=${interval}s (GH#37914)" >>"${LOGFILE:-/dev/null}"
@@ -102,7 +124,8 @@ _pulse_start_routines_ticker() {
 _pulse_stop_routines_ticker() {
 	local ticker_pid="${_PULSE_ROUTINES_TICKER_PID:-}"
 	[[ "$ticker_pid" =~ ^[1-9][0-9]*$ ]] || return 0
-	[[ "${_PULSE_ROUTINES_TICKER_OWNER:-}" == "${BASHPID:-$$}" ]] || return 0
+	_pulse_routines_self_pid || return 0
+	[[ "${_PULSE_ROUTINES_TICKER_OWNER:-}" == "$_PULSE_ROUTINES_SELF_PID" ]] || return 0
 	_PULSE_ROUTINES_TICKER_PID=""
 	kill -TERM "$ticker_pid" 2>/dev/null || true
 	return 0
