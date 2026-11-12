@@ -608,14 +608,21 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: exact GraphQL metadata read returned malformed metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
 	fi
-	labels_str=$(printf '%s' "$pr_meta_json" \
-		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
-	is_fork=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.isCrossRepository // false' 2>/dev/null) || is_fork="false"
-	current_head_sha=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.headRefOid // ""' 2>/dev/null) || current_head_sha=""
-	pr_author=$(printf '%s' "$pr_meta_json" \
-		| jq -r '.author.login // ""' 2>/dev/null) || pr_author=""
+	# One jq pass for all four fields (was four forks); each field keeps its own
+	# fail-safe default so a malformed sibling cannot change another value.
+	local meta_fields=""
+	meta_fields=$(printf '%s' "$pr_meta_json" | jq -r '
+		(try ([.labels[].name] | join(",")) catch ""),
+		(try (.isCrossRepository // false | tostring) catch "false"),
+		(try (.headRefOid // "" | tostring) catch ""),
+		(try (.author.login // "" | tostring) catch "")' 2>/dev/null) || meta_fields=$'\nfalse\n\n'
+	{
+		IFS= read -r labels_str
+		IFS= read -r is_fork
+		IFS= read -r current_head_sha
+		IFS= read -r pr_author
+	} <<<"$meta_fields" || true
+	is_fork="${is_fork:-false}"
 	if [[ -z "$current_head_sha" || -z "$pr_author" ]]; then
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: missing head SHA or author for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1

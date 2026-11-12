@@ -21,10 +21,33 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _pmp_timing_path
 fi
 
-_pmp_now_epoch() {
-	local now_epoch
-	now_epoch=$(date +%s 2>/dev/null || printf '0')
+# Bash 4.2+ reads the clock through the printf builtin (no fork/exec); Bash 3.2
+# (macOS) falls back to date. Detected once at load time.
+_PMP_NOW_BUILTIN=0
+if printf -v _pmp_probe_epoch '%(%s)T' -1 2>/dev/null && [[ "$_pmp_probe_epoch" =~ ^[0-9]+$ ]]; then
+	_PMP_NOW_BUILTIN=1
+fi
+unset _pmp_probe_epoch
+
+# Set the caller's variable to integer epoch seconds without a subshell when
+# the printf builtin is available. Args: $1=destination variable name.
+_pmp_now_epoch_into() {
+	local dest_var="$1"
+	local now_epoch=""
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	if [[ "$_PMP_NOW_BUILTIN" -eq 1 ]]; then
+		printf -v now_epoch '%(%s)T' -1
+	else
+		now_epoch=$(date +%s 2>/dev/null || printf '0')
+	fi
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	printf -v "$dest_var" '%s' "$now_epoch"
+	return 0
+}
+
+_pmp_now_epoch() {
+	local now_epoch=""
+	_pmp_now_epoch_into now_epoch
 	printf '%s' "$now_epoch"
 	return 0
 }
@@ -37,7 +60,7 @@ _pmp_add_elapsed_seconds() {
 	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch=0
 
-	end_epoch=$(_pmp_now_epoch)
+	_pmp_now_epoch_into end_epoch
 	elapsed=$((end_epoch - start_epoch))
 	[[ "$elapsed" =~ ^[0-9]+$ ]] || elapsed=0
 
