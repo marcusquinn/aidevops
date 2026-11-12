@@ -148,7 +148,7 @@ api-*)
 	# Lock-marker reads carry a jq filter naming the consolidation-lock
 	# marker; they must see no competing runner rather than the comments.
 	_stub_parse_args "$@"
-	if printf '%s' "$JQ" | grep -q 'consolidation-lock'; then
+	if [[ "$JQ" == *consolidation-lock* ]]; then
 		_stub_emit "${GH_LOCK_MARKERS_JSON:-[]}" "$JQ"
 	else
 		printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}"
