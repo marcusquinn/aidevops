@@ -268,7 +268,9 @@ Agent installation prepares the framework workspace before bundle activation and
 exports its canonical path to subsequent setup steps. It does not create the
 private registry. An explicit custom state path still requires an existing,
 canonical parent. Each machine uses its own local state: do not share or copy
-this database between hosts.
+this database between hosts. Linked worktrees copied by a machine migration or
+restore refuse with `generation-directory-mismatch`; rescue their uncommitted
+work with `worktree-rescue-helper.sh` per `../reference/machine-migration.md`.
 With lifecycle observation explicitly disabled, workspace preparation failures
 produce a warning without blocking bundle activation.
 Both hooks pass `--initialize`: after platform readiness, the first launch creates

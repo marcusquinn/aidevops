@@ -42,6 +42,9 @@ SAFE_REASONS = {
     "state-parent-must-be-canonical",
     "session-owner-already-ended",
     "generation-changed-during-session-admission",
+    # GH#37827: the marker names another installation, path or directory
+    # identity, typically a worktree copied by a machine migration or restore.
+    "generation-directory-mismatch",
 }
 # GH#37346: concurrent pulse, cleanup and worker writers can hold the WAL write
 # lock past the store's 2 s busy timeout. Admission replay is idempotent, so

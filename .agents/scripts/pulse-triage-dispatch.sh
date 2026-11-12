@@ -61,12 +61,24 @@ fi
 # t1982: Compose the "What to do" instructions and "Constraints" sections
 # for the consolidation-task child body. Called by _compose_consolidation_child_body.
 #
-# Args: $1=parent_num $2=repo_slug $3=authors_line
+# Args: $1=parent_num $2=repo_slug $3=authors_line $4=parent_labels (CSV, optional)
+#
+# GH#37809: status:blocked records an unresolved dependency or hold, not
+# ownership, so a blocked parent hands its successor status:blocked. Ownership
+# states (queued/claimed/in-progress/in-review) are never copied.
 #######################################
 _compose_consolidation_worker_instructions() {
 	local parent_num="$1"
 	local repo_slug="$2"
 	local authors_line="$3"
+	local parent_labels="${4:-}"
+
+	local successor_status="status:available"
+	local status_rationale="never the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`). Immediately before creating the successor, re-read the parent's labels; if it now carries \`status:blocked\`, use \`status:blocked\` instead, because that label records an unresolved dependency or hold rather than ownership."
+	if [[ ",${parent_labels}," == *",status:blocked,"* ]]; then
+		successor_status="status:blocked"
+		status_rationale="the parent carries \`status:blocked\`, which records an unresolved dependency or hold rather than ownership, so the successor keeps it and stays held until that blocker is resolved. Keep the blocker text in the merged body. Never copy the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`)."
+	fi
 
 	cat <<EOF
 ## What to do
@@ -108,13 +120,13 @@ The validator must pass before running the signed creation command below. It che
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --label "consolidated,origin:worker,auto-dispatch,${successor_status},<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
   --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
 **Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
+**Dispatch handoff:** \`auto-dispatch\` and \`${successor_status}\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`${successor_status}\` — ${status_rationale} The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status, and the pre-claim gate holds a \`status:blocked\` successor until its blocker is released.
 
    Capture the new issue number as \$NEW_NUM.
 
@@ -184,7 +196,7 @@ _compose_consolidation_child_body() {
 
 	local instructions_block
 	instructions_block=$(_compose_consolidation_worker_instructions \
-		"$parent_num" "$repo_slug" "$authors_line")
+		"$parent_num" "$repo_slug" "$authors_line" "$parent_labels")
 
 	local packet
 	packet=$(

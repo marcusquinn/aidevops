@@ -337,7 +337,7 @@ _cb_meta_body_hypothesis() {
 
 	if [[ "$breaker_type" == "$_CB_BREAKER_NO_WORK" ]]; then
 		cat <<'EOF'
-- **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure.sh::classify_worker_exit` and the wait_status sentinel propagation.
+- **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure-classify.sh::classify_worker_exit` and the wait_status sentinel propagation (still in `headless-runtime-failure.sh`).
 - **Stale-recovery false positive** — assignment recovery may mark active work as stale and record `stale_timeout` / `no_work` fast-fails. Check `dispatch-dedup-stale.sh::_is_stale_assignment`, especially comment pagination/slurping and last-activity aggregation on long issue threads.
 - **Plugin init crash** — opencode plugin (`opencode-aidevops`) failing during boot due to FD exhaustion, env pollution, or a stale cache. Check the worker's stderr in `~/.aidevops/logs/worker-*-stderr.log`.
 - **Branch naming race** — worker tries to checkout a branch that another concurrent worker just consumed.
@@ -376,7 +376,7 @@ Treat the original (${original_display}) as evidence, not as the work to do. The
 - \`EDIT: .agents/scripts/dispatch-dedup-cost.sh\` — t2007 cost breaker definition and trip site.
 - \`EDIT: .agents/scripts/worker-lifecycle-common.sh\` — t2769 no_work breaker definition and trip site (around the \`no_work_loop\` marker).
 - \`EDIT: .agents/scripts/dispatch-dedup-stale.sh::_is_stale_assignment\` — stale assignment recovery path; for \`no_work\` trips, verify comment pagination/slurping and last-activity aggregation before changing exit classification.
-- \`EDIT: .agents/scripts/headless-runtime-failure.sh\` — worker exit classifier (the prime suspect for misclassification).
+- \`EDIT: .agents/scripts/headless-runtime-failure-classify.sh::classify_worker_exit\` — worker exit classifier (the prime suspect for misclassification); wait_status sentinel propagation stays in \`headless-runtime-failure.sh\`.
 - \`EDIT: .agents/scripts/circuit-breaker-meta-filer.sh\` — this filer; if it filed too eagerly, fix the trip-detection upstream rather than the filer.
 - \`EDIT: .agents/scripts/pulse-merge.sh::_handle_post_merge_actions\` — meta-PR merge cleanup that unblocks the original.
 
@@ -433,6 +433,7 @@ _cb_meta_body_tail() {
 - `.agents/scripts/dispatch-dedup-stale.sh`
 - `.agents/scripts/worker-lifecycle-common.sh`
 - `.agents/scripts/headless-runtime-failure.sh`
+- `.agents/scripts/headless-runtime-failure-classify.sh`
 - `.agents/scripts/headless-runtime-helper.sh`
 - `.agents/scripts/circuit-breaker-meta-filer.sh`
 - `.agents/scripts/pulse-merge.sh`
