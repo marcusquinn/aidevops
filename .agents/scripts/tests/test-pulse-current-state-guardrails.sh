@@ -876,6 +876,58 @@ JSON
 	return 0
 }
 
+test_open_pr_backlog_snapshot_expires_within_guardrail_max_age() {
+	reset_guardrail_env
+	local cache_dir="${TEST_ROOT}/pr-list-provider-cache"
+	mkdir -p "$cache_dir"
+	local saved_disable="${PULSE_PR_LIST_PROVIDER_CACHE_DISABLE:-}"
+	export PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=0
+	export PULSE_PR_LIST_PROVIDER_CACHE_DIR="$cache_dir"
+	export PULSE_PR_LIST_PROVIDER_CACHE_TTL=3600
+	export AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1
+	local live_file="${TEST_ROOT}/live-pr-count"
+	printf '12\n' >"$live_file"
+	# Underlying provider: emits <live_count> ready worker PRs.
+	gh_pr_list() {
+		local count=""
+		count=$(<"$live_file")
+		jq -n --argjson n "$count" '[range(0; $n) | {number: ., isDraft: false, labels: [{name: "origin:worker"}]}]'
+		return 0
+	}
+	# Re-source the real provider (earlier tests replaced pulse_pr_list_get).
+	unset _PULSE_PR_LIST_CACHE_LOADED
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/pulse-pr-list-cache.sh"
+	local candidates='[{"number":1,"labels":[{"name":"bug"}]}]'
+	local first="" second="" third=""
+	first=$(_dispatch_filter_repo_pr_backlog_candidates owner/stale "$candidates" | jq 'length')
+	# Other runners merge PRs: live count drops below threshold.
+	printf '3\n' >"$live_file"
+	# Within the max age the snapshot is still reused (REST cost bounded).
+	second=$(_dispatch_filter_repo_pr_backlog_candidates owner/stale "$candidates" | jq 'length')
+	# Age every cache entry past the guardrail bound but well inside the 3600s TTL.
+	local entry=""
+	for entry in "$cache_dir"/pr-list-*.out; do
+		[[ -f "$entry" ]] || continue
+		perl -e 'my $t = time - 600; utime $t, $t, $ARGV[0]' "$entry"
+	done
+	third=$(_dispatch_filter_repo_pr_backlog_candidates owner/stale "$candidates" | jq 'length')
+	unset AIDEVOPS_GH_PR_LIST_CACHE_DISABLE PULSE_PR_LIST_PROVIDER_CACHE_DIR PULSE_PR_LIST_PROVIDER_CACHE_TTL
+	unset -f gh_pr_list pulse_pr_list_get
+	if [[ -n "$saved_disable" ]]; then
+		export PULSE_PR_LIST_PROVIDER_CACHE_DISABLE="$saved_disable"
+	else
+		unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
+	fi
+	if [[ "$first" == "0" && "$second" == "0" && "$third" == "1" ]]; then
+		print_result "guardrail: PR backlog snapshot expires within guardrail max age despite 3600s cycle TTL" 0
+	else
+		print_result "guardrail: PR backlog snapshot expires within guardrail max age despite 3600s cycle TTL" 1 \
+			"first=${first} second=${second} third=${third}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -903,6 +955,7 @@ test_dispatch_max_exports_benign_ledger_for_direct_callers
 test_apply_dispatch_max_preserves_benign_ledger_across_refill
 test_ranked_candidates_prioritise_solvable_work
 test_ranked_candidates_prioritise_low_complexity_over_research
+test_open_pr_backlog_snapshot_expires_within_guardrail_max_age
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"
