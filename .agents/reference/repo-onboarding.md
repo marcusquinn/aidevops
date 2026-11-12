@@ -58,12 +58,12 @@ stop there.
 6. **Branch protection:** require pull requests and the `review-bot-gate`,
    `maintainer-gate` and `linked-issue-check` status checks on the default
    branch. This is a deliberate maintainer action, required for public
-   repositories. Verify with `aidevops security check <path>`. Exception:
-   workflows that push straight to the default branch, such as Cloudron catalog
-   publication, fail under these rules. Those repositories use the baseline
-   rulesets in `tools/deployment/cloudron-app-publishing-skill.md` ("Repository
-   protection") until a bypass token path is verified; the security check
-   still reports them as critical.
+   repositories. Verify with `aidevops security check <path>`. Workflows that
+   push straight to the default branch, such as Cloudron catalog publication,
+   then need the owner as an admin bypass actor and an owner PAT that has the
+   repository in its selected access ("Repository protection" in
+   `tools/deployment/cloudron-app-publishing-skill.md`). The security check
+   reports that bypass as critical; that is the accepted trade-off.
 7. **Type-specific steps:** Cloudron packages also need
    `tools/deployment/cloudron-package-onboarding.md`. Repositories with a user
    interface need a root `DESIGN.md`; repositories with public search targets

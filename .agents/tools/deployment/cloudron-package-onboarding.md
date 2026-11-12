@@ -18,9 +18,10 @@ had Pulse off, no aidevops labels, no `cloudron_package` entry and missing
 managed workflows, so its `auto-dispatch` tasks never ran and a new upstream
 release went unnoticed. This adds Cloudron steps to the general
 `reference/repo-onboarding.md`; complete its secrets and event policy steps too.
-For branch protection, use the baseline rulesets in
-`cloudron-app-publishing-skill.md`, not pull-request rules, which block catalog
-publication.
+Apply the baseline rulesets in `cloudron-app-publishing-skill.md`. If you also
+require pull requests and checks, catalog publication needs an admin bypass
+actor and `CLOUDRON_RELEASE_PAT` with this repository added to the token's
+selected access. A dry-run push with the token proves that access.
 
 1. **Initialize:** run `aidevops init` in a linked worktree of the package and
    merge the result. It writes `.aidevops.json`, the release and catalog callers
