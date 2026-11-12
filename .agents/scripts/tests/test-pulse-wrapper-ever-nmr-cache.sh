@@ -219,15 +219,15 @@ test_dead_owner_lock_is_reclaimed() {
 	return 0
 }
 
-test_live_owner_past_ceiling_is_reclaimed() {
-	local name="live legacy owner past the hold ceiling is reclaimed"
+test_live_owner_is_never_reclaimed() {
+	local name="live owner is respected however old its lock is"
 	reset_lock_state
-	# Legacy records stored the long-lived parent pulse PID ($$), which stays live.
 	make_lock_dir "$$" "202001010000"
-	_ever_nmr_cache_set "17465" "owner/repo" "false"
+	_ever_nmr_cache_set "17466" "owner/repo" "false"
 	local value=""
-	value=$(cached_value "17465")
-	if [[ "$value" == "false" ]] && grep -q 'past 300s ceiling' "$LOGFILE"; then
+	value=$(cached_value "17466")
+	if [[ "$value" == "missing" && -f "${EVER_NMR_CACHE_FILE}.lockdir/owner.pid" ]] &&
+		! grep -q 'clearing stale lock' "$LOGFILE"; then
 		print_result "$name" 0
 		return 0
 	fi
@@ -235,18 +235,85 @@ test_live_owner_past_ceiling_is_reclaimed() {
 	return 0
 }
 
-test_live_owner_within_ceiling_is_respected() {
-	local name="live owner within the hold ceiling is respected"
+test_leading_zero_settings_are_decimal() {
+	local name="leading-zero lock settings are read as decimal, not octal"
 	reset_lock_state
 	make_lock_dir "$$" ""
-	_ever_nmr_cache_set "17466" "owner/repo" "false"
-	local value=""
-	value=$(cached_value "17466")
-	if [[ "$value" == "missing" && -f "${EVER_NMR_CACHE_FILE}.lockdir/owner.pid" ]]; then
+	local rc=0
+	# 08 is invalid octal; without base-10 normalisation the timeout never fires.
+	EVER_NMR_LOCK_RETRIES=08 _ever_nmr_cache_set "17468" "owner/repo" "false" || rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q 'lock acquisition timed out' "$LOGFILE"; then
 		print_result "$name" 0
 		return 0
 	fi
-	print_result "$name" 1 "cached=${value}"
+	print_result "$name" 1 "rc=${rc}"
+	return 0
+}
+
+test_release_skips_lock_owned_by_another_caller() {
+	local name="release leaves a lock that another caller re-acquired"
+	reset_lock_state
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	steal_lock() {
+		# Simulate reclamation plus re-acquisition by another caller mid-callback.
+		printf '%s\n' "999999" >"${EVER_NMR_CACHE_FILE}.lockdir/owner.pid"
+		return 0
+	}
+	_ever_nmr_cache_with_lock steal_lock || true
+	local recorded=""
+	recorded=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
+	if [[ -d "$lock_dir" && "$recorded" == "999999" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "lockdir_exists=$([[ -d "$lock_dir" ]] && echo yes || echo no) recorded=${recorded}"
+	return 0
+}
+
+test_lost_lock_skips_callback() {
+	local name="lost lock before owner registration skips the callback"
+	reset_lock_state
+	local marker="${TEST_ROOT}/callback-ran"
+	rm -f "$marker"
+	mark_callback() {
+		printf 'ran\n' >"$marker"
+		return 0
+	}
+	# Make the owner write fail right after acquisition, as when the lock is
+	# reclaimed while its holder pauses: occupy owner.pid with a directory.
+	local lock_path="${EVER_NMR_CACHE_FILE}.lockdir"
+	mkdir() {
+		command mkdir "$@" || return 1
+		if [[ "${1:-}" == "$lock_path" ]]; then
+			command mkdir -p "${lock_path}/owner.pid"
+		fi
+		return 0
+	}
+	local rc=0
+	_ever_nmr_cache_with_lock mark_callback || rc=$?
+	unset -f mkdir
+	if [[ "$rc" -ne 0 && ! -f "$marker" ]] && grep -q 'lost lock before owner registration' "$LOGFILE"; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "rc=${rc} callback_ran=$([[ -f "$marker" ]] && echo yes || echo no)"
+	return 0
+}
+
+test_instance_token_tracks_replacement() {
+	local name="lock instance token changes when the lock is replaced"
+	reset_lock_state
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	make_lock_dir "" ""
+	local before="" after_owner=""
+	before=$(_ever_nmr_lock_instance "$lock_dir")
+	printf '%s\n' "$$" >"${lock_dir}/owner.pid"
+	after_owner=$(_ever_nmr_lock_instance "$lock_dir")
+	if [[ "$before" == *":none" && "$after_owner" == *":$$" && "$before" != "$after_owner" ]]; then
+		print_result "$name" 0
+		return 0
+	fi
+	print_result "$name" 1 "before=${before} after=${after_owner}"
 	return 0
 }
 
@@ -300,8 +367,11 @@ main() {
 	test_old_ownerless_lock_is_reclaimed
 	test_fresh_ownerless_lock_is_respected
 	test_dead_owner_lock_is_reclaimed
-	test_live_owner_past_ceiling_is_reclaimed
-	test_live_owner_within_ceiling_is_respected
+	test_live_owner_is_never_reclaimed
+	test_leading_zero_settings_are_decimal
+	test_release_skips_lock_owned_by_another_caller
+	test_lost_lock_skips_callback
+	test_instance_token_tracks_replacement
 	test_abandoned_reclaim_marker_is_cleared
 	test_owner_record_is_current_shell
 	teardown_test_env

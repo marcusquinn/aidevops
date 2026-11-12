@@ -54,7 +54,8 @@ _ever_nmr_lock_setting() {
 	local value="$1"
 	local default_value="$2"
 	if [[ "$value" =~ ^[0-9]+$ ]]; then
-		printf '%s\n' "$value"
+		# Force base 10: Bash arithmetic treats 08/09 as invalid octal.
+		printf '%s\n' "$((10#$value))"
 	else
 		printf '%s\n' "$default_value"
 	fi
@@ -86,45 +87,46 @@ _ever_nmr_lock_age() {
 	return 0
 }
 
-# PID of the shell that holds the lock. In parallel dispatch subshells `$$` is
-# the long-lived parent pulse PID, which would make a dead subshell's lock look
-# live. Bash 3.2 has no BASHPID; exec makes sh's PPID the calling shell.
-_ever_nmr_lock_owner_pid() {
-	local owner_pid="${BASHPID:-}"
-	if [[ -z "$owner_pid" ]]; then
-		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || owner_pid="$$"
+# Print a token naming one lock instance: its directory inode plus its owner
+# record ("none" when absent or invalid). A replacement lock differs in at
+# least one part, so a reclaimer can confirm it still holds the instance it
+# judged stale. Returns 1 when the directory has vanished.
+# Arguments: $1 - lock dir
+_ever_nmr_lock_instance() {
+	local lock_dir="$1"
+	local inode="" owner_pid=""
+	read -r inode _ <<<"$(ls -di "$lock_dir" 2>/dev/null)"
+	[[ "$inode" =~ ^[0-9]+$ ]] || return 1
+	if [[ -f "${lock_dir}/owner.pid" ]]; then
+		IFS= read -r owner_pid 2>/dev/null <"${lock_dir}/owner.pid" || owner_pid=""
 	fi
-	printf '%s\n' "$owner_pid"
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="none"
+	printf '%s:%s\n' "$inode" "$owner_pid"
 	return 0
 }
 
-# Reclaim a stale ever-NMR cache lock (GH#37869). Stale means: a dead owner
-# PID; no valid owner.pid for at least the orphan age (holder killed between
-# mkdir and the owner write, or between the owner removal and rmdir); or held
-# past the hold ceiling (legacy `$$` records naming a live parent pulse).
-# A .reclaim directory elects one reclaimer while the lock still blocks writers.
-# Arguments: $1 - lock dir, $2 - ownerless orphan age, $3 - hold ceiling
+# Reclaim a stale ever-NMR cache lock (GH#37869). Stale means a dead owner PID,
+# or no valid owner.pid for at least the orphan age (holder killed between
+# mkdir and the owner write, or between the owner removal and rmdir). A live
+# owner is never reclaimed: legacy `$$` records come only from processes still
+# running pre-fix code, and their locks become dead-owner locks once they exit.
+# A .reclaim directory elects one reclaimer while the lock still blocks
+# writers; the winner re-checks the instance so it never removes a lock that
+# another caller reclaimed and re-acquired in the meantime.
+# Arguments: $1 - lock dir, $2 - ownerless orphan age
 # Returns: 0 only when the stale lock was removed
 _ever_nmr_cache_reclaim_stale_lock() {
 	local lock_dir="$1"
 	local orphan_age="$2"
-	local max_hold="$3"
-	local owner_pid="" stale_reason="" lock_age=""
+	local instance="" owner_pid="" stale_reason="" lock_age=""
 
-	[[ -d "$lock_dir" ]] || return 1
+	instance=$(_ever_nmr_lock_instance "$lock_dir") || return 1
 	lock_age=$(_ever_nmr_lock_age "$lock_dir") || return 1
-	if [[ -f "${lock_dir}/owner.pid" ]]; then
-		IFS= read -r owner_pid 2>/dev/null <"${lock_dir}/owner.pid" || owner_pid=""
-	fi
+	owner_pid="${instance#*:}"
 
-	if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
-		if ! kill -0 "$owner_pid" 2>/dev/null; then
-			stale_reason="owner PID ${owner_pid} gone"
-		elif [[ "$max_hold" -gt 0 && "$lock_age" -ge "$max_hold" ]]; then
-			stale_reason="held ${lock_age}s by PID ${owner_pid}, past ${max_hold}s ceiling"
-		else
-			return 1
-		fi
+	if [[ "$owner_pid" != "none" ]]; then
+		kill -0 "$owner_pid" 2>/dev/null && return 1
+		stale_reason="owner PID ${owner_pid} gone"
 	elif [[ "$lock_age" -ge "$orphan_age" ]]; then
 		stale_reason="ownerless for ${lock_age}s"
 	else
@@ -140,6 +142,14 @@ _ever_nmr_cache_reclaim_stale_lock() {
 	fi
 	mkdir "$reclaim_dir" 2>/dev/null || return 1
 
+	# Re-validate after the election: if the judged instance was replaced, back off.
+	local current=""
+	current=$(_ever_nmr_lock_instance "$lock_dir") || current=""
+	if [[ "$current" != "$instance" ]]; then
+		rmdir "$reclaim_dir" 2>/dev/null || true
+		return 1
+	fi
+
 	echo "[pulse-wrapper] _ever_nmr_cache_with_lock: clearing stale lock (${stale_reason})" >>"$LOGFILE"
 	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
 	rmdir "$reclaim_dir" 2>/dev/null || true
@@ -149,13 +159,12 @@ _ever_nmr_cache_reclaim_stale_lock() {
 
 _ever_nmr_cache_with_lock() {
 	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
-	local max_retries="" orphan_age="" max_hold=""
+	local max_retries="" orphan_age=""
 	max_retries=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_RETRIES:-}" 50)
 	orphan_age=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_ORPHAN_AGE_SECS:-}" 60)
-	max_hold=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_MAX_HOLD_SECS:-}" 300)
 	local retries=0
 	while ! mkdir "$lock_dir" 2>/dev/null; do
-		if _ever_nmr_cache_reclaim_stale_lock "$lock_dir" "$orphan_age" "$max_hold"; then
+		if _ever_nmr_cache_reclaim_stale_lock "$lock_dir" "$orphan_age"; then
 			continue
 		fi
 		retries=$((retries + 1))
@@ -166,12 +175,32 @@ _ever_nmr_cache_with_lock() {
 		sleep 0.1
 	done
 
-	# Record owner PID inside lock directory so retrying callers can detect staleness.
-	_ever_nmr_lock_owner_pid >"${lock_dir}/owner.pid" 2>/dev/null || true
+	# Record owner PID inside lock directory so retrying callers can detect
+	# staleness. If the directory vanished (reclaimed while this caller paused
+	# past the orphan age), ownership is lost: skip the callback and leave the
+	# path alone, since it may now belong to another caller.
+	# Resolve the PID in this shell, not a command substitution: in parallel
+	# dispatch subshells `$$` is the parent pulse PID. Bash 3.2 has no BASHPID;
+	# exec makes sh's PPID this shell.
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || owner_pid="$$"
+	fi
+	if ! printf '%s\n' "$owner_pid" 2>/dev/null >"${lock_dir}/owner.pid"; then
+		echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lost lock before owner registration" >>"$LOGFILE"
+		return 1
+	fi
 	local rc=0
 	"$@" || rc=$?
-	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
-	rmdir "$lock_dir" 2>/dev/null || true
+	# Release only a lock this caller still owns.
+	local recorded=""
+	if [[ -f "${lock_dir}/owner.pid" ]]; then
+		IFS= read -r recorded 2>/dev/null <"${lock_dir}/owner.pid" || recorded=""
+	fi
+	if [[ "$recorded" == "$owner_pid" ]]; then
+		rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+		rmdir "$lock_dir" 2>/dev/null || true
+	fi
 	return "$rc"
 }
 
