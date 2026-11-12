@@ -34,6 +34,8 @@ _PULSE_DISPATCH_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_PULSE_DISPATCH_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _PULSE_DISPATCH_LIB_DIR="."
 # shellcheck source=shared-runner-identity.sh
 source "${_PULSE_DISPATCH_LIB_DIR}/shared-runner-identity.sh"
+# shellcheck source=pulse-dispatch-sealed-worktree.sh
+source "${_PULSE_DISPATCH_LIB_DIR}/pulse-dispatch-sealed-worktree.sh"
 if ! command -v _file_mtime_epoch >/dev/null 2>&1; then
 	# shellcheck source=portable-stat.sh
 	source "${_PULSE_DISPATCH_LIB_DIR}/portable-stat.sh"
@@ -257,14 +259,28 @@ _dispatch_maintainer_gate_from_lines() {
 	return 1
 }
 
-# Read only the local complete PR snapshot: cooldown enumeration must not add
-# per-candidate network reads. Missing/stale evidence fails open to dispatch.
+# Enumeration reads only the local complete PR snapshot. Record/read paths may
+# opt into one bounded exact-PR REST read when the snapshot is unavailable.
 # The key is head SHA plus sorted PR labels, so a label change (e.g. removing
 # no-takeover) invalidates the cooldown without PR comment churn doing so.
 _dispatch_checkpoint_pr_head() {
-	local repo="$1" pr="$2" snapshot=""
+	local repo="$1" pr="$2" mode="${3:-snapshot_only}" snapshot=""
 	[[ "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
-	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || return 1
+	snapshot=$("${_PULSE_DISPATCH_LIB_DIR}/pulse-batch-prefetch-helper.sh" read-snapshot --kind prs --slug "$repo" 2>/dev/null) || snapshot=""
+	if ! jq -e 'select(.complete == true) |
+		select((now - (.timestamp | fromdateiso8601)) >= 0 and
+			(now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
+		[[ "$mode" == allow_rest && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+		declare -F timeout_sec >/dev/null 2>&1 || return 1
+		local pr_json=""
+		pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+			gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+		jq -er 'select(.state == "open" and .draft == true) |
+			select((.head.sha | type) == "string" and (.head.sha | length) > 0) |
+			.head.sha + "_" + ([.labels[]? | (.name? // .) | select(type == "string") | gsub("[\\t\\n\\r]"; " ")] | sort | join(","))
+		' <<<"$pr_json" 2>/dev/null
+		return $?
+	fi
 	jq -er --argjson pr "$pr" '
 		select(.complete == true) |
 		select((now - (.timestamp | fromdateiso8601)) >= 0 and
@@ -322,7 +338,7 @@ _dispatch_draft_hint_boundary() {
 
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
-	local fields="" issue="" repo="" updated="" file="" tmp=""
+	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
 		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
@@ -348,33 +364,70 @@ _dispatch_negative_cache_record() {
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
-		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 0
+		checkpoint_boundary=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
+		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) || return 0
 		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
 	fi
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" >"$tmp"; then
-		mv -f "$tmp" "$file" || rm -f "$tmp"
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" >"$tmp"; then
+		if mv -f "$tmp" "$file"; then
+			if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
+				_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=1
+			fi
+		else
+			rm -f "$tmp"
+		fi
 	else
 		rm -f "$tmp"
 	fi
 	return 0
 }
 
-_dispatch_negative_cache_reason() {
-	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
-	local expected_reason="${2:-}"
-	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+# Quiet eligibility is fixed at write time, independently of record age.
+_dispatch_checkpoint_cooldown_ttl() {
+	local candidate="$1" stamp="$2" ttl="$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	local quiet_after="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_AFTER_SECONDS:-14400}" revision_epoch=""
+	[[ "$ttl" -gt 0 ]] || return 1
+	quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
+	((quiet_ttl <= 86400)) || quiet_ttl=86400
+	quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
+	if ((quiet_ttl > ttl)); then
+		revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
+			.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
+		if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
+			ttl="$quiet_ttl"
+		fi
+	fi
+	printf '%s\n' "$ttl"
+	return 0
+}
+
+# GH#37780: return 0 only when the candidate has assignees and none of them is
+# this runner. An unset or malformed self login fails closed (returns 1).
+_dispatch_claim_owned_elsewhere() {
+	local candidate="$1" self="${_DISPATCH_SELF_LOGIN:-}"
+	[[ "$self" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]] || return 1
+	jq -e --arg self "$self" '
+		[.assignees // [] | .[] | (.login? // .) | strings | ascii_downcase] as $owners |
+		($owners | length) > 0 and all($owners[]; . != ($self | ascii_downcase))' <<<"$candidate" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_dispatch_negative_cache_reason() {
+	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
+	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
+	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path <"$file" || return 1
+	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary <"$file" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
@@ -394,24 +447,22 @@ _dispatch_negative_cache_reason() {
 	fi
 	case "$reason" in
 	worker_draft_checkpoint_cooldown)
-		ttl="$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS"
-		[[ "$ttl" -gt 0 && -n "$fingerprint" ]] || return 1
+		ttl=$(_dispatch_checkpoint_cooldown_ttl "$candidate" "$stamp") || return 1
+		[[ -n "$fingerprint" ]] || return 1
+		# Quiet hints must obey the same owner/re-arm limits as draft blocks.
+		# Legacy records without boundary evidence run the ceremony once.
+		jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
+		[[ "$checkpoint_boundary" =~ ^([0-9]+):([0-9]+)$ ]] || return 1
+		local checkpoint_deadline="${BASH_REMATCH[1]}" checkpoint_rearm="${BASH_REMATCH[2]}"
+		[[ "$checkpoint_rearm" == "$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)" ]] || return 1
+		now=$(date +%s)
+		((checkpoint_deadline == 0 || now < checkpoint_deadline)) || return 1
 		current=$(_dispatch_checkpoint_fingerprint "$candidate") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
-		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr") || return 1
+		# Expire before the optional REST read; enumeration remains network-free.
+		((now >= stamp && now - stamp < ttl)) || return 1
+		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr" "$checkpoint_mode") || return 1
 		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
-		# Only old, unassigned revisions can outlive the base cooldown: recent
-		# claims may still expire, and assigned issues need stale-owner recovery.
-		quiet_ttl=$(_dispatch_checkpoint_decimal "$quiet_ttl" 21600)
-		((quiet_ttl <= 86400)) || quiet_ttl=86400
-		quiet_after=$(_dispatch_checkpoint_decimal "$quiet_after" 14400)
-		if ((quiet_ttl > ttl)); then
-			revision_epoch=$(jq -er 'select((.assignees // [] | length) == 0) |
-				.updatedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' <<<"$candidate" 2>/dev/null) || revision_epoch=""
-			if [[ "$revision_epoch" =~ ^[0-9]+$ ]] && ((stamp >= revision_epoch && stamp - revision_epoch >= quiet_after)); then
-				ttl="$quiet_ttl"
-			fi
-		fi
 		;;
 	terminal_blocker_circuit)
 		# The circuit hold applies to unowned available issues by design. An
@@ -426,8 +477,13 @@ _dispatch_negative_cache_reason() {
 		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
 		;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
-		# Empty worker pools must retain the authoritative active-claim recheck.
-		[[ "${_DISPATCH_ACTIVE_WORKERS:-0}" != 0 ]] || return 1
+		# Empty worker pools must retain the authoritative active-claim recheck
+		# for claims this runner could own. GH#37780: an empty local pool says
+		# nothing about another runner's claim, and rechecking those every cycle
+		# spent the dispatch reserve and kept the pool empty.
+		if [[ "${_DISPATCH_ACTIVE_WORKERS:-0}" == 0 ]]; then
+			_dispatch_claim_owned_elsewhere "$candidate" || return 1
+		fi
 		;;
 	worker_draft_checkpoint_blocked | stale_draft_checkpoint)
 		[[ -n "$fingerprint" ]] || return 1
@@ -462,6 +518,7 @@ _dispatch_negative_cache_reason() {
 
 _dispatch_prefilter_owned_candidate() {
 	local candidate="$1" issue="$2" repo="$3" reason=""
+	_dispatch_ranked_candidate_consumed "$candidate"
 	if reason=$(_dispatch_negative_cache_reason "$candidate"); then
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle ownership block:${reason}" >>"$LOGFILE"
@@ -487,7 +544,10 @@ _dispatch_cache_confirmed_block() {
 	[[ "$lines" != *"checkpoint_routed"* && "$lines" != *"CONTINUATION_ROUTED"* ]] || return 0
 	# Already recorded by the benign result classifier; do not overwrite it with
 	# the older PR-read cache (or an unusable available-issue active-claim hint).
-	_dispatch_checkpoint_cooldown_eligible "$lines" && return 0
+	if [[ "${_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED:-0}" == 1 ]] &&
+		_dispatch_checkpoint_cooldown_eligible "$lines"; then
+		return 0
+	fi
 	# Only a positively identified worker draft with an unchanged prefetched PR
 	# can bypass the next ceremony. Never cache interactive checkpoint routing.
 	if [[ "$lines" != *"checkpoint_routed"* &&
@@ -541,10 +601,40 @@ _dispatch_record_and_cache_block() {
 	return 1
 }
 
+#######################################
+# GH#37907: deploy reconciliation (pulse-lifecycle-helper.sh
+# _pulse_request_cycle_drain) asks a deferred earlier-bundle lock owner to stop
+# at its next candidate boundary via LOCKDIR/drain_requested. Only the named
+# owner honours it ($$ is the wrapper PID in dispatch subshells too); releasing
+# the lock removes it. In-flight candidates finish; no new census starts.
+# Stdout: the activated bundle id the scheduler starts next
+# Returns: 0 when this cycle should drain, 1 otherwise
+#######################################
+_pulse_drain_requested_bundle() {
+	local marker="${LOCKDIR:-}/drain_requested" line="" owner="" bundle=""
+	[[ -n "${LOCKDIR:-}" && -f "$marker" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		owner=*) owner="${line#owner=}" ;;
+		bundle=*) bundle="${line#bundle=}" ;;
+		esac
+	done 2>/dev/null <"$marker"
+	[[ "$owner" =~ ^[0-9]+$ && "$owner" == "$$" ]] || return 1
+	[[ "$bundle" =~ ^[A-Za-z0-9._-]+$ ]] || bundle="unrecorded"
+	printf '%s\n' "$bundle"
+	return 0
+}
+
 _dispatch_compute_capacity() {
+	_dispatch_refresh_owner_lease
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
+		return 1
+	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max skipped: cooperative drain requested; activated bundle ${drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_capacity"; then
@@ -712,6 +802,8 @@ _dispatch_process_candidate() {
 		return 1
 	fi
 	_dispatch_prefilter_owned_candidate "$candidate_json" "$issue_number" "$repo_slug" && return 1
+	# Local sealed holds precede claims, model/class reservations and wave slots.
+	_dispatch_skip_for_sealed_generation "$repo_path" "$issue_number" "$repo_slug" && return 1
 	# GH#33743: unchanged runner_capability_unmet candidates from a pre-record snapshot.
 	_dispatch_skip_for_capability_cooldown "$candidate_json" "$issue_number" "$repo_slug" "$repo_path" "$self_login" && return 1
 
@@ -893,6 +985,11 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
+		local drain_bundle=""
+		if drain_bundle=$(_pulse_drain_requested_bundle); then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during serial loop (GH#37907)" >>"$LOGFILE"
+			break
+		fi
 		local budget_rc=0
 		_dispatch_graphql_budget_allows_next || budget_rc=$?
 		if [[ "$budget_rc" -ne 0 ]]; then
@@ -1032,6 +1129,7 @@ _dispatch_max_prefilter_cached_block() {
 	_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	_dispatch_record_candidate_outcome "$candidate_json" 1 "$outcomes_file" || true
+	_dispatch_ranked_candidate_consumed "$candidate_json"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_UNKNOWN"
 	return 0
 }
@@ -1126,6 +1224,11 @@ _dispatch_max_should_stop() {
 	fi
 	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
+		return 0
+	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during parallel loop (GH#37907)" >>"$LOGFILE"
 		return 0
 	fi
 	local budget_rc=0
@@ -1482,18 +1585,28 @@ _dispatch_product_reservation_slots() {
 #
 # Arguments: $1 - output variable name; remaining arguments - command and args
 #######################################
+_dispatch_refresh_owner_lease() {
+	if declare -F _pulse_instance_lock_heartbeat >/dev/null 2>&1; then
+		_pulse_instance_lock_heartbeat || true
+	fi
+	return 0
+}
+
 _dispatch_capture_with_owner_liveness() {
 	local output_variable="$1"
 	shift
 	local capture_file="" capture_pid="" capture_rc=0
 	local now=0 last_heartbeat=0
 	capture_file=$(mktemp) || return 1
+	_dispatch_refresh_owner_lease
 	# Explicit stdin keeps async Bash from substituting /dev/null.
 	"$@" <&0 >"$capture_file" &
 	capture_pid=$!
 	while kill -0 "$capture_pid" 2>/dev/null; do
 		now=$(date +%s)
 		if ((now - last_heartbeat >= 60)); then
+			# Keep the singleton lease alive through census and candidate waits.
+			_dispatch_refresh_owner_lease
 			if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null 2>&1; then
 				_pulse_cycle_state_stage_heartbeat || true
 			fi

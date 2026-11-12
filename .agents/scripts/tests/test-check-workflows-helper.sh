@@ -32,11 +32,19 @@
 
 set -uo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 # Fixture repositories are disposable. Export a test-local native Git boundary
 # so child helper shells cannot inherit the runtime's canonical-repo guard while
 # the normal PATH remains available for dependencies such as jq.
 git() {
-	local _git_bin="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+	local _git_bin="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 	"$_git_bin" "$@"
 	return $?
 }
@@ -591,7 +599,7 @@ rm -rf "$TMPDIR_19"
 # must classify that worktree rather than the registered canonical checkout.
 TMPDIR_20="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_20"
-REAL_GIT_20="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
+REAL_GIT_20="${AIDEVOPS_TEST_GIT_BIN:-${TEST_NATIVE_GIT}}"
 BARE_20="$TMPDIR_20/remote.git"
 REPO_20="$TMPDIR_20/repos/canonical"
 LINKED_20="$TMPDIR_20/worktrees/caller-owned"

@@ -163,6 +163,12 @@ if [[ -z "${PULSE_LIFECYCLE_HELPER:-}" ]]; then
 	fi
 fi
 : "${OPENCODE_DB_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
+# GH#37663: interrupt → maintain → resume for interactive TUI holders.
+: "${OPENCODE_SESSION_RESTART_HELPER:=${SCRIPT_DIR}/opencode-session-restart-helper.sh}"
+: "${OPENCODE_ARCHIVE_LAST_RUN_FILE:=${HOME}/.aidevops/logs/opencode-db-archive.last-run}"
+# Name interactive TUI holders once archive/maintenance has not succeeded for this long (72h).
+: "${INTERACTIVE_HOLDER_NOTICE_SECONDS:=259200}"
+[[ "$INTERACTIVE_HOLDER_NOTICE_SECONDS" =~ ^[0-9]+$ ]] || INTERACTIVE_HOLDER_NOTICE_SECONDS=259200
 : "${SQLITE3_BIN:=sqlite3}"
 
 # -----------------------------------------------------------------------------
@@ -406,6 +412,47 @@ _auto_skip_advisory() {
 	reclaim_bytes=$((10#$freelist_count * 10#$page_size))
 	printf '[OPENCODE MAINTENANCE] %s consecutive scheduled runs skipped (opencode running); ~%s MB reclaimable free pages in %s. Run aidevops opencode-db maintenance-window --force-opencode to reclaim.\n' \
 		"$skips" "$((reclaim_bytes / 1048576))" "$OPENCODE_DB"
+	return 0
+}
+
+# _last_success_epoch — newest successful maintenance or archive run (0 = none).
+_last_success_epoch() {
+	local maintained archived
+	maintained=$(_state_mtime_epoch "$STATE_FILE")
+	archived=$(tr -cd '0-9' <"$OPENCODE_ARCHIVE_LAST_RUN_FILE" 2>/dev/null || true)
+	[[ "$maintained" =~ ^[0-9]+$ ]] || maintained=0
+	[[ "$archived" =~ ^[0-9]+$ ]] || archived=0
+	if [[ "$archived" -gt "$maintained" ]]; then printf '%s\n' "$archived"; else printf '%s\n' "$maintained"; fi
+	return 0
+}
+
+# _interactive_holder_advisory — GH#37663: when archive/maintenance has not
+# succeeded for INTERACTIVE_HOLDER_NOTICE_SECONDS and interactive TUIs hold the
+# DB, print one line naming the oldest holder's PID, session and age.
+_interactive_holder_advisory() {
+	local last now holders line
+	[[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]] && command -v jq >/dev/null 2>&1 || return 1
+	last=$(_last_success_epoch)
+	now=$(date +%s)
+	[[ "$last" -gt 0 && $((now - last)) -ge "$INTERACTIVE_HOLDER_NOTICE_SECONDS" ]] || return 1
+	holders=$(OPENCODE_DB_PATH="$OPENCODE_DB" "$OPENCODE_SESSION_RESTART_HELPER" inventory --json 2>/dev/null || true)
+	line=$(jq -r 'if (type == "array" and length > 0) then (sort_by(-.age_seconds) | .[0]) as $h
+		| "\(length)\t\($h.pid)\t\($h.session_id)\t\(($h.age_seconds / 86400) | floor)" else empty end' <<<"$holders" 2>/dev/null || true)
+	[[ -n "$line" ]] || return 1
+	local count pid sid days
+	IFS=$'\t' read -r count pid sid days <<<"$line"
+	printf '[OPENCODE MAINTENANCE] Archive/maintenance deferred %sh by %s interactive TUI holder(s), oldest PID %s session %s up %sd. Run aidevops opencode-db maintenance-window --restart-interactive to checkpoint, stop and resume idle sessions.\n' \
+		"$(((now - last) / 3600))" "$count" "$pid" "$sid" "$days"
+	return 0
+}
+
+# _interactive_holder_notify <reason> — scheduled path: notify holders over the
+# session bus (throttled by the restart helper); never stops a session.
+_interactive_holder_notify() {
+	local reason="$1"
+	[[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]] || return 0
+	OPENCODE_DB_PATH="$OPENCODE_DB" "$OPENCODE_SESSION_RESTART_HELPER" notify --reason "$reason" >/dev/null 2>&1 ||
+		_log WARN "interactive holder notify failed"
 	return 0
 }
 
@@ -939,6 +986,10 @@ cmd_report() {
 	else
 		printf '\n  No previous maintenance runs recorded.\n'
 	fi
+	local holder_line
+	if holder_line=$(_interactive_holder_advisory); then
+		printf '\n  %s\n' "$holder_line"
+	fi
 
 	echo
 	return 0
@@ -1215,7 +1266,9 @@ cmd_maintain() {
 # as `auto` (default DB plus isolated per-project DBs). Each DB is gated on its
 # exact lsof holders, so a TUI open on one project skips only that DB instead of
 # aborting the whole run. Pulse restarts even when a step fails. Interactive
-# TUIs are never stopped; --force-opencode maintains held DBs anyway.
+# TUIs are never stopped by default; --force-opencode maintains held DBs anyway,
+# and --restart-interactive (GH#37663) checkpoints, stops and later resumes
+# idle TUIs through opencode-session-restart-helper.sh (busy ones are skipped).
 
 # _headless_worker_count — in-flight headless `opencode run` workers.
 _headless_worker_count() {
@@ -1317,12 +1370,20 @@ cmd_maintenance_window() {
 	local interactive_days="$MAINTENANCE_WINDOW_INTERACTIVE_RETENTION_DAYS"
 	local drain_timeout="$MAINTENANCE_WINDOW_DRAIN_TIMEOUT"
 	local skip_archive=false
+	local restart_interactive=false
+	local assume_yes=false
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--force-opencode)
 			force_opencode=true; shift
+			;;
+		--restart-interactive)
+			restart_interactive=true; shift
+			;;
+		--yes | -y)
+			assume_yes=true; shift
 			;;
 		--keep-sessions)
 			keep_sessions="${2:-}"; shift 2
@@ -1362,11 +1423,36 @@ cmd_maintenance_window() {
 		_maintenance_window_db "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive"
 		return $?
 	fi
-	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive" "$drain_timeout"
+	_maintenance_window_inventory "$force_opencode" "$keep_sessions" "$worker_days" "$interactive_days" "$skip_archive" "$drain_timeout" \
+		"$restart_interactive" "$assume_yes"
 	return $?
 }
 
-# _maintenance_window_inventory <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive> <drain_timeout>
+# _restart_interactive_stop <assume_yes> — GH#37663: checkpoint and stop idle
+# interactive TUIs (never busy ones) and queue their resume as a cleanup, so
+# sessions relaunch even when a maintenance step fails. Without terminal
+# confirmation or host opt-in, the restart helper only notifies owners.
+_restart_interactive_stop() {
+	local assume_yes="$1"
+	local args=(stop --all --reason "maintenance-window")
+	local rc=0
+	if [[ ! -x "$OPENCODE_SESSION_RESTART_HELPER" ]]; then
+		print_warning "opencode-session-restart-helper.sh not found; interactive TUIs are left running"
+		return 0
+	fi
+	[[ "$assume_yes" != true ]] || args+=(--yes)
+	push_cleanup "$(printf '%q resume' "$OPENCODE_SESSION_RESTART_HELPER")"
+	"$OPENCODE_SESSION_RESTART_HELPER" "${args[@]}" || rc=$?
+	case "$rc" in
+	0) _log INFO "maintenance-window: interactive TUIs stopped for restart" ;;
+	2) print_warning "Some interactive sessions stayed busy or running; DBs they hold are skipped" ;;
+	3) print_info "Interactive TUIs were notified only (no stop authority)" ;;
+	*) print_warning "Interactive restart returned ${rc}; continuing with DB holder checks" ;;
+	esac
+	return 0
+}
+
+# _maintenance_window_inventory <force> <keep_sessions> <worker_days> <interactive_days> <skip_archive> <drain_timeout> [restart_interactive] [assume_yes]
 # Parent run: stop pulse once, drain workers, then visit each inventory DB in a
 # single-DB child. Returns 1 on any failure, 2 when only holder skips occurred.
 _maintenance_window_inventory() {
@@ -1376,6 +1462,8 @@ _maintenance_window_inventory() {
 	local interactive_days="$4"
 	local skip_archive="$5"
 	local drain_timeout="$6"
+	local restart_interactive="${7:-false}"
+	local assume_yes="${8:-false}"
 
 	local dbs=()
 	local db
@@ -1401,6 +1489,7 @@ _maintenance_window_inventory() {
 	fi
 
 	_drain_headless_workers "$drain_timeout"
+	[[ "$restart_interactive" != true ]] || _restart_interactive_stop "$assume_yes"
 
 	local child_args=(--keep-sessions "$keep_sessions" --worker-retention-days "$worker_days" --interactive-retention-days "$interactive_days")
 	[[ "$force_opencode" != true ]] || child_args+=(--force-opencode)
@@ -1533,6 +1622,9 @@ cmd_auto() {
 	if [[ "$rc" -eq 2 ]]; then
 		_log INFO "auto: skipped — opencode active"
 		_auto_skip_record "$(_opencode_process_count)"
+		if [[ "$(_auto_skip_count)" -ge "$AUTO_SKIP_ESCALATION_COUNT" ]]; then
+			_interactive_holder_notify "scheduled maintenance"
+		fi
 		return 0
 	fi
 	return "$rc"
@@ -1742,6 +1834,20 @@ cmd_notice() {
 		return 0
 	fi
 
+	# GH#37663: sessions stopped for maintenance that await a manual resume,
+	# then long-deferred maintenance caused by interactive TUI holders.
+	local restart_notice=""
+	if [[ -x "$OPENCODE_SESSION_RESTART_HELPER" ]]; then
+		restart_notice=$("$OPENCODE_SESSION_RESTART_HELPER" notice 2>/dev/null || true)
+	fi
+	if [[ -n "$restart_notice" ]]; then
+		printf '%s\n' "$restart_notice"
+		return 0
+	fi
+	if _interactive_holder_advisory; then
+		return 0
+	fi
+
 	if [[ "$OPENCODE_DB_MAINTENANCE_MODE" == "$MAINTENANCE_WINDOW_MODE" ]]; then
 		printf '[OPENCODE MAINTENANCE] Scheduled weekly Sun %02d:%02d local: maintenance-window pauses pulse/headless workers while compacting opencode.db.\n' \
 			"$OPENCODE_DB_MAINTENANCE_HOUR" "$OPENCODE_DB_MAINTENANCE_MINUTE"
@@ -1834,7 +1940,13 @@ Subcommands:
                          --worker-retention-days N (default 7),
                          --interactive-retention-days N (default 90),
                          --retention-days N (one cutoff for both), --keep-sessions N
-                         (protects interactive sessions only), --skip-archive.
+                         (protects interactive sessions only), --skip-archive,
+                         --restart-interactive [--yes]: ask busy TUIs to checkpoint,
+                         stop idle TUIs (never busy ones), maintain, then relaunch
+                         `opencode -s <id>` in the original tmux/screen pane. Needs
+                         terminal confirmation (or --yes); non-terminal runs only
+                         notify owners unless the host allows unattended restarts
+                         (opencode-session-restart-helper.sh help).
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
                          Visits isolated project DBs too, skipping each live DB.

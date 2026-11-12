@@ -24,7 +24,7 @@ tools:
 - **Purpose**: Extract browser cookies for automation, session reuse, authenticated scraping
 - **Libraries**: `@steipete/sweet-cookie` (TypeScript, cross-platform) | `SweetCookieKit` (Swift, macOS-only)
 - **Use when**: reusing browser sessions, authenticated API calls, bypassing automation detection, CI/CD auth state
-- **Don't use when**: fresh browser automation -> agent-browser/stagehand; unauthenticated scraping -> crawl4ai
+- **Don't use when**: fresh browser automation -> Playwright/agent-browser; unauthenticated scraping -> crawl4ai
 
 ```text
 Need cookies from existing browser session?
@@ -133,4 +133,4 @@ CLI: `swift run SweetCookieCLI stores` | `swift run SweetCookieCLI export --doma
 - [sweet-cookie (TS)](https://github.com/steipete/sweet-cookie) | [SweetCookieKit (Swift)](https://github.com/steipete/SweetCookieKit) | [Docs](https://sweetcookie.dev)
 - Bird (X/Twitter CLI): auto-extracts cookies -> `tools/social-media/bird.md`
 - Crawl4AI: `crawl4ai https://app.example.com --cookies /path/to/cookies.json`
-- `tools/browser/agent-browser.md` (CLI browser automation) | `tools/browser/stagehand.md` (AI browser) | `tools/browser/playwright.md` (official existing-session extension)
+- `tools/browser/agent-browser.md` (CLI browser automation) | `tools/browser/playwright.md` (official existing-session extension)

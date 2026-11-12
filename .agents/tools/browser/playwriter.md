@@ -39,7 +39,7 @@ mcp:
 
 **Legacy capability**: A single tool controls explicitly approved tabs in an existing browser with its extensions, sessions, cookies, and proxy.
 
-**When to use alternatives**: **Stagehand** for natural language / self-healing selectors. **Playwright MCP** for isolated automation. **Crawl4AI** for scraping. **playwright-cli** for headless.
+**When to use alternatives**: **Playwright MCP** for isolated automation. **Crawl4AI** for scraping. **playwright-cli** for headless.
 
 **Parallel tabs**: Click extension on each tab. Shared session — not isolated. For isolated parallel work, use Playwright direct.
 

@@ -101,14 +101,22 @@ main() {
 	printf 'plain\n' >"$repo/credential-secret-helper.sh"
 	printf 'plain\n' >"$repo/api-secret-dir/readme.md"
 	printf 'plain\n' >"$repo/hard-secret-link.sh"
+	# GH#37601: other code languages share the tracked-source exemption.
+	printf '<?php\n' >"$repo/class-passwordless-auth-manager.php"
+	printf '# ruby\n' >"$repo/secret_rotation.rb"
+	printf '<?php\n' >"$repo/credential-password-store.php"
+	printf 'key = "value"\n' >"$repo/password-config.toml"
 	git -C "$repo" add tracked-secret-helper.sh secret-value-redaction.mjs password-rotation.md \
-		secrets.yaml credential-secret-helper.sh api-secret-dir/readme.md hard-secret-link.sh
+		secrets.yaml credential-secret-helper.sh api-secret-dir/readme.md hard-secret-link.sh \
+		class-passwordless-auth-manager.php secret_rotation.rb credential-password-store.php password-config.toml
 	git -C "$repo" commit --quiet -m fixture
 	ln "$repo/hard-secret-link.sh" "$WORK_DIR/outside-hard-link"
 	printf 'plain\n' >"$repo/untracked-secret.sh"
+	printf '<?php\n' >"$repo/untracked-password.php"
 	printf 'plain\n' >"$WORK_DIR/outside-secret.sh"
 	ln -s "$repo/tracked-secret-helper.sh" "$repo/link-secret.sh"
-	git -C "$repo" add link-secret.sh
+	ln -s "$repo/class-passwordless-auth-manager.php" "$repo/link-password.php"
+	git -C "$repo" add link-secret.sh link-password.php
 	git -C "$repo" commit --quiet -m link
 
 	expect "tracked .sh with secret basename is readable" "$repo/tracked-secret-helper.sh" allowed
@@ -122,6 +130,12 @@ main() {
 	expect "tracked symlink stays blocked" "$repo/link-secret.sh" blocked
 	expect "hard-linked tracked file stays blocked" "$repo/hard-secret-link.sh" blocked
 	expect "untracked env file stays blocked" "$repo/.env" blocked
+	expect "tracked .php with password basename is readable" "$repo/class-passwordless-auth-manager.php" allowed
+	expect "tracked .rb with secret basename is readable" "$repo/secret_rotation.rb" allowed
+	expect "untracked .php stays blocked" "$repo/untracked-password.php" blocked
+	expect "tracked .php symlink stays blocked" "$repo/link-password.php" blocked
+	expect "strong credential hint .php stays blocked" "$repo/credential-password-store.php" blocked
+	expect "tracked .toml config stays blocked" "$repo/password-config.toml" blocked
 
 	local candidate=""
 	for candidate in .agents/plugins/opencode-aidevops/secret-value-redaction.mjs .agents/scripts/example-credential-helper.py; do

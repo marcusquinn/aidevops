@@ -113,6 +113,10 @@ guard_child_processes() {
 			# Primary pulse process — runtime governed by PULSE_STALE_THRESHOLD,
 			# not CHILD_RUNTIME_LIMIT. Skip runtime check but keep RSS check.
 			:
+		elif [[ -n "${_PULSE_ROUTINES_TICKER_PID:-}" && "$pid" == "$_PULSE_ROUTINES_TICKER_PID" ]]; then
+			# Cycle-owned routines ticker (GH#37914) lives as long as the
+			# cycle. Skip runtime check but keep RSS check.
+			:
 		elif [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violation="runtime ${age_seconds}s > ${runtime_limit}s limit"
 		fi
@@ -204,7 +208,24 @@ run_cmd_with_timeout() {
 # Return the remaining cycle budget after a finalisation reserve. Missing or
 # invalid clocks/configuration fail open so standalone routines retain their
 # existing timeout behaviour. Pass 0 for admission checks that own a reserve.
+# A dispatch lease is elastic only for the actual instance owner. Standalone
+# routines and housekeeping keep their bounded cycle semantics.
+_pulse_dispatch_lease_active() {
+	local owner="" heartbeat="" now="" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
+	[[ "${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" == 1 && -n "${LOCKDIR:-}" ]] || return 1
+	read -r owner <"${LOCKDIR}/pid" 2>/dev/null || return 1
+	[[ "$owner" == "$$" ]] && kill -0 "$owner" 2>/dev/null || return 1
+	read -r heartbeat <"${LOCKDIR}/supervisor_heartbeat_epoch" 2>/dev/null || return 1
+	[[ "$heartbeat" =~ ^[1-9][0-9]*$ && "$ceiling" =~ ^[1-9][0-9]*$ ]] || return 1
+	now=$(date +%s) || return 1
+	((heartbeat <= now && now - heartbeat <= ceiling)) || return 1
+	return 0
+}
+
 _pulse_cycle_remaining_seconds() {
+	if [[ "${_PULSE_ELASTIC_DISPATCH:-0}" == 1 ]] && _pulse_dispatch_lease_active; then
+		return 1 # No fixed deadline; candidate watchdogs and quota gates still apply.
+	fi
 	local reserve="${1:-${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}}"
 	local start="${PULSE_START_EPOCH:-}" stale="${PULSE_STALE_THRESHOLD:-}"
 	local lock="${PULSE_LOCK_MAX_AGE_S:-1800}" now=""
@@ -217,6 +238,21 @@ _pulse_cycle_remaining_seconds() {
 	return 0
 }
 
+# GH#37811: report whether the main dispatch round can no longer be admitted
+# this cycle, using the round's own admission plan (full, bounded or skip).
+# The cycle clock only moves forward, so a skip now stays a skip. Without the
+# dispatch library or a cycle clock the plan is unknown; report admittable so
+# callers keep the GH#37051 reserve.
+# Returns: 0 when the round would be skipped, 1 otherwise
+_pulse_main_dispatch_round_unadmittable() {
+	local plan=""
+	declare -F _dispatch_round_budget_plan >/dev/null 2>&1 || return 1
+	declare -F _dispatch_round_plan_skips >/dev/null 2>&1 || return 1
+	plan=$(_dispatch_round_budget_plan before 2>/dev/null) || return 1
+	_dispatch_round_plan_skips "$plan" || return 1
+	return 0
+}
+
 _pulse_stage_cycle_timeout() {
 	local stage_name="$1" timeout_seconds="$2" remaining=""
 	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
@@ -225,8 +261,14 @@ _pulse_stage_cycle_timeout() {
 	# GH#37051: every pre-dispatch stage, including nested cleanup and graph
 	# work, must leave the main round its enumeration + candidate budget.
 	# Dispatch itself shadows this internal reserve, not its admission gates.
+	# GH#37811: once the round cannot be admitted, the reserve protects
+	# nothing; stages keep only the finalisation reserve instead of deferring.
 	if [[ "$reserve" =~ ^[0-9]+$ && "$dispatch_reserve" =~ ^[0-9]+$ && "$dispatch_reserve" -gt "$reserve" ]]; then
-		reserve="$dispatch_reserve"
+		if _pulse_main_dispatch_round_unadmittable; then
+			echo "[pulse-wrapper] Stage dispatch reserve released: ${stage_name} main dispatch round cannot be admitted this cycle (GH#37811)" >>"$LOGFILE"
+		else
+			reserve="$dispatch_reserve"
+		fi
 	fi
 	remaining=$(_pulse_cycle_remaining_seconds "$reserve") || { printf '%s\n' "$timeout_seconds"; return 0; }
 	if [[ "$remaining" -lt 15 ]]; then

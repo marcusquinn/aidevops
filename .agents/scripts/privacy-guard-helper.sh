@@ -363,11 +363,12 @@ privacy_scan_public_text() {
 	local entities_file="$2"
 	local aidevops_script_basenames_provided="${3+x}"
 	local aidevops_script_basenames="${3:-}"
-	local hits=0 class value secret_hits path_hits
+	local target_repo="${4:-}"
+	local hits=0 class value secret_hits path_hits basename escaped scan_text
 
 	[[ -f "$entities_file" ]] || return 2
 	[[ -z "$text" ]] && return 0
-	path_hits=$(privacy_scan_local_paths "$text")
+	path_hits=$(privacy_scan_local_paths "$text" "$target_repo")
 	case $? in
 	1) printf '%s\n' '[local-path]'; hits=$((hits + 1)) ;;
 	2) return 2 ;;
@@ -386,6 +387,20 @@ privacy_scan_public_text() {
 		if [[ "$text" == *"$value"* ]]; then
 			printf '[private-%s]\n' "$class"
 			hits=$((hits + 1))
+		elif [[ "$class" == "repo" ]]; then
+			basename="${value##*/}"
+			if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+				scan_text="$text"
+				if [[ "$basename" == "aidevops" ]]; then
+					scan_text="${scan_text//<!-- aidevops:sig -->/ }"
+					scan_text="${scan_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
+				fi
+				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
+					printf '[private-repo]\n'
+					hits=$((hits + 1))
+				fi
+			fi
 		fi
 	done <"$entities_file"
 	[[ "$hits" -gt 0 ]] && return 1
@@ -394,14 +409,14 @@ privacy_scan_public_text() {
 
 #######################################
 # Redact tagged private entities in locally previewed text.
-# Arguments: $1=text $2=entity inventory
+# Arguments: $1=text $2=entity inventory $3=optional public target slug
 #######################################
 privacy_redact_public_text() {
 	local text="$1"
 	local entities_file="$2"
 	local class value redacted="$text"
 	[[ -f "$entities_file" ]] || return 1
-	redacted=$(privacy_redact_local_paths "$redacted") || return 1
+	redacted=$(privacy_redact_local_paths "$redacted" "${3:-}") || return 1
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		redacted="${redacted//"$value"/[private-${class}]}"
@@ -436,15 +451,21 @@ privacy_redact_public_text_from_inventory() {
 # Replace local filesystem paths before rendering text for a public surface.
 # Mirrors privacy_scan_local_paths() so callers can preserve useful dashboard
 # data without bypassing the public-write privacy guard.
-# Arguments: $1=text
+# Arguments: $1=text $2=optional public target slug
 #######################################
 privacy_redact_local_paths() {
 	local text="$1"
+	local target_repo="${2:-}"
+	local folders='Git|Projects|Code|src|work|dev'
+	if [[ -n "$target_repo" ]]; then
+		text=$(_privacy_transform_git_paths "$text" "$target_repo" redact) || return 1
+		folders='Projects|Code|src|work|dev'
+	fi
 	# shellcheck disable=SC2016  # sed expressions intentionally use single quotes
 	printf '%s' "$text" | sed -E \
 		-e 's%(^|[[:space:]`"(:=])/Users/[^[:space:]`")]*%\1[local-path]%g' \
 		-e 's%(^|[[:space:]`"(:=])/home/[^[:space:]`")]*%\1[local-path]%g' \
-		-e 's%(^|[[:space:]`"(:=])~/(Git|Projects|Code|src|work|dev)/[^[:space:]`")]*%\1[local-path]%g' \
+		-e "s%(^|[[:space:]\`\"(:=])~/(${folders})/[^[:space:]\`\")]*%\\1[local-path]%g" \
 		-e 's%(^|[[:space:]`"(:=])file:///(Users|home)/[^[:space:]`")]*%\1[local-path]%g'
 	return 0
 }
@@ -480,7 +501,7 @@ privacy_guard_public_write() {
 		printf '[privacy-guard][BLOCK] Private entity inventory could not be loaded.\n' >&2
 		return 1
 	fi
-	hits=$(privacy_scan_public_text "$text" "$entities_file")
+	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo")
 	scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 ]]; then
@@ -578,6 +599,14 @@ privacy_scan_bare_basenames() {
 	local matched_full_slugs="$3"
 	local slug owner basename escaped_basename
 	local hits=0
+	local framework_text="$text"
+	local scan_text
+	# Only these literal metadata tokens identify the framework, not a private
+	# repository. Do not exempt arbitrary aidevops comments or their payloads.
+	# Full-slug, local-path and secret scans continue to inspect the original.
+	# Preserve word boundaries for prose immediately beside either marker.
+	framework_text="${framework_text//<!-- aidevops:sig -->/ }"
+	framework_text="${framework_text//<!-- aidevops:skipped-check:qlty-out-of-credits -->/ }"
 
 	while IFS= read -r slug || [[ -n "$slug" ]]; do
 		# Skip blanks and comment lines.
@@ -601,8 +630,12 @@ privacy_scan_bare_basenames() {
 		fi
 
 		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			scan_text="$text"
+			if [[ "$basename" == "aidevops" ]]; then
+				scan_text="$framework_text"
+			fi
 			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
-			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+			if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped_basename}([^a-zA-Z0-9-]|$)" 2>/dev/null; then
 				if [[ -n "$owner" ]]; then
 					printf '%s (basename of %s)\n' "$basename" "$slug"
 				else
@@ -718,9 +751,36 @@ privacy_scan_text() {
 # Returns:
 #   0 if no hits, 1 if at least one hit, 2 on setup error.
 #######################################
+_privacy_transform_git_paths() {
+	local text="$1" target_repo="$2" mode="$3"
+	printf '%s' "$text" | awk -v slug="$target_repo" -v mode="$mode" '
+	BEGIN { split(slug, parts, "/"); repo=parts[2]; valid=(length(parts[1]) && length(repo) && !parts[3]) }
+	{
+		line=$0; out=""
+		while (match(line, /(^|[[:space:]`"\047(:=])~\/Git\/[^[:space:]`"\047)]*/)) {
+			prefix=substr(line, 1, RSTART-1); token=substr(line, RSTART, RLENGTH)
+			boundary=""; if (substr(token,1,1)!="~") { boundary=substr(token,1,1); token=substr(token,2) }
+			path=substr(token,7); n=split(path, p, "/")
+			allowed=valid && (p[1]==repo || (n>=2 && p[2]==repo))
+			for (i=1; i<=n; i++) if (p[i]==".." || p[i]==".") allowed=0
+			if (allowed) {
+				if (mode=="scan") { token="[public-repo-path]"; print "[privacy-scan][ALLOW] public repository path" > "/dev/stderr" }
+			} else if (mode=="redact") token="[local-path]"
+			out=out prefix boundary token; line=substr(line,RSTART+RLENGTH)
+		}
+		printf "%s%s", out line, (NR ? ORS : "")
+	}' || return 1
+	return 0
+}
+
 privacy_scan_local_paths() {
 	local text="$1"
+	local target_repo="${2:-}"
 	[[ -z "$text" ]] && return 0
+	local builtin_text="$text"
+	if [[ -n "$target_repo" ]]; then
+		builtin_text=$(_privacy_transform_git_paths "$text" "$target_repo" scan) || return 2
+	fi
 
 	local hits=0
 	local emitted_builtin=0
@@ -732,7 +792,7 @@ privacy_scan_local_paths() {
 	)
 	local pattern
 	for pattern in "${builtin_patterns[@]}"; do
-		if printf '%s' "$text" | grep -qE "$pattern" 2>/dev/null; then
+		if printf '%s' "$builtin_text" | grep -qE "$pattern" 2>/dev/null; then
 			if [[ "$emitted_builtin" -eq 0 ]]; then
 				printf '[local-path]\n'
 				emitted_builtin=1
@@ -953,6 +1013,9 @@ _privacy_custom_candidate_ordinals() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		printf '%s\n' "$value" >>"$values"
+		if [[ "$class" == "repo" && ${#value} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			printf '%s\n' "${value##*/}" >>"$values"
+		fi
 	done <"$entities_file"
 	if [[ -f "$patterns_file" ]]; then
 		while IFS= read -r pattern || [[ -n "$pattern" ]]; do
@@ -1266,6 +1329,7 @@ privacy_scan_public_diff() {
 	local head_sha="$2"
 	local entities_file="$3"
 	local public_head="${4:-}"
+	local target_repo="${5:-}"
 	local diff_base="$base_sha" diff_output
 	local current_file="" line_num=0 hits=0 line added matching_hits scan_rc hit
 	local aidevops_script_basenames
@@ -1328,7 +1392,7 @@ privacy_scan_public_diff() {
 		"+"*)
 			[[ "$line" == "+""++ " ]] && continue
 			added="${line:1}"
-			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames")
+			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames" "$target_repo")
 			scan_rc=$?
 			if [[ "$scan_rc" -eq 1 ]]; then
 				while IFS= read -r hit; do

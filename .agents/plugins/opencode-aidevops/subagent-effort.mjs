@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "fs";
 import { readCurrentOpenAIAuth } from "./oauth-pool.mjs";
 import { createPrimaryEntitlementFailover } from "./primary-entitlement-failover.mjs";
 import { openAIAuthSignature } from "./model-unavailability.mjs";
+import { rateLimitedProviders } from "./provider-rate-limits.mjs";
 import { withUnambiguousProviderFallbacks } from "./model-routing-reasoning.mjs";
 import { createSubagentEffortHandlers } from "./subagent-effort-handlers.mjs";
 import { loadSubagentTrial } from "./subagent-ab.mjs";
@@ -205,6 +206,7 @@ export function createSubagentEffortHooks(client, options = {}) {
   const modelRouting = options.modelRouting;
   const agentRoutingState = options.agentRoutingState;
   const onRoutingDecision = options.onRoutingDecision;
+  const resolveRateLimits = options.resolveRateLimits || (() => rateLimitedProviders());
   const resolveProviderState = createProviderStateResolver(
     client,
     options.providerStateTtlMs ?? 30000,
@@ -222,10 +224,13 @@ export function createSubagentEffortHooks(client, options = {}) {
     resolveProviderState,
     // GH#36698: read the current OpenAI auth on every decision so a re-login
     // stops matching model rejections recorded for the previous token.
+    // GH#37649: also read exhausted OAuth pools so routing skips a provider
+    // whose every account is in a rate-limit cooldown until the earliest reset.
     resolveAvailability: () => {
+      const availability = { rateLimitedProviders: resolveRateLimits() };
       const auth = readCurrentOpenAIAuth();
-      if (auth?.type !== "oauth" || !auth.access) return {};
-      return { authSignature: openAIAuthSignature(auth.access), openAIAuthType: auth.type };
+      if (auth?.type !== "oauth" || !auth.access) return availability;
+      return { ...availability, authSignature: openAIAuthSignature(auth.access), openAIAuthType: auth.type };
     },
     clampReasoningVariant,
     extractVariant,

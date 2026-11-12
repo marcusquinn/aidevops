@@ -606,6 +606,33 @@ _stale_recovery_has_unresolved_blocked_by() {
 	return 1
 }
 
+# Preserve the assignment and labels when an unresolved input circuit exists;
+# the recovery owner alone projects a revision/retry rearm with its receipt.
+_stale_recovery_has_input_circuit() {
+	local issue_number="$1" repo_slug="$2" pages="${3:-}" issue_json="" comments="" rc=0
+	# The recovery scan already fetched all comment pages. An explicit valid
+	# snapshot without any circuit needs no further circuit-specific reads.
+	if [[ -n "$pages" ]] && jq -e 'arrays | all(.[]; arrays | true) and
+		(all(.[][]; ((.body // "") | contains("aidevops:terminal-blocker-circuit revision=")) | not))' <<<"$pages" >/dev/null 2>&1; then
+		return 1
+	fi
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 0
+	comments=$(terminal_blocker_fetch_trusted_comments "$issue_number" "$repo_slug") || return 0
+	if ! jq -e 'any(.[]; (.body // "") | contains("aidevops:terminal-blocker-circuit revision="))' <<<"$comments" >/dev/null 2>&1; then
+		return 1
+	fi
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '{title: (.title // ""), body: (.body // ""), labels: (.labels // [])}' 2>/dev/null) || return 0
+	# A blocked-to-available transition belongs to rearm, which records the
+	# receipt; stale recovery must not silently release even a rearmed hold.
+	if jq -e 'any(.labels[]?; .name == "status:blocked")' <<<"$issue_json" >/dev/null 2>&1; then
+		return 0
+	fi
+	terminal_blocker_input_circuit_active "$comments" "$issue_json" "$repo_slug" "$issue_number" "" || rc=$?
+	[[ "$rc" -eq 1 ]] && return 1
+	return 0
+}
+
 #######################################
 # Verify a stale-recovery status transition before publishing success.
 # Args: issue number, repo slug, target status, stale assignees CSV
@@ -708,6 +735,7 @@ _stale_recovery_apply() {
 	local expected_dispatch_ts="${5:-}"
 	local recovery_tick="${6:-}"
 	local recovery_threshold="${7:-}"
+	local recovery_pages="${8:-}"
 
 	local saved_ifs="${IFS:-}"
 	local -a assignee_arr=()
@@ -719,6 +747,10 @@ _stale_recovery_apply() {
 	for assignee in "${assignee_arr[@]}"; do
 		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
+	if _stale_recovery_has_input_circuit "$issue_number" "$repo_slug" "$recovery_pages"; then
+		printf 'STALE_CIRCUIT_HOLD: issue #%s in %s — preserving status and assignment\n' "$issue_number" "$repo_slug"
+		return 0
+	fi
 	if _stale_recovery_has_unresolved_blocked_by "$issue_number" "$repo_slug"; then
 		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$expected_dispatch_ts" "${_recov_extra[@]}"
 		return 0
@@ -846,7 +878,7 @@ _recover_stale_assignment() {
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────
 
-	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" || return 1
+	_stale_recovery_apply "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_latest_dispatch_ts" "$_next_tick" "$_threshold" "$_comments_pages" || return 1
 	return 0
 }
 

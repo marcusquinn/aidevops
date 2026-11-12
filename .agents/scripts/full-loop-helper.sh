@@ -80,7 +80,9 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase] [--base <branch>]
+# --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
+#   (branch must exist on origin and differ from the current branch). Default: remote default branch.
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --keep-issue-open: interactive only; link with `For #N` (no closing keyword) and skip the
@@ -98,13 +100,11 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # can create the PR manually.
 cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
-	local runtime_risk="" testing_level=""
-	local pr_metadata_overrides=""
+	local runtime_risk="" testing_level="" pr_metadata_overrides=""
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
-	local allow_parent_close=0 keep_issue_open=0
-	local skip_hooks=0 skip_rebase=0
+	local allow_parent_close=0 keep_issue_open=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
 
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
@@ -129,10 +129,11 @@ cmd_commit_and_pr() {
 		fi
 	fi
 	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
+	_validate_stack_base "$stack_base_arg" "$branch" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	base_ref="origin/${base_branch}"
 	local parent_issue=0
 	_issue_has_parent_task_label "$issue_number" "$repo" && parent_issue=1
@@ -265,7 +266,7 @@ _commit_and_pr_prepare_metadata() {
 	if [[ "$completion_bookkeeping" -eq 1 ]]; then
 		closing_keyword="For"
 	fi
-	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_branch=$(_resolve_pr_base_branch origin) || return 1
 	base_ref="origin/${base_branch}"
 	# Freeze the comparison once: upstream movement is not part of this PR.
 	comparison_base=$(_pending_runtime_comparison_base "$base_ref") || return 1
@@ -495,7 +496,7 @@ Commands:
   status [--json]               Show observed executor and lifecycle state
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
-  commit-and-pr|create-pr --issue N --message "msg"
+  commit-and-pr|create-pr --issue N --message "msg" [--base <parent-branch>]
                                   Stage, commit, rebase, push, create PR, post merge summary
                 [--title TEXT]            Set the PR title (default: commit message)
                 [--summary TEXT]          Fill the PR Summary section
@@ -523,6 +524,10 @@ Commands:
                                  --admin and --auto are mutually exclusive at the
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
+                [--allow-parent-close]
+                                 Refused by default when a closing keyword targets a
+                                 parent-task issue (GH#37690); pass only for the
+                                 verified final phase.
                 [--override-review-bot-gate="REASON"]
                                  Interactive maintainer only (GH#36901): admin-merge
                                  when review-bot-gate is the sole failing required

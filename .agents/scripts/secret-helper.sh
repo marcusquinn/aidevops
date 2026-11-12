@@ -43,6 +43,10 @@ readonly INVENTORY_MAX_NAMES=512
 readonly INVENTORY_MAX_NAME_LENGTH=128
 readonly REDACTION_INIT_ERROR="Unable to initialize secret output redaction"
 
+# shellcheck source=./secret-systemd-creds-lib.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/secret-systemd-creds-lib.sh"
+
 # Check if gopass is available and initialized
 has_gopass() {
 	if ! command -v gopass &>/dev/null; then
@@ -127,11 +131,16 @@ stranded_loader_names() {
 # Whether gopass should own NAME. A listed entry stays gopass-only, so a locked
 # store fails closed instead of reading a stale plaintext value. An unreadable
 # listing also counts as owned, preserving the historical gopass-first result.
+# List the whole store, not the prefix: `gopass ls PREFIX/` fails once the
+# prefix folder is empty, which made every name look gopass-owned and broke
+# credentials.sh fallback after all secrets were moved out of gopass.
 gopass_owns_secret() {
 	local name="$1"
 	local listing=""
-	listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null) || return 0
-	if printf '%s\n' "$listing" | grep -Fxq -- "${GOPASS_PREFIX}/${name}"; then
+	listing=$(gopass ls --flat 2>/dev/null) || return 0
+	# Here-string, not a pipe: with pipefail, grep -q exiting early on a large
+	# whole-store listing could SIGPIPE printf and report a listed name as unowned.
+	if grep -Fxq -- "${GOPASS_PREFIX}/${name}" <<<"$listing"; then
 		return 0
 	fi
 	return 1
@@ -159,6 +168,10 @@ get_secret_value() {
 			return 3
 		fi
 		rm -f "$err_file"
+		return 0
+	fi
+	if systemd_owns_secret "$name"; then
+		systemd_secret_read "$name" || return 3
 		return 0
 	fi
 	# Fallback to credential files (handles multi-tenant)
@@ -463,7 +476,8 @@ build_secret_env() {
 		if [[ ${#specific_names[@]} -gt 0 ]]; then
 			# Inject only specific secrets
 			local available_secrets=""
-			if ! available_secrets=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+			# Whole-store listing: an empty prefix folder is not an error.
+			if ! available_secrets=$(gopass ls --flat 2>/dev/null); then
 				print_error "Unable to list gopass secrets for injection" >&2
 				return 1
 			fi
@@ -504,6 +518,23 @@ build_secret_env() {
 			done <<<"$secrets"
 		fi
 	fi
+
+	local encrypted_name="" encrypted_value=""
+	while IFS= read -r encrypted_name; do
+		[[ -n "$encrypted_name" ]] || continue
+		if [[ ${#specific_names[@]} -gt 0 ]] && ! secret_env_name_emitted "$encrypted_name" "${specific_names[@]}"; then
+			continue
+		fi
+		secret_env_name_emitted "$encrypted_name" "${emitted_names[@]}" && continue
+		# A listed but unreadable gopass entry must not fall through to this backend.
+		if has_gopass && gopass_owns_secret "$encrypted_name"; then
+			return 1
+		fi
+		encrypted_value=$(systemd_secret_read "$encrypted_name") || return 1
+		[[ -n "$encrypted_value" ]] || return 1
+		emit_secret_env_record "$encrypted_name" "$encrypted_value"
+		emitted_names+=("$encrypted_name")
+	done < <(systemd_secret_names)
 
 	# Also load from credential files as fallback/supplement (handles multi-tenant)
 	local cred_file
@@ -894,6 +925,7 @@ has_credential_inventory() {
 # True when NAME is stored in gopass or a credential file (no decryption).
 secret_name_stored() {
 	local name="$1"
+	systemd_owns_secret "$name" && return 0
 	if has_gopass && gopass_owns_secret "$name"; then
 		return 0
 	fi
@@ -984,14 +1016,18 @@ append_registry_aliases() {
 # SET_RECORD_ARGS (globals keep Bash 3.2 compatibility without namerefs).
 parse_set_options() {
 	SET_SOURCE_FILE=""
+	SET_BACKEND="auto"
 	SET_RECORD_ARGS=()
 	while [[ $# -gt 0 ]]; do
 		local flag="$1"
 		local flag_value="${2:-}"
 		case "$flag" in
-		--from-file | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
+		--from-file | --backend | --provider | --account | --purpose | --zones | --resources | --expires | --kind)
 			[[ -n "$flag_value" ]] || return 1
-			if [[ "$flag" == "--from-file" ]]; then
+			if [[ "$flag" == "--backend" ]]; then
+				[[ "$flag_value" == systemd-creds || "$flag_value" == auto ]] || return 1
+				SET_BACKEND="$flag_value"
+			elif [[ "$flag" == "--from-file" ]]; then
 				SET_SOURCE_FILE="$flag_value"
 			else
 				SET_RECORD_ARGS+=("$flag" "$flag_value")
@@ -1003,6 +1039,36 @@ parse_set_options() {
 			;;
 		esac
 	done
+	return 0
+}
+
+print_secret_input_guidance() {
+	print_warning "WARNING: Never paste secret values into AI chat"
+	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
+	echo ""
+	echo "  1) When prompted, paste ONLY a single-line secret value"
+	echo "  2) Do NOT paste the command, key name, or an export line"
+	echo "  3) Input is hidden; press Enter when done"
+	echo ""
+	return 0
+}
+
+# Validate a normalized secret name for `set`; systemd-creds names follow the
+# inventory/check/rm rule (must start with a letter).
+validate_set_name() {
+	local name="$1"
+	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+		print_error "Secret name must be a valid environment variable name"
+		return 1
+	fi
+	if [[ "$SET_BACKEND" == systemd-creds && ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "systemd-creds secret names must start with a letter"
+		return 1
+	fi
+	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
+		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
+		return 1
+	fi
 	return 0
 }
 
@@ -1028,34 +1094,27 @@ cmd_set() {
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
-	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-		print_error "Secret name must be a valid environment variable name"
-		return 1
-	fi
-	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
-		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
-		return 1
-	fi
+	validate_set_name "$name" || return 1
 	if [[ ${#record_args[@]} -gt 0 ]] && ! run_credential_inventory record "$name" "${record_args[@]}" --check; then
 		print_error "Credential metadata rejected; nothing was stored"
 		return 1
 	fi
 
 	print_info "Setting secret: $name"
-	print_warning "WARNING: Never paste secret values into AI chat"
-	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
-	echo ""
-	echo "  1) When prompted, paste ONLY a single-line secret value"
-	echo "  2) Do NOT paste the command, key name, or an export line"
-	echo "  3) Input is hidden; press Enter when done"
-	echo ""
+	print_secret_input_guidance
 
 	local value
 	if ! value=$(read_secret_input "$name" "$source_file"); then
 		return 1
 	fi
 
-	if has_gopass; then
+	if [[ "$SET_BACKEND" == systemd-creds ]] || { systemd_owns_secret "$name" && ! { has_gopass && gopass_owns_secret "$name"; }; }; then
+		if ! printf '%s' "$value" | systemd_secret_write "$name"; then
+			print_error "Encrypted storage failed; no plaintext fallback was written" >&2
+			return 1
+		fi
+		print_success "Stored $name in systemd-creds (decrypt-verified)"
+	elif has_gopass; then
 		local gopass_output
 		if ! gopass_output=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1); then
 			if [[ "$gopass_output" == *"BLOCKED by canonical Git guard"* ]]; then
@@ -1149,7 +1208,7 @@ cmd_get() {
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then
-		print_error "Unable to read ${read_name} from gopass (decryption or store failure; check gpg-agent, pinentry and GNUPGHOME)" >&2
+		print_error "Unable to read ${read_name} from gopass or systemd-creds (decryption or store failure; check gpg-agent, pinentry, GNUPGHOME and ~/.config/aidevops/creds)" >&2
 		return 1
 	fi
 
@@ -1183,7 +1242,7 @@ cmd_check() {
 		return 0
 	fi
 	local plain_value=""
-	plain_value=$(get_secret_value "$name" 2>/dev/null) || return 1
+	plain_value=$(get_secret_value "$name" 2>/dev/null) || return $?
 	[[ -n "$plain_value" ]] || return 1
 	return 0
 }
@@ -1296,6 +1355,9 @@ cmd_rm() {
 
 	local rc=0
 	for name in "${RM_NAMES[@]}"; do
+		if systemd_owns_secret "$name"; then
+			rm -f -- "$CONFIG_DIR/creds/$name.cred" || rc=1
+		fi
 		if has_gopass && gopass_owns_secret "$name"; then
 			if ! gopass rm -f "${GOPASS_PREFIX}/${name}" </dev/null >/dev/null 2>&1; then
 				print_error "Failed to remove $name from gopass" >&2
@@ -1337,6 +1399,13 @@ cmd_rm() {
 # List secret names (NEVER values)
 cmd_list() {
 	local has_secrets=false
+	local encrypted_names=""
+	encrypted_names=$(systemd_secret_names)
+	if [[ -n "$encrypted_names" ]]; then
+		print_info "Secrets in systemd-creds:"
+		printf '%s\n' "$encrypted_names"
+		has_secrets=true
+	fi
 
 	if has_gopass; then
 		local secrets
@@ -1417,25 +1486,28 @@ cmd_inventory() (
 	local names_file=""
 	local sorted_file=""
 	local count=0
+	local encrypted_name=""
 
 	names_file=$(mktemp) || return 1
 	sorted_file="${names_file}.sorted"
 	trap 'rm -f "${names_file:-}" "${sorted_file:-}"' EXIT
+	while IFS= read -r encrypted_name; do
+		[[ -n "$encrypted_name" ]] || continue
+		inventory_add_name "$encrypted_name" "$names_file" || return 1
+	done < <(systemd_secret_names)
 
 	if command -v gopass &>/dev/null; then
 		gopass_status="error"
 		local listing=""
-		if listing=$(gopass ls --flat "${GOPASS_PREFIX}/" 2>/dev/null); then
+		# Whole-store listing: an empty prefix folder is "available", not an error.
+		if listing=$(gopass ls --flat 2>/dev/null); then
 			gopass_status="available"
 			local secret_path=""
 			while IFS= read -r secret_path; do
 				[[ -z "$secret_path" ]] && continue
 				case "$secret_path" in
 				"${GOPASS_PREFIX}/"*) inventory_add_name "${secret_path#"${GOPASS_PREFIX}/"}" "$names_file" || return 1 ;;
-				*)
-					print_error "Invalid gopass inventory path" >&2
-					return 1
-					;;
+				*) continue ;;
 				esac
 			done <<<"$listing"
 		fi
@@ -1609,11 +1681,11 @@ cmd_run() {
 
 	# Build environment in temp file with trap cleanup for security
 	local env_file
-	env_file=$(mktemp)
+	env_file=$(secret_env_tempfile) || return 1
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
-	build_secret_env >"$env_file"
+	build_secret_env >"$env_file" || return 1
 	append_registry_aliases "$env_file"
 	register_redaction_digests "$env_file"
 
@@ -1653,7 +1725,7 @@ cmd_run_specific() {
 
 	# Build environment with specific secrets only, trap cleanup for security
 	local env_file
-	env_file=$(mktemp)
+	env_file=$(secret_env_tempfile) || return 1
 	# shellcheck disable=SC2064
 	trap "rm -f '$env_file'" EXIT
 
@@ -1688,136 +1760,20 @@ cmd_run_specific() {
 	return "$exit_code"
 }
 
-# Explicit, read-only provider verification (GH#34722). Each token reaches
-# the verifier only through cmd_run_specific (environment, never argv; output
-# redacted); the verifier caches value-free observations in the registry.
-cmd_verify() {
-	local provider="${1:-}"
-	if [[ "$provider" == "aws" ]]; then
-		shift
-		cmd_verify_aws "$@"
-		return $?
-	fi
-	if [[ "$provider" != "cloudflare" ]]; then
-		print_error "Usage: aidevops secret verify {cloudflare|aws} [NAME...]"
-		return 1
-	fi
-	shift
-	local targets=""
-	local targets_rc=0
-	targets=$(run_credential_inventory verify-targets "$provider" "$@") || targets_rc=$?
-	if [[ "$targets_rc" -ne 0 ]]; then
-		[[ "$targets_rc" -eq 1 ]] && print_error "No recorded $provider API tokens; record them with: aidevops secret record NAME --provider $provider --kind api_token --account REF"
-		return 1
-	fi
-	local -a names=()
-	local name=""
-	while IFS= read -r name; do
-		[[ -n "$name" ]] && names+=("$name")
-	done <<<"$targets"
-	local verifier="${SCRIPT_DIR}/credential_inventory_${provider}.py"
-	local failures=0
-	for name in "${names[@]}"; do
-		cmd_run_specific "$name" -- python3 "$verifier" verify "$name" </dev/null || failures=$((failures + 1))
-	done
-	if [[ "$failures" -gt 0 ]]; then
-		print_warning "$failures of ${#names[@]} $provider credential(s) did not verify as active"
-		return 1
-	fi
-	return 0
-}
-
-# AWS uses paired credentials, not the single-token Cloudflare target model.
-cmd_verify_aws() {
-	local verifier="${SCRIPT_DIR}/credential_inventory_aws.py"
-	local targets="" prefix="" names_output="" name=""
-	local failures=0
-	targets=$(python3 "$verifier" targets "$@") || return 1
-	while IFS= read -r prefix; do
-		local -a names=()
-		names_output=$(python3 "$verifier" names "$prefix") || return 1
-		while IFS= read -r name; do
-			names+=("$name")
-		done <<<"$names_output"
-		cmd_run_specific "${names[@]}" -- python3 "$verifier" verify "$prefix" </dev/null || failures=$((failures + 1))
-	done <<<"$targets"
-	if [[ "$failures" -gt 0 ]]; then
-		print_warning "$failures AWS credential pair(s) did not verify"
-		return 1
-	fi
-	return 0
-}
-
-# Migrate only the active plaintext store into the resolver's flat namespace.
-# Both operations share the writer lock and a conservative literal-only parser.
-credential_migration() (
-	local operation="$1"
-	local dry_run="${2:-false}"
-	if ! has_gopass; then
-		print_error "gopass not initialized. Run: aidevops secret init"
-		return 1
-	fi
-	local file="" lock_dir=""
-	file=$(credential_store_file)
-	if [[ ! -e "$file" && ! -L "$file" ]]; then
-		print_info "No active credentials file found"
-		return 0
-	fi
-	lock_dir=$(acquire_credentials_lock) || return 1
-	trap 'release_credentials_lock "$lock_dir"' EXIT
-	python3 "${SCRIPT_DIR}/credential_migration.py" "$file" "$operation" "$dry_run" "${SCRIPT_DIR}/secret-helper.sh"
-	return $?
-)
-
-# JSON Lines, names only. File resolution stays shared with the runtime resolver.
-cmd_audit_credentials() {
-	local loader="" file=""
-	local -a files=("$CREDENTIALS_FILE")
-	is_tenant_loader && loader="$CREDENTIALS_FILE"
-	while IFS= read -r file; do
-		[[ -n "$file" ]] && files+=("$file")
-	done < <(resolve_credential_files)
-	python3 "${SCRIPT_DIR}/credential_audit.py" audit "${SCRIPT_DIR}/secret-helper.sh" "$loader" "$(credential_store_file)" "${files[@]}" || return 1
-	return 0
-}
-
-cmd_import_credentials() {
-	credential_migration import || return 1
-	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
-	print_info "Keep plaintext until callers use injection; preview with: aidevops secret prune-plaintext --dry-run"
-	return 0
-}
-
-cmd_prune_plaintext() {
-	local dry_run=false
-	local option="${1:-}"
-	if [[ $# -eq 1 && "$option" == "--dry-run" ]]; then
-		dry_run=true
-	elif [[ $# -ne 0 ]]; then
-		print_error "Usage: aidevops secret prune-plaintext [--dry-run]"
-		return 1
-	fi
-	print_info "Env-only helpers must run via: aidevops secret NAME -- cmd"
-	credential_migration prune "$dry_run" || return 1
-	return 0
-}
-
-# Names/permissions only: old copies remain plaintext even after pruning.
-warn_credential_backups() {
-	local backup="" permissions=""
-	for backup in "$CONFIG_DIR"/credentials.sh.bak-* "$TENANTS_DIR"/*/credentials.sh.bak-*; do
-		[[ -e "$backup" || -L "$backup" ]] || continue
-		permissions=$(_file_perms "$backup" 2>/dev/null) || permissions="unknown"
-		print_warning "Plaintext credentials.sh.bak-* backup remains (mode $permissions); review under your secure-deletion policy"
-		if [[ ! "$permissions" =~ ^[046]00$ ]]; then
-			print_warning "Credential backup may be group/world-readable or unsafe"
-		fi
-	done
-	return 0
-}
+# shellcheck source=./secret-verify-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/secret-verify-lib.sh"
 
 # Show backend status
 cmd_status() {
+	if has_systemd_creds; then
+		print_info "systemd-creds: available (user scope, host key; explicit --backend systemd-creds)"
+	else
+		print_info "systemd-creds: unavailable (requires systemd 259+ with --refuse-null)"
+	fi
+	local encrypted_names=""
+	encrypted_names=$(systemd_secret_names)
+	[[ -z "$encrypted_names" ]] || printf 'systemd-creds configured names:\n%s\n' "$encrypted_names"
 	echo ""
 	print_info "Secret Management Status"
 	echo "========================="
@@ -1888,6 +1844,7 @@ cmd_help() {
 	echo "  init                              Initialize gopass store"
 	echo "  set <NAME>                        Store a secret (interactive hidden input)"
 	echo "  set <NAME> --from-file PATH       Store a private regular file (chmod 600)"
+	echo "  set <NAME> --backend systemd-creds Store host-bound encrypted credentials (systemd 259+)"
 	echo "                                    Piped stdin is read in full until EOF"
 	echo "  get <NAME>                        Get a secret value (for scripts/piping)"
 	echo "  check <NAME>                      Resolve by name; exit status only, no output"
@@ -1922,6 +1879,7 @@ cmd_help() {
 	echo "  run CMD [ARGS...]                 Run command with all secrets injected"
 	echo "  NAME [NAME...] -- CMD [ARGS...]   Run command with specific secrets"
 	echo "  import-credentials                Import from credentials.sh to gopass"
+	echo "  import-credentials --to systemd-creds  Decrypt-verified import; retains plaintext source"
 	echo "  prune-plaintext [--dry-run]        Remove matching active-store secrets; keep config"
 	echo "  migrate-loader                    Move exports stranded in a tenant loader into the active tenant"
 	echo ""
@@ -2010,7 +1968,12 @@ main() {
 		cmd_run "$@"
 		;;
 	import-credentials | import)
-		cmd_import_credentials "$@"
+		if [[ "${1:-}" == --to && "${2:-}" == systemd-creds && $# -eq 2 ]]; then
+			cmd_import_systemd_credentials || return 1
+		else
+			[[ $# -eq 0 ]] || return 1
+			cmd_import_credentials "$@"
+		fi
 		;;
 	prune-plaintext)
 		cmd_prune_plaintext "$@"

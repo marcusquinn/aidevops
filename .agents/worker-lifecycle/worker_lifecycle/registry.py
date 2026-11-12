@@ -147,6 +147,17 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    vacant = commands.add_parser(
+        "release-vacant-path",
+        help="release the stale reservation of an absent path before re-creating it; never deletes",
+    )
+    vacant.add_argument("--path", required=True, type=Path)
+    replaced = commands.add_parser(
+        "release-replaced-path",
+        help="preview or confirm releasing a reservation whose tree was replaced; never deletes",
+    )
+    replaced.add_argument("--path", required=True, type=Path)
+    replaced.add_argument("--confirm", action="store_true")
     proof = commands.add_parser(
         "verify-retirement", help="verify dated cleanup-receipt evidence; never delete",
     )
@@ -202,23 +213,27 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    if args.operation == "cleanup-worktree":
-        from .cleanup import cleanup_worktree
+    from . import cleanup, path_release
 
-        return cleanup_worktree(store, args.repos_config, args.output_root, args.path)
-    if args.operation == "retire-enrolled-only":
-        from .cleanup import retire_enrolled_only
-
-        return retire_enrolled_only(
+    operations = {
+        "cleanup-worktree": lambda: cleanup.cleanup_worktree(
+            store, args.repos_config, args.output_root, args.path,
+        ),
+        "retire-enrolled-only": lambda: cleanup.retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
-        )
-    if args.operation == "cleanup":
-        from .cleanup import cleanup_pass
-
-        return cleanup_pass(
+        ),
+        "release-vacant-path": lambda: path_release.release_vacant_path(store, args.path),
+        "release-replaced-path": lambda: path_release.release_replaced_path(
+            store, args.path, args.confirm,
+        ),
+        "cleanup": lambda: cleanup.cleanup_pass(
             store, args.repos_config, args.output_root, args.limit, args.budget_seconds,
-        )
-    raise ValueError("unsupported-cleanup-operation")
+        ),
+    }
+    operation = operations.get(args.operation)
+    if operation is None:
+        raise ValueError("unsupported-cleanup-operation")
+    return operation()
 
 
 def _maintenance_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
@@ -241,7 +256,8 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
-    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only"}:
+    if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
+                          "release-vacant-path", "release-replaced-path"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",

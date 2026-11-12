@@ -6,8 +6,30 @@ import {
   isTitleOverwritable,
   purposePreservingTitle,
 } from "../lib/session-rename-guards"
-import { withAidevopsTitleSuffix } from "../lib/session-title-suffix"
+import { isSessionTitleAddressEnabled, withSessionTitleDecorations } from "../lib/session-title-suffix"
 import { emitTerminalTitle } from "../lib/terminal-title"
+
+type SessionRow = { title: string; parent_id: string | null }
+
+function readSessionRow(db: Database, sessionID: string): SessionRow | null {
+  try {
+    return db
+      .query("SELECT COALESCE(title, '') AS title, parent_id FROM session WHERE id = ?")
+      .get(sessionID) as SessionRow | null
+  } catch {
+    // Schemas without parent_id: treat the session as a root session.
+    const row = db
+      .query("SELECT COALESCE(title, '') AS title FROM session WHERE id = ?")
+      .get(sessionID) as { title: string } | null
+    return row ? { title: row.title, parent_id: null } : null
+  }
+}
+
+// GH#37630: interactive root sessions carry their session-bus address token.
+function displayTitleFor(title: string, sessionID: string, row: SessionRow | null): string {
+  const addressed = isSessionTitleAddressEnabled() && row !== null && !row.parent_id
+  return withSessionTitleDecorations(title, { sessionID: addressed ? sessionID : "" })
+}
 
 /**
  * Rename a session by updating the title directly in the SQLite database.
@@ -26,11 +48,9 @@ function renameSession(
   try {
     const db = new Database(dbPath)
     try {
-      const current = db
-        .query("SELECT COALESCE(title, '') AS title FROM session WHERE id = ?")
-        .get(sessionID) as { title: string } | null
+      const current = readSessionRow(db, sessionID)
       const preservedTitle = purposePreservingTitle(current?.title || "", title, replacePurpose)
-      const displayTitle = withAidevopsTitleSuffix(preservedTitle)
+      const displayTitle = displayTitleFor(preservedTitle, sessionID, current)
       const nowMs = Date.now()
       const result = db.run(
         "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
@@ -83,7 +103,7 @@ function syncSessionWithBranch(
         }
       }
 
-      const displayTitle = withAidevopsTitleSuffix(branch)
+      const displayTitle = displayTitleFor(branch, sessionID, readSessionRow(db, sessionID))
       const nowMs = Date.now()
       const result = db.run(
         "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",

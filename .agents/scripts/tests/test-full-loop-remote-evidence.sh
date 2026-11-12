@@ -82,6 +82,16 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/testrepo/branches/main" ]]
 	fi
 	exit 0
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == "--paginate" && "${3:-}" == "repos/testorg/testrepo/commits/abc123/check-runs"* ]]; then
+	case "${GH_TEST_MODE:-pass}" in
+		rollup-pass) printf '%s\n' '{"id":1,"name":"required-ci","status":"completed","conclusion":"success","head_sha":"abc123"}' ;;
+		rollup-failure) printf '%s\n' '{"id":1,"name":"required-ci","status":"completed","conclusion":"failure","head_sha":"abc123"}' ;;
+		rollup-pending) printf '%s\n' '{"id":1,"name":"required-ci","status":"in_progress","conclusion":null,"head_sha":"abc123"}' ;;
+		rollup-wrong-head) printf '%s\n' '{"id":1,"name":"required-ci","status":"completed","conclusion":"success","head_sha":"other"}' ;;
+		rollup-error) printf '%s\n' 'HTTP 503: service unavailable' >&2; exit 1 ;;
+	esac
+	exit 0
+fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/testrepo/rulesets" ]]; then
 	printf '%s\n' '[]'
 	exit 0
@@ -155,6 +165,10 @@ _merge_collect_external_authority_gaps() {
 	FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS=()
 	return 0
 }
+review_thread_gate_unresolved_bot_count() {
+	printf '0\n'
+	return 0
+}
 gh_pr_checks_exact_json() {
 	local repo_slug="\$1"
 	local pr_number="\$2"
@@ -197,7 +211,7 @@ gh_pr_checks_exact_json() {
 			printf '%s\n' 'exact check helper must not run when configuration has no contexts' >&2
 			return 99
 			;;
-		cli-no-required)
+		cli-no-required | rollup-*)
 			printf "%s\n" "no required checks reported on the 'remote-branch' branch" >&2
 			return 1
 			;;
@@ -278,11 +292,29 @@ run_gate no-required || {
 }
 printf 'PASS explicit no-required-checks evidence reaches the review-bot gate\n'
 
-run_gate cli-no-required || {
-	printf 'FAIL canonical CLI no-required-checks evidence was rejected after API failure\n'
+if run_gate cli-no-required; then
+	printf 'FAIL positive requirements with an empty rollup were inferred absent\n'
+	exit 1
+fi
+printf 'PASS positive requirements are not inferred absent from an empty rollup\n'
+
+rollup_output=$(run_gate rollup-pass visible 2>&1) || {
+	printf 'FAIL exact-head check-runs for positive requirements were rejected: %s\n' "$rollup_output"
 	exit 1
 }
-printf 'PASS canonical CLI no-required-checks evidence survives unavailable branch protection\n'
+if [[ "$rollup_output" != *"CHECK_EVIDENCE=required-checks-pass"* || "$rollup_output" == *"no required checks are configured"* ]]; then
+	printf 'FAIL empty-rollup success lost positive evidence: %s\n' "$rollup_output"
+	exit 1
+fi
+printf 'PASS empty rollup with passing exact-head check-runs is ready\n'
+
+for mode in rollup-failure rollup-pending rollup-wrong-head rollup-error; do
+	if run_gate "$mode"; then
+		printf 'FAIL empty rollup granted readiness: %s\n' "$mode"
+		exit 1
+	fi
+	printf 'PASS empty rollup does not grant readiness: %s\n' "$mode"
+done
 
 for mode in protected404-pass protected404-pending protected404-failure; do
 	fallback_rc=0

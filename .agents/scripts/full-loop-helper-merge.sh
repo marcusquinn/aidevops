@@ -63,6 +63,10 @@ source "${SCRIPT_DIR}/gh-merge-cache-remediation-lib.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/release-lane-helper.sh"
 
+# shellcheck source=./manual-release-hold-helper.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/manual-release-hold-helper.sh"
+
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
@@ -1342,6 +1346,7 @@ _merge_parse_command_args() {
 	FULL_LOOP_MERGE_PARSED_METHOD="--squash"
 	FULL_LOOP_MERGE_PARSED_ADMIN=0
 	FULL_LOOP_MERGE_PARSED_AUTO=0
+	FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=0
 	FULL_LOOP_MERGE_PARSED_BODY_FILE=""
 	FULL_LOOP_MERGE_PARSED_RBG_OVERRIDE_REASON=""
 	local arg=""
@@ -1368,6 +1373,9 @@ _merge_parse_command_args() {
 			;;
 		--auto)
 			FULL_LOOP_MERGE_PARSED_AUTO=1
+			;;
+		--allow-parent-close)
+			FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE=1
 			;;
 		"$FULL_LOOP_MERGE_BODY_FILE_FLAG")
 			if [[ $# -eq 0 || "$1" == -* || -n "$FULL_LOOP_MERGE_PARSED_BODY_FILE" ]]; then
@@ -1557,7 +1565,14 @@ _merge_handle_already_merged_provenance() {
 _merge_release_lane_check() {
 	local pr_number="$1"
 	local repo="$2"
-	[[ "$repo" == "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] || return 0
+	if [[ "$repo" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]]; then
+		# Advisory manual-release hold: refuse other PRs while a release PR is in flight.
+		manual_release_hold_check "$repo" "$pr_number" || {
+			print_error "Merge deferred by active manual release hold"
+			return 1
+		}
+		return 0
+	fi
 	local pr_refs="" base_ref=""
 	pr_refs=$(_flm_gh_read gh api "repos/${repo}/pulls/${pr_number}" --jq '[.base.ref, .head.ref] | @tsv') || {
 		print_error "Merge blocked: cannot verify release-lane PR identity"
@@ -1684,13 +1699,69 @@ _merge_check_closure_metadata() {
 		print_error "Merge blocked for PR #${pr_number}: ${closure_reason}"
 		return 1
 	fi
+	FULL_LOOP_MERGE_CLOSURE_JSON="$closure_json"
+	return 0
+}
+
+# GH#37690: re-run the parent-task closing-keyword guard at merge time. PRs
+# opened outside create-pr/commit-and-pr (raw `gh pr create`, web UI, a later
+# body edit) otherwise merge and let GitHub auto-close a parent-task issue
+# before post-merge reconciliation can react. Checks the body and GitHub's
+# repository-qualified closingIssuesReferences; unverifiable labels refuse.
+_merge_check_parent_task_keywords() {
+	local pr_number="$1" repo="$2" allow="$3" metadata="${4:-}"
+	local refs="" ref_repo="" ref_number="" tmp="" rc=0
+	[[ "$allow" -eq 1 ]] && return 0
+	local guard="${SCRIPT_DIR}/parent-task-keyword-guard.sh"
+	if [[ ! -x "$guard" ]]; then
+		print_error "Merge blocked for PR #${pr_number}: parent-task keyword guard unavailable"
+		return 1
+	fi
+	if [[ -z "$metadata" ]]; then
+		metadata=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json body,closingIssuesReferences) || {
+			print_error "Merge blocked for PR #${pr_number}: closing-reference metadata unavailable"
+			return 1
+		}
+	fi
+	refs=$(printf '%s' "$metadata" | jq -r '
+		if ([.body // "" | strings] | length) != 1 or ([.closingIssuesReferences | arrays] | length) != 1 then error("invalid metadata") else
+		.closingIssuesReferences[] | select(.number != null and .repository.owner.login != null and .repository.name != null)
+		| "\(.repository.owner.login)/\(.repository.name) \(.number)" end') || {
+		print_error "Merge blocked for PR #${pr_number}: invalid closing-reference metadata"
+		return 1
+	}
+	_merge_closing_refs_have_repository "$metadata" || return 1
+	tmp=$(mktemp) || return 1
+	printf '%s' "$metadata" | jq -r '.body // ""' >"$tmp"
+	"$guard" check-body --body-file "$tmp" --repo "$repo" --strict --fail-on-uncertain || rc=$?
+	while read -r ref_repo ref_number; do
+		[[ -n "$ref_repo" && "$ref_number" =~ ^[0-9]+$ ]] || continue
+		printf 'Resolves #%s\n' "$ref_number" >"$tmp"
+		"$guard" check-body --body-file "$tmp" --repo "$ref_repo" --strict --fail-on-uncertain || rc=$?
+	done <<<"$refs"
+	rm -f "$tmp"
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Merge blocked for PR #${pr_number}: closing keyword targets a parent-task issue (edit the body to 'For #N'/'Ref #N', or pass --allow-parent-close for the verified final phase)"
+		return 1
+	fi
+	return 0
+}
+
+# Closure invariant (GH#36174) then parent-task keyword guard (GH#37690),
+# sharing one closing-reference metadata read.
+_merge_check_closing_guards() {
+	local pr_number="$1" repo="$2"
+	FULL_LOOP_MERGE_CLOSURE_JSON=""
+	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_parent_task_keywords "$pr_number" "$repo" \
+		"${FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE:-0}" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
 	return 0
 }
 
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
-		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH] [--override-review-bot-gate=REASON]"
+		print_error "Usage: full-loop-helper.sh merge <PR_NUMBER> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--allow-parent-close] [--body-file PATH] [--override-review-bot-gate=REASON]"
 		return 1
 	fi
 	shift
@@ -1724,7 +1795,7 @@ cmd_merge() {
 		return "$_already_merged_rc"
 	fi
 
-	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_closing_guards "$pr_number" "$repo" || return 1
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
@@ -1777,6 +1848,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_restore_partial_continuation "$pr_number" "$repo" || print_warning "Partial continuation restore could not run for PR #${pr_number}"
 	_merge_record_post_merge_audits "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
@@ -1786,3 +1858,20 @@ cmd_merge() {
 
 	return 0
 }
+
+# Isolate pulse globals; the restore itself checks worker origin, closing refs,
+# merged state and ownership before any writes. It is best-effort after merge.
+_merge_restore_partial_continuation() (
+	local pr_number="$1" repo="$2" LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-restore.XXXXXX") || return 1
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pulse-merge.sh" || return 1
+	_pm_restore_partial_continuation "$pr_number" "$repo" "" "" || return 1
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	else
+		print_info "Partial continuation restore checked for PR #${pr_number}"
+	fi
+	return 0
+)

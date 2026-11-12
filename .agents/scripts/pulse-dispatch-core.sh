@@ -718,7 +718,9 @@ _release_dispatch_claim_on_abort() {
 	esac
 
 	if [[ "$_is_pre_launch_abort" == "1" ]]; then
-		if [[ "$reason" == worker_launch_rc_* ]] &&
+		# Sealed refusal precedes queued ownership publication. No rollback is
+		# necessary (or safe to infer) for that deterministic no-worker outcome.
+		if [[ "$reason" == worker_launch_rc_* && "$reason" != worker_launch_rc_2:worktree_reuse_sealed_generation ]] &&
 			! _rollback_prelaunch_ownership "$issue_number" "$repo_slug" "$self_login" "$_claim_comment_id"; then
 			echo "[dispatch_with_dedup] Retaining dispatch claim ${_claim_comment_id} after uncertain pre-launch rollback for #${issue_number} (${reason})" >>"$LOGFILE"
 			return 1
@@ -1106,6 +1108,7 @@ dispatch_with_dedup() {
 	# scope first. Without this, set -u crashes the wrapper on every dispatch,
 	# SIGTERM-ing all active workers.
 	local _claim_comment_id=""
+	_dlw_sealed_hold_active "$repo_path" "$issue_number" "$repo_slug" && return 1
 
 	# GH#17503: Claim comments are NEVER deleted — they form the audit trail.
 	# The _cleanup_claim_comment function is retained as a no-op for backward

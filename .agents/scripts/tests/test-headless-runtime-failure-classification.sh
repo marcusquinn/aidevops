@@ -87,6 +87,14 @@ _hrff_record_runner_health_failure issue-123 crash_during_startup
 _hrff_record_runner_health_failure issue-123 worker_noop_zero_output
 _hrff_record_runner_health_failure issue-123 crash_during_execution
 assert_eq "only zero-activity startup outcomes recorded" "2" "$(wc -l <"$FIXTURE_HEALTH_LOG" | tr -d ' ')"
+# GH#37597: a fresh dispatch's signing failure keeps the trip-at-1 signal; a
+# continuation after an attempt with activity is recorded audit-only.
+: >"$FIXTURE_HEALTH_LOG"
+_HRW_PRIOR_ATTEMPT_ACTIVITY=0 _hrff_record_runner_health_failure issue-123 worker_signing_unavailable
+_HRW_PRIOR_ATTEMPT_ACTIVITY=1 _hrff_record_runner_health_failure issue-123 worker_signing_unavailable
+assert_eq "signing outcome attribution follows prior attempt activity" \
+	"worker_signing_unavailable|worker_signing_unavailable_after_activity" \
+	"$(cut -d' ' -f2 "$FIXTURE_HEALTH_LOG" | paste -sd'|' -)"
 
 check_classification \
 	"openai_rate_limit" \

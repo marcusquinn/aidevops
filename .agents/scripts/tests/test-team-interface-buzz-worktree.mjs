@@ -12,6 +12,11 @@ import {fileURLToPath} from "node:url";
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const helper = path.resolve(testDirectory, "../team-interface-buzz-worktree.sh");
 
+// Resolve native Git from the system default PATH (portable to non-FHS hosts).
+const nativeGitLookup = spawnSync("/bin/sh", ["-c", "command -p -v git"], {encoding: "utf8"});
+const NATIVE_GIT = nativeGitLookup.stdout.trim();
+assert.ok(nativeGitLookup.status === 0 && NATIVE_GIT, "Native Git is unavailable on the system PATH");
+
 function run(command, args, options = {}) {
   return spawnSync(command, args, {encoding: "utf8", ...options});
 }
@@ -28,10 +33,10 @@ test("Buzz worktree resolver binds canonical projects per host-qualified agent",
   const manager = path.join(root, "worktree-manager.sh");
   fs.mkdirSync(canonical, {mode: 0o700});
   fs.mkdirSync(central, {mode: 0o700});
-  requireSuccess(run("/usr/bin/git", ["-C", canonical, "init", "--quiet", "--initial-branch=main"]), "git init");
+  requireSuccess(run(NATIVE_GIT, ["-C", canonical, "init", "--quiet", "--initial-branch=main"]), "git init");
   fs.writeFileSync(path.join(canonical, "README.md"), "fixture\n");
-  requireSuccess(run("/usr/bin/git", ["-C", canonical, "add", "README.md"]), "git add");
-  requireSuccess(run("/usr/bin/git", [
+  requireSuccess(run(NATIVE_GIT, ["-C", canonical, "add", "README.md"]), "git add");
+  requireSuccess(run(NATIVE_GIT, [
     "-C", canonical,
     "-c", "user.name=Fixture",
     "-c", "user.email=fixture@example.invalid",
@@ -41,7 +46,7 @@ test("Buzz worktree resolver binds canonical projects per host-qualified agent",
 set -euo pipefail
 [[ "$1" == "add" ]]
 [[ "$PWD" == "${canonical}" ]]
-/usr/bin/git -C "${canonical}" worktree add -q -b "$2" "$3" main
+"${NATIVE_GIT}" -C "${canonical}" worktree add -q -b "$2" "$3" main
 `);
   fs.chmodSync(manager, 0o700);
   const environment = {
@@ -57,7 +62,7 @@ set -euo pipefail
     );
     assert.equal(resolved, path.join(central, "project-buzz-test-host-build-plus"));
     assert.equal(
-      requireSuccess(run("/usr/bin/git", ["-C", resolved, "branch", "--show-current"]), "branch read"),
+      requireSuccess(run(NATIVE_GIT, ["-C", resolved, "branch", "--show-current"]), "branch read"),
       "buzz/test-host/build-plus",
     );
     const reused = requireSuccess(

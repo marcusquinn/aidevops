@@ -173,13 +173,14 @@ _is_trusted_opencode_canary_issue_pr() {
 
 #######################################
 # Check whether a linked issue is a plugin starter-sync issue and the PR stays
-# inside the repo's scripts/core-files.txt (plus changelog.txt).
+# inside the base core-files list or the trusted issue's Files Scope.
 #
 #aidevops:trust-boundary — the starter-sync workflow files one issue as
 # github-actions[bot] titled exactly "Core files differ from the starter" with
 # label starter-sync. Trust is bound to that issue shape AND the PR diff: every
-# changed file must be listed in scripts/core-files.txt read at the PR BASE sha
-# (a PR cannot widen its own scope) or be changelog.txt; renames are rejected.
+# changed file must match a file or directory prefix in scripts/core-files.txt
+# read at the PR BASE sha, an exact path in the trusted issue's Files Scope,
+# or changelog.txt; renames are rejected. The issue body must be readable.
 # API errors, truncated file lists (>= 100) or missing data fail closed. All
 # other merge gates (checks, reviews, review-bot, NMR) still apply. The gate
 # order is pinned by test_starter_sync_does_not_bypass_other_gates in
@@ -187,7 +188,7 @@ _is_trusted_opencode_canary_issue_pr() {
 # moving this check.
 # Blob-equality hardening against the starter was not implemented: files with
 # plugin-own marker blocks legitimately differ and the starter commit is not
-# machine-readable from the issue, so the base-ref scope list is the bound.
+# machine-readable from the issue, so these scope lists are the bound.
 #
 # Args: $1=pr_number, $2=repo_slug, $3=issue API path
 # Returns: 0=trusted starter-sync brief with in-scope diff, 1=not trusted
@@ -196,20 +197,24 @@ _is_trusted_starter_sync_issue_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local issue_api="$3"
-	local issue_meta="" login="" user_type="" title="" labels=""
+	local issue_meta="" login="" user_type="" title="" labels="" issue_scope=""
 	local required_title="Core files differ from the starter"
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" && -n "$issue_api" ]] || return 1
-	issue_meta=$(gh api "$issue_api" \
-		--jq 'select(.pull_request == null) | [(.user.login // ""), (.user.type // ""), ([.labels[].name] | join(",")), (.title // "")] | @tsv' \
-		2>/dev/null) || return 1
-	IFS=$'\t' read -r login user_type labels title <<<"$issue_meta"
+	issue_meta=$(gh api "$issue_api" 2>/dev/null) || return 1
+	login=$(jq -r 'select(.pull_request == null and ([.body | strings] | length == 1)) | .user.login // ""' <<<"$issue_meta") || return 1
+	user_type=$(jq -r '.user.type // ""' <<<"$issue_meta") || return 1
+	labels=$(jq -r '[.labels[].name] | join(",")' <<<"$issue_meta") || return 1
+	title=$(jq -r '.title // ""' <<<"$issue_meta") || return 1
 	[[ "$login" == "$_PM_WORKFLOW_BOT_LOGIN" && "$user_type" == "Bot" ]] || return 1
 	[[ "$title" == "$required_title" ]] || return 1
 	[[ ",${labels}," == *",starter-sync,"* ]] || return 1
+	issue_scope=$(jq -r '.body | split("\n") | (index("### Files Scope") // length) as $start |
+		.[$start + 1:] | (map(test("^#{1,6} ")) | index(true) // length) as $end |
+		.[:$end][] | select(test("^- `[^`]+`$")) | .[3:-1]' <<<"$issue_meta") || return 1
 
 	local base_sha="" scope_list="" files_json=""
-	local file_count='' path=''
+	local file_count='' path='' entry='' in_scope=0
 	local pr_api="repos/${repo_slug}/pulls"
 	pr_api+="/${pr_number}"
 	base_sha=$(gh api "$pr_api" --jq '.base.sha // ""' 2>/dev/null) || return 1
@@ -231,15 +236,24 @@ _is_trusted_starter_sync_issue_pr() {
 		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync file count ${file_count} is empty or potentially truncated (GH#37289)" >>"$LOGFILE"
 		return 1
 	fi
+	jq -e 'all(.[]; .status != "renamed" and ([.filename | strings] | length == 1))' <<<"$files_json" >/dev/null 2>&1 || return 1
 
 	while IFS= read -r path; do
 		[[ -n "$path" ]] || return 1
 		[[ "$path" == "changelog.txt" ]] && continue
-		if ! grep -Fxq -- "$path" <<<"$scope_list"; then
+		in_scope=0
+		while IFS= read -r entry; do
+			[[ -z "$entry" || "$entry" == \#* ]] && continue
+			if [[ "$path" == "$entry" || ( "$entry" == */ && "$path" == "$entry"* ) ]]; then
+				in_scope=1
+				break
+			fi
+		done <<<"$scope_list"
+		if [[ "$in_scope" -eq 0 ]] && ! grep -Fxq -- "$path" <<<"$issue_scope"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — starter-sync PR changes out-of-scope file ${path} (GH#37289)" >>"$LOGFILE"
 			return 1
 		fi
-	done < <(printf '%s' "$files_json" | jq -r '.[] | (if .status == "renamed" then "<renamed>" else .filename end)')
+	done < <(printf '%s' "$files_json" | jq -r '.[].filename')
 	return 0
 }
 

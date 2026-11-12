@@ -70,6 +70,18 @@ gh() {
 	local command="${1:-}"
 	local subcommand="${2:-}"
 	local args="$*"
+	if [[ "$command" == "api" && -n "${GH_FLAKY_DIR:-}" ]]; then
+		local marker="${GH_FLAKY_DIR}/${subcommand//[^A-Za-z0-9]/_}"
+		if [[ ! -e "$marker" ]]; then
+			: >"$marker"
+			printf '%s\n' 'gh: Bad Gateway (HTTP 502)' >&2
+			return 1
+		fi
+	fi
+	if [[ "$command" == "api" && "${GH_TAG_ABSENT:-false}" == "true" && "$subcommand" == */git/ref/tags/* ]]; then
+		printf '%s\n' 'gh: Not Found (HTTP 404)' >&2
+		return 1
+	fi
 	if [[ "$command" == "api" && -n "$GH_RELEASE_TAG_MODE" ]]; then
 		case "$subcommand" in
 		"repos/example/repo/git/ref/tags/v1.2.3")
@@ -1032,9 +1044,35 @@ test_release_tag_commit_resolution() {
 	return 0
 }
 
+test_release_evidence_transient_read_retry() {
+	setup_subject
+	local stderr_file="${TEST_ROOT}/tag-retry.stderr"
+	local rc=0
+	local old_backoff="${AIDEVOPS_GH_READ_BACKOFF:-}"
+
+	AIDEVOPS_GH_READ_BACKOFF="0 0 0"
+	GH_RELEASE_TAG_MODE="annotated"
+	GH_FLAKY_DIR="${TEST_ROOT}/flaky"
+	mkdir -p "$GH_FLAKY_DIR"
+	_full_loop_verify_published_release "example/repo" "v1.2.3" "$GH_RELEASE_TAG_COMMIT" \
+		"release.yml" "push" 2>"$stderr_file" || rc=1
+	GH_FLAKY_DIR=""
+
+	GH_TAG_ABSENT="true"
+	if _full_loop_verify_published_release "example/repo" "v1.2.3" "$GH_RELEASE_TAG_COMMIT" 2>"$stderr_file"; then rc=1; fi
+	[[ "$(<"$stderr_file")" == *"not found"* ]] || rc=1
+	GH_TAG_ABSENT="false"
+	GH_RELEASE_TAG_MODE=""
+	if [[ -n "$old_backoff" ]]; then AIDEVOPS_GH_READ_BACKOFF="$old_backoff"; else unset AIDEVOPS_GH_READ_BACKOFF; fi
+
+	print_result "release evidence retries transient reads and keeps 404 tags failing as not found" "$rc"
+	return 0
+}
+
 main() {
 	resolve_fixture_git
 	setup_subject
+	test_release_evidence_transient_read_retry
 	test_refresh_canonical_reports_pending_without_mutation
 	test_interactive_merge_fast_forwards_canonical_through_helper
 	test_untracked_only_canonical_fast_forwards_through_helper

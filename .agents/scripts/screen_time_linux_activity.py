@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
-"""Persist sampled Linux input evidence as compact active intervals.
+"""Persist sampled human input evidence as compact active intervals.
 
 Each sample supplies the latest human-input epoch. Time counts as active from
 an input until an idle cut-off later, only while the sampler proves the host
 stayed awake. Completed intervals and sampler coverage spans are appended to
 screen-activity.jsonl; the open interval lives in screen-activity-state.json.
+Linux (tty/desktop idle) and macOS (HIDIdleTime) samplers share this store and
+differ only in the collector name, so both platforms apply the same rule.
 """
 
 from __future__ import annotations
@@ -27,7 +29,8 @@ DEFAULT_IDLE_SECONDS = 300
 MIN_SAMPLE_GAP = 180
 RETENTION_SECONDS = 400 * DAY
 STALE_HOURS = 72
-PARTIAL_EVIDENCE = "graphical-idle-unavailable"
+# Evidence kinds meaning a human input source existed but could not be read.
+PARTIAL_EVIDENCE = ("graphical-idle-unavailable", "hid-idle-unavailable")
 
 
 def idle_seconds():
@@ -35,8 +38,8 @@ def idle_seconds():
     return int(value) if value is not None and 60 <= value <= 3600 else DEFAULT_IDLE_SECONDS
 
 
-def source_name(idle):
-    return f"{COLLECTOR}:idle-cutoff-{idle}s"
+def source_name(idle, collector=COLLECTOR):
+    return f"{collector}:idle-cutoff-{idle}s"
 
 
 def pair(value):
@@ -137,8 +140,8 @@ def read_records(log_path):
     return [record for record in map(parse_record, lines) if record is not None]
 
 
-def record_line(kind, left, right):
-    row = {"kind": kind, "start": round(left, 1), "end": round(right, 1), "collector": COLLECTOR}
+def record_line(kind, left, right, collector=COLLECTOR):
+    row = {"kind": kind, "start": round(left, 1), "end": round(right, 1), "collector": collector}
     return json.dumps(row, sort_keys=True) + "\n"
 
 
@@ -149,24 +152,24 @@ def write_atomic(path, text):
     os.replace(temporary, path)
 
 
-def prune_records(log_path, cutoff):
+def prune_records(log_path, cutoff, collector=COLLECTOR):
     records = read_records(log_path)
     keep = [record for record in records if record[2] >= cutoff]
     if len(keep) != len(records):
-        write_atomic(log_path, "".join(record_line(*record) for record in keep))
+        write_atomic(log_path, "".join(record_line(*record, collector) for record in keep))
 
 
-def persist(directory, state, done, prune_before):
+def persist(directory, state, done, prune_before, collector=COLLECTOR):
     log_path = directory / LOG_NAME
     if done:
         with log_path.open("a", encoding="utf-8") as handle:
-            handle.writelines(record_line(kind, *span) for kind, span in done)
+            handle.writelines(record_line(kind, *span, collector) for kind, span in done)
     if prune_before is not None:
-        prune_records(log_path, prune_before)
+        prune_records(log_path, prune_before, collector)
     write_atomic(directory / STATE_NAME, json.dumps(state, sort_keys=True) + "\n")
 
 
-def record_sample(directory, now, evidence):
+def record_sample(directory, now, evidence, collector=COLLECTOR):
     """Advance the persisted state with one evidence sample under a lock."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -181,7 +184,7 @@ def record_sample(directory, now, evidence):
         idle = idle_seconds()
         done = advance(state, now, safe_float(evidence.get("last_input")), idle)
         state.update(evidence=list(evidence.get("kinds", [])), idle_seconds=idle)
-        persist(directory, state, done, now - RETENTION_SECONDS if new_day else None)
+        persist(directory, state, done, now - RETENTION_SECONDS if new_day else None, collector)
     return {"status": "sampled", "last_input": state["last_input"], "open": state["open"], "evidence": state["evidence"]}
 
 
@@ -210,31 +213,31 @@ def stored_spans(directory, state, now):
     return spans["active"], spans["coverage"]
 
 
-def unavailable(reason):
-    return {"status": "unavailable", "source": COLLECTOR, "reason": reason, "intervals": []}
+def unavailable(reason, collector=COLLECTOR):
+    return {"status": "unavailable", "source": collector, "reason": reason, "intervals": []}
 
 
 def collection_status(state, freshness):
     if freshness > STALE_HOURS:
         return "stale"
-    return "partial" if PARTIAL_EVIDENCE in state["evidence"] else "ok"
+    return "partial" if any(kind in PARTIAL_EVIDENCE for kind in state["evidence"]) else "ok"
 
 
-def activity_collection(directory, now):
+def activity_collection(directory, now, collector=COLLECTOR):
     if directory is None:
-        return unavailable("activity-directory-unset")
+        return unavailable("activity-directory-unset", collector)
     directory = Path(directory)
     state = normalized_state(read_json(directory / STATE_NAME))
     active, coverage = stored_spans(directory, state, now)
     latest = state["last_sample"] or (coverage[-1][1] if coverage else None)
     if latest is None:
-        return unavailable("no-input-activity-samples")
+        return unavailable("no-input-activity-samples", collector)
     freshness = max(0.0, (now - latest) / 3600)
     earliest = coverage[0][0] if coverage else latest
     markers = day_markers(coverage)
     return {
         "status": collection_status(state, freshness),
-        "source": source_name(int(state["idle_seconds"] or idle_seconds())),
+        "source": source_name(int(state["idle_seconds"] or idle_seconds()), collector),
         "reason": "sampled-input-activity",
         "intervals": active,
         "observations": len(markers),

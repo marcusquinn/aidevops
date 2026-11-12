@@ -5,6 +5,7 @@ import re
 import subprocess  # nosec B404 # classify exceptions, never execute error argv
 
 from .filesystem import FilesystemValidationError, filesystem_error_details
+from .protected_proc import ProcessCensusUnavailable
 from .refusal import failure_category
 
 
@@ -16,6 +17,8 @@ def failure_details(error: Exception) -> dict:
         details = {"reason": type(error).__name__}
     if isinstance(error, ValueError) and re.fullmatch(r"[a-z][a-z0-9:_-]{0,159}", str(error)):
         details["reason"] = str(error)
+    if isinstance(error, ProcessCensusUnavailable):
+        details["process_observation"] = error.observation
     if isinstance(error, OSError) and error.errno is not None:
         details["errno"] = error.errno
     category = failure_category(error)

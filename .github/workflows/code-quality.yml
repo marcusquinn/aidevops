@@ -223,17 +223,27 @@ jobs:
 
     - name: Install Bubblewrap
       timeout-minutes: 8
+      env:
+        # GH#37769: hosted runners repeatedly stalled in `apt-get update`
+        # (60s+ per attempt, every PR and main). Install the pinned jammy
+        # security build of Bubblewrap directly instead of refreshing every
+        # apt index; its dependencies (libc6, libcap2, libselinux1) ship in
+        # the runner image. The checksum fails closed on any byte change.
+        BWRAP_DEB: bubblewrap_0.6.1-1ubuntu0.3_amd64.deb
+        BWRAP_DEB_SHA256: 706763714e5d19fc7ab2572a6418506e3a4a5d5960e99309707b58117e6b40cb
       run: |
-        # Bubblewrap comes from Ubuntu, not the runner's browser/vendor repos.
-        # Keep unrelated mirror/signature failures out of boundary verification.
-        for source_file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-          [ -e "$source_file" ] || continue
-          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
-            sudo mv "$source_file" "${source_file}.disabled"
-          fi
-        done
-        sudo apt-get update -qq
-        sudo apt-get install -y bubblewrap
+        deb="${RUNNER_TEMP}/${BWRAP_DEB}"
+        if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 15 --max-time 60 \
+             -o "$deb" "http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/${BWRAP_DEB}" &&
+           echo "${BWRAP_DEB_SHA256}  ${deb}" | sha256sum -c - &&
+           sudo dpkg -i "$deb"; then
+          bwrap --version
+          exit 0
+        fi
+        echo "::warning::Pinned Bubblewrap package install failed; falling back to one bounded apt attempt"
+        timeout 180 sudo apt-get -o Acquire::Retries=1 update -qq
+        timeout 120 sudo apt-get -o Acquire::Retries=1 install -y bubblewrap
+        bwrap --version
 
     - name: Run model replay boundary suite
       run: node .agents/scripts/tests/test-model-replay-benchmark.mjs
@@ -556,6 +566,11 @@ jobs:
         bash .agents/scripts/tests/test-large-file-dependency-lifecycle-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Auto-decomposer Scanner Regression Tests (GH#37557)
+      run: |
+        bash .agents/scripts/tests/test-auto-decomposer-scanner.sh
+        bash .agents/scripts/tests/test-auto-decomposer-per-parent-gate.sh
+
     - name: Approve Collaborator Author Guard (GH#17671, t2933)
       run: |
         # Pins the function-level supply-chain defense in approve_collaborator_pr.
@@ -580,7 +595,8 @@ jobs:
         export LOG_DIR="$log_dir"
         # *-cases.sh / *-mocks.sh are fixtures sourced by a suite, not suites.
         git ls-files '.agents/scripts/tests/test-pulse-merge-*.sh' \
-          '.agents/scripts/tests/test-pulse-merge-*.py' |
+          '.agents/scripts/tests/test-pulse-merge-*.py' \
+          '.agents/scripts/tests/test-full-loop-merge.sh' |
           grep -Ev -- '-(cases|mocks)\.sh$' >"${log_dir}/suites.txt"
         run_suite() {
           local suite="$1"
@@ -735,53 +751,23 @@ jobs:
     - name: Install shfmt (for nesting-depth AST scanner, GH#20105)
       # scanners/nesting-depth.sh uses `shfmt --to-json` + jq to walk the bash
       # AST. Without shfmt it falls back to the legacy AWK scanner (which has
-      # the four false-positive classes the GH#20105 rewrite fixed). Ubuntu
-      # 22.04+ ships shfmt in the default apt repos; --to-json is stable since
-      # v3.0.0 so the packaged version is fine. Hosted runner images can carry
-      # third-party apt sources that fail independently of this repo; remove the
-      # unused Microsoft/Chrome package sources before apt update so shfmt install
-      # is not blocked by unrelated 403/signature/hash-mismatch errors.
+      # the four false-positive classes the GH#20105 rewrite fixed).
+      # GH#37759: this job is a required check, so it must not depend on Ubuntu
+      # apt mirrors (an azure.archive.ubuntu.com DNS outage blocked every PR).
+      # Install the pinned upstream release binary instead. v3.8.0 matches the
+      # apt package this step used before (shfmt_3.8.0-1), so the AST output
+      # is unchanged. The checksum fails closed on any byte change.
+      timeout-minutes: 5
+      env:
+        SHFMT_VERSION: v3.8.0
+        SHFMT_SHA256: 27b3c6f9d9592fc5b4856c341d1ff2c88856709b9e76469313642a1d7b558fe0
       run: |
-        # Keep each network-bound apt phase within a five-minute budget. The
-        # heartbeat makes a slow runner distinguishable from a silent stall.
-        run_with_heartbeat() {
-          local phase="$1"
-          local timeout_seconds="$2"
-          local heartbeat_pid
-          local status=0
-          shift 2
-
-          printf '::notice::Starting %s (timeout: %ss)\n' "$phase" "$timeout_seconds"
-          (
-            local elapsed=0
-            while true; do
-              sleep 30
-              elapsed=$((elapsed + 30))
-              printf '::notice::%s still running (%ss/%ss)\n' "$phase" "$elapsed" "$timeout_seconds"
-            done
-          ) &
-          heartbeat_pid=$!
-          trap 'kill "$heartbeat_pid" 2>/dev/null || true; wait "$heartbeat_pid" 2>/dev/null || true' EXIT INT TERM
-
-          timeout --kill-after=30s "${timeout_seconds}s" "$@" || status=$?
-
-          kill "$heartbeat_pid" 2>/dev/null || true
-          wait "$heartbeat_pid" 2>/dev/null || true
-          trap - EXIT INT TERM
-          if [ "$status" -ne 0 ]; then
-            printf '::error::%s exited with status %s (timeout: %ss)\n' "$phase" "$status" "$timeout_seconds"
-          fi
-          return "$status"
-        }
-
-        for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-          [ -e "$source_file" ] || continue
-          if grep -qE 'packages[.]microsoft[.]com|dl[.]google[.]com/linux/chrome' "$source_file"; then
-            sudo mv "$source_file" "${source_file}.disabled"
-          fi
-        done
-        run_with_heartbeat "apt-get update" 300 sudo apt-get update -qq
-        run_with_heartbeat "apt-get install shfmt" 300 sudo apt-get install -y shfmt
+        shfmt_tmp="${RUNNER_TEMP}/shfmt"
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 \
+          --connect-timeout 15 --max-time 45 -o "$shfmt_tmp" \
+          "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_amd64"
+        printf '%s  %s\n' "$SHFMT_SHA256" "$shfmt_tmp" | sha256sum --check --strict -
+        sudo install -m 0755 "$shfmt_tmp" /usr/local/bin/shfmt
         shfmt --version
 
     - name: Shell function complexity
@@ -1144,7 +1130,7 @@ jobs:
     - name: SonarCloud Scan
       id: sonarcloud_scan
       if: env.SONAR_TOKEN != ''
-      uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+      uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
       # SonarCloud may fail on fork PR merge refs even when SONAR_TOKEN is
       # available (e.g., maintainer re-runs). Non-fatal — other quality tools
       # (Codacy, CodeFactor, Qlty) still provide coverage.

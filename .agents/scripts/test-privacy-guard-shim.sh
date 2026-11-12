@@ -175,6 +175,39 @@ else
 	fail "expected rc=1 with single hit, got rc=$rc hits='$hits'"
 fi
 
+# GH#37542: framework metadata must not hide private prose or comment payloads.
+FRAMEWORK_SLUGS="${TMP}/framework-slugs.txt"
+printf '%s\n' 'acme/aidevops' 'acme/longprivate' 'acme/credits' >"$FRAMEWORK_SLUGS"
+for text in '<!-- aidevops:sig -->' \
+	'<!-- aidevops:skipped-check:qlty-out-of-credits -->' \
+	$'<!-- aidevops:sig -->\n<!-- aidevops:skipped-check:qlty-out-of-credits -->'; do
+	hits=$(privacy_scan_text "$text" "$FRAMEWORK_SLUGS")
+	rc=$?
+	if [[ "$rc" -eq 0 && -z "$hits" ]]; then
+		pass "exact framework metadata allowed: $text"
+	else
+		fail "framework metadata: rc=$rc hits='$hits'"
+	fi
+done
+for text in 'Private aidevops repository <!-- aidevops:sig -->' \
+	'aidevops<!-- aidevops:sig -->suffix' \
+	'prefix<!-- aidevops:skipped-check:qlty-out-of-credits -->aidevops' \
+	'<!-- aidevops:sig --> acme/aidevops' \
+	'<!-- aidevops:longprivate -->' \
+	'<!-- aidevops:sig longprivate -->' \
+	'<!-- aidevops:skipped-check:qlty-out-of-credits --> longprivate' \
+	'<!-- aidevops:sig --> <!-- longprivate -->' \
+	'<!-- aidevops:skipped-check:qlty-out-of-credits --> credits' \
+	'<!-- aidevops:sig --> /ho''me/example/private'; do
+	hits=$(privacy_scan_text "$text" "$FRAMEWORK_SLUGS")
+	rc=$?
+	if [[ "$rc" -eq 1 && -n "$hits" ]]; then
+		pass "private content beside or inside metadata blocked: $text"
+	else
+		fail "private metadata content: rc=$rc hits='$hits'"
+	fi
+done
+
 # -----------------------------------------------------------------------------
 # Group 2: gh shim integration tests
 # These tests stage a fake `gh` on PATH so the shim's `_find_real_gh` returns
@@ -407,6 +440,16 @@ if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
 	pass "--body-file with private slug → BLOCKED"
 else
 	fail "expected rc=1 for --body-file leak. rc=$rc out='$out'"
+fi
+
+printf 'scripts/build-banner.sh gettext_longprivate' >"$BF"
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body-file "$BF" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RECORD_FILE" ]]; then
+	pass "body with script reference and identifier basename is blocked"
+else
+	fail "body identifier basename" "rc=$rc out=$out"
 fi
 
 # -- Test 2.7: title-only leak → BLOCKED

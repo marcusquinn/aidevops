@@ -19,6 +19,36 @@
 
 set -euo pipefail
 
+# Resolve native Git once as an executable on the caller PATH (portable to
+# non-FHS hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+_resolve_native_git() {
+	local dir candidate target
+	local -a path_dirs=()
+	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
+	for dir in "${path_dirs[@]}"; do
+		[[ "$dir" == /* ]] || continue
+		candidate="${dir}/git"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		# Skip the aidevops git wrapper.
+		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -a 'aidevops' >/dev/null; then
+			continue
+		fi
+		while [[ -L "$candidate" ]]; do
+			target=$(readlink "$candidate") || break
+			[[ "$target" == /* ]] || target="$(dirname "$candidate")/${target}"
+			candidate="$target"
+		done
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+TEST_NATIVE_GIT=$(_resolve_native_git) || {
+	printf '%s\n' 'Native Git (non-wrapper executable) not found on PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../cleanup-worktrees-async-helper.sh"
 
@@ -102,6 +132,10 @@ config_get() {
 aidevops_worktree_capacity_check() {
 	[[ "${MOCK_PRESSURE:-0}" == 1 ]] && return 1
 	return 0
+}
+aidevops_worktree_cleanup_headroom_low() {
+	[[ "${MOCK_HEADROOM_LOW:-0}" == 1 ]] && return 0
+	return 1
 }
 STUB
 
@@ -218,7 +252,7 @@ if [[ "\$*" == *"worktree list --porcelain -z"* ]]; then
 	printf 'worktree %s\\0prunable gitdir file points to non-existent location\\0\\0' "${MOCK_PRUNABLE_TARGET}"
 	exit 0
 fi
-exec /usr/bin/git "\$@"
+exec "$TEST_NATIVE_GIT" "\$@"
 STUB
 		chmod +x "${stub_dir}/git"
 		mkdir -p "${TEST_DIR}/repo"
@@ -819,6 +853,33 @@ test_cleanup_budget_scales_under_pressure() {
 	return 0
 }
 
+test_headroom_bypasses_cadence() {
+	local logs="${TEST_DIR}/.aidevops/logs"
+	mkdir -p "$logs"
+	date +%s >"${logs}/cleanup_worktrees.last-run"
+	MOCK_HEADROOM_LOW=1 run_helper_in_isolation >/dev/null
+	if [[ "$(<"${TEST_DIR}/cleanup-budget")" == 900 ]] &&
+		grep -q 'cleanup budget=900 reason=disk-headroom' "${logs}/cleanup_worktrees.log"; then
+		print_result "headroom: pressure bypasses cadence with distinct reason" 0
+	else
+		print_result "headroom: pressure bypasses cadence with distinct reason" 1
+	fi
+	return 0
+}
+
+test_headroom_real_snapshot() {
+	# Exercise the real probe without running retirement on this host.
+	source "${SCRIPT_DIR}/../disk-capacity-lib.sh"
+	if aidevops_disk_capacity_snapshot "$TEST_DIR" &&
+		AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=100 aidevops_worktree_cleanup_headroom_low &&
+		! AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=0 aidevops_worktree_cleanup_headroom_low; then
+		print_result "headroom: real snapshot honors percentage overrides" 0
+	else
+		print_result "headroom: real snapshot honors percentage overrides" 1
+	fi
+	return 0
+}
+
 test_capacity_mode_is_scoped_and_locked() {
 	local logs="${TEST_DIR}/.aidevops/logs" rc=0
 	git init -q "${TEST_DIR}/repo"
@@ -927,7 +988,7 @@ main() {
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
 		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked \
-		test_cleanup_budget_scales_under_pressure; do
+		test_cleanup_budget_scales_under_pressure test_headroom_bypasses_cadence test_headroom_real_snapshot; do
 		teardown
 		setup
 		"$test_case"

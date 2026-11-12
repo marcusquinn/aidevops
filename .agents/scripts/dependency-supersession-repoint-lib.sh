@@ -8,7 +8,9 @@
 # GH#34341 keeps dependants blocked at read time by following "Superseded by
 # #S". This library makes the graph itself truthful: it adds a native
 # blocked_by edge to #S, rewrites "Blocked by:" lines from #orig to #S and posts
-# one pointer comment. The old edge stays as history.
+# one pointer comment. The old edge stays as history. A dependant can opt out
+# of both repoint paths with <!-- aidevops:no-supersession-repoint -->. Remove
+# historical edges too when decoupling: readiness checks still follow them.
 #
 # Requires dependency-supersession-lib.sh. Writes use gh-write-helper.sh.
 
@@ -45,6 +47,8 @@ dsr_repoint_dependant() {
 	state=$(printf '%s' "$issue_json" | jq -r '.state // ""') || return 1
 	[[ "$state" == "$DSR_STATE_OPEN" ]] || return 0
 	body=$(printf '%s' "$issue_json" | jq -r '.body // ""') || return 1
+	# Respect explicit decoupling before any native edge or body mutation.
+	[[ "$body" == *'<!-- aidevops:no-supersession-repoint -->'* ]] && return 0
 	# Compare global issue IDs: a same-number blocker from another repo must not match.
 	edges=$(gh api "repos/${repo}/issues/${dependant}/dependencies/blocked_by" --jq '.[].id' 2>/dev/null) || return 1
 	succ_id=$(gh api "repos/${repo}/issues/${succ}" --jq '.id' 2>/dev/null) || return 1

@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 HELPER="$REPO_ROOT/.agents/scripts/repo-aidevops-health-helper.sh"
@@ -79,13 +87,13 @@ count_migration_plans() {
 
 init_fixture_repo() {
 	local repo="$1"
-	/usr/bin/git -C "$repo" init -q -b fixture
-	/usr/bin/git -C "$repo" config user.email test@example.invalid
-	/usr/bin/git -C "$repo" config user.name Test
-	/usr/bin/git -C "$repo" config commit.gpgsign false
+	"$TEST_NATIVE_GIT" -C "$repo" init -q -b fixture
+	"$TEST_NATIVE_GIT" -C "$repo" config user.email test@example.invalid
+	"$TEST_NATIVE_GIT" -C "$repo" config user.name Test
+	"$TEST_NATIVE_GIT" -C "$repo" config commit.gpgsign false
 	printf '%s\n' '.aidevops.json' >"$repo/.gitignore"
-	/usr/bin/git -C "$repo" add .gitignore
-	/usr/bin/git -C "$repo" commit -qm fixture
+	"$TEST_NATIVE_GIT" -C "$repo" add .gitignore
+	"$TEST_NATIVE_GIT" -C "$repo" commit -qm fixture
 	return 0
 }
 
@@ -125,8 +133,8 @@ printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$TRACKED_REPO
 for fixture_repo in "$STALE_REPO" "$CURRENT_REPO" "$TRACKED_REPO" "$REGISTERED_MISSING_REPO" "$UNREGISTERED_REPO"; do
 	init_fixture_repo "$fixture_repo"
 done
-/usr/bin/git -C "$TRACKED_REPO" add -f .aidevops.json
-/usr/bin/git -C "$TRACKED_REPO" commit -qm tracked-config
+"$TEST_NATIVE_GIT" -C "$TRACKED_REPO" add -f .aidevops.json
+"$TEST_NATIVE_GIT" -C "$TRACKED_REPO" commit -qm tracked-config
 
 jq -n \
 	--arg stale "$STALE_REPO" \
@@ -152,7 +160,7 @@ mkdir -p "$TEST_ROOT/disabled-existing"
 TRACKED_BEFORE=$(cksum <"$TRACKED_REPO/.aidevops.json")
 CURRENT_BEFORE=$(cksum <"$CURRENT_REPO/.aidevops.json")
 STALE_MODE_BEFORE=$(file_mode "$STALE_REPO/.aidevops.json")
-STALE_HEAD_BEFORE=$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)
+STALE_HEAD_BEFORE=$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)
 EXPECTED_FIRST_SUMMARY="1 bumped, 2 bump-skipped, 0 bump-failed, 1 registered-config-missing, 1 missing-folder, 1 no-init"
 HEALTH_LOG="$HOME/.aidevops/logs/repo-aidevops-health.log"
 
@@ -168,8 +176,8 @@ assert_equal "local config does not gain legacy version key" "$(jq -r 'has("aide
 assert_equal "local config preserves feature choices" "$(jq -r '.features.planning' "$STALE_REPO/.aidevops.json")" "true"
 assert_equal "local config preserves file mode" "$(file_mode "$STALE_REPO/.aidevops.json")" "$STALE_MODE_BEFORE"
 assert_equal "current local config remains byte-identical" "$(cksum <"$CURRENT_REPO/.aidevops.json")" "$CURRENT_BEFORE"
-assert_equal "local config update does not create a commit" "$(/usr/bin/git -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
-assert_equal "ignored local config keeps repository clean" "$(/usr/bin/git -C "$STALE_REPO" status --porcelain)" ""
+assert_equal "local config update does not create a commit" "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" rev-parse HEAD)" "$STALE_HEAD_BEFORE"
+assert_equal "ignored local config keeps repository clean" "$("$TEST_NATIVE_GIT" -C "$STALE_REPO" status --porcelain)" ""
 assert_equal "tracked config remains byte-identical" "$(cksum <"$TRACKED_REPO/.aidevops.json")" "$TRACKED_BEFORE"
 assert_contains "tracked config without origin reports migration blocker" "$(<"$HEALTH_LOG")" "no GitHub origin is available"
 assert_equal "tracked config without origin does not write obsolete local plan" "$(count_migration_plans)" "0"
@@ -244,6 +252,47 @@ PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
 assert_contains "plist legacy call keeps environment path" "$PLIST_OUT" "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 assert_equal "shared accessor reads canonical version" "$(_project_config_read_version "$STALE_REPO/.aidevops.json")" "9.9.9"
+
+# Exercise the actual audit with deterministic GitHub responses and isolated HOME.
+gh() {
+	local action="$1"
+	shift
+	if [[ "$action" == issue ]]; then
+		if [[ "$*" == *'org/blocked'* ]]; then printf '[{"number":1}]\n'; else printf '[]\n'; fi
+	elif [[ "$*" == *'org/unknown'* ]]; then
+		printf 'HTTP 500\n' >&2; return 1
+	elif [[ "$*" == *'org/clean'* ]]; then
+		printf '{}\n'
+	else
+		printf 'HTTP 404\n' >&2; return 1
+	fi
+	return 0
+}
+mkdir -p "$TEST_ROOT/onboard" "$HOME/.aidevops/advisories"
+printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
+jq -n --arg path "$TEST_ROOT/onboard" --arg recent "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+	'{initialized_repos: [
+	 {slug:"org/recent",path:$path,initialized:$recent,pulse:false},
+	 {slug:"org/old",path:$path,initialized:"2000-01-01T00:00:00Z",pulse:false},
+	 {slug:"org/blocked",path:$path,pulse:false},
+	 {slug:"org/clean",path:$path,initialized:$recent,pulse:true},
+	 {slug:"org/unknown",path:$path,initialized:$recent,pulse:true}]}' >"$CONFIG_FILE"
+rm "$TEST_ROOT/onboard/.aidevops.json"
+printf 'previous\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory"
+_check_onboarding_gaps 1
+assert_equal "onboarding dry run writes nothing" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory" && printf yes || printf no)" "no"
+_check_onboarding_gaps 0
+assert_contains "recent repository records pulse gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Pulse off"
+assert_contains "recent repository records config gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Missing config"
+assert_contains "recent repository records label gap" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory")" "Missing label"
+assert_equal "old unblocked repository has no advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-old.advisory" && printf yes || printf no)" "no"
+assert_equal "old blocked repository has advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-blocked.advisory" && printf yes || printf no)" "yes"
+assert_equal "unknown GitHub state preserves advisory" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory")" "previous"
+printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
+printf 'stale\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory"
+_check_onboarding_gaps 0
+assert_equal "clean advisory removed" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory" && printf yes || printf no)" "no"
+assert_contains "all report includes old candidates" "$(cmd_onboarding --all)" "org/old"
 
 printf '\nRan %d tests, %d failed.\n' "$((PASS + FAIL))" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

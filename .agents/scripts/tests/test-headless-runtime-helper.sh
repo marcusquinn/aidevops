@@ -51,6 +51,9 @@ setup_test_env() {
 	# shellcheck source=/dev/null
 	source "$HELPER_SCRIPT" >/dev/null 2>&1
 	set -e
+	# Finish-path fixtures model a run whose runtime launched (GH#37669);
+	# not-launched cases set _WORKER_RUNTIME_LAUNCH_STARTED=0 explicitly.
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
 	return 0
 }
 
@@ -517,6 +520,9 @@ main() {
 	test_clean_prelaunch_exit_is_precise_nonzero_failure
 	test_deleted_cwd_recovery_uses_worker_worktree
 	run_cmd_run_orchestration_tests
+	# Prelaunch and cmd_run cases above reset the launch flag; the finish-path
+	# fixtures below model launched runtimes (GH#37669).
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_stale_session_retry_clears_continuation_state

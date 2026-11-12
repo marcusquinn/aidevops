@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker-lifecycl
 from worker_lifecycle.enrollment import GenerationEnrollment, _git_directory
 from worker_lifecycle.launch import initialize_or_open, require_unregistered
 from worker_lifecycle.process import ObservationUnavailable
+from worker_lifecycle.refusal import _sqlite_code, failure_category
 from worker_lifecycle.runtime import adapter_for, require_ready
 from worker_lifecycle.session import admit_session
 
@@ -41,6 +42,9 @@ SAFE_REASONS = {
     "state-parent-must-be-canonical",
     "session-owner-already-ended",
     "generation-changed-during-session-admission",
+    # GH#37827: the marker names another installation, path or directory
+    # identity, typically a worktree copied by a machine migration or restore.
+    "generation-directory-mismatch",
 }
 # GH#37346: concurrent pulse, cleanup and worker writers can hold the WAL write
 # lock past the store's 2 s busy timeout. Admission replay is idempotent, so
@@ -154,8 +158,18 @@ def main():
     except (ValueError, OSError, RuntimeError, sqlite3.Error,
             subprocess.SubprocessError, ObservationUnavailable) as error:
         # Expose safe protocol reasons, never host paths or SQL exception text.
-        reason = str(error) if str(error) in SAFE_REASONS else type(error).__name__
-        print(json.dumps({"status": "unavailable", "reason": reason}))
+        payload = {}
+        if str(error) in SAFE_REASONS:
+            reason = str(error)
+        elif isinstance(error, sqlite3.Error):
+            # GH#37577: same stable SQLite code and category as cleanup/retire paths.
+            reason = _sqlite_code(error)
+            category = failure_category(error)
+            if category:
+                payload["category"] = category
+        else:
+            reason = type(error).__name__
+        print(json.dumps({"status": "unavailable", "reason": reason, **payload}))
         return 75
     result = {"status": status, "cleanup_authorized": False}
     if status == "coverage-gap":

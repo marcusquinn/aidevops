@@ -351,12 +351,14 @@ _large_file_gate_resolve_full_path() {
 _large_file_gate_remote_default_line_count() {
 	local repo_slug="$1"
 	local lf_path="$2"
-	local default_branch=""
+	local default_branch="${3:-}"
 	local content_json=""
 	local line_count=""
 
 	[[ "$repo_slug" == */* && -n "$lf_path" ]] || return 1
-	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch // empty' 2>/dev/null) || return 1
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch // empty' 2>/dev/null) || return 1
+	fi
 	[[ -n "$default_branch" ]] || return 1
 	content_json=$(gh api --method GET "repos/${repo_slug}/contents/${lf_path}" \
 		-f "ref=${default_branch}" 2>/dev/null) || return 1
@@ -645,6 +647,50 @@ _large_file_gate_close_duplicate_debt_issues() {
 }
 
 #######################################
+# Close resolved exact-marker debt issues before their simplification exemption
+# allows dispatch. Never infer resolution from a local checkout or a missing file.
+# Arguments: issue_number, repo_slug, issue_body
+# Returns: 0 only when the current candidate was closed (block its dispatch).
+#######################################
+_large_file_gate_close_resolved_debt_issues() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body="$3"
+	local lf_path="" marker="" branch="" sha="" count="" matches="" numbers=""
+	local debt_issue="" current_closed=false extra=""
+	[[ "$issue_body" =~ generator=large-file-simplification-gate\ cited_file=([^[:space:]]+)\  ]] || return 1
+	lf_path="${BASH_REMATCH[1]}"
+	marker="generator=large-file-simplification-gate"
+	marker+=" cited_file=${lf_path} "
+	branch=$(gh api "repos/${repo_slug}" --jq '.default_branch // empty' 2>/dev/null) || return 1
+	[[ -n "$branch" ]] || return 1
+	sha=$(gh api "repos/${repo_slug}/commits/${branch}" --jq '.sha // empty' 2>/dev/null) || return 1
+	[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	count=$(_large_file_gate_remote_default_line_count "$repo_slug" "$lf_path" "$sha") || return 1
+	[[ "$count" =~ ^[0-9]+$ && "$count" -lt "$LARGE_FILE_LINE_THRESHOLD" ]] || return 1
+	# The current issue is closed from its validated marker and measurement,
+	# independent of search (which may lag or return []). Search only adds duplicates.
+	numbers="$issue_number"
+	if matches=$(gh_issue_list --repo "$repo_slug" --state open --label "file-size-debt" \
+		--search "\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc" \
+		--json number,body --limit 100 2>/dev/null); then
+		extra=$(printf '%s' "$matches" | jq -r --arg marker "$marker" \
+			'[.[] | select((.body // "") | contains($marker)) | .number
+			| select(type == "number" and . > 0 and . == floor)] | .[]' 2>/dev/null) || extra=""
+		[[ -z "$extra" ]] || numbers+=$'\n'"$extra"
+	fi
+	numbers=$(printf '%s\n' "$numbers" | awk 'NF && !seen[$0]++')
+	while IFS= read -r debt_issue; do
+		if gh issue close "$debt_issue" --repo "$repo_slug" --reason completed \
+			--comment "Resolved file-size debt: ${lf_path} has ${count} lines (below ${LARGE_FILE_LINE_THRESHOLD}) on default branch ${branch} at commit ${sha}. Verified from the pinned remote file content." >/dev/null 2>&1; then
+			[[ "$debt_issue" != "$issue_number" ]] || current_closed=true
+		fi
+	done <<<"$numbers"
+	[[ "$current_closed" == true ]] || return 1
+	return 0
+}
+
+#######################################
 # Reopen the canonical debt issue when its cited file remains oversized.
 # Reusing the durable issue identity prevents close/create/auto-dispatch loops.
 # Arguments: issue_number, lf_path, repo_slug
@@ -720,6 +766,7 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
 - Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+- Verify: \`python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD\` exits 0 (pure move: \`removed-only=0 review=0 gated=0\`); paste its summary line into the PR body (playbook section 7.5)
 
 **Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).
 
@@ -1259,6 +1306,11 @@ _issue_targets_large_files() {
 	local simplification_gate_label="needs-simplification"
 	issue_labels=$(_large_file_gate_issue_labels "$issue_number" "$repo_slug" "$pre_fetched_json")
 	issue_labels_tokenized=",${issue_labels},"
+
+	if [[ "$issue_labels_tokenized" == *",file-size-debt,"* ]] &&
+		_large_file_gate_close_resolved_debt_issues "$issue_number" "$repo_slug" "$issue_body"; then
+		return 0
+	fi
 
 	local _precheck_rc=0
 	_large_file_gate_precheck_labels "$issue_number" "$repo_slug" "$issue_labels" "$force_recheck" || _precheck_rc=$?

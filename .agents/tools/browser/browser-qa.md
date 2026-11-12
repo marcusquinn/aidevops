@@ -25,7 +25,7 @@ tools:
 - **Purpose**: Visual and functional QA for mission milestones with UI components
 - **CLI**: `browser-qa-helper.sh run|screenshot|links|a11y|smoke --url URL --pages "/ /about"`; authenticated read-only: `browser-qa-helper.sh journey --config journey.json --environment NAME`
 - **Invoked by**: `workflows/milestone-validation.md` (Phase 3) during mission orchestration
-- **Tool stack**: Playwright (primary, fastest) > Stagehand (fallback, self-healing) > DevTools (companion)
+- **Tool stack**: Playwright (primary) and DevTools (companion)
 - **Output**: JSON/markdown reports with screenshots, broken links, accessibility issues, console errors
 - **When to use**: Milestone has UI components and criteria mention pages, visual layout, responsive design, user flows, or frontend rendering
 
@@ -301,7 +301,7 @@ const heroExists = await page.locator('.hero, [data-testid="hero"]').count() > 0
 const ctaExists = await page.locator('a:has-text("Get Started"), button:has-text("Sign Up")').count() > 0;
 ```
 
-Use Stagehand `observe()`/`extract()` when page structure is unknown or criteria are vague ("page looks professional"). Prefer Playwright for speed when you know what to look for.
+For unknown structure, use bounded Playwright DOM/ARIA inspection to discover selectors. Turn vague criteria into observable checks; do not treat a subjective impression as a pass.
 
 ## Interpreting Results for the Orchestrator
 
@@ -354,6 +354,6 @@ compare -metric RMSE shots/before-index-desktop-dark-1440x900.png shots/after-in
 - `workflows/mission-orchestrator.md` — Mission orchestrator (Phase 4 triggers validation)
 - `tools/browser/browser-automation.md` — Tool selection guide
 - `tools/browser/playwright.md` — Playwright API reference
-- `tools/browser/stagehand.md` — Stagehand for unknown page structures
+- `tools/browser/stagehand.md` — not recommended; only when the user explicitly asks to try Stagehand
 - `scripts/accessibility/playwright-contrast.mjs` — WCAG contrast checking
 - `tools/accessibility/accessibility-audit.md` — Full accessibility audit workflow

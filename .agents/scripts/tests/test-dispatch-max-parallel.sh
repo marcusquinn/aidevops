@@ -829,6 +829,8 @@ test_dispatch_cycle_floor_clock_fallback() {
 		_pulse_cycle_remaining_seconds() { printf '600\n'; return 0; }
 		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
 		DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=601
+		_dispatch_cycle_budget_defers_candidate 340 o/r && exit 1
+		_pulse_cycle_remaining_seconds() { printf '599\n'; return 0; }
 		_dispatch_cycle_budget_defers_candidate 340 o/r || exit 1
 		return 0
 	) || rc=1
@@ -960,6 +962,51 @@ test_serial_loop_allows_unset_stop_flag() {
 	else
 		print_result "serial_loop: unset STOP_FLAG defaults to no stop flag" 1 "got=${result}"
 	fi
+	return 0
+}
+
+# GH#37907: a deploy drain request that appears while candidate 1 runs stops
+# the serial loop before candidate 2, and skips the next dispatch_max census.
+# A marker naming another owner is ignored.
+test_serial_loop_cooperative_drain() {
+	local LOCKDIR="${TEST_ROOT}/drain-lock"
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 710 711 712; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "1 2" && "$capacity_rc" -ne 0 ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 0
+	else
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	printf 'owner=1\nbundle=bundle-next\n' >"${LOCKDIR}/drain_requested"
+	_dispatch_process_candidate() {
+		return 0
+	}
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "3 3" ]]; then
+		print_result "serial_loop: drain marker for another lock owner is ignored" 0
+	else
+		print_result "serial_loop: drain marker for another lock owner is ignored" 1 "got=${result}"
+	fi
+	rm -rf "$LOCKDIR" "$candidate_file"
 	return 0
 }
 
@@ -1196,6 +1243,69 @@ test_parallel_loop_skips_cached_blocks_before_wave() {
 
 # GH#33560: isolate clocks and cache writes in subshells, without live API calls.
 # GH#36603: admission needs floor (600) + pre-stage margin (60) [+ enumeration].
+test_elastic_dispatch_lease() {
+	local rc=0
+	(
+		set -e
+		source "${SCRIPT_DIR}/pulse-watchdog.sh"
+		source "${SCRIPT_DIR}/pulse-instance-lock.sh"
+		local LOCKDIR="${TEST_ROOT}/elastic-lock" WRAPPER_LOGFILE="$LOGFILE"
+		local PULSE_LOCK_MAX_AGE_S=1800 PULSE_STALE_THRESHOLD=3600 PULSE_START_EPOCH=1
+		local _PULSE_ELASTIC_DISPATCH=1 killed=0
+		mkdir "$LOCKDIR"
+		printf '%s\n' "$$" >"${LOCKDIR}/pid"
+		date +%s >"${LOCKDIR}/supervisor_heartbeat_epoch"
+		_get_process_age() { printf '7200\n'; return 0; }
+		ps() { printf 'bash pulse-wrapper.sh\n'; return 0; }
+		_kill_tree() { killed=$((killed + 1)); return 0; }
+		_force_kill_tree() { return 0; }
+		sleep() { return 0; }
+		_pulse_dispatch_lease_active
+		[[ "$(_dispatch_round_budget_plan before)" == 'full 0' ]] || exit 1
+		_pulse_cycle_remaining_seconds 0 && exit 1
+		_handle_existing_lock && exit 1
+		[[ "$killed" == 0 ]] || exit 1
+		unset _PULSE_DISPATCH_CANDIDATES_LIB_LOADED
+		source "${SCRIPT_DIR}/pulse-dispatch-lib-candidates.sh"
+		is_graphql_budget_sufficient() { return 0; }
+		_dispatch_process_candidate() { return 0; }
+		local candidates="${TEST_ROOT}/elastic-candidates" outcomes="${TEST_ROOT}/elastic-outcomes" i=0 result=""
+		for ((i=1; i<=50; i++)); do
+			printf '{"number":%s,"repo_slug":"o/r"}\n' "$i"
+		done >"$candidates"
+		: >"$outcomes"
+		result=$(_dispatch_max_loop "$candidates" 10 10 test_user 6 "$outcomes")
+		[[ "${result%% *}" == 10 ]] || exit 1
+		# A dead heartbeat retains the old hung-owner reclaim ceiling.
+		printf '1\n' >"${LOCKDIR}/supervisor_heartbeat_epoch"
+		_pulse_dispatch_lease_active && exit 1
+		_handle_existing_lock || exit 1
+		[[ "$killed" == 1 ]] || exit 1
+		rm -rf "$LOCKDIR"
+	) || rc=1
+	print_result "elastic lease: old fresh owner preserved, stale heartbeat reclaimed" "$rc"
+	return 0
+}
+
+test_observed_ceremony_reserve() {
+	local rc=0
+	(
+		set -e
+		local AIDEVOPS_DISPATCH_STAGES_LOG="${TEST_ROOT}/ceremony.tsv" i=0 DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=600
+		for ((i=1; i<=10; i++)); do
+			printf 'now\t#1\to/r\tdedup.ceremony_total\t%s\tcomplete\n' "$((i * 10000))"
+		done >"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		printf 'now\t#1\to/r\tdedup.ceremony_total\t0\tstart\n' >>"$AIDEVOPS_DISPATCH_STAGES_LOG"
+		[[ "$(_dispatch_ceremony_reserve_seconds)" == 90 ]] || exit 1
+		_pulse_cycle_remaining_seconds() { printf '150\n'; return 0; }
+		[[ "$(_dispatch_round_budget_plan after)" == 'full 0 150 90 60 0 0' ]] || exit 1
+		_dispatch_cycle_budget_defers_candidate 1 o/r && exit 1
+		[[ "$DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR" == 600 ]] || exit 1
+	) || rc=1
+	print_result "observed reserve: p90 excludes starts and leaves execution timeout unchanged" "$rc"
+	return 0
+}
+
 test_enumeration_budget_admission() {
 	local rc=0
 	(
@@ -1205,13 +1315,24 @@ test_enumeration_budget_admission() {
 		mkdir -p "${HOME}/.aidevops/cache"
 		rm -f "$_DISPATCH_TEST_CACHE"
 		[[ "$(_dispatch_enumeration_expected_seconds)" == 300 ]] || exit 1
-		_dispatch_cycle_budget_admits_round test before && exit 1
-		test_remaining=960
+		# GH#37623: below the full-census reserve, 120s+ of slack beyond
+		# floor + margin admits a bounded census (half the slack, <=180s).
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 149 959 600 60 300 1" ]] || exit 1
 		_dispatch_cycle_budget_admits_round test before || exit 1
-		printf '400\n' >"$_DISPATCH_TEST_CACHE"
+		AIDEVOPS_PULSE_BOUNDED_ENUMERATION_MIN_S=0 _dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=779
 		_dispatch_cycle_budget_admits_round test before && exit 1
+		test_remaining=780
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 60 780 600 60 300 1" ]] || exit 1
+		test_remaining=960
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 960 600 60 300 1" ]] || exit 1
+		printf '400\n' >"$_DISPATCH_TEST_CACHE"
+		[[ "$(_dispatch_round_budget_plan before)" == "bounded 150 960 600 60 400 1" ]] || exit 1
 		test_remaining=1060
 		_dispatch_cycle_budget_admits_round test before || exit 1
+		[[ "$(_dispatch_round_budget_plan before)" == "full 0 1060 600 60 400 1" ]] || exit 1
+		test_remaining=1500
+		[[ "$(_dispatch_bounded_enumeration_budget_seconds 1500 600 60)" == 180 ]] || exit 1
 		test_remaining=660
 		_dispatch_cycle_budget_admits_round test after || exit 1
 		test_remaining=659
@@ -1264,9 +1385,10 @@ test_enumeration_overrun_retains_refill() {
 		: >"$trigger"
 		rm -f "$enumerated" "${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
 		printf '1000000\n' >"$clock_file"
-		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300.
+		# GH#36603: before-enumeration admission needs 600 floor + 60 margin + 300;
+		# GH#37623: a bounded census needs 120s of slack beyond floor + margin.
 		if [[ "$stage" == before ]]; then
-			printf '959\n' >"$remaining_file"
+			printf '779\n' >"$remaining_file"
 		else
 			printf '1010\n' >"$remaining_file"
 		fi
@@ -1330,6 +1452,8 @@ test_enumeration_overrun_retains_refill() {
 # =============================================================================
 # Run all tests
 # =============================================================================
+test_elastic_dispatch_lease
+test_observed_ceremony_reserve
 test_enumeration_budget_admission
 test_enumeration_timing_persists_average
 test_enumeration_overrun_retains_refill before
@@ -1366,6 +1490,7 @@ test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
+test_serial_loop_cooperative_drain
 test_priority_reservations normal 1 2 4
 test_priority_reservations normal 3 2 4
 test_priority_reservations concurrent 3 2 4

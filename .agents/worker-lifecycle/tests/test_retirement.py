@@ -274,6 +274,19 @@ class RetirementContract(unittest.TestCase):
         )
         self.assertEqual(refusal_code(locked, "cleanup-worktree"), "worktree-locked")
 
+    def test_creation_names_disk_quota_only_from_strerror(self):
+        # GH#37922: only EDQUOT/ENOSPC text proves exhaustion; paths never leak.
+        def add_failure(stderr):
+            return subprocess.CalledProcessError(128, ["git", "worktree", "add"], stderr=stderr)
+
+        quota = add_failure(b"error: unable to write file worktree/locked/x: Disk quota exceeded\n")
+        full = add_failure(b"fatal: unable to write new index file: No space left on device\n")
+        generic = add_failure(b"error: unable to write file worktree/x\n")
+        self.assertEqual(refusal_code(quota, "create-worktree"), "disk-quota-exceeded")
+        self.assertEqual(refusal_code(full, "create-worktree"), "disk-full")
+        self.assertEqual(refusal_code(generic, "create-worktree"), "git-worktree-add-failed")
+        self.assertIsNone(refusal_code(quota, "cleanup-worktree"))
+
     def test_late_write_before_relocation_preserves_source(self):
         self.create()
         finish = retirement._finish

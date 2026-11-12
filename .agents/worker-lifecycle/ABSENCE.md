@@ -34,6 +34,25 @@ directory produces a retry, not a terminal outcome. Journal and admission releas
 commit together; failures roll back both. A replay returns its historical outcome
 without inspecting or modifying a replacement generation at the same pathname.
 
+## Fixed-path reuse (GH#37706)
+
+Fixed-path producers (Buzz host agents) re-create a tree at the same path. A generation
+whose tree vanished before retirement finished keeps its path reservation, so enrolling
+the replacement refuses with `reserved-path-without-enrollment-marker` (or
+`create-worktree` with `generation-path-reserved`). Neither command below deletes files,
+archives or Git data.
+
+- `release-vacant-path --path P`: while P is absent, runs the reconciliation above for
+  its reserving generation. `worktree_create_registered` calls it before every creation;
+  `no-reservation` and `path-present` are no-ops.
+- `release-replaced-path --path P [--confirm]`: operator recovery once a replacement
+  already occupies P. Eligible only when P's linked tree has no generation marker, the
+  reserving generation has no planned retirement, and every bound run was admitted and
+  has ended. It previews by default; `--confirm` journals `replaced-path-released`
+  evidence and releases the reservation in one writer transaction. The operator confirms
+  the tree at P is not the reserving generation with its marker removed (that case is
+  `generation-marker-missing`). Then enroll the replacement normally.
+
 ## Reporting
 
 `cleanup` returns `reconciled` separately from `retired`, `held` and `failed`.

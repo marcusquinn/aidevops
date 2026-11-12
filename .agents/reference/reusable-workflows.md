@@ -274,6 +274,21 @@ The caller YAML becomes `with: runner: "[self-hosted, linux, x64]"` and GitHub A
 
   Verification: `gh api repos/OWNER/REPO/actions/permissions/workflow --jq .default_workflow_permissions` returns `"read"` or `"write"`. A `"read"` repo will fail without the caller's `permissions:` block.
 
+## `pull_request_target` Actions event policy (public repositories)
+
+GitHub blocks `pull_request_target` by default in public repositories from **2026-12-02** unless an applicable Actions event policy explicitly allows it. Brownouts enforce the block early on **2026-11-09 and 2026-11-16, 16:00–18:00 UTC**: affected runs end `startup_failure` with zero jobs, so required gates such as `maintainer-gate` cannot report and no PR merges. Other events (`pull_request`, `issues`, `push`, `schedule`) are unaffected.
+
+A `restrict_action_events` rule limits the targeted workflows to `allowed_events`. These files also declare `issues`, `issue_comment`, `push`, `schedule`, `workflow_dispatch`, etc., so `allowed_events` must be the **union of every event declared in the targeted files' `on:` blocks** (plus `workflow_call` when a file calls a local reusable workflow). Too narrow a list silently stops those other triggers. The helper computes the union with a real YAML parser (`yq`).
+
+```bash
+actions-event-policy-helper.sh status --repo OWNER/REPO   # exit 0 covered/not applicable, 1 uncovered, 2 error
+actions-event-policy-helper.sh plan --repo OWNER/REPO     # print the exact policy JSON (read-only)
+actions-event-policy-helper.sh apply --repo OWNER/REPO    # create/update policy aidevops-pull-request-target-gates (repo admin)
+actions-event-policy-helper.sh status --all-managed       # public repos in repos.json
+```
+
+`security-posture-helper.sh` warns and `aidevops sync-workflows` prints the `apply` command for uncovered public repositories; neither mutates settings. Run `apply` per repository, as an administrator (the policies API returns 404 without admin access).
+
 ## Framework self-test assumption guard
 
 Both GH#20967 (missing `permissions:` block) and GH#20976 (`secrets: inherit` cross-account failure) share the same root cause class: the canonical caller templates were authored against the framework's own self-test scenario (`marcusquinn/aidevops` calling itself) which has same-account and same-repo semantics that don't hold for downstream consumers.

@@ -646,6 +646,46 @@ _normalize_mark_pass_started() {
 	return 0
 }
 
+# GH#37568: per-pass repo cursor. Pass rotation alone gives each pass a turn,
+# but a pass slower than the remaining stage budget restarted at the first
+# repo every turn, so late repos.json entries were rarely normalized. Set only
+# by normalize_active_issue_assignments; direct calls keep canonical order.
+_NORMALIZE_REPO_CURSOR_DIR=""
+
+#######################################
+# Print a pass's repo slugs starting after the repo it last started (wrapping).
+# A missing, unreadable or unknown cursor keeps the canonical order.
+# Args: $1 pass name, $2 newline-separated slugs
+# Stdout: one slug per line
+# Returns: 0 always
+#######################################
+_normalize_rotated_slugs() {
+	local pass="$1" slugs="$2" last=""
+	local cursor="${_NORMALIZE_REPO_CURSOR_DIR}/${pass}"
+	if [[ -n "$_NORMALIZE_REPO_CURSOR_DIR" && -f "$cursor" ]]; then
+		read -r last <"$cursor" 2>/dev/null || last=""
+	fi
+	if [[ -z "$last" ]]; then
+		printf '%s\n' "$slugs"
+		return 0
+	fi
+	printf '%s\n' "$slugs" | awk -v last="$last" '
+		NF { slug[n++] = $0; if ($0 == last) start = n }
+		END { for (i = 0; i < n; i++) print slug[(start + i) % n] }'
+	return 0
+}
+
+# Record the repo before scanning it, so a repo slower than the remaining
+# budget cannot pin the rotation. Best effort: a failed write only restarts
+# the pass at its first repo.
+_normalize_mark_repo_started() {
+	local pass="$1" slug="$2"
+	[[ -n "$_NORMALIZE_REPO_CURSOR_DIR" ]] || return 0
+	mkdir -p "$_NORMALIZE_REPO_CURSOR_DIR" 2>/dev/null || return 0
+	printf '%s\n' "$slug" >"${_NORMALIZE_REPO_CURSOR_DIR}/${pass}" 2>/dev/null || true
+	return 0
+}
+
 #######################################
 # Resolve the runner's GitHub login once per process, with a small file cache
 # keyed by the auth fingerprint (TTL ~1h; override PULSE_RUNNER_LOGIN_TTL).
@@ -794,6 +834,7 @@ _normalize_reassign_self() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_normalize_mark_repo_started reassign_self "$slug"
 		local _repo_start=$SECONDS _repo_gh_calls=0
 		local _repo_timing="substage:normalize/reassign_self/repo:${slug//\//-}:direct_gh_calls="
 
@@ -866,7 +907,7 @@ _normalize_reassign_self() {
 			fi
 		done <<<"$all_rows"
 		_normalize_log_timing "${_repo_timing}${_repo_gh_calls}" "$_repo_start" 0
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+	done < <(_normalize_rotated_slugs reassign_self "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)")
 
 	if [[ "$total_checked" -gt 0 ]]; then
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user} (skipped_claimed=${total_skipped_claimed})" >>"$LOGFILE"
@@ -958,6 +999,7 @@ _normalize_unassign_stampless_interactive() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		_normalize_mark_repo_started unassign_stampless_interactive "$slug"
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$slug"; then
 			continue
@@ -1025,7 +1067,7 @@ _normalize_unassign_stampless_interactive() {
 				total_released=$((total_released + 1))
 			fi
 		done <<<"$rows"
-	done < <(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null || true)
+	done < <(_normalize_rotated_slugs unassign_stampless_interactive "$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null || true)")
 
 	if [[ "$total_released" -gt 0 ]]; then
 		echo "[pulse-wrapper] Stampless interactive cleanup: released ${total_released} issues for dispatch" >>"$LOGFILE"
@@ -1121,6 +1163,7 @@ normalize_active_issue_assignments() {
 		return 0
 	fi
 	_NORMALIZE_LISTING_DIR="$_listing_dir"
+	_NORMALIZE_REPO_CURSOR_DIR="${AIDEVOPS_NORMALIZE_REPO_CURSOR_DIR:-${HOME}/.aidevops/cache/normalize-repo-cursor}"
 	local pass_state_dir="${HOME}/.aidevops/cache/normalize-pass-started"
 	local pass="" pass_order=""
 	# Resolve the order up front: passes read their own stdin streams.
@@ -1149,6 +1192,7 @@ normalize_active_issue_assignments() {
 	done
 
 	_NORMALIZE_LISTING_DIR=""
+	_NORMALIZE_REPO_CURSOR_DIR=""
 	[[ -n "$_listing_dir" ]] && rm -rf "$_listing_dir"
 
 	return 0
@@ -1496,6 +1540,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 # Sub-stage order (short-circuit per issue — first action that fires skips rest):
 #   0a. persistent non-task label hygiene (_should/_action_reconcile_persistent_issue*)
 #   0b. external issue trust gate (_should/_action_reconcile_external_issue_gate)
+#   0c. stranded consolidated issues (_should/_action_reconcile_stranded_consolidated)
 #   1. close_issues_with_merged_prs  (_should_ciw + _action_ciw_single)
 #   2. reconcile_stale_done_issues   (_should_rsd + _action_rsd_single)
 #   3. reconcile_open_issues_with_merged_prs (_should_oimp + _action_oimp_single)
@@ -1610,9 +1655,43 @@ _pir_initialize_backfill_gates() {
 	return 0
 }
 
+# Repair only signed, unambiguous PR provenance from write-authorized authors.
+# Re-read each candidate before mutation: a stale list must not replace an origin.
+_pir_backfill_pr_origin() {
+	local slug="$1" pr_json="" candidates="" number="" live="" origin="" author="" assoc=""
+	pr_json=$(gh api "repos/${slug}/pulls?state=open&per_page=100" 2>/dev/null) || return 0
+	candidates=$(printf '%s' "$pr_json" | jq -r '.[] | select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) | .number' 2>/dev/null) || return 0
+	local checked=0
+	while IFS= read -r number; do
+		[[ "$number" =~ ^[0-9]+$ ]] || continue
+		[[ "$checked" -lt 10 ]] || break
+		live=$(gh api "repos/${slug}/issues/${number}" 2>/dev/null) || continue
+		origin=$(printf '%s' "$live" | jq -r '
+			select(.state == "open" and has("pull_request")) |
+			select(([.labels[]?.name | select(startswith("origin:"))] | length) == 0) |
+			(.body // "" | split("\n")) as $lines |
+			[$lines[] | select(test("^<!-- aidevops:origin:(worker|interactive) -->$"))] as $markers |
+			select(($markers | length) == 1 and ($lines | index("<!-- aidevops:sig -->") != null)) |
+			$markers[0] | capture("origin:(?<origin>worker|interactive)").origin' 2>/dev/null) || continue
+		[[ -n "$origin" ]] || continue
+		checked=$((checked + 1))
+		author=$(printf '%s' "$live" | jq -r '.user.login // ""')
+		assoc=$(printf '%s' "$live" | jq -r '.author_association // ""')
+		# #aidevops:trust-boundary: fail closed on unknown authority or missing helper.
+		[[ -n "$author" && -n "$assoc" ]] || continue
+		declare -F _gh_actor_has_repo_write_authority >/dev/null 2>&1 || continue
+		_gh_actor_has_repo_write_authority "$slug" "$author" "$assoc" || continue
+		if set_origin_label "$number" "$slug" "$origin" --pr; then
+			printf '[pulse-wrapper] PR origin backfill: applied origin:%s to PR #%s (author=%s, assoc=%s)\n' "$origin" "$number" "$author" "$assoc" >>"$LOGFILE"
+		fi
+	done <<<"$candidates"
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
+	_pir_backfill_pr_origin "$slug"
 	# Per-repo caps (reset each slug)
 	local ciw_per_repo=0 ciw_max_repo=20
 	local rsd_per_repo=0 rsd_max_repo=20
@@ -1773,6 +1852,16 @@ _pir_reconcile_issue_stages() {
 		fi
 	fi
 
+	# Stage 0c: stranded consolidated originals and legacy successors (GH#37600).
+	if [[ "$stranded_checked" -lt "$stranded_max" ]] &&
+		_should_reconcile_stranded_consolidated "$labels_csv" "$issue_body"; then
+		local _stranded_rc=0
+		_action_reconcile_stranded_consolidated "$slug" "$issue_num" "$labels_csv" \
+			"$issue_body" "$issue_author_association" || _stranded_rc=$?
+		stranded_checked=$((stranded_checked + _PIR_STRANDED_LOOKUP_USED))
+		[[ "$_stranded_rc" -eq 0 ]] && return 0
+	fi
+
 	# Stage 1: close issues whose dedup guard detects a merged PR
 	if [[ "$_ciw_rsd_enabled" == "1" ]] && \
 		[[ "$ciw_per_repo" -lt "$ciw_max_repo" ]] && \
@@ -1884,6 +1973,8 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
+	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
 	[[ "$(uname -s)" == "Darwin" ]] && _b64d_flag="-D"
 	local _t2984_start_ts=$SECONDS _t2984_budget=0 _t2984_aborted=0

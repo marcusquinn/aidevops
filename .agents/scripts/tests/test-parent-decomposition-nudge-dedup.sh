@@ -127,7 +127,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$AGENTS_DIR/.." && pwd)"
 PARENT_RECONCILE="$SCRIPT_DIR/pulse-issue-reconcile-parent.sh"
-RECONCILE_ACTIONS="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
+RECONCILE_ACTIONS="$("$SCRIPT_DIR/tests/pira-combined-source.sh")"
 SYNC_COMPOSE="$SCRIPT_DIR/issue-sync-lib-compose.sh"
 
 for f in "$PARENT_RECONCILE" "$RECONCILE_ACTIONS" "$SYNC_COMPOSE"; do

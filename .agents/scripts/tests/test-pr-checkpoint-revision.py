@@ -25,6 +25,7 @@ sys.path.insert(0, str(SCRIPTS))
 from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
 from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
+from checkpoint_launch_failure_cases import LaunchFailureCases
 from pr_checkpoint_events import EVENTS, fields, own_claim_matches
 import integration_recovery as recovery
 
@@ -92,10 +93,12 @@ def insert_renewed_attempt(data):
     data["comments"].insert(1, renewed)
 
 
-class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.TestCase):
+class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelopeCases, unittest.TestCase):
     fixture = staticmethod(fixture)
     comment = staticmethod(comment)
     revision = revision
+    bash = BASH
+    scripts = SCRIPTS
 
     def test_legacy_release_and_ambiguous_attempt(self):
         data = fixture()
@@ -215,6 +218,63 @@ class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.Test
         for key, value in [("lease", "wrong"), ("session", "wrong"), ("now", data["now"] + 20000)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 revision.validate({**data, key: value})
+
+    def not_launched_attempt(self, first_id, lease, reason="worker_not_launched", author="next-worker"):
+        field = "lease_" + "token"
+        return [
+            comment(first_id, f"DISPATCH_CLAIM nonce={lease} {field}={lease} runner={author} "
+                              "checkpoint_approval=3 session=checkpoint-42 expires_at=1788620400", author),
+            comment(first_id + 0.1, f"DISPATCH_LEASE phase=ready {field}={lease} session=checkpoint-42 "
+                                    "attempt_id=attempt:failed expires_at=1788620400", author),
+            comment(first_id + 0.2, f"CLAIM_RELEASED reason={reason} runner={author} {field}={lease}", author),
+            comment(first_id + 0.3, f"DISPATCH_LEASE phase=terminal {field}={lease} session=checkpoint-42 "
+                                    "expires_at=0", author),
+        ]
+
+    def test_not_launched_release_with_attempt_log_keeps_approval_reusable(self):
+        data = fixture()
+        data["issue"]["assignees"] = []
+        attempt = self.not_launched_attempt(4, "failed1")
+        attempt[2]["body"] += " attempt_log=worker-checkpoint-42.log.ABC123"
+        data["comments"] += attempt
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+
+    def test_not_launched_attempt_keeps_exact_head_approval_reusable(self):
+        # GH#37669: a revision attempt whose runtime never launched changed
+        # nothing on the approved head, so the same approval stays usable.
+        field = "lease_" + "token"
+        data = fixture()
+        data["issue"]["assignees"] = []
+        data["comments"] += self.not_launched_attempt(4, "failed1")
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+        data.update(lease="new", session="checkpoint-42", assignee="next-worker", claiming=True)
+        data["comments"].append(comment(9, f"DISPATCH_CLAIM nonce=new {field}=new runner=next-worker "
+                                           "checkpoint_approval=3 session=checkpoint-42 expires_at=1788620400",
+                                        "next-worker"))
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+
+        rejected = {
+            "launched_release": lambda d: d["comments"][5].update(
+                body=d["comments"][5]["body"].replace("worker_not_launched", "worker_complete")),
+            "foreign_release": lambda d: d["comments"][5]["user"].update(login="stranger"),
+            "other_approval": lambda d: d["comments"][3].update(
+                body=d["comments"][3]["body"].replace("checkpoint_approval=3", "checkpoint_approval=99")),
+            "edited_release": lambda d: d["comments"][5].update(updated_at="2026-09-05T12:01:00Z"),
+            "open_attempt": lambda d: d["comments"].__delitem__(slice(5, 7)),
+        }
+        base = fixture()
+        base["issue"]["assignees"] = []
+        base["comments"] += self.not_launched_attempt(4, "failed1")
+        self.assert_mutations_rejected(rejected, lambda: copy.deepcopy(base), revision.validate)
+
+        bounded = fixture()
+        bounded["issue"]["assignees"] = []
+        for index in range(revision.MAX_NOT_LAUNCHED_REUSES):
+            bounded["comments"] += self.not_launched_attempt(4 + index, f"failed{index}")
+        self.assertEqual(revision.validate(bounded)["approval_id"], 3)
+        bounded["comments"] += self.not_launched_attempt(20, "failed-extra")
+        with self.assertRaises(ValueError):
+            revision.validate(bounded)
 
     def test_shell_predicate_preserves_holds_and_linkage(self):
         data = unlabelled_blocked_fixture()
@@ -336,7 +396,8 @@ class RevisionTests(DiagnosticToolingCases, RevisionEnvelopeCases, unittest.Test
                 env = {**os.environ, "PATH": root + os.pathsep + os.environ["PATH"], "HOME": root,
                        "CHECKPOINT_TEST_FILE": str(pathlib.Path(__file__).with_name("checkpoint_github_fixture.py")), "CHECKPOINT_TEST_STATE": str(state),
                        "CHECKPOINT_TEST_APPROVAL": str(approval_id),
-                       "CHECKPOINT_TEST_READY": str(build is fixture and not unassigned).lower(),
+                        "CHECKPOINT_TEST_READY": str(build is fixture and not unassigned).lower(),
+                        "CHECKPOINT_TEST_RENEW": str(not (build is fixture and unassigned)).lower(),
                        # Do not renew this fixture's lease under the invoking
                        # headless worker's real dispatch session.
                        "AIDEVOPS_DISPATCH_LEASE_SESSION": "",
@@ -358,7 +419,9 @@ export WORKER_ISSUE_NUMBER=123 WORKER_REPO_SLUG=owner/repo WORKER_GITHUB_LOGIN=n
 export DISPATCH_REPO_SLUG=owner/repo
 export AIDEVOPS_PR_REPAIR_NUMBER=42 AIDEVOPS_PR_REPAIR_LINKED_ISSUE=123 AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE=next-worker
 export AIDEVOPS_PR_CHECKPOINT_AUTHOR=worker AIDEVOPS_PR_REPAIR_HEAD_SHA="$PCC_HEAD_OID" AIDEVOPS_PR_REPAIR_HEAD_REF="$PCC_HEAD_REF"
-_hrw_renew_dispatch_prelaunch_lease "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+if [[ "$CHECKPOINT_TEST_RENEW" == true ]]; then
+    _hrw_renew_dispatch_prelaunch_lease "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+fi
 _hrw_verify_dispatch_ownership 123 owner/repo
 if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
     "$1/dispatch-claim-helper.sh" transition ready 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
@@ -367,6 +430,10 @@ if [[ "$CHECKPOINT_TEST_READY" == true ]]; then
     "$1/dispatch-claim-helper.sh" transition terminal 123 owner/repo "$AIDEVOPS_DISPATCH_LEASE_TOKEN" "$AIDEVOPS_PR_CHECKPOINT_SESSION"
 else
     _pcc_restore_transferred_ownership owner/repo 42
+    # GH#37735: no model ran and the exact head is unchanged. The real claim
+    # producer must accept the same approval after the compensating release.
+    "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEAD_OID" "$PCC_HEAD_REF" next-worker "$AIDEVOPS_PR_CHECKPOINT_SESSION"
+    exit 0
 fi
 if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEAD_OID" "$PCC_HEAD_REF" next-worker "$AIDEVOPS_PR_CHECKPOINT_SESSION"; then exit 99; fi
 '''
@@ -381,7 +448,6 @@ if "$1/dispatch-claim-helper.sh" claim-pr-checkpoint 123 owner/repo 42 "$PCC_HEA
                 else:
                     self.assertEqual(restored["assignees"], data["issue"]["assignees"])
                     self.assertEqual(restored["labels"], data["issue"]["labels"])
-
 
 def released_successor_fixture():
     """Two historical attempts released before a new exact-revision approval."""

@@ -74,12 +74,17 @@ cat >"$LOG_FILE" <<'EOF'
 {"ts":"2026-07-31T00:25:00Z","op":"issue_edit","repo":"example/repo","number":26,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:status:in-review"]}
 {"ts":"2026-07-31T00:26:00Z","op":"issue_edit","repo":"example/repo","number":27,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available","source:ci-feedback"]},"suspicious":["protected_label_removed:status:in-review"]}
 {"ts":"2026-07-31T00:27:00Z","op":"issue_edit","repo":"example/repo","number":28,"caller_script":"/runtime/agents/scripts/worker-permission-helper.sh","caller_function":"permission_apply_block","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["needs-maintainer-permissions","status:blocked"]},"suspicious":["protected_label_removed:status:in-review"]}
+{"ts":"2026-07-31T00:28:00Z","op":"issue_edit","repo":"example/repo","number":29,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:available","auto-dispatch"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available","auto-dispatch"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:29:00Z","op":"issue_edit","repo":"example/repo","number":30,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:30:00Z","op":"issue_edit","repo":"example/repo","number":31,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","priority:high"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","priority:high"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 EOF
 
 output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state.json" \
 	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
 
-[[ "$output" == *"**Anomalies found:** 15"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"**Anomalies found:** 17"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"| #30 |"* ]] || fail "unverified permission grant was hidden"
+[[ "$output" == *"| #31 |"* ]] || fail "permission grant with an extra label removal was hidden"
 [[ "$output" == *"| #3 |"* ]] || fail "unexpected lifecycle transition was hidden"
 [[ "$output" == *"| #4 |"* ]] || fail "approval transition with an additional signal was hidden"
 [[ "$output" == *"| #5 |"* ]] || fail "malformed provenance was dropped instead of retained"
@@ -103,7 +108,8 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 [[ "$output" != *"| #1 |"* && "$output" != *"| #2 |"* && "$output" != *"| #7 |"* && "$output" != *"| #9 |"* &&
 	"$output" != *"| #12 |"* && "$output" != *"| #14 |"* && "$output" != *"| #17 |"* &&
 	"$output" != *"| #18 |"* && "$output" != *"| #20 |"* && "$output" != *"| #22 |"* &&
-	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* && "$output" != *"| #28 |"* ]] ||
+	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* && "$output" != *"| #28 |"* &&
+	"$output" != *"| #29 |"* ]] ||
 	fail "an exact expected transition remained actionable"
 
 MALFORMED_LOG="${TEST_ROOT}/malformed-audit.log"
@@ -170,6 +176,34 @@ _gh_audit_record_op \
 	"_approval_apply_pr_lifecycle_updates" "1"
 jq -e -s 'map(select(.number == 22))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "failed approval verification produced trusted audit proof"
+
+# GH#37906: signed permission grants earn proof only from live re-verification.
+cmd_verify_permissions() {
+	local target_type="${1:-}"
+	local target_number="${2:-}"
+	# 42 verifies too: its foreign caller path alone must deny the proof.
+	if [[ "$target_type" == "issue" && ("$target_number" == "40" || "$target_number" == "42") ]]; then
+		printf 'VERIFIED\n'
+		return 0
+	fi
+	printf 'NO_APPROVAL\n'
+	return 1
+}
+for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"41|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"42|/tmp/approval-helper-permissions-copy.sh"; do
+	_gh_audit_record_op \
+		"issue_edit" "example/repo" "${permission_case%%|*}" \
+		'{"title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]}' \
+		'{"title_len":1,"body_len":1,"labels":[]}' \
+		"${permission_case#*|}" \
+		"_apply_permission_approval_state" "1"
+done
+jq -e -s 'map(select(.number == 40))[0].flags.permission_approval_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "verified permission grant did not produce audit proof"
+jq -e -s 'map(select(.number == 41 or .number == 42) | .flags == {}) | length == 2 and all' "$PROOF_LOG" >/dev/null ||
+	fail "unverified or foreign permission grant produced trusted audit proof"
+unset -f cmd_verify_permissions
 
 CURRENT_ACTOR="trusted-runner"
 gh() {

@@ -55,3 +55,34 @@ export function withAidevopsTitleSuffix(title: string, version = sessionTitleVer
   if (!version) return baseTitle
   return `${baseTitle} · AIDevOps ${version}`
 }
+
+// GH#37630: mirrors .agents/plugins/opencode-aidevops/session-title-suffix.mjs.
+// Interactive root-session titles end with `· @<last 6 of the session ID>`,
+// a session-bus address. Order: `<title> · @xxxxxx[ · AIDevOps <version>]`.
+const SESSION_ADDRESS_TOKEN_RE = /\s+· @[a-z0-9]{6}(?![a-z0-9])/g
+const SESSION_ID_RE = /^ses_[A-Za-z0-9]{6,}$/
+
+export function sessionAddressToken(sessionID: string): string {
+  return SESSION_ID_RE.test(sessionID) ? `@${sessionID.slice(-6).toLowerCase()}` : ""
+}
+
+/** Off for headless workers or AIDEVOPS_SESSION_TITLE_ID=false|0. */
+export function isSessionTitleAddressEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.FULL_LOOP_HEADLESS || env.AIDEVOPS_HEADLESS || env.OPENCODE_HEADLESS || env.GITHUB_ACTIONS) return false
+  const value = (env.AIDEVOPS_SESSION_TITLE_ID || "").trim().toLowerCase()
+  return value !== "false" && value !== "0"
+}
+
+export function stripSessionTitleDecorations(title: string): string {
+  return sanitizeSessionTitle(title.replace(SESSION_ADDRESS_TOKEN_RE, "").replace(AIDEVOPS_TITLE_SUFFIX_RE, ""))
+}
+
+export function withSessionTitleDecorations(
+  title: string,
+  { version = sessionTitleVersion(), sessionID = "" }: { version?: string; sessionID?: string } = {},
+): string {
+  const baseTitle = stripSessionTitleDecorations(title)
+  if (!baseTitle) return baseTitle
+  const token = sessionAddressToken(sessionID)
+  return [baseTitle, token, version ? `AIDevOps ${version}` : ""].filter(Boolean).join(" · ")
+}

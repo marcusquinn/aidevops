@@ -115,6 +115,76 @@ test_mark_blocked_never_requests_rereview() {
 	return 0
 }
 
+test_mark_blocked_rejects_capacity_and_mark_progress_records() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local rc=0
+	$SCANNER mark-blocked owner/repo 1 infrastructure session_capacity_insufficient 2>/dev/null || rc=$?
+	if [[ "$rc" -ne 0 && ! -f "$state_file" ]]; then
+		print_result "mark-blocked refuses session_capacity reason" 0
+	else
+		print_result "mark-blocked refuses session_capacity reason" 1 "rc=${rc}"
+	fi
+	# Missing starting-head evidence must not create terminal progress state.
+	unset AIDEVOPS_PR_REPAIR_HEAD_SHA
+	rc=0
+	AIDEVOPS_PR_REPAIR_HEAD_SHA="" $SCANNER mark-progress owner/repo 1 no_start 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && ! -f "$state_file" ]]; then
+		print_result "mark-progress rejects unknown starting head without writing state" 0
+	else
+		print_result "mark-progress rejects unknown starting head without writing state" 1
+	fi
+	write_rereview_dispatch_state
+	local original_state=""
+	original_state="$(<"$state_file")"
+	rc=0
+	$SCANNER mark-progress owner/repo 1 unchanged 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && "$(<"$state_file")" == "$original_state" ]]; then
+		print_result "mark-progress rejects unchanged published head without writing state" 0
+	else
+		print_result "mark-progress rejects unchanged published head without writing state" 1
+	fi
+	rc=0
+	STUB_PULL_HEAD_OID=invalid $SCANNER mark-progress owner/repo 1 unknown_head 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 2 && "$(<"$state_file")" == "$original_state" ]]; then
+		print_result "mark-progress fails closed on unverifiable published head" 0
+	else
+		print_result "mark-progress fails closed on unverifiable published head" 1
+	fi
+	export STUB_PULL_HEAD_OID="$TEST_HEAD_OID_2"
+	$SCANNER mark-progress owner/repo 1 partial_enrichment
+	if grep -Fxq 'analysis_complete=false' "$state_file" &&
+		grep -Fxq 'maintainer_attention=false' "$state_file" &&
+		grep -Fxq 'blocked_by=none' "$state_file"; then
+		print_result "mark-progress records progress without attention" 0
+	else
+		print_result "mark-progress records progress without attention" 1
+	fi
+	# Exercise inflight ordering independently of head/fingerprint cooldown rules.
+	rc=0
+	bash -c '
+		source "$1"
+		now=$(date +%s)
+		_prrts_write_state owner/repo 1 old_fingerprint 1 "$((now - 10))" 1 false "$TEST_HEAD_OID_1"
+		_prrts_write_analysis_state owner/repo 1 false none false progress:partial
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$now" "$TEST_HEAD_OID_1" || exit 1
+		export STUB_ACTIVE_RESPONSE_WORKER=pr-review-thread-response-owner-repo-1
+		rc=0
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$now" "$TEST_HEAD_OID_2" || rc=$?
+		[[ "$rc" -eq "$PRRTS_RC_DISPATCH_DEFERRED" ]] || exit 1
+		unset STUB_ACTIVE_RESPONSE_WORKER
+		# Simulate a later dispatch retaining an older progress record.
+		state_file=$(_prrts_state_file owner/repo 1)
+		printf "dispatched_at=%s\n" "$((now + 1))" >>"$state_file"
+		rc=0
+		_prrts_should_dispatch owner/repo 1 new_fingerprint "$((now + 2))" "$TEST_HEAD_OID_2" || rc=$?
+		[[ "$rc" -eq "$PRRTS_RC_DISPATCH_DEFERRED" ]] || exit 1
+	' _ "$SCANNER" || rc=$?
+	print_result "fresh progress bypasses inflight only after active-worker guard; stale progress defers" "$rc"
+	teardown_test_env
+	return 0
+}
+
 test_mark_blocked_publishes_continuation_finding() {
 	setup_test_env
 	local gh_log="${TEST_ROOT}/continuation-gh.log"

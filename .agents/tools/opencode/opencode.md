@@ -24,6 +24,24 @@ tools:
 - **MCPs disabled globally** — enabled per-agent to save context tokens
 - **Runtime profile**: V1 is the rollback-safe default; V2 is opt-in until its Linux-headless canary passes
 
+### Capturing and interacting with the TUI
+
+`opencode-test-helper.sh tui-capture` snapshots the session database and captures
+the render without changing the live database. For interaction, use an isolated
+overlay with absolute worktree plugin paths; `--isolated-config` is required to
+load a worktree plugin instead of a globally installed plugin:
+
+```bash
+.agents/scripts/opencode-test-helper.sh tui-capture --session "$SESSION_ID" \
+  --out "$OUTPUT_FILE" --isolated-config --tui-config "$OVERLAY_FILE" \
+  --click-text "Messages" --expect "Status: not yet delivered to the model"
+```
+
+The last rendered occurrence is clicked after the initial render. A missing
+target fails the command; `--expect` checks the post-click output. Optionally
+pass `--keys '\x1b'` to send unicode-escape encoded keys after the click and
+capture the resulting output. Without `--click-text`, capture is unchanged.
+
 | Purpose | Path |
 |---------|------|
 | Main config | `~/.config/opencode/opencode.json` |
@@ -274,7 +292,7 @@ Optional navigation bindings in `tui.json` are `messages_last_user`, `messages_p
 
 ### Messages between sessions
 
-Live OpenCode 1.x and V2 sessions on this machine can list each other and exchange short messages through the `aidevops_sessions` tool and `aidevops sessions` in a shell. A **Messages** sidebar section under **Prompts** shows the session's latest 6 messages: `←` received, `→` sent, `•` not yet delivered. It is hidden when there is no traffic; set `AIDEVOPS_TUI_MESSAGES=false` to turn it off. In OpenCode 1.x each arrival also shows a toast; V2 has no plugin toast API. Details: `reference/session-bus.md`.
+Live OpenCode 1.x and V2 sessions on this machine can list each other and exchange short messages through the `aidevops_sessions` tool and `aidevops sessions` in a shell. A **Messages** sidebar section under **Prompts** shows the session's latest 6 messages: `←` received, `→` sent, `•` not yet delivered. Click a row to read the full message in a dialog. It is hidden when there is no traffic; set `AIDEVOPS_TUI_MESSAGES=false` to turn it off. In OpenCode 1.x each arrival also shows a toast; V2 has no plugin toast API. Details: `reference/session-bus.md`.
 
 ### Workflow Order
 

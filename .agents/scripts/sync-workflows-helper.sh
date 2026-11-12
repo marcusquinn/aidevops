@@ -1684,10 +1684,53 @@ _sync_one_repo() {
 		return 1
 	fi
 
-	_sync_open_pr \
+	_sync_open_pr_and_warn \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
-		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing"
+		"$_default_branch" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_target_content"
 	return $?
+}
+
+# Open the PR, then warn (never mutate) when the installed caller needs an
+# Actions event policy. Args match _sync_open_pr plus the rendered content.
+_sync_open_pr_and_warn() {
+	local _slug="$1"
+	local _path="$2"
+	local _status="$3"
+	local _branch_name="$4"
+	local _default_branch="$5"
+	local _effective_ref="$6"
+	local _workflow_relpath="$7"
+	local _sync_contributing="$8"
+	local _content="$9"
+	local _open_rc=0
+	_sync_open_pr "$_slug" "$_path" "$_status" "$_branch_name" "$_default_branch" \
+		"$_effective_ref" "$_workflow_relpath" "$_sync_contributing" || _open_rc=$?
+	if [[ "$_open_rc" -eq 0 ]]; then
+		_warn_event_policy_uncovered "$_slug" "$_content"
+	fi
+	return "$_open_rc"
+}
+
+# Warn-only: a caller template that uses pull_request_target stops running in
+# public repositories from 2026-12-02 unless an Actions event policy allows it.
+# Never mutates settings; prints the apply command for the repository owner.
+_warn_event_policy_uncovered() {
+	local _slug="$1"
+	local _content="$2"
+	local _helper="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/actions-event-policy-helper.sh"
+	local _out="" _rc=0
+	grep -q 'pull_request_target' <<<"$_content" || return 0
+	[[ -x "$_helper" ]] || return 0
+	_out=$("$_helper" status --repo "$_slug" 2>/dev/null) || _rc=$?
+	# Not applicable (private/internal) is silent; a public repo whose caller is
+	# not yet on the default branch is reported as "no workflows" and still needs
+	# the policy once this PR merges.
+	if [[ "$_rc" -eq 1 ]] || { [[ "$_rc" -eq 0 ]] && grep -q 'no pull_request_target workflows' <<<"$_out"; }; then
+		_warn "$_slug: pull_request_target gates need an Actions event policy (blocked by default from 2026-12-02). After merge run: ${_helper} apply --repo ${_slug}"
+	elif [[ "$_rc" -eq 2 ]]; then
+		_warn "$_slug: could not verify the pull_request_target Actions event policy. Run: ${_helper} status --repo ${_slug}"
+	fi
+	return 0
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────

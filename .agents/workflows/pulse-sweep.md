@@ -68,6 +68,20 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below, including snapshot-derived repository scope. Run
+`bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope` to obtain
+current schedule-filtered `slug|path` pairs from configuration (use the path for
+`repo-cap` and other permitted repository operations, not worker launches).
+Worker dispatch remains owned by the deterministic wrapper. Limit triage and
+`list-candidates SLUG 100` to those slugs; use the named helpers and targeted `gh`
+reads for current evidence. In stale mode only, discover live PRs with one bounded
+call per scoped slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the `gh pr list` prohibition below. Skip snapshot-only checks without equivalent live
+evidence. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **t2041 read contract — summary first, deep reads on demand.**
@@ -137,14 +151,17 @@ After initial dispatch, enter a monitoring loop. Each cycle (repeat until exit c
 
 1. **Create a todo batch** for this cycle (drift prevention, e.g. `- [x] Dispatch worker for issue #3567`, `- [ ] Monitor cycle N+1`).
 
-2. **Sleep 60 seconds** — write a heartbeat log line first:
+2. **Wait about 60 seconds without repeating an identical tool call.** OpenCode's `doom_loop` guard rejects the same call issued three times in a row, and the permission broker cannot grant it, so the session dies with rc=1 (GH#37625). Rules:
+
+   - Never issue the same command or tool call three times in a row, and never run parallel sleeps.
+   - Make each wait command unique by embedding the cycle number and elapsed seconds as literals, and run it as a single call:
 
    ```bash
-   echo "[pulse] Monitoring cycle N: sleeping 60s (active WORKER_COUNT/MAX_WORKERS, elapsed ELAPSED_SECONDS)"
-   sleep 60
+   sleep 60 # pulse monitoring cycle N, elapsed ELAPSED_SECONDS
    ```
 
    Replace the uppercase placeholders with literal numbers before running.
+   - If this supervisor owns no live work (dispatch is owned by the deterministic wrapper), skip the wait and take the exit condition in step 6 instead of sleep-polling.
 
 3. **Check capacity**:
 
@@ -293,7 +310,7 @@ Also check bundle overrides: `bundle-helper.sh get agent_routing <repo-path>`.
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch).
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap "PATH"` to inspect capacity — returns 0 (at cap) or 1 (below cap). Worker launches remain owned by the deterministic wrapper.
 
 Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
 
@@ -303,7 +320,7 @@ When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a 
 
 ### Scope boundary
 
-Only dispatch workers for repos in the pre-fetched state (`pulse: true`). Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
+Only dispatch workers for repos in the pre-fetched state (`pulse: true`), or in the current `list-scope` output when the stale-state override applies. Workers can file issues on any repo, but code changes are restricted to `PULSE_SCOPE_REPOS`.
 
 ## Quality-Debt and Simplification-Debt
 
@@ -450,7 +467,7 @@ In your end-of-session summary: how many duplicates caught (intelligence layer) 
 3. NEVER use `claude` CLI. Always dispatch via `headless-runtime-helper.sh run`.
 4. NEVER include private repo names in public issue titles/bodies/comments.
 5. NEVER exceed MAX_WORKERS. Count before dispatching.
-6. Run the monitoring loop — dispatch, sleep 60s, check slots, backfill. Exit after 55 minutes or when no work remains.
+6. Run the monitoring loop — dispatch, wait ~60s (never identical consecutive calls; see Monitoring Loop step 2), check slots, backfill. Exit after 55 minutes or when no work remains.
 7. NEVER create "pulse summary" or "supervisor log" issues. Your output IS the log.
 8. NEVER create duplicate issues. Search before creating: `gh issue list --search "tNNN" --state all`.
 9. NEVER ask the user anything. You are headless. Decide and act.

@@ -194,17 +194,31 @@ _now_epoch() {
 	return 0
 }
 
+# GH#37883: store " issue=<n> repo=<slug>" in the named variable so parallel
+# dispatch rounds produce attributable stage lines; empty when either value is
+# absent or malformed. Uses printf -v to avoid a subshell per stage line.
+# Args: output variable name, issue number, repo slug
+_dch_stage_context() {
+	local _dsc_out="$1" _dsc_issue="${2:-}" _dsc_repo="${3:-}"
+	printf -v "$_dsc_out" '%s' ""
+	[[ "$_dsc_issue" =~ ^[1-9][0-9]*$ && "$_dsc_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 0
+	printf -v "$_dsc_out" ' issue=%s repo=%s' "$_dsc_issue" "$_dsc_repo"
+	return 0
+}
+
 # Emit per-call latency to runner diagnostics without exposing response bodies.
+# issue_number/repo_slug are read from the calling function's scope.
 _dch_timed() {
-	local stage="$1" started="$SECONDS" rc=0
+	local stage="$1" started="$SECONDS" rc=0 _dcht_context=""
 	shift
 	"$@" || rc=$?
+	_dch_stage_context _dcht_context "${issue_number:-}" "${repo_slug:-}"
 	if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
-		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
-			"$stage" "$((SECONDS - started))" "$rc" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s%s\n' \
+			"$stage" "$((SECONDS - started))" "$rc" "$_dcht_context" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
 	else
-		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s\n' \
-			"$stage" "$((SECONDS - started))" "$rc" >&2
+		printf '[dispatch-claim] stage=%s elapsed_s=%s rc=%s%s\n' \
+			"$stage" "$((SECONDS - started))" "$rc" "$_dcht_context" >&2
 	fi
 	return "$rc"
 }
@@ -374,7 +388,8 @@ ${machine_readable_part}
 		retry_delay=2
 	fi
 
-	local comment_id="" attempt=1 post_err_file="" post_error_summary="" post_started=0
+	local comment_id="" attempt=1 post_err_file="" post_error_summary="" post_started=0 post_context=""
+	_dch_stage_context post_context "$issue_number" "$repo_slug"
 	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
 		post_started=$SECONDS
@@ -382,10 +397,10 @@ ${machine_readable_part}
 			--method POST \
 			--field body="$body" \
 			--jq '.id' 2>"$post_err_file"); then
-			printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=0 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
+			printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=0 attempt=%s%s\n' "$((SECONDS - post_started))" "$attempt" "$post_context" >&2
 			break
 		fi
-		printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=1 attempt=%s\n' "$((SECONDS - post_started))" "$attempt" >&2
+		printf '[dispatch-claim] stage=claim_post elapsed_s=%s rc=1 attempt=%s%s\n' "$((SECONDS - post_started))" "$attempt" "$post_context" >&2
 
 		post_error_summary=$(tr '\n' ' ' <"$post_err_file" | cut -c1-240 2>/dev/null || printf '%s' "unknown")
 		if [[ "$attempt" -lt "$attempts" ]]; then
@@ -1677,6 +1692,25 @@ cmd_verify_pr_checkpoint_target() {
 			"$pr_number" "$repo_slug" "$linked_issue"
 		return 2
 	fi
+	# Compensation alone may encounter an unchanged or partially applied transfer.
+	# Validate that live metadata is within this exact transfer before checking the
+	# original claim against the intended owner state. All other metadata, history,
+	# head and prelaunch fences below remain intact.
+	if [[ $# -eq 9 ]]; then
+		local previous_owner="$8" previous_status="$9"
+		[[ "${AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH:-0}" == 1 &&
+			"${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == revision &&
+			"$previous_owner" =~ ^([A-Za-z0-9._-]+(\[bot\])?)?$ && -n "$previous_status" ]] || return 1
+		issue_json=$(jq -e --arg previous "$previous_owner" --arg runner "$expected_assignee" \
+			--arg status "$previous_status" '
+			[.assignees[].login] as $owners |
+			[.labels[].name | select(startswith("status:"))] as $statuses |
+			select(($owners | length) <= 2 and ($owners | unique | length) == ($owners | length) and
+				all($owners[]; . == $runner or ($previous != "" and . == $previous)) and
+				($statuses == ["status:" + $status] or $statuses == ["status:in-progress"])) |
+			.assignees = [{login:$runner}]
+		' <<<"$issue_json") || return 1
+	fi
 	if [[ "${AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE:-}" == automatic ]]; then
 		_dch_verify_automatic_checkpoint "$repo_slug" "$pr_json" "$issue_json" "$pr_number" \
 			"$linked_issue" "$expected_head_sha" "$expected_head_ref" "$expected_assignee" "$checkpoint_author"
@@ -2189,7 +2223,19 @@ main() {
 # Include all library/config sourcing in startup attribution without spawning
 # another timer process under host load.
 if [[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]]; then
-	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0\n' \
-		"$((SECONDS - _DCH_STARTUP_SECONDS))" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+	# GH#37883: tag issue-keyed commands; PR-keyed commands stay untagged.
+	_dch_startup_context=""
+	case "${1:-}" in
+	check-and-claim | claim | check | guard-ownership | verify-worker-ownership)
+		_dch_stage_context _dch_startup_context "${2:-}" "${3:-}"
+		;;
+	transition)
+		_dch_stage_context _dch_startup_context "${3:-}" "${4:-}"
+		;;
+	esac
+	printf '[dispatch-claim] stage=startup elapsed_s=%s rc=0%s\n' \
+		"$((SECONDS - _DCH_STARTUP_SECONDS))" "$_dch_startup_context" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
 fi
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

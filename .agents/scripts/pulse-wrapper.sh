@@ -337,6 +337,9 @@ source "${SCRIPT_DIR}/pulse-meta-parse.sh"
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-routines.sh"
+# GH#37914: cycle-owned routines ticker for long cycles.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-routines-tick.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dependabot-alert-monitor.sh"
 # GH#23604: semantics-preserving exact-output PR-list provider cache used by
@@ -1494,14 +1497,9 @@ main() {
 	fi
 	_pulse_start_cycle_observation
 
-	# Routine evaluation (t1925, GH#31855) before preflight spends REST budget;
-	# GH#35349 busy-tick backstop sharing routines.lockdir.
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
-	else
-		_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
-			evaluate_routines_locked || true
-	fi
+	# Routine evaluation (t1925, GH#31855) before preflight spends REST budget,
+	# then the cycle-owned routines ticker (GH#37914).
+	_pulse_run_cycle_routines
 
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
@@ -1555,6 +1553,26 @@ main() {
 # process-lifetime cleanup. Never move it onto the shared
 # push_cleanup/_run_cleanups stack, whose RETURN traps fire in callers.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# _pulse_run_cycle_routines
+#
+# Cycle-start routine evaluation (t1925, GH#31855), the GH#35349 backstop
+# sharing routines.lockdir. GH#37914: launchd and systemd timers start no
+# second invocation while this cycle runs, so the busy pass never fires in a
+# long cycle. A cycle-owned child then ticks routines until this process
+# exits; the EXIT handler and the source re-exec path stop it.
+# ---------------------------------------------------------------------------
+_pulse_run_cycle_routines() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping routine evaluation" >>"$LOGFILE"
+		return 0
+	fi
+	_pulse_run_budget_priority_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
+		evaluate_routines_locked || true
+	_pulse_start_routines_ticker || true
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # _pulse_run_entry_modes
@@ -2116,6 +2134,13 @@ _pulse_drain_cycle_final_refill() {
 # ---------------------------------------------------------------------------
 _pulse_run_supervisor_phase() {
 	_pulse_cycle_state_publish supervising || true
+	# GH#37907: read a deploy drain request before lock release removes it. A
+	# drained earlier-bundle cycle skips the optional LLM supervisor and exits
+	# so the scheduler starts the activated bundle without another long phase.
+	local _pulse_drain_bundle=""
+	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
+		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
+	fi
 	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
 	# can run deterministic ops concurrently. Terminal publication briefly
 	# reacquires this lock and writes only when health still names this cycle,
@@ -2125,6 +2150,10 @@ _pulse_run_supervisor_phase() {
 	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
 	release_instance_lock
 	_pulse_finish_post_dispatch_housekeeping
+	if [[ -n "$_pulse_drain_bundle" ]]; then
+		echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
+		return 0
+	fi
 	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
 	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
 	# unless prefetch has degraded long enough that the supervisor would starve;
@@ -2180,6 +2209,8 @@ _pulse_reexec_if_source_changed() {
 			[[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
 			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
 			_pulse_efficiency_cycle_finish
+			# exec keeps this PID, so the ticker would outlive it (GH#37914).
+			_pulse_stop_routines_ticker || true
 			release_instance_lock
 			aidevops_runtime_bundle_lease_release
 			exec "$_pw_self" "$@"

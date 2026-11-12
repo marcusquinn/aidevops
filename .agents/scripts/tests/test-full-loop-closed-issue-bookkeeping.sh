@@ -268,6 +268,13 @@ _resolve_remote_default_branch() {
 	printf 'main\n'
 	return 0
 }
+_validate_stack_base() {
+	return 0
+}
+_resolve_pr_base_branch() {
+	_resolve_remote_default_branch "$@"
+	return $?
+}
 
 _build_pr_body() {
 	local issue_number="$1"

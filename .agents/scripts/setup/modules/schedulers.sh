@@ -457,11 +457,79 @@ MONITOR_PLIST
 	return 0
 }
 
+# macOS per-minute input-activity sampler: records only the HIDIdleTime
+# input timestamp so the profile README can show input activity under the
+# same 5-minute idle rule as Linux. Runs the helper directly (no login shell)
+# because it fires every minute; silent on success.
+# Standard ProcessType, not Background: the Darwin background policy starved
+# this ~50 ms job on a loaded Mac (no output within 240 s at load ~50), so
+# HIDIdleTime reads failed and input went unrecorded exactly while the user
+# was busiest (GH#37588). Nice 10 keeps it polite without missing samples.
+_setup_screen_activity_sampler_darwin() {
+	local st_script="$1"
+	local sa_label="sh.aidevops.screen-activity-sampler"
+	local sa_plist="$HOME/Library/LaunchAgents/${sa_label}.plist"
+	local _xml_home _xml_script _xml_bash
+	_xml_home=$(_xml_escape "$HOME")
+	_xml_script=$(_xml_escape "$st_script")
+	_xml_bash=$(_xml_escape "$(_resolve_modern_bash)")
+
+	local sa_plist_content
+	sa_plist_content=$(
+		cat <<SA_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${sa_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${_xml_bash}</string>
+		<string>${_xml_script}</string>
+		<string>sample</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_home}/.aidevops/.agent-workspace/logs/screen-activity-sampler.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_home}/.aidevops/.agent-workspace/logs/screen-activity-sampler.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(aidevops_launchd_sanitized_path)</string>
+		<key>HOME</key>
+		<string>${_xml_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+SA_PLIST
+	)
+
+	if _launchd_install_if_changed "$sa_label" "$sa_plist" "$sa_plist_content"; then
+		print_info "Screen activity sampler enabled (launchd, every 60s)"
+	else
+		print_warning "Failed to load screen activity sampler LaunchAgent"
+	fi
+	return 0
+}
+
 # Setup screen time snapshot — captures daily screen time for contributor stats.
 # Accumulates data in screen-time.jsonl (macOS Knowledge DB retains only ~28 days).
 # Always installed when the script exists; no consent needed (data collection only).
 # macOS: launchd plist (every 6h, RunAtLoad=true) | Linux: systemd timer or cron (every 6h)
-# plus a per-minute input-activity sampler, because Linux has no screen-time store.
+# Both platforms also get a per-minute input-activity sampler (input timestamps
+# only): on Linux it is the screen-time source; on macOS it feeds the README
+# "Input activity (Mac)" row so Mac and Linux input time use the same rule.
 setup_screen_time_snapshot() {
 	local st_script="$HOME/.aidevops/agents/scripts/screen-time-helper.sh"
 	local st_label="sh.aidevops.screen-time-snapshot"
@@ -531,6 +599,7 @@ ST_PLIST
 		else
 			print_warning "Failed to load screen time snapshot LaunchAgent"
 		fi
+		_setup_screen_activity_sampler_darwin "$st_script"
 	else
 		# Linux: systemd timer (every 6h) or cron fallback
 		_install_scheduler_linux \

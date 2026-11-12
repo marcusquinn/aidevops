@@ -43,7 +43,7 @@ Ask when browser access, target state, dimensions, or privacy expectations are u
 ## Capture Workflow
 
 1. Read project `DESIGN.md` when present. Extract palette, background, surface, radius, shadows/elevation, typography, and tone.
-2. Use `tools/browser/browser-automation.md` for authorised browser capture. Choose Playwright or dev-browser for repeatable captures; use Chrome DevTools or Stagehand when inspection is needed.
+2. Use `tools/browser/browser-automation.md` for authorised browser capture. Choose Playwright or dev-browser for repeatable captures; use Chrome DevTools when inspection is needed.
 3. Set deterministic viewport, theme, timezone, locale, feature flags, and seeded data where possible.
 4. Capture the smallest useful region: selector screenshot, component screenshot, modal, card, chart, or window. Capture full viewport only when the composition requires it.
 5. Avoid `fullPage: true` for AI review or draft inspection; use bounded captures and resize large images before analysis.

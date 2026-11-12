@@ -104,6 +104,22 @@ assert_contains "configured but unreported required checks time out as pending" 
 assert_contains "initial state names every unreported context" "CI wait started: none=0 missing=Format, Lint" "$configured_missing_output"
 assert_contains "timeout names every unreported context" "(none=0 missing=Format, Lint)" "$configured_missing_output"
 
+draft_skipped_dir="${TMPDIR_TEST}/draft-skipped"
+write_fixture "$draft_skipped_dir" 1 '[{"name":"Format","workflow":"CI","state":"SKIPPED","bucket":"skipping","link":""}]'
+set +e
+draft_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE=true AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+draft_missing_rc=$?
+draft_skipped_output=$(AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE=true AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=Format run_fixture_wait "$draft_skipped_dir" --timeout 5 --heartbeat 1 2>&1)
+draft_skipped_rc=$?
+ready_missing_output=$(AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS=$'Format\nLint' run_fixture_wait "$draft_skipped_dir" --timeout 1 --heartbeat 1 2>&1)
+ready_missing_rc=$?
+set -e
+assert_eq "draft missing and skipped checks return 9" "9" "$draft_missing_rc"
+assert_contains "draft result identifies action" "WAIT_CHECKS=draft-required-missing: run gh pr ready 123 --repo example/repo, then wait again" "$draft_missing_output"
+assert_eq "draft skipped required checks return 9" "9" "$draft_skipped_rc"
+assert_eq "ready missing checks remain pending" "8" "$ready_missing_rc"
+assert_contains "ready missing checks report timeout" "TIMEOUT:" "$ready_missing_output"
+
 partial_dir="${TMPDIR_TEST}/partial"
 write_fixture "$partial_dir" 1 '[{"name":"Format","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 set +e

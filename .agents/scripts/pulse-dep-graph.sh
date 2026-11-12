@@ -42,6 +42,8 @@ source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
 # shellcheck source=./terminal-blocker-circuit.sh
 source "${_pulse_dep_graph_dir}/terminal-blocker-circuit.sh"
+# shellcheck source=./pulse-dep-graph-checkpoint.sh
+source "${_pulse_dep_graph_dir}/pulse-dep-graph-checkpoint.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -311,6 +313,9 @@ _dep_graph_build_repo_data() {
 # Cache format (DEP_GRAPH_CACHE_FILE):
 # {
 #   "built_at": "<ISO timestamp>",
+#   "rebuild_started_at": <epoch seconds of generation start>,
+#   "rebuild_complete": true|false,  # absent means complete for legacy caches
+#   "rebuild_pending": ["owner/repo", ...],  # unread/failed repos in this pass
 #   "repos": {
 #     "owner/repo": {
 #       "built_at": <epoch seconds of last successful repo build>,
@@ -330,7 +335,7 @@ _dep_graph_build_repo_data() {
 #   }
 # }
 #
-# Returns: 0 always (non-fatal — cache miss falls back to live API)
+# Returns: 0 complete/fresh, 124 resumable deadline yield, 1 build/write failure.
 #######################################
 build_dependency_graph_cache() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
@@ -340,7 +345,8 @@ build_dependency_graph_cache() {
 	if [[ -f "$cache_file" && "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" != "1" ]]; then
 		local cache_age
 		cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
-		if [[ "$cache_age" -lt "$ttl_secs" ]]; then
+		if [[ "$cache_age" -lt "$ttl_secs" ]] &&
+			jq -e '.rebuild_complete != false' "$cache_file" >/dev/null 2>&1; then
 			echo "[pulse-wrapper] dep-graph-cache: cache fresh (${cache_age}s < ${ttl_secs}s TTL), skipping rebuild" >>"$LOGFILE"
 			return 0
 		fi
@@ -355,21 +361,24 @@ build_dependency_graph_cache() {
 
 	local repos_json
 	repos_json=$(jq -c '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only != true))' \
-		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || repos_json=""
-	if [[ -z "$repos_json" ]]; then
-		echo "[pulse-wrapper] dep-graph-cache: no pulse repos found, skipping" >>"$LOGFILE"
-		return 0
-	fi
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || return 1
 
 	# Build the graph JSON incrementally
 	local graph_json="" old_graph_json=""
-	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 	if [[ -f "$cache_file" ]]; then
 		old_graph_json=$(<"$cache_file") || old_graph_json=""
 	fi
+	graph_json=$(_dep_graph_checkpoint_seed "$old_graph_json" "$repos_json" "$build_start") || return 1
+	repos_json=$(_dep_graph_checkpoint_order "$repos_json" "$graph_json") || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
+	local build_failed=0
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
+		if ! _dep_graph_checkpoint_budget_allows; then
+			echo "[pulse-wrapper] dep-graph-cache: deadline reached; checkpoint retained for resume" >>"$LOGFILE"
+			return 124
+		fi
 		local slug
 		slug=$(printf '%s' "$repo_entry" | jq -r '.slug // empty' 2>/dev/null)
 		[[ -n "$slug" ]] || continue
@@ -379,35 +388,21 @@ build_dependency_graph_cache() {
 		# 100-line complexity gate).
 		local repo_data
 		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
-			# Legacy data has unknown freshness: never promote it to freshly built.
-			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" \
-				'.repos[$s] // empty | .built_at //= 0' 2>/dev/null) || repo_data=""
-			if [[ -z "$repo_data" ]]; then
-				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
-				continue
-			fi
-			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
-		else
-			repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$build_start" '.built_at = $now') || continue
+			# Seeded data retains its original age; only successful reads advance it.
+			build_failed=1
+			continue
 		fi
+		repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$(date +%s)" '.built_at = $now') || return 1
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
 			jq --arg slug "$slug" --argjson rd "$repo_data" \
-				'.repos[$slug] = $rd' 2>/dev/null) || true
+				'.repos[$slug] = $rd | .rebuild_pending -= [$slug]' 2>/dev/null) || return 1
+		_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv). GH#33246: the async
-	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
-	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
-	local tmp_file=""
-	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
-	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
-	if printf '%s\n' "$graph_json" >"$tmp_file"; then
-		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
-	else
-		rm -f "$tmp_file"
-	fi
+	[[ "$build_failed" -eq 0 ]] || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" true || return 1
 
 	local build_end="" build_dur=""
 	build_end=$(date +%s)
@@ -676,6 +671,27 @@ _refresh_ensure_unresolved_is_blocked() {
 	local current_labels=""
 	_dep_validate_issue_target "$slug" "$issue_num" || return 1
 
+	# GH#37684: callers can carry an old cache/supersession verdict. Recheck
+	# at the write boundary; a removed edge or a now-closed native blocker
+	# must not turn an available issue back into a persistent dependency hold.
+	local native_rc=0 block_reason="dependency_native_unresolved" issue_body=""
+	_blocked_by_check_native_relationships "$slug" "$issue_num" || native_rc=$?
+	case "$native_rc" in
+	2 | 3)
+		printf '[pulse-wrapper] DEPENDENCY_BLOCK_DEFERRED issue=#%s repo=%s native_rc=%s reason=clear_or_unavailable\n' \
+			"$issue_num" "$slug" "$native_rc" >>"$LOGFILE"
+		return 1
+		;;
+	1)
+		# No native edges: only a current structured declaration can justify
+		# a body fallback. Secret declarations and free prose are not edges.
+		issue_body=$(gh issue view "$issue_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || return 1
+		[[ -n "$(_blocked_by_structured_lines "$issue_body")" ]] || return 1
+		_dep_structured_has_open_blocker "$issue_body" "$slug" "$issue_num" || return 1
+		block_reason="dependency_structured_unresolved"
+		;;
+	esac
+
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" || return 1
@@ -696,7 +712,8 @@ _refresh_ensure_unresolved_is_blocked() {
 		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1 || true
 		return 1
 	fi
-	echo "[pulse-wrapper] dep-graph-cache: normalized #${issue_num} in ${slug} available -> blocked — unresolved dependency evidence; retryable relationship normalization pending" >>"$LOGFILE"
+	printf '[pulse-wrapper] dep-graph-cache: normalized #%s in %s available -> blocked DISPATCH_BLOCK_APPLIED reason=%s source=dependency_normalization native_rc=%s\n' \
+		"$issue_num" "$slug" "$block_reason" "$native_rc" >>"$LOGFILE"
 	return 0
 }
 
@@ -1277,9 +1294,11 @@ _blocked_by_check_task_id() {
 	local repo_slug="$2"
 	local issue_number="$3"
 	local cache_state="$4"
+	# Dispatch fails closed by default; label writers request a distinct unknown.
+	local unknown_rc="${5:-0}"
 	if ! task_identity_validate "$task_id"; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} malformed blocked-by task ID — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 
 	local use_cache
@@ -1313,7 +1332,7 @@ _blocked_by_check_task_id() {
 	if ! live_matches=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "${task_id} in:title" --json number,title,state 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference ${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 	blocker_state=$(printf '%s' "$live_matches" | jq -r \
 		--arg current_issue "$issue_number" \
@@ -1339,7 +1358,7 @@ _blocked_by_check_task_id() {
 			;;
 	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference ${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
-	return 0
+	return "$unknown_rc"
 }
 
 #######################################
@@ -1386,12 +1405,13 @@ _blocked_by_check_issue_num_live() {
 	local blocker_num="$1"
 	local repo_slug="$2"
 	local issue_number="$3"
+	local unknown_rc="${4:-0}"
 
 	local blocker_state="" blocker_reason=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state,stateReason --jq '"\(.state // ""):\(.stateReason // "")"' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
-		return 0
+		return "$unknown_rc"
 	fi
 	IFS=':' read -r blocker_state blocker_reason <<<"$blocker_state"
 	case "$blocker_state" in
@@ -1405,7 +1425,36 @@ _blocked_by_check_issue_num_live() {
 			;;
 	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
-	return 0
+	return "$unknown_rc"
+}
+
+#######################################
+# Confirm structured fallback evidence for a label write, not dispatch gating.
+# Unknown/malformed references must not create persistent dependency holds.
+# Bypass cached state and do not repeat the already-completed native lookup.
+# Args: $1=body $2=repo slug $3=issue number
+# Returns: 0 for a live unresolved blocker; 1 for clear or unknown evidence.
+#######################################
+_dep_structured_has_open_blocker() {
+	local body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local task_ids="" issue_nums="" ref=""
+	task_ids=$(_blocked_by_extract_tids "$body")
+	issue_nums=$(_blocked_by_extract_nums "$body")
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		if _blocked_by_check_task_id "$ref" "$repo_slug" "$issue_number" "$DEP_CACHE_EMPTY_JSON" 2; then
+			return 0
+		fi
+	done <<<"$task_ids"
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		if _blocked_by_check_issue_num_live "$ref" "$repo_slug" "$issue_number" 2; then
+			return 0
+		fi
+	done <<<"$issue_nums"
+	return 1
 }
 
 #######################################

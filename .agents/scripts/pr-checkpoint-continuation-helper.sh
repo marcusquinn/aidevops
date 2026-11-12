@@ -19,6 +19,10 @@ source "${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
 source "${SCRIPT_DIR}/pr-checkpoint-target-lib.sh"
 # shellcheck source=pr-checkpoint-diagnostic-tooling.sh
 source "${SCRIPT_DIR}/pr-checkpoint-diagnostic-tooling.sh"
+# shellcheck source=pr-checkpoint-compensation.sh
+source "${SCRIPT_DIR}/pr-checkpoint-compensation.sh"
+# shellcheck source=pr-checkpoint-terminal-action.sh
+source "${SCRIPT_DIR}/pr-checkpoint-terminal-action.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -83,7 +87,7 @@ _PCC_ATTENTION_REARM_MAX_DOUBLINGS=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
-_PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled while the trusted approval exists; the re-arm window does not bypass revision validation (see `reference/checkpoint-revision-recovery.md`).'
+_PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled until the trusted approval expires (24 hours after it was posted); the re-arm window does not bypass revision validation before then (see `reference/checkpoint-revision-recovery.md`).'
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -159,6 +163,7 @@ _pcc_claim_revised_checkpoint() {
 _pcc_claim_checkpoint() {
 	local repo="$1" pr="$2" ref="$3" head="$4" mode="$5"
 	local claim="" session="" helper="${SCRIPT_DIR}/dispatch-claim-helper.sh" previous_owner="$PCC_EXPECTED_ASSIGNEE"
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_claim_failed"
 	session=$(_pcc_session_key "$repo" "$pr") || return 1
 	if [[ "$mode" == revision ]]; then
 		claim=$("$helper" claim-pr-checkpoint "$PCC_LINKED_ISSUE" "$repo" "$pr" "$head" "$ref" \
@@ -192,8 +197,10 @@ _pcc_claim_checkpoint() {
 		owner_args+=(--remove-assignee "$PCC_PREVIOUS_ASSIGNEE")
 	fi
 	PCC_OWNERSHIP_TRANSFERRED=1
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_ownership_transfer_failed"
 	set_issue_status "$PCC_LINKED_ISSUE" "$repo" in-progress "${owner_args[@]}" >/dev/null || return 1
 	PCC_ISSUE_ASSIGNEE="$PCC_AUTHENTICATED_LOGIN"
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_post_transfer_verification_failed"
 	"$helper" verify-pr-checkpoint-target "$pr" "$repo" "$head" "$ref" \
 		"$PCC_LINKED_ISSUE" "$PCC_ISSUE_ASSIGNEE" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
 	# Worker startup renews prelaunch before transitioning ready. Pre-transitioning
@@ -328,6 +335,23 @@ _prrts_closing_link_step() {
 	return 0
 }
 
+# GH#37926: prompt step 8 — progress-push path and no self-assessed capacity stop.
+# Args: scanner path, repo slug ref, PR number ref
+_prrts_progress_step() {
+	local scanner_path="$1"
+	local repo_slug_ref="$2"
+	local repair_number_ref="$3"
+	printf '%s\n' \
+		'8. There is no per-session capacity budget to estimate; keep working until' \
+		'   acceptance or a real blocker. Capacity, context or time-budget reasons are' \
+		"   refused by \`mark-blocked\`. If you must stop before acceptance, commit" \
+		'   everything produced (captures, extracted data, ledgers), run the step 4' \
+		'   fence, use your single push from step 5 to publish that progress head, then' \
+		"   run \`\"${scanner_path}\" mark-progress \"${repo_slug_ref}\" \"${repair_number_ref}\" <short_reason>\` exactly once." \
+		'   Pulse re-arms one continuation for the new head.'
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local worktree_path="$2"
@@ -336,18 +360,17 @@ _prrts_write_prompt_file() {
 	local _thread_count="$5"
 	local _fingerprint="$6"
 	local _preview="$7"
-	local prompt_file=""
-	local safe_slug=""
-	local safe_title=""
+	local prompt_file="" recovery_dir="" safe_slug="" safe_title=""
 	local scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
 	local ownership_helper="${HOME}/.aidevops/agents/scripts/dispatch-claim-helper.sh"
 	local repair_number_ref="\$AIDEVOPS_PR_REPAIR_NUMBER"
 	local repo_slug_ref="\$WORKER_REPO_SLUG"
 	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
 	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
-	local closing_link_step=""
+	local closing_link_step="" progress_step=""
 	: "$_thread_count" "$_fingerprint" "$_preview"
 	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
+	progress_step="$(_prrts_progress_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
 
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -359,6 +382,7 @@ _prrts_write_prompt_file() {
 		printf '%s\n' "$prompt_file"
 		return 0
 	fi
+	recovery_dir=$(mktemp -d "${STATE_DIR}/${safe_slug}-${pr_number}-recovery.XXXXXXXX") || return 1
 	cat >"$prompt_file" <<PROMPT_EOF
 # STALE WORKER DRAFT CONTINUATION — BOUNDED WORKER
 
@@ -397,12 +421,19 @@ PR title: ${safe_title}
    unavailable on this runner whose check the PR's CI also runs (for example
    ShellCheck or markdownlint) is delegated to CI, not a blocker: name the tool
    and covering CI job in the PR body (GH#34758).
-4. Before pushing, run the exact-target fence:
+4. Make all continuation commits locally, including intermediate data artifacts;
+   do not push them mid-run. If publication evidence must be durable mid-run,
+   record receipts in the private workspace and include them in the final commit.
+   Recovery bundle for this repository and attempt: ${recovery_dir}/continuation.bundle
+   Retain this path in the continuation checkpoint for recovery after a restart.
+   After each commit save a recovery copy: \`git bundle create "${recovery_dir}/continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`; on resume keep and verify unpushed local commits, never reset them away.
+   Once all work and verification are complete, before the single final push,
+   run the exact-target fence:
    \`"${ownership_helper}" verify-pr-checkpoint-target "${repair_number_ref}" "${repo_slug_ref}" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA" "\$AIDEVOPS_PR_REPAIR_HEAD_REF" "${linked_issue_ref}" "${issue_assignee_ref}" "${PCC_CHECKPOINT_ASSIGNEE}"\`.
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
-5. Commit the continuation and push without force to the existing remote branch
-   using \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
-   replacement PR.
+5. Push exactly once, without force, to the existing remote branch using
+   \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
+   replacement PR. After a successful push make no further push (stale fence). Retry a failed or ambiguous push only if the remote head still equals \`\$AIDEVOPS_PR_REPAIR_HEAD_SHA\`, after rerunning the fence.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
    \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
@@ -413,8 +444,8 @@ PR title: ${safe_title}
    another merged PR (\`decision already_landed\`, naming the merged evidence),
    and a draft whose remaining acceptance needs a human choice the brief does
    not make (\`decision\`, naming the exact choice). Never close the draft.
-
-Do not invoke both terminal-state commands. A prose report or successful process
+${progress_step}
+Do not invoke more than one terminal-state command. A prose report or successful process
 exit is not a terminal state: exiting without one leaves the draft for human
 attention once the bounded retries are spent. End with the changes,
 verification, pushed head, and any remaining blocker.
@@ -586,22 +617,45 @@ _pcc_restore_issue_ownership() {
 _pcc_restore_transferred_ownership() {
 	local repo_slug="$1"
 	local pr_number="$2"
-	[[ "$PCC_OWNERSHIP_TRANSFERRED" -eq 1 ]] || return 0
+	if [[ "$PCC_OWNERSHIP_TRANSFERRED" -ne 1 ]]; then
+		_prrts_log "dispatch: restore skipped — ownership was not transferred"
+		return 0
+	fi
 	if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 ]]; then
 		local helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
-		# Compensate only while the exact admission and our live lease still own
-		# the target. A changed head, human claim or replacement owner stops writes.
+		if [[ "${PRRTS_WORKER_LAUNCH_STARTED:-0}" == 1 ]]; then
+			_prrts_log "dispatch: restore skipped — detached worker may already be running"
+			return 1
+		fi
+		# This verifies the original claim itself, even without a separate lease
+		# renewal. It rejects ready leases, head drift and intervening ownership.
+		# Keep the array non-empty in both modes (Bash 3.2 + set -u safe).
+		local -a verification_args=(verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF"
+			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE")
+		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
+			verification_args+=("$PCC_PREVIOUS_ASSIGNEE" "$PCC_ORIGINAL_STATUS")
+		fi
 		AIDEVOPS_PR_CHECKPOINT_REQUIRE_PRELAUNCH=1 \
-			"$helper" verify-pr-checkpoint-target "$pr_number" "$repo_slug" "$PCC_HEAD_OID" "$PCC_HEAD_REF" \
-			"$PCC_LINKED_ISSUE" "$PCC_AUTHENTICATED_LOGIN" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
+			"$helper" "${verification_args[@]}" >/dev/null || {
+			_prrts_log "dispatch: restore skipped — checkpoint claim or target no longer valid"
+			return 1
+		}
 		local -a restore_args=()
 		[[ -z "$PCC_PREVIOUS_ASSIGNEE" ]] || restore_args+=(--add-assignee "$PCC_PREVIOUS_ASSIGNEE")
 		if [[ "$PCC_PREVIOUS_ASSIGNEE" != "$PCC_AUTHENTICATED_LOGIN" ]]; then
 			restore_args+=(--remove-assignee "$PCC_AUTHENTICATED_LOGIN")
 		fi
-		set_issue_status "$PCC_LINKED_ISSUE" "$repo_slug" "$PCC_ORIGINAL_STATUS" "${restore_args[@]}" >/dev/null || return 1
-		"$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
-			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null || return 1
+		set_issue_status "$PCC_LINKED_ISSUE" "$repo_slug" "$PCC_ORIGINAL_STATUS" "${restore_args[@]}" >/dev/null || {
+			_prrts_log "dispatch: restore skipped — issue ownership restoration failed"
+			return 1
+		}
+		if [[ "$AIDEVOPS_PR_CHECKPOINT_ADMISSION_MODE" == revision ]]; then
+			_pcc_release_not_launched_claim "$repo_slug" "$pr_number" || return 1
+		elif ! "$helper" transition terminal "$PCC_LINKED_ISSUE" "$repo_slug" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
+			"$AIDEVOPS_PR_CHECKPOINT_SESSION" >/dev/null; then
+			_prrts_log "dispatch: restore skipped — terminal lease publication failed"
+			return 1
+		fi
 		PCC_OWNERSHIP_TRANSFERRED=0
 		PCC_ISSUE_ASSIGNEE="$PCC_PREVIOUS_ASSIGNEE"
 		return 0
@@ -641,6 +695,8 @@ _pcc_dispatch() {
 	PCC_EXPECTED_ASSIGNEE="$expected_assignee"
 	PCC_AUTHENTICATED_LOGIN="$authenticated_login"
 	PCC_TARGET_REJECTED=0
+	# Reconcile a failed/uncertain release before admission can consume a new claim.
+	_pcc_retry_compensation "$repo_slug" "$pr_number" || return 1
 	# Retry saved audit publication even if target/dispatch gates below keep the
 	# completed blocked continuation held. This does not start another worker.
 	_prrts_retry_continuation_blocker "$repo_slug" "$pr_number" "$linked_issue" || return 1
@@ -669,6 +725,7 @@ _pcc_dispatch() {
 	PCC_ORIGINAL_STATUS="$issue_status"
 	PCC_OWNERSHIP_TRANSFERRED=0
 	PCC_CLAIM_ACQUIRED=0
+	PRRTS_WORKER_LAUNCH_STARTED=0
 	if [[ "$PCC_REVISION_APPROVAL" != 0 ]]; then
 		# Exact revision validation preserves the PR author while authenticating
 		# the releasing runner. Transfer only the owner returned by that fence.
@@ -1428,7 +1485,8 @@ _pcc_attention_rearm_allowed() {
 # the fenced checkpoint claim admits exactly one, and its claim then owns the
 # draft, so later runners see no current stall release.
 # Args: $1=newest attention epoch, $2=current release epoch, $3=stalls since head
-# Output: effective window in seconds
+# Output: effective window in seconds; GH#37779: also printed when the window
+#         is computable but not yet due, so the caller can name the wait
 # Returns: 0 when the fleet re-arm is due, 1 otherwise
 #######################################
 _pcc_fleet_rearm_allowed() {
@@ -1444,9 +1502,74 @@ _pcc_fleet_rearm_allowed() {
 	window=$((_PCC_ATTENTION_REARM_SECONDS << doublings))
 	now=$(date +%s) || return 1
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
-	((now - anchor >= window)) || return 1
 	printf '%s\n' "$window"
+	((now - anchor >= window)) || return 1
 	return 0
+}
+
+#######################################
+# GH#37779: name why a paused head did not re-arm, so pulse diagnostics can
+# tell the per-PR fuse and the all-runners-tried wait from a missing record.
+# Args: $1=releases since PR creation, $2=newest attention epoch,
+#       $3=fleet window seconds (empty when not computable)
+# Output: per_pr_fuse | rearm_disabled | rearm_window_pending |
+#         fleet_window_pending window=<seconds>s
+#######################################
+_pcc_rearm_block_reason() {
+	local pr_releases="$1" attention_epoch="$2" fleet_window="${3:-}"
+	if [[ "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]]; then
+		printf 'per_pr_fuse\n'
+	elif [[ "$_PCC_ATTENTION_REARM_SECONDS" -eq 0 ]]; then
+		printf 'rearm_disabled\n'
+	elif ! _pcc_attention_rearm_allowed "${attention_epoch:-0}"; then
+		printf 'rearm_window_pending\n'
+	else
+		printf 'fleet_window_pending window=%ss\n' "${fleet_window:-unknown}"
+	fi
+	return 0
+}
+
+#######################################
+# The per-head attention record is a pause. After the re-arm window with no
+# human change, a runner that never tried this head gets one continuation;
+# once every runner tried it, the fleet re-arm (GH#37514) continues it on a
+# doubling schedule. The per-PR fuse is the one block no re-arm lifts, so
+# once its window passes the bounded terminal action ends the hold (GH#37779).
+# Args: repo, issue, pr, head, release id, stalls, releases since PR creation,
+#       attention epoch, release epoch, comments JSON, head date, login
+# Output: STALLED_CHECKPOINT_REARMED, or ATTENTION_EXISTS + REARM_BLOCKED
+# Returns: 0 when re-armed (continue the head), 1 when the head stays paused
+#######################################
+_pcc_stalled_rearm_or_block() {
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" stalls="$6" pr_releases="$7"
+	local attention_epoch="$8" release_epoch="$9" comments="${10}" head_date="${11}" login="${12}"
+	local rearm_mode="" fleet_window="" rearm_block=""
+	if [[ "$pr_releases" -lt "$_PCC_MAX_PR_RELEASES" ]]; then
+		if _pcc_attention_rearm_allowed "$attention_epoch" &&
+			! _pcc_runner_tried_head "$comments" "$head_date" "$login"; then
+			rearm_mode="untried_runner"
+		elif fleet_window=$(_pcc_fleet_rearm_allowed "$attention_epoch" "$release_epoch" "$stalls"); then
+			rearm_mode="fleet window=${fleet_window}s"
+		fi
+	fi
+	if [[ -n "$rearm_mode" ]]; then
+		printf 'STALLED_CHECKPOINT_REARMED: PR #%s in %s head=%s runner=%s stalls=%s pr_releases=%s issue=#%s mode=%s\n' \
+			"$pr" "$repo" "$head" "$login" "$stalls" "$pr_releases" "$issue" "$rearm_mode"
+		return 0
+	fi
+	rearm_block=$(_pcc_rearm_block_reason "$pr_releases" "$attention_epoch" "$fleet_window")
+	printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
+	printf 'STALLED_CHECKPOINT_REARM_BLOCKED: PR #%s in %s head=%s reason=%s stalls=%s pr_releases=%s issue=#%s\n' \
+		"$pr" "$repo" "$head" "$rearm_block" "$stalls" "$pr_releases" "$issue"
+	if [[ "$rearm_block" == per_pr_fuse ]] && _pcc_terminal_action_due "$attention_epoch" "$release_epoch"; then
+		# A current trusted revision approval owns scheduling; never act then.
+		local fuse_logins=""
+		if fuse_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo" 2>/dev/null) &&
+			! _pcc_comments_have_revision_approval "$comments" "$fuse_logins"; then
+			_pcc_terminal_checkpoint_action "$repo" "$issue" "$pr" "$head" "$release_id" per_pr_fuse || true
+		fi
+	fi
+	return 1
 }
 
 #######################################
@@ -1480,9 +1603,9 @@ _pcc_post_stall_attention() {
 		posted_scope="Posted once per PR."
 	fi
 	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" ]]; then
-		# A historical approval still fences the legacy route, even after a
-		# head change or expiry. Neither an aged record nor a push bypasses it.
-		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling; neither a new head nor an aged attention record re-arms automatic continuation"
+		# An unexpired approval fences the legacy route, even after a head
+		# change. Neither an aged record nor a push bypasses it before expiry.
+		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling until the approval expires; before then neither a new head nor an aged attention record re-arms automatic continuation"
 		push_step="2. Revalidate the existing revision approval after retrying unavailable metadata or permission checks. If it expired or no longer matches the head or brief, generate a fresh approval with \`pr-checkpoint-continuation-helper.sh approval-template\` and publish the generated approval as a new issue comment."
 		resume_step=""
 	fi
@@ -1601,7 +1724,7 @@ _pcc_dispatch_stalled() {
 	head_date=$(jq -er --arg head "$head" '[.commits[]? | select(.oid == $head) | .committedDate] |
 		last | strings | select(length > 0)' <<<"$pr_json") || return 1
 	pr_created=$(jq -r '.createdAt // "" | strings' <<<"$pr_json") || pr_created=""
-	assignees=$(gh api "repos/${repo}/issues/${issue}" --jq '(.assignees // []) | length') || return 1
+	assignees=$(_pcc_issue_assignee_count "$repo" "$issue") || return 1
 	if [[ "$assignees" != 0 ]]; then
 		# Assigned drafts belong to stale-assignment recovery (Layer 6).
 		printf 'STALLED_CHECKPOINT_CONTINUATION_SKIPPED: issue #%s in %s is assigned\n' "$issue" "$repo"
@@ -1642,25 +1765,8 @@ _pcc_dispatch_stalled() {
 				"$pr" "$repo" "$head" "$release_id" "$stalls"
 			return 0
 		fi
-		# The per-head record is a pause. After the re-arm window with no human
-		# change, a runner that never tried this head gets one continuation;
-		# once every runner tried it, the fleet re-arm (GH#37514) continues it
-		# on a doubling schedule. The per-PR fuse remains a hard stop.
-		local rearm_mode="" fleet_window=""
-		if [[ "$pr_releases" -lt "$_PCC_MAX_PR_RELEASES" ]]; then
-			if _pcc_attention_rearm_allowed "${attention_epoch:-0}" &&
-				! _pcc_runner_tried_head "$comments" "$head_date" "$login"; then
-				rearm_mode="untried_runner"
-			elif fleet_window=$(_pcc_fleet_rearm_allowed "${attention_epoch:-0}" "$release_epoch" "$stalls"); then
-				rearm_mode="fleet window=${fleet_window}s"
-			fi
-		fi
-		if [[ -z "$rearm_mode" ]]; then
-			printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
-			return 0
-		fi
-		printf 'STALLED_CHECKPOINT_REARMED: PR #%s in %s head=%s runner=%s stalls=%s pr_releases=%s issue=#%s mode=%s\n' \
-			"$pr" "$repo" "$head" "$login" "$stalls" "$pr_releases" "$issue" "$rearm_mode"
+		_pcc_stalled_rearm_or_block "$repo" "$issue" "$pr" "$head" "$release_id" "$stalls" "$pr_releases" \
+			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" || return 0
 	fi
 	local self_release=""
 	if self_release=$(_pcc_self_capability_release "$comments" "$head_date" "$login" 2>/dev/null); then
@@ -1679,6 +1785,14 @@ _pcc_dispatch_stalled() {
 		_pcc_approved_revision_attention "$repo" "$issue" "$pr" "$head" "$release_id" \
 			"$reason" "$stalls" "$key" "$posted"
 		return $?
+	fi
+	# GH#37779: a confirmed target rejection (not a metadata outage) on a head
+	# whose attention record has aged past the window cannot be continued;
+	# take the bounded terminal action instead of holding indefinitely.
+	if [[ "$dispatch_rc" -ne 0 && "$PCC_TARGET_REJECTED" == 1 && "$posted" == true ]] &&
+		_pcc_terminal_action_due "${attention_epoch:-0}" "$release_epoch" &&
+		_pcc_terminal_checkpoint_action "$repo" "$issue" "$pr" "$head" "$release_id" target_rejected; then
+		return 0
 	fi
 	return "$dispatch_rc"
 }
@@ -1709,23 +1823,64 @@ _pcc_approved_revision_attention() {
 # GH#36186: true when a trusted CHECKPOINT_CONTINUATION_APPROVED comment
 # exists (edited or not). Such an approval disables the legacy continuation
 # route (_pr_checkpoint_issue_metadata_is_eligible) for the issue.
+# GH#37779: only until it expires (_PCTL_APPROVAL_TTL_SECONDS); an expired
+# approval no longer owns scheduling, so the legacy re-arm applies again.
 # Args: $1=comments JSON (paginated or flat), $2=trusted logins JSON
 #######################################
 _pcc_comments_have_revision_approval() {
 	local comments="$1"
 	local trusted_logins="${2:-[]}"
-	jq -e --argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+	jq -e --argjson trusted_logins "$trusted_logins" --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" \
+		"${_PCC_JQ_RELEASE_DEFS}${_PCTL_COORDINATION_JQ_DEFS}"'
 		any(flatten[] | objects | select(trusted);
-			any(body_lines; startswith("CHECKPOINT_CONTINUATION_APPROVED ")))
+			any(body_lines; startswith("CHECKPOINT_CONTINUATION_APPROVED ")) and pctl_approval_unexpired($ttl))
 	' <<<"$comments" >/dev/null 2>&1 || return 1
 	return 0
+}
+
+#######################################
+# Count the live assignees of an issue.
+# Args: $1=repo slug, $2=issue number
+# Output: assignee count; returns 1 when unreadable
+#######################################
+_pcc_issue_assignee_count() {
+	local repo="$1" issue="$2"
+	gh api "repos/${repo}/issues/${issue}" --jq '(.assignees // []) | length' || return 1
+	return 0
+}
+
+#######################################
+# GH#37779: STALE_PR_CONTINUATION names the original runner, but stale-
+# assignment recovery may already have released the issue unassigned before
+# Layer 6 routes it, so `_pcc_dispatch` (which requires that assignee) always
+# rejected the target. Route a verified unassigned issue through
+# dispatch-stalled, which re-verifies the trusted release evidence and claims
+# the released issue, exactly as for stall-released checkpoints.
+# Args: repo slug, repo path, PR, issue, expected assignee, authenticated login
+# Returns: _pcc_dispatch / _pcc_dispatch_stalled exit status
+#######################################
+_pcc_dispatch_command() {
+	local repo="$1" path="$2" pr="$3" issue="$4" expected="$5" login="${6:-$5}"
+	local assignees=""
+	if [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
+		"$pr" =~ ^[1-9][0-9]*$ && -d "$path" ]] && _pcc_login_is_safe "$login"; then
+		assignees=$(_pcc_issue_assignee_count "$repo" "$issue" 2>/dev/null) || assignees=""
+		if [[ "$assignees" == 0 ]]; then
+			printf 'STALE_PR_CONTINUATION_RELEASED: issue #%s in %s is unassigned; routing PR #%s through dispatch-stalled (expected=%s)\n' \
+				"$issue" "$repo" "$pr" "${expected:-unknown}"
+			_pcc_dispatch_stalled "$repo" "$path" "$issue" "$pr" "$login"
+			return $?
+		fi
+	fi
+	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$expected" "$login"
+	return $?
 }
 
 main() {
 	local command="${1:-}"
 	case "$command" in
 	dispatch)
-		_pcc_dispatch "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+		_pcc_dispatch_command "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
 		return $?
 		;;
 	dispatch-approved)

@@ -35,6 +35,7 @@ _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_CRASH_OVERWHELMED="overwhelmed"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
+_HRW_REASON_NOT_LAUNCHED="worker_not_launched"
 _HRW_TELEMETRY_SUCCESS="success"
 _HRW_TELEMETRY_FAILED="failed"
 _HRW_TELEMETRY_DEFERRED="deferred"
@@ -73,6 +74,9 @@ _HRW_EVENT_FAILED="worker.failed"
 _HRW_EVENT_DEFERRED="worker.deferred"
 _HRW_PERMISSION_PERSISTENCE_FAILED="permission_request_persistence_failed"
 _HRW_SPOTLIGHT_MARKER=".metadata_never_index"
+# GH#37597: runtime-only marker full-loop-helper.sh merge writes on
+# CLEANUP_DEFERRED; lifecycle state, never task output.
+_HRW_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC=":(top,exclude,literal).agents/.full-loop-cleanup-deferred"
 _HRW_RECOVERY_CLASSIFICATION=""
 _HRW_CLAIM_RELEASE_PERSISTENCE_FAILED=0
 
@@ -126,197 +130,9 @@ source "${SCRIPT_DIR}/headless-runtime-worker-invocation.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/headless-runtime-worker-output.sh"
 
-# =============================================================================
-# Orphan handling
-# =============================================================================
-
-#######################################
-# _increment_orphan_count_stat — increment worker_branch_orphan_count in pulse-stats.json
-#
-# Uses pulse_stats_increment if available (pulse-stats-helper.sh is sourced
-# in pulse-wrapper.sh context); otherwise does an inline jq atomic update
-# using the same timestamp-array format for consistency.
-#
-# Non-fatal: any file/jq failure is silently ignored.
-#######################################
-_increment_orphan_count_stat() {
-	if declare -F pulse_stats_increment >/dev/null 2>&1; then
-		pulse_stats_increment "worker_branch_orphan_count" 2>/dev/null || true
-		return 0
-	fi
-	# Inline fallback: timestamp-array format (matches pulse-stats-helper.sh schema)
-	local _stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
-	local _stats_dir
-	_stats_dir="$(dirname "$_stats_file")"
-	[[ -d "$_stats_dir" ]] || mkdir -p "$_stats_dir" 2>/dev/null || return 0
-	[[ -f "$_stats_file" ]] || printf '{"counters":{}}\n' >"$_stats_file" 2>/dev/null || return 0
-	local _ts _tmp
-	_ts=$(date +%s 2>/dev/null) || _ts=0
-	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
-	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-orphan-XXXXXX") || return 0
-	jq --argjson ts "$_ts" \
-		'.counters.worker_branch_orphan_count += [$ts]' \
-		"$_stats_file" >"$_tmp" 2>/dev/null \
-		|| { rm -f "$_tmp"; return 0; }
-	mv "$_tmp" "$_stats_file" 2>/dev/null || rm -f "$_tmp"
-	return 0
-}
-
-#######################################
-# _handle_worker_branch_orphan — recover from worker_branch_orphan state (GH#20819)
-#
-# Called from _cmd_run_finish when _worker_produced_output returns "branch_orphan":
-# the worker pushed commits/branch but exited before opening a PR.
-#
-# Actions:
-#   1. Increments worker_branch_orphan_count in pulse-stats.json (always)
-#   2. Calls _attempt_orphan_recovery_pr to open a PR (GH#20819)
-#   3. On PR success  → releases claim as "worker_complete" (audit note)
-#   4. On PR failure  → releases claim as "worker_branch_orphan" + posts
-#      structured ops comment on the issue so next dispatch can pick up
-#
-# Args: $1=session_key, $2=work_dir
-#######################################
-_handle_worker_branch_orphan() {
-	local session_key="$1"
-	local work_dir="$2"
-
-	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
-
-	# t2899: extended diagnostic — surface what the worker actually produced so
-	# the next regression in this classifier is debuggable from a single log line.
-	# target_branch is the branch the worker was DISPATCHED to operate on
-	# (set by the dispatch path via WORKER_TARGET_BRANCH env if present);
-	# final_head is the HEAD SHA the worker exited on; ahead_count is commits
-	# ahead of origin/$base_branch (configured PR base branch, fallback to
-	# origin/master when the primary ref is missing); work_dir is the worktree path.
-	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
-	local head_ref="HE""AD"
-	local final_head=""
-	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
-	local ahead_count=0
-	local base_branch=""
-	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
-	local rev_output=""
-	# Fallback to master only when the primary ref is MISSING (non-zero exit),
-	# not when the count happens to be zero (worker exited on default branch).
-	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..HEAD" 2>/dev/null); then
-		ahead_count=$rev_output
-	else
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || echo 0)
-	fi
-	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-
-	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
-
-	# Always increment counter — failure or success
-	_increment_orphan_count_stat
-
-	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
-		print_info "[lifecycle] Orphan PR auto-created for session=${session_key}"
-		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
-	else
-		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
-		_hrw_release_dispatch_claim "$session_key" "worker_branch_orphan"
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
-		# Post structured ops comment so the next dispatch knows what happened
-		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
-			local _ops_comment
-			local _orphan_key="${repo_slug}#${issue_number}#${branch_name}#worker_branch_orphan"
-			local _orphan_base_branch="main"
-			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
-				_orphan_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
-			fi
-			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
-			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually against the configured PR base branch:\n\n```\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
-				"$_orphan_key" \
-				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-				"$branch_name" "$branch_name" "$_orphan_base_branch" "$repo_slug")
-			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-				--method POST \
-				--field body="$_ops_comment" \
-				>/dev/null 2>&1 || true
-		fi
-	fi
-	return 0
-}
-
-#######################################
-# _handle_worker_local_branch_unpushed — recover local-only committed branch.
-#
-# Called from _cmd_run_finish when _worker_produced_output returns
-# "local_branch_unpushed": the worker has local commits on a feature branch,
-# but no remote branch and no PR were found. The shared orphan recovery helper
-# safely pushes the branch before creating the PR; failure leaves a distinct,
-# non-misleading recovery diagnostic for manual intervention (GH#25374).
-#
-# Args: $1=session_key, $2=work_dir
-#######################################
-_handle_worker_local_branch_unpushed() {
-	local session_key="$1"
-	local work_dir="$2"
-
-	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
-
-	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
-	local head_ref="HE""AD"
-	local final_head=""
-	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
-	local ahead_count=0
-	local base_branch=""
-	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
-	local rev_output=""
-	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..${head_ref}" 2>/dev/null); then
-		ahead_count=$rev_output
-	else
-		local fallback_base_ref="origin/""master"
-		ahead_count=$(git -C "$work_dir" rev-list --count "${fallback_base_ref}..${head_ref}" 2>/dev/null || printf '0')
-	fi
-	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-
-	print_info "[lifecycle] worker_local_branch_unpushed session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
-
-	_increment_orphan_count_stat
-
-	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
-		print_info "[lifecycle] Local branch pushed and recovery PR auto-created for session=${session_key}"
-		local complete_reason="worker_"
-		_hrw_release_dispatch_claim "$session_key" "${complete_reason}complete"
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
-	else
-		print_info "[lifecycle] Local branch recovery failed for session=${session_key}"
-		_hrw_release_dispatch_claim "$session_key" "worker_local_branch_unpushed"
-		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_FAILED"
-		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
-			local _ops_comment
-			local _local_key="${repo_slug}#${issue_number}#${branch_name}#worker_local_branch_unpushed"
-			local _local_base_branch="main"
-			local _local_head_ref="HE""AD"
-			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
-				_local_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
-			fi
-			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
-			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-local-branch-unpushed:key=%s -->\nWORKER_LOCAL_BRANCH_UNPUSHED branch=%s session=%s ts=%s\n\nThis worker committed local changes on branch `%s`, but no remote branch or PR could be confirmed and automatic recovery failed. To recover, inspect the worker worktree, push the local branch, then open a PR manually against the configured PR base branch:\n\n```\ngit -C %s push origin %s:%s\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
-				"$_local_key" \
-				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-				"$branch_name" "$work_dir" "$_local_head_ref" "$branch_name" "$branch_name" "$_local_base_branch" "$repo_slug")
-			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-				--method POST \
-				--field body="$_ops_comment" \
-				>/dev/null 2>&1 || true
-		fi
-	fi
-	return 0
-}
+# shellcheck source=./headless-runtime-worker-orphan.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/headless-runtime-worker-orphan.sh"
 
 #######################################
 # _handle_worker_dirty_worktree — preserve uncommitted worker edits after crash.
@@ -700,7 +516,7 @@ _hrw_merged_terminal_complete() {
 	work_dir=$(cd "$work_dir" && pwd -P) || return 1
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
-	dirty=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	dirty=$(_hrw_task_worktree_status "$work_dir") || return 1
 	[[ -n "$branch" && "$head" =~ ^[0-9a-f]{40}$ && -z "$dirty" ]] || return 1
 	# A clean checkout at the delivered head cannot hide newer remote-only work.
 	local remote_branch=""
@@ -767,6 +583,20 @@ _hrw_merged_terminal_complete() {
 	return 0
 }
 
+# Task-owned worktree status for completion proofs. GH#37597: after the
+# worker's own PR merges, full-loop-helper.sh writes the untracked deferred
+# cleanup marker; reading it as unpublished work rejected verified delivery and
+# resumed a finished session. Every other untracked or modified path still
+# counts, so genuine post-merge edits keep failing closed.
+# Args: $1 = worktree path
+# Stdout: porcelain status (empty when clean)
+_hrw_task_worktree_status() {
+	local work_dir="$1"
+	git -C "$work_dir" status --porcelain --untracked-files=all -- ":/" \
+		"$_HRW_DEFERRED_CLEANUP_EXCLUDE_PATHSPEC" 2>/dev/null || return 1
+	return 0
+}
+
 _hrw_terminal_objective_complete() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -802,7 +632,7 @@ _hrw_pr_less_terminal_complete() {
 		context="${session_key}|${repo_slug}|${issue_number}|${work_dir}|${branch}|${head}|${AIDEVOPS_ATTEMPT_ID:-}|${AIDEVOPS_ATTEMPT_STARTED_AT:-}"
 		if [[ "$context" == "${_HRW_PR_LESS_VERIFIED_CONTEXT:-}" ]]; then
 			_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
-			task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+			task_status=$(_hrw_task_worktree_status "$work_dir") || return 1
 			if [[ -z "$task_status" ]]; then
 				_HRW_PR_LESS_REJECTION=""
 				return 0
@@ -827,6 +657,7 @@ _hrw_pr_less_terminal_complete() {
 		_hrw_report_only_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_consolidation_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_already_delivered_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
+		_hrw_already_satisfied_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json" ||
 		_hrw_review_triage_terminal_complete "$session_key" "$work_dir" "$issue_number" "$repo_slug" "$issue_json"; then
 		_hrw_pr_less_normalize_labels "$issue_number" "$repo_slug" "$issue_json" || return 1
 		# Scoped evidence is freshly regenerated, never replayed from this cache.
@@ -986,6 +817,108 @@ _hrw_already_delivered_terminal_complete() {
 	return 1
 }
 
+# GH#37515: a worker may verify an already-satisfied or premise-falsified issue
+# and close it without a PR. Credit only a structured receipt bound to this
+# attempt, the authenticated closer, an issue-named path at its live-default blob
+# and (for already_satisfied) a merged PR touching that path. Issues not closed
+# during this attempt keep the prior predicate's rejection reason.
+_hrw_already_satisfied_terminal_complete() {
+	local session_key="$1" work_dir="$2" issue_number="$3" repo_slug="$4" issue_json="$5"
+	local actor comments verdict reason path blob evidence_pr pr_json files default_blob comments_endpoint
+	printf -v comments_endpoint 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number"
+	# Review feedback keeps its own receipt and never falls back to this one.
+	[[ -z "${_HRW_REVIEW_TRIAGE_CANDIDATE:-}" ]] || return 1
+	[[ "${DISPATCH_REPO_SLUG:-}" == "$repo_slug" && "${WORKER_ISSUE_NUMBER:-}" == "$issue_number" &&
+		-n "${AIDEVOPS_ATTEMPT_ID:-}" && "${AIDEVOPS_ATTEMPT_STARTED_AT:-}" =~ ^[0-9]{19}$ ]] || return 1
+	jq -e --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" '
+		.state == "closed" and .pull_request == null and ((.closed_by.login // "") | length > 0)
+		and ((try (.closed_at | fromdateiso8601) catch 0) >= (($started | tonumber) / 1000000000 | floor))' \
+		<<<"$issue_json" >/dev/null 2>&1 || return 1
+	_HRW_PR_LESS_REJECTION="already_satisfied_receipt_unavailable"
+	actor=$(gh api user --jq '.login' 2>/dev/null) || return 1
+	[[ -n "$actor" ]] || return 1
+	comments=$(gh api --paginate "$comments_endpoint" 2>/dev/null) || return 1
+	_HRW_PR_LESS_REJECTION="already_satisfied_receipt_invalid"
+	verdict=$(_hrw_already_satisfied_receipt_verdict "$repo_slug" "$issue_number" "$actor" "$issue_json" <<<"$comments") || return 1
+	reason=$(jq -r '.reason' <<<"$verdict" 2>/dev/null) || return 1
+	if [[ -n "$reason" ]]; then
+		# Verdicts are program constants; never copy arbitrary text into metrics.
+		[[ "$reason" =~ ^already_satisfied_[a-z_]+$ ]] && _HRW_PR_LESS_REJECTION="$reason"
+		return 1
+	fi
+	path=$(jq -r '.receipt.path' <<<"$verdict") || return 1
+	blob=$(jq -r '.receipt.blob' <<<"$verdict") || return 1
+	evidence_pr=$(jq -r '.receipt.evidence_pr // empty' <<<"$verdict") || return 1
+	if [[ -n "$evidence_pr" ]]; then
+		_HRW_PR_LESS_REJECTION="already_satisfied_evidence_unavailable"
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${evidence_pr}" 2>/dev/null) || return 1
+		files=$(gh api --paginate "repos/${repo_slug}/pulls/${evidence_pr}/files?per_page=100" 2>/dev/null) || return 1
+		_HRW_PR_LESS_REJECTION="already_satisfied_evidence_invalid"
+		jq -e --arg repo "$repo_slug" --argjson pr "$evidence_pr" '
+			.number == $pr and .state == "closed" and .merged_at != null
+			and .base.repo.full_name == $repo' <<<"$pr_json" >/dev/null 2>&1 || return 1
+		jq -se --arg path "$path" 'any(.[][]; .filename == $path and .status != "removed")' \
+			<<<"$files" >/dev/null 2>&1 || return 1
+	fi
+	_hrw_pr_less_worktree_clean "$work_dir" "$repo_slug" || return 1
+	# The clean guard fetched the exact live default tip into FETCH_HEAD.
+	_HRW_PR_LESS_REJECTION="already_satisfied_default_blob_mismatch"
+	default_blob=$(git -C "$work_dir" rev-parse "FETCH_HEAD:${path}" 2>/dev/null) || return 1
+	[[ "$default_blob" == "$blob" ]] || return 1
+	print_info "[lifecycle] worker_already_satisfied complete session=${session_key} issue=${issue_number} attempt=${AIDEVOPS_ATTEMPT_ID} implementation=none"
+	return 0
+}
+
+# Classify paginated issue comments (stdin) into one constant rejection reason,
+# or an empty reason plus the single fresh receipt authored by the closer.
+# aidevops:trust-boundary — trust forge metadata, not receipt author claims.
+# Args: repo_slug issue_number actor issue_json
+_hrw_already_satisfied_receipt_verdict() {
+	local repo_slug="$1" issue_number="$2" actor="$3" issue_json="$4"
+	jq -cse --arg repo "$repo_slug" --argjson issue "$issue_number" --arg actor "$actor" \
+		--arg attempt "$AIDEVOPS_ATTEMPT_ID" --arg started "$AIDEVOPS_ATTEMPT_STARTED_AT" \
+		--arg url "https://github.com/${repo_slug}/issues/${issue_number}" \
+		--arg marker '<!-- aidevops:already-satisfied-completion:v1 -->' --argjson task "$issue_json" \
+		--arg numeric number --arg text string --arg sha '^[0-9a-f]{40}$' '
+		def writer: (.author_association // "none") | test("^(OWNER|MEMBER|COLLABORATOR)$");
+		def secs: try fromdateiso8601 catch null;
+		def positive_id: type == $numeric and . > 0 and floor == .;
+		def safe_path: type == $text and test("^([A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$")
+			and (split("/") | all(.[]; . != ".." and . != "."));
+		# Compare whole path tokens; allow a single sentence-ending period,
+		# but never a parent directory, extension, or dotted path continuation.
+		def names_path($path): any(scan("[A-Za-z0-9_./-]+"); . == $path or . == ($path + "."));
+		def valid_receipt: type == "object" and .schema == 1 and .repository == $repo and .issue == $issue
+			and .attempt_id == $attempt and .attempt_started_at == $started
+			and (.disposition == "already_satisfied" or .disposition == "premise_falsified")
+			and (.rationale | type == $text and length >= 20)
+			and (.path | safe_path) and (.blob | type == $text and test($sha))
+			and (if .disposition == "already_satisfied" then (.evidence_pr | positive_id)
+				else (.evidence_pr == null or (.evidence_pr | positive_id)) end);
+		def verdict($reason): {reason: $reason};
+		(($started | tonumber) / 1000000000 | floor) as $start
+		| ($task.closed_at | secs) as $closed
+		| [.[][] | select((.body // "") | startswith($marker + "\n"))] as $marked
+		| [$marked[] | select(.user.login == $actor)] as $own
+		| [$own[] | select((.created_at | secs) as $t | ($t != null and $t >= $start))] as $fresh
+		| if ($marked | length) == 0 then verdict("already_satisfied_receipt_missing")
+		elif ($own | length) == 0 then verdict("already_satisfied_closer_mismatch")
+		elif ($fresh | length) == 0 then verdict("already_satisfied_receipt_stale")
+		elif ($fresh | length) > 1 then verdict("already_satisfied_receipt_duplicated")
+		else $fresh[0] as $c
+			| (try ($c.body | split("\n")[1] | fromjson) catch null) as $r
+			| if ($task.closed_by.login // "") != $actor or ($c | writer | not) then
+				verdict("already_satisfied_closer_mismatch")
+			elif $closed == null or ((($c.updated_at | secs) // 1e300) > $closed) then
+				verdict("already_satisfied_receipt_edited")
+			elif ($c.id | positive_id | not) or $c.html_url != "\($url)#issuecomment-\($c.id)"
+				or ($r | valid_receipt | not) then verdict("already_satisfied_receipt_invalid")
+			elif (($task.body // "") | names_path($r.path) | not) then verdict("already_satisfied_path_unbound")
+			else {reason: "", receipt: $r} end
+		end' 2>/dev/null || return 1
+	return 0
+}
+
 # A fresh verifier-produced lifecycle receipt is an alternative only for a
 # completed, fully delivered literal scope. It cannot close an issue, authorize
 # publication, or bypass the unchanged no-unpublished-work guard.
@@ -1037,7 +970,7 @@ _hrw_pr_less_worktree_clean() {
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	[[ -n "$branch" && "$branch" != "$default_branch" ]] || return 1
 	_HRW_PR_LESS_REJECTION="worktree_status_unavailable"
-	task_status=$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null) || return 1
+	task_status=$(_hrw_task_worktree_status "$work_dir") || return 1
 	_HRW_PR_LESS_REJECTION="unpublished_worktree_changes"
 	[[ -z "$task_status" ]] || return 1
 	_HRW_PR_LESS_REJECTION="local_head_unavailable"
@@ -1290,6 +1223,10 @@ _hrw_finish_failed_run() {
 	local external_terminal_confirmed="${3:-0}"
 	local failure_recovered=0
 
+	if ! _hrw_runtime_launch_confirmed; then
+		_hrw_finish_not_launched "$session_key"
+		return 0
+	fi
 	if [[ "$external_terminal_confirmed" -eq 1 ]] || \
 		_worker_external_terminal_complete "$session_key" "$work_dir"; then
 		_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_WORKER_COMPLETE"
@@ -1812,12 +1749,23 @@ _hrw_post_pr_handoff_gate() {
 	return 1
 }
 
+_hrw_finish_not_launched() {
+	local session_key="$1"
+	_hrff_log_prelaunch_abort "$session_key" "${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_runtime_not_invoked}"
+	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; exact-head revision approval remains reusable"
+	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
+	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
+	_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"
+	return 0
+}
+
 _hrw_finish_success_run() {
 	local session_key="$1"
 	local work_dir="$2"
 	local release_needed=1
 	local finish_status=0
 	local permission_pending_file=""
+	_hrw_runtime_launch_confirmed || { _hrw_finish_not_launched "$session_key"; return 0; }
 	if [[ "${_run_result_label:-}" == "$_HRW_STATUS_BLOCKED" ]]; then
 		_hrw_preserve_blocked_outcome "$session_key" "$work_dir"
 		return 0
@@ -1937,6 +1885,9 @@ _hrw_write_external_final_outcome() {
 	[[ "${_WORKER_EXTERNAL_OUTCOME_WRITTEN:-0}" != "1" ]] || return 0
 	external_session_count=$(_hrff_worker_session_count)
 	external_reason="${_HRW_FINAL_RUNTIME_CLASSIFICATION:-worker_complete}"
+	if [[ "$external_reason" == worker_complete ]] && ! _hrw_runtime_launch_confirmed; then
+		external_reason="$_HRW_REASON_NOT_LAUNCHED"
+	fi
 	external_retry_class=$(_hrff_retry_class_for_reason "$external_reason" "$external_session_count")
 	if [[ "$ledger_status" == "$_HRW_STATUS_PERMISSION_REQUIRED" ]]; then
 		external_reason="$_HRW_STATUS_PERMISSION_REQUIRED"
@@ -1944,11 +1895,11 @@ _hrw_write_external_final_outcome() {
 	elif [[ "$external_reason" == "$_HRW_CRASH_NO_WORK" && "$external_session_count" == "0" ]]; then
 		external_reason="worker_noop_zero_output"
 		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
+	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" || "$external_reason" == "$_HRW_REASON_NOT_LAUNCHED" ]]; then
+		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_TERMINAL_OUTCOME" == "$_HRW_TELEMETRY_SUCCESS" ]]; then
 		external_reason="${external_reason:-$_HRW_REASON_WORKER_COMPLETE}"
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
-	elif [[ "$external_reason" == "$_HRW_REASON_HANDOFF_VERIFICATION_DEFERRED" ]]; then
-		external_retry_class="$_HRFF_RETRY_CLASS_INFRASTRUCTURE"
 	elif [[ "$_HRW_FINAL_RUNTIME_STATUS" == "$_HRW_STATUS_CHECKPOINTED" ]]; then
 		external_retry_class="$_HRFF_RETRY_CLASS_REMEDIATION"
 	fi

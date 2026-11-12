@@ -281,6 +281,26 @@ _routine_update_state() {
 
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" 2>/dev/null || true
 
+	# Serialize the entire read-modify-rename, including reads by detached runners.
+	local write_lock="${ROUTINE_STATE_FILE}.write.lock"
+	local lock_held=0 attempts=0 lock_mtime=0 lock_now=0
+	while [[ "$attempts" -lt 50 ]]; do
+		if mkdir "$write_lock" 2>/dev/null; then
+			lock_held=1
+			break
+		fi
+		lock_mtime=$(_file_mtime_epoch "$write_lock") || lock_mtime=0
+		lock_now=$(date +%s)
+		if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && [[ "$lock_mtime" -gt 0 ]] && [[ $((lock_now - lock_mtime)) -gt 30 ]]; then
+			rmdir "$write_lock" 2>/dev/null || true
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+	if [[ "$lock_held" -eq 0 ]]; then
+		echo "[pulse-wrapper] _routine_update_state: lock timeout for ${routine_id}" >>"${LOGFILE:-/dev/null}"
+	fi
+
 	local existing="{}"
 	if [[ -f "$ROUTINE_STATE_FILE" ]]; then
 		existing=$(cat "$ROUTINE_STATE_FILE" 2>/dev/null) || existing="{}"
@@ -306,6 +326,9 @@ _routine_update_state() {
 	else
 		rm -f "$tmp_file"
 		echo "[pulse-wrapper] _routine_update_state: failed to write state for ${routine_id}" >>"$LOGFILE"
+	fi
+	if [[ "$lock_held" -eq 1 ]]; then
+		rmdir "$write_lock" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -1253,6 +1276,35 @@ _evaluate_issue_archive_routine() {
 }
 
 #######################################
+# Evaluate the opt-in Actions event policy maintenance routine.
+#######################################
+_evaluate_event_policy_routine() {
+	local routine_id="r-event-policy"
+	local schedule="${AIDEVOPS_EVENT_POLICY_SCHEDULE:-daily(@05:40)}"
+	local last_epoch=0
+	# Without a Pulse working directory there is nowhere to run the routine.
+	[[ -n "${PULSE_DIR:-}" ]] || return 0
+	if [[ "${AIDEVOPS_EVENT_POLICY_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:r-event-policy"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
+		return 0
+	fi
+	echo "[pulse-wrapper] event policy routine due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Check Actions event policies" \
+		"scripts/actions-event-policy-routine.sh" "" "$PULSE_DIR" "$schedule" ""
+	return $?
+}
+
+#######################################
 # Evaluate routines across all pulse-enabled repos
 #
 # Reads TODO.md from each pulse-enabled repo, extracts enabled routines
@@ -1282,6 +1334,7 @@ evaluate_routines() {
 	fi
 	_evaluate_session_miner_routine
 	_evaluate_issue_archive_routine
+	_evaluate_event_policy_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path

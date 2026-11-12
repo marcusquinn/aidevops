@@ -3,8 +3,45 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once as an executable on the caller PATH (portable to
+# non-FHS hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+_resolve_native_git() {
+	local dir candidate target
+	local -a path_dirs=()
+	IFS=':' read -r -a path_dirs <<<"${PATH:-}"
+	for dir in "${path_dirs[@]}"; do
+		[[ "$dir" == /* ]] || continue
+		candidate="${dir}/git"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		# Skip the aidevops git wrapper.
+		if [[ "$candidate" == *aidevops* ]] || head -c 512 "$candidate" 2>/dev/null | grep -aq 'aidevops'; then
+			continue
+		fi
+		while [[ -L "$candidate" ]]; do
+			target=$(readlink "$candidate") || break
+			[[ "$target" == /* ]] || target="$(dirname "$candidate")/${target}"
+			candidate="$target"
+		done
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+TEST_NATIVE_GIT=$(_resolve_native_git) || {
+	printf '%s\n' 'Native Git (non-wrapper executable) not found on PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 # Fixture repositories are disposable; bypass interactive canonical-repo guards.
-PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+# A fixture bin dir holding a `git` symlink to the native Git is placed first on
+# the fixed PATH, so bare fixture `git` calls never select another executable
+# (including the wrapper) and work even when Git lives outside standard dirs.
+TEST_COREUTILS_DIR=$(dirname "$(command -v dirname)") || TEST_COREUTILS_DIR=/usr/bin
+TEST_GIT_BIN_DIR=$(mktemp -d) || exit 1
+ln -s "$TEST_NATIVE_GIT" "${TEST_GIT_BIN_DIR}/git" || exit 1
+trap 'rm -rf "$TEST_GIT_BIN_DIR"' EXIT
+PATH="${TEST_GIT_BIN_DIR}:/usr/bin:/bin:/usr/sbin:/sbin:${TEST_COREUTILS_DIR}"
 export PATH
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 PUBLISHER="${SCRIPT_DIR_TEST}/../planning-publisher.sh"
@@ -91,7 +128,7 @@ run_publish_with_receipt() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 			AIDEVOPS_PLANNING_WRITE_RECEIPT=true \
@@ -112,7 +149,7 @@ run_receipt_verify() {
 		SCRIPT_DIR="$(dirname "$PUBLISHER")"
 		# shellcheck source=../planning-publisher.sh
 		source "$PUBLISHER"
-		AIDEVOPS_PLANNING_GIT_BIN=/usr/bin/git \
+		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$receipt_dir" \
 			planning_verify_publication_receipt "$repo" origin "$branch" "$expected_commit"
 	)
@@ -212,7 +249,7 @@ test_publication_receipt_revalidates_exact_handoff() {
 		esac
 	done <<<"$output"
 	after=$(state_digest "$repo")
-	remote_head=$(/usr/bin/git --git-dir="${root}/remote.git" rev-parse main)
+	remote_head=$("$TEST_NATIVE_GIT" --git-dir="${root}/remote.git" rev-parse main)
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" || valid_rc=$?
 	rm -f "$receipt"
 	replay_output=$(run_publish_with_receipt "$repo" "$receipt_dir" main) || replay_rc=$?
@@ -241,7 +278,7 @@ test_publication_receipt_revalidates_exact_handoff() {
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" >/dev/null 2>&1 || forged_rc=$?
 	if [[ -f "$receipt" && "$before" == "$after" && "$valid_rc" -eq 0 && "$replay_rc" -eq 0 && \
 		"$changed_rc" -ne 0 && "$added_rc" -ne 0 && "$forged_rc" -ne 0 && "$remote_head" == "$published_commit" && \
-		"$replayed_commit" == "$published_commit" && "$source_head" == "$(/usr/bin/git -C "$repo" rev-parse HEAD)" ]] && \
+		"$replayed_commit" == "$published_commit" && "$source_head" == "$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD)" ]] && \
 		grep -q '^format=aidevops-planning-publication-v3$' "$receipt" &&
 		grep -q '^handoff_id=[0-9a-fA-F]\{40,64\}$' "$receipt"; then
 		pass "$name"
@@ -263,9 +300,9 @@ test_publication_receipt_rejects_ancestor_source_forgery() {
 	}
 	repo="${root}/work"
 	receipt_dir="${root}/receipts"
-	/usr/bin/git -C "$repo" commit --allow-empty -q -m 'source anchor' || return 0
-	/usr/bin/git -C "$repo" push -q origin main || return 0
-	ancestor_head=$(/usr/bin/git -C "$repo" rev-parse HEAD^) || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" commit --allow-empty -q -m 'source anchor' || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" push -q origin main || return 0
+	ancestor_head=$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD^) || return 0
 	printf '%s\n' '- [ ] t012 immutable source handoff ref:GH#12' >>"${repo}/TODO.md"
 	output=$(run_publish_with_receipt "$repo" "$receipt_dir" main) || {
 		fail "$name" publish
@@ -288,10 +325,10 @@ test_publication_receipt_rejects_ancestor_source_forgery() {
 		fi
 	done <"$receipt" >"$forged_tmp"
 	mv "$forged_tmp" "$receipt"
-	/usr/bin/git -C "$repo" update-ref refs/heads/main "$ancestor_head" "$source_head" || return 0
+	"$TEST_NATIVE_GIT" -C "$repo" update-ref refs/heads/main "$ancestor_head" "$source_head" || return 0
 	run_receipt_verify "$repo" "$receipt_dir" main "$published_commit" >/dev/null 2>&1 || forged_rc=$?
-	if [[ "$forged_rc" -ne 0 && "$(/usr/bin/git -C "$repo" rev-parse HEAD)" == "$ancestor_head" ]] &&
-		/usr/bin/git --git-dir="${root}/remote.git" show -s --format=%B "$published_commit" |
+	if [[ "$forged_rc" -ne 0 && "$("$TEST_NATIVE_GIT" -C "$repo" rev-parse HEAD)" == "$ancestor_head" ]] &&
+		"$TEST_NATIVE_GIT" --git-dir="${root}/remote.git" show -s --format=%B "$published_commit" |
 		grep -q '^Planning-Publication-Handoff-ID: [0-9a-fA-F]\{40,64\}$'; then
 		pass "$name"
 	else

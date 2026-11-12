@@ -185,6 +185,30 @@ _has_live_checkpoint_continuation_for_issue() {
 }
 
 #######################################
+# Run one dedup layer as a timed dispatch sub-stage (GH#37883). The layer's
+# exit status is returned unchanged and its stdout (the block signal) passes
+# through untouched; recording writes only to the stage log. Callers that did
+# not load dispatch-stage-instrument.sh run the layer untimed. Locals use a
+# _dlt_ prefix so layers reading caller-scoped variables see no shadowing.
+# Args: issue number, repo slug, stage name, command and arguments
+#######################################
+_dedup_layer_timed() {
+	local _dlt_issue="$1" _dlt_repo="$2" _dlt_stage="$3"
+	shift 3
+	local _dlt_t0="" _dlt_rc=0 _ds_stage_attempt_id=""
+	if ! declare -F _ds_record >/dev/null 2>&1 || ! declare -F _ds_now_ns >/dev/null 2>&1 ||
+		! declare -F _ds_stage_start >/dev/null 2>&1; then
+		"$@" || _dlt_rc=$?
+		return "$_dlt_rc"
+	fi
+	_dlt_t0=$(_ds_now_ns)
+	_ds_stage_start "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" _ds_stage_attempt_id
+	"$@" || _dlt_rc=$?
+	_ds_record "$_dlt_issue" "$_dlt_repo" "$_dlt_stage" "$_dlt_t0" "$_ds_stage_attempt_id"
+	return "$_dlt_rc"
+}
+
+#######################################
 # Thin orchestrator — runs read-only dedup layers in order.
 # Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
 # implementation. Layers return 0 to block or 1 to continue; Layer 4 returns 2
@@ -200,11 +224,16 @@ check_dispatch_dedup() {
 	local issue_title="${4:-}"
 	local self_login="${5:-}"
 
-	_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
-	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
-	_dedup_layer3_title_match "$title" && return 0
+	# GH#37883: each layer is a dedup.layer* sub-stage of dedup.7_layers.
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer1_ledger" \
+		_dedup_layer1_ledger_check "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer2_process" \
+		_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer3_title" \
+		_dedup_layer3_title_match "$title" && return 0
 	local _pr_evidence_rc=0
-	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer4_pr_evidence" \
+		_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?
 	if [[ "$_pr_evidence_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -219,8 +248,10 @@ check_dispatch_dedup() {
 	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
 	# "Stage failed" noise and refill loops can skip this candidate for the
 	# current pulse cycle (GH#23541).
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer5_dispatch_comment" \
+		_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer6_assignee" \
+		_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
 	[[ "$_pr_evidence_rc" -eq 2 ]] && return 0
 
 	return 1

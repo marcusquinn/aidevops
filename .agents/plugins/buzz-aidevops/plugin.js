@@ -13,8 +13,15 @@
 export const inject = ["react", "settingsCards", "host", "agents"];
 
 // Bump only when plugin files change; Buzz revisions are content hashes.
-const PLUGIN_VERSION = "1.1.0";
+const PLUGIN_VERSION = "1.3.0";
 const TYPE_ID = "aidevops";
+/** An empty project folder means the aidevops repository registered on this
+ * computer: the launcher resolves it from `repos.json`. Agents for a project
+ * name that project's folder instead. */
+const DEFAULT_PROJECT_LABEL = "the aidevops repository";
+/** Prefilled for new agents, including drafts other agents request: the
+ * standard aidevops checkout. Clearing it falls back to the registered one. */
+const DEFAULT_PROJECT = "~/Git/aidevops";
 /** The MCP server name each session declares; Buzz tools arrive as `buzz_*`. */
 const TOOL_SERVER = "buzz";
 /** Buzz tools that answer where people see it, so no fallback reply is due. */
@@ -69,8 +76,7 @@ function settings(raw) {
 }
 
 function projectProblem(project) {
-  if (!project)
-    return "Set a project folder: open Agents, choose this agent, then on its Identity tab fill in Project folder and press Save.";
+  if (!project) return "";
   if (!project.startsWith("/") && !project.startsWith("~/"))
     return "The project folder must be a full path, or start with ~/.";
   return "";
@@ -372,6 +378,14 @@ class Runner {
     return this.runtimes.get(key);
   }
 
+  /** Reads a file the agent's Buzz tools send or upload (attachments, a
+   * profile picture): absolute, `~/…`, or relative to its project folder, as
+   * Buzz's bundled agent types read relative to their workspace. */
+  read(project, path) {
+    if (!this.host.readFile) throw new Error("aidevops agents run only in the desktop app");
+    return this.host.readFile(path, { cwd: project || DEFAULT_PROJECT });
+  }
+
   /** Answers one Buzz tools MCP message. OpenCode registers MCP servers per
    * directory, so every session of the process shares this server: a call
    * goes to the session OpenCode names (`ai.opencode/sessionID`, OpenCode
@@ -389,7 +403,9 @@ class Runner {
         id,
         error: { code: -32603, message: "This aidevops agent has not started a turn" },
       };
-    const answer = await this.kit.tools(handle, session?.conversation)(message);
+    const answer = await this.kit.tools(handle, session?.conversation, {
+      read: (path) => this.read(runtime.project, path),
+    })(message);
     if (session && answeredPeople(message, answer)) session.acted = true;
     return answer;
   }
@@ -418,11 +434,12 @@ class Runner {
     if (!this.host.spawn) throw new Error("aidevops agents run only in the desktop app");
     const acp = await Acp.start(
       this.host.spawn.bind(this.host),
-      ["--member", config.member, "--project", config.project],
+      ["--member", config.member, ...(config.project ? ["--project", config.project] : [])],
       (params) => recordUpdate(runtime, params),
     );
     runtime.acp = acp;
     runtime.launch = launch;
+    runtime.project = config.project;
     void acp.exited.then(() => {
       if (runtime.acp !== acp) return;
       runtime.acp = undefined;
@@ -436,13 +453,14 @@ class Runner {
     const server = await this.ensureServer(runtime);
     const system = await this.kit.systemPrompt(delivery, {
       scope: config.scope,
-      cwd: config.project,
+      cwd: config.project || DEFAULT_PROJECT_LABEL,
       instructions: "",
     });
     const standard = !!system && acp.advertises("systemPrompt");
     const opened = await acp.request(
       "session/new",
       {
+        // The launcher's proxy replaces this with the agent's worktree.
         cwd: config.project,
         mcpServers: [
           { type: "http", name: TOOL_SERVER, url: server.url, headers: server.headers },
@@ -696,7 +714,7 @@ function fields(h, { value, onChange, disabled, agentName }) {
         type: "text",
         style: inputStyle,
         value: value.project ?? "",
-        placeholder: "e.g. /path/to/your/repo",
+        placeholder: `Empty: ${DEFAULT_PROJECT_LABEL}`,
         disabled,
         spellCheck: false,
         onChange: set("project"),
@@ -704,7 +722,7 @@ function fields(h, { value, onChange, disabled, agentName }) {
       h(
         "p",
         { style: hintStyle },
-        "Required. Full path (or ~/ path) to a repository registered with aidevops. The agent works in its own linked worktree of it, never in the folder itself.",
+        `aidevops main agents use ${DEFAULT_PROJECT} (empty means ${DEFAULT_PROJECT_LABEL} registered on this computer). An agent for a project uses that project's folder in your Git folder: a full path, or one starting with ~/. It must be a repository registered with aidevops; the agent works in its own linked worktree of it, never in the folder itself.`,
       ),
     ),
     h(
@@ -849,7 +867,7 @@ function SettingsTab({ React, agent, save }) {
 
 function summary(agent) {
   const config = settings(agent.config);
-  return config.project ? `aidevops · ${basename(config.project)}` : "aidevops · no project set";
+  return `aidevops · ${config.project ? basename(config.project) : "aidevops"}`;
 }
 
 export function apply(ctx) {
@@ -874,7 +892,7 @@ export function apply(ctx) {
     title: "aidevops",
     description:
       "aidevops agents in OpenCode on this computer, each in its own worktree of a registered project.",
-    defaults: () => ({ config: { member: "", project: "", scope: "thread" } }),
+    defaults: () => ({ config: { member: "", project: DEFAULT_PROJECT, scope: "thread" } }),
     summary,
     Create: ({ config, onChange, disabled }) =>
       fields(h, { value: config ?? {}, onChange, disabled }),
@@ -888,5 +906,10 @@ export function apply(ctx) {
     ],
     timeoutMs: 30 * 60_000,
     run: (delivery) => runner.run(delivery),
+    // Reads outside turns, as for an approved external connection's tools.
+    readFile: async (agent, path, signal) => {
+      signal.throwIfAborted();
+      return runner.read(settings(agent.config).project, path);
+    },
   });
 }

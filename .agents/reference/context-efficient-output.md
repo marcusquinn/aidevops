@@ -76,6 +76,14 @@ a lifecycle transition occurs; omit it for an immediate snapshot. The start
 action returns after the owned process spawns, so the primary session remains
 available for progress reports and scoped cancellation.
 
+Every tool call is a full model turn over the whole session context, so polling
+is the expensive part (t18953). For a command likely to finish within 60
+seconds, pass `wait_seconds` (up to 60; larger values are clamped) on `start`.
+It waits for a terminal state, and a terminal `start` or `status` receipt
+carries its first output window inline as `output` (`output_offset`/
+`output_limit`, default 1/120). One call then replaces start → status → output.
+A failed inline read becomes `output_error` on the receipt instead of failing it.
+
 Do not assume bounded operations inherit session secrets: wrap the command as
 `aidevops secret NAME -- <argv>`, and never put a secret value in argv.
 
@@ -97,8 +105,8 @@ available. Restoration receipts retain their own `restoration_termination_cause`
 and `restoration_signal`: a budget stop remains `timed_out`, and a disposal stop
 remains `cancelled`, even when a TERM handler exits zero during cleanup.
 
-After a terminal receipt reports `evidence_state: recorded`, retrieve a bounded
-slice through the same native tool with action `output`, the receipt's
+After a terminal receipt reports `evidence_state: recorded`, page further
+bounded slices through the same native tool with action `output`, the receipt's
 `operation_id`, and optional `output_offset`/`output_limit` values. Retrieval is
 terminal-only, limited to 500 lines per call, and revalidates session ownership;
 callers cannot use a bare output ID to bypass the operation generation.

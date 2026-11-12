@@ -104,10 +104,17 @@ _probe_has_static_auth_for_provider() {
 
 	local creds_file="${HOME}/.config/aidevops/credentials.sh"
 	if [[ -f "$creds_file" ]]; then
-		# shellcheck disable=SC1090
-		source "$creds_file"
+		# Presence checks must use the same bounded, non-executing parser as
+		# resolve_api_key. Sourcing here executes unrelated configuration before
+		# the OAuth cooldown/cache checks, even when no API key is resolved.
 		for var_name in "${var_names[@]}"; do
-			if [[ -n "${!var_name:-}" ]]; then
+			local key_val=""
+			key_val=$(timeout_sec 5 node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { credentialFileSecret } = await import(pathToFileURL(process.argv[1]).href);
+process.stdout.write(credentialFileSecret(process.argv[2]));
+' "${SCRIPT_DIR}/secret-resolver.mjs" "$var_name" 2>/dev/null) || key_val=""
+			if [[ -n "$key_val" ]]; then
 				return 0
 			fi
 		done
@@ -606,8 +613,61 @@ _probe_openai_oauth_fallback_verified() {
 		return 3
 	fi
 
-	_probe_execute_http openai "$access_token" "$quiet"
-	return $?
+	local http_exit=0
+	_probe_execute_http openai "$access_token" "$quiet" || http_exit=$?
+	if [[ "$http_exit" -eq 3 ]]; then
+		# GH#37627: ChatGPT-only (e.g. free) accounts have no platform API
+		# access, so /models rejects the token although OpenCode inference via
+		# the Codex backend works. Only a platform auth rejection (3) reaches
+		# here; quota (1) and rate-limit (2) outcomes stay unhealthy.
+		local codex_exit=0
+		_probe_openai_codex_backend "$auth_file" "$access_token" "$quiet" || codex_exit=$?
+		return "$codex_exit"
+	fi
+	return "$http_exit"
+}
+
+# _probe_openai_codex_backend: verify a ChatGPT OAuth access token against the
+# Codex backend that OpenCode uses for ChatGPT OAuth inference (GH#37627).
+# Returns: 0=healthy (recorded), 2=rate-limited, 3=rejected, 1=other failure.
+# Never prints the token. Override the endpoint with AIDEVOPS_OPENAI_CODEX_PROBE_URL.
+_probe_openai_codex_backend() {
+	local auth_file="$1"
+	local access_token="$2"
+	local quiet="${3:-false}"
+	local url="${AIDEVOPS_OPENAI_CODEX_PROBE_URL:-https://chatgpt.com/backend-api/codex/models?client_version=1.0.0}"
+	local account_id
+	account_id=$(jq -r '.openai.accountId // empty' "$auth_file" 2>/dev/null) || account_id=""
+
+	local -a curl_args=(-s -o /dev/null -w '%{http_code}' --max-time 15
+		-H "Authorization: Bearer ${access_token}" -H "originator: opencode")
+	if [[ -n "$account_id" ]]; then
+		curl_args+=(-H "chatgpt-account-id: ${account_id}")
+	fi
+
+	local code
+	code=$(curl "${curl_args[@]}" "$url" 2>/dev/null) || code=""
+	if [[ "$quiet" != "true" && "$code" != "200" ]]; then
+		if [[ -n "$code" && "$code" != "000" ]]; then
+			print_warning "openai: Codex backend probe failed (HTTP $code)"
+		else
+			print_warning "openai: Codex backend probe failed (connection failure or timeout)"
+		fi
+	fi
+	case "$code" in
+	200)
+		[[ "$quiet" != "true" ]] && print_success "openai: ChatGPT OAuth verified via Codex backend (GH#37627)"
+		_record_health openai "healthy" 200 0 "ChatGPT OAuth verified via Codex backend" 0
+		return 0
+		;;
+	401 | 403)
+		return 3
+		;;
+	429)
+		return 2
+		;;
+	esac
+	return 1
 }
 
 # _probe_check_oauth_fallback: called when an HTTP probe rejected the resolved
@@ -791,7 +851,11 @@ probe_provider() {
 	# auth.json has an OAuth entry for this provider. OAuth wins over a
 	# stale/invalid env key — the runtime authenticates at session start.
 	if [[ "$http_exit" -eq 3 ]]; then
-		_probe_check_oauth_fallback "$provider" "$quiet"
+		# Earlier resolve_api_key calls ran in command substitutions, so the
+		# RESOLVED_API_KEY_SOURCE they set was lost. Re-resolve in this shell
+		# (output discarded, never logged) so the t3555 env-key guard sees it.
+		resolve_api_key "$provider" >/dev/null 2>&1 || true
+		_probe_check_oauth_fallback "$provider" "$quiet" "${RESOLVED_API_KEY_SOURCE:-}"
 		return $?
 	fi
 

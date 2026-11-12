@@ -69,6 +69,69 @@ def claimed(provider: str, **values: str | None) -> ClaimedOperation:
 
 
 class OutboundProviderTests(unittest.TestCase):
+    def _org_provider(self, acl_body: bytes, requests: list[object]) -> LinkedInPreparedProvider:
+        responses = iter([Response(200, acl_body), Response(201, b"", {"x-restli-id": "share_fixture_1"})])
+
+        def opener(request: object, **_kwargs: object) -> Response:
+            requests.append(request)
+            return next(responses)
+
+        return LinkedInPreparedProvider(claimed("linkedin", account="org_2414183"), opener)
+
+    @patch.dict(
+        os.environ,
+        {
+            "LINKEDIN_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN,
+            "LINKEDIN_FIXTURE_SCOPES": "r_organization_admin w_organization_social",
+        },
+    )
+    def test_linkedin_organization_admin_binding_posts_as_organization(self) -> None:
+        requests: list[object] = []
+        acl = (
+            b'{"elements":[{"role":"ADMINISTRATOR","state":"APPROVED",'
+            b'"organization":"urn:li:organization:2414183","roleAssignee":"urn:li:person:x"}]}'
+        )
+        provider = self._org_provider(acl, requests)
+        provider.verify_identity()
+        self.assertEqual(provider.invoke(), ("share_fixture_1", None))
+        self.assertIn("organizationAcls?q=roleAssignee", getattr(requests[0], "full_url"))
+        self.assertEqual(
+            json.loads(getattr(requests[1], "data"))["author"], "urn:li:organization:2414183"
+        )
+
+    @patch.dict(
+        os.environ,
+        {
+            "LINKEDIN_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN,
+            "LINKEDIN_FIXTURE_SCOPES": "w_organization_social",
+        },
+    )
+    def test_linkedin_organization_non_admin_is_refused_before_post(self) -> None:
+        requests: list[object] = []
+        acl = (
+            b'{"elements":[{"role":"ADMINISTRATOR","state":"APPROVED",'
+            b'"organization":"urn:li:organization:999","roleAssignee":"urn:li:person:x"}]}'
+        )
+        provider = self._org_provider(acl, requests)
+        with self.assertRaisesRegex(Exception, "not an approved administrator"):
+            provider.verify_identity()
+        self.assertEqual(len(requests), 1)
+
+    @patch.dict(
+        os.environ,
+        {
+            "LINKEDIN_FIXTURE_ACCESS_TOKEN": FIXTURE_ACCESS_TOKEN,
+            "LINKEDIN_FIXTURE_SCOPES": "w_member_social",
+        },
+    )
+    def test_linkedin_organization_missing_scope_is_refused_without_requests(self) -> None:
+        requests: list[object] = []
+        provider = self._org_provider(b'{"elements":[]}', requests)
+        with self.assertRaisesRegex(Exception, "w_organization_social"):
+            provider.verify_identity()
+        self.assertEqual(provider.invoke(), (None, "validation"))
+        self.assertEqual(requests, [])
+
     def test_retry_after_duration_is_validated_and_bounded(self) -> None:
         self.assertEqual(2, provider_retry_seconds("1.5"))
         self.assertEqual(

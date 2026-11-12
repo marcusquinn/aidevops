@@ -52,8 +52,28 @@ _hrw_permission_pending_path() {
 _hrw_mark_runtime_launch_started() {
 	local session_key="$1"
 	local runtime="$2"
+	# This records intent before spawn, not proof that a runtime session exists.
 	_WORKER_RUNTIME_LAUNCH_STARTED=1
 	print_info "[lifecycle] pre_runtime_launch session=${session_key} runtime=${runtime} pid=$$"
+	return 0
+}
+
+# A spawn intent (or a persisted continuation ID) cannot consume an approval.
+# The result session ID comes from this invocation's output; activity snapshots
+# survive isolated OpenCode DB finalization and cover failed invocations too.
+_hrw_runtime_launch_confirmed() {
+	local activity_count="0"
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == 1 ]] || return 1
+	[[ -n "${_run_metric_session_id:-}" ]] && return 0
+	# Isolated runs must not borrow shared-DB activity from other workers when
+	# isolation failed before spawn: require this attempt's live DB or snapshot.
+	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" &&
+		"${_WORKER_ATTEMPT_ACTIVITY_START_MS:-}" != "${_WORKER_START_EPOCH_MS:-0}" &&
+		! -f "${_WORKER_ISOLATED_DB_PATH:-}" ]]; then
+		return 1
+	fi
+	activity_count=$(_hrff_worker_session_count)
+	[[ "$activity_count" =~ ^[0-9]+$ && "$activity_count" -gt 0 ]] || return 1
 	return 0
 }
 
@@ -531,6 +551,9 @@ _hrw_detach_systemd_scope() {
 # fallback. Logs stay flat in the root so system-cleanup.sh ages each file.
 # mktemp creates the file exclusively with mode 600: a planted symlink is never
 # followed and repeated attempts for one session key never truncate each other.
+# Pulse-side callers (revised checkpoint dispatch, PR review launch) are not
+# managed session entry points, so an unset root is initialised here from the
+# same contract. An explicitly set but unusable root still fails closed.
 # Args: $1 = session key
 # Output: absolute log path
 # Returns: 0 created, 1 unusable root (caller must not spawn)
@@ -539,6 +562,14 @@ _hrw_create_detached_log() {
 	local session_key="$1"
 	local root="${AIDEVOPS_TEMP_DIR:-}"
 	local safe_key="" log_file=""
+	if [[ -z "$root" ]]; then
+		if ! declare -F aidevops_init_temp_workspace >/dev/null 2>&1; then
+			# shellcheck source=./shared-temp-workspace.sh
+			source "${BASH_SOURCE[0]%/*}/shared-temp-workspace.sh" || return 1
+		fi
+		aidevops_init_temp_workspace || return 1
+		root="${AIDEVOPS_TEMP_DIR:-}"
+	fi
 	if [[ "$root" != /* || -L "$root" || ! -d "$root" || ! -O "$root" || ! -w "$root" ]]; then
 		print_error "Detached worker log root is unusable: ${root:-<unset>} (must be an owned, writable, non-symlink directory; set AIDEVOPS_WORKSPACE_DIR to an approved location)"
 		return 1

@@ -3,6 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 set -u
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 AGENTS_DIR="${INSTALL_DIR}/.agents"
@@ -103,10 +111,10 @@ main() {
 	trap 'rm -rf "$TEST_TMP_DIR"' EXIT
 	local repo_root="${TEST_TMP_DIR}/repo"
 	mkdir -p "$repo_root"
-	/usr/bin/git -C "$repo_root" init -q
+	"$TEST_NATIVE_GIT" -C "$repo_root" init -q
 	printf '%s\n' '{"custom":{"keep":true},"features":{"planning":false}}' >"$repo_root/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
-	/usr/bin/git -C "$repo_root" add package.json
+	"$TEST_NATIVE_GIT" -C "$repo_root" add package.json
 
 	_init_write_project_config "$repo_root/.aidevops.json" "9.9.9" "standard" false false true true true false false false false true false false
 	assert_equal "true" "$(jq -r '.custom.keep' "$repo_root/.aidevops.json")" "init preserves unknown configuration keys"
@@ -117,7 +125,7 @@ main() {
 	assert_equal "npm run lint" "$(jq -r '.verify.lint' "$repo_root/.aidevops.json")" "init seeds exact lint command"
 	assert_equal "npm run typecheck" "$(jq -r '.verify.typecheck' "$repo_root/.aidevops.json")" "init seeds exact typecheck command"
 	local common_dir
-	common_dir=$(/usr/bin/git -C "$repo_root" rev-parse --git-common-dir)
+	common_dir=$("$TEST_NATIVE_GIT" -C "$repo_root" rev-parse --git-common-dir)
 	assert_equal "1" "$(grep -c '# guard:repo-verify' "${repo_root}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "init immediately installs repo-verify hook"
 
 	assert_equal "null" "$(jq -r '.beads // null' "$repo_root/.aidevops.json")" "fresh config omits retired integration"
@@ -140,13 +148,13 @@ main() {
 
 	local opted_out="${TEST_TMP_DIR}/opted-out"
 	mkdir -p "$opted_out"
-	/usr/bin/git -C "$opted_out" init -q
+	"$TEST_NATIVE_GIT" -C "$opted_out" init -q
 	printf '%s\n' '{"features":{"code_quality":true},"verify":{"enabled":false}}' >"$opted_out/.aidevops.json"
 	printf '%s\n' '{"scripts":{"lint":"eslint ."}}' >"$opted_out/package.json"
-	/usr/bin/git -C "$opted_out" add package.json
+	"$TEST_NATIVE_GIT" -C "$opted_out" add package.json
 	_init_configure_repo_verify "$opted_out"
 	_init_finalize_repo_verify "$opted_out"
-	common_dir=$(/usr/bin/git -C "$opted_out" rev-parse --git-common-dir)
+	common_dir=$("$TEST_NATIVE_GIT" -C "$opted_out" rev-parse --git-common-dir)
 	if [[ -f "${opted_out}/${common_dir}/hooks/pre-push" ]]; then
 		assert_equal "0" "$(grep -c '# guard:repo-verify' "${opted_out}/${common_dir}/hooks/pre-push" 2>/dev/null || printf 0)" "init does not install hook for verify opt-out"
 	else

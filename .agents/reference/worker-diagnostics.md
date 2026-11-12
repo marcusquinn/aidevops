@@ -303,6 +303,7 @@ Safety boundaries:
   Actions incident suppresses the rerun and classifies delayed queued checks as
   provider saturation; an unavailable status feed fails open. Use
   `AIDEVOPS_SKIP_GITHUB_ACTIONS_STATUS=1` only as an explicit emergency bypass.
+  For runs still stranded after recovery, see [orphaned queued runs](#orphaned-queued-runs-after-a-github-incident).
 
 Diagnosis commands:
 
@@ -321,6 +322,32 @@ required checks limited to fast core gates where possible and run broad E2E at
 staging/release boundaries. If advisory E2E finds a real defect, file a focused
 follow-up task with the failing check/artifact evidence instead of closing the
 current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
+
+### Orphaned queued runs after a GitHub incident
+
+Ordinary pending checks are not failures. Suspect an orphan only when a run
+remains queued long after `gh-status-helper.sh check-actions` reports Actions
+operational, newer runs in the same repository finish, and cancellation or
+rerun requests return contradictory run states. Check the PR head and workflow
+definitions before taking action; an unavailable status feed is not evidence of
+recovery.
+
+If each affected `pull_request` workflow includes `ready_for_review` and the PR
+is already ready, an authorized operator can re-trigger it once without changing
+the head:
+
+```bash
+gh pr ready <pr-number> --repo <owner/repo> --undo
+gh pr ready <pr-number> --repo <owner/repo>
+```
+
+Confirm new runs target the same head and satisfy the required check names;
+normal CI and merge protections still apply. If the workflow instead supports
+`workflow_dispatch`, dispatch it on the PR branch only when its resulting check
+names and association satisfy the PR's required checks. Otherwise leave the PR
+pending and escalate the provider issue; do not create an empty commit or bypass
+a gate. Avoid closing and reopening the PR, which can change issue and automation
+state. Do not repeat the toggle while replacement runs are pending.
 
 ### Review-thread remediation
 
@@ -1038,6 +1065,7 @@ Current orphan-loop recovery uses `status:blocked`; the root-cause repair or an 
 - **REST fallback (t2574, t2744, t2902, t3459, GH#22478):** `shared-gh-wrappers.sh` routes eligible reads/writes through REST when GraphQL remaining <= the fallback threshold, preserving GraphQL for calls without REST equivalents. Eligible `gh_issue_view`, `gh_issue_list`, `gh_pr_view`, and `gh_pr_list` reads route to REST proactively before spending a GraphQL-backed `gh` call. During a pulse cycle, `pulse-wrapper.sh` exports `AIDEVOPS_GH_FORCE_REST_READS=1` when GraphQL remaining is at or below `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD` but above the hard circuit-breaker floor, so supported wrappers avoid both repeated `rate_limit` probes and first GraphQL attempts. Issue search uses `/search/issues` to preserve search semantics; PR `--search` remains GraphQL-only because the REST pulls endpoint has no equivalent. Overrides: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`, `AIDEVOPS_GH_REST_FALLBACK_CACHE_TTL`, `AIDEVOPS_PULSE_FORCE_REST_READS_ON_LOW_GRAPHQL=0`.
 - **Instrumentation (t2902):** routed `gh` calls append to `~/.aidevops/logs/gh-api-calls.log` and aggregate by stage in `~/.aidevops/logs/gh-api-calls-by-stage.json`. Helper: `gh-api-instrument.sh record|report|trim|clear`. Instrumentation is fail-open.
 - **Same-login external REST drain (t18804, GH#36054):** a user token shares one 5,000/h REST-core quota with every client of that login, including hosted apps and CI using the owner's PAT. Run `gh-api-instrument.sh report <out> <window_s>` and read `rest_core_attribution.series[]`: `same_login_external_cost` is an upper-bound estimate of quota use not explained by logged local attempts, not proof of an off-host consumer; unknown costs and uninstrumented local callers can also contribute. Per-minute bursts aligned to wall-clock boundaries (for example every `:x0`/`:x5`) with low local `logged_quota_cost` suggest a scheduled consumer to investigate. Sample free `gh api rate_limit` every 2-3 s across a boundary to confirm aggregate quota changes, not the consumer's identity; search owned app repos for `*/5` crons using a user token as one hypothesis, and corroborate with consumer-side logs. Fix at the identified consumer: conditional requests (`If-None-Match`; a 304 costs no quota) with a cache that survives restarts or a `since=` change scan, or a GitHub App installation access token with its own installation quota. A GitHub App user access token still shares the user's quota.
+- **Same-host, other-OS-user pulse (GH#37313):** a second OS account on the same server that runs its own `pulse-wrapper.sh`/`pulse-merge-routine.sh` with the same GitHub login spends the shared REST-core quota but writes `gh-api-calls.log` under its own home, so this account's `quota-report` counts it as `same_login_external_cost`. Signature: unattributed bursts of 200-500/min with 1-30 logged calls, not aligned to `:x0`/`:x5`, and, optionally, several `auth_fingerprint` series (non-specific: the other account's token is absent from this log, so a same-login drain can show a single series). Check with `ps -eo user,args | rg 'pulse-wrapper|pulse-merge-routine|gh-transport-governor'` (more than one user) and compare `gh api user --jq .login` as each account (the other account's log is unreadable by design, so ask its operator to run `gh-checks-wait-helper.sh quota-report 5400`; `used_delta` is shared-quota change, not that account's own requests, so compare its `known_local_cost` and time-bounded logs against the affected intervals before attributing the drain). Fix by giving each OS account its own GitHub App installation or separate login, or by running one pulse per login. An App installation token isolates only the runner registration requests; jobs on those runners can still spend the shared user quota if they use a user PAT, so check job credentials before excluding a runner pool.
 - **Circuit breaker (t2690, t2744, t2896):** worker dispatch pauses when GraphQL budget is below the emergency 5% floor. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Overrides: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD`, `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1`.
 - **Budget priority scheduler (GH#22479):** when GraphQL remaining falls below the optional-stage reserve threshold (default `AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD`, override `AIDEVOPS_PULSE_OPTIONAL_BUDGET_THRESHOLD`), the wrapper enters reserve mode instead of skipping the whole cycle. Merge readiness, dispatch capacity/safety gates, dependency graph refresh, and dispatch attempts retain first claim on budget. Optional cache priming, review/enrichment scanners, routine evaluation, canonical maintenance, dashboard freshness checks, and the LLM supervisor defer until budget recovers. Counters: `pulse_graphql_budget_reserve_mode`, `pulse_graphql_budget_stage_deferred`, and `pulse_graphql_budget_stage_deferred_<stage>`.
 - **Rate-limit status cache (t3422):** `pulse-rate-limit-circuit-breaker.sh` caches the free `gh api rate_limit` response for 20s at `~/.aidevops/cache/pulse-graphql-rate-limit.json`. Use `pulse-rate-limit-circuit-breaker.sh status --cached` inside diagnostics that must not touch the network; use plain `status` when you need a fresh free endpoint read. Override: `AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL`.

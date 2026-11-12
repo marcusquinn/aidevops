@@ -42,6 +42,7 @@ fi
 #######################################
 # Configuration
 #######################################
+PULSE_ELASTIC_DISPATCH_ENABLED="${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" # Fresh owner lease, not cycle age, bounds dispatch
 PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                       # 60 min hard ceiling — workers need 10-20 min to solve issues; 15 min was killing active workers (GH#19166)
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-1800}"                                             # 30 min idle before kill — the per-worker activity watchdog (300s) is the real stall detector
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-2}"                                    # CPU% below this = idle (0-100 scale) — lowered from 5 to reduce false positives on I/O-bound work

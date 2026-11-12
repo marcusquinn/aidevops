@@ -48,6 +48,12 @@ normal TODO-to-GitHub relationship backfill and status normalization; Pulse
 changes the next leaf to `status:available` after all blockers close. Workers
 complete only their own leaf and do not manually edit successors.
 
+External upstream-release blockers use a body marker instead of prose:
+`<!-- aidevops:upstream-release-gate repo=OWNER/REPO commit=SHA -->` (full SHA,
+own line). Pulse's stale-blocked sweep unblocks the issue once a recent upstream
+tag contains that commit. Details: `workflows/brief.md` "Waiting on an upstream
+release"; implementation: `scripts/upstream-release-gate-lib.sh`.
+
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 ### Cross-repository child tasks
@@ -258,7 +264,7 @@ Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
-**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`.
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`. Registration alone misses init, labels, workflows and branch protection; complete `reference/repo-onboarding.md`.
 
 **repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
 

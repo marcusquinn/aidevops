@@ -360,7 +360,7 @@ EOF
 }
 
 # --- Generate the Work with AI markdown table ---
-# Usage: _generate_work_with_ai_table <screen_json> <day_json> <week_json> <month_json> <year_json>
+# Usage: _generate_work_with_ai_table <screen_json> <day_json> <week_json> <month_json> <year_json> [input_json]
 _generate_screen_time_vars() {
 	local screen_json="$1"
 	local values screen_today screen_week screen_month screen_year screen_status year_estimated screen_source
@@ -403,6 +403,44 @@ _generate_screen_time_vars() {
 	printf 'screen_today=%q screen_week=%q screen_month=%q screen_year=%q screen_status=%q screen_source=%q year_prefix=%q year_suffix=%q screen_detail=%q screen_note=%q\n' \
 		"$screen_today" "$screen_week" "$screen_month" "$screen_year" "$screen_status" "$screen_source" "$year_prefix" "$year_suffix" \
 		"$screen_detail" "$screen_note"
+	return 0
+}
+
+# --- macOS input-activity row and footnote (same 5-minute idle rule as Linux) ---
+# Usage: _generate_input_activity_vars <input_json> <label>
+# Emits input_row and input_note assignments for eval.
+_generate_input_activity_vars() {
+	local input_json="$1"
+	local label="$2"
+	local screen_today screen_week screen_month screen_year screen_status screen_source year_prefix year_suffix screen_detail screen_note
+	eval "$(_generate_screen_time_vars "$input_json")"
+	local input_row input_note estimate_note=""
+	[[ -n "$year_suffix" ]] && estimate_note=" *365-day estimate uses sampled calendar coverage."
+	input_row="| ${label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |"
+	input_note="_Input activity from ${screen_source} (time from each keyboard, mouse or trackpad input until 5 idle minutes); collection status: ${screen_status}${screen_detail}.${screen_note}${estimate_note}_"
+	printf 'input_row=%q input_note=%q\n' "$input_row" "$input_note"
+	return 0
+}
+
+# --- Describe which Linux input sources the latest sample could read ---
+# Usage: _input_evidence_note <screen_json>
+# Outputs a sentence (leading space) or nothing when evidence is absent.
+_input_evidence_note() {
+	local screen_json="$1"
+	printf '%s' "$screen_json" | jq -r '
+		[(.evidence // []) | arrays | .[]] as $kinds |
+		if ($kinds | length) == 0 then ""
+		else
+			($kinds | any(. == "gnome-idle-monitor" or . == "screensaver-idle" or . == "xprintidle" or . == "logind-idle-hint" or . == "fixture-desktop-idle")) as $desktop |
+			($kinds | any(. == "tty-atime")) as $terminal |
+			" Latest sample measured: " + (
+				if $desktop and $terminal then "desktop and terminal input"
+				elif $desktop then "desktop input"
+				elif ($kinds | any(. == "graphical-idle-unavailable")) then "terminal input only; a desktop session was present but its idle time was unreadable, so desktop work is not counted"
+				elif ($kinds | any(. == "locked")) then "no input (session locked)"
+				elif $terminal then "terminal input only; no desktop session on this host"
+				else "no readable input source" end) + "."
+		end' 2>/dev/null || true
 	return 0
 }
 
@@ -458,6 +496,8 @@ _generate_work_with_ai_table() {
 	local week_json="$3"
 	local month_json="$4"
 	local year_json="$5"
+	# Optional macOS input-activity payload (screen-time-helper.sh input-stats).
+	local input_json="${6:-}"
 
 	local screen_today screen_week screen_month screen_year screen_status screen_source year_prefix year_suffix screen_detail screen_note
 	eval "$(_generate_screen_time_vars "$screen_json")"
@@ -482,20 +522,35 @@ _generate_work_with_ai_table() {
 	eval "$(_period_unavailable_assignments "$month_json" month_human month_interactive_machine month_worker_human month_worker f_month_total f_month_int f_month_wrk)"
 	eval "$(_period_unavailable_assignments "$year_json" year_human year_interactive_machine year_worker_human year_worker f_year_total f_year_int f_year_wrk)"
 
-	# Determine platform label for screen time row
-	local os_type screen_label
+	# Platform labels: macOS screen time is display-on time; Linux has no display
+	# store, so its row is input activity. A macOS input-activity row uses the
+	# Linux rule so the two platforms can be compared like for like.
+	local os_type screen_label note_label="Screen time" input_row="" input_note="" evidence_note=""
 	os_type="$(uname -s)"
 	case "$os_type" in
 	Darwin)
 		screen_label="Screen time (Mac)"
+		if [[ -n "$input_json" ]]; then
+			eval "$(_generate_input_activity_vars "$input_json" "Input activity (Mac)")"
+		fi
 		;;
 	Linux)
-		screen_label="Screen time (Linux)"
+		screen_label="Input activity (Linux)"
+		note_label="Input activity"
+		evidence_note=$(_input_evidence_note "$screen_json")
 		;;
 	*)
 		screen_label="Screen time"
 		;;
 	esac
+	local screen_rows="| ${screen_label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |"
+	local year_estimate_note=""
+	[[ -n "$year_suffix" ]] && year_estimate_note=" *365-day estimate uses observed calendar coverage."
+	local screen_notes="_${note_label} from ${screen_source}; collection status: ${screen_status}${screen_detail}.${screen_note}${evidence_note}${year_estimate_note}_"
+	if [[ -n "$input_row" ]]; then
+		screen_rows+=$'\n'"${input_row}"
+		screen_notes+=$'\n\n'"${input_note}"
+	fi
 
 	local session_coverage_note=""
 	local session_observed_days
@@ -510,7 +565,7 @@ _generate_work_with_ai_table() {
 
 | Metric | Yesterday | Prior 7 Days | Prior 28 Days | Prior 365 Days |
 | --- | ---: | ---: | ---: | ---: |
-| ${screen_label} | ${screen_today} | ${screen_week} | ${screen_month} | ${year_prefix}${screen_year}${year_suffix} |
+${screen_rows}
 | Interactive human attention | $(_format_work_hour_cell "$day_human") | $(_format_work_hour_cell "$week_human") | $(_format_work_hour_cell "$month_human") | $(_format_work_hour_cell "$year_human") |
 | Interactive AI generation | $(_format_work_hour_cell "$day_interactive_machine") | $(_format_work_hour_cell "$week_interactive_machine") | $(_format_work_hour_cell "$month_interactive_machine") | $(_format_work_hour_cell "$year_interactive_machine") |
 | Worker-classified human attention | $(_format_work_hour_cell "$day_worker_human") | $(_format_work_hour_cell "$week_worker_human") | $(_format_work_hour_cell "$month_worker_human") | $(_format_work_hour_cell "$year_worker_human") |
@@ -519,7 +574,7 @@ _generate_work_with_ai_table() {
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
-_Screen time from ${screen_source}; collection status: ${screen_status}${screen_detail}.${screen_note}$([ -n "$year_suffix" ] && echo " *365-day estimate uses observed calendar coverage.")_
+${screen_notes}
 
 _Periods are completed local calendar days ending at midnight; today is excluded._
 
@@ -531,8 +586,12 @@ EOF
 # --- Generate the stats markdown ---
 cmd_generate() {
 	# Gather all data
-	local screen_json
+	local screen_json input_json=""
 	screen_json=$(_get_screen_time)
+	# Linux screen time already is input activity; macOS adds a matching row.
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		input_json=$(_get_input_activity)
+	fi
 
 	local session_periods day_json week_json month_json year_json
 	session_periods=$(_get_profile_session_times)
@@ -572,7 +631,7 @@ EOF
 		return 0
 	fi
 
-	_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json"
+	_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json" "$input_json"
 	_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"
 	_render_model_usage_table "AI Model Usage (all time)" "$model_json_all" "$token_totals_all"
 	_generate_top_apps_section

@@ -81,6 +81,20 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("StrictHostKeyChecking=no", args)
         self.assertEqual(args[-4:], ["-p", "2222", "-l", "generic"])
 
+    def test_identity_selection_for_probes_and_interactive_connections(self):
+        for probe in (True, False):
+            for fields, expected in (({}, None), ({"identityFile": "/generic/key"}, "yes"),
+                                     ({"identitiesOnly": True}, "yes"),
+                                     ({"identityFile": "/generic/key", "identitiesOnly": False}, "no")):
+                args = config.ssh_argv(host(**fields), probe=probe)
+                options = [arg for arg in args if arg.startswith("IdentitiesOnly=")]
+                self.assertEqual(options, [] if expected is None else ["IdentitiesOnly=" + expected])
+                self.assertEqual("BatchMode=yes" in args, probe)
+                self.assertEqual("-tt" in args, not probe)
+        for value in ("yes", 1, None):
+            with self.assertRaisesRegex(config.SessionError, "identitiesOnly must be boolean"):
+                host(identitiesOnly=value)
+
     def test_tabby_version_and_command_array_diagnostics(self):
         for version, help_output, succeeds in (("1.0.235", "--command", False),
                                                ("1.0.236", "--command [array]", True),
@@ -194,6 +208,61 @@ class RemoteTests(unittest.TestCase):
                 with self.assertRaisesRegex(config.SessionError, expected) as error:
                     remote.inventory(host())
                 self.assertNotIn("private diagnostic", str(error.exception))
+
+    def test_inventory_recovers_from_connection_burst(self):
+        run = subprocess.run
+        payload = "".join("S|${}|100|200|oc-{:03d}\n".format(i, i) for i in range(1, 21))
+
+        def recovered(argv, **kwargs):
+            # Execute the actual framed response locally after transient failures.
+            if failures:
+                return failures.pop(0)
+            return run(shlex.split(argv[-1]), **kwargs)
+
+        failures = [subprocess.CompletedProcess([], 255, "", message) for message in (
+            "kex_exchange_identification: read: Connection reset by peer",
+            "mux_client_request_session: session request failed: Session open refused by peer")]
+        with mock.patch.object(remote, "INVENTORY", "printf '%s' " + shlex.quote(payload)), mock.patch.object(
+                remote.subprocess, "run", side_effect=recovered) as probe, mock.patch.object(
+                remote.time, "sleep") as sleep:
+            sessions, clients = remote.inventory(host())
+            self.assertEqual(len(sessions), 20)
+            self.assertEqual(clients, set())
+            self.assertEqual(probe.call_count, 3)
+            self.assertEqual(sleep.call_args_list, [mock.call(2), mock.call(4)])
+
+    def test_inventory_retry_limit_and_timeout(self):
+        for failure in (subprocess.TimeoutExpired("ssh", 45),
+                        remote.TransientSSHError("SSH connection/channel unavailable")):
+            with mock.patch.object(remote.subprocess, "run", side_effect=failure) as probe, mock.patch.object(
+                    remote.time, "sleep") as sleep:
+                with self.assertRaisesRegex(config.SessionError, "after 4 attempts"):
+                    remote.inventory(host())
+                self.assertEqual(probe.call_count, 4)
+                self.assertEqual(sleep.call_args_list, [mock.call(2), mock.call(4), mock.call(8)])
+
+    def test_inventory_permanent_errors_are_not_retried_or_disclosed(self):
+        for rc, message, expected in (
+                (255, "private-host: Permission denied (publickey).", "authentication failed"),
+                (255, "private-host: Too many authentication failures", "rejected too many identities"),
+                (255, "private-host: Host key verification failed.", "host key verification failed"),
+                (71, "private-host diagnostic", "tmux inventory command failed")):
+            with mock.patch.object(remote.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], rc, "", message)) as probe, mock.patch.object(remote.time, "sleep") as sleep:
+                with self.assertRaisesRegex(config.SessionError, expected) as error:
+                    remote.inventory(host())
+                self.assertNotIn("private-host", str(error.exception))
+                self.assertEqual(probe.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_transient_creation_failure_does_not_retry_mutation(self):
+        with mock.patch.object(remote, "inventory", return_value=([], set())), mock.patch.object(
+                remote.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 255, "", "Connection reset by peer")) as probe, mock.patch.object(remote.time, "sleep") as sleep:
+            with self.assertRaisesRegex(config.SessionError, "uncertain for oc-001"):
+                remote.create(host())
+            self.assertEqual(probe.call_count, 1)
+            sleep.assert_not_called()
 
     def test_attach_remote_shell_argv_is_quoted(self):
         args = remote.attach_command(host(), session(), "AIDEVOPS_GENERIC:")
@@ -367,6 +436,17 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("beta\toc-001\trequested", output)
         self.assertIn("requested=1 skipped=0 failed=1", output)
 
+    def test_restore_requests_all_twenty_sessions_without_duplicates_on_repeat(self):
+        sessions = [session("oc-{:03d}".format(i), "${}".format(i)) for i in range(1, 21)]
+        result, output, errors = self.run_main(["restore", "alpha"], [(sessions, set())])
+        self.assertEqual(result, 0)
+        self.assertEqual(errors, "")
+        self.assertIn("requested=20 skipped=0 failed=0", output)
+        result, output, errors = self.run_main(["restore", "alpha"], [(sessions, set())])
+        self.assertEqual(result, 0)
+        self.assertEqual(errors, "")
+        self.assertIn("requested=0 skipped=20 failed=0 pending=20", output)
+
     def test_dry_run_and_list_create_no_reservations(self):
         for args in (["restore", "--dry-run"], ["new", "alpha", "--dry-run"], ["list"]):
             result, _output, _errors = self.run_main(args, [([session()], set())] * 2)
@@ -405,6 +485,57 @@ class OrchestrationTests(unittest.TestCase):
             with self.assertRaises(config.SessionError):
                 app.attach(args, host(), [host()])
             connect.assert_not_called()
+
+
+class TransportTests(unittest.TestCase):
+    def setUp(self):
+        self.output = io.TextIOWrapper(io.BytesIO())
+        self.addCleanup(self.output.close)
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(contextlib.redirect_stdout(self.output))
+        for name, value in (("endpoint", "endpoint"), ("equivalent_aliases", {"dev-alpha"})):
+            self.stack.enter_context(mock.patch.object(transport, name, return_value=value))
+        self.legacy = self.stack.enter_context(mock.patch.object(transport, "local_legacy", return_value=set()))
+        self.inventory = self.stack.enter_context(mock.patch.object(transport, "inventory", return_value=([session()], set())))
+        self.launch = self.stack.enter_context(mock.patch.object(transport.subprocess, "Popen"))
+        self.launch.return_value.__enter__.return_value.wait.return_value = 0
+        self.relay = self.stack.enter_context(mock.patch.object(transport, "relay_output"))
+        self.args = argparse.Namespace(token="a" * 48)
+        self.handle = mock.Mock()
+        self.identity = {key: session()[key] for key in ("sid", "created", "server")}
+
+    def test_twenty_managed_tabs_connect_directly_without_inventory_probes(self):
+        self.inventory.side_effect = config.SessionError("BatchMode probe must not gate managed tabs")
+        for number in range(1, 21):
+            identity = dict(self.identity, sid="${}".format(number))
+            self.assertEqual(transport.attach_held(self.args, host(), [host()], identity, self.handle), 0)
+            argv = self.launch.call_args.args[0]
+            self.assertIn("-tt", argv)
+            self.assertNotIn("BatchMode=yes", argv)
+            self.assertIn("if-shell", argv[-1])
+            self.assertIn(identity["sid"], argv[-1])
+        self.assertEqual(self.launch.call_count, 20)
+        self.inventory.assert_not_called()
+        self.relay.call_args.args[2]("42")
+        self.handle.write.assert_called_once_with(dict(phase="attaching", token=self.args.token, remote_pid="42"))
+
+    def test_legacy_exact_and_ambiguous_attachments_still_block_duplicates(self):
+        for target in ("oc-001", "$1", "oc-old-name"):
+            self.legacy.return_value = {target}
+            self.assertEqual(transport.attach_held(self.args, host(), [host()], self.identity, self.handle), 0)
+        self.assertEqual(self.inventory.call_count, 3)
+        self.launch.assert_not_called()
+
+    def test_legacy_check_rejects_reused_identity_and_inspection_failure(self):
+        self.legacy.return_value = {"oc-001"}
+        self.inventory.return_value = ([dict(session(), created="999")], set())
+        with self.assertRaisesRegex(config.SessionError, "no replacement attached"):
+            transport.attach_held(self.args, host(), [host()], self.identity, self.handle)
+        self.legacy.side_effect = config.SessionError("Cannot inspect current-account SSH attachments")
+        with self.assertRaisesRegex(config.SessionError, "Cannot inspect"):
+            transport.attach_held(self.args, host(), [host()], self.identity, self.handle)
+        self.launch.assert_not_called()
 
 
 class HostManagementTests(unittest.TestCase):
@@ -459,6 +590,27 @@ class HostManagementTests(unittest.TestCase):
             self.run_host("add", "alpha", "--hostname", "server.invalid", allow_temp=False)
         self.add("alpha", "--dry-run")
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_identity_selection_defaults_and_inventory_only_updates(self):
+        identity = self.root / "identity"
+        identity.write_text("test identity placeholder\n")
+        self.add("alpha", "--identity-file", str(identity))
+        self.assertTrue(config.load_hosts(self.inventory, "alpha")[0]["identitiesOnly"])
+        managed = self.managed.read_bytes()
+        self.run_host("update", "alpha", "--no-identities-only")
+        self.assertFalse(config.load_hosts(self.inventory, "alpha")[0]["identitiesOnly"])
+        self.run_host("update", "alpha", "--identities-only")
+        self.assertTrue(config.load_hosts(self.inventory, "alpha")[0]["identitiesOnly"])
+        self.assertEqual(self.managed.read_bytes(), managed)
+        self.add("beta", "--identity-file", str(identity), "--no-identities-only")
+        self.assertFalse(config.load_hosts(self.inventory, "beta")[0]["identitiesOnly"])
+        for name, expected in (("alpha", "yes"), ("beta", "no")):
+            selected = config.load_hosts(self.inventory, name)[0]
+            result = subprocess.run(  # nosec B603 - isolated config, local ssh -G only; no connection
+                config.ssh_argv(selected) + ["-G", "-F", str(self.ssh), selected["sshHost"]],
+                capture_output=True, text=True, check=True)
+            self.assertIn("identitiesonly " + expected + "\n", result.stdout)
+            self.assertIn("identityfile " + str(identity) + "\n", result.stdout)
 
     def test_existing_alias_registration_and_user_owned_protection(self):
         self.ssh.parent.mkdir()

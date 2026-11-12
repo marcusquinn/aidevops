@@ -45,9 +45,22 @@
 #                                     immediate replacement.
 #   AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
 #                                     cycles at or above this age are replaced
-#                                     immediately (treated as stuck). The async
-#                                     post-dispatch housekeeping run is not a
-#                                     cycle and is not counted as an instance.
+#                                     immediately (treated as stuck) unless the
+#                                     lock owner's heartbeat lease is fresh
+#                                     (GH#37907). The async post-dispatch
+#                                     housekeeping run is not a cycle and is
+#                                     not counted as an instance.
+#   AIDEVOPS_PULSE_RECONCILE_DRAIN_HARD_CAP_S=<4x lock max age>
+#                                     replace even a fresh-lease cycle at or
+#                                     above this age (default 7200).
+#   AIDEVOPS_PULSE_RECONCILE_DRAIN_REQUEST=1
+#                                     ask a deferred lock owner to stop at its
+#                                     next candidate (LOCKDIR/drain_requested);
+#                                     0 lets it run to its natural end.
+#   AIDEVOPS_PULSE_LOCK_DIR=<path>    instance lock directory (tests).
+#   AIDEVOPS_PULSE_LOCK_MAX_AGE_S=1800
+#                                     heartbeat lease freshness window, shared
+#                                     with pulse-wrapper-config.sh.
 #   AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR=<path>
 #                                     test override for the async housekeeping
 #                                     lock that identifies that run.
@@ -143,6 +156,20 @@ _PULSE_RECONCILE_DRAIN="${AIDEVOPS_PULSE_RECONCILE_DRAIN:-1}"
 _PULSE_RECONCILE_DRAIN_MAX_AGE="${AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S:-3600}"
 [[ "$_PULSE_RECONCILE_DRAIN_MAX_AGE" =~ ^[0-9]+$ ]] || _PULSE_RECONCILE_DRAIN_MAX_AGE=3600
 _PULSE_RECONCILE_DRAIN_MAX_AGE=$((10#$_PULSE_RECONCILE_DRAIN_MAX_AGE))
+# GH#37907: elastic dispatch (GH#37874) lets a healthy lock owner run past the
+# age ceiling while it refreshes its owner-bound supervisor heartbeat. Such a
+# cycle keeps draining while that lease is fresh (the pulse-watchdog.sh
+# _pulse_dispatch_lease_active test, PULSE_LOCK_MAX_AGE_S) until a hard cap,
+# default 4x the lock max age; it is also asked to stop at its next candidate.
+_PULSE_LOCK_DIR="${AIDEVOPS_PULSE_LOCK_DIR:-${HOME}/.aidevops/logs/pulse-wrapper.lockdir}"
+_PULSE_LOCK_MAX_AGE="${AIDEVOPS_PULSE_LOCK_MAX_AGE_S:-1800}"
+[[ "$_PULSE_LOCK_MAX_AGE" =~ ^[0-9]+$ ]] || _PULSE_LOCK_MAX_AGE=1800
+_PULSE_LOCK_MAX_AGE=$((10#$_PULSE_LOCK_MAX_AGE))
+[[ "$_PULSE_LOCK_MAX_AGE" -ge 1 ]] || _PULSE_LOCK_MAX_AGE=1800
+_PULSE_RECONCILE_DRAIN_HARD_CAP="${AIDEVOPS_PULSE_RECONCILE_DRAIN_HARD_CAP_S:-$((_PULSE_LOCK_MAX_AGE * 4))}"
+[[ "$_PULSE_RECONCILE_DRAIN_HARD_CAP" =~ ^[0-9]+$ ]] || _PULSE_RECONCILE_DRAIN_HARD_CAP=$((_PULSE_LOCK_MAX_AGE * 4))
+_PULSE_RECONCILE_DRAIN_HARD_CAP=$((10#$_PULSE_RECONCILE_DRAIN_HARD_CAP))
+_PULSE_RECONCILE_DRAIN_REQUEST="${AIDEVOPS_PULSE_RECONCILE_DRAIN_REQUEST:-1}"
 
 # Expected-max coexistence threshold (GH#21903).
 #
@@ -934,6 +961,46 @@ _stop_reconciliation_processes() {
 	return 0
 }
 
+# GH#37907: print the heartbeat age when PID owns the instance lock and its
+# supervisor heartbeat is fresh. This is the elastic dispatch lease test in
+# pulse-watchdog.sh _pulse_dispatch_lease_active, bound to the evaluated PID.
+# A missing, foreign, malformed, future-dated or stale lease returns 1.
+_pulse_owner_lease_fresh_age() {
+	local _pid="$1"
+	local _owner=""
+	local _heartbeat=""
+	local _now=""
+	[[ "$_pid" =~ ^[0-9]+$ ]] || return 1
+	read -r _owner 2>/dev/null <"${_PULSE_LOCK_DIR}/pid" || return 1
+	[[ "$_owner" == "$_pid" ]] || return 1
+	read -r _heartbeat 2>/dev/null <"${_PULSE_LOCK_DIR}/supervisor_heartbeat_epoch" || return 1
+	[[ "$_heartbeat" =~ ^[1-9][0-9]*$ ]] || return 1
+	_now=$(date +%s 2>/dev/null) || return 1
+	[[ "$_now" =~ ^[0-9]+$ ]] || return 1
+	[[ "$_heartbeat" -le "$_now" && $((_now - _heartbeat)) -le "$_PULSE_LOCK_MAX_AGE" ]] || return 1
+	printf '%s\n' "$((_now - _heartbeat))"
+	return 0
+}
+
+# GH#37907: ask the deferred lock owner to stop at its next candidate boundary
+# (pulse-dispatch-lib.sh _pulse_drain_requested_bundle). The marker lives in
+# the owner's lock directory, so releasing the lock removes it, and it names
+# the owner PID so a later lock holder never honours it. Best effort: a lock
+# released meanwhile leaves the cycle to finish on its own.
+_pulse_request_cycle_drain() {
+	local _pid="$1"
+	local _bundle="$2"
+	local _temporary=""
+	[[ "$_pid" =~ ^[0-9]+$ && -d "$_PULSE_LOCK_DIR" ]] || return 1
+	_temporary=$(mktemp "${_PULSE_LOCK_DIR}/drain_requested.XXXXXX" 2>/dev/null) || return 1
+	if printf 'owner=%s\nbundle=%s\n' "$_pid" "$_bundle" >"$_temporary" 2>/dev/null &&
+		mv -f "$_temporary" "${_PULSE_LOCK_DIR}/drain_requested" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$_temporary" 2>/dev/null || true
+	return 1
+}
+
 # GH#34452: decide whether setup reconciliation leaves running Pulse processes
 # alone. A main Pulse executes one immutable bundle (physical script directory
 # plus runtime lease), so a cycle started before activation can finish safely;
@@ -944,12 +1011,19 @@ _stop_reconciliation_processes() {
 # merge routines, which run from the stable link rather than a leased bundle.
 # The async housekeeping run is not a cycle and never sets the ceiling for one
 # (_pulse_pids excludes it); it only decides the case where no cycle runs.
+# GH#37907: an elastic cycle legitimately outlives the ceiling, so a PID at or
+# past it still drains while it owns the instance lock with a fresh heartbeat
+# lease, up to the hard cap. A deferred lock owner is asked to stop at its next
+# candidate boundary so the activated bundle starts within about one candidate.
 # Returns 0 to leave the Pulse process trees running, 1 to continue with
 # immediate replacement.
 _pulse_reconcile_defers_to_cycle_boundary() {
 	local _main_pids=""
 	local _pid=""
 	local _age=""
+	local _lease_age=""
+	local _lock_owner=""
+	local _drain_owner=""
 	local _draining=""
 	local _current=""
 	[[ "$_PULSE_RECONCILE_DRAIN" != "0" ]] || return 1
@@ -981,13 +1055,31 @@ _pulse_reconcile_defers_to_cycle_boundary() {
 			return 1
 		fi
 		if [[ "$_age" -ge "$_PULSE_RECONCILE_DRAIN_MAX_AGE" ]]; then
-			_pl_info "Pulse PID ${_pid} has run ${_age}s (drain ceiling ${_PULSE_RECONCILE_DRAIN_MAX_AGE}s); replacing it now"
-			return 1
+			if ! _lease_age=$(_pulse_owner_lease_fresh_age "$_pid"); then
+				_pl_info "Pulse PID ${_pid} has run ${_age}s (drain ceiling ${_PULSE_RECONCILE_DRAIN_MAX_AGE}s) without a fresh owner heartbeat lease; replacing it now"
+				return 1
+			fi
+			if [[ "$_age" -ge "$_PULSE_RECONCILE_DRAIN_HARD_CAP" ]]; then
+				_pl_info "Pulse PID ${_pid} has run ${_age}s (drain hard cap ${_PULSE_RECONCILE_DRAIN_HARD_CAP}s, heartbeat ${_lease_age}s); replacing it now"
+				return 1
+			fi
+			_pl_info "Pulse PID ${_pid} deferring: elastic owner lease fresh (age ${_age}s, heartbeat ${_lease_age}s)"
 		fi
+		if [[ -z "$_lock_owner" ]]; then
+			read -r _lock_owner 2>/dev/null <"${_PULSE_LOCK_DIR}/pid" || _lock_owner="none"
+		fi
+		[[ "$_lock_owner" != "$_pid" ]] || _drain_owner="$_pid"
 		_draining="${_draining}${_draining:+ }${_pid} (${_age}s)"
 	done <<<"$_main_pids"
 	if [[ -n "$_draining" ]]; then
 		_pl_info "Deferring Pulse replacement to the cycle boundary: earlier-bundle cycle ${_draining} keeps running; scheduler starts bundle $(_pulse_runtime_bundle_id) when it exits"
+		if [[ -n "$_drain_owner" && "$_PULSE_RECONCILE_DRAIN_REQUEST" != "0" ]]; then
+			if _pulse_request_cycle_drain "$_drain_owner" "$(_pulse_runtime_bundle_id)"; then
+				_pl_info "Requested cooperative drain: lock owner PID ${_drain_owner} stops at its next candidate boundary"
+			else
+				_pl_info "Cooperative drain request for PID ${_drain_owner} was not recorded; the cycle finishes at its natural end"
+			fi
+		fi
 	elif [[ -n "$_current" ]]; then
 		_pl_info "Pulse already running from the activated bundle (PID ${_current})"
 	else
@@ -1052,7 +1144,8 @@ _start_activated_runtime() {
 	fi
 	_pulse_require_script || return $?
 	_pulse_launch_unmanaged
-	if active_pid=$(_pulse_find_active_runtime_pid_since ""); then
+	# The unmanaged runtime may publish its lease after the first probe.
+	if active_pid=$(_pulse_wait_for_launchd_runtime ""); then
 		_pl_ok "Pulse is running from the activated bundle (PID ${active_pid})"
 		return 0
 	fi
@@ -1195,7 +1288,7 @@ _status() {
 	# Read lock-holder PID for cross-reference (GH#21433 acceptance criterion).
 	# AIDEVOPS_PULSE_LOCK_DIR overrides the default path — useful for tests
 	# that must isolate from the real user lockdir (GH#21581).
-	local _lockdir="${AIDEVOPS_PULSE_LOCK_DIR:-${HOME}/.aidevops/logs/pulse-wrapper.lockdir}"
+	local _lockdir="$_PULSE_LOCK_DIR"
 	local _lock_pid=""
 	if [[ -f "${_lockdir}/pid" ]]; then
 		_lock_pid=$(cat "${_lockdir}/pid" 2>/dev/null || echo "")
@@ -1288,7 +1381,14 @@ Env:
   AIDEVOPS_PULSE_RECONCILE_DRAIN=0          Replace an in-flight launchd cycle
                                             immediately (default 1 lets it finish).
   AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=3600
-                                            Replace cycles at least this old now.
+                                            Replace cycles at least this old now,
+                                            unless the lock owner's heartbeat
+                                            lease is fresh (GH#37907).
+  AIDEVOPS_PULSE_RECONCILE_DRAIN_HARD_CAP_S=7200
+                                            Replace even fresh-lease cycles at
+                                            this age (default 4x lock max age).
+  AIDEVOPS_PULSE_RECONCILE_DRAIN_REQUEST=0  Do not ask a deferred cycle to stop
+                                            at its next candidate boundary.
   AIDEVOPS_PULSE_HOUSEKEEPING_LOCK_DIR=...  Override the async housekeeping lock (tests).
   AIDEVOPS_PULSE_MERGE_PROCESS_PATTERN=...  Override merge-routine match (tests).
 

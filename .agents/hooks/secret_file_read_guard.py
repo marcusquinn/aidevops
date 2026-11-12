@@ -28,12 +28,19 @@ READ_PATH_KEYS = ("filePath", "file_path", "path", "pattern")
 # GH#32526: loose name hints (secret/password/passwd) are routine in framework
 # source and docs. Tracked code/doc files carrying only these hints are
 # readable; strong credential names and every other extension stay blocked.
+# GH#37601: the allowlist covers common code languages (managed repos are not
+# all shell/JS/Python). Data, config and template formats (json, yaml, toml,
+# ini, env, conf, cfg, properties, txt, xml, html) stay excluded. Keep this
+# list identical to TRACKED_SOURCE_EXTENSION_RE in quality-hooks-secret-read.mjs.
 LOOSE_SECRET_BASENAME_RE = re.compile(r"(secret|password|passwd)", re.IGNORECASE)
 STRONG_SECRET_HINT_RE = re.compile(
     r"(^\.env|^id_(rsa|dsa|ecdsa|ed25519)|credential|service-account|kubeconfig|op-vault)",
     re.IGNORECASE,
 )
-TRACKED_SOURCE_EXTENSION_RE = re.compile(r"\.(sh|mjs|js|ts|py|md)$", re.IGNORECASE)
+TRACKED_SOURCE_EXTENSION_RE = re.compile(
+    r"\.(sh|bash|zsh|mjs|cjs|js|jsx|ts|tsx|mts|cts|py|md|php|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|lua|pl|vue|svelte)$",
+    re.IGNORECASE,
+)
 GIT_ENV_OVERRIDES = (
     "GIT_DIR",
     "GIT_WORK_TREE",

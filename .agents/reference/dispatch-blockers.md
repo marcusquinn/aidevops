@@ -158,6 +158,27 @@ publication, network operations or mutation. Output is discarded. At most 32
 secrets and eight probes are allowed. Invalid requirements, missing executables,
 failed checks and timeouts fail closed.
 
+A local tool prerequisite (GH#37587) is a standalone issue-body line such as
+`requires-tools: docker, jq`, or a `"tools": ["docker"]` list in a dispatch
+class. Each name must be a bare lowercase command name (`[a-z][a-z0-9._-]{0,63}`),
+never a path, argument or shell text; at most eight per declaration and overall.
+The dispatcher only resolves each name on `PATH` (`shutil.which`) and never
+executes it. A missing tool defers with `tool_missing name=<name>`
+(`cooldown=eligible`); an invalid name defers with `invalid_requirements`. Use
+this, not a gitignored per-runner dispatch class, when every runner in the fleet
+must enforce the gate.
+
+A local service prerequisite (GH#37638) is a standalone issue-body line such as
+`requires-loopback-health: 8191/health` (port 1024-65535, optional path of
+`[A-Za-z0-9_./-]{0,64}` without `..`), or a `"loopback_health": ["8191/health"]`
+list in a dispatch class; at most four entries. The dispatcher sends one `GET` to
+`http://127.0.0.1:<port>/<path>` (no redirects, 2 s timeout, 4 KiB read) and
+requires a 2xx response. Issue text never supplies a host, method, header or
+command. Results are cached per port and path for the pulse cycle. An
+unhealthy service defers with `service_unhealthy port=<port>`
+(`cooldown=eligible`); an invalid value defers with `invalid_requirements`. This
+runs after the `PATH` tool check and before secret reads.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming
@@ -166,6 +187,18 @@ This is a known runner-local class, never a global circuit or shared backoff;
 the next runner independently checks capabilities. It does not grant credentials
 or bypass permission/security guards. Repositories without declarations retain
 the existing behavior.
+
+Per-runner exclusion (GH#37752): the releasing runner's own
+`terminal-blocker-observation` is imported as a local cooldown with no TTL. It
+holds while the brief revision is unchanged and no OWNER/MEMBER retry follows.
+It is lifted by a brief edit, a trusted retry, a later trusted `DISPATCH_CLAIM`
+by another runner, or a change to this runner's capability inputs (repo
+registry, `.aidevops.json`, JS readiness), which discards earlier observations
+whether the observation import or a log-derived deferral sees the change first;
+a newer release re-arms it. Without a recorded capability anchor, only an
+observation under an hour old holds; an older one re-probes once. Other runners
+are unaffected. The 6h TTL (`AIDEVOPS_DISPATCH_CAPABILITY_COOLDOWN_SECONDS`)
+still bounds only log-derived records.
 
 Host binaries (GH#35576): the worker sandbox may not expose host tools such as
 `ip`, `xauth`, `Xtigervnc` or `docker`. A child using a sanitized PATH

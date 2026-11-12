@@ -570,15 +570,21 @@ _health_repo_times() {
 }
 
 # Recovery lane: succeed when the last successful refresh is older than
-# STATS_HEALTH_RECOVERY_AGE_SECONDS (default 24h) and the latest attempt did
-# not succeed. Prints the refresh epoch on success.
+# STATS_HEALTH_RECOVERY_AGE_SECONDS (default 24h), regardless of attempt status.
+# A repo attempted but never refreshed (epoch 0) qualifies at once.
+# Prints the refresh epoch on success.
 _health_repo_needs_recovery() {
 	local slug="$1" runner="$2" epoch attempted age times
 	[[ -n "$slug" ]] || return 1
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
 	read -r epoch attempted <<<"$times"
-	[[ "$epoch" -gt 0 && "$attempted" -gt "$epoch" ]] || return 1
+	if [[ "$epoch" -eq 0 && "$attempted" -gt 0 ]]; then
+		# Attempted but never refreshed: eligible immediately, oldest candidate.
+		printf '0\n'
+		return 0
+	fi
+	[[ "$epoch" -gt 0 ]] || return 1
 	[[ "$(($(date +%s) - epoch))" -ge "$age" ]] || return 1
 	printf '%s\n' "$epoch"
 	return 0
@@ -652,19 +658,35 @@ _refresh_health_repo_bounded() {
 #######################################
 _refresh_priority_health_issue() {
 	local repo_entries="$1"
-	local priority_entry="" priority_slug="" priority_path="" update_ec=0
+	local priority_entry="" priority_slug="" priority_path="" update_ec=0 cache failures=0 skip=0
 
 	priority_entry=$(printf '%s\n' "$repo_entries" | awk 'NR == 1 { print; exit }')
 	[[ -z "$priority_entry" ]] && return 0
 	IFS='|' read -r priority_slug priority_path <<<"$priority_entry"
+	cache=$(_health_schedule_cache_file "$priority_slug" "$_HEALTH_SCHEDULE_RUNNER")
+	if [[ -f "${cache}.priority-backoff" ]]; then
+		read -r failures skip <"${cache}.priority-backoff" || true
+	fi
+	[[ "$failures" =~ ^[0-9]{1,6}$ ]] || failures=0
+	[[ "$skip" == 1 ]] || skip=0
 	# Emit the attempted slug even on failure so the best-effort caller can skip
 	# an immediate retry while continuing with the remaining repositories.
 	printf '%s\n' "$priority_slug"
+	if [[ "$failures" -ge 3 && "$skip" -eq 1 ]]; then
+		printf '%s 0\n' "$failures" >"${cache}.priority-backoff"
+		echo "[stats] Health dashboard priority refresh backed off for ${priority_slug}" >>"$LOGFILE"
+		return 75
+	fi
 	_refresh_health_repo_bounded "$priority_slug" "$priority_path" "" "" "" || update_ec=$?
 	if [[ "$update_ec" -ne 0 ]]; then
+		mkdir -p "${cache%/*}" || return 1
+		failures=$((failures + 1))
+		[[ "$failures" -lt 3 ]] || skip=1
+		printf '%s %s\n' "$failures" "$skip" >"${cache}.priority-backoff"
 		echo "[stats] Health issue update failed for priority ${priority_slug}" >>"$LOGFILE"
 		return "$update_ec"
 	fi
+	rm -f "${cache}.priority-backoff"
 	return 0
 }
 
@@ -749,14 +771,15 @@ _health_summaries_json() {
 
 _health_routine_repo_entries() {
 	local runner="$1" entries
-	[[ -f "$REPOS_JSON" ]] || return 0
-	entries=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$REPOS_JSON" 2>/dev/null) || return 1
-	[[ -n "$entries" ]] || return 0
+	[[ -f "$REPOS_JSON" ]] || { echo "[stats] Health dashboard skipped: repository registry missing" >>"$LOGFILE"; return 0; }
+	entries=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$REPOS_JSON" 2>/dev/null) || { echo "[stats] Health dashboard skipped: repository registry could not be parsed" >>"$LOGFILE"; return 1; }
+	[[ -n "$entries" ]] || { echo "[stats] Health dashboard skipped: no configured eligible repositories" >>"$LOGFILE"; return 0; }
 	entries=$(_stats_run_bounded 60 "$_HEALTH_WORK_DEADLINE" _filter_routine_eligible_repo_entries "$entries" "$runner") || {
-		echo "[stats] Health dashboard permission preflight deferred/failed" >>"$LOGFILE"
+		echo "[stats] Health dashboard skipped: Health dashboard permission preflight deferred/failed" >>"$LOGFILE"
 		return 1
 	}
 	entries=$(_order_health_repo_entries "$entries" "$runner")
+	[[ -n "$entries" ]] || { echo "[stats] Health dashboard skipped: no repositories passed permission preflight" >>"$LOGFILE"; return 0; }
 	entries=$(_prioritize_health_repo_entries "$entries")
 	_apply_health_recovery_lane "$entries" "$runner"
 	return 0
@@ -791,15 +814,15 @@ _update_health_issues_with_session_cache() {
 	# to exercise the call graph without making gh/git API calls. Temporary
 	# scaffolding — removed after Phase 3 merges.
 	if [[ "${STATS_DRY_RUN:-}" == "1" ]]; then
-		echo "[stats] update_health_issues: dry-run, skipping" >>"$LOGFILE"
+		echo "[stats] Health dashboard skipped: dry-run" >>"$LOGFILE"
 		return 0
 	fi
 	# _health_routine_repo_entries applies `.maintenance != false` before work.
 	local _HEALTH_WORK_DEADLINE _HEALTH_SCHEDULE_RUNNER="" _HEALTH_RECOVERY_SLUG=""
 	_HEALTH_WORK_DEADLINE=$(_stats_work_deadline)
 	_HEALTH_WORK_DEADLINE=$((_HEALTH_WORK_DEADLINE - $(_stats_seconds "${STATS_OPTIONAL_WORK_RESERVE_SECONDS:-120}" 120)))
-	command -v gh &>/dev/null || return 0
-	_stats_run_bounded 15 "$_HEALTH_WORK_DEADLINE" gh auth status &>/dev/null || return 0
+	command -v gh &>/dev/null || { echo "[stats] Health dashboard skipped: gh unavailable" >>"$LOGFILE"; return 0; }
+	_stats_run_bounded 15 "$_HEALTH_WORK_DEADLINE" gh auth status &>/dev/null || { echo "[stats] Health dashboard skipped: gh authentication check failed or timed out" >>"$LOGFILE"; return 0; }
 
 	local routine_runner_user
 	routine_runner_user=$(_stats_run_bounded 15 "$_HEALTH_WORK_DEADLINE" aidevops_repo_state_current_user) || routine_runner_user=""

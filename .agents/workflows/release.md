@@ -135,6 +135,13 @@ Before version mutation, the helper reserves the repository's remote release lan
 
 The underlying version manager verifies the source PR is merged and its merge SHA is reachable, then atomically checks the tree → bumps and validates version files → commits → signs and pushes the tag. The tag workflow verifies immutable provenance before reconciling GitHub, npm OIDC, and Homebrew. A later trusted reconciliation verifies all three channels, runs local deploy sync from a detached tag worktree, and persists receipts. Direct `version-manager.sh release` execution is not a full-loop release because it cannot persist terminal per-PR lifecycle evidence.
 
+Reconciliation requires npm audit signatures JSON with verified attestation bundles
+from `--include-attestations`. Legacy or malformed output is a tooling error, not
+proof of publication or a propagation wait. Use an independently provisioned npm
+with that capability in the reconciliation process's PATH, without changing the
+global npm installation; npm 11.21.2 has been observed working, not established
+as the minimum version. Never skip provenance verification to work around it.
+
 When the release range contains a conventional `perf:` commit (optionally
 scoped or prefixed with `GH#NNN:`), the signed tag includes
 `Aidevops-Efficiency-Change: true` and generated release notes include an
@@ -294,6 +301,23 @@ scripts, and follow it: bump versions in a linked worktree and PR, merge with
 `full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
 (`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
 
+Concurrent merges make release PRs conflict on the changelog. Coordinate with the
+advisory manual release hold (`manual-release-hold-helper.sh`; stored as a remote
+branch, 60-minute default expiry, fails open on API errors):
+
+1. Open the version-bump PR, then `aidevops release hold OWNER/REPO --pr N --version vX.Y.Z`.
+   It refuses when another hold is active or another open PR already carries that
+   release version (the duplicate guard; also `aidevops release duplicate-check OWNER/REPO vX.Y.Z`).
+2. While held, `full-loop-helper.sh merge` and pulse merges for every other PR in
+   that repo refuse with `MANUAL_RELEASE_HOLD`; the release PR is exempt.
+3. If the release PR needs a rebase, every PR merged before the release merge
+   commit is included in the release; rebase onto the new default branch and re-run CI.
+4. After the release merge, `aidevops release unhold OWNER/REPO` (an unreleased hold
+   expires on its own).
+5. When another session owns the fleet roll-out, record it with
+   `aidevops release owner OWNER/REPO TAG --session ID`; when the Release run and update
+   test finish, `aidevops release owner-notify OWNER/REPO TAG` sends the session-bus notice.
+
 Publication still requires explicit release authority and follows the repository's
 own process. For GitHub repos with Actions enabled, opt into read-only evidence
 before publishing: `aidevops sync-workflows --repo OWNER/REPO --workflow
@@ -425,7 +449,7 @@ git commit -m "fix: resolve critical issue"
 | Signed tag already exists | Do not delete or retag it. Run `aidevops release status <source-pr>` and then `aidevops release reconcile <source-pr>`. |
 | Publication queued/interrupted | Exit `8` is durable pending state. Reconcile the same source PR; never bump again for the same tag. |
 | Another source owns the release lane | Run the printed `aidevops release status <active-pr>` command. Reconcile that source when its remote work is ready; aggregate later sources only through a reviewed exact-tip PR. A `RELEASE_OWNER_SESSION` line names the advisory owner session and a ready `aidevops sessions ask` command; `aidevops sessions watch-release <owner/repo>` sends finalize and dead-executor notices. Details: `reference/session-bus.md` "Release notices". |
-| Lane `reconcile-required` with `tag=pending`; `reconcile` exits 2 (tag not found) | Version-manager failed before tagging, so there is nothing to reconcile and `recover-reservation` (reserved phase only) does not apply. Re-run the lane's own source: `aidevops release <type> <lane-source-pr> incremental`. It recovers the failed pre-publication lane, keeps the reviewed authorization, and continues from a fresh pinned snapshot; then follow the normal exit-`8` reconcile flow. |
+| Lane `reconcile-required` with `tag=pending`; `reconcile` exits 2 (tag not found) | Version-manager failed before tagging, so there is nothing to reconcile and `recover-reservation` (reserved phase only) does not apply. Re-run the lane's own source: `aidevops release <type> <lane-source-pr> incremental`. It recovers the failed pre-publication lane, keeps the reviewed authorization, and continues from a fresh pinned snapshot; then follow the normal exit-`8` reconcile flow. Run it on the executor host (`executor.host_id` in the lane state): the reviewed authorization file lives only there, so from any other host the command exits `8` and prints that `host_id` with the command to run. |
 | Expected/observed source mismatch | Stop before mutation. The exiting executor releases its own untouched reservation by CAS (`abandoned-prepublication`); refresh the reviewed source set and retry the authorized command immediately. Correct the reviewed aggregation integrity manifest and verify each source is a PR merged to the default branch; bare ancestry without merged-PR provenance is insufficient. |
 | Dead executor with a tagless `reserved` lane | If owner cleanup did not run, wait for the configured grace (at least five minutes) since the timestamp printed by status, then run `aidevops release recover-reservation <source-pr>`. Status is read-only; retrying `patch` before recovery cannot resume this lane. Live, foreign, legacy, recovery, or concurrently preparing owners remain protected. |
 | Historical immutable tag omitted authorized PRs | Preserve pending receipts and write detached `authorization-gap` evidence. Do not retag or create terminal cleanup evidence. |

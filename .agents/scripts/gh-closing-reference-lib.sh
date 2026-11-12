@@ -179,8 +179,19 @@ _gh_pr_body_explicit_issues() {
 			next
 		}
 		fence { next }
-		/<!--/ { comment = 1 }
-		comment { if ($0 ~ /-->/) comment = 0; next }
+		{
+			line = $0; visible = ""
+			while (length(line)) {
+				if (comment) {
+					if (!match(line, /-->/)) { line = ""; break }
+					line = substr(line, RSTART + RLENGTH); comment = 0
+				} else if (match(line, /<!--/)) {
+					visible = visible substr(line, 1, RSTART - 1) " "
+					line = substr(line, RSTART + RLENGTH); comment = 1
+				} else { visible = visible line; break }
+			}
+			$0 = visible
+		}
 		/^[[:space:]]*#/ {
 			section = tolower($0)
 			sub(/^[[:space:]]*/, "", section)

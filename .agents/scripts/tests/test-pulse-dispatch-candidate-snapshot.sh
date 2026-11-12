@@ -120,6 +120,65 @@ fifth=$(_dispatch_ranked_candidates_json 50)
 # A small runnable-count diagnostic sample must not limit dispatch scanning.
 # Three benignly blocked candidates must not hide a later eligible candidate.
 unset PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED
+(
+	_PULSE_CYCLE_ID="ranked-continuation"
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	dependency_normalization_mode=normalize
+	snapshot=$(_dispatch_candidate_snapshot_path 50)
+	now=$(date +%s)
+	jq -nc --argjson now "$now" '{captured_at:($now-180),census_seconds:300,candidates:[{number:1,repo_slug:"o/r"},{number:2,repo_slug:"o/r"},{number:3,repo_slug:"o/r"}]}' >"$snapshot"
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/r"}'
+	remaining=$(_dispatch_ranked_candidates_json 50)
+	[[ "$(jq -r '[.[].number]|join(",")' <<<"$remaining")" == '2,3' ]]
+	_dispatch_ranked_candidate_consumed '{"number":2,"repo_slug":"o/r"}'
+	_dispatch_ranked_candidate_consumed '{"number":3,"repo_slug":"o/r"}'
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[{"number":1,"repo_slug":"o/r"},{"number":4,"repo_slug":"o/r"}]'
+		return 0
+	}
+	refreshed=$(_dispatch_ranked_candidates_json 50)
+	[[ "$(jq -r '[.[].number]|join(",")' <<<"$refreshed")" == 4 && -f "${snapshot}.consumed" ]]
+	_dispatch_cleanup_cycle_cache 50
+)
+printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-census on exhaustion\n'
+
+(
+	claim_comments='[{"id":41,"author_association":"OWNER","created_at":"2026-11-12T05:00:00Z","updated_at":"2026-11-12T05:00:00Z","body":"Dispatching worker"}]'
+	gh() {
+		local query="" arg=""
+		while (($#)); do
+			arg="$1"; shift
+			if [[ "$arg" == --jq ]]; then query="$1"; shift; fi
+		done
+		jq -c "$query" <<<"$claim_comments"
+		return 0
+	}
+	_dispatch_claim_cache_record 41 o/r 'TTL: 100s remaining'
+	_dispatch_claim_cache_hit 41 o/r
+	# A different cycle can use the persisted evidence, not the cycle ledger.
+	_PULSE_CYCLE_ID="claim-cache-next-cycle"
+	_dispatch_claim_cache_hit 41 o/r
+	claim_comments=$(jq '.[0].updated_at="2026-11-12T05:01:00Z"' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments=$(jq '.[0].id=42' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	_dispatch_claim_cache_record 41 o/r 'TTL: 100s remaining'
+	claim_comments=$(jq '. + [{id:43,author_association:"OWNER",created_at:"2026-11-12T05:02:00Z",body:"CLAIM_RELEASED"}]' <<<"$claim_comments")
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments='[{"id":44,"author_association":"NONE","body":"Dispatching worker"}]'
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	claim_comments='[]'
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	cache_path=$(_dispatch_negative_cache_path 41 o/r)
+	jq '.expires=1' "${cache_path}.claim" >"${cache_path}.test"
+	mv "${cache_path}.test" "${cache_path}.claim"
+	if _dispatch_claim_cache_hit 41 o/r; then exit 1; fi
+	_dispatch_claim_cache_record 42 o/r 'no verifiable expiry'
+	cache_path=$(_dispatch_negative_cache_path 42 o/r)
+	[[ ! -f "${cache_path}.claim" ]]
+)
+printf 'PASS durable claim cache expires and wakes on changed, released, missing or untrusted evidence\n'
+
 _PULSE_CYCLE_ID="test-cycle-stale-candidate-snapshot"
 fresh=$(_dispatch_ranked_candidates_json 50)
 snapshot=$(_dispatch_candidate_snapshot_path 50)

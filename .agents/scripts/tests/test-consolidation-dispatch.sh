@@ -63,17 +63,19 @@ _write_gh_stub_binary() {
 # bash 3.2 compatible — no ;;& fall-through.
 printf '%s\n' "$*" >>"${GH_LOG:-/dev/null}"
 
-# _stub_parse_args: scan argv for `--jq <filter>` and `--state <state>`,
-# emit them on stdout as `JQ=<f>;STATE=<s>` so the caller can eval. Empty
-# values when absent. Used by the issue-list and pr-list branches.
+# _stub_parse_args: scan argv for `--jq <filter>` and `--state <state>` and
+# set the globals JQ and STATE (empty JQ / "open" STATE when absent). Sets
+# globals directly rather than emitting text for eval: real jq filters contain
+# quotes, pipes and parentheses that break an eval round-trip.
 _stub_parse_args() {
-	local prev="" jq="" state="open" arg
+	local prev="" arg
+	JQ=""
+	STATE="open"
 	for arg in "$@"; do
-		[[ "$prev" == "--jq" ]] && jq="$arg"
-		[[ "$prev" == "--state" ]] && state="$arg"
+		[[ "$prev" == "--jq" ]] && JQ="$arg"
+		[[ "$prev" == "--state" ]] && STATE="$arg"
 		prev="$arg"
 	done
-	printf 'JQ=%s\nSTATE=%s\n' "$jq" "$state"
 	return 0
 }
 
@@ -123,7 +125,7 @@ issue-list)
 	fi
 	# t2144: --state dispatch so tests can fixture open and closed child
 	# lists independently (grace-window regression tests).
-	eval "$(_stub_parse_args "$@")"
+	_stub_parse_args "$@"
 	list_json="${GH_ISSUE_LIST_CHILD_JSON:-[]}"
 	[[ "$STATE" == "closed" ]] && list_json="${GH_ISSUE_LIST_CHILD_CLOSED_JSON:-[]}"
 	_stub_emit "$list_json" "$JQ"
@@ -131,7 +133,7 @@ issue-list)
 pr-list)
 	# t2161: drives off GH_PR_LIST_RESOLVING_JSON. Honours --jq if used
 	# (current production caller does NOT — it pipes raw JSON through jq).
-	eval "$(_stub_parse_args "$@")"
+	_stub_parse_args "$@"
 	_stub_emit "${GH_PR_LIST_RESOLVING_JSON:-[]}" "$JQ"
 	;;
 issue-create)
@@ -141,7 +143,17 @@ issue-create)
 	fi
 	printf '%s\n' "${GH_ISSUE_CREATE_URL:-https://github.com/owner/repo/issues/999}"
 	;;
-api-*) printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}" ;;
+api-user) printf '%s\n' "${GH_SELF_LOGIN:-testuser}" ;;
+api-*)
+	# Lock-marker reads carry a jq filter naming the consolidation-lock
+	# marker; they must see no competing runner rather than the comments.
+	_stub_parse_args "$@"
+	if [[ "$JQ" == *consolidation-lock* ]]; then
+		_stub_emit "${GH_LOCK_MARKERS_JSON:-[]}" "$JQ"
+	else
+		printf '%s\n' "${GH_API_COMMENTS_JSON:-[]}"
+	fi
+	;;
 issue-comment)
 	while [[ $# -gt 0 ]]; do
 		if [[ "$1" == --body ]]; then
@@ -179,6 +191,8 @@ _setup_gh_stub_globals() {
 	export ISSUE_CONSOLIDATION_COMMENT_THRESHOLD=2
 	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	printf '{"initialized_repos": []}\n' >"$REPOS_JSON"
+	# Tests never sleep during the lock tiebreak re-check.
+	export CONSOLIDATION_LOCK_TIEBREAK_WAIT_SEC=0
 
 	# Source pulse-triage.sh in isolation — it's intended to be sourced
 	# from pulse-wrapper.sh but the consolidation helpers are self-contained.
@@ -362,6 +376,30 @@ test_child_body_contains_parent_content_and_authors() {
 	fi
 
 	teardown_gh_stub
+	return 0
+}
+
+# GH#37809: a blocked parent hands status:blocked (not status:available) to its
+# consolidated successor; ownership statuses are still never copied.
+test_child_body_carries_blocked_status_to_successor() {
+	local body
+	body=$(_compose_consolidation_child_body \
+		124 "owner/repo" "test: blocked parent" "Waiting on upstream schema." \
+		"[]" "@alice" "bug,auto-dispatch,status:blocked")
+
+	local failmsg=""
+	grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,status:blocked,<copy relevant labels from parent, excluding all status:* labels' <<<"$body" ||
+		failmsg="${failmsg} | successor label list omits carried status:blocked"
+	grep -qF -- 'auto-dispatch,status:available,' <<<"$body" &&
+		failmsg="${failmsg} | blocked parent still hands off status:available"
+	grep -qF -- 'Keep the blocker text in the merged body.' <<<"$body" ||
+		failmsg="${failmsg} | blocked handoff omits blocker-text retention"
+
+	if [[ -z "$failmsg" ]]; then
+		print_result "blocked parent hands status:blocked to consolidated successor" 0
+	else
+		print_result "blocked parent hands status:blocked to consolidated successor" 1 "$failmsg"
+	fi
 	return 0
 }
 
@@ -1832,6 +1870,7 @@ main() {
 	test_non_consolidating_comment_call_budget
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
+	test_child_body_carries_blocked_status_to_successor
 	test_dedup_skips_when_child_exists
 	test_consolidation_child_exists_detects_existing
 	test_consolidation_child_exists_detects_parent_dispatch_comment_on_later_page

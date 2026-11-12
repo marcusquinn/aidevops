@@ -84,9 +84,9 @@ _pr_checkpoint_trusted_logins() {
 # continuation, stale-recovery or approval path, so the issue stalled
 # permanently. worker_checkpoint_draft_links accepts an open same-repository
 # origin:worker/origin:worker-takeover draft with no closing identity and no
-# protective label whose line-start `For #N` lines name exactly issue N or,
-# without any `For` line, whose line-start `Ref #N`/`Refs #N` lines do. Several
-# targets are ambiguous and never match. Continuation turns that line into a
+# protective label whose explicit `For #N` / `Ref(s) #N` references (anywhere in
+# the body, word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name
+# exactly issue N. Several targets are ambiguous and never match. Continuation turns that line into a
 # closing link only once the issue criteria are met (_prrts_write_prompt_file).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
@@ -108,10 +108,9 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 		(checkpoint_protected | not) and
 		for_issue_line($issue);
 	def checkpoint_line_issues($keyword):
-		[(.body // "") | scan("(?m)^" + $keyword + " #([1-9][0-9]*)(?:[.](?:[ \\t]|$)|[ \\t]*$)") | .[0] | tonumber] | unique;
+		[(.body // "") | scan("(?i)(?:^|[^a-z0-9_])" + $keyword + "[ \\t]+#([1-9][0-9]*)(?![a-z0-9_])") | .[0] | tonumber] | unique;
 	def checkpoint_reference_issues:
-		checkpoint_line_issues("For") as $for |
-		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
+		(checkpoint_line_issues("For") + checkpoint_line_issues("Refs?")) | unique;
 	def worker_checkpoint_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
@@ -357,7 +356,15 @@ _PCTL_COORDINATION_JQ_DEFS='
 		| sort_by(.created_at, .id)
 		| last
 		| (.body // "");
+	# GH#37779: an approval comment fences scheduling only inside the same
+	# 24-hour window pr-checkpoint-revision.py accepts. An unreadable creation
+	# time fails closed (still unexpired).
+	def pctl_approval_unexpired($ttl):
+		((.created_at // "") | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $created |
+		($created == null or (now - $created) <= $ttl);
 '
+# Revision approvals expire after this many seconds (pr-checkpoint-revision.py).
+_PCTL_APPROVAL_TTL_SECONDS=86400
 
 #######################################
 # Verify that the newest trusted coordination event is the worker's explicit
@@ -419,8 +426,12 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	# release is still the newest coordination event, so an exception limited to
 	# the released state stopped every capability continuation before launch.
 	# Assignment, lifecycle and protective labels are still enforced below.
-	if jq -e "${_PCTL_COORDINATION_JQ_DEFS}"'
-		(pctl_trusted_comments | any((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))) or
+	# GH#37779: only an unexpired approval owns scheduling. Past its 24-hour
+	# expiry the revision route can no longer launch, so the legacy route and
+	# its re-arm windows apply again; a newer approval re-fences it.
+	if jq -e --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" "${_PCTL_COORDINATION_JQ_DEFS}"'
+		(pctl_trusted_comments | any(((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED ")) and
+			pctl_approval_unexpired($ttl))) or
 		(pctl_newest_coordination_body |
 			test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
 			(test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ") | not))

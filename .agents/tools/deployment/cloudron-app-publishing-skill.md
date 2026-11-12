@@ -25,6 +25,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Prerequisite**: Each version needs a registry-hosted image, normally built with `cloudron builder login` → `cloudron builder build`; on-server builds cannot be published
 - **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
+- **New package repos**: complete `cloudron-package-onboarding.md` (init, Pulse, upstream monitoring, labels, workflows, listing URLs)
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
 - **Forum**: announce published community packages in [Community Packages (220)](https://forum.cloudron.io/category/220/community-packages); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
 
@@ -53,6 +54,31 @@ processes these issues every 30 minutes, requiring `VERIFIED` from
 head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
+
+**Standing release policy (GH#37697, optional).** To stop routine upstream
+bumps queuing behind per-release signatures, a maintainer may sign one policy
+per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,
+then `sudo aidevops approve issue <policy-issue> <repo>`. While that
+`release-standing-policy` issue is open with a `VERIFIED` signature, `r924`
+publishes an **unsigned** request without another signature only when
+`cloudron_routine_bump.py` proves, at the exact PR head and merge-base diff:
+one open, trusted linked monitor finding equal to `upstreamVersion` (same
+major, and same minor under 0.x); a patch-only package bump with no other
+manifest change; additions-only changelogs; pinned files changed only by
+whole-token old→new upstream-version substitution; check files without hidden
+line-break characters whose existing lines change only by package/upstream
+version substitution, with inserted lines (never after a continued line) fully
+matching the signed
+`check_insertion_pattern` (default: expansion-free changelog assertions); no
+other, added, removed or renamed files; an OWNER/MEMBER request and
+same-repository PR with green checks and preflight, its release hold, no
+auto-merge and no `needs-maintainer-review` (the per-PR brake). The policy is
+re-proved immediately before merge, and the closing comment records
+`authority: standing policy #N`. Anything else, and any stale or unverifiable
+per-release signature, keeps the per-release path. Under an active policy, an
+unsigned request whose head moved is closed so a fresh exact-head request
+follows. Close the policy issue to revoke it; any edit or comment makes its
+signature stale.
 
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
@@ -94,7 +120,7 @@ Commit these before the first registry build:
 - A short publishing runbook that records the canonical catalog URL, registry/repository ownership, asset provenance, test install, rollback, and Community Apps listing steps without storing credentials.
 - A managed GitHub Actions release workflow that creates and verifies keyless provenance for the immutable image digest and exact generated `CloudronVersions.json`; use `templates/workflows/cloudron-catalog-publish-caller.yml` and review `reference/release-artifact-provenance.md` before the first publication.
 
-`packageUrl` is the Cloudron 10 manifest field for the package source repository and requires `minBoxVersion` 10.0.0. It does not control the ca.cloudron.io listing: verified on 2026-11-01, that site builds both the "By `packagerName`" link and the "Package" link from `packagerUrl` only, even for published entries that set `packageUrl` (aidevops#36428). Do not add `packageUrl` expecting it to change the Community Apps Package link. `packagerUrl` identifies the maintainer, and changing it to the repository URL also changes the "By" link.
+`packageUrl` is the Cloudron 10 manifest field for the package source repository and requires `minBoxVersion` 10.0.0. On the ca.cloudron.io listing, the "Package" link uses `packageUrl` when it is set and falls back to `packagerUrl`; the "By `packagerName`" link always uses `packagerUrl` (Cloudron added the fallback on 2026-11-11 after aidevops#36428; verified in the live listing bundle). Set `packagerUrl` to the maintainer's profile and, once the package requires Cloudron 10, `packageUrl` to the package repository. Do not point `packagerUrl` at the repository; that was a workaround from before Cloudron added the fallback. Packages that must stay on Cloudron 9.x omit `packageUrl`, so their Package link uses `packagerUrl`. The listing shows the newest published catalog entry, so metadata changes appear after the next published version.
 
 Adding `packageUrl` drops Cloudron 9.x for the whole catalog, not just the new version: Cloudron 9.x rejects `packageUrl` while parsing `CloudronVersions.json`, so one entry containing `packageUrl` stops 9.x servers resolving any version from that catalog, and `minBoxVersion` gating does not prevent it (aidevops-cloudron-app#66, cloudron-netbird-app#62). Packages that need Cloudron 9.x compatibility must omit `packageUrl` from every catalog entry. To adopt it, release a new package version with `minBoxVersion` 10.0.0, invert any package test that rejects `packageUrl`, update documented Cloudron requirements, and note the dropped 9.x support in the changelog. Never add `packageUrl` to an existing catalog entry. `author` and `contactEmail` are deprecated in the manifest reference but are still required by the current CLI version-catalog validator.
 

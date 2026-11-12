@@ -54,6 +54,19 @@ yourself from printed output. The launcher already provides `PATH`.
 
 ### 2. Read pre-fetched state (DO NOT re-fetch)
 
+**Stale-state override:** if the launch prompt says no current snapshot exists,
+do not read or rely on the old snapshot. This overrides all pre-fetched-state
+instructions below. Run `bash ~/.aidevops/agents/scripts/pulse-wrapper.sh --command list-scope`
+to obtain current schedule-filtered `slug|path` pairs from configuration (use the
+path for `repo-cap` and dispatch). Limit
+triage and `list-candidates SLUG 100` to those slugs; use the named helpers and
+targeted `gh` reads for current evidence. `list-candidates` returns issues, not
+PRs, so in stale mode only, discover live PRs with one bounded call per scoped
+slug (`gh pr list --repo SLUG --state open --limit 50 --json number,title,headRefName,statusCheckRollup,reviewDecision,mergeable`),
+overriding the "do NOT run `gh pr list`" rule below. Do not infer absent data from the old
+snapshot. If scope lookup fails or returns no slugs, log a diagnostic and exit
+cleanly rather than using persisted scope or broadening to all repositories.
+
 The wrapper already fetched all open PRs and issues. Data is in your prompt between `--- PRE-FETCHED STATE ---` markers or in the state file path provided. Use it directly — do NOT run `gh pr list` or `gh issue list` (root cause of the "only processes first repo" bug).
 
 **Sandbox rule:** this unattended pulse runs from the aidevops agent workspace, not from each repo. Do NOT run Bash with `workdir` set to a managed repo path (for example to run `git worktree list`). OpenCode treats that as high-risk `external_directory` shell access and stalls for human permission. Use pre-fetched state or wrapper/helper functions from the current workspace; if required repo/worktree data is missing, log a diagnostic and exit cleanly.
@@ -89,7 +102,7 @@ Skip when: all slots occupied, issue created <5 min ago, or maintainer already c
 # Atomic dispatch — runs all 7 dedup layers, assigns, launches, records ledger.
 # Model selection is automatic via the runtime resolver; there is no model argument.
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER PATH \
+  "Issue #NUMBER: TITLE" "TASK_ID: TITLE" RUNNER_USER "PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION"
 ```
 
@@ -303,7 +316,7 @@ resolver default. See [Task Taxonomy](../reference/task-taxonomy.md) for tier pu
 
 ### Per-repo worker cap
 
-Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap PATH` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
+Default `MAX_WORKERS_PER_REPO=5`. Run `~/.aidevops/agents/scripts/pulse-wrapper.sh --command repo-cap "PATH"` before dispatching — returns 0 (at cap, skip) or 1 (below cap, safe to dispatch). Deterministic pulse dispatch does not apply this per-repo cap; it is a supervisor check only.
 
 Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: OpenCode may hide nonzero exit statuses. `command=repo-cap rc=0 outcome=at-cap` means skip; `command=repo-cap rc=1 outcome=below-cap` means capacity is available. After dispatch, `command=dispatch rc=0 outcome=launched` confirms launch; `rc=1` or `rc=3` with `outcome=deferred` means no launch. Other statuses report `outcome=failed`; do not count them as launches or available capacity. Both commands preserve their exit statuses and print exactly one result line in addition to any delegate output. Usage errors return 2 on stderr with no result line.
 
@@ -312,10 +325,10 @@ Read the stdout `PULSE_COMMAND_RESULT` line rather than shell status probes: Ope
 Quality-debt workers MUST use pre-created worktrees:
 
 ```bash
-~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree PATH NUMBER TITLE
+~/.aidevops/agents/scripts/pulse-wrapper.sh --command create-debt-worktree "PATH" NUMBER TITLE
 
 ~/.aidevops/agents/scripts/pulse-wrapper.sh --command dispatch NUMBER SLUG \
-  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER QD_WT_PATH \
+  "Issue #NUMBER: TITLE" "GH#NUMBER: TITLE" RUNNER_USER "QD_WT_PATH" \
   "/full-loop Implement issue #NUMBER (URL) -- TITLE"
 ```
 

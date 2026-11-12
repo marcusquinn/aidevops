@@ -61,12 +61,24 @@ fi
 # t1982: Compose the "What to do" instructions and "Constraints" sections
 # for the consolidation-task child body. Called by _compose_consolidation_child_body.
 #
-# Args: $1=parent_num $2=repo_slug $3=authors_line
+# Args: $1=parent_num $2=repo_slug $3=authors_line $4=parent_labels (CSV, optional)
+#
+# GH#37809: status:blocked records an unresolved dependency or hold, not
+# ownership, so a blocked parent hands its successor status:blocked. Ownership
+# states (queued/claimed/in-progress/in-review) are never copied.
 #######################################
 _compose_consolidation_worker_instructions() {
 	local parent_num="$1"
 	local repo_slug="$2"
 	local authors_line="$3"
+	local parent_labels="${4:-}"
+
+	local successor_status="status:available"
+	local status_rationale="never the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`). Immediately before creating the successor, re-read the parent's labels; if it now carries \`status:blocked\`, use \`status:blocked\` instead, because that label records an unresolved dependency or hold rather than ownership."
+	if [[ ",${parent_labels}," == *",status:blocked,"* ]]; then
+		successor_status="status:blocked"
+		status_rationale="the parent carries \`status:blocked\`, which records an unresolved dependency or hold rather than ownership, so the successor keeps it and stays held until that blocker is resolved. Keep the blocker text in the merged body. Never copy the parent's ownership status (\`status:queued\`, \`status:claimed\`, \`status:in-progress\`, \`status:in-review\`)."
+	fi
 
 	cat <<EOF
 ## What to do
@@ -108,17 +120,17 @@ The validator must pass before running the signed creation command below. It che
 \`\`\`bash
 ~/.aidevops/agents/scripts/gh-write-helper.sh issue create --repo "${repo_slug}" \\
   --title "consolidated: <concise description derived from the merged spec>" \\
-  --label "consolidated,origin:worker,auto-dispatch,status:available,<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
+  --label "consolidated,origin:worker,auto-dispatch,${successor_status},<copy relevant labels from parent, excluding all status:* labels, needs-consolidation, consolidation-task, and origin:interactive>" \\
   --body-file "<file containing the merged body from step 2>"
 \`\`\`
 
 **Note (GH#18670):** \`origin:worker\` is mandatory on this label list — consolidated issues are pulse-generated artifacts, not interactive maintainer work. Use the signed wrapper above rather than the raw GitHub CLI so the successor retains the managed signature and origin metadata.
 
-**Dispatch handoff:** \`auto-dispatch\` and \`status:available\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`status:available\`, never the parent's lifecycle status. The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status.
+**Dispatch handoff:** \`auto-dispatch\` and \`${successor_status}\` are also mandatory. Keep exactly one \`status:*\` label on the successor: \`${successor_status}\` — ${status_rationale} The consolidated successor marker and this explicit handoff must both be present before \`_has_consolidated_label\` permits implementation dispatch; the fill-floor enumerator also needs the available status, and the pre-claim gate holds a \`status:blocked\` successor until its blocker is released.
 
    Capture the new issue number as \$NEW_NUM.
 
-4. **Close every superseded parent.** Run all four commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing). Do not close this consolidation task until every parent's handoff is complete:
+4. **Close every superseded parent and verify each handoff.** Run all five commands below for #${parent_num}, then repeat them for every additional issue passed as \`--parent\` in step 3, substituting that issue number in every command (including dependency repointing and the state check). Every command must succeed:
 
 \`\`\`bash
 gh issue comment ${parent_num} --repo "${repo_slug}" \\
@@ -128,9 +140,13 @@ gh issue edit ${parent_num} --repo "${repo_slug}" \\
 gh issue close ${parent_num} --repo "${repo_slug}" --reason "not planned"
 # Repoint open dependants' blockedBy edges and Blocked-by lines at the successor (GH#35130):
 ~/.aidevops/agents/scripts/dependency-supersession-repoint-helper.sh repoint "${repo_slug}" ${parent_num} \$NEW_NUM
+# Re-read the parent (GH#37600); this must print exactly: closed not_planned
+gh api "repos/${repo_slug}/issues/${parent_num}" --jq '.state + " " + (.state_reason // "")'
 \`\`\`
 
-5. **Close this consolidation-task issue** with a summary comment:
+   **Handoff verification (GH#37600):** a parent that still reads \`open\` keeps the \`consolidated\` label while the dispatch gate rejects it, so it consumes dispatch attempts every cycle. If any command above fails or refuses the write (for example a worker target-scope guard on a non-target issue), or any parent re-read is not \`closed not_planned\`, this task has FAILED: do not run step 5 and do not report success. Leave this consolidation task open, record the parent number, the failing command and its output in one comment here, and exit \`BLOCKED\`. Report a reopen observed after your close as evidence, with its event time; do not guess its cause.
+
+5. **Close this consolidation-task issue** only after every parent passed the step 4 verification, with a summary comment:
 
 \`\`\`bash
 gh issue comment \$THIS_ISSUE --repo "${repo_slug}" \\
@@ -180,7 +196,7 @@ _compose_consolidation_child_body() {
 
 	local instructions_block
 	instructions_block=$(_compose_consolidation_worker_instructions \
-		"$parent_num" "$repo_slug" "$authors_line")
+		"$parent_num" "$repo_slug" "$authors_line" "$parent_labels")
 
 	local packet
 	packet=$(

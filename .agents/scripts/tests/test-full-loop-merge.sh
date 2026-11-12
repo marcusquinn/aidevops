@@ -7,6 +7,17 @@
 
 set -euo pipefail
 
+# The suite exercises synthetic PRs, not the issue that dispatched the runner.
+unset WORKER_ISSUE_NUMBER
+
+# Resolve native Git once from the system default PATH (portable to non-FHS
+# hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
+TEST_NATIVE_GIT=$(command -p -v git) || {
+	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
+	exit 1
+}
+export TEST_NATIVE_GIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
 test_prospective_todo_requires_supported_native_git() {
@@ -21,7 +32,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '%s\n' 'git version 2.37.0'
 	exit 0
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 WRAPPER_EOF
 	chmod +x "$wrapper"
 	output=$(run_prospective_todo_guard "$fixture_dir" "$base_sha" "$head_sha" stub \
@@ -139,18 +150,18 @@ if [[ "$subcommand" == "fetch" ]]; then
 	no_repo=$(mktemp -d) || exit 128
 	credential=$(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
 		GIT_CEILING_DIRECTORIES="$no_repo" \
-		/usr/bin/git "${config_args[@]}" credential fill <<<"$request") || { rmdir "$no_repo"; exit 128; }
+		"$TEST_NATIVE_GIT" "${config_args[@]}" credential fill <<<"$request") || { rmdir "$no_repo"; exit 128; }
 	(cd "$no_repo" && env -u XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM=1 \
 		GIT_CEILING_DIRECTORIES="$no_repo" \
-		/usr/bin/git "${config_args[@]}" credential approve <<<"${credential}"$'\n') || { rmdir "$no_repo"; exit 128; }
+		"$TEST_NATIVE_GIT" "${config_args[@]}" credential approve <<<"${credential}"$'\n') || { rmdir "$no_repo"; exit 128; }
 	rmdir "$no_repo"
 fi
-exec /usr/bin/git "$@"
+exec "$TEST_NATIVE_GIT" "$@"
 PROBE_EOF
 	chmod +x "${auth_root}/inherited-helper" "${auth_root}/bin/gh" "$probe" || return 0
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global credential.helper \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global credential.helper \
 		"${auth_root}/inherited-helper" || return 0
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global \
 		credential.https://github.com.helper "${auth_root}/inherited-helper" || return 0
 	: >"$inherited_log"
 	: >"$gh_log"
@@ -172,8 +183,8 @@ PROBE_EOF
 		"$([[ "$rc" -ne 0 && ! -s "$inherited_log" && "$output" == *"gh auth status"* &&
 			"$output" != *synthetic* ]] && printf '0' || printf '1')" \
 		"rc=$rc inherited=$(<"$inherited_log") output=$output"
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all credential.helper || true
-	HOME="${fixture_dir}/attacker-home" /usr/bin/git config --global --unset-all \
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global --unset-all credential.helper || true
+	HOME="${fixture_dir}/attacker-home" "$TEST_NATIVE_GIT" config --global --unset-all \
 		credential.https://github.com.helper || true
 	rc=0
 	prospective_contexts_clean "$fixture_dir" || rc=$?
@@ -274,9 +285,77 @@ source "${SCRIPT_DIR}/test-full-loop-merge-cases.sh"
 # shellcheck disable=SC1091  # Sibling test module resolved at runtime.
 source "${SCRIPT_DIR}/test-full-loop-merge-planning.sh"
 
+test_parent_task_merge_guard() {
+	local scripts_dir="${SCRIPT_DIR}/.." rc=0 output=""
+	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "issue view" ]]; then
+	printf '%s\n' '{"labels":[{"name":"parent-task"}]}'
+	return_code=0
+else
+	return_code=1
+fi
+exit "$return_code"
+STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		_merge_check_parent_task_keywords 42 test/repo 0
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent-task closing keyword blocks merge guard with remedy" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		_flm_gh_read() { printf "%s\n" '\''{"body":"Resolves #123","closingIssuesReferences":[{"number":123,"repository":{"owner":{"login":"test"},"name":"repo"}}]}'\''; return 0; }
+		cmd_merge 42 test/repo
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "cmd_merge rejects parent before merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'For #123'* ]] && printf '0' || printf '1')" "$output"
+	rc=0
+	PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_parse_command_args test/repo --allow-parent-close || exit 1
+		_merge_check_parent_task_keywords 42 test/repo "$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE"
+	' _ "$scripts_dir" || rc=$?
+	print_result "explicit parent close override passes merge guard" "$rc"
+	rc=0
+	output=$(PATH="${TEST_ROOT}/bin:${PATH}" bash -c '
+		SCRIPT_DIR="$1"
+		source "$SCRIPT_DIR/shared-constants.sh"
+		source "$SCRIPT_DIR/full-loop-helper-merge.sh"
+		_merge_handle_already_merged_provenance() { return 2; }
+		_merge_check_closure_metadata() { return 0; }
+		source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
+		_merge_pre_merge_gate_with_admission_retry() { return 0; }
+		_merge_release_lane_check() { return 0; }
+		_merge_release_provenance_method() { printf "%s\n" "$3"; return 0; }
+		_merge_canonical_dir_for_sync() { return 1; }
+		_merge_fresh_worktree_cleanup_target() { return 1; }
+		_merge_prepare_verified_head_aggregation_body() { FULL_LOOP_MERGE_BODY_SNAPSHOT=""; FULL_LOOP_MERGE_PREPARED_BODY_FILE=""; return 0; }
+		_retarget_stacked_children_interactive() { return 0; }
+		_merge_execute() { printf "%s\n" "merge transport reached"; return 1; }
+		_merge_remove_body_snapshot() { return 0; }
+		cmd_merge 42 test/repo --allow-parent-close
+	' _ "$scripts_dir" 2>&1) || rc=$?
+	print_result "parent close override reaches merge transport" \
+		"$([[ "$rc" -ne 0 && "$output" == *'merge transport reached'* ]] && printf '0' || printf '1')" "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
+	test_parent_task_merge_guard
 
 	echo "=== Admin merge fallback signaling tests (t2247) ==="
 	echo ""

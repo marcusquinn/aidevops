@@ -22,6 +22,8 @@ source "${_der_dir}/task-identity-lib.sh"
 source "${_der_dir}/dependency-supersession-lib.sh"
 # shellcheck source=./dependency-supersession-repoint-lib.sh
 source "${_der_dir}/dependency-supersession-repoint-lib.sh"
+# shellcheck source=./upstream-release-gate-lib.sh
+source "${_der_dir}/upstream-release-gate-lib.sh"
 unset _der_dir
 
 _der_reconcile_terminal_worker_blockers() {
@@ -460,11 +462,28 @@ _der_completion_blockers_closed() {
 	return $?
 }
 
+# GH#37696: upstream-release gates count only on an issue whose author is
+# trusted; the body is editable only by its author and write collaborators.
+_der_upstream_gates_ready() {
+	local repo="$1"
+	local issue_number="$2"
+	local body="$3"
+	local association=""
+	association=$(gh api "repos/${repo}/issues/${issue_number}" --jq '.author_association // ""' 2>/dev/null) || return 1
+	# aidevops:trust-boundary — an untrusted author cannot self-unblock via a gate.
+	case "$association" in
+	OWNER | MEMBER | COLLABORATOR) ;;
+	*) return "$DER_NOT_READY" ;;
+	esac
+	upstream_release_gates_ready "$body" "[dependency-reconciler] ${repo}#${issue_number}"
+	return $?
+}
+
 _der_try_unblock() {
 	local repo="$1"
 	local issue_number="$2"
 	local candidate_json="$3"
-	local labels="" body="" comments_json="" comments=""
+	local labels="" body="" comments_json="" comments="" upstream_gated=false
 	labels=$(printf '%s' "$candidate_json" | jq -r '[.labels.nodes[].name] | join(",")') || return 1
 	body=$(printf '%s' "$candidate_json" | jq -r '.body // ""') || return 1
 	_der_labels_has "$labels" status:blocked || return 0
@@ -474,8 +493,14 @@ _der_try_unblock() {
 	# aidevops:trust-boundary — external comments cannot assert a hold.
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
 	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
+	upstream_release_gate_declared "$body" && upstream_gated=true
 	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
-	if [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
+	if [[ "$upstream_gated" == true ]]; then
+		# GH#37696: a gated issue also honours every declared blocker, with or
+		# without native edges; a text read failure returns 1, never "none".
+		_der_all_declared_blockers_closed "$repo" "$candidate_json" "${repo}#${issue_number}" || return $?
+		_der_upstream_gates_ready "$repo" "$issue_number" "$body" || return $?
+	elif [[ "$_DER_NATIVE_BLOCKERS_PRESENT" != true ]]; then
 		# No native edge and no declared blocker: status:blocked came from another
 		# mechanism (cost breaker, infrastructure failure, sync retry hold) that
 		# owns its own release.

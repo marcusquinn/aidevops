@@ -591,7 +591,7 @@ describe_r909() {
 	local os="${1:-darwin}"
 	local screen_time_check
 	if _is_darwin_os "$os"; then
-		screen_time_check="System Settings → Screen Time — raw data"
+		screen_time_check="System Settings → Screen Time — raw data; \`~/.aidevops/.agent-workspace/observability/screen-activity.jsonl\` — input-activity intervals from the per-minute \`sh.aidevops.screen-activity-sampler\` (HIDIdleTime, same 5-minute idle rule as Linux); \`screen-time-helper.sh input-stats\`"
 	else
 		screen_time_check="\`~/.aidevops/.agent-workspace/observability/screen-activity.jsonl\` — input-activity intervals from the per-minute \`aidevops-screen-activity-sampler\` (no native Screen Time on Linux); \`screen-time-helper.sh profile-stats\` reports \`unavailable\` until it has samples"
 	fi

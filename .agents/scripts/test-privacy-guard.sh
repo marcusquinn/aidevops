@@ -250,6 +250,26 @@ else
 	fail "diff with private slug not flagged (rc=$rc hits=$hits)"
 fi
 
+# The public push fast path must retain lines containing only a basename.
+(
+	cd "$REPO" || exit 1
+	printf '%s\n' 'gettext_private-mirror' >README.md
+	git add README.md
+	git commit -m 'add private basename' --quiet
+) || fail "could not seed basename diff"
+base=$(git -C "$REPO" rev-parse HEAD~1)
+head=$(git -C "$REPO" rev-parse HEAD)
+printf 'repo\ttestorg/private-mirror\n' >"${TMP}/basename-entities.tsv"
+pushd "$REPO" >/dev/null || exit 1
+hits=$(privacy_scan_public_diff "$base" "$head" "${TMP}/basename-entities.tsv")
+rc=$?
+popd >/dev/null || exit 1
+if [[ "$rc" -eq 1 && "$hits" == *'[private-repo]'* ]]; then
+	pass "public README diff with identifier basename is flagged"
+else
+	fail "public README basename diff" "rc=$rc hits=$hits"
+fi
+
 # -----------------------------------------------------------------------------
 # Test 2: sanitised TODO.md → does not block
 # -----------------------------------------------------------------------------
@@ -690,6 +710,33 @@ fi
 # =============================================================================
 # privacy_scan_text tests (GH#21004 — review feedback on PR #20974)
 # =============================================================================
+
+# Public target paths are narrow exemptions; other scanners remain active.
+for path in \~/Git/public-repo/.agents \~/Git/testorg/public-repo/subdir; do
+	hits=$(privacy_scan_local_paths "$path" 'testorg/public-repo' 2>"${TMP}/allow-log")
+	rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -q '\[privacy-scan\]\[ALLOW\]' "${TMP}/allow-log"; then
+		pass "target repository path allowed with audit log"
+	else
+		fail "target repository path should be allowed (rc=$rc)"
+	fi
+done
+for path in \~/Git/private-repo \~/Git/public-repo-extra \~/Git/public-repo/../private-repo /ho"me"/example/Git/public-repo /Us"ers"/example/Git/public-repo; do
+	hits=$(privacy_scan_local_paths "$path" 'testorg/public-repo')
+	rc=$?
+	if [[ "$rc" -eq 1 && "$hits" == *'[local-path]'* ]]; then
+		pass "non-exempt local path blocked"
+	else
+		fail "non-exempt local path must be blocked (rc=$rc)"
+	fi
+done
+tilde='~'
+redacted=$(privacy_redact_local_paths "${tilde}/Git/public-repo/docs ${tilde}/Git/private-repo" 'testorg/public-repo')
+if [[ "$redacted" == "${tilde}/Git/public-repo/docs [local-path]" ]]; then
+	pass "redaction preserves only target repository path"
+else
+	fail "redaction should preserve target repository path"
+fi
 
 TEXT_SLUGS_FILE="${TMP}/text-slugs.txt"
 printf 'testorg/private-mirror\ntestorg/local-only\n' >"$TEXT_SLUGS_FILE"
