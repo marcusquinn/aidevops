@@ -4,6 +4,7 @@
 """Fixture-only reclaim evidence tests: every incomplete signal must refuse removal."""
 
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 -- fixed offline Git fixtures only.
@@ -22,8 +23,11 @@ reclaim = importlib.util.module_from_spec(SPEC)
 # module from sys.modules while the class body is processed.
 sys.modules[SPEC.name] = reclaim
 SPEC.loader.exec_module(reclaim)
+host = sys.modules["worktree_reclaim_host"]
+collector = sys.modules["worktree_reclaim_evidence"]
 
 SLUG = "fixture/repo"
+ORIGIN = f"git@github.com:{SLUG}.git"
 
 
 def git(path, *arguments):
@@ -31,21 +35,40 @@ def git(path, *arguments):
                    capture_output=True, text=True)
 
 
+def census_of(*directories):
+    return host.Census(frozenset(Path(directory) for directory in directories), ())
+
+
 class ReferenceTests(unittest.TestCase):
     def test_extracts_issue_and_pull_request_numbers(self):
-        self.assertEqual(reclaim.references("repo-feature-auto-20261112-gh22419"),
+        self.assertEqual(collector.references("repo-feature-auto-20261112-gh22419"),
                          [("gh", 22419)])
-        self.assertEqual(reclaim.references("repo-pr36801-ci-repair-abc"), [("pr", 36801)])
-        self.assertEqual(reclaim.references("repo-pr22476-review-gh22443-abc"),
-                         [("pr", 22476), ("gh", 22443)])
+        self.assertEqual(collector.references("repo-pr36801-ci-repair-abc"), [("pr", 36801)])
+
+    def test_extracts_adjacent_references_sharing_a_separator(self):
+        self.assertEqual(collector.references("repo-gh42-pr9001"),
+                         [("gh", 42), ("pr", 9001)])
+
+    def test_extracts_single_digit_references(self):
+        self.assertEqual(collector.references("repo-gh7"), [("gh", 7)])
 
     def test_reports_no_reference_when_name_encodes_none(self):
-        self.assertEqual(reclaim.references("repo-manual-investigation"), [])
+        self.assertEqual(collector.references("repo-manual-investigation"), [])
+
+    def test_ignores_digits_that_merely_follow_letters(self):
+        self.assertEqual(collector.references("sprint2-release"), [])
+
+
+class RepositoryTests(unittest.TestCase):
+    def test_accepts_github_remotes_only(self):
+        self.assertIsNotNone(collector.REMOTE_SLUG.search(ORIGIN))
+        self.assertIsNotNone(collector.REMOTE_SLUG.search(f"https://github.com/{SLUG}"))
+        self.assertIsNone(collector.REMOTE_SLUG.search(f"git@gitlab.example:{SLUG}.git"))
 
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="reclaim-fixture-"))
+        self.root = Path(tempfile.mkdtemp(prefix="reclaim-fixture-")).resolve()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.origin = self.root / "origin.git"
         subprocess.run([GIT, "init", "--bare", "-q", str(self.origin)],  # nosec B603
@@ -62,16 +85,20 @@ class EvidenceTests(unittest.TestCase):
         git(self.canonical, "fetch", "-q", "origin")
         # Rewrite the remote only after fetching: the slug the pass reads must look
         # like GitHub, while the fixture itself must stay a local path to clone from.
-        git(self.canonical, "config", "remote.origin.url", f"git@github.com:{SLUG}.git")
-        self.worktree = self.root / "repo-gh4242"
-        git(self.canonical, "worktree", "add", "-q", "--detach", str(self.worktree), "HEAD")
-        self.census = {Path.cwd()}
+        git(self.canonical, "config", "remote.origin.url", ORIGIN)
+        self.worktree = self.add_worktree("repo-gh4242")
+        self.census = census_of(Path.cwd())
         self.finished = {("gh", 4242, SLUG): (True, "issue-4242-closed")}
 
+    def add_worktree(self, name):
+        path = self.root / name
+        git(self.canonical, "worktree", "add", "-q", "--detach", str(path), "HEAD")
+        return path
+
     def decide(self, path=None, census="default", cache=None):
-        return reclaim.evidence(path or self.worktree,
-                                self.census if census == "default" else census,
-                                self.finished if cache is None else cache)
+        return collector.evidence(path or self.worktree,
+                                  self.census if census == "default" else census,
+                                  self.finished if cache is None else cache)
 
     def test_authorizes_finished_clean_and_pushed_worktree(self):
         verdict = self.decide()
@@ -86,14 +113,29 @@ class EvidenceTests(unittest.TestCase):
     def test_refuses_a_path_that_is_not_a_worktree(self):
         plain = self.root / "plain-gh4242"
         plain.mkdir()
-        verdict = self.decide(path=plain)
-        self.assertEqual(verdict["reason"], "not-a-worktree")
+        self.assertEqual(self.decide(path=plain)["reason"], "not-a-linked-worktree")
+
+    def test_refuses_a_main_checkout(self):
+        # A main checkout has a .git directory, so it must never be a candidate.
+        self.assertEqual(self.decide(path=self.canonical)["reason"],
+                         "not-a-linked-worktree")
+
+    def test_refuses_a_locked_worktree(self):
+        git(self.canonical, "worktree", "lock", str(self.worktree))
+        self.assertEqual(self.decide()["reason"], "worktree-locked")
+
+    def test_refuses_a_symlinked_candidate(self):
+        link = self.root / "linked-gh4242"
+        link.symlink_to(self.worktree)
+        self.assertEqual(self.decide(path=link)["reason"], "symlinked-path")
 
     def test_refuses_when_the_name_encodes_no_reference(self):
-        unnamed = self.root / "repo-manual"
-        git(self.canonical, "worktree", "add", "-q", "--detach", str(unnamed), "HEAD")
-        verdict = self.decide(path=unnamed)
-        self.assertEqual(verdict["reason"], "reference-unknown")
+        unnamed = self.add_worktree("repo-manual")
+        self.assertEqual(self.decide(path=unnamed)["reason"], "reference-unknown")
+
+    def test_refuses_a_remote_outside_github(self):
+        git(self.canonical, "config", "remote.origin.url", f"git@gitlab.example:{SLUG}.git")
+        self.assertEqual(self.decide()["reason"], "repository-unknown")
 
     def test_refuses_while_the_issue_remains_open(self):
         verdict = self.decide(cache={("gh", 4242, SLUG): (False, "issue-4242-open")})
@@ -101,16 +143,18 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(verdict["reason"], "issue-4242-open")
 
     def test_refuses_every_reference_a_name_encodes(self):
-        both = self.root / "repo-pr9001-review-gh4242"
-        git(self.canonical, "worktree", "add", "-q", "--detach", str(both), "HEAD")
+        both = self.add_worktree("repo-pr9001-gh4242")
         cache = dict(self.finished)
         cache[("pr", 9001, SLUG)] = (False, "pr-9001-closed")
-        verdict = self.decide(path=both, cache=cache)
-        self.assertEqual(verdict["reason"], "pr-9001-closed")
+        self.assertEqual(self.decide(path=both, cache=cache)["reason"], "pr-9001-closed")
 
     def test_refuses_when_a_live_process_works_inside_the_worktree(self):
-        verdict = self.decide(census={self.worktree / "nested"})
-        self.assertEqual(verdict["reason"], "writers-present")
+        self.assertEqual(self.decide(census=census_of(self.worktree / "nested"))["reason"],
+                         "writers-present")
+
+    def test_refuses_when_a_live_process_names_the_worktree(self):
+        census = host.Census(frozenset({Path.cwd()}), (f"--repo-path={self.worktree}",))
+        self.assertEqual(self.decide(census=census)["reason"], "writers-present")
 
     def test_refuses_uncommitted_changes(self):
         (self.worktree / "README.md").write_text("edited\n", encoding="utf-8")
@@ -120,16 +164,38 @@ class EvidenceTests(unittest.TestCase):
         (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
         self.assertEqual(self.decide()["reason"], "uncommitted-changes")
 
+    def test_refuses_untracked_files_hidden_by_configuration(self):
+        git(self.worktree, "config", "status.showUntrackedFiles", "no")
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        self.assertEqual(self.decide()["reason"], "uncommitted-changes")
+
     def test_refuses_unpushed_commits(self):
         (self.worktree / "README.md").write_text("changed\n", encoding="utf-8")
         git(self.worktree, "add", "README.md")
         git(self.worktree, "commit", "-qm", "fixture: unpushed")
         self.assertEqual(self.decide()["reason"], "unpushed-commits-1")
 
+    def test_ignores_an_inherited_git_directory_variable(self):
+        # An inherited GIT_DIR would otherwise answer every question from another
+        # checkout, reporting a dirty candidate as clean.
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        previous = os.environ.get("GIT_DIR")
+        os.environ["GIT_DIR"] = str(self.origin)
+        self.addCleanup(lambda: os.environ.pop("GIT_DIR", None) if previous is None
+                        else os.environ.__setitem__("GIT_DIR", previous))
+        self.assertEqual(self.decide()["reason"], "uncommitted-changes")
+
     def test_removes_an_authorized_worktree(self):
-        removed, detail = reclaim.remove(self.worktree)
+        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
         self.assertTrue(removed, detail)
         self.assertFalse(self.worktree.exists())
+
+    def test_refuses_removal_when_state_changed_after_judgement(self):
+        (self.worktree / "notes.md").write_text("late\n", encoding="utf-8")
+        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
+        self.assertFalse(removed)
+        self.assertEqual(detail, "changed-uncommitted-changes")
+        self.assertTrue(self.worktree.exists())
 
     def test_reports_without_removing_when_apply_is_absent(self):
         result = subprocess.run(  # nosec B603

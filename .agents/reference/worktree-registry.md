@@ -184,22 +184,35 @@ Cooperative locks cannot prove that arbitrary external shells are absent.
 unbounded growth, not slow cleanup: 101 of 143 worktrees were finished but
 retained, and free space fell 24 GB in 50 minutes.
 
-`worktree-reclaim-finished.py` is the interim answer, off unless
-`AIDEVOPS_WORKTREE_RECLAIM_FINISHED=1`. The pulse cleanup stage then runs it as a
-third pass sharing the budget in thirds. It reports only, unless `--apply`.
+`worktree-reclaim-finished.py` is the interim answer, and it has two entry points.
+Run directly it reports only, unless `--apply`. Setting
+`AIDEVOPS_WORKTREE_RECLAIM_FINISHED=1` adds it to the pulse cleanup stage as a
+third pass sharing the budget in thirds, and that pass always applies: enabling
+the flag enables unattended, archive-free deletion.
 
 It removes a worktree only when every one of these holds, and names the first
 failure as its refusal reason:
 
+- The path is a linked worktree, not a symlink and not a main checkout, and Git
+  holds no lock on it.
 - Every issue and pull request number encoded in the directory name is finished:
   an issue `CLOSED`, a pull request `MERGED`. A pull request closed without
-  merging is not finished work.
-- No live same-user process has the worktree, or anything inside it, as its
-  working directory, re-checked immediately before deletion.
-- No uncommitted changes, no untracked files, and no commits absent from every
-  remote (`rev-list HEAD --not --remotes`).
-- The process census is readable and can see its own working directory. An
-  unreadable census is not an absence of writers.
+  merging is not finished work. Adjacent references sharing one separator are all
+  read, so one closed reference cannot authorize removal while another is open.
+- The origin is a GitHub remote. A hostless slug would query an unrelated
+  repository of the same name.
+- No observed process has the worktree, or anything inside it, as its working
+  directory, and none names that path in its arguments.
+- No uncommitted changes, no untracked files (requested explicitly, since
+  configuration can suppress them) and no commits absent from every remote.
+- The process census is readable and can see its own working directory.
+
+Liveness and repository state are both re-verified immediately before deletion,
+so an edit landing after judgement refuses with `changed-*`. Forced removal is
+retained because ignored build artifacts are expected and Git refuses them
+otherwise; it runs only after a fresh clean verdict. Git subprocesses run without
+inherited `GIT_DIR`-style redirects, which would otherwise answer every question
+from another checkout.
 
 Removal is archive-free by explicit operator decision, so those checks are the
 only protection and each fails closed. Reclaimed removals are counted as removed
@@ -207,10 +220,13 @@ but never as archived.
 
 This pass deliberately claims less than it deletes on: it supplies none of the six
 `CleanupEvidence` proofs, reports no `cleanup_authorized`, and does not meet the
-prerequisites in the section above. Specifically, a descendant process whose
-working directory sits outside the worktree is not detected. The flag exists so
+prerequisites in the section above. Two residual gaps are known and reported
+rather than assumed away. A registered owner process whose working directory and
+arguments both sit outside the worktree is not detected. Live same-user processes
+whose working directory cannot be read are counted in the receipt as
+`unplaceable_processes` and matched only by their arguments. The flag exists so
 the real collector can be designed deliberately rather than under disk pressure;
-enabling it accepts that residual risk on that host.
+enabling it accepts those risks on that host.
 
 ## Process-first activity observation
 

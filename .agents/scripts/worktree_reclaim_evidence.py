@@ -15,10 +15,18 @@ import json
 from pathlib import Path
 import re
 
-from worktree_reclaim_host import git, occupied, run
+from worktree_reclaim_host import Census, git, locked, metadata_directory, run
 
-REFERENCE = re.compile(r"(?:^|[^a-z])(gh|pr)(\d{2,8})(?:[^0-9]|$)")
-REMOTE_SLUG = re.compile(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$")
+# Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
+# be found, because one closed reference must never authorize removal while the
+# other is still open.
+REFERENCE = re.compile(r"(?<![a-z0-9])(gh|pr)(\d{1,8})(?![0-9])")
+# Only GitHub origins are supported: a hostless slug would query an unrelated
+# repository of the same name on GitHub.
+REMOTE_SLUG = re.compile(
+    r"^(?:git@github\.com:|ssh://git@github\.com/|git://github\.com/"
+    r"|https?://(?:[^@/]+@)?github\.com/)([^/]+/[^/]+?)(?:\.git)?/?$",
+)
 
 
 def references(name: str) -> list[tuple[str, int]]:
@@ -31,13 +39,14 @@ def references(name: str) -> list[tuple[str, int]]:
     return found
 
 
-def repository(path: Path) -> str | None:
-    status, url = git(path, "remote", "get-url", "origin")
+def repository(path: Path, *, timeout: int = 60) -> str | None:
+    status, url = git(path, "remote", "get-url", "origin", timeout=timeout)
     match = REMOTE_SLUG.search(url.strip()) if status == 0 and url else None
     return match.group(1) if match else None
 
 
-def reference_finished(kind: str, number: int, slug: str, cache: dict) -> tuple[bool, str]:
+def reference_finished(kind: str, number: int, slug: str, cache: dict,
+                       *, timeout: int = 60) -> tuple[bool, str]:
     """Report whether one reference is finished: an issue closed, or a merge.
 
     A pull request closed without merging is not finished work, so only MERGED
@@ -48,36 +57,49 @@ def reference_finished(kind: str, number: int, slug: str, cache: dict) -> tuple[
         noun, done = ("issue", "CLOSED") if kind == "gh" else ("pr", "MERGED")
         status, output = run(
             ["gh", noun, "view", str(number), "--repo", slug, "--json", "state"],
+            timeout=timeout,
         )
         state = json.loads(output).get("state") if status == 0 and output else None
         cache[key] = (state == done, f"{noun}-{number}-{str(state).lower()}")
     return cache[key]
 
 
-def nothing_to_lose(path: Path) -> tuple[bool, str]:
-    """Confirm no uncommitted, untracked, or unpushed work exists in the worktree."""
-    status, dirty = git(path, "status", "--porcelain")
+def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
+    """Confirm no uncommitted, untracked, or unpushed work exists in the worktree.
+
+    Untracked and submodule reporting are requested explicitly: repository or
+    global configuration can otherwise suppress exactly the files that removal
+    would discard. Ignored build artifacts stay excluded and expected.
+    """
+    status, dirty = git(path, "status", "--porcelain", "--untracked-files=all",
+                        "--ignore-submodules=none", timeout=timeout)
     if status != 0:
         return False, "status-unreadable"
     if dirty:
         return False, "uncommitted-changes"
-    status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes")
+    status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes",
+                           timeout=timeout)
     if status != 0 or not unpushed.isdigit():
         return False, "unpushed-state-unreadable"
     return (unpushed == "0"), ("nothing-to-lose" if unpushed == "0"
                                else f"unpushed-commits-{unpushed}")
 
 
-def _preconditions(path: Path, census: set[Path] | None) -> str | None:
+def _preconditions(path: Path, census: Census | None) -> str | None:
     """Name the first missing precondition for judging this path at all."""
-    failures = ((census is None, "process-inventory-unavailable"),
-                (not (path / ".git").exists(), "not-a-worktree"))
+    failures = (
+        (census is None, "process-inventory-unavailable"),
+        (path.is_symlink(), "symlinked-path"),
+        (metadata_directory(path) is None, "not-a-linked-worktree"),
+        (locked(path), "worktree-locked"),
+    )
     return next((reason for failed, reason in failures if failed), None)
 
 
-def _identity(path: Path, found: list[tuple[str, int]], verdict: dict) -> str | None:
+def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
+              timeout: int) -> str | None:
     """Record the repository and references a decision needs, naming what is absent."""
-    slug = repository(path)
+    slug = repository(path, timeout=timeout)
     if slug is None:
         return "repository-unknown"
     verdict["repository"] = slug
@@ -85,34 +107,36 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict) -> str | 
     return None if found else "reference-unknown"
 
 
-def _unfinished(slug: str, found: list[tuple[str, int]], cache: dict) -> str | None:
+def _unfinished(slug: str, found: list[tuple[str, int]], cache: dict,
+                timeout: int) -> str | None:
     """Name the first reference whose work has not finished."""
     for kind, number in found:
-        finished, detail = reference_finished(kind, number, slug, cache)
+        finished, detail = reference_finished(kind, number, slug, cache, timeout=timeout)
         if not finished:
             return detail
     return None
 
 
-def _unsafe_to_remove(path: Path, census: set[Path]) -> str | None:
+def _unsafe_to_remove(path: Path, census: Census, timeout: int) -> str | None:
     """Name what removal would disturb or discard, or nothing when it is safe."""
-    if occupied(path, census):
+    if census.holds(path):
         return "writers-present"
-    clean, detail = nothing_to_lose(path)
+    clean, detail = nothing_to_lose(path, timeout=timeout)
     return None if clean else detail
 
 
-def evidence(path: Path, census: set[Path] | None, cache: dict) -> dict:
+def evidence(path: Path, census: Census | None, cache: dict,
+             *, timeout: int = 60) -> dict:
     """Decide one worktree, reporting the first missing proof as the reason."""
     verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated"}
     found = references(path.name)
     reason = _preconditions(path, census)
     if reason is None:
-        reason = _identity(path, found, verdict)
+        reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason = _unfinished(verdict["repository"], found, cache)
+        reason = _unfinished(verdict["repository"], found, cache, timeout)
     if reason is None and census is not None:
-        reason = _unsafe_to_remove(path, census)
+        reason = _unsafe_to_remove(path, census, timeout)
     verdict["authorized"] = reason is None
     verdict["reason"] = reason or "work-finished"
     return verdict

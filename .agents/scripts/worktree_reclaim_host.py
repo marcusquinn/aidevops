@@ -9,57 +9,143 @@ unreadable process census is not an absence of writers.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 -- fixed git and gh invocations only.
+
+# Git reads these before -C, so an inherited value would silently redirect every
+# repository question at another checkout.
+GIT_REDIRECTS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES", "GIT_NAMESPACE",
+)
+
+
+@dataclass(frozen=True)
+class Census:
+    """One process observation: working directories, arguments, and its own gaps.
+
+    ``unplaceable`` counts live same-user processes whose working directory could
+    not be read. Those processes are still matched by argument, but they remain a
+    reported gap rather than an assumed absence.
+    """
+
+    directories: frozenset[Path]
+    arguments: tuple[str, ...]
+    unplaceable: int = 0
+
+    def holds(self, path: Path) -> bool:
+        """Report whether any observed process works in, or names, this worktree."""
+        if any(directory == path or path in directory.parents
+               for directory in self.directories):
+            return True
+        return any(str(path) in argument for argument in self.arguments)
+
+
+def _environment() -> dict[str, str]:
+    return {name: value for name, value in os.environ.items()
+            if name not in GIT_REDIRECTS}
 
 
 def run(command: list[str], timeout: int = 60) -> tuple[int, str]:
     """Return the exit status and stripped stdout, never raising on failure."""
     try:
         completed = subprocess.run(  # nosec B603 -- argument vector, no shell.
-            command, capture_output=True, text=True, timeout=timeout, check=False,
+            command, capture_output=True, text=True, timeout=max(timeout, 1),
+            check=False, env=_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return 1, ""
     return completed.returncode, completed.stdout.strip()
 
 
-def git(path: Path, *arguments: str) -> tuple[int, str]:
-    return run(["git", "-C", str(path), *arguments])
+def git(path: Path, *arguments: str, timeout: int = 60) -> tuple[int, str]:
+    return run(["git", "-C", str(path), *arguments], timeout=timeout)
 
 
-def working_directories() -> set[Path] | None:
-    """Resolve every readable process working directory, or None when unknowable."""
+def _arguments(entry: Path) -> list[str]:
+    try:
+        return (entry / "cmdline").read_bytes().decode("utf-8", "replace").split("\0")
+    except OSError:
+        return []
+
+
+def _live_same_user(entry: Path, uid: int) -> bool:
+    try:
+        return entry.stat().st_uid == uid
+    except OSError:
+        return False
+
+
+def process_census() -> Census | None:
+    """Observe every readable process, or None when the census cannot be trusted."""
     procfs = Path("/proc")
     if not procfs.is_dir():
         return None
+    uid = os.getuid()
     directories: set[Path] = set()
+    arguments: list[str] = []
+    unplaceable = 0
     for entry in procfs.iterdir():
         if not entry.name.isdigit():
             continue
+        arguments.extend(argument for argument in _arguments(entry) if argument)
         try:
             directories.add(Path(os.readlink(entry / "cwd")))
         except OSError:
-            # A process exiting mid-scan cannot hold a worktree we then delete,
-            # and a census that cannot see itself is rejected below.
-            continue
-    return directories if Path.cwd() in directories else None
+            # Exited processes are harmless; a live same-user process we cannot
+            # place stays a reported gap, matched only by its arguments.
+            unplaceable += 1 if _live_same_user(entry, uid) else 0
+    if Path.cwd() not in directories:
+        return None
+    return Census(frozenset(directories), tuple(arguments), unplaceable)
 
 
-def occupied(path: Path, census: set[Path]) -> bool:
-    """Report whether any observed process works in the worktree or inside it."""
-    return any(directory == path or path in directory.parents for directory in census)
+def metadata_directory(path: Path) -> Path | None:
+    """Resolve a linked worktree's metadata directory from its `.git` file.
+
+    A main checkout has a `.git` directory, not a file, and is never a candidate.
+    """
+    marker = path / ".git"
+    if not marker.is_file():
+        return None
+    try:
+        content = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not content.startswith(prefix):
+        return None
+    return Path(content[len(prefix):].strip())
 
 
-def remove(path: Path) -> tuple[bool, str]:
-    """Remove one worktree, re-checking liveness immediately before deleting."""
-    census = working_directories()
+def locked(path: Path) -> bool:
+    """Report whether Git holds an explicit lock on this linked worktree."""
+    metadata = metadata_directory(path)
+    return metadata is not None and (metadata / "locked").exists()
+
+
+def remove(path: Path, verify) -> tuple[bool, str]:
+    """Remove one worktree, re-verifying liveness and state immediately first.
+
+    ``verify`` re-runs the caller's state checks, so an edit landing between
+    judgement and deletion still refuses. Forced removal is retained because
+    ignored build artifacts are expected and Git refuses them otherwise; it is
+    reached only after a fresh clean verdict.
+    """
+    census = process_census()
     if census is None:
         return False, "process-inventory-unavailable"
-    if occupied(path, census):
+    if census.holds(path):
         return False, "writers-appeared"
+    clean, detail = verify(path)
+    if not clean:
+        return False, f"changed-{detail}"
+    if metadata_directory(path) is None:
+        return False, "not-a-linked-worktree"
     status, _ = git(path, "worktree", "remove", "--force", str(path))
     if status != 0 and path.exists():
         try:

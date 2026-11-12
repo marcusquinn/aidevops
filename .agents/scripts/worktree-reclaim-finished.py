@@ -20,23 +20,27 @@ from pathlib import Path
 import sys
 import time
 
-from worktree_reclaim_evidence import evidence, references
-from worktree_reclaim_host import common_directory, directory_size, remove, run, working_directories
+from worktree_reclaim_evidence import evidence, nothing_to_lose, references
+from worktree_reclaim_host import Census, common_directory, directory_size, process_census, remove, run
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
-__all__ = ["SCHEMA", "evidence", "main", "references", "remove"]
+__all__ = ["SCHEMA", "evidence", "main", "references"]
 
 
 @dataclass(frozen=True)
 class Pass:
-    """One pass's host observations and settings, read once and shared per path."""
+    """One pass's host observation and settings, read once and shared per path."""
 
-    census: set[Path] | None
+    census: Census | None
     apply_removal: bool
     deadline: float
     limit: int = 0
     finished: dict = field(default_factory=dict)
+
+    def remaining(self) -> int:
+        """Report whole seconds left, so no child outlives the pass budget."""
+        return max(int(self.deadline - time.monotonic()), 0)
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,13 +52,17 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         help="remove authorized worktrees; default reports only")
     parser.add_argument("--budget-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=0, help="0 means no limit")
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    # The census reports absolute paths, so candidate identity must be absolute too.
+    arguments.base_dir = arguments.base_dir.absolute()
+    return arguments
 
 
 def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
     return {"schema": SCHEMA, "base_dir": str(base_dir), "dry_run": dry_run,
             "scanned": 0, "authorized": 0, "removed": 0, "failed": 0, "refused": 0,
-            "reclaimed_bytes": 0, "budget_exhausted": False, "results": []}
+            "reclaimed_bytes": 0, "budget_exhausted": False,
+            "unplaceable_processes": 0, "results": []}
 
 
 def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
@@ -62,7 +70,8 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
 
     Returns the repository needing a worktree prune, or None.
     """
-    verdict = evidence(path, current.census, current.finished)
+    verdict = evidence(path, current.census, current.finished,
+                       timeout=min(current.remaining(), 60))
     receipt["results"].append(verdict)
     if not verdict["authorized"]:
         receipt["refused"] += 1
@@ -71,8 +80,13 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     verdict["bytes"] = directory_size(path)
     if not current.apply_removal:
         return None
+    if current.remaining() == 0:
+        # Never start destructive work the budget can no longer cover.
+        receipt["budget_exhausted"] = True
+        verdict["removal"] = "budget-exhausted"
+        return None
     common = common_directory(path)
-    removed, detail = remove(path)
+    removed, detail = remove(path, nothing_to_lose)
     verdict["removal"] = detail
     if not removed:
         receipt["failed"] += 1
@@ -87,7 +101,7 @@ def candidates(base_dir: Path, current: Pass, receipt: dict):
     for path in sorted(base_dir.iterdir()):
         if not path.is_dir():
             continue
-        if time.monotonic() >= current.deadline:
+        if current.remaining() == 0:
             receipt["budget_exhausted"] = True
             return
         if current.limit and receipt["scanned"] >= current.limit:
@@ -103,9 +117,11 @@ def main() -> int:
         receipt["reason"] = "base-dir-absent"
         print(json.dumps(receipt))
         return 0
-    current = Pass(census=working_directories(), apply_removal=arguments.apply,
+    census = process_census()
+    current = Pass(census=census, apply_removal=arguments.apply,
                    deadline=time.monotonic() + max(arguments.budget_seconds, 1),
                    limit=arguments.limit)
+    receipt["unplaceable_processes"] = census.unplaceable if census else 0
     repositories: set[Path] = set()
     for path in candidates(arguments.base_dir, current, receipt):
         common = reclaim_one(path, current, receipt)
