@@ -23,9 +23,12 @@ gh() {
 	'api repos/owner/app/pulls/7')
 		local head="$HEAD_SHA"
 		[[ "$SCENARIO" != head_moved ]] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-		jq -cn --arg head "$head" --arg scenario "$SCENARIO" '{head:{sha:$head,repo:{full_name:"owner/app"}},base:{ref:"main",repo:{full_name:"owner/app"}},draft:false}
-			| if $scenario == "fork" then .head.repo.full_name = "other/app" else . end'
+		jq -cn --arg head "$head" --arg scenario "$SCENARIO" '{head:{sha:$head},base:{ref:"main"},auto_merge:null}
+			| if $scenario == "stacked" then .base.ref = "feature/x"
+			  elif $scenario == "auto" then .auto_merge = {merge_method:"squash"}
+			  else . end'
 		;;
+	'pr merge 7 --repo owner/app --disable-auto') ;;
 	'api repos/owner/app/pulls/7/files?per_page=100 --paginate')
 		[[ "$SCENARIO" != files_error ]] || return 1
 		if [[ "$SCENARIO" == no_manifest ]]; then
@@ -93,9 +96,20 @@ run_guard bump false 1 true
 run_guard bump false 1 false 1
 run_guard head_moved true 1 false
 run_guard files_error true 1 false
-run_guard fork true 1 false
 if grep -q '^authorize' "$CALLS"; then exit 1; fi
 printf 'PASS indeterminate evidence never reaches authorization\n'
+# A stacked base cannot publish; its later PR into main is gated instead.
+run_guard stacked false 0 false
+if grep -q 'files' "$CALLS"; then exit 1; fi
+run_guard auto false 1 true
+grep -q -- '--disable-auto' "$CALLS" || exit 1
+run_guard bump false 1 true
+if grep -q -- '--disable-auto' "$CALLS"; then exit 1; fi
+printf 'PASS held bump cancels pending native auto-merge only\n'
+: >"$CALLS"
+if CLOUDRON_RELEASE_GUARD_READ_ONLY=1 release_merge_guard owner/app 7 "$HEAD_SHA" 2>/dev/null; then exit 1; fi
+if grep -q 'pr-edit' "$CALLS"; then exit 1; fi
+printf 'PASS diagnostic read-only mode blocks without writing holds\n'
 
 # Library routing: unregistered repos make no helper/API calls; an unreadable
 # registry fails closed.

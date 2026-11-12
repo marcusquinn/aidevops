@@ -1301,6 +1301,8 @@ _pmp_stage_parse_and_validate() {
 	fi
 	#aidevops:trust-boundary GH#37955 — a Cloudron package version bump is a
 	# release; the raw merge below must never publish it without authority.
+	# Not skipped for snapshot hold-for-review: the live-state gate re-reads
+	# labels, so a hold removed mid-cycle must not bypass this check.
 	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
 		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" ",${pr_labels}," 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} — Cloudron release requires exact-head release authority (GH#37955)" >>"$LOGFILE"

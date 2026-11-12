@@ -55,9 +55,16 @@ release_checks() {
 	return 0
 }
 
+# Raw REST PR snapshot; callers apply their own trust checks.
+release_pr_raw() {
+	local repo="$1" pr="$2"
+	gh api "repos/${repo}/pulls/${pr}" || return 1
+	return 0
+}
+
 release_pr() {
 	local repo="$1" pr="$2" snapshot=""
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
 	#aidevops:trust-boundary — only same-repository, non-draft main updates.
 	jq -e --arg repo "$repo" '.base.repo.full_name == $repo and .head.repo.full_name == $repo and .base.ref == "main"' <<<"$snapshot" >/dev/null || release_error "PR #${pr} must be a same-repository PR against main in ${repo}." || return 1
 	jq -e '.draft == false' <<<"$snapshot" >/dev/null || release_error "PR #${pr} is a draft or its draft status is unavailable. Run: gh pr ready ${pr} --repo ${repo}; then wait for re-triggered checks to pass." || return 1
@@ -644,19 +651,22 @@ release_authorize() {
 release_is_version_bump() {
 	local repo="$1" pr="$2" head="$3" manifest_path='CloudronManifest.json'
 	local snapshot="" pages="" touched="" base_ref="" head_version="" base_version=""
-	# Same-repository, non-draft PRs against main only; anything else is unknown.
-	snapshot=$(release_pr "$repo" "$pr") || return 2
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 2
 	jq -e --arg head "$head" '.head.sha == $head' <<<"$snapshot" >/dev/null || return 2
+	base_ref=$(jq -er '.base.ref' <<<"$snapshot") || return 2
+	# Catalog publication runs on main only; a stacked base cannot publish, and
+	# its eventual PR into main is gated here in turn.
+	[[ "$base_ref" == main ]] || return 1
 	pages=$(gh api "repos/${repo}/pulls/${pr}/files?per_page=100" --paginate) || return 2
 	# Malformed pages make jq fail, which is unknown evidence, not "unchanged".
 	touched=$(jq -s --arg path "$manifest_path" 'add // [] | any(.[]; .filename == $path or .previous_filename == $path)' <<<"$pages") || return 2
 	[[ "$touched" == true ]] || return 1
-	base_ref=$(jq -er '.base.ref' <<<"$snapshot") || return 2
 	head_version=$(release_contents "$repo" "$manifest_path" "$head" | jq -r '.version // ""') || return 2
 	base_version=$(release_contents "$repo" "$manifest_path" "$base_ref" | jq -r '.version // ""') || return 2
 	[[ -n "$head_version" && -n "$base_version" ]] || return 2
 	[[ "$head_version" != "$base_version" ]] || return 1
-	printf '%s %s\n' "$base_version" "$head_version"
+	# Third field: whether native auto-merge is pending on this PR.
+	printf '%s %s %s\n' "$base_version" "$head_version" "$(jq -r 'if .auto_merge == null then "manual" else "auto" end' <<<"$snapshot")"
 	return 0
 }
 
@@ -666,22 +676,30 @@ release_is_version_bump() {
 # An unauthorized bump is held for the r924 routine (process --apply), which
 # requests approval or applies the signed standing policy. Returns 0 to allow.
 release_merge_guard() {
-	local repo="$1" pr="$2" head="$3" versions="" rc=0
+	local repo="$1" pr="$2" head="$3" versions="" rc=0 base_version="" head_version="" merge_mode=""
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ $RELEASE_SHA_PATTERN ]] ||
 		release_error 'merge-guard requires owner/repo, a PR number and a full head SHA.' || return 1
 	versions=$(release_is_version_bump "$repo" "$pr" "$head") || rc=$?
+	read -r base_version head_version merge_mode <<<"$versions" || true
 	[[ "$rc" -ne 1 ]] || return 0
 	#aidevops:trust-boundary — unknown evidence never allows a package merge.
 	[[ "$rc" -eq 0 ]] || release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked." || return 1
 	release_authorize "$repo" "$pr" "$head" && return 0
-	if [[ "${DRY_RUN:-0}" != 1 ]]; then
+	if [[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]]; then
 		# Adding holds only narrows merge eligibility; it never grants authority.
+		# r924 requests approval for any held same-repository PR (see
+		# release_retry_interrupted) or applies the standing policy.
 		if ! release_ensure_labels "$repo" ||
 			! gh_pr_edit_safe "$pr" --repo "$repo" --add-label "$RELEASE_APPROVAL_LABEL" --add-label hold-for-review >/dev/null; then
 			printf 'WARN: unable to apply release hold labels to PR #%s in %s\n' "$pr" "$repo" >&2
 		fi
+		# A pending native auto-merge would otherwise publish without this gate.
+		if [[ "$merge_mode" == auto ]] &&
+			! gh pr merge "$pr" --repo "$repo" --disable-auto >/dev/null 2>&1; then
+			printf 'WARN: unable to disable native auto-merge on held PR #%s in %s\n' "$pr" "$repo" >&2
+		fi
 	fi
-	release_error "PR #${pr} changes the ${repo} release version (${versions% *} -> ${versions#* }) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
+	release_error "PR #${pr} changes the ${repo} release version (${base_version} -> ${head_version}) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
 	return 1
 }
 
@@ -841,7 +859,7 @@ release_supersede_held_pr() {
 		printf '%s PR #%s: would supersede (%s) (dry run)\n' "$repo" "$pr" "$reason"
 		return 0
 	fi
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
 	#aidevops:trust-boundary — re-read before closing: only an unchanged,
 	# same-repository, trusted worker PR that is still held may be superseded.
 	if ! jq -e --arg repo "$repo" --arg head "$head" --arg approval "$RELEASE_APPROVAL_LABEL" \

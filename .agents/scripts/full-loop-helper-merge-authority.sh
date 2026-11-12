@@ -311,11 +311,13 @@ _merge_report_author_lookup_failure() {
 _merge_pr_label_holds_clear() {
 	local pr_number="$1"
 	local labels_padded="$2"
-	local repo="${3:-}" head="${4:-}"
+	local repo="${3:-}" head="${4:-}" diagnostic_only="${5:-0}"
 	#aidevops:trust-boundary — a release hold survives removal of the ordinary
 	# PR hold, and an unlabelled Cloudron manifest version bump (GH#37955) is a
 	# release too. Every merge caller must prove authorization for this head.
-	if ! cloudron_release_merge_guard "$repo" "$pr_number" "$head" "$labels_padded"; then
+	# Diagnostic preflights evaluate the same gate without applying holds.
+	if ! CLOUDRON_RELEASE_GUARD_READ_ONLY="$diagnostic_only" \
+		cloudron_release_merge_guard "$repo" "$pr_number" "$head" "$labels_padded"; then
 		print_error "Merge blocked: no verified exact-head Cloudron release approval"
 		return 1
 	fi
@@ -422,7 +424,7 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 
-	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" || return 1
+	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" "$diagnostic_only" || return 1
 	_merge_interactive_preference_clear "$pr_number" "$repo" "$labels_csv" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot

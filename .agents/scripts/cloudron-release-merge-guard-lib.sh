@@ -17,9 +17,11 @@
 
 [[ -n "${_CLOUDRON_RELEASE_MERGE_GUARD_LIB_LOADED:-}" ]] && return 0
 _CLOUDRON_RELEASE_MERGE_GUARD_LIB_LOADED=1
-_CLOUDRON_RELEASE_MERGE_GUARD_DIR="${BASH_SOURCE[0]%/*}"
+_CLOUDRON_RELEASE_MERGE_GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 
-# Returns 0 when the merge may proceed, 1 when it is blocked.
+# Returns 0 when the merge may proceed, 1 when it is blocked. With
+# CLOUDRON_RELEASE_GUARD_READ_ONLY=1 (diagnostic preflight) or DRY_RUN=1 the
+# decision is identical but no hold labels are written.
 cloudron_release_merge_guard() {
 	local repo="$1" pr="$2" head="$3" labels_padded="${4:-}"
 	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
@@ -35,8 +37,10 @@ cloudron_release_merge_guard() {
 	fi
 	# Unregistered repositories make no API calls.
 	[[ -f "$repos_file" ]] || return 0
+	# GitHub slugs are case-insensitive; a differently cased caller argument
+	# must not classify a registered package as unregistered.
 	jq -e --arg repo "$repo" \
-		'any(.initialized_repos[]?; .slug == $repo and .app_type == "cloudron-package" and .maintenance != false)' \
+		'any(.initialized_repos[]?; ((.slug // "") | ascii_downcase) == ($repo | ascii_downcase) and .app_type == "cloudron-package" and .maintenance != false)' \
 		"$repos_file" >/dev/null 2>&1 || registered_rc=$?
 	[[ "$registered_rc" -ne 1 ]] || return 0
 	# An unreadable registry fails closed rather than skipping the gate.
