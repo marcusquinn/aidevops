@@ -320,6 +320,10 @@ The scanner:
    runtime-owned blocked exits replacing only `status:in-progress` with
    `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
    (live blocked state and a trusted blocked release newer than the last claim),
+   signed worker-permission grants that remove `needs-maintainer-permissions`
+   (optionally with `status:blocked`, adding only `status:available` or
+   `auto-dispatch`) with `permission_approval_verified: v1-current-state`
+   (the signed grant re-verified against the latest live request, GH#37906),
    and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)

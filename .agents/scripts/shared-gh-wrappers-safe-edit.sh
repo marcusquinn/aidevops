@@ -300,6 +300,20 @@ _gh_audit_record_op() {
 			flags_json='{"approval_verified":"v2-current-state"}'
 		fi
 	fi
+	# aidevops:trust-boundary — a signed worker-permission grant clears its
+	# needs-maintainer-permissions hold only after the grant comment is posted.
+	# Re-verify that signed grant against the latest live request (GH#37906);
+	# caller provenance alone never earns the exemption.
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_apply_permission_approval_state" ]] &&
+		[[ "$caller_script" == */agents/scripts/approval-helper-permissions.sh ||
+			"$caller_script" == */.agents/scripts/approval-helper-permissions.sh ]] &&
+		command -v cmd_verify_permissions &>/dev/null; then
+		local permission_verification=""
+		permission_verification=$(cmd_verify_permissions issue "$number" "$repo" 2>/dev/null) || permission_verification=""
+		if [[ "$permission_verification" == "VERIFIED" ]]; then
+			flags_json='{"permission_approval_verified":"v1-current-state"}'
+		fi
+	fi
 	# aidevops:trust-boundary — trusted-author NMR normalization is expected only
 	# when the immutable snapshots show a pure NMR removal and live GitHub state
 	# independently confirms both issue-author and current-token write authority.

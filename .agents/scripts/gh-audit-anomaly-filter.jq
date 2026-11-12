@@ -28,6 +28,21 @@ def expected_approval_transition:
   and ((.before.labels // []) | index($nmr) != null)
   and ((.after.labels // []) | index($nmr) == null);
 
+def expected_permission_approval_transition:
+  comparable_state
+  and .op == $issue_edit
+  and .caller_function == "_apply_permission_approval_state"
+  and framework_script("approval-helper-permissions.sh")
+  and .flags.permission_approval_verified == "v1-current-state"
+  and .suspicious == [("protected_label_removed:" + $permission)]
+  and ((.delta.labels_removed // []) | index($permission) != null)
+  and (((.delta.labels_removed // []) - [$permission, "status:blocked"]) | length == 0)
+  and (((.delta.labels_added // []) - ["status:available", "auto-dispatch"]) | length == 0)
+  and (.delta.title_delta_pct == 0)
+  and (.delta.body_delta_pct == 0)
+  and ((.before.labels // []) | index($permission) != null)
+  and ((.after.labels // []) | index($permission) == null);
+
 def expected_permission_block_transition:
   comparable_state
   and .op == $issue_edit
@@ -173,6 +188,7 @@ def unavailable_capture_only:
 select(try ((.suspicious | length) > 0) catch true)
 | select((try (
   expected_approval_transition
+  or expected_permission_approval_transition
   or expected_permission_block_transition
   or expected_trusted_author_nmr_transition
   or expected_full_loop_review_transition
