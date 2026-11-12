@@ -271,7 +271,7 @@ def retire_foreign_worktree(
     if found is not None:
         if path.resolve(strict=True) != path:
             raise ValueError("canonical-source-required")
-        generation = found["generation_id"]
+        generation = str(found["generation_id"])
     if generation is None:
         raise StoreConflict("foreign-source-absent")
     generation = str(UUID(generation))
