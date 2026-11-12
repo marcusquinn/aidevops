@@ -55,9 +55,16 @@ release_checks() {
 	return 0
 }
 
+# Raw REST PR snapshot; callers apply their own trust checks.
+release_pr_raw() {
+	local repo="$1" pr="$2"
+	gh api "repos/${repo}/pulls/${pr}" || return 1
+	return 0
+}
+
 release_pr() {
 	local repo="$1" pr="$2" snapshot=""
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || release_error "Unable to read PR #${pr} in ${repo}." || return 1
 	#aidevops:trust-boundary — only same-repository, non-draft main updates.
 	jq -e --arg repo "$repo" '.base.repo.full_name == $repo and .head.repo.full_name == $repo and .base.ref == "main"' <<<"$snapshot" >/dev/null || release_error "PR #${pr} must be a same-repository PR against main in ${repo}." || return 1
 	jq -e '.draft == false' <<<"$snapshot" >/dev/null || release_error "PR #${pr} is a draft or its draft status is unavailable. Run: gh pr ready ${pr} --repo ${repo}; then wait for re-triggered checks to pass." || return 1
@@ -638,6 +645,94 @@ release_authorize() {
 	return 1
 }
 
+# GH#37955: does exact head $3 of PR $2 change the CloudronManifest.json
+# version against its base branch tip? Returns 0 for a release bump, 1 when it
+# is not one, and 2 when the evidence is unavailable (callers fail closed).
+release_is_version_bump() {
+	local repo="$1" pr="$2" head="$3" manifest_path='CloudronManifest.json'
+	local snapshot="" pages="" touched="" base_ref="" head_version="" base_version=""
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 2
+	jq -e --arg head "$head" '.head.sha == $head' <<<"$snapshot" >/dev/null || return 2
+	base_ref=$(jq -er '.base.ref' <<<"$snapshot") || return 2
+	# Catalog publication runs on main only; a stacked base cannot publish, and
+	# its eventual PR into main is gated here in turn.
+	[[ "$base_ref" == main ]] || return 1
+	pages=$(gh api "repos/${repo}/pulls/${pr}/files?per_page=100" --paginate) || return 2
+	# Malformed pages make jq fail, which is unknown evidence, not "unchanged".
+	touched=$(jq -s --arg path "$manifest_path" 'add // [] | any(.[]; .filename == $path or .previous_filename == $path)' <<<"$pages") || return 2
+	[[ "$touched" == true ]] || return 1
+	head_version=$(release_contents "$repo" "$manifest_path" "$head" | jq -r '.version // ""') || return 2
+	base_version=$(release_contents "$repo" "$manifest_path" "$base_ref" | jq -r '.version // ""') || return 2
+	[[ -n "$head_version" && -n "$base_version" ]] || return 2
+	[[ "$head_version" != "$base_version" ]] || return 1
+	# Third field: whether native auto-merge is pending on this PR. Fourth: an
+	# independent review hold (hold-for-review without the release label).
+	printf '%s %s %s\n' "$base_version" "$head_version" "$(jq -r --arg label "$RELEASE_APPROVAL_LABEL" '
+		(if .auto_merge == null then "manual" else "auto" end) + " " +
+		(if any(.labels[]?; .name == "hold-for-review") and all(.labels[]?; .name != $label) then "independent" else "none" end)' <<<"$snapshot")"
+	return 0
+}
+
+# GH#37955: best-effort cancellation of a pending native auto-merge on a PR the
+# release gate denies; otherwise GitHub could merge (and publish) once checks
+# pass. $3 is "auto"/"manual" from a fresh snapshot; any other value re-reads,
+# and unreadable state still attempts cancellation. Never writes under DRY_RUN
+# or CLOUDRON_RELEASE_GUARD_READ_ONLY. Always returns 0.
+release_cancel_auto_merge() {
+	local repo="$1" pr="$2" mode="${3:-}" snapshot=""
+	[[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]] || return 0
+	if [[ "$mode" != auto && "$mode" != manual ]]; then
+		mode=auto
+		if snapshot=$(release_pr_raw "$repo" "$pr" 2>/dev/null) &&
+			jq -e '.auto_merge == null' <<<"$snapshot" >/dev/null 2>&1; then
+			mode=manual
+		fi
+	fi
+	[[ "$mode" == auto ]] || return 0
+	gh pr merge "$pr" --repo "$repo" --disable-auto >/dev/null 2>&1 ||
+		printf 'WARN: unable to disable native auto-merge on held PR #%s in %s\n' "$pr" "$repo" >&2
+	return 0
+}
+
+# GH#37955: merge-time release gate for every transport (pulse and full-loop).
+# A manifest version change publishes a catalog release on merge, so it needs
+# exact-head release authority whether or not a release request was ever made.
+# An unauthorized bump is held for the r924 routine (process --apply), which
+# requests approval or applies the signed standing policy. Returns 0 to allow.
+release_merge_guard() {
+	local repo="$1" pr="$2" head="$3" versions="" rc=0 base_version="" head_version="" merge_mode="" review_hold=""
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ $RELEASE_SHA_PATTERN ]] ||
+		release_error 'merge-guard requires owner/repo, a PR number and a full head SHA.' || return 1
+	versions=$(release_is_version_bump "$repo" "$pr" "$head") || rc=$?
+	read -r base_version head_version merge_mode review_hold <<<"$versions" || true
+	[[ "$rc" -ne 1 ]] || return 0
+	#aidevops:trust-boundary — unknown evidence never allows a package merge,
+	# and must not leave a native auto-merge able to publish either.
+	if [[ "$rc" -ne 0 ]]; then
+		release_cancel_auto_merge "$repo" "$pr"
+		release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked."
+		return 1
+	fi
+	release_authorize "$repo" "$pr" "$head" && return 0
+	if [[ "$review_hold" == independent ]]; then
+		# #aidevops:trust-boundary — labelling would let release processing
+		# adopt and later clear another workflow's hold. The PR stays held; the
+		# guard re-labels it once that independent hold is resolved.
+		printf 'WARN: PR #%s in %s keeps its independent hold-for-review; release hold labels not added\n' "$pr" "$repo" >&2
+	elif [[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]]; then
+		# Adding holds only narrows merge eligibility; it never grants authority.
+		# r924 requests approval for any held same-repository PR (see
+		# release_retry_interrupted) or applies the standing policy.
+		if ! release_ensure_labels "$repo" ||
+			! gh_pr_edit_safe "$pr" --repo "$repo" --add-label "$RELEASE_APPROVAL_LABEL" --add-label hold-for-review >/dev/null; then
+			printf 'WARN: unable to apply release hold labels to PR #%s in %s\n' "$pr" "$repo" >&2
+		fi
+	fi
+	release_cancel_auto_merge "$repo" "$pr" "$merge_mode"
+	release_error "PR #${pr} changes the ${repo} release version (${base_version} -> ${head_version}) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
+	return 1
+}
+
 # Held worker PRs: same-repository, non-draft, labelled for release approval.
 # Prints a number-sorted array of {number, head, issues}. Fails closed on a
 # malformed or possibly truncated page.
@@ -794,7 +889,7 @@ release_supersede_held_pr() {
 		printf '%s PR #%s: would supersede (%s) (dry run)\n' "$repo" "$pr" "$reason"
 		return 0
 	fi
-	snapshot=$(gh api "repos/${repo}/pulls/${pr}") || return 1
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
 	#aidevops:trust-boundary — re-read before closing: only an unchanged,
 	# same-repository, trusted worker PR that is still held may be superseded.
 	if ! jq -e --arg repo "$repo" --arg head "$head" --arg approval "$RELEASE_APPROVAL_LABEL" \
@@ -952,6 +1047,14 @@ main() {
 		[[ $# -eq 4 ]] || return 1
 		release_authorize "$arg2" "$arg3" "$arg4" || return 1
 		;;
+	merge-guard)
+		[[ $# -eq 4 ]] || return 1
+		release_merge_guard "$arg2" "$arg3" "$arg4" || return 1
+		;;
+	cancel-auto-merge)
+		[[ $# -eq 3 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$arg3" =~ ^[1-9][0-9]*$ ]] || return 1
+		release_cancel_auto_merge "$arg2" "$arg3"
+		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
 		release_request "$arg2" "$arg3" || return $?
@@ -988,7 +1091,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac
