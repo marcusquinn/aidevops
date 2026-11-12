@@ -346,6 +346,44 @@ test_inventory_requires_owner_only_credentials() {
 	return 0
 }
 
+test_systemd_creds_round_trip() {
+	local name="systemd-creds backend round trip"
+	local help=""
+	help=$(systemd-creds --help 2>/dev/null) || help=""
+	if [[ "$help" != *--refuse-null* ]] || ! systemd-creds --user --with-key=host encrypt - - </dev/null >/dev/null 2>&1; then
+		print_result "$name (skipped: unsupported systemd-creds)" 0
+		return 0
+	fi
+	setup
+	trap 'teardown' RETURN
+	mkdir -p "$TEST_DIR/home"
+	local home="$TEST_DIR/home" cred="$TEST_DIR/home/.config/aidevops/creds/ENC_TEST_KEY.cred"
+	local value="enc-test-value-0123456789"
+	printf '%s' "$value" | HOME="$home" bash "$HELPER" set ENC_TEST_KEY --backend systemd-creds >/dev/null 2>&1 || {
+		print_result "$name" 1 "set failed"
+		return 0
+	}
+	local got="" injected="" listed="" mode=""
+	got=$(HOME="$home" bash "$HELPER" get ENC_TEST_KEY 2>/dev/null) || got=""
+	injected=$(HOME="$home" bash "$HELPER" ENC_TEST_KEY -- bash -c 'printf %s "${#ENC_TEST_KEY}"' 2>/dev/null) || injected=""
+	listed=$(HOME="$home" bash "$HELPER" list 2>&1) || listed=""
+	mode=$(stat -c %a "$cred" 2>/dev/null) || mode=""
+	local ok=0 reason=""
+	[[ "$got" == "$value" ]] || { ok=1; reason="get mismatch"; }
+	[[ "$injected" == "${#value}" ]] || { ok=1; reason="$reason injection mismatch"; }
+	[[ "$listed" == *ENC_TEST_KEY* && "$listed" != *"$value"* ]] || { ok=1; reason="$reason list leak/missing"; }
+	[[ "$mode" == 600 ]] || { ok=1; reason="$reason mode=$mode"; }
+	if grep -q -F -- "$value" "$cred"; then
+		ok=1
+		reason="$reason plaintext on disk"
+	fi
+	HOME="$home" bash "$HELPER" check ENC_TEST_KEY || { ok=1; reason="$reason check failed"; }
+	HOME="$home" bash "$HELPER" rm ENC_TEST_KEY --yes --skip-dependents >/dev/null 2>&1 || { ok=1; reason="$reason rm failed"; }
+	[[ ! -e "$cred" ]] || { ok=1; reason="$reason rm left ciphertext"; }
+	print_result "$name" "$ok" "$reason"
+	return 0
+}
+
 teardown() {
 	export PATH="$ORIG_PATH"
 	if [[ -n "$TEST_DIR" && -d "$TEST_DIR" ]]; then
@@ -1436,6 +1474,7 @@ main() {
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure
 	test_inventory_requires_owner_only_credentials
+	test_systemd_creds_round_trip
 
 	echo ""
 	echo "Tests run: $TESTS_RUN"
