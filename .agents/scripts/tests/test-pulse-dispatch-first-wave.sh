@@ -266,6 +266,27 @@ if _dispatch_cycle_budget_admits_round fixture before; then
 fi
 printf 'PASS first wave preserves the per-candidate ceremony reserve\n'
 
+(
+	# GH#37874: an expired fixed cycle is not a dispatch deadline while
+	# this wrapper owns a fresh lease. Standalone calls above remain bounded.
+	source "${SCRIPT_DIR}/pulse-watchdog.sh"
+	source "${SCRIPT_DIR}/pulse-instance-lock.sh"
+	LOCKDIR="${TEST_ROOT}/elastic-first-wave"
+	mkdir "$LOCKDIR"
+	printf '%s\n' "$$" >"${LOCKDIR}/pid"
+	printf '1\n' >"${LOCKDIR}/supervisor_heartbeat_epoch"
+	_pulse_instance_lock_heartbeat
+	PULSE_START_EPOCH=1 PULSE_STALE_THRESHOLD=3600 PULSE_LOCK_MAX_AGE_S=1800
+	_PULSE_ELASTIC_DISPATCH=1
+	[[ "$(_dispatch_round_budget_plan before)" == 'full 0' ]]
+	if _pulse_cycle_remaining_seconds 0; then exit 1; fi
+	# A child must never refresh another owner's lease.
+	printf '99999999\n' >"${LOCKDIR}/pid"
+	if _pulse_instance_lock_heartbeat; then exit 1; fi
+	if _pulse_dispatch_lease_active; then exit 1; fi
+)
+printf 'PASS first-wave dispatch extends only a fresh, matching owner lease\n'
+
 # GH#33944: post-label refill must not spend its admission budget normalizing
 # the entire blocked backlog before already-available candidates can launch.
 rm -f "$STOP_FLAG"

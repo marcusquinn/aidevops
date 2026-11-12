@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.181] - 2026-11-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+## [3.39.180] - 2026-11-12
+
+### Fixed
+
+- reconcile resolved large-file debt before dispatch (#37877)
+- surface aged blocked draft checkpoints (#37871)
+
 ## [3.39.179] - 2026-11-12
 
 ### Added

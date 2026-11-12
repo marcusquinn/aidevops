@@ -42,7 +42,7 @@ _dispatch_cleanup_cycle_cache() {
 	triage_file=$(_dispatch_cycle_cache_path "pulse-triage-prepass" ".done" 2>/dev/null || true)
 	for cache_file in "$candidate_file" "$skip_candidate_file" "$triage_file"; do
 		[[ -n "$cache_file" && ( -f "$cache_file" || -L "$cache_file" ) ]] || continue
-		rm -f "$cache_file" 2>/dev/null || true
+		rm -f "$cache_file" "${cache_file}.consumed" 2>/dev/null || true
 	done
 	return 0
 }
@@ -54,7 +54,7 @@ _dispatch_invalidate_candidate_snapshot() {
 	for dependency_normalization_mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
 		snapshot_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$dependency_normalization_mode") || continue
 		if [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]]; then
-			rm -f "$snapshot_file" 2>/dev/null || return 1
+			rm -f "$snapshot_file" "${snapshot_file}.consumed" 2>/dev/null || return 1
 			removed_snapshot=1
 		fi
 	done
@@ -64,12 +64,36 @@ _dispatch_invalidate_candidate_snapshot() {
 	return 0
 }
 
+# Append-only consumption survives dispatch command substitutions and floor
+# refills. Each candidate still passes the authoritative live ceremony gate.
+_dispatch_ranked_candidate_consumed() {
+	local candidate_json="$1" snapshot="" key=""
+	snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "${dependency_normalization_mode:-normalize}") || return 0
+	[[ -f "$snapshot" && ! -L "$snapshot" && ! -L "${snapshot}.consumed" ]] || return 0
+	key=$(jq -cr '[.repo_slug,.number]' <<<"$candidate_json") || return 0
+	printf '%s\n' "$key" >>"${snapshot}.consumed"
+	return 0
+}
+
+_dispatch_filter_consumed_ranked_candidates() {
+	local snapshot="$1" candidates="$2" consumed="[]"
+	if [[ -f "${snapshot}.consumed" && ! -L "${snapshot}.consumed" ]]; then
+		consumed=$(jq -sc '.' "${snapshot}.consumed") || consumed="[]"
+	fi
+	jq -c --argjson consumed "$consumed" 'map(select([.repo_slug,.number] as $key | $consumed | any(. == $key) | not))' <<<"$candidates"
+	return $?
+}
+
 _dispatch_ranked_candidates_json() {
 	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
 	local dependency_normalization_mode="${2:-normalize}"
 	local snapshot_file="" snapshot_tmp="" candidates_json="[]"
-	local now_epoch="" snapshot_ttl=120
+	local now_epoch="" snapshot_ttl=300 started_epoch=0
 	now_epoch=$(date +%s) || return 1
+	started_epoch="$now_epoch"
+	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		snapshot_ttl=$(_dispatch_enumeration_expected_seconds)
+	fi
 	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit=1000
 	[[ "$dependency_normalization_mode" == "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" ]] || dependency_normalization_mode="normalize"
 	if [[ "${PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED:-1}" == "0" ]]; then
@@ -82,11 +106,15 @@ _dispatch_ranked_candidates_json() {
 	}
 	if [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] && jq -e \
 		--argjson now "$now_epoch" --argjson ttl "$snapshot_ttl" \
-		'type == "object" and (.captured_at | type == "number") and .captured_at <= $now and .captured_at > ($now - $ttl) and (.candidates | type == "array")' \
+		'type == "object" and (.captured_at | type == "number") and .captured_at <= $now and .captured_at > ($now - ([$ttl, (.census_seconds // 0)] | max)) and (.candidates | type == "array")' \
 		"$snapshot_file" >/dev/null 2>&1; then
-		jq -c '.candidates' "$snapshot_file"
-		_dispatch_stats_increment "dispatch_candidate_snapshot_hit"
-		return 0
+		candidates_json=$(jq -c '.candidates' "$snapshot_file") || return 1
+		candidates_json=$(_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json") || return 1
+		if [[ "$candidates_json" != '[]' ]]; then
+			printf '%s\n' "$candidates_json"
+			_dispatch_stats_increment "dispatch_candidate_snapshot_hit"
+			return 0
+		fi
 	fi
 	if [[ -L "$snapshot_file" ]]; then
 		rm -f "$snapshot_file" 2>/dev/null || {
@@ -98,15 +126,61 @@ _dispatch_ranked_candidates_json() {
 	if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$candidates_json"; then
 		return 1
 	fi
+	# TTL starts at completion, not at the beginning of an expensive census.
+	now_epoch=$(date +%s) || return 1
+	((now_epoch - started_epoch <= snapshot_ttl)) || snapshot_ttl=$((now_epoch - started_epoch))
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --argjson captured_at "$now_epoch" \
-		--argjson candidates "$candidates_json" '{captured_at:$captured_at,candidates:$candidates}' >"$snapshot_tmp") 2>/dev/null; then
+		--argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" '{captured_at:$captured_at,census_seconds:$census_seconds,candidates:$candidates}' >"$snapshot_tmp") 2>/dev/null; then
 		mv "$snapshot_tmp" "$snapshot_file" 2>/dev/null || rm -f "$snapshot_tmp" 2>/dev/null || true
 	elif [[ -n "$snapshot_tmp" ]]; then
 		rm -f "$snapshot_tmp" 2>/dev/null || true
 	fi
 	_dispatch_stats_increment "dispatch_candidate_snapshot_miss"
-	printf '%s\n' "$candidates_json"
+	_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json"
+	return 0
+}
+
+# Cache only claims with explicit TTL evidence. The newest trusted comment must
+# still be that exact, unedited dispatch claim. A release, new claim, edit,
+# deleted comment or failed lookup immediately falls through to live ceremony.
+_dispatch_claim_cache_evidence() {
+	local issue="$1" repo="$2" comments=""
+	comments=$(gh api --paginate "repos/${repo}/issues/${issue}/comments?per_page=100" \
+		--jq '[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")]' 2>/dev/null) || return 1
+	jq -cse 'add | sort_by(.created_at,.id) | last // empty | select((.body // "") | test("(^|\n)Dispatching worker")) | {id,created_at,updated_at}' <<<"$comments"
+	return $?
+}
+
+_dispatch_claim_cache_record() {
+	local issue="$1" repo="$2" lines="$3" path="" evidence="" temporary="" now=0 ttl=0
+	local ttl_pattern='(TTL:|window:) ([0-9]+)s remaining'
+	[[ "$lines" =~ $ttl_pattern ]] || return 0
+	ttl="${BASH_REMATCH[2]}"
+	[[ "$ttl" =~ ^[1-9][0-9]{0,4}$ ]] && ((ttl <= 7200)) || return 0
+	now=$(date +%s) || return 0
+	path=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
+	evidence=$(_dispatch_claim_cache_evidence "$issue" "$repo") || return 0
+	mkdir -p "${path%/*}" || return 0
+	temporary=$(mktemp "${path}.claim.XXXXXX") || return 0
+	if (umask 077 && jq -nc --argjson evidence "$evidence" --argjson expires "$((now + ttl))" \
+		'{evidence:$evidence,expires:$expires}' >"$temporary"); then
+		mv -f "$temporary" "${path}.claim" || rm -f "$temporary"
+	else
+		rm -f "$temporary"
+	fi
+	return 0
+}
+
+_dispatch_claim_cache_hit() {
+	local issue="$1" repo="$2" path="" now=0 evidence=""
+	path=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
+	path="${path}.claim"
+	[[ -f "$path" && ! -L "$path" ]] || return 1
+	now=$(date +%s) || return 1
+	jq -e --argjson now "$now" '.expires > $now and .expires <= ($now + 7200)' "$path" >/dev/null 2>&1 || return 1
+	evidence=$(_dispatch_claim_cache_evidence "$issue" "$repo") || return 1
+	jq -e --argjson evidence "$evidence" '.evidence == $evidence' "$path" >/dev/null 2>&1 || return 1
 	return 0
 }
 
