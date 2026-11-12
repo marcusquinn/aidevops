@@ -34,7 +34,7 @@ from hosting_fleet_plan import (  # noqa: E402
     CLEAN_STATES, build_plan,
 )
 from hosting_fleet_privacy import config_pairs, fleet_entities, merge_private_entities  # noqa: E402
-from hosting_fleet_move import run_move  # noqa: E402
+from hosting_fleet_move_cli import run_move  # noqa: E402
 from hosting_fleet_provision import (  # noqa: E402
     assert_plan_current,
     build_provision,
