@@ -123,6 +123,10 @@ load_functions() {
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
+	# Unregistered fixture repos: the Cloudron release gate makes no API calls.
+	export AIDEVOPS_REPOS_FILE="${TEST_ROOT}/no-repos.json"
+	# shellcheck source=../cloudron-release-merge-guard-lib.sh
+	source "${MERGE_AUTHORITY_SCRIPT%/*}/cloudron-release-merge-guard-lib.sh"
 	return 0
 }
 

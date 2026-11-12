@@ -67,6 +67,11 @@ source "${SCRIPT_DIR}/release-lane-helper.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/manual-release-hold-helper.sh"
 
+# GH#37955: Cloudron manifest version bumps require release authority.
+# shellcheck source=./cloudron-release-merge-guard-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/cloudron-release-merge-guard-lib.sh"
+
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
