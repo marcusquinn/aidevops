@@ -1419,6 +1419,11 @@ _clean_capacity_patches_upstream() {
 	local wt_branch="$1" default_br="$2" lines="" ahead="" merges=""
 	ahead=$(git rev-list --count "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
 	[[ "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]] || return 1
+	# Identical trees prove all content is upstream, even with ahead merges.
+	local branch_tree="" upstream_tree=""
+	branch_tree=$(git rev-parse "refs/heads/$wt_branch^{tree}" 2>/dev/null) || return 1
+	upstream_tree=$(git rev-parse "origin/$default_br^{tree}" 2>/dev/null) || return 1
+	[[ -n "$branch_tree" && "$branch_tree" == "$upstream_tree" ]] && return 0
 	# Patch IDs cannot prove changes introduced by merges: git cherry omits them.
 	merges=$(git rev-list --count --merges "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
 	[[ "$merges" =~ ^[0-9]+$ && "$merges" -eq 0 ]] || return 1
