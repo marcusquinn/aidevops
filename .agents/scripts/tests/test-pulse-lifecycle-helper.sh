@@ -671,6 +671,10 @@ test_managed_start_ignores_non_active_running_pids() {
 	result=$(
 		# shellcheck source=../pulse-lifecycle-helper.sh
 		source "$HELPER"
+		_PULSE_LAUNCHD_START_WAIT=3
+		sleep() {
+			return 0
+		}
 		_is_running() {
 			return 0
 		}
@@ -691,7 +695,7 @@ test_managed_start_ignores_non_active_running_pids() {
 			IFS= read -r find_calls <"$find_count_file" || find_calls=0
 			find_calls=$((find_calls + 1))
 			printf '%s\n' "$find_calls" >"$find_count_file"
-			if [[ "$find_calls" -lt 2 ]]; then
+			if [[ "$find_calls" -lt 4 ]]; then
 				return 1
 			fi
 			printf '303\n'
