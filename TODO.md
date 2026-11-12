@@ -2045,6 +2045,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18975 feat(ci): opt-in Pulse routine that auto-applies the pull_request_target Actions event policy #auto-dispatch #feat #priority:high blocked-by:t18974 ref:GH#37848
 
+- [ ] t18976 feat(cloudron): GitHub-signed catalog publish commits with atomic tag push #auto-dispatch #feat #priority:low ref:GH#37852
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
