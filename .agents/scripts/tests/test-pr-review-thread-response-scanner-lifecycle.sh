@@ -115,6 +115,28 @@ test_mark_blocked_never_requests_rereview() {
 	return 0
 }
 
+test_mark_blocked_rejects_capacity_and_mark_progress_records() {
+	setup_test_env
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	local rc=0
+	$SCANNER mark-blocked owner/repo 1 infrastructure session_capacity_insufficient 2>/dev/null || rc=$?
+	if [[ "$rc" -ne 0 && ! -f "$state_file" ]]; then
+		print_result "mark-blocked refuses session_capacity reason" 0
+	else
+		print_result "mark-blocked refuses session_capacity reason" 1 "rc=${rc}"
+	fi
+	$SCANNER mark-progress owner/repo 1 partial_enrichment
+	if grep -Fxq 'analysis_complete=false' "$state_file" &&
+		grep -Fxq 'maintainer_attention=false' "$state_file" &&
+		grep -Fxq 'blocked_by=none' "$state_file"; then
+		print_result "mark-progress records progress without attention" 0
+	else
+		print_result "mark-progress records progress without attention" 1
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_mark_blocked_publishes_continuation_finding() {
 	setup_test_env
 	local gh_log="${TEST_ROOT}/continuation-gh.log"
