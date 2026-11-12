@@ -27,6 +27,7 @@ gate refuses to merge worker PRs.
 - The toast shows `[WARN] N repos need workflow re-sync` (cross-account secrets:inherit)
 - A worker PR sits BLOCKED with all-green CI
 - You just registered a new repo via `aidevops init` or hand-edited `repos.json`
+  (the full new-repository checklist is `reference/repo-onboarding.md`)
 - You're onboarding a new operator and want every active repo's secrets right
 
 **Use `/onboarding` instead when**:
