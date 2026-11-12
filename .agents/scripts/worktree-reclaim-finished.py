@@ -13,25 +13,30 @@ the only protection and each fails closed.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import sys
 import time
 
-from worktree_reclaim_evidence import (
-    common_directory,
-    directory_size,
-    evidence,
-    references,
-    remove,
-    run,
-    working_directories,
-)
+from worktree_reclaim_evidence import evidence, references
+from worktree_reclaim_host import common_directory, directory_size, remove, run, working_directories
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
 __all__ = ["SCHEMA", "evidence", "main", "references", "remove"]
+
+
+@dataclass(frozen=True)
+class Pass:
+    """One pass's host observations and settings, read once and shared per path."""
+
+    census: set[Path] | None
+    apply_removal: bool
+    deadline: float
+    limit: int = 0
+    finished: dict = field(default_factory=dict)
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -52,20 +57,19 @@ def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
             "reclaimed_bytes": 0, "budget_exhausted": False, "results": []}
 
 
-def reclaim_one(path: Path, census: set[Path] | None, cache: dict, receipt: dict,
-                *, apply_removal: bool) -> Path | None:
+def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     """Judge one worktree and, when authorized and applying, remove it.
 
     Returns the repository needing a worktree prune, or None.
     """
-    verdict = evidence(path, census, cache)
+    verdict = evidence(path, current.census, current.finished)
     receipt["results"].append(verdict)
     if not verdict["authorized"]:
         receipt["refused"] += 1
         return None
     receipt["authorized"] += 1
     verdict["bytes"] = directory_size(path)
-    if not apply_removal:
+    if not current.apply_removal:
         return None
     common = common_directory(path)
     removed, detail = remove(path)
@@ -78,15 +82,15 @@ def reclaim_one(path: Path, census: set[Path] | None, cache: dict, receipt: dict
     return common
 
 
-def candidates(base_dir: Path, receipt: dict, deadline: float, limit: int):
+def candidates(base_dir: Path, current: Pass, receipt: dict):
     """Yield each worktree directory until the budget or limit stops the pass."""
     for path in sorted(base_dir.iterdir()):
         if not path.is_dir():
             continue
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= current.deadline:
             receipt["budget_exhausted"] = True
             return
-        if limit and receipt["scanned"] >= limit:
+        if current.limit and receipt["scanned"] >= current.limit:
             return
         receipt["scanned"] += 1
         yield path
@@ -99,13 +103,12 @@ def main() -> int:
         receipt["reason"] = "base-dir-absent"
         print(json.dumps(receipt))
         return 0
-    deadline = time.monotonic() + max(arguments.budget_seconds, 1)
-    census = working_directories()
-    cache: dict = {}
+    current = Pass(census=working_directories(), apply_removal=arguments.apply,
+                   deadline=time.monotonic() + max(arguments.budget_seconds, 1),
+                   limit=arguments.limit)
     repositories: set[Path] = set()
-    for path in candidates(arguments.base_dir, receipt, deadline, arguments.limit):
-        common = reclaim_one(path, census, cache, receipt,
-                             apply_removal=arguments.apply)
+    for path in candidates(arguments.base_dir, current, receipt):
+        common = reclaim_one(path, current, receipt)
         if common is not None:
             repositories.add(common)
     for common in repositories:

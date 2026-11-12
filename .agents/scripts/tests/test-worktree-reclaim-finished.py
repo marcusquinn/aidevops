@@ -18,6 +18,9 @@ if not GIT:
     raise RuntimeError("Git is required for fixture verification")
 SPEC = importlib.util.spec_from_file_location("reclaim", SCRIPTS / "worktree-reclaim-finished.py")
 reclaim = importlib.util.module_from_spec(SPEC)
+# Register before executing: the module defines a dataclass, which resolves its own
+# module from sys.modules while the class body is processed.
+sys.modules[SPEC.name] = reclaim
 SPEC.loader.exec_module(reclaim)
 
 SLUG = "fixture/repo"
