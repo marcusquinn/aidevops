@@ -21,7 +21,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .cleanup_plan import _runs, enrolled_only_authorized, marker_digest, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import (
@@ -187,6 +187,14 @@ def _require_private_identity(
     store: LifecycleRegistry, path: Path, plan: dict, target: Path, admin: Path,
 ) -> None:
     """Bind the private tree, its Git administration and marker to the plan."""
+    if "marker_sha256" in plan:
+        # GH#37828: a foreign marker is never reconstructed, only compared as bytes.
+        if (_directory_inode(target) != plan["directory_identity"]
+                or _git_directory(target) != admin
+                or _directory_inode(admin) != plan["git_identity"]
+                or marker_digest(admin / MARKER) != plan["marker_sha256"]):
+            raise StoreConflict("private-worktree-changed")
+        return
     marker = {
         "format": 2, "installation_id": store.installation_id(),
         "generation_id": plan["generation_id"], "path": str(path),

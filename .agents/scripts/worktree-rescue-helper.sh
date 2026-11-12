@@ -10,7 +10,8 @@
 #   inspect <worktree>                 Read-only summary of branch, commit and changes.
 #   export  <worktree> [--out DIR]     Write a rescue bundle; the source is never modified.
 #   import  <bundle> [--dest DIR]      Apply a bundle to a clean fresh worktree at the same commit.
-#   verify  <bundle> [--dest DIR]      Prove the destination reproduces the bundle exactly.
+#   verify  <bundle> [--dest DIR]      Prove the destination reproduces the bundle exactly
+#                                      and write <bundle>/receipt.txt (retire-foreign-worktree proof).
 #
 # Run inspect/export with a workdir OUTSIDE the refused worktree (agent tools
 # refuse any command whose workdir is inside it). Run import/verify from inside
@@ -29,6 +30,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
 	GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX
 
 readonly RESCUE_FORMAT=1
+readonly RESCUE_RECEIPT="receipt.txt"
 # Deterministic diff output so source and destination compare byte-for-byte.
 RESCUE_DIFF_ARGS=(
 	diff --binary --full-index --no-color --no-ext-diff --no-textconv --no-renames
@@ -495,13 +497,37 @@ cmd_verify() {
 		print_error "VERIFY FAILED: untracked files differ from the bundle."
 		return 1
 	fi
+	_rescue_write_receipt "$bundle" "$top" || print_warning "Could not write $bundle/$RESCUE_RECEIPT; retirement of the source needs it (re-run verify)."
 	print_success "VERIFIED: $top reproduces the bundle exactly (tracked changes and untracked files)."
 	printf 'RESCUE_VERIFIED=%s\n' "$top"
 	return 0
 }
 
+# Write the machine-verifiable receipt that guarded retirement of the source
+# requires (GH#37828). It restates the manifest hashes and pins the manifest
+# bytes; retirement re-derives every hash from the source, so this is evidence
+# of a verified rescue, never an authorization.
+_rescue_write_receipt() {
+	local bundle="$1"
+	local dest="$2"
+	local tmp="$bundle/.${RESCUE_RECEIPT}.tmp"
+	local key
+	{
+		printf 'format=%s\n' "$RESCUE_FORMAT"
+		printf 'bundle_manifest_sha256=%s\n' "$(_rescue_sha256 "$bundle/manifest.txt")"
+		for key in source head patch_sha256 untracked_hashes_sha256 untracked_list_sha256; do
+			printf '%s=%s\n' "$key" "$(_rescue_manifest_value "$bundle" "$key")"
+		done
+		printf 'verified_destination=%s\n' "$dest"
+		printf 'verified_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	} >"$tmp" || return 1
+	chmod 600 "$tmp" && mv -f "$tmp" "$bundle/$RESCUE_RECEIPT" || return 1
+	printf 'RESCUE_RECEIPT=%s\n' "$bundle/$RESCUE_RECEIPT"
+	return 0
+}
+
 cmd_help() {
-	sed -n '4,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '4,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
