@@ -8,8 +8,6 @@
 [[ -n "${_TEST_HEADLESS_RUNTIME_PROVIDER_TESTS_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_PROVIDER_TESTS_LOADED=1
 
-SCRIPT_DIR="${SCRIPT_DIR:-$(cd "${BASH_SOURCE[0]%/*}" && pwd)}"
-
 # shellcheck source=./test-headless-runtime-provider-tests-session.sh
 # shellcheck disable=SC1091  # resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/test-headless-runtime-provider-tests-session.sh"
