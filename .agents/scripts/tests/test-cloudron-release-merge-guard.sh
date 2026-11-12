@@ -25,12 +25,13 @@ gh() {
 		[[ "$SCENARIO" != head_moved ]] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 		jq -cn --arg head "$head" --arg scenario "$SCENARIO" '{head:{sha:$head},base:{ref:"main"},auto_merge:null}
 			| if $scenario == "stacked" then .base.ref = "feature/x"
-			  elif $scenario == "auto" then .auto_merge = {merge_method:"squash"}
+			  elif $scenario == "auto" or $scenario == "files_error_auto" then .auto_merge = {merge_method:"squash"}
+			  elif $scenario == "review_hold" then .labels = [{name:"hold-for-review"}]
 			  else . end'
 		;;
 	'pr merge 7 --repo owner/app --disable-auto') ;;
 	'api repos/owner/app/pulls/7/files?per_page=100 --paginate')
-		[[ "$SCENARIO" != files_error ]] || return 1
+		[[ "$SCENARIO" != files_error && "$SCENARIO" != files_error_auto ]] || return 1
 		if [[ "$SCENARIO" == no_manifest ]]; then
 			printf '[{"filename":"README.md"}]\n'
 		else
@@ -106,6 +107,14 @@ grep -q -- '--disable-auto' "$CALLS" || exit 1
 run_guard bump false 1 true
 if grep -q -- '--disable-auto' "$CALLS"; then exit 1; fi
 printf 'PASS held bump cancels pending native auto-merge only\n'
+run_guard files_error_auto true 1 false
+grep -q -- '--disable-auto' "$CALLS" || exit 1
+printf 'PASS unknown evidence still cancels pending native auto-merge\n'
+# An independent review hold must not be adopted (and later cleared) by
+# release processing, so the guard blocks without adding release labels.
+run_guard review_hold false 1 false
+if grep -q 'pr-edit' "$CALLS"; then exit 1; fi
+printf 'PASS independent hold-for-review is preserved\n'
 : >"$CALLS"
 if CLOUDRON_RELEASE_GUARD_READ_ONLY=1 release_merge_guard owner/app 7 "$HEAD_SHA" 2>/dev/null; then exit 1; fi
 if grep -q 'pr-edit' "$CALLS"; then exit 1; fi
@@ -125,3 +134,23 @@ if AIDEVOPS_REPOS_FILE="${TEST_ROOT}/repos.json" cloudron_release_merge_guard ow
 	exit 1
 fi
 printf 'PASS unreadable registry fails closed\n'
+
+# A labelled release whose authorization fails also cancels native auto-merge.
+mkdir -p "${TEST_ROOT}/fake"
+cat >"${TEST_ROOT}/fake/cloudron-release-approval-helper.sh" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FAKE_CALLS}"
+[[ "$1" == authorize && "${FAKE_AUTHORIZED:-false}" == true ]] && exit 0
+[[ "$1" == cancel-auto-merge ]] && exit 0
+exit 1
+FAKE
+chmod +x "${TEST_ROOT}/fake/cloudron-release-approval-helper.sh"
+_CLOUDRON_RELEASE_MERGE_GUARD_DIR="${TEST_ROOT}/fake"
+export FAKE_CALLS="${TEST_ROOT}/fake-calls"
+: >"$FAKE_CALLS"
+if FAKE_AUTHORIZED=false cloudron_release_merge_guard owner/app 7 "$HEAD_SHA" ',release-approval-required,'; then exit 1; fi
+grep -qx 'cancel-auto-merge owner/app 7' "$FAKE_CALLS" || exit 1
+: >"$FAKE_CALLS"
+FAKE_AUTHORIZED=true cloudron_release_merge_guard owner/app 7 "$HEAD_SHA" ',release-approval-required,'
+if grep -q 'cancel-auto-merge' "$FAKE_CALLS"; then exit 1; fi
+printf 'PASS labelled authorization failure cancels native auto-merge\n'

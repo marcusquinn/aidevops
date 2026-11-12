@@ -30,10 +30,13 @@ cloudron_release_merge_guard() {
 	local helper="${_CLOUDRON_RELEASE_MERGE_GUARD_DIR}/cloudron-release-approval-helper.sh"
 	local registered_rc=0
 
-	# A dedicated release hold always requires exact-head authority.
+	# A dedicated release hold always requires exact-head authority. On denial,
+	# also cancel any pending native auto-merge (authorize itself stays
+	# read-only; the cancel step honours DRY_RUN/READ_ONLY).
 	if [[ "$labels_padded" == *",release-approval-required,"* ]]; then
-		"$helper" authorize "$repo" "$pr" "$head" || return 1
-		return 0
+		"$helper" authorize "$repo" "$pr" "$head" && return 0
+		"$helper" cancel-auto-merge "$repo" "$pr" || true
+		return 1
 	fi
 	# Unregistered repositories make no API calls.
 	[[ -f "$repos_file" ]] || return 0

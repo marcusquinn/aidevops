@@ -665,8 +665,32 @@ release_is_version_bump() {
 	base_version=$(release_contents "$repo" "$manifest_path" "$base_ref" | jq -r '.version // ""') || return 2
 	[[ -n "$head_version" && -n "$base_version" ]] || return 2
 	[[ "$head_version" != "$base_version" ]] || return 1
-	# Third field: whether native auto-merge is pending on this PR.
-	printf '%s %s %s\n' "$base_version" "$head_version" "$(jq -r 'if .auto_merge == null then "manual" else "auto" end' <<<"$snapshot")"
+	# Third field: whether native auto-merge is pending on this PR. Fourth: an
+	# independent review hold (hold-for-review without the release label).
+	printf '%s %s %s\n' "$base_version" "$head_version" "$(jq -r --arg label "$RELEASE_APPROVAL_LABEL" '
+		(if .auto_merge == null then "manual" else "auto" end) + " " +
+		(if any(.labels[]?; .name == "hold-for-review") and all(.labels[]?; .name != $label) then "independent" else "none" end)' <<<"$snapshot")"
+	return 0
+}
+
+# GH#37955: best-effort cancellation of a pending native auto-merge on a PR the
+# release gate denies; otherwise GitHub could merge (and publish) once checks
+# pass. $3 is "auto"/"manual" from a fresh snapshot; any other value re-reads,
+# and unreadable state still attempts cancellation. Never writes under DRY_RUN
+# or CLOUDRON_RELEASE_GUARD_READ_ONLY. Always returns 0.
+release_cancel_auto_merge() {
+	local repo="$1" pr="$2" mode="${3:-}" snapshot=""
+	[[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]] || return 0
+	if [[ "$mode" != auto && "$mode" != manual ]]; then
+		mode=auto
+		if snapshot=$(release_pr_raw "$repo" "$pr" 2>/dev/null) &&
+			jq -e '.auto_merge == null' <<<"$snapshot" >/dev/null 2>&1; then
+			mode=manual
+		fi
+	fi
+	[[ "$mode" == auto ]] || return 0
+	gh pr merge "$pr" --repo "$repo" --disable-auto >/dev/null 2>&1 ||
+		printf 'WARN: unable to disable native auto-merge on held PR #%s in %s\n' "$pr" "$repo" >&2
 	return 0
 }
 
@@ -676,16 +700,26 @@ release_is_version_bump() {
 # An unauthorized bump is held for the r924 routine (process --apply), which
 # requests approval or applies the signed standing policy. Returns 0 to allow.
 release_merge_guard() {
-	local repo="$1" pr="$2" head="$3" versions="" rc=0 base_version="" head_version="" merge_mode=""
+	local repo="$1" pr="$2" head="$3" versions="" rc=0 base_version="" head_version="" merge_mode="" review_hold=""
 	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ $RELEASE_SHA_PATTERN ]] ||
 		release_error 'merge-guard requires owner/repo, a PR number and a full head SHA.' || return 1
 	versions=$(release_is_version_bump "$repo" "$pr" "$head") || rc=$?
-	read -r base_version head_version merge_mode <<<"$versions" || true
+	read -r base_version head_version merge_mode review_hold <<<"$versions" || true
 	[[ "$rc" -ne 1 ]] || return 0
-	#aidevops:trust-boundary — unknown evidence never allows a package merge.
-	[[ "$rc" -eq 0 ]] || release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked." || return 1
+	#aidevops:trust-boundary — unknown evidence never allows a package merge,
+	# and must not leave a native auto-merge able to publish either.
+	if [[ "$rc" -ne 0 ]]; then
+		release_cancel_auto_merge "$repo" "$pr"
+		release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked."
+		return 1
+	fi
 	release_authorize "$repo" "$pr" "$head" && return 0
-	if [[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]]; then
+	if [[ "$review_hold" == independent ]]; then
+		# #aidevops:trust-boundary — labelling would let release processing
+		# adopt and later clear another workflow's hold. The PR stays held; the
+		# guard re-labels it once that independent hold is resolved.
+		printf 'WARN: PR #%s in %s keeps its independent hold-for-review; release hold labels not added\n' "$pr" "$repo" >&2
+	elif [[ "${DRY_RUN:-0}" != 1 && "${CLOUDRON_RELEASE_GUARD_READ_ONLY:-0}" != 1 ]]; then
 		# Adding holds only narrows merge eligibility; it never grants authority.
 		# r924 requests approval for any held same-repository PR (see
 		# release_retry_interrupted) or applies the standing policy.
@@ -693,12 +727,8 @@ release_merge_guard() {
 			! gh_pr_edit_safe "$pr" --repo "$repo" --add-label "$RELEASE_APPROVAL_LABEL" --add-label hold-for-review >/dev/null; then
 			printf 'WARN: unable to apply release hold labels to PR #%s in %s\n' "$pr" "$repo" >&2
 		fi
-		# A pending native auto-merge would otherwise publish without this gate.
-		if [[ "$merge_mode" == auto ]] &&
-			! gh pr merge "$pr" --repo "$repo" --disable-auto >/dev/null 2>&1; then
-			printf 'WARN: unable to disable native auto-merge on held PR #%s in %s\n' "$pr" "$repo" >&2
-		fi
 	fi
+	release_cancel_auto_merge "$repo" "$pr" "$merge_mode"
 	release_error "PR #${pr} changes the ${repo} release version (${base_version} -> ${head_version}) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
 	return 1
 }
@@ -1020,6 +1050,10 @@ main() {
 	merge-guard)
 		[[ $# -eq 4 ]] || return 1
 		release_merge_guard "$arg2" "$arg3" "$arg4" || return 1
+		;;
+	cancel-auto-merge)
+		[[ $# -eq 3 && "$arg2" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$arg3" =~ ^[1-9][0-9]*$ ]] || return 1
+		release_cancel_auto_merge "$arg2" "$arg3"
 		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
