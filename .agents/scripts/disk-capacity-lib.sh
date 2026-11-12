@@ -74,6 +74,20 @@ aidevops_worktree_capacity_check() {
 	return 0
 }
 
+# Evaluate the successful capacity snapshot without another filesystem probe.
+aidevops_worktree_cleanup_headroom_low() {
+	local minimum_kb="${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}"
+	local cleanup_kb="${AIDEVOPS_WORKTREE_CLEANUP_FREE_KB:-}"
+	local cleanup_percent="${AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT:-15}"
+	[[ "$minimum_kb" =~ ^[0-9]+$ ]] || minimum_kb=5242880
+	[[ "$cleanup_kb" =~ ^[0-9]+$ ]] || cleanup_kb=$((minimum_kb * 4))
+	[[ "$cleanup_percent" =~ ^[0-9]+$ && "$cleanup_percent" -le 100 ]] || cleanup_percent=15
+	[[ "$AIDEVOPS_DISK_CAPACITY_REASON" == available ]] || return 1
+	[[ "$AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB" -lt "$cleanup_kb" ]] && return 0
+	[[ $((AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB * 100)) -lt $((AIDEVOPS_DISK_CAPACITY_TOTAL_KB * cleanup_percent)) ]] && return 0
+	return 1
+}
+
 # Per-repo registered-worktree admission cap. Disk thresholds above are the
 # resource guard; this count cap is only a runaway backstop. GH#18987 used 200
 # as an illustrative value, which throttled real work while merged worktrees
