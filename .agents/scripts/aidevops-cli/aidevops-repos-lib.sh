@@ -678,6 +678,20 @@ _register_repo_locked() {
 			)]' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE" || return 1
 	fi
+	_warn_cloudron_missing_upstream "$repo_path" "$app_type_default"
+	return 0
+}
+
+# Warn (print only) when a Cloudron package has no upstream monitoring slug.
+_warn_cloudron_missing_upstream() {
+	local repo_path="$1"
+	local app_type="$2"
+	[[ "$app_type" == "cloudron-package" ]] || return 0
+	local upstream=""
+	upstream=$(jq -r --arg path "$repo_path" '[.initialized_repos[] | select(.path == $path)][0].cloudron_package.upstream_slug // empty' "$REPOS_FILE" 2>/dev/null) || upstream=""
+	if [[ -z "$upstream" ]]; then
+		print_warning "Cloudron package registered without upstream monitoring; complete tools/deployment/cloudron-package-onboarding.md"
+	fi
 	return 0
 }
 

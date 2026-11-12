@@ -107,6 +107,14 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     printf '\n'
     exit 0
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/labels/auto-dispatch ]]; then
+    case "${MONITOR_LABEL_STATE:-present}" in
+        missing) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        error) printf 'gh: server error (HTTP 500)\n' >&2; exit 1 ;;
+    esac
+    printf '%s\n' '{"name":"auto-dispatch"}'
+    exit 0
+fi
 source "${0%/*}/gh-source"
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
     search=""
@@ -531,6 +539,45 @@ test_monitor_deduplicates_and_preserves_source() {
 	assert_equal 1 "$(grep -c '^- Upgrade base image' "$log_file")" "legacy upgrade creates one actionable finding"
 	grep -Fq 'minBoxVersion' "$log_file" && assert_equal true true "upgrade issue includes platform qualification" || assert_equal true false "upgrade issue includes platform qualification"
 	assert_equal "$docker_before" "$(cksum "${repo_dir}/Dockerfile")" "compatibility monitor does not mutate package source"
+	return 0
+}
+
+test_monitor_setup_audit_reports_gaps() {
+	local home_dir="${TEST_ROOT}/setup-home"
+	local repo_dir="${TEST_ROOT}/setup-package"
+	local bin_dir="${TEST_ROOT}/setup-bin"
+	local log_file="${TEST_ROOT}/setup-issues.log"
+	local repos_tmp="${home_dir}/.config/aidevops/repos.tmp.json"
+	local output=""
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	printf '{}\n' >"${repo_dir}/.aidevops.json"
+	: >"$log_file"
+
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 1 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "setup audit reports only the missing pulse flag on a configured package"
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c 'upstream_slug')" "configured upstream slug is not reported"
+
+	jq '.initialized_repos[0].pulse = true' "${home_dir}/.config/aidevops/repos.json" >"$repos_tmp"
+	mv "$repos_tmp" "${home_dir}/.config/aidevops/repos.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "fully configured package prints no SETUP lines"
+
+	jq '.initialized_repos[0] |= (del(.app_type) | del(.cloudron_package) | .pulse = false | .maintenance = false)' "${home_dir}/.config/aidevops/repos.json" >"$repos_tmp"
+	mv "$repos_tmp" "${home_dir}/.config/aidevops/repos.json"
+	rm -f "${repo_dir}/.aidevops.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=missing bash "$HELPER" setup --apply 2>&1)
+	assert_equal 6 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "unregistered package reports every onboarding gap"
+	printf '%s\n' "$output" | grep -Fq 'fix: aidevops repos maintenance on exampleorg/example-package' && assert_equal true true "gap line carries a fix command" || assert_equal true false "gap line carries a fix command"
+	printf '%s\n' "$output" | grep -Fq 'fix: label-sync-helper.sh sync --repo exampleorg/example-package' && assert_equal true true "missing label has a fix command" || assert_equal true false "missing label has a fix command"
+	assert_equal 0 "$(grep -c '^CALL ' "$log_file")" "setup audit never creates issues"
+
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=error bash "$HELPER" setup 2>&1) && assert_equal true false "label API error fails the setup run" || assert_equal true true "label API error fails the setup run"
+	printf '%s\n' "$output" | grep -Fq 'could not verify labels' && assert_equal true true "label API error is not reported as a gap" || assert_equal true false "label API error is not reported as a gap"
+
+	rm -f "${repo_dir}/CloudronManifest.json"
+	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)
+	assert_equal 0 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "repository without a manifest is ignored"
 	return 0
 }
 
@@ -1251,6 +1298,7 @@ main() {
 	test_catalog_atomic_push_races
 	test_monitor_reconciles_catalog_once
 	test_monitor_deduplicates_and_preserves_source
+	test_monitor_setup_audit_reports_gaps
 	test_monitor_reports_stranded_upstream_findings
 	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present

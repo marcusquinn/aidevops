@@ -896,6 +896,63 @@ _cloudron_monitor_run() {
 	return 0
 }
 
+# Report-only onboarding audit for one registry entry. Prints one SETUP line per
+# gap and returns 3 when any were printed, 1 when the label check failed.
+_cloudron_monitor_setup_entry() {
+	local entry="$1"
+	local slug="" repo_path="" gaps=0 failed=0
+	slug=$(jq -r '.slug // empty' <<<"$entry")
+	repo_path=$(jq -r '.path // empty' <<<"$entry")
+	repo_path="${repo_path/#\~/$HOME}"
+	[[ -n "$repo_path" && -f "${repo_path}/CloudronManifest.json" ]] || return 0
+	if [[ "$(jq -r '.app_type // empty' <<<"$entry")" != "cloudron-package" ]]; then
+		printf 'SETUP %s: app_type is not cloudron-package; fix: aidevops init (in a linked worktree)\n' "$slug"
+		gaps=$((gaps + 1))
+	fi
+	if [[ ! -f "${repo_path}/.aidevops.json" ]]; then
+		printf 'SETUP %s: missing .aidevops.json; fix: aidevops init\n' "$slug"
+		gaps=$((gaps + 1))
+	fi
+	if [[ "$(jq -r '.maintenance' <<<"$entry")" == "false" ]]; then
+		printf 'SETUP %s: maintenance is off; fix: aidevops repos maintenance on %s\n' "$slug" "$slug"
+		gaps=$((gaps + 1))
+	fi
+	if [[ "$(jq -r '.pulse' <<<"$entry")" != "true" ]]; then
+		printf 'SETUP %s: pulse is off; fix: aidevops repos pulse on %s\n' "$slug" "$slug"
+		gaps=$((gaps + 1))
+	fi
+	if [[ -z "$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")" ]]; then
+		printf 'SETUP %s: cloudron_package.upstream_slug is not set; fix: set cloudron_package.upstream_slug (reference/repos-json-fields.md)\n' "$slug"
+		gaps=$((gaps + 1))
+	fi
+	local label_out="" label_rc=0
+	label_out=$(gh api "repos/${slug}/labels/auto-dispatch" 2>&1) || label_rc=$?
+	if [[ "$label_rc" -ne 0 ]]; then
+		if [[ "$label_out" == *"404"* || "$label_out" == *"Not Found"* ]]; then
+			printf 'SETUP %s: auto-dispatch label is missing; fix: label-sync-helper.sh sync --repo %s\n' "$slug" "$slug"
+			gaps=$((gaps + 1))
+		else
+			printf 'SETUP %s: could not verify labels\n' "$slug"
+			failed=1
+		fi
+	fi
+	[[ "$failed" -eq 0 ]] || return 1
+	[[ "$gaps" -eq 0 ]] || return 3
+	return 0
+}
+
+# Gaps alone return 0 so the weekly routine is not marked failed.
+_cloudron_monitor_setup_run() {
+	local failures=0 entry="" entry_rc=0
+	while IFS= read -r entry; do
+		entry_rc=0
+		_cloudron_monitor_setup_entry "$entry" || entry_rc=$?
+		[[ "$entry_rc" -eq 0 || "$entry_rc" -eq 3 ]] || failures=$((failures + 1))
+	done < <(jq -c '.initialized_repos[] | select((.local_only // false) != true and (.slug // "") != "")' "$REPOS_FILE")
+	[[ "$failures" -eq 0 ]] || return 1
+	return 0
+}
+
 show_help() {
 	cat <<'HELP'
 Cloudron Package Monitor
@@ -903,6 +960,10 @@ Cloudron Package Monitor
 Usage:
   cloudron-package-monitor-helper.sh upstream [--apply]
   cloudron-package-monitor-helper.sh compatibility [--apply]
+  cloudron-package-monitor-helper.sh setup
+
+The setup audit (also run first by compatibility) is report-only: it prints
+SETUP lines for onboarding gaps in manifest-bearing registered repositories.
 
 Without --apply, findings are reported without creating issues. With --apply,
 deduplicated issues are created in each registered package repository after an
@@ -920,7 +981,16 @@ main() {
 	case "$mode" in
 	upstream | compatibility)
 		_cloudron_monitor_require_tools || return 1
+		if [[ "$mode" == "compatibility" ]]; then
+			local setup_rc=0
+			_cloudron_monitor_setup_run || setup_rc=$?
+			[[ "$setup_rc" -eq 0 ]] || _cloudron_monitor_error "Setup audit could not verify every repository." || true
+		fi
 		_cloudron_monitor_run "$mode" "$apply"
+		;;
+	setup)
+		_cloudron_monitor_require_tools || return 1
+		_cloudron_monitor_setup_run
 		;;
 	help | --help | -h)
 		show_help

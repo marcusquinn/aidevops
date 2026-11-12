@@ -45,4 +45,14 @@ release went unnoticed.
    `packageUrl` to the package repository (Cloudron 10+ catalogs only), and
    assert both in the package test. ca.cloudron.io links "By" to `packagerUrl`
    and Package to `packageUrl`. For the Cloudron 9.x trade-off, see
-   `cloudron-app-publishing-skill.md`.
+    `cloudron-app-publishing-skill.md`.
+
+## Automated audit
+
+`cloudron-package-monitor-helper.sh setup` audits steps 1–5 for every registered
+repository that contains `CloudronManifest.json`, including those missing
+`app_type` or with maintenance off. It is report-only, prints
+`SETUP <slug>: <gap>; fix: <command>` per gap, and never creates issues or edits
+files. The weekly `compatibility` routine runs it first. The compatibility check
+also reports `packagerUrl` equal to `packageUrl`, and registration warns when a
+package has no `cloudron_package.upstream_slug`.
