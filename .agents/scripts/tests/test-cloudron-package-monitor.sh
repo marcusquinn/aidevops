@@ -107,14 +107,6 @@ if [[ "${1:-}" == "api" && "${2:-}" == "/repos/exampleorg/example-package/conten
     printf '\n'
     exit 0
 fi
-if [[ "${1:-}" == "api" && "${2:-}" == repos/*/labels/auto-dispatch ]]; then
-    case "${MONITOR_LABEL_STATE:-present}" in
-        missing) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
-        error) printf 'gh: server error (HTTP 500)\n' >&2; exit 1 ;;
-    esac
-    printf '%s\n' '{"name":"auto-dispatch"}'
-    exit 0
-fi
 source "${0%/*}/gh-source"
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
     search=""
@@ -143,6 +135,14 @@ GH
 write_fake_catalog_commands() {
 	local bin_dir="$1"
 	cat >>"${bin_dir}/gh-source" <<'CATALOG'
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/labels/auto-dispatch ]]; then
+    case "${MONITOR_LABEL_STATE:-present}" in
+        missing) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        error) printf 'gh: server error (HTTP 500)\n' >&2; exit 1 ;;
+    esac
+    printf '%s\n' '{"name":"auto-dispatch"}'
+    exit 0
+fi
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
     printf '%s\n' 'ADMIN'
     exit 0

@@ -633,7 +633,6 @@ _register_repo_locked() {
 
 	local default_init_scope
 	default_init_scope=$(_infer_init_scope "$repo_path" "$is_local_only")
-
 	local has_interface
 	has_interface=$(_repo_config_has_interface_value "$repo_path")
 	local cloudron_app_type="cloudron-package" app_type_default="" cloudron_defaults='{}'
