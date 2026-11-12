@@ -588,7 +588,7 @@ _setup_opencode_plugins_register_file_url() {
 	local already_registered
 	local managed_prefix="file://${HOME}/.aidevops/agents/plugins/opencode-aidevops/"
 	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" --arg prefix "$managed_prefix" --arg kind string \
-		'[(.[$key] // [])[], (.[$other] // [])[] | select(type == $kind and startswith($prefix))] == [$url]' \
+		'(has($other) | not) and ([(.[$key] // [])[] | select(type == $kind and startswith($prefix))] == [$url])' \
 		"$opencode_config" || echo "0")
 
 	if [[ "$already_registered" != "true" ]]; then
@@ -689,7 +689,7 @@ _setup_opencode_plugins_remove_managed_symlink() {
 	[[ -L "$aidevops_plugin_dst" ]] || return 0
 	link_target=$(readlink "$aidevops_plugin_dst" 2>/dev/null || true)
 	case "$link_target" in
-	*/plugins/opencode-aidevops | */plugins/opencode-aidevops/*) ;;
+	"$HOME/.aidevops/agents/plugins/opencode-aidevops" | "$HOME/.aidevops/agents/plugins/opencode-aidevops/"*) ;;
 	*) return 0 ;;
 	esac
 	if rm -f "$aidevops_plugin_dst"; then
@@ -962,7 +962,9 @@ setup_opencode_plugins() {
 	setup_track_configured "OpenCode plugins"
 
 	# Version-appropriate auth guidance
-	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	if [[ "${AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE:-0}" != 1 ]]; then
+		_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	fi
 
 	return 0
 }
@@ -1001,6 +1003,9 @@ except (OSError, subprocess.SubprocessError):
 			fi
 		elif [[ -z "$major" ]]; then
 			print_info "OpenCode version unavailable or unparseable; using V1 plugin contract"
+			AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE=1 AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins || return $?
+			setup_opencode_v2_preview_plugins
+			return $?
 		fi
 	fi
 	if [[ "$selected_profile" == "v2" ]]; then
