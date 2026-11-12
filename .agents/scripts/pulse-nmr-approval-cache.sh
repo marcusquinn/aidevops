@@ -42,30 +42,130 @@ _ever_nmr_cache_load() {
 	return 0
 }
 
-_ever_nmr_cache_with_lock() {
-	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
-	local retries=0
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		retries=$((retries + 1))
-		if [[ "$retries" -ge 50 ]]; then
-			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lock acquisition timed out" >>"$LOGFILE"
+# Read a non-negative integer setting, falling back to its default (GH#37869).
+# Arguments: $1 - candidate value, $2 - default
+_ever_nmr_lock_setting() {
+	local value="$1"
+	local default_value="$2"
+	if [[ "$value" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$value"
+	else
+		printf '%s\n' "$default_value"
+	fi
+	return 0
+}
+
+# Print a path's mtime epoch; returns 1 when unavailable (path vanished).
+# Arguments: $1 - path
+_ever_nmr_lock_mtime() {
+	local path="$1"
+	local mtime=""
+	if declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		mtime=$(_file_mtime_epoch "$path" 2>/dev/null) || mtime=""
+	else
+		# GNU first: on Linux `stat -f` reports filesystem status, not file mtime.
+		mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null) || mtime=""
+	fi
+	[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 1
+	printf '%s\n' "$mtime"
+	return 0
+}
+
+# Print a path's age in seconds; returns 1 when the mtime is unavailable.
+# Arguments: $1 - path
+_ever_nmr_lock_age() {
+	local path="$1"
+	local mtime="" now=""
+	mtime=$(_ever_nmr_lock_mtime "$path") || return 1
+	now=$(date +%s)
+	local age=$((now - mtime))
+	[[ "$age" -ge 0 ]] || age=0
+	printf '%s\n' "$age"
+	return 0
+}
+
+# PID of the shell that holds the lock. In parallel dispatch subshells `$$` is
+# the long-lived parent pulse PID, which would make a dead subshell's lock look
+# live. Bash 3.2 has no BASHPID; exec makes sh's PPID the calling shell.
+_ever_nmr_lock_owner_pid() {
+	local owner_pid="${BASHPID:-}"
+	if [[ -z "$owner_pid" ]]; then
+		owner_pid="$(exec sh -c 'printf "%s" "$PPID"')" || owner_pid="$$"
+	fi
+	printf '%s\n' "$owner_pid"
+	return 0
+}
+
+# Reclaim a stale ever-NMR cache lock (GH#37869). Stale means: a dead owner
+# PID; no valid owner.pid for at least the orphan age (holder killed between
+# mkdir and the owner write, or between the owner removal and rmdir); or held
+# past the hold ceiling (legacy `$$` records naming a live parent pulse).
+# A .reclaim directory elects one reclaimer while the lock still blocks writers.
+# Arguments: $1 - lock dir, $2 - ownerless orphan age, $3 - hold ceiling
+# Returns: 0 only when the stale lock was removed
+_ever_nmr_cache_reclaim_stale_lock() {
+	local lock_dir="$1"
+	local orphan_age="$2"
+	local max_hold="$3"
+	local owner_pid="" stale_reason="" lock_age=""
+
+	[[ -d "$lock_dir" ]] || return 1
+	lock_age=$(_ever_nmr_lock_age "$lock_dir") || return 1
+	if [[ -f "${lock_dir}/owner.pid" ]]; then
+		IFS= read -r owner_pid 2>/dev/null <"${lock_dir}/owner.pid" || owner_pid=""
+	fi
+
+	if [[ "$owner_pid" =~ ^[0-9]+$ ]]; then
+		if ! kill -0 "$owner_pid" 2>/dev/null; then
+			stale_reason="owner PID ${owner_pid} gone"
+		elif [[ "$max_hold" -gt 0 && "$lock_age" -ge "$max_hold" ]]; then
+			stale_reason="held ${lock_age}s by PID ${owner_pid}, past ${max_hold}s ceiling"
+		else
 			return 1
 		fi
-		# Stale lock detection: read the owner PID stored in the lock directory.
-		# If that process is no longer running, the lock is orphaned — clear it.
-		local _nmr_owner_pid
-		_nmr_owner_pid=$(cat "${lock_dir}/owner.pid" 2>/dev/null || true)
-		if [[ -n "$_nmr_owner_pid" ]] && ! kill -0 "$_nmr_owner_pid" 2>/dev/null; then
-			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: clearing stale lock (owner PID ${_nmr_owner_pid} gone)" >>"$LOGFILE"
-			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
-			rmdir "$lock_dir" 2>/dev/null || true
+	elif [[ "$lock_age" -ge "$orphan_age" ]]; then
+		stale_reason="ownerless for ${lock_age}s"
+	else
+		return 1
+	fi
+
+	# A reclaimer killed mid-reclaim leaves .reclaim behind; clear it once old.
+	local reclaim_dir="${lock_dir}/.reclaim"
+	local reclaim_age=""
+	if [[ -d "$reclaim_dir" ]]; then
+		reclaim_age=$(_ever_nmr_lock_age "$reclaim_dir") || reclaim_age=0
+		[[ "$reclaim_age" -ge "$orphan_age" ]] && rmdir "$reclaim_dir" 2>/dev/null
+	fi
+	mkdir "$reclaim_dir" 2>/dev/null || return 1
+
+	echo "[pulse-wrapper] _ever_nmr_cache_with_lock: clearing stale lock (${stale_reason})" >>"$LOGFILE"
+	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
+	rmdir "$reclaim_dir" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || return 1
+	return 0
+}
+
+_ever_nmr_cache_with_lock() {
+	local lock_dir="${EVER_NMR_CACHE_FILE}.lockdir"
+	local max_retries="" orphan_age="" max_hold=""
+	max_retries=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_RETRIES:-}" 50)
+	orphan_age=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_ORPHAN_AGE_SECS:-}" 60)
+	max_hold=$(_ever_nmr_lock_setting "${EVER_NMR_LOCK_MAX_HOLD_SECS:-}" 300)
+	local retries=0
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		if _ever_nmr_cache_reclaim_stale_lock "$lock_dir" "$orphan_age" "$max_hold"; then
 			continue
+		fi
+		retries=$((retries + 1))
+		if [[ "$retries" -ge "$max_retries" ]]; then
+			echo "[pulse-wrapper] _ever_nmr_cache_with_lock: lock acquisition timed out" >>"$LOGFILE"
+			return 1
 		fi
 		sleep 0.1
 	done
 
 	# Record owner PID inside lock directory so retrying callers can detect staleness.
-	printf '%s\n' "$$" >"${lock_dir}/owner.pid" 2>/dev/null || true
+	_ever_nmr_lock_owner_pid >"${lock_dir}/owner.pid" 2>/dev/null || true
 	local rc=0
 	"$@" || rc=$?
 	rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
