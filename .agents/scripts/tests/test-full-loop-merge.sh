@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# The suite exercises synthetic PRs, not the issue that dispatched the runner.
+unset WORKER_ISSUE_NUMBER
+
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
 TEST_NATIVE_GIT=$(command -p -v git) || {
