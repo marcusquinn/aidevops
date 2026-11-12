@@ -152,36 +152,40 @@ def transfer_matches(old_slug: str, target: str) -> bool:
     """Resolve both slugs and require a matching immutable repository ID."""
     old, old_error = gh_json(f"repos/{old_slug}")
     new, new_error = gh_json(f"repos/{target}")
-    return bool(not old_error and not new_error and isinstance(old, dict) and isinstance(new, dict)
-                and old.get("id") and old.get("id") == new.get("id")
-                and str(old.get("full_name") or "").lower() == target.lower())
+    if old_error or new_error:
+        return False
+    old_id = (old or {}).get("id")
+    new_name = str((new or {}).get("full_name") or "").lower()
+    return old_id is not None and old_id == (new or {}).get("id") and new_name == target.lower()
 
 
 def site_registrations(domain: str, repo: str, owner: str, context: dict[str, Any]) -> list[dict[str, str]]:
     """Find registrations, refusing uncertain renamed-site identity."""
-    matches = [item for item in context["registrations"] if item["name"].lower() == repo]
-    # A renamed site may still be registered under its hosted domain. Resolve
-    # both names independently; never infer identity from a redirect alone.
-    candidates = [item for item in context["registrations"] if item["name"].lower() == domain]
-    if repo != domain and not matches and candidates:
-        if len(candidates) == 1 and not transfer_matches(candidates[0]["slug"], f"{owner}/{repo}"):
-            raise FleetError(f"Cannot verify repository transfer for {domain}; refusing provisioning")
-        matches = candidates
-    return matches
+    registrations = context["registrations"]
+    matches = [item for item in registrations if item["name"].lower() == repo]
+    # A renamed site may still be registered under its hosted domain; never
+    # infer identity from a redirect alone.
+    candidates = [item for item in registrations if item["name"].lower() == domain]
+    if matches or repo == domain or not candidates:
+        return matches
+    if len(candidates) == 1 and not transfer_matches(candidates[0]["slug"], f"{owner}/{repo}"):
+        raise FleetError(f"Cannot verify repository transfer for {domain}; refusing provisioning")
+    return candidates
 
 
 def site_state(matches: list[dict[str, str]], destination: Path, owner: str, repo: str) -> str:
     """Select a state after registration matching."""
-    registration = matches[0] if len(matches) == 1 else {}
     if len(matches) > 1:
         return "ambiguous"
-    if registration:
-        if registration["name"].lower() != repo:
-            return "transferred"
-        if registration["slug"].lower() != f"{owner}/{repo}".lower():
-            return "transferred" if transfer_matches(registration["slug"], f"{owner}/{repo}") else "owner-mismatch"
+    if not matches:
+        return unregistered_state(destination, owner, repo)
+    registration = matches[0]
+    target = f"{owner}/{repo}"
+    if registration["name"].lower() != repo:
+        return "transferred"
+    if registration["slug"].lower() == target.lower():
         return registered_state(registration, destination, owner)
-    return unregistered_state(destination, owner, repo)
+    return "transferred" if transfer_matches(registration["slug"], target) else "owner-mismatch"
 
 
 def classify_site(site: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
