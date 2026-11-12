@@ -63,7 +63,8 @@ _rescue_entry_hash() {
 		# Trailing "x" sentinel keeps trailing newlines that $(...) would strip.
 		local target
 		target="$(readlink "$path"; printf x)"
-		printf 'link:%s' "${target%x}"
+		target="${target%x}"
+		printf 'link:%s' "${target%$'\n'}"
 		return 0
 	fi
 	printf 'sha256:%s' "$(_rescue_sha256 "$path")"

@@ -11,6 +11,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import threading
 import subprocess  # nosec B404 # fixed read-only Git queries, explicit argv
 
 from .cleanup_plan import marker_digest
@@ -49,10 +50,16 @@ def stream_git_sha(path: Path, *arguments: str) -> str:
         stream = process.stdout
         if stream is None:
             raise ValueError("archive-git-unavailable")
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-        if process.wait() != 0:
-            raise subprocess.CalledProcessError(process.returncode, arguments)
+        timer = threading.Timer(120, process.kill)
+        timer.start()
+        try:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+            returncode = process.wait()
+        finally:
+            timer.cancel()
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, arguments)
     return digest.hexdigest()
 
 
@@ -146,14 +153,20 @@ def _verified_destination(receipt: dict[str, str], manifest: dict[str, str]) -> 
     try:
         head = read_git(destination, "rev-parse", "HEAD").decode().strip()
         top = read_git(destination, "rev-parse", "--show-toplevel").decode().strip()
+        # Same worktree (not a subdirectory of another checkout).
+        if os.path.realpath(top) != os.path.realpath(destination):
+            raise StoreConflict("rescue-destination-changed")
+        if head != receipt.get("head"):
+            # Rescue committed after verification: HEAD must descend from the
+            # receipt head and a remote must verifiably hold the clean result.
+            read_git(destination, "merge-base", "--is-ancestor",
+                     receipt.get("head", ""), head)
+            _pushed_proof(destination, head)
+            return str(destination)
         held = source_hashes(destination)
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         raise StoreConflict("rescue-destination-missing") from None
-    if head != receipt.get("head"):
-        raise StoreConflict("rescue-destination-changed")
-    # Same worktree (not a subdirectory of another checkout) still holding the rescued data.
-    if os.path.realpath(top) != os.path.realpath(destination) or any(
-            manifest.get(name) != value for name, value in held.items()):
+    if any(manifest.get(name) != value for name, value in held.items()):
         raise StoreConflict("rescue-destination-changed")
     return str(destination)
 

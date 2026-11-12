@@ -185,7 +185,10 @@ def retire_foreign_worktree(
         found = foreign_marker(store, path)
         if path.resolve(strict=True) != path:
             raise ValueError("canonical-source-required")
-        generation = str(found["generation_id"])
+        found_generation = str(found["generation_id"])
+        if generation is not None and found_generation != generation:
+            raise StoreConflict("retirement-generation-mismatch")
+        generation = found_generation
     if generation is None:
         raise StoreConflict("foreign-source-absent")
     with _lock(store, generation):
