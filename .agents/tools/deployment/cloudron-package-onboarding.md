@@ -16,7 +16,9 @@ packages. A repository registered by `aidevops repos add` or auto-discovery,
 without `aidevops init`, misses most of it silently. In November 2026 one package
 had Pulse off, no aidevops labels, no `cloudron_package` entry and missing
 managed workflows, so its `auto-dispatch` tasks never ran and a new upstream
-release went unnoticed.
+release went unnoticed. This adds Cloudron steps to the general
+`reference/repo-onboarding.md`; complete its secrets and branch protection steps
+too.
 
 1. **Initialize:** run `aidevops init` in a linked worktree of the package and
    merge the result. It writes `.aidevops.json`, the release and catalog callers
