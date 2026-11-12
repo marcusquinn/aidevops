@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.183] - 2026-11-12
+
+### Changed
+
+- Documentation: record circuit-breaker trip #37892 root-cause investigation
+
+### Fixed
+
+- gh-audit anomaly scanner scans rotated logs after rotation
+- verified permission-grant label removals no longer raise gh-audit anomalies
+- release registry writer during legacy-cleanup inspection; log interactive admission refusals (#37902)
+- trigger cleanup on low disk headroom (#37897)
+
 ## [3.39.182] - 2026-11-12
 
 ### Changed
