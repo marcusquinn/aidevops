@@ -64,8 +64,11 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
     key = (kind, number, query.slug)
     if key not in query.cache:
         noun, done = ("issue", "CLOSED") if kind == "gh" else ("pr", "MERGED")
+        # Qualify the host: a bare slug follows GH_HOST, so an enterprise item with
+        # the same slug and number could answer for the github.com one.
         status, output = run(
-            ["gh", noun, "view", str(number), "--repo", query.slug, "--json", "state"],
+            ["gh", noun, "view", str(number), "--repo", f"github.com/{query.slug}",
+             "--json", "state"],
             timeout=query.timeout,
         )
         state = json.loads(output).get("state") if status == 0 and output else None

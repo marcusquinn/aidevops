@@ -104,6 +104,22 @@ def process_census() -> Census | None:
     return Census(frozenset(directories), tuple(arguments), unplaceable)
 
 
+def _registered_worktree(metadata: Path, marker: Path) -> bool:
+    """Confirm Git registers this metadata directory as a linked worktree.
+
+    A main checkout created with `--separate-git-dir` has the same `.git` file
+    shape, so only the `worktrees/` parent and the back-pointer Git writes there
+    distinguish a linked worktree from it.
+    """
+    if metadata.parent.name != "worktrees":
+        return False
+    try:
+        back = Path((metadata / "gitdir").read_text(encoding="utf-8").strip())
+    except OSError:
+        return False
+    return back == marker or back.resolve() == marker.resolve()
+
+
 def metadata_directory(path: Path) -> Path | None:
     """Resolve a linked worktree's metadata directory from its `.git` file.
 
@@ -119,7 +135,12 @@ def metadata_directory(path: Path) -> Path | None:
     prefix = "gitdir:"
     if not content.startswith(prefix):
         return None
-    return Path(content[len(prefix):].strip())
+    metadata = Path(content[len(prefix):].strip())
+    if not metadata.is_absolute():
+        # Git permits a relative pointer; reading it from elsewhere would check
+        # the wrong directory for locks and registration.
+        metadata = (path / metadata).resolve()
+    return metadata if _registered_worktree(metadata, marker) else None
 
 
 def locked(path: Path) -> bool:
@@ -133,11 +154,16 @@ def _removal_blocked(path: Path, verify) -> str | None:
     census = process_census()
     if census is None:
         return "process-inventory-unavailable"
+    # Identity first: repository state means nothing until the path is known to be
+    # a removable linked worktree.
+    identity = ((census.holds(path), "writers-appeared"),
+                (metadata_directory(path) is None, "not-a-linked-worktree"),
+                (locked(path), "worktree-locked"))
+    blocked = next((reason for failed, reason in identity if failed), None)
+    if blocked is not None:
+        return blocked
     clean, detail = verify(path)
-    blockers = ((census.holds(path), "writers-appeared"),
-                (not clean, f"changed-{detail}"),
-                (metadata_directory(path) is None, "not-a-linked-worktree"))
-    return next((reason for blocked, reason in blockers if blocked), None)
+    return None if clean else f"changed-{detail}"
 
 
 def remove(path: Path, verify) -> tuple[bool, str]:

@@ -185,6 +185,26 @@ class EvidenceTests(unittest.TestCase):
                         else os.environ.__setitem__("GIT_DIR", previous))
         self.assertEqual(self.decide()["reason"], "uncommitted-changes")
 
+    def test_refuses_a_main_checkout_with_a_separate_git_directory(self):
+        # --separate-git-dir gives a main checkout the same .git file shape, so only
+        # registration distinguishes it from a linked worktree.
+        separate = self.root / "separate-gh4242"
+        subprocess.run([GIT, "init", "-q", "--separate-git-dir",  # nosec B603
+                        str(self.root / "separate.git"), str(separate)],
+                       check=True, capture_output=True)
+        self.assertEqual(self.decide(path=separate)["reason"], "not-a-linked-worktree")
+        removed, detail = host.remove(separate, collector.nothing_to_lose)
+        self.assertFalse(removed)
+        self.assertEqual(detail, "not-a-linked-worktree")
+        self.assertTrue(separate.exists())
+
+    def test_removal_refuses_a_locked_worktree(self):
+        git(self.canonical, "worktree", "lock", str(self.worktree))
+        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
+        self.assertFalse(removed)
+        self.assertEqual(detail, "worktree-locked")
+        self.assertTrue(self.worktree.exists())
+
     def test_removes_an_authorized_worktree(self):
         removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
         self.assertTrue(removed, detail)
