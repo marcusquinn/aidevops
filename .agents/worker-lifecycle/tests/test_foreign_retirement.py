@@ -214,6 +214,27 @@ class ForeignRetirementContract(unittest.TestCase):
             self.retire()
         self.assertTrue(self.target.exists())
 
+    def test_registered_generation_refuses_interrupted_resume(self):
+        (self.target / "work.txt").unlink()
+        self.pushed()
+        generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
+        native = foreign_retirement._git
+
+        def interrupted(*arguments):
+            result = native(*arguments)
+            if "move" in arguments:
+                raise OSError("fixture interruption after relocation")
+            return result
+
+        with patch.object(foreign_retirement, "_git", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "fixture interruption"):
+                self.retire()
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, elsewhere)
+        with self.assertRaisesRegex(StoreConflict, "foreign-generation-registered"):
+            self.retire(generation=generation)
+
     def test_interrupted_retirement_resumes_without_touching_marker(self):
         (self.target / "work.txt").unlink()
         self.pushed()
