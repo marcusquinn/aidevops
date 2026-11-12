@@ -68,12 +68,15 @@ Run the aggregator and present the result:
 ~/.aidevops/agents/scripts/setup-debt-helper.sh summary --format=human
 ```
 
-Then list both debt classes:
+Then list the debt classes:
 
 ```bash
 ~/.aidevops/agents/scripts/setup-debt-helper.sh list-sync-pat-missing
 ~/.aidevops/agents/scripts/setup-debt-helper.sh list-cross-account-inherit
+~/.aidevops/agents/scripts/setup-debt-helper.sh list-repo-onboarding
 ```
+
+For each onboarding result, walk through `reference/repo-onboarding.md`.
 
 For each slug, also fetch the platform from `~/.config/aidevops/repos.json`
 so you can route to the correct PAT URL template:
