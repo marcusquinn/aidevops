@@ -281,6 +281,26 @@ _routine_update_state() {
 
 	mkdir -p "$(dirname "$ROUTINE_STATE_FILE")" 2>/dev/null || true
 
+	# Serialize the entire read-modify-rename, including reads by detached runners.
+	local write_lock="${ROUTINE_STATE_FILE}.write.lock"
+	local lock_held=0 attempts=0 lock_mtime=0 lock_now=0
+	while [[ "$attempts" -lt 50 ]]; do
+		if mkdir "$write_lock" 2>/dev/null; then
+			lock_held=1
+			break
+		fi
+		lock_mtime=$(_file_mtime_epoch "$write_lock") || lock_mtime=0
+		lock_now=$(date +%s)
+		if [[ "$lock_mtime" =~ ^[0-9]+$ ]] && [[ "$lock_mtime" -gt 0 ]] && [[ $((lock_now - lock_mtime)) -gt 30 ]]; then
+			rmdir "$write_lock" 2>/dev/null || true
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+	if [[ "$lock_held" -eq 0 ]]; then
+		echo "[pulse-wrapper] _routine_update_state: lock timeout for ${routine_id}" >>"${LOGFILE:-/dev/null}"
+	fi
+
 	local existing="{}"
 	if [[ -f "$ROUTINE_STATE_FILE" ]]; then
 		existing=$(cat "$ROUTINE_STATE_FILE" 2>/dev/null) || existing="{}"
@@ -306,6 +326,9 @@ _routine_update_state() {
 	else
 		rm -f "$tmp_file"
 		echo "[pulse-wrapper] _routine_update_state: failed to write state for ${routine_id}" >>"$LOGFILE"
+	fi
+	if [[ "$lock_held" -eq 1 ]]; then
+		rmdir "$write_lock" 2>/dev/null || true
 	fi
 	return 0
 }
