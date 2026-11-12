@@ -1862,7 +1862,7 @@ cmd_merge() {
 # Isolate pulse globals; the restore itself checks worker origin, closing refs,
 # merged state and ownership before any writes. It is best-effort after merge.
 _merge_restore_partial_continuation() (
-	local pr_number="$1" repo="$2" LOGFILE=""
+	local pr_number="$1" repo="$2" LOGFILE="" line=""
 	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-restore.XXXXXX") || return 1
 	trap 'rm -f "$LOGFILE"' EXIT
 	# shellcheck disable=SC1091
