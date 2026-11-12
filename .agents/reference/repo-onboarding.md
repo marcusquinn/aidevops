@@ -46,13 +46,24 @@ stop there.
    `sync-workflows-helper.sh --repo <slug> --workflow <name> --install-missing`,
    then repeat with `--apply`, which opens a PR. Repair drift with
    `aidevops sync-workflows --apply --repo <slug>`.
+
+   Public repositories: the gate, triage and sync workflows run on
+   `pull_request_target`, which GitHub blocks by default from 2026-12-02. After
+   merging them, run `actions-event-policy-helper.sh plan --repo <slug>`, then
+   `apply`. Its `status` can report `UNCOVERED` even after a successful apply;
+   confirm with `gh api repos/<slug>/actions/policies/<id>`.
 5. **Secrets:** when the repository runs `issue-sync` or the metrics workflow,
    run `/setup-git` to set `SYNC_PAT` (`scripts/commands/setup-git.md`). Never
    paste tokens into a session.
 6. **Branch protection:** require pull requests and the `review-bot-gate`,
    `maintainer-gate` and `linked-issue-check` status checks on the default
    branch. This is a deliberate maintainer action, required for public
-   repositories. Verify with `aidevops security check <path>`.
+   repositories. Verify with `aidevops security check <path>`. Exception:
+   workflows that push straight to the default branch, such as Cloudron catalog
+   publication, fail under these rules. Those repositories use the baseline
+   rulesets in `tools/deployment/cloudron-app-publishing-skill.md` ("Repository
+   protection") until a bypass token path is verified; the security check
+   still reports them as critical.
 7. **Type-specific steps:** Cloudron packages also need
    `tools/deployment/cloudron-package-onboarding.md`. Repositories with a user
    interface need a root `DESIGN.md`; repositories with public search targets
