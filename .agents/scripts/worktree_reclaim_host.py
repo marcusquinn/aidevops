@@ -128,6 +128,18 @@ def locked(path: Path) -> bool:
     return metadata is not None and (metadata / "locked").exists()
 
 
+def _removal_blocked(path: Path, verify) -> str | None:
+    """Re-check liveness and state at the last moment, naming the first blocker."""
+    census = process_census()
+    if census is None:
+        return "process-inventory-unavailable"
+    clean, detail = verify(path)
+    blockers = ((census.holds(path), "writers-appeared"),
+                (not clean, f"changed-{detail}"),
+                (metadata_directory(path) is None, "not-a-linked-worktree"))
+    return next((reason for blocked, reason in blockers if blocked), None)
+
+
 def remove(path: Path, verify) -> tuple[bool, str]:
     """Remove one worktree, re-verifying liveness and state immediately first.
 
@@ -136,16 +148,9 @@ def remove(path: Path, verify) -> tuple[bool, str]:
     ignored build artifacts are expected and Git refuses them otherwise; it is
     reached only after a fresh clean verdict.
     """
-    census = process_census()
-    if census is None:
-        return False, "process-inventory-unavailable"
-    if census.holds(path):
-        return False, "writers-appeared"
-    clean, detail = verify(path)
-    if not clean:
-        return False, f"changed-{detail}"
-    if metadata_directory(path) is None:
-        return False, "not-a-linked-worktree"
+    blocked = _removal_blocked(path, verify)
+    if blocked is not None:
+        return False, blocked
     status, _ = git(path, "worktree", "remove", "--force", str(path))
     if status != 0 and path.exists():
         try:

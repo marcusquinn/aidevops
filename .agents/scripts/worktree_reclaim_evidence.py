@@ -11,6 +11,7 @@ archive-free, each check here fails closed.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
@@ -45,23 +46,31 @@ def repository(path: Path, *, timeout: int = 60) -> str | None:
     return match.group(1) if match else None
 
 
-def reference_finished(kind: str, number: int, slug: str, cache: dict,
-                       *, timeout: int = 60) -> tuple[bool, str]:
+@dataclass(frozen=True)
+class Query:
+    """Where to ask whether a reference has finished, and what was already asked."""
+
+    slug: str
+    cache: dict
+    timeout: int = 60
+
+
+def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]:
     """Report whether one reference is finished: an issue closed, or a merge.
 
     A pull request closed without merging is not finished work, so only MERGED
     authorizes removal.
     """
-    key = (kind, number, slug)
-    if key not in cache:
+    key = (kind, number, query.slug)
+    if key not in query.cache:
         noun, done = ("issue", "CLOSED") if kind == "gh" else ("pr", "MERGED")
         status, output = run(
-            ["gh", noun, "view", str(number), "--repo", slug, "--json", "state"],
-            timeout=timeout,
+            ["gh", noun, "view", str(number), "--repo", query.slug, "--json", "state"],
+            timeout=query.timeout,
         )
         state = json.loads(output).get("state") if status == 0 and output else None
-        cache[key] = (state == done, f"{noun}-{number}-{str(state).lower()}")
-    return cache[key]
+        query.cache[key] = (state == done, f"{noun}-{number}-{str(state).lower()}")
+    return query.cache[key]
 
 
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
@@ -107,11 +116,10 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
     return None if found else "reference-unknown"
 
 
-def _unfinished(slug: str, found: list[tuple[str, int]], cache: dict,
-                timeout: int) -> str | None:
+def _unfinished(found: list[tuple[str, int]], query: Query) -> str | None:
     """Name the first reference whose work has not finished."""
     for kind, number in found:
-        finished, detail = reference_finished(kind, number, slug, cache, timeout=timeout)
+        finished, detail = reference_finished(kind, number, query)
         if not finished:
             return detail
     return None
@@ -134,7 +142,7 @@ def evidence(path: Path, census: Census | None, cache: dict,
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason = _unfinished(verdict["repository"], found, cache, timeout)
+        reason = _unfinished(found, Query(verdict["repository"], cache, timeout))
     if reason is None and census is not None:
         reason = _unsafe_to_remove(path, census, timeout)
     verdict["authorized"] = reason is None
