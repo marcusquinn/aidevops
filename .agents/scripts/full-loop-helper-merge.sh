@@ -1747,6 +1747,17 @@ _merge_check_parent_task_keywords() {
 	return 0
 }
 
+# Closure invariant (GH#36174) then parent-task keyword guard (GH#37690),
+# sharing one closing-reference metadata read.
+_merge_check_closing_guards() {
+	local pr_number="$1" repo="$2"
+	FULL_LOOP_MERGE_CLOSURE_JSON=""
+	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
+	_merge_check_parent_task_keywords "$pr_number" "$repo" \
+		"${FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE:-0}" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
+	return 0
+}
+
 cmd_merge() {
 	local pr_number="${1:-}"
 	if [[ -z "$pr_number" ]]; then
@@ -1784,10 +1795,7 @@ cmd_merge() {
 		return "$_already_merged_rc"
 	fi
 
-	FULL_LOOP_MERGE_CLOSURE_JSON=""
-	_merge_check_closure_metadata "$pr_number" "$repo" || return 1
-	_merge_check_parent_task_keywords "$pr_number" "$repo" \
-		"$FULL_LOOP_MERGE_PARSED_ALLOW_PARENT_CLOSE" "$FULL_LOOP_MERGE_CLOSURE_JSON" || return 1
+	_merge_check_closing_guards "$pr_number" "$repo" || return 1
 
 	# t2449: use the deterministic worker-briefed linked-issue trust verdict
 	# before pre-merge checks or any native/admin merge transport.
