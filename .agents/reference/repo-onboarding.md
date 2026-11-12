@@ -10,6 +10,8 @@ sync labels or install workflows. Missed steps fail silently: with Pulse off or
 labels missing, `auto-dispatch` issues are never picked up, and
 `aidevops check-workflows` exits 0 when managed workflows are missing.
 
+r914 flags new or blocked repositories in the session toast; run `repo-aidevops-health-helper.sh onboarding --all` to audit all maintained candidates.
+
 Third-party upstreams you only mirror: register them with
 `aidevops repos add <path> --sync-only` (`reference/repos-json-fields.md`) and
 stop there.
