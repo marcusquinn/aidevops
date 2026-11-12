@@ -120,6 +120,8 @@ _pulse_blocker_refresh_starved() {
 	# Pending work survives failures and signals independently of that mtime.
 	[[ -f "$(_pulse_post_dispatch_housekeeping_statefile).blocker-refresh-pending" ]] && return 0
 	[[ -f "$cache_file" ]] || return 0
+	# Per-repository checkpoints update mtime without completing the rebuild.
+	jq -e '.rebuild_complete == false' "$cache_file" >/dev/null 2>&1 && return 0
 	local now="" mtime=""
 	now=$(date +%s 2>/dev/null) || return 1
 	mtime=$(date -r "$cache_file" +%s 2>/dev/null) || return 0
@@ -160,7 +162,7 @@ _pulse_run_blocker_refresh_catchup() {
 	if [[ -f "$progress_file" ]] &&
 		{ ! _pulse_housekeeping_stage_recently_done "$graph_stage" "$progress_file" >/dev/null || ! jq -e \
 			--argjson max_age "$((${DEP_GRAPH_CACHE_TTL_SECS:-300} * 2))" '
-		now as $now | (.repos | length) > 0 and all(.repos[];
+		now as $now | .rebuild_complete != false and (.repos | length) > 0 and all(.repos[];
 			(.built_at | type) == "number" and .built_at > 0
 			and .built_at <= $now and $now - .built_at < $max_age)
 	' "${DEP_GRAPH_CACHE_FILE:-}" >/dev/null 2>&1; }; then
