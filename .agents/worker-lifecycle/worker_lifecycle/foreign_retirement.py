@@ -17,7 +17,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import foreign_marker
+from .cleanup_plan import foreign_marker, require_foreign_unregistered
 from .directory_handle import DirectoryHandle
 from .enrollment import _directory_inode
 from .filesystem import validate_private_path as _private
@@ -134,6 +134,7 @@ def _finish(
     if not os.path.lexists(target) and removing is None:
         _relocate(store, path, plan, receipt)
     if os.path.lexists(target):
+        require_foreign_unregistered(store, path, generation)
         if removing is None:
             # Resumed after relocation: revalidate proof against the moved tree first.
             bundle = plan["proof"].get("bundle")

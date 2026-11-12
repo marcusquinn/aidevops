@@ -84,6 +84,23 @@ def marker_digest(marker: Path) -> str:
         os.close(descriptor)
 
 
+def require_foreign_unregistered(store: LifecycleRegistry, path: Path, generation: str) -> None:
+    """Refuse any locally registered foreign generation or source path."""
+    with store.connection() as connection:
+        registered = (
+            connection.execute(
+                "SELECT 1 FROM generations WHERE generation_id=? OR path=?",
+                (generation, str(path))).fetchone()
+            or connection.execute(
+                "SELECT 1 FROM generation_admissions WHERE generation_id=? OR path=?",
+                (generation, str(path))).fetchone()
+            or connection.execute(
+                "SELECT 1 FROM bindings WHERE generation_id=?", (generation,)).fetchone()
+        )
+    if registered:
+        raise StoreConflict("foreign-generation-registered")
+
+
 def foreign_marker(store: LifecycleRegistry, path: Path) -> dict[str, object]:
     """Classify a refused `generation-directory-mismatch` tree as foreign (GH#37828).
 
@@ -107,19 +124,7 @@ def foreign_marker(store: LifecycleRegistry, path: Path) -> dict[str, object]:
     if marker_installation == store.installation_id():
         # Same installation: normal enrollment, cleanup and diagnostics apply.
         raise StoreConflict("marker-matches-current-installation")
-    with store.connection() as connection:
-        registered = (
-            connection.execute(
-                "SELECT 1 FROM generations WHERE generation_id=? OR path=?",
-                (generation, str(path))).fetchone()
-            or connection.execute(
-                "SELECT 1 FROM generation_admissions WHERE generation_id=? OR path=?",
-                (generation, str(path))).fetchone()
-            or connection.execute(
-                "SELECT 1 FROM bindings WHERE generation_id=?", (generation,)).fetchone()
-        )
-    if registered:
-        raise StoreConflict("foreign-generation-registered")
+    require_foreign_unregistered(store, path, generation)
     common = Path(_native_common(path))
     if (admin.parent != common / "worktrees" or admin.resolve(strict=True) != admin
             or (admin / "gitdir").read_text(encoding="utf-8").rstrip("\n")

@@ -104,12 +104,8 @@ def _verified_destination(receipt: dict[str, str], manifest: dict[str, str]) -> 
         if os.path.realpath(top) != os.path.realpath(destination):
             raise StoreConflict("rescue-destination-changed")
         if head != receipt.get("head"):
-            # Rescue committed after verification: HEAD must descend from the
-            # receipt head and a remote must verifiably hold the clean result.
-            read_git(destination, "merge-base", "--is-ancestor",
-                     receipt.get("head", ""), head)
-            _pushed_proof(destination, head)
-            return str(destination)
+            # A pushed descendant alone does not prove it contains rescued work.
+            raise StoreConflict("rescue-destination-changed")
         held = source_hashes(destination)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         raise StoreConflict("rescue-destination-missing") from None
@@ -166,6 +162,12 @@ def prove(path: Path, bundle: Path | None, origin: Path | None = None) -> dict[s
     """Return proof evidence or raise; callable again to revalidate before relocation."""
     if _in_progress(path):
         raise StoreConflict("source-operation-in-progress")
+    # The Git-only archive excludes ignored entries, and a combined HEAD diff
+    # does not preserve index-only state. Refuse rather than lose either.
+    if read_git(path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"):
+        raise StoreConflict("source-ignored-files-present")
+    if read_git(path, "diff", "--cached", "--name-only", "-z"):
+        raise StoreConflict("source-staged-changes-present")
     current = source_hashes(path)
     if bundle is None:
         return _pushed_proof(path, current["head"])

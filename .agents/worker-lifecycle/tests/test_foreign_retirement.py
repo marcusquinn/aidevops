@@ -161,6 +161,32 @@ class ForeignRetirementContract(unittest.TestCase):
             self.retire(bundle)
         self.assertEqual((self.target / "late.txt").read_text(), "new")
 
+    def test_ignored_source_is_never_removed(self):
+        bundle = self.rescue()
+        (self.repo / ".git" / "info" / "exclude").write_text("private.txt\n")
+        (self.target / "private.txt").write_text("local data")
+        with self.assertRaisesRegex(StoreConflict, "source-ignored-files-present"):
+            self.retire(bundle)
+        self.assertTrue((self.target / "private.txt").exists())
+
+    def test_staged_source_is_never_removed(self):
+        bundle = self.rescue()
+        retirement._git("-C", str(self.target), "add", "work.txt")
+        with self.assertRaisesRegex(StoreConflict, "source-staged-changes-present"):
+            self.retire(bundle)
+        self.assertTrue(self.target.exists())
+
+    def test_pushed_descendant_without_rescue_is_refused(self):
+        bundle = self.rescue()
+        fresh = self.root / "fresh"
+        (fresh / "work.txt").unlink()
+        retirement._git("-C", str(fresh), "-c", "user.name=Fixture", "-c",
+                        "user.email=fixture@example.invalid", "commit", "-q",
+                        "--allow-empty", "-m", "discarded rescue")
+        with self.assertRaisesRegex(StoreConflict, "rescue-destination-changed"):
+            self.retire(bundle)
+        self.assertTrue(self.target.exists())
+
     def test_tampered_receipt_is_refused(self):
         bundle = self.rescue()
         receipt = bundle / foreign_retirement.RECEIPT

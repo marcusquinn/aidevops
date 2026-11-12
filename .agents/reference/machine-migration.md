@@ -131,8 +131,9 @@ repeated:
 
 ## After the rescue
 
-Keep the copied worktrees and bundles until the rescued work is committed and
-pushed, and checked. Normal cleanup refuses the copies.
+Keep the copied worktrees and bundles until the rescued work is checked. Normal
+cleanup refuses the copies. The guarded receipt path below requires the verified
+destination to remain unchanged at the rescued HEAD until retirement completes.
 
 ## Retiring the copies
 
@@ -155,8 +156,10 @@ remote-tracking ref that `git ls-remote` confirms still points at the same commi
 - repeats this proof immediately before relocation, so a resumed run never relies
   on stale evidence;
 - refuses an in-progress merge, rebase, cherry-pick, revert or bisect;
-- archives the copy through the normal WIP archive (ignored files are excluded,
-  as in the rescue), verifies it, then has Git relocate and remove it with the
+- refuses staged changes and ignored files because the rescue and normal WIP
+  archive do not preserve their full state. Preserve ignored files separately
+  and resolve staged changes before retrying; verify the rescue again afterward;
+- archives the copy through the normal WIP archive, verifies it, then has Git relocate and remove it with the
   shared journaled removal; the branch is kept;
 - leaves the foreign marker untouched (it is removed only with the whole Git
   administration directory), never opens admission and registers no generation;
