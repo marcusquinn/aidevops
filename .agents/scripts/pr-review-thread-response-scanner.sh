@@ -13,6 +13,7 @@
 #   pr-review-thread-response-scanner.sh resolve <repo_slug> <thread_id>
 #   pr-review-thread-response-scanner.sh mark-complete <repo_slug> <pr_number> [reason] [details_file]
 #   pr-review-thread-response-scanner.sh mark-blocked <repo_slug> <pr_number> <blocked_by> <reason> [details_file]
+#   pr-review-thread-response-scanner.sh mark-progress <repo_slug> <pr_number> [reason] [details_file]
 #
 # This helper is intentionally conservative: it never resolves review threads
 # itself. It only detects unresolved bot review threads on open non-draft PRs by
@@ -124,7 +125,7 @@ _prrts_log() {
 }
 
 _prrts_usage() {
-	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked} <repo_slug> ...\n' "$(basename "$0")"
+	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked|mark-progress} <repo_slug> ...\n' "$(basename "$0")"
 	return 0
 }
 
@@ -1347,6 +1348,30 @@ cmd_mark_complete() {
 	return 0
 }
 
+# GH#37926: capacity/context/time-budget reasons are not blockers.
+_prrts_is_capacity_reason() {
+	local reason="$1"
+	case "$reason" in
+	session_capacity* | context* | capacity* | time_budget*) return 0 ;;
+	esac
+	return 1
+}
+
+# GH#37926: record a pushed progress head without raising attention. The
+# per-head continuation rule re-arms one continuation for the new head.
+cmd_mark_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local reason="${3:-continuation_progress}"
+	local details_file="${4:-}"
+	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		_prrts_usage >&2
+		return 2
+	fi
+	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_FALSE" "none" "$PRRTS_BOOL_FALSE" "progress:${reason}" "$details_file"
+	return 0
+}
+
 cmd_mark_blocked() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1355,6 +1380,12 @@ cmd_mark_blocked() {
 	local details_file="${5:-}"
 	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ || -z "$blocked_by" ]]; then
 		_prrts_usage >&2
+		return 2
+	fi
+	# GH#37926: self-assessed capacity is never a blocker; publish progress instead.
+	if _prrts_is_capacity_reason "$reason"; then
+		printf 'mark-blocked refused: "%s" is a capacity/time-budget reason, not a blocker. Commit and push your progress head, then run mark-progress.\n' "$reason" >&2
+		_prrts_log "mark-blocked: ${repo_slug}#${pr_number} refused capacity-style reason"
 		return 2
 	fi
 	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "$blocked_by" "$PRRTS_BOOL_TRUE" "$reason" "$details_file"
@@ -1989,6 +2020,9 @@ main() {
 		;;
 	mark-blocked)
 		cmd_mark_blocked "$repo_slug" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+		;;
+	mark-progress)
+		cmd_mark_progress "$repo_slug" "${3:-}" "${4:-}" "${5:-}"
 		;;
 	-h | --help | help)
 		_prrts_usage

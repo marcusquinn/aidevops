@@ -215,6 +215,33 @@ _run_result_terminal_completion_confirmed() {
 	return 1
 }
 
+# GH#37926: a checkpoint-continuation session that leaves the draft head
+# unchanged and records no terminal state (mark-complete/blocked/progress) did
+# not succeed. Fails open (returns 1) whenever evidence is unavailable.
+_run_result_continuation_exited_unchanged() {
+	local repair_pr="${AIDEVOPS_PR_REPAIR_NUMBER:-}" start_head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}" state_dir="" state_file="" current_head=""
+	[[ "$repair_pr" =~ ^[0-9]+$ && "$start_head" =~ ^[0-9a-fA-F]{40,64}$ && -n "$repo_slug" && -n "${work_dir:-}" ]] || return 1
+	[[ -n "${AIDEVOPS_PR_REPAIR_LINKED_ISSUE:-}" ]] || return 1
+	current_head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	[[ "$current_head" == "$start_head" ]] || return 1
+	state_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
+	state_file="${state_dir}/$(printf '%s' "$repo_slug" | tr '/:' '--')-${repair_pr}.state"
+	if [[ -f "$state_file" ]] && grep -q '^completed_at=' "$state_file"; then
+		return 1
+	fi
+	return 0
+}
+
+_run_result_flag_unchanged_continuation() {
+	_run_result_label="premature_exit"
+	_run_classification_source="continuation_unchanged_head"
+	_run_classification_pattern="no_terminal_state_unchanged_head"
+	rm -f "$output_file"
+	print_warning "$selected_model checkpoint continuation exited with unchanged head and no terminal state (premature exit — will attempt continuation)"
+	return 0
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -307,6 +334,10 @@ _handle_run_result_success_output() {
 			print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
 			return 77
 		fi
+	fi
+	if ! _run_result_is_issue_worker && _run_result_continuation_exited_unchanged; then
+		_run_result_flag_unchanged_continuation
+		return 77
 	fi
 	_run_result_label="success"
 	rm -f "$output_file"
