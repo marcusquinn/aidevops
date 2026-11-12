@@ -205,6 +205,11 @@ cloudron_package_compatibility_findings() {
 		fi
 	fi
 
+	if jq -e '(.packageUrl // "") != "" and .packageUrl == .packagerUrl' "$manifest_path" >/dev/null 2>&1; then
+		printf '%s\n' '- packagerUrl equals packageUrl; set packagerUrl to the maintainer profile so the Community Apps "By" link is correct (cloudron-app-publishing-skill.md).'
+		findings=$((findings + 1))
+	fi
+
 	[[ "$findings" -eq 0 ]] && return 0
 	return 1
 }

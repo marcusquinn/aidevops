@@ -63,6 +63,8 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/aidevops-cli/repo-discovery-lib.sh"
 # shellcheck source=aidevops-cli/aidevops-project-config-lib.sh
 source "${SCRIPT_DIR}/aidevops-cli/aidevops-project-config-lib.sh"
+# shellcheck source=repo-onboarding-audit-lib.sh
+source "${SCRIPT_DIR}/repo-onboarding-audit-lib.sh"
 # shellcheck source=/dev/null
 if [[ -f "${SCRIPT_DIR}/shared-gh-wrappers.sh" ]]; then
 	source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
@@ -978,6 +980,7 @@ cmd_check() {
 	_check_missing_folders
 	_check_no_init_repos
 	_check_required_trust_workflows "$dry_run"
+	_check_onboarding_gaps "$dry_run"
 
 	log_info "r914 complete: ${_R914_BUMPED} bumped, ${_R914_BUMP_SKIPPED} bump-skipped, ${_R914_BUMP_FAILED} bump-failed, ${_R914_REGISTERED_CONFIG_MISSING} registered-config-missing, ${_R914_MISSING_FOLDER} missing-folder, ${_R914_NO_INIT} no-init"
 	update_state "$_R914_BUMPED" "$_R914_BUMP_SKIPPED" "$_R914_BUMP_FAILED" "$_R914_REGISTERED_CONFIG_MISSING" "$_R914_MISSING_FOLDER" "$_R914_NO_INIT"
@@ -1771,6 +1774,7 @@ COMMANDS:
     disable             Remove scheduler
     status              Show current state and last drift-check results
     check               One-shot: check all configured repos now
+    onboarding [--all]  Report onboarding gaps (all maintained candidates with --all)
     dirs [subcmd]       Manage git parent directories:
         list            Show configured directories (default)
         add <path>      Add a parent directory
@@ -1829,6 +1833,7 @@ main() {
 	disable) cmd_disable "$@" ;;
 	status) cmd_status "$@" ;;
 	check | run) cmd_check "$@" ;;
+	onboarding) cmd_onboarding "$@" ;;
 	dirs) cmd_dirs "$@" ;;
 	config) cmd_config "$@" ;;
 	logs) cmd_logs "$@" ;;
