@@ -853,6 +853,24 @@ _setup_opencode_v1_find_config() {
 	return $?
 }
 
+_setup_opencode_v2_prepare_config() {
+	local config_home="$1" opencode_config_dir="$2" opencode_config="$3"
+	local opencode_config_parent="" dir=""
+	local managed_root="${HOME}/.aidevops/runtimes/opencode-v2"
+	opencode_config_parent=$(dirname "$opencode_config")
+	mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
+	if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" != "1" ]]; then
+		for dir in "$config_home" "$opencode_config_dir" "$opencode_config_parent"; do
+			case "$dir" in "$managed_root"/*) chmod 700 "$dir" 2>/dev/null || true ;; esac
+		done
+	fi
+	if [[ ! -e "$opencode_config" ]]; then
+		(umask 077 && printf '{}\n' >"$opencode_config") || return 1
+	fi
+	_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+	return 0
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
@@ -918,20 +936,7 @@ setup_opencode_plugins() {
 	# Mechanism 1: file:// URL in opencode.json
 	local pool_plugin_registered=""
 	if [[ "$profile" == "v2" ]]; then
-		local opencode_config_parent=""
-		opencode_config_parent=$(dirname "$opencode_config")
-		mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
-		if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" != "1" ]]; then
-			local managed_root="${HOME}/.aidevops/runtimes/opencode-v2"
-			local dir=""
-			for dir in "$config_home" "$opencode_config_dir" "$opencode_config_parent"; do
-				case "$dir" in "$managed_root"/*) chmod 700 "$dir" 2>/dev/null || true ;; esac
-			done
-		fi
-		if [[ ! -e "$opencode_config" ]]; then
-			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
-		fi
-		_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+		_setup_opencode_v2_prepare_config "$config_home" "$opencode_config_dir" "$opencode_config" || return 1
 	fi
 	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config); then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
