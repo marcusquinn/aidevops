@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.177] - 2026-11-12
+
+### Added
+
+- add file-split-verify.py pure-move verifier for file-split PRs (#37805)
+
+### Changed
+
+- Refactor: extract migration sqlite inspection (#37778)
+- Performance: drop redundant pulse-merge final trust gates
+
+### Fixed
+
+- carry status:blocked to consolidated successors
+- recover incomplete checkpoint triage (#37822)
+- restore stale supervisor scope (#37789)
+- recover empty sealed generations and hold protected checkpoints (#37807)
+
 ## [3.39.176] - 2026-11-11
 
 ### Changed
