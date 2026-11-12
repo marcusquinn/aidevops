@@ -191,3 +191,4 @@ def require_foreign_identity(
             or _directory_inode(admin) != plan["git_identity"]
             or marker_digest(admin / MARKER) != plan["marker_sha256"]):
         raise StoreConflict("private-worktree-changed")
+    require_preservable_state(target)

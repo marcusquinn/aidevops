@@ -271,6 +271,26 @@ class ForeignRetirementContract(unittest.TestCase):
         self.assertEqual(result["status"], "retired")
         self.assertFalse(admin.exists())
 
+    def test_interrupted_removal_restores_git_link_before_safety_checks(self):
+        (self.target / "work.txt").unlink()
+        self.pushed()
+        generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
+        native = retirement._git
+
+        def interrupted(*arguments):
+            if "remove" in arguments and "worktree" in arguments:
+                Path(arguments[-1], ".git").unlink()
+                raise OSError("fixture interruption during removal")
+            return native(*arguments)
+
+        with patch.object(retirement, "_git", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "fixture interruption"):
+                self.retire()
+        # Isolate link restoration from this host's unrelated protected processes.
+        with patch.object(retirement, "require_idle_processes"):
+            result = self.retire(generation=generation)
+        self.assertEqual(result["status"], "retired")
+
 
 if __name__ == "__main__":
     unittest.main()
