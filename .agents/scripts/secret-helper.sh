@@ -1053,6 +1053,25 @@ print_secret_input_guidance() {
 	return 0
 }
 
+# Validate a normalized secret name for `set`; systemd-creds names follow the
+# inventory/check/rm rule (must start with a letter).
+validate_set_name() {
+	local name="$1"
+	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+		print_error "Secret name must be a valid environment variable name"
+		return 1
+	fi
+	if [[ "$SET_BACKEND" == systemd-creds && ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+		print_error "systemd-creds secret names must start with a letter"
+		return 1
+	fi
+	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
+		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
+		return 1
+	fi
+	return 0
+}
+
 # Set a secret (hidden single-line input, full stdin, or private file).
 # Optional metadata flags record which account the secret opens (GH#34680);
 # they are validated before the value is read so a rejection stores nothing.
@@ -1075,18 +1094,7 @@ cmd_set() {
 
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
-	if [[ ! "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-		print_error "Secret name must be a valid environment variable name"
-		return 1
-	fi
-	if [[ "$SET_BACKEND" == systemd-creds && ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
-		print_error "systemd-creds secret names must start with a letter (inventory/check/rm rule)"
-		return 1
-	fi
-	if [[ "$name" == "AIDEVOPS_ACTIVE_TENANT" ]]; then
-		print_error "AIDEVOPS_ACTIVE_TENANT is reserved; use: credential-helper.sh switch TENANT"
-		return 1
-	fi
+	validate_set_name "$name" || return 1
 	if [[ ${#record_args[@]} -gt 0 ]] && ! run_credential_inventory record "$name" "${record_args[@]}" --check; then
 		print_error "Credential metadata rejected; nothing was stored"
 		return 1
