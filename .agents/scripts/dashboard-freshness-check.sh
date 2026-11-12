@@ -64,6 +64,7 @@ source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 # =============================================================================
 
 LOGFILE="${HOME}/.aidevops/logs/dashboard-freshness.log"
+STATS_LOGFILE="${DASHBOARD_FRESHNESS_STATS_LOG:-${HOME}/.aidevops/logs/stats.log}"
 STATE_DIR="${HOME}/.aidevops/cache/dashboard-freshness"
 LAST_RUN_FILE="${STATE_DIR}/last-scan"
 HEALTH_ISSUE_CACHE_DIR="${HOME}/.aidevops/logs"
@@ -708,6 +709,23 @@ _close_recovered_missing_marker_alerts() {
 	return 0
 }
 
+# Summarise recent `rc=124` budget stops for a repo from stats.log so the
+# stale alert names the real cause (repeated per-repo timeouts) instead of
+# implying the scheduler is missing. Prints a markdown paragraph, or nothing.
+# Args: $1 - target slug
+_stats_timeout_diagnosis() {
+	local slug="$1"
+	[[ -r "$STATS_LOGFILE" ]] || return 0
+	local lines count stages last
+	lines="$(tail -n 20000 "$STATS_LOGFILE" 2>/dev/null | grep -F "Health issue update stopped for ${slug} (rc=124 " || true)"
+	[[ -n "$lines" ]] || return 0
+	count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
+	stages="$(printf '%s\n' "$lines" | sed -n 's/.* stage=\([A-Za-z0-9_-]*\) .*/\1/p' | sort | uniq -c | sort -rn | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "}')"
+	last="$(printf '%s\n' "$lines" | tail -n 1 | sed -n 's/.* timeout=\([0-9]*\)s).*/\1/p')"
+	printf '\n\n**Likely cause:** `stats.log` records %s recent per-repository budget stops (`rc=124`) for this repo (stages: %s; last timeout budget: %ss). The scheduler is running but this repo keeps exceeding its refresh budget; raise `STATS_HEALTH_REPO_TIMEOUT` / `STATS_HEALTH_RECOVERY_REPO_TIMEOUT` or investigate the slow stage before checking for a missing plist.' "$count" "${stages:-unknown}" "${last:-unknown}"
+	return 0
+}
+
 # Write the alert body to the given tempfile. Extracted from
 # _file_stale_alert so the parent stays under the 100-line gate in
 # complexity-regression-helper.sh. Args:
@@ -829,6 +847,7 @@ _file_stale_alert() {
 		human_age="$(_format_age "$age_secs")"
 		title="Supervisor health dashboard stale: ${human_age} (#${dash_issue})"
 		body_summary="The dashboard at #${dash_issue} last refreshed \`${iso}\` — **${human_age} ago** (threshold: ${threshold_human}). The \`stats-wrapper.sh\` scheduler is likely failing silently."
+		body_summary+="$(_stats_timeout_diagnosis "$slug")"
 	fi
 
 	local body_file
