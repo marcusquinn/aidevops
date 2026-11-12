@@ -13,6 +13,7 @@
 #   pr-review-thread-response-scanner.sh resolve <repo_slug> <thread_id>
 #   pr-review-thread-response-scanner.sh mark-complete <repo_slug> <pr_number> [reason] [details_file]
 #   pr-review-thread-response-scanner.sh mark-blocked <repo_slug> <pr_number> <blocked_by> <reason> [details_file]
+#   pr-review-thread-response-scanner.sh mark-progress <repo_slug> <pr_number> [reason] [details_file]
 #
 # This helper is intentionally conservative: it never resolves review threads
 # itself. It only detects unresolved bot review threads on open non-draft PRs by
@@ -124,7 +125,7 @@ _prrts_log() {
 }
 
 _prrts_usage() {
-	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked} <repo_slug> ...\n' "$(basename "$0")"
+	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked|mark-progress} <repo_slug> ...\n' "$(basename "$0")"
 	return 0
 }
 
@@ -840,6 +841,7 @@ _prrts_read_state() {
 	local worker_contract_version_var="${10:-}"
 	local outcome_id_var="${11:-}"
 	local infrastructure_failure_count_var="${12:-}"
+	local completed_var="${13:-}"
 	local key="" value=""
 	local state_fingerprint="" state_dispatched_at="0"
 	local state_attempt_count="0"
@@ -847,6 +849,7 @@ _prrts_read_state() {
 	local state_analysis_complete="$PRRTS_BOOL_FALSE" state_blocked_by="" state_maintainer_attention="$PRRTS_BOOL_FALSE"
 	local state_blocker_reason="" state_worker_contract_version="" state_outcome_id=""
 	local state_infrastructure_failure_count="0"
+	local state_completed_at="0"
 	if [[ -f "$state_file" ]]; then
 		while IFS='=' read -r key value; do
 			case "$key" in
@@ -862,12 +865,14 @@ _prrts_read_state() {
 			worker_contract_version) state_worker_contract_version="$value" ;;
 			outcome_id) state_outcome_id="$value" ;;
 			infrastructure_failure_count) state_infrastructure_failure_count="$value" ;;
+			completed_at) state_completed_at="$value" ;;
 			esac
 		done <"$state_file"
 	fi
 	[[ "$state_dispatched_at" =~ ^[0-9]+$ ]] || state_dispatched_at=0
 	[[ "$state_attempt_count" =~ ^[0-9]+$ ]] || state_attempt_count=0
 	[[ "$state_infrastructure_failure_count" =~ ^[0-9]+$ ]] || state_infrastructure_failure_count=0
+	[[ "$state_completed_at" =~ ^[0-9]+$ ]] || state_completed_at=0
 	[[ "$state_analysis_complete" == "$PRRTS_BOOL_TRUE" ]] || state_analysis_complete="$PRRTS_BOOL_FALSE"
 	[[ "$state_maintainer_attention" == "$PRRTS_BOOL_TRUE" ]] || state_maintainer_attention="$PRRTS_BOOL_FALSE"
 	printf -v "$fingerprint_var" '%s' "$state_fingerprint"
@@ -898,6 +903,9 @@ _prrts_read_state() {
 	fi
 	if [[ -n "$infrastructure_failure_count_var" ]]; then
 		printf -v "$infrastructure_failure_count_var" '%s' "$state_infrastructure_failure_count"
+	fi
+	if [[ -n "$completed_var" ]]; then
+		printf -v "$completed_var" '%s' "$state_completed_at"
 	fi
 	return 0
 }
@@ -1121,6 +1129,15 @@ _prrts_set_dispatch_outputs() {
 	return 0
 }
 
+# A progress record belongs only to the dispatch it completed, not a later one.
+_prrts_has_fresh_progress() {
+	local reason="$1" analysis_complete="$2" completed_at="$3" dispatched_at="$4"
+	if [[ "$reason" == progress:* && "$analysis_complete" == "$PRRTS_BOOL_FALSE" && "$completed_at" -gt "$dispatched_at" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _prrts_should_dispatch() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1140,13 +1157,14 @@ _prrts_should_dispatch() {
 	local stored_contract_label="" outcome_reason="" outcome_session_count="" outcome_finished_at="0" outcome_retry_class=""
 	local expected_outcome_id="" observed_outcome_id="" infrastructure_failure_cooldown=""
 	local retryable_infrastructure_failure="$PRRTS_BOOL_FALSE" maintainer_gate_outcome="$PRRTS_BOOL_FALSE"
+	local completed_at="0"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	outcome_file="$(_prrts_outcome_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
 	inflight_ttl="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL" "300" "1")"
 	infrastructure_failure_cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFRASTRUCTURE_FAILURE_COOLDOWN" "90" "1")"
 	infrastructure_failure_max="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFRASTRUCTURE_FAILURE_MAX" "5" "2")"
-	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention last_head_sha blocker_reason worker_contract_version expected_outcome_id last_infrastructure_failure_count
+	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention last_head_sha blocker_reason worker_contract_version expected_outcome_id last_infrastructure_failure_count completed_at
 	_prrts_read_outcome "$outcome_file" outcome_reason outcome_session_count outcome_finished_at observed_outcome_id outcome_retry_class
 	if [[ "$worker_contract_version" != "$PRRTS_WORKER_CONTRACT_VERSION" &&
 		"$fingerprint" == "$last_fingerprint" &&
@@ -1204,7 +1222,8 @@ _prrts_should_dispatch() {
 		fi
 		return 0
 	fi
-	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" ]]; then
+	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" ]] &&
+		! _prrts_has_fresh_progress "$blocker_reason" "$analysis_complete" "$completed_at" "$dispatched_at"; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch state active ${age_seconds}s ago"
 		return "$PRRTS_RC_DISPATCH_DEFERRED"
 	fi
@@ -1347,6 +1366,44 @@ cmd_mark_complete() {
 	return 0
 }
 
+# GH#37926: capacity/context/time-budget reasons are not blockers.
+_prrts_is_capacity_reason() {
+	local reason="$1"
+	case "$reason" in
+	session_capacity* | context* | capacity* | time_budget*) return 0 ;;
+	esac
+	return 1
+}
+
+# GH#37926: record a pushed progress head without raising attention. The
+# per-head continuation rule re-arms one continuation for the new head.
+cmd_mark_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local reason="${3:-continuation_progress}"
+	local details_file="${4:-}"
+	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		_prrts_usage >&2
+		return 2
+	fi
+	local start_head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" current_head="" snapshot=""
+	local pull_state="" pull_draft="" # state/draft fields are positional placeholders
+	if [[ -z "$start_head" ]]; then
+		start_head=$(_prrts_rereview_dispatch_head "$(_prrts_state_file "$repo_slug" "$pr_number")") || start_head=""
+	fi
+	snapshot=$(_prrts_rereview_pull_snapshot "$repo_slug" "$pr_number") || snapshot=""
+	IFS=$'\t' read -r pull_state pull_draft current_head <<<"$snapshot"
+	: "$pull_state" "$pull_draft"
+	if [[ ! "$start_head" =~ ^[0-9a-fA-F]{40}$ || ! "$current_head" =~ ^[0-9a-fA-F]{40}$ ||
+		"$current_head" == "$start_head" ]]; then
+		printf 'mark-progress refused: a changed published PR head could not be verified. Push progress before recording it.\n' >&2
+		_prrts_log "mark-progress: ${repo_slug}#${pr_number} refused unchanged or unverifiable head"
+		return 2
+	fi
+	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_FALSE" "none" "$PRRTS_BOOL_FALSE" "progress:${reason}" "$details_file"
+	return 0
+}
+
 cmd_mark_blocked() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1355,6 +1412,12 @@ cmd_mark_blocked() {
 	local details_file="${5:-}"
 	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ || -z "$blocked_by" ]]; then
 		_prrts_usage >&2
+		return 2
+	fi
+	# GH#37926: self-assessed capacity is never a blocker; publish progress instead.
+	if _prrts_is_capacity_reason "$reason"; then
+		printf 'mark-blocked refused: "%s" is a capacity/time-budget reason, not a blocker. Commit and push your progress head, then run mark-progress.\n' "$reason" >&2
+		_prrts_log "mark-blocked: ${repo_slug}#${pr_number} refused capacity-style reason"
 		return 2
 	fi
 	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "$blocked_by" "$PRRTS_BOOL_TRUE" "$reason" "$details_file"
@@ -1989,6 +2052,9 @@ main() {
 		;;
 	mark-blocked)
 		cmd_mark_blocked "$repo_slug" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+		;;
+	mark-progress)
+		cmd_mark_progress "$repo_slug" "${3:-}" "${4:-}" "${5:-}"
 		;;
 	-h | --help | help)
 		_prrts_usage
