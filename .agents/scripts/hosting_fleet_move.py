@@ -66,6 +66,8 @@ def select_moves(plan: dict[str, Any], sites: list[str] | None) -> list[dict[str
     moves = {}
     for domain in sorted(wanted):
         item = by_domain[domain]
+        if not item.get("registered_path") or not item.get("registered_slug"):
+            raise FleetError(f"Registered clone is missing for {domain}")
         moves[item["expected_slug"]] = {"slug": item["expected_slug"],
                                         "old_slug": item["registered_slug"],
                                         "source": str(expand_path(item["registered_path"])),
