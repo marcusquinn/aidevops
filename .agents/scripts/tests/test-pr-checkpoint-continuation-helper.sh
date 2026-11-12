@@ -139,10 +139,14 @@ STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
 
 # Test groups live in sibling modules sourced in order (shared fixtures/state).
-for _pcc_module in dispatch selfhold attention fuse; do
-	# shellcheck source=/dev/null
-	source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-${_pcc_module}.sh"
-done
+# shellcheck source=test-pr-checkpoint-continuation-dispatch.sh
+source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-dispatch.sh"
+# shellcheck source=test-pr-checkpoint-continuation-selfhold.sh
+source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-selfhold.sh"
+# shellcheck source=test-pr-checkpoint-continuation-attention.sh
+source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-attention.sh"
+# shellcheck source=test-pr-checkpoint-continuation-fuse.sh
+source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-fuse.sh"
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
