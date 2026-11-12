@@ -37,6 +37,9 @@ fi
 
 # Dashboard provenance label, shared by creation and label normalization.
 _QUALITY_DASHBOARD_SOURCE_LABEL="source:quality-sweep"
+# Dashboard titles: bare "Code Audit Routines" or the sweep's
+# "Code Audit Routines — <stats>" form (jq regex, embedded in --jq filters).
+_QUALITY_DASHBOARD_TITLE_RE='^Code Audit Routines( — |$)'
 # Sentinel for unavailable gate/grade/badge signals.
 _QUALITY_SIGNAL_UNKNOWN="UNKNOWN"
 
@@ -92,9 +95,11 @@ _quality_issue_title_search() {
 	local repo_slug="$1"
 
 	local raw_output exit_code
+	# Only dashboard titles qualify: an unrelated issue mentioning the phrase
+	# must never become the survivor that duplicate cleanup keeps.
 	raw_output=$(gh issue list --repo "$repo_slug" \
 		--state open --search "\"Code Audit Routines\" in:title" \
-		--json number --jq '.[0].number // empty' 2>&1)
+		--json number,title --jq "[.[] | select(.title | test(\"${_QUALITY_DASHBOARD_TITLE_RE}\"))] | .[0].number // empty" 2>&1)
 	exit_code=$?
 
 	if [[ "$exit_code" -ne 0 ]]; then
@@ -107,20 +112,28 @@ _quality_issue_title_search() {
 }
 
 #######################################
-# Close all open "Code Audit Routines" sibling issues except the survivor.
+# Close all open "Code Audit Routines" sibling issues except the canonical
+# survivor, and print that survivor.
 #
-# Self-healing sweep: called post-create to close any duplicates that
-# accumulated during prior label-search failures. Models on
+# Self-healing sweep: called post-create and after reusing a verified-open
+# dashboard to close duplicates from prior failures. Models on
 # pulse-merge.sh::_close_superseded_prs — close with comment, best-effort.
+#
+# GH#37957: the canonical survivor is the highest-numbered open dashboard
+# (including the caller's). Every sweep, on any runner, converges on the same
+# issue and never closes it, so concurrent sweeps cannot close each other's
+# survivors and no cross-runner lock is needed.
 #
 # Arguments:
 #   $1 - repo_slug
-#   $2 - survivor_issue_number (the one to keep open)
+#   $2 - survivor_issue_number (the caller's verified-open dashboard)
+# Output: the canonical survivor number (the caller's on any failure)
 # Returns: 0 always (best-effort, never blocks the caller)
 #######################################
 _quality_issue_close_duplicates() {
 	local repo_slug="$1"
 	local survivor="$2"
+	local canonical="$survivor"
 
 	local siblings_json
 	# Dashboard titles only: the bare title or the invariant "Code Audit
@@ -128,20 +141,26 @@ _quality_issue_close_duplicates() {
 	# unrelated issues that merely mention the phrase; those are never closed.
 	siblings_json=$(gh issue list --repo "$repo_slug" \
 		--state open --search "\"Code Audit Routines\" in:title" \
-		--json number,title --jq '[.[] | select(.title | test("^Code Audit Routines( — |$)")) | .number]' 2>/dev/null) || return 0
+		--json number,title --jq "[.[] | select(.title | test(\"${_QUALITY_DASHBOARD_TITLE_RE}\")) | .number]" 2>/dev/null) || siblings_json=""
 
-	[[ -z "$siblings_json" ]] && return 0
+	if [[ -n "$siblings_json" && "$survivor" =~ ^[0-9]+$ ]]; then
+		canonical=$(printf '%s\n' "$siblings_json" | jq -r --argjson s "$survivor" '(. + [$s]) | map(numbers) | max' 2>/dev/null) || canonical="$survivor"
+		[[ "$canonical" =~ ^[0-9]+$ ]] || canonical="$survivor"
+		[[ "$canonical" == "$survivor" ]] ||
+			echo "[stats] Quality sweep: adopting newer dashboard #${canonical} over #${survivor} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
 
-	local num
-	while IFS= read -r num; do
-		[[ -z "$num" ]] && continue
-		[[ "$num" == "$survivor" ]] && continue
-		local close_body="> Auto-closed: superseded by #${survivor} as duplicate quality dashboard."
-		gh issue comment "$num" --repo "$repo_slug" --body "$close_body" 2>/dev/null || true
-		gh issue close "$num" --repo "$repo_slug" 2>/dev/null || true
-		echo "[stats] Quality sweep: closed duplicate dashboard #${num} (survivor: #${survivor})" >>"${LOGFILE:-/dev/null}"
-	done < <(printf '%s\n' "$siblings_json" | jq -r '.[]' 2>/dev/null)
+		local num
+		while IFS= read -r num; do
+			[[ -z "$num" ]] && continue
+			[[ "$num" == "$canonical" ]] && continue
+			local close_body="> Auto-closed: superseded by #${canonical} as duplicate quality dashboard."
+			gh issue comment "$num" --repo "$repo_slug" --body "$close_body" >/dev/null 2>&1 || true
+			gh issue close "$num" --repo "$repo_slug" >/dev/null 2>&1 || true
+			echo "[stats] Quality sweep: closed duplicate dashboard #${num} (survivor: #${canonical})" >>"${LOGFILE:-/dev/null}"
+		done < <(printf '%s\n' "$siblings_json" | jq -r '.[]' 2>/dev/null)
+	fi
 
+	printf '%s\n' "$canonical"
 	return 0
 }
 
@@ -288,11 +307,12 @@ _ensure_quality_issue() {
 	if [[ -z "$issue_number" ]]; then
 		issue_number=$(_quality_issue_create_dashboard "$repo_slug" "$lbl_review" "$lbl_persist" "$lbl_source") || return 1
 		# Post-create defensive sweep: close any siblings from prior failures
-		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
+		issue_number=$(_quality_issue_close_duplicates "$repo_slug" "$issue_number")
 	elif [[ "$survivor_verified" -eq 1 ]]; then
-		# GH#37957: a reused dashboard must also reclaim older duplicates;
-		# otherwise a stale sibling survives indefinitely beside it.
-		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
+		# GH#37957: a reused dashboard must also reclaim duplicates; otherwise
+		# a stale sibling survives indefinitely beside it. Adopt the canonical
+		# survivor so concurrent sweeps converge on one dashboard.
+		issue_number=$(_quality_issue_close_duplicates "$repo_slug" "$issue_number")
 	fi
 
 	# Cache the winner
