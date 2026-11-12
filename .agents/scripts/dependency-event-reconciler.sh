@@ -610,7 +610,12 @@ _der_open_native_blocked_numbers() {
 	printf '%s' "$pages" | jq -ce --arg closed "$DER_STATE_CLOSED" '
 		select(type == "array" and length > 0)
 		| select(all(.[]; (.errors // [] | length) == 0
-			and (.data.repository.issues.nodes | type) == "array"))
+			and (.data.repository.issues.nodes | type) == "array"
+			and (.data.repository.issues.pageInfo.hasNextPage | type) == "boolean"
+			and (if .data.repository.issues.pageInfo.hasNextPage then
+				(.data.repository.issues.pageInfo.endCursor | type) == ("" | type)
+				and (.data.repository.issues.pageInfo.endCursor | length) > 0 else true end)))
+		| select(.[-1].data.repository.issues.pageInfo.hasNextPage == false)
 		| [.[] | .data.repository.issues.nodes[]]
 		| select(all(.[]; (.number | type) == "number"
 			and (.blockedBy.nodes | type) == "array"
@@ -635,6 +640,17 @@ _der_stale_memo_load() {
 			| select(.value.epoch <= $now and $now - .value.epoch < $ttl))') || memo='{}'
 	_der_stale_cursor_write "$file" "$memo" || return 1
 	printf '%s\n' "$memo"
+	return 0
+}
+
+_der_stale_memo_matches() {
+	local memo="$1" candidate="$2" ttl="$3" body="" now=""
+	body=$(printf '%s' "$candidate" | jq -r '.body // ""') || return 1
+	upstream_release_gate_declared "$body" && return 1
+	now=$(date +%s) || return 1
+	printf '%s' "$memo" | jq -e --argjson candidate "$candidate" --argjson now "$now" --argjson ttl "$ttl" '
+		.[$candidate.number | tostring] | .updated_at != null and .updated_at != ""
+		and .updated_at == $candidate.updated_at and .epoch <= $now and $now - .epoch < $ttl' >/dev/null || return 1
 	return 0
 }
 
@@ -694,7 +710,7 @@ reconcile_stale_blocked_issues() {
 	local ready_max="${DER_STALE_BLOCKED_READY_MAX:-10}" ttl="${DER_STALE_BLOCKED_SKIP_TTL_SECONDS:-21600}"
 	local pages candidates candidate issue_number cursor_file="" cursor=0 sets="" prefiltered=0
 	local ready_cursor=0 ready_file="" ready=0 ready_visited=0 skipped=0 is_ready=false
-	local memo_file="" memo='{}' memo_enabled=false updated="" body="" try_status=0
+	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
@@ -721,10 +737,16 @@ reconcile_stale_blocked_issues() {
 		[[ -n "$candidate" ]] || continue
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number' 2>/dev/null) || issue_number=""
 		is_ready=$(printf '%s' "$candidate" | jq -r '.sweep_ready') || return 1
+		if _der_stale_epoch_reached "$stop_deadline" ||
+			{ [[ "$is_ready" == false && "$examined" -ge "$max_candidates" ]]; }; then
+			complete=false ordinary_complete=false
+			break
+		fi
 		if [[ "$is_ready" == true && "$ready_visited" -ge "$ready_max" ]]; then
 			complete=false
 			continue
 		fi
+		[[ "$is_ready" == true ]] || examined=$((examined + 1))
 		# A still-open native blocker is a verdict without API calls; advance
 		# the cursor so the share is spent on candidates that may be ready.
 		if printf '%s' "$sets" | jq -e --argjson n "$issue_number" '.open | index($n) != null' >/dev/null; then
@@ -732,20 +754,14 @@ reconcile_stale_blocked_issues() {
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
 			continue
 		fi
-		updated=$(printf '%s' "$candidate" | jq -r '.updated_at // ""') || return 1
-		body=$(printf '%s' "$candidate" | jq -r '.body // ""') || return 1
-		if [[ "$is_ready" == false && "$memo_enabled" == true && -n "$updated" ]] &&
-			! upstream_release_gate_declared "$body" &&
-			printf '%s' "$memo" | jq -e --arg n "$issue_number" --arg updated "$updated" \
-				'.[$n].updated_at == $updated' >/dev/null; then
+		if [[ "$is_ready" == false && "$memo_enabled" == true ]] &&
+			_der_stale_memo_matches "$memo" "$candidate" "$ttl"; then
 			skipped=$((skipped + 1))
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
 			continue
 		fi
-		if _der_stale_epoch_reached "$stop_deadline" ||
-			{ [[ "$is_ready" == false ]] && { [[ $((visited - ready_visited)) -ge "$max_candidates" ]] ||
-				{ [[ "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; }; }; }; then
-			complete=false
+		if [[ "$is_ready" == false && "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; then
+			complete=false ordinary_complete=false
 			break
 		fi
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || {
@@ -774,7 +790,7 @@ reconcile_stale_blocked_issues() {
 		fi
 	done <<<"$candidates"
 	# A finished traversal restarts from the lowest issue on the next pass.
-	if [[ "$complete" == true ]]; then
+	if [[ "$ordinary_complete" == true ]]; then
 		_der_stale_cursor_write "$cursor_file" 0 || cursor_failed=true
 	fi
 	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s ready=%s ready_visited=%s skipped_unchanged=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" "$ready" "$ready_visited" "$skipped" >&2
