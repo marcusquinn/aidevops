@@ -94,10 +94,41 @@ _full_loop_local_admission_evidence() {
 	return 1
 }
 
+#######################################
+# Build gh-pr-checks-shaped evidence for resolved required contexts from REST
+# check-runs on the exact PR head (GH#37923). A required context with no run is
+# reported pending, never absent. Latest run per name wins.
+# Args: $1=repo_slug, $2=head_sha, $3=newline-delimited required contexts
+# Output: JSON array of {name,state,bucket}
+# Returns: 0=built, 1=head/read/parse failure
+#######################################
+_full_loop_required_checks_from_check_runs() {
+	local repo="$1" head_sha="$2" contexts="$3"
+	local runs="" contexts_json=""
+	[[ "$head_sha" =~ ^[0-9a-fA-F]{6,64}$ && -n "$contexts" ]] || return 1
+	runs=$(gh api --paginate "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
+		--jq '.check_runs[] | {id,name,status,conclusion,head_sha}' 2>/dev/null) || return 1
+	contexts_json=$(printf '%s\n' "$contexts" | jq -R -s -c 'split("\n") | map(select(length > 0))') || return 1
+	printf '%s\n' "$runs" | jq -s -c --arg head "$head_sha" --argjson contexts "$contexts_json" '
+		def classify:
+			if .status != "completed" then {state: "IN_PROGRESS", bucket: "pending"}
+			elif .conclusion == "success" then {state: "SUCCESS", bucket: "pass"}
+			elif .conclusion == "skipped" then {state: "SKIPPED", bucket: "skipping"}
+			elif .conclusion == "cancelled" then {state: "CANCELLED", bucket: "cancel"}
+			else {state: ((.conclusion // "UNKNOWN") | ascii_upcase), bucket: "fail"} end;
+		[.[] | select(.head_sha == $head)] as $runs
+		| [$contexts[] as $c
+			| ([$runs[] | select(.name == $c)] | sort_by(.id) | last) as $r
+			| if $r == null then {name: $c, state: "MISSING", bucket: "pending"}
+			  else ({name: $c} + ($r | classify)) end]'
+	return $?
+}
+
 _full_loop_query_required_checks() {
 	local pr_number="$1"
 	local repo="$2"
 	local pr_head_ref="$3"
+	local head_sha="${4:-}"
 	local required_contexts=""
 	local required_contexts_rc=0
 	local required_checks=""
@@ -161,10 +192,25 @@ _full_loop_query_required_checks() {
 	fi
 
 	if [[ "$required_rc" -eq 1 && -z "$required_checks" && -n "$pr_head_ref" && "$required_checks_stderr" == "$expected_no_required_checks" ]]; then
-		required_checks="[]"
-		minimum_check_count=0
-		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
-		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+		# GH#37923: an empty PR rollup is not evidence that requirements are
+		# absent. Authoritative positive requirements are evaluated from exact-head
+		# REST check-runs; an unresolved resolver (error) never means "none".
+		if [[ "$required_contexts_rc" -ne 0 ]]; then
+			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="required contexts unresolved and PR check rollup is empty"
+			return 1
+		fi
+		if [[ -n "$required_contexts" ]]; then
+			required_checks=$(_full_loop_required_checks_from_check_runs "$repo" "$head_sha" "$required_contexts") || {
+				FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="PR check rollup is empty and exact-head check-runs are unavailable"
+				return 1
+			}
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="required checks are terminal-success (exact-head check-runs)"
+		else
+			required_checks="[]"
+			minimum_check_count=0
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="no-required-checks"
+			FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="no required checks are configured"
+		fi
 	elif [[ -n "$required_checks_stderr" || ("$required_rc" -ne 0 && "$required_rc" -ne 1 && "$required_rc" -ne 8) ]]; then
 		return 1
 	fi
@@ -336,7 +382,7 @@ _full_loop_query_capability_checks() {
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE="trusted-local-verification"
 		FULL_LOOP_REQUIRED_CHECKS_SUCCESS_SUMMARY="trusted local checks passed; Actions unavailable"
 	else
-		_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" || {
+		_full_loop_query_required_checks "$pr_number" "$repo" "$pr_head_ref" "$verified_head" || {
 			_full_loop_record_check_read_failure "$pr_number" "$verified_head"
 			return 1
 		}
