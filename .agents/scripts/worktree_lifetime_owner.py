@@ -10,6 +10,7 @@ An empty, missing or replaced arbitrary cgroup is not descendant evidence.
 """
 
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -57,8 +58,68 @@ def unit_snapshot(unit):
     return snapshot
 
 
+BOOT_PATTERN = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+INVOCATION_PATTERN = r"[0-9a-f]{32}"
+PREVIOUS_BOOT_GROUP = "previous-boot-ended"
+
+
+def valid_boot_id(value):
+    """Return whether value is a kernel boot UUID."""
+    return isinstance(value, str) and re.fullmatch(BOOT_PATTERN, value) is not None
+
+
+def valid_invocation(value):
+    """Return whether value is a systemd invocation ID."""
+    return (isinstance(value, str) and
+            re.fullmatch(INVOCATION_PATTERN, value) is not None)
+
+
+def previous_boot_receipt_valid(launch, receipt):
+    """
+    Validate an ended-boot receipt for one bound unit launch.
+
+    A reboot ends every process of the recorded boot. For a bound invocation
+    that is stronger descendant evidence than a unit sample, but only when
+    both boot IDs are valid and differ and the invocation matches.
+    """
+    if not isinstance(receipt, dict):
+        return False
+    observed_at = receipt.get("observed_at")
+    return all((receipt.get("group") == PREVIOUS_BOOT_GROUP,
+                valid_boot_id(launch.get("boot_id")),
+                valid_boot_id(receipt.get("observed_boot")),
+                receipt.get("observed_boot") != launch.get("boot_id"),
+                valid_invocation(launch.get("invocation")),
+                receipt.get("InvocationID") == launch.get("invocation"),
+                type(observed_at) in (int, float)
+                and math.isfinite(observed_at)
+                and 0 < observed_at <= time.time()))
+
+
+def drain_previous_boot(launch, current_boot, boot_reader):
+    """
+    Record that the recorded boot of a bound launch has ended.
+
+    Unit names, invocations and cgroup paths can be reused across boots, so
+    this never samples unit or cgroup state. Unbound admissions still refuse.
+    """
+    require(valid_boot_id(current_boot) and valid_boot_id(launch.get("boot_id")),
+            "boot generation unavailable")
+    require(valid_invocation(launch.get("invocation")),
+            "unresolved previous-boot admission")
+    receipt = {"group": PREVIOUS_BOOT_GROUP, "observed_boot": current_boot,
+               "InvocationID": launch["invocation"], "observed_at": time.time()}
+    require(boot_reader() == current_boot, "boot changed during observation")
+    require(previous_boot_receipt_valid(launch, receipt),
+            "invalid previous-boot receipt")
+    launch["quiescence"] = receipt
+
+
 def drain_unit(launch, boot_reader=boot_id, snapshot_reader=unit_snapshot):
-    require(launch["boot_id"] == boot_reader(), "boot generation unavailable")
+    current_boot = boot_reader()
+    if launch["boot_id"] != current_boot:
+        drain_previous_boot(launch, current_boot, boot_reader)
+        return
     snapshot = snapshot_reader(launch["unit"])
     require(snapshot.get("InvocationID") == launch["invocation"], "invocation changed")
     require(snapshot.get("MainPID") == "0" and not snapshot.get("Job"), "unit still has work")
@@ -109,12 +170,8 @@ def recorded_process_status(launch):
     try:
         saved_boot = launch.get("boot_id")
         current_boot = boot_id()
-        require(isinstance(saved_boot, str) and
-                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", saved_boot) is not None,
-                "invalid saved boot identity")
-        require(isinstance(current_boot, str) and
-                re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", current_boot) is not None,
-                "boot identity unavailable")
+        require(valid_boot_id(saved_boot), "invalid saved boot identity")
+        require(valid_boot_id(current_boot), "boot identity unavailable")
         pid = launch.get("owner_pid")
         start = launch.get("owner_start")
         require(type(pid) is int and pid > 0 and isinstance(start, str) and start.isdecimal(),
