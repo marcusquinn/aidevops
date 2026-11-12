@@ -869,6 +869,113 @@ else
 fi
 
 # =============================================================================
+# Tests 29-32: cycle-owned routines ticker (GH#37914)
+# =============================================================================
+# launchd and systemd timers start no second invocation while the cycle runs,
+# so the busy pass above never fired during long cycles. The cycle now owns a
+# child that runs the routines-only pass every tick until the cycle exits.
+printf '\n=== Cycle-owned routines ticker (GH#37914) ===\n'
+
+TICK_HARNESS="${BUSY_ROOT}/tick-harness.sh"
+cat >"$TICK_HARNESS" <<'TICK_HARNESS_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+root="${BUSY_ROOT:?}/tick"
+mkdir -p "$root"
+LOGFILE="${root}/pulse.log"
+STOP_FLAG="${root}/stop"
+ticks="${root}/ticks.log"
+: >"$ticks"
+# shellcheck disable=SC1091
+source "${ROUTINE_TEST_SCRIPTS_DIR:?}/pulse-routines-tick.sh"
+_pulse_run_routines_while_busy() {
+	printf '%s clamp=%s lock=%s\n' "$1" "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" "${_LOCK_OWNED:-}" >>"$ticks"
+	return 0
+}
+count_ticks() { wc -l <"$ticks" | tr -d ' '; return 0; }
+wait_ticks() {
+	local want="$1" attempt=0
+	while [[ "$attempt" -lt 60 ]]; do
+		[[ "$(count_ticks)" -ge "$want" ]] && return 0
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+wait_gone() {
+	local pid="$1" attempt=0
+	while [[ "$attempt" -lt 40 ]]; do
+		kill -0 "$pid" 2>/dev/null || return 0
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+_LOCK_OWNED=true
+export AIDEVOPS_PULSE_ROUTINES_TICK_SECONDS=1
+
+_pulse_start_routines_ticker
+ticker="$_PULSE_ROUTINES_TICKER_PID"
+_pulse_start_routines_ticker
+[[ "$_PULSE_ROUTINES_TICKER_PID" == "$ticker" ]] && printf 'idempotent\n'
+wait_ticks 2 && printf 'ticked\n'
+grep -q '^cycle-tick clamp=0 lock=false$' "$ticks" && printf 'unclamped-unowned\n'
+# An inherited subshell copy must never stop the owner's ticker.
+(_pulse_stop_routines_ticker)
+kill -0 "$ticker" 2>/dev/null && printf 'subshell-ignored\n'
+_pulse_stop_routines_ticker
+wait_gone "$ticker" && printf 'stopped\n'
+before=$(count_ticks)
+sleep 1.5
+[[ "$(count_ticks)" == "$before" ]] && printf 'no-tick-after-stop\n'
+
+# A ticker whose owning cycle died exits at its next tick.
+orphan_pid=$(
+	_pulse_start_routines_ticker
+	printf '%s\n' "$_PULSE_ROUTINES_TICKER_PID"
+)
+wait_gone "$orphan_pid" && printf 'owner-exit\n'
+
+# The disable switch starts nothing.
+AIDEVOPS_PULSE_ROUTINES_TICK=0 _pulse_start_routines_ticker
+[[ -z "$_PULSE_ROUTINES_TICKER_PID" ]] && printf 'disabled\n'
+exit 0
+TICK_HARNESS_EOF
+
+tick_output=$(BUSY_ROOT="$BUSY_ROOT" ROUTINE_TEST_SCRIPTS_DIR="$SCRIPTS_DIR" \
+	timeout 60 bash "$TICK_HARNESS" 2>&1)
+tick_rc=$?
+
+if [[ "$tick_rc" -eq 0 && "$tick_output" == *"idempotent"* && "$tick_output" == *"ticked"* && "$tick_output" == *"unclamped-unowned"* ]]; then
+	pass "29: ticker runs the routines-only pass every tick, unclamped and without lock ownership"
+else
+	fail "29: ticker runs the routines-only pass every tick, unclamped and without lock ownership" \
+		"harness rc=${tick_rc}, output=${tick_output}"
+fi
+
+if [[ "$tick_output" == *"subshell-ignored"* && "$tick_output" == *"stopped"* && "$tick_output" == *"no-tick-after-stop"* ]]; then
+	pass "30: only the owning cycle stops the ticker, and no pass runs after stop"
+else
+	fail "30: only the owning cycle stops the ticker, and no pass runs after stop" "output=${tick_output}"
+fi
+
+if [[ "$tick_output" == *"owner-exit"* && "$tick_output" == *"disabled"* ]]; then
+	pass "31: ticker exits with its owning cycle and honours AIDEVOPS_PULSE_ROUTINES_TICK=0"
+else
+	fail "31: ticker exits with its owning cycle and honours AIDEVOPS_PULSE_ROUTINES_TICK=0" "output=${tick_output}"
+fi
+
+LOCK_FILE="${SCRIPTS_DIR}/pulse-instance-lock.sh"
+if grep -qF '_pulse_start_routines_ticker || true' "$WRAPPER_FILE" &&
+	grep -qF '_pulse_stop_routines_ticker || true' "$WRAPPER_FILE" &&
+	grep -qF '_pulse_stop_routines_ticker || true' "$LOCK_FILE" &&
+	grep -qF 'pulse-routines-tick.sh' "$WRAPPER_FILE"; then
+	pass "32: the cycle starts the ticker and stops it on exit and before re-exec"
+else
+	fail "32: the cycle starts the ticker and stops it on exit and before re-exec"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'

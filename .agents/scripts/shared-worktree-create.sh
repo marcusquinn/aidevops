@@ -122,6 +122,11 @@ _worktree_refusal_remediation() {
 	ref-already-checked-out)
 		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
 		;;
+	disk-quota-exceeded | disk-full)
+		# GH#37922: retries cannot succeed until space is reclaimed; free files
+		# you own (caches, merged worktrees) rather than raising the quota.
+		printf 'Refusal cause: %s; Git could not write the worktree. Check quota -s and df -h, reclaim space, then retry.\n' "$code" >&2
+		;;
 	reserved-path-without-enrollment-marker | generation-path-reserved)
 		# GH#37706: an earlier generation still reserves this path. Preview first;
 		# --confirm releases the reservation only and never deletes files.
