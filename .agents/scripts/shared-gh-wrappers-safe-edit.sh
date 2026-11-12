@@ -258,6 +258,47 @@ _gh_audit_absolute_caller_script() {
 }
 
 #######################################
+# Print the audit proof flags for a signed-approval label transition, or {}.
+# Args: $1=op $2=repo $3=number $4=caller_script (absolute) $5=caller_function
+#######################################
+_gh_audit_signed_approval_flags() {
+	local op="$1" repo="$2" number="$3" caller_script="$4" caller_function="$5"
+	local verification=""
+	# aidevops:trust-boundary — caller provenance alone is spoofable. Record the
+	# exemption proof only after independently re-verifying the signed approval
+	# and authenticated actor authority against current GitHub state.
+	local approval_target_type=""
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_approval_apply_issue_lifecycle_updates" ]]; then
+		approval_target_type="issue"
+	elif [[ "$op" == "pr_edit" && "$caller_function" == "_approval_apply_pr_lifecycle_updates" ]]; then
+		approval_target_type="pr"
+	fi
+	if [[ -n "$approval_target_type" ]] && command -v cmd_verify &>/dev/null; then
+		verification=$(cmd_verify "$approval_target_type" "$number" "$repo" --require-authority 2>/dev/null) || verification=""
+		if [[ "$verification" == "VERIFIED" ]]; then
+			printf '%s\n' '{"approval_verified":"v2-current-state"}'
+			return 0
+		fi
+	fi
+	# aidevops:trust-boundary — a signed worker-permission grant clears its
+	# needs-maintainer-permissions hold only after the grant comment is posted.
+	# Re-verify that signed grant against the latest live request (GH#37906);
+	# caller provenance alone never earns the exemption.
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_apply_permission_approval_state" ]] &&
+		[[ "$caller_script" == */agents/scripts/approval-helper-permissions.sh ||
+			"$caller_script" == */.agents/scripts/approval-helper-permissions.sh ]] &&
+		command -v cmd_verify_permissions &>/dev/null; then
+		verification=$(cmd_verify_permissions issue "$number" "$repo" 2>/dev/null) || verification=""
+		if [[ "$verification" == "VERIFIED" ]]; then
+			printf '%s\n' '{"permission_approval_verified":"v1-current-state"}'
+			return 0
+		fi
+	fi
+	printf '%s\n' '{}'
+	return 0
+}
+
+#######################################
 # Write one audit record via gh-audit-log-helper.sh record.
 # Non-blocking: silently returns 0 on any failure.
 # Args:
@@ -284,36 +325,7 @@ _gh_audit_record_op() {
 	local audit_helper
 	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-audit-log-helper.sh"
 	[[ ! -x "$audit_helper" ]] && return 0
-	# aidevops:trust-boundary — caller provenance alone is spoofable. Record the
-	# exemption proof only after independently re-verifying the signed approval
-	# and authenticated actor authority against current GitHub state.
-	local approval_target_type=""
-	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_approval_apply_issue_lifecycle_updates" ]]; then
-		approval_target_type="issue"
-	elif [[ "$op" == "pr_edit" && "$caller_function" == "_approval_apply_pr_lifecycle_updates" ]]; then
-		approval_target_type="pr"
-	fi
-	if [[ -n "$approval_target_type" ]] && command -v cmd_verify &>/dev/null; then
-		local approval_verification=""
-		approval_verification=$(cmd_verify "$approval_target_type" "$number" "$repo" --require-authority 2>/dev/null) || approval_verification=""
-		if [[ "$approval_verification" == "VERIFIED" ]]; then
-			flags_json='{"approval_verified":"v2-current-state"}'
-		fi
-	fi
-	# aidevops:trust-boundary — a signed worker-permission grant clears its
-	# needs-maintainer-permissions hold only after the grant comment is posted.
-	# Re-verify that signed grant against the latest live request (GH#37906);
-	# caller provenance alone never earns the exemption.
-	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" && "$caller_function" == "_apply_permission_approval_state" ]] &&
-		[[ "$caller_script" == */agents/scripts/approval-helper-permissions.sh ||
-			"$caller_script" == */.agents/scripts/approval-helper-permissions.sh ]] &&
-		command -v cmd_verify_permissions &>/dev/null; then
-		local permission_verification=""
-		permission_verification=$(cmd_verify_permissions issue "$number" "$repo" 2>/dev/null) || permission_verification=""
-		if [[ "$permission_verification" == "VERIFIED" ]]; then
-			flags_json='{"permission_approval_verified":"v1-current-state"}'
-		fi
-	fi
+	flags_json="$(_gh_audit_signed_approval_flags "$op" "$repo" "$number" "$caller_script" "$caller_function")"
 	# aidevops:trust-boundary — trusted-author NMR normalization is expected only
 	# when the immutable snapshots show a pure NMR removal and live GitHub state
 	# independently confirms both issue-author and current-token write authority.
