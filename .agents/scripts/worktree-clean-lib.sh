@@ -1416,9 +1416,12 @@ _clean_capacity_candidate_allowed() {
 # origin/<default> (rebase/cherry-pick merges). `git cherry` prints "-" for
 # upstream-present patches and "+" for missing ones; no API read is needed.
 _clean_capacity_patches_upstream() {
-	local wt_branch="$1" default_br="$2" lines="" ahead=""
+	local wt_branch="$1" default_br="$2" lines="" ahead="" merges=""
 	ahead=$(git rev-list --count "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
 	[[ "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]] || return 1
+	# Patch IDs cannot prove changes introduced by merges: git cherry omits them.
+	merges=$(git rev-list --count --merges "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ "$merges" =~ ^[0-9]+$ && "$merges" -eq 0 ]] || return 1
 	lines=$(git cherry "origin/$default_br" "refs/heads/$wt_branch" 2>/dev/null) || return 1
 	[[ -n "$lines" ]] || return 1
 	[[ "$lines" != *"+ "* ]] || return 1
