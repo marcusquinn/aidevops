@@ -99,7 +99,8 @@ def write_native_plan(workspace: str, moves: list[dict[str, str]], output: Path)
 
 
 def move_progress(moves: list[dict[str, str]]) -> str:
-    """none, all or partial, from physical source/destination presence."""
+    """none, all or partial for physical moves; transfer-only work needs no move."""
+    moves = [move for move in moves if move["source"] != move["destination"]]
     done = [not Path(move["source"]).exists() and Path(move["destination"]).exists() for move in moves]
     untouched = [Path(move["source"]).exists() and not Path(move["destination"]).exists() for move in moves]
     return "all" if all(done) else "none" if all(untouched) else "partial"
@@ -146,17 +147,23 @@ def apply_move(plan: dict[str, Any], sites: list[str] | None, confirm: str, repo
     snapshot = {"status": "paused", "moves": moves,
                 "flags": {slug: automation_flags(repos_json, slug) for slug in slugs}}
     save_snapshot(path, snapshot)
-    pause(slugs)
+    pause(slugs, repos_json)
     native_path = state_dir / f"move-layout-plan-{stamp}.json"
     try:
         for move in moves:
             if move["old_slug"].lower() != move["slug"].lower():
                 ok, detail = run_long(["bash", str(RECOVERY_HELPER), "follow-transfer", "--repo", move["source"],
                                        "--slug", move["slug"], "--confirm", "FOLLOW_REPOSITORY_TRANSFER"],
-                                      cwd=expand_path(plan["workspace"]))
+                                      cwd=expand_path(plan["workspace"]),
+                                      env={"AIDEVOPS_REPOS_CONFIG": str(repos_json)})
                 if not ok:
                     raise FleetError(f"Transfer recovery refused: {detail}")
-        native = write_native_plan(plan["workspace"], moves, native_path)
+                snapshot.setdefault("transferred", []).append(move["slug"])
+                save_snapshot(path, snapshot)
+        physical_moves = [move for move in moves if move["source"] != move["destination"]]
+        if not physical_moves:
+            return finish(snapshot, path, repos_json, (True, "repository transfers complete; no layout move needed"))
+        native = write_native_plan(plan["workspace"], physical_moves, native_path)
     except FleetError as exc:
         return finish(snapshot, path, repos_json, (False, str(exc)))
     snapshot["native_resume"] = (f"aidevops repos migrate-layout apply --plan {native_path} "

@@ -166,11 +166,18 @@ def site_registrations(domain: str, repo: str, owner: str, context: dict[str, An
     # A renamed site may still be registered under its hosted domain; never
     # infer identity from a redirect alone.
     candidates = [item for item in registrations if item["name"].lower() == domain]
-    if matches or repo == domain or not candidates:
+    if matches:
         return matches
-    if len(candidates) == 1 and not transfer_matches(candidates[0]["slug"], f"{owner}/{repo}"):
-        raise FleetError(f"Cannot verify repository transfer for {domain}; refusing provisioning")
-    return candidates
+    target = f"{owner}/{repo}"
+    if repo != domain and candidates:
+        if len(candidates) == 1 and not transfer_matches(candidates[0]["slug"], target):
+            raise FleetError(f"Cannot verify repository transfer for {domain}; refusing provisioning")
+        return candidates
+    # A previous domain can differ from both the hosted domain and mapped name.
+    # Search only this fleet's owners, and never infer a rename from names alone.
+    owners = {context["owner"].lower(), owner.lower()}
+    return [item for item in registrations if item["owner"].lower() in owners
+            and transfer_matches(item["slug"], target)]
 
 
 def site_state(matches: list[dict[str, str]], destination: Path, owner: str, repo: str) -> str:
