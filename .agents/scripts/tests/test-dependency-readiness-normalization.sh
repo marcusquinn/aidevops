@@ -243,6 +243,7 @@ _test_checkpoint_resume() (
 	# Fail precisely the graph merge, after seed and timestamp jq calls succeed.
 	jq() {
 		local args="$*"
+		# shellcheck disable=SC2016 # Match literal jq variables, not shell variables.
 		[[ "$args" != *'.repos[$slug] = $rd'* ]] || return 1
 		command jq "$@" || return 1
 		return 0
