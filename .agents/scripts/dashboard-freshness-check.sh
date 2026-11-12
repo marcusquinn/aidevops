@@ -722,7 +722,7 @@ _stats_timeout_diagnosis() {
 	count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
 	stages="$(printf '%s\n' "$lines" | sed -n 's/.* stage=\([A-Za-z0-9_-]*\) .*/\1/p' | sort | uniq -c | sort -rn | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "}')"
 	last="$(printf '%s\n' "$lines" | tail -n 1 | sed -n 's/.* timeout=\([0-9]*\)s).*/\1/p')"
-	printf '\n\n**Likely cause:** `stats.log` records %s recent per-repository budget stops (`rc=124`) for this repo (stages: %s; last timeout budget: %ss). The scheduler is running but this repo keeps exceeding its refresh budget; raise `STATS_HEALTH_REPO_TIMEOUT` / `STATS_HEALTH_RECOVERY_REPO_TIMEOUT` or investigate the slow stage before checking for a missing plist.' "$count" "${stages:-unknown}" "${last:-unknown}"
+	printf '\n\n**Likely cause:** `stats.log` (last 20000 lines) retains %s historical budget-stop records (`rc=124`) for this repo (stages: %s; last logged timeout: %ss). These records are not time-bounded, so they do not confirm current scheduler health, and `rc=124` can come from either the per-repository budget or the shared aggregate deadline. Verify the scheduler is running; if recent stops are repository-budget stops, raise `STATS_HEALTH_REPO_TIMEOUT` / `STATS_HEALTH_RECOVERY_REPO_TIMEOUT` or investigate the slow stage.' "$count" "${stages:-unknown}" "${last:-unknown}"
 	return 0
 }
 
