@@ -8,6 +8,9 @@ set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT=$(mktemp -d)
+# GH#37500: Git reports physical worktree paths (macOS /var -> /private/var);
+# path-keyed fixture seams such as the grace-period stub must match them.
+ROOT=$(cd "$ROOT" && pwd -P)
 trap 'rm -rf "$ROOT"' EXIT
 trap 'cat "$ROOT/home/.aidevops/logs/cleanup_worktrees.log" >&2' ERR
 export HOME="$ROOT/home" FIXTURE_ROOT="$ROOT" REAL_SCRIPTS="$SCRIPTS"
@@ -56,7 +59,7 @@ _clean_fetch_remotes() { printf 'false\n'; return 0; }
 _clean_build_merged_pr_branches() { printf 'squash\nreused\n'; return 0; }
 _clean_build_exact_merged_pr_branches() { return 0; }
 _clean_build_open_pr_branches() { printf 'open\n'; return 0; }
-_clean_build_closed_pr_branches() { return 0; }
+_clean_build_closed_pr_branches() { printf 'unexpected closed-PR query\n' >&2; return 1; }
 _clean_repo_slug() { printf 'fixture/recovery\n'; return 0; }
 gh_pr_list() {
 	local head="${4:-}" state="${6:-}"
@@ -134,6 +137,7 @@ count=$(git -C "$ROOT/repo" worktree list --porcelain | rg -c '^worktree ')
 [[ "$count" -eq 9 ]]
 _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10
 [[ -d "$ROOT/hidden-open" && -d "$ROOT/unknown" && -d "$ROOT/fresh" && -d "$ROOT/reused" ]]
+if rg -q 'unexpected closed-PR query' "$HOME/.aidevops/logs/cleanup_worktrees.log"; then exit 1; fi
 printf 'PASS async pass reclaims contained and merged/expired trees; dirty/open/live/unproven preserved\n'
 printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh pre-work remain protected\n'
 
