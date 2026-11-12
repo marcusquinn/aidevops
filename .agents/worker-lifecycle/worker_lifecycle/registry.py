@@ -213,22 +213,22 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
         return preserve_wip(store, args.path, args.repo, args.base_branch, args.output_root)
     if args.operation == "prepare-cleanup":
         return prepare_cleanup(store, args.path)
-    if args.operation == "retire-worktree":
-        from .retirement import ArchiveTarget, retire_worktree
+    return _retirement_operation(store, args)
 
-        return retire_worktree(
-            store, args.path, args.generation_id,
-            ArchiveTarget(args.repo, args.base_branch, args.output_root),
-        )
+
+def _retirement_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    from .retirement import ArchiveTarget, retire_worktree
+
+    archive = ArchiveTarget(args.repo, args.base_branch, args.output_root)
     if args.operation == "retire-foreign-worktree":
         from .foreign_retirement import retire_foreign_worktree
-        from .retirement import ArchiveTarget
 
         return retire_foreign_worktree(
-            store, args.path, ArchiveTarget(args.repo, args.base_branch, args.output_root),
-            args.rescue_bundle, args.generation_id,
+            store, args.path, archive, args.rescue_bundle, args.generation_id,
         )
-    raise ValueError("unsupported-worktree-operation")
+    if args.operation != "retire-worktree":
+        raise ValueError("unsupported-worktree-operation")
+    return retire_worktree(store, args.path, args.generation_id, archive)
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:

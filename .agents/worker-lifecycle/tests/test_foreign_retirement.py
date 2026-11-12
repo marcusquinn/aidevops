@@ -97,7 +97,19 @@ class ForeignRetirementContract(unittest.TestCase):
         return bundle
 
     def pushed(self):
+        remote = self.root / "remote.git"
+        retirement._git("init", "-q", "--bare", str(remote))
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+        self.git("fetch", "-q", "origin")
+
+    def test_local_tracking_ref_without_remote_branch_is_refused(self):
+        (self.target / "work.txt").unlink()
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("remote", "add", "origin", str(self.root / "missing.git"))
+        with self.assertRaisesRegex(StoreConflict, "pushed-ref-unverifiable"):
+            self.retire()
+        self.assertTrue(self.target.exists())
 
     def test_pushed_clean_tree_is_archived_and_removed(self):
         (self.target / "work.txt").unlink()

@@ -7,7 +7,7 @@ archive and remaining data retained.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
@@ -21,7 +21,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, enrolled_only_authorized, marker_digest, prepare_cleanup
+from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import (
@@ -187,24 +187,21 @@ def _require_private_identity(
     store: LifecycleRegistry, path: Path, plan: dict, target: Path, admin: Path,
 ) -> None:
     """Bind the private tree, its Git administration and marker to the plan."""
-    if "marker_sha256" in plan:
-        # GH#37828: a foreign marker is never reconstructed, only compared as bytes.
-        if (_directory_inode(target) != plan["directory_identity"]
-                or _git_directory(target) != admin
-                or _directory_inode(admin) != plan["git_identity"]
-                or marker_digest(admin / MARKER) != plan["marker_sha256"]):
-            raise StoreConflict("private-worktree-changed")
-        return
     marker = {
         "format": 2, "installation_id": store.installation_id(),
         "generation_id": plan["generation_id"], "path": str(path),
         "directory": plan["directory_identity"],
         "git_directory": str(admin), "git_identity": plan["git_identity"],
     }
+    _require_inodes(plan, target, admin)
+    if _git_directory(target) != admin or _read_marker(admin / MARKER) != marker:
+        raise StoreConflict("private-worktree-changed")
+
+
+def _require_inodes(plan: dict, target: Path, admin: Path) -> None:
+    """Bind the private tree and its Git administration directory identities."""
     if (_directory_inode(target) != plan["directory_identity"]
-            or _git_directory(target) != admin
-            or _directory_inode(admin) != plan["git_identity"]
-            or _read_marker(admin / MARKER) != marker):
+            or _directory_inode(admin) != plan["git_identity"]):
         raise StoreConflict("private-worktree-changed")
 
 
@@ -217,15 +214,15 @@ def _removal_start(store: LifecycleRegistry, generation: str) -> int | None:
 
 def _restore_private_link(plan: dict, target: Path, admin: Path) -> None:
     """Bind tree and administration to the plan before restoring a deleted `.git`."""
-    if (_directory_inode(target) != plan["directory_identity"]
-            or _directory_inode(admin) != plan["git_identity"]):
-        raise StoreConflict("private-worktree-changed")
+    _require_inodes(plan, target, admin)
     restore_git_link(target, admin)
 
 
 def _remove_private(
     store: LifecycleRegistry, path: Path, plan: dict, receipt: dict,
+    identity: Callable[..., None] = _require_private_identity,
 ) -> None:
+    """Remove the private tree; `identity` binds it to its plan (foreign: marker bytes)."""
     target, admin = Path(plan["container"]) / "tree", Path(plan["git_directory"])
     generation = plan["generation_id"]
     # Never census a replacement at the public path after private relocation.
@@ -234,7 +231,7 @@ def _remove_private(
     with DirectoryHandle(target) as tree, DirectoryHandle(admin) as metadata:
         if started is not None:
             _restore_private_link(plan, target, admin)
-        _require_private_identity(store, path, plan, target, admin)
+        identity(store, path, plan, target, admin)
         # An interrupted delete resumes only if nothing but deletions followed.
         require_removable(target, started,
                           lambda: _snapshot(target) == receipt["snapshot"], _git)

@@ -146,10 +146,14 @@ python3 ~/.aidevops/agents/worker-lifecycle/worker-registry.py --state-dir <STAT
 ```
 
 Omit `--rescue-bundle` only for a clean copy whose HEAD is contained in a
-remote-tracking ref (nothing to rescue). The command:
+remote-tracking ref that `git ls-remote` confirms still points at the same commit
+(nothing to rescue; run `git fetch` first if it reports a stale ref). The command:
 
 - re-derives the patch and untracked-file hashes from the copy and refuses unless
-  they equal the bundle's, so a copy changed after the rescue is kept;
+  they equal the bundle's, so a copy changed after the rescue is kept; it also
+  requires the receipt's rescue destination to still exist at the rescued HEAD;
+- repeats this proof immediately before relocation, so a resumed run never relies
+  on stale evidence;
 - refuses an in-progress merge, rebase, cherry-pick, revert or bisect;
 - archives the copy through the normal WIP archive (ignored files are excluded,
   as in the rescue), verifies it, then has Git relocate and remove it with the
