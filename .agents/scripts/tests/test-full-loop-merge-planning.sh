@@ -462,6 +462,13 @@ create_no_timeout_path_dir() {
 			[[ -e "$entry" ]] || continue
 			[[ -e "${path_dir}/${name}" ]] || ln -s "$entry" "${path_dir}/${name}" || return 1
 		done
+		# Non-FHS hosts (e.g. NixOS) keep these outside /usr/bin and /bin. Link
+		# each tool individually: adding its directory could bring timeout back.
+		for name in bash cat sleep; do
+			[[ -e "${path_dir}/${name}" ]] && continue
+			entry=$(command -v "$name") || return 1
+			ln -s "$entry" "${path_dir}/${name}" || return 1
+		done
 	fi
 	printf '%s\n' "$path_dir"
 	return 0
