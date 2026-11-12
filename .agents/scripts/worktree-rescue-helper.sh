@@ -497,7 +497,10 @@ cmd_verify() {
 		print_error "VERIFY FAILED: untracked files differ from the bundle."
 		return 1
 	fi
-	_rescue_write_receipt "$bundle" "$top" || print_warning "Could not write $bundle/$RESCUE_RECEIPT; retirement of the source needs it (re-run verify)."
+	if ! _rescue_write_receipt "$bundle" "$top"; then
+		print_error "Could not write $bundle/$RESCUE_RECEIPT; retirement of the source needs it (re-run verify)."
+		return 1
+	fi
 	print_success "VERIFIED: $top reproduces the bundle exactly (tracked changes and untracked files)."
 	printf 'RESCUE_VERIFIED=%s\n' "$top"
 	return 0

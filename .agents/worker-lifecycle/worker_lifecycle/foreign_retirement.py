@@ -69,9 +69,9 @@ def source_hashes(path: Path) -> dict[str, str]:
         entry = path / name.rstrip("/")
         if name.endswith("/") or (entry.is_dir() and not entry.is_symlink()):
             raise StoreConflict("untracked-directory-unsupported")
-        digest = (f"link:{os.readlink(entry)}" if entry.is_symlink()
-                  else f"sha256:{_sha(entry.read_bytes())}")
-        records += f"{digest}\t{name.rstrip('/')}".encode() + b"\0"
+        digest = (b"link:" + os.fsencode(os.readlink(entry)) if entry.is_symlink()
+                  else f"sha256:{_sha(entry.read_bytes())}".encode())
+        records += digest + b"\t" + raw.rstrip(b"/") + b"\0"
     return {
         "head": _read_git(path, "rev-parse", "HEAD").decode().strip(),
         "patch_sha256": _sha(_read_git(path, *DIFF_ARGS)),
