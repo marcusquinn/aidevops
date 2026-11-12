@@ -50,7 +50,10 @@ stop there.
    Public repositories: the gate, triage and sync workflows run on
    `pull_request_target`, which GitHub blocks by default from 2026-12-02. After
    merging them, run `actions-event-policy-helper.sh plan --repo <slug>`, then
-   `apply` and check `status`.
+   `apply` and check `status`. Pulse reports uncovered managed repositories daily;
+   setting `safety.actions_event_policy_auto_apply` to `true` lets it apply and
+   verify policies automatically. Set `AIDEVOPS_EVENT_POLICY_ENABLED=0` to disable
+   the routine on a host.
 5. **Secrets:** when the repository runs `issue-sync` or the metrics workflow,
    run `/setup-git` to set `SYNC_PAT` (`scripts/commands/setup-git.md`). Never
    paste tokens into a session.

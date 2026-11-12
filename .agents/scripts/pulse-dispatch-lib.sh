@@ -518,6 +518,7 @@ _dispatch_negative_cache_reason() {
 
 _dispatch_prefilter_owned_candidate() {
 	local candidate="$1" issue="$2" repo="$3" reason=""
+	_dispatch_ranked_candidate_consumed "$candidate"
 	if reason=$(_dispatch_negative_cache_reason "$candidate"); then
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle ownership block:${reason}" >>"$LOGFILE"
@@ -600,10 +601,40 @@ _dispatch_record_and_cache_block() {
 	return 1
 }
 
+#######################################
+# GH#37907: deploy reconciliation (pulse-lifecycle-helper.sh
+# _pulse_request_cycle_drain) asks a deferred earlier-bundle lock owner to stop
+# at its next candidate boundary via LOCKDIR/drain_requested. Only the named
+# owner honours it ($$ is the wrapper PID in dispatch subshells too); releasing
+# the lock removes it. In-flight candidates finish; no new census starts.
+# Stdout: the activated bundle id the scheduler starts next
+# Returns: 0 when this cycle should drain, 1 otherwise
+#######################################
+_pulse_drain_requested_bundle() {
+	local marker="${LOCKDIR:-}/drain_requested" line="" owner="" bundle=""
+	[[ -n "${LOCKDIR:-}" && -f "$marker" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		owner=*) owner="${line#owner=}" ;;
+		bundle=*) bundle="${line#bundle=}" ;;
+		esac
+	done 2>/dev/null <"$marker"
+	[[ "$owner" =~ ^[0-9]+$ && "$owner" == "$$" ]] || return 1
+	[[ "$bundle" =~ ^[A-Za-z0-9._-]+$ ]] || bundle="unrecorded"
+	printf '%s\n' "$bundle"
+	return 0
+}
+
 _dispatch_compute_capacity() {
+	_dispatch_refresh_owner_lease
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
+		return 1
+	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max skipped: cooperative drain requested; activated bundle ${drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_capacity"; then
@@ -954,6 +985,11 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
+		local drain_bundle=""
+		if drain_bundle=$(_pulse_drain_requested_bundle); then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during serial loop (GH#37907)" >>"$LOGFILE"
+			break
+		fi
 		local budget_rc=0
 		_dispatch_graphql_budget_allows_next || budget_rc=$?
 		if [[ "$budget_rc" -ne 0 ]]; then
@@ -1093,6 +1129,7 @@ _dispatch_max_prefilter_cached_block() {
 	_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	_dispatch_record_candidate_outcome "$candidate_json" 1 "$outcomes_file" || true
+	_dispatch_ranked_candidate_consumed "$candidate_json"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_UNKNOWN"
 	return 0
 }
@@ -1187,6 +1224,11 @@ _dispatch_max_should_stop() {
 	fi
 	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
+		return 0
+	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during parallel loop (GH#37907)" >>"$LOGFILE"
 		return 0
 	fi
 	local budget_rc=0
@@ -1543,18 +1585,28 @@ _dispatch_product_reservation_slots() {
 #
 # Arguments: $1 - output variable name; remaining arguments - command and args
 #######################################
+_dispatch_refresh_owner_lease() {
+	if declare -F _pulse_instance_lock_heartbeat >/dev/null 2>&1; then
+		_pulse_instance_lock_heartbeat || true
+	fi
+	return 0
+}
+
 _dispatch_capture_with_owner_liveness() {
 	local output_variable="$1"
 	shift
 	local capture_file="" capture_pid="" capture_rc=0
 	local now=0 last_heartbeat=0
 	capture_file=$(mktemp) || return 1
+	_dispatch_refresh_owner_lease
 	# Explicit stdin keeps async Bash from substituting /dev/null.
 	"$@" <&0 >"$capture_file" &
 	capture_pid=$!
 	while kill -0 "$capture_pid" 2>/dev/null; do
 		now=$(date +%s)
 		if ((now - last_heartbeat >= 60)); then
+			# Keep the singleton lease alive through census and candidate waits.
+			_dispatch_refresh_owner_lease
 			if declare -F _pulse_cycle_state_stage_heartbeat >/dev/null 2>&1; then
 				_pulse_cycle_state_stage_heartbeat || true
 			fi

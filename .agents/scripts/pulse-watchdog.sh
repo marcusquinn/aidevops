@@ -204,7 +204,24 @@ run_cmd_with_timeout() {
 # Return the remaining cycle budget after a finalisation reserve. Missing or
 # invalid clocks/configuration fail open so standalone routines retain their
 # existing timeout behaviour. Pass 0 for admission checks that own a reserve.
+# A dispatch lease is elastic only for the actual instance owner. Standalone
+# routines and housekeeping keep their bounded cycle semantics.
+_pulse_dispatch_lease_active() {
+	local owner="" heartbeat="" now="" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
+	[[ "${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" == 1 && -n "${LOCKDIR:-}" ]] || return 1
+	read -r owner <"${LOCKDIR}/pid" 2>/dev/null || return 1
+	[[ "$owner" == "$$" ]] && kill -0 "$owner" 2>/dev/null || return 1
+	read -r heartbeat <"${LOCKDIR}/supervisor_heartbeat_epoch" 2>/dev/null || return 1
+	[[ "$heartbeat" =~ ^[1-9][0-9]*$ && "$ceiling" =~ ^[1-9][0-9]*$ ]] || return 1
+	now=$(date +%s) || return 1
+	((heartbeat <= now && now - heartbeat <= ceiling)) || return 1
+	return 0
+}
+
 _pulse_cycle_remaining_seconds() {
+	if [[ "${_PULSE_ELASTIC_DISPATCH:-0}" == 1 ]] && _pulse_dispatch_lease_active; then
+		return 1 # No fixed deadline; candidate watchdogs and quota gates still apply.
+	fi
 	local reserve="${1:-${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}}"
 	local start="${PULSE_START_EPOCH:-}" stale="${PULSE_STALE_THRESHOLD:-}"
 	local lock="${PULSE_LOCK_MAX_AGE_S:-1800}" now=""

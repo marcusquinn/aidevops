@@ -1861,8 +1861,8 @@ _drop_closing_pull_request_refs() {
 # Resolve a work target for conflict repair/carry-forward, never issue closing.
 # A native closing target wins; ambiguous or unavailable closing metadata must
 # not fall back. Otherwise require one distinct local For/Ref or title identity.
-# Mode explicit is for merge association: no title inference, only standalone
-# local For/Ref declarations outside code/quotes and secondary-work sections.
+# Mode explicit accepts standalone declarations, or a title corroborated by a
+# visible For/Ref when no closing or explicit target exists.
 # Args: $1=PR number, $2=repo slug, $3=mode, $4=optional fetched body
 #######################################
 _extract_pr_work_issue() {
@@ -1892,6 +1892,11 @@ _extract_pr_work_issue() {
 		if [[ "$explicit_issues" == *$'\n'* || "$explicit_issues" == "ambiguous" ]]; then
 			echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous explicit issue identities — no merge association" >>"$LOGFILE"
 			return 1
+		fi
+		# aidevops:trust-boundary: never infer from the title alone or fall back
+		# after ambiguous closing/explicit metadata or a closing body reference.
+		if [[ -z "$explicit_issues" ]] && ! _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug" "$pr_body"; then
+			explicit_issues=$(_pmpc_corroborated_target "$pr_number" "$repo_slug" "$pr_body") || explicit_issues=""
 		fi
 		printf '%s' "$explicit_issues"
 		return 0

@@ -15,8 +15,10 @@ const advisedSessions = new Set();
 // Diagnostic evidence only: never changes admission policy or logs tool args.
 function recordAdmission(input, outcome, reason = "", status = "") {
   const session = input.sessionID || input.sessionId || input.session?.id || "";
-  // Interactive tools and plugin fixture sessions are not worker health probes.
-  if (!/^[1-9][0-9]*$/.test(process.env.WORKER_ISSUE_NUMBER || "")) return;
+  // Interactive passes are not worker health probes, but every refusal is
+  // recorded so a blocked interactive operation (for example database-locked,
+  // GH#37900) leaves a trace.
+  if (outcome !== "refused" && !/^[1-9][0-9]*$/.test(process.env.WORKER_ISSUE_NUMBER || "")) return;
   if (!/^[A-Za-z0-9_-]+$/.test(session)) return;
   try {
     const directory = join(homedir(), ".aidevops", "logs", "lifecycle-admission");

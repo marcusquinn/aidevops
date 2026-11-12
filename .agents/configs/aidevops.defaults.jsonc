@@ -248,6 +248,10 @@
     // Model tier used for verification checks (cheapest sufficient tier).
     "verification_tier": "simple",
 
+    // GitHub blocks pull_request_target by default from 2026-12-02.
+    // True allows Pulse to mutate public repository Actions event policies.
+    "actions_event_policy_auto_apply": false,
+
     // Maximum number of concurrent interactive AI sessions before warning.
     // Counts processes matching known AI coding assistants (opencode, claude, etc.).
     // Set to 0 to disable the session count check.

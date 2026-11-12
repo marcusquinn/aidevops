@@ -788,15 +788,16 @@ _build_health_issue_body() {
 	if [[ "$worker_success_rate_24h" != "—" || "$worker_success_rate_7d" != "—" ]]; then
 		rate_section_md=$(_format_worker_rate_section "$worker_success_rate_24h" "$worker_success_rate_7d" "$worker_total_runs_24h" "$worker_total_runs_7d")
 	fi
-	local optional_sections aged_holds_md=""
+	local optional_sections aged_holds_md="" aged_checkpoints_md=""
 	if [[ "$runner_role" == "supervisor" ]]; then
 		aged_holds_md=$(_health_aged_hold_section "$repo_slug" 2>/dev/null) || aged_holds_md=""
+		aged_checkpoints_md=$(_health_aged_checkpoint_section "$repo_slug" 2>/dev/null) || aged_checkpoints_md=""
 	fi
 	optional_sections=$(_build_health_optional_sections "$runner_user" \
 		"$worker_section_title" "$worker_section_md" "$rate_section_md" \
 		"$person_stats_md" "$cross_repo_person_stats_md" \
 		"$session_time_md" "$cross_repo_session_time_md" \
-		"$activity_md" "$cross_repo_md" "$aged_holds_md")
+		"$activity_md" "$cross_repo_md" "$aged_holds_md" "$aged_checkpoints_md")
 
 	cat <<BODY
 ## Queue Health Dashboard
@@ -845,16 +846,18 @@ BODY
 #   $7/$8 - AI session time (this project / all projects)
 #   $9/$10 - commit activity (this project / all projects)
 #   $11 - aged hold-for-review decisions (optional)
+#   $12 - aged blocked checkpoints (optional)
 #######################################
 _build_health_optional_sections() {
 	local runner_user="$1"
 	local worker_title="$2" worker_md="$3" rate_md="$4"
 	local person_md="$5" cross_person_md="$6"
 	local session_md="$7" cross_session_md="$8"
-	local activity_md="$9" cross_activity_md="${10}" aged_holds_md="${11:-}"
+	local activity_md="$9" cross_activity_md="${10}" aged_holds_md="${11:-}" aged_checkpoints_md="${12:-}"
 
 	_dashboard_optional_section "$worker_title" "$worker_md"
 	_dashboard_optional_section "Maintainer decisions waiting" "$aged_holds_md"
+	_dashboard_optional_section "Blocked draft checkpoints waiting" "$aged_checkpoints_md"
 	_dashboard_optional_section "Worker Success Rate" "$rate_md"
 	_dashboard_optional_section "GitHub activity on this project (last 30 days)" "$person_md"
 	_dashboard_optional_section "GitHub activity on all projects (last 30 days)" "$cross_person_md"

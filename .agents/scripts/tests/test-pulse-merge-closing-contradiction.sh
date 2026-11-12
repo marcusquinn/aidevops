@@ -17,6 +17,7 @@ FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 # Match the existing merge-pass harness: load only the function under test.
 eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/pulse-merge.sh")"
 eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
+eval "$(awk '/^_merge_check_closing_guards\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 
 gh_pr_view() {
@@ -48,6 +49,8 @@ _merge_parse_command_args() {
 	return 0
 }
 _merge_resolve_repo() { printf '%s' 'test/repo'; return 0; }
+# GH#37690 parent-task guard is covered by test-full-loop-merge.sh merge cases.
+_merge_check_parent_task_keywords() { return 0; }
 _merge_handle_already_merged_provenance() { return 2; }
 _flm_gh_read() { gh_pr_view "$@"; return $?; }
 # Trust behavior is covered by test-worker-briefed-trust-parity.sh, not closure cases.

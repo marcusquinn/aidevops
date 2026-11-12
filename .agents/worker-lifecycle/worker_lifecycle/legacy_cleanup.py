@@ -191,9 +191,14 @@ def retire(store, item, repositories, adapter, options):
         if plan is None:
             current = next((row for row in inventory(connection)
                             if row["path"] == item["path"]), unrecorded(item["path"]))
-            identity = inspect(
-                current, repositories, adapter, time.time(), options,
-            )
+            # Source inspection (Git, /proc census) is non-destructive filesystem
+            # work: release the writer so bounded-operation admission is not
+            # refused meanwhile. archive_source revalidates with unchanged()
+            # under the reacquired writer before anything is journaled.
+            with writer_released(connection):
+                identity = inspect(
+                    current, repositories, adapter, time.time(), options,
+                )
             identity["output_root"] = str(options.root)
             if confirmed:
                 identity["operator_confirmed"] = True

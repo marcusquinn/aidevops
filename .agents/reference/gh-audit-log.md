@@ -311,7 +311,11 @@ The daily routine `r-gh-audit-scan` runs `gh-audit-anomaly-helper.sh scan`:
 ```
 
 The scanner:
-1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`)
+1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`).
+   After a rotation it first reads the rotated file that held the checkpoint
+   (from the saved line onward) and any later rotated files, then the whole live
+   log; a live log shorter than the checkpoint with no rotated file is rescanned
+   from line 1 (GH#37904)
 2. Filters entries with `suspicious[] | length > 0`, excluding only exact,
    fully comparable expected transitions: verified issue/PR approval removal of
    `needs-maintainer-review`, independently revalidated trusted-author NMR
@@ -320,6 +324,10 @@ The scanner:
    runtime-owned blocked exits replacing only `status:in-progress` with
    `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
    (live blocked state and a trusted blocked release newer than the last claim),
+   signed worker-permission grants that remove `needs-maintainer-permissions`
+   (optionally with `status:blocked`, adding only `status:available` or
+   `auto-dispatch`) with `permission_approval_verified: v1-current-state`
+   (the signed grant re-verified against the latest live request, GH#37906),
    and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)
@@ -366,7 +374,7 @@ To run the scanner manually:
 # Normal run (incremental, files issue)
 gh-audit-anomaly-helper.sh scan
 
-# Scan all entries without filing an issue (dry run)
+# Scan the whole live log (not rotated logs) without filing an issue (dry run)
 gh-audit-anomaly-helper.sh scan --all --dry-run
 
 # Check scanner state

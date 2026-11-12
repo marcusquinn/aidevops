@@ -2116,6 +2116,13 @@ _pulse_drain_cycle_final_refill() {
 # ---------------------------------------------------------------------------
 _pulse_run_supervisor_phase() {
 	_pulse_cycle_state_publish supervising || true
+	# GH#37907: read a deploy drain request before lock release removes it. A
+	# drained earlier-bundle cycle skips the optional LLM supervisor and exits
+	# so the scheduler starts the activated bundle without another long phase.
+	local _pulse_drain_bundle=""
+	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
+		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
+	fi
 	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
 	# can run deterministic ops concurrently. Terminal publication briefly
 	# reacquires this lock and writes only when health still names this cycle,
@@ -2125,6 +2132,10 @@ _pulse_run_supervisor_phase() {
 	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
 	release_instance_lock
 	_pulse_finish_post_dispatch_housekeeping
+	if [[ -n "$_pulse_drain_bundle" ]]; then
+		echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
+		return 0
+	fi
 	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
 	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
 	# unless prefetch has degraded long enough that the supervisor would starve;

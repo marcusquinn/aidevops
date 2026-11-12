@@ -524,6 +524,10 @@ Commands:
                                  --admin and --auto are mutually exclusive at the
                                  gh CLI level; if both are given, --admin wins and
                                   --auto is dropped (GH#19310).
+                [--allow-parent-close]
+                                 Refused by default when a closing keyword targets a
+                                 parent-task issue (GH#37690); pass only for the
+                                 verified final phase.
                 [--override-review-bot-gate="REASON"]
                                  Interactive maintainer only (GH#36901): admin-merge
                                  when review-bot-gate is the sole failing required

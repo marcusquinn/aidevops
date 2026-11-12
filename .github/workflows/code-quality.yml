@@ -595,7 +595,8 @@ jobs:
         export LOG_DIR="$log_dir"
         # *-cases.sh / *-mocks.sh are fixtures sourced by a suite, not suites.
         git ls-files '.agents/scripts/tests/test-pulse-merge-*.sh' \
-          '.agents/scripts/tests/test-pulse-merge-*.py' |
+          '.agents/scripts/tests/test-pulse-merge-*.py' \
+          '.agents/scripts/tests/test-full-loop-merge.sh' |
           grep -Ev -- '-(cases|mocks)\.sh$' >"${log_dir}/suites.txt"
         run_suite() {
           local suite="$1"
