@@ -20,7 +20,7 @@ RUNTIMES = {"opencode", "claude-code"}
 class RejectRedirects(HTTPRedirectHandler):
     """Never forward the bearer token to a redirect destination."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(self, *_args: Any) -> None:
         return None
 
 
@@ -49,37 +49,92 @@ def _invalid_constant(_: str) -> None:
     raise ValueError("invalid_constant")
 
 
-def _valid_config(payload: dict[str, Any]) -> bool:
-    """Minimum serviceDetails contract, not application/deployment validation."""
-    details = payload.get("serviceDetails")
-    if not isinstance(details, dict):
-        return False
-    runtime, url = details.get("runtime"), details.get("url")
-    if not isinstance(runtime, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", runtime):
-        return False
+def _valid_runtime(details: dict[str, Any]) -> bool:
+    runtime = details.get("runtime")
+    return isinstance(runtime, str) and bool(re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", runtime))
+
+
+def _valid_hostname(hostname: str) -> bool:
+    label_pattern = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    return len(hostname) <= 253 and all(
+        re.fullmatch(label_pattern, label, re.ASCII) for label in hostname.split(".")
+    )
+
+
+def _valid_url(url: Any) -> bool:
     if not isinstance(url, str) or any(char.isspace() or ord(char) < 32 for char in url):
         return False
     parsed = urlsplit(url)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
-            or parsed.password is not None or parsed.query or parsed.fragment):
-        return False
     hostname = parsed.hostname
-    if len(hostname) > 253 or any(
-        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label, re.ASCII)
-        for label in hostname.split(".")
-    ):
-        return False
+    simple = (parsed.scheme == "https", bool(hostname), parsed.username is None,
+              parsed.password is None, not parsed.query, not parsed.fragment)
     # Accessing port validates malformed/out-of-range ports without contacting the URL.
-    if parsed.port not in (None, 443):
-        return False
-    if "envSpecificDetails" in details:
-        config = details["envSpecificDetails"]
-        if not isinstance(config, dict):
-            return False
-        for key in ("buildCommand", "startCommand", "dockerCommand", "dockerContext", "dockerfilePath"):
-            if key in config and not isinstance(config[key], str):
-                return False
-    return True
+    return all(simple) and _valid_hostname(hostname or "") and parsed.port in (None, 443)
+
+
+def _valid_env(details: dict[str, Any]) -> bool:
+    if "envSpecificDetails" not in details:
+        return True
+    config = details["envSpecificDetails"]
+    keys = ("buildCommand", "startCommand", "dockerCommand", "dockerContext", "dockerfilePath")
+    return isinstance(config, dict) and all(isinstance(config[key], str) for key in keys if key in config)
+
+
+def _valid_config(payload: dict[str, Any]) -> bool:
+    """Minimum serviceDetails contract, not application/deployment validation."""
+    details = payload.get("serviceDetails")
+    return (isinstance(details, dict) and _valid_runtime(details)
+            and _valid_url(details.get("url")) and _valid_env(details))
+
+
+def _token_problem(token: str | None) -> str | None:
+    if not token:
+        return "missing_token"
+    if len(token) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in token):
+        return "invalid_token"
+    return None
+
+
+def _classify(body: bytes, target: str, evidence: dict[str, str]) -> str:
+    if len(body) > MAX_RESPONSE_BYTES:
+        return "response_too_large"
+    payload = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_object,
+                         parse_constant=_invalid_constant)
+    if not isinstance(payload, dict):
+        return "invalid_response"
+    if payload.get("id") != target:
+        return "target_mismatch"
+    if not _valid_config(payload):
+        return "invalid_service_config"
+    evidence.update(dict.fromkeys(evidence, "true"))
+    return "ready"
+
+
+def _http_reason(code: int) -> str:
+    known = {401: "unauthenticated", 403: "forbidden", 404: "service_not_found", 429: "rate_limited"}
+    return known.get(code, "redirect_rejected" if 300 <= code < 400 else "http_error")
+
+
+def _fetch_reason(target: str, token: str, evidence: dict[str, str]) -> str:
+    request = Request(f"https://api.render.com/v1/services/{target}", method="GET",
+                      headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    try:
+        # No environment-selected proxy, arbitrary endpoint, retries, or redirects.
+        opener = build_opener(ProxyHandler({}), RejectRedirects())
+        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+            evidence["reachable"] = "true"
+            status = response.status
+            body = response.read(MAX_RESPONSE_BYTES + 1) if status == 200 else b""
+        reason = "unexpected_status" if status != 200 else _classify(body, target, evidence)
+    except HTTPError as error:
+        evidence["reachable"] = "true"
+        reason = _http_reason(error.code)
+        error.close()
+    except (URLError, OSError, HTTPException):
+        reason = "network_error"
+    except (ValueError, UnicodeError, RecursionError):
+        reason = "invalid_response"
+    return reason
 
 
 def render_live_evidence(
@@ -91,44 +146,9 @@ def render_live_evidence(
     scope = {"provider": "render", "target": target, "operation": "read",
              "resource": "service-metadata", "reason": "missing_token"}
     token = os.environ.get("RENDER_API_KEY")
-    if not token:
-        return evidence, scope
-    if len(token) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in token):
-        scope["reason"] = "invalid_token"
-        return evidence, scope
-    evidence["configured"] = "true"
-    request = Request(f"https://api.render.com/v1/services/{target}", method="GET",
-                      headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-    try:
-        # No environment-selected proxy, arbitrary endpoint, retries, or redirects.
-        opener = build_opener(ProxyHandler({}), RejectRedirects())
-        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
-            evidence["reachable"] = "true"
-            if response.status != 200:
-                scope["reason"] = "unexpected_status"
-                return evidence, scope
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(body) > MAX_RESPONSE_BYTES:
-            scope["reason"] = "response_too_large"
-            return evidence, scope
-        payload = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_object,
-                             parse_constant=_invalid_constant)
-        if not isinstance(payload, dict):
-            scope["reason"] = "invalid_response"
-        elif payload.get("id") != target:
-            scope["reason"] = "target_mismatch"
-        elif not _valid_config(payload):
-            scope["reason"] = "invalid_service_config"
-        else:
-            evidence.update(dict.fromkeys(evidence, "true"))
-            scope["reason"] = "ready"
-    except HTTPError as error:
-        evidence["reachable"] = "true"
-        scope["reason"] = {401: "unauthenticated", 403: "forbidden", 404: "service_not_found",
-                           429: "rate_limited"}.get(error.code, "redirect_rejected" if 300 <= error.code < 400 else "http_error")
-        error.close()
-    except (URLError, OSError, HTTPException):
-        scope["reason"] = "network_error"
-    except (ValueError, UnicodeError, RecursionError):
-        scope["reason"] = "invalid_response"
+    problem = _token_problem(token)
+    if problem is None and token and target:
+        evidence["configured"] = "true"
+        problem = _fetch_reason(target, token, evidence)
+    scope["reason"] = problem
     return evidence, scope
