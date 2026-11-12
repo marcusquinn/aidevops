@@ -1480,7 +1480,10 @@ _full_loop_release_finalize_reconciliation() {
 	[[ "$requested_present" == "$_FULL_LOOP_RELEASE_TRUE" ]] || return 1
 	tag_commit=$(_full_loop_release_resolve_tag_commit "$tag_name") || return 1
 	_full_loop_release_validate_published_reconciliation_intent \
-		"$repo" "$requested_pr" "$tag_name" "$source_json" || return 1
+		"$repo" "$requested_pr" "$tag_name" "$source_json" || {
+		printf 'Published reconciliation refused: missing/invalid local explicit publication authorization or active matching lane for PR #%s (%s); inspect release status and the verified source manifest. Terminal cross-host publication requires interactive adopt-published, not replacement publication intent.\n' "$requested_pr" "$tag_name" >&2
+		return 1
+	}
 	_full_loop_validate_release_candidates "$repo" "$source_json" \
 		"$_FULL_LOOP_RELEASE_RECONCILE_AUTHORIZED" "$tag_name" "$tag_commit" || return 1
 	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
@@ -1540,6 +1543,7 @@ _full_loop_release_write_protected_successor_receipt() {
 	[[ "$source_merge" =~ $_FULL_LOOP_SHA40_REGEX && "$successor_merge" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
 	[[ "$release_tag" =~ $_FULL_LOOP_RELEASE_VERSION_TAG_REGEX && "$release_commit" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
 	[[ "$release_run" =~ ^[0-9]+$ && "$release_run" -gt 0 ]] || return 1
+	_full_loop_release_require_successor_receipt "$repo" "$successor_pr" "$release_tag" || return 1
 	source_tag=$(jq -er '.source_tag' <<<"$protected_json") || return 1
 	source_tag_object=$(jq -er '.source_tag_object' <<<"$protected_json") || return 1
 	source_commit=$(jq -er '.source_commit' <<<"$protected_json") || return 1
@@ -1604,6 +1608,26 @@ _full_loop_release_write_protected_successor_receipt() {
 	return $?
 }
 
+_full_loop_release_require_successor_receipt() {
+	local repo="$1" successor_pr="$2" release_tag="$3"
+	local receipt="" status="" adoption="" authorization=""
+	receipt=$(_full_loop_release_receipt_path "$repo" "$successor_pr") || return 1
+	[[ -f "$receipt" ]] || {
+		printf 'Cannot settle stale release: local published receipt for successor PR #%s (%s) is missing; reconcile the successor or run aidevops release adopt-published %s --tag %s in an interactive maintainer session.\n' \
+			"$successor_pr" "$release_tag" "$successor_pr" "$release_tag" >&2
+		return 1
+	}
+	IFS= read -r status <"$receipt" || return 1
+	[[ "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	adoption="${receipt%.status}.adoption.json"
+	authorization="${receipt%.status}.adoption-authorization.json"
+	if cmp -s "$receipt" <(printf 'published\ncross-host-adoption/v1\n') ||
+		[[ -e "$adoption" || -L "$adoption" || -e "$authorization" || -L "$authorization" ]]; then
+		_full_loop_release_verify_adoption_evidence "$repo" "$successor_pr" "$release_tag" || return 1
+	fi
+	return 0
+}
+
 _full_loop_release_finalize_stale_supersession() {
 	local repo="$1"
 	local requested_pr="$2"
@@ -1620,8 +1644,6 @@ _full_loop_release_finalize_stale_supersession() {
 	local successor_merge=""
 	local release_commit=""
 	local release_run=""
-	local release_receipt=""
-	local release_status=""
 
 	source_json=$(_full_loop_release_source_json_from_tag "$source_tag") || return 1
 	source_merge=$(jq -er --argjson requested "$requested_pr" '
@@ -1668,10 +1690,7 @@ _full_loop_release_finalize_stale_supersession() {
 		'.id | select(type == $number_type and . > 0 and floor == .)' \
 		<<<"$_FULL_LOOP_RELEASE_RUN_JSON") || return 1
 	[[ -z "$source_run" || "$source_run" != "$release_run" ]] || return 1
-	release_receipt=$(_full_loop_release_receipt_path "$repo" "$successor_pr") || return 1
-	[[ -f "$release_receipt" ]] || return 1
-	IFS= read -r release_status <"$release_receipt" || return 1
-	[[ "$release_status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+	_full_loop_release_require_successor_receipt "$repo" "$successor_pr" "$release_tag" || return 1
 
 	if [[ -n "$source_run" ]]; then
 		_full_loop_write_successor_release_receipt "$repo" "$requested_pr" "$source_merge" \
@@ -1833,6 +1852,17 @@ _full_loop_release_handle_inspect_rc() {
 	esac
 }
 
+_full_loop_release_local_adoption_required() {
+	local repo="$1" requested_pr="$2" tag_name="$3"
+	release_lane_read "$repo" || return 1
+	jq -e --argjson pr "$requested_pr" --arg tag "$tag_name" '
+		.active == false and .phase == "terminal" and .terminal_receipt == "published"
+		and .source_pr == $pr and .tag == $tag
+	' <<<"$_AIDEVOPS_RELEASE_LANE_JSON" >/dev/null || return 1
+	printf 'RELEASE_LOCAL_ADOPTION_REQUIRED=1\naidevops release adopt-published %s --tag %s\n' "$requested_pr" "$tag_name"
+	return 0
+}
+
 _full_loop_release_existing_command() {
 	local mode="$1"
 	local requested_pr="$2"
@@ -1915,6 +1945,9 @@ _full_loop_release_existing_command() {
 				printf 'release:superseded already recorded for PR #%s\n' "$requested_pr"
 				;;
 			*)
+				if [[ -z "$receipt_status" ]] && _full_loop_release_local_adoption_required "$repo" "$requested_pr" "$tag_name"; then
+					return 10
+				fi
 				_full_loop_release_finalize_reconciliation "$repo" "$requested_pr" "$tag_name" || return 1
 				printf 'release:published tag=%s\n' "$tag_name"
 				;;

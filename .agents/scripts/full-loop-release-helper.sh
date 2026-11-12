@@ -138,6 +138,8 @@ source "${SCRIPT_DIR}/full-loop-helper-state.sh"
 source "${SCRIPT_DIR}/release-lane-helper.sh"
 # shellcheck source=./full-loop-release-reconcile.sh
 source "${SCRIPT_DIR}/full-loop-release-reconcile.sh"
+# shellcheck source=./full-loop-release-adopt.sh
+source "${SCRIPT_DIR}/full-loop-release-adopt.sh"
 # shellcheck source=./full-loop-release-aggregate-recovery.sh
 source "${SCRIPT_DIR}/full-loop-release-aggregate-recovery.sh"
 # shellcheck source=./full-loop-release-snapshot-migration.sh
@@ -362,6 +364,7 @@ Usage:
   aidevops release owner-notify OWNER/REPO TAG [--result TEXT]
   aidevops release duplicate-check OWNER/REPO vX.Y.Z
   aidevops release reconcile SOURCE_PR
+  aidevops release adopt-published SOURCE_PR --tag TAG
   aidevops release recover-reservation SOURCE_PR
   aidevops release refresh-aggregate STALE_AGGREGATION_PR
   aidevops release recover-aggregate SOURCE_PR --tag TAG --expected-sources PR[,PR...] [--aggregate-commit SHA]
@@ -949,6 +952,16 @@ _full_loop_release_is_manual_hold_command() {
 	return 1
 }
 
+_full_loop_release_cmd_refresh_aggregate() {
+	local source_pr="$1"
+	local successor_repo=""
+	[[ "$source_pr" =~ ^[0-9]+$ ]] || { _full_loop_release_usage >&2; return 1; }
+	_full_loop_release_bind_repo_context || return 1
+	successor_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
+	_full_loop_release_refresh_aggregate "$successor_repo" "$source_pr"
+	return $?
+}
+
 main() {
 	if _full_loop_release_is_manual_hold_command "${1:-}"; then
 		"${SCRIPT_DIR}/manual-release-hold-helper.sh" "$@"
@@ -1020,18 +1033,16 @@ main() {
 		return $?
 		;;
 	refresh-aggregate)
-		[[ "$source_pr" =~ ^[0-9]+$ ]] || {
-			_full_loop_release_usage >&2
-			return 1
-		}
-		_full_loop_release_bind_repo_context || return 1
-		local successor_repo=""
-		successor_repo=$(_full_loop_resolve_repo "${AIDEVOPS_FULL_LOOP_REPO:-}") || return 1
-		_full_loop_release_refresh_aggregate "$successor_repo" "$source_pr"
+		_full_loop_release_cmd_refresh_aggregate "$source_pr"
 		return $?
 		;;
 	recover-aggregate)
 		_full_loop_release_cmd_recover_aggregate "$source_pr" "$tag_name" "$expected_sources" "$aggregate_commit"
+		return $?
+		;;
+	adopt-published)
+		[[ -z "$expected_sources" && -z "$gap_reason" ]] || return 1
+		_full_loop_release_cmd_adopt_published "$source_pr" "$tag_name"
 		return $?
 		;;
 	authorization-gap)
