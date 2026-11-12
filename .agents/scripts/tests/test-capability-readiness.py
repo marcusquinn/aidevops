@@ -177,6 +177,7 @@ class RenderReadinessTests(unittest.TestCase):
         configs = (None, [], {}, {"runtime": "docker"}, {"runtime": 1, "url": "https://example.test"},
                    {"runtime": "", "url": "https://example.test"},
                    {"runtime": "docker", "url": "http://example.test"},
+                   {"runtime": "docker", "url": "https://%"},
                    {"runtime": "docker", "url": synthetic_userinfo_url},
                    {"runtime": "docker", "url": "https://example.test", "envSpecificDetails": []},
                    {"runtime": "docker", "url": "https://example.test", "envSpecificDetails": {"dockerCommand": []}})

@@ -9,12 +9,12 @@ Use the registered `render-service-readiness` capability (alias `render`), owned
 by Build+, in `opencode` or `claude-code`:
 
 ```bash
-python3 .agents/scripts/capability-readiness-helper.py route render --runtime opencode --target srv-example123 --operation read
+aidevops secret RENDER_API_KEY -- python3 .agents/scripts/capability-readiness-helper.py route render --runtime opencode --target srv-example123 --operation read
 ```
 
 The target must be an explicit service ID matching `srv-[a-z0-9]+`, not a
-project name, logical target, URL, account, or service list. Provision the token
-outside the helper and inject it only through `RENDER_API_KEY`. The helper never
+project name, logical target, URL, account, or service list. Store the token with
+`aidevops secret set RENDER_API_KEY` and inject it using the command above. The helper never
 searches credential stores, invokes subprocesses to obtain credentials, stores
 tokens, or prints provider responses, headers, config values, or exceptions.
 

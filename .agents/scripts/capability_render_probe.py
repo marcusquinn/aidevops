@@ -63,6 +63,12 @@ def _valid_config(payload: dict[str, Any]) -> bool:
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
             or parsed.password is not None or parsed.query or parsed.fragment):
         return False
+    hostname = parsed.hostname
+    if len(hostname) > 253 or any(
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label, re.ASCII)
+        for label in hostname.split(".")
+    ):
+        return False
     # Accessing port validates malformed/out-of-range ports without contacting the URL.
     if parsed.port not in (None, 443):
         return False
