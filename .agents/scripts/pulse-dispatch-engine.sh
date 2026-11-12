@@ -665,6 +665,7 @@ _dispatch_execute_candidate_loop() {
 # Returns: dispatched worker count via stdout
 #######################################
 dispatch_max() {
+	local _PULSE_ELASTIC_DISPATCH=1
 	local dependency_normalization_mode="${1:-normalize}"
 	local capacity_line
 	capacity_line=$(_dispatch_compute_capacity) || {
