@@ -1895,8 +1895,8 @@ _extract_pr_work_issue() {
 		fi
 		# aidevops:trust-boundary: never infer from the title alone or fall back
 		# after ambiguous closing/explicit metadata or a closing body reference.
-		if [[ -z "$explicit_issues" ]] && ! _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug"; then
-			explicit_issues=$(_pmpc_corroborated_target "$pr_number" "$repo_slug") || explicit_issues=""
+		if [[ -z "$explicit_issues" ]] && ! _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug" "$pr_body"; then
+			explicit_issues=$(_pmpc_corroborated_target "$pr_number" "$repo_slug" "$pr_body") || explicit_issues=""
 		fi
 		printf '%s' "$explicit_issues"
 		return 0
