@@ -25,9 +25,8 @@ def _base(path):
     return path.rsplit("/", 1)[-1]
 
 
-def pin_is_gate_for(head, path, line_no, old_base, cache):
-    """Decide whether a caller_function pin at path:line_no binds old_base."""
-    lines = file_lines(head, path, cache)
+def pin_is_gate_for(lines, line_no, old_base):
+    """Decide whether a caller_function pin at line_no of lines binds old_base."""
     start = max(0, line_no - 1 - PIN_WINDOW_BEFORE)
     window = lines[start:line_no + PIN_WINDOW_AFTER]
     literals, variable = set(), False
@@ -57,13 +56,20 @@ def _pin_regex(name):
     )
 
 
-def _pin_sites(head, pins, name, old_base, cache):
-    """Return (path, line_no, text) pins of `name` that bind old_base."""
+def _gate_checker(head, old_base, cache):
+    """Return a (path, line_no) predicate: does the pin there bind old_base."""
+    return lambda path, line_no: pin_is_gate_for(
+        file_lines(head, path, cache), line_no, old_base
+    )
+
+
+def _pin_sites(pins, name, is_gate):
+    """Return (path, line_no, text) pins of `name` where is_gate(path, line_no)."""
     pin_re = _pin_regex(name)
     return [
         (path, line_no, content.strip())
         for path, line_no, content in pins
-        if pin_re.search(content) and pin_is_gate_for(head, path, line_no, old_base, cache)
+        if pin_re.search(content) and is_gate(path, line_no)
     ]
 
 
@@ -89,7 +95,7 @@ def gate_findings(head, moves):
     cache, findings = {}, {}
     for move in moves:
         name, old_base = move[0], _base(move[1])
-        sites = _pin_sites(head, pins, name, old_base, cache)
+        sites = _pin_sites(pins, name, _gate_checker(head, old_base, cache))
         if sites:
             sites += _script_ref_sites(head, sites, old_base, cache)
             findings[move] = sorted(set(sites))
@@ -109,8 +115,13 @@ def _pointer_warnings(head, name, old_base, new_path):
     return warnings, files
 
 
-def _edit_warnings(edit_lines, name, old_base, new_path, pointer_files, seen):
-    """Return warnings for `EDIT:` lines naming old_base beside fn or a pointer file."""
+def _edit_warnings(edit_lines, move, skip):
+    """Return warnings for `EDIT:` lines naming old_base beside fn or a pointer file.
+
+    move is (name, old_base, new_path); skip is (pointer_files, seen).
+    """
+    name, old_base, new_path = move
+    pointer_files, seen = skip
     old_re = basename_re(old_base)
     name_re = re.compile(r"\b" + re.escape(name) + r"\b")
     return {
@@ -131,6 +142,8 @@ def stale_pointers(head, moves):
         found, pointer_files = _pointer_warnings(head, name, old_base, new_path)
         warnings.update(found)
         warnings.update(
-            _edit_warnings(edit_lines, name, old_base, new_path, pointer_files, warnings)
+            _edit_warnings(
+                edit_lines, (name, old_base, new_path), (pointer_files, warnings)
+            )
         )
     return sorted((path, line_no, *rest) for (path, line_no), rest in warnings.items())
