@@ -8,6 +8,12 @@
 [[ -n "${_PULSE_NMR_APPROVAL_CACHE_LOADED:-}" ]] && return 0
 _PULSE_NMR_APPROVAL_CACHE_LOADED=1
 
+# Lock reclamation needs portable mtimes; pulse-wrapper normally loads this.
+if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+	# shellcheck source=./portable-stat.sh
+	source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+fi
+
 NMR_CACHE_TRUE="true"
 NMR_CACHE_FALSE="false"
 NMR_CACHE_UNKNOWN="unknown"
@@ -60,12 +66,8 @@ _ever_nmr_lock_setting() {
 _ever_nmr_lock_mtime() {
 	local path="$1"
 	local mtime=""
-	if declare -F _file_mtime_epoch >/dev/null 2>&1; then
-		mtime=$(_file_mtime_epoch "$path" 2>/dev/null) || mtime=""
-	else
-		# GNU first: on Linux `stat -f` reports filesystem status, not file mtime.
-		mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null) || mtime=""
-	fi
+	# _file_mtime_epoch prints 0 when the path vanished; treat that as unavailable.
+	mtime=$(_file_mtime_epoch "$path" 2>/dev/null) || mtime=""
 	[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 1
 	printf '%s\n' "$mtime"
 	return 0
