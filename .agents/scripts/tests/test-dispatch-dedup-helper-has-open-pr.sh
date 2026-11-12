@@ -601,6 +601,23 @@ test_has_open_pr_marks_worker_draft_for_stale_routing() {
 	return 0
 }
 
+test_has_open_pr_inline_for_matches_continuation_predicate() {
+	local body='Partial data checkpoint; publication remain pending. For #18790'
+	set_gh_fixtures "marcusquinn/aidevops|open|#18790|[{\"number\":18917,\"title\":\"Worker checkpoint\",\"body\":\"${body}\",\"isDraft\":true,\"reviewDecision\":\"REVIEW_REQUIRED\",\"mergeStateStatus\":\"UNKNOWN\",\"labels\":[{\"name\":\"origin:worker\"}]}]"
+
+	local pr_json output=""
+	pr_json=$(jq -n --arg body "$body" '{body:$body,isDraft:true,isCrossRepository:false,closingIssuesReferences:[],labels:[{name:"origin:worker"}]}')
+	if output=$("$HELPER_SCRIPT" has-open-pr 18790 marcusquinn/aidevops 'inline checkpoint') &&
+		[[ "$output" == WORKER_DRAFT_CHECKPOINT:* ]] &&
+		bash -c 'source "$1" && _pr_checkpoint_nonclosing_draft_links_issue "$2" 18790' _ \
+			"${SCRIPT_DIR}/../pr-checkpoint-target-lib.sh" "$pr_json"; then
+		print_result "has-open-pr and continuation agree on inline 'For #N' draft" 0
+		return 0
+	fi
+	print_result "has-open-pr and continuation agree on inline 'For #N' draft" 1 "Unexpected output: ${output}"
+	return 0
+}
+
 test_has_open_pr_keeps_protected_draft_unroutable() {
 	set_gh_fixtures 'marcusquinn/aidevops|open|#18781|[{"number":18908,"title":"Interactive checkpoint for #18781","body":"Resolves #18781. Held for review.","isDraft":true,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"UNKNOWN","labels":[{"name":"origin:interactive"}]}]'
 
@@ -1375,6 +1392,7 @@ main() {
 	test_has_open_pr_blocks_draft_body_closing_keyword
 	test_has_open_pr_distinguishes_body_mentions_from_references
 	test_has_open_pr_marks_worker_draft_for_stale_routing
+	test_has_open_pr_inline_for_matches_continuation_predicate
 	test_has_open_pr_keeps_protected_draft_unroutable
 	test_has_open_pr_ignores_seed_draft_only_for_its_issue
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails
