@@ -1387,12 +1387,13 @@ cmd_mark_progress() {
 		return 2
 	fi
 	local start_head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" current_head="" snapshot=""
-	local pull_state="" pull_draft=""
+	local pull_state="" pull_draft="" # state/draft fields are positional placeholders
 	if [[ -z "$start_head" ]]; then
 		start_head=$(_prrts_rereview_dispatch_head "$(_prrts_state_file "$repo_slug" "$pr_number")") || start_head=""
 	fi
 	snapshot=$(_prrts_rereview_pull_snapshot "$repo_slug" "$pr_number") || snapshot=""
 	IFS=$'\t' read -r pull_state pull_draft current_head <<<"$snapshot"
+	: "$pull_state" "$pull_draft"
 	if [[ ! "$start_head" =~ ^[0-9a-fA-F]{40}$ || ! "$current_head" =~ ^[0-9a-fA-F]{40}$ ||
 		"$current_head" == "$start_head" ]]; then
 		printf 'mark-progress refused: a changed published PR head could not be verified. Push progress before recording it.\n' >&2

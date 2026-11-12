@@ -344,7 +344,7 @@ _prrts_progress_step() {
 	printf '%s\n' \
 		'8. There is no per-session capacity budget to estimate; keep working until' \
 		'   acceptance or a real blocker. Capacity, context or time-budget reasons are' \
-		'   refused by `mark-blocked`. If you must stop before acceptance, commit' \
+		"   refused by \`mark-blocked\`. If you must stop before acceptance, commit" \
 		'   everything produced (captures, extracted data, ledgers), run the step 4' \
 		'   fence, use your single push from step 5 to publish that progress head, then' \
 		"   run \`\"${scanner_path}\" mark-progress \"${repo_slug_ref}\" \"${repair_number_ref}\" <short_reason>\` exactly once." \
