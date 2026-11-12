@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.178] - 2026-11-12
+
+### Changed
+
+- Documentation: general repository onboarding checklist
+
 ## [3.39.177] - 2026-11-12
 
 ### Added
