@@ -1509,20 +1509,9 @@ _run_preflight_stages() {
 	# Overdue synchronous recovery needs admission before dispatch can spend
 	# the cycle budget. The bounded attempt retains the main-dispatch reserve.
 	_pulse_run_pre_dispatch_blocker_refresh "$_pflt_timeout"
-	# GH#37854: starvation bound. A stale or missing snapshot promotes the
-	# budget-gated prefetch ahead of early dispatch so it gets the full stage
-	# budget instead of the clamped remainder. REST/GraphQL gates still apply;
-	# a hard prefetch failure keeps its abort semantics but only after the
-	# dispatch waves below, matching the legacy end-of-preflight position.
+	# GH#37854: a stale/missing snapshot runs prefetch before early dispatch.
 	local _pflt_prefetch_rc=0
-	_PULSE_PREFETCH_RAN=0
-	if _preflight_prefetch_starved; then
-		echo "[pulse-wrapper] Prefetch starvation bound reached: STATE_FILE missing or older than ${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}s — running prefetch before early dispatch (GH#37854)" >>"$LOGFILE"
-		if declare -F pulse_stats_increment >/dev/null 2>&1; then
-			pulse_stats_increment "pulse_prefetch_starvation_promoted" 2>/dev/null || true
-		fi
-		_run_preflight_prefetch_stage "$_pflt_timeout" || _pflt_prefetch_rc=$?
-	fi
+	_run_promoted_prefetch_if_starved "$_pflt_timeout" || _pflt_prefetch_rc=$?
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1574,6 +1563,30 @@ _run_preflight_stages() {
 	if [[ "${_PULSE_PREFETCH_RAN:-0}" != "1" ]]; then
 		_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
 	fi
+	return 0
+}
+
+#######################################
+# GH#37854: starvation bound. Early dispatch can consume nearly the whole
+# cycle, leaving prefetch a clamped window it never finishes. A stale or
+# missing snapshot promotes the budget-gated prefetch ahead of early dispatch
+# so it receives the full stage budget. REST/GraphQL gates still apply. The
+# caller defers a hard-failure abort until after the dispatch waves, matching
+# the legacy end-of-preflight position.
+#
+# Arguments: $1 - preflight stage timeout (seconds)
+# Sets: _PULSE_PREFETCH_RAN (reset to 0, then 1 if prefetch executed)
+# Returns: 0 when not starved or prefetch continued; 1 on hard failure
+#######################################
+_run_promoted_prefetch_if_starved() {
+	local _pflt_timeout="$1"
+	_PULSE_PREFETCH_RAN=0
+	_preflight_prefetch_starved || return 0
+	echo "[pulse-wrapper] Prefetch starvation bound reached: STATE_FILE missing or older than ${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}s — running prefetch before early dispatch (GH#37854)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_prefetch_starvation_promoted" 2>/dev/null || true
+	fi
+	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
 	return 0
 }
 
