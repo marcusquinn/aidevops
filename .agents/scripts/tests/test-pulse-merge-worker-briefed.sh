@@ -912,6 +912,39 @@ test_reference_to_pr_is_not_a_worker_brief() {
 	return 0
 }
 
+test_partial_comment_and_title_association() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local body="" expected="" actual="" title="t501: partial" src=""
+	for body in 'For #501. text <!-- marker -->' $'text <!-- c -->\nFor #501' '<!-- For #501 -->' $'<!--\nFor #501\n-->'; do
+		expected="501"
+		[[ "$body" != '<!--'* ]] || expected=""
+		actual=$(_gh_pr_body_explicit_issues "$body")
+		if [[ "$actual" == "$expected" ]]; then
+			print_result "explicit comment spans: ${body//$'\n'/ }" 0
+		else
+			print_result "explicit comment spans: ${body//$'\n'/ }" 1 "got ${actual}"
+		fi
+	done
+	src=$(awk '/^_extract_pr_work_issue\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	eval "$src"
+	# shellcheck source=../pulse-merge-partial-continuation.sh
+	source "${MERGE_SCRIPT%/*}/pulse-merge-partial-continuation.sh"
+	_extract_linked_issue() { return 0; }
+	gh_pr_view() {
+		if [[ "$*" == *'--json title'* ]]; then printf '%s' "$title"; else printf '%s' "$body"; fi
+		return 0
+	}
+	body=$'## Remaining\nFor #501'
+	actual=$(_extract_pr_work_issue 1 owner/repo explicit "$body")
+	[[ "$actual" == 501 ]] && print_result "corroborated secondary association" 0 || print_result "corroborated secondary association" 1
+	title='t502: partial'
+	actual=$(_extract_pr_work_issue 1 owner/repo explicit "$body")
+	[[ -z "$actual" ]] && print_result "mismatched title fails closed" 0 || print_result "mismatched title fails closed" 1
+	teardown_test_env
+	return 0
+}
+
 test_partial_worker_association_reaches_authority_gate() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
@@ -1258,6 +1291,7 @@ main() {
 	test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login
 	test_case_v_spoofed_crypto_marker_blocked
 	test_reference_to_pr_is_not_a_worker_brief
+	test_partial_comment_and_title_association
 	test_partial_worker_association_reaches_authority_gate
 	test_non_closing_reference_gates
 	test_parent_planning_checkpoint_gates

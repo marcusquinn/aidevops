@@ -271,15 +271,20 @@ _pmpc_other_open_pr_owns_issue() {
 # _extract_linked_issue does not parse (`Closes: #N`, GH-N, owner/repo#N, an
 # issue URL). GitHub closes those targets on merge, so such a PR completes
 # work rather than delivering a partial.
-# Args: $1=PR number, $2=repo slug
+# Args: $1=PR number, $2=repo slug, $3=optional PR body (skips live read)
 # Returns: 0 when a closing reference exists or the body is unreadable (fail
 #          closed), 1 when the body has none
 #######################################
 _pmpc_pr_body_has_closing_ref() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local supplied_body="${3-}"
 	local pr_body="" verdict=""
-	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 0
+	if [[ "$#" -ge 3 ]]; then
+		pr_body="$supplied_body"
+	else
+		pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 0
+	fi
 	verdict=$(printf '%s' "$pr_body" | jq -Rrs --arg pattern "$_PMPC_CLOSING_REF_PATTERN" \
 		'test($pattern; "i")' 2>/dev/null) || return 0
 	[[ "$verdict" == "false" ]] && return 1
@@ -290,18 +295,23 @@ _pmpc_pr_body_has_closing_ref() {
 # Resolve a title target corroborated by a visible For/Ref body reference.
 # Unlike the shared explicit resolver, secondary sections and mid-line refs
 # are eligible here: the title independently identifies the partial's target.
-# Args: $1=PR number, $2=repo slug
+# Args: $1=PR number, $2=repo slug, $3=optional PR body (title stays live)
 # Stdout: corroborated issue number
 # Returns: 0 when corroborated, 1 when absent or unreadable
 #######################################
 _pmpc_corroborated_target() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local supplied_body="${3-}"
 	local pr_title="" pr_body="" title_target="" target=""
 	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 1
 	[[ "$pr_title" =~ ^(t|GH#)([0-9]+)([^[:alnum:]_]|$) ]] || return 1
 	title_target="${BASH_REMATCH[2]}"
-	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	if [[ "$#" -ge 3 ]]; then
+		pr_body="$supplied_body"
+	else
+		pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	fi
 	target=$(printf '%s\n' "$pr_body" | awk -v target="$title_target" '
 		{
 			line = $0
