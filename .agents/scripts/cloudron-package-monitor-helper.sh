@@ -904,7 +904,10 @@ _cloudron_monitor_setup_entry() {
 	slug=$(jq -r '.slug // empty' <<<"$entry")
 	repo_path=$(jq -r '.path // empty' <<<"$entry")
 	repo_path="${repo_path/#\~/$HOME}"
-	[[ -n "$repo_path" && -f "${repo_path}/CloudronManifest.json" ]] || return 0
+	local manifest_rel=""
+	manifest_rel=$(jq -r --arg manifest "$_CLOUDRON_MONITOR_DEFAULT_MANIFEST" '.cloudron_package.manifest // $manifest' <<<"$entry")
+	[[ "$manifest_rel" != /* && "$manifest_rel" != *..* ]] || return 0
+	[[ -n "$repo_path" && -f "${repo_path}/${manifest_rel}" ]] || return 0
 	if [[ "$(jq -r '.app_type // empty' <<<"$entry")" != "cloudron-package" ]]; then
 		printf 'SETUP %s: app_type is not cloudron-package; fix: aidevops init (in a linked worktree)\n' "$slug"
 		gaps=$((gaps + 1))
@@ -923,6 +926,10 @@ _cloudron_monitor_setup_entry() {
 	fi
 	if [[ -z "$(jq -r '.cloudron_package.upstream_slug // empty' <<<"$entry")" ]]; then
 		printf 'SETUP %s: cloudron_package.upstream_slug is not set; fix: set cloudron_package.upstream_slug (reference/repos-json-fields.md)\n' "$slug"
+		gaps=$((gaps + 1))
+	fi
+	if [[ "$(jq -r '.cloudron_package.monitor_upstream' <<<"$entry")" == "false" ]]; then
+		printf 'SETUP %s: cloudron_package.monitor_upstream is false; fix: set cloudron_package.monitor_upstream to true (reference/repos-json-fields.md)\n' "$slug"
 		gaps=$((gaps + 1))
 	fi
 	local label_out="" label_rc=0

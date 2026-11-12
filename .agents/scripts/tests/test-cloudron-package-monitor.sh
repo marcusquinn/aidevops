@@ -568,12 +568,12 @@ test_monitor_setup_audit_reports_gaps() {
 	rm -f "${repo_dir}/.aidevops.json"
 	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=missing bash "$HELPER" setup --apply 2>&1)
 	assert_equal 6 "$(printf '%s\n' "$output" | grep -c '^SETUP ')" "unregistered package reports every onboarding gap"
-	printf '%s\n' "$output" | grep -Fq 'fix: aidevops repos maintenance on exampleorg/example-package' && assert_equal true true "gap line carries a fix command" || assert_equal true false "gap line carries a fix command"
-	printf '%s\n' "$output" | grep -Fq 'fix: label-sync-helper.sh sync --repo exampleorg/example-package' && assert_equal true true "missing label has a fix command" || assert_equal true false "missing label has a fix command"
+	grep -Fq 'fix: aidevops repos maintenance on exampleorg/example-package' <<<"$output" && assert_equal true true "gap line carries a fix command" || assert_equal true false "gap line carries a fix command"
+	grep -Fq 'fix: label-sync-helper.sh sync --repo exampleorg/example-package' <<<"$output" && assert_equal true true "missing label has a fix command" || assert_equal true false "missing label has a fix command"
 	assert_equal 0 "$(grep -c '^CALL ' "$log_file")" "setup audit never creates issues"
 
 	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_LABEL_STATE=error bash "$HELPER" setup 2>&1) && assert_equal true false "label API error fails the setup run" || assert_equal true true "label API error fails the setup run"
-	printf '%s\n' "$output" | grep -Fq 'could not verify labels' && assert_equal true true "label API error is not reported as a gap" || assert_equal true false "label API error is not reported as a gap"
+	grep -Fq 'could not verify labels' <<<"$output" && assert_equal true true "label API error is not reported as a gap" || assert_equal true false "label API error is not reported as a gap"
 
 	rm -f "${repo_dir}/CloudronManifest.json"
 	output=$(HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" bash "$HELPER" setup 2>&1)

@@ -49,9 +49,13 @@ release went unnoticed.
 
 ## Automated audit
 
-`cloudron-package-monitor-helper.sh setup` audits steps 1–5 for every registered
-repository that contains `CloudronManifest.json`, including those missing
-`app_type` or with maintenance off. It is report-only, prints
+`cloudron-package-monitor-helper.sh setup` audits registration (`app_type`,
+`.aidevops.json`, maintenance, pulse), `cloudron_package.upstream_slug` and
+`monitor_upstream`, and the `auto-dispatch` label for every registered repository
+whose configured manifest (default `CloudronManifest.json`) exists, including
+those missing `app_type` or with maintenance off. It does not validate managed
+workflows or listing metadata; check those separately, so empty output does not
+mean onboarding is complete. It is report-only, prints
 `SETUP <slug>: <gap>; fix: <command>` per gap, and never creates issues or edits
 files. The weekly `compatibility` routine runs it first. The compatibility check
 also reports `packagerUrl` equal to `packageUrl`, and registration warns when a
