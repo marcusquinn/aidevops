@@ -1509,6 +1509,20 @@ _run_preflight_stages() {
 	# Overdue synchronous recovery needs admission before dispatch can spend
 	# the cycle budget. The bounded attempt retains the main-dispatch reserve.
 	_pulse_run_pre_dispatch_blocker_refresh "$_pflt_timeout"
+	# GH#37854: starvation bound. A stale or missing snapshot promotes the
+	# budget-gated prefetch ahead of early dispatch so it gets the full stage
+	# budget instead of the clamped remainder. REST/GraphQL gates still apply;
+	# a hard prefetch failure keeps its abort semantics but only after the
+	# dispatch waves below, matching the legacy end-of-preflight position.
+	local _pflt_prefetch_rc=0
+	_PULSE_PREFETCH_RAN=0
+	if _preflight_prefetch_starved; then
+		echo "[pulse-wrapper] Prefetch starvation bound reached: STATE_FILE missing or older than ${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}s — running prefetch before early dispatch (GH#37854)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_prefetch_starvation_promoted" 2>/dev/null || true
+		fi
+		_run_preflight_prefetch_stage "$_pflt_timeout" || _pflt_prefetch_rc=$?
+	fi
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1556,7 +1570,10 @@ _run_preflight_stages() {
 	# AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0 to restore the legacy
 	# synchronous path for debugging.
 	_pulse_start_post_dispatch_housekeeping "$_pflt_timeout"
-	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	[[ "$_pflt_prefetch_rc" -eq 0 ]] || return 1
+	if [[ "${_PULSE_PREFETCH_RAN:-0}" != "1" ]]; then
+		_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	fi
 	return 0
 }
 
@@ -1565,6 +1582,7 @@ _run_preflight_stages() {
 #
 # Arguments: $1 - preflight stage timeout (seconds)
 # Sets: _PULSE_PREFETCH_DEGRADED (1 when prefetch timed out/was deferred)
+#       _PULSE_PREFETCH_RAN (1 when prefetch passed the budget gate; GH#37854)
 # Returns: 0 to continue the cycle, 1 if prefetch failed (abort cycle)
 #######################################
 _run_preflight_prefetch_stage() {
@@ -1600,6 +1618,9 @@ _run_preflight_prefetch_stage() {
 	# LLM supervisor, whose prompt reads the incomplete STATE_FILE.
 	_PULSE_PREFETCH_DEGRADED=0
 	if [[ "$_budget_gate_skip" -eq 0 ]]; then
+		# GH#37854: one prefetch attempt per cycle; a budget-deferred
+		# promoted attempt stays eligible for the end-of-preflight retry.
+		_PULSE_PREFETCH_RAN=1
 		local _prefetch_rc=0
 		AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$(_preflight_prefetch_reserved_finalise_seconds)" \
 			run_stage_with_timeout "$_budget_prefetch_stage" "$_pflt_timeout" \
