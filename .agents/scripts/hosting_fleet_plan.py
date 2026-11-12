@@ -20,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from hosting_fleet_inventory import DOMAIN_RE, FleetError  # noqa: E402
+from hosting_fleet_checks import gh_json  # noqa: E402
 from repo_layout_migrate import (  # noqa: E402
     MigrationError,
     canonical_bytes,
@@ -42,6 +43,7 @@ STATE_ACTIONS = {
     "unregistered-clone": ("register", None),
     "missing-clone": ("clone", None),
     "misplaced": ("migrate-layout", None),
+    "transferred": ("follow-transfer-and-migrate-layout", None),
     "ambiguous": ("review", "Multiple registrations share this repository name"),
     "collision": ("review", "Destination exists with a different or missing origin"),
     "owner-mismatch": ("review", "Registered owner differs; pass DOMAIN=OWNER if intentional"),
@@ -155,11 +157,40 @@ def classify_site(site: dict[str, Any], context: dict[str, Any]) -> dict[str, An
         context["workspace"], (context["host"], owner, repo), context["repos_json"], context["lib"]
     )
     matches = [item for item in context["registrations"] if item["name"].lower() == repo]
+    # A renamed site may still be registered under its hosted domain. Resolve
+    # both names independently; never infer identity from a redirect alone.
+    candidates = [item for item in context["registrations"] if item["name"].lower() == domain]
+    if repo != domain and not matches and candidates:
+        if len(candidates) != 1:
+            matches = candidates
+        else:
+            old, old_error = gh_json(f"repos/{candidates[0]['slug']}")
+            new, new_error = gh_json(f"repos/{owner}/{repo}")
+            if old_error or new_error or not isinstance(old, dict) or not isinstance(new, dict):
+                raise FleetError(f"Cannot verify repository transfer for {domain}; refusing provisioning")
+            if not old.get("id") or old.get("id") != new.get("id"):
+                raise FleetError(f"Repository identity mismatch for {domain}; refusing provisioning")
+            if str(old.get("full_name") or "").lower() != f"{owner}/{repo}".lower():
+                raise FleetError(f"Repository transfer target mismatch for {domain}")
+            matches = candidates
     registration = matches[0] if len(matches) == 1 else {}
     if len(matches) > 1:
         state = "ambiguous"
     elif registration:
-        state = registered_state(registration, destination, owner)
+        if registration["name"].lower() != repo:
+            state = "transferred"
+        elif registration["slug"].lower() != f"{owner}/{repo}".lower():
+            old, old_error = gh_json(f"repos/{registration['slug']}")
+            new, new_error = gh_json(f"repos/{owner}/{repo}")
+            if not old_error and not new_error and isinstance(old, dict) and isinstance(new, dict) and (
+                old.get("id") and old.get("id") == new.get("id")
+                and str(old.get("full_name") or "").lower() == f"{owner}/{repo}".lower()
+            ):
+                state = "transferred"
+            else:
+                state = "owner-mismatch"
+        else:
+            state = registered_state(registration, destination, owner)
     else:
         state = unregistered_state(destination, owner, repo)
     if state == "ok" and (domain in context["exceptions"] or repo != domain
@@ -242,6 +273,8 @@ def build_plan(inventory: dict[str, Any], options: dict[str, Any]) -> dict[str, 
         for site in inventory["sites"]
         if site["domain"] not in context["ignored"]
     ]
+    hosted |= {item["registered_slug"].split("/", 1)[1].lower() for item in results
+               if item["state"] == "transferred" and item.get("registered_slug")}
     results.extend(not_in_hosting(context, hosted))
     mark_shared_destinations(results)
     counts: dict[str, int] = {}

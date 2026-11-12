@@ -47,6 +47,7 @@ from hosting_fleet_steps import run_long  # noqa: E402
 from repo_layout_migrate import canonical_bytes, expand_path, load_json, private_directory, sha256_bytes  # noqa: E402
 
 MIGRATE_HELPER = SCRIPT_DIR / "repo-layout-migrate-helper.sh"
+RECOVERY_HELPER = SCRIPT_DIR / "canonical-recovery-helper.sh"
 MOVE_FAILED_EXIT = 6
 
 
@@ -59,13 +60,14 @@ def select_moves(plan: dict[str, Any], sites: list[str] | None) -> list[dict[str
     unknown = sorted(wanted - by_domain.keys())
     if unknown:
         raise FleetError(f"Not in this fleet plan: {', '.join(unknown)}")
-    not_misplaced = sorted(domain for domain in wanted if by_domain[domain]["state"] != "misplaced")
+    not_misplaced = sorted(domain for domain in wanted if by_domain[domain]["state"] not in {"misplaced", "transferred"})
     if not_misplaced:
-        raise FleetError(f"Only misplaced sites can move; not misplaced: {', '.join(not_misplaced)}")
+        raise FleetError(f"Only misplaced or transferred sites can move: {', '.join(not_misplaced)}")
     moves = {}
     for domain in sorted(wanted):
         item = by_domain[domain]
         moves[item["expected_slug"]] = {"slug": item["expected_slug"],
+                                        "old_slug": item["registered_slug"],
                                         "source": str(expand_path(item["registered_path"])),
                                         "destination": str(expand_path(item["expected_path"]))}
     return sorted(moves.values(), key=lambda move: move["slug"])
@@ -88,7 +90,8 @@ def write_native_plan(workspace: str, moves: list[dict[str, str]], output: Path)
     if not ok:
         raise FleetError(f"Native layout plan refused: {detail}")
     native = load_json(output)
-    if native.get("exclusions") or native_moves(native) != moves:
+    expected = [{key: move[key] for key in ("slug", "source", "destination")} for move in moves]
+    if native.get("exclusions") or native_moves(native) != expected:
         raise FleetError("Native layout plan does not match the selected fleet moves")
     return native
 
@@ -133,9 +136,9 @@ def apply_move(plan: dict[str, Any], sites: list[str] | None, confirm: str, repo
     if plan["plan_sha256"] != confirm:
         raise FleetError("--confirm does not match the current fleet plan; preview again")
     moves = select_moves(plan, sites)
-    slugs = [move["slug"] for move in moves]
+    slugs = [move["old_slug"] for move in moves]
     private_directory(state_dir)
-    assert_no_unfinished(state_dir, slugs)
+    assert_no_unfinished(state_dir, slugs + [move["slug"] for move in moves])
     stamp = int(time.time())
     path = state_dir / f"move-automation-{sha256_bytes(canonical_bytes(slugs))[:12]}-{stamp}.json"
     snapshot = {"status": "paused", "moves": moves,
@@ -144,6 +147,13 @@ def apply_move(plan: dict[str, Any], sites: list[str] | None, confirm: str, repo
     pause(slugs)
     native_path = state_dir / f"move-layout-plan-{stamp}.json"
     try:
+        for move in moves:
+            if move["old_slug"].lower() != move["slug"].lower():
+                ok, detail = run_long(["bash", str(RECOVERY_HELPER), "follow-transfer", "--repo", move["source"],
+                                       "--slug", move["slug"], "--confirm", "FOLLOW_REPOSITORY_TRANSFER"],
+                                      cwd=expand_path(plan["workspace"]))
+                if not ok:
+                    raise FleetError(f"Transfer recovery refused: {detail}")
         native = write_native_plan(plan["workspace"], moves, native_path)
     except FleetError as exc:
         return finish(snapshot, path, repos_json, (False, str(exc)))
@@ -166,13 +176,13 @@ def preview_move(plan: dict[str, Any], sites: list[str] | None, repos_json: Path
     """Read-only: the selected moves, their current flags and the hash to confirm."""
     moves = select_moves(plan, sites)
     return {"plan_sha256": plan["plan_sha256"], "moves": moves, "sites": sorted(sites or []),
-            "flags": {move["slug"]: automation_flags(repos_json, move["slug"]) for move in moves}}
+            "flags": {move["old_slug"]: automation_flags(repos_json, move["old_slug"]) for move in moves}}
 
 
 def print_move(report: dict[str, Any]) -> None:
     """Human summary of a preview or an apply/restore result."""
     for move in report["moves"]:
-        flags = report["flags"].get(move["slug"], {})
+        flags = report["flags"].get(move.get("old_slug", move["slug"]), {})
         print(f"  {move['slug']}: maintenance={flags.get('maintenance')} pulse={flags.get('pulse')}")
         print(f"    {move['source']} -> {move['destination']}")
     if "status" not in report:

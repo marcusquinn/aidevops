@@ -50,7 +50,8 @@ def assert_no_unfinished(state_dir: Path, slugs: list[str]) -> None:
     """Refuse while an unfinished snapshot covers any of these repositories."""
     for path in sorted(state_dir.glob("move-automation-*.json")):
         snapshot = load_json(path)
-        if snapshot.get("status") not in FINISHED and set(snapshot.get("flags", {})) & set(slugs):
+        covered = set(snapshot.get("flags", {})) | {move["slug"] for move in snapshot.get("moves", [])}
+        if snapshot.get("status") not in FINISHED and covered & set(slugs):
             raise FleetError(f"Unfinished move snapshot covers these repositories: {path}; "
                              "finish the native move, then run fleet move --restore with it")
 
@@ -72,9 +73,13 @@ def restore_flags(snapshot: dict[str, Any], repos_json: Path) -> dict[str, Any]:
     """Restore maintenance, then Pulse, and read both back as proof."""
     proof = {}
     for slug, wanted in snapshot["flags"].items():
+        target = slug
+        for move in snapshot.get("moves", []):
+            if move.get("old_slug") == slug and registration(repos_json, move["slug"]):
+                target = move["slug"]
         if wanted["maintenance"]:
-            cli("maintenance", "on", slug)
+            cli("maintenance", "on", target)
             if wanted["pulse"]:
-                cli("pulse", "on", slug)
-        proof[slug] = automation_flags(repos_json, slug)
+                cli("pulse", "on", target)
+        proof[slug] = automation_flags(repos_json, target)
     return proof
