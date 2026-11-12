@@ -25,6 +25,7 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 - **Prerequisite**: Each version needs a registry-hosted image, normally built with `cloudron builder login` → `cloudron builder build`; on-server builds cannot be published
 - **Last upstream review**: `74e455bd03f5`; adopted registry builder and explicit version-image selection guidance
 - **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
+- **New package repos**: complete `cloudron-package-onboarding.md` (init, Pulse, upstream monitoring, labels, workflows, listing URLs)
 - **Listing**: [Cloudron Community Apps](https://ca.cloudron.io) accepts a public versions URL after the catalog contains a tested release; listing is optional
 - **Forum**: announce published community packages in [Community Packages (220)](https://forum.cloudron.io/category/220/community-packages); ask packaging questions in [App Packaging & Development (96)](https://forum.cloudron.io/category/96/app-packaging-development)
 
