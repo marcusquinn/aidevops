@@ -1020,6 +1020,19 @@ assert_grep \
 	'_PULSE_PREFETCH_DEGRADED:-0\}" == "1"' \
 	"$WRAPPER"
 assert_prefetch_degraded_contract
+assert_order \
+	"11g: GH#37854 starved prefetch is promoted ahead of early dispatch" \
+	'_run_promoted_prefetch_if_starved "\$_pflt_timeout"' \
+	'_pulse_run_budget_priority_stage "preflight_early_dispatch"' \
+	"$ENGINE"
+assert_grep \
+	"11g2: GH#37854 promotion is gated on the snapshot starvation bound" \
+	'_preflight_prefetch_starved \|\| return 0' \
+	"$ENGINE"
+assert_grep \
+	"11h: GH#37854 end-of-preflight prefetch skips a cycle that already ran it" \
+	'_PULSE_PREFETCH_RAN:-0\}" != "1"' \
+	"$ENGINE"
 
 assert_ownership_deadline_contract
 assert_stage_cycle_budget_contract

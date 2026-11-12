@@ -850,6 +850,32 @@ _preflight_prefetch_reserved_finalise_seconds() {
 }
 
 #######################################
+# GH#37854: starvation bound for the prefetch snapshot. Early dispatch runs
+# first and can consume nearly the whole cycle, leaving prefetch clamped to a
+# window it cannot finish (or deferred outright), so STATE_FILE froze for days.
+# When the snapshot is missing or older than the bound, the caller promotes
+# prefetch ahead of early dispatch so it receives the full stage budget.
+# AIDEVOPS_PULSE_PREFETCH_STARVATION_S=0 disables promotion (legacy order).
+# Returns: 0 when the snapshot is starved, 1 otherwise (or undeterminable).
+#######################################
+_preflight_prefetch_starved() {
+	local bound="${AIDEVOPS_PULSE_PREFETCH_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]+$ ]] || bound=7200
+	[[ "$bound" -gt 0 ]] || return 1
+	local state_file="${STATE_FILE:-}"
+	[[ -n "$state_file" ]] || return 1
+	[[ -s "$state_file" ]] || return 0
+	declare -F _file_mtime_epoch >/dev/null 2>&1 || return 1
+	local mtime=""
+	mtime=$(_file_mtime_epoch "$state_file" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+	local now
+	now=$(date +%s)
+	[[ $((now - mtime)) -gt "$bound" ]] && return 0
+	return 1
+}
+
+#######################################
 # Prefetch GitHub state + restore persisted PULSE_SCOPE_REPOS.
 #
 # Returns:
