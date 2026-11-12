@@ -8,13 +8,7 @@
 [[ -n "${_TEST_HEADLESS_RUNTIME_PROVIDER_TESTS_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_PROVIDER_TESTS_LOADED=1
 
-
-if [[ -z "${SCRIPT_DIR:-}" ]]; then
-	_tests_path="${BASH_SOURCE[0]%/*}"
-	[[ "$_tests_path" == "${BASH_SOURCE[0]}" ]] && _tests_path="."
-	SCRIPT_DIR="$(cd "$_tests_path" && pwd)"
-	unset _tests_path
-fi
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "${BASH_SOURCE[0]%/*}" && pwd)}"
 
 # shellcheck source=./test-headless-runtime-provider-tests-session.sh
 # shellcheck disable=SC1091  # resolved at runtime via $SCRIPT_DIR
