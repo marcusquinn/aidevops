@@ -370,7 +370,7 @@ To run the scanner manually:
 # Normal run (incremental, files issue)
 gh-audit-anomaly-helper.sh scan
 
-# Scan all entries without filing an issue (dry run)
+# Scan the whole live log (not rotated logs) without filing an issue (dry run)
 gh-audit-anomaly-helper.sh scan --all --dry-run
 
 # Check scanner state

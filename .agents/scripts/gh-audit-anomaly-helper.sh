@@ -434,6 +434,22 @@ _cmd_scan_build_window() {
 	return 0
 }
 
+# Advance the checkpoint after a successful scan. `scan --all` reads only the
+# live log, so while rotated logs newer than the checkpoint are pending it keeps
+# the old checkpoint; the next incremental scan then covers them (duplicates
+# are preferred over gaps).
+# Uses caller-scoped _sc_scan_all.
+# Args: live_log total_lines scan_started_ts
+_cmd_scan_advance_checkpoint() {
+	local log_file="$1" total_lines="$2" scan_started_ts="$3"
+	if [[ "$_sc_scan_all" -eq 1 && -n "$(_ga_pending_rotations "$log_file" "$(_ga_read_last_scan_ts)")" ]]; then
+		_ga_warn "--all does not scan rotated logs; rotated logs are pending, so the checkpoint was not advanced"
+		return 0
+	fi
+	_ga_write_state "$total_lines" "$scan_started_ts"
+	return 0
+}
+
 # Build the markdown issue body for an anomaly report.
 # Args: scan_ts anomaly_count scan_desc issue_repo entry1 entry2 ...
 # Output: issue body markdown on stdout.
@@ -602,7 +618,7 @@ cmd_scan() {
 	local anomaly_count="${#_sc_anomaly_entries[@]}"
 	_ga_info "Found ${anomaly_count} anomalous entries"
 
-	[[ "$_sc_dry_run" -eq 0 ]] && _ga_write_state "$total_lines" "$scan_started_ts"
+	[[ "$_sc_dry_run" -eq 0 ]] && _cmd_scan_advance_checkpoint "$log_file" "$total_lines" "$scan_started_ts"
 
 	if [[ "$anomaly_count" -eq 0 ]]; then
 		_ga_info "No anomalies found — no issue filed"
