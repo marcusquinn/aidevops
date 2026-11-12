@@ -25,7 +25,7 @@ tools:
 - **Source Code**: [git.cloudron.io/packages](https://git.cloudron.io/packages) (200+ official app packages) | [By Technology](https://git.cloudron.io/explore/projects/topics)
 - **Forum**: [forum.cloudron.io/category/96](https://forum.cloudron.io/category/96/app-packaging-development)
 - **Base Image Tags**: https://hub.docker.com/r/cloudron/base/tags
-- **Sub-docs**: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md) | [manifest-ref.md](cloudron-app-packaging-skill/manifest-ref.md) | [cloudron-git-reference.md](cloudron-git-reference.md)
+- **Sub-docs**: [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md) | [manifest-ref.md](cloudron-app-packaging-skill/manifest-ref.md) | [cloudron-git-reference.md](cloudron-git-reference.md) | [cloudron-package-onboarding.md](cloudron-package-onboarding.md) (new package repos)
 
 **Golden Rules** (violations cause package failure):
 
@@ -314,6 +314,7 @@ listener may terminate addon TLS inside the app when required by its protocol;
 document the trust boundary and verify the actual native transport. This is not
 permission to replace Cloudron nginx or claim native VPN-provider support.
 
+New package repositories: complete `cloudron-package-onboarding.md`.
 `aidevops init` detects `CloudronManifest.json`, records
 `app_type: cloudron-package` in local `repos.json`, and installs the thin
 `.github/workflows/cloudron-package-release.yml` caller when no file already
@@ -329,36 +330,6 @@ stable tag fail closed. Compatibility monitoring is enabled by default.
 The generated caller pins both the reusable workflow and checked-out validator
 to the same full framework commit. Updating that revision is an explicit,
 reviewed package change; repeated init never overwrites an existing caller.
-
-### New package repository checklist
-
-Complete this when a package repository is created; audit existing packages the
-same way. A repository registered by `aidevops repos add` or auto-discovery
-without `aidevops init` silently misses most of it (cloudron-orbit-app, 2026-11).
-
-1. **Initialize:** run `aidevops init` in a linked worktree of the package and
-   merge the result. It writes `.aidevops.json`, the release and catalog callers,
-   `app_type: cloudron-package`, and syncs the canonical GitHub labels.
-2. **Automation:** `aidevops repos maintenance on <slug>`, then
-   `aidevops repos pulse on <slug>`. The `repos.json` entry must show
-   `pulse: true`, `maintenance: true` and `app_type: "cloudron-package"`;
-   otherwise `auto-dispatch` issues are never picked up.
-3. **Upstream monitoring:** set `cloudron_package.upstream_slug`,
-   `upstream_source` (`releases`, `tags` or `commits`) and, if needed,
-   `upstream_tag_prefixes` and `monitor_upstream: true`
-   (`reference/repos-json-fields.md`). Run
-   `cloudron-package-monitor-helper.sh upstream` (report-only): a newer
-   upstream prints a `FINDING`, an up-to-date package prints nothing.
-4. **Labels and workflows:** if init warned about labels, run
-   `label-sync-helper.sh sync --repo <slug>`. Run `aidevops check-workflows`,
-   then `sync-workflows-helper.sh --repo <slug> --workflow <name> --install-missing`
-   (dry run, then `--apply`) for missing managed callers such as
-   `linked-issue-check` and `issue-triage-gate`.
-5. **Listing metadata:** `packagerUrl` is the maintainer profile and
-   `packageUrl` the package repository (Cloudron 10+ catalogs only); assert both
-   in the package test. ca.cloudron.io links "By" to `packagerUrl` and Package
-   to `packageUrl`; see `cloudron-app-publishing-skill.md` for the Cloudron 9.x
-   trade-off.
 
 Prepare and validate releases without publishing:
 
