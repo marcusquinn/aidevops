@@ -243,6 +243,9 @@ class LifecycleRegistry:
         identifier(generation_id)
         if not isinstance(path, str) or len(path) > 4096 or not Path(path).is_absolute() or "\0" in path:
             raise ValueError("absolute-generation-path-required")
+        from .retirement_fence import require_unfenced
+
+        require_unfenced(connection, generation_id, path)  # GH#37828 retirement reservation
         payload = {"type": "bind", "run_id": run_id, "generation_id": generation_id, "path": path}
         _, duplicate = self._event(connection, event_id, payload)
         if duplicate:

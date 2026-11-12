@@ -75,6 +75,13 @@ class ForeignRetirementContract(unittest.TestCase):
             bundle, generation,
         )
 
+    def isolate_census(self):
+        """Isolate from this host's unrelated, unreadable /proc entries."""
+        for module in (retirement, foreign_retirement):
+            patcher = patch.object(module, "require_idle_processes")
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def rescue(self):
         """Export, import into a fresh worktree and verify; return the bundle."""
         bundle = self.root / "bundle"
@@ -225,6 +232,7 @@ class ForeignRetirementContract(unittest.TestCase):
         self.assertTrue(self.target.exists())
 
     def test_registered_generation_refuses_interrupted_resume(self):
+        self.isolate_census()
         (self.target / "work.txt").unlink()
         self.pushed()
         generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
@@ -241,9 +249,59 @@ class ForeignRetirementContract(unittest.TestCase):
                 self.retire()
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
-        AdmissionRegistry(self.store).open_generation(str(uuid4()), generation, elsewhere)
+        # The durable reservation outlives the interruption and refuses writers.
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            AdmissionRegistry(self.store).open_generation(
+                str(uuid4()), generation, elsewhere)
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            self.store.bind(str(uuid4()), str(uuid4()), generation, str(elsewhere))
+        # A different generation naming the reserved source path is also refused.
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            self.store.bind(str(uuid4()), str(uuid4()), str(uuid4()), str(self.target))
+        result = self.retire(generation=generation)
+        self.assertEqual(result["status"], "retired")
+
+    def test_registration_between_plan_and_relocation_loses_to_reservation(self):
+        self.isolate_census()
+        (self.target / "work.txt").unlink()
+        self.pushed()
+        generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
+        native, outcomes = foreign_retirement._relocate, []
+
+        def racing(*arguments):
+            try:
+                AdmissionRegistry(self.store).open_generation(
+                    str(uuid4()), generation, self.target)
+            except StoreConflict as error:
+                outcomes.append(str(error))
+            return native(*arguments)
+
+        with patch.object(foreign_retirement, "_relocate", side_effect=racing):
+            result = self.retire()
+        self.assertEqual(outcomes, ["generation-retirement-reserved"])
+        self.assertEqual(result["status"], "retired")
+
+    def test_completed_retirement_frees_path_but_keeps_generation_fenced(self):
+        self.isolate_census()
+        (self.target / "work.txt").unlink()
+        self.pushed()
+        generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
+        self.retire()
+        self.target.mkdir()
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            AdmissionRegistry(self.store).open_generation(
+                str(uuid4()), generation, self.target)
+        AdmissionRegistry(self.store).open_generation(
+            str(uuid4()), str(uuid4()), self.target)
+
+    def test_registration_committed_first_blocks_reservation(self):
+        self.pushed()
+        generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
+        AdmissionRegistry(self.store).open_generation(
+            str(uuid4()), str(uuid4()), self.target)
         with self.assertRaisesRegex(StoreConflict, "foreign-generation-registered"):
             self.retire(generation=generation)
+        self.assertTrue(self.target.exists())
 
     def test_interrupted_retirement_resumes_without_touching_marker(self):
         (self.target / "work.txt").unlink()

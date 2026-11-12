@@ -25,8 +25,9 @@ from .foreign_proof import RECEIPT, prove, require_foreign_identity
 from .legacy_proc import require_idle_processes
 from .preservation import _helper, _retain_base, _snapshot, _verify
 from .retirement import (
-    ArchiveTarget, _event, _event_id, _git, _lock, _preserved, _record, _remove_private,
+    ArchiveTarget, _event, _event_id, _git, _lock, _preserved, _remove_private,
 )
+from .retirement_fence import release_path, reserve
 from .storage import LifecycleRegistry, StoreConflict, encode
 
 __all__ = ["RECEIPT", "retire_foreign_worktree"]
@@ -85,7 +86,10 @@ def _new_plan(
         "preservation_id": preserved["operation"],
         "marker_sha256": found["marker_sha256"], "proof": proof,
     }
-    _record(store, generation, "planned", plan)
+    # Fence and plan commit together: no writer can slip in between them.
+    with store.connection(write=True) as connection:
+        reserve(connection, generation, str(path))
+        store._event(connection, _event_id(generation, "planned"), plan)
     return plan
 
 
@@ -144,10 +148,12 @@ def _finish(
         raise StoreConflict("retirement-outcome-unverified")
     if os.path.lexists(target):
         raise StoreConflict("private-worktree-still-present")
-    _record(store, generation, "retired", {
-        "type": "foreign-worktree-retired", "generation_id": generation,
-        "preservation_id": plan["preservation_id"],
-    })
+    with store.connection(write=True) as connection:
+        store._event(connection, _event_id(generation, "retired"), {
+            "type": "foreign-worktree-retired", "generation_id": generation,
+            "preservation_id": plan["preservation_id"],
+        })
+        release_path(connection, generation)
     try:
         container.rmdir()  # Empty owned container only; never recursive cleanup.
     except OSError:
@@ -203,4 +209,7 @@ def retire_foreign_worktree(
                 plan = _new_plan(store, path, found, archive, proof)
         if not _plan_matches(plan, path, archive, generation):
             raise StoreConflict("retirement-parameters-changed")
+        if _event(store, _event_id(generation, "retired")) is None:
+            with store.connection(write=True) as connection:
+                reserve(connection, generation, plan["source"])  # Idempotent on resume.
         return _finish(store, path, generation, plan, root)
