@@ -158,16 +158,24 @@ def _pushed_proof(path: Path, head: str) -> dict[str, str]:
     raise StoreConflict("pushed-ref-stale-or-unverified")
 
 
-def prove(path: Path, bundle: Path | None, origin: Path | None = None) -> dict[str, str]:
-    """Return proof evidence or raise; callable again to revalidate before relocation."""
-    if _in_progress(path):
-        raise StoreConflict("source-operation-in-progress")
+def require_preservable_state(path: Path) -> None:
+    """Reject local state Git's normal archive and diff cannot faithfully preserve."""
     # The Git-only archive excludes ignored entries, and a combined HEAD diff
     # does not preserve index-only state. Refuse rather than lose either.
     if read_git(path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"):
         raise StoreConflict("source-ignored-files-present")
     if read_git(path, "diff", "--cached", "--name-only", "-z"):
         raise StoreConflict("source-staged-changes-present")
+    entries = read_git(path, "ls-files", "-v", "-z").split(b"\0")
+    if any(entry and (entry[:1].islower() or entry[:1] == b"S") for entry in entries):
+        raise StoreConflict("source-hidden-index-flags")
+
+
+def prove(path: Path, bundle: Path | None, origin: Path | None = None) -> dict[str, str]:
+    """Return proof evidence or raise; callable again to revalidate before relocation."""
+    if _in_progress(path):
+        raise StoreConflict("source-operation-in-progress")
+    require_preservable_state(path)
     current = source_hashes(path)
     if bundle is None:
         return _pushed_proof(path, current["head"])

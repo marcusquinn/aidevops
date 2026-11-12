@@ -156,11 +156,12 @@ remote-tracking ref that `git ls-remote` confirms still points at the same commi
 - repeats this proof immediately before relocation, so a resumed run never relies
   on stale evidence;
 - refuses an in-progress merge, rebase, cherry-pick, revert or bisect;
-- refuses staged changes and ignored files because the rescue and normal WIP
-  archive do not preserve their full state. Preserve ignored files separately
-  and resolve staged changes before retrying; verify the rescue again afterward;
-- archives the copy through the normal WIP archive, verifies it, then has Git relocate and remove it with the
-  shared journaled removal; the branch is kept;
+- refuses staged changes, ignored files, and assume-unchanged or skip-worktree
+  index flags because Git's normal diff and archive can omit their state. Preserve
+  ignored files separately and resolve index state before retrying; verify the
+  rescue again afterward;
+- archives the copy through the normal WIP archive, verifies it, then has Git
+  relocate and remove it with the shared journaled removal; the branch is kept;
 - leaves the foreign marker untouched (it is removed only with the whole Git
   administration directory), never opens admission and registers no generation;
 - refuses a marker of this installation (use normal cleanup), a generation or path

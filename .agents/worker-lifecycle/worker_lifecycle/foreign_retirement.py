@@ -21,7 +21,7 @@ from .cleanup_plan import foreign_marker, require_foreign_unregistered
 from .directory_handle import DirectoryHandle
 from .enrollment import _directory_inode
 from .filesystem import validate_private_path as _private
-from .foreign_proof import RECEIPT, prove, require_foreign_identity
+from .foreign_proof import RECEIPT, prove, require_foreign_identity, require_preservable_state
 from .legacy_proc import require_idle_processes
 from .preservation import _helper, _retain_base, _snapshot, _verify
 from .retirement import (
@@ -135,6 +135,7 @@ def _finish(
         _relocate(store, path, plan, receipt)
     if os.path.lexists(target):
         require_foreign_unregistered(store, path, generation)
+        require_preservable_state(target)
         if removing is None:
             # Resumed after relocation: revalidate proof against the moved tree first.
             bundle = plan["proof"].get("bundle")

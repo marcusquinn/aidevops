@@ -176,6 +176,16 @@ class ForeignRetirementContract(unittest.TestCase):
             self.retire(bundle)
         self.assertTrue(self.target.exists())
 
+    def test_hidden_index_flags_are_refused(self):
+        retirement._git("-C", str(self.target), "add", "work.txt")
+        retirement._git("-C", str(self.target), "-c", "user.name=Fixture", "-c",
+                        "user.email=fixture@example.invalid", "commit", "-q", "-m", "work")
+        retirement._git("-C", str(self.target), "update-index", "--assume-unchanged", "work.txt")
+        (self.target / "work.txt").write_text("hidden changes")
+        with self.assertRaisesRegex(StoreConflict, "source-hidden-index-flags"):
+            self.retire()
+        self.assertTrue(self.target.exists())
+
     def test_pushed_descendant_without_rescue_is_refused(self):
         bundle = self.rescue()
         fresh = self.root / "fresh"
