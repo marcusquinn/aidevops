@@ -271,6 +271,11 @@ _dispatch_skip_for_benign_block() {
 	local repo_slug="$2"
 
 	local benign_block_reason=""
+	if _dispatch_claim_cache_hit "$issue_number" "$repo_slug"; then
+		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
+		_dispatch_stats_increment "dispatch_claim_cache_hit"
+		return 0
+	fi
 	if benign_block_reason=$(_dispatch_benign_blocked_candidate_reason "$issue_number" "$repo_slug"); then
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — skip:already_assigned blocked:${benign_block_reason} from current pulse cycle" >>"$LOGFILE"
@@ -691,8 +696,8 @@ _dispatch_with_timeout() {
 #######################################
 _dispatch_cycle_budget_defers_candidate() {
 	local issue_number="$1" repo_slug="$2" remaining=""
-	local floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
-	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	local floor_seconds=""
+	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
 	declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 || return 1
 	remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}") || return 1
 	[[ "$remaining" =~ ^-?[0-9]+$ ]] || return 1
@@ -799,6 +804,22 @@ _dispatch_prestage_margin_seconds() {
 	return 0
 }
 
+# Admission uses recent completed ceremony p90 (milliseconds on disk), never
+# the per-candidate watchdog floor. Bound memory to the last 200 samples.
+_dispatch_ceremony_reserve_seconds() {
+	local timing_file="${AIDEVOPS_DISPATCH_STAGES_LOG:-${HOME}/.aidevops/logs/dispatch-stages.tsv}" reserve=""
+	if [[ -f "$timing_file" && ! -L "$timing_file" ]]; then
+		reserve=$(awk '{count=split($0, fields, "\t"); elapsed=fields[5]
+			if (fields[4] == "dedup.ceremony_total" && elapsed ~ /^[0-9]+$/ && elapsed > 0 && (fields[6] == "complete" || count == 5)) samples[n++ % 200]=elapsed}
+			END {for (i in samples) print samples[i]}' "$timing_file" | sort -n | awk '{a[NR]=$0} END {if (NR) {p=int((NR*9+9)/10); print int((a[p]+999)/1000)}}') || reserve=""
+	fi
+	# No completed samples yet: conservative cold start, independent of the
+	# configurable execution timeout. Any observed distribution replaces it.
+	[[ "$reserve" =~ ^[1-9][0-9]{0,4}$ ]] || reserve=600
+	printf '%s\n' "$reserve"
+	return 0
+}
+
 _dispatch_record_enumeration_seconds() {
 	local started_ms="$1" ended_ms="" elapsed=0 expected=0 timing_dir="${HOME}/.aidevops/cache" temporary=""
 	local timing_file="${timing_dir}/pulse-dispatch-enumeration-seconds"
@@ -858,6 +879,11 @@ _dispatch_bounded_enumeration_budget_seconds() {
 # stage only: the full census does not fit but a bounded census does) or skip.
 _dispatch_round_budget_plan() {
 	local stage="${1:-before}" remaining="" floor="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" enumeration=0 margin=0 budget=0 mode=skip is_before=0
+	floor=$(_dispatch_ceremony_reserve_seconds)
+	if declare -F _pulse_dispatch_lease_active >/dev/null 2>&1 && _pulse_dispatch_lease_active; then
+		printf 'full 0\n'
+		return 0
+	fi
 	if [[ "${AIDEVOPS_PULSE_DISPATCH_BUDGET_RESERVE:-1}" != "1" ]] || ! declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1; then
 		printf 'full 0\n'
 		return 0
@@ -1023,11 +1049,12 @@ _dispatch_enumerate_ranked_round() {
 #######################################
 _dispatch_graphql_budget_allows_next() {
 	# Both serial and parallel candidate loops call this before any candidate
-	# API work. Keep the 600s ceremony floor; defer instead of shrinking it.
-	# GH#36603: admit only with the pre-stage margin on top of the floor, so a
-	# candidate admitted here still clears the stage-start floor guard.
-	local cycle_remaining="" floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}" margin=0
-	[[ "$floor_seconds" =~ ^[1-9][0-9]*$ ]] || floor_seconds=600
+	# API work. Refresh on forward progress for direct/refill callers too.
+	_dispatch_refresh_owner_lease
+	# Admission uses observed ceremony plus pre-stage slack; execution keeps
+	# its independent 600s watchdog.
+	local cycle_remaining="" floor_seconds="" margin=0
+	floor_seconds=$(_dispatch_ceremony_reserve_seconds)
 	margin=$(_dispatch_prestage_margin_seconds)
 	if declare -F _pulse_cycle_remaining_seconds >/dev/null 2>&1 && cycle_remaining=$(_pulse_cycle_remaining_seconds "${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"); then
 		if [[ "$cycle_remaining" -lt $((floor_seconds + margin)) ]]; then
@@ -1881,6 +1908,9 @@ _dispatch_record_nonzero_dispatch_result() {
 	if _dispatch_candidate_benign_block_reason "$failure_reason"; then
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
+		case "$failure_reason" in
+		dedup_active_claim | dedup_active_claim_durable_launch) _dispatch_claim_cache_record "$issue_number" "$repo_slug" "$recent_lines" ;;
+		esac
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
 		if [[ "$failure_reason" == dedup_active_claim || "$failure_reason" == worker_draft_checkpoint_blocked ]] && _dispatch_checkpoint_cooldown_eligible "$recent_lines"; then
