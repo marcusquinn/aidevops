@@ -177,6 +177,41 @@ Do not introduce a second independent lease database. Reuse the registry's
 identity contract and keep process containment separate from SQLite queries.
 Cooperative locks cannot prove that arbitrary external shells are absent.
 
+## Opt-in reclaim of finished worktrees (interim)
+
+`cleanup_policy.py` requires six proofs that no production collector supplies, so
+`decide_cleanup` always holds and nothing is ever retired. On a busy host that is
+unbounded growth, not slow cleanup: 101 of 143 worktrees were finished but
+retained, and free space fell 24 GB in 50 minutes.
+
+`worktree-reclaim-finished.py` is the interim answer, off unless
+`AIDEVOPS_WORKTREE_RECLAIM_FINISHED=1`. The pulse cleanup stage then runs it as a
+third pass sharing the budget in thirds. It reports only, unless `--apply`.
+
+It removes a worktree only when every one of these holds, and names the first
+failure as its refusal reason:
+
+- Every issue and pull request number encoded in the directory name is finished:
+  an issue `CLOSED`, a pull request `MERGED`. A pull request closed without
+  merging is not finished work.
+- No live same-user process has the worktree, or anything inside it, as its
+  working directory, re-checked immediately before deletion.
+- No uncommitted changes, no untracked files, and no commits absent from every
+  remote (`rev-list HEAD --not --remotes`).
+- The process census is readable and can see its own working directory. An
+  unreadable census is not an absence of writers.
+
+Removal is archive-free by explicit operator decision, so those checks are the
+only protection and each fails closed. Reclaimed removals are counted as removed
+but never as archived.
+
+This pass deliberately claims less than it deletes on: it supplies none of the six
+`CleanupEvidence` proofs, reports no `cleanup_authorized`, and does not meet the
+prerequisites in the section above. Specifically, a descendant process whose
+working directory sits outside the worktree is not detected. The flag exists so
+the real collector can be designed deliberately rather than under disk pressure;
+enabling it accepts that residual risk on that host.
+
 ## Process-first activity observation
 
 `worktree-lifecycle-helper.sh activity [--summary]` reads the existing lifecycle
