@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from _team_interface_buzz_plan import as_list, compute_plan, member_pubkeys, render_text
+from _team_interface_buzz_runtime_io import RuntimeError as BuzzRuntimeError
 from _team_interface_buzz_runtime_install import default_app_data_dir
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -133,7 +134,7 @@ def main(argv=None):
                 continue  # unknown memberships are reported without member_add requests
             live_members[name] = member_pubkeys(payload)
         plan = compute_plan(template, host_slug, identities, live_channels, live_members)
-    except (PlanError, RuntimeError) as error:
+    except (PlanError, BuzzRuntimeError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     print(json.dumps(plan, indent=2, sort_keys=True) if args.as_json else render_text(plan))
