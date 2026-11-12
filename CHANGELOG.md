@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.182] - 2026-11-12
+
+### Changed
+
+- Documentation: maintainer-token route for scheduled-workflow issues
+- Tests: repair full-loop merge regression suite
+
+### Fixed
+
+- serialize routine state updates (#37886)
+
 ## [3.39.181] - 2026-11-12
 
 ### Changed
