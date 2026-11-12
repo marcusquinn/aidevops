@@ -3,35 +3,30 @@
 
 # Corrected blocked checkpoint recovery
 
-An authorised brief owner may approve continuing a released worker draft after
-correcting its brief. This is not permission to take over a live interactive
-session, clear a sensitive-scope hold, or replace the existing PR.
+An authorised brief owner may approve continuation of a released worker draft after correcting its brief.
+This never permits taking over a live interactive session, clearing a sensitive-scope hold, or replacing the existing PR.
 
 ## Approval and continuation
 
-When the draft blocks ordinary redispatch (`WORKER_DRAFT_CHECKPOINT`), Pulse
-runs `pr-checkpoint-continuation-helper.sh blocked-attention OWNER/REPO ISSUE PR`.
-If the newest trusted release is the PR author's `blocked` release with no later
-coordination event, it posts one `BLOCKED_CHECKPOINT_ATTENTION` comment per head
-and release. That comment names the release ID, attempt and both exits: approve
-after correcting the brief, or close the draft to restart dispatch (GH#33132).
-It grants nothing, starts no line with an event prefix and never dispatches.
+When a draft blocks ordinary redispatch (`WORKER_DRAFT_CHECKPOINT`), Pulse runs
+`pr-checkpoint-continuation-helper.sh blocked-attention OWNER/REPO ISSUE PR`. If the newest trusted release
+is the PR author's `blocked` release with no later coordination event, it posts one `BLOCKED_CHECKPOINT_ATTENTION`
+comment per head and release. The comment names the release ID, attempt and both exits: approve after correcting
+the brief, or close the draft to restart dispatch (GH#33132). It grants nothing, starts no line with an event prefix
+and never dispatches.
 
 ### Unknown-blocker triage (GH#36525)
 
-Before publishing an unclassified blocked release, the runner performs one bounded
-(45-second, simple-tier) inference over the protected final report and logs its
-sanitized outcome. Tool output and public PR prose are not evidence. Explicit
-classes win; inferred external triggers require a named event, owner or date quoted from the report.
-Known dependencies, access, input, scope and runner prerequisites use the normal class/owner path, never automatic approval by this feature.
+Before publishing an unclassified blocked release, the runner performs one bounded (45-second, simple-tier)
+inference over the protected final report and logs its sanitized outcome. Tool output and public PR prose are not
+evidence. Explicit classes win; inferred external triggers require a named event, owner or date quoted from the report.
+Known dependencies, access, input, scope and runner prerequisites use the normal class/owner path, never this feature's automatic approval.
 
-Continue in-scope work where possible. If execution must stop with a pushed draft
-and only in-scope work remaining, report it without `BLOCKED:` for the runtime's
-`worker_draft_checkpoint` continuation path; remaining work alone is not a blocker.
-Only a complete report positively establishing unfinished authorised work without a
-prerequisite emits `CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`.
-Missing tooling, timeout, invalid JSON, conflicting declarations, truncation or
-uncertainty retain the unknown hold; draft prose is not a substitute for evidence.
+Continue in-scope work where possible. If execution must stop with a pushed draft and only in-scope work remaining,
+report it without `BLOCKED:` for the runtime's `worker_draft_checkpoint` continuation path; remaining work alone is
+not a blocker. Only a complete report positively establishing unfinished authorised work without a prerequisite emits
+`CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`. Missing tooling, timeout, invalid JSON, conflicting
+declarations, truncation or uncertainty retain the unknown hold; draft prose is not evidence.
 
 Automatic approval is **off by default**. An operator with current repository
 write/maintain/admin permission can configure the registered `repos.json` entry:
@@ -72,11 +67,9 @@ bounds, or unreadable are reconsidered in the next UTC day's snapshot. No
 protected report text is posted. The digest stays informational if the head/brief
 changes; running a command revalidates it.
 
-Pulse check reports the unknown triage backlog, oldest release age in minutes, and
-unreadable/unscanned count. Age is measured from the trusted release, never from
-`updatedAt`, attention comments or lease renewals. These are bounded observations
-of unassigned blocked auto-dispatch issues, not a fleet inventory or authority to
-clear holds.
+Pulse check reports the unknown triage backlog, oldest release age in minutes, and unreadable/unscanned count. Age is
+measured from the trusted release, never from `updatedAt`, attention comments or lease renewals. These bounded
+observations of unassigned blocked auto-dispatch issues are not a fleet inventory or authority to clear holds.
 
 ### Non-blocked releases with an open draft (GH#33850, GH#36019)
 
@@ -486,15 +479,12 @@ dispatch message proves launch initiation, not model startup or delivery.
 
 ## Aged objectives
 
-Pulse check tracks creation age separately from time since linked PR creation,
-commits or completed checks. Comments, lease renewals, labels and `updatedAt` do
-not refresh durable progress. Bounded/failed evidence reads remain unknown;
+Pulse check tracks creation age separately from time since linked PR creation, commits or completed checks. Comments,
+lease renewals, labels and `updatedAt` do not refresh durable progress. Bounded/failed evidence reads remain unknown;
 persistent dashboards and explicit authority/dependency waits are excluded.
 
-After one hour, the owning AI assesses one recovery action against fresh target
-evidence. Preserve live owners, continue the exact approved checkpoint, or send
-one evidence-backed scope-revision request to its authorised brief owner. Retain
-the action in existing recovery state; do not repeat age comments or redispatch
-an unchanged brief. The broader delegated scope-decision and AI-owned handoff
-contract is tracked in #31305; this mechanism does not itself grant workers
-permission to approve their own authority expansion.
+After one hour, the owning AI assesses one recovery action against fresh target evidence: preserve live owners,
+continue the exact approved checkpoint, or send one evidence-backed scope-revision request to its authorised brief
+owner. Retain the action in existing recovery state; do not repeat age comments or redispatch an unchanged brief.
+The broader delegated scope-decision and AI-owned handoff contract is tracked in #31305; this mechanism does not grant
+workers permission to approve their own authority expansion.
