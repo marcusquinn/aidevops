@@ -43,7 +43,7 @@ from hosting_fleet_automation import (  # noqa: E402
     save_snapshot,
 )
 from hosting_fleet_inventory import FleetError  # noqa: E402
-from hosting_fleet_steps import run_long  # noqa: E402
+from hosting_fleet_steps import registration, run_long  # noqa: E402
 from repo_layout_migrate import canonical_bytes, expand_path, load_json, private_directory, sha256_bytes  # noqa: E402
 
 MIGRATE_HELPER = SCRIPT_DIR / "repo-layout-migrate-helper.sh"
@@ -82,10 +82,16 @@ def native_moves(native: dict[str, Any]) -> list[dict[str, str]]:
                    for repo in native.get("repositories", [])), key=lambda move: move["slug"])
 
 
-def write_native_plan(workspace: str, moves: list[dict[str, str]], output: Path) -> dict[str, Any]:
+def comparable_moves(moves: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Fold slug case, as GitHub does, and sort so both plans order alike."""
+    return sorted(({**move, "slug": move["slug"].casefold()} for move in moves), key=lambda move: move["slug"])
+
+
+def write_native_plan(workspace: str, moves: list[dict[str, str]], output: Path,
+                      repos_json: Path) -> dict[str, Any]:
     """Run the scoped native plan and require it to match the fleet moves exactly."""
     command = ["bash", str(MIGRATE_HELPER), "plan", "--workspace", workspace,
-               "--include-registered-paths", "--output", str(output)]
+               "--repos-json", str(repos_json), "--include-registered-paths", "--output", str(output)]
     for move in moves:
         command += ["--source", move["source"]]
     ok, detail = run_long(command, cwd=expand_path(workspace))
@@ -93,7 +99,7 @@ def write_native_plan(workspace: str, moves: list[dict[str, str]], output: Path)
         raise FleetError(f"Native layout plan refused: {detail}")
     native = load_json(output)
     expected = [{key: move[key] for key in ("slug", "source", "destination")} for move in moves]
-    if native.get("exclusions") or native_moves(native) != expected:
+    if native.get("exclusions") or comparable_moves(native_moves(native)) != comparable_moves(expected):
         raise FleetError("Native layout plan does not match the selected fleet moves")
     return native
 
@@ -106,11 +112,34 @@ def move_progress(moves: list[dict[str, str]]) -> str:
     return "all" if all(done) else "none" if all(untouched) else "partial"
 
 
+def transfer_progress(snapshot: dict[str, Any], repos_json: Path) -> str:
+    """Registry-verified slug transfers: all (or none needed), none, or partial/unknown."""
+    states = []
+    for move in snapshot["moves"]:
+        if move.get("old_slug", move["slug"]).lower() == move["slug"].lower():
+            continue
+        paths = {expand_path(move["source"]), expand_path(move["destination"])}
+        new = registration(repos_json, move["slug"])
+        old = registration(repos_json, move["old_slug"])
+        if new.get("path") and expand_path(new["path"]) in paths:
+            if move["slug"] not in snapshot.setdefault("transferred", []):
+                snapshot["transferred"].append(move["slug"])
+            states.append("all")
+        elif old.get("path") and expand_path(old["path"]) in paths:
+            states.append("none")
+        else:
+            states.append("unknown")
+    if all(state == "all" for state in states):
+        return "all"
+    return "none" if all(state == "none" for state in states) else "partial"
+
+
 def finish(snapshot: dict[str, Any], path: Path, repos_json: Path, outcome: tuple[bool, str]) -> dict[str, Any]:
     """Restore automation when every move or none happened; otherwise stay paused."""
     ok, detail = outcome
     progress = move_progress(snapshot["moves"])
-    if progress == "partial" or (ok and progress != "all"):
+    transfers = transfer_progress(snapshot, repos_json)
+    if transfers == "partial" or progress == "partial" or (ok and (progress != "all" or transfers != "all")):
         snapshot["status"] = "paused-after-partial-move"
     else:
         snapshot["proof"] = restore_flags(snapshot, repos_json)
@@ -157,13 +186,15 @@ def apply_move(plan: dict[str, Any], sites: list[str] | None, confirm: str, repo
                                       cwd=expand_path(plan["workspace"]),
                                       env={"AIDEVOPS_REPOS_CONFIG": str(repos_json)})
                 if not ok:
+                    # The helper may have committed the registry change before failing;
+                    # finish verifies the registry and stays paused when identity is unclear.
                     raise FleetError(f"Transfer recovery refused: {detail}")
                 snapshot.setdefault("transferred", []).append(move["slug"])
                 save_snapshot(path, snapshot)
         physical_moves = [move for move in moves if move["source"] != move["destination"]]
         if not physical_moves:
             return finish(snapshot, path, repos_json, (True, "repository transfers complete; no layout move needed"))
-        native = write_native_plan(plan["workspace"], physical_moves, native_path)
+        native = write_native_plan(plan["workspace"], physical_moves, native_path, repos_json)
     except FleetError as exc:
         return finish(snapshot, path, repos_json, (False, str(exc)))
     snapshot["native_resume"] = (f"aidevops repos migrate-layout apply --plan {native_path} "
@@ -201,7 +232,8 @@ def print_move(report: dict[str, Any]) -> None:
     print(f"Status: {report['status']} ({report['detail']})")
     print(f"Snapshot: {report['snapshot']}")
     if report["status"] == "paused-after-partial-move":
-        print("Automation stays paused. Finish the native move, then restore:")
+        print("Automation stays paused. Finish any pending repository transfer "
+              "(canonical-recovery-helper.sh follow-transfer) and the native move, then restore:")
         print(f"  {report.get('native_resume') or 'aidevops repos migrate-layout status --receipt <id>'}")
         print(f"  hostinger-helper.sh fleet move --restore {report['snapshot']}")
 

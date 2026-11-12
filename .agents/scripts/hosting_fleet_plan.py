@@ -152,6 +152,9 @@ def transfer_matches(old_slug: str, target: str) -> bool:
     """Resolve both slugs and require a matching immutable repository ID."""
     old, old_error = gh_json(f"repos/{old_slug}")
     new, new_error = gh_json(f"repos/{target}")
+    if "failed" in (old_error, new_error):
+        # A transient lookup failure is uncertain identity, not a verified non-match.
+        raise FleetError(f"Cannot verify repository transfer {old_slug} -> {target}; refusing provisioning")
     if old_error or new_error:
         return False
     old_id = (old or {}).get("id")
