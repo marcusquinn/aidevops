@@ -198,6 +198,23 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(detail, "not-a-linked-worktree")
         self.assertTrue(separate.exists())
 
+    def test_accepts_relative_worktree_links_from_another_directory(self):
+        # Git resolves both pointers relatively; judgement must not depend on cwd.
+        metadata = host.metadata_directory(self.worktree)
+        self.assertIsNotNone(metadata)
+        marker = self.worktree / ".git"
+        relative_back = os.path.relpath(marker, metadata)
+        (metadata / "gitdir").write_text(f"{relative_back}\n", encoding="utf-8")
+        marker.write_text(f"gitdir: {os.path.relpath(metadata, self.worktree)}\n",
+                          encoding="utf-8")
+        origin = Path.cwd()
+        try:
+            os.chdir(self.root)
+            self.assertEqual(host.metadata_directory(self.worktree), metadata)
+            self.assertEqual(self.decide()["reason"], "work-finished")
+        finally:
+            os.chdir(origin)
+
     def test_removal_refuses_a_locked_worktree(self):
         git(self.canonical, "worktree", "lock", str(self.worktree))
         removed, detail = host.remove(self.worktree, collector.nothing_to_lose)

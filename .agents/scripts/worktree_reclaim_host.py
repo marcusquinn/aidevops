@@ -117,7 +117,11 @@ def _registered_worktree(metadata: Path, marker: Path) -> bool:
         back = Path((metadata / "gitdir").read_text(encoding="utf-8").strip())
     except OSError:
         return False
-    return back == marker or back.resolve() == marker.resolve()
+    if not back.is_absolute():
+        # Git resolves a relative back-pointer against the metadata directory;
+        # resolving it against the process directory would refuse a valid worktree.
+        back = metadata / back
+    return back.resolve() == marker.resolve()
 
 
 def metadata_directory(path: Path) -> Path | None:
