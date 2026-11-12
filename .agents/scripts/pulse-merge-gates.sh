@@ -587,6 +587,31 @@ _pulse_merge_trusted_dependabot_final_authority() {
 	return 0
 }
 
+#######################################
+# Parse labels, fork flag, head SHA and author from PR metadata in one jq pass
+# (was four forks). Each field keeps its own fail-safe default so a malformed
+# sibling cannot change another value. Sets _PMG_META_{LABELS,IS_FORK,HEAD_SHA,
+# AUTHOR}. Args: $1=pr_meta_json
+#######################################
+_pulse_merge_admin_meta_fields() {
+	local pr_meta_json="$1"
+	local meta_fields=""
+	_PMG_META_LABELS="" _PMG_META_IS_FORK="" _PMG_META_HEAD_SHA="" _PMG_META_AUTHOR=""
+	meta_fields=$(printf '%s' "$pr_meta_json" | jq -r '
+		(try ([.labels[].name] | join(",")) catch ""),
+		(try (.isCrossRepository // false | tostring) catch "false"),
+		(try (.headRefOid // "" | tostring) catch ""),
+		(try (.author.login // "" | tostring) catch "")' 2>/dev/null) || meta_fields=""
+	{
+		IFS= read -r _PMG_META_LABELS
+		IFS= read -r _PMG_META_IS_FORK
+		IFS= read -r _PMG_META_HEAD_SHA
+		IFS= read -r _PMG_META_AUTHOR
+	} <<<"$meta_fields" || true
+	_PMG_META_IS_FORK="${_PMG_META_IS_FORK:-false}"
+	return 0
+}
+
 _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -608,21 +633,11 @@ _pulse_merge_admin_safety_check() {
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: exact GraphQL metadata read returned malformed metadata for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
 	fi
-	# One jq pass for all four fields (was four forks); each field keeps its own
-	# fail-safe default so a malformed sibling cannot change another value.
-	local meta_fields=""
-	meta_fields=$(printf '%s' "$pr_meta_json" | jq -r '
-		(try ([.labels[].name] | join(",")) catch ""),
-		(try (.isCrossRepository // false | tostring) catch "false"),
-		(try (.headRefOid // "" | tostring) catch ""),
-		(try (.author.login // "" | tostring) catch "")' 2>/dev/null) || meta_fields=$'\nfalse\n\n'
-	{
-		IFS= read -r labels_str
-		IFS= read -r is_fork
-		IFS= read -r current_head_sha
-		IFS= read -r pr_author
-	} <<<"$meta_fields" || true
-	is_fork="${is_fork:-false}"
+	_pulse_merge_admin_meta_fields "$pr_meta_json"
+	labels_str="${_PMG_META_LABELS}"
+	is_fork="${_PMG_META_IS_FORK}"
+	current_head_sha="${_PMG_META_HEAD_SHA}"
+	pr_author="${_PMG_META_AUTHOR}"
 	if [[ -z "$current_head_sha" || -z "$pr_author" ]]; then
 		echo "[pulse-merge] _pulse_merge_admin_safety_check: missing head SHA or author for PR #${pr_number} in ${repo_slug} — failing closed" >>"$LOGFILE"
 		return 1
