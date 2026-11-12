@@ -311,7 +311,11 @@ The daily routine `r-gh-audit-scan` runs `gh-audit-anomaly-helper.sh scan`:
 ```
 
 The scanner:
-1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`)
+1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`).
+   After a rotation it first reads the rotated file that held the checkpoint
+   (from the saved line onward) and any later rotated files, then the whole live
+   log; a live log shorter than the checkpoint with no rotated file is rescanned
+   from line 1 (GH#37904)
 2. Filters entries with `suspicious[] | length > 0`, excluding only exact,
    fully comparable expected transitions: verified issue/PR approval removal of
    `needs-maintainer-review`, independently revalidated trusted-author NMR

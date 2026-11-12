@@ -11,6 +11,8 @@
 #
 # State is persisted in ~/.aidevops/logs/gh-audit-scanner.state (JSON):
 #   {"last_scan_ts": "2026-04-20T09:00:00Z", "last_line": 42}
+# last_line indexes the log that was live at last_scan_ts. Rotated logs
+# (gh-audit.<UTC>.log) newer than last_scan_ts are scanned before the live log.
 #
 # Usage:
 #   gh-audit-anomaly-helper.sh scan [--all] [--dry-run] [--repo SLUG]
@@ -33,7 +35,7 @@ init_log_file || true
 # Constants
 # =============================================================================
 
-readonly GH_ANOMALY_VERSION="1.2.0"
+readonly GH_ANOMALY_VERSION="1.3.0"
 readonly GH_ANOMALY_STATE_FILE_DEFAULT="${HOME}/.aidevops/logs/gh-audit-scanner.state"
 readonly GH_ANOMALY_LOG_DIR_DEFAULT="${HOME}/.aidevops/logs"
 readonly GH_ANOMALY_LOG_FILENAME="gh-audit.log"
@@ -100,13 +102,62 @@ _ga_read_last_line() {
 	return 0
 }
 
-# Write the scanner state file.
-_ga_write_state() {
-	local last_line="$1"
+# Read the last scan timestamp from the state file ("" when unknown).
+_ga_read_last_scan_ts() {
 	local state_file
 	state_file="$(_ga_state_path)"
-	local ts
-	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	local last_scan_ts=""
+	if [[ -f "$state_file" ]] && command -v jq &>/dev/null; then
+		last_scan_ts=$(jq -r '.last_scan_ts // ""' "$state_file" 2>/dev/null) || last_scan_ts=""
+	fi
+	printf '%s\n' "$last_scan_ts"
+	return 0
+}
+
+# Current UTC time in the state-file format.
+_ga_now_ts() {
+	date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+# List rotated audit logs created at or after the last scan, oldest first.
+# gh-audit-log-helper.sh rotates by renaming the live log to
+# <basename>.<YYYYMMDDTHHMMSSZ>.log, so the first match held the checkpoint and
+# any later matches were never scanned (GH#37904). An equal timestamp is
+# included: rescanning duplicates is safer than skipping entries.
+# Args: live log path, last_scan_ts (ISO-8601 UTC)
+_ga_pending_rotations() {
+	local log_file="$1"
+	local last_scan_ts="$2"
+	local since="${last_scan_ts//-/}"
+	since="${since//:/}"
+	[[ "$since" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || return 0
+
+	local log_dir base candidate suffix
+	log_dir="$(dirname "$log_file")"
+	base="$(basename "$log_file")"
+	base="${base%.log}"
+	for candidate in "${log_dir}/${base}".*.log; do
+		[[ -f "$candidate" ]] || continue
+		suffix="${candidate##*/}"
+		suffix="${suffix#"${base}".}"
+		suffix="${suffix%.log}"
+		[[ "$suffix" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+		[[ "$suffix" < "$since" ]] && continue
+		printf '%s\n' "$candidate"
+	done
+	return 0
+}
+
+# Write the scanner state file.
+# Args: last_line [scan_ts]. Pass the scan start time so a rotation during the
+# scan sorts after the checkpoint and its remainder is scanned next time.
+_ga_write_state() {
+	local last_line="$1"
+	local ts="${2:-}"
+	local state_file
+	state_file="$(_ga_state_path)"
+	[[ -n "$ts" ]] || ts="$(_ga_now_ts)"
 	local state_dir
 	state_dir="$(dirname "$state_file")"
 	[[ ! -d "$state_dir" ]] && mkdir -p "$state_dir" || true
@@ -332,13 +383,64 @@ _cmd_scan_collect_anomalies() {
 	return 0
 }
 
+# Append lines [skip+1, total] of one log segment to the scan window.
+# Uses caller-scoped _sc_lines_to_scan and _sc_scan_desc.
+# Args: segment_file skip_count total_lines window_file
+_cmd_scan_append_segment() {
+	local segment_file="$1" skip_count="$2" total_lines="$3" window_file="$4"
+	[[ "$total_lines" -gt "$skip_count" ]] || return 0
+	# awk terminates a final unterminated line so segments never merge.
+	tail -n +"$((skip_count + 1))" "$segment_file" | awk '1' >>"$window_file" || return 1
+	_sc_lines_to_scan=$((_sc_lines_to_scan + total_lines - skip_count))
+	_sc_scan_desc="${_sc_scan_desc:+${_sc_scan_desc}; }Lines $((skip_count + 1))–${total_lines} of \`$(basename "$segment_file")\`"
+	return 0
+}
+
+# Assemble the unscanned audit window into window_file (GH#37904).
+# Without rotation: the live log after the checkpoint. With rotation: the rest of
+# the rotated file that held the checkpoint, every later rotated file, then the
+# whole live log. A live log shorter than the checkpoint with no rotated file to
+# explain it is rescanned from line 1 (duplicates are safer than gaps).
+# Uses caller-scoped _sc_rotated_files; sets _sc_lines_to_scan and _sc_scan_desc.
+# Args: live_log start_line live_total window_file
+_cmd_scan_build_window() {
+	local log_file="$1" start_line="$2" total_lines="$3" window_file="$4"
+	local live_skip="$start_line"
+	_sc_lines_to_scan=0
+	_sc_scan_desc=""
+
+	if [[ ${#_sc_rotated_files[@]} -gt 0 ]]; then
+		local rotated rotated_lines rotated_skip first=1
+		for rotated in "${_sc_rotated_files[@]}"; do
+			rotated_lines="$(wc -l <"$rotated" | tr -d ' ')"
+			rotated_skip=0
+			if [[ "$first" -eq 1 ]]; then
+				if [[ "$start_line" -le "$rotated_lines" ]]; then
+					rotated_skip="$start_line"
+				else
+					_ga_warn "Checkpoint line ${start_line} exceeds $(basename "$rotated") (${rotated_lines} lines); rescanning it from line 1"
+				fi
+				first=0
+			fi
+			_cmd_scan_append_segment "$rotated" "$rotated_skip" "$rotated_lines" "$window_file" || return 1
+		done
+		live_skip=0
+	elif [[ "$start_line" -gt "$total_lines" ]]; then
+		_ga_warn "Audit log (${total_lines} lines) is shorter than checkpoint ${start_line} and no rotated log explains it; rescanning from line 1"
+		live_skip=0
+	fi
+
+	_cmd_scan_append_segment "$log_file" "$live_skip" "$total_lines" "$window_file" || return 1
+	return 0
+}
+
 # Build the markdown issue body for an anomaly report.
-# Args: scan_ts anomaly_count skip_count total_lines issue_repo entry1 entry2 ...
+# Args: scan_ts anomaly_count scan_desc issue_repo entry1 entry2 ...
 # Output: issue body markdown on stdout.
 _cmd_scan_build_issue_body() {
-	local scan_ts="$1" anomaly_count="$2" skip_count="$3" total_lines="$4"
-	local issue_repo="$5"
-	shift 5
+	local scan_ts="$1" anomaly_count="$2" scan_desc="$3"
+	local issue_repo="$4"
+	shift 4
 
 	# Header (heredoc is easier to review than concatenation).
 	cat <<BODY
@@ -346,7 +448,7 @@ _cmd_scan_build_issue_body() {
 
 **Scan time:** ${scan_ts}
 **Anomalies found:** ${anomaly_count}
-**Log scanned:** Lines $((skip_count + 1))–${total_lines} of \`gh-audit.log\`
+**Log scanned:** ${scan_desc}
 
 ## Anomalous Entries
 
@@ -455,30 +557,52 @@ cmd_scan() {
 		return 0
 	fi
 
-	local total_lines start_line skip_count lines_to_scan
+	local scan_started_ts total_lines start_line rotated
+	scan_started_ts="$(_ga_now_ts)"
 	total_lines="$(wc -l <"$log_file" | tr -d ' ')"
 	start_line=0
-	[[ "$_sc_scan_all" -eq 0 ]] && start_line="$(_ga_read_last_line)"
-	skip_count="$start_line"
-	lines_to_scan=$((total_lines - skip_count))
+	local -a _sc_rotated_files=()
+	if [[ "$_sc_scan_all" -eq 0 ]]; then
+		start_line="$(_ga_read_last_line)"
+		while IFS= read -r rotated; do
+			[[ -n "$rotated" ]] && _sc_rotated_files+=("$rotated")
+		done < <(_ga_pending_rotations "$log_file" "$(_ga_read_last_scan_ts)")
+	fi
 
-	if [[ "$lines_to_scan" -le 0 ]]; then
+	local window_file _sc_lines_to_scan=0 _sc_scan_desc=""
+	window_file="$(mktemp -t gh-audit-anomaly-window.XXXXXX)" || {
+		_ga_warn "Could not create audit scan window — checkpoint not advanced"
+		return 1
+	}
+	if ! _cmd_scan_build_window "$log_file" "$start_line" "$total_lines" "$window_file"; then
+		rm -f "$window_file"
+		_ga_warn "Could not read audit log window — checkpoint not advanced"
+		return 1
+	fi
+
+	if [[ "$_sc_lines_to_scan" -le 0 ]]; then
+		rm -f "$window_file"
 		_ga_info "No new entries since last scan (last_line=${start_line}, total=${total_lines})"
 		return 0
 	fi
 
-	_ga_info "Scanning ${lines_to_scan} entries (lines ${start_line}+1..${total_lines})"
+	if [[ ${#_sc_rotated_files[@]} -gt 0 ]]; then
+		_ga_info "Detected ${#_sc_rotated_files[@]} rotated audit log(s) since the last scan"
+	fi
+	_ga_info "Scanning ${_sc_lines_to_scan} entries (${_sc_scan_desc})"
 
 	local -a _sc_anomaly_entries=()
-	if ! _cmd_scan_collect_anomalies "$log_file" "$skip_count"; then
+	if ! _cmd_scan_collect_anomalies "$window_file" 0; then
+		rm -f "$window_file"
 		_ga_warn "Audit scan aborted without updating state"
 		return 1
 	fi
+	rm -f "$window_file"
 
 	local anomaly_count="${#_sc_anomaly_entries[@]}"
 	_ga_info "Found ${anomaly_count} anomalous entries"
 
-	[[ "$_sc_dry_run" -eq 0 ]] && _ga_write_state "$total_lines"
+	[[ "$_sc_dry_run" -eq 0 ]] && _ga_write_state "$total_lines" "$scan_started_ts"
 
 	if [[ "$anomaly_count" -eq 0 ]]; then
 		_ga_info "No anomalies found — no issue filed"
@@ -486,14 +610,14 @@ cmd_scan() {
 	fi
 
 	local scan_ts
-	scan_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	scan_ts="$(_ga_now_ts)"
 
 	# Build the body in a tempfile; gh issue create --body-file is safer than
 	# --body for large content (avoids argv size limits and shell quoting).
 	local body_file
 	body_file="$(mktemp -t gh-audit-anomaly-body.XXXXXX)"
-	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$skip_count" \
-		"$total_lines" "$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
+	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$_sc_scan_desc" \
+		"$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
 
 	if [[ "$_sc_dry_run" -eq 1 ]]; then
 		_ga_info "DRY RUN — anomalies found, would file issue on ${_sc_issue_repo}"
@@ -543,7 +667,18 @@ cmd_status() {
 		last_line=$(jq -r '.last_line // 0' "$state_file" 2>/dev/null || echo "0")
 		echo "Last scan:  ${last_scan}"
 		echo "Last line:  ${last_line}"
-		echo "Unscanned:  $((total_lines - last_line)) entries"
+		local rotated_count=0 rotated
+		while IFS= read -r rotated; do
+			[[ -n "$rotated" ]] && rotated_count=$((rotated_count + 1))
+		done < <(_ga_pending_rotations "$log_file" "$last_scan")
+		if [[ "$rotated_count" -gt 0 ]]; then
+			echo "Rotated:    ${rotated_count} rotated log(s) since last scan (scanned on next run)"
+			echo "Unscanned:  ${total_lines} live entries plus the rotated remainder"
+		elif [[ "$last_line" -gt "$total_lines" ]]; then
+			echo "Unscanned:  ${total_lines} entries (log shorter than checkpoint; next scan restarts at line 1)"
+		else
+			echo "Unscanned:  $((total_lines - last_line)) entries"
+		fi
 	else
 		echo "Last scan:  never"
 	fi
@@ -564,9 +699,12 @@ Commands:
   help                                      Show this help
 
 Options:
-  --all        Scan from the beginning (ignore last-scan state)
+  --all        Scan the live log from the beginning (ignore last-scan state)
   --dry-run    Print findings without filing an issue or updating state
   --repo SLUG  Override the repo to file issues in (default: marcusquinn/aidevops)
+
+Rotated logs created since the last scan are scanned before the live log, from
+the saved checkpoint onward, so rotation never hides entries.
 
 Routine entry for TODO.md:
   - [x] r-gh-audit-scan Scan gh-audit.log for anomalies \
