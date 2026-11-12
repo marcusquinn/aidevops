@@ -313,6 +313,9 @@ _dep_graph_build_repo_data() {
 # Cache format (DEP_GRAPH_CACHE_FILE):
 # {
 #   "built_at": "<ISO timestamp>",
+#   "rebuild_started_at": <epoch seconds of generation start>,
+#   "rebuild_complete": true|false,  # absent means complete for legacy caches
+#   "rebuild_pending": ["owner/repo", ...],  # unread/failed repos in this pass
 #   "repos": {
 #     "owner/repo": {
 #       "built_at": <epoch seconds of last successful repo build>,
