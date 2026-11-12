@@ -99,7 +99,12 @@ def foreign_marker(store: LifecycleRegistry, path: Path) -> dict[str, object]:
         raise StoreConflict("foreign-marker-absent")
     value = _read_marker(marker)
     generation = str(UUID(value["generation_id"]))
-    if value.get("installation_id") == store.installation_id():
+    marker_installation = value.get("installation_id")
+    try:
+        marker_installation = str(UUID(str(marker_installation)))
+    except ValueError:
+        raise StoreConflict("foreign-installation-invalid") from None
+    if marker_installation == store.installation_id():
         # Same installation: normal enrollment, cleanup and diagnostics apply.
         raise StoreConflict("marker-matches-current-installation")
     with store.connection() as connection:
