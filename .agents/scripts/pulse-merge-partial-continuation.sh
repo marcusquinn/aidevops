@@ -86,6 +86,26 @@ _pmpc_merged_pr_author() {
 	return 1
 }
 
+# GH#37204: merged worker partial PRs created without an origin label stranded
+# their target in status:in-review. Accept missing labels only with
+# independently verified worker provenance: merged, worker branch name, body
+# marker AND an author with current write access. Never infer trust from the
+# body marker or branch name alone.
+_pmpc_unlabeled_worker_provenance() {
+	local repo_slug="$1" pr_number="$2" pr_json="" author="" permission=""
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	author=$(printf '%s' "$pr_json" | jq -er '
+		select(.merged == true and (.body | type == "string")
+			and (.body | contains("<!-- aidevops:origin:worker -->"))
+			and (.head.ref | type == "string" and test("^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$"))
+			and (.user.login | type == "string" and test("^[A-Za-z0-9-]+$"))) | .user.login
+	' 2>/dev/null) || return 1
+	# aidevops:trust-boundary: require current repository write access.
+	permission=$(_pmpc_gh_read api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
+	case "$permission" in admin | maintain | write) return 0 ;; esac
+	return 1
+}
+
 #######################################
 # Test for a label on the referenced issue.
 # Args: $1=issue JSON, $2=label name
@@ -447,7 +467,12 @@ _pm_restore_partial_continuation() {
 		pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || return 0
 	fi
-	[[ ",${pr_labels}," == *",origin:worker,"* || ",${pr_labels}," == *",origin:worker-takeover,"* ]] || return 0
+	if [[ ",${pr_labels}," != *",origin:worker,"* && ",${pr_labels}," != *",origin:worker-takeover,"* ]]; then
+		# Conflicting origins are not missing provenance and must not be overridden.
+		[[ ",$pr_labels," != *",origin:"* ]] || return 0
+		_pmpc_unlabeled_worker_provenance "$repo_slug" "$pr_number" || return 0
+		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} has no origin label; accepted verified worker provenance (branch, body marker, write-access author) for partial continuation (GH#37204)" >>"$LOGFILE"
+	fi
 	# An empty caller target can also mean the upstream closing-target read
 	# failed, and the explicit resolver returns a closing target first. Prove
 	# independently that the PR closes nothing before using its For/Ref target.
