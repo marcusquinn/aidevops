@@ -720,6 +720,7 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
 - Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+- Verify: \`python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD\` exits 0 (pure move: \`removed-only=0 review=0 gated=0\`); paste its summary line into the PR body (playbook section 7.5)
 
 **Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).
 
