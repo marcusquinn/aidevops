@@ -1041,14 +1041,15 @@ test_parent_planning_checkpoint_gates() {
 #       $5=issue user type, $6=PR file, $7=core-files fixture mode (ok|missing)
 _run_starter_sync_case() {
 	local label="$1" expect="$2" title="$3" labels="$4" utype="$5" pfile="$6" mode="${7:-ok}"
+	local body="${8:-}" status="${9:-modified}"
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
-	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" \
-		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l}' >"${TEST_ROOT}/issue.json"
+	jq -n --arg t "$title" --argjson l "$labels" --arg ty "$utype" --arg body "$body" \
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:$ty},title:$t,labels:$l,body:$body}' >"${TEST_ROOT}/issue.json"
 	printf '[]' >"${TEST_ROOT}/comments.json"
 	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
-	[[ "$mode" == "ok" ]] && printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
-	jq -n --arg f "$pfile" '[{filename:$f,status:"modified"},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
+	[[ "$mode" == "ok" ]] && printf '# core files\n\nscripts/sync.sh\nincludes/core.php\n.github/\n' >"${TEST_ROOT}/core-files.txt"
+	jq -n --arg f "$pfile" --arg s "$status" '[{filename:$f,status:$s},{filename:"changelog.txt",status:"modified"}]' >"${TEST_ROOT}/pr-files.json"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0
@@ -1068,6 +1069,10 @@ test_starter_sync_scoped_trust() {
 	local ok_labels='[{"name":"starter-sync"}]'
 	local ttl="Core files differ from the starter"
 	_run_starter_sync_case "starter-sync: in-scope diff passes" pass "$ttl" "$ok_labels" Bot "includes/core.php"
+	_run_starter_sync_case "starter-sync: directory prefix passes" pass "$ttl" "$ok_labels" Bot ".github/workflows/ci.yml"
+	_run_starter_sync_case "starter-sync: issue scope passes" pass "$ttl" "$ok_labels" Bot "scripts/new-core.sh" ok $'### Files Scope\n- `scripts/new-core.sh`\n## Next\n- `outside.sh`'
+	_run_starter_sync_case "starter-sync: later heading excluded" block "$ttl" "$ok_labels" Bot "outside.sh" ok $'### Files Scope\n- `scripts/new-core.sh`\n## Next\n- `outside.sh`'
+	_run_starter_sync_case "starter-sync: renamed file blocked" block "$ttl" "$ok_labels" Bot "includes/core.php" ok "" renamed
 	_run_starter_sync_case "starter-sync: wrong title blocked" block "Something else" "$ok_labels" Bot "includes/core.php"
 	_run_starter_sync_case "starter-sync: missing label blocked" block "$ttl" '[{"name":"bug"}]' Bot "includes/core.php"
 	_run_starter_sync_case "starter-sync: non-Bot author blocked" block "$ttl" "$ok_labels" User "includes/core.php"
@@ -1183,7 +1188,7 @@ _run_starter_gate_chain_case() {
 	none) ;;
 	esac
 	jq -n --argjson l "$issue_labels" \
-		'{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:$l}' >"${TEST_ROOT}/issue.json"
+		'{author_association:"NONE",user:{login:"github-actions[bot]",type:"Bot"},title:"Core files differ from the starter",labels:$l,body:""}' >"${TEST_ROOT}/issue.json"
 	printf '0123456789abcdef0123456789abcdef01234567\n' >"${TEST_ROOT}/base-sha.txt"
 	printf 'scripts/sync.sh\nincludes/core.php\n' >"${TEST_ROOT}/core-files.txt"
 	printf '[{"filename":"includes/core.php","status":"modified"},{"filename":"changelog.txt","status":"modified"}]' >"${TEST_ROOT}/pr-files.json"
