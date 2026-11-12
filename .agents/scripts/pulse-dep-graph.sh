@@ -42,6 +42,8 @@ source "${_pulse_dep_graph_dir}/issue-hold-marker-lib.sh"
 source "${_pulse_dep_graph_dir}/dependency-supersession-lib.sh"
 # shellcheck source=./terminal-blocker-circuit.sh
 source "${_pulse_dep_graph_dir}/terminal-blocker-circuit.sh"
+# shellcheck source=./pulse-dep-graph-checkpoint.sh
+source "${_pulse_dep_graph_dir}/pulse-dep-graph-checkpoint.sh"
 DEP_GRAPH_REDUCE_FILTER="${PULSE_DEP_GRAPH_REDUCE_FILTER:-${_pulse_dep_graph_dir}/pulse-dep-graph-reduce.jq}"
 DEP_GRAPH_BRIEF_PARSER_AWK="${_pulse_dep_graph_dir}/brief-readiness-parser.awk"
 DEP_GRAPH_BLOCKED_BY_VALUE_AWK="${_pulse_dep_graph_dir}/blocked-by-value.awk"
@@ -311,6 +313,9 @@ _dep_graph_build_repo_data() {
 # Cache format (DEP_GRAPH_CACHE_FILE):
 # {
 #   "built_at": "<ISO timestamp>",
+#   "rebuild_started_at": <epoch seconds of generation start>,
+#   "rebuild_complete": true|false,  # absent means complete for legacy caches
+#   "rebuild_pending": ["owner/repo", ...],  # unread/failed repos in this pass
 #   "repos": {
 #     "owner/repo": {
 #       "built_at": <epoch seconds of last successful repo build>,
@@ -330,7 +335,7 @@ _dep_graph_build_repo_data() {
 #   }
 # }
 #
-# Returns: 0 always (non-fatal — cache miss falls back to live API)
+# Returns: 0 complete/fresh, 124 resumable deadline yield, 1 build/write failure.
 #######################################
 build_dependency_graph_cache() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
@@ -340,7 +345,8 @@ build_dependency_graph_cache() {
 	if [[ -f "$cache_file" && "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" != "1" ]]; then
 		local cache_age
 		cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
-		if [[ "$cache_age" -lt "$ttl_secs" ]]; then
+		if [[ "$cache_age" -lt "$ttl_secs" ]] &&
+			jq -e '.rebuild_complete != false' "$cache_file" >/dev/null 2>&1; then
 			echo "[pulse-wrapper] dep-graph-cache: cache fresh (${cache_age}s < ${ttl_secs}s TTL), skipping rebuild" >>"$LOGFILE"
 			return 0
 		fi
@@ -355,21 +361,24 @@ build_dependency_graph_cache() {
 
 	local repos_json
 	repos_json=$(jq -c '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only != true))' \
-		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || repos_json=""
-	if [[ -z "$repos_json" ]]; then
-		echo "[pulse-wrapper] dep-graph-cache: no pulse repos found, skipping" >>"$LOGFILE"
-		return 0
-	fi
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || return 1
 
 	# Build the graph JSON incrementally
 	local graph_json="" old_graph_json=""
-	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 	if [[ -f "$cache_file" ]]; then
 		old_graph_json=$(<"$cache_file") || old_graph_json=""
 	fi
+	graph_json=$(_dep_graph_checkpoint_seed "$old_graph_json" "$repos_json" "$build_start") || return 1
+	repos_json=$(_dep_graph_checkpoint_order "$repos_json" "$graph_json") || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
+	local build_failed=0
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
+		if ! _dep_graph_checkpoint_budget_allows; then
+			echo "[pulse-wrapper] dep-graph-cache: deadline reached; checkpoint retained for resume" >>"$LOGFILE"
+			return 124
+		fi
 		local slug
 		slug=$(printf '%s' "$repo_entry" | jq -r '.slug // empty' 2>/dev/null)
 		[[ -n "$slug" ]] || continue
@@ -379,35 +388,21 @@ build_dependency_graph_cache() {
 		# 100-line complexity gate).
 		local repo_data
 		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
-			# Legacy data has unknown freshness: never promote it to freshly built.
-			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" \
-				'.repos[$s] // empty | .built_at //= 0' 2>/dev/null) || repo_data=""
-			if [[ -z "$repo_data" ]]; then
-				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
-				continue
-			fi
-			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
-		else
-			repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$build_start" '.built_at = $now') || continue
+			# Seeded data retains its original age; only successful reads advance it.
+			build_failed=1
+			continue
 		fi
+		repo_data=$(printf '%s' "$repo_data" | jq -c --argjson now "$(date +%s)" '.built_at = $now') || return 1
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
 			jq --arg slug "$slug" --argjson rd "$repo_data" \
-				'.repos[$slug] = $rd' 2>/dev/null) || true
+				'.repos[$slug] = $rd | .rebuild_pending -= [$slug]' 2>/dev/null) || return 1
+		_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
 	done <<<"$repos_json"
 
-	# Atomically write cache (write to tmp then mv). GH#33246: the async
-	# housekeeping catch-up and the in-cycle stage share the pulse PID, so a
-	# `.tmp.$$` name could collide; mktemp gives each writer its own sibling.
-	local tmp_file=""
-	mkdir -p "$(dirname "$cache_file")" 2>/dev/null || true
-	tmp_file=$(mktemp "${cache_file}.tmp.XXXXXX" 2>/dev/null) || tmp_file="${cache_file}.tmp.${BASHPID:-$$}"
-	if printf '%s\n' "$graph_json" >"$tmp_file"; then
-		mv "$tmp_file" "$cache_file" || rm -f "$tmp_file"
-	else
-		rm -f "$tmp_file"
-	fi
+	[[ "$build_failed" -eq 0 ]] || return 1
+	_dep_graph_checkpoint_write "$cache_file" "$graph_json" true || return 1
 
 	local build_end="" build_dur=""
 	build_end=$(date +%s)

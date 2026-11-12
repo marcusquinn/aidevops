@@ -562,7 +562,7 @@ test_housekeeping_retries_incomplete_stages() {
 # or disappears before an interrupted housekeeping run resumes.
 test_blocker_catchup_checkpoint_rechecks_cache() {
 	local cache_state
-	for cache_state in fresh stale missing; do
+	for cache_state in fresh stale missing incomplete; do
 		setup_test_env
 		local failures=0 state_file got="" expected="ownership_reconcile "
 		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/dep-graph-cache.json"
@@ -576,6 +576,7 @@ test_blocker_catchup_checkpoint_rechecks_cache() {
 		case "$cache_state" in
 		stale) touch -t 202601010000 "$DEP_GRAPH_CACHE_FILE" ;;
 		missing) rm -f "$DEP_GRAPH_CACHE_FILE" ;;
+		incomplete) printf '{"rebuild_complete":false,"repos":{}}\n' >"$DEP_GRAPH_CACHE_FILE" ;;
 		esac
 		_pulse_run_post_dispatch_housekeeping_stages 7
 		got=$(_catchup_stages)
@@ -648,7 +649,7 @@ test_blocker_catchup_resumes_pending_recovery() {
 
 test_blocker_catchup_invalidates_inner_checkpoints() {
 	local mode
-	for mode in missing malformed empty legacy mixed_stale future expired disabled; do
+	for mode in missing malformed empty legacy mixed_stale future expired disabled incomplete; do
 		setup_test_env
 		local failures=0 pending_file progress_file got=""
 		local DEP_GRAPH_CACHE_FILE="${TEST_ROOT}/graph.json"
@@ -665,6 +666,7 @@ test_blocker_catchup_invalidates_inner_checkpoints() {
 		malformed) printf 'invalid\n' >"$DEP_GRAPH_CACHE_FILE" ;;
 		empty) printf '{"repos":{}}\n' >"$DEP_GRAPH_CACHE_FILE" ;;
 		legacy) printf '{"repos":{"legacy":{}}}\n' >"$DEP_GRAPH_CACHE_FILE" ;;
+		incomplete) jq -n --argjson now "$(date +%s)" '{rebuild_complete:false,repos:{fresh:{built_at:$now}}}' >"$DEP_GRAPH_CACHE_FILE" ;;
 		mixed_stale) jq -n --argjson now "$(date +%s)" '{repos:{fresh:{built_at:$now},stale:{built_at:1}}}' >"$DEP_GRAPH_CACHE_FILE" ;;
 		future) jq -n --argjson now "$(date +%s)" '{repos:{future:{built_at:($now+3600)}}}' >"$DEP_GRAPH_CACHE_FILE" ;;
 		expired)
