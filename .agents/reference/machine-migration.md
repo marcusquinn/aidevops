@@ -45,8 +45,11 @@ works there as normal. Remote access over SSH lets the new machine's agent drive
 this.
 
 1. Check that nobody edited the copies on the new machine after migration.
-   Compare `git status --short` on both machines. If the copies changed, use
-   Path B for those worktrees.
+   `git status --short` is not enough: both sides can report the same
+   modified file with different contents. Run `worktree-rescue-helper.sh export` (Path B, step 2) for
+   the worktree on each machine and compare the `head`, `patch_sha256` and
+   `untracked_hashes_sha256` lines of the two `manifest.txt` files. If any differ,
+   or you cannot compare them, use Path B for that worktree.
 2. On the old machine, for each worktree with uncommitted work, commit it and push
    the branch to its normal remote. Push to a private remote if the work must not
    be public. Alternatively, export a bundle (Path B, step 2) on the old machine
@@ -81,7 +84,11 @@ the export, and the export refuses if they changed.
    worktree-rescue-helper.sh export /path/to/copied-worktree
    ```
 
-   It prints `BUNDLE=`, `HEAD=` and `BRANCH=`.
+   It prints `BUNDLE=`, `HEAD=` and `BRANCH=`. The bundle directory must be
+   outside the source worktree. Export refuses an untracked nested repository,
+   because archiving it would include that repository's `.git` and ignored files.
+   Commit and push the nested repository from its own checkout, or copy it by
+   hand, then export again.
 
 3. Create a fresh worktree at exactly that commit:
 

@@ -24,6 +24,9 @@ set -euo pipefail
 
 # Optional index/stat refreshes are writes; never take them on the source.
 export GIT_OPTIONAL_LOCKS=0
+# Inherited repository selectors would redirect -C to another index or tree.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+	GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX
 
 readonly RESCUE_FORMAT=1
 # Deterministic diff output so source and destination compare byte-for-byte.
@@ -50,19 +53,61 @@ _rescue_sha256() {
 	return 0
 }
 
-# Hash a path without following symlinks; directories (nested repositories) are
-# recorded by kind only because tar carries their contents.
+# Hash a path without following symlinks. Export refuses directory entries
+# (nested repositories), so only files and symlinks reach this function.
 _rescue_entry_hash() {
 	local path="$1"
 	if [[ -L "$path" ]]; then
 		printf 'link:%s' "$(readlink "$path")"
 		return 0
 	fi
-	if [[ -d "$path" ]]; then
-		printf 'dir'
-		return 0
-	fi
 	printf 'sha256:%s' "$(_rescue_sha256 "$path")"
+	return 0
+}
+
+# Print an absolute, physical path for a directory that may not exist yet.
+# The deepest existing ancestor is resolved with pwd -P; `..` is refused in the
+# remainder so the result cannot escape that lexical check.
+_rescue_physical_path() {
+	local requested="$1"
+	local target="$requested"
+	local ancestor remainder="" part
+	[[ "$target" == /* ]] || target="$PWD/$target"
+	ancestor="$target"
+	while [[ ! -d "$ancestor" ]]; do
+		part="${ancestor##*/}"
+		if [[ "$part" == ".." ]]; then
+			print_error "Refusing '..' in a path that does not exist yet: $requested"
+			return 1
+		fi
+		remainder="/${part}${remainder}"
+		ancestor="${ancestor%/*}"
+		[[ -n "$ancestor" ]] || ancestor="/"
+	done
+	ancestor=$(cd "$ancestor" && pwd -P) || return 1
+	printf '%s%s\n' "${ancestor%/}" "$remainder"
+	return 0
+}
+
+# Print the physical path of an existing directory.
+_rescue_existing_dir() {
+	local target="$1"
+	if [[ ! -d "$target" ]]; then
+		print_error "Not a directory: $target"
+		return 1
+	fi
+	(cd "$target" && pwd -P)
+	return $?
+}
+
+# Sorted newline list of NUL-separated names; names containing newlines are refused.
+_rescue_sorted_names() {
+	local list="$1"
+	if [[ "$(tr -cd '\n' <"$list" | wc -c | tr -d ' ')" != "0" ]]; then
+		print_error "Untracked file names containing newlines are not supported; move those files by hand."
+		return 1
+	fi
+	tr '\0' '\n' <"$list" | LC_ALL=C sort
 	return 0
 }
 
@@ -199,6 +244,15 @@ cmd_export() {
 	head=$(_rescue_git "$top" rev-parse HEAD) || return 1
 	branch=$(_rescue_git "$top" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '(detached)')
 	[[ -n "$out" ]] || out=$(_rescue_default_out "$top")
+	# Git and tar run with other working directories, so use one physical path,
+	# and never write the bundle inside the tree that export must not change.
+	out=$(_rescue_physical_path "$out") || return 1
+	case "$out/" in
+	"$top"/* | "$(cd "$top" && pwd -P)"/*)
+		print_error "Bundle directory must be outside the source worktree: $out"
+		return 1
+		;;
+	esac
 	if [[ -e "$out" ]] && [[ -n "$(ls -A "$out" 2>/dev/null)" ]]; then
 		print_error "Bundle directory exists and is not empty: $out"
 		return 1
@@ -212,11 +266,21 @@ cmd_export() {
 
 	_rescue_git "$top" "${RESCUE_DIFF_ARGS[@]}" --output="$out/changes.patch"
 	_rescue_git "$top" ls-files --others --exclude-standard -z >"$out/untracked.list0"
+	_rescue_sorted_names "$out/untracked.list0" >/dev/null || return 1
+	local entry
+	while IFS= read -r -d '' entry; do
+		# Git lists an untracked nested repository as one directory entry; archiving
+		# it would carry that repository's .git and ignored files (secrets).
+		if [[ "$entry" == */ || ( -d "$top/$entry" && ! -L "$top/$entry" ) ]]; then
+			print_error "Untracked nested repository or directory: ${entry%/}. Commit and push it from its own checkout, or copy it by hand, then re-run export."
+			return 1
+		fi
+	done <"$out/untracked.list0"
 	_rescue_git "$top" ls-files --others --ignored --exclude-standard --directory -z >"$out/ignored.list0"
 	tr '\0' '\n' <"$out/ignored.list0" >"$out/ignored.txt"
 	count=$(tr -cd '\0' <"$out/untracked.list0" | wc -c | tr -d ' ')
 	if [[ "$count" -gt 0 ]]; then
-		(cd "$top" && tar --null -T "$out/untracked.list0" -cf "$out/untracked.tar")
+		(cd "$top" && tar --no-recursion --null -T "$out/untracked.list0" -cf "$out/untracked.tar")
 	fi
 	_rescue_hash_untracked "$top" "$out/untracked.list0" "$out/untracked.hashes0"
 
@@ -237,6 +301,7 @@ cmd_export() {
 		printf 'untracked_count=%s\n' "$count"
 		printf 'patch_sha256=%s\n' "$(_rescue_sha256 "$out/changes.patch")"
 		printf 'untracked_hashes_sha256=%s\n' "$(_rescue_sha256 "$out/untracked.hashes0")"
+		printf 'untracked_list_sha256=%s\n' "$(_rescue_sha256 "$out/untracked.list0")"
 		if [[ -f "$out/untracked.tar" ]]; then
 			printf 'untracked_tar_sha256=%s\n' "$(_rescue_sha256 "$out/untracked.tar")"
 		fi
@@ -281,9 +346,27 @@ _rescue_check_bundle() {
 		print_error "Bundle patch checksum mismatch; re-export from the source."
 		return 1
 	fi
+	expected=$(_rescue_manifest_value "$bundle" untracked_list_sha256)
+	if [[ ! -f "$bundle/untracked.list0" || "$expected" != "$(_rescue_sha256 "$bundle/untracked.list0")" ]]; then
+		print_error "Bundle untracked list checksum mismatch; re-export from the source."
+		return 1
+	fi
 	expected=$(_rescue_manifest_value "$bundle" untracked_tar_sha256)
-	if [[ -n "$expected" ]] && [[ "$expected" != "$(_rescue_sha256 "$bundle/untracked.tar")" ]]; then
+	if [[ -z "$expected" ]]; then
+		# An archive the manifest does not declare could overwrite ignored files.
+		if [[ -e "$bundle/untracked.tar" || -L "$bundle/untracked.tar" ]]; then
+			print_error "Bundle contains an undeclared untracked archive; re-export from the source."
+			return 1
+		fi
+		return 0
+	fi
+	if [[ ! -f "$bundle/untracked.tar" || "$expected" != "$(_rescue_sha256 "$bundle/untracked.tar")" ]]; then
 		print_error "Bundle untracked archive checksum mismatch; re-export from the source."
+		return 1
+	fi
+	# Archive members must be exactly the declared untracked files.
+	if [[ "$(tar -tf "$bundle/untracked.tar" | LC_ALL=C sort)" != "$(_rescue_sorted_names "$bundle/untracked.list0")" ]]; then
+		print_error "Bundle archive members differ from its untracked list; re-export from the source."
 		return 1
 	fi
 	return 0
@@ -330,6 +413,8 @@ cmd_import() {
 		print_error "Usage: worktree-rescue-helper.sh import <bundle> [--dest DIR]"
 		return 1
 	fi
+	# git -C and tar -C would resolve a relative bundle from the destination.
+	bundle=$(_rescue_existing_dir "$bundle") || return 1
 	dest=$(_rescue_parse_dest "$@") || return 1
 	_rescue_check_bundle "$bundle" || return 1
 	top=$(_rescue_dest_root "$dest" "$bundle") || return 1
@@ -369,6 +454,7 @@ cmd_verify() {
 		print_error "Usage: worktree-rescue-helper.sh verify <bundle> [--dest DIR]"
 		return 1
 	fi
+	bundle=$(_rescue_existing_dir "$bundle") || return 1
 	dest=$(_rescue_parse_dest "$@") || return 1
 	_rescue_check_bundle "$bundle" || return 1
 	top=$(_rescue_dest_root "$dest" "$bundle") || return 1
