@@ -145,7 +145,14 @@ _dispatch_filter_repo_pr_backlog_candidates() {
 	((fetch_limit >= pr_threshold)) || fetch_limit="$pr_threshold"
 
 	local pr_json="" open_prs_total=0 open_prs=0 filtered_json="" candidate_count=0 filtered_count=0
-	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open --json number,isDraft,labels --limit "$fetch_limit" 2>/dev/null) || {
+	# Bound the snapshot age independent of the per-cycle 3600s caches: elastic
+	# cycles outlive that TTL while other runners keep merging (GH#37918). Both
+	# cache layers read their TTL from these variables at call time; the scoped
+	# override affects only this read. Local invalidation-after-merge is unchanged.
+	local max_age="${PULSE_DISPATCH_GUARDRAIL_PR_LIST_MAX_AGE:-120}"
+	[[ "$max_age" =~ ^[1-9][0-9]*$ ]] || max_age=120
+	pr_json=$(PULSE_PR_LIST_PROVIDER_CACHE_TTL="$max_age" AIDEVOPS_GH_PR_LIST_CACHE_TTL="$max_age" \
+		pulse_pr_list_get --repo "$repo_slug" --state open --json number,isDraft,labels --limit "$fetch_limit" 2>/dev/null) || {
 		printf '%s\n' "$candidates_json"
 		return 0
 	}
