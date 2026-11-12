@@ -137,6 +137,17 @@
       "probes": {"installed": {"command": "gh"}, "authenticated": {"command_check": ["gh", "auth", "status"]}, "authorized": {"live": "requires target-specific permission check"}, "reachable": {"live": "requires GitHub API request"}}
     },
     {
+      "name": "render-service-readiness",
+      "aliases": ["render"],
+      "owner": "Build+",
+      "description": "GET-only access to exact selected Render service metadata, not app health or deployment authority",
+      "runtimes": ["opencode", "claude-code"],
+      "entry_points": ["services/hosting/render.md", "scripts/capability_render_probe.py"],
+      "fallback": "render-metadata-unavailable",
+      "required": ["deployed", "configured", "authenticated", "authorized", "reachable", "runtime_compatible", "usable"],
+      "probes": {"deployed": {"path": "scripts/capability_render_probe.py"}, "configured": {"live": "requires injected RENDER_API_KEY"}, "authenticated": {"live": "requires valid exact-service metadata response"}, "authorized": {"live": "requires exact-service GET access only"}, "reachable": {"live": "requires fixed Render service endpoint request"}, "usable": {"live": "requires matching service id and minimum serviceDetails runtime and URL schema"}}
+    },
+    {
       "name": "browser-automation",
       "aliases": ["browser", "playwright", "web-automation"],
       "owner": "Build+",

@@ -583,17 +583,19 @@ _setup_opencode_plugins_register_file_url() {
 		return 0
 	fi
 
-	# Check if the plugin URL is already in the array
+	# Reconcile both keys even when the desired URL is already present: an old
+	# managed entry may still coexist with it after an interrupted migration.
 	local already_registered
-	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" \
-		'(.[$key] // []) | map(select(. == $url)) | length' \
+	local managed_prefix="file://${HOME}/.aidevops/agents/plugins/opencode-aidevops/"
+	already_registered=$(jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" --arg prefix "$managed_prefix" --arg kind string \
+		'(has($other) | not) and ([(.[$key] // [])[] | select(type == $kind and startswith($prefix))] == [$url])' \
 		"$opencode_config" || echo "0")
 
-	if [[ "$already_registered" -eq 0 ]]; then
+	if [[ "$already_registered" != "true" ]]; then
 		local tmp_config="${opencode_config}.tmp.$$"
-		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" \
+		if jq --arg url "$plugin_url" --arg key "$plugin_key" --arg other "$other_plugin_key" --arg prefix "$managed_prefix" \
 			'.[$key] = (((.[$key] // []) + (.[$other] // []))
-			| map(select((type != "string") or (contains("/plugins/opencode-aidevops/") | not)))
+			| map(select((type != "string") or (startswith($prefix) | not)))
 			+ [$url] | unique) | del(.[$other])' \
 			"$opencode_config" >"$tmp_config"; then
 			mv "$tmp_config" "$opencode_config"
@@ -608,7 +610,7 @@ _setup_opencode_plugins_register_file_url() {
 		print_success "aidevops plugin already registered in opencode.json" >&2
 	fi
 
-	_setup_opencode_plugins_remove_cursor_oauth "$opencode_config" >&2
+	[[ "$other_plugin_key" == plugin ]] || _setup_opencode_plugins_remove_cursor_oauth "$opencode_config" >&2
 
 	echo "true"
 	return 0
@@ -687,7 +689,7 @@ _setup_opencode_plugins_remove_managed_symlink() {
 	[[ -L "$aidevops_plugin_dst" ]] || return 0
 	link_target=$(readlink "$aidevops_plugin_dst" 2>/dev/null || true)
 	case "$link_target" in
-	*/plugins/opencode-aidevops | */plugins/opencode-aidevops/*) ;;
+	"$HOME/.aidevops/agents/plugins/opencode-aidevops" | "$HOME/.aidevops/agents/plugins/opencode-aidevops/"*) ;;
 	*) return 0 ;;
 	esac
 	if rm -f "$aidevops_plugin_dst"; then
@@ -851,6 +853,24 @@ _setup_opencode_v1_find_config() {
 	return $?
 }
 
+_setup_opencode_v2_prepare_config() {
+	local config_home="$1" opencode_config_dir="$2" opencode_config="$3"
+	local opencode_config_parent="" dir=""
+	local managed_root="${HOME}/.aidevops/runtimes/opencode-v2"
+	opencode_config_parent=$(dirname "$opencode_config")
+	mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
+	if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" != "1" ]]; then
+		for dir in "$config_home" "$opencode_config_dir" "$opencode_config_parent"; do
+			case "$dir" in "$managed_root"/*) chmod 700 "$dir" 2>/dev/null || true ;; esac
+		done
+	fi
+	if [[ ! -e "$opencode_config" ]]; then
+		(umask 077 && printf '{}\n' >"$opencode_config") || return 1
+	fi
+	_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+	return 0
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
@@ -871,6 +891,13 @@ setup_opencode_plugins() {
 		config_home="${AIDEVOPS_OPENCODE_V2_CONFIG_HOME:-${v2_root}/config}"
 		opencode_config_dir="${AIDEVOPS_OPENCODE_V2_CONFIG_DIR:-${config_home}/opencode}"
 		opencode_config="${AIDEVOPS_OPENCODE_V2_CONFIG:-${opencode_config_dir}/opencode.json}"
+		if [[ "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" == "1" ]]; then
+			binary_name="opencode"
+			config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
+			config_home="${config_home:-$HOME/.config}"
+			opencode_config_dir="${config_home}/opencode"
+			opencode_config=$(_setup_opencode_v1_find_config) || opencode_config="${opencode_config_dir}/opencode.json"
+		fi
 	else
 		config_home=$(_setup_opencode_v1_ambient_path "${XDG_CONFIG_HOME:-}")
 		config_home="${config_home:-$HOME/.config}"
@@ -909,14 +936,7 @@ setup_opencode_plugins() {
 	# Mechanism 1: file:// URL in opencode.json
 	local pool_plugin_registered=""
 	if [[ "$profile" == "v2" ]]; then
-		local opencode_config_parent=""
-		opencode_config_parent=$(dirname "$opencode_config")
-		mkdir -p "$opencode_config_dir" "$opencode_config_parent" || return 1
-		chmod 700 "$config_home" "$opencode_config_dir" "$opencode_config_parent" 2>/dev/null || true
-		if [[ ! -e "$opencode_config" ]]; then
-			(umask 077 && printf '{}\n' >"$opencode_config") || return 1
-		fi
-		_setup_opencode_v2_link_framework_guide "$opencode_config_dir"
+		_setup_opencode_v2_prepare_config "$config_home" "$opencode_config_dir" "$opencode_config" || return 1
 	fi
 	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config); then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
@@ -942,7 +962,9 @@ setup_opencode_plugins() {
 	setup_track_configured "OpenCode plugins"
 
 	# Version-appropriate auth guidance
-	_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	if [[ "${AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE:-0}" != 1 ]]; then
+		_setup_opencode_plugins_auth_guidance "$pool_plugin_registered" "$binary_path" "$binary_name"
+	fi
 
 	return 0
 }
@@ -959,6 +981,32 @@ setup_opencode_runtime_plugins() {
 	local selected_profile="v1"
 	if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
 		selected_profile=$(aidevops_opencode_profile_id)
+	fi
+	if [[ -z "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
+		local binary="" major="" helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+		binary=$(command -v opencode 2>/dev/null || true)
+		if [[ -n "$binary" && -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
+			major=$(python3 -c 'import re, subprocess, sys
+try:
+    out = subprocess.check_output([sys.argv[1], "--version"], stderr=subprocess.DEVNULL, timeout=5, text=True)
+    match = re.search(r"\b(\d+)\.\d+\.\d+", out)
+    print(int(match.group(1)) if match else "")
+except (OSError, subprocess.SubprocessError):
+    pass' "$binary")
+		fi
+		if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 2 )); then
+			selected_profile=$(python3 "$helper" detect 2.0.0 2>/dev/null || printf 'v1')
+			if [[ "$selected_profile" == "v2" ]]; then
+				AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins || return $?
+				setup_opencode_v2_preview_plugins
+				return $?
+			fi
+		elif [[ -z "$major" ]]; then
+			print_info "OpenCode version unavailable or unparseable; using V1 plugin contract"
+			AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE=1 AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins || return $?
+			setup_opencode_v2_preview_plugins
+			return $?
+		fi
 	fi
 	if [[ "$selected_profile" == "v2" ]]; then
 		(
