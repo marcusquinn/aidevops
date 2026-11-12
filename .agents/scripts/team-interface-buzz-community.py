@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 from _team_interface_buzz_plan import as_list, compute_plan, member_pubkeys, render_text
-from _team_interface_buzz_runtime_io import RuntimeError as BuzzRuntimeError
 from _team_interface_buzz_runtime_install import default_app_data_dir
 from _team_interface_buzz_runtime_io import RuntimeError as BuzzRuntimeError
 
