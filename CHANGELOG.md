@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.179] - 2026-11-12
+
+### Added
+
+- add opt-in event policy routine (#37860)
+- handle fleet repository transfers (#37835)
+- surface repository onboarding advisories (#37845)
+
+### Changed
+
+- Tests: fix gh stub so child creation is reached (GH#37834) (#37844)
+
+### Fixed
+
+- enforce parent-task closing-keyword guard at merge time
+- trust bounded starter sync scope (#37863)
+- recover merged unlabeled worker partial continuations
+- keep function sizes under complexity threshold (t18971) (#37838)
+
 ## [3.39.178] - 2026-11-12
 
 ### Changed
