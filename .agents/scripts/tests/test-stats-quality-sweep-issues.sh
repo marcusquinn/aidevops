@@ -255,9 +255,9 @@ gh() {
 		printf ''
 		return 0
 		;;
-	*"issue list"*"Code Audit Routines"*"[.[].number]"*)
-		# Sibling search in _quality_issue_close_duplicates (--jq '[.[].number]'):
-		# return a JSON array containing the new issue (999) plus two siblings
+	*"issue list"*"Code Audit Routines"*"--json number,title"*)
+		# Sibling search in _quality_issue_close_duplicates (exact-title jq
+		# filter applied by gh): the new issue (999) plus two siblings
 		printf '[100,200,999]\n'
 		return 0
 		;;
@@ -333,6 +333,59 @@ if ! grep -q "close:999" "$CLOSE_CALLS" 2>/dev/null; then
 else
 	fail "post-create-sweep-preserved-survivor" "survivor 999 was incorrectly closed"
 fi
+
+# =============================================================================
+# Test (c2): GH#37957 — reusing a cached dashboard proven OPEN also closes
+# duplicates; an unverifiable cached dashboard never closes anything.
+# =============================================================================
+printf '\n%s[c2] reuse-path-closes-siblings%s\n' "$TEST_BLUE" "$TEST_NC"
+
+REUSE_STATE_RC=0
+gh() {
+	echo "gh $*" >>"$GH_CALLS"
+	case "$*" in
+	*"issue view"*"--json state"*)
+		[[ "$REUSE_STATE_RC" -eq 0 ]] || return 1
+		printf 'OPEN\n'
+		return 0
+		;;
+	*"issue list"*"Code Audit Routines"*"--json number,title"*)
+		printf '[33,4]\n'
+		return 0
+		;;
+	*"issue close"*)
+		local num
+		num=$(printf '%s' "$*" | grep -oE '[0-9]+' | head -1)
+		echo "close:$num" >>"$CLOSE_CALLS"
+		return 0
+		;;
+	esac
+	return 0
+}
+export -f gh
+
+for REUSE_STATE_RC in 0 1; do
+	true >"$CREATE_CALLS"
+	true >"$CLOSE_CALLS"
+	export HOME="$TMP"
+	mkdir -p "${TMP}/.aidevops/logs"
+	printf '33\n' >"${TMP}/.aidevops/logs/quality-issue-test-repo"
+	result=$(_ensure_quality_issue "test/repo" 2>/dev/null)
+	rc=$?
+	export HOME="$_original_home"
+	if [[ "$REUSE_STATE_RC" -eq 0 ]]; then
+		if [[ "$rc" -eq 0 && "$result" == "33" ]] && grep -q "close:4" "$CLOSE_CALLS" &&
+			! grep -q "close:33" "$CLOSE_CALLS" && [[ ! -s "$CREATE_CALLS" ]]; then
+			pass "reuse-verified-closes-stale-sibling"
+		else
+			fail "reuse-verified-closes-stale-sibling" "rc=$rc result=$result closes=$(cat "$CLOSE_CALLS")"
+		fi
+	elif [[ "$rc" -eq 0 && "$result" == "33" && ! -s "$CLOSE_CALLS" ]]; then
+		pass "reuse-unverified-closes-nothing"
+	else
+		fail "reuse-unverified-closes-nothing" "rc=$rc result=$result closes=$(cat "$CLOSE_CALLS")"
+	fi
+done
 
 # =============================================================================
 # Test (d): Sonar gate blocker issue is created only for failing gates

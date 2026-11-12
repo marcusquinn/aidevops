@@ -123,9 +123,12 @@ _quality_issue_close_duplicates() {
 	local survivor="$2"
 
 	local siblings_json
+	# Dashboard titles only: the bare title or the invariant "Code Audit
+	# Routines — <stats>" form written by the sweep. The search also returns
+	# unrelated issues that merely mention the phrase; those are never closed.
 	siblings_json=$(gh issue list --repo "$repo_slug" \
 		--state open --search "\"Code Audit Routines\" in:title" \
-		--json number --jq '[.[].number]' 2>/dev/null) || return 0
+		--json number,title --jq '[.[] | select(.title | test("^Code Audit Routines( — |$)")) | .number]' 2>/dev/null) || return 0
 
 	[[ -z "$siblings_json" ]] && return 0
 
@@ -155,8 +158,9 @@ _quality_issue_close_duplicates() {
 #   4. Title-prefix fallback — runs only when label search returns empty.
 #      Abort if this API call also fails.
 #   5. Create only when BOTH searches confirmed zero matches.
-#   6. Post-create: run _quality_issue_close_duplicates to reclaim any
-#      siblings created during prior failures.
+#   6. Post-create, or after reusing a dashboard proven OPEN (GH#37957):
+#      run _quality_issue_close_duplicates to reclaim dashboard-titled siblings
+#      created during prior failures.
 #
 # Arguments:
 #   $1 - repo slug
@@ -177,6 +181,8 @@ _ensure_quality_issue() {
 
 	# Try cached issue number
 	local issue_number=""
+	# Set when the survivor is proven OPEN; only then may siblings be closed.
+	local survivor_verified=0
 	if [[ -f "$cache_file" ]]; then
 		issue_number=$(cat "$cache_file" 2>/dev/null || echo "")
 	fi
@@ -192,6 +198,8 @@ _ensure_quality_issue() {
 			# Definitively closed/merged — invalidate cache
 			issue_number=""
 			rm -f "$cache_file" 2>/dev/null || true
+		elif [[ "$gh_exit" -eq 0 && "$state" == "OPEN" ]]; then
+			survivor_verified=1
 		fi
 		# Transient failure: keep cache and proceed as if valid
 	fi
@@ -204,6 +212,7 @@ _ensure_quality_issue() {
 			return 1
 		}
 		issue_number="$label_result"
+		[[ -z "$issue_number" ]] || survivor_verified=1
 	fi
 
 	# Title-prefix fallback — only runs when label search returned empty
@@ -214,6 +223,7 @@ _ensure_quality_issue() {
 			return 1
 		}
 		issue_number="$title_result"
+		[[ -z "$issue_number" ]] || survivor_verified=1
 	fi
 
 	# Create only when BOTH searches confirmed zero open matches
@@ -256,6 +266,10 @@ _ensure_quality_issue() {
 		echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
 
 		# Post-create defensive sweep: close any siblings from prior failures
+		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
+	elif [[ "$survivor_verified" -eq 1 ]]; then
+		# GH#37957: a reused dashboard must also reclaim older duplicates;
+		# otherwise a stale sibling survives indefinitely beside it.
 		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
 	fi
 
