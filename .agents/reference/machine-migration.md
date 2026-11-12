@@ -110,7 +110,10 @@ the export, and the export refuses if they changed.
    large. Copy any you need by hand, or reinstall dependencies.
 6. Commit and push from the fresh worktree as normal.
 
-`worktree-rescue-helper.sh verify <BUNDLE>` repeats the check at any time.
+`worktree-rescue-helper.sh verify <BUNDLE>` repeats the check at any time. A
+successful `verify` (including the one `import` runs) writes
+`<BUNDLE>/receipt.txt`, which restates the manifest hashes and pins the manifest
+bytes. It is evidence for retirement, never an authorization.
 
 ## Interrupted recovery
 
@@ -129,9 +132,37 @@ repeated:
 ## After the rescue
 
 Keep the copied worktrees and bundles until the rescued work is committed and
-pushed, and checked. Normal cleanup refuses the copies. Guarded retirement after
-a verified rescue is tracked in GH#37828. Until it ships, leaving the copies in
-place costs only disk space.
+pushed, and checked. Normal cleanup refuses the copies.
+
+## Retiring the copies
+
+Do not use `git worktree remove` on a copy: it discards the work without
+preservation evidence. Retire it with the guarded path, run from outside the copy:
+
+```bash
+python3 ~/.aidevops/agents/worker-lifecycle/worker-registry.py --state-dir <STATE_DIR> \
+  retire-foreign-worktree --path <COPY> --repo <owner/repo> --base-branch main \
+  --output-root <ARCHIVE_ROOT> --rescue-bundle <BUNDLE>
+```
+
+Omit `--rescue-bundle` only for a clean copy whose HEAD is contained in a
+remote-tracking ref (nothing to rescue). The command:
+
+- re-derives the patch and untracked-file hashes from the copy and refuses unless
+  they equal the bundle's, so a copy changed after the rescue is kept;
+- refuses an in-progress merge, rebase, cherry-pick, revert or bisect;
+- archives the copy through the normal WIP archive (ignored files are excluded,
+  as in the rescue), verifies it, then has Git relocate and remove it with the
+  shared journaled removal; the branch is kept;
+- leaves the foreign marker untouched (it is removed only with the whole Git
+  administration directory), never opens admission and registers no generation;
+- refuses a marker of this installation (use normal cleanup), a generation or path
+  already registered here, and a tree that Git does not register at that exact
+  path (a copy at a new path shares administration with the original, so it
+  cannot be retired this way).
+
+If interrupted after relocation, repeat the command with `--generation-id <ID>`
+(the marker's `generation_id`, also printed in an earlier result).
 
 For canonical (non-linked) checkouts with unexpected state, use
 `reference/dirty-worktree-preservation.md` instead.
