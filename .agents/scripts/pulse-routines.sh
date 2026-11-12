@@ -1253,6 +1253,35 @@ _evaluate_issue_archive_routine() {
 }
 
 #######################################
+# Evaluate the opt-in Actions event policy maintenance routine.
+#######################################
+_evaluate_event_policy_routine() {
+	local routine_id="r-event-policy"
+	local schedule="${AIDEVOPS_EVENT_POLICY_SCHEDULE:-daily(@05:40)}"
+	local last_epoch=0
+	# Without a Pulse working directory there is nowhere to run the routine.
+	[[ -n "${PULSE_DIR:-}" ]] || return 0
+	if [[ "${AIDEVOPS_EVENT_POLICY_ENABLED:-1}" == "0" ]]; then
+		return 0
+	fi
+	if _routine_retry_blocked "$routine_id"; then
+		return 0
+	fi
+	last_epoch=$(_routine_last_run_epoch "$routine_id")
+	if ! _routine_schedule_is_due "$schedule" "$last_epoch" "" "$routine_id"; then
+		return 0
+	fi
+	if ! _routine_rest_core_allows_next "routine_execute:r-event-policy"; then
+		_routine_log_slot "$routine_id" "$schedule" "" deferred
+		return 0
+	fi
+	echo "[pulse-wrapper] event policy routine due (expr=${schedule}, last_run_epoch=${last_epoch})" >>"$LOGFILE"
+	_routine_execute "$routine_id" "Check Actions event policies" \
+		"scripts/actions-event-policy-routine.sh" "" "$PULSE_DIR" "$schedule" ""
+	return $?
+}
+
+#######################################
 # Evaluate routines across all pulse-enabled repos
 #
 # Reads TODO.md from each pulse-enabled repo, extracts enabled routines
@@ -1282,6 +1311,7 @@ evaluate_routines() {
 	fi
 	_evaluate_session_miner_routine
 	_evaluate_issue_archive_routine
+	_evaluate_event_policy_routine
 
 	local routines_dispatched=0
 	local _routine_slug repo_path
