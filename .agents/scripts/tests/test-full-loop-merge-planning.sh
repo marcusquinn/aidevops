@@ -477,13 +477,17 @@ test_timeout_sec_fallback_preserves_stdin() {
 	printf 'abcdefghijklm\n' >"$sample"
 	# The redirect sits inside a subshell, where Bash has no job control: this
 	# is the shape that previously handed the command /dev/null.
+	# Sourcing runtime-env.sh appends the system PATH fallback, which restores
+	# /usr/bin/timeout on Linux; timeout_sec resolves tools at call time, so
+	# re-pin the fixture PATH after sourcing (GH#37865).
 	# shellcheck disable=SC2016  # Positional parameters expand in the child shell.
 	output=$(env PATH="$path_dir" bash -c '
 		source "$1/shared-constants.sh" >/dev/null 2>&1 || exit 90
+		PATH="$3"
 		command -v timeout >/dev/null 2>&1 && exit 91
 		command -v gtimeout >/dev/null 2>&1 && exit 91
 		( timeout_sec 5 cat <"$2" )
-	' _ "$scripts_dir" "$sample") || rc=$?
+	' _ "$scripts_dir" "$sample" "$path_dir") || rc=$?
 	print_result "timeout_sec fallback: subshell caller stdin reaches the command" \
 		"$([[ "$rc" -eq 0 && "$output" == "abcdefghijklm" ]] && printf '0' || printf '1')" \
 		"rc=$rc output=$output"
@@ -492,8 +496,11 @@ test_timeout_sec_fallback_preserves_stdin() {
 	# shellcheck disable=SC2016  # Positional parameters expand in the child shell.
 	env PATH="$path_dir" bash -c '
 		source "$1/shared-constants.sh" >/dev/null 2>&1 || exit 90
+		PATH="$2"
+		command -v timeout >/dev/null 2>&1 && exit 91
+		command -v gtimeout >/dev/null 2>&1 && exit 91
 		( timeout_sec 1 sleep 5 </dev/null )
-	' _ "$scripts_dir" 2>/dev/null || rc=$?
+	' _ "$scripts_dir" "$path_dir" 2>/dev/null || rc=$?
 	print_result "timeout_sec fallback: deadline still returns 124" \
 		"$([[ "$rc" -eq 124 ]] && printf '0' || printf '1')" "rc=$rc"
 	return 0
