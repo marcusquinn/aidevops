@@ -212,6 +212,53 @@ _rescue_index_fingerprint() {
 	return 0
 }
 
+# Create an empty private bundle directory outside the source; print its path.
+# Git and tar run with other working directories, so one physical path is used.
+_rescue_prepare_out() {
+	local top="$1"
+	local out="$2"
+	out=$(_rescue_physical_path "$out") || return 1
+	case "$out/" in
+	"$top"/* | "$(cd "$top" && pwd -P)"/*)
+		print_error "Bundle directory must be outside the source worktree: $out"
+		return 1
+		;;
+	esac
+	if [[ -e "$out" ]] && [[ -n "$(ls -A "$out" 2>/dev/null)" ]]; then
+		print_error "Bundle directory exists and is not empty: $out"
+		return 1
+	fi
+	mkdir -p "$out"
+	chmod 700 "$out"
+	printf '%s\n' "$out"
+	return 0
+}
+
+# Write the patch, untracked list/archive/hashes and ignored list.
+_rescue_write_payload() {
+	local top="$1"
+	local out="$2"
+	local entry
+	_rescue_git "$top" "${RESCUE_DIFF_ARGS[@]}" --output="$out/changes.patch"
+	_rescue_git "$top" ls-files --others --exclude-standard -z >"$out/untracked.list0"
+	_rescue_sorted_names "$out/untracked.list0" >/dev/null || return 1
+	while IFS= read -r -d '' entry; do
+		# Git lists an untracked nested repository as one directory entry; archiving
+		# it would carry that repository's .git and ignored files (secrets).
+		if [[ "$entry" == */ || ( -d "$top/$entry" && ! -L "$top/$entry" ) ]]; then
+			print_error "Untracked nested repository or directory: ${entry%/}. Commit and push it from its own checkout, or copy it by hand, then re-run export."
+			return 1
+		fi
+	done <"$out/untracked.list0"
+	_rescue_git "$top" ls-files --others --ignored --exclude-standard --directory -z >"$out/ignored.list0"
+	tr '\0' '\n' <"$out/ignored.list0" >"$out/ignored.txt"
+	if [[ -s "$out/untracked.list0" ]]; then
+		(cd "$top" && tar --no-recursion --null -T "$out/untracked.list0" -cf "$out/untracked.tar")
+	fi
+	_rescue_hash_untracked "$top" "$out/untracked.list0" "$out/untracked.hashes0"
+	return 0
+}
+
 cmd_export() {
 	local tree="${1:-}"
 	shift || true
@@ -244,45 +291,14 @@ cmd_export() {
 	head=$(_rescue_git "$top" rev-parse HEAD) || return 1
 	branch=$(_rescue_git "$top" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '(detached)')
 	[[ -n "$out" ]] || out=$(_rescue_default_out "$top")
-	# Git and tar run with other working directories, so use one physical path,
-	# and never write the bundle inside the tree that export must not change.
-	out=$(_rescue_physical_path "$out") || return 1
-	case "$out/" in
-	"$top"/* | "$(cd "$top" && pwd -P)"/*)
-		print_error "Bundle directory must be outside the source worktree: $out"
-		return 1
-		;;
-	esac
-	if [[ -e "$out" ]] && [[ -n "$(ls -A "$out" 2>/dev/null)" ]]; then
-		print_error "Bundle directory exists and is not empty: $out"
-		return 1
-	fi
-	mkdir -p "$out"
-	chmod 700 "$out"
+	out=$(_rescue_prepare_out "$top" "$out") || return 1
 
 	index_before=$(_rescue_index_fingerprint "$top") || return 1
 	status_before=$(_rescue_git "$top" status --porcelain=v2 -z | _rescue_stdin_sha256)
 	pending=$(_rescue_in_progress "$top" | tr '\n' ' ')
 
-	_rescue_git "$top" "${RESCUE_DIFF_ARGS[@]}" --output="$out/changes.patch"
-	_rescue_git "$top" ls-files --others --exclude-standard -z >"$out/untracked.list0"
-	_rescue_sorted_names "$out/untracked.list0" >/dev/null || return 1
-	local entry
-	while IFS= read -r -d '' entry; do
-		# Git lists an untracked nested repository as one directory entry; archiving
-		# it would carry that repository's .git and ignored files (secrets).
-		if [[ "$entry" == */ || ( -d "$top/$entry" && ! -L "$top/$entry" ) ]]; then
-			print_error "Untracked nested repository or directory: ${entry%/}. Commit and push it from its own checkout, or copy it by hand, then re-run export."
-			return 1
-		fi
-	done <"$out/untracked.list0"
-	_rescue_git "$top" ls-files --others --ignored --exclude-standard --directory -z >"$out/ignored.list0"
-	tr '\0' '\n' <"$out/ignored.list0" >"$out/ignored.txt"
+	_rescue_write_payload "$top" "$out" || return 1
 	count=$(tr -cd '\0' <"$out/untracked.list0" | wc -c | tr -d ' ')
-	if [[ "$count" -gt 0 ]]; then
-		(cd "$top" && tar --no-recursion --null -T "$out/untracked.list0" -cf "$out/untracked.tar")
-	fi
-	_rescue_hash_untracked "$top" "$out/untracked.list0" "$out/untracked.hashes0"
 
 	index_after=$(_rescue_index_fingerprint "$top") || return 1
 	status_after=$(_rescue_git "$top" status --porcelain=v2 -z | _rescue_stdin_sha256)
