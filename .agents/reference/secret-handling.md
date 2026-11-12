@@ -30,6 +30,55 @@ cannot scope one token to an explicit repository set.
 
 ## Migrating plaintext credentials safely
 
+### Optional systemd-creds storage
+
+On Linux with systemd 259 or newer, opt in per secret using
+`aidevops secret set NAME --backend systemd-creds`. Input remains hidden or is
+read from stdin/`--from-file`; never supply a value in argv or AI chat.
+The backend requires both `--user` (introduced in 256) and `--refuse-null`
+(introduced in 259). Older versions and macOS retain existing behavior; an
+explicit request for an unavailable backend fails without writing plaintext.
+
+Credentials are user-scoped, host-key encrypted, authenticated and stored in
+`~/.config/aidevops/creds/NAME.cred` (directory 700, files 600). Writes encrypt
+from stdin, decrypt-compare in memory, and atomically replace only ciphertext.
+The first version deliberately uses `--with-key=host`, not automatic TPM
+selection or null-key encryption; TPM provisioning and NixOS packaging remain
+outside this feature. Host-key access may require administrator provisioning
+of systemd's host key and authorization. Operations disable password prompts
+and have timeouts; they never silently downgrade to plaintext.
+
+Reads prefer a listed gopass entry, then a present encrypted credential, then
+`credentials.sh`. An unreadable encrypted credential fails closed, including
+when systemd-creds is unavailable; `check` returns 3 without output. Existing
+encrypted names keep their backend on ordinary `set` unless gopass owns the
+same name. An explicit encrypted write does not remove a higher-priority
+gopass entry: reconcile that entry before expecting the new value to resolve.
+`list` and `inventory` discover names without decrypting; guarded `rm` removes
+the encrypted copy as well as the existing backends and performs read-back.
+
+The helper decrypts on demand rather than changing user unit configuration.
+Headless `systemd-run --user` workers use the same resolver as interactive
+commands. Subprocess injection uses an owned tmpfs runtime directory when
+encrypted entries exist and refuses persistent temporary storage. Values still
+exist in process memory, subprocess environments and the runtime tmpfs; disable
+unencrypted swap and restrict core dumps if the host policy requires protection
+against those copies. This is not protection against root or same-user process
+compromise. A copied credential alone is not portable: user-scoped encryption
+binds the host key, machine identity, username and numeric UID. Copying the host
+key and all identity material can defeat that protection. Host-key loss or
+identity changes can make secrets unrecoverable; retain an independently secured
+recovery source and protect host-key backups separately from ciphertext backups.
+
+`aidevops secret import-credentials --to systemd-creds` imports eligible unique
+literal secret exports from the active plaintext store, using the existing
+strict parser. It skips existing encrypted names, verifies each new encrypted
+value, and always retains the source. It does not automatically migrate gopass
+or prune plaintext. Existing `prune-plaintext` remains gopass-only; do not use
+it as verification of this backend. After migrating callers and checking names
+through the resolver, retire retained sources through the operator's normal
+secure secret-management process, accounting for backups and snapshots.
+
 `aidevops secret import-credentials` imports **only the active tenant's store**
 (or the single `credentials.sh`) into the flat `aidevops/NAME` namespace used
 by `check`, `get` and subprocess injection. Other tenants are not merged into

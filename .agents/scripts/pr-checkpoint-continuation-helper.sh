@@ -335,6 +335,23 @@ _prrts_closing_link_step() {
 	return 0
 }
 
+# GH#37926: prompt step 8 — progress-push path and no self-assessed capacity stop.
+# Args: scanner path, repo slug ref, PR number ref
+_prrts_progress_step() {
+	local scanner_path="$1"
+	local repo_slug_ref="$2"
+	local repair_number_ref="$3"
+	printf '%s\n' \
+		'8. There is no per-session capacity budget to estimate; keep working until' \
+		'   acceptance or a real blocker. Capacity, context or time-budget reasons are' \
+		"   refused by \`mark-blocked\`. If you must stop before acceptance, commit" \
+		'   everything produced (captures, extracted data, ledgers), run the step 4' \
+		'   fence, use your single push from step 5 to publish that progress head, then' \
+		"   run \`\"${scanner_path}\" mark-progress \"${repo_slug_ref}\" \"${repair_number_ref}\" <short_reason>\` exactly once." \
+		'   Pulse re-arms one continuation for the new head.'
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local worktree_path="$2"
@@ -350,9 +367,10 @@ _prrts_write_prompt_file() {
 	local repo_slug_ref="\$WORKER_REPO_SLUG"
 	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
 	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
-	local closing_link_step=""
+	local closing_link_step="" progress_step=""
 	: "$_thread_count" "$_fingerprint" "$_preview"
 	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
+	progress_step="$(_prrts_progress_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
 
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -426,8 +444,8 @@ PR title: ${safe_title}
    another merged PR (\`decision already_landed\`, naming the merged evidence),
    and a draft whose remaining acceptance needs a human choice the brief does
    not make (\`decision\`, naming the exact choice). Never close the draft.
-
-Do not invoke both terminal-state commands. A prose report or successful process
+${progress_step}
+Do not invoke more than one terminal-state command. A prose report or successful process
 exit is not a terminal state: exiting without one leaves the draft for human
 attention once the bounded retries are spent. End with the changes,
 verification, pushed head, and any remaining blocker.

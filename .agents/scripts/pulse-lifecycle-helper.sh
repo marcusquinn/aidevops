@@ -1144,7 +1144,8 @@ _start_activated_runtime() {
 	fi
 	_pulse_require_script || return $?
 	_pulse_launch_unmanaged
-	if active_pid=$(_pulse_find_active_runtime_pid_since ""); then
+	# The unmanaged runtime may publish its lease after the first probe.
+	if active_pid=$(_pulse_wait_for_launchd_runtime ""); then
 		_pl_ok "Pulse is running from the activated bundle (PID ${active_pid})"
 		return 0
 	fi
