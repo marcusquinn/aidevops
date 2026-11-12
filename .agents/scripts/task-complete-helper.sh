@@ -472,6 +472,8 @@ BEGIN { in_block=0; block_done=0; block="" }
 
 !in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) {
     in_block=1
+    match($0, /^[[:space:]]*/)
+    task_indent=RLENGTH
     line=$0
     sub(/\[[ >]\]/, "[x]", line)
     sub(/[[:space:]]*$/, "", line)
@@ -495,7 +497,12 @@ BEGIN { in_block=0; block_done=0; block="" }
 }
 
 in_block {
-    if (/^$/ || /^- \[/) {
+    is_item=0
+    if ($0 ~ /^[[:space:]]*- \[/) {
+        match($0, /^[[:space:]]*/)
+        if (RLENGTH <= task_indent) is_item=1
+    }
+    if (/^$/ || is_item) {
         in_block=0
         block_done=1
     } else {
@@ -862,7 +869,7 @@ task_issue_number() {
 	local task_line=""
 	local issue_number=""
 
-	task_line=$(grep -E "^- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
+	task_line=$(grep -E "^[[:space:]]*- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
 	if [[ -z "$task_line" ]]; then
 		log_error "Task $task_id not found in an open TODO.md entry"
 		return 1
