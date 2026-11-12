@@ -1138,3 +1138,70 @@ _health_aged_hold_section() {
 	[[ "$total" -le "$max_rows" ]] || printf '\n_%s more not shown._\n' "$((total - max_rows))"
 	return 0
 }
+
+#######################################
+# Read-only, budget-limited snapshot of aged blocked draft checkpoints.
+# Search bounds candidates to 100; only trusted attention and release comments
+# contribute metadata. Never execute the displayed recovery commands.
+#######################################
+_health_checkpoint_comments() {
+	local repo_slug="$1" number="$2" page=1 batch="" count=0 all='[]'
+	while [[ "$page" -le 10 ]]; do
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || return 1
+		batch=$(gh api "repos/${repo_slug}/issues/${number}/comments?per_page=100&page=${page}" 2>/dev/null) || return 1
+		count=$(jq -er 'if type == "array" then length else error("invalid comments") end' <<<"$batch") || return 1
+		all=$(jq -cn --argjson all "$all" --argjson batch "$batch" '$all + $batch') || return 1
+		if [[ "$count" -lt 100 ]]; then
+			printf '%s\n' "$all"
+			return 0
+		fi
+		page=$((page + 1))
+	done
+	# Do not infer the newest comment from an incomplete history.
+	return 1
+}
+
+_health_aged_checkpoint_section() {
+	local repo_slug="$1" age_hours="${HEALTH_CHECKPOINT_AGE_HOURS:-24}"
+	local candidates="" comments="" evidence="" pr_json="" rows="" number pr release attempt age reason owner created
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	[[ "$age_hours" =~ ^[0-9]{1,5}$ ]] || age_hours=24
+	_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || return 0
+	candidates=$(gh api -X GET search/issues -f "q=repo:${repo_slug} is:issue is:open BLOCKED_CHECKPOINT_ATTENTION in:comments" \
+		-f per_page=100 -f sort=created -f order=asc 2>/dev/null) || return 0
+	while IFS= read -r number; do
+		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || break
+		comments=$(_health_checkpoint_comments "$repo_slug" "$number") || continue
+		evidence=$(jq -r --arg hours "$age_hours" '
+			[.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")]
+			| . as $comments
+			| [ .[] | select((.body // "") | test("(?m)^BLOCKED_CHECKPOINT_ATTENTION pr=")) ]
+			| sort_by(.created_at, .id) | last // empty
+			| . as $attention
+			| select((now - (.created_at | fromdateiso8601)) > (($hours | tonumber) * 3600))
+			| (.body | capture("(?m)^BLOCKED_CHECKPOINT_ATTENTION pr=(?<pr>[0-9]+) head=[0-9a-fA-F]+ release_comment=(?<release>[0-9]+) attempt=(?<attempt>[A-Za-z0-9:_-]+)")) as $marker
+			| [$comments[] | select((.id | tostring) == $marker.release) | .body
+				| capture("(?m)^Terminal blocker: reason=(?<reason>[A-Za-z0-9_-]+) owner=(?<owner>[A-Za-z0-9_-]+)")?] | last // empty
+			| [$marker.pr, $marker.release, $marker.attempt, $attention.created_at, .reason, .owner] | @tsv' <<<"$comments" 2>/dev/null) || continue
+		[[ -n "$evidence" ]] || continue
+		IFS=$'\t' read -r pr release attempt created reason owner <<<"$evidence"
+		[[ "$pr" =~ ^[1-9][0-9]*$ && "$release" =~ ^[1-9][0-9]*$ ]] || continue
+		_health_dashboard_optional_work_has_budget "${refresh_start_epoch:-0}" || break
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr}" 2>/dev/null) || continue
+		jq -e '.state == "open" and .draft == true' <<<"$pr_json" >/dev/null 2>&1 || continue
+		age=$(jq -nr --arg date "$created" '((now - ($date | fromdateiso8601)) / 3600 | floor)') || continue
+		rows+="${created}"$'\t'"${age}"$'\t'"${number}"$'\t'"${pr}"$'\t'"${release}"$'\t'"${attempt}"$'\t'"${reason}"$'\t'"${owner}"$'\n'
+	done < <(jq -r '.items[]?.number' <<<"$candidates" 2>/dev/null)
+	[[ -n "$rows" ]] || return 0
+	printf 'Aged blocked checkpoints (read-only; surfacing grants nothing). Resolve the blocker before generating an approval; alternatively close the draft. Runner capability releases may instead resume on a capable runner. This snapshot scans at most 100 candidate issues.\n\n'
+	printf '| Age | Issue | Draft PR | Reason | Owner | Exits |\n| --- | --- | --- | --- | --- | --- |\n'
+	while IFS=$'\t' read -r created age number pr release attempt reason owner; do
+		[[ -n "$created" ]] || continue
+		# Literal backticks delimit a displayed command, never execute it.
+		# shellcheck disable=SC2016
+		printf '| %sh | [#%s](https://github.com/%s/issues/%s) | [#%s](https://github.com/%s/pull/%s) | %s | %s | `pr-checkpoint-continuation-helper.sh approval-template %s %s %s %s %s` or close draft |\n' \
+			"$age" "$number" "$repo_slug" "$number" "$pr" "$repo_slug" "$pr" "$reason" "$owner" "$repo_slug" "$pr" "$number" "$release" "$attempt"
+	done < <(printf '%s' "$rows" | LC_ALL=C sort | jq -Rsc 'split("\n") | map(select(length > 0)) | .[0:10][]' -r)
+	return 0
+}
