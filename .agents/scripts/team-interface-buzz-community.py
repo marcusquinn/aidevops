@@ -132,7 +132,9 @@ def main(argv=None):
                 payload = run_buzz_json(buzz_bin, ["channels", "members", channel_id])
             except PlanError:
                 continue  # unknown memberships are reported without member_add requests
-            live_members[name] = member_pubkeys(payload)
+            keys = member_pubkeys(payload)
+            if keys is not None:  # unsupported shapes stay unreadable
+                live_members[name] = keys
         plan = compute_plan(template, host_slug, identities, live_channels, live_members)
     except (PlanError, BuzzRuntimeError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)

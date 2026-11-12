@@ -30,9 +30,13 @@ def template_channels(template):
 
 
 def member_pubkeys(members):
-    """Return the set of pubkeys in a buzz members payload."""
+    """Return the set of pubkeys in a buzz members payload, or None if unsupported."""
+    if isinstance(members, dict):
+        members = members.get("members")
+    if not isinstance(members, list):
+        return None
     keys = set()
-    for member in as_list(members, "members"):
+    for member in members:
         if isinstance(member, str):
             keys.add(member)
         elif isinstance(member, dict):
