@@ -10,7 +10,7 @@ from pathlib import Path
 import shlex
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- only used for a fixed-argv version probe, no shell.
 import sys
 import tempfile
 
@@ -111,6 +111,8 @@ def opencode_major():
         result = subprocess.run(  # nosec B603 B607 -- fixed binary and argv, no shell.
             ["opencode", "--version"], capture_output=True, text=True, timeout=5, check=False)
     except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
         return None
     match = re.search(r"(\d+)\.\d+", result.stdout or "")
     return int(match.group(1)) if match else None
