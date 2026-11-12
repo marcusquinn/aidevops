@@ -365,6 +365,30 @@ test_child_body_contains_parent_content_and_authors() {
 	return 0
 }
 
+# GH#37809: a blocked parent hands status:blocked (not status:available) to its
+# consolidated successor; ownership statuses are still never copied.
+test_child_body_carries_blocked_status_to_successor() {
+	local body
+	body=$(_compose_consolidation_child_body \
+		124 "owner/repo" "test: blocked parent" "Waiting on upstream schema." \
+		"[]" "@alice" "bug,auto-dispatch,status:blocked")
+
+	local failmsg=""
+	grep -qF -- '--label "consolidated,origin:worker,auto-dispatch,status:blocked,<copy relevant labels from parent, excluding all status:* labels' <<<"$body" ||
+		failmsg="${failmsg} | successor label list omits carried status:blocked"
+	grep -qF -- 'auto-dispatch,status:available,' <<<"$body" &&
+		failmsg="${failmsg} | blocked parent still hands off status:available"
+	grep -qF -- 'Keep the blocker text in the merged body.' <<<"$body" ||
+		failmsg="${failmsg} | blocked handoff omits blocker-text retention"
+
+	if [[ -z "$failmsg" ]]; then
+		print_result "blocked parent hands status:blocked to consolidated successor" 0
+	else
+		print_result "blocked parent hands status:blocked to consolidated successor" 1 "$failmsg"
+	fi
+	return 0
+}
+
 test_dedup_skips_when_child_exists() {
 	setup_gh_stub
 	GH_ISSUE_VIEW_TITLE="test: parent"
@@ -1832,6 +1856,7 @@ main() {
 	test_non_consolidating_comment_call_budget
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
+	test_child_body_carries_blocked_status_to_successor
 	test_dedup_skips_when_child_exists
 	test_consolidation_child_exists_detects_existing
 	test_consolidation_child_exists_detects_parent_dispatch_comment_on_later_page
