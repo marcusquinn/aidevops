@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.184] - 2026-11-12
+
+### Changed
+
+- Documentation: resolve review-bot findings on managed synced copies without follow-up
+
+### Fixed
+
+- do not infer no requirements from an empty PR check rollup (GH#37923) (#37924)
+- detect account disk quota exhaustion before worktree creation (#37925)
+- tick routines from a cycle-owned child during long cycles (GH#37914) (#37917)
+- bound PR backlog guardrail snapshot age to 120s (GH#37918) (#37920)
+- defer deploy reconciliation for fresh elastic owner leases and drain cooperatively (#37910)
+- preserve specific failure detail in r921 sync failed rows (GH#37911) (#37913)
+- flag-gated reclaim of finished worktrees (t18979)
+- name rc=124 refresh timeouts in stale dashboard alert (GH#37898) (#37909)
+
 ## [3.39.183] - 2026-11-12
 
 ### Changed
