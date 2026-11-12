@@ -33,15 +33,16 @@ unset _pmp_probe_epoch
 # the printf builtin is available. Args: $1=destination variable name.
 _pmp_now_epoch_into() {
 	local dest_var="$1"
-	local now_epoch=""
+	# Local name must not collide with caller destination names (dynamic scope).
+	local _pmp_helper_now=""
 	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	if [[ "$_PMP_NOW_BUILTIN" -eq 1 ]]; then
-		printf -v now_epoch '%(%s)T' -1
+		printf -v _pmp_helper_now '%(%s)T' -1
 	else
-		now_epoch=$(date +%s 2>/dev/null || printf '0')
+		_pmp_helper_now=$(date +%s 2>/dev/null || printf '0')
 	fi
-	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
-	printf -v "$dest_var" '%s' "$now_epoch"
+	[[ "$_pmp_helper_now" =~ ^[0-9]+$ ]] || _pmp_helper_now=0
+	printf -v "$dest_var" '%s' "$_pmp_helper_now"
 	return 0
 }
 
