@@ -268,8 +268,9 @@ write_gh_stub_pr_issue_views() {
 		fi
 		exit 0
 	fi
-	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
-		if [[ "$mode" == "fallback-nmr" ]]; then
+	if [[ "\$*" == *"--json body,closingIssuesReferences"* || "\$*" == *"--json closingIssuesReferences,body"* ]]; then
+		if [[ "\$*" == *"--json body,closingIssuesReferences"* ]]; then echo '{"body":"","closingIssuesReferences":[]}'
+		elif [[ "$mode" == "fallback-nmr" ]]; then
 			echo '{"closingIssuesReferences":[{"number":24354}],"body":"Resolves #22621"}'
 		else
 			echo '{"closingIssuesReferences":[],"body":"Resolves #22621"}'
@@ -488,6 +489,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() {
 	FULL_LOOP_PRE_MERGE_BLOCKER_KIND='${gate_kind}'
 	FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL='${gate_detail}'
@@ -525,6 +527,7 @@ set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_worker_briefed_gate_pinned() { return 0; }
 cmd_pre_merge_gate() { return 0; }
 _merge_guard_prospective_todo() { return 0; }
 _retarget_stacked_children_interactive() { return 0; }
@@ -1104,6 +1107,8 @@ test_shared_merge_read_admission_recovery() {
 				# This case exercises the open-PR release-lane read, not the
 				# preliminary already-merged provenance probe (GH#34839).
 				_merge_handle_already_merged_provenance() { return 2; }
+				_merge_check_closing_guards() { return 0; }
+				_merge_worker_briefed_gate_pinned() { return 0; }
 				_merge_pre_merge_gate_with_admission_retry() { return 0; }
 				release_lane_merge_guard() { [[ "$3" == main && "$4" == base-sha ]] || exit 2; return 1; }
 				out=$(cmd_merge 42 testorg/testrepo 2>&1) || rc=$?
@@ -1624,6 +1629,7 @@ test_local_deferral_survives_context_resolution() {
 	local result=0
 	(
 		local scripts_dir="${SCRIPT_DIR}/.." attempt="" rc=0
+		SCRIPT_DIR="$scripts_dir"
 		# shellcheck source=/dev/null
 		source "$scripts_dir/shared-constants.sh"
 		# shellcheck source=/dev/null

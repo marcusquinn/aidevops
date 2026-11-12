@@ -56,7 +56,7 @@ create_planning_handoff_fixture() {
 		# shellcheck source=../planning-publisher.sh
 		source "${scripts_dir}/planning-publisher.sh"
 		AIDEVOPS_PLANNING_GIT_BIN="$TEST_NATIVE_GIT" \
-			AIDEVOPS_PLANNING_VALIDATOR=/usr/bin/true \
+			AIDEVOPS_PLANNING_VALIDATOR="$(type -P true)" \
 			AIDEVOPS_PLANNING_RECEIPT_DIR="$HANDOFF_RECEIPT_DIR" \
 			AIDEVOPS_PLANNING_WRITE_RECEIPT=true \
 			planning_publish "$HANDOFF_REPO" "plan: checkout-free handoff" origin main || exit $?
@@ -456,9 +456,10 @@ create_no_timeout_path_dir() {
 	local entry="" name=""
 	if [[ ! -d "$path_dir" ]]; then
 		mkdir -p "$path_dir" || return 1
-		for entry in /usr/bin/* /bin/*; do
+		for entry in /usr/bin/* /bin/* "${TEST_NATIVE_GIT%/*}"/*; do
 			name="${entry##*/}"
 			[[ "$name" == "timeout" || "$name" == "gtimeout" ]] && continue
+			[[ -e "$entry" ]] || continue
 			[[ -e "${path_dir}/${name}" ]] || ln -s "$entry" "${path_dir}/${name}" || return 1
 		done
 	fi
