@@ -965,6 +965,51 @@ test_serial_loop_allows_unset_stop_flag() {
 	return 0
 }
 
+# GH#37907: a deploy drain request that appears while candidate 1 runs stops
+# the serial loop before candidate 2, and skips the next dispatch_max census.
+# A marker naming another owner is ignored.
+test_serial_loop_cooperative_drain() {
+	local LOCKDIR="${TEST_ROOT}/drain-lock"
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 710 711 712; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "1 2" && "$capacity_rc" -ne 0 ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 0
+	else
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	printf 'owner=1\nbundle=bundle-next\n' >"${LOCKDIR}/drain_requested"
+	_dispatch_process_candidate() {
+		return 0
+	}
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "3 3" ]]; then
+		print_result "serial_loop: drain marker for another lock owner is ignored" 0
+	else
+		print_result "serial_loop: drain marker for another lock owner is ignored" 1 "got=${result}"
+	fi
+	rm -rf "$LOCKDIR" "$candidate_file"
+	return 0
+}
+
 # Exercise reservation admission through the real serial and parallel loops.
 test_priority_reservations() {
 	local mode="$1" parallel="$2" expected_product="$3" expected_total="$4"
@@ -1445,6 +1490,7 @@ test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
+test_serial_loop_cooperative_drain
 test_priority_reservations normal 1 2 4
 test_priority_reservations normal 3 2 4
 test_priority_reservations concurrent 3 2 4

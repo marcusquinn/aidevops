@@ -1054,6 +1054,12 @@ _dispatch_min_worker_floor_refill() {
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
 			return 0
 		fi
+		local drain_bundle=""
+		if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 &&
+			drain_bundle=$(_pulse_drain_requested_bundle); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: cooperative drain requested for activated bundle ${drain_bundle} (GH#37907)" >>"$LOGFILE"
+			return 0
+		fi
 		if ((active_workers_known <= 0)); then
 			active_workers=$(count_active_workers)
 			[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
