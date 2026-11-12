@@ -52,6 +52,30 @@ _cleanup_log_diagnostics() {
 	return 0
 }
 
+# Opt-in interim pass: removes worktrees whose work is provably finished while
+# cleanup_policy.decide_cleanup still lacks a production evidence collector. It
+# supplies none of that policy's six proofs and claims no cleanup authorization;
+# it answers only whether the work finished and whether removal would lose it.
+# Removal here is archive-free by explicit operator decision.
+_cleanup_reclaim_finished_worktrees() {
+	local python="$1"
+	local budget="$2"
+	local result="" removed="" refused="" failed="" reclaimed=""
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-reclaim-finished.py" \
+		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
+		printf '[pulse-wrapper] Finished-worktree reclaim unavailable\n' >>"$LOGFILE"
+		return 0
+	fi
+	removed=$(jq -er '.removed | numbers' <<<"$result") || return 0
+	refused=$(jq -er '.refused | numbers' <<<"$result") || return 0
+	failed=$(jq -er '.failed | numbers' <<<"$result") || return 0
+	reclaimed=$(jq -er '(.reclaimed_bytes / 1048576 | floor) | numbers' <<<"$result") || return 0
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + removed))
+	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s refused=%s failed=%s reclaimed_mib=%s\n' \
+		"$removed" "$refused" "$failed" "$reclaimed" >>"$LOGFILE"
+	return 0
+}
+
 _cleanup_observation_era_worktrees() {
 	local state_dir="$1"
 	local python="$2"
@@ -79,7 +103,7 @@ _cleanup_observation_era_worktrees() {
 # Retain the public pass orchestrator here for source-location contract checks.
 cleanup_worktrees() {
 	local cleanup_budget="${1:-120}"
-	local state_dir="" python="" result="" retired="" pass_budget=0
+	local state_dir="" python="" result="" retired="" pass_budget=0 reclaim_enabled=0
 	local failed="" archive_failed="" held="" reconciled="" quarantined=0
 	CLEANUP_WORKTREES_SKIPPED=1
 	CLEANUP_WORKTREES_REMOVED_COUNT=0
@@ -94,7 +118,16 @@ cleanup_worktrees() {
 	[[ -n "$state_dir" && -d "$state_dir" ]] || return 0
 	[[ "$cleanup_budget" =~ ^[0-9]+$ && "$cleanup_budget" -ge 2 ]] || return 0
 	pass_budget=$((cleanup_budget / 2))
+	# The reclaim pass is opt-in and takes an equal share only when enabled, so a
+	# host without the flag keeps today's budget split and today's behaviour.
+	if [[ "${AIDEVOPS_WORKTREE_RECLAIM_FINISHED:-0}" == 1 && "$cleanup_budget" -ge 3 ]]; then
+		reclaim_enabled=1
+		pass_budget=$((cleanup_budget / 3))
+	fi
 	_cleanup_observation_era_worktrees "$state_dir" "$python" "$pass_budget"
+	if [[ "$reclaim_enabled" == 1 ]]; then
+		_cleanup_reclaim_finished_worktrees "$python" "$pass_budget"
+	fi
 	# Neither pass initializes/migrates state or consults old owner files.
 	# Each gets half the budget; the scheduler retains its hard watchdog.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" \
@@ -111,7 +144,8 @@ cleanup_worktrees() {
 	archive_failed=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
 	quarantined=$(jq -er '(.quarantined // 0) | numbers' <<<"$result") || quarantined=0
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
-	CLEANUP_WORKTREES_ARCHIVED_COUNT="$CLEANUP_WORKTREES_REMOVED_COUNT"
+	# Count only what the archiving passes retired: reclaim removes without archiving.
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + retired))
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT + archive_failed))
 	_cleanup_log_diagnostics "$result" || return 0
 	CLEANUP_WORKTREES_SKIPPED=0
