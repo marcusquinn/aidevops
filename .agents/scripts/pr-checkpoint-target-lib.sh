@@ -84,9 +84,9 @@ _pr_checkpoint_trusted_logins() {
 # continuation, stale-recovery or approval path, so the issue stalled
 # permanently. worker_checkpoint_draft_links accepts an open same-repository
 # origin:worker/origin:worker-takeover draft with no closing identity and no
-# protective label whose line-start `For #N` lines name exactly issue N or,
-# without any `For` line, whose line-start `Ref #N`/`Refs #N` lines do. Several
-# targets are ambiguous and never match. Continuation turns that line into a
+# protective label whose explicit `For #N` / `Ref(s) #N` references (anywhere in
+# the body, word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name
+# exactly issue N. Several targets are ambiguous and never match. Continuation turns that line into a
 # closing link only once the issue criteria are met (_prrts_write_prompt_file).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
