@@ -60,7 +60,10 @@ _rescue_sha256() {
 _rescue_entry_hash() {
 	local path="$1"
 	if [[ -L "$path" ]]; then
-		printf 'link:%s' "$(readlink "$path")"
+		# Trailing "x" sentinel keeps trailing newlines that $(...) would strip.
+		local target
+		target="$(readlink "$path"; printf x)"
+		printf 'link:%s' "${target%x}"
 		return 0
 	fi
 	printf 'sha256:%s' "$(_rescue_sha256 "$path")"

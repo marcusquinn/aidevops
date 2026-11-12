@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess  # nosec B404 # fixed fixture programs in disposable repositories
 import sys
 import tempfile
@@ -79,9 +80,11 @@ class ForeignRetirementContract(unittest.TestCase):
         bundle = self.root / "bundle"
         script = str(SCRIPTS / "worktree-rescue-helper.sh")
 
+        bash = shutil.which("bash") or "/bin/bash"
+
         def run(*arguments, cwd):
-            return subprocess.run(  # nosec B603 # fixture helper, no shell
-                ["bash", script, *arguments], cwd=cwd, check=True,
+            return subprocess.run(  # nosec B603 # fixture helper, absolute bash, no shell
+                [bash, script, *arguments], cwd=cwd, check=True,
                 capture_output=True, timeout=60, text=True,
             ).stdout
 
