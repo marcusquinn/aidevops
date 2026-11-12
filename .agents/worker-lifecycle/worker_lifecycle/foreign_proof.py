@@ -10,12 +10,11 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-import shutil
-import threading
 import subprocess  # nosec B404 # fixed read-only Git queries, explicit argv
 
 from .cleanup_plan import marker_digest
 from .enrollment import MARKER, _directory_inode, _git_directory
+from .foreign_git import file_sha, read_git, stream_git_sha
 from .storage import StoreConflict
 
 RECEIPT = "receipt.txt"
@@ -28,58 +27,6 @@ STATE_MARKERS = (
     "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply",
     "BISECT_LOG",
 )
-
-
-def _git_environment() -> tuple[str, dict[str, str]]:
-    git = shutil.which("git")
-    if git is None:
-        raise ValueError("archive-git-unavailable")
-    environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    environment.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
-    return git, environment
-
-
-def stream_git_sha(path: Path, *arguments: str) -> str:
-    """SHA-256 of Git output computed incrementally with bounded memory."""
-    git, environment = _git_environment()
-    digest = hashlib.sha256()
-    with subprocess.Popen(  # nosec B603 # resolved git, literal flags, path as one argv item
-        [git, "--no-optional-locks", "-C", str(path), *arguments],
-        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
-    ) as process:
-        stream = process.stdout
-        if stream is None:
-            raise ValueError("archive-git-unavailable")
-        timer = threading.Timer(120, process.kill)
-        timer.start()
-        try:
-            for chunk in iter(lambda: stream.read(1 << 20), b""):
-                digest.update(chunk)
-            returncode = process.wait()
-        finally:
-            timer.cancel()
-        if returncode != 0:
-            raise subprocess.CalledProcessError(returncode, arguments)
-    return digest.hexdigest()
-
-
-def file_sha(file: Path) -> str:
-    """SHA-256 of a file read in bounded chunks."""
-    digest = hashlib.sha256()
-    with file.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def read_git(path: Path, *arguments: str, network: bool = False) -> bytes:
-    """Run native Git on the source without optional index refreshes or prompts."""
-    git, environment = _git_environment()
-    return subprocess.run(  # nosec B603 # resolved git, literal flags, path as one argv item
-        [git, "--no-optional-locks", "-C", str(path), *arguments],
-        env=environment, capture_output=True, check=True,
-        timeout=60 if network else 120, shell=False,
-    ).stdout
 
 
 def _sha(data: bytes) -> str:
