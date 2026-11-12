@@ -134,6 +134,10 @@ def _finish(
     if not os.path.lexists(target) and removing is None:
         _relocate(store, path, plan, receipt)
     if os.path.lexists(target):
+        if removing is None:
+            # Resumed after relocation: revalidate proof against the moved tree first.
+            bundle = plan["proof"].get("bundle")
+            prove(target, Path(bundle) if bundle else None, path)
         _remove_private(store, path, plan, receipt, require_foreign_identity)
     elif removing is None or os.path.lexists(admin):
         raise StoreConflict("retirement-outcome-unverified")
@@ -171,14 +175,19 @@ def retire_foreign_worktree(
     if not root.is_absolute() or root.resolve(strict=True) != root:
         raise ValueError("canonical-output-root-required")
     validate_archive_path(root)
-    found = foreign_marker(store, path) if os.path.lexists(path) else None
-    if found is not None:
+    if generation is not None:
+        generation = str(UUID(generation))
+    # A supplied generation resumes its saved plan before the public path is
+    # inspected, so a replacement now occupying that path is never classified.
+    saved = _event(store, _event_id(generation, "planned")) if generation else None
+    found = None
+    if saved is None and os.path.lexists(path):
+        found = foreign_marker(store, path)
         if path.resolve(strict=True) != path:
             raise ValueError("canonical-source-required")
         generation = str(found["generation_id"])
     if generation is None:
         raise StoreConflict("foreign-source-absent")
-    generation = str(UUID(generation))
     with _lock(store, generation):
         plan = _event(store, _event_id(generation, "planned"))
         if plan is None:

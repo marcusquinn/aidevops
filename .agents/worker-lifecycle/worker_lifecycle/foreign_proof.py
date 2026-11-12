@@ -29,13 +29,45 @@ STATE_MARKERS = (
 )
 
 
-def read_git(path: Path, *arguments: str, network: bool = False) -> bytes:
-    """Run native Git on the source without optional index refreshes or prompts."""
+def _git_environment() -> tuple[str, dict[str, str]]:
     git = shutil.which("git")
     if git is None:
         raise ValueError("archive-git-unavailable")
     environment = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     environment.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
+    return git, environment
+
+
+def stream_git_sha(path: Path, *arguments: str) -> str:
+    """SHA-256 of Git output computed incrementally with bounded memory."""
+    git, environment = _git_environment()
+    digest = hashlib.sha256()
+    with subprocess.Popen(  # nosec B603 # resolved git, literal flags, path as one argv item
+        [git, "--no-optional-locks", "-C", str(path), *arguments],
+        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False,
+    ) as process:
+        stream = process.stdout
+        if stream is None:
+            raise ValueError("archive-git-unavailable")
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+        if process.wait() != 0:
+            raise subprocess.CalledProcessError(process.returncode, arguments)
+    return digest.hexdigest()
+
+
+def file_sha(file: Path) -> str:
+    """SHA-256 of a file read in bounded chunks."""
+    digest = hashlib.sha256()
+    with file.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_git(path: Path, *arguments: str, network: bool = False) -> bytes:
+    """Run native Git on the source without optional index refreshes or prompts."""
+    git, environment = _git_environment()
     return subprocess.run(  # nosec B603 # resolved git, literal flags, path as one argv item
         [git, "--no-optional-locks", "-C", str(path), *arguments],
         env=environment, capture_output=True, check=True,
@@ -57,11 +89,11 @@ def source_hashes(path: Path) -> dict[str, str]:
         if name.endswith("/") or (entry.is_dir() and not entry.is_symlink()):
             raise StoreConflict("untracked-directory-unsupported")
         digest = (b"link:" + os.fsencode(os.readlink(entry)) if entry.is_symlink()
-                  else f"sha256:{_sha(entry.read_bytes())}".encode())
+                  else f"sha256:{file_sha(entry)}".encode())
         records += digest + b"\t" + raw.rstrip(b"/") + b"\0"
     return {
         "head": read_git(path, "rev-parse", "HEAD").decode().strip(),
-        "patch_sha256": _sha(read_git(path, *DIFF_ARGS)),
+        "patch_sha256": stream_git_sha(path, *DIFF_ARGS),
         "untracked_hashes_sha256": _sha(bytes(records)),
         "untracked_list_sha256": _sha(listing),
     }
@@ -91,26 +123,44 @@ def _bundle_files(bundle: Path) -> tuple[dict[str, str], dict[str, str]]:
     if receipt.get("bundle_manifest_sha256") != _sha((bundle / "manifest.txt").read_bytes()):
         raise StoreConflict("rescue-receipt-manifest-mismatch")
     patch = bundle / "changes.patch"
-    if patch.is_symlink() or _sha(patch.read_bytes()) != manifest.get("patch_sha256"):
+    if patch.is_symlink() or file_sha(patch) != manifest.get("patch_sha256"):
+        raise StoreConflict("rescue-bundle-corrupt")
+    listing, archive = bundle / "untracked.list0", bundle / "untracked.tar"
+    if (listing.is_symlink() or not listing.is_file()
+            or file_sha(listing) != manifest.get("untracked_list_sha256")):
+        raise StoreConflict("rescue-bundle-corrupt")
+    expected = manifest.get("untracked_tar_sha256")
+    if expected:
+        if archive.is_symlink() or not archive.is_file() or file_sha(archive) != expected:
+            raise StoreConflict("rescue-bundle-corrupt")
+    elif os.path.lexists(archive):
         raise StoreConflict("rescue-bundle-corrupt")
     return manifest, receipt
 
 
-def _verified_destination(receipt: dict[str, str]) -> str:
-    """The rescue destination must still be a Git worktree holding the rescued HEAD."""
+def _verified_destination(receipt: dict[str, str], manifest: dict[str, str]) -> str:
+    """The rescue destination must still be the worktree holding the rescued data."""
     destination = Path(receipt.get("verified_destination", ""))
     if not destination.is_absolute() or not destination.is_dir():
         raise StoreConflict("rescue-destination-missing")
     try:
         head = read_git(destination, "rev-parse", "HEAD").decode().strip()
+        top = read_git(destination, "rev-parse", "--show-toplevel").decode().strip()
+        held = source_hashes(destination)
     except (subprocess.CalledProcessError, OSError):
         raise StoreConflict("rescue-destination-missing") from None
     if head != receipt.get("head"):
         raise StoreConflict("rescue-destination-changed")
+    # Same worktree (not a subdirectory of another checkout) still holding the rescued data.
+    if os.path.realpath(top) != os.path.realpath(destination) or any(
+            manifest.get(name) != value for name, value in held.items()):
+        raise StoreConflict("rescue-destination-changed")
     return str(destination)
 
 
-def _rescue_proof(path: Path, bundle: Path, current: dict[str, str]) -> dict[str, str]:
+def _rescue_proof(
+    path: Path, bundle: Path, current: dict[str, str], origin: Path,
+) -> dict[str, str]:
     """Require the bundle, its verify receipt, its destination and the source to agree."""
     if bundle.resolve(strict=True) != bundle or bundle.is_relative_to(path):
         raise StoreConflict("rescue-bundle-must-be-outside-source")
@@ -119,12 +169,12 @@ def _rescue_proof(path: Path, bundle: Path, current: dict[str, str]) -> dict[str
                  "untracked_list_sha256"):
         if receipt.get(name) != manifest.get(name):
             raise StoreConflict("rescue-receipt-manifest-mismatch")
-    if manifest["source"] != str(path):
+    if manifest["source"] != str(origin):
         raise StoreConflict("rescue-receipt-other-source")
     if any(manifest.get(name) != value for name, value in current.items()):
         raise StoreConflict("source-changed-since-rescue")
     return {"kind": "rescue-receipt", "manifest_sha256": receipt["bundle_manifest_sha256"],
-            "destination": _verified_destination(receipt)}
+            "destination": _verified_destination(receipt, manifest)}
 
 
 def _remote_tip(path: Path, remote: str, branch: str) -> str:
@@ -152,14 +202,14 @@ def _pushed_proof(path: Path, head: str) -> dict[str, str]:
     raise StoreConflict("pushed-ref-stale-or-unverified")
 
 
-def prove(path: Path, bundle: Path | None) -> dict[str, str]:
+def prove(path: Path, bundle: Path | None, origin: Path | None = None) -> dict[str, str]:
     """Return proof evidence or raise; callable again to revalidate before relocation."""
     if _in_progress(path):
         raise StoreConflict("source-operation-in-progress")
     current = source_hashes(path)
     if bundle is None:
         return _pushed_proof(path, current["head"])
-    return _rescue_proof(path, bundle, current)
+    return _rescue_proof(path, bundle, current, origin or path)
 
 
 def require_foreign_identity(
