@@ -30,6 +30,11 @@ _SQLITE_CODES = (
     ("database or disk is full", "database-full"),
 )
 _GIT_CODES = (
+    # GH#37922: the EDQUOT/ENOSPC strerror text Git appends to write failures is
+    # the only proof of exhaustion. A bare "unable to write" stays generic, and
+    # these lead so path fragments such as "locked" cannot mask them.
+    ("disk quota exceeded", "disk-quota-exceeded"),
+    ("no space left on device", "disk-full"),
     ("is already used by worktree", "ref-already-checked-out"),
     ("is already checked out", "ref-already-checked-out"),
     ("a branch named", "branch-already-exists"),
