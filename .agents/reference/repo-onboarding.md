@@ -50,8 +50,7 @@ stop there.
    Public repositories: the gate, triage and sync workflows run on
    `pull_request_target`, which GitHub blocks by default from 2026-12-02. After
    merging them, run `actions-event-policy-helper.sh plan --repo <slug>`, then
-   `apply`. Its `status` can report `UNCOVERED` even after a successful apply;
-   confirm with `gh api repos/<slug>/actions/policies/<id>`.
+   `apply` and check `status`.
 5. **Secrets:** when the repository runs `issue-sync` or the metrics workflow,
    run `/setup-git` to set `SYNC_PAT` (`scripts/commands/setup-git.md`). Never
    paste tokens into a session.

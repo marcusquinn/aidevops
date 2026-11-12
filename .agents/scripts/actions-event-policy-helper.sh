@@ -232,7 +232,18 @@ _policy_uncovered_paths() {
 
 _policy_read_policies() {
 	local slug="$1"
-	_policy_api_read "repos/${slug}/actions/policies?has_parents=true"
+	local listing="" links="" link="" detail="" details='[]'
+	listing=$(_policy_api_read "repos/${slug}/actions/policies?has_parents=true") || return 1
+	links=$(jq -r '
+		.policies | if type != "array" then error("invalid policies") else . end
+		| .[] | ._links.self.href
+		| if startswith("https://api.github.com/") then . else error("invalid policy link") end' <<<"$listing") || return 1
+	while IFS= read -r link; do
+		[[ -n "$link" ]] || continue
+		detail=$(_policy_api_read "${link#https://api.github.com/}") || return 1
+		details=$(jq -ce --argjson detail "$detail" '. + [$detail]' <<<"$details") || return 1
+	done <<<"$links"
+	jq -c '{total_count: length, policies: .}' <<<"$details"
 	return $?
 }
 
@@ -250,7 +261,7 @@ _policy_cmd_status() {
 		return 0
 	fi
 	policies=$(_policy_read_policies "$slug") || {
-		_policy_error "cannot read Actions policies for ${slug}"
+		_policy_error "cannot read Actions policies for ${slug}" || true
 		return 2
 	}
 	uncovered=$(_policy_uncovered_paths "$policies") || return 2
@@ -297,7 +308,7 @@ _policy_cmd_apply() {
 	_policy_require_plannable || return 1
 	body=$(_policy_build_body) || return 2
 	policies=$(_policy_read_policies "$slug") || {
-		_policy_error "cannot read Actions policies for ${slug}"
+		_policy_error "cannot read Actions policies for ${slug}" || true
 		return 2
 	}
 	policy_id=$(jq -r --arg n "$POLICY_NAME" 'first(.policies[]? | select(.name == $n) | .id) // empty' <<<"$policies")
