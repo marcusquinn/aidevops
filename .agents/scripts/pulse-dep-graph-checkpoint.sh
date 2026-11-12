@@ -12,11 +12,17 @@ _dep_graph_checkpoint_seed() {
 		previous='{}'
 	fi
 	printf '%s\n' "$previous" | jq -c --argjson slugs "$slugs" --argjson now "$now" '
+		. as $old
+		| (if .rebuild_complete == false and (.rebuild_pending | type) == "array"
+		   then [.rebuild_pending[], ($slugs[] | select($old.repos[.] == null))] | unique
+		   else $slugs end) as $pending
+		|
 		(if .rebuild_complete == false and (.rebuild_started_at | type) == "number"
 			and .rebuild_started_at > 0 and .rebuild_started_at <= $now
 		 then .rebuild_started_at else $now end) as $start
 		| {built_at:($start | todateiso8601), rebuild_started_at:$start,
-		   rebuild_complete:false, repos:((.repos // {})
+		   rebuild_complete:false, rebuild_pending:($pending | map(select(. as $s | $slugs | index($s)))),
+		   repos:((.repos // {})
 		   | with_entries(select(.key as $key | $slugs | index($key)))
 		   | map_values(.built_at //= 0))}' || return 1
 	return 0
@@ -28,7 +34,7 @@ _dep_graph_checkpoint_order() {
 	local repos="$1" graph="$2"
 	printf '%s\n' "$repos" | jq -sc --argjson graph "$graph" '
 		unique_by(.slug) | map(select(.slug | type == "string" and length > 0))
-		| map(select(($graph.repos[.slug].built_at // 0) < $graph.rebuild_started_at))
+		| map(select(.slug as $s | $graph.rebuild_pending | index($s)))
 		| sort_by($graph.repos[.slug].built_at // 0)[]' || return 1
 	return 0
 }

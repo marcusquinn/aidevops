@@ -394,7 +394,7 @@ build_dependency_graph_cache() {
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
 			jq --arg slug "$slug" --argjson rd "$repo_data" \
-				'.repos[$slug] = $rd' 2>/dev/null) || return 1
+				'.repos[$slug] = $rd | .rebuild_pending -= [$slug]' 2>/dev/null) || return 1
 		_dep_graph_checkpoint_write "$cache_file" "$graph_json" false || return 1
 	done <<<"$repos_json"
 

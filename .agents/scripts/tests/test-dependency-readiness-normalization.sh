@@ -180,6 +180,82 @@ _test_preserved_repo_freshness() (
 )
 assert_true "per-repo freshness and reducer diagnostics" _test_preserved_repo_freshness
 
+# GH#37938: drive the production builder through deadline yield and resume.
+_test_checkpoint_resume() (
+	local initial_fail="$fail"
+	export HOME="${TMP_ROOT}/resume-home"
+	mkdir -p "${HOME}/.config/aidevops"
+	local DEP_GRAPH_CACHE_FILE="${TMP_ROOT}/resume-cache.json"
+	local DEP_GRAPH_CACHE_TTL_SECS=100
+	local PULSE_DEP_GRAPH_FORCE_REBUILD=0 PULSE_STAGE_DEADLINE_EPOCH=1002
+	local clock_file="${TMP_ROOT}/clock" reads="${TMP_ROOT}/reads" rc=0
+	printf '1000\n' >"$clock_file"
+	: >"$reads"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/a","pulse":true},{"slug":"owner/b","pulse":true},{"slug":"owner/c","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	date() {
+		local arg="${1:-}"
+		if [[ "$arg" == +%s ]]; then
+			command cat "$clock_file"
+		else
+			command date "$@"
+		fi
+		return 0
+	}
+	_dep_graph_build_repo_data() {
+		local slug="$1" now=""
+		printf '%s\n' "$slug" >>"$reads"
+		now=$(date +%s)
+		printf '%s\n' "$((now + 1))" >"$clock_file"
+		printf '%s\n' '{"open_issues":[],"blocked_by":{}}'
+		return 0
+	}
+	build_dependency_graph_cache || rc=$?
+	assert_eq "deadline yields resumably" 124 "$rc"
+	assert_eq "checkpoint is incomplete after two repositories" false "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "completed repository data survives yield" 2 "$(jq '.repos | length' "$DEP_GRAPH_CACHE_FILE")"
+	# Expire per-repo TTL, remove a completed repo, disable another, add unread d.
+	printf '100000\n' >"$clock_file"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/b","pulse":true},{"slug":"owner/c","pulse":false},{"slug":"owner/d","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+	PULSE_STAGE_DEADLINE_EPOCH=0
+	build_dependency_graph_cache || assert_eq "resume succeeds" 0 "$?"
+	assert_eq "resume skips completed reads even after TTL expires" 'owner/a owner/b owner/d ' "$(tr '\n' ' ' <"$reads")"
+	assert_eq "resume drops removed and disabled repositories" '["owner/b","owner/d"]' "$(jq -c '.repos | keys' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "resume completes generation" true "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	assert_eq "checkpoint preserves own repository timestamp" 1002 "$(jq '.repos["owner/b"].built_at' "$DEP_GRAPH_CACHE_FILE")"
+	# Missing field on a fresh legacy cache still short-circuits.
+	printf '%s\n' '{"repos":{}}' >"$DEP_GRAPH_CACHE_FILE"
+	build_dependency_graph_cache
+	assert_eq "legacy cache within TTL is unchanged" '{"repos":{}}' "$(<"$DEP_GRAPH_CACHE_FILE")"
+	# Explicit rebuilds must not mistake same-second prior data for this pass.
+	PULSE_DEP_GRAPH_FORCE_REBUILD=1
+	build_dependency_graph_cache
+	build_dependency_graph_cache
+	assert_eq "force rebuild rereads complete caches" 7 "$(wc -l <"$reads" | tr -d ' ')"
+	local ordered=""
+	ordered=$(_dep_graph_checkpoint_order $'{"slug":"new"}\n{"slug":"old"}\n{"slug":"older"}' '{"rebuild_pending":["new","old","older"],"repos":{"old":{"built_at":20},"older":{"built_at":10}}}')
+	assert_eq "oldest snapshots are processed first" 'new older old ' "$(printf '%s\n' "$ordered" | jq -r '.slug' | tr '\n' ' ')"
+	local before=""
+	before=$(<"$DEP_GRAPH_CACHE_FILE")
+	if _dep_graph_checkpoint_write "$DEP_GRAPH_CACHE_FILE" invalid false 2>/dev/null; then
+		assert_eq "invalid write fails" failure success
+	fi
+	assert_eq "failed atomic write preserves cache" "$before" "$(<"$DEP_GRAPH_CACHE_FILE")"
+	# Fail precisely the graph merge, after seed and timestamp jq calls succeed.
+	jq() {
+		local args="$*"
+		[[ "$args" != *'.repos[$slug] = $rd'* ]] || return 1
+		command jq "$@" || return 1
+		return 0
+	}
+	rc=0
+	build_dependency_graph_cache 2>/dev/null || rc=$?
+	assert_eq "jq failure surfaces as failure" 1 "$rc"
+	assert_eq "jq failure cannot mark checkpoint complete" false "$(jq -r '.rebuild_complete' "$DEP_GRAPH_CACHE_FILE")"
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "checkpoint deadline resume and atomic failure safety" _test_checkpoint_resume
+
 entry='{"task_ids":["t10"],"issue_nums":["11"]}'
 assert_true "closed roadmap predecessors resolve" \
 	_refresh_all_blockers_resolved "$entry" '{"t10":10}' '[10,11]' '[10,11,20]'
