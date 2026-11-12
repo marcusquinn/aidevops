@@ -146,6 +146,64 @@ _quality_issue_close_duplicates() {
 }
 
 #######################################
+# Create and pin a new "Code Audit Routines" dashboard issue.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - review label
+#   $3 - persistent label
+#   $4 - source label
+# Output: new issue number to stdout
+# Returns: 0 on success, 1 when creation fails
+#######################################
+_quality_issue_create_dashboard() {
+	local repo_slug="$1"
+	local lbl_review="$2"
+	local lbl_persist="$3"
+	local lbl_source="$4"
+	local issue_number=""
+
+	# Ensure labels exist
+	gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
+		--description "Daily code quality review" --force 2>/dev/null || true
+	gh label create "$lbl_persist" --repo "$repo_slug" --color "FBCA04" \
+		--description "Persistent issue — do not close" --force 2>/dev/null || true
+	gh label create "$lbl_source" --repo "$repo_slug" --color "C2E0C6" \
+		--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
+
+	local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
+	local qa_sig=""
+	qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
+	qa_body="${qa_body}${qa_sig}"
+
+	issue_number=$(gh_create_issue --repo "$repo_slug" \
+		--title "Code Audit Routines" \
+		--body "$qa_body" \
+		--label "$lbl_review" --label "$lbl_persist" --label "$lbl_source" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+
+	if [[ -z "$issue_number" ]]; then
+		echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	# Pin (best-effort)
+	local node_id
+	node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	if [[ -n "$node_id" ]]; then
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"${node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+	fi
+
+	echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	printf '%s\n' "$issue_number"
+	return 0
+}
+
+#######################################
 # Ensure persistent quality review issue exists for a repo.
 #
 # Creates or finds the "Code Audit Routines" dashboard issue.
@@ -228,43 +286,7 @@ _ensure_quality_issue() {
 
 	# Create only when BOTH searches confirmed zero open matches
 	if [[ -z "$issue_number" ]]; then
-		# Ensure labels exist
-		gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
-			--description "Daily code quality review" --force 2>/dev/null || true
-		gh label create "$lbl_persist" --repo "$repo_slug" --color "FBCA04" \
-			--description "Persistent issue — do not close" --force 2>/dev/null || true
-		gh label create "$lbl_source" --repo "$repo_slug" --color "C2E0C6" \
-			--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
-
-		local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
-		local qa_sig=""
-		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
-		qa_body="${qa_body}${qa_sig}"
-
-		issue_number=$(gh_create_issue --repo "$repo_slug" \
-			--title "Code Audit Routines" \
-			--body "$qa_body" \
-			--label "$lbl_review" --label "$lbl_persist" --label "$lbl_source" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
-
-		if [[ -z "$issue_number" ]]; then
-			echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
-			return 1
-		fi
-
-		# Pin (best-effort)
-		local node_id
-		node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-		if [[ -n "$node_id" ]]; then
-			gh api graphql -f query="
-				mutation {
-					pinIssue(input: {issueId: \"${node_id}\"}) {
-						issue { number }
-					}
-				}" >/dev/null 2>&1 || true
-		fi
-
-		echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
-
+		issue_number=$(_quality_issue_create_dashboard "$repo_slug" "$lbl_review" "$lbl_persist" "$lbl_source") || return 1
 		# Post-create defensive sweep: close any siblings from prior failures
 		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
 	elif [[ "$survivor_verified" -eq 1 ]]; then
