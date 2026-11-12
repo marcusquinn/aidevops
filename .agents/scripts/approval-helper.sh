@@ -848,7 +848,7 @@ _approval_apply_issue_lifecycle_updates() {
 	local status_err=""
 	local restore_err=""
 	local _ah_labels_json=""
-	local _ah_stamp_file=""
+	local _ah_issue_json=""
 	local _ah_had_in_review=0
 
 	gh_user=$(_approval_current_github_login) || {
@@ -860,11 +860,22 @@ _approval_apply_issue_lifecycle_updates() {
 	# authoritative status transition removes status:in-review.
 	_ah_labels_json=$(gh_issue_view "$target_number" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	# GH#37956: an empty result may be a failed read. Confirm it through REST
+	# before taking the dispatchable path, which would turn an approval-only
+	# record into worker work. An unreadable issue fails closed, unchanged.
+	if [[ -z "$_ah_labels_json" ]]; then
+		_ah_issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") &&
+			_ah_labels_json=$(jq -er '[(.labels // [])[].name] | join(",")' <<<"$_ah_issue_json" 2>/dev/null) || {
+			_print_error "Could not read labels on issue #$target_number — approval state was not changed"
+			return 1
+		}
+	fi
 	[[ ",${_ah_labels_json}," == *",status:in-review,"* ]] && _ah_had_in_review=1
 
 	if _approval_issue_is_approval_only "$_ah_labels_json"; then
-		_approval_apply_approval_only_issue_updates "$target_number" "$slug" "$_ah_labels_json"
-		return $?
+		_approval_apply_approval_only_issue_updates "$target_number" "$slug" "$_ah_labels_json" || return 1
+		[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+		return 0
 	fi
 
 	# Establish the final status while NMR still blocks dispatch. This prevents
@@ -910,11 +921,18 @@ _approval_apply_issue_lifecycle_updates() {
 	# verified. Invoking `release` here would perform a second remote status write
 	# that can overwrite a concurrent queued worker claim. On uncertainty, retain
 	# the stamp as a durable ownership/recovery marker.
-	if [[ "$_ah_had_in_review" -eq 1 ]]; then
-		_ah_stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
-		rm -f "$_ah_stamp_file" 2>/dev/null || true
-		_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
-	fi
+	[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+	return 0
+}
+
+# Remove only the local interactive claim stamp for a verified handoff.
+_approval_release_claim_stamp() {
+	local target_number="$1"
+	local slug="$2"
+	local stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
+
+	rm -f "$stamp_file" 2>/dev/null || true
+	_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
 	return 0
 }
 

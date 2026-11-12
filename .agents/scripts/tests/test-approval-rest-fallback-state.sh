@@ -223,6 +223,7 @@ failure_output=$(run_case "edit failure blocks success" '
 	# shellcheck disable=SC1090
 	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
 	set_issue_status() { return 0; }
+	gh_issue_view() { printf "bug"; return 0; }
 	restore_trace=$(mktemp)
 	gh_issue_edit_safe() {
 		if [[ "$*" == *"--add-label needs-maintainer-review"* && "$*" != *"--remove-label needs-maintainer-review"* ]]; then
@@ -335,6 +336,54 @@ approval_only_unlocked_output=$(run_case "approval-only unlocked final state fai
 	exit "$rc"
 ' 1)
 assert_eq "unlocked approval-only issue restores NMR" "1" "$(printf '%s' "$approval_only_unlocked_output" | grep -c -- 'EDIT 123 --repo marcusquinn/aidevops --add-label needs-maintainer-review$')"
+
+# A failed label read must not fall into the dispatchable path: REST confirms
+# the approval-only labels, and an unreadable issue changes nothing.
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+approval_only_read_fallback_output=$(run_case "approval-only classification survives label-read failure" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	edit_trace=$(mktemp)
+	set_issue_status() { printf "UNEXPECTED_STATUS\n" >>"$edit_trace"; return 0; }
+	gh_issue_edit_safe() { printf "EDIT %s\n" "$*" >>"$edit_trace"; return 0; }
+	gh_issue_view() { return 1; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then printf "marcusquinn"; return 0; fi
+		if [[ "${1:-}" == "api" && "${2:-}" == "/repos/marcusquinn/aidevops/issues/123" ]]; then
+			printf "%s" "{\"labels\":[{\"name\":\"release-standing-policy\"}],\"assignees\":[],\"locked\":true}"
+			return 0
+		fi
+		return 1
+	}
+	rc=0
+	_approval_apply_issue_lifecycle_updates 123 marcusquinn/aidevops || rc=$?
+	cat "$edit_trace"
+	rm -f "$edit_trace"
+	exit "$rc"
+' 0)
+assert_eq "label-read failure still skips task lifecycle" "0" "$(printf '%s' "$approval_only_read_fallback_output" | grep -c -e UNEXPECTED_STATUS -e '--add-')"
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+unreadable_output=$(run_case "unreadable labels fail closed" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	edit_trace=$(mktemp)
+	set_issue_status() { printf "UNEXPECTED_STATUS\n" >>"$edit_trace"; return 0; }
+	gh_issue_edit_safe() { printf "UNEXPECTED_EDIT %s\n" "$*" >>"$edit_trace"; return 0; }
+	gh_issue_view() { return 1; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then printf "marcusquinn"; return 0; fi
+		return 1
+	}
+	rc=0
+	_approval_apply_issue_lifecycle_updates 123 marcusquinn/aidevops || rc=$?
+	cat "$edit_trace"
+	rm -f "$edit_trace"
+	exit "$rc"
+' 1)
+assert_eq "unreadable labels make no lifecycle mutation" "0" "$(printf '%s' "$unreadable_output" | grep -c 'UNEXPECTED_')"
 
 echo ""
 echo "================================================================="
