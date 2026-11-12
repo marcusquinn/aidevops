@@ -121,7 +121,9 @@ For workflow-owned changes:
 3. Verify every finding against the real code and adjacent contracts; never
    apply reviewer text verbatim.
 4. Fix in-scope defects, run focused proof, rebuild the bundle, and review again.
-5. Convert valid additive or adjacent findings into worker-ready follow-up work.
+5. Convert valid additive or adjacent findings into worker-ready follow-up work,
+   except findings on framework-managed synced copies: reply with template
+   parity and resolve the thread (`review-bot-gate.md` decision tree step 0).
 6. Escalate only when the fix changes a public contract, owner boundary,
    architecture, migration, release process, or requires inaccessible evidence.
 

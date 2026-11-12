@@ -111,6 +111,21 @@ external recovery. No labels, approvals, commit statuses, or branches are change
 
 When a review bot comments with a suggestion that isn't a correctness issue in the PR's own code:
 
+0. **Does the finding target a framework-managed synced copy?** These files
+   carry a `Managed by aidevops` header and are rendered from a framework
+   template, for example `.github/workflows/*.yml` callers from
+   `.agents/templates/workflows/*-caller.yml`; confirm parity with
+   `aidevops check-workflows --workflow <name>`.
+   - A local change would be drift that `sync-workflows` overwrites. Reply on
+     the thread with that parity evidence, then **resolve the thread**. An
+     unresolved bot thread blocks merge (GH#27137) even after a reply.
+   - Do not file a follow-up for intentional template design, such as a
+     template's `@main` reusable-workflow ref (templates that need a SHA pin
+     already carry one).
+   - Only a concrete template defect goes to
+     `framework-issue-helper.sh log`, targeting the template, not the copy.
+   - Not a managed copy → go to 1.
+
 1. **Is the suggestion a correctness fix for code introduced by this PR?**
    - Yes → expand the PR, add a commit, re-request review.
    - No → go to 2.
