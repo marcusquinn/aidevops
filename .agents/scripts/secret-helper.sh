@@ -1196,7 +1196,7 @@ cmd_get() {
 
 	# Present but unreadable is not "not found": fail closed like cmd_check (GH#35265).
 	if [[ "$read_rc" -eq 3 ]]; then
-		print_error "Unable to read ${read_name} from encrypted storage (gopass/systemd-creds decryption or store failure)" >&2
+		print_error "Unable to read ${read_name} from gopass or systemd-creds (decryption or store failure; check gpg-agent, pinentry, GNUPGHOME and ~/.config/aidevops/creds)" >&2
 		return 1
 	fi
 
