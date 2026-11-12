@@ -338,12 +338,81 @@ class OwnerEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 owner.register(db, "/fixture", 1, "first")
 
-    def test_reboot_and_changed_invocation_refuse(self):
+    def test_unverifiable_reboot_and_changed_invocation_refuse(self):
         launch = {"boot_id": "old", "unit": "aidevops-worker-fixture", "invocation": "first"}
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "new", lambda _: {})
         with self.assertRaises(ValueError):
             owner.drain_unit(launch, lambda: "old", lambda _: {"InvocationID": "second"})
+        self.assertNotIn("quiescence", launch)
+
+    OLD_BOOT = "1c11018b-6bde-48ad-b729-90b4b8d36b45"
+    NEW_BOOT = "04f36445-ad8c-48fd-a4c8-0bb20313fe18"
+
+    @staticmethod
+    def unreachable(_unit):
+        raise AssertionError("previous-boot unit evidence must not be sampled")
+
+    def ended_boot_launch(self, **changes):
+        launch = {"boot_id": self.OLD_BOOT, "unit": "aidevops-worker-fixture",
+                  "invocation": "a" * 32, "cgroup": "/stale.service"}
+        launch.update(changes)
+        return launch
+
+    @staticmethod
+    def sealed(launch):
+        return {"state": "sealed", "sealed_at": time.time(),
+                "identity": {"source_inode": "1:2"}, "launches": [launch]}
+
+    def test_ended_boot_drains_and_seals_without_unit_evidence(self):
+        launch = self.ended_boot_launch()
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        receipt = launch["quiescence"]
+        self.assertEqual(receipt["group"], owner.PREVIOUS_BOOT_GROUP)
+        self.assertEqual(receipt["observed_boot"], self.NEW_BOOT)
+        self.assertEqual(receipt["InvocationID"], "a" * 32)
+        self.assertTrue(owner.previous_boot_receipt_valid(launch, receipt))
+        proof.proof(self.sealed(launch), "1:2", fresh=False)
+        # Idempotent: a repeated drain rewrites an equivalent receipt.
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        self.assertEqual(launch["quiescence"]["observed_boot"], self.NEW_BOOT)
+
+    def test_forged_previous_boot_receipts_refuse(self):
+        launch = self.ended_boot_launch()
+        owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+        receipt = launch["quiescence"]
+        forgeries = (dict(receipt, observed_boot=self.OLD_BOOT),
+                     dict(receipt, observed_boot="new"),
+                     dict(receipt, InvocationID="b" * 32),
+                     dict(receipt, observed_at=time.time() + 3600),
+                     dict(receipt, observed_at="now"))
+        for forged in forgeries:
+            with self.subTest(forged=forged), self.assertRaises(ValueError):
+                proof.proof(self.sealed(dict(launch, quiescence=forged)), "1:2",
+                            fresh=False)
+        invalid_launch = dict(launch, boot_id="old",
+                              quiescence=dict(receipt))
+        with self.assertRaises(ValueError):
+            proof.proof(self.sealed(invalid_launch), "1:2", fresh=False)
+
+    def test_unbound_or_invalid_prior_boot_launch_refuses(self):
+        for changes in ({"invocation": None}, {"invocation": ""},
+                        {"invocation": "first"}, {"boot_id": "old"}):
+            launch = self.ended_boot_launch(**changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                owner.drain_unit(launch, lambda: self.NEW_BOOT, self.unreachable)
+            self.assertNotIn("quiescence", launch)
+        launch = self.ended_boot_launch()
+        with self.assertRaises(ValueError):
+            owner.drain_unit(launch, lambda: "new", self.unreachable)
+        self.assertNotIn("quiescence", launch)
+
+    def test_boot_change_during_previous_boot_observation_refuses(self):
+        boots = iter((self.NEW_BOOT, "2b5d6d0c-4f0e-4b5e-9a39-0c4f7c1f5d11"))
+        launch = self.ended_boot_launch()
+        with self.assertRaises(ValueError):
+            owner.drain_unit(launch, lambda: next(boots), self.unreachable)
+        self.assertNotIn("quiescence", launch)
 
     def test_live_descendants_refuse_even_after_parent_exit(self):
         launch = {"boot_id": "boot", "unit": "aidevops-worker-fixture", "invocation": "first"}
