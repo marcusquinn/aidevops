@@ -1381,6 +1381,24 @@ _clean_capacity_candidate_allowed() {
 	_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 1
 	# The summary list is capped. An exact query also protects branches with
 	# open PRs beyond that page, and fails closed when GitHub is unavailable.
+	# Local guards and merge proof run first so the scarce REST read below is
+	# spent only on candidates that could actually be reclaimed (GH#37500).
+	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
+	worktree_has_changes "$wt_path" && return 1
+	_clean_terminal_owner_blocks_cleanup "$wt_path" && return 1
+	_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 1
+	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
+	local local_proof=false needs_head_match=false
+	if git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null ||
+		_clean_capacity_patches_upstream "$wt_branch" "$default_br"; then
+		local_proof=true
+	fi
+	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
+		_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 1
+		[[ "$local_proof" == true ]] || return 1
+	elif [[ "$local_proof" != true ]]; then
+		needs_head_match=true
+	fi
 	local repo_slug="" open_count=""
 	repo_slug=$(_clean_repo_slug) || return 1
 	if ! open_count=$(gh_pr_list --repo "$repo_slug" --head "$wt_branch" --state open --limit 1 --json number --jq 'length' 2>/dev/null); then
@@ -1388,17 +1406,30 @@ _clean_capacity_candidate_allowed() {
 		return 1
 	fi
 	[[ "$open_count" == 0 ]] || return 1
-	_clean_worktree_index_is_readable "$wt_path" "$wt_branch" "capacity-recovery" || return 1
-	worktree_has_changes "$wt_path" && return 1
-	_clean_terminal_owner_blocks_cleanup "$wt_path" && return 1
-	_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 1
-	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
-	if ! _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
-		_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 1
-		git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null || return 1
-	elif ! git merge-base --is-ancestor "refs/heads/$wt_branch" "origin/$default_br" 2>/dev/null; then
+	if [[ "$needs_head_match" == true ]]; then
 		_clean_capacity_merged_head_matches "$wt_branch" "$repo_slug" || return 1
 	fi
+	return 0
+}
+
+# Local patch-id proof: every commit on the branch has an equivalent patch in
+# origin/<default> (rebase/cherry-pick merges). `git cherry` prints "-" for
+# upstream-present patches and "+" for missing ones; no API read is needed.
+_clean_capacity_patches_upstream() {
+	local wt_branch="$1" default_br="$2" lines="" ahead="" merges=""
+	ahead=$(git rev-list --count "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ "$ahead" =~ ^[0-9]+$ && "$ahead" -gt 0 ]] || return 1
+	# Identical trees prove all content is upstream, even with ahead merges.
+	local branch_tree="" upstream_tree=""
+	branch_tree=$(git rev-parse "refs/heads/$wt_branch^{tree}" 2>/dev/null) || return 1
+	upstream_tree=$(git rev-parse "origin/$default_br^{tree}" 2>/dev/null) || return 1
+	[[ -n "$branch_tree" && "$branch_tree" == "$upstream_tree" ]] && return 0
+	# Patch IDs cannot prove changes introduced by merges: git cherry omits them.
+	merges=$(git rev-list --count --merges "origin/$default_br..refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ "$merges" =~ ^[0-9]+$ && "$merges" -eq 0 ]] || return 1
+	lines=$(git cherry "origin/$default_br" "refs/heads/$wt_branch" 2>/dev/null) || return 1
+	[[ -n "$lines" ]] || return 1
+	[[ "$lines" != *"+ "* ]] || return 1
 	return 0
 }
 
