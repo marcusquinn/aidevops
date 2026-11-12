@@ -30,8 +30,12 @@ release went unnoticed.
    `upstream_source` (`releases`, `tags` or `commits`), `monitor_upstream: true`
    and, when needed, `upstream_tag_prefixes`
    (`reference/repos-json-fields.md`). Check with
-   `cloudron-package-monitor-helper.sh upstream`, which only reports: a newer
-   upstream prints a `FINDING`, and an up-to-date package prints nothing.
+   `cloudron-package-monitor-helper.sh upstream`, which only reports and scans
+   every registered package. For this package, a newer upstream prints
+   `FINDING <slug>` or, when its issue exists, `Already handled in <slug>`.
+   Silence is not proof: an up-to-date package and a package skipped for
+   missing `app_type`, `maintenance: false` or no `upstream_slug` both print
+   nothing, so confirm steps 1–3 in `repos.json` first.
 4. **Labels and workflows:** if init warned about labels, run
    `label-sync-helper.sh sync --repo <slug>`. Run `aidevops check-workflows`,
    then `sync-workflows-helper.sh --repo <slug> --workflow <name> --install-missing`
