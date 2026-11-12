@@ -55,6 +55,14 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+**Merge-time release gate (GH#37955).** Pulse and full-loop merges run
+`cloudron_release_merge_guard` (`cloudron-release-merge-guard-lib.sh`) for
+registered maintained packages. A PR whose `CloudronManifest.json` `version`
+differs from its base branch tip is a release even without a request: it merges
+only with exact-head authority (signed approval or the standing policy).
+Otherwise the guard adds `release-approval-required` + `hold-for-review` so `r924`
+requests approval or applies the policy. Unknown evidence blocks the merge.
+
 **Standing release policy (GH#37697, optional).** To stop routine upstream
 bumps queuing behind per-release signatures, a maintainer may sign one policy
 per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,

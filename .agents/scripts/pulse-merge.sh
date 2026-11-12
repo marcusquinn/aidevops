@@ -302,6 +302,11 @@ source "${_PULSE_MERGE_DIR}/release-lane-helper.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/manual-release-hold-helper.sh"
 
+# GH#37955: Cloudron manifest version bumps require release authority.
+# shellcheck source=./cloudron-release-merge-guard-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/cloudron-release-merge-guard-lib.sh"
+
 readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 # Source author permission check helpers (GH#21426 — extracted to bring
@@ -1292,6 +1297,15 @@ _pmp_stage_parse_and_validate() {
 	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
 		&& ! manual_release_hold_check "$repo_slug" "$pr_number" 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} for active manual release hold" >>"$LOGFILE"
+		return 1
+	fi
+	#aidevops:trust-boundary GH#37955 — a Cloudron package version bump is a
+	# release; the raw merge below must never publish it without authority.
+	# Not skipped for snapshot hold-for-review: the live-state gate re-reads
+	# labels, so a hold removed mid-cycle must not bypass this check.
+	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
+		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" ",${pr_labels}," 2>>"$LOGFILE"; then
+		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} — Cloudron release requires exact-head release authority (GH#37955)" >>"$LOGFILE"
 		return 1
 	fi
 	# GH#24634: refresh REST-first UNKNOWN state before conflict handling.

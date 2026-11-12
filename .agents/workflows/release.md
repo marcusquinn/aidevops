@@ -243,6 +243,43 @@ exact reviewed `main` workflow commit while package contents stay pinned to the
 immutable tag. Full contract: `reference/release-publication-controls.md`
 "Intervening-main recovery".
 
+### Local convergence after publication on another host
+
+When the shared lane is already inactive, terminal and published but this host
+has no local receipt, `reconcile` reports `RELEASE_LOCAL_ADOPTION_REQUIRED=1`
+and exits **10** with the exact command:
+
+```bash
+aidevops release adopt-published <SOURCE_PR> --tag vX.Y.Z
+```
+
+Run this explicitly in an interactive maintainer terminal. The command itself
+is local-adoption intent, **not publication consent**. Workers, CI and headless
+sessions cannot invoke it. It requires maintainer-equivalent repository access,
+an exact terminal source/tag lane, independently verified signed provenance and
+merged source membership, all publication channels, a successful exact-tag
+postflight run, and an already materialized exact-tag runtime bundle (version,
+manifest, deployment stamp and sentinel hashes). It does not deploy: on local
+deployment mismatch, run `aidevops update` then retry. A newer deployed descendant
+is not an exact-tag deployment for adoption.
+
+Adoption makes no remote writes: no lane update, publication, tag, version bump,
+workflow dispatch, label or comment. It refuses active competitors and names a
+different terminal tag rather than adopting a superseded one. Before local
+persistence it re-reads and fences the lane by head and canonical JSON digest.
+Distinct `cross-host-adoption/v1` authorization and evidence files preserve the
+operator, timestamp, signed source manifest, tag object/commit, publication and
+postflight runs, verified channel summary and lane revision. Publication
+authorization is never reused or overwritten. Local receipt writers share a
+per-receipt lock. Identical replay and interrupted identical writes are safe;
+conflicting existing receipts/evidence fail closed without replacement. A lock
+left by an interrupted process needs inspection before retry, not blind removal.
+
+An adopted successor can satisfy the predecessor's local receipt dependency only
+after its adoption evidence, current channels, deployment and lane fence verify
+again. The predecessor remains `superseded`, never `published`. Adoption does not
+repair historical receipts automatically or authorize recovery publication.
+
 If an older signed tag already completed GitHub, npm, and Homebrew publication
 but failed only while queuing postflight, do not recover it after a later release
 becomes current. `aidevops release reconcile <older-source-pr>` can instead write

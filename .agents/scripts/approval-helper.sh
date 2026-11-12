@@ -79,6 +79,9 @@ readonly _APPROVAL_AUTO_DISPATCH_LABEL="auto-dispatch"
 readonly _APPROVAL_AVAILABLE_LABEL="status:available"
 readonly _APPROVAL_QUEUED_LABEL="status:queued"
 readonly _APPROVAL_IN_PROGRESS_LABEL="status:in-progress"
+# GH#37956: approval-only records (Cloudron release requests and standing
+# release policies) are authority evidence, never worker tasks.
+readonly _APPROVAL_ONLY_LABELS="release-approval-required,release-standing-policy"
 readonly _APPROVAL_GITHUB_ACTIONS_BOT_ID="41898282"
 readonly _APPROVAL_MISSING_FIELD="__missing__"
 readonly _APPROVAL_GH_INVALID_TOKEN="invalid-token"
@@ -785,6 +788,58 @@ _approval_verify_pr_state() {
 	return $?
 }
 
+# Return 0 when a comma-joined label list marks an approval-only issue.
+_approval_issue_is_approval_only() {
+	local labels_csv="$1"
+	local label=""
+	local -a approval_only_labels=()
+
+	IFS=',' read -r -a approval_only_labels <<<"$_APPROVAL_ONLY_LABELS"
+	for label in "${approval_only_labels[@]}"; do
+		[[ ",${labels_csv}," == *",${label},"* ]] && return 0
+	done
+	return 1
+}
+
+# GH#37956: signing an approval-only issue records authority; it must not turn
+# the record into dispatchable work. Clear only the NMR hold, never add status,
+# auto-dispatch or an assignee, then verify the final locked, unheld state.
+_approval_apply_approval_only_issue_updates() {
+	local target_number="$1"
+	local slug="$2"
+	local labels_csv="$3"
+	local edit_err=""
+	local restore_err=""
+	local issue_json=""
+
+	if [[ ",${labels_csv}," == *",${_APPROVAL_NMR_LABEL},"* ]]; then
+		edit_err=$(gh_issue_edit_safe "$target_number" --repo "$slug" \
+			--remove-label "$_APPROVAL_NMR_LABEL" 2>&1 >/dev/null) || {
+			_print_error "Failed to clear needs-maintainer-review on approval-only issue #$target_number"
+			[[ -n "$edit_err" ]] && _print_error "$edit_err"
+			restore_err=$(_approval_restore_nmr_hold issue "$target_number" "$slug" 2>&1 >/dev/null) || {
+				_print_error "Failed to restore needs-maintainer-review after uncertain update on issue #$target_number"
+				[[ -n "$restore_err" ]] && _print_error "$restore_err"
+			}
+			return 1
+		}
+	fi
+
+	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+		_print_error "Approval state verification failed: could not read issue #$target_number via REST"
+		_approval_restore_nmr_hold issue "$target_number" "$slug" >/dev/null 2>&1 || true
+		return 1
+	}
+	if ! printf '%s' "$issue_json" | jq -e --arg label "$_APPROVAL_NMR_LABEL" \
+		'((.labels // []) | any(.name == $label) | not) and .locked == true' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: approval-only issue #$target_number is not locked without needs-maintainer-review"
+		_approval_restore_nmr_hold issue "$target_number" "$slug" >/dev/null 2>&1 || true
+		return 1
+	fi
+	_print_info "Approval-only issue #$target_number: recorded authority without task lifecycle labels"
+	return 0
+}
+
 _approval_apply_issue_lifecycle_updates() {
 	local target_number="$1"
 	local slug="$2"
@@ -793,7 +848,7 @@ _approval_apply_issue_lifecycle_updates() {
 	local status_err=""
 	local restore_err=""
 	local _ah_labels_json=""
-	local _ah_stamp_file=""
+	local _ah_issue_json=""
 	local _ah_had_in_review=0
 
 	gh_user=$(_approval_current_github_login) || {
@@ -805,7 +860,23 @@ _approval_apply_issue_lifecycle_updates() {
 	# authoritative status transition removes status:in-review.
 	_ah_labels_json=$(gh_issue_view "$target_number" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	# GH#37956: an empty result may be a failed read. Confirm it through REST
+	# before taking the dispatchable path, which would turn an approval-only
+	# record into worker work. An unreadable issue fails closed, unchanged.
+	if [[ -z "$_ah_labels_json" ]]; then
+		_ah_issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") &&
+			_ah_labels_json=$(jq -er '[(.labels // [])[].name] | join(",")' <<<"$_ah_issue_json" 2>/dev/null) || {
+			_print_error "Could not read labels on issue #$target_number — approval state was not changed"
+			return 1
+		}
+	fi
 	[[ ",${_ah_labels_json}," == *",status:in-review,"* ]] && _ah_had_in_review=1
+
+	if _approval_issue_is_approval_only "$_ah_labels_json"; then
+		_approval_apply_approval_only_issue_updates "$target_number" "$slug" "$_ah_labels_json" || return 1
+		[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+		return 0
+	fi
 
 	# Establish the final status while NMR still blocks dispatch. This prevents
 	# the default-status workflow from owning the normal handoff path.
@@ -850,11 +921,18 @@ _approval_apply_issue_lifecycle_updates() {
 	# verified. Invoking `release` here would perform a second remote status write
 	# that can overwrite a concurrent queued worker claim. On uncertainty, retain
 	# the stamp as a durable ownership/recovery marker.
-	if [[ "$_ah_had_in_review" -eq 1 ]]; then
-		_ah_stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
-		rm -f "$_ah_stamp_file" 2>/dev/null || true
-		_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
-	fi
+	[[ "$_ah_had_in_review" -eq 0 ]] || _approval_release_claim_stamp "$target_number" "$slug"
+	return 0
+}
+
+# Remove only the local interactive claim stamp for a verified handoff.
+_approval_release_claim_stamp() {
+	local target_number="$1"
+	local slug="$2"
+	local stamp_file="${_APPROVAL_HOME}/.aidevops/.agent-workspace/interactive-claims/${slug//\//-}-${target_number}.json"
+
+	rm -f "$stamp_file" 2>/dev/null || true
+	_print_info "Released the local interactive claim after the verified remote lifecycle handoff"
 	return 0
 }
 
