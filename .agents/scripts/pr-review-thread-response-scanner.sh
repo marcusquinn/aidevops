@@ -1129,6 +1129,15 @@ _prrts_set_dispatch_outputs() {
 	return 0
 }
 
+# A progress record belongs only to the dispatch it completed, not a later one.
+_prrts_has_fresh_progress() {
+	local reason="$1" analysis_complete="$2" completed_at="$3" dispatched_at="$4"
+	if [[ "$reason" == progress:* && "$analysis_complete" == "$PRRTS_BOOL_FALSE" && "$completed_at" -gt "$dispatched_at" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _prrts_should_dispatch() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1148,7 +1157,7 @@ _prrts_should_dispatch() {
 	local stored_contract_label="" outcome_reason="" outcome_session_count="" outcome_finished_at="0" outcome_retry_class=""
 	local expected_outcome_id="" observed_outcome_id="" infrastructure_failure_cooldown=""
 	local retryable_infrastructure_failure="$PRRTS_BOOL_FALSE" maintainer_gate_outcome="$PRRTS_BOOL_FALSE"
-	local completed_at="0" fresh_progress="$PRRTS_BOOL_FALSE"
+	local completed_at="0"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	outcome_file="$(_prrts_outcome_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
@@ -1186,11 +1195,6 @@ _prrts_should_dispatch() {
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — response worker already active"
 		return "$PRRTS_RC_DISPATCH_DEFERRED"
 	fi
-	# A progress record belongs only to the dispatch it completed, not a later one.
-	if [[ "$blocker_reason" == progress:* && "$analysis_complete" == "$PRRTS_BOOL_FALSE" &&
-		"$completed_at" -gt "$dispatched_at" ]]; then
-		fresh_progress="$PRRTS_BOOL_TRUE"
-	fi
 	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$analysis_complete" == "$PRRTS_BOOL_TRUE" && "$maintainer_attention" == "$PRRTS_BOOL_TRUE" ]]; then
 		if [[ "$last_attempt_count" -eq 1 ]] && _prrts_retryable_prelaunch_failure_once "$blocker_reason"; then
 			retry_stale_head_validation="$PRRTS_BOOL_TRUE"
@@ -1218,7 +1222,8 @@ _prrts_should_dispatch() {
 		fi
 		return 0
 	fi
-	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" && "$fresh_progress" != "$PRRTS_BOOL_TRUE" ]]; then
+	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" ]] &&
+		! _prrts_has_fresh_progress "$blocker_reason" "$analysis_complete" "$completed_at" "$dispatched_at"; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch state active ${age_seconds}s ago"
 		return "$PRRTS_RC_DISPATCH_DEFERRED"
 	fi
