@@ -657,7 +657,7 @@ _large_file_gate_close_resolved_debt_issues() {
 	local repo_slug="$2"
 	local issue_body="$3"
 	local lf_path="" marker="" branch="" sha="" count="" matches="" numbers=""
-	local debt_issue="" current_closed=false
+	local debt_issue="" current_closed=false extra=""
 	[[ "$issue_body" =~ generator=large-file-simplification-gate\ cited_file=([^[:space:]]+)\  ]] || return 1
 	lf_path="${BASH_REMATCH[1]}"
 	marker="generator=large-file-simplification-gate"
@@ -668,12 +668,18 @@ _large_file_gate_close_resolved_debt_issues() {
 	[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
 	count=$(_large_file_gate_remote_default_line_count "$repo_slug" "$lf_path" "$sha") || return 1
 	[[ "$count" =~ ^[0-9]+$ && "$count" -lt "$LARGE_FILE_LINE_THRESHOLD" ]] || return 1
-	matches=$(gh_issue_list --repo "$repo_slug" --state open --label "file-size-debt" \
+	# The current issue is closed from its validated marker and measurement,
+	# independent of search (which may lag or return []). Search only adds duplicates.
+	numbers="$issue_number"
+	if matches=$(gh_issue_list --repo "$repo_slug" --state open --label "file-size-debt" \
 		--search "\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc" \
-		--json number,body --limit 100 2>/dev/null) || return 1
-	numbers=$(printf '%s' "$matches" | jq -er --arg marker "$marker" \
-		'[.[] | select((.body // "") | contains($marker)) | .number
-		| select(type == "number" and . > 0 and . == floor)] | .[]' 2>/dev/null) || return 1
+		--json number,body --limit 100 2>/dev/null); then
+		extra=$(printf '%s' "$matches" | jq -r --arg marker "$marker" \
+			'[.[] | select((.body // "") | contains($marker)) | .number
+			| select(type == "number" and . > 0 and . == floor)] | .[]' 2>/dev/null) || extra=""
+		[[ -z "$extra" ]] || numbers+=$'\n'"$extra"
+	fi
+	numbers=$(printf '%s\n' "$numbers" | awk 'NF && !seen[$0]++')
 	while IFS= read -r debt_issue; do
 		if gh issue close "$debt_issue" --repo "$repo_slug" --reason completed \
 			--comment "Resolved file-size debt: ${lf_path} has ${count} lines (below ${LARGE_FILE_LINE_THRESHOLD}) on default branch ${branch} at commit ${sha}. Verified from the pinned remote file content." >/dev/null 2>&1; then

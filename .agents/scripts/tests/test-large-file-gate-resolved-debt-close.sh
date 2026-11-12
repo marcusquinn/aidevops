@@ -58,7 +58,19 @@ if rg -q 'close 14 ' "$TMP/closes"; then
 fi
 printf 'PASS: exact-marker canonical and duplicate closure with pinned evidence\n'
 
-for FAIL in api content search close; do
+# Search lag/failure must not leave the verified current issue open.
+SAVED_MATCHES="$MATCHES"
+for FAIL in search empty; do
+	: >"$TMP/closes"
+	[[ "$FAIL" != empty ]] || MATCHES='[]'
+	_large_file_gate_close_resolved_debt_issues 12 owner/repo "$BODY"
+	[[ $(wc -l <"$TMP/closes") -eq 1 ]]
+	rg -q -- 'close 12 ' "$TMP/closes"
+done
+MATCHES="$SAVED_MATCHES"
+printf 'PASS: current issue closes when search fails or omits it\n'
+
+for FAIL in api content close; do
 	: >"$TMP/closes"
 	if _large_file_gate_close_resolved_debt_issues 12 owner/repo "$BODY"; then
 		printf 'FAIL: accepted %s failure\n' "$FAIL"
