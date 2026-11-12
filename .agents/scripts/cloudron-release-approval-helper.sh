@@ -638,6 +638,53 @@ release_authorize() {
 	return 1
 }
 
+# GH#37955: does exact head $3 of PR $2 change the CloudronManifest.json
+# version against its base branch tip? Returns 0 for a release bump, 1 when it
+# is not one, and 2 when the evidence is unavailable (callers fail closed).
+release_is_version_bump() {
+	local repo="$1" pr="$2" head="$3" manifest_path='CloudronManifest.json'
+	local snapshot="" pages="" touched="" base_ref="" head_version="" base_version=""
+	# Same-repository, non-draft PRs against main only; anything else is unknown.
+	snapshot=$(release_pr "$repo" "$pr") || return 2
+	jq -e --arg head "$head" '.head.sha == $head' <<<"$snapshot" >/dev/null || return 2
+	pages=$(gh api "repos/${repo}/pulls/${pr}/files?per_page=100" --paginate) || return 2
+	# Malformed pages make jq fail, which is unknown evidence, not "unchanged".
+	touched=$(jq -s --arg path "$manifest_path" 'add // [] | any(.[]; .filename == $path or .previous_filename == $path)' <<<"$pages") || return 2
+	[[ "$touched" == true ]] || return 1
+	base_ref=$(jq -er '.base.ref' <<<"$snapshot") || return 2
+	head_version=$(release_contents "$repo" "$manifest_path" "$head" | jq -r '.version // ""') || return 2
+	base_version=$(release_contents "$repo" "$manifest_path" "$base_ref" | jq -r '.version // ""') || return 2
+	[[ -n "$head_version" && -n "$base_version" ]] || return 2
+	[[ "$head_version" != "$base_version" ]] || return 1
+	printf '%s %s\n' "$base_version" "$head_version"
+	return 0
+}
+
+# GH#37955: merge-time release gate for every transport (pulse and full-loop).
+# A manifest version change publishes a catalog release on merge, so it needs
+# exact-head release authority whether or not a release request was ever made.
+# An unauthorized bump is held for the r924 routine (process --apply), which
+# requests approval or applies the signed standing policy. Returns 0 to allow.
+release_merge_guard() {
+	local repo="$1" pr="$2" head="$3" versions="" rc=0
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ $RELEASE_SHA_PATTERN ]] ||
+		release_error 'merge-guard requires owner/repo, a PR number and a full head SHA.' || return 1
+	versions=$(release_is_version_bump "$repo" "$pr" "$head") || rc=$?
+	[[ "$rc" -ne 1 ]] || return 0
+	#aidevops:trust-boundary — unknown evidence never allows a package merge.
+	[[ "$rc" -eq 0 ]] || release_error "Unable to determine whether PR #${pr} changes the ${repo} release version; merge blocked." || return 1
+	release_authorize "$repo" "$pr" "$head" && return 0
+	if [[ "${DRY_RUN:-0}" != 1 ]]; then
+		# Adding holds only narrows merge eligibility; it never grants authority.
+		if ! release_ensure_labels "$repo" ||
+			! gh_pr_edit_safe "$pr" --repo "$repo" --add-label "$RELEASE_APPROVAL_LABEL" --add-label hold-for-review >/dev/null; then
+			printf 'WARN: unable to apply release hold labels to PR #%s in %s\n' "$pr" "$repo" >&2
+		fi
+	fi
+	release_error "PR #${pr} changes the ${repo} release version (${versions% *} -> ${versions#* }) without exact-head release authority; held for the release routine (signed approval or standing release policy)."
+	return 1
+}
+
 # Held worker PRs: same-repository, non-draft, labelled for release approval.
 # Prints a number-sorted array of {number, head, issues}. Fails closed on a
 # malformed or possibly truncated page.
@@ -952,6 +999,10 @@ main() {
 		[[ $# -eq 4 ]] || return 1
 		release_authorize "$arg2" "$arg3" "$arg4" || return 1
 		;;
+	merge-guard)
+		[[ $# -eq 4 ]] || return 1
+		release_merge_guard "$arg2" "$arg3" "$arg4" || return 1
+		;;
 	request)
 		[[ $# -eq 3 ]] || return 1
 		release_request "$arg2" "$arg3" || return $?
@@ -988,7 +1039,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac
