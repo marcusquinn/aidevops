@@ -1848,6 +1848,7 @@ cmd_merge() {
 		return 1
 	fi
 	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_restore_partial_continuation "$pr_number" "$repo" || print_warning "Partial continuation restore could not run for PR #${pr_number}"
 	_merge_record_post_merge_audits "$pr_number" "$repo" "$FULL_LOOP_MERGE_SHA"
 	_merge_sync_canonical_then_reconcile "$pr_number" "$repo" "$_canonical_dir"
 	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active; then
@@ -1857,3 +1858,20 @@ cmd_merge() {
 
 	return 0
 }
+
+# Isolate pulse globals; the restore itself checks worker origin, closing refs,
+# merged state and ownership before any writes. It is best-effort after merge.
+_merge_restore_partial_continuation() (
+	local pr_number="$1" repo="$2" LOGFILE="" line=""
+	LOGFILE=$(mktemp "${TMPDIR:-/tmp}/partial-restore.XXXXXX") || return 1
+	trap 'rm -f "$LOGFILE"' EXIT
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pulse-merge.sh" || return 1
+	_pm_restore_partial_continuation "$pr_number" "$repo" "" "" || return 1
+	if [[ -s "$LOGFILE" ]]; then
+		while IFS= read -r line; do print_info "$line"; done <"$LOGFILE"
+	else
+		print_info "Partial continuation restore checked for PR #${pr_number}"
+	fi
+	return 0
+)
