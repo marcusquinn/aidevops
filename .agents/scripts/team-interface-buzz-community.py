@@ -13,6 +13,7 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
+from _team_interface_buzz_plan import as_list, compute_plan, member_pubkeys, render_text
 from _team_interface_buzz_runtime_install import default_app_data_dir
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -37,18 +38,6 @@ def load_template(path):
     return data
 
 
-def template_channels(template):
-    """Return {channel name: visibility} for all template channels."""
-    channels = {}
-    for section in template.get("sections", []):
-        for channel in section.get("channels", []):
-            channels[channel["name"]] = channel.get("visibility", "open")
-    for channel in template.get("unsectioned_channels", []):
-        channels[channel["name"]] = channel.get("visibility", "open")
-    for name in template.get("agents", {}).get("repo_channels", {}):
-        channels.setdefault(name, "open")
-    return channels
-
 
 def run_buzz_json(buzz_bin, args):
     """Run a read-only buzz CLI command and parse its JSON output."""
@@ -68,17 +57,6 @@ def run_buzz_json(buzz_bin, args):
         return json.loads(result.stdout)
     except ValueError as error:
         raise PlanError(f"buzz {' '.join(args)} returned non-JSON output") from error
-
-
-def as_list(value, *keys):
-    """Return a list from a bare list or a dict wrapping it under a known key."""
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict):
-        for key in keys:
-            if isinstance(value.get(key), list):
-                return value[key]
-    return []
 
 
 def load_identities(app_data_dir):
@@ -110,95 +88,6 @@ def channel_record(channel):
         str(channel.get("id") or channel.get("channel_id") or channel.get("channelId") or ""),
         str(channel.get("name") or ""),
     )
-
-
-def member_pubkeys(members):
-    """Return the set of pubkeys in a buzz members payload."""
-    keys = set()
-    for member in as_list(members, "members"):
-        if isinstance(member, str):
-            keys.add(member)
-        elif isinstance(member, dict):
-            key = member.get("pubkey") or member.get("publicKey")
-            if isinstance(key, str):
-                keys.add(key)
-    return keys
-
-
-def compute_plan(template, host_slug, identities, live_channels, live_members):
-    """Compute the community plan sections without any side effect."""
-    wanted = template_channels(template)
-    missing_channels = sorted(name for name in wanted if name not in live_channels)
-    agents = template.get("agents", {})
-    agent_channels = {role: list(channels) for role, channels in agents.get("channels", {}).items()}
-    for channel, roles in agents.get("repo_channels", {}).items():
-        for role in roles:
-            channels = agent_channels.setdefault(role, [])
-            if channel not in channels:
-                channels.append(channel)
-    missing_agents = []
-    requests = []
-    owner_actions = []
-    unreadable_memberships = []
-    executing_pubkey = identities.get(f"aidevops-{host_slug}")
-    per_channel = {}
-    for role, channels in agent_channels.items():
-        name = f"{role}-{host_slug}"
-        pubkey = identities.get(name)
-        if pubkey is None:
-            missing_agents.append(name)
-            continue
-        for channel in channels:
-            per_channel.setdefault(channel, []).append((name, pubkey))
-    for channel in sorted(per_channel):
-        if channel not in live_channels:
-            continue
-        current = live_members.get(channel)
-        if current is None:
-            unreadable_memberships.append(channel)
-            continue
-        pending = [pk for _, pk in per_channel[channel] if pk not in current]
-        if not pending:
-            continue
-        request = {
-            "tool": "member_add",
-            "channel": live_channels[channel],
-            "channel_name": channel,
-            "pubkeys": pending,
-            "role": "bot",
-        }
-        requests.append(request)
-        if wanted.get(channel) == "private" and executing_pubkey not in current:
-            owner_actions.append(channel)
-    return {
-        "host_slug": host_slug,
-        "missing_channels": missing_channels,
-        "missing_agents": sorted(missing_agents),
-        "member_add_requests": requests,
-        "private_channels_needing_owner": owner_actions,
-        "unreadable_memberships": unreadable_memberships,
-    }
-
-
-def render_text(plan):
-    """Render the plan for humans."""
-    lines = [f"Buzz community plan for host slug: {plan['host_slug']}", ""]
-    lines.append("1. Missing channels (create in Buzz; local tools cannot):")
-    lines += [f"   - {name}" for name in plan["missing_channels"]] or ["   none"]
-    lines += ["", "2. Missing agent drafts (generate/submit via the snapshot flow):"]
-    lines += [f"   - {name}" for name in plan["missing_agents"]] or ["   none"]
-    lines += ["", "3. member_add requests (send to an existing aidevops Buzz agent",
-              "   in that channel with `buzz messages send --mention`):"]
-    for request in plan["member_add_requests"]:
-        lines.append("   " + json.dumps(request, sort_keys=True))
-    if not plan["member_add_requests"]:
-        lines.append("   none")
-    lines += ["", "4. Private channels where the owner must first add that agent",
-               "   (member_add is refused with 'restricted: not a channel member'):"]
-    lines += [f"   - {name}" for name in plan["private_channels_needing_owner"]] or ["   none"]
-    lines += ["", "5. Unreadable memberships (unknown; no member_add requests planned):"]
-    lines += [f"   - {name}" for name in plan["unreadable_memberships"]] or ["   none"]
-    return "\n".join(lines)
 
 
 def build_parser():
