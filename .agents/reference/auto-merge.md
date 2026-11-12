@@ -129,6 +129,21 @@ The allowlist allows peer runners (separate machine/account, `COLLABORATOR` asso
 
 **Security posture:** Allowlist entries are local-trust grants from the maintainer of the runner machine. They cannot bypass CI, a live NMR gate, or PR-specific external merge authority; they only relax the GitHub author-association proxy.
 
+### Scheduled-Workflow Issues (GH#37882)
+
+An issue opened by a workflow's default `GITHUB_TOKEN` is authored by `github-actions[bot]` (`author_association` `NONE`), so its worker PRs stop at criterion 2: `Merge blocked by t2449: linked issue #N author_association=NONE ... no cryptographic approval signature found`. Pulse and `full-loop-helper.sh merge` share this verdict (`worker_briefed_trust_verdict`).
+
+**Supported route: give the workflow maintainer authority.** Have the workflow open and edit its issues with a token that carries maintainer identity, falling back to `github.token`:
+
+- **Maintainer fine-grained PAT** (repository or organization secret; `Issues: Read and write` on the target repositories only). The issue author becomes the maintainer, `OWNER`/`MEMBER`, and criterion 2 passes with no config change.
+- **GitHub App installation token** (minted in the job with `actions/create-github-app-token`). The issue author is `<app-slug>[bot]`; add that exact login, including `[bot]`, to `trusted-issue-authors.conf` on each runner.
+
+Use such a token only in workflows that run trusted code: `schedule`/`workflow_dispatch` on the default branch, with no `pull_request_target`, `issue_comment`, or other untrusted triggers that write issues. A maintainer-authored brief is maintainer-briefed for every file it names, so the workflow, not the PR diff, bounds the scope. Criteria 3-9 still apply.
+
+**Never** add `github-actions[bot]` to the allowlist: login matching is global, so it would trust every Actions-filed issue in every Pulse repository, including workflows on untrusted triggers.
+
+**Scoped exceptions without a token.** Two fixed issue shapes pass as `github-actions[bot]` when the PR diff stays in scope: the OpenCode pin canary (`_is_trusted_opencode_canary_issue_pr`, GH#35752) and WP Plugin Starter `starter-sync` issues (`_is_trusted_starter_sync_issue_pr`, GH#37289). The starter-sync scope is `scripts/core-files.txt` at the PR base plus bare `` - `path` `` items under the issue's `### Files Scope`. New core files from the starter, and plugin-own edits (`README.md`, annotated scope lines), fall outside it and still need the token route or `sudo aidevops approve issue N`.
+
 ### Security Gate: External-Author NMR Authority
 
 `auto_approve_maintainer_issues` uses live issue-author authority as the invariant. A verified write-authorized author never self-approves: unreasoned residue is removed, explicit durable human-decision or security evidence becomes `hold-for-review`, and machine-breaker evidence becomes `status:blocked`, without posting an approval marker. A live security label takes precedence over temporary or breaker recovery. Label actor, elapsed time, and missing automation provenance cannot manufacture human intent; incomplete timeline, comment, or current-label evidence leaves NMR unchanged for retry.
