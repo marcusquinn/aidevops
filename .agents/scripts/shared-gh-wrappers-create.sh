@@ -237,8 +237,51 @@ _gh_ci_prepare_todo_labels() {
 # created origin-labelled issues from entering the reconciler's triage-missing
 # bucket when callers also omit tier/auto-dispatch metadata.
 _GH_CI_STATUS_LABEL_ARGS=()
+
+# GH#37993: long-lived non-task records (dashboards, routine logs, signed
+# approval/policy issues) are never task-lifecycle subjects. They receive no
+# derived status:available and no creator self-assignment.
+_GH_CI_NON_TASK_CREATE_LABELS=(
+	"persistent" "supervisor" "contributor" "quality-review" "routine-tracking"
+	"release-approval-required" "release-standing-policy"
+)
+_gh_ci_args_are_non_task() {
+	local label=""
+	for label in "${_GH_CI_NON_TASK_CREATE_LABELS[@]}"; do
+		_gh_wrapper_args_have_label "$label" "$@" && return 0
+	done
+	return 1
+}
+
+# t2028/t2406/GH#27929: choose an eligible auto-assignee before creation,
+# but keep durable creation independent from the best-effort assignment.
+# Result in _GH_CI_AUTO_ASSIGNEE (empty = no self-assignment); print_info
+# diagnostics must not be captured as the assignee.
+_GH_CI_AUTO_ASSIGNEE=""
+_gh_ci_select_auto_assignee() {
+	local target_repo="$1"
+	shift
+	_GH_CI_AUTO_ASSIGNEE=""
+	_gh_wrapper_args_have_assignee "$@" && return 0
+	if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
+		# GH#30325: pending publication withholds auto-dispatch from the
+		# issue, so trusted callers pass the original ownership intent
+		# separately for the shared GraphQL/REST creation path.
+		print_info "[INFO] caller ownership policy skips self-assignment"
+	elif _gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" "$@"; then
+		# t2157/t2406: auto-dispatch means worker-owned; skip self-assignment.
+		print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
+	elif _gh_ci_args_are_non_task "$@"; then
+		print_info "[INFO] non-task issue — skipping self-assignment per GH#37993"
+	else
+		_GH_CI_AUTO_ASSIGNEE=$(_gh_wrapper_auto_assignee "$target_repo")
+	fi
+	return 0
+}
+
 _gh_ci_prepare_status_label() {
 	_GH_CI_STATUS_LABEL_ARGS=()
+	_gh_ci_args_are_non_task "$@" && return 0
 	if ! _gh_wrapper_args_have_label_prefix "status:" "$@"; then
 		_GH_CI_STATUS_LABEL_ARGS=(--label "status:available")
 	fi
@@ -753,21 +796,8 @@ gh_create_issue() {
 		_rest_args+=("${_origin_label_args[@]}")
 	fi
 
-	# t2028/t2406/GH#27929: choose an eligible auto-assignee before creation,
-	# but keep durable creation independent from the best-effort assignment.
-	if ! _gh_wrapper_args_have_assignee "$@"; then
-		if [[ "${AIDEVOPS_GH_SKIP_AUTO_ASSIGNMENT:-0}" == 1 ]]; then
-			# GH#30325: pending publication withholds auto-dispatch from the
-			# issue, so trusted callers pass the original ownership intent
-			# separately for the shared GraphQL/REST creation path.
-			print_info "[INFO] caller ownership policy skips self-assignment"
-		elif _gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" "$@"; then
-			# t2157/t2406: auto-dispatch means worker-owned; skip self-assignment.
-			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
-		else
-			auto_assignee=$(_gh_wrapper_auto_assignee "$target_repo")
-		fi
-	fi
+	_gh_ci_select_auto_assignee "$target_repo" "$@"
+	auto_assignee="$_GH_CI_AUTO_ASSIGNEE"
 
 	issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
 	rc=$?

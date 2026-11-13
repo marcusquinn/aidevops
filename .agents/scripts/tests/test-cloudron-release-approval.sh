@@ -1082,8 +1082,9 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	export POLICY_CASE=create
 	: >"${TEST_ROOT}/calls"
 	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
-	grep -q -- '--label release-standing-policy --label no-auto-dispatch' "${TEST_ROOT}/calls"
+	grep -q -- '--label release-standing-policy --label persistent --label no-auto-dispatch' "${TEST_ROOT}/calls"
 	grep -q '^gh label create release-standing-policy --repo owner/app ' "${TEST_ROOT}/calls"
+	grep -q '^gh label create persistent --repo owner/app ' "${TEST_ROOT}/calls"
 	[[ "$(release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app)" == "$POLICY_JSON" ]]
 	# shellcheck disable=SC2016 # Markdown command backticks are literal.
 	grep -q 'Maintainer command: `sudo aidevops approve issue 50 owner/app`' "${TEST_ROOT}/policy-body"

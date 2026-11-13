@@ -233,7 +233,7 @@ _fetch_label_invariant_rows() {
 			([$labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			(any($labels[].name; . == "origin:interactive") | tostring),
 			(any($labels[].name; . == "auto-dispatch")      | tostring),
-			(any($labels[].name; . == ("supervisor", "contributor", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold") or . == $persistent) | tostring),
+			(any($labels[].name; . == ("supervisor", "contributor", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold", "release-approval-required", "release-standing-policy") or . == $persistent) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
 			(([$labels[].name | select(startswith("status:"))] | length) | tostring),
 			(any($labels[].name; . == $persistent) | tostring),

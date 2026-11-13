@@ -1210,8 +1210,43 @@ test_monitor_reconciles_catalog_once() {
 	return 0
 }
 
+write_signing_gh_stub() {
+	# Offline stand-in for the Git Database API: it returns a GitHub-shaped signed
+	# commit (payload plus detached signature) without storing it locally, so the
+	# workflow must rebuild the exact object before the atomic push.
+	local stub_dir="$1"
+	mkdir -p "$stub_dir"
+	cat >"$stub_dir/gh" <<'PY'
+#!/usr/bin/env python3
+import base64, hashlib, json, subprocess, sys
+endpoint = sys.argv[2].rsplit('/git/', 1)[1]
+body = json.load(sys.stdin)
+def git(*args, data=None):
+    return subprocess.run(['git', *args], input=data, capture_output=True, check=True).stdout.decode().strip()
+if endpoint == 'blobs':
+    print(git('hash-object', '-w', '--stdin', data=base64.b64decode(body['content'])))
+elif endpoint == 'trees':
+    item = body['tree'][0]
+    entries = [line for line in git('ls-tree', body['base_tree']).splitlines() if line.split('\t', 1)[1] != item['path']]
+    entries.append(item['mode'] + ' blob ' + item['sha'] + '\t' + item['path'])
+    print(git('mktree', data=('\n'.join(entries) + '\n').encode()))
+else:
+    head = ('tree %s\nparent %s\n' % (body['tree'], body['parents'][0])
+            + 'author github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1700000000 +0000\n'
+            + 'committer GitHub <noreply@github.com> 1700000000 +0000')
+    signature = '-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQ\n=test\n-----END PGP SIGNATURE-----\n'
+    raw = (head + '\ngpgsig ' + signature.replace('\n', '\n ') + '\n\n' + body['message']).encode()
+    sha = hashlib.sha1(b'commit %d\0' % len(raw) + raw).hexdigest()
+    print(json.dumps({'sha': sha, 'verification': {'verified': True, 'reason': 'valid', 'signature': signature,
+                                                    'payload': head + '\n\n' + body['message']}}))
+PY
+	chmod 0755 "$stub_dir/gh"
+	return 0
+}
+
 test_catalog_atomic_push_races() {
 	# Execute the actual workflow shell against disposable local bare remotes.
+	write_signing_gh_stub "$TEST_ROOT/signing-gh"
 	python3 - "$SCRIPT_DIR/../../../.github/workflows/cloudron-catalog-publish-reusable.yml" "$TEST_ROOT" <<'PY'
 import os
 import pathlib
@@ -1227,6 +1262,7 @@ editor.write_text('#!/usr/bin/env python3\nimport pathlib, sys\npathlib.Path(sys
 editor.chmod(0o755)
 env = dict(os.environ, GIT_AUTHOR_NAME='Catalog Test', GIT_AUTHOR_EMAIL='test@example.invalid',
            GIT_COMMITTER_NAME='Catalog Test', GIT_COMMITTER_EMAIL='test@example.invalid', GIT_EDITOR=str(editor))
+stub_bin = pathlib.Path(sys.argv[2]) / 'signing-gh'
 
 def git(cwd, *args):
     result = subprocess.run(['git', *args], cwd=cwd, env=env, text=True, capture_output=True)
@@ -1234,7 +1270,9 @@ def git(cwd, *args):
         raise AssertionError(result.stderr)
     return result.stdout.strip()
 
-for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-source', 'catalog', 'second-race'):
+for scenario in ('unchanged', 'docs', 'signed', 'signed-docs', 'source', 'reverted-source', 'renamed-source',
+                 'catalog', 'second-race'):
+    signed = scenario.startswith('signed')
     root = pathlib.Path(sys.argv[2]) / ('push-' + scenario)
     root.mkdir()
     remote, worker, racer = (root / name for name in ('origin.git', 'worker', 'racer'))
@@ -1247,8 +1285,8 @@ for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-sour
     source = git(worker, 'rev-parse', 'HEAD')
     git(worker, 'push', 'origin', 'HEAD:main')
     git(root, 'clone', str(remote), str(racer))
-    if scenario != 'unchanged':
-        path = 'README.md' if scenario in ('docs', 'second-race') else 'CloudronVersions.json' if scenario == 'catalog' else 'Dockerfile'
+    if scenario not in ('unchanged', 'signed'):
+        path = 'README.md' if scenario in ('docs', 'signed-docs', 'second-race') else 'CloudronVersions.json' if scenario == 'catalog' else 'Dockerfile'
         (racer / path).write_text('concurrent change\n')
         git(racer, 'add', '.')
         git(racer, 'commit', '-m', 'concurrent change')
@@ -1266,11 +1304,16 @@ for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-sour
     expected_main = git(racer, 'ls-remote', 'origin', 'refs/heads/main').split()[0]
     catalog = '{"versions":{"1.0.0":{}}}\n'
     (worker / 'CloudronVersions.json').write_text(catalog)
+    # Unsigned scenarios lack SIGN_TOKEN and must take the warned fallback.
+    signing = dict(SIGN_TOKEN='test-sign-token', GITHUB_REPOSITORY='exampleorg/example-package', RUNNER_TEMP=str(root),
+                   PATH=str(stub_bin) + os.pathsep + env['PATH']) if signed else {}
     result = subprocess.run(['bash', '-c', script], cwd=worker,
-                            env=dict(env, SOURCE_SHA=source, VERSION='1.0.0', PUSH_TOKEN='test-placeholder'),
+                            env=dict(env, **signing, SOURCE_SHA=source, VERSION='1.0.0', PUSH_TOKEN='test-placeholder'),
                             text=True, capture_output=True)
-    success = scenario in ('unchanged', 'docs')
+    success = scenario in ('unchanged', 'docs', 'signed', 'signed-docs')
     assert (result.returncode == 0) == success, (scenario, result.stdout, result.stderr)
+    if success:
+        assert ('publishing the unsigned atomic commit' in result.stdout) != signed, (scenario, result.stdout)
     tag = git(worker, 'ls-remote', 'origin', 'refs/tags/v1.0.0')
     assert bool(tag) == success, scenario
     if success:
@@ -1279,6 +1322,12 @@ for scenario in ('unchanged', 'docs', 'source', 'reverted-source', 'renamed-sour
         assert git(racer, 'show', '-s', '--format=%(trailers:key=Cloudron-Source,valueonly)', 'v1.0.0^{commit}') == source
         git(racer, 'merge-base', '--is-ancestor', source, 'v1.0.0')
         assert git(racer, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'v1.0.0') == 'CloudronVersions.json'
+        published = git(racer, 'cat-file', 'commit', 'v1.0.0^{commit}')
+        # Runner-local signing config may sign fallback commits; check for GitHub's.
+        github_signed = '\ncommitter GitHub <noreply@github.com>' in published and '\ngpgsig -----BEGIN PGP' in published
+        assert github_signed == signed, (scenario, published)
+        assert git(racer, 'rev-parse', 'origin/main') == git(racer, 'rev-parse', 'v1.0.0^{commit}'), scenario
+        assert git(racer, 'show', '-s', '--format=%s', 'v1.0.0^{commit}') == 'chore: publish Cloudron package 1.0.0 [skip ci]'
         release = workflow.split('      - name: Verify existing tag, public image and catalog; repair release only\n', 1)[1]
         verification = textwrap.dedent(release.split('        run: |\n', 1)[1]).split('image=$(jq', 1)[0]
         checked = subprocess.run(['bash', '-c', verification + '\ntest "$source_sha" = "$EXPECTED_SOURCE"'],

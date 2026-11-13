@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.185] - 2026-11-13
+
+### Added
+
+- support guarded local published-release adoption (GH#37658) (#37958)
+- add Render service readiness (#37948)
+
+### Changed
+
+- Documentation: release-scope sweep solves session-filed issues before release
+- Refactor: split checkpoint continuation test into modules (#37935)
+
+### Fixed
+
+- close duplicate dashboards when reusing an existing one
+- skip task-lifecycle labels on approval-only issues
+- require release authority for every manifest version bump merge
+- detect global OpenCode plugin contract (#37946)
+- wait for unmanaged runtime lease (#37943)
+- retry transient gh reads in release receipt evidence (GH#37944) (#37951)
+- checkpoint dependency graph rebuilds (GH#37938) (#37945)
+- omit unsupported --agent flag on OpenCode 2.x (GH#37932) (#37934)
+- drain unit launches whose recorded boot has ended (#37952)
+- continuation progress push path, capacity-blocker rejection, unchanged-head exit classification (#37953)
+
 ## [3.39.184] - 2026-11-12
 
 ### Changed
