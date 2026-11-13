@@ -21,9 +21,15 @@
 #   git -C "$SCRATCH_WORKTREE_PATH" fetch ...
 #   scratch_worktree_remove "$SCRATCH_WORKTREE_PATH" "my-script.sh" || true
 #
+# A caller that only needs one fetch for a canonical checkout uses
+# scratch_worktree_fetch, which borrows a linked worktree when one is usable and
+# creates (then removes) a scratch worktree only when none is.
+#
 # Environment:
 #   AIDEVOPS_SCRATCH_WORKTREE_STALE_MINUTES — idle minutes before a dead owner's
 #     scratch worktree is reclaimable (default 30).
+#   AIDEVOPS_SCRATCH_WORKTREE_FETCH_TIMEOUT_SECONDS — wall-clock bound for one
+#     scratch_worktree_fetch when timeout_sec is loaded (default 120).
 #
 # Compatibility: bash 3.2+.
 
@@ -35,8 +41,11 @@ _SCRATCH_WT_REASON_PREFIX="aidevops-scratch/v1"
 _SCRATCH_WT_CALLER="scratch-worktree-helper.sh"
 _SCRATCH_WT_MODE="scratch"
 _SCRATCH_WT_UNKNOWN="unknown"
+_SCRATCH_WT_FETCH_STAGE_CONTEXT="context"
+_SCRATCH_WT_FETCH_STAGE_FETCH="fetch"
 SCRATCH_WORKTREE_PATH=""
 SCRATCH_WORKTREE_REASON=""
+SCRATCH_WORKTREE_FETCH_FAILURE=""
 
 # Audit one event; loads the canonical audit logger lazily (fail-open).
 _scratch_wt_log() {
@@ -210,6 +219,100 @@ scratch_worktree_remove() {
 	_scratch_wt_unlock_and_remove "$wt_path" "$expected_reason" "$caller" "$context" || return 1
 	SCRATCH_WORKTREE_PATH=""
 	SCRATCH_WORKTREE_REASON=""
+	return 0
+}
+
+# Return 0 when a path is a linked worktree whose Git state is readable.
+# `rev-parse` does not read the index, and a truncated sibling index fails a
+# fetch, so the probe is a lock-free status.
+_scratch_wt_context_is_usable() {
+	local wt_path="$1"
+	local git_dir="" common_dir=""
+	[[ -n "$wt_path" && -d "$wt_path" && ! -L "$wt_path" ]] || return 1
+	git_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	common_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]] || return 1
+	GIT_OPTIONAL_LOCKS=0 git -C "$wt_path" status --porcelain --untracked-files=no >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Print the first linked worktree that can be borrowed as a fetch context.
+# Locked entries are skipped: a lock marks a worktree still being created, a
+# scratch worktree its owner may remove mid-fetch, or a deliberate hold.
+_scratch_wt_borrowable_context() {
+	local repo_path="$1"
+	local line="" candidate="" held=0
+	if _scratch_wt_context_is_usable "$repo_path"; then
+		printf '%s\n' "$repo_path"
+		return 0
+	fi
+	# The trailing blank line closes the last porcelain record.
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*)
+			candidate="${line#worktree }"
+			held=0
+			;;
+		locked | "locked "* | prunable | "prunable "* | bare) held=1 ;;
+		"")
+			if [[ -n "$candidate" && "$held" -eq 0 ]] && _scratch_wt_context_is_usable "$candidate"; then
+				printf '%s\n' "$candidate"
+				return 0
+			fi
+			candidate=""
+			;;
+		esac
+	done < <(
+		git -C "$repo_path" worktree list --porcelain 2>/dev/null
+		printf '\n'
+	)
+	return 1
+}
+
+#######################################
+# Run one `git fetch` for a repository from a linked-worktree Git context.
+# The canonical Git guard denies `git fetch` in a canonical checkout, so a
+# caller that holds only the canonical path fetches through a borrowed linked
+# worktree, or through an owned scratch worktree when none is usable. Objects
+# and remote-tracking refs are shared by every worktree of the repository.
+# Pass --no-write-fetch-head so a borrowed worktree's FETCH_HEAD is untouched.
+# Arguments: $1 repo path, $2 scratch base dir, $3 scratch label,
+#   $4 audit caller, $5.. arguments for `git fetch`
+# Sets: SCRATCH_WORKTREE_FETCH_FAILURE — empty on success, "context" when no
+#   linked context was available, "fetch" when `git fetch` failed
+# Returns: 0 when the fetch succeeded, 1 otherwise
+#######################################
+scratch_worktree_fetch() {
+	local repo_path="${1:-}"
+	local base_dir="${2:-}"
+	local label="${3:-}"
+	local caller="${4:-$_SCRATCH_WT_CALLER}"
+	local fetch_seconds="${AIDEVOPS_SCRATCH_WORKTREE_FETCH_TIMEOUT_SECONDS:-120}"
+	local fetch_cwd="" bootstrap_path=""
+	local fetch_rc=0
+	SCRATCH_WORKTREE_FETCH_FAILURE="$_SCRATCH_WT_FETCH_STAGE_CONTEXT"
+	[[ $# -ge 5 && -n "$repo_path" && -n "$base_dir" && -n "$label" ]] || return 1
+	shift 4
+	[[ "$fetch_seconds" =~ ^[1-9][0-9]*$ ]] || fetch_seconds=120
+	fetch_cwd=$(_scratch_wt_borrowable_context "$repo_path") || fetch_cwd=""
+	if [[ -z "$fetch_cwd" ]]; then
+		scratch_worktree_add "$repo_path" "$base_dir" "$label" HEAD || return 1
+		bootstrap_path="$SCRATCH_WORKTREE_PATH"
+		fetch_cwd="$bootstrap_path"
+	fi
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		GIT_TERMINAL_PROMPT=0 timeout_sec "$fetch_seconds" git -C "$fetch_cwd" fetch "$@" || fetch_rc=$?
+	else
+		GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" fetch "$@" || fetch_rc=$?
+	fi
+	if [[ -n "$bootstrap_path" ]]; then
+		scratch_worktree_remove "$bootstrap_path" "$caller" || true
+	fi
+	if [[ "$fetch_rc" -ne 0 ]]; then
+		SCRATCH_WORKTREE_FETCH_FAILURE="$_SCRATCH_WT_FETCH_STAGE_FETCH"
+		return 1
+	fi
+	SCRATCH_WORKTREE_FETCH_FAILURE=""
 	return 0
 }
 

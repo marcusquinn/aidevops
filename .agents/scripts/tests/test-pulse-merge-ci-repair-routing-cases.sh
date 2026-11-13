@@ -344,7 +344,8 @@ define_feedback_helpers() {
 		_ci_repair_latest_archive
 		_ci_repair_prepare_attempt
 		_ci_repair_adopt_live_session
-		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_create_worktree
+		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_fetch_pr_head
+		_ci_repair_create_worktree
 		_ci_repair_session_identity
 		_ci_repair_resolve_runner_login
 		_ci_repair_launch_worker
@@ -1140,6 +1141,187 @@ test_ci_repair_worktree_paths_are_repository_scoped() {
 		print_result "same-basename repositories have isolated repair worktrees" 0
 	fi
 	teardown_test_env
+	return 0
+}
+
+# GH#38031 fixture: a canonical checkout whose remote holds a PR head it has
+# not fetched, behind a git that refuses `fetch` in a main worktree exactly as
+# the canonical Git guard does. Linked worktrees and the object store are real.
+setup_guarded_head_fetch_fixture() {
+	local candidate="" real_git=""
+	while IFS= read -r candidate; do
+		[[ "$candidate" != "${TEST_ROOT}/bin/git" && -x "$candidate" ]] || continue
+		real_git="$candidate"
+		break
+	done < <(type -a -P git 2>/dev/null)
+	[[ -n "$real_git" ]] || return 1
+	GUARDED_FETCH_SAVED_HOME="$HOME"
+	export TEST_REAL_GIT="$real_git"
+	export HOME="${TEST_ROOT}/home"
+	export AIDEVOPS_CLEANUP_LOG="${TEST_ROOT}/cleanup.log"
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
+	# Generation enrollment is not under test and would otherwise address the
+	# invoking session's lifecycle state.
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	mkdir -p "$HOME"
+	cat >"${TEST_ROOT}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+target="$PWD"
+subcommand=""
+args=("$@")
+index=0
+while [[ "$index" -lt "${#args[@]}" ]]; do
+	case "${args[$index]}" in
+	-C)
+		target="${args[$((index + 1))]}"
+		index=$((index + 2))
+		;;
+	-c) index=$((index + 2)) ;;
+	-*) index=$((index + 1)) ;;
+	*)
+		subcommand="${args[$index]}"
+		break
+		;;
+	esac
+done
+if [[ "$subcommand" == "fetch" ]]; then
+	git_dir=$("$TEST_REAL_GIT" -C "$target" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+	common_dir=$("$TEST_REAL_GIT" -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+	if [[ -z "$git_dir" || "$git_dir" == "$common_dir" ]]; then
+		printf 'fetch-denied %s\n' "${target##*/}" >>"${GH_LOG}"
+		printf "BLOCKED by canonical Git guard: canonical worktree mutation via 'git fetch'\n" >&2
+		exit 42
+	fi
+	printf 'fetch-allowed %s\n' "${target##*/}" >>"${GH_LOG}"
+fi
+exec "$TEST_REAL_GIT" "$@"
+EOF
+	chmod +x "${TEST_ROOT}/bin/git"
+	cat >"${TEST_ROOT}/bin/worktree-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "add" ]] || exit 1
+branch="${2:-}"
+path="${3:-}"
+shift 3
+base=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--base)
+		base="${2:-}"
+		shift 2
+		;;
+	*) shift ;;
+	esac
+done
+git worktree add -q -b "$branch" "$path" "$base"
+EOF
+	chmod +x "${TEST_ROOT}/bin/worktree-helper.sh"
+
+	local seed="${TEST_ROOT}/seed" origin="${TEST_ROOT}/origin.git"
+	local -a identity=(-c user.name=Test -c user.email=test@example.invalid)
+	"$real_git" init -q --bare -b main "$origin" || return 1
+	"$real_git" init -q -b main "$seed" || return 1
+	"$real_git" -C "$seed" "${identity[@]}" commit -q --allow-empty -m seed || return 1
+	"$real_git" -C "$seed" push -q "$origin" main || return 1
+	"$real_git" clone -q "$origin" "${TEST_ROOT}/repo" || return 1
+	"$real_git" -C "$seed" checkout -q -b feature/repair || return 1
+	"$real_git" -C "$seed" "${identity[@]}" commit -q --allow-empty -m "pr head" || return 1
+	"$real_git" -C "$seed" push -q "$origin" feature/repair || return 1
+	GUARDED_FETCH_HEAD_SHA=$("$real_git" -C "$seed" rev-parse HEAD) || return 1
+	# shellcheck source=../scratch-worktree-helper.sh
+	source "${SCRIPT_DIR}/../scratch-worktree-helper.sh" || return 1
+	return 0
+}
+
+teardown_guarded_head_fetch_fixture() {
+	[[ -n "${GUARDED_FETCH_SAVED_HOME:-}" ]] && export HOME="$GUARDED_FETCH_SAVED_HOME"
+	unset TEST_REAL_GIT AIDEVOPS_CLEANUP_LOG WORKTREE_REGISTRY_DIR WORKTREE_REGISTRY_DB
+	unset AIDEVOPS_LIFECYCLE_DISABLED GUARDED_FETCH_SAVED_HOME GUARDED_FETCH_HEAD_SHA
+	teardown_test_env
+	return 0
+}
+
+# Count scratch fetch contexts still present under the repair worktree base.
+guarded_fetch_scratch_leftovers() {
+	find "$AIDEVOPS_CI_REPAIR_WORKTREE_BASE_DIR" -maxdepth 1 -name '.repo-ci-repair-fetch-*' 2>/dev/null |
+		wc -l | tr -d ' '
+	return 0
+}
+
+test_ci_repair_fetches_absent_head_through_scratch_context() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for guarded head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds guarded head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local missing_rc=0 created_path="" created_head="" fetches_before=0 fetches_after=0 reused_path=""
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/absent" "fingerprint" "1" "$diagnostic" >/dev/null || missing_rc=$?
+	if [[ "$missing_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_fetch|pr_head_fetch_failed|verify_remote_branch_access_and_retry" ]]; then
+		print_result "missing remote branch fails closed as a head fetch failure" 1 "rc=${missing_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif [[ "$(guarded_fetch_scratch_leftovers)" != "0" ]]; then
+		print_result "failed head fetch removes its scratch context" 1 "leftovers=$(guarded_fetch_scratch_leftovers)"
+	else
+		print_result "failed head fetch is diagnosed and leaves no scratch context" 0
+	fi
+
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$GUARDED_FETCH_HEAD_SHA" ]]; then
+		print_result "absent PR head is fetched through a scratch context" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null), log=$(cat "$GH_LOG")"
+	elif grep -q '^fetch-denied ' "$GH_LOG" || ! grep -q '^fetch-allowed \.repo-ci-repair-fetch-' "$GH_LOG"; then
+		print_result "head fetch never targets the canonical checkout" 1 "Log: $(cat "$GH_LOG")"
+	elif [[ "$(guarded_fetch_scratch_leftovers)" != "0" ]]; then
+		print_result "successful head fetch removes its scratch context" 1 "leftovers=$(guarded_fetch_scratch_leftovers)"
+	else
+		print_result "absent PR head is fetched through an owned scratch context" 0
+	fi
+
+	fetches_before=$(grep -c '^fetch-' "$GH_LOG" || true)
+	reused_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "2" "$diagnostic") || reused_path=""
+	fetches_after=$(grep -c '^fetch-' "$GH_LOG" || true)
+	if [[ -z "$reused_path" || "$fetches_before" != "$fetches_after" ]]; then
+		print_result "locally available PR head skips the fetch" 1 "path=${reused_path}, before=${fetches_before}, after=${fetches_after}"
+	else
+		print_result "locally available PR head creates no fetch context" 0
+	fi
+	teardown_guarded_head_fetch_fixture
+	return 0
+}
+
+test_ci_repair_fetches_absent_head_through_sibling_worktree() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for sibling head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds sibling head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local moved_rc=0 created_path="" created_head=""
+	"$TEST_REAL_GIT" -C "$repo" worktree add -q --detach "${TEST_ROOT}/sibling" HEAD || true
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$GUARDED_FETCH_HEAD_SHA" ]]; then
+		print_result "absent PR head is fetched through a sibling worktree" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null), log=$(cat "$GH_LOG")"
+	elif grep -q -e '^fetch-denied ' -e '^fetch-allowed \.repo-ci-repair-fetch-' "$GH_LOG" || ! grep -q '^fetch-allowed sibling$' "$GH_LOG"; then
+		print_result "sibling worktree is borrowed instead of a scratch context" 1 "Log: $(cat "$GH_LOG")"
+	else
+		print_result "absent PR head is fetched through a borrowed sibling worktree" 0
+	fi
+
+	# The remote branch exists but its tip is not the expected head.
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "1111111111111111111111111111111111111111" \
+		"feature/repair" "fingerprint" "2" "$diagnostic" >/dev/null || moved_rc=$?
+	if [[ "$moved_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_validation|pr_head_commit_unavailable|refresh_pr_head_and_retry" ]]; then
+		print_result "moved PR head still fails closed after the fetch" 1 "rc=${moved_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif grep -q '^fetch-denied ' "$GH_LOG"; then
+		print_result "moved PR head fetch never targets the canonical checkout" 1 "Log: $(cat "$GH_LOG")"
+	else
+		print_result "moved PR head still fails closed after the fetch" 0
+	fi
+	teardown_guarded_head_fetch_fixture
 	return 0
 }
 
