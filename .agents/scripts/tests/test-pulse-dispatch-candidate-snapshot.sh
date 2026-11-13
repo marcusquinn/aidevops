@@ -96,10 +96,10 @@ third=$(_dispatch_ranked_candidates_json 50)
 	exit 1
 }
 
-PULSE_RUNNABLE_ISSUE_LIMIT=50
+# Cleanup follows the census key, not the runnable-count sample size.
 triage_marker=$(_dispatch_cycle_cache_path "pulse-triage-prepass" ".done")
 printf 'done\n' >"$triage_marker"
-_dispatch_cleanup_cycle_cache
+PULSE_RUNNABLE_ISSUE_LIMIT=7 PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50 _dispatch_cleanup_cycle_cache
 [[ ! -e "$normalize_snapshot_file" && ! -e "$skip_snapshot_file" && ! -e "$triage_marker" ]] || {
 	printf 'FAIL cycle cache cleanup left candidate or triage artifacts behind\n' >&2
 	exit 1
@@ -229,10 +229,10 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 		return 0
 	}
 	write_handoff() {
-		local target="$1" schema="$2" age="$3" issue="$4" now=""
+		local target="$1" schema="$2" age="$3" issues="$4" now=""
 		now=$(date +%s)
-		jq -nc --arg schema "$schema" --argjson captured "$((now - age))" --argjson issue "$issue" \
-			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[{number:$issue,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
+		jq -nc --arg schema "$schema" --argjson captured "$((now - age))" --arg issues "$issues" \
+			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
 		return 0
 	}
 	numbers() {
@@ -297,11 +297,40 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	[[ "$(numbers "$normalized")" == '1,2,3' && -f "$skip_handoff" ]]
 	skipped=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
 	[[ "$(numbers "$skipped")" == '7' && ! -e "$skip_handoff" ]]
+	# Production callers pass no limit: the default is the census key.
 	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 8
-	_dispatch_invalidate_candidate_snapshot label_maintenance_complete 50
+	PULSE_RUNNABLE_ISSUE_LIMIT=7 _dispatch_invalidate_candidate_snapshot label_maintenance_complete
 	[[ ! -e "$handoff" && ! -e "$partial" ]]
+
+	# Attempts the drained cycle's first wave recorded in a still-fresh durable
+	# snapshot stay consumed after adoption; an expired snapshot's lapse.
+	for fixture in '0|8' '301|7,8'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handoff "$partial" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" "${fixture%%|*}" 7
+		_dispatch_ranked_candidate_consumed '{"number":7,"repo_slug":"o/product"}'
+		write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 7,8
+		: >"$builds"
+		merged=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$merged")" == "${fixture##*|}" && ! -s "$builds" && ! -e "$handoff" ]]
+	done
+
+	# A census whose attempt ledger cannot be installed is not adopted.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 9
+	printf '["o/product",9]\n' >"${handoff}.consumed"
+	mv() {
+		local target="${!#}"
+		[[ "$target" != "${partial}.consumed" ]] || return 1
+		command mv "$@"
+		return $?
+	}
+	: >"$builds"
+	scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	unset -f mv
+	[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" && ! -e "${handoff}.consumed" ]]
+	grep -q 'handoff discarded: reason=transfer_failed' "$LOGFILE"
 )
-printf 'PASS drained cycles hand a full census to the next first wave; stale, foreign-format and wrong-mode handoffs are not served\n'
+printf 'PASS drained cycles hand a full census and its attempt ledger to the next first wave; stale, foreign-format, wrong-mode and untransferable handoffs are not served\n'
 
 (
 	claim_comments='[{"id":41,"author_association":"OWNER","created_at":"2026-11-12T05:00:00Z","updated_at":"2026-11-12T05:00:00Z","body":"Dispatching worker"}]'

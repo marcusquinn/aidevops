@@ -91,31 +91,61 @@ _dispatch_hand_off_candidate_snapshots() {
 	return 0
 }
 
+# GH#38048: installs a handoff census and its attempt ledger as the durable
+# snapshot. Attempt keys of a still-fresh destination snapshot are kept and an
+# expired one's are dropped, as for an expired partial in
+# _dispatch_ranked_candidates_json. The ledger is installed before the census,
+# so a failed transfer never leaves an adopted census without attempt history.
+# Args: $1=handoff $2=target snapshot $3=now epoch $4=ttl seconds
+# Returns: 0 installed, 1 handoff not usable, 2 transfer failed
+_dispatch_install_candidate_handoff() {
+	local handoff="$1" snapshot_file="$2" now_epoch="$3" snapshot_ttl="$4"
+	local ledger="" target_ledger="${snapshot_file}.consumed" transfer_rc=0
+	[[ ! -L "${handoff}.consumed" && ! -L "$snapshot_file" && ! -d "$snapshot_file" ]] || return 1
+	_dispatch_candidate_snapshot_is_fresh "$handoff" "$now_epoch" "$snapshot_ttl" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" || return 1
+	ledger=$(mktemp "${target_ledger}.tmp.XXXXXX" 2>/dev/null) || return 2
+	if [[ -f "${handoff}.consumed" ]]; then
+		cat "${handoff}.consumed" >>"$ledger" 2>/dev/null || transfer_rc=2
+	fi
+	if [[ "$transfer_rc" -eq 0 && -f "$target_ledger" && ! -L "$target_ledger" ]] &&
+		_dispatch_candidate_snapshot_is_fresh "$snapshot_file" "$now_epoch" "$snapshot_ttl"; then
+		cat "$target_ledger" >>"$ledger" 2>/dev/null || transfer_rc=2
+	fi
+	if [[ "$transfer_rc" -eq 0 ]] && mv -f "$ledger" "$target_ledger" 2>/dev/null &&
+		mv -f "$handoff" "$snapshot_file" 2>/dev/null; then
+		rm -f "${handoff}.consumed" 2>/dev/null || true
+		return 0
+	fi
+	rm -f "$ledger" 2>/dev/null || true
+	return 2
+}
+
 # GH#38048: a first wave or bounded census adopts a drained cycle's full
 # census as its durable snapshot, so the activated bundle starts from known
 # work without a new scan. A skip round may take a normalized census, never
-# the reverse. A handoff past its reuse window, with another schema or on an
-# unsafe path is removed unserved. Adopted candidates still pass the
-# registry/schedule recheck and every live dispatch gate.
+# the reverse. A handoff past its reuse window, with another schema, on an
+# unsafe path or whose ledger cannot be transferred is removed unserved.
+# Adopted candidates still pass the registry/schedule recheck and every live
+# dispatch gate.
 # Args: $1=target snapshot $2=per-repo limit $3=mode $4=now epoch $5=ttl seconds
 _dispatch_adopt_candidate_handoff() {
 	local snapshot_file="$1" per_repo_limit="$2" mode="$3" now_epoch="$4" snapshot_ttl="$5"
-	local source_mode="" handoff="" adopted=0 outcome=""
+	local source_mode="" handoff="" adopted=0 outcome="" install_rc=0
 	for source_mode in normalize "$mode"; do
 		handoff=$(_dispatch_candidate_handoff_path "$per_repo_limit" "$source_mode") || continue
 		[[ -e "$handoff" || -L "$handoff" ]] || continue
-		outcome="stale_or_invalid"
-		[[ "$adopted" -eq 0 ]] || outcome="superseded"
-		if [[ "$adopted" -eq 0 && ! -L "${handoff}.consumed" && ! -L "$snapshot_file" && ! -d "$snapshot_file" ]] &&
-			_dispatch_candidate_snapshot_is_fresh "$handoff" "$now_epoch" "$snapshot_ttl" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" &&
-			rm -f "${snapshot_file}.consumed" 2>/dev/null && mv -f "$handoff" "$snapshot_file" 2>/dev/null; then
-			if [[ -f "${handoff}.consumed" ]]; then
-				mv -f "${handoff}.consumed" "${snapshot_file}.consumed" 2>/dev/null || rm -f "${handoff}.consumed" 2>/dev/null || true
+		outcome="superseded"
+		if [[ "$adopted" -eq 0 ]]; then
+			install_rc=0
+			_dispatch_install_candidate_handoff "$handoff" "$snapshot_file" "$now_epoch" "$snapshot_ttl" || install_rc=$?
+			if [[ "$install_rc" -eq 0 ]]; then
+				adopted=1
+				_dispatch_stats_increment "dispatch_candidate_handoff_adopted"
+				echo "[pulse-wrapper] Dispatch candidate census handoff adopted: source_mode=${source_mode} mode=${mode} (GH#38048)" >>"$LOGFILE"
+				continue
 			fi
-			adopted=1
-			_dispatch_stats_increment "dispatch_candidate_handoff_adopted"
-			echo "[pulse-wrapper] Dispatch candidate census handoff adopted: source_mode=${source_mode} mode=${mode} (GH#38048)" >>"$LOGFILE"
-			continue
+			outcome="stale_or_invalid"
+			[[ "$install_rc" -eq 1 ]] || outcome="transfer_failed"
 		fi
 		rm -f "$handoff" "${handoff}.consumed" 2>/dev/null || true
 		_dispatch_stats_increment "dispatch_candidate_handoff_discarded"
@@ -125,8 +155,10 @@ _dispatch_adopt_candidate_handoff() {
 	return $?
 }
 
+# The census is written under PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT, so cleanup
+# and invalidation default to that key, not to the runnable-count sample size.
 _dispatch_cleanup_cycle_cache() {
-	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
+	local per_repo_limit="${1:-${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}}"
 	local _PULSE_FIRST_DISPATCH_WAVE=0
 	local candidate_file="" skip_candidate_file="" triage_file="" cache_file="" drain_bundle=""
 	# GH#38048: under a cooperative drain the full census outlives its cycle.
@@ -146,7 +178,7 @@ _dispatch_cleanup_cycle_cache() {
 
 _dispatch_invalidate_candidate_snapshot() {
 	local reason="${1:-state_mutation}"
-	local per_repo_limit="${2:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
+	local per_repo_limit="${2:-${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}}"
 	local snapshot_file="" dependency_normalization_mode="" removed_snapshot=0
 	local _PULSE_FIRST_DISPATCH_WAVE=0 wave=""
 	for wave in 0 1 handoff; do
