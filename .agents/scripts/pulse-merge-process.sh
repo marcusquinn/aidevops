@@ -159,30 +159,134 @@ _pmp_is_protected_release_pr() {
 	return 0
 }
 
+# Bind a protected release PR head to its remote release evidence without
+# requiring this runner to trust the release signer (GH#38012). Collaborator
+# runners usually lack the releaser's allowed-signers principal, so a local
+# `git verify-tag` failure cannot distinguish "untrusted here" from drift.
+# Instead bind the PR-pinned provenance marker, the remote staging envelope,
+# the raw tag bytes it carries, and the live head exactly.
+# Args: $1=repo_path $2=head_ref $3=live head OID $4=PR body
+# Returns: 0=bound, 1=proven mismatch or invalid evidence, 2=evidence unavailable
+_pmp_protected_release_head_binding() {
+	local repo_path="$1"
+	local head_ref="$2"
+	local head_oid="$3"
+	local pr_body="$4"
+	local tag_name="${head_ref#chore/release-}" marker_regex="" pinned_object="" pinned_commit=""
+	local remote_ref="" ls_rc=0 staged_oid="" tag_object="" tag_header="" tag_commit="" envelope_parents=""
+	tag_name="${tag_name%-provenance}"
+	marker_regex='<!-- aidevops:release-provenance tag=(v[0-9]+\.[0-9]+\.[0-9]+) tag-object=([0-9a-f]{40}) release-commit=([0-9a-f]{40}) merge-method=merge -->'
+	[[ "$head_oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# aidevops:trust-boundary — the release lane pins the exact release commit
+	# in the PR body; any other live head is proven drift without git access.
+	[[ "$pr_body" =~ $marker_regex && "${BASH_REMATCH[1]}" == "$tag_name" ]] || return 1
+	pinned_object="${BASH_REMATCH[2]}"
+	pinned_commit="${BASH_REMATCH[3]}"
+	[[ "$pinned_commit" == "$head_oid" ]] || return 1
+	if [[ -z "$repo_path" ]] || ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+		return 2
+	fi
+	# Read remote evidence, never a stale local ref. A missing staging ref is
+	# not "unavailable": the release lane stages it before queueing the merge.
+	remote_ref=$(GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" ls-remote --exit-code origin \
+		"refs/aidevops/release-tags/${tag_name}" 2>/dev/null) || ls_rc=$?
+	[[ "$ls_rc" -ne 2 ]] || return 1
+	[[ "$ls_rc" -eq 0 ]] || return 2
+	staged_oid="${remote_ref%%[[:space:]]*}"
+	[[ "$staged_oid" =~ ^[0-9a-f]{40}$ ]] || return 1
+	GIT_TERMINAL_PROMPT=0 timeout_sec 30 git -C "$repo_path" fetch --quiet --no-tags --no-write-fetch-head \
+		origin "refs/aidevops/release-tags/${tag_name}" 2>/dev/null || return 2
+	tag_object=$(git -C "$repo_path" cat-file blob "${staged_oid}:tag" 2>/dev/null |
+		git -C "$repo_path" hash-object -t tag -w --stdin 2>/dev/null) || return 1
+	[[ "$tag_object" == "$pinned_object" ]] || return 1
+	tag_header=$(git -C "$repo_path" cat-file tag "$tag_object" 2>/dev/null |
+		awk '/^$/ {exit} /^tag / {print substr($0, 5)}') || return 1
+	[[ "$tag_header" == "$tag_name" ]] || return 1
+	tag_commit=$(git -C "$repo_path" rev-parse --verify "${tag_object}^{commit}" 2>/dev/null) || return 1
+	envelope_parents=$(git -C "$repo_path" show -s --format=%P "$staged_oid" 2>/dev/null) || return 1
+	[[ "$envelope_parents" == "$head_oid" && "$tag_commit" == "$head_oid" ]] || return 1
+	return 0
+}
+
 # Protected release PRs always belong to exact-merge reconciliation. Even an
 # exact signed head must never be armed for the generic native squash path.
+# The release lane's own `--merge --match-head-commit` request is retained
+# while the live head stays bound to the pinned release commit (GH#38012).
+# Decide whether an armed protected release auto-merge may stay queued.
+# Args: $1=PR REST JSON $2=repo_slug $3=head_ref $4=gated head OID
+# Prints the log reason. Returns: 0=retain the exact queue, 1=disarm.
+_pmp_protected_release_queue_decision() {
+	local pr_json="$1"
+	local repo_slug="$2"
+	local head_ref="$3"
+	local head_oid="$4"
+	local auto_method="" live_head="" head_repo="" base_repo="" author_association=""
+	local pr_body="" repo_path="" binding_rc=0 normalized_repo=""
+	auto_method=$(printf '%s' "$pr_json" | jq -r '.auto_merge.merge_method // ""' 2>/dev/null) || auto_method=""
+	live_head=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""' 2>/dev/null) || live_head=""
+	head_repo=$(printf '%s' "$pr_json" | jq -r '(.head.repo.full_name // "") | ascii_downcase' 2>/dev/null) || head_repo=""
+	base_repo=$(printf '%s' "$pr_json" | jq -r '(.base.repo.full_name // "") | ascii_downcase' 2>/dev/null) || base_repo=""
+	normalized_repo=$(printf '%s' "$repo_slug" | jq -Rr 'ascii_downcase') || return 1
+	author_association=$(printf '%s' "$pr_json" | jq -r '.author_association // ""' 2>/dev/null) || author_association=""
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
+	# aidevops:trust-boundary — only the release lane's ancestry-preserving
+	# exact merge on the gated, same-repository, collaborator-authored head may stay.
+	if [[ "$auto_method" != "merge" ]]; then
+		printf "protected release PR native auto-merge uses '%s', not the ancestry-preserving exact merge" "${auto_method:-unknown}"
+		return 1
+	fi
+	if [[ -z "$head_oid" || "$live_head" != "$head_oid" || "$head_repo" != "$normalized_repo" ||
+		"$base_repo" != "$normalized_repo" ]]; then
+		printf '%s' "protected release PR live head or repository no longer matches the gated head"
+		return 1
+	fi
+	if [[ ! "$author_association" =~ ^(OWNER|MEMBER|COLLABORATOR)$ ]]; then
+		printf '%s' "protected release PR author is not a trusted repository collaborator"
+		return 1
+	fi
+	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
+	_pmp_protected_release_head_binding "$repo_path" "$head_ref" "$live_head" "$pr_body" || binding_rc=$?
+	case "$binding_rc" in
+	0)
+		printf 'retaining exact-merge native auto-merge; head %s is bound to the remote signed release evidence (GH#38012)' "${live_head:0:12}"
+		return 0
+		;;
+	2)
+		# The live head equals the release lane's pinned commit; only this
+		# runner's copy of the remote envelope is unavailable. The release
+		# lane and `aidevops release reconcile` own any further recovery.
+		printf 'retaining exact-merge native auto-merge; head %s matches pinned release provenance and remote staging evidence is unavailable on this runner (GH#38012)' "${live_head:0:12}"
+		return 0
+		;;
+	esac
+	printf '%s' "protected release PR head differs from its pinned signed release commit or remote staging evidence"
+	return 1
+}
+
 _pmp_hold_protected_release_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local head_ref="$3"
 	local head_oid="$4"
-	local repo_path="" auto_merge="" hold_reason="protected release PR requires exact-merge reconciliation"
-	repo_path=$(_pulse_merge_repo_path_for_slug "$repo_slug" 2>/dev/null) || repo_path=""
-	if ! protected_release_head_matches_staged "$repo_path" "$head_ref" "$head_oid"; then
-		hold_reason="protected release PR head differs from staged signed commit or staging evidence is unavailable"
+	local pr_api_path="" pr_json="" disarm=1 stop_rc=0
+	local hold_reason="protected release PR requires exact-merge reconciliation"
+	printf -v pr_api_path 'repos/%s/pulls/%s' "$repo_slug" "$pr_number"
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		disarm=0
+	elif ! pr_json=$(gh api "$pr_api_path" 2>/dev/null) || [[ -z "$pr_json" ]]; then
+		# An unavailable read takes the fail-closed disarm path below.
+		hold_reason="protected release PR state is unreadable"
+	elif printf '%s' "$pr_json" | jq -e '.auto_merge == null' >/dev/null 2>&1; then
+		# Do not turn an already-safe release into a draft on every merge pass.
+		disarm=0
+	elif hold_reason=$(_pmp_protected_release_queue_decision "$pr_json" "$repo_slug" "$head_ref" "$head_oid"); then
+		disarm=0
 	fi
+	[[ -n "$hold_reason" ]] || hold_reason="protected release PR exact-merge evidence is unavailable"
 	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${hold_reason}" >>"$LOGFILE"
-	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
-	# Do not turn an already-safe release into a draft on every merge pass.
-	# An unavailable read still takes the fail-closed disarm path below.
-	if auto_merge=$(gh pr view "$pr_number" --repo "$repo_slug" --json autoMergeRequest \
-		--jq '.autoMergeRequest == null' 2>/dev/null) &&
-		[[ "$auto_merge" == true ]]; then
-		return 0
-	fi
+	[[ "$disarm" -eq 1 ]] || return 0
 	# aidevops:trust-boundary — revoke native auto-merge before deferring so a
 	# previously armed request cannot merge a drifted release between passes.
-	local stop_rc=0
 	_stop_external_native_auto_merge "$pr_number" "$repo_slug" "$hold_reason" || stop_rc=$?
 	[[ "$stop_rc" -eq 0 || "$stop_rc" -eq 2 ]] || return 1
 	return 0
