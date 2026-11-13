@@ -457,7 +457,47 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 	return 0
 }
 
+test_ambient_server_attachment_respects_isolation() {
+	(
+		_detect_opencode_server() {
+			printf '%s\n' 'http://localhost:4096' 'fixture-password'
+			return 0
+		}
+		local role="worker" AIDEVOPS_OPENCODE_PROFILE="v1" args=""
+		local AIDEVOPS_HEADLESS_AUTH_ISOLATION=""
+		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
+		if [[ "$args" != *--attach* ]]; then
+			print_result "default isolation does not attach to ambient server" 0
+		else
+			print_result "default isolation does not attach to ambient server" 1
+		fi
+		AIDEVOPS_HEADLESS_AUTH_ISOLATION=0
+		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
+		if [[ "$args" == *$'--attach\nhttp://localhost:4096\n--password\nfixture-password'* ]]; then
+			print_result "non-isolated v1 attaches to ambient server" 0
+		else
+			print_result "non-isolated v1 attaches to ambient server" 1
+		fi
+		role="triage"
+		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
+		if [[ "$args" != *--attach* ]]; then
+			print_result "ephemeral role does not attach to ambient server" 0
+		else
+			print_result "ephemeral role does not attach to ambient server" 1
+		fi
+		role="worker" AIDEVOPS_OPENCODE_PROFILE="v2"
+		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
+		if [[ "$args" != *--attach* && "$args" == *--standalone* ]]; then
+			print_result "v2 remains standalone with isolation disabled" 0
+		else
+			print_result "v2 remains standalone with isolation disabled" 1
+		fi
+	)
+	return 0
+}
+
 test_worker_opencode_exec_paths_strip_session_env() {
+	test_ambient_server_attachment_respects_isolation
 	local invoke_helper="${SCRIPT_DIR}/headless-runtime-invoke.sh"
 	# shellcheck disable=SC2016 # Match literal caller-scoped variables in source.
 	if grep -Fq 'run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" "${sandbox_args[@]}"' "$invoke_helper" &&
