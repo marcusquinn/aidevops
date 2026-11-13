@@ -249,9 +249,9 @@ _pmp_reduce_reviews_json() {
 
 #######################################
 # GraphQL fallback for the review state when REST is at the worker reserve.
-# One bounded `gh pr view` read (GraphQL budget is separate from REST core).
-# latestReviews is capped at 10 reviewers: a full list without a blocker is
-# inconclusive and fails closed. Malformed data fails closed.
+# One bounded history read (GraphQL budget is separate from REST core).
+# Preserve state-changing reviews even after later comments. Pagination metadata
+# makes incomplete history fail closed, independently of gh's internal limits.
 # Args: $1=PR number, $2=repo slug
 # Stdout: CHANGES_REQUESTED | OBSERVED_APPROVED | NONE
 #######################################
@@ -259,22 +259,31 @@ _pmp_graphql_review_decision_from_reviews() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local pr_json=""
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}"
+	local mapped=""
 
-	local review_count="" mapped="" decision=""
-
-	pr_json=$(_pmrs_gh_call read gh pr view "$pr_number" --repo "$repo_slug" --json latestReviews 2>/dev/null) || return 1
-	review_count=$(printf '%s' "$pr_json" | jq -er '.latestReviews | length' 2>/dev/null) || return 1
-	[[ "$review_count" =~ ^[0-9]+$ ]] || return 1
+	# GraphQL variables must remain literal, not shell-expanded.
+	# shellcheck disable=SC2016
+	pr_json=$(_pmrs_gh_call read gh api graphql -f query='
+		query($owner:String!,$name:String!,$number:Int!) {
+			repository(owner:$owner,name:$name) {
+				pullRequest(number:$number) {
+					reviews(first:100) {
+						pageInfo { hasNextPage }
+						nodes { databaseId author { login } state submittedAt }
+					}
+				}
+			}
+		}' -f owner="$owner" -f name="$name" -F number="$pr_number" 2>/dev/null) || return 1
 	mapped=$(printf '%s' "$pr_json" | jq -ce '
-		.latestReviews | to_entries
-		| map({user: {login: .value.author.login}, state: .value.state, submitted_at: .value.submittedAt, id: .key})
+		if .errors != null then error("GraphQL errors") else
+		.data.repository.pullRequest.reviews
+		| if .pageInfo.hasNextPage != false or (.nodes | type) != "array"
+		  then error("incomplete review history") else .nodes end
+		| map({user: {login: .author.login}, state: .state, submitted_at: .submittedAt, id: .databaseId})
+		end
 	' 2>/dev/null) || return 1
-	decision=$(printf '%s' "$mapped" | _pmp_reduce_reviews_json) || return 1
-	# A full (capped) list is only conclusive when it already shows a blocker.
-	if [[ "$review_count" -ge 10 && "$decision" != "CHANGES_REQUESTED" ]]; then
-		return 1
-	fi
-	printf '%s' "$decision"
+	printf '%s' "$mapped" | _pmp_reduce_reviews_json || return 1
 	return 0
 }
 
