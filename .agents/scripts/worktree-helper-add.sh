@@ -1370,6 +1370,14 @@ _cmd_add_create_worktree() {
 		return 0
 	fi
 
+	# Interactive callers may be checking out a PR head pushed elsewhere. Pulse
+	# creates new auto branches and must not incur an additional network fetch.
+	# A missing remote branch is normal for a new branch.
+	if [[ -z "$_explicit_base" && -z "${AIDEVOPS_WORKTREE_MANAGER:-}" ]] &&
+		git remote get-url origin >/dev/null 2>&1; then
+		_worktree_refresh_origin_branch "$_branch" 2>/dev/null || true
+	fi
+
 	# Branch doesn't exist locally — check for stale remote ref (t1060)
 	_ds_substage_run precreate.stale_remote_check handle_stale_remote_branch "$_branch" || return 1
 
