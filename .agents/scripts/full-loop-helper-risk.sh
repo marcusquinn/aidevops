@@ -80,7 +80,7 @@ _runtime_path_is_low() {
 		.github/* | .qlty/* | .shellcheckrc | */.shellcheckrc | .markdownlint* | */.markdownlint* | .yamllint* | */.yamllint* | \
 		.eslintrc* | */.eslintrc* | eslint.config.* | */eslint.config.* | .prettierrc* | */.prettierrc* | prettier.config.* | */prettier.config.* | \
 		.stylelintrc* | */.stylelintrc* | stylelint.config.* | */stylelint.config.* | biome.json | */biome.json | *lint*.config.* | *linters*.conf | \
-		.agents/prompts/* | todo/*.json | todo/*.jsonl | */todo/*.json | */todo/*.jsonl)
+		.agents/prompts/* | .agents/configs/prompt-hook-candidates.conf | todo/*.json | todo/*.jsonl | */todo/*.json | */todo/*.jsonl)
 		return 0
 		;;
 	*) return 1 ;;
