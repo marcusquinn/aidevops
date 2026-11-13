@@ -1000,26 +1000,15 @@ test_protected_release_exact_merge_queue_survives_collaborator_pulse() {
 		return 0
 	}
 
-	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"
-	result=0
-	_set_native_auto_merge_or_skip 904 owner/repo 0 APPROVED "$signed_head" || result=$?
-	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
-		grep -q 'bound to the remote signed release evidence' "$LOGFILE"; then
-		print_result "Collaborator pulse retains exact-merge queue bound to remote release evidence" 0
-	else
-		print_result "Collaborator pulse retains exact-merge queue bound to remote release evidence" 1 \
-			"rc=${result}; gh log: $(cat "$GH_LOG")"
-	fi
-
 	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head" Owner/Repo OWNER/REPO
 	result=0
-	_pmp_hold_protected_release_pr 904 oWner/rEpo \
-		chore/release-v1.2.3-provenance "$signed_head" || result=$?
-	if [[ "$result" -eq 0 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
+	_set_native_auto_merge_or_skip 904 oWner/rEpo 0 APPROVED "$signed_head" || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
 		grep -q 'bound to the remote signed release evidence' "$LOGFILE"; then
-		print_result "Mixed-case repository names retain the exact-merge queue" 0
+		print_result "Collaborator pulse retains exact-merge queue with mixed-case repository names" 0
 	else
-		print_result "Mixed-case repository names retain the exact-merge queue" 1 "rc=${result}"
+		print_result "Collaborator pulse retains exact-merge queue with mixed-case repository names" 1 \
+			"rc=${result}; gh log: $(cat "$GH_LOG")"
 	fi
 
 	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"
