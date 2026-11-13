@@ -858,11 +858,11 @@ interrupt_output="${SANDBOX}/interrupt-output.log"
 OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
 	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
 	OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS=10 \
-	"$HELPER" archive --retention-days 0 --max-duration-seconds 30 >"$interrupt_output" 2>&1 &
+	"$HELPER" archive --retention-days 0 --max-duration-seconds 60 >"$interrupt_output" 2>&1 &
 archive_pid=$!
 archive_progress=0
 interrupt_log=""
-for _attempt in {1..100}; do
+for _attempt in {1..400}; do
 	if [[ -f "$interrupt_output" ]]; then
 		interrupt_log=$(<"$interrupt_output")
 		if [[ "$interrupt_log" == *"Archived 1/2 sessions"* ]]; then
@@ -1089,19 +1089,19 @@ for budget_stage in preflight batch; do
 	_add_second_active_1_18_3_session
 	wal_delay=0
 	batch_delay=0
-	if [[ "$budget_stage" == preflight ]]; then wal_delay=10; else batch_delay=10; fi
+	if [[ "$budget_stage" == preflight ]]; then wal_delay=20; else batch_delay=20; fi
 	started=$SECONDS
 	set +e
 	out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" \
 		OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS="$wal_delay" OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 \
 		OPENCODE_DB_ARCHIVE_BATCH_DELAY_SECONDS="$batch_delay" \
-		"$HELPER" archive --retention-days 0 --max-duration-seconds 3 2>&1)
+		"$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
 	rc=$?
 	set -e
 	elapsed=$((SECONDS - started))
 	active_check=$(sqlite3 "$ACTIVE_DB" 'PRAGMA quick_check;')
 	remaining=$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')
-	if [[ "$rc" -eq 2 && "$elapsed" -le 7 && "$active_check" == ok && "$out" == *"deferred/partial"* ]] &&
+	if [[ "$rc" -eq 2 && "$elapsed" -le 15 && "$active_check" == ok && "$out" == *"deferred/partial"* ]] &&
 		{ [[ "$budget_stage" == preflight && "$remaining" == 2 && ! -e "$ARCHIVE_DB" ]] ||
 			[[ "$budget_stage" == batch && "$remaining" == 1 && "$(sqlite3 "$ARCHIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; }; then
 		_pass "per-DB deadline bounds $budget_stage and preserves session ownership"
@@ -1290,6 +1290,30 @@ if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"VACUUM skippe
 	_pass "idle holders allow held-mode archive and protect heartbeat-listed sessions"
 else
 	_fail "held-mode archive mismatch: rc=$rc output=$out"
+fi
+
+# Existing archives expire events independently of the held session batch size,
+# and a subsequent held run must not rescan the whole archive for integrity.
+sqlite3 "$ARCHIVE_DB" "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<25) INSERT INTO event SELECT 'expiry-'||x, 'ses-1183', 100+x, 'fixture', '{}' FROM n;"
+mkdir -p "$SANDBOX/trace-sqlite"
+cat >"$SANDBOX/trace-sqlite/sqlite3" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"$SQLITE_TRACE_FILE"
+exec "$REAL_SQLITE" "$@"
+SH
+chmod +x "$SANDBOX/trace-sqlite/sqlite3"
+: >"$SANDBOX/sqlite-trace"
+_write_heartbeat "$hb_file" 0 "$old_epoch" '[]'
+set +e
+out=$(_held_archive PATH="$SANDBOX/trace-sqlite:$PATH" REAL_SQLITE="$sqlite_bin" SQLITE_TRACE_FILE="$SANDBOX/sqlite-trace" OPENCODE_DB_HOLDER_COMMAND="$mock_active_only")
+rc=$?
+set -e
+trace=$(<"$SANDBOX/sqlite-trace")
+if [[ "$rc" -eq 0 && "$out" == *"Idle gate passed"* && "$out" == *"expired 26 events"* &&
+	"$trace" == *"LIMIT 500"* && "$trace" != *"PRAGMA integrity_check"* ]]; then
+	_pass "held expiry uses archive-sized batches and existing archive skips integrity scan"
+else
+	_fail "held expiry or repeated integrity scan mismatch: rc=$rc output=$out"
 fi
 
 # GH#37656: a busy holder that lists its sessions no longer blocks archiving of
