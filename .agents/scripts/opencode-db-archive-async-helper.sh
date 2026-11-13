@@ -272,10 +272,10 @@ _record_deferral() {
 	if ((count < max_deferrals && stale == 0)); then
 		return 0
 	fi
-	[[ ! -f "$BLOCKED_NOTICE_FILE" ]] || return 0
 	holder=$(_blocking_holder_summary)
 	hbless=$(_heartbeat_less_holders_summary)
 	local rdb="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
+	# Always rewrite so holder changes and the recovery command stay current.
 	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s.%s Safe action: close or restart those OpenCode sessions (OPENCODE_DB_PATH=%q opencode-session-restart-helper.sh stop --yes covers heartbeat-less tmux TUIs). Holders are never killed automatically.\n' \
 		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" "${hbless:+ Also: ${hbless}.}" "$rdb" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
 	echo "[opencode-db-archive-async] NOTICE: $(<"$BLOCKED_NOTICE_FILE")" >>"$LOGFILE"

@@ -588,7 +588,7 @@ _wait_for_exit() {
 _continue_matches() {
 	local pane="$1"
 	local socket="$2"
-	_tmux "$socket" capture-pane -p -S - -t "$pane" 2>/dev/null |
+	_tmux "$socket" capture-pane -p -J -S - -t "$pane" 2>/dev/null |
 		grep -Eo 'Continue[[:space:]]+opencode[[:space:]]+-s[[:space:]]+[A-Za-z0-9_-]{1,128}' | awk '{ print $NF }' || true
 	return 0
 }
