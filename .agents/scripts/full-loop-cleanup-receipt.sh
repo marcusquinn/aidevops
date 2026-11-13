@@ -872,6 +872,90 @@ _full_loop_active_recreated_receipts_are_cleaned() {
 	return 0
 }
 
+# GH#38149: one full-set pass for recreated-worktree reconciliation. Combines
+# _full_loop_valid_receipt_file_count, _full_loop_cleanup_receipt_for_worktree_unlocked
+# and _full_loop_active_recreated_receipts_are_cleaned so the global receipt
+# lock is held for one jq parse of the hot set instead of three. Fails closed
+# exactly like the separate validators: a symlink, malformed JSON, a non-object
+# value or an empty file rejects the whole set.
+# Caller must hold the receipt lock.
+# Args: $1=receipt directory, $2=worktree path
+# Stdout (on success), four lines:
+#   1: valid receipt file count
+#   2: number of unsuperseded receipts naming the worktree
+#   3: 1 when every such receipt is CLEANED, otherwise 0
+#   4: newest selected receipt path as a JSON string ("" when none)
+# Returns: 0 valid set, 1 unsafe or invalid set
+_full_loop_recreated_receipt_scan() {
+	local receipt_dir="$1"
+	local worktree="$2"
+	local receipt_path=""
+	local receipt_file_count=0
+
+	for receipt_path in "$receipt_dir"/*.json; do
+		[[ -f "$receipt_path" ]] || continue
+		[[ ! -L "$receipt_path" ]] || return 1
+		receipt_file_count=$((receipt_file_count + 1))
+	done
+	if [[ "$receipt_file_count" -eq 0 ]]; then
+		printf '0\n0\n0\n""\n'
+		return 0
+	fi
+	jq -nr --argjson count "$receipt_file_count" \
+		--arg worktree "$worktree" \
+		--arg superseded "$_FULL_LOOP_RECEIPT_PATH_RECREATED" \
+		--arg cleaned "$_FULL_LOOP_CLEANUP_CLEANED" \
+		--arg string_type "$_FULL_LOOP_RECEIPT_JSON_STRING_TYPE" '
+		reduce inputs as $receipt (
+			{files: {}, valid: true, matched: 0, all_cleaned: true, selected: null};
+			.files[input_filename] = true
+			| if ($receipt | type) != ({} | type) then
+				.valid = false
+			elif $receipt.worktree == $worktree
+				and (($receipt.receipt_disposition.state // "") != $superseded) then
+				($receipt | {
+					path: input_filename,
+					created_at: (.created_at // "" | rtrimstr("Z")),
+					is_migrated: (
+						if (((.migration.from_repository? // null) | type) == $string_type
+							and ((.migration.from_repository? // "") | length) > 0)
+						then 1 else 0 end
+					)
+				}) as $candidate
+				| .matched += 1
+				| .all_cleaned = (.all_cleaned and ($receipt.resource_cleanup_state == $cleaned))
+				| .selected = (
+					if .selected == null
+						or $candidate.created_at > .selected.created_at
+						or ($candidate.created_at == .selected.created_at
+							and $candidate.is_migrated == 1 and .selected.is_migrated != 1)
+					then $candidate else .selected end
+				)
+			else . end
+		)
+		| if (.files | length) == $count and .valid then
+			(.files | length | tostring),
+			(.matched | tostring),
+			(if .matched > 0 and .all_cleaned then "1" else "0" end),
+			((.selected.path // "") | tojson)
+		else error("invalid receipt set") end
+	' "$receipt_dir"/*.json 2>/dev/null || return 1
+	return 0
+}
+
+# Record a reconciliation sub-stage when the dispatch-stage recorder is loaded.
+# Args: stage name, command and arguments. Returns the command's exit status.
+_full_loop_receipt_substage_run() {
+	local stage_name="$1"
+	shift
+	if declare -F _ds_substage_run >/dev/null 2>&1; then
+		_ds_substage_run "$stage_name" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 _full_loop_initialize_recreated_receipt_transaction() {
 	local receipt_dir="$1"
 	local transaction_dir=""
@@ -1086,8 +1170,12 @@ full_loop_supersede_cleaned_receipts_for_recreated_worktree() {
 	local owner_session="$5"
 	local receipt_dir=""
 	local selected_path=""
+	local selected_json=""
+	local scan_output=""
 	local now=""
 	local receipt_file_count=0
+	local matched_count=0
+	local all_cleaned=0
 
 	if [[ ! -d "$worktree" || -L "$worktree" || -z "$branch" ]]; then
 		_full_loop_supersede_reason "worktree path is missing, a symlink, or branch is empty: ${worktree}"
@@ -1108,29 +1196,48 @@ full_loop_supersede_cleaned_receipts_for_recreated_worktree() {
 		_full_loop_supersede_reason "worktree root, branch or HEAD does not match the new generation (${worktree})"
 		return 1
 	}
-	_full_loop_receipt_lock_acquire || {
+	# GH#38149: lock wait and the full-set scan are timed separately so
+	# contention can be told apart from hot-set size in dispatch-stages.tsv.
+	_full_loop_receipt_substage_run precreate.verify.reconcile_lock _full_loop_receipt_lock_acquire || {
 		_full_loop_supersede_reason "could not acquire the receipt lock: $(_full_loop_receipt_lock_failure_detail)"
 		return 1
 	}
-	receipt_file_count=$(_full_loop_valid_receipt_file_count "$receipt_dir") || {
+	# One jq pass validates the whole set, selects the newest receipt for the
+	# path and reports whether every unsuperseded match is CLEANED.
+	scan_output=$(_full_loop_receipt_substage_run precreate.verify.reconcile_scan \
+		_full_loop_recreated_receipt_scan "$receipt_dir" "$worktree") || {
 		_full_loop_supersede_reason "a receipt in ${receipt_dir} is a symlink or not a JSON object"
 		_full_loop_receipt_lock_release
 		return 1
 	}
-	if [[ "$receipt_file_count" -eq 0 ]]; then
+	{
+		IFS= read -r receipt_file_count
+		IFS= read -r matched_count
+		IFS= read -r all_cleaned
+		IFS= read -r selected_json
+	} <<<"$scan_output"
+	if [[ ! "$receipt_file_count" =~ ^[0-9]+$ || ! "$matched_count" =~ ^[0-9]+$ ||
+		! "$all_cleaned" =~ ^[01]$ || -z "$selected_json" ]]; then
+		_full_loop_supersede_reason "receipt scan of ${receipt_dir} returned an unexpected result"
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	if [[ "$receipt_file_count" -eq 0 || "$matched_count" -eq 0 ]]; then
 		_full_loop_receipt_lock_release
 		return 2
 	fi
-	selected_path=$(_full_loop_cleanup_receipt_for_worktree_unlocked "$worktree" 2>/dev/null) || {
+	selected_path=$(jq -r '.' <<<"$selected_json" 2>/dev/null) || selected_path=""
+	if [[ -z "$selected_path" ]]; then
+		_full_loop_supersede_reason "receipt scan of ${receipt_dir} matched ${worktree} without a selectable receipt"
 		_full_loop_receipt_lock_release
-		return 2
-	}
+		return 1
+	fi
 	if ! _full_loop_recreated_worktree_identity_matches "$worktree" "$branch" "$head_sha"; then
 		_full_loop_supersede_reason "worktree identity changed while the receipt lock was held"
 		_full_loop_receipt_lock_release
 		return 1
 	fi
-	if ! _full_loop_active_recreated_receipts_are_cleaned "$receipt_dir" "$worktree"; then
+	if [[ "$all_cleaned" -ne 1 ]]; then
 		_full_loop_supersede_reason "a receipt for ${worktree} is not CLEANED (active or deferred lifecycle, e.g. ${selected_path}); finish or clean it first"
 		_full_loop_receipt_lock_release
 		return 1
