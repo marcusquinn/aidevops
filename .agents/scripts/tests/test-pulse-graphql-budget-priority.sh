@@ -149,7 +149,8 @@ grep -q '^[[:space:]]*_pulse_reconcile_stale_blocked_if_due || true' "${TEST_SCR
 [[ "$(_pulse_stage_priority_class "checkpoint_ledger_sweep")" == "critical" ]]
 grep -q '_pulse_run_budget_priority_stage_with_timeout "checkpoint_ledger_sweep"' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
 grep -q '^[[:space:]]*_pulse_sweep_checkpoint_ledger || true' "${TEST_SCRIPT_DIR}/../pulse-wrapper.sh"
-if declare -f _pulse_reconcile_stale_blocked_if_due | grep -q '_pulse_sweep_checkpoint_ledger'; then
+reconcile_body="$(declare -f _pulse_reconcile_stale_blocked_if_due)"
+if [[ "$reconcile_body" == *_pulse_sweep_checkpoint_ledger* ]]; then
 	printf 'FAIL: ledger sweep still nested in the deferrable stale-blocked stage\n' >&2
 	exit 1
 fi
