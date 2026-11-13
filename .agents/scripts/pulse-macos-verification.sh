@@ -63,7 +63,9 @@ _pulse_macos_verify() {
 	trap 'exit 124' TERM INT HUP
 	{
 		# Never trust origin to identify this repository, nor a mutable head branch.
-		git -C "$path" fetch --no-tags "https://github.com/$repo.git" "refs/pull/$pr/head" "$base" &&
+		scratch_worktree_fetch "$path" "$worktree_base" "macos-verify-fetch-$pr" \
+			"pulse-macos-verification.sh" --no-tags --no-write-fetch-head \
+			"https://github.com/$repo.git" "refs/pull/$pr/head" "$base" &&
 			git -C "$path" cat-file -e "$head^{commit}" &&
 			scratch_worktree_add "$path" "$worktree_base" "macos-verify-$pr" "$head" &&
 			(
@@ -204,7 +206,8 @@ _pulse_macos_run() {
 	umask 077
 	mkdir -p "$state" || return 1
 	# shellcheck source=shared-constants.sh
-	source "$_PULSE_MACOS_DIR/shared-constants.sh" || return 1
+	# Pass `run` so a Bash 3.2 re-exec keeps the entrypoint command.
+	source "$_PULSE_MACOS_DIR/shared-constants.sh" run || return 1
 	local -a timer=(timeout_sec "$budget")
 	# Coreutils otherwise waits forever if a suite ignores TERM. The stock
 	# macOS timeout_sec fallback already escalates to KILL for the whole group.
