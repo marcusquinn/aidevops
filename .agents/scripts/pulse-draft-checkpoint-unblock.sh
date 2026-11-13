@@ -83,19 +83,19 @@ _pdcu_blocked_issues() {
 }
 
 #######################################
-# Map open origin:worker draft PRs to the issues they close.
-# Args: $1=repo slug
+# Map open origin:worker draft PRs to linked issues.
+# Args: $1=repo slug, $2=include non-closing checkpoint references (optional)
 # Stdout: "issue<TAB>pr<TAB>head_sha" per closing reference
 # Returns: 0 on a readable list, 1 otherwise
 #######################################
 _pdcu_draft_closing_refs() {
-	local repo_slug="$1"
+	local repo_slug="$1" include_checkpoint="${2:-false}"
 	local prs_json=""
 	prs_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=open&per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 1
-	printf '%s' "$prs_json" | jq -r --arg slug "$repo_slug" "${_PDCU_LIST_JQ_DEFS}"'
+	printf '%s' "$prs_json" | jq -r --arg slug "$repo_slug" --argjson checkpoint "$include_checkpoint" "${_PDCU_LIST_JQ_DEFS}"'
 		($slug | ascii_downcase | gsub("[.]"; "\\.")) as $slug_re
-		| ("(^|[^a-z0-9_])(close[ds]?|fix(es|ed)?|resolve[ds]?)[\\s:]+((" + $slug_re
+		| ("(^|[^a-z0-9_])(close[ds]?|fix(es|ed)?|resolve[ds]?" + (if $checkpoint then "|for|refs?" else "" end) + ")[\\s:]+((" + $slug_re
 			+ ")?#|https?://github\\.com/" + $slug_re + "/issues/)(?<n>[0-9]+)") as $ref
 		| items("PR list")[]
 		| if (type != "object") or ((.number | type) != "number") then error("unreadable PR")
@@ -104,9 +104,8 @@ _pdcu_draft_closing_refs() {
 		| select(any(.labels[]?; .name == "origin:worker"))
 		# GitHub only interprets closing keywords against the default branch.
 		# Missing branch metadata cannot prove an effective closing reference.
-		| select((.base.repo.default_branch | type) == "string")
-		| select((.base.repo.default_branch | length) > 0)
-		| select(.base.ref == .base.repo.default_branch)
+		| select($checkpoint or (((.base.repo.default_branch | type) == "string")
+			and ((.base.repo.default_branch | length) > 0) and .base.ref == .base.repo.default_branch))
 		| . as $pr
 		| [(.body // "") | ascii_downcase | match($ref; "g") | .captures[] | select(.name == "n") | .string]
 		| unique[]
@@ -357,6 +356,32 @@ _pdcu_cursor_write() {
 	local cursor_file="$1" issue_num="$2"
 	mkdir -p "${cursor_file%/*}" 2>/dev/null || return 0
 	printf '%s\n' "$issue_num" >"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+# Visit a bounded, rotating slice of open worker drafts every pulse cycle.
+# Claim validation and the final live read are performed by the claim helper.
+_pdcu_sweep_expired_claims() {
+	local repo_slug="$1" stop="${2:-0}" refs="" issues="" ordered="" issue_num="" cursor_file="" now=""
+	local count=0 cap="${PULSE_CHECKPOINT_CLAIM_SWEEP_LIMIT:-10}"
+	[[ "$cap" =~ ^[1-9][0-9]{0,2}$ ]] || cap=10
+	[[ "$stop" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s) || return 1
+	[[ "$stop" -eq 0 || "$now" -lt "$stop" ]] || return 3
+	refs=$(_pdcu_draft_closing_refs "$repo_slug" true) || return 1
+	[[ -n "$refs" ]] || return 0
+	issues=$(printf '%s\n' "$refs" | jq -Rn '[inputs | split("\t")[0] | tonumber? | select(. != null)] | unique | .[] | {number:.}' -c) || return 1
+	cursor_file="${HOME}/.aidevops/cache/checkpoint-claim-sweep/${repo_slug//\//__}"
+	ordered=$(_pdcu_rotated_issues "$issues" "$cursor_file") || return 1
+	while IFS= read -r issue_num; do
+		[[ "$issue_num" =~ ^[1-9][0-9]*$ ]] || continue
+		now=$(date +%s) || return 1
+		[[ "$stop" -eq 0 || "$now" -lt "$stop" ]] || return 3
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-pr-checkpoint-claim "$issue_num" "$repo_slug" "$stop" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+		_pdcu_cursor_write "$cursor_file" "$issue_num"
+		count=$((count + 1))
+		[[ "$count" -lt "$cap" ]] || break
+	done < <(printf '%s\n' "$ordered" | jq -r '.number')
 	return 0
 }
 

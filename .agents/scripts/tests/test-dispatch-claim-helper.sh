@@ -970,6 +970,170 @@ test_check_releases_claim_only_orphan() {
 	return 0
 }
 
+test_sweep_checkpoint_orphan() {
+	local result=0
+	(
+		# shellcheck source=../dispatch-claim-helper.sh
+		source "$CLAIM_HELPER"
+		local tmp_dir fixture scenario expected live
+		tmp_dir=$(mktemp -d)
+		_resolve_runner() { printf '%s' runner; return 0; }
+		_resolve_device_id() { printf '%s' device; return 0; }
+		aidevops_can_manage_repo_issue_state() { return 0; }
+		_dch_session_has_live_executor() { [[ "$live" == yes ]] && return 0; return 1; }
+		_fetch_claim_marker_comments() {
+			if [[ "$scenario" == drift && -f "${tmp_dir}/read" ]]; then
+				jq -c '. + [.[0] | .id=11 | .body="DISPATCH_LEASE phase=ready lease_token=token device=device session=pr-session expires_at=4102444800"]' <<<"$fixture"
+			else
+				: >"${tmp_dir}/read"
+				printf '%s' "$fixture"
+			fi
+			return 0
+		}
+		gh() { printf '%s' posted >"${tmp_dir}/posted"; return 0; }
+		for scenario in expired live other_device other_runner no_approval ready released edited executor drift; do
+			fixture='[{"id":10,"author":"runner","author_association":"MEMBER","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","body":"DISPATCH_CLAIM nonce=token runner=runner phase=prelaunch lease_token=token device=device session=pr-session expires_at=1 checkpoint_mode=revision checkpoint_approval=22"}]'
+			expected=no
+			live=no
+			case "$scenario" in
+			expired) expected=yes ;;
+			live) fixture=${fixture/expires_at=1/expires_at=4102444800} ;;
+			other_device) fixture=${fixture/device=device/device=other} ;;
+			other_runner) fixture=${fixture/\"author\":\"runner\"/\"author\":\"other\"} ;;
+			no_approval) fixture=${fixture/checkpoint_approval=22/checkpoint_approval=} ;;
+			ready) fixture=${fixture/phase=prelaunch/phase=ready} ;;
+			released) fixture=$(jq -c '. + [.[0] | .id=11 | .body="CLAIM_RELEASED nonce=token"]' <<<"$fixture") ;;
+			edited) fixture=${fixture/updated_at\":\"2026-01-01/updated_at\":\"2026-01-02} ;;
+			executor) live=yes ;;
+			esac
+			rm -f "${tmp_dir}/posted" "${tmp_dir}/read"
+			cmd_sweep_pr_checkpoint_claim 42 owner/repo || return 1
+			if [[ "$expected" == yes ]]; then
+				[[ -f "${tmp_dir}/posted" ]] || return 1
+			else
+				[[ ! -f "${tmp_dir}/posted" ]] || return 1
+			fi
+		done
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep releases only expired owned unlaunched claims" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_rotation() {
+	local result=0
+	(
+		# shellcheck source=../pulse-draft-checkpoint-unblock.sh
+		source "${SCRIPT_DIR}/../pulse-draft-checkpoint-unblock.sh"
+		local tmp_dir
+		tmp_dir=$(mktemp -d)
+		local SCRIPT_DIR="$tmp_dir" HOME="$tmp_dir" LOGFILE="${tmp_dir}/log"
+		export MOCK_SWEEP_LOG="${tmp_dir}/visits"
+		cat >"${tmp_dir}/dispatch-claim-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$2" >>"$MOCK_SWEEP_LOG"
+EOF
+		chmod +x "${tmp_dir}/dispatch-claim-helper.sh"
+		_pdcu_draft_closing_refs() { printf '1\t11\thead\n2\t12\thead\n3\t13\thead\n'; return 0; }
+		PULSE_CHECKPOINT_CLAIM_SWEEP_LIMIT=2 _pdcu_sweep_expired_claims owner/repo || return 1
+		PULSE_CHECKPOINT_CLAIM_SWEEP_LIMIT=2 _pdcu_sweep_expired_claims owner/repo || return 1
+		[[ "$(<"$MOCK_SWEEP_LOG")" == $'1\n2\n3\n1' ]] || return 1
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep bounds visits and rotates across cycles" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_cycle_and_refs() {
+	local result=0
+	(
+		# shellcheck source=../pulse-draft-checkpoint-unblock.sh
+		source "${SCRIPT_DIR}/../pulse-draft-checkpoint-unblock.sh"
+		# shellcheck source=../pulse-wrapper-cycle.sh
+		source "${SCRIPT_DIR}/../pulse-wrapper-cycle.sh"
+		local tmp_dir refs keyword visits="" HOME REPOS_JSON
+		tmp_dir=$(mktemp -d)
+		HOME="$tmp_dir" REPOS_JSON="${tmp_dir}/repos.json"
+		_pmpc_gh_read() {
+			jq -nc --arg body "$keyword #42" '[{number:7, state:"open", draft:true,
+				labels:[{name:"origin:worker"}], body:$body, head:{sha:"head"},
+				base:{ref:"main", repo:{default_branch:"main"}}}]'
+			return 0
+		}
+		for keyword in For Ref Refs; do
+			refs=$(_pdcu_draft_closing_refs owner/repo true) || return 1
+			[[ "$refs" == $'42\t7\thead' ]] || return 1
+			refs=$(_pdcu_draft_closing_refs owner/repo) || return 1
+			[[ -z "$refs" ]] || return 1
+		done
+		mkdir -p "${HOME}/.aidevops/cache"
+		printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","pulse":true},{"slug":"owner/local","pulse":true,"local_only":true}]}' >"$REPOS_JSON"
+		touch "${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
+		_file_mtime_epoch() { date +%s; return 0; }
+		_pulse_stale_blocked_sweep_deadline() { printf '%s\n' "$(($(date +%s) + 60))"; return 0; }
+		_pdcu_sweep_expired_claims() { visits="${visits}${1} "; return 0; }
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		[[ "$visits" == 'owner/repo owner/repo ' ]] || return 1
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep recognizes For/Ref/Refs and runs every cycle despite fresh cadence" "$result"
+	return 0
+}
+
+test_checkpoint_consensus_failure_recovers() {
+	local result=0
+	(
+		# shellcheck source=../dispatch-claim-helper.sh
+		source "$CLAIM_HELPER"
+		local swept=no rc=0
+		_resolve_runner() { printf runner; return 0; }
+		aidevops_can_manage_repo_issue_state() { return 0; }
+		_interactive_claim_fence_blocks_dispatch() { return 1; }
+		_dch_checkpoint_snapshot() { printf '{"approval_id":22}'; return 0; }
+		_generate_nonce() { printf token; return 0; }
+		_post_claim() { printf 10; return 0; }
+		sleep() { return 0; }
+		_fetch_claims() { return 1; }
+		cmd_sweep_pr_checkpoint_claim() { swept=yes; return 0; }
+		cmd_claim_pr_checkpoint 42 owner/repo 7 0123456789012345678901234567890123456789 branch runner pr-session 2>/dev/null || rc=$?
+		[[ "$rc" == 1 && "$swept" == yes ]] || return 1
+		return 0
+	) || result=1
+	print_result "checkpoint consensus read failure attempts safe recovery" "$result"
+	return 0
+}
+
+test_checkpoint_sweep_cli() {
+	local tmp_dir result=0
+	tmp_dir=$(mktemp -d)
+	mkdir -p "${tmp_dir}/bin"
+	cat >"${tmp_dir}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${2:-}" == user ]]; then
+	printf 'mockrunner\n'
+elif [[ " $* " == *' --method POST '* ]]; then
+	printf '%s\n' "$*" >"${MOCK_SWEEP_DIR}/posted"
+else
+	printf '%s\n' '[[{"id":10,"user":{"login":"mockrunner"},"author_association":"MEMBER","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","body":"DISPATCH_CLAIM nonce=token runner=mockrunner phase=prelaunch lease_token=token device=fixture-device session=fixture-session expires_at=1 checkpoint_mode=revision checkpoint_approval=22"}]]'
+fi
+EOF
+	chmod +x "${tmp_dir}/bin/gh"
+	PATH="${tmp_dir}/bin:$PATH" MOCK_SWEEP_DIR="$tmp_dir" AIDEVOPS_DEVICE_ID=fixture-device \
+		"$CLAIM_HELPER" sweep-pr-checkpoint-claim 42 owner/repo || result=1
+	if [[ -f "${tmp_dir}/posted" ]] && grep -q 'CLAIM_RELEASED reason=claim_only_no_worker' "${tmp_dir}/posted"; then
+		:
+	else
+		result=1
+	fi
+	print_result "checkpoint sweep CLI posts an expired claim release against fixture GitHub" "$result"
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 #######################################
 # Test: fresh claim-only marker stays active during the grace window.
 #######################################
@@ -1810,6 +1974,11 @@ main() {
 	test_pr_checkpoint_target_verification
 	test_env_var_defaults
 	test_check_releases_claim_only_orphan
+	test_sweep_checkpoint_orphan
+	test_checkpoint_sweep_rotation
+	test_checkpoint_sweep_cycle_and_refs
+	test_checkpoint_consensus_failure_recovers
+	test_checkpoint_sweep_cli
 	test_check_preserves_fresh_claim_only_marker
 	test_check_releases_claim_with_uncorrelated_launch_text
 	test_orphan_release_revalidation
