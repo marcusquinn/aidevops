@@ -141,12 +141,14 @@ run_simplification_dedup_cleanup() {
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
 	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve=""
+	local closed_file="${cursor_file}.closed"
 	if [[ -f "$cursor_file" ]]; then
 		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
 		if [[ -n "$resume_after" ]] && ! _pulse_slug_list_contains "$resume_after" "$repo_slugs"; then
 			resume_after=""
 		fi
 	fi
+	total_closed=$(_dedup_cleanup_carried_closed "$closed_file" "$resume_after")
 	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_DEDUP_CLEANUP_STAGE_RESERVE_SECONDS:-5}" "$now_epoch")
 
 	while IFS= read -r slug; do
@@ -173,10 +175,12 @@ run_simplification_dedup_cleanup() {
 		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))") || repo_closed=0
 		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
 		total_closed=$((total_closed + repo_closed))
+		# Persist per repo so a yield or watchdog kill carries the interval budget.
+		[[ "$repo_closed" -eq 0 ]] || printf '%s\n' "$total_closed" >"$closed_file" 2>/dev/null || true
 	done <<<"$repo_slugs"
 
 	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate function-complexity-debt issue(s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt issue(s) closed this interval" >>"$LOGFILE"
 	fi
 	if [[ "$yielded" -eq 1 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
@@ -190,7 +194,31 @@ run_simplification_dedup_cleanup() {
 	else
 		rm -f "$cursor_file" 2>/dev/null || true
 	fi
+	# The interval ends here, so the next one starts with a fresh close budget.
+	rm -f "$closed_file" 2>/dev/null || true
 	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
+	return 0
+}
+
+#######################################
+# GH#38171: close count already spent in this interval by earlier yielded
+# slices. Only a resumed traversal (valid cursor) carries it; a fresh
+# traversal discards any leftover count.
+# Args: $1 - closed-count file, $2 - validated resume cursor (may be empty)
+# Stdout: non-negative integer
+# Returns: 0 always
+#######################################
+_dedup_cleanup_carried_closed() {
+	local closed_file="$1"
+	local resume_after="$2"
+	local carried=""
+	if [[ -n "$resume_after" && -f "$closed_file" ]]; then
+		carried=$(sed -n '1p' "$closed_file" 2>/dev/null || true)
+	else
+		rm -f "$closed_file" 2>/dev/null || true
+	fi
+	[[ "$carried" =~ ^[0-9]+$ ]] || carried=0
+	printf '%s\n' "$carried"
 	return 0
 }
 

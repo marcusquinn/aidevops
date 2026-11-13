@@ -144,9 +144,32 @@ test_batch_exhaustion_keeps_cursor() {
 	return 0
 }
 
+test_yield_carries_interval_budget() {
+	local failed=0 detail=""
+	local cursor_file="${DEDUP_CLEANUP_LAST_RUN}.cursor"
+	rm -f "$DEDUP_CLEANUP_LAST_RUN" "$cursor_file" "${cursor_file}.closed"
+	: >"$CALLS_LOG"
+	: >"${TEST_ROOT}/gh.log"
+	# Slice 1 closes #11 in o/a, then yields at o/c with the budget 1 of 2 spent.
+	printf '4000\n' >"$CLOCK_FILE"
+	DEDUP_CLEANUP_BATCH_SIZE=2 DEDUP_TEST_SATURATE_C=1 PULSE_STAGE_DEADLINE_EPOCH=4012 run_simplification_dedup_cleanup
+	[[ "$(sed -n '1p' "${cursor_file}.closed" 2>/dev/null)" == "1" ]] || { failed=1; detail="carried"; }
+
+	# Slice 2 may close only one more (31, not 32), then the interval ends.
+	printf '5000\n' >"$CLOCK_FILE"
+	DEDUP_CLEANUP_BATCH_SIZE=2 DEDUP_TEST_SATURATE_C=1 PULSE_STAGE_DEADLINE_EPOCH=5100 run_simplification_dedup_cleanup
+	grep -q 'issue close 31 --repo o/c' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} no-31"; }
+	! grep -q 'issue close 32 ' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} over-budget"; }
+	[[ "$(cat "$DEDUP_CLEANUP_LAST_RUN" 2>/dev/null)" == "5000" ]] || { failed=1; detail="${detail} last-run"; }
+	[[ ! -f "${cursor_file}.closed" ]] || { failed=1; detail="${detail} budget-left"; }
+	print_result "deadline yields carry the interval close budget into the resumed slice" "$failed" "$detail"
+	return 0
+}
+
 test_short_slice_resumes_and_completes
 test_interval_gate_after_completion
 test_batch_exhaustion_keeps_cursor
+test_yield_carries_interval_budget
 
 printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
