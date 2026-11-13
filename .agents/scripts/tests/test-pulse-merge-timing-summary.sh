@@ -145,6 +145,7 @@ if ! grep -q 'deterministic_merge_pass timing: repo=owner/failure .*list_state=i
 fi
 
 _pmp_now_epoch() { printf '100'; }
+_pmp_now_epoch_into() { printf -v "$1" '%s' "$(_pmp_now_epoch)"; return 0; }
 _PMP_MERGE_PASS_DEADLINE_EPOCH=110
 if [[ "$(_pmp_merge_pr_list_timeout_seconds)" != "10" ]]; then
 	printf 'FAIL: PR-list timeout was not clamped to the remaining pass deadline\n'
@@ -188,6 +189,7 @@ final_gate_timing_regression() {
   local route_calls=0 routed_evidence=""
   local fresh_evidence='[{"name":"current-check","bucket":"fail"}]'
   _pmp_now_epoch() { printf '%s' "$fake_epoch"; return 0; }
+  _pmp_now_epoch_into() { printf -v "$1" '%s' "$fake_epoch"; return 0; }
   _pulse_merge_admin_safety_check() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != authority ]]; return $?; }
   _pulse_merge_refresh_review_gate_evidence() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != review ]]; return $?; }
   worker_briefed_trust_verdict() { fake_epoch=$((fake_epoch + 1)); [[ "$failure" != worker ]]; return $?; }
