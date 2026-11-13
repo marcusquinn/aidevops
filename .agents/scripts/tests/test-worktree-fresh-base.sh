@@ -22,6 +22,9 @@ WORKTREES="${ROOT}/worktrees"
 HOME="${ROOT}/home"
 export HOME AIDEVOPS_WORKTREE_BASE_DIR="$WORKTREES"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${ROOT}/cleanup-receipts"
+# Never register fixture worktrees in the invoking session's lifecycle state.
+unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 REGISTRY_DB="${HOME}/.aidevops/.agent-workspace/worktree-registry.db"
 
 git init -q --bare "$REMOTE"
@@ -290,9 +293,9 @@ REGISTRATION_FAILURE_OUTPUT=$(
 	HOME="$BROKEN_HOME" AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		"$HELPER" add "$REGISTRATION_FAILURE_BRANCH" "$REGISTRATION_FAILURE_PATH" 2>&1
 ) || REGISTRATION_FAILURE_RC=$?
-if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || ! -d "$REGISTRATION_FAILURE_PATH" ||
-	"$REGISTRATION_FAILURE_OUTPUT" != *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=REGISTRATION_FAILED"* ]]; then
-	printf 'FAIL registration failure did not preserve unverifiable path recreation: rc=%s output=%s\n' \
+if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || -e "$REGISTRATION_FAILURE_PATH" ||
+	"$REGISTRATION_FAILURE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_STAGE=lifecycle:begin-create"* ]]; then
+	printf 'FAIL unavailable registry did not prevent worktree creation: rc=%s output=%s\n' \
 		"$REGISTRATION_FAILURE_RC" "$REGISTRATION_FAILURE_OUTPUT"
 	exit 1
 fi
@@ -307,7 +310,7 @@ jq -e '
 	printf 'FAIL registration failure retired selectable terminal receipt evidence\n'
 	exit 1
 }
-printf 'PASS registration failure preserves terminal receipt and unverifiable worktree generation\n'
+printf 'PASS unavailable registry prevents creation and preserves terminal receipt\n'
 
 ACTIVE_RECEIPT_BRANCH="test/recreated-active-path"
 ACTIVE_RECEIPT_PATH="${WORKTREES}/canonical-test-recreated-active-path"
