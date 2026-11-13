@@ -15,8 +15,16 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import time
 
-from .host import Census, git, locked, metadata_directory, run
+from .host import git, locked, metadata_directory, run
+from .owners import OwnerCheck
+
+# Review worktrees (`<repo>-pr<N>-review-<slug>`) are disposable reads of an open
+# pull request; the PR stays open long after the review ends. Only this shape may
+# be removed while its pull request is open, and only once idle this long.
+REVIEW_TREE = re.compile(r"(?<![a-z0-9])pr\d{1,8}-review-")
+REVIEW_IDLE_SECONDS = 2 * 60 * 60
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the
@@ -169,10 +177,10 @@ def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
                                else f"unpushed-commits-{unpushed}")
 
 
-def _preconditions(path: Path, census: Census | None) -> str | None:
+def _preconditions(path: Path, owner: OwnerCheck | None) -> str | None:
     """Name the first missing precondition for judging this path at all."""
     failures = (
-        (census is None, "process-inventory-unavailable"),
+        (owner is None, "owner-observation-unavailable"),
         (path.is_symlink(), "symlinked-path"),
         (metadata_directory(path) is None, "not-a-linked-worktree"),
         (locked(path), "worktree-locked"),
@@ -200,26 +208,63 @@ def _unfinished(found: list[tuple[str, int]], query: Query) -> str | None:
     return None
 
 
-def _unsafe_to_remove(path: Path, census: Census, timeout: int) -> str | None:
-    """Name what removal would disturb or discard, or nothing when it is safe."""
-    if census.holds(path):
-        return "writers-present"
+def idle_seconds(path: Path, now: float) -> float | None:
+    """Seconds since Git last moved HEAD or the index, or None when unreadable.
+
+    Both live in the worktree's own metadata directory, so a checkout, commit,
+    rebase or staging operation in this tree refreshes them.
+    """
+    metadata = metadata_directory(path)
+    if metadata is None:
+        return None
+    times = []
+    for name in ("HEAD", "index"):
+        try:
+            times.append((metadata / name).stat().st_mtime)
+        except OSError:
+            continue
+    return now - max(times) if times else None
+
+
+def _idle_review_tree(path: Path, unfinished: str, now: float) -> bool:
+    """Accept an open pull request only for an idle review worktree.
+
+    Unknown PR state still refuses: only a confirmed open review qualifies.
+    """
+    if REVIEW_TREE.search(path.name.lower()) is None or not unfinished.endswith("-open"):
+        return False
+    idle = idle_seconds(path, now)
+    return idle is not None and idle >= REVIEW_IDLE_SECONDS
+
+
+def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
+    """Name what removal would disturb or discard, or nothing when it is safe.
+
+    Runs only for finished candidates, so the registry is read after GitHub.
+    """
+    reason = owner(path)
+    if reason is not None:
+        return reason
     clean, detail = nothing_to_lose(path, timeout=timeout)
     return None if clean else detail
 
 
-def evidence(path: Path, census: Census | None, cache: dict,
-             *, timeout: int = 60) -> dict:
+def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
+             *, timeout: int = 60, now: float | None = None) -> dict:
     """Decide one worktree, reporting the first missing proof as the reason."""
     verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated"}
     found = references(path.name)
-    reason = _preconditions(path, census)
+    finished = "work-finished"
+    reason = _preconditions(path, owner)
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
         reason = _unfinished(found, Query(verdict["repository"], cache, timeout))
-    if reason is None and census is not None:
-        reason = _unsafe_to_remove(path, census, timeout)
+        if reason is not None and _idle_review_tree(
+                path, reason, time.time() if now is None else now):
+            reason, finished = None, "review-idle"
+    if reason is None and owner is not None:
+        reason = _unsafe_to_remove(path, owner, timeout)
     verdict["authorized"] = reason is None
-    verdict["reason"] = reason or "work-finished"
+    verdict["reason"] = reason or finished
     return verdict

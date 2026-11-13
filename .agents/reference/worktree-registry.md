@@ -214,16 +214,27 @@ failure as its refusal reason:
   an issue `CLOSED`, a pull request `MERGED`. A pull request closed without
   merging is not finished work. Adjacent references sharing one separator are all
   read, so one closed reference cannot authorize removal while another is open.
+  One exception: a review worktree (`<repo>-pr<N>-review-<slug>`) whose pull
+  request is confirmed `OPEN` qualifies once Git has not moved its `HEAD` or
+  index for 2 hours (`review-idle`). Unknown PR state still refuses, and every
+  other check below still applies.
 - The origin is a GitHub remote. A hostless slug would query an unrelated
   repository of the same name.
-- No observed process has the worktree, or anything inside it, as its working
-  directory, and none names that path in its arguments.
+- No registered owner can still be working there. Ownership comes from the
+  lifecycle registry, never a host process scan: the worktree's generation
+  (`GenerationEnrollment.inspect_retirement`) lists its admitted runs, and the
+  platform `ProcessAdapter` observes each run not recorded as ended. Refusals:
+  `owner-alive`, `owner-unobservable`, `owner-not-enrolled`,
+  `owner-registry-unreadable`. The registry is opened and the adapter's
+  readiness checked once per pass; if either fails, every candidate refuses with
+  `owner-observation-unavailable`. Owners are read only for candidates whose work
+  has finished, after GitHub.
 - No uncommitted changes, no untracked files (requested explicitly, since
   configuration can suppress them) and no commits absent from every remote.
-- The process census is readable and can see its own working directory.
 
-Liveness and repository state are both re-verified immediately before deletion,
-so an edit landing after judgement refuses with `changed-*`. Forced removal is
+Ownership and repository state are both re-verified immediately before deletion:
+a run that became live refuses with `owners-appeared`, and an edit landing after
+judgement refuses with `changed-*`. Forced removal is
 retained because ignored build artifacts are expected and Git refuses them
 otherwise; it runs only after a fresh clean verdict. Git subprocesses run without
 inherited `GIT_DIR`-style redirects, which would otherwise answer every question
@@ -235,13 +246,17 @@ but never as archived.
 
 This pass deliberately claims less than it deletes on: it supplies none of the six
 `CleanupEvidence` proofs, reports no `cleanup_authorized`, and does not meet the
-prerequisites in the section above. Two residual gaps are known and reported
-rather than assumed away. A registered owner process whose working directory and
-arguments both sit outside the worktree is not detected. Live same-user processes
-whose working directory cannot be read are counted in the receipt as
-`unplaceable_processes` and matched only by their arguments. The pass exists so
-the real collector can be designed deliberately rather than under disk pressure;
-running it accepts those risks on every host.
+prerequisites in the section above. One residual gap is known and reported rather
+than assumed away: processes that never registered a run (an ad-hoc shell, an
+interactive session, an orphan outliving its launcher) are not observed. Every
+receipt states this as `"residual_risk": "unregistered-processes-unobserved"`, and
+`owner_observation` reports `registry` or `unavailable`. Registered runs are
+covered wherever their working directory is, which a working-directory scan
+cannot do. Measured on 2026-11-13 across 89 worktrees: the registry found 10 live
+owners in 13.8s; the former `/proc` scan saw 2 of the 6 live owners it was
+compared against and none the registry missed. The pass exists so the real
+collector can be designed deliberately rather than under disk pressure; running
+it accepts that risk on every host.
 
 ## Process-first activity observation
 

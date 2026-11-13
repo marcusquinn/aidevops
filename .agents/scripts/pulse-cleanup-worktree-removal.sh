@@ -58,11 +58,13 @@ _cleanup_log_diagnostics() {
 # it answers only whether the work finished and whether removal would lose it.
 # Removal here is archive-free by explicit operator decision.
 _cleanup_reclaim_finished_worktrees() {
-	local python="$1"
-	local budget="$2"
+	local state_dir="$1"
+	local python="$2"
+	local budget="$3"
 	local result="" removed="" refused="" failed="" reclaimed=""
+	# Owners come from the lifecycle registry, never a host process scan.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
-		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
+		--state-dir "$state_dir" --apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
 		printf '[pulse-wrapper] Finished-worktree reclaim unavailable\n' >>"$LOGFILE"
 		return 0
 	fi
@@ -123,7 +125,7 @@ cleanup_worktrees() {
 	# Reclaim runs first: it is the only pass that reliably retires anything, and a
 	# budget this stage can exhaust must not be spent ahead of it. Measured on a
 	# busy host, the observation-era pass retired nothing in 866 of 934 runs.
-	_cleanup_reclaim_finished_worktrees "$python" "$pass_budget"
+	_cleanup_reclaim_finished_worktrees "$state_dir" "$python" "$pass_budget"
 	_cleanup_observation_era_worktrees "$state_dir" "$python" "$pass_budget"
 	# No pass initializes/migrates state or consults old owner files.
 	# Each gets a third of the budget; the scheduler retains its hard watchdog.
