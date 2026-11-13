@@ -1333,7 +1333,7 @@ test_ci_repair_rejects_head_superseded_by_descendant() {
 	setup_guarded_head_fetch_fixture || { print_result "builds superseded head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
 
 	local repo="${TEST_ROOT}/repo" seed="${TEST_ROOT}/seed" diagnostic="${TEST_ROOT}/worktree-failure.state"
-	local superseded_rc=0 descendant_sha="" created_path="" created_head=""
+	local superseded_rc=0 descendant_sha="" created_path="" created_head="" worktrees=""
 	"$TEST_REAL_GIT" -C "$seed" -c user.name=Test -c user.email=test@example.invalid \
 		commit -q --allow-empty -m "descendant" || true
 	"$TEST_REAL_GIT" -C "$seed" push -q "${TEST_ROOT}/origin.git" feature/repair || true
@@ -1341,13 +1341,14 @@ test_ci_repair_rejects_head_superseded_by_descendant() {
 
 	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
 		"feature/repair" "fingerprint" "1" "$diagnostic" >/dev/null || superseded_rc=$?
+	worktrees=$("$TEST_REAL_GIT" -C "$repo" worktree list --porcelain 2>/dev/null) || worktrees=""
 	if [[ -z "$descendant_sha" || "$descendant_sha" == "$GUARDED_FETCH_HEAD_SHA" ]] ||
 		! "$TEST_REAL_GIT" -C "$repo" cat-file -e "${GUARDED_FETCH_HEAD_SHA}^{commit}" 2>/dev/null; then
 		print_result "superseded head fixture delivers the expected commit as an ancestor" 1 "descendant=${descendant_sha}, log=$(cat "$GH_LOG")"
 	elif [[ "$superseded_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_validation|pr_head_moved|refresh_pr_head_and_retry" ]]; then
 		print_result "PR head superseded by a descendant fails closed" 1 "rc=${superseded_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
-	elif "$TEST_REAL_GIT" -C "$repo" worktree list --porcelain | grep -q 'ci-repair-pr100'; then
-		print_result "superseded PR head creates no repair worktree" 1 "worktrees=$("$TEST_REAL_GIT" -C "$repo" worktree list --porcelain)"
+	elif [[ "$worktrees" == *ci-repair-pr100* ]]; then
+		print_result "superseded PR head creates no repair worktree" 1 "worktrees=${worktrees}"
 	else
 		print_result "PR head superseded by a descendant fails closed" 0
 	fi
