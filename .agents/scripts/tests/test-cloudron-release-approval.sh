@@ -917,6 +917,42 @@ assert_routine not 'manifest in a looser class' '.policy.check_files += ["Cloudr
 assert_routine not 'path traversal in policy' '.policy.check_files += ["../start.sh"]' 'invalid path'
 assert_routine not 'overlapping policy classes' '.policy.check_files += ["Dockerfile"]' 'overlap'
 
+# GH#38013: SHA policies require a fresh signed mode and repository. A commit
+# fingerprint alone is not ancestry evidence, and prefixes are whole tokens.
+OLD_UPSTREAM=1234567aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+(
+	POLICY_JSON=$(jq -c '. + {upstream_mode:"commits",upstream_repository:"upstream/project"}' <<<"$POLICY_JSON")
+	BASE_MANIFEST="${BASE_MANIFEST//3.39.87/1234567}"
+	HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/abcdef1}"
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/1234567}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/abcdef1}"
+	BASE_CHECK="${BASE_CHECK//3.39.87/1234567}"
+	HEAD_CHECK="${HEAD_CHECK//3.39.114/abcdef1}"
+	commit_filter=".finding_upstream = \"$NEW_UPSTREAM\" | .upstream_proof = {repository:\"upstream/project\",base:\"$OLD_UPSTREAM\",head:\"$NEW_UPSTREAM\",status:\"ahead\",merge_base:\"$OLD_UPSTREAM\"}"
+	assert_routine routine 'commit forward ancestry' "$commit_filter"
+	for status in diverged behind identical; do
+		assert_routine not "commit $status" "$commit_filter | .upstream_proof.status = \"$status\"" 'strictly ahead'
+	done
+	assert_routine not 'commit missing proof' "$commit_filter | del(.upstream_proof)" 'proof repository mismatch'
+	assert_routine not 'commit wrong upstream' "$commit_filter | .upstream_proof.repository = \"other/project\"" 'proof repository mismatch'
+	assert_routine not 'commit finding mismatch' "$commit_filter | .finding_upstream = \"$OLD_UPSTREAM\"" 'equal the monitor finding'
+	assert_routine not 'commit resolved head mismatch' "$commit_filter | .upstream_proof.head = \"$OLD_UPSTREAM\"" 'proof commit mismatch'
+	assert_routine not 'commit wrong base' "$commit_filter | .upstream_proof.base = \"$NEW_UPSTREAM\"" 'proof commit mismatch'
+	assert_routine not 'commit wrong merge base' "$commit_filter | .upstream_proof.merge_base = \"$NEW_UPSTREAM\"" 'strictly ahead'
+	assert_routine not 'commit no signed mode' "$commit_filter | del(.policy.upstream_mode)" 'head upstreamVersion must be X.Y.Z'
+	assert_routine not 'commit unknown mode' "$commit_filter | .policy.upstream_mode = \"tags\"" 'unsupported upstream mode'
+	assert_routine not 'commit no signed upstream' "$commit_filter | del(.policy.upstream_repository)" 'needs an upstream repository'
+	assert_routine not 'commit extra file' "$commit_filter | .files += [{filename:\"start.sh\",status:\"modified\"}]" 'outside the standing policy'
+	for token in 1234567a a1234567 pin1234567 1234567_extra; do
+		assert_routine not "commit partial token $token" "$commit_filter | .contents.Dockerfile.base = \"$(b64 "ARG DEP=$token")\" | .contents.Dockerfile.head = \"$(b64 "ARG DEP=${token/1234567/abcdef1}")\"" 'pinned file changes beyond version substitution'
+	done
+)
+# Main-build suffixes cannot borrow tag authority; the documented migration
+# needs one per-release signature before strict-tag routine bumps can start.
+assert_routine not 'Buzz main-build cannot use a tag finding' "$(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28-main.2cd40ba"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\"" 'base upstreamVersion must be X.Y.Z'
+assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]) | $(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\""
+
 # GH#37697: release_policy_authorizes plumbing against stubbed GitHub reads.
 (
 	# shellcheck source=../cloudron-release-approval-helper.sh
@@ -927,7 +963,7 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	policy_issue_json() {
 		local number="$1" author="$2" repo="${3:-owner/app}"
 		jq -cn --argjson number "$number" --arg author "$author" \
-			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`")" \
+			--arg body "$(release_policy_body "$repo" "Maintainer command: \`sudo aidevops approve issue ${number} ${repo}\`" "${POLICY_MODE:-semver}" "${POLICY_UPSTREAM:-}")" \
 			'{number: $number, html_url: ("https://example.invalid/issue/" + ($number | tostring)), author_association: $author, body: $body,
 			  state: "open", closed_at: null, updated_at: "2026-11-11T00:00:00Z", labels: [{name: "release-standing-policy"}]}'
 		return 0
@@ -982,8 +1018,23 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 			;;
 		'pr view') jq -cn --arg head "$HEAD_SHA" '{closingIssuesReferences: [{number: 30}], headRefOid: $head}' ;;
 		'api repos/owner/app/issues/30')
-			jq -cn --arg scenario "$POLICY_CASE" '{state: (if $scenario == "finding_closed" then "closed" else "open" end), author_association: "OWNER",
+			if [[ "${POLICY_MODE:-semver}" == commits ]]; then
+				jq -cn --arg sha "$NEW_UPSTREAM" --arg scenario "$POLICY_CASE" '{state:"open",author_association:"OWNER",
+				 body:("Finding\n<!-- aidevops:cloudron-package-monitor upstream-commit-" + $sha + " -->\nUpstream `" + (if $scenario == "commit_wrong_repo" then "other/project" else "upstream/project" end) + "` branch `main` head is `" + $sha + "` (date): update")}'
+			else
+				jq -cn --arg scenario "$POLICY_CASE" '{state: (if $scenario == "finding_closed" then "closed" else "open" end), author_association: "OWNER",
 				body: "Finding\n<!-- aidevops:cloudron-package-monitor upstream-v3.39.114 -->\n"}'
+			fi
+			;;
+		'api repos/upstream/project/commits/1234567')
+			[[ "$POLICY_CASE" != commit_api_error ]] || return 1
+			printf '%s\n' "$OLD_UPSTREAM"
+			;;
+		'api repos/upstream/project/commits/abcdef1')
+			if [[ "$POLICY_CASE" == commit_resolved_mismatch ]]; then printf '%s\n' "$OLD_UPSTREAM"; else printf '%s\n' "$NEW_UPSTREAM"; fi
+			;;
+		"api repos/upstream/project/compare/${OLD_UPSTREAM}...${NEW_UPSTREAM}")
+			jq -cn --arg base "$OLD_UPSTREAM" --arg scenario "$POLICY_CASE" '{status:(if $scenario == "commit_diverged" then "diverged" else "ahead" end), merge_base_commit:{sha:$base}}'
 			;;
 		"api repos/owner/app/compare/${MAIN_SHA}...${HEAD_SHA}")
 			jq -cn --arg base "$BASE_SHA" --arg scenario "$POLICY_CASE" '{merge_base_commit: {sha: $base},
@@ -1059,6 +1110,23 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	assert_policy none 1
 	assert_policy verified 1 "$OTHER_SHA"
 
+	(
+		POLICY_MODE=commits
+		POLICY_UPSTREAM=upstream/project
+		BASE_MANIFEST="${BASE_MANIFEST//3.39.87/1234567}"
+		HEAD_MANIFEST="${HEAD_MANIFEST//3.39.114/abcdef1}"
+		BASE_DOCKERFILE="${BASE_DOCKERFILE//3.39.87/1234567}"
+		HEAD_DOCKERFILE="${HEAD_DOCKERFILE//3.39.114/abcdef1}"
+		BASE_CHECK="${BASE_CHECK//3.39.87/1234567}"
+		HEAD_CHECK="${HEAD_CHECK//3.39.114/abcdef1}"
+		assert_policy commit_ahead 0
+		grep -Fq "gh api repos/upstream/project/compare/${OLD_UPSTREAM}...${NEW_UPSTREAM}" "${TEST_ROOT}/calls"
+		assert_policy commit_diverged 1
+		assert_policy commit_wrong_repo 1
+		assert_policy commit_resolved_mismatch 1
+		assert_policy commit_api_error 1
+	)
+
 	gh_create_issue() {
 		local body=""
 		body=$(</dev/stdin)
@@ -1100,6 +1168,32 @@ assert_routine not 'overlapping policy classes' '.policy.check_files += ["Docker
 	[[ "$(release_policy_request owner/app)" == "$expected_policy_output" ]]
 	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
 	printf 'PASS interrupted unsigned policy request is finalized\n'
+	export POLICY_CASE=create
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app commits upstream/project)" == "$expected_policy_output" ]]
+	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
+		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
+	grep -q 'commits have no major boundary' "${TEST_ROOT}/policy-body"
+	grep -q 'Maintainer command:' "${TEST_ROOT}/policy-body"
+	printf 'PASS commit policy creation records the signed upstream, ancestry rule and signing command\n'
+	# Migration may finalize an unsigned policy, but must never edit a signed,
+	# stale or unverifiable legacy semver policy to expand its authorization.
+	for POLICY_CASE in verified stale api_error; do
+		export POLICY_CASE
+		: >"${TEST_ROOT}/calls"
+		if release_policy_request owner/app commits upstream/project 2>/dev/null; then exit 1; fi
+		if grep -q '^issue-edit ' "${TEST_ROOT}/calls"; then exit 1; fi
+	done
+	export POLICY_CASE=unsigned
+	: >"${TEST_ROOT}/calls"
+	[[ "$(release_policy_request owner/app commits upstream/project)" == "$expected_policy_output" ]]
+	grep -q '^issue-edit 50 ' "${TEST_ROOT}/calls"
+	release_policy_metadata "$(<"${TEST_ROOT}/policy-body")" owner/app |
+		jq -e '.upstream_mode == "commits" and .upstream_repository == "upstream/project"' >/dev/null
+	printf 'PASS only an unsigned legacy policy can be finalized as a new commit policy for signing\n'
+	: >"${TEST_ROOT}/calls"
+	if release_policy_request owner/app commits '../unsafe' 2>/dev/null; then exit 1; fi
+	if grep -Eq '^(create |issue-edit )' "${TEST_ROOT}/calls"; then exit 1; fi
 	gh() {
 		printf 'gh %s\n' "$*" >>"${TEST_ROOT}/calls"
 		# A non-canonical body that still carries the maintainer command.
