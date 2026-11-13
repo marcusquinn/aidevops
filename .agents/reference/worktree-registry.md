@@ -184,7 +184,7 @@ Cooperative locks cannot prove that arbitrary external shells are absent.
 unbounded growth, not slow cleanup: 101 of 143 worktrees were finished but
 retained, and free space fell 24 GB in 50 minutes.
 
-`worktree-reclaim-finished.py` is the interim answer, and it has two entry points.
+`.agents/worker-lifecycle/worktree-reclaim.py` (logic in `worker_lifecycle/reclaim/`) is the interim answer, and it has two entry points.
 Run directly it reports only, unless `--apply`. The pulse cleanup stage always runs
 it as a third pass sharing the budget in thirds (stage minimum budget 3), and that
 pass always applies: unattended, archive-free deletion with no opt-out flag.
