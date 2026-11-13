@@ -76,12 +76,19 @@ def classify_command(command: str, cwd: str, real_git: str) -> tuple[bool, str]:
 
 
 def main() -> int:
+    # Everything after the first `--` is the Git argv, passed verbatim.
+    raw = sys.argv[1:]
+    positional_argv: Optional[list[str]] = None
+    if "--" in raw:
+        split_at = raw.index("--")
+        positional_argv = raw[split_at + 1 :]
+        raw = raw[:split_at]
     parser = argparse.ArgumentParser()
     parser.add_argument("--cwd", default=None)
     parser.add_argument("--command", default="")
     parser.add_argument("--argv-json", default="")
     parser.add_argument("--real-git", default="")
-    args = parser.parse_args()
+    args = parser.parse_args(raw)
     if args.cwd is None:
         # os.getcwd() raises when the working directory was deleted; fall back
         # to the shell's PWD so absolute `git -C <path>` calls still classify.
@@ -94,7 +101,9 @@ def main() -> int:
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
         return BLOCK_EXIT
-    if args.argv_json:
+    if positional_argv is not None:
+        allowed, reason = classify_git_argv(positional_argv, args.cwd, real_git_path)
+    elif args.argv_json:
         try:
             git_argv = json.loads(args.argv_json)
         except json.JSONDecodeError:

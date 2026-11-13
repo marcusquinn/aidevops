@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 from pathlib import Path
 
 from canonical_git_clone import is_clone_outside_canonical
@@ -103,6 +102,8 @@ def _is_isolated_prospective_merge_tree(
     context_dir = os.path.dirname(os.path.realpath(git_dir))
     if not os.path.basename(context_dir).startswith("aidevops-prospective-todo."):
         return False
+    import tempfile  # deferred: only needed on this rare path
+
     return os.path.dirname(context_dir) == os.path.realpath(tempfile.gettempdir())
 
 
@@ -135,6 +136,8 @@ def _is_isolated_routines_publisher(
         return False
     repo_dir = os.path.realpath(repo_dir)
     context_dir = os.path.dirname(repo_dir)
+    import tempfile  # deferred: only needed on this rare path
+
     return bool(
         os.path.basename(repo_dir) == "repo"
         and re.fullmatch(r"routines-publisher\.[A-Za-z0-9]+", os.path.basename(context_dir))
