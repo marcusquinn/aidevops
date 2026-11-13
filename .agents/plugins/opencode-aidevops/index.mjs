@@ -549,16 +549,8 @@ export async function AidevopsPlugin({ directory, client }) {
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
   // GH#37997: stop and rerun compaction summaries that loop on repeated text;
   // a rerun continues under the same autocontinue policy as OpenCode's own.
-  const compactionLoopGuard = createCompactionLoopGuard({
-    client,
-    isHeadless,
-    qualityLog,
-    shouldContinue: async (sessionID) => {
-      const decision = { enabled: true };
-      await compactionContinuation.autoContinue({ sessionID }, decision);
-      return decision.enabled;
-    },
-  });
+  // Its hooks are fail-open internally.
+  const compactionLoopGuard = createCompactionLoopGuard({ client, isHeadless, qualityLog, continuation: compactionContinuation });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
   // GH#35893: flag a local session compacted on a non-local provider.
@@ -640,11 +632,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
     // GH#37997: first, so replay and later hooks see the repaired history.
-    try {
-      compactionLoopGuard.transformMessages(input, output);
-    } catch (err) {
-      qualityLog("WARN", `[compaction-loop-guard] transform skipped: ${err?.message ?? err}`);
-    }
+    compactionLoopGuard.transformMessages(input, output);
     await compactionInputReplay.inject(input, output);
     await annotateTurnTimesSafely(input, output, { client, isHeadless }, qualityLog);
     // GH#35529: attach receipts to interrupted Task results (fail-open).
@@ -663,11 +651,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // travel through messagesTransformHook as synthetic messages. The only
   // rewrite is GH#37997: repeated runs in a compaction summary are collapsed.
   const completionTextHook = async (input, output) => {
-    try {
-      compactionLoopGuard.completeText(input, output);
-    } catch (err) {
-      qualityLog("WARN", `[compaction-loop-guard] collapse skipped: ${err?.message ?? err}`);
-    }
+    compactionLoopGuard.completeText(input, output);
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
   };
@@ -848,7 +832,7 @@ export async function AidevopsPlugin({ directory, client }) {
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),
         Promise.resolve(subagentEffortHooks.handleEvent(input)),
         compactionContinuation.handleEvent(input),
-        Promise.resolve().then(() => compactionLoopGuard.handleEvent(input)).catch((err) => debugEventError("compaction loop guard", err)),
+        Promise.resolve(compactionLoopGuard.handleEvent(input)),
         Promise.resolve(cancellationReceipt.handleEvent(input)),
         Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),

@@ -4,12 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  collapseRepetitions,
-  repairCompactedHistory,
-  repetitionAtTail,
-} from "../compaction-loop-detect.mjs";
-import { CONTINUE_TEXT, createCompactionLoopGuard } from "../compaction-loop-guard.mjs";
+import { collapseRepetitions, repetitionAtTail } from "../compaction-loop-detect.mjs";
+import { repairCompactedHistory } from "../compaction-history-repair.mjs";
+import { createCompactionLoopGuard } from "../compaction-loop-guard.mjs";
+import { CONTINUE_TEXT } from "../compaction-loop-recovery.mjs";
 
 // Shape of the GH#37997 incident: a summary that copies a quoted aim, then
 // repeats one ~90-char span of it back-to-back.

@@ -5,26 +5,18 @@
 // GH#37997: stop compaction summaries that loop on repeated text (OpenCode 1).
 //
 // Stream: `message.part.delta` text of compaction summaries is checked at the
-// tail. On a loop, interactive sessions are aborted, compaction is rerun via
-// `session.summarize` (a fresh, correctly anchored compaction part), and an
-// automatic compaction continues with the original agent, model and variant.
-// Headless runs are never aborted: `opencode run` would exit, so the output
-// cap ends the stream and text.complete collapses the loop instead.
+// tail. On a loop, interactive sessions are aborted and compaction is rerun
+// (compaction-loop-recovery.mjs). Headless runs are never aborted: `opencode
+// run` would exit, so the output cap ends the stream and text.complete
+// collapses the loop instead.
 // Model input: messages.transform drops failed summaries and repairs a
-// misanchored boundary (compaction-loop-detect.mjs).
+// misanchored boundary (compaction-history-repair.mjs).
 // ---------------------------------------------------------------------------
 
-import { createHash } from "node:crypto";
-import {
-  collapseRepetitions,
-  isCompactionSummary,
-  LOOP_DEFAULTS,
-  repairCompactedHistory,
-  repetitionAtTail,
-} from "./compaction-loop-detect.mjs";
+import { collapseRepetitions, LOOP_DEFAULTS, repetitionAtTail } from "./compaction-loop-detect.mjs";
+import { isCompactionSummary, repairCompactedHistory } from "./compaction-history-repair.mjs";
+import { abortLoopingCompaction, continuationPolicy, rerunCompaction, sessionHash } from "./compaction-loop-recovery.mjs";
 
-// Same text as OpenCode's own post-compaction continuation (compaction.ts).
-export const CONTINUE_TEXT = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.";
 const CHECK_EVERY_CHARS = 512;
 const MAX_TRACKED = 64;
 const MAX_RECOVERIES = 2;
@@ -32,14 +24,6 @@ const RECOVERY_WINDOW_MS = 30 * 60 * 1000;
 
 function capMap(map) {
   while (map.size > MAX_TRACKED) map.delete(map.keys().next().value);
-}
-
-function sessionHash(sessionID) {
-  return createHash("sha256").update(String(sessionID || "unknown-session")).digest("hex").slice(0, 12);
-}
-
-function responseError(response) {
-  return response?.error || response?.data?.error || null;
 }
 
 function idleEvent(event) {
@@ -52,17 +36,21 @@ function eventSessionID(event) {
   return String(props.sessionID || props.info?.sessionID || props.part?.sessionID || "");
 }
 
+function agentName(input) {
+  return typeof input?.agent === "string" ? input.agent : input?.agent?.name;
+}
+
 class CompactionLoopGuard {
-  constructor({ client, isHeadless, qualityLog, shouldContinue, now, detectOptions }) {
+  constructor({ client, isHeadless, qualityLog, shouldContinue, continuation, now, detectOptions }) {
     this.client = client;
     this.isHeadless = isHeadless || (() => false);
     this.log = qualityLog || (() => {});
-    this.shouldContinue = shouldContinue;
+    this.shouldContinue = shouldContinue || continuationPolicy(continuation);
     this.now = now || Date.now;
-    this.detectOptions = { ...LOOP_DEFAULTS, ...(detectOptions || {}) };
+    this.detectOptions = { ...LOOP_DEFAULTS, ...detectOptions };
     this.summaries = new Map(); // assistant messageID -> { sessionID, looped }
     this.compactionParts = new Map(); // user messageID -> { auto, overflow }
-    this.streams = new Map(); // partID -> { messageID, sessionID, tail, checkedAt }
+    this.streams = new Map(); // partID -> { messageID, sessionID, tail, length, checkedAt }
     this.requests = new Map(); // sessionID -> parent request identity
     this.recoveries = new Map(); // sessionID -> { attempts, pending }
   }
@@ -70,47 +58,43 @@ class CompactionLoopGuard {
   // The compaction request's `message` is its parent user message: the
   // session's agent, model and variant to continue with.
   chatParams(input) {
-    const agent = typeof input?.agent === "string" ? input.agent : input?.agent?.name;
     const message = input?.message;
-    if (agent !== "compaction" || !input?.sessionID || !message?.model) return;
-    this.requests.set(input.sessionID, {
-      parentID: message.id,
-      agent: message.agent,
-      providerID: message.model.providerID,
-      modelID: message.model.modelID,
-      variant: message.model.variant,
-    });
+    if (agentName(input) !== "compaction" || !input?.sessionID || !message?.model) return;
+    const { providerID, modelID, variant } = message.model;
+    this.requests.set(input.sessionID, { parentID: message.id, agent: message.agent, providerID, modelID, variant });
     capMap(this.requests);
   }
 
   trackMessage(info) {
-    if (isCompactionSummary(info) && info.id) {
-      if (!this.summaries.has(info.id)) this.summaries.set(info.id, { sessionID: info.sessionID, looped: false });
+    if (isCompactionSummary(info) && info.id && !this.summaries.has(info.id)) {
+      this.summaries.set(info.id, { sessionID: info.sessionID, looped: false });
       capMap(this.summaries);
     }
-    const recovery = this.recoveries.get(info?.sessionID);
-    if (recovery?.pending?.messageID === info?.id && (info.error || info.time?.completed)) {
-      recovery.pending.ended = true;
-    }
+    const pending = this.recoveries.get(info?.sessionID)?.pending;
+    if (pending && pending.messageID === info.id && (info.error || info.time?.completed)) pending.ended = true;
+  }
+
+  trackCompactionPart(part) {
+    this.compactionParts.set(part.messageID, { auto: part.auto === true, overflow: part.overflow === true });
+    capMap(this.compactionParts);
+  }
+
+  // A delta appends; a full part update (text) replaces it.
+  trackText({ id, messageID, sessionID, delta }, text) {
+    const stream = this.streams.get(id) || { messageID, sessionID, tail: "", length: 0, checkedAt: 0 };
+    const next = text === undefined ? stream.tail + delta : text;
+    stream.length = text === undefined ? stream.length + delta.length : text.length;
+    stream.tail = next.slice(-this.detectOptions.window);
+    this.streams.set(id, stream);
+    capMap(this.streams);
+    this.check(stream);
   }
 
   trackPart(part, text) {
-    if (part?.type === "compaction" && part.messageID) {
-      this.compactionParts.set(part.messageID, { auto: part.auto === true, overflow: part.overflow === true });
-      capMap(this.compactionParts);
-      return;
-    }
-    if (!part?.id || !this.summaries.has(part.messageID)) return;
-    if (part.type !== "text" && part.type !== "reasoning") return;
-    const stream = this.streams.get(part.id)
-      || { messageID: part.messageID, sessionID: part.sessionID, tail: "", length: 0, checkedAt: 0 };
-    // A delta appends; a full part update replaces (text-start and text-end).
-    const delta = String(part.delta || "");
-    stream.tail = (text === undefined ? stream.tail + delta : text).slice(-this.detectOptions.window);
-    stream.length = text === undefined ? stream.length + delta.length : text.length;
-    this.streams.set(part.id, stream);
-    capMap(this.streams);
-    this.check(stream);
+    if (part?.type === "compaction" && part.messageID) return this.trackCompactionPart(part);
+    if (!part?.id || !this.summaries.has(part.messageID)) return undefined;
+    if (part.type !== "text" && part.type !== "reasoning") return undefined;
+    return this.trackText({ ...part, delta: String(part.delta || "") }, text);
   }
 
   check(stream) {
@@ -124,13 +108,8 @@ class CompactionLoopGuard {
     this.onLoop(stream, loop);
   }
 
-  onLoop(stream, loop) {
-    const { sessionID, messageID } = stream;
-    const detail = `session sha256:${sessionHash(sessionID)} period=${loop.period} repeats=${loop.repeats} chars=${stream.length}`;
-    if (this.isHeadless()) {
-      this.log("WARN", `[compaction-loop-guard] repetition loop in compaction summary (${detail}); headless: output cap ends it, text is collapsed on completion`);
-      return;
-    }
+  // Up to MAX_RECOVERIES reruns per session within RECOVERY_WINDOW_MS.
+  reserveRecovery(sessionID, messageID) {
     const recovery = this.recoveries.get(sessionID) || { attempts: [], pending: null };
     recovery.attempts = recovery.attempts.filter((at) => this.now() - at < RECOVERY_WINDOW_MS);
     const retry = recovery.attempts.length < MAX_RECOVERIES;
@@ -140,60 +119,22 @@ class CompactionLoopGuard {
     }
     this.recoveries.set(sessionID, recovery);
     capMap(this.recoveries);
+    return retry;
+  }
+
+  onLoop(stream, loop) {
+    const { sessionID, messageID } = stream;
+    const detail = `session sha256:${sessionHash(sessionID)} period=${loop.period} repeats=${loop.repeats} chars=${stream.length}`;
+    if (this.isHeadless()) {
+      this.log("WARN", `[compaction-loop-guard] repetition loop in compaction summary (${detail}); headless: output cap ends it, text is collapsed on completion`);
+      return;
+    }
+    const retry = this.reserveRecovery(sessionID, messageID);
     this.log("WARN", `[compaction-loop-guard] repetition loop in compaction summary (${detail}); aborting${retry ? " and rerunning compaction" : "; retry limit reached"}`);
-    void this.abort(sessionID, retry);
-  }
-
-  async abort(sessionID, retry) {
-    try {
-      const response = await this.client?.session?.abort?.({ path: { id: sessionID } });
-      if (responseError(response)) throw new Error(String(responseError(response)?.message || "abort failed"));
-    } catch (error) {
+    void abortLoopingCompaction({ client: this.client, log: this.log, sessionID, retry }).then((aborted) => {
       const recovery = this.recoveries.get(sessionID);
-      if (recovery) recovery.pending = null;
-      this.log("WARN", `[compaction-loop-guard] abort failed: ${String(error?.message ?? error).slice(0, 200)}`);
-      return;
-    }
-    await this.toast(retry
-      ? "The compaction summary started repeating text. It was stopped and compaction is running again."
-      : "The compaction summary repeated text again and was stopped. Send /compact to retry, or pin agent.compaction.model to another model.",
-    retry ? "warning" : "error");
-  }
-
-  async toast(message, variant) {
-    try {
-      await this.client?.tui?.showToast?.({ body: { title: "Compaction loop stopped", message, variant } });
-    } catch {
-      // Toasts are advisory; the log line above is the durable record.
-    }
-  }
-
-  async recover(sessionID, pending) {
-    const request = pending.request;
-    if (!request?.providerID || !request?.modelID || typeof this.client?.session?.summarize !== "function") {
-      this.log("WARN", "[compaction-loop-guard] rerun skipped: compaction request identity unavailable");
-      return;
-    }
-    const part = this.compactionParts.get(request.parentID) || { auto: false, overflow: false };
-    const summarized = await this.client.session.summarize({
-      path: { id: sessionID },
-      body: { providerID: request.providerID, modelID: request.modelID, auto: false },
+      if (!aborted && recovery) recovery.pending = null;
     });
-    if (responseError(summarized)) throw new Error("summarize failed");
-    this.log("INFO", `[compaction-loop-guard] compaction rerun completed for session sha256:${sessionHash(sessionID)}`);
-    if (!part.auto || part.overflow) return;
-    if (this.shouldContinue && !(await this.shouldContinue(sessionID))) return;
-    if (typeof this.client.session.promptAsync !== "function") return;
-    const prompted = await this.client.session.promptAsync({
-      path: { id: sessionID },
-      body: {
-        agent: request.agent,
-        model: { providerID: request.providerID, modelID: request.modelID },
-        ...(request.variant ? { variant: request.variant } : {}),
-        parts: [{ type: "text", text: CONTINUE_TEXT, synthetic: true }],
-      },
-    });
-    if (responseError(prompted)) throw new Error("continuation prompt failed");
   }
 
   // Only the idle after the aborted summary has ended proves the run is torn
@@ -203,7 +144,15 @@ class CompactionLoopGuard {
     const pending = recovery?.pending;
     if (!pending?.ended) return;
     recovery.pending = null;
-    this.recover(sessionID, pending).catch((error) => {
+    const request = pending.request;
+    rerunCompaction({
+      client: this.client,
+      log: this.log,
+      sessionID,
+      request,
+      part: this.compactionParts.get(request?.parentID),
+      shouldContinue: this.shouldContinue,
+    }).catch((error) => {
       this.log("WARN", `[compaction-loop-guard] rerun failed: ${String(error?.message ?? error).slice(0, 200)}`);
     });
   }
@@ -248,9 +197,21 @@ const DISABLED_GUARD = Object.freeze({
   completeText: () => {},
 });
 
+// Every hook is fail-open: a guard error is logged and never blocks the host.
+function failOpen(log, hook, run) {
+  return (...args) => {
+    try {
+      run(...args);
+    } catch (error) {
+      log("WARN", `[compaction-loop-guard] ${hook} skipped: ${String(error?.message ?? error).slice(0, 200)}`);
+    }
+  };
+}
+
 /**
  * @param {object} options - `client`, `isHeadless()`, `qualityLog(level, msg)`,
- *   `shouldContinue(sessionID)` (autocontinue policy), `now()`, `detectOptions`,
+ *   `continuation` (compaction autocontinue guard) or `shouldContinue(sessionID)`,
+ *   `now()`, `detectOptions`,
  *   `env` (defaults to process.env; `AIDEVOPS_COMPACTION_LOOP_GUARD=0` disables)
  * @returns {{ chatParams: Function, handleEvent: Function, transformMessages: Function, completeText: Function }}
  */
@@ -259,9 +220,9 @@ export function createCompactionLoopGuard(options = {}) {
   if (String(env.AIDEVOPS_COMPACTION_LOOP_GUARD ?? "").trim() === "0") return DISABLED_GUARD;
   const guard = new CompactionLoopGuard(options);
   return {
-    chatParams: (input) => guard.chatParams(input),
-    handleEvent: (input) => guard.handleEvent(input),
-    transformMessages: (_input, output) => guard.transformMessages(output),
-    completeText: (input, output) => guard.completeText(input, output),
+    chatParams: failOpen(guard.log, "chat.params", (input) => guard.chatParams(input)),
+    handleEvent: failOpen(guard.log, "event", (input) => guard.handleEvent(input)),
+    transformMessages: failOpen(guard.log, "transform", (_input, output) => guard.transformMessages(output)),
+    completeText: failOpen(guard.log, "collapse", (input, output) => guard.completeText(input, output)),
   };
 }
