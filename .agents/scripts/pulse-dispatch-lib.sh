@@ -606,7 +606,10 @@ _dispatch_record_and_cache_block() {
 # _pulse_request_cycle_drain) asks a deferred earlier-bundle lock owner to stop
 # at its next candidate boundary via LOCKDIR/drain_requested. Only the named
 # owner honours it ($$ is the wrapper PID in dispatch subshells too); releasing
-# the lock removes it. In-flight candidates finish; no new census starts.
+# the lock removes it. In-flight candidates finish; no new census starts. A
+# census already running completes: the drained cycle launches nothing from it
+# and hands it to the activated bundle before releasing the lock (GH#38048,
+# _dispatch_cleanup_cycle_cache).
 # Stdout: the activated bundle id the scheduler starts next
 # Returns: 0 when this cycle should drain, 1 otherwise
 #######################################

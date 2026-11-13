@@ -2141,6 +2141,12 @@ _pulse_run_supervisor_phase() {
 	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
 		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
 	fi
+	# GH#38048: hand the cycle's full census to the activated bundle while the
+	# drain marker and instance lock still exist. The EXIT-trap cleanup runs
+	# after both are gone, when it could only delete the census.
+	if [[ -n "$_pulse_drain_bundle" ]] && declare -F _dispatch_cleanup_cycle_cache >/dev/null 2>&1; then
+		_dispatch_cleanup_cycle_cache || true
+	fi
 	# Release the instance lock BEFORE the LLM session so the next 2-min cycle
 	# can run deterministic ops concurrently. Terminal publication briefly
 	# reacquires this lock and writes only when health still names this cycle,
