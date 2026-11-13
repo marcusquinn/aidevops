@@ -335,6 +335,9 @@ _ghrs_acquire_reclaim_marker() {
 _ghrs_reclaim_lease() {
 	local key="$1"
 	local observed_generation="$2"
+	# Optional decision label; garbage collection passes "" so idle-state
+	# hygiene never inflates single-flight takeover evidence.
+	local record_decision="${3-takeover}"
 	local request_dir=""
 	local lease_dir=""
 	local reclaim_dir=""
@@ -364,7 +367,7 @@ _ghrs_reclaim_lease() {
 		return 1
 	fi
 	rmdir "$reclaim_dir" 2>/dev/null || true
-	_ghrs_record takeover
+	[[ -z "$record_decision" ]] || _ghrs_record "$record_decision"
 	return 0
 }
 
@@ -599,6 +602,222 @@ gh_request_state_singleflight_finish() {
 	_ghrs_write_outcome "$key" "$generation" "$status" || return 1
 	_ghrs_release_owned_lease "$key" "$generation" || return 1
 	_ghrs_record "leader-${status}"
+	return 0
+}
+
+# GH#38141: bounded garbage collection for the request-coordination root.
+# Every distinct single-flight key leaves requests/<key>/ behind, and killed
+# processes leave mktemp files and ownerless leases. The collector removes
+# only provably idle state, never follows symlinks, and stays under
+# _ghrs_base_dir. Directories holding invalidation.json are always retained:
+# that marker is durable fencing state whose readers never refresh its mtime,
+# so age cannot prove it unused and removing it would reset the generation.
+_GHRS_GC_SCANNED=0
+_GHRS_GC_REMOVED=0
+_GHRS_GC_KEPT=0
+_GHRS_GC_TEMP_REMOVED=0
+_GHRS_GC_BATCH_SIZE=200
+
+_ghrs_gc_positive_int() {
+	local value="$1"
+	local default_value="$2"
+	if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+		printf '%s\n' "$value"
+	else
+		printf '%s\n' "$default_value"
+	fi
+	return 0
+}
+
+# Remove orphaned atomic-write temp files (.outcome.*, .invalidation.* and
+# lease/.owner.*) older than temp_cutoff across one batch of request dirs.
+# Live writers hold these for milliseconds, so an hour-old file is orphaned.
+_ghrs_gc_temp_files() {
+	local temp_cutoff="$1"
+	shift
+	local mtime=""
+	local request_dir="" candidate="" line="" temp_path=""
+	local -a temps=()
+	for request_dir in "$@"; do
+		for candidate in "${request_dir}"/.outcome.* "${request_dir}"/.invalidation.* \
+			"${request_dir}"/lease/.owner.*; do
+			[[ -f "$candidate" && ! -L "$candidate" ]] || continue
+			[[ ! -L "${candidate%/*}" ]] || continue
+			temps+=("$candidate")
+		done
+	done
+	[[ "${#temps[@]}" -gt 0 ]] || return 0
+	while IFS= read -r line; do
+		mtime="${line%% *}"
+		temp_path="${line#* }"
+		[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$temp_cutoff" ]] || continue
+		[[ -f "$temp_path" && ! -L "$temp_path" ]] || continue
+		if rm -f "$temp_path" 2>/dev/null; then
+			_GHRS_GC_TEMP_REMOVED=$((_GHRS_GC_TEMP_REMOVED + 1))
+		fi
+	done < <(_stat_batch '%Y %n' "${temps[@]}" || true)
+	return 0
+}
+
+# Remove one request dir whose own mtime was already proven older than
+# cutoff. Returns 0 when removed, 1 when retained. Unknown entries, symlinks,
+# fresh entries, invalidation markers and live leases all retain the dir; the
+# final rmdir fails closed if a concurrent caller created anything meanwhile.
+_ghrs_gc_request_dir() {
+	local key="$1"
+	local request_dir="$2"
+	local cutoff="$3"
+	local mtime=""
+	local entry="" owner_record="" stat_output="" count=0
+	local -a paths=()
+	[[ -d "$request_dir" && ! -L "$request_dir" ]] || return 1
+	[[ ! -e "${request_dir}/invalidation.json" && ! -L "${request_dir}/invalidation.json" ]] || return 1
+	for entry in "${request_dir}"/* "${request_dir}"/.[!.]* "${request_dir}"/..?*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		[[ ! -L "$entry" ]] || return 1
+		case "${entry##*/}" in
+		outcome.json) [[ -f "$entry" ]] || return 1 ;;
+		lease | lease.reclaim) [[ -d "$entry" ]] || return 1 ;;
+		*) return 1 ;;
+		esac
+		paths+=("$entry")
+	done
+	if [[ -d "${request_dir}/lease" ]]; then
+		for entry in "${request_dir}/lease"/* "${request_dir}/lease"/.[!.]* "${request_dir}/lease"/..?*; do
+			[[ -e "$entry" || -L "$entry" ]] || continue
+			[[ -f "$entry" && ! -L "$entry" ]] || return 1
+			case "${entry##*/}" in
+			owner.json | .owner.*) ;;
+			*) return 1 ;;
+			esac
+			paths+=("$entry")
+		done
+	fi
+	if [[ "${#paths[@]}" -gt 0 ]]; then
+		stat_output="$(_stat_batch '%Y' "${paths[@]}")" || return 1
+		while IFS= read -r mtime; do
+			[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$cutoff" ]] || return 1
+			count=$((count + 1))
+		done <<<"$stat_output"
+		[[ "$count" -eq "${#paths[@]}" ]] || return 1
+	fi
+	if [[ -d "${request_dir}/lease" ]]; then
+		owner_record="$(_ghrs_owner_read "$key")" || owner_record=""
+		_ghrs_owner_is_stale "$key" "$owner_record" || return 1
+		_ghrs_reclaim_lease "$key" "${owner_record%%$'\t'*}" "" || return 1
+	fi
+	rmdir "${request_dir}/lease.reclaim" 2>/dev/null || true
+	rm -f "${request_dir}/outcome.json" 2>/dev/null || true
+	rmdir "$request_dir" 2>/dev/null || return 1
+	return 0
+}
+
+# Age-filter one batch of request dirs with a single stat call, then examine
+# only the idle candidates in detail.
+_ghrs_gc_batch() {
+	local requests_dir="$1"
+	local cutoff="$2"
+	local temp_cutoff="$3"
+	shift 3
+	local mtime=""
+	local line="" request_dir="" key=""
+	local -a candidates=()
+	[[ "$#" -gt 0 ]] || return 0
+	while IFS= read -r line; do
+		mtime="${line%% *}"
+		request_dir="${line#* }"
+		[[ "$request_dir" == "${requests_dir}/"* ]] || continue
+		[[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$cutoff" ]] || continue
+		candidates+=("$request_dir")
+	done < <(_stat_batch '%Y %n' "$@" || true)
+	_GHRS_GC_SCANNED=$((_GHRS_GC_SCANNED + $#))
+	_ghrs_gc_temp_files "$temp_cutoff" "$@"
+	[[ "${#candidates[@]}" -gt 0 ]] || return 0
+	for request_dir in "${candidates[@]}"; do
+		key="${request_dir##*/}"
+		if _ghrs_gc_request_dir "$key" "$request_dir" "$cutoff"; then
+			_GHRS_GC_REMOVED=$((_GHRS_GC_REMOVED + 1))
+		else
+			_GHRS_GC_KEPT=$((_GHRS_GC_KEPT + 1))
+		fi
+	done
+	return 0
+}
+
+# Garbage-collect idle request-coordination state. Rate-limited by a stamp
+# file to one completed sweep per AIDEVOPS_GH_REQUEST_STATE_GC_INTERVAL_SECONDS
+# (default 24h); --force bypasses the stamp. A sweep that exhausts its time
+# budget does not stamp, so the next pulse resumes draining a large backlog.
+# Tunables: AIDEVOPS_GH_REQUEST_STATE_GC_DAYS (idle age, default 7),
+# AIDEVOPS_GH_REQUEST_STATE_GC_TEMP_SECONDS (temp-file age, default 3600),
+# AIDEVOPS_GH_REQUEST_STATE_GC_MAX_SECONDS (time budget, default 45; also
+# clamped to PULSE_STAGE_DEADLINE_EPOCH when run as a pulse stage).
+gh_request_state_gc() {
+	local force=0
+	if [[ "${1:-}" == "--force" ]]; then
+		force=1
+	fi
+	local gc_days="" interval="" temp_seconds="" max_seconds=""
+	local base_dir="" requests_dir="" stamp_file="" now="" stamp_mtime=""
+	local cutoff=0 temp_cutoff=0 started_seconds="$SECONDS" complete=1
+	local request_dir="" stage_deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	local -a batch=()
+	gc_days="$(_ghrs_gc_positive_int "${AIDEVOPS_GH_REQUEST_STATE_GC_DAYS:-}" 7)"
+	interval="$(_ghrs_gc_positive_int "${AIDEVOPS_GH_REQUEST_STATE_GC_INTERVAL_SECONDS:-}" 86400)"
+	temp_seconds="$(_ghrs_gc_positive_int "${AIDEVOPS_GH_REQUEST_STATE_GC_TEMP_SECONDS:-}" 3600)"
+	max_seconds="$(_ghrs_gc_positive_int "${AIDEVOPS_GH_REQUEST_STATE_GC_MAX_SECONDS:-}" 45)"
+	_GHRS_GC_SCANNED=0
+	_GHRS_GC_REMOVED=0
+	_GHRS_GC_KEPT=0
+	_GHRS_GC_TEMP_REMOVED=0
+
+	base_dir="$(_ghrs_base_dir)" || return 1
+	requests_dir="${base_dir}/requests"
+	stamp_file="${base_dir}/.gc-stamp"
+	now="$(_ghrs_now)"
+	[[ "$now" =~ ^[0-9]+$ && "$now" -gt 0 ]] || return 1
+	if [[ -L "$stamp_file" ]]; then
+		rm -f "$stamp_file" 2>/dev/null || return 1
+	fi
+	if [[ "$force" -eq 0 && -f "$stamp_file" ]]; then
+		stamp_mtime="$(_file_mtime_epoch "$stamp_file")" || stamp_mtime=0
+		if [[ "$stamp_mtime" =~ ^[0-9]+$ && "$stamp_mtime" -gt 0 && $((now - stamp_mtime)) -lt "$interval" && "$stamp_mtime" -le "$now" ]]; then
+			printf 'gh_request_state_gc: skipped (last sweep %ss ago)\n' "$((now - stamp_mtime))"
+			return 0
+		fi
+	fi
+	[[ ! -L "$requests_dir" ]] || return 1
+	if [[ "$stage_deadline" =~ ^[0-9]+$ && "$stage_deadline" -gt 0 ]]; then
+		if [[ $((stage_deadline - now - 5)) -lt "$max_seconds" ]]; then
+			max_seconds=$((stage_deadline - now - 5))
+		fi
+		[[ "$max_seconds" -ge 1 ]] || max_seconds=1
+	fi
+	cutoff=$((now - gc_days * 86400))
+	temp_cutoff=$((now - temp_seconds))
+
+	if [[ -d "$requests_dir" ]]; then
+		for request_dir in "${requests_dir}"/*; do
+			[[ "${request_dir##*/}" =~ ^[A-Fa-f0-9]{64}$ ]] || continue
+			[[ -d "$request_dir" && ! -L "$request_dir" ]] || continue
+			batch+=("$request_dir")
+			[[ "${#batch[@]}" -ge "$_GHRS_GC_BATCH_SIZE" ]] || continue
+			_ghrs_gc_batch "$requests_dir" "$cutoff" "$temp_cutoff" "${batch[@]}"
+			batch=()
+			if [[ $((SECONDS - started_seconds)) -ge "$max_seconds" ]]; then
+				complete=0
+				break
+			fi
+		done
+		if [[ "$complete" -eq 1 && "${#batch[@]}" -gt 0 ]]; then
+			_ghrs_gc_batch "$requests_dir" "$cutoff" "$temp_cutoff" "${batch[@]}"
+		fi
+	fi
+	if [[ "$complete" -eq 1 ]]; then
+		(umask 077 && touch "$stamp_file") 2>/dev/null || true
+	fi
+	printf 'gh_request_state_gc: scanned=%s removed=%s kept=%s temp_removed=%s complete=%s\n' \
+		"$_GHRS_GC_SCANNED" "$_GHRS_GC_REMOVED" "$_GHRS_GC_KEPT" "$_GHRS_GC_TEMP_REMOVED" "$complete"
 	return 0
 }
 

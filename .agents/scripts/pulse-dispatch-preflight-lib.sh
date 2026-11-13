@@ -343,6 +343,14 @@ _preflight_cleanup_and_ledger() {
 	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
 		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
 	fi
+	# GH#38141: idle GitHub request-coordination state otherwise grows without
+	# bound. The collector is stamp-limited to one completed sweep per day and
+	# self-budgets below this timeout, so it amortises without blocking dispatch.
+	if declare -F gh_request_state_gc >/dev/null 2>&1; then
+		local _gh_request_state_gc_timeout="${GH_REQUEST_STATE_GC_TIMEOUT:-60}"
+		[[ "$_gh_request_state_gc_timeout" =~ ^[0-9]+$ ]] || _gh_request_state_gc_timeout=60
+		run_stage_with_timeout "gh_request_state_gc" "$_gh_request_state_gc_timeout" gh_request_state_gc || true
+	fi
 	# Fast API-free recovery runs synchronously before the long async cleanup.
 	# This prevents a stale async lock from leaving the dispatch worktree cap
 	# saturated by abandoned detached linter/regression fixtures.
