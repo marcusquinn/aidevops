@@ -189,7 +189,7 @@ def template(data):
     """Emit an approval line only when dispatch-approved could accept its release.
 
     GH#33997: an approval naming an unsupported release (for example
-    worker_draft_checkpoint or crash_during_execution) can never dispatch, and
+    crash_during_execution) can never dispatch, and
     a trusted approval comment also disables the legacy continuation path.
     """
     approval = {**binding(data), "release_id": data["release_id"], "attempt": data["attempt"]}
