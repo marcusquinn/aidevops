@@ -263,6 +263,14 @@ assert_contains "todo data files mentioning payments derive Low" "$todo_data_ris
 todo_runtime_risk=$(_derive_runtime_risk "" "todo/x/specs/a.json,src/billing.ts" "Add planning data about payments")
 assert_contains "runtime file beside todo data still derives Critical" "$todo_runtime_risk" "Critical"
 
+# The prompt-hook candidate registry is display-only metadata (GH#37972 follow-up).
+registry_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,.agents/reference/release-scope-sweep.md" "Add candidate: sessions share one account")
+assert_contains "prompt-hook candidate registry derives Low despite policy terms" "<$registry_risk>" "<Low>"
+other_conf_risk=$(_derive_runtime_risk "" ".agents/configs/self-hosting-files.conf" "Update session list")
+assert_contains "other agent configs still derive Critical" "$other_conf_risk" "Critical"
+registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
+assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
+
 # GH#35709: runtime-owned leftovers must match product staging exclusions.
 RUNTIME_STATE_REPO="${TEST_ROOT}/runtime-state-repo"
 mkdir -p "${RUNTIME_STATE_REPO}/todo/x" "${RUNTIME_STATE_REPO}/.agents/loop-state/nested"
