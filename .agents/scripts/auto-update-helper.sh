@@ -1056,6 +1056,8 @@ _cmd_enable_systemd() {
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
+	# TimeoutStartSec = one interval: a version update (setup.sh ~80-110s) or the
+	# daily skill re-import routinely exceeded the former 120s and was killed.
 	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; \"${script_path}\" expands to "path" in the service file, preserving space-safe quoting
 	printf '%s' "[Unit]
 Description=aidevops auto-update
@@ -1066,7 +1068,7 @@ Type=oneshot
 KillMode=control-group
 ExecStart=/usr/bin/env bash -lc '\"${script_path}\" check'
 $(aidevops_systemd_path_env)
-TimeoutStartSec=120
+TimeoutStartSec=${interval_sec}
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=append:${LOG_FILE}
