@@ -917,6 +917,7 @@ _dispatch_load_and_validate_metadata() {
 	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
 	if [[ "$issue_state" == "CLOSED" ]]; then
 		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_closed signal=state-closed issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
 		return 1
 	fi

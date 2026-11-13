@@ -87,6 +87,16 @@ _dispatch_checkpoint_pr_head() {
 	printf '%s\n' "$CHECKPOINT_HEAD"
 	return 0
 }
+# GH#38091: the slug-less legacy skip is filtered out, but the structured
+# marker must survive candidate-local attribution and select the benign path.
+printf '%s\n' \
+	'[pulse-wrapper] DISPATCH_CANDIDATE_ATTEMPT #38091 (example/repo)' \
+	'[dispatch] Skipping #38091: state=CLOSED' \
+	'[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_closed signal=state-closed issue=#38091 repo=example/repo' >"$LOGFILE"
+[[ "$(_dispatch_candidate_failure_reason 38091 example/repo 1)" == issue_closed ]]
+_dispatch_candidate_benign_block_reason issue_closed
+[[ -z "$(_dispatch_candidate_recent_lines 38091 other/repo)" ]]
+printf 'PASS closed-issue structured reason attribution and benign classification\n'
 # GH#36000: exercise the real LOGFILE reader before the legacy unit stub below.
 candidate='{"number":34526,"repo_slug":"example/repo","updatedAt":"2026-10-13T00:00:00Z","assignees":[],"labels":["status:available","auto-dispatch"]}'
 cache=$(_dispatch_negative_cache_path 34526 example/repo)
