@@ -115,6 +115,13 @@ _policy_fetch_file() {
 	local slug="$1"
 	local path="$2"
 	local ref="$3"
+	local sha="${4:-}"
+	# Fetch the exact listed blob so content always matches the cache key.
+	if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+		gh api --method GET -H "Accept: application/vnd.github.raw" \
+			"repos/${slug}/git/blobs/${sha}"
+		return $?
+	fi
 	gh api --method GET -H "Accept: application/vnd.github.raw" \
 		"repos/${slug}/contents/${path}?ref=${ref}"
 	return $?
@@ -167,7 +174,8 @@ _policy_cache_read() {
 	file="$(_policy_cache_dir)/${_POLICY_ANALYZER_ID}-${sha}"
 	[[ -f "$file" ]] || return 1
 	data=$(cat "$file" 2>/dev/null) || return 1
-	jq -ce 'select((.include | booleans) != null and (.parsed | booleans) != null and (.events | arrays) != null)' \
+	# parsed:false is a cache miss so a recovered parser re-analyses the blob.
+	jq -ce 'select((.include | booleans) != null and .parsed == true and (.events | arrays) != null)' \
 		<<<"$data" 2>/dev/null || return 1
 	return 0
 }
@@ -256,7 +264,7 @@ _policy_scan() {
 		esac
 		# The sha comes from this run's live listing; a miss or bad entry refetches.
 		if ! analysis=$(_policy_cache_read "$sha"); then
-			content=$(_policy_fetch_file "$slug" "$path" "$default_branch") || {
+			content=$(_policy_fetch_file "$slug" "$path" "$default_branch" "$sha") || {
 				_policy_error "cannot read ${path} in ${slug}"
 				return 1
 			}
