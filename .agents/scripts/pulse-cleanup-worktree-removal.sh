@@ -61,7 +61,7 @@ _cleanup_reclaim_finished_worktrees() {
 	local python="$1"
 	local budget="$2"
 	local result="" removed="" refused="" failed="" reclaimed=""
-	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-reclaim-finished.py" \
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
 		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
 		printf '[pulse-wrapper] Finished-worktree reclaim unavailable\n' >>"$LOGFILE"
 		return 0
