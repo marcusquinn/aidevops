@@ -79,6 +79,11 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
 
 BATCH_SIZE = 20
 
+# Marker written by full-loop-helper-merge-cleanup.sh to defer cleanup to a
+# supervisor; framework state, not work. Porcelain status of it when untracked.
+DEFERRED_MARKER = ".agents/.full-loop-cleanup-deferred"
+DEFERRED_MARKER_STATUS = f"?? {DEFERRED_MARKER}"
+
 
 def _batch_query(items: list[tuple[str, int]]) -> str:
     """Build the batch query; the owner and name stay variables, never query text.
@@ -149,11 +154,13 @@ def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
     global configuration can otherwise suppress exactly the files that removal
     would discard. Ignored build artifacts stay excluded and expected.
     """
-    status, dirty = git(path, "status", "--porcelain", "--untracked-files=all",
+    status, dirty = git(path, "status", "--porcelain", "-z", "--untracked-files=all",
                         "--ignore-submodules=none", timeout=timeout)
     if status != 0:
         return False, "status-unreadable"
-    if dirty:
+    # Only the untracked deferral marker is framework state; a tracked change to
+    # that path reports a different status code and still refuses.
+    if any(entry and entry != DEFERRED_MARKER_STATUS for entry in dirty.split("\0")):
         return False, "uncommitted-changes"
     status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes",
                            timeout=timeout)
