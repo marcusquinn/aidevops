@@ -122,12 +122,7 @@ def refusal_code(error: Exception, operation: str) -> str | None:
     if operation in RETIREMENT_OPERATIONS:
         # Never expose Git stderr: it may contain private paths or lock reasons.
         if isinstance(error, subprocess.CalledProcessError):
-            if _git_locked(error):
-                return "worktree-locked"
-            # GH#38056: name the archive helper's namespaced code, never its text.
-            from .cleanup_failure import command_failure
-
-            return command_failure(error).get("reason")
+            return "worktree-locked" if _git_locked(error) else None
         return _value_code(error) if isinstance(error, ValueError) else None
     handler = next((handler for kind, handler in _HANDLERS if isinstance(error, kind)), None)
     if handler is None or operation not in CREATION_OPERATIONS:
