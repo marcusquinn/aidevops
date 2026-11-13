@@ -2,10 +2,12 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """The one exception to finished work: an idle review worktree of an open PR.
 
-Review worktrees (``<repo>-pr<N>-review-<slug>``) are disposable reads of an open
-pull request, and that PR stays open long after the review ends. Only this shape
-may be removed while its pull request is open, only once Git has been idle there
-for ``IDLE_SECONDS``, and still only after every other reclaim check passes.
+Review worktrees (``<repo>-pr<N>-review-<slug>``) are disposable checkouts of
+pull request N's head, and that PR stays open long after the review ends. For
+this shape PR N alone decides: the head branch's references later in the name
+describe the same work. An open PR qualifies only once Git has been idle there
+for ``IDLE_SECONDS``, re-checked at removal, and every other reclaim check
+still applies.
 """
 
 from __future__ import annotations
@@ -14,10 +16,20 @@ from pathlib import Path
 import re
 import time
 
-from .host import metadata_directory
+from .host import metadata_directory, nothing_to_lose
 
-TREE = re.compile(r"(?<![a-z0-9])pr\d{1,8}-review-")
 IDLE_SECONDS = 2 * 60 * 60
+
+
+def own_pull_request(name: str, slug: str) -> int | None:
+    """The PR a review worktree checks out, or None for any other shape.
+
+    Anchored on the origin's repository name, so a worker tree that merely
+    mentions a review later in its name is not a review worktree.
+    """
+    repo = slug.rsplit("/", 1)[-1].lower()
+    match = re.match(rf"{re.escape(repo)}-pr(\d{{1,8}})-review-", name.lower())
+    return int(match.group(1)) if match else None
 
 
 def idle_seconds(path: Path) -> float | None:
@@ -37,12 +49,14 @@ def idle_seconds(path: Path) -> float | None:
     return time.time() - max(times) if times else None
 
 
-def idle_review(path: Path, unfinished: str) -> bool:
-    """Accept an open pull request only for an idle review worktree.
-
-    Unknown PR state still refuses: only a confirmed open review qualifies.
-    """
-    if TREE.search(path.name.lower()) is None or not unfinished.endswith("-open"):
-        return False
+def still_idle(path: Path) -> bool:
+    """Unreadable idleness refuses: only a measured quiet period qualifies."""
     idle = idle_seconds(path)
     return idle is not None and idle >= IDLE_SECONDS
+
+
+def verify_idle_review(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
+    """Removal-time re-check for ``review-idle``: still quiet, still nothing to lose."""
+    if not still_idle(path):
+        return False, "review-active"
+    return nothing_to_lose(path, timeout=timeout)

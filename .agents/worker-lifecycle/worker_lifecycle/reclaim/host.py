@@ -25,8 +25,12 @@ GIT_REDIRECTS = (
 
 
 def _environment() -> dict[str, str]:
-    return {name: value for name, value in os.environ.items()
-            if name not in GIT_REDIRECTS}
+    # No optional locks: a status refresh would rewrite the index, resetting the
+    # idle clock that review worktrees are judged by and racing a live writer.
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in GIT_REDIRECTS}
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    return environment
 
 
 def run(command: list[str], timeout: int = 60) -> tuple[int, str]:

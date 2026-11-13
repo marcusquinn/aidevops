@@ -214,10 +214,14 @@ failure as its refusal reason:
   an issue `CLOSED`, a pull request `MERGED`. A pull request closed without
   merging is not finished work. Adjacent references sharing one separator are all
   read, so one closed reference cannot authorize removal while another is open.
-  One exception: a review worktree (`<repo>-pr<N>-review-<slug>`) whose pull
-  request is confirmed `OPEN` qualifies once Git has not moved its `HEAD` or
-  index for 2 hours (`review-idle`). Unknown PR state still refuses, and every
-  other check below still applies.
+  One exception: a review worktree (`<repo>-pr<N>-review-<slug>`, `<repo>` being
+  the origin's repository name) is judged by PR N alone, since the head-branch
+  references later in its name describe the same work. If PR N is confirmed
+  `OPEN`, it qualifies once Git has not moved its `HEAD` or index for 2 hours
+  (`review-idle`), re-checked just before removal (`changed-review-active`).
+  Unknown PR state still refuses, and every other check below still applies.
+  Reclaim runs Git with `GIT_OPTIONAL_LOCKS=0`, so its own status reads never
+  rewrite the index and reset that clock.
 - The origin is a GitHub remote. A hostless slug would query an unrelated
   repository of the same name.
 - No registered owner can still be working there. Ownership comes from the

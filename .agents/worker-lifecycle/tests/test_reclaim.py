@@ -203,6 +203,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
                          "pr-9001-open")
 
+    def test_review_exception_follows_the_trees_own_pull_request_only(self):
+        # An open issue earlier in the name must not stand in for PR 9001's state.
+        tree = self.worktree_idle("repo-gh4242-pr9001-review-fixture")
+        cache = {("gh", 4242, SLUG): (False, "issue-4242-open"),
+                 ("pr", 9001, SLUG): (False, "pr-9001-none")}
+        self.assertEqual(self.decide(path=tree, cache=cache)["reason"], "issue-4242-open")
+        own = self.worktree_idle("repo-pr9001-review-gh4242-fixture")
+        self.assertEqual(self.decide(path=own, cache=cache)["reason"], "pr-9001-none")
+
     def test_refuses_uncommitted_changes(self):
         (self.worktree / "README.md").write_text("edited\n", encoding="utf-8")
         self.assertEqual(self.decide()["reason"], "uncommitted-changes")
@@ -260,7 +269,7 @@ class EvidenceTests(unittest.TestCase):
                         str(self.root / "separate.git"), str(separate)],
                        check=True, capture_output=True)
         self.assertEqual(self.decide(path=separate)["reason"], "not-a-linked-worktree")
-        removed, detail = host.remove(separate, collector.nothing_to_lose, no_owner)
+        removed, detail = host.remove(separate, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "not-a-linked-worktree")
         self.assertTrue(separate.exists())
@@ -284,18 +293,18 @@ class EvidenceTests(unittest.TestCase):
 
     def test_removal_refuses_a_locked_worktree(self):
         git(self.canonical, "worktree", "lock", str(self.worktree))
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose, no_owner)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "worktree-locked")
         self.assertTrue(self.worktree.exists())
 
     def test_removes_an_authorized_worktree(self):
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose, no_owner)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertTrue(removed, detail)
         self.assertFalse(self.worktree.exists())
 
     def test_refuses_removal_when_an_owner_appeared_after_judgement(self):
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose,
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose,
                                       owner_reporting("owner-alive"))
         self.assertFalse(removed)
         self.assertEqual(detail, "owners-appeared")
@@ -303,7 +312,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_refuses_removal_when_state_changed_after_judgement(self):
         (self.worktree / "notes.md").write_text("late\n", encoding="utf-8")
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose, no_owner)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "changed-uncommitted-changes")
         self.assertTrue(self.worktree.exists())

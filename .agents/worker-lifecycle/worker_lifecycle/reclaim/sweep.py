@@ -21,10 +21,10 @@ from pathlib import Path
 import sys
 import time
 
-from .evidence import (
-    evidence, nothing_to_lose, prefetch, references, repository)
-from .host import common_directory, free_bytes, remove, run
+from .evidence import evidence, prefetch, references, repository
+from .host import common_directory, free_bytes, nothing_to_lose, remove, run
 from .owners import RESIDUAL_RISK, OwnerCheck, default_state_dir, open_owners
+from .review import verify_idle_review
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
@@ -92,7 +92,9 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
         verdict["removal"] = "budget-exhausted"
         return None
     common = common_directory(path)
-    removed, detail = remove(path, nothing_to_lose, current.owner)
+    # A review tree was authorized for being quiet, so removal re-checks that too.
+    verify = verify_idle_review if verdict["reason"] == "review-idle" else nothing_to_lose
+    removed, detail = remove(path, verify, current.owner)
     verdict["removal"] = detail
     if not removed:
         receipt["failed"] += 1

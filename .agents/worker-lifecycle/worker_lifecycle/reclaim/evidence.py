@@ -18,9 +18,9 @@ import re
 
 from .host import git, locked, metadata_directory, nothing_to_lose, run
 from .owners import OwnerCheck
+from .review import own_pull_request, still_idle
 
-__all__ = ["evidence", "nothing_to_lose", "prefetch", "references", "repository"]
-from .review import idle_review
+__all__ = ["evidence", "prefetch", "references", "repository"]
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the
@@ -171,13 +171,18 @@ def _unfinished(path: Path, found: list[tuple[str, int]],
                 query: Query) -> tuple[str | None, str]:
     """Name the first unfinished reference, or how the work counts as finished.
 
-    An idle review worktree of a confirmed-open pull request is the one exception
-    (``review.idle_review``); every later check still applies to it.
+    A review worktree is judged by its own pull request alone, and an idle one
+    whose PR is confirmed open is the one exception (``reclaim.review``); every
+    later check still applies to it.
     """
-    for kind, number in found:
+    own = own_pull_request(path.name, query.slug)
+    for kind, number in found if own is None else [("pr", own)]:
         finished, detail = reference_finished(kind, number, query)
-        if not finished:
-            return (None, "review-idle") if idle_review(path, detail) else (detail, "")
+        if finished:
+            continue
+        if own is not None and detail == f"pr-{own}-open" and still_idle(path):
+            return None, "review-idle"
+        return detail, ""
     return None, "work-finished"
 
 

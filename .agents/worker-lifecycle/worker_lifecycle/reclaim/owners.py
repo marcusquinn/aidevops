@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-"""Registered-owner observation for the reclaim pass; read-only, fails closed.
+"""Registered-owner observation for the reclaim pass; issues no writes, fails closed.
 
 Ownership comes from the lifecycle registry, never from a host-wide process
 scan: a worktree's generation lists the runs admitted to it, and the platform
@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess  # nosec B404 -- exception types only; this module runs nothing.
 
 from ..cleanup_plan import _runs
 from ..enrollment import GenerationEnrollment
@@ -30,7 +31,10 @@ RESIDUAL_RISK = "unregistered-processes-unobserved"
 # Returns None when no registered owner can be alive, otherwise the refusal reason.
 OwnerCheck = Callable[[Path], "str | None"]
 
-_REGISTRY_ERRORS = (ValueError, OSError, sqlite3.Error, KeyError, TypeError)
+# SubprocessError: enrollment resolves the generation's git directory with a
+# checked, time-limited git call, so one wedged tree must refuse, not end the pass.
+_REGISTRY_ERRORS = (ValueError, OSError, sqlite3.Error, KeyError, TypeError,
+                    subprocess.SubprocessError)
 # Any status other than these two, including "unknown", refuses as unobservable.
 _OBSERVED: dict[str, str | None] = {"alive": "owner-alive", "ended": None}
 
