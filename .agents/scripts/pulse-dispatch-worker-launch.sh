@@ -1024,8 +1024,9 @@ _dlw_precreate_helper_reason() {
 	local output="$1"
 	local reason="" pattern=""
 	# GH#36142: an enrollment refusal names its own cause, so it outranks the
-	# generic "Worktree retained" disposition that follows it.
-	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+	# generic "Worktree retained" disposition that follows it. GH#38095: so does
+	# a cleanup-receipt refusal, which precedes RECONCILIATION_FAILED.
+	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'Cleanup-receipt reconciliation refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
 		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
 		[[ -z "$reason" ]] || break
 	done
