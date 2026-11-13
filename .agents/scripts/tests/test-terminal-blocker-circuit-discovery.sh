@@ -460,3 +460,174 @@ test_owner_scoped_discovery() {
 	print_result "owner-scoped discovery paginates, queues unqueued trusted holds once, resumes interrupted passes, and lets rearm apply retries" "$status"
 	return 0
 }
+
+# GH#37978 fixtures: one listing page from "number|updatedAt|labels|blockers"
+# specs (comma-separated label names and blocker states).
+_unclassified_listing_page() {
+	printf '%s\n' "$@" | jq -Rn '[inputs | split("|") |
+		{number: (.[0] | tonumber), updatedAt: .[1],
+		 labels: {nodes: (.[2] | split(",") | map({name: .})), pageInfo: {hasNextPage: false}},
+		 blockedBy: {nodes: (.[3] | split(",") | map(select(length > 0) | {state: .})), pageInfo: {hasNextPage: false}}}] |
+		[{data: {repository: {issues: {nodes: ., pageInfo: {hasNextPage: false, endCursor: null}}}}}]' \
+		>"${TB_UNCLASSIFIED_FIXTURE}/listing.json"
+	return 0
+}
+
+_unclassified_issue() {
+	local issue="$1" state="$2" updated="$3" labels="$4"
+	jq -nc --arg state "$state" --arg updated "$updated" --arg labels "$labels" \
+		'{state:$state, title:"Held task", body:"", updated_at:$updated,
+		  labels:($labels | split(",") | map(select(length > 0) | {name: .}))}' \
+		>"${TB_UNCLASSIFIED_FIXTURE}/issue-${issue}.json"
+	return 0
+}
+
+_unclassified_gh() {
+	local args="$*" path="${2:-}" issue=""
+	printf '%s\n' "$args" >>"${TB_UNCLASSIFIED_FIXTURE}/requests"
+	case "$args" in
+	"api graphql --paginate --slurp -f owner=owner -f name=repo -f label=status:blocked "*)
+		[[ ! -f "${TB_UNCLASSIFIED_FIXTURE}/listing.fail" ]] || return 1
+		jq -c . "${TB_UNCLASSIFIED_FIXTURE}/listing.json"
+		;;
+	"api repos/owner/repo/issues/"*"/comments?per_page=100 --paginate --slurp")
+		[[ "$path" =~ /issues/([0-9]+)/comments ]] || return 1
+		issue="${BASH_REMATCH[1]}"
+		if [[ -f "${TB_UNCLASSIFIED_FIXTURE}/comments-${issue}.json" ]]; then
+			jq -c . "${TB_UNCLASSIFIED_FIXTURE}/comments-${issue}.json"
+		else
+			printf '[[]]\n'
+		fi
+		;;
+	"api repos/owner/repo/issues/"*)
+		issue="${path##*/}"
+		[[ -f "${TB_UNCLASSIFIED_FIXTURE}/issue-${issue}.json" ]] || return 1
+		jq -c . "${TB_UNCLASSIFIED_FIXTURE}/issue-${issue}.json"
+		;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+test_unclassified_hold_intake() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/unclassified"
+		TBR_REPOS_JSON="${TEST_ROOT}/unclassified-repos.json"
+		TBR_UNCLASSIFIED_MAX=2
+		export TB_UNCLASSIFIED_FIXTURE="${TEST_ROOT}/unclassified-fixture" TERMINAL_BLOCKER_SELF_LOGIN=runner-one
+		mkdir -p "$TB_UNCLASSIFIED_FIXTURE" || exit 1
+		_tbr_start_budget || exit 1
+		_tbr_init_dirs || exit 1
+		jq -nc '{initialized_repos:[{slug:"owner/repo",pulse:true}]}' >"$TBR_REPOS_JSON"
+		local old="2026-01-01T00:00:00Z" recent="" issue="" out="" rc=0 writes=0
+		recent=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		# 60/66/67 qualify; 61 has an open native blocker, 62 another hold
+		# label, 63 a terminal-blocker comment, 64 a recent update, 65 an open
+		# text dependency.
+		_unclassified_listing_page "60|${old}|status:blocked|CLOSED" "61|${old}|status:blocked|OPEN" \
+			"62|${old}|status:blocked,hold-for-review|" "63|${old}|status:blocked|" \
+			"64|${recent}|status:blocked|" "65|${old}|status:blocked|" \
+			"66|${old}|status:blocked|" "67|${old}|status:blocked,enhancement|"
+		for issue in 60 61 62 63 64 65 66 67; do
+			_unclassified_issue "$issue" open "$old" status:blocked
+		done
+		jq -nc '[[{id:10,user:{login:"outsider"},author_association:"NONE",created_at:"2026-01-01T00:00:00Z",
+			body:"Terminal blocker: reason=input_required owner=maintainer"}]]' >"${TB_UNCLASSIFIED_FIXTURE}/comments-63.json"
+		gh() { _unclassified_gh "$@"; return $?; }
+		_tbr_dependency_unresolved() { [[ "$2" == 65 ]]; return $?; }
+		# The pending pass runs stages in-process; seed is out of scope here.
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		tbr_seed() { return 0; }
+		tbr_discover() { return 0; }
+		# Regression guard: no issue write from the stage or the queue pass.
+		set_issue_status() { writes=$((writes + 1)); return 0; }
+		_tbr_post_rearm_receipt() { writes=$((writes + 1)); return 0; }
+		# Unknown intake values still coerce to local; existing ones survive.
+		tbr_enqueue owner/repo 90 unknown bogus || exit 1
+		tbr_enqueue owner/repo 91 permission_required remote_observation || exit 1
+		[[ "$(jq -r .intake "${TBR_ROOT}/queue/owner--repo--90.json")" == local ]] || exit 1
+		[[ "$(jq -r .intake "${TBR_ROOT}/queue/owner--repo--91.json")" == remote_observation ]] || exit 1
+		rm -f "${TBR_ROOT}"/queue/*.json
+		# Pass 1: an empty queue prints nothing; the stage queues two (the cap),
+		# which this pass has not observed (partial, rc 2).
+		out=$(tbr_pending 2>/dev/null) || rc=$?
+		[[ "$rc" -eq 2 && -z "$out" ]] || exit 1
+		[[ "$(find "${TBR_ROOT}/queue" -name '*.json' | wc -l | tr -d ' ')" == 2 ]] || exit 1
+		[[ "$(jq -r '.reason + " " + .intake' "${TBR_ROOT}/queue/owner--repo--60.json")" == "unknown unclassified_hold" ]] || exit 1
+		[[ -f "${TBR_ROOT}/queue/owner--repo--66.json" && ! -f "${TBR_ROOT}/queue/owner--repo--67.json" ]] || exit 1
+		for issue in 61 62 63 64 65; do
+			[[ ! -f "${TBR_ROOT}/queue/owner--repo--${issue}.json" ]] || exit 1
+		done
+		# Listing filters drop 61, 62 and 64 without any per-issue read.
+		! rg -q 'issues/(61|62|64)' "${TB_UNCLASSIFIED_FIXTURE}/requests" || exit 1
+		[[ -s "${TBR_ROOT}/unclassified/owner--repo.list" && ! -f "${TBR_ROOT}/unclassified/owner--repo.epoch" ]] || exit 1
+		# Pass 2 prints both entries, then resumes after the cap without
+		# listing again; 67 is queued after the queue pass (partial, rc 2).
+		: >"${TB_UNCLASSIFIED_FIXTURE}/requests"
+		rc=0
+		out=$(tbr_pending 2>/dev/null) || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		[[ "$(jq -sc 'map(.issue)' <<<"$out")" == '[60,66]' ]] || exit 1
+		jq -se 'all(.[]; .intake == "unclassified_hold" and .local_excerpts == [] and .reason == "unknown")' <<<"$out" >/dev/null || exit 1
+		! rg -q 'graphql' "${TB_UNCLASSIFIED_FIXTURE}/requests" || exit 1
+		[[ -f "${TBR_ROOT}/queue/owner--repo--67.json" && -s "${TBR_ROOT}/unclassified/owner--repo.epoch" ]] || exit 1
+		[[ ! -f "${TBR_ROOT}/unclassified/owner--repo.list" ]] || exit 1
+		# The stamped repo is not listed again inside the interval.
+		: >"${TB_UNCLASSIFIED_FIXTURE}/requests"
+		tbr_discover_unclassified 2>/dev/null || exit 1
+		[[ ! -s "${TB_UNCLASSIFIED_FIXTURE}/requests" ]] || exit 1
+		_unclassified_lifecycle_checks "$old" || exit 1
+		[[ "$writes" -eq 0 ]] || exit 1
+		! rg -q -e '--method' -e '-X (POST|PATCH|DELETE)' -e 'issue (edit|comment)' "${TB_UNCLASSIFIED_FIXTURE}/requests" || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "unclassified status:blocked holds are queued under the per-pass cap, reported to the supervisor, retired when owned elsewhere, and never written" "$status"
+	return 0
+}
+
+# Queued-entry lifecycle for test_unclassified_hold_intake; runs inside its
+# subshell, so the helper, fixtures and stubs are already loaded.
+_unclassified_lifecycle_checks() {
+	local old="$1" issue="" out="" rc=0
+	# A recorded decision suppresses the line but keeps the entry.
+	printf '{"recorded_epoch":%s}\n' "$(date +%s)" >"${TBR_ROOT}/decisions/owner--repo--66.json"
+	_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--66.json" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 1 && -f "${TBR_ROOT}/queue/owner--repo--66.json" ]] || return 1
+	# rearm: no stage, no read, no output, no write.
+	: >"${TB_UNCLASSIFIED_FIXTURE}/requests"
+	rm -f "${TBR_ROOT}/unclassified/owner--repo.epoch"
+	out=$(tbr_main rearm 2>/dev/null) || return 1
+	[[ -z "$out" && ! -s "${TB_UNCLASSIFIED_FIXTURE}/requests" ]] || return 1
+	[[ ! -f "${TBR_ROOT}/unclassified/owner--repo.list" ]] || return 1
+	# A held text dependency keeps the entry silently.
+	tbr_enqueue owner/repo 65 unknown unclassified_hold || return 1
+	rc=0
+	out=$(_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--65.json" 2>/dev/null) || rc=$?
+	[[ "$rc" -eq 1 && -z "$out" && -f "${TBR_ROOT}/queue/owner--repo--65.json" ]] || return 1
+	# Retire on close, on losing status:blocked, on another hold label and
+	# on a terminal-blocker record (normal intake then owns it).
+	tbr_enqueue owner/repo 63 unknown unclassified_hold || return 1
+	_unclassified_issue 60 closed "$old" status:blocked
+	_unclassified_issue 66 open "$old" status:available
+	_unclassified_issue 67 open "$old" status:blocked,no-auto-dispatch
+	for issue in 60 66 67 63; do
+		rc=0
+		_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--${issue}.json" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 1 && ! -f "${TBR_ROOT}/queue/owner--repo--${issue}.json" ]] || return 1
+	done
+	[[ ! -f "${TBR_ROOT}/decisions/owner--repo--66.json" ]] || return 1
+	# A retired, unchanged issue is not queued again; a failed listing is
+	# incomplete and leaves the repo unstamped.
+	_unclassified_issue 67 open "$old" status:blocked
+	tbr_discover_unclassified 2>/dev/null || return 1
+	[[ ! -f "${TBR_ROOT}/queue/owner--repo--60.json" && ! -f "${TBR_ROOT}/queue/owner--repo--67.json" ]] || return 1
+	rm -f "${TBR_ROOT}/unclassified/owner--repo.epoch"
+	: >"${TB_UNCLASSIFIED_FIXTURE}/listing.fail"
+	rc=0
+	tbr_discover_unclassified 2>/dev/null || rc=$?
+	[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/unclassified/owner--repo.epoch" ]] || return 1
+	return 0
+}

@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.187] - 2026-11-13
+
+### Added
+
+- queue bare status:blocked holds as unclassified_hold (#38002)
+
+### Fixed
+
+- stop runaway compaction summary loops and repair misanchored compaction boundaries
+- stop skill-check timeout retry loop and size unit timeout to interval
+- release watchdog hard-kills as watchdog_kill:hard_kill_stall, not worker_failed (GH#37984) (#37995)
+- publish decision/maintainer review-thread blocker on the PR (#37996)
+
+## [3.39.186] - 2026-11-13
+
+### Added
+
+- GitHub-signed catalog publish commits with atomic tag push (#37980)
+
+### Changed
+
+- Refactor: extract reconciliation rotation helpers (#37988)
+
+### Fixed
+
+- refresh a reused file-size-debt issue body that lacks Files Scope (#37990)
+- allow continuation workers to integrate the PR base locally (#37982)
+- prevent isolated ambient server attachment (#37987)
+- make re-armed workers act on brief revisions (GH#37970) (#37975)
+- allow durability pushes to a side ref in continuation attempts (#37966)
+- clarify compaction summary scope (#37976)
+
 ## [3.39.185] - 2026-11-13
 
 ### Added

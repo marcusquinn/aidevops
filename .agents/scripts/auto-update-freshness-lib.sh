@@ -329,6 +329,21 @@ check_skill_freshness() {
 		return 0
 	fi
 
+	# Attempt backoff: last_skill_check is only written after completion, so a
+	# run killed by the scheduler (systemd TimeoutStartSec) left no record and
+	# every 10-minute tick retried the full re-import — a repeating timeout loop
+	# whose start time drifted later each day. Persist the attempt first, like
+	# check_upstream_watch, so interrupted runs back off for an hour.
+	local attempt_field="last_skill_check_attempt"
+	gate_result=$(_check_freshness_time_gate "$attempt_field" 3600 "Skills attempt")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+	if ! update_upstream_watch_timestamp "$attempt_field"; then
+		log_warn "Could not record skill freshness attempt — skipping"
+		return 0
+	fi
+
 	log_info "Running daily skill freshness check..."
 	local skill_updates
 	skill_updates=$(_run_skill_update "$skill_update_script")
