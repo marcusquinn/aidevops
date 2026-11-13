@@ -345,7 +345,7 @@ define_feedback_helpers() {
 		_ci_repair_prepare_attempt
 		_ci_repair_adopt_live_session
 		_ci_repair_claim_lease _ci_repair_record_worktree_failure _ci_repair_fetch_pr_head
-		_ci_repair_create_worktree
+		_ci_repair_fetched_tip_is_head _ci_repair_create_worktree
 		_ci_repair_session_identity
 		_ci_repair_resolve_runner_login
 		_ci_repair_launch_worker
@@ -1320,6 +1320,45 @@ test_ci_repair_fetches_absent_head_through_sibling_worktree() {
 		print_result "moved PR head fetch never targets the canonical checkout" 1 "Log: $(cat "$GH_LOG")"
 	else
 		print_result "moved PR head still fails closed after the fetch" 0
+	fi
+	teardown_guarded_head_fetch_fixture
+	return 0
+}
+
+# The remote branch advanced to a descendant after the PR head was read: the
+# fetch delivers the expected commit as an ancestor, which must not be accepted.
+test_ci_repair_rejects_head_superseded_by_descendant() {
+	setup_test_env
+	define_feedback_helpers || { print_result "defines feedback helpers for superseded head fetch" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+	setup_guarded_head_fetch_fixture || { print_result "builds superseded head fetch fixture" 1 "fixture setup failed"; teardown_guarded_head_fetch_fixture; return 0; }
+
+	local repo="${TEST_ROOT}/repo" seed="${TEST_ROOT}/seed" diagnostic="${TEST_ROOT}/worktree-failure.state"
+	local superseded_rc=0 descendant_sha="" created_path="" created_head=""
+	"$TEST_REAL_GIT" -C "$seed" -c user.name=Test -c user.email=test@example.invalid \
+		commit -q --allow-empty -m "descendant" || true
+	"$TEST_REAL_GIT" -C "$seed" push -q "${TEST_ROOT}/origin.git" feature/repair || true
+	descendant_sha=$("$TEST_REAL_GIT" -C "$seed" rev-parse HEAD 2>/dev/null) || descendant_sha=""
+
+	_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$GUARDED_FETCH_HEAD_SHA" \
+		"feature/repair" "fingerprint" "1" "$diagnostic" >/dev/null || superseded_rc=$?
+	if [[ -z "$descendant_sha" || "$descendant_sha" == "$GUARDED_FETCH_HEAD_SHA" ]] ||
+		! "$TEST_REAL_GIT" -C "$repo" cat-file -e "${GUARDED_FETCH_HEAD_SHA}^{commit}" 2>/dev/null; then
+		print_result "superseded head fixture delivers the expected commit as an ancestor" 1 "descendant=${descendant_sha}, log=$(cat "$GH_LOG")"
+	elif [[ "$superseded_rc" -eq 0 || "$(cat "$diagnostic" 2>/dev/null)" != "head_validation|pr_head_moved|refresh_pr_head_and_retry" ]]; then
+		print_result "PR head superseded by a descendant fails closed" 1 "rc=${superseded_rc}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	elif "$TEST_REAL_GIT" -C "$repo" worktree list --porcelain | grep -q 'ci-repair-pr100'; then
+		print_result "superseded PR head creates no repair worktree" 1 "worktrees=$("$TEST_REAL_GIT" -C "$repo" worktree list --porcelain)"
+	else
+		print_result "PR head superseded by a descendant fails closed" 0
+	fi
+
+	created_path=$(_ci_repair_create_worktree "$repo" "owner/repo" "42" "100" "$descendant_sha" \
+		"feature/repair" "fingerprint" "2" "$diagnostic") || created_path=""
+	created_head=$(git -C "${created_path:-/nonexistent}" rev-parse HEAD 2>/dev/null) || created_head=""
+	if [[ -z "$created_path" || "$created_head" != "$descendant_sha" ]]; then
+		print_result "refreshed PR head is repairable after a superseded attempt" 1 "path=${created_path}, head=${created_head}, diagnostic=$(cat "$diagnostic" 2>/dev/null)"
+	else
+		print_result "refreshed PR head is repairable after a superseded attempt" 0
 	fi
 	teardown_guarded_head_fetch_fixture
 	return 0
