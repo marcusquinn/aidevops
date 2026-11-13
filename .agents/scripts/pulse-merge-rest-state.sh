@@ -218,7 +218,15 @@ _pmp_rest_review_decision_from_reviews() {
 	local reviews_json=""
 
 	reviews_json=$(_pmp_rest_reviews_json "$pr_number" "$repo_slug") || return 1
-	printf '%s' "$reviews_json" | jq -r '
+	printf '%s' "$reviews_json" | _pmp_reduce_reviews_json || return 1
+	return 0
+}
+
+#######################################
+# Reduce a REST-shaped review array (stdin) to the active review state.
+#######################################
+_pmp_reduce_reviews_json() {
+	jq -r '
 		def state_changing: .state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED";
 		if type != "array" then error("expected review array")
 		elif any(.[]?; state_changing and (
@@ -239,6 +247,37 @@ _pmp_rest_review_decision_from_reviews() {
 	return 0
 }
 
+#######################################
+# GraphQL fallback for the review state when REST is at the worker reserve.
+# One bounded `gh pr view` read (GraphQL budget is separate from REST core).
+# latestReviews is capped at 10 reviewers: a full list without a blocker is
+# inconclusive and fails closed. Malformed data fails closed.
+# Args: $1=PR number, $2=repo slug
+# Stdout: CHANGES_REQUESTED | OBSERVED_APPROVED | NONE
+#######################################
+_pmp_graphql_review_decision_from_reviews() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_json=""
+
+	local review_count="" mapped="" decision=""
+
+	pr_json=$(_pmrs_gh_call read gh pr view "$pr_number" --repo "$repo_slug" --json latestReviews 2>/dev/null) || return 1
+	review_count=$(printf '%s' "$pr_json" | jq -er '.latestReviews | length' 2>/dev/null) || return 1
+	[[ "$review_count" =~ ^[0-9]+$ ]] || return 1
+	mapped=$(printf '%s' "$pr_json" | jq -ce '
+		.latestReviews | to_entries
+		| map({user: {login: .value.author.login}, state: .value.state, submitted_at: .value.submittedAt, id: .key})
+	' 2>/dev/null) || return 1
+	decision=$(printf '%s' "$mapped" | _pmp_reduce_reviews_json) || return 1
+	# A full (capped) list is only conclusive when it already shows a blocker.
+	if [[ "$review_count" -ge 10 && "$decision" != "CHANGES_REQUESTED" ]]; then
+		return 1
+	fi
+	printf '%s' "$decision"
+	return 0
+}
+
 _pmp_refresh_unknown_review_decision_into() {
 	local dest_var="$1"
 	local pr_number="$2"
@@ -249,7 +288,9 @@ _pmp_refresh_unknown_review_decision_into() {
 	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	_pmp_normalize_review_decision_into refreshed_review "$current_review"
 	if [[ "$refreshed_review" == "UNKNOWN" ]]; then
-		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) || refreshed_review="UNKNOWN"
+		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review=$(_pmp_graphql_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review="UNKNOWN"
 		_pmp_normalize_review_decision_into refreshed_review "$refreshed_review"
 	fi
 	printf -v "$dest_var" '%s' "$refreshed_review"
