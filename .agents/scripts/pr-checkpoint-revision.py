@@ -153,25 +153,21 @@ def sorted_comments(data):
 
 def newest_binding_mismatch(data):
     """Report only fixed field names from the newest trusted unedited approval."""
-    for comment in reversed(sorted_comments(data)):
-        lines = [line for line in comment.get("body", "").splitlines() if line.startswith(PREFIX)]
-        if len(lines) != 1 or not trusted(comment, data.get("trusted_logins", ())):
-            continue
-        try:
-            approval = json.loads(lines[0][len(PREFIX):])
-            if not isinstance(approval, dict):
-                return None
-            keys = [key for key, value in binding(data).items() if approval.get(key) != value]
-            now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
-            if not 0 <= now - timestamp(comment["created_at"]) <= 86400:
-                keys.append("expired")
-            attempt = approval.get("attempt")
-            if not isinstance(attempt, str) or not attempt.startswith("attempt:"):
-                keys.append("attempt_malformed")
-            return keys, comment["id"]
-        except (ValueError, KeyError, TypeError, OverflowError):
-            return None
-    return None
+    try:
+        comments = (c for c in reversed(sorted_comments(data))
+                    if trusted(c, data.get("trusted_logins", ())) and
+                    len([line for line in c["body"].splitlines() if line.startswith(PREFIX)]) == 1)
+        comment = next(comments)
+        line = next(line for line in comment["body"].splitlines() if line.startswith(PREFIX))
+        approval = json.loads(line[len(PREFIX):])
+        keys = [key for key, value in binding(data).items() if approval.get(key) != value]
+        now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
+        age = now - timestamp(comment["created_at"])
+        checks = {"expired": not 0 <= age <= 86400,
+                  "attempt_malformed": not re.match(r"^attempt:", str(approval.get("attempt")))}
+        return keys + [key for key, failed in checks.items() if failed], comment["id"]
+    except (ValueError, KeyError, TypeError, OverflowError, StopIteration, AttributeError):
+        return None
 
 
 def binding_diagnostic(data):
