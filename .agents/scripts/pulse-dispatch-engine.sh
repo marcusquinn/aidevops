@@ -1519,6 +1519,9 @@ _run_preflight_stages() {
 	# GH#37854: a stale/missing snapshot runs prefetch before early dispatch.
 	local _pflt_prefetch_rc=0
 	_run_promoted_prefetch_if_starved "$_pflt_timeout" || _pflt_prefetch_rc=$?
+	# GH#37986: starved label maintenance runs one bounded slice before early
+	# dispatch, so stale needs-* holds cannot outlive the starvation bound.
+	_run_promoted_label_maintenance_if_starved || true
 	# t3054: dispatch passes do NOT use run_stage_with_timeout. Unlike other
 	# preflight stages (single-step operations), each wraps apply_dispatch_max,
 	# which iterates N candidates that are each
@@ -1541,17 +1544,20 @@ _run_preflight_stages() {
 	# normalize trusted-author NMR residue and refill once so every newly unblocked
 	# candidate remains dispatchable this cycle.
 	local _label_timeout=""
-	if _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
+	if [[ "${_PULSE_LABEL_MAINTENANCE_PROMOTED:-0}" == "1" ]]; then
+		# GH#37986: a cycle runs the stage at most once.
+		echo "[pulse-wrapper] preflight_label_maintenance: promoted slice ran before early dispatch; normal slot skipped this cycle (GH#37986)" >>"$LOGFILE"
+	elif _label_timeout=$(_preflight_refill_reserved_timeout "$_pflt_timeout"); then
 		_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_label_timeout" \
 			_preflight_label_maintenance "$_label_timeout" || true
 	else
-		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+		echo "[pulse-wrapper] preflight_label_maintenance deferred: insufficient wall-clock budget for post-label refill ($(_preflight_refill_reserved_deficit))" >>"$LOGFILE"
 	fi
 	local _nmr_timeout=""
 	if _nmr_timeout=$(_preflight_refill_reserved_timeout "$PRE_RUN_STAGE_TIMEOUT"); then
 		_pulse_run_budget_priority_stage "preflight_trusted_nmr_reconcile" _preflight_trusted_nmr_reconcile "$_nmr_timeout" || true
 	else
-		echo "[pulse-wrapper] preflight_trusted_nmr_reconcile deferred: insufficient wall-clock budget for post-label refill" >>"$LOGFILE"
+		echo "[pulse-wrapper] preflight_trusted_nmr_reconcile deferred: insufficient wall-clock budget for post-label refill ($(_preflight_refill_reserved_deficit))" >>"$LOGFILE"
 	fi
 	local _pflt_refill_start=$SECONDS
 	local _pflt_refill_rc=0
@@ -1594,6 +1600,44 @@ _run_promoted_prefetch_if_starved() {
 		pulse_stats_increment "pulse_prefetch_starvation_promoted" 2>/dev/null || true
 	fi
 	_run_preflight_prefetch_stage "$_pflt_timeout" || return 1
+	return 0
+}
+
+#######################################
+# GH#37986: starvation bound for label maintenance. Its normal slot follows
+# early dispatch and needs the post-label refill reserve, so a busy runner can
+# defer it on every cycle while stale needs-simplification and
+# needs-consolidation holds keep issues out of dispatch. When a substage has
+# not started within the bound, run one bounded slice before early dispatch.
+# The slice passes the same REST/GraphQL budget gates as the normal slot; a
+# budget deferral leaves the normal slot free to try. A cycle that already
+# promoted prefetch promotes this stage only at twice the bound, so the first
+# fill normally waits for one promotion at most. The stop flag suppresses
+# promotion.
+#
+# Sets: _PULSE_LABEL_MAINTENANCE_PROMOTED (reset to 0, then 1 when the slice
+#       passed the budget gate; the normal slot is skipped for that cycle)
+# Returns: 0 always
+#######################################
+_run_promoted_label_maintenance_if_starved() {
+	_PULSE_LABEL_MAINTENANCE_PROMOTED=0
+	declare -F _preflight_label_maintenance_starved >/dev/null 2>&1 || return 0
+	[[ -z "${STOP_FLAG:-}" || ! -f "$STOP_FLAG" ]] || return 0
+	local _lm_age="" _lm_factor=1
+	[[ "${_PULSE_PREFETCH_RAN:-0}" != "1" ]] || _lm_factor=2
+	_lm_age=$(_preflight_label_maintenance_starved "$_lm_factor") || return 0
+	local _lm_slice="${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S:-180}"
+	[[ "$_lm_slice" =~ ^[0-9]{1,5}$ && "$((10#$_lm_slice))" -ge 60 ]] || _lm_slice=180
+	_lm_slice="$((10#$_lm_slice))"
+	local _lm_last="not recorded"
+	[[ ! "$_lm_age" =~ ^[0-9]+$ ]] || _lm_last="${_lm_age}s ago"
+	echo "[pulse-wrapper] Label maintenance starvation bound reached: stalest substage attempt ${_lm_last}, bound ${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S:-7200}s x${_lm_factor} — promoting a ${_lm_slice}s slice ahead of early dispatch (GH#37986)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_label_maintenance_starvation_promoted" 2>/dev/null || true
+	fi
+	_pulse_run_budget_priority_stage_with_timeout "preflight_label_maintenance" "$_lm_slice" \
+		_preflight_label_maintenance "$_lm_slice" || true
+	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] || _PULSE_LABEL_MAINTENANCE_PROMOTED=1
 	return 0
 }
 

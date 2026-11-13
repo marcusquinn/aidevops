@@ -629,6 +629,31 @@ _preflight_refill_reserved_timeout() {
 	return 0
 }
 
+# GH#37986: log-only mirror of the reserve _preflight_refill_reserved_timeout
+# applies, so a deferral line says how far short the cycle fell. Keep the
+# reserve and margin rules identical to that gate. This never admits a stage.
+# Stdout: "remaining=<s>s, required=<s>s" ("?" for an unavailable value).
+_preflight_refill_reserved_deficit() {
+	local configured="${PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-600}}"
+	local refill_reserve="" margin=5 remaining="" required="?"
+	remaining=$(_pulse_cycle_remaining_seconds 0) || remaining=""
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || remaining=""
+	refill_reserve=$(_preflight_post_label_refill_required_seconds) || refill_reserve=""
+	if [[ "$refill_reserve" =~ ^[0-9]+$ ]]; then
+		if [[ "$configured" =~ ^[0-9]+$ && "$refill_reserve" -gt "$configured" ]]; then
+			if [[ -n "$remaining" && "$remaining" -ge "$refill_reserve" ]]; then
+				margin=60
+			else
+				refill_reserve="$configured"
+			fi
+		fi
+		# The gate needs at least one second beyond the reserve and its margin.
+		required=$((refill_reserve + margin + 1))
+	fi
+	printf 'remaining=%ss, required=%ss\n' "${remaining:-?}" "$required"
+	return 0
+}
+
 #######################################
 # Normalize NMR only after live author-authority, provenance, breaker, and
 # security classification in auto_approve_maintainer_issues. Running this after the first
@@ -873,6 +898,64 @@ _preflight_prefetch_starved() {
 	now=$(date +%s)
 	[[ $((now - mtime)) -gt "$bound" ]] && return 0
 	return 1
+}
+
+#######################################
+# GH#37986: starvation bound for label maintenance. The stage runs after early
+# dispatch and only when the cycle still holds the post-label refill reserve,
+# so a busy runner deferred it on every cycle (66 hours measured). It is the
+# only path that removes needs-simplification and needs-consolidation holds:
+# held issues are filtered out before dispatch can re-measure them. When any
+# substage has not started within the bound, the caller runs one bounded slice
+# before early dispatch. The stage runs its stalest substage first, so every
+# slice that passes the REST gate moves the stalest attempt forward.
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S   bound in seconds (default
+#     7200; 0 disables promotion and keeps the legacy order).
+#   AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S   promoted slice timeout
+#     (default 180, minimum 60; read by the caller).
+# Reads the attempt epochs _preflight_label_maintenance_order reads, with the
+# same fallback to the completion epochs.
+# Arguments: $1 - bound multiplier (default 1). The caller passes 2 on a cycle
+#   that already promoted prefetch; a substage with no recorded attempt has no
+#   measurable age and then waits for the next cycle.
+# Stdout (when starved): seconds since the stalest substage last started, or
+#   "never" when a substage has no recorded attempt.
+# Returns: 0 when starved, 1 otherwise (or when the clock cannot be read).
+#######################################
+_preflight_label_maintenance_starved() {
+	local factor="${1:-1}"
+	local bound="${AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S:-7200}"
+	[[ "$bound" =~ ^[0-9]{1,9}$ ]] || bound=7200
+	[[ "$((10#$bound))" -gt 0 ]] || return 1
+	[[ "$factor" =~ ^[1-9]$ ]] || factor=1
+	bound=$((10#$bound * factor))
+	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.attempts"
+	local key epoch extra
+	local now="" stalest=0 consolidation=0 backfill=0 simplification=0
+	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
+	if [[ -r "$state_file" && -f "$state_file" ]]; then
+		while read -r key epoch extra; do
+			[[ -z "$extra" && "$epoch" =~ ^[0-9]{1,12}$ ]] || continue
+			case "$key" in
+				consolidation) consolidation="$((10#$epoch))" ;;
+				backfill) backfill="$((10#$epoch))" ;;
+				simplification) simplification="$((10#$epoch))" ;;
+			esac
+		done <"$state_file"
+	fi
+	now=$(date +%s 2>/dev/null) || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	stalest="$consolidation"
+	[[ "$backfill" -ge "$stalest" ]] || stalest="$backfill"
+	[[ "$simplification" -ge "$stalest" ]] || stalest="$simplification"
+	if [[ "$stalest" -eq 0 ]]; then
+		[[ "$factor" -eq 1 ]] || return 1
+		printf 'never\n'
+		return 0
+	fi
+	[[ $((now - stalest)) -gt "$bound" ]] || return 1
+	printf '%s\n' "$((now - stalest))"
+	return 0
 }
 
 #######################################

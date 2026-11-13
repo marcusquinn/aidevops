@@ -418,6 +418,224 @@ assert_label_maintenance_cycle_budget_contract() {
 	return 0
 }
 
+# GH#37986: any substage that has not started within the starvation bound
+# promotes one bounded slice ahead of early dispatch, and a deferral reports
+# how far short of the refill reserve the cycle fell.
+assert_label_maintenance_starvation_contract() {
+	local test_root="" actual=""
+	local expected="never:never;doubled_never:no;fresh:no;stale:9000;partial:never;disabled:no;doubled:no;doubled_stale:15000;"
+	expected+="deficit:remaining=605s, required=606s;"
+	expected+="promoted:1:preflight_label_maintenance:180;current:0:;deferred:0:preflight_label_maintenance:180;"
+	expected+="prefetch:0:;prefetch_doubled:1:preflight_label_maintenance:180;stopped:0:;slice:1:preflight_label_maintenance:240;minimum:1:preflight_label_maintenance:180;"
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-starved-XXXXXX") || return 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual=$(
+		(
+			unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
+			# shellcheck source=../pulse-dispatch-preflight-lib.sh
+			source "$PREFLIGHT_LIB"
+			eval "$(sed -n '/^_run_promoted_label_maintenance_if_starved() {/,/^}/p' "$ENGINE")"
+			unset AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S
+			unset PULSE_POST_LABEL_REFILL_MIN_REMAINING_SECONDS _PULSE_ELASTIC_DISPATCH
+			LOGFILE="$test_root/pulse.log" STOP_FLAG="$test_root/stop"
+			AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE="$test_root/epochs"
+			PULSE_START_EPOCH=98805 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800 PRE_RUN_STAGE_TIMEOUT=600
+			date() { printf '100000\n'; }
+			attempts() {
+				printf 'consolidation 99000\nbackfill 99000\nsimplification %s\n' "$1" >"$test_root/epochs.attempts"
+				return 0
+			}
+			printf 'never:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
+			printf 'doubled_never:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
+			attempts 99000
+			printf 'fresh:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
+			attempts 91000
+			printf 'stale:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
+			printf 'consolidation 99000\nbackfill 99000\n' >"$test_root/epochs.attempts"
+			printf 'partial:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
+			attempts 91000
+			printf 'disabled:%s;' "$(AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S=0 _preflight_label_maintenance_starved || printf 'no')"
+			printf 'doubled:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
+			attempts 85000
+			printf 'doubled_stale:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
+			printf 'deficit:%s;' "$(_preflight_refill_reserved_deficit)"
+
+			TEST_DEFERRED=0 STAGE_CALL=""
+			_pulse_run_budget_priority_stage_with_timeout() {
+				local stage="$1" timeout_seconds="$2"
+				_PULSE_BUDGET_STAGE_DEFERRED="$TEST_DEFERRED"
+				STAGE_CALL="${stage}:${timeout_seconds}"
+				return 0
+			}
+			promotion_probe() {
+				local probe="$1"
+				STAGE_CALL=""
+				_run_promoted_label_maintenance_if_starved
+				printf '%s:%s:%s;' "$probe" "$_PULSE_LABEL_MAINTENANCE_PROMOTED" "$STAGE_CALL"
+				return 0
+			}
+			_PULSE_PREFETCH_RAN=0
+			attempts 91000
+			promotion_probe promoted
+			attempts 99000
+			promotion_probe current
+			attempts 91000
+			TEST_DEFERRED=1
+			promotion_probe deferred
+			TEST_DEFERRED=0 _PULSE_PREFETCH_RAN=1
+			promotion_probe prefetch
+			attempts 85000
+			promotion_probe prefetch_doubled
+			_PULSE_PREFETCH_RAN=0
+			: >"$STOP_FLAG"
+			promotion_probe stopped
+			rm -f "$STOP_FLAG"
+			AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S=240
+			promotion_probe slice
+			AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVED_SLICE_S=30
+			promotion_probe minimum
+		)
+	)
+	if [[ "$actual" == "$expected" ]] &&
+		grep -q 'stalest substage attempt 9000s ago, bound 7200s x1 — promoting a 180s slice' "$test_root/pulse.log" &&
+		grep -q 'stalest substage attempt 15000s ago, bound 7200s x2' "$test_root/pulse.log"; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: starved label maintenance is promoted once per bound and reports its deficit"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: label maintenance starvation contract"
+		echo "  expected: $expected"
+		echo "  actual:   ${actual:-none}"
+	fi
+	rm -rf "$test_root"
+	return 0
+}
+
+# GH#37986: each re-evaluation substage re-checks the issues that carry its
+# label before it sweeps repositories. The sweep remains the safety net for a
+# failed search, skips what the held-first step already re-checked, and keeps
+# a share of the substage's time.
+assert_label_maintenance_held_first_contract() {
+	local test_root="" actual="" expected=""
+	local held7="measure:Acme/held#7:b7:/h;cleared:Acme/held#7;" held12="measure:Acme/held#12:b12:/h;"
+	local sweep="list:acme/empty;list:Acme/held;" held20="measure:Acme/held#20:b20:/h;"
+	expected="first:0:search;${held7}${held12}${sweep}${held20}:Acme/held 12|"
+	expected+="rotated:0:search;${held12}${held7}${sweep}${held20}:Acme/held 7|"
+	expected+="fallback:0:search;${sweep}${held7}${held12}${held20}|"
+	expected+="share:2:search;${held7}${sweep}${held12}:Acme/held 7:Acme/held 2 20|"
+	expected+="consolidation:0:search;c7;c12;${sweep}c20;|"
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-held-XXXXXX") || return 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual=$(
+		(
+			unset _PULSE_TRIAGE_EVALUATION_LIB_LOADED
+			# shellcheck source=../pulse-triage-evaluation.sh
+			source "$TRIAGE_EVALUATION"
+			unset _LABEL_MAINTENANCE_DEADLINE _LABEL_CURSOR_SLUG _LABEL_CURSOR_PHASE _LABEL_CURSOR_ISSUE
+			LOGFILE="$test_root/pulse.log" REPOS_JSON="$test_root/repos.json"
+			EVENTS="$test_root/events" CLOCK="$test_root/clock"
+			_LABEL_MAINTENANCE_KEY="simplification"
+			_LABEL_CURSOR_FILE="$test_root/epochs.simplification.cursor"
+			jq -n '{initialized_repos:[{slug:"acme/empty",path:"/e",pulse:true},{slug:"Acme/held",path:"/h",pulse:true}]}' >"$REPOS_JSON"
+			printf '0\n' >"$CLOCK"
+			TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=0
+			date() {
+				local now=0
+				read -r now <"$CLOCK"
+				printf '%s\n' "$now"
+				return 0
+			}
+			gh() {
+				[[ "$*" == "api -X GET search/issues"* ]] || return 1
+				printf 'search;' >>"$EVENTS"
+				[[ "$TEST_SEARCH_RC" -eq 0 ]] || return 1
+				printf '%s\n' '{"slug":"acme/held","number":12,"body":"b12"}' \
+					'{"slug":"acme/held","number":7,"body":"b7"}' \
+					'{"slug":"stranger/repo","number":3,"body":"b3"}'
+				return 0
+			}
+			gh_issue_list() {
+				local slug="$2"
+				printf 'list:%s;' "$slug" >>"$EVENTS"
+				if [[ "$slug" == "Acme/held" ]]; then
+					printf '%s\n' '[{"number":20,"body":"b20"},{"number":7,"body":"b7"},{"number":12,"body":"b12"}]'
+				else
+					printf '[]\n'
+				fi
+				return 0
+			}
+			_pulse_refresh_repo() { return 0; }
+			_backfill_simplification_auto_dispatch_labels() { printf '0\n'; return 0; }
+			_reevaluate_stale_continuations() { return 1; }
+			_post_simplification_gate_cleared_comment() {
+				printf 'cleared:%s#%s;' "$2" "$1" >>"$EVENTS"
+				return 0
+			}
+			_issue_targets_large_files() {
+				local num="$1" slug="$2" body="$3" rpath="$4" now=0
+				printf 'measure:%s#%s:%s:%s;' "$slug" "$num" "$body" "$rpath" >>"$EVENTS"
+				read -r now <"$CLOCK"
+				printf '%s\n' "$((now + TEST_MEASURE_SECONDS))" >"$CLOCK"
+				[[ "$num" != 7 ]]
+			}
+			_issue_needs_consolidation() {
+				local num="$1"
+				printf 'c%s;' "$num" >>"$EVENTS"
+				[[ "$num" != 7 ]]
+			}
+			local rc=0 held_cursor="$test_root/epochs.simplification.held"
+
+			: >"$EVENTS"
+			_reevaluate_simplification_labels || rc=$?
+			printf 'first:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
+
+			# A previous run stopped at #7: this run starts after it.
+			printf 'Acme/held 7\n' >"$held_cursor"
+			: >"$EVENTS"
+			rc=0
+			_reevaluate_simplification_labels || rc=$?
+			printf 'rotated:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
+
+			# A failed search proves nothing: the sweep re-checks every hold.
+			TEST_SEARCH_RC=1
+			: >"$EVENTS"
+			rc=0
+			_reevaluate_simplification_labels || rc=$?
+			printf 'fallback:%s:%s|' "$rc" "$(<"$EVENTS")"
+
+			# 60s substage: the held-first step yields at 40s, the sweep
+			# re-checks #12 and the deadline defers #20 to the next cycle.
+			TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=40 _LABEL_MAINTENANCE_DEADLINE=60
+			rm -f "$held_cursor"
+			: >"$EVENTS"
+			rc=0
+			_reevaluate_simplification_labels || rc=$?
+			printf 'share:%s:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")" "$(<"$_LABEL_CURSOR_FILE")"
+
+			unset _LABEL_MAINTENANCE_DEADLINE
+			TEST_MEASURE_SECONDS=0 _LABEL_MAINTENANCE_KEY="consolidation"
+			_LABEL_CURSOR_FILE="$test_root/epochs.consolidation.cursor"
+			: >"$EVENTS"
+			rc=0
+			_reevaluate_consolidation_labels || rc=$?
+			printf 'consolidation:%s:%s|' "$rc" "$(<"$EVENTS")"
+		)
+	)
+	if [[ "$actual" == "$expected" ]] &&
+		grep -q 'held-first needs-simplification re-checked 2 issue(s), cleared 1 (GH#37986)' "$test_root/pulse.log" &&
+		grep -q 'held-first needs-simplification re-checked 1 issue(s), cleared 1; time share used' "$test_root/pulse.log" &&
+		grep -q 'partial simplification; resume Acme/held 2 20' "$test_root/pulse.log" &&
+		grep -q 'Consolidation re-evaluation: cleared 1 stale' "$test_root/pulse.log"; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: held issues are re-checked before the repository sweep"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: label maintenance held-first contract"
+		echo "  expected: $expected"
+		echo "  actual:   ${actual:-none}"
+	fi
+	rm -rf "$test_root"
+	return 0
+}
+
 ownership_deadline_trace() {
 	local mode="$1" requested=600 starved=0 rc=0
 	unset _PULSE_DISPATCH_PREFLIGHT_LIB_LOADED
@@ -881,6 +1099,27 @@ assert_label_maintenance_rest_block_contract \
 assert_label_maintenance_stalest_contract \
 	"9l4: stalest simplification runs first and a refused REST gate stops the stage"
 assert_label_maintenance_cycle_budget_contract
+assert_label_maintenance_starvation_contract
+assert_label_maintenance_held_first_contract
+assert_order \
+	"9l5: GH#37986 starved label maintenance is promoted after the prefetch promotion" \
+	'_run_promoted_prefetch_if_starved "\$_pflt_timeout"' \
+	'^[[:space:]]*_run_promoted_label_maintenance_if_starved \|\| true' \
+	"$ENGINE"
+assert_order \
+	"9l6: GH#37986 starved label maintenance is promoted ahead of early dispatch" \
+	'^[[:space:]]*_run_promoted_label_maintenance_if_starved \|\| true' \
+	'^[[:space:]]*_pulse_run_budget_priority_stage "preflight_early_dispatch"' \
+	"$ENGINE"
+assert_grep \
+	"9l7: GH#37986 a promoted cycle skips the normal label-maintenance slot" \
+	'_PULSE_LABEL_MAINTENANCE_PROMOTED:-0\}" == "1"' \
+	"$ENGINE"
+assert_match_count \
+	"9l8: GH#37986 refill-reserve deferrals report remaining and required seconds" \
+	'deferred: insufficient wall-clock budget for post-label refill \(\$\(_preflight_refill_reserved_deficit\)\)' \
+	2 \
+	"$ENGINE"
 assert_order \
 	"9m: routine-comment REST gate precedes its API scan" \
 	'_preflight_rest_core_allows_next "routine_comment_responses"' \
