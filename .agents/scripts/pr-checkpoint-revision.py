@@ -151,6 +151,36 @@ def sorted_comments(data):
     return sorted(comments, key=lambda c: (c["created_at"], c["id"]))
 
 
+def newest_binding_mismatch(data):
+    """Report only fixed field names from the newest trusted unedited approval."""
+    for comment in reversed(sorted_comments(data)):
+        lines = [line for line in comment.get("body", "").splitlines() if line.startswith(PREFIX)]
+        if len(lines) != 1 or not trusted(comment, data.get("trusted_logins", ())):
+            continue
+        try:
+            approval = json.loads(lines[0][len(PREFIX):])
+            if not isinstance(approval, dict):
+                return None
+            keys = [key for key, value in binding(data).items() if approval.get(key) != value]
+            now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
+            if not 0 <= now - timestamp(comment["created_at"]) <= 86400:
+                keys.append("expired")
+            attempt = approval.get("attempt")
+            if not isinstance(attempt, str) or not attempt.startswith("attempt:"):
+                keys.append("attempt_malformed")
+            return keys, comment["id"]
+        except (ValueError, KeyError, TypeError, OverflowError):
+            return None
+    return None
+
+
+def binding_diagnostic(data):
+    mismatch = newest_binding_mismatch(data)
+    if mismatch and mismatch[0] and type(mismatch[1]) is int and mismatch[1] > 0:
+        return f"APPROVAL_BINDING_MISMATCH keys={','.join(mismatch[0])} approval_comment={mismatch[1]}"
+    return ""
+
+
 def validate(data):
     comments = sorted_comments(data)
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
@@ -251,8 +281,15 @@ def template(data):
 
 if __name__ == "__main__":
     template_mode = sys.argv[1:] == ["template"]
+    diagnostic_mode = sys.argv[1:] == ["binding-diagnostic"]
     try:
         payload = json.load(sys.stdin)
+        diagnostic = binding_diagnostic(payload)
+        if diagnostic:
+            print(diagnostic, file=sys.stderr)
+        if diagnostic_mode:
+            print(diagnostic)
+            sys.exit(0)
         print(template(payload) if template_mode else json.dumps(validate(payload)))
     except (ValueError, KeyError, TypeError, OverflowError) as error:
         if template_mode:
