@@ -237,8 +237,25 @@ _gh_ci_prepare_todo_labels() {
 # created origin-labelled issues from entering the reconciler's triage-missing
 # bucket when callers also omit tier/auto-dispatch metadata.
 _GH_CI_STATUS_LABEL_ARGS=()
+
+# GH#37993: long-lived non-task records (dashboards, routine logs, signed
+# approval/policy issues) are never task-lifecycle subjects. They receive no
+# derived status:available and no creator self-assignment.
+_GH_CI_NON_TASK_CREATE_LABELS=(
+	"persistent" "supervisor" "contributor" "quality-review" "routine-tracking"
+	"release-approval-required" "release-standing-policy"
+)
+_gh_ci_args_are_non_task() {
+	local label=""
+	for label in "${_GH_CI_NON_TASK_CREATE_LABELS[@]}"; do
+		_gh_wrapper_args_have_label "$label" "$@" && return 0
+	done
+	return 1
+}
+
 _gh_ci_prepare_status_label() {
 	_GH_CI_STATUS_LABEL_ARGS=()
+	_gh_ci_args_are_non_task "$@" && return 0
 	if ! _gh_wrapper_args_have_label_prefix "status:" "$@"; then
 		_GH_CI_STATUS_LABEL_ARGS=(--label "status:available")
 	fi
@@ -764,6 +781,8 @@ gh_create_issue() {
 		elif _gh_wrapper_args_have_label "$_GH_CREATE_AUTO_DISPATCH_LABEL" "$@"; then
 			# t2157/t2406: auto-dispatch means worker-owned; skip self-assignment.
 			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
+		elif _gh_ci_args_are_non_task "$@"; then
+			print_info "[INFO] non-task issue — skipping self-assignment per GH#37993"
 		else
 			auto_assignee=$(_gh_wrapper_auto_assignee "$target_repo")
 		fi

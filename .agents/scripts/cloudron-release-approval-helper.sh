@@ -446,7 +446,7 @@ release_policy_request() {
 		release_ensure_policy_labels "$repo" || return 1
 		url=$(release_policy_body "$repo" 'Policy finalization pending. Do not sign until the maintainer command appears.' |
 			gh_create_issue --repo "$repo" --title "Standing release policy: ${repo##*/} routine upstream bumps" --body-file - \
-				--label "$RELEASE_POLICY_LABEL" --label no-auto-dispatch) || return 1
+				--label "$RELEASE_POLICY_LABEL" --label persistent --label no-auto-dispatch) || return 1
 	fi
 	issue="${url##*/}"
 	[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || release_error 'Created issue URL has no valid issue number.' || return 1

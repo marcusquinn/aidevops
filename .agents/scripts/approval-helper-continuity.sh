@@ -16,6 +16,8 @@ _APPROVAL_LABELED_EVENT="labeled"
 _APPROVAL_OBSERVABILITY_LABEL="fix-the-fixer"
 # GH#37762: dispatch hold toggled by signed permission requests/decisions.
 _APPROVAL_PERMISSION_HOLD_LABEL="needs-maintainer-permissions"
+# GH#37993: long-lived non-task marker; add-only after signing.
+_APPROVAL_PERSISTENT_LABEL="persistent"
 _APPROVAL_CONTINUITY_JSON_NUMBER="number"
 _APPROVAL_CONTINUITY_JSON_STRING="string"
 
@@ -130,7 +132,7 @@ _approval_continuity_label_replay_matches() {
 # rules; their legitimate pre-anchor transitions are not necessarily visible.
 _approval_continuity_reconciled_labels_match() {
 	local signed="$1" snapshot="$2" rows="$3" label=""
-	for label in auto-dispatch needs-maintainer-permissions needs-maintainer-review \
+	for label in auto-dispatch needs-maintainer-permissions needs-maintainer-review "$_APPROVAL_PERSISTENT_LABEL" \
 		status:available status:queued status:claimed status:in-progress status:in-review status:done status:blocked; do
 		_approval_continuity_label_replay_matches "$signed" "$snapshot" "$rows" "$label" || return 1
 	done
@@ -149,11 +151,16 @@ _approval_continuity_lifecycle_change_allowed() {
 	# observability; it never widens scope or grants authority.
 	# GH#37762: needs-maintainer-permissions is a dispatch hold toggled by
 	# separately signed permission requests/decisions; it never widens scope.
+	# GH#37993: persistent may only be added. It marks a long-lived non-task
+	# record and only restricts automation; removing it stays approval-bound,
+	# so a removal (revocation path) stales the signature.
 	jq -e --argjson signed "$signed_lifecycle" --argjson self_hosting "$self_hosting" \
 		--arg observability "$_APPROVAL_OBSERVABILITY_LABEL" \
+		--arg persistent "$_APPROVAL_PERSISTENT_LABEL" \
 		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
 		def tier_label: . as $label | $tiers | index($label) != null;
 		def allowed_label: . == "needs-maintainer-review" or . == "needs-maintainer-permissions" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label;
+		def allowed_added_label: allowed_label or . == $persistent;
 		.lifecycle as $current |
 		($current.labels | map(.name)) as $current_labels |
 		($signed.labels | map(.name)) as $signed_labels |
@@ -169,7 +176,8 @@ _approval_continuity_lifecycle_change_allowed() {
 		and $current.active_lock_reason == $signed.active_lock_reason
 		and $current.milestone == $signed.milestone
 		and $current.lock_anchor == $signed.lock_anchor
-		and ([$added_labels[], $removed_labels[]] | unique | all(allowed_label))
+		and ($added_labels | all(allowed_added_label))
+		and ($removed_labels | all(allowed_label))
 		and (if ($added_tiers + $removed_tiers) > 0 then
 			($signed_tiers == 0 and $current_tiers == 1 and $added_tiers == 1 and $removed_tiers == 0)
 			or ($self_hosting and $signed_tiers == 1 and $current_tiers == 1
@@ -382,6 +390,7 @@ _approval_verify_locked_issue_continuity() {
 		case "$event:$subject" in
 		renamed:title) [[ "$title_changed" -eq 1 ]] || return 1 ;;
 		labeled:"$_APPROVAL_OBSERVABILITY_LABEL" | unlabeled:"$_APPROVAL_OBSERVABILITY_LABEL") ;;
+		labeled:"$_APPROVAL_PERSISTENT_LABEL") ;; # GH#37993: add-only; unlabeled stays stale
 		assigned:* | unassigned:* | labeled:needs-maintainer-review | unlabeled:needs-maintainer-review | labeled:needs-maintainer-permissions | unlabeled:needs-maintainer-permissions | labeled:auto-dispatch | unlabeled:auto-dispatch | labeled:status:available | unlabeled:status:available | labeled:status:queued | unlabeled:status:queued | labeled:status:claimed | unlabeled:status:claimed | labeled:status:in-progress | unlabeled:status:in-progress | labeled:status:in-review | unlabeled:status:in-review | labeled:status:done | unlabeled:status:done | labeled:status:blocked | unlabeled:status:blocked | labeled:tier:simple | unlabeled:tier:simple | labeled:tier:standard | unlabeled:tier:standard | labeled:tier:thinking | unlabeled:tier:thinking) ;;
 		*) return 1 ;;
 		esac
