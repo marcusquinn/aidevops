@@ -103,15 +103,16 @@ pr_json() {
 	return 0
 }
 
-# Args: $1=labels CSV, $2=assignees CSV
+# Args: $1=labels CSV, $2=assignees CSV, $3=body (optional; omitted when empty)
 issue_json() {
 	local labels="$1"
 	local assignees="$2"
-	jq -cn --arg labels "$labels" --arg assignees "$assignees" '{
+	local body="${3:-}"
+	jq -cn --arg labels "$labels" --arg assignees "$assignees" --arg body "$body" '{
 		number: 501, state: "open",
 		labels: ($labels | split(",") | map(select(length > 0) | {name: .})),
 		assignees: ($assignees | split(",") | map(select(length > 0) | {login: .}))
-	}'
+	} + (if $body == "" then {} else {body: $body} end)'
 	return 0
 }
 
@@ -1009,6 +1010,140 @@ test_available_dispatch_recovery() {
 	return 0
 }
 
+# GH#38021: a draft checkpoint on a canonical consolidated spec gets back the
+# auto-dispatch label that the same worker run removed, and nothing else does.
+test_checkpoint_spec_dispatch_restore() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	TEST_OPEN_PRS='[{"number":901,"body":"For #501","draft":true}]'
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec regains dispatch beside its open draft"
+	if [[ ! -s "$COMMENT_LOG" ]]; then
+		pass "checkpoint spec restore posts no comment"
+	else
+		fail "checkpoint spec restore posts no comment"
+	fi
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec receipt is consumed on use"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "label removed before the checkpoint stays removed"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "restore without a receipt writes nothing"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 'Hand-written body.')
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' '' 'Hand-written body.')
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "consolidated issue without the canonical marker is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,auto-dispatch' runner1 "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available' '' "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "ordinary issue is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON='unreadable'
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "unreadable pre-checkpoint state records no receipt"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 502 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "receipt for another issue is discarded without a write"
+
+	for label in auto-dispatch no-auto-dispatch parent-task hold-for-review lockdown persistent needs-maintainer-review needs-simplification status:blocked; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated,${label}" '' "$spec")
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+		assert_no_write "checkpoint spec restore preserves ${label}"
+	done
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' runner2 "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "checkpoint spec restore preserves an assigned issue"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:in-review,consolidated' '' "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "repeated escalation keeps the first receipt"
+	return 0
+}
+
+# GH#38021: the restore reports its outcome, and a deferred release replay in
+# another process adopts the recording run's receipt.
+test_checkpoint_spec_receipt_outcomes() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after="" rc=0 outcomes=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	# 0 restored, 1 nothing to restore (label already back, then no receipt),
+	# 2 receipt held but the issue is on hold.
+	for label in '' auto-dispatch hold-for-review; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated${label:+,${label}}" '' "$spec")
+		rc=0
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+		outcomes+="${rc} "
+	done
+	rc=0
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+	outcomes+="$rc"
+	if [[ "$outcomes" == "0 1 2 1" ]]; then
+		pass "checkpoint spec restore reports restored, nothing to restore and refused"
+	else
+		fail "checkpoint spec restore reports restored, nothing to restore and refused (got ${outcomes})"
+	fi
+
+	# A deferred release replay adopts the recording run's receipt.
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_adopt_checkpoint_spec_receipt 'not a slug' 501 || true
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 0 || true
+	if _pmpc_holds_checkpoint_spec_receipt "$SLUG" 501; then
+		fail "malformed issue reference adopts no receipt"
+	else
+		pass "malformed issue reference adopts no receipt"
+	fi
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "adopted receipt restores dispatch"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1056,6 +1191,8 @@ main() {
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_available_dispatch_recovery
+	test_checkpoint_spec_dispatch_restore
+	test_checkpoint_spec_receipt_outcomes
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

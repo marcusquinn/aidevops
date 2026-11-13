@@ -30,12 +30,21 @@ _dispatch_candidate_snapshot_path() {
 	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit=1000
 	[[ "$dependency_normalization_mode" == "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" ]] || dependency_normalization_mode="normalize"
 	[[ "$dependency_normalization_mode" == "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" ]] && mode_suffix=".skip"
+	# Partial censuses survive cooperative bundle drains/cycle rollover, but
+	# must never masquerade as complete product discovery in the full cache.
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+		local _PULSE_CYCLE_ID="first-wave"
+		local AIDEVOPS_TEMP_DIR="${HOME}/.aidevops/cache"
+		_dispatch_cycle_cache_path "pulse-dispatch-candidates" ".${per_repo_limit}${mode_suffix}.partial.json"
+		return $?
+	fi
 	_dispatch_cycle_cache_path "pulse-dispatch-candidates" ".${per_repo_limit}${mode_suffix}.json"
 	return $?
 }
 
 _dispatch_cleanup_cycle_cache() {
 	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
+	local _PULSE_FIRST_DISPATCH_WAVE=0
 	local candidate_file="" skip_candidate_file="" triage_file="" cache_file=""
 	candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" 2>/dev/null || true)
 	skip_candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" 2>/dev/null || true)
@@ -51,12 +60,20 @@ _dispatch_invalidate_candidate_snapshot() {
 	local reason="${1:-state_mutation}"
 	local per_repo_limit="${2:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
 	local snapshot_file="" dependency_normalization_mode="" removed_snapshot=0
-	for dependency_normalization_mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
-		snapshot_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$dependency_normalization_mode") || continue
-		if [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]]; then
-			rm -f "$snapshot_file" "${snapshot_file}.consumed" 2>/dev/null || return 1
-			removed_snapshot=1
-		fi
+	local _PULSE_FIRST_DISPATCH_WAVE=0 wave=""
+	for wave in 0 1; do
+		# A worker exit frees capacity, not candidate eligibility. Preserve the
+		# durable remainder even if the refill's later dispatch gates block it;
+		# eligibility mutations still invalidate both waves below.
+		[[ "$reason" == "event_refill" && "$wave" == 1 ]] && continue
+		_PULSE_FIRST_DISPATCH_WAVE="$wave"
+		for dependency_normalization_mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
+			snapshot_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$dependency_normalization_mode") || continue
+			if [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]]; then
+				rm -f "$snapshot_file" "${snapshot_file}.consumed" 2>/dev/null || return 1
+				removed_snapshot=1
+			fi
+		done
 	done
 	if [[ "$removed_snapshot" -eq 1 ]]; then
 		echo "[pulse-wrapper] Dispatch candidate snapshot invalidated: reason=${reason}" >>"$LOGFILE"
@@ -68,10 +85,31 @@ _dispatch_invalidate_candidate_snapshot() {
 # refills. Each candidate still passes the authoritative live ceremony gate.
 _dispatch_ranked_candidate_consumed() {
 	local candidate_json="$1" snapshot="" key=""
-	snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "${dependency_normalization_mode:-normalize}") || return 0
-	[[ -f "$snapshot" && ! -L "$snapshot" && ! -L "${snapshot}.consumed" ]] || return 0
+	local _PULSE_FIRST_DISPATCH_WAVE=0 wave="" mode=""
 	key=$(jq -cr '[.repo_slug,.number]' <<<"$candidate_json") || return 0
-	printf '%s\n' "$key" >>"${snapshot}.consumed"
+	# Bounded enumeration runs in a command substitution: its dynamic wave
+	# flag is gone by the time the serial/parallel loop records an attempt.
+	for wave in 0 1; do
+		_PULSE_FIRST_DISPATCH_WAVE="$wave"
+		for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
+			snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "$mode") || continue
+			[[ -f "$snapshot" && ! -L "$snapshot" && ! -L "${snapshot}.consumed" ]] || continue
+			printf '%s\n' "$key" >>"${snapshot}.consumed"
+		done
+	done
+	return 0
+}
+
+# Ordering hint only: expired remainder still identifies repositories worth
+# rechecking first. Live ceremony, schedules and interval gates remain binding.
+_dispatch_first_wave_backlog_repos() {
+	local _PULSE_FIRST_DISPATCH_WAVE=1 mode="" snapshot="" candidates="[]"
+	for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
+		snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "$mode") || continue
+		[[ -f "$snapshot" && ! -L "$snapshot" ]] || continue
+		candidates=$(jq -ce '.candidates | arrays' "$snapshot" 2>/dev/null) || continue
+		_dispatch_filter_consumed_ranked_candidates "$snapshot" "$candidates" | jq -r '.[].repo_slug // empty'
+	done
 	return 0
 }
 
@@ -84,11 +122,29 @@ _dispatch_filter_consumed_ranked_candidates() {
 	return $?
 }
 
+# A durable remainder crosses cycle boundaries: recheck current registry paths
+# and schedules before reuse. Interval throttling applies to API polling, not
+# to attempting already-enumerated work. No network census is needed here.
+_dispatch_filter_partial_snapshot_candidates() {
+	local candidates="$1" allowed="" slug="" path="" priority="" start="" end="" expires="" interval=""
+	local _PULSE_FIRST_DISPATCH_WAVE=0
+	[[ -f "${REPOS_JSON:-}" ]] || { printf '[]\n'; return 0; }
+	allowed=$(
+		while IFS='|' read -r slug path priority start end expires interval; do
+			check_repo_pulse_schedule "$slug" "$start" "$end" "$expires" "$REPOS_JSON" || continue
+			jq -nc --arg slug "$slug" --arg path "$path" '{repo_slug:$slug,repo_path:$path}'
+		done < <(_dispatch_repository_rows "")
+	) || return 1
+	jq -cs --argjson candidates "$candidates" '. as $allowed |
+		$candidates | map(select({repo_slug,repo_path} as $repo | $allowed | index($repo)))' <<<"$allowed"
+	return $?
+}
+
 _dispatch_ranked_candidates_json() {
 	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
 	local dependency_normalization_mode="${2:-normalize}"
 	local snapshot_file="" snapshot_tmp="" candidates_json="[]"
-	local now_epoch="" snapshot_ttl=300 started_epoch=0
+	local now_epoch="" snapshot_ttl=300 started_epoch=0 snapshot_fresh=0
 	now_epoch=$(date +%s) || return 1
 	started_epoch="$now_epoch"
 	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
@@ -108,8 +164,12 @@ _dispatch_ranked_candidates_json() {
 		--argjson now "$now_epoch" --argjson ttl "$snapshot_ttl" \
 		'type == "object" and (.captured_at | type == "number") and .captured_at <= $now and .captured_at > ($now - ([$ttl, (.census_seconds // 0)] | max)) and (.candidates | type == "array")' \
 		"$snapshot_file" >/dev/null 2>&1; then
+		snapshot_fresh=1
 		candidates_json=$(jq -c '.candidates' "$snapshot_file") || return 1
 		candidates_json=$(_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json") || return 1
+		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+			candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
+		fi
 		if [[ "$candidates_json" != '[]' ]]; then
 			printf '%s\n' "$candidates_json"
 			_dispatch_stats_increment "dispatch_candidate_snapshot_hit"
@@ -127,8 +187,17 @@ _dispatch_ranked_candidates_json() {
 		return 1
 	fi
 	# TTL starts at completion, not at the beginning of an expensive census.
+	# Keep same-census attempts across exhaustion/refills, but let expired
+	# durable first waves retry candidates after their normal live cooldown.
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 0 ]]; then
+		rm -f "${snapshot_file}.consumed" 2>/dev/null || return 1
+	fi
 	now_epoch=$(date +%s) || return 1
 	((now_epoch - started_epoch <= snapshot_ttl)) || snapshot_ttl=$((now_epoch - started_epoch))
+	# Exhaustion must not perpetually renew the durable attempt ledger's TTL.
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 1 ]]; then
+		now_epoch=$(jq -r '.captured_at' "$snapshot_file") || return 1
+	fi
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --argjson captured_at "$now_epoch" \
 		--argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" '{captured_at:$captured_at,census_seconds:$census_seconds,candidates:$candidates}' >"$snapshot_tmp") 2>/dev/null; then
