@@ -412,7 +412,11 @@ PR title: ${safe_title}
 - Do NOT call pre-edit-check.sh, the aidevops_pre_edit_check tool,
   worktree-helper.sh, or session-rename tools.
 - Work only in the supplied linked worktree. Do not create another branch,
-  worktree, issue, or PR, and do not merge or force-push.
+  worktree, issue, or PR. Do not merge the PR, rebase, or force-push. You may
+  integrate the PR base branch locally when the work or repository documentation
+  needs a current base. First refresh the remote-tracking ref with
+  \`git fetch origin refs/heads/<base>:refs/remotes/origin/<base>\`, then run
+  \`git merge --no-edit origin/<base>\`. The merge ships in the single final push.
 
 PROMPT_EOF
 	return 0
@@ -469,7 +473,8 @@ _prrts_write_prompt_file() {
 4. Make all continuation commits locally, including intermediate data artifacts;
    do not push them to the PR branch mid-run. If publication evidence must be
    durable mid-run, record receipts in the private workspace and include them
-   in the final commit.
+    in the final commit. A base-integration merge commit is an ordinary local
+    continuation commit, so bundle it like any other.
 ${durability_push}
    Recovery bundle for this repository and attempt: ${recovery_dir}/continuation.bundle
    Retain this path in the continuation checkpoint for recovery after a restart.
