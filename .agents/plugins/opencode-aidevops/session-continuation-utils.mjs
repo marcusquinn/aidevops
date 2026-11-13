@@ -99,6 +99,25 @@ function hasWhatNextAsk(normalized) {
   return Boolean(last) && !NO_ASK_RE.test(last);
 }
 
+// GH#37979: a numbered ask that only requests permission to file, capture or
+// log an issue/task/TODO. Keep in sync with session_continuation_stop.py.
+const NEEDED_BLOCK_RE = /Needed from you:[\s\S]*?(?=Left to capture|\bClose(?: readiness)?:|$)/gi;
+const NUMBERED_ASK_RE = /^[ \t]*(?:[-*][ \t]*)?\d+[.)][ \t]+/gm;
+const FILING_ASK_RE = /^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to|would you like me to|ok(?:ay)? to)?\s*(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*(?:(?:worker(?:-ready)?|follow-?up|local|actionable)\s+){0,3}(?:issue|task|todo|ticket|follow-?up)s?\b/i;
+// Authority the session lacks, or an ask where the need itself is the question.
+const FILING_EXCLUDED_RE = /\bnot needed\b|\b(?:and|then|also)\s+(?:also\s+)?(?:deploy|merge|release|publish|ship)\b(?!\s+(?:pipelines?|process(?:es)?|workflows?|notes?|automation|tooling|scripts?|steps?|docs?|documentation|system|infrastructure|checks?|gates?|jobs?|stages?|management|engineering)\b)|\bor\s+(?:is|could|might)\s+(?:this|that|it)\s+(?:be\s+)?(?:expected|intended|normal)\b|\bor\s+(?:is|are)\s+(?:it|this|that|they)\s+(?:unnecessary|not\s+(?:needed|necessary))\b|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b|\b(?:another|other|third[- ]party|external|upstream)\s+(?:repos?|repositories|repository)\b|\b(?:secrets?|credentials?|spend|spending|billing)\b|\bprivate[- ](?:data|repo)/i;
+
+export function asksFilingPermission(text) {
+  // Ignore fenced examples, but retain inline content for authority exclusions.
+  const normalized = String(text || "").replace(/```[\s\S]*?```/g, " ");
+  const blocks = [...normalized.matchAll(NEEDED_BLOCK_RE)].map((match) => match[0]);
+  const last = blocks.at(-1) || "";
+  const starts = [...last.matchAll(NUMBERED_ASK_RE)].map((match) => match.index);
+  const asks = starts.map((start, index) => last.slice(start, starts[index + 1] ?? last.length));
+  return asks.length > 0 && !FILING_EXCLUDED_RE.test(last)
+    && asks.every((ask) => FILING_ASK_RE.test(ask.replace(/`[^`]*`/g, " ")));
+}
+
 function handsBackToUser(normalized) {
   const lines = normalized.split("\n").map((line) => line.trim().replace(/[*_` ]+$/, "")).filter(Boolean);
   if (lines.slice(-3).some((line) => line.endsWith("?"))) return true;
