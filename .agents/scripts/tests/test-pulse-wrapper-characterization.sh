@@ -976,9 +976,13 @@ test_deterministic_merge_guard_uses_routine_lock() {
 # Test 10: routine evaluation runs before the potentially long preflight.
 # An overdue routine must get a budget decision before preflight can consume
 # the cycle's REST allowance or keep the process busy until the next restart.
+# GH#37914 (#37917) moved the full-cycle evaluation from main() into
+# _pulse_run_cycle_routines, so main() must call that helper before preflight
+# and the helper must still run the budget-gated full evaluation (GH#38174).
 #######################################
 test_routine_evaluation_precedes_preflight() {
 	local main_body=""
+	local routines_body=""
 	local graphql_budget_match=""
 	local rest_budget_match=""
 	local routine_match=""
@@ -987,11 +991,18 @@ test_routine_evaluation_precedes_preflight() {
 	local rest_budget_line=0
 	local routine_line=0
 	local preflight_line=0
+	local helper_evaluates=0
 	main_body=$(declare -f main)
+	routines_body=$(declare -f _pulse_run_cycle_routines || true)
 	graphql_budget_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_set_graphql_budget_priority' || true)
 	rest_budget_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_set_rest_core_budget_priority' || true)
-	routine_match=$(printf '%s\n' "$main_body" | grep -nF '_pulse_run_budget_priority_stage_with_timeout "evaluate_routines"' || true)
+	routine_match=$(printf '%s\n' "$main_body" | grep -nxE '[[:space:]]*_pulse_run_cycle_routines;?' || true)
 	preflight_match=$(printf '%s\n' "$main_body" | grep -nF 'if ! _run_preflight_stages; then' || true)
+	# The full-cycle pass publishes; only the busy-lock pass skips publication.
+	if printf '%s\n' "$routines_body" | grep -qF '_pulse_run_budget_priority_stage_with_timeout "evaluate_routines"' &&
+		printf '%s\n' "$routines_body" | grep -qE 'evaluate_routines_locked( \|\||$)'; then
+		helper_evaluates=1
+	fi
 	graphql_budget_line="${graphql_budget_match%%:*}"
 	rest_budget_line="${rest_budget_match%%:*}"
 	routine_line="${routine_match%%:*}"
@@ -1001,13 +1012,14 @@ test_routine_evaluation_precedes_preflight() {
 	[[ "$routine_line" =~ ^[0-9]+$ ]] || routine_line=0
 	[[ "$preflight_line" =~ ^[0-9]+$ ]] || preflight_line=0
 
-	if [[ "$graphql_budget_line" -gt 0 && "$graphql_budget_line" -lt "$routine_line" && \
+	if [[ "$helper_evaluates" -eq 1 && \
+		"$graphql_budget_line" -gt 0 && "$graphql_budget_line" -lt "$routine_line" && \
 		"$rest_budget_line" -gt 0 && "$rest_budget_line" -lt "$routine_line" && \
 		"$routine_line" -lt "$preflight_line" ]]; then
 		print_result "budget initialization and routine evaluation precede Pulse preflight" 0
 	else
 		print_result "budget initialization and routine evaluation precede Pulse preflight" 1 \
-			"graphql=${graphql_budget_line} rest=${rest_budget_line} routine=${routine_line} preflight=${preflight_line}"
+			"graphql=${graphql_budget_line} rest=${rest_budget_line} routine=${routine_line} preflight=${preflight_line} helper_evaluates=${helper_evaluates}"
 	fi
 	return 0
 }

@@ -769,6 +769,10 @@ assert_stage_cycle_budget_contract() {
 		(
 			LOGFILE="$test_root/stages.log" EVENTS="$test_root/events"
 			PULSE_START_EPOCH=1000 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
+			# GH#38174: since t18978 (#37878) the candidate floor is the host's
+			# observed ceremony p90 from dispatch-stages.tsv. Pin the cold-start
+			# 600s floor these budgets assume instead of reading host telemetry.
+			AIDEVOPS_DISPATCH_STAGES_LOG="$test_root/no-ceremony-samples.tsv"
 			date() { [[ "${1:-}" == '+%s' ]] && printf '%s\n' "$TEST_EPOCH"; }
 			stage_probe() { printf 'run\n' >>"$EVENTS"; return 0; }
 			# A many-repo scan needs 483s + 600s floor + 60s prestage
@@ -834,6 +838,12 @@ assert_dispatch_cycle_budget_contract() {
 		(
 			# shellcheck source=../pulse-dispatch-lib-candidates.sh
 			source "$DISPATCH_CANDIDATES_LIB"
+			# The owner-lease refresh lives in pulse-dispatch-lib.sh, which this
+			# standalone admission check does not source.
+			_dispatch_refresh_owner_lease() { return 0; }
+			# GH#38174: pin the t18978 (#37878) cold-start 600s ceremony floor;
+			# host dispatch-stages.tsv samples would otherwise replace it.
+			AIDEVOPS_DISPATCH_STAGES_LOG="${TMPDIR:-/tmp}/gh38174-missing-dispatch-stages.tsv"
 			LOGFILE="/dev/null" PULSE_START_EPOCH=0 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1100
 			date() { printf '500\n'; }
 			local rc=0
