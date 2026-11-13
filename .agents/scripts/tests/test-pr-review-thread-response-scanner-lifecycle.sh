@@ -238,6 +238,71 @@ GH_STUB
 	return 0
 }
 
+test_mark_blocked_publishes_review_thread_finding() {
+	setup_test_env
+	local gh_log="${TEST_ROOT}/review-gh.log"
+	local posted_flag="${TEST_ROOT}/review-posted.flag"
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${REV_GH_LOG}"
+if [[ "$*" == *'--method POST'* ]]; then
+	[[ "${REV_POST_FAIL:-false}" == true ]] && exit 1
+	: >"${REV_POSTED_FLAG}"
+	exit 0
+fi
+if [[ "$*" == *'issues/1/comments'* && -f "${REV_POSTED_FLAG}" ]]; then
+	printf '42\n'
+fi
+exit 0
+GH_STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	export REV_GH_LOG="$gh_log" REV_POSTED_FLAG="$posted_flag"
+	local details_file="${TEST_ROOT}/review-details.txt"
+	printf 'needs a maintainer choice' >"$details_file"
+	local pr_posts=0
+	$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	pr_posts=$(grep -c 'issues/1/comments.*--method POST' "$gh_log" || true)
+	$SCANNER mark-blocked owner/repo 1 decision needs_choice "$details_file"
+	local repeat_posts=0
+	repeat_posts=$(grep -c 'issues/1/comments.*--method POST' "$gh_log" || true)
+	if [[ "$pr_posts" -eq 1 && "$repeat_posts" -eq 1 ]] &&
+		grep -Fq 'REVIEW_THREAD_BLOCKER_FINDING' "$gh_log"; then
+		print_result "mark-blocked decision posts one PR comment per head" 0
+	else
+		print_result "mark-blocked decision posts one PR comment per head" 1 "posts=${pr_posts}/${repeat_posts}"
+	fi
+	rm -f "$posted_flag" "$gh_log"
+	$SCANNER mark-blocked owner/repo 2 code needs_fix "$details_file"
+	$SCANNER mark-blocked owner/repo 2 infrastructure needs_infra "$details_file"
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=77 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 3 maintainer needs_choice "$details_file"
+	if ! grep -Fq 'issues/2/comments' "$gh_log" && ! grep -Fq 'issues/3/comments' "$gh_log"; then
+		print_result "code/infrastructure and continuation blocks publish no PR comment" 0
+	else
+		print_result "code/infrastructure and continuation blocks publish no PR comment" 1
+	fi
+	rm -f "$posted_flag" "$gh_log"
+	export REV_POST_FAIL=true
+	$SCANNER mark-blocked owner/repo 4 maintainer retry_reason "$details_file"
+	local pending_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-4.review-blocker-pending.json"
+	if [[ -s "$pending_file" ]] &&
+		grep -Fxq 'analysis_complete=true' "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-4.state"; then
+		print_result "failed review-thread blocker post keeps state and pending payload" 0
+	else
+		print_result "failed review-thread blocker post keeps state and pending payload" 1
+	fi
+	unset REV_POST_FAIL
+	bash -c 'source "$1"; _prrts_retry_review_thread_blocker owner/repo 4' _ "$SCANNER"
+	if [[ ! -f "$pending_file" ]] && grep -Fq 'retry_reason' "$gh_log"; then
+		print_result "review-thread blocker retry posts saved payload and clears pending" 0
+	else
+		print_result "review-thread blocker retry posts saved payload and clears pending" 1
+	fi
+	unset REV_GH_LOG REV_POSTED_FLAG
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_pr_skips_when_pr_lock_held() {
 	setup_test_env
 	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
