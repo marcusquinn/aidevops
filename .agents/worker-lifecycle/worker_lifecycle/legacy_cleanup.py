@@ -19,7 +19,7 @@ from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
-from .interrupted_removal import restore_git_link, validation_boundary
+from .interrupted_removal import validation_boundary
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
@@ -27,7 +27,9 @@ from .legacy_options import require_manual_confirmation, require_managed_takeove
 from .legacy_options import retained_outcome, unrecorded
 from .legacy_probe import checkpoint, event_id, host_probe, interrupted_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
-from .legacy_proc import require_ended, require_idle_processes
+from .legacy_proc import require_idle_processes
+from .legacy_resume import RECONSTRUCTIBLE_REMOVING, current_legacy_item
+from .legacy_resume import restore_link, resume_reconstructible_removal
 from .legacy_probe import verify_reconstructible
 from .legacy_takeover import require_managed_authority
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
@@ -58,11 +60,6 @@ def writer_released(connection):
     connection.commit()
     yield
     connection.execute("BEGIN IMMEDIATE")
-
-
-# Journaled start of a reconstructible native removal; distinct from finish()'s
-# "removing" phase, which shares the operation id (GH#38158).
-RECONSTRUCTIBLE_REMOVING = "reconstructible-removing"
 
 
 def remove_released(connection, *arguments):
@@ -140,14 +137,6 @@ def archive_source(store, connection, operation, plan, adapter):
     return previous
 
 
-def _restore_link(target, plan):
-    """Bind tree and administration to the plan before restoring a deleted `.git`."""
-    admin = Path(plan["admin"])
-    if _id(target) != plan["directory"] or _id(admin) != plan["admin_identity"]:
-        raise ValueError("worktree-replaced")
-    restore_git_link(target, admin)
-
-
 def finish(store, connection, operation, plan, adapter):
     """Only the journaled private pathname is ever passed to native removal."""
     root = Path(plan["output_root"])
@@ -177,7 +166,7 @@ def finish(store, connection, operation, plan, adapter):
         require_idle_processes(target)
     with DirectoryHandle(target):
         if started is not None:
-            _restore_link(target, plan)
+            restore_link(target, plan)
         same_tree(target, plan)
         unchanged(connection, plan, adapter)
         if started is None:
@@ -331,12 +320,6 @@ def recover_interrupted_probe(store, item, apply):
             prepare_reconstructible_probe(store, connection, host, None, verify_reconstructible)
 
 
-def current_legacy_item(connection, item):
-    """Return the current inventory row for an item, or the item itself."""
-    return next((row for row in inventory(connection)
-                  if row["path"] == item["path"]), item)
-
-
 def plan_reconstructible(store, connection, item, inspect_source, open_prs):
     """Refresh the inventory row, build its plan and require managed authority.
 
@@ -373,7 +356,8 @@ def process_reconstructible(store, item, repositories, adapter, options):
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         if receipt(connection, operation, RECONSTRUCTIBLE_REMOVING) is not None:
-            plan, test_removal = resume_reconstructible_removal(store, connection, item, adapter)
+            plan, test_removal = resume_reconstructible_removal(
+                store, connection, item, adapter, remove_released, _git)
         else:
             # GitHub lookups release the writer (GH#36921); this plan is only journaled.
             plan = reconstructible_plan(
@@ -405,37 +389,6 @@ def process_reconstructible(store, item, repositories, adapter, options):
                        dict(plan, type="reconstructible-host-probe-verified"))
         outcome["status"] = "retired"
     return outcome, 1, 1
-
-
-def resume_reconstructible_removal(store, connection, item, adapter):
-    """Finish a journaled non-forced removal that timed out or was interrupted.
-
-    Removal authority was established when the start was journaled. Like
-    `finish`, a remaining tree must keep its identity and an idle census, and
-    only deletions may follow the validation boundary; then a forced removal
-    completes what the non-forced one began. Registry writers are rechecked.
-    """
-    operation = operation_id(store, item["path"])
-    journaled = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
-    started = removal_started(connection, event_id(operation, RECONSTRUCTIBLE_REMOVING))
-    if journaled is None or started is None:
-        raise ValueError("interrupted-removal-time-unavailable")
-    plan = journaled["plan"]
-    source = Path(plan["source"])
-    if os.path.lexists(source):
-        # Census before opening our own handle on the tree.
-        require_idle_processes(source)
-        with DirectoryHandle(source):
-            _restore_link(source, plan)
-            same_tree(source, plan)
-            current = current_legacy_item(connection, item)
-            require_ended(current, adapter, operator_confirmed=True)
-            if item["modern"]:
-                require_managed_authority(store, connection, current, plan)
-            require_deletion_only(source, started, _git)
-            remove_released(connection, "--git-dir", plan["common"], "worktree", "remove",
-                            "--force", str(source))
-    return plan, bool(journaled.get("probe", False))
 
 
 def run(store, config, root, **arguments):
