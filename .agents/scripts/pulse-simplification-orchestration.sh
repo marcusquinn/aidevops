@@ -55,13 +55,19 @@ fi
 # Args:
 #   $1 - repo slug
 #   $2 - maximum issues to close
+#   $3 - optional interval close-count file, rewritten after every close so a
+#        watchdog kill mid-repo cannot lose spent budget (GH#38171)
+#   $4 - close count already spent this interval (base for $3)
 # Stdout: number of issues closed
 # Returns 0 always.
 #######################################
 _dedup_cleanup_close_repo_dupes() {
 	local slug="$1"
 	local limit="$2"
+	local count_file="${3:-}"
+	local count_base="${4:-0}"
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=0
+	[[ "$count_base" =~ ^[0-9]+$ ]] || count_base=0
 	local closed=0 dupe_numbers="" dupe_num=""
 	dupe_numbers=$(gh_issue_list --repo "$slug" \
 		--label "function-complexity-debt" --state open \
@@ -89,6 +95,7 @@ _dedup_cleanup_close_repo_dupes() {
 			--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
 			>/dev/null 2>&1; then
 			closed=$((closed + 1))
+			[[ -z "$count_file" ]] || printf '%s\n' "$((count_base + closed))" >"$count_file" 2>/dev/null || true
 		fi
 	done <<<"$dupe_numbers"
 	printf '%s\n' "$closed"
@@ -172,11 +179,11 @@ run_simplification_dedup_cleanup() {
 		fi
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
 		local repo_closed=0
-		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))") || repo_closed=0
+		# The helper persists the interval count after every close, so a yield
+		# or a watchdog kill mid-repo carries the spent budget forward.
+		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))" "$closed_file" "$total_closed") || repo_closed=0
 		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
 		total_closed=$((total_closed + repo_closed))
-		# Persist per repo so a yield or watchdog kill carries the interval budget.
-		[[ "$repo_closed" -eq 0 ]] || printf '%s\n' "$total_closed" >"$closed_file" 2>/dev/null || true
 	done <<<"$repo_slugs"
 
 	if [[ "$total_closed" -gt 0 ]]; then

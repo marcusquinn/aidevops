@@ -66,6 +66,10 @@ gh_issue_list() {
 }
 
 gh() {
+	# Simulate a watchdog SIGKILL arriving after #31 closed, before #32 does.
+	if [[ "${DEDUP_TEST_KILL_ON_32:-0}" == "1" && "$*" == "issue close 32 "* ]]; then
+		kill -KILL "$BASHPID"
+	fi
 	printf 'gh %s\n' "$*" >>"${TEST_ROOT}/gh.log"
 	return 0
 }
@@ -166,10 +170,24 @@ test_yield_carries_interval_budget() {
 	return 0
 }
 
+test_kill_mid_repo_keeps_spent_budget() {
+	local failed=0 detail="" out="" count_file="${TEST_ROOT}/kill.closed"
+	rm -f "$count_file"
+	: >"${TEST_ROOT}/gh.log"
+	# One close already spent this interval; #31 closes, then SIGKILL lands.
+	out=$(DEDUP_TEST_SATURATE_C=1 DEDUP_TEST_KILL_ON_32=1 _dedup_cleanup_close_repo_dupes o/c 5 "$count_file" 1) || true
+	[[ -z "$out" ]] || { failed=1; detail="not-killed=${out}"; }
+	grep -q 'issue close 31 --repo o/c' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} no-31"; }
+	[[ "$(sed -n '1p' "$count_file" 2>/dev/null)" == "2" ]] || { failed=1; detail="${detail} count=$(sed -n '1p' "$count_file" 2>/dev/null)"; }
+	print_result "a kill mid-repo after a close keeps the spent interval budget" "$failed" "$detail"
+	return 0
+}
+
 test_short_slice_resumes_and_completes
 test_interval_gate_after_completion
 test_batch_exhaustion_keeps_cursor
 test_yield_carries_interval_budget
+test_kill_mid_repo_keeps_spent_budget
 
 printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
