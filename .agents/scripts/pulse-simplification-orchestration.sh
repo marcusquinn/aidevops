@@ -107,7 +107,9 @@ _dedup_cleanup_close_repo_dupes() {
 #
 # GH#38171: the housekeeping slice (12s) is shorter than one traversal, so a
 # repo cursor records the last started repo. A yield or watchdog kill resumes
-# after it, and last-run is written only when a traversal completes.
+# after it, and last-run is written only when a traversal completes or the
+# close batch is exhausted; batch exhaustion keeps the cursor so the next
+# interval serves the remaining repos first.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
@@ -138,7 +140,7 @@ run_simplification_dedup_cleanup() {
 
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
-	local resume_after="" yielded=0 stage_reserve=""
+	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve=""
 	if [[ -f "$cursor_file" ]]; then
 		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
 		if [[ -n "$resume_after" ]] && ! _pulse_slug_list_contains "$resume_after" "$repo_slugs"; then
@@ -153,7 +155,10 @@ run_simplification_dedup_cleanup() {
 			[[ "$slug" == "$resume_after" ]] && resume_after=""
 			continue
 		fi
-		[[ "$total_closed" -ge "$batch_limit" ]] && break
+		if [[ "$total_closed" -ge "$batch_limit" ]]; then
+			batch_exhausted=1
+			break
+		fi
 		# t2145: skip repos where the user is a contributor — simplification
 		# dedup cleanup is a maintainer-only operation.
 		local _dedup_role
@@ -177,7 +182,14 @@ run_simplification_dedup_cleanup() {
 		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
 		return 0
 	fi
-	rm -f "$cursor_file" 2>/dev/null || true
+	# Batch exhaustion honours the per-interval close budget (last-run is
+	# written) but keeps the cursor, so the next interval starts after the
+	# saturating repo instead of starving later repos behind earlier ones.
+	if [[ "$batch_exhausted" -eq 1 ]]; then
+		echo "[pulse-wrapper] Dedup cleanup: batch limit ${batch_limit} reached before traversal end; cursor kept for the next interval" >>"$LOGFILE"
+	else
+		rm -f "$cursor_file" 2>/dev/null || true
+	fi
 	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	return 0
 }

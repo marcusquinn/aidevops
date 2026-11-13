@@ -61,6 +61,7 @@ gh_issue_list() {
 	printf '%s\n' "$slug" >>"$CALLS_LOG"
 	printf '%s\n' "$(($(cat "$CLOCK_FILE") + 5))" >"$CLOCK_FILE"
 	[[ "$slug" == "o/a" ]] && printf '11\n'
+	[[ "$slug" == "o/c" && "${DEDUP_TEST_SATURATE_C:-0}" == "1" ]] && printf '31\n32\n'
 	return 0
 }
 
@@ -120,8 +121,32 @@ test_interval_gate_after_completion() {
 	return 0
 }
 
+test_batch_exhaustion_keeps_cursor() {
+	local failed=0 detail=""
+	local cursor_file="${DEDUP_CLEANUP_LAST_RUN}.cursor"
+	: >"$CALLS_LOG"
+	rm -f "$DEDUP_CLEANUP_LAST_RUN"
+	printf 'o/b\n' >"$cursor_file"
+	printf '3000\n' >"$CLOCK_FILE"
+	# Resumed past o/b; o/c closes the whole batch (2), so o/d is unvisited.
+	DEDUP_CLEANUP_BATCH_SIZE=2 DEDUP_TEST_SATURATE_C=1 PULSE_STAGE_DEADLINE_EPOCH=3100 run_simplification_dedup_cleanup
+	[[ "$(calls)" == "o/c " ]] || { failed=1; detail="calls=$(calls)"; }
+	[[ "$(sed -n '1p' "$cursor_file" 2>/dev/null)" == "o/c" ]] || { failed=1; detail="${detail} cursor"; }
+	[[ "$(cat "$DEDUP_CLEANUP_LAST_RUN" 2>/dev/null)" == "3000" ]] || { failed=1; detail="${detail} last-run"; }
+
+	# Next interval starts after the saturating repo, then completes.
+	: >"$CALLS_LOG"
+	printf '%s\n' "$((3000 + DEDUP_CLEANUP_INTERVAL))" >"$CLOCK_FILE"
+	PULSE_STAGE_DEADLINE_EPOCH=$((3100 + DEDUP_CLEANUP_INTERVAL)) run_simplification_dedup_cleanup
+	[[ "$(calls)" == "o/d " ]] || { failed=1; detail="${detail} next=$(calls)"; }
+	[[ ! -f "$cursor_file" ]] || { failed=1; detail="${detail} cursor-left"; }
+	print_result "batch exhaustion honours the interval and resumes after the saturating repo" "$failed" "$detail"
+	return 0
+}
+
 test_short_slice_resumes_and_completes
 test_interval_gate_after_completion
+test_batch_exhaustion_keeps_cursor
 
 printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
