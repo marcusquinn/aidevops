@@ -201,6 +201,108 @@ printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-ce
 )
 printf 'PASS durable partial snapshots preserve attempts across cycles, expire without renewing consumed work, and invalidate on mutation\n'
 
+# GH#38048: a cooperatively drained cycle hands its full census and attempt
+# ledger to the activated bundle's first wave instead of deleting them.
+(
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	LOCKDIR="${TEST_ROOT}/drain-lock"
+	REPOS_JSON="${TEST_ROOT}/handoff-repos.json"
+	builds="${TEST_ROOT}/handoff-builds"
+	stats="${TEST_ROOT}/handoff-stats"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/fixture","pulse":true}]}\n' >"$REPOS_JSON"
+	check_repo_pulse_schedule() { return 0; }
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	pulse_stats_increment() {
+		local counter="$1"
+		printf '%s\n' "$counter" >>"$stats"
+		return 0
+	}
+	build_ranked_dispatch_candidates_json() {
+		printf 'scan\n' >>"$builds"
+		jq -nc '[range(1;4) | {number:.,repo_slug:"o/product",repo_path:"/fixture"}]'
+		return 0
+	}
+	request_drain() {
+		local owner="$1"
+		mkdir -p "$LOCKDIR"
+		printf 'owner=%s\nbundle=bundle-next\n' "$owner" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+	write_handoff() {
+		local target="$1" schema="$2" age="$3" issue="$4" now=""
+		now=$(date +%s)
+		jq -nc --arg schema "$schema" --argjson captured "$((now - age))" --argjson issue "$issue" \
+			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[{number:$issue,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
+		return 0
+	}
+	numbers() {
+		local candidates="$1"
+		jq -r '[.[].number] | join(",")' <<<"$candidates"
+		return 0
+	}
+	handoff=$(_dispatch_candidate_handoff_path 50)
+	skip_handoff=$(_dispatch_candidate_handoff_path 50 skip)
+	partial=$(_PULSE_FIRST_DISPATCH_WAVE=1 _dispatch_candidate_snapshot_path 50 skip)
+
+	# A marker naming another lock owner is not this cycle's drain.
+	_PULSE_CYCLE_ID="undrained-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	request_drain 1
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "$handoff" ]]
+
+	_PULSE_CYCLE_ID="drained-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	request_drain "$$"
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	[[ "$(jq -r '.schema' "$handoff")" == "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" ]]
+	rm -rf "$LOCKDIR"
+
+	# A full round of the activated bundle scans for itself; a freed slot
+	# keeps the handoff for the first wave.
+	_PULSE_CYCLE_ID="activated-cycle"
+	: >"$builds"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	_dispatch_invalidate_candidate_snapshot event_refill 50
+	[[ -s "$builds" && -f "$handoff" ]]
+
+	# The first wave serves the unattempted remainder without a scan.
+	: >"$builds"
+	: >"$stats"
+	remainder=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$remainder")" == '2,3' && ! -s "$builds" ]]
+	[[ ! -e "$handoff" && ! -e "${handoff}.consumed" && -f "$partial" && -f "${partial}.consumed" ]]
+	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
+	grep -qx 'dispatch_candidate_snapshot_hit' "$stats"
+
+	# Past its reuse window, or in another snapshot format, a handoff is
+	# removed unserved and the wave scans.
+	for fixture in "${_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA}|301" 'other/v0|0'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handoff "$handoff" "${fixture%%|*}" "${fixture##*|}" 9
+		: >"$builds"
+		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+	done
+
+	# A normalize round never takes a census that skipped dependency
+	# normalization; a skip round does. A mutation discards an unadopted one.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handoff "$skip_handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 7
+	normalized=$(_dispatch_bounded_ranked_candidates_json 50 normalize 180)
+	[[ "$(numbers "$normalized")" == '1,2,3' && -f "$skip_handoff" ]]
+	skipped=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$skipped")" == '7' && ! -e "$skip_handoff" ]]
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 8
+	_dispatch_invalidate_candidate_snapshot label_maintenance_complete 50
+	[[ ! -e "$handoff" && ! -e "$partial" ]]
+)
+printf 'PASS drained cycles hand a full census to the next first wave; stale, foreign-format and wrong-mode handoffs are not served\n'
+
 (
 	claim_comments='[{"id":41,"author_association":"OWNER","created_at":"2026-11-12T05:00:00Z","updated_at":"2026-11-12T05:00:00Z","body":"Dispatching worker"}]'
 	gh() {
