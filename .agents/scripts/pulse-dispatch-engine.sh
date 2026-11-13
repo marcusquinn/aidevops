@@ -793,19 +793,19 @@ _dispatch_attribute_round_underfill() {
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-engine-supervisor.sh"
 
 _should_run_llm_supervisor() {
-	local now_epoch
+	local now_epoch last_llm_success_epoch="" last_llm_attempt_epoch=""
 	now_epoch=$(date +%s)
 
 	# 1. Daily sweep: only a successful daily sweep advances its cadence.
 	# last_llm_run_epoch remains as the legacy success timestamp for older installs;
 	# last_llm_attempt_epoch is separate so failed runs do not suppress retries for
 	# a full daily interval.
-	local last_llm_success_epoch="" last_llm_attempt_epoch=""
-	last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
-	if [[ "$last_llm_success_epoch" -eq 0 ]]; then
-		last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
-	fi
+	last_llm_success_epoch=$(_pulse_read_llm_success_epoch)
 	last_llm_attempt_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
+	if [[ "${_PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY:-0}" == "1" ]]; then # GH#38162: incomplete prefetch
+		_pulse_queue_triggers_only_decision "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch" || return 1
+		return 0
+	fi
 
 	local last_daily_epoch="" last_success_mode=""
 	last_daily_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_daily_sweep_success_epoch")
