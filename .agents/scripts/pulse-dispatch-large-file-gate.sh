@@ -806,7 +806,7 @@ _large_file_gate_body_has_scope_path() {
 		found && level == 2 && /^## / { found=0 }
 		found && level == 3 && (/^# / || /^## / || /^### /) { found=0 }
 		found { print }
-	' | grep -qE '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$'
+	' | grep -E '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$' >/dev/null
 	return $?
 }
 
@@ -879,7 +879,7 @@ _large_file_gate_file_new_debt_issue() {
 		--color "D93F0B" \
 		--force 2>/dev/null || true
 
-	local _new_num _create_body _create_combined
+	local _new_num="" _create_body="" _create_combined=""
 	_create_body=$(_large_file_gate_debt_issue_body "$lf_path" "$parent_issue" "$prior_attempt_issue")
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
 	_create_combined=$(gh_create_issue --repo "$repo_slug" \
