@@ -33,24 +33,36 @@ macos_checks_host() {
 	return 0
 }
 
+macos_checks_suite() {
+	local suite="$1"
+	shift
+	printf 'macOS suite: %s\n' "$suite" >&2
+	"$@" || {
+		printf 'macOS suite failed: %s\n' "$suite" >&2
+		return 1
+	}
+	return 0
+}
+
 macos_checks_run() {
 	local root="" test_script=""
 	root=$(git rev-parse --show-toplevel) || return 1
 	# Run from the repository root, just like the former macOS Actions leg.
 	(
 		cd "$root" || exit 1
-		bash -c 'source .agents/scripts/platform-detect.sh; [[ "$AIDEVOPS_PLATFORM" == macos && "$AIDEVOPS_SCHEDULER" == launchd ]]' || exit 1
-		node .agents/scripts/tests/test-model-replay-benchmark.mjs || exit 1
+		# shellcheck disable=SC2016 # Variables belong to the child Bash assertion.
+		macos_checks_suite platform-detect bash -c 'source .agents/scripts/platform-detect.sh; [[ "$AIDEVOPS_PLATFORM" == macos && "$AIDEVOPS_SCHEDULER" == launchd ]]' || exit 1
+		macos_checks_suite test-model-replay-benchmark.mjs node .agents/scripts/tests/test-model-replay-benchmark.mjs || exit 1
 		for test_script in \
 			test-runtime-env.sh test-launchd-sanitized-path.sh test-pulse-path-precedence.sh \
 			test-canonical-git-command-guard.sh test-command-policy-helper.sh \
 			test-tool-install-opencode.sh test-setup-source-access-broker.sh test-portable-shebangs.sh; do
-			env -u GITHUB_ACTIONS bash ".agents/scripts/tests/$test_script" || exit 1
+			macos_checks_suite "$test_script" env -u GITHUB_ACTIONS bash ".agents/scripts/tests/$test_script" || exit 1
 		done
 		for test_script in test-source-access-helper.py test_opencode_service.py test-release-lane-owner.py; do
-			python3 ".agents/scripts/tests/$test_script" || exit 1
+			macos_checks_suite "$test_script" python3 ".agents/scripts/tests/$test_script" || exit 1
 		done
-		node --test \
+		macos_checks_suite opencode-native-tests node --test \
 			.agents/plugins/opencode-aidevops/tests/test-git-safety-gate.mjs \
 			.agents/plugins/opencode-aidevops/tests/test-shell-env-origin.mjs \
 			.agents/plugins/opencode-aidevops/tests/test-source-access-guidance.mjs \
