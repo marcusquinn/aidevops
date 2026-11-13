@@ -146,8 +146,14 @@ _policy_list_workflows() {
 	return 1
 }
 
-# Workflow analysis cache: a blob SHA is immutable, so the derived result for a
-# SHA never goes stale. Only the derived JSON {include, events, parsed} is stored.
+# Workflow analysis cache: a blob SHA is immutable, but the derived result also
+# depends on this analyzer. Keys combine both, so editing this helper (for
+# example a parser fix) re-analyses every file instead of trusting results from
+# older code. Only the derived JSON {include, events, parsed} is stored. An empty
+# analyzer ID disables the cache.
+_POLICY_ANALYZER_ID=""
+read -r _POLICY_ANALYZER_ID _ < <(cksum <"${BASH_SOURCE[0]}" 2>/dev/null) || _POLICY_ANALYZER_ID=""
+
 _policy_cache_dir() {
 	printf '%s\n' "${AIDEVOPS_ACTIONS_EVENT_POLICY_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/cache/actions-event-policy}"
 	return 0
@@ -157,8 +163,8 @@ _policy_cache_dir() {
 _policy_cache_read() {
 	local sha="$1"
 	local file="" data=""
-	[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
-	file="$(_policy_cache_dir)/${sha}"
+	[[ -n "$_POLICY_ANALYZER_ID" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	file="$(_policy_cache_dir)/${_POLICY_ANALYZER_ID}-${sha}"
 	[[ -f "$file" ]] || return 1
 	data=$(cat "$file" 2>/dev/null) || return 1
 	jq -ce 'select((.include | booleans) != null and (.parsed | booleans) != null and (.events | arrays) != null)' \
@@ -171,11 +177,12 @@ _policy_cache_write() {
 	local sha="$1"
 	local json="$2"
 	local dir="" tmp=""
-	[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+	[[ -n "$_POLICY_ANALYZER_ID" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 0
 	dir="$(_policy_cache_dir)"
 	(umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
 	tmp=$(umask 077 && mktemp "${dir}/.tmp.XXXXXX" 2>/dev/null) || return 0
-	if printf '%s\n' "$json" >"$tmp" 2>/dev/null && chmod 600 "$tmp" 2>/dev/null && mv -f "$tmp" "${dir}/${sha}" 2>/dev/null; then
+	if printf '%s\n' "$json" >"$tmp" 2>/dev/null && chmod 600 "$tmp" 2>/dev/null &&
+		mv -f "$tmp" "${dir}/${_POLICY_ANALYZER_ID}-${sha}" 2>/dev/null; then
 		return 0
 	fi
 	rm -f "$tmp" 2>/dev/null || true
