@@ -206,6 +206,7 @@ printf 'PASS async cleanup helpers start even when early dispatch exhausts the c
 
 # The launch stub above deliberately stops after one attempt. Isolate the
 # rotation-only cases below from that retained interrupted-wave remainder.
+# shellcheck disable=SC2218 # Production definition is sourced above; later stub is unrelated.
 _dispatch_invalidate_candidate_snapshot fixture_reset 1000
 
 # The later global scan remains complete and keeps all repositories eligible.
@@ -290,6 +291,66 @@ printf 'PASS first wave preserves the per-candidate ceremony reserve\n'
 	if _pulse_dispatch_lease_active; then exit 1; fi
 )
 printf 'PASS first-wave dispatch extends only a fresh, matching owner lease\n'
+
+# GH#38022: 70 repositories, twenty product candidates and one blocked tooling
+# candidate. An interrupted wave must outlive both floor refill and rollover.
+(
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	_PULSE_FIRST_DISPATCH_WAVE=1
+	_PULSE_FIRST_WAVE_CANDIDATE_TARGET=21
+	PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=3600
+	jq -n '{initialized_repos:[range(1;71) | {slug:("owner/repo" + tostring),
+		path:"/fixture",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
+	printf '0\n' >"$CLOCK"
+	printf 'owner/repo70\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+	pulse_campaign_shadow_candidates_json() {
+		local slug="$1"
+		printf 'scan:%s\n' "$slug" >>"$EVENTS"
+		advance_clock 5
+		case "$slug" in
+		owner/repo4) jq -nc '[range(1;21) | {number:.,labels:["auto-dispatch","status:available"]}]' ;;
+		owner/repo5) printf '[{"number":99,"labels":["auto-dispatch","status:available"]}]\n' ;;
+		*) printf '[]\n' ;;
+		esac
+		return 0
+	}
+	seed=$(_dispatch_ranked_candidates_json 50 skip)
+	jq -e 'length == 21' <<<"$seed" >/dev/null
+	partial=$(_dispatch_candidate_snapshot_path 50 skip)
+	full=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_candidate_snapshot_path 50 skip)
+	[[ "$partial" != "$full" && ! -f "$full" ]]
+	# A blocked attempt is consumed too, even outside the bounded-call scope.
+	_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_ranked_candidate_consumed '{"number":99,"repo_slug":"owner/repo5"}'
+	for issue in 1 2 3; do
+		_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_ranked_candidate_consumed "{\"number\":$issue,\"repo_slug\":\"owner/repo4\"}"
+	done
+	_PULSE_CYCLE_ID="after-cooperative-drain"
+	_dispatch_cleanup_cycle_cache 50
+	[[ -f "$partial" ]]
+	printf 'owner/repo42\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+	: >"$EVENTS"
+	remainder=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	jq -e 'length == 17 and all(.[]; .repo_slug == "owner/repo4" and .number > 3
+		and .product_discovery_complete == false)' <<<"$remainder" >/dev/null
+	[[ ! -s "$EVENTS" ]]
+	# Once TTL requires re-enumeration, known unattempted product work leads
+	# every wave, regardless of the round-robin cursor or a blocked neighbour.
+	for cursor in owner/repo42 owner/repo69; do
+		printf '%s\n' "$cursor" >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+		: >"$EVENTS"
+		_PULSE_FIRST_WAVE_CANDIDATE_TARGET=20 build_ranked_dispatch_candidates_json 50 skip >/dev/null
+		[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo4;' ]]
+	done
+	while IFS= read -r candidate; do
+		_dispatch_ranked_candidate_consumed "$candidate"
+	done < <(jq -c '.[]' <<<"$remainder")
+	[[ -z "$(_dispatch_first_wave_backlog_repos)" ]]
+	printf 'owner/repo42\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+	rows=$(_dispatch_repository_rows owner/repo42)
+	[[ "${rows%%|*}" == owner/repo43 ]]
+	_dispatch_invalidate_candidate_snapshot fixture_complete 50
+)
+printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor remainder and restore cursor fairness after attempts\n'
 
 # GH#33944: post-label refill must not spend its admission budget normalizing
 # the entire blocked backlog before already-available candidates can launch.

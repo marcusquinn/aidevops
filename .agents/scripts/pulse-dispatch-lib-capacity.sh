@@ -118,6 +118,24 @@ _dispatch_filter_consumed_ranked_candidates() {
 	return $?
 }
 
+# A durable remainder crosses cycle boundaries: recheck current registry paths
+# and schedules before reuse. Interval throttling applies to API polling, not
+# to attempting already-enumerated work. No network census is needed here.
+_dispatch_filter_partial_snapshot_candidates() {
+	local candidates="$1" allowed="" slug="" path="" priority="" start="" end="" expires="" interval=""
+	local _PULSE_FIRST_DISPATCH_WAVE=0
+	[[ -f "${REPOS_JSON:-}" ]] || { printf '[]\n'; return 0; }
+	allowed=$(
+		while IFS='|' read -r slug path priority start end expires interval; do
+			check_repo_pulse_schedule "$slug" "$start" "$end" "$expires" "$REPOS_JSON" || continue
+			jq -nc --arg slug "$slug" --arg path "$path" '{repo_slug:$slug,repo_path:$path}'
+		done < <(_dispatch_repository_rows "")
+	) || return 1
+	jq -cs --argjson candidates "$candidates" '. as $allowed |
+		$candidates | map(select({repo_slug,repo_path} as $repo | $allowed | index($repo)))' <<<"$allowed"
+	return $?
+}
+
 _dispatch_ranked_candidates_json() {
 	local per_repo_limit="${1:-${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -145,6 +163,9 @@ _dispatch_ranked_candidates_json() {
 		snapshot_fresh=1
 		candidates_json=$(jq -c '.candidates' "$snapshot_file") || return 1
 		candidates_json=$(_dispatch_filter_consumed_ranked_candidates "$snapshot_file" "$candidates_json") || return 1
+		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+			candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
+		fi
 		if [[ "$candidates_json" != '[]' ]]; then
 			printf '%s\n' "$candidates_json"
 			_dispatch_stats_increment "dispatch_candidate_snapshot_hit"

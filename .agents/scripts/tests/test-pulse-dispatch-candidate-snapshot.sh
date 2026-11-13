@@ -143,6 +143,50 @@ unset PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED
 printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-census on exhaustion\n'
 
 (
+	_PULSE_FIRST_DISPATCH_WAVE=1
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	REPOS_JSON="${TEST_ROOT}/partial-repos.json"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/fixture","pulse":true}]}\n' >"$REPOS_JSON"
+	scheduled=1
+	check_repo_pulse_schedule() {
+		[[ "$scheduled" == 1 ]] && return 0
+		return 1
+	}
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	build_ranked_dispatch_candidates_json() {
+		jq -nc '[range(1;3) | {number:.,repo_slug:"o/product",repo_path:"/fixture",product_discovery_complete:false}]'
+		return 0
+	}
+	initial=$(_dispatch_ranked_candidates_json 50 skip)
+	[[ "$(scheduled=0 _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	jq '.initialized_repos[0].maintenance = false' "$REPOS_JSON" >"${REPOS_JSON}.test"
+	[[ "$(REPOS_JSON="${REPOS_JSON}.test" _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	jq '.initialized_repos[0].path = "/moved"' "$REPOS_JSON" >"${REPOS_JSON}.test"
+	[[ "$(REPOS_JSON="${REPOS_JSON}.test" _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
+	partial=$(_dispatch_candidate_snapshot_path 50 skip)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	_dispatch_cleanup_cycle_cache 50
+	_PULSE_CYCLE_ID="partial-next-cycle"
+	remaining=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	jq -e 'length == 1 and .[0].number == 2 and .[0].product_discovery_complete == false' <<<"$remaining" >/dev/null
+	_dispatch_ranked_candidate_consumed '{"number":2,"repo_slug":"o/product"}'
+	# Rebuilding an exhausted queue retains its original attempt-ledger expiry.
+	jq '.captured_at -= 10' "$partial" >"${partial}.test"
+	mv "${partial}.test" "$partial"
+	captured=$(jq -r '.captured_at' "$partial")
+	[[ "$(_dispatch_ranked_candidates_json 50 skip)" == '[]' ]]
+	[[ "$(jq -r '.captured_at' "$partial")" == "$captured" ]]
+	jq '.captured_at = 0' "$partial" >"${partial}.test"
+	mv "${partial}.test" "$partial"
+	refreshed=$(_dispatch_ranked_candidates_json 50 skip)
+	[[ "$refreshed" == "$initial" && ! -f "${partial}.consumed" ]]
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	_dispatch_invalidate_candidate_snapshot partial_state_changed 50
+	[[ ! -f "$partial" && ! -f "${partial}.consumed" ]]
+)
+printf 'PASS durable partial snapshots preserve attempts across cycles, expire without renewing consumed work, and invalidate on mutation\n'
+
+(
 	claim_comments='[{"id":41,"author_association":"OWNER","created_at":"2026-11-12T05:00:00Z","updated_at":"2026-11-12T05:00:00Z","body":"Dispatching worker"}]'
 	gh() {
 		local query="" arg=""
