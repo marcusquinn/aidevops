@@ -23,6 +23,9 @@
 #   - pulse-simplification-state.sh (_simplification_state_prune,
 #     _simplification_state_refresh, _simplification_state_backfill_closed,
 #     _simplification_state_push, _simplification_close_spurious_requeue_issues)
+#   - pulse-simplification-review.sh (_pulse_slug_list_contains,
+#     _pulse_scanner_mark_started, _pulse_scanner_effective_reserve,
+#     _pulse_scanner_deadline_reached)
 #   - worker-lifecycle-common.sh (get_repo_role_by_slug)
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -43,6 +46,56 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 #######################################
+# Close one repo's duplicate function-complexity-debt issues.
+#
+# Uses jq to extract file paths from titles and find duplicates server-side:
+# fetch issues sorted by number ascending (oldest first), extract the file
+# path from the title, group by path, and close all but the newest per group.
+#
+# Args:
+#   $1 - repo slug
+#   $2 - maximum issues to close
+# Stdout: number of issues closed
+# Returns 0 always.
+#######################################
+_dedup_cleanup_close_repo_dupes() {
+	local slug="$1"
+	local limit="$2"
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=0
+	local closed=0 dupe_numbers="" dupe_num=""
+	dupe_numbers=$(gh_issue_list --repo "$slug" \
+		--label "function-complexity-debt" --state open \
+		--limit 500 --json number,title \
+		--jq '
+			sort_by(.number) |
+			[.[] | {
+				number,
+				file: (
+					(.title | capture("\\((?<p>[^,)]+\\.(sh|md|py|ts|js))[,)]") // null | .p) //
+					(.title | capture("in (?<p>[^ ]+\\.(sh|md|py|ts|js))") // null | .p) //
+					null
+				)
+			}] |
+			[.[] | select(.file != null)] |
+			group_by(.file) |
+			[.[] | select(length > 1) | .[:-1][].number] |
+			.[]
+		' 2>/dev/null) || dupe_numbers=""
+
+	while IFS= read -r dupe_num; do
+		[[ -n "$dupe_num" ]] || continue
+		[[ "$closed" -lt "$limit" ]] || break
+		if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
+			--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
+			>/dev/null 2>&1; then
+			closed=$((closed + 1))
+		fi
+	done <<<"$dupe_numbers"
+	printf '%s\n' "$closed"
+	return 0
+}
+
+#######################################
 # Close duplicate function-complexity-debt issues across pulse-enabled repos.
 #
 # For each repo, fetches open function-complexity-debt issues and groups by
@@ -52,11 +105,16 @@ fi
 # Rate-limited: closes at most DEDUP_CLEANUP_BATCH_SIZE issues per run
 # and runs at most once per DEDUP_CLEANUP_INTERVAL (default: daily).
 #
+# GH#38171: the housekeeping slice (12s) is shorter than one traversal, so a
+# repo cursor records the last started repo. A yield or watchdog kill resumes
+# after it, and last-run is written only when a traversal completes.
+#
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
 run_simplification_dedup_cleanup() {
 	local now_epoch
 	now_epoch=$(date +%s)
+	local cursor_file="${DEDUP_CLEANUP_CURSOR_FILE:-${DEDUP_CLEANUP_LAST_RUN}.cursor}"
 
 	# Interval guard
 	if [[ -f "$DEDUP_CLEANUP_LAST_RUN" ]]; then
@@ -80,57 +138,47 @@ run_simplification_dedup_cleanup() {
 
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
+	local resume_after="" yielded=0 stage_reserve=""
+	if [[ -f "$cursor_file" ]]; then
+		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
+		if [[ -n "$resume_after" ]] && ! _pulse_slug_list_contains "$resume_after" "$repo_slugs"; then
+			resume_after=""
+		fi
+	fi
+	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_DEDUP_CLEANUP_STAGE_RESERVE_SECONDS:-5}" "$now_epoch")
 
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
+		if [[ -n "$resume_after" ]]; then
+			[[ "$slug" == "$resume_after" ]] && resume_after=""
+			continue
+		fi
 		[[ "$total_closed" -ge "$batch_limit" ]] && break
 		# t2145: skip repos where the user is a contributor — simplification
 		# dedup cleanup is a maintainer-only operation.
 		local _dedup_role
 		_dedup_role=$(get_repo_role_by_slug "$slug")
 		[[ "$_dedup_role" != "maintainer" ]] && continue
-
-		# Use jq to extract file paths from titles and find duplicates server-side.
-		# Strategy: fetch issues sorted by number ascending (oldest first), extract
-		# file path from title via jq regex, group by path, and collect all but the
-		# last (newest) issue number from each group as duplicates to close.
-		local dupe_numbers
-		dupe_numbers=$(gh_issue_list --repo "$slug" \
-			--label "function-complexity-debt" --state open \
-			--limit 500 --json number,title \
-			--jq '
-				sort_by(.number) |
-				[.[] | {
-					number,
-					file: (
-						(.title | capture("\\((?<p>[^,)]+\\.(sh|md|py|ts|js))[,)]") // null | .p) //
-						(.title | capture("in (?<p>[^ ]+\\.(sh|md|py|ts|js))") // null | .p) //
-						null
-					)
-				}] |
-				[.[] | select(.file != null)] |
-				group_by(.file) |
-				[.[] | select(length > 1) | .[:-1][].number] |
-				.[]
-			' 2>/dev/null) || dupe_numbers=""
-
-		[[ -z "$dupe_numbers" ]] && continue
-
-		while IFS= read -r dupe_num; do
-			[[ -z "$dupe_num" ]] && continue
-			[[ "$total_closed" -ge "$batch_limit" ]] && break
-			if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
-				--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
-				>/dev/null 2>&1; then
-				total_closed=$((total_closed + 1))
-			fi
-		done <<<"$dupe_numbers"
+		if _pulse_scanner_deadline_reached "$stage_reserve"; then
+			yielded=1
+			break
+		fi
+		_pulse_scanner_mark_started "$cursor_file" "$slug"
+		local repo_closed=0
+		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))") || repo_closed=0
+		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
+		total_closed=$((total_closed + repo_closed))
 	done <<<"$repo_slugs"
 
-	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	if [[ "$total_closed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate function-complexity-debt issue(s)" >>"$LOGFILE"
 	fi
+	if [[ "$yielded" -eq 1 ]]; then
+		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
+		return 0
+	fi
+	rm -f "$cursor_file" 2>/dev/null || true
+	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	return 0
 }
 
