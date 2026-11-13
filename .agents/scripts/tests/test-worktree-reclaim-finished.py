@@ -264,6 +264,8 @@ class BatchTests(unittest.TestCase):
         self.assertNotIn(hostile, query)
         self.assertIn("$owner", query)
         self.assertIn(f"owner={hostile}", command)
+        self.assertEqual(command[command.index(f"owner={hostile}") - 1], "-f")
+        self.assertEqual(command[command.index("name=repo") - 1], "-f")
 
     def test_batch_populates_cache_and_tolerates_nonzero_exit(self):
         self.run_with(1, '{"data":{"repository":{"g1":{"state":"CLOSED"},'

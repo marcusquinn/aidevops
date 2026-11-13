@@ -138,7 +138,7 @@ def prefetch_references(base_dir: Path, current: Pass) -> None:
         slug = repository(path, timeout=min(current.remaining(), 60))
         if slug:
             wanted.setdefault(slug, []).extend(found)
-    prefetch(wanted, current.finished, timeout=min(max(current.remaining(), 1), 60))
+    prefetch(wanted, current.finished, remaining=current.remaining)
 
 
 def main() -> int:

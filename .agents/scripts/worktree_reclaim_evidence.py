@@ -11,6 +11,7 @@ archive-free, each check here fails closed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -101,7 +102,7 @@ def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: i
     """
     owner, name = slug.split("/", 1)
     _, output = run(["gh", "api", "graphql", "--hostname", "github.com",
-                     "-F", f"owner={owner}", "-F", f"name={name}",
+                     "-f", f"owner={owner}", "-f", f"name={name}",
                      "-f", f"query={_batch_query(items)}"], timeout=timeout)
     try:
         data = ((json.loads(output) or {}).get("data") or {}).get("repository") or {}
@@ -117,7 +118,7 @@ def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: i
 
 
 def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
-             *, timeout: int = 60) -> None:
+             *, remaining: Callable[[], float] | None = None, cap: int = 60) -> None:
     """Fill the cache ``reference_finished`` reads, one query per 20 references.
 
     Any failure leaves the key absent, so judgement degrades to per-reference queries.
@@ -126,6 +127,12 @@ def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
         pending = [item for item in dict.fromkeys(items)
                    if (item[0], item[1], slug) not in cache]
         for start in range(0, len(pending), BATCH_SIZE):
+            timeout = cap
+            if remaining is not None:
+                budget = remaining()
+                if budget <= 0:
+                    return
+                timeout = min(max(int(budget), 1), cap)
             _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, timeout)
 
 
