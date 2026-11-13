@@ -213,19 +213,24 @@ get_injected_gopass_value() {
 		python3 -c '
 import os, signal, subprocess, sys
 
+try:
+    timeout = int(os.environ.get("AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS", "12"))
+except ValueError:
+    timeout = 12
+timeout = min(55, max(1, timeout))
 process = subprocess.Popen(["gopass", "show", "-n", sys.argv[1]],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            start_new_session=True)
 try:
-    value, _ = process.communicate(timeout=4)
+    value, _ = process.communicate(timeout=timeout)
 except subprocess.TimeoutExpired:
     os.killpg(process.pid, signal.SIGKILL)
     process.communicate()
-    sys.exit(1)
+    sys.exit(5)
 if process.returncode:
     sys.exit(1)
 sys.stdout.buffer.write(value)
-' "$secret_path" || return 1
+' "$secret_path" || return $?
 	fi
 	return 0
 }
@@ -876,7 +881,7 @@ cmd_get() {
 }
 
 # Status-only resolution for dispatch: 0 readable, 1 missing/empty plaintext,
-# 3 gopass-owned but unreadable/empty. Decrypt once; never emit values/errors.
+# 3 gopass-owned but unreadable/empty, 5 timed out. Never emit values/errors.
 cmd_check() {
 	local name="${1:-}"
 	[[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
@@ -887,7 +892,10 @@ cmd_check() {
 	fi
 	if has_gopass && gopass_owns_secret "$name"; then
 		local value=""
-		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || return 3
+		local read_status=0
+		value=$(get_injected_gopass_value "${GOPASS_PREFIX}/${name}" </dev/null 2>/dev/null) || read_status=$?
+		[[ "$read_status" -ne 5 ]] || return 5
+		[[ "$read_status" -eq 0 ]] || return 3
 		[[ -n "$value" ]] || return 3
 		return 0
 	fi
