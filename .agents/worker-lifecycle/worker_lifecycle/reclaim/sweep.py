@@ -83,14 +83,13 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
         receipt["refused"] += 1
         return None
     receipt["authorized"] += 1
-    if not current.apply_removal:
+    # An authorized verdict implies owners were observed; the check narrows the type.
+    if not current.apply_removal or current.owner is None:
         return None
     if current.remaining() == 0:
         # Never start destructive work the budget can no longer cover.
         receipt["budget_exhausted"] = True
         verdict["removal"] = "budget-exhausted"
-        return None
-    if current.owner is None:
         return None
     common = common_directory(path)
     removed, detail = remove(path, nothing_to_lose, current.owner)

@@ -15,16 +15,10 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-import time
 
 from .host import git, locked, metadata_directory, run
 from .owners import OwnerCheck
-
-# Review worktrees (`<repo>-pr<N>-review-<slug>`) are disposable reads of an open
-# pull request; the PR stays open long after the review ends. Only this shape may
-# be removed while its pull request is open, and only once idle this long.
-REVIEW_TREE = re.compile(r"(?<![a-z0-9])pr\d{1,8}-review-")
-REVIEW_IDLE_SECONDS = 2 * 60 * 60
+from .review import idle_review
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the
@@ -199,42 +193,18 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
     return None if found else "reference-unknown"
 
 
-def _unfinished(found: list[tuple[str, int]], query: Query) -> str | None:
-    """Name the first reference whose work has not finished."""
+def _unfinished(path: Path, found: list[tuple[str, int]],
+                query: Query) -> tuple[str | None, str]:
+    """Name the first unfinished reference, or how the work counts as finished.
+
+    An idle review worktree of a confirmed-open pull request is the one exception
+    (``review.idle_review``); every later check still applies to it.
+    """
     for kind, number in found:
         finished, detail = reference_finished(kind, number, query)
         if not finished:
-            return detail
-    return None
-
-
-def idle_seconds(path: Path, now: float) -> float | None:
-    """Seconds since Git last moved HEAD or the index, or None when unreadable.
-
-    Both live in the worktree's own metadata directory, so a checkout, commit,
-    rebase or staging operation in this tree refreshes them.
-    """
-    metadata = metadata_directory(path)
-    if metadata is None:
-        return None
-    times = []
-    for name in ("HEAD", "index"):
-        try:
-            times.append((metadata / name).stat().st_mtime)
-        except OSError:
-            continue
-    return now - max(times) if times else None
-
-
-def _idle_review_tree(path: Path, unfinished: str, now: float) -> bool:
-    """Accept an open pull request only for an idle review worktree.
-
-    Unknown PR state still refuses: only a confirmed open review qualifies.
-    """
-    if REVIEW_TREE.search(path.name.lower()) is None or not unfinished.endswith("-open"):
-        return False
-    idle = idle_seconds(path, now)
-    return idle is not None and idle >= REVIEW_IDLE_SECONDS
+            return (None, "review-idle") if idle_review(path, detail) else (detail, "")
+    return None, "work-finished"
 
 
 def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
@@ -250,7 +220,7 @@ def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None
 
 
 def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
-             *, timeout: int = 60, now: float | None = None) -> dict:
+             *, timeout: int = 60) -> dict:
     """Decide one worktree, reporting the first missing proof as the reason."""
     verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated"}
     found = references(path.name)
@@ -259,10 +229,8 @@ def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason = _unfinished(found, Query(verdict["repository"], cache, timeout))
-        if reason is not None and _idle_review_tree(
-                path, reason, time.time() if now is None else now):
-            reason, finished = None, "review-idle"
+        reason, finished = _unfinished(path, found,
+                                       Query(verdict["repository"], cache, timeout))
     if reason is None and owner is not None:
         reason = _unsafe_to_remove(path, owner, timeout)
     verdict["authorized"] = reason is None

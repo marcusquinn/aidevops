@@ -10,6 +10,7 @@ import shutil
 import subprocess  # nosec B404 -- fixed offline Git fixtures only.
 import sys
 import tempfile
+import time
 import unittest
 
 LIFECYCLE = Path(__file__).resolve().parents[1]
@@ -20,6 +21,7 @@ if not GIT:
 
 from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
 from worker_lifecycle.reclaim import host  # noqa: E402
+from worker_lifecycle.reclaim import review  # noqa: E402
 from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
 
 SLUG = "fixture/repo"
@@ -94,9 +96,9 @@ class EvidenceTests(unittest.TestCase):
         git(self.canonical, "worktree", "add", "-q", "--detach", str(path), "HEAD")
         return path
 
-    def decide(self, path=None, owner=no_owner, cache=None, now=None):
+    def decide(self, path=None, owner=no_owner, cache=None):
         return collector.evidence(path or self.worktree, owner,
-                                  self.finished if cache is None else cache, now=now)
+                                  self.finished if cache is None else cache)
 
     def test_authorizes_finished_clean_and_pushed_worktree(self):
         verdict = self.decide()
@@ -161,44 +163,45 @@ class EvidenceTests(unittest.TestCase):
         self.decide(owner=lambda path: asked.append(path), cache=cache)
         self.assertEqual(asked, [])
 
-    def review_tree(self):
-        tree = self.add_worktree("repo-pr9001-review-fixture")
-        cache = {("pr", 9001, SLUG): (False, "pr-9001-open")}
-        idle_from = collector.idle_seconds(tree, 0.0)
-        self.assertIsNotNone(idle_from)
-        # idle_seconds(tree, 0) is minus the newest mtime, so this is "now".
-        modified = -idle_from
-        return tree, cache, modified
+    def worktree_idle(self, name, idle=review.IDLE_SECONDS + 60):
+        """Add a worktree whose Git HEAD and index were last touched ``idle`` ago."""
+        tree = self.add_worktree(name)
+        metadata = host.metadata_directory(tree)
+        self.assertIsNotNone(metadata)
+        moment = time.time() - idle
+        for entry in ("HEAD", "index"):
+            if (metadata / entry).exists():
+                os.utime(metadata / entry, (moment, moment))
+        return tree
+
+    OPEN_REVIEW = {("pr", 9001, SLUG): (False, "pr-9001-open")}
 
     def test_authorizes_an_idle_review_tree_of_an_open_pull_request(self):
-        tree, cache, modified = self.review_tree()
-        verdict = self.decide(path=tree, cache=cache,
-                              now=modified + collector.REVIEW_IDLE_SECONDS)
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW)
         self.assertTrue(verdict["authorized"], verdict)
         self.assertEqual(verdict["reason"], "review-idle")
 
     def test_refuses_a_recently_active_review_tree(self):
-        tree, cache, modified = self.review_tree()
-        verdict = self.decide(path=tree, cache=cache, now=modified + 60)
-        self.assertEqual(verdict["reason"], "pr-9001-open")
+        tree = self.worktree_idle("repo-pr9001-review-fixture", idle=60)
+        self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
+                         "pr-9001-open")
 
     def test_refuses_an_idle_review_tree_with_a_live_owner(self):
-        tree, cache, modified = self.review_tree()
-        verdict = self.decide(path=tree, cache=cache, owner=owner_reporting("owner-alive"),
-                              now=modified + collector.REVIEW_IDLE_SECONDS)
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW,
+                              owner=owner_reporting("owner-alive"))
         self.assertEqual(verdict["reason"], "owner-alive")
 
     def test_refuses_an_idle_review_tree_with_unknown_pull_request_state(self):
-        tree, _, modified = self.review_tree()
-        verdict = self.decide(path=tree, cache={("pr", 9001, SLUG): (False, "pr-9001-none")},
-                              now=modified + collector.REVIEW_IDLE_SECONDS)
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache={("pr", 9001, SLUG): (False, "pr-9001-none")})
         self.assertEqual(verdict["reason"], "pr-9001-none")
 
     def test_open_pull_request_still_refuses_outside_review_trees(self):
-        tree = self.add_worktree("repo-pr9001-ci-repair-fixture")
-        verdict = self.decide(path=tree, cache={("pr", 9001, SLUG): (False, "pr-9001-open")},
-                              now=float("inf"))
-        self.assertEqual(verdict["reason"], "pr-9001-open")
+        tree = self.worktree_idle("repo-pr9001-ci-repair-fixture")
+        self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
+                         "pr-9001-open")
 
     def test_refuses_uncommitted_changes(self):
         (self.worktree / "README.md").write_text("edited\n", encoding="utf-8")
