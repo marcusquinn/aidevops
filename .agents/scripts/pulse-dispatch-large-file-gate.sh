@@ -22,6 +22,10 @@
 [[ -n "${_PULSE_DISPATCH_LARGE_FILE_GATE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_LARGE_FILE_GATE_LOADED=1
 
+# Directory of this module, for lazily sourcing sibling libraries.
+_LFG_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_LFG_SCRIPT_DIR" != "${BASH_SOURCE[0]}" ]] || _LFG_SCRIPT_DIR="."
+
 # Module-level skip pattern used by the large-file gate — files that are
 # large by nature and can't/shouldn't be "simplified" (lockfiles, generated
 # data, JSON/YAML configs, binary-adjacent formats). GH#17897: also skips
@@ -693,12 +697,14 @@ _large_file_gate_close_resolved_debt_issues() {
 #######################################
 # Reopen the canonical debt issue when its cited file remains oversized.
 # Reusing the durable issue identity prevents close/create/auto-dispatch loops.
-# Arguments: issue_number, lf_path, repo_slug
+# Arguments: issue_number, lf_path, repo_slug, parent_issue (optional; names
+#   the held issue when an outdated body is refreshed)
 #######################################
 _large_file_gate_reopen_debt_issue() {
 	local issue_number="$1"
 	local lf_path="$2"
 	local repo_slug="$3"
+	local parent_issue="${4:-}"
 
 	if ! gh issue reopen "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] WARN: failed to reopen canonical file-size-debt #${issue_number} for ${lf_path}; deferring" >>"$LOGFILE"
@@ -708,22 +714,24 @@ _large_file_gate_reopen_debt_issue() {
 		echo "[pulse-wrapper] WARN: reopened file-size-debt #${issue_number} but failed to normalize labels; next pulse will retry" >>"$LOGFILE"
 		return 1
 	fi
+	# A failed refresh leaves the old body; the next pass retries (GH#37989).
+	if ! _large_file_gate_refresh_debt_issue_body "$issue_number" "$lf_path" "$repo_slug" "$parent_issue"; then
+		echo "[pulse-wrapper] WARN: reopened file-size-debt #${issue_number} but failed to refresh its body; next pulse will retry" >>"$LOGFILE"
+	fi
 	echo "[pulse-wrapper] Reopened canonical file-size-debt issue #${issue_number} for ${lf_path}" >>"$LOGFILE"
 	printf '#%s (reopened)' "$issue_number"
 	return 0
 }
 
 #######################################
-# t2164 helper — create a fresh file-size-debt issue via gh_create_issue.
-# Prints "#NNN (new)" on success and empty on failure (gh failure is logged).
-# Accepts an optional `prior_attempt_issue` for the body's "Prior attempt"
-# footnote (t2164 phantom-continuation audit trail).
+# Print the current file-size-debt issue body template. Pure: no GitHub calls.
+# New issues and refreshed reused issues share this one template (GH#37989).
+# Arguments: lf_path, parent_issue, prior_attempt_issue (optional)
 #######################################
-_large_file_gate_file_new_debt_issue() {
+_large_file_gate_debt_issue_body() {
 	local lf_path="$1"
 	local parent_issue="$2"
-	local repo_slug="$3"
-	local prior_attempt_issue="${4:-}"
+	local prior_attempt_issue="${3:-}"
 
 	local _prior_attempt_ref=""
 	if [[ -n "$prior_attempt_issue" ]]; then
@@ -731,13 +739,6 @@ _large_file_gate_file_new_debt_issue() {
 
 **Prior attempt:** #${prior_attempt_issue} closed without reducing file size below the ${LARGE_FILE_LINE_THRESHOLD}-line threshold (current size verified by gate). This issue is the file-size follow-up."
 	fi
-
-	# GH#18644: ensure the `file-size-debt` label exists before creation.
-	gh label create "file-size-debt" \
-		--repo "$repo_slug" \
-		--description "Target file exceeds the line-count threshold and needs splitting before implementation can proceed" \
-		--color "D93F0B" \
-		--force 2>/dev/null || true
 
 	# A split creates sibling modules, so the scope must admit them up front;
 	# otherwise the worker stops on files_scope_excluded. Drop a -helper suffix
@@ -749,7 +750,7 @@ _large_file_gate_file_new_debt_issue() {
 - NEW: \`${_lf_stem%-helper}-*.${lf_path##*.}\`"
 	fi
 
-	local _new_num _create_body _create_combined
+	local _create_body
 	_create_body="<!-- aidevops:generator=large-file-simplification-gate cited_file=${lf_path} threshold=${LARGE_FILE_LINE_THRESHOLD} -->
 
 ## What
@@ -775,6 +776,111 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 **Expected CI gate overrides:** This PR will likely trigger a complexity regression from the file-split identity-key change. Apply the \`complexity-bump-ok\` label AND include a \`## Complexity Bump Justification\` section in the PR body citing scanner evidence. See the playbook section 4 (Known CI False-Positive Classes).
 
 _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
+	printf '%s' "$_create_body"
+	return 0
+}
+
+#######################################
+# Return 0 when a body carries a non-empty canonical Files Scope. Uses the
+# pre-dispatch validator's rule so the gate and the validator never disagree;
+# falls back to the same heading + literal-path rule if the library is absent.
+# Arguments: issue_body
+#######################################
+_large_file_gate_body_has_scope_path() {
+	local issue_body="$1"
+	local scope_lib="${_LFG_SCRIPT_DIR}/pre-dispatch-validator-lib-brief-scope.sh"
+
+	if ! declare -F _brief_files_scope_has_path >/dev/null 2>&1 && [[ -f "$scope_lib" ]]; then
+		# shellcheck source=./pre-dispatch-validator-lib-brief-scope.sh
+		# shellcheck disable=SC1091
+		source "$scope_lib" >/dev/null 2>&1 || true
+	fi
+	if declare -F _brief_files_scope_has_path >/dev/null 2>&1; then
+		_brief_files_scope_has_path "$issue_body"
+		return $?
+	fi
+	# shellcheck disable=SC2016 # literal Markdown backticks and regex anchors
+	printf '%s' "$issue_body" | awk '
+		/^## Files Scope[[:space:]]*$/ { found=1; level=2; next }
+		/^### Files Scope[[:space:]]*$/ { found=1; level=3; next }
+		found && level == 2 && /^## / { found=0 }
+		found && level == 3 && (/^# / || /^## / || /^### /) { found=0 }
+		found { print }
+	' | grep -qE '^[[:space:]]*-[[:space:]]*((EDIT|NEW):[[:space:]]*)?`?[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*`?[[:space:]]*$'
+	return $?
+}
+
+#######################################
+# Bring a reused debt issue's body up to the current template when it carries
+# this gate's exact marker for the path but no canonical Files Scope path.
+# Bodies written before the template gained `### Files Scope` fail the
+# pre-dispatch validator on every pass, so the debt issue is never worked and
+# the issue it holds stays held (GH#37989). Bodies without the marker, or that
+# already declare a scope (a maintainer may have edited them), are left alone.
+# aidevops:trust-boundary — only file-size-debt issues with the exact marker
+# that duplicate/closure reconciliation already trusts are rewritten.
+# Arguments: issue_number, lf_path, repo_slug, parent_issue
+# Returns: 0 when no write is needed or the refresh succeeded; 1 on failure.
+#######################################
+_large_file_gate_refresh_debt_issue_body() {
+	local issue_number="$1"
+	local lf_path="$2"
+	local repo_slug="$3"
+	local parent_issue="${4:-}"
+	local marker="generator=large-file-simplification-gate"
+	local issue_json="" body="" has_label="" new_body="" body_file=""
+	marker+=" cited_file=${lf_path} "
+
+	# The template names the held issue; without one there is nothing to write.
+	[[ "$parent_issue" =~ ^[0-9]+$ ]] || return 0
+	# Same rule as label normalization: never rewrite a body an owner holds.
+	if declare -F issue_brief_hold_blocks_auto_release >/dev/null 2>&1 &&
+		issue_brief_hold_blocks_auto_release "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	issue_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json body,labels 2>/dev/null) || return 1
+	body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null) || return 1
+	has_label=$(printf '%s' "$issue_json" |
+		jq -r 'any((.labels // [])[]; .name == "file-size-debt")' 2>/dev/null) || return 1
+	[[ "$has_label" == "true" ]] || return 0
+	[[ "$body" == *"$marker"* ]] || return 0
+	_large_file_gate_body_has_scope_path "$body" && return 0
+
+	new_body=$(_large_file_gate_debt_issue_body "$lf_path" "$parent_issue" "")
+	body_file=$(mktemp) || return 1
+	printf '%s\n' "$new_body" >"$body_file"
+	if ! gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
+		--body-file "$body_file" >/dev/null 2>&1; then
+		rm -f "$body_file"
+		return 1
+	fi
+	rm -f "$body_file"
+	echo "[pulse-wrapper] Refreshed file-size-debt #${issue_number} body to the current template for ${lf_path} (holding #${parent_issue}; GH#37989)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
+# t2164 helper — create a fresh file-size-debt issue via gh_create_issue.
+# Prints "#NNN (new)" on success and empty on failure (gh failure is logged).
+# Accepts an optional `prior_attempt_issue` for the body's "Prior attempt"
+# footnote (t2164 phantom-continuation audit trail).
+#######################################
+_large_file_gate_file_new_debt_issue() {
+	local lf_path="$1"
+	local parent_issue="$2"
+	local repo_slug="$3"
+	local prior_attempt_issue="${4:-}"
+
+	# GH#18644: ensure the `file-size-debt` label exists before creation.
+	gh label create "file-size-debt" \
+		--repo "$repo_slug" \
+		--description "Target file exceeds the line-count threshold and needs splitting before implementation can proceed" \
+		--color "D93F0B" \
+		--force 2>/dev/null || true
+
+	local _new_num _create_body _create_combined
+	_create_body=$(_large_file_gate_debt_issue_body "$lf_path" "$parent_issue" "$prior_attempt_issue")
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
 	_create_combined=$(gh_create_issue --repo "$repo_slug" \
 		--title "file-size-debt: ${lf_path} exceeds ${LARGE_FILE_LINE_THRESHOLD} lines" \
@@ -873,6 +979,9 @@ _large_file_gate_create_debt_issue() {
 			echo "[pulse-wrapper] WARN: failed to normalize canonical file-size-debt #${_existing}; deferring" >>"$LOGFILE"
 			return 0
 		fi
+		if ! _large_file_gate_refresh_debt_issue_body "$_existing" "$lf_path" "$repo_slug" "$parent_issue"; then
+			echo "[pulse-wrapper] WARN: failed to refresh canonical file-size-debt #${_existing} body; next pulse will retry" >>"$LOGFILE"
+		fi
 		printf '#%s (existing)' "$_existing"
 		return 0
 	fi
@@ -890,7 +999,7 @@ _large_file_gate_create_debt_issue() {
 		# The file remains oversized. Reopen the durable per-path issue instead
 		# of creating a successor that can feed an unbounded dispatch loop.
 		# The helper emits the reopened reference on success.
-		_large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug" || true
+		_large_file_gate_reopen_debt_issue "$_existing" "$lf_path" "$repo_slug" "$parent_issue" || true
 		return 0
 	fi
 
