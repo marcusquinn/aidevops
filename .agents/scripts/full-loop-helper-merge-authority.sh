@@ -386,6 +386,27 @@ _merge_interactive_preference_clear() {
 	return 0
 }
 
+# GH#33374: a native sidebar/development closing link must not override a
+# For/Ref checkpoint. Fail closed before any merge write; do not silently
+# unlink issues or infer completion from GitHub's closing metadata alone.
+_merge_closing_link_consistent() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json="$3"
+
+	if ! printf '%s' "$pr_json" | jq -e --arg repo "$repo" '
+		(.body // "") as $body
+		| all(.closingIssuesReferences[]
+			| select(((.repository.owner.login // "") + "/" + (.repository.name // "")) | ascii_downcase == ($repo | ascii_downcase)); .number as $num
+			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
+			else true end)' >/dev/null 2>&1; then
+		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
+		return 1
+	fi
+	return 0
+}
+
 _merge_collect_external_authority_gaps() {
 	local pr_number="$1"
 	local repo="$2"
@@ -414,19 +435,7 @@ _merge_collect_external_authority_gaps() {
 		print_error "Merge blocked: PR #${pr_number} head changed before the final authority check"
 		return 1
 	fi
-	# GH#33374: a native sidebar/development closing link must not override a
-	# For/Ref checkpoint. Fail closed before any merge write; do not silently
-	# unlink issues or infer completion from GitHub's closing metadata alone.
-	if ! printf '%s' "$pr_json" | jq -e --arg repo "$repo" '
-		(.body // "") as $body
-		| all(.closingIssuesReferences[]
-			| select(((.repository.owner.login // "") + "/" + (.repository.name // "")) | ascii_downcase == ($repo | ascii_downcase)); .number as $num
-			| if ($body | test("\\b(for|ref)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			then ($body | test("\\b(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#" + ($num | tostring) + "\\b"; "i"))
-			else true end)' >/dev/null 2>&1; then
-		print_error "Merge blocked: PR #${pr_number} has a closing link contradicting its For/Ref-only issue reference"
-		return 1
-	fi
+	_merge_closing_link_consistent "$pr_number" "$repo" "$pr_json" || return 1
 
 	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" "$diagnostic_only" "$advisory" || return 1
 	if [[ "$advisory" == "1" && "$labels_padded" == *",needs-maintainer-review,"* ]]; then

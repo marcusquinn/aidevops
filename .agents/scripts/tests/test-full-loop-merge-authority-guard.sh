@@ -99,6 +99,7 @@ load_functions() {
 	extract_function _merge_authority_metadata_valid
 	extract_function _merge_is_headless_session
 	extract_function _merge_interactive_preference_clear
+	extract_function _merge_closing_link_consistent
 	extract_function _merge_collect_external_authority_gaps
 	extract_function _merge_linked_issue_authority_clear
 	extract_function _merge_guard_admin_merge_maintainer_review
