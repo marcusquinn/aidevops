@@ -15,6 +15,7 @@ import {
 } from "./session-continuation-loops.mjs";
 import {
   activeTodos,
+  asksFilingPermission,
   boundedText,
   capMap,
   classifyToolOutcome,
@@ -270,9 +271,24 @@ function correctUncapturedCloseout(state, input, output) {
   return { corrected: true, capture: true, dirty: check.dirty };
 }
 
+// GH#37979: filing a follow-up on a managed repository is already delegated
+// (Framework Rules), so a closeout that only asks permission to file gets one
+// steer per session scope to file it and report the link.
+function correctFilingPermissionAsk(state, input, output) {
+  const scope = scopeFor(state, input);
+  if (state.filingSteered.has(scope) || !asksFilingPermission(output?.text)) return { corrected: false };
+  state.filingSteered.add(scope);
+  capMap(state.filingSteered, state.maxScopes);
+  queueSteering(state, input, "filing", "Your closeout asks permission to file an issue, task or TODO. Filing is already authorised: file it now under the capture rule in Framework Rules (deduplicate first) and cite the link in the body. Keep the ask only when the need itself is undecided, and then ask about the need.");
+  state.qualityLog?.("WARN", `[session-continuation] queued filing-permission steering for session ${sessionHashFor(input)}`);
+  return { corrected: true, filing: true };
+}
+
 function completeText(state, input, output) {
   const result = correctTodoYield(state, input, output);
   if (result.corrected) return result;
+  const filing = correctFilingPermissionAsk(state, input, output);
+  if (filing.corrected) return filing;
   return correctUncapturedCloseout(state, input, output);
 }
 
@@ -352,6 +368,7 @@ export function createSessionContinuationGuard(options = {}) {
     steering: new Map(),
     edits: new Map(),
     captureSteered: new Map(),
+    filingSteered: new Set(),
     dirtyEdits: options.dirtyEdits || defaultDirtyEdits,
   };
 

@@ -78,6 +78,34 @@ NEGATED_BLOCKER_RE = re.compile(
 # GH#34123: the What next field (reference/session.md) that lists user asks.
 NEEDED_FROM_YOU_RE = re.compile(r"Needed from you:[*_\s]*([^\n]*)", re.IGNORECASE)
 NO_ASK_RE = re.compile(r"^(?:none|nothing|n/a)\b", re.IGNORECASE)
+# GH#37979: a numbered ask that only requests permission to file an issue,
+# task or TODO. Ported to session-continuation-utils.mjs (asksFilingPermission).
+NEEDED_BLOCK_RE = re.compile(
+    r"Needed from you:.*?(?=Left to capture|\bClose(?: readiness)?:|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+FILING_ASK_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*"
+    r"(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to"
+    r"|would you like me to|ok(?:ay)? to)?\s*"
+    r"(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*"
+    r"(?:[\w/-]+\s+){0,5}?(?:issue|task|todo|ticket|follow-?up)s?\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+FILING_EXCLUDED_RE = re.compile(
+    r"\bnot needed\b"
+    r"|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b"
+    r"|\bexternal repos?(?:itory)?\b"
+    r"|\b(?:secrets?|credentials?|spend|spending|billing)\b"
+    r"|\bprivate[- ](?:data|repo)",
+    re.IGNORECASE,
+)
+FILING_REASON = (
+    "Your closeout asks permission to file an issue, task or TODO. Filing is "
+    "already authorised: file it now under the capture rule in Framework Rules "
+    "(deduplicate first) and cite the link in the body. Keep the ask only when "
+    "the need itself is undecided, and then ask about the need."
+)
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 CODE_SPAN_RE = re.compile(r"`[^`]*`")
 
@@ -182,6 +210,13 @@ def _has_what_next_ask(text: str) -> bool:
     return bool(values and values[-1]) and not NO_ASK_RE.match(values[-1])
 
 
+def _asks_filing_permission(text: str) -> bool:
+    """GH#37979: the last Needed from you block only asks to file an item."""
+    blocks = [match.group(0) for match in NEEDED_BLOCK_RE.finditer(_without_code(text))]
+    last = blocks[-1] if blocks else ""
+    return bool(FILING_ASK_RE.search(last)) and not FILING_EXCLUDED_RE.search(last)
+
+
 def _reports_blocker(text: str) -> bool:
     """True when the text reports a blocker, ignoring code and negations."""
     return bool(BLOCKER_RE.search(NEGATED_BLOCKER_RE.sub(" ", _without_code(text))))
@@ -204,9 +239,18 @@ def _hands_back_to_user(text: str, open_count: int) -> bool:
     return open_count <= 1 and _reports_blocker(text)
 
 
-def _stop_reason(state: dict, final_text: str, cwd: str):
+def _filing_marker(session_id: str) -> Path:
+    """One-shot marker: the filing steer fires once per session (GH#37979)."""
+    return _state_file(session_id).with_suffix(".filing")
+
+
+def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str = ""):
     """Block reason for open todos, or (GH#35121) for an unasked closeout that
     leaves session-edited files uncommitted once every todo is terminal."""
+    if session_id and _asks_filing_permission(final_text) and not _filing_marker(session_id).exists():
+        _filing_marker(session_id).parent.mkdir(parents=True, exist_ok=True)
+        _filing_marker(session_id).write_text("1")
+        return FILING_REASON
     open_todos = _open_todos(state["todos"])
     if _hands_back_to_user(final_text, len(open_todos)):
         return None
@@ -265,7 +309,7 @@ def decide(payload: dict):
         final_text = state["assistant"]
     reason = None
     if not USER_STOP_RE.search(state["user"]):
-        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""))
+        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""), session_id)
     if reason:
         _record_block(session_id, blocks + 1)
     return reason

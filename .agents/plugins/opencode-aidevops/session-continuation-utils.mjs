@@ -99,6 +99,19 @@ function hasWhatNextAsk(normalized) {
   return Boolean(last) && !NO_ASK_RE.test(last);
 }
 
+// GH#37979: a numbered ask that only requests permission to file, capture or
+// log an issue/task/TODO. Keep in sync with session_continuation_stop.py.
+const NEEDED_BLOCK_RE = /Needed from you:[\s\S]*?(?=Left to capture|\bClose(?: readiness)?:|$)/gi;
+const FILING_ASK_RE = /^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to|would you like me to|ok(?:ay)? to)?\s*(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*(?:[\w/-]+\s+){0,5}?(?:issue|task|todo|ticket|follow-?up)s?\b/im;
+// Authority the session lacks, or an ask where the need itself is the question.
+const FILING_EXCLUDED_RE = /\bnot needed\b|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b|\bexternal repos?(?:itory)?\b|\b(?:secrets?|credentials?|spend|spending|billing)\b|\bprivate[- ](?:data|repo)/i;
+
+export function asksFilingPermission(text) {
+  const blocks = [...withoutCode(text).matchAll(NEEDED_BLOCK_RE)].map((match) => match[0]);
+  const last = blocks.at(-1) || "";
+  return FILING_ASK_RE.test(last) && !FILING_EXCLUDED_RE.test(last);
+}
+
 function handsBackToUser(normalized) {
   const lines = normalized.split("\n").map((line) => line.trim().replace(/[*_` ]+$/, "")).filter(Boolean);
   if (lines.slice(-3).some((line) => line.endsWith("?"))) return true;

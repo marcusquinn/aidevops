@@ -121,6 +121,30 @@ fi
   assert.equal(blockerGuard.injectSteering({ sessionID: "mixed" }, claimCall).kind, "completion");
   assert.match(claimCall.messages.at(-1).parts[0].text, /not yet valid/);
 
+  // GH#37979: a closeout whose only ask is permission to file an issue is
+  // steered once per session scope; authority, "not needed" and release asks
+  // are left alone.
+  const askWith = (ask) => ["Done.", "", "**What next**", "- **Session:** x — Done", "- **Needed from you:**", `  ${ask}`, "- **Left to capture:** None", "- **Close:** Ready to close"].join("\n");
+  const fileAsk = askWith("1. **Should I file a worker-ready issue so X warns about Y?**");
+  const fileResult = blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk });
+  assert.equal(fileResult.filing, true, "filing-permission ask is steered");
+  const fileCall = request("filing");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing" }, fileCall).kind, "filing");
+  assert.match(fileCall.messages.at(-1).parts[0].text, /file it now/);
+  assert.equal(blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk }).corrected, false, "second matching closeout queues nothing");
+  for (const [name, ask] of [
+    ["not needed option", "1. **Should I file an issue for X?** y = file · n = not needed"],
+    ["other organisation", "1. **Should I file an issue in another organisation's repository?**"],
+    ["secret", "1. **Should I file a task to rotate the secret?**"],
+    ["spend", "1. **Should I file a task to approve the spend?**"],
+    ["release", "1. **Should I release v1.2.3?**"],
+    ["merge", "1. **Should I merge the PR for the issue?**"],
+    ["mention only", "1. **Is the issue fix acceptable?**"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).corrected, false, `${name} ask is not steered`);
+  }
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-lead" }, { text: askWith("1. **File a worker task to add the warning?**") }).filing, true, "bare filing verb lead matches");
+
   // GH#35121: a closeout that asks for nothing while files this session
   // edited remain uncommitted is steered toward the Capture Check, across
   // every touched repository. Read-only sessions, asks, committed edits and

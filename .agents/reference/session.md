@@ -268,7 +268,8 @@ can follow them without knowing where the setting lives:
    session filed (`reference/release-scope-sweep.md`).
 4. Route reusable lessons: shared framework lessons to the narrowest doc or
    `framework-issue-helper.sh log`; personal/install lessons to memory.
-5. Offer a reusable-capability TODO when the session invented or adapted tooling.
+5. File a reusable-capability TODO/issue (deduplicate first, then report the link)
+   when the session invented or adapted tooling; do not ask permission to file.
 6. If session aims wait on issues handed to pulse/workers, file a continuation
    reminder (below) so the session can close.
 7. If anything remains, either do it now (when authorized and safe) or list it
