@@ -1736,6 +1736,10 @@ _pulse_run_supervisor_phase() {
 			return 0
 		fi
 		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested, but no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — evaluating supervisor before bundle ${_pulse_drain_bundle} starts (GH#38162 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+		# The drain marker is removed with the lock, so flag the escape for the
+		# supervisor stage: it must not run the dispatch_max recycle loop.
+		_PULSE_DRAIN_ESCAPE=1 _pulse_run_supervisor_decision "$_pulse_supervisor_age"
+		return 0
 	fi
 	_pulse_run_supervisor_decision "$_pulse_supervisor_age"
 	return 0

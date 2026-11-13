@@ -503,7 +503,13 @@ _pulse_maybe_run_llm_supervisor() {
 
 		if [[ "$pulse_rc" -eq 0 ]]; then
 			_pulse_record_llm_success "$llm_trigger_mode" || true
-			_run_early_exit_recycle_loop "$pulse_duration"
+			if [[ "${_PULSE_DRAIN_ESCAPE:-0}" == "1" ]]; then
+				# GH#38162: the drain marker is gone after lock release, so the
+				# recycle loop's dispatch_max would break the drain contract.
+				echo "[pulse-wrapper] Skipping early-exit recycle loop: cooperative drain escape (no new dispatch from this bundle)" >>"$LOGFILE"
+			else
+				_run_early_exit_recycle_loop "$pulse_duration"
+			fi
 		else
 			_pulse_record_llm_failure "$llm_trigger_mode" "$pulse_rc"
 		fi
