@@ -167,8 +167,16 @@ class EvidenceTests(unittest.TestCase):
     def test_authorizes_when_only_the_cleanup_deferred_marker_is_untracked(self):
         marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"
         marker.parent.mkdir(exist_ok=True)
-        marker.write_text("deferred\n", encoding="utf-8")
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait()
+        marker.write_text(f"{exited.pid}\n", encoding="utf-8")
         self.assertEqual(self.decide()["reason"], "work-finished")
+
+    def test_refuses_the_marker_while_its_owner_is_live(self):
+        marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        self.assertEqual(self.decide()["reason"], "cleanup-owner-live")
 
     def test_refuses_the_marker_alongside_another_untracked_file(self):
         marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"

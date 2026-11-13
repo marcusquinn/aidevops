@@ -54,8 +54,8 @@ def run(command: list[str], timeout: int = 60) -> tuple[int, str]:
     """Return the exit status and stripped stdout, never raising on failure."""
     try:
         completed = subprocess.run(  # nosec B603 -- argument vector, no shell.
-            command, capture_output=True, text=True, timeout=max(timeout, 1),
-            check=False, env=_environment(),
+            command, capture_output=True, text=True, errors="surrogateescape",
+            timeout=max(timeout, 1), check=False, env=_environment(),
         )
     except (OSError, subprocess.SubprocessError):
         return 1, ""

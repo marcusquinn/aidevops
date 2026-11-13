@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 
@@ -147,6 +148,27 @@ def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
             _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, budget)
 
 
+def _cleanup_owner_live(path: Path) -> bool:
+    """Report whether the deferral marker's owner may still be running.
+
+    Fails closed: an unreadable or malformed marker, or a PID that answers (even
+    a reused one), counts as live. Only a PID confirmed absent releases it.
+    """
+    try:
+        pid = int((path / DEFERRED_MARKER).read_text().strip())
+    except (OSError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
     """Confirm no uncommitted, untracked, or unpushed work exists in the worktree.
 
@@ -160,8 +182,11 @@ def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
         return False, "status-unreadable"
     # Only the untracked deferral marker is framework state; a tracked change to
     # that path reports a different status code and still refuses.
-    if any(entry and entry != DEFERRED_MARKER_STATUS for entry in dirty.split("\0")):
+    entries = [entry for entry in dirty.split("\0") if entry]
+    if any(entry != DEFERRED_MARKER_STATUS for entry in entries):
         return False, "uncommitted-changes"
+    if entries and _cleanup_owner_live(path):
+        return False, "cleanup-owner-live"
     status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes",
                            timeout=timeout)
     if status != 0 or not unpushed.isdigit():
