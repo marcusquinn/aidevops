@@ -362,7 +362,42 @@ _ddpr_closing_keyword_pattern() {
 	return 0
 }
 
-# GH#38163: enrich the canonical cycle snapshot once, not once per candidate.
+# One bounded rich read, shared by all three open-PR checks (GH#38163).
+# Args: repository
+_ddpr_fetch_open_snapshot() {
+	local repo_slug="$1"
+	# shellcheck disable=SC2016
+	AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
+		AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-snapshot-exact-cost" \
+		_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql \
+		-f owner="${repo_slug%%/*}" -f name="${repo_slug#*/}" -f query='
+		query($owner: String!, $name: String!) {
+			repository(owner: $owner, name: $name) {
+				pullRequests(first: 100, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+					pageInfo { hasNextPage }
+					nodes {
+						number title body isDraft createdAt headRefOid updatedAt
+						reviewDecision mergeStateStatus mergeable changedFiles
+						isCrossRepository headRefName
+						closingIssuesReferences(first: 100) {
+							nodes { number repository { name owner { login } } }
+							pageInfo { hasNextPage }
+						}
+						files(first: 100) { nodes { path } pageInfo { hasNextPage } }
+						labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+						commits(first: 100) {
+							nodes { commit { messageHeadline } }
+							pageInfo { hasNextPage }
+						}
+					}
+				}
+			}
+			rateLimit { cost }
+		}' 2>/dev/null
+	return $?
+}
+
+# Enrich the canonical cycle snapshot once, not once per candidate.
 # The canonical reader has already checked repository, projection, auth scope
 # and invalidation generation. Never use partial/old snapshots as negative
 # evidence. The private derivative is keyed by the entire envelope, so a new
@@ -371,8 +406,9 @@ _ddpr_closing_keyword_pattern() {
 _ddpr_prepare_open_snapshot() {
 	local repo_slug="$1" output_dir="$2"
 	local snapshot="${AIDEVOPS_DDPR_OPEN_SNAPSHOT_FILE:-}"
-	local key="" cache_dir="" cache_file="" response="" rich="" temporary=""
+	local key="" cache_dir="" cache_file="" response="" rich="" temporary="" cache_hit=0
 	_DDPR_OPEN_SNAPSHOT_JSON=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
 	[[ -f "$snapshot" && ! -L "$snapshot" ]] || return 1
 	jq -e --arg repo "$repo_slug" '
 		.repository == $repo and .collection == "prs" and .complete == true and
@@ -384,42 +420,21 @@ _ddpr_prepare_open_snapshot() {
 	key="${key%% *}"
 	[[ "$key" =~ ^[a-f0-9]{64}$ ]] || return 1
 	cache_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-pr-snapshots"
-	cache_file="${cache_dir}/${key}.json"
+	# One replaceable entry per repository; do not accumulate one body-rich
+	# artifact per pulse cycle. The embedded key fences concurrent generations.
+	cache_file="${cache_dir}/${repo_slug//\//--}.json"
 	if [[ -f "$cache_file" && ! -L "$cache_file" ]]; then
-		rich=$(jq -ce 'select(type == "array")' "$cache_file" 2>/dev/null) || return 1
-	else
+		response=$(jq -ce --arg key "$key" 'select(._ddpr_snapshot_key == $key)' "$cache_file" 2>/dev/null) && cache_hit=1
+	fi
+	if [[ "$cache_hit" == 0 ]]; then
 		# The lightweight prefetch projection lacks body, commits and merge/draft
 		# classification. Fetch these together once for this exact snapshot. If
 		# any nested page is incomplete, the original paginated live readers win.
-		# shellcheck disable=SC2016
-		response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
-			AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-snapshot-exact-cost" \
-			_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql \
-			-f owner="${repo_slug%%/*}" -f name="${repo_slug#*/}" -f query='
-			query($owner: String!, $name: String!) {
-				repository(owner: $owner, name: $name) {
-					pullRequests(first: 100, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
-						pageInfo { hasNextPage }
-						nodes {
-							number title body isDraft createdAt headRefOid updatedAt
-							reviewDecision mergeStateStatus mergeable changedFiles
-							isCrossRepository headRefName
-							closingIssuesReferences(first: 100) {
-								nodes { number repository { name owner { login } } }
-								pageInfo { hasNextPage }
-							}
-							files(first: 100) { nodes { path } pageInfo { hasNextPage } }
-							labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
-							commits(first: 100) {
-								nodes { commit { messageHeadline } }
-								pageInfo { hasNextPage }
-							}
-						}
-					}
-				}
-				rateLimit { cost }
-			}' 2>/dev/null) || return 1
-		rich=$(printf '%s' "$response" | jq -ce --slurpfile snapshot "$snapshot" \
+		response=$(_ddpr_fetch_open_snapshot "$repo_slug") || return 1
+	fi
+	# Revalidate cached responses as strictly as fresh responses. Valid JSON
+	# alone is not proof of complete evidence (including a damaged empty array).
+	rich=$(printf '%s' "$response" | jq -ce --slurpfile snapshot "$snapshot" \
 			--arg bt "$_DDPR_JSON_BOOLEAN_TYPE" --arg st "$_DDPR_JSON_STRING_TYPE" \
 			--arg nt "$_DDPR_JSON_NUMBER_TYPE" --arg at "$_DDPR_JSON_ARRAY_TYPE" '
 			select(((.errors // []) | length) == 0) |
@@ -447,11 +462,13 @@ _ddpr_prepare_open_snapshot() {
 				.closingIssuesReferences = .closingIssuesReferences.nodes |
 				.commits = [.commits.nodes[].commit | {messageHeadline}])
 		' 2>/dev/null) || return 1
+	if [[ "$cache_hit" == 0 ]]; then
 		# Atomic, private, best-effort publication. Failure only loses reuse;
 		# the current invocation still has complete validated evidence.
 		mkdir -p "$cache_dir" 2>/dev/null || return 1
 		temporary=$(umask 077; mktemp "${cache_dir}/.snapshot.XXXXXX") || return 1
-		if ! printf '%s' "$rich" >"$temporary" || ! mv -f "$temporary" "$cache_file"; then
+		if ! printf '%s' "$response" | jq -c --arg key "$key" '._ddpr_snapshot_key = $key' >"$temporary" ||
+			! mv -f "$temporary" "$cache_file"; then
 			rm -f "$temporary"
 			return 1
 		fi
