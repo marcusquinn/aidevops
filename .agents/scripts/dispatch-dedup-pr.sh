@@ -631,6 +631,12 @@ _ddpr_graphql_open_commit_page() {
 	return $?
 }
 
+# Match the live reader: slice the ten newest open PRs before excluding drafts.
+_ddpr_snapshot_open_commits() {
+	jq -c 'sort_by(.createdAt) | reverse | .[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
+	return $?
+}
+
 #######################################
 # Fetch the ten newest open PR commit headlines with response-owned quota cost.
 #
@@ -641,9 +647,7 @@ _ddpr_graphql_open_commit_page() {
 _ddpr_graphql_open_commits() {
 	local repo_slug="$1"
 	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
-		# Match the live reader: only the ten newest open PRs, including drafts
-		# before slicing (the verdict check excludes drafts afterwards).
-		jq -c 'sort_by(.createdAt) | reverse | .[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
+		_ddpr_snapshot_open_commits
 		return $?
 	fi
 	local owner="${repo_slug%%/*}"
