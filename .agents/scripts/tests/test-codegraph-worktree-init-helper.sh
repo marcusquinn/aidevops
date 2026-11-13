@@ -6,7 +6,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${TEST_DIR}/../codegraph-worktree-init-helper.sh"
-TEST_ROOT=$(mktemp -d)
+TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 fail() {
