@@ -18,7 +18,8 @@ from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, re
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
-from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
+from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES as MAX_NOT_LAUNCHED_REUSES
+from pr_checkpoint_reuse import not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
 
 LEASE_EXPIRED = "reason=prelaunch_lease_expired"
@@ -73,10 +74,14 @@ def history_approved(data, comments, approval, approval_id, closing):
     proposed = approval.get("released_successors", [])
     terminal_ids = [item["terminal_id"] for item in proposed
                     if item.get("outcome") == TERMINAL_WITHOUT_RELEASE]
+    # GH#38103: executor-less released episodes the approver attested at template time.
+    executorless = [item["release_id"] for item in proposed
+                    if "ready_id" in item and "release_id" in item and "terminal_id" not in item]
     approval_comment = next(c for c in comments if c["id"] == approval_id)
     history, _ = explain_reviewed_successor_history(
         comments, (approval["release_id"], approval_id), closing,
         {"trusted_logins": trusted_logins, "terminal_ids": acknowledgement_ids(terminal_ids),
+         "executorless_release_ids": executorless,
          "before": timestamp(approval_comment["created_at"])})
     # Every entry, including claim_only_no_worker and blocked_before_ready
     # (GH#35683) closures, must be acknowledged exactly as generated.
@@ -232,7 +237,8 @@ def template(data):
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     history, rejection = explain_reviewed_successor_history(
         comments, (release["id"], float("inf")), closing,
-        {"trusted_logins": trusted_logins, "terminal_ids": terminal_ids, "before": now})
+        {"trusted_logins": trusted_logins, "terminal_ids": terminal_ids, "before": now,
+         "executorless_release_ids": data.get("executorless_release_ids", [])})
     if history is None:
         raise ValueError("intervening coordination is not fully released; no approval generated; "
                           + rejection_diagnostic(rejection))

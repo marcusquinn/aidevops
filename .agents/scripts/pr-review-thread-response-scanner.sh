@@ -1226,8 +1226,10 @@ _prrts_prepare_dispatch_target() {
 	fi
 	_prrts_prepare_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" "$path_var" || return 1
 	PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
+	# GH#38103: the fence may reclassify a GitHub write failure (for example the
+	# checkpoint ownership transfer) as infrastructure; code is the default.
+	PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
 	if ! _prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid"; then
-		PRRTS_WORKTREE_FAILURE_BLOCKED_BY="$PRRTS_BLOCKED_BY_CODE"
 		[[ -n "$PRRTS_WORKTREE_FAILURE_REASON" ]] || PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
 		return 1
 	fi

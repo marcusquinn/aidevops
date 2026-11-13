@@ -614,14 +614,16 @@ test_status_and_comment_failures() {
 }
 
 # From PR #36031: keep the reason set aligned with the continuation helper
-# without sourcing its CLI. Ownership loss is excluded here on purpose.
+# without sourcing its CLI. Ownership loss and capability blockers stay held.
 test_release_pattern_tracks_continuation_helper() {
 	local pcc_pattern=""
 	pcc_pattern=$(awk -F "'" '/^_PCC_STALL_RELEASE_PATTERN=/{print $2}' "${SCRIPT_DIR_TEST}/../pr-checkpoint-continuation-helper.sh")
-	if [[ -n "$pcc_pattern" && "${pcc_pattern/worker_ownership_lost|/}" == "$_PDCU_RELEASE_REASON_PATTERN" ]]; then
-		pass "release reasons match _PCC_STALL_RELEASE_PATTERN minus worker_ownership_lost"
+	pcc_pattern="${pcc_pattern/worker_ownership_lost|/}"
+	pcc_pattern="${pcc_pattern/capability_limit|/}"
+	if [[ -n "$pcc_pattern" && "$pcc_pattern" == "$_PDCU_RELEASE_REASON_PATTERN" ]]; then
+		pass "release reasons match continuation reasons minus ownership and capability holds"
 	else
-		fail "release reasons match _PCC_STALL_RELEASE_PATTERN minus worker_ownership_lost" "pcc=[${pcc_pattern}]"
+		fail "release reasons match continuation reasons minus ownership and capability holds" "pcc=[${pcc_pattern}]"
 	fi
 	return 0
 }
