@@ -77,10 +77,34 @@ _pulse_macos_verify() {
 	return 0
 }
 
+_pulse_macos_checks_pass() {
+	local repo="$1" pr="$2" head="$3" checks=""
+	# Query the immutable commit, not the PR's mutable current-head check list.
+	# isRequired uses this PR's branch protection/ruleset context. Incomplete or
+	# unknown rollups fail closed, including a truncated (>100 contexts) response.
+	checks=$(gh api graphql -f owner="${repo%/*}" -f name="${repo#*/}" -F pr="$pr" -f head="$head" -f query='
+		query($owner:String!, $name:String!, $pr:Int!, $head:GitObjectID!) {
+		  repository(owner:$owner, name:$name) { object(oid:$head) { ... on Commit {
+		    oid statusCheckRollup { contexts(first:100) {
+		      nodes { __typename
+		        ... on CheckRun { isRequired(pullRequestNumber:$pr) status conclusion }
+		        ... on StatusContext { isRequired(pullRequestNumber:$pr) state }
+		      } pageInfo { hasNextPage }
+		    } }
+		  } } }
+		}') || return 1
+	jq -e --arg head "$head" '.data.repository.object | select(.oid == $head) |
+		.statusCheckRollup.contexts | select(.pageInfo.hasNextPage == false and (.nodes | type) == "array") |
+		all(.nodes[]; .isRequired == false or (.isRequired == true and
+			((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or
+			 (.__typename == "StatusContext" and .state == "SUCCESS"))))' <<<"$checks" >/dev/null || return 1
+	return 0
+}
+
 _pulse_macos_candidates() {
 	local repo="$1" path="$2" state="$3" candidates="" row="" pr="" head="" base="" author="" fork=""
-	local permission="" checks="" current="" attempt=""
-	candidates=$(gh api "repos/$repo/pulls?state=open&per_page=100" --jq '
+	local permission="" current="" attempt=""
+	candidates=$(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '
 		.[] | select(.draft == false and any(.labels[]; .name == "needs-macos-verification")) |
 		[.number, .head.sha, .base.sha, .user.login, (.head.repo.full_name != .base.repo.full_name)] | @tsv') || return 1
 	while IFS= read -r row; do
@@ -109,9 +133,8 @@ _pulse_macos_candidates() {
 			fi
 			continue
 		fi
-		checks=$(gh pr checks "$pr" --repo "$repo" --required --json bucket 2>/dev/null) || continue
-		jq -e 'type == "array" and all(.[]; .bucket == "pass")' <<<"$checks" >/dev/null || continue
-		# Bind the check snapshot to the candidate head; verify-pr checks again.
+		_pulse_macos_checks_pass "$repo" "$pr" "$head" || continue
+		# Retain the freshness check as well as the immutable check snapshot.
 		current=$(gh api "repos/$repo/pulls/$pr" --jq 'select(.state == "open" and .draft == false) | .head.sha') || continue
 		[[ "$current" == "$head" ]] || continue
 		mkdir -p "${attempt%/*}" || return 1
@@ -130,8 +153,8 @@ _pulse_macos_cycle() {
 	source "$_PULSE_MACOS_DIR/macos-local-checks.sh" || return 1
 	[[ "$(macos_checks_host)" == Darwin ]] || return 0
 	# Match macos_checks_route's unique registration and login validation exactly.
-	entries=$(jq -er '[.initialized_repos[] | select(.pulse == true and .maintenance != false and .local_only != true)] |
-		group_by(.slug)[] | select(length == 1) | .[0] |
+	entries=$(jq -er '.initialized_repos | group_by(.slug)[] | select(length == 1) | .[0] |
+		select(.pulse == true and .maintenance != false and .local_only != true) |
 		(.macos_maintainer // .maintainer) as $maintainer |
 		select($maintainer | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")) |
 		[.slug, .path, $maintainer] | @tsv' "$config") || return 0

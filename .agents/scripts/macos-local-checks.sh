@@ -124,7 +124,11 @@ macos_checks_verify_pr() {
 	base=$(jq -r .baseRefOid <<<"$metadata")
 	base=$(git merge-base "$base" HEAD) || return 1
 	evidence=$(macos_checks_evidence "$base") || return 1
-	[[ -n "$evidence" ]] || return 0
+	# A sensitive diff may disappear on a later push while the handoff label
+	# remains. Reconcile it with explicit no-op evidence, not a claimed native run.
+	if [[ -z "$evidence" ]]; then
+		evidence="macOS: no remaining macOS-sensitive changes at $head; native suites not needed."
+	fi
 	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid,body) || return 1
 	[[ "$(jq -r .headRefOid <<<"$metadata")" == "$head" && -z "$(git status --porcelain)" ]] || return 1
 	body_file=$(mktemp) || return 1
