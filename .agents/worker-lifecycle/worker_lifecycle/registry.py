@@ -1,7 +1,7 @@
 """Lifecycle registry CLI; writes only an opt-in private store, never legacy state."""
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
 from pathlib import Path
 import sqlite3
@@ -192,11 +192,13 @@ def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     return {"generation_id": generation, "cleanup_authorized": False}
 
 
-def _enroll_or_admit(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    """One complete enrollment or session admission attempt; safe to repeat."""
-    if args.operation == "enroll":
-        return enrollment_result(store, args)
-    return _worktree_operation(store, args)
+def _contended(operation: str, attempt: Callable[[], Mapping[str, object]]) -> Mapping[str, object]:
+    """Run one attempt; enroll and admit-session wait out writer contention.
+
+    GH#38086: both replay idempotently, so worktree pre-creation waits for a
+    busy cleanup writer instead of being refused after one busy timeout.
+    """
+    return wait_out_contention(attempt) if operation in {"enroll", "admit-session"} else attempt()
 
 
 def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
@@ -214,7 +216,9 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
         from .session import admit_session, relinquish_session
 
         session_operation = admit_session if args.operation == "admit-session" else relinquish_session
-        return session_operation(store, args.path, args.pid, args.session_id)
+        return _contended(args.operation, lambda: session_operation(
+            store, args.path, args.pid, args.session_id,
+        ))
     if args.operation == "preserve-wip":
         from .preservation import preserve_wip
 
@@ -283,10 +287,6 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
-    if args.operation in {"enroll", "admit-session"}:
-        # GH#38086: both replay idempotently, so wait out writer contention
-        # instead of refusing worktree pre-creation after one busy timeout.
-        return wait_out_contention(lambda: _enroll_or_admit(store, args))
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
                           "release-vacant-path", "release-replaced-path"}:
         return _cleanup_operation(store, args)
@@ -304,7 +304,7 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     elif args.operation == "ingest":
         ingest(store, sys.stdin.read(MAX_EVENT_BYTES + 1))
     if args.operation in ("enroll", "resolve-generation"):
-        return enrollment_result(store, args)
+        return _contended(args.operation, lambda: enrollment_result(store, args))
     return reconcile(store, args.limit) if args.operation == "reconcile" else store.summary()
 
 
