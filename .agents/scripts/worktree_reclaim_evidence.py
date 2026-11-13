@@ -79,12 +79,18 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
 BATCH_SIZE = 20
 
 
-def _batch_query(owner: str, name: str, items: list[tuple[str, int]]) -> str:
+def _batch_query(items: list[tuple[str, int]]) -> str:
+    """Build the batch query; the owner and name stay variables, never query text.
+
+    Aliases interpolate safely because REFERENCE yields only digits, but a slug can
+    carry a quote, and a slug parsed as query syntax is an injection.
+    """
     fields = " ".join(
         f"{'g' if kind == 'gh' else 'p'}{number}: "
         f"{'issue' if kind == 'gh' else 'pullRequest'}(number: {number}) {{ state }}"
         for kind, number in items)
-    return f'query {{ repository(owner: "{owner}", name: "{name}") {{ {fields} }} }}'
+    return ("query($owner: String!, $name: String!) "
+            f"{{ repository(owner: $owner, name: $name) {{ {fields} }} }}")
 
 
 def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: int) -> None:
@@ -95,7 +101,8 @@ def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: i
     """
     owner, name = slug.split("/", 1)
     _, output = run(["gh", "api", "graphql", "--hostname", "github.com",
-                     "-f", f"query={_batch_query(owner, name, items)}"], timeout=timeout)
+                     "-F", f"owner={owner}", "-F", f"name={name}",
+                     "-f", f"query={_batch_query(items)}"], timeout=timeout)
     try:
         data = ((json.loads(output) or {}).get("data") or {}).get("repository") or {}
     except (ValueError, AttributeError):

@@ -246,8 +246,24 @@ class EvidenceTests(unittest.TestCase):
 class BatchTests(unittest.TestCase):
     def run_with(self, status, output):
         original = collector.run
-        collector.run = lambda command, timeout=60: (status, output)
+        self.commands = []
+        def record(command, timeout=60):
+            self.commands.append(command)
+            return (status, output)
+        collector.run = record
         self.addCleanup(setattr, collector, "run", original)
+
+    def test_repository_identity_is_bound_as_variables_not_query_text(self):
+        # A slug can carry a quote, and a slug parsed as query syntax is an injection.
+        self.run_with(0, '{"data":{"repository":{"g1":{"state":"CLOSED"}}}}')
+        hostile = 'owner", name: "other'
+        collector.prefetch({f'{hostile}/repo': [("gh", 1)]}, {})
+        command = self.commands[0]
+        query = next(argument.partition("=")[2] for argument in command
+                     if argument.startswith("query="))
+        self.assertNotIn(hostile, query)
+        self.assertIn("$owner", query)
+        self.assertIn(f"owner={hostile}", command)
 
     def test_batch_populates_cache_and_tolerates_nonzero_exit(self):
         self.run_with(1, '{"data":{"repository":{"g1":{"state":"CLOSED"},'

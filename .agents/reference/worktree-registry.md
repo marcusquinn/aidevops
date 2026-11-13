@@ -190,10 +190,20 @@ it as a third pass sharing the budget in thirds (stage minimum budget 3), and th
 pass always applies: unattended, archive-free deletion with no opt-out flag.
 
 To fit the budget, references are resolved up front with one batched GraphQL query
-per repository (20 per query). A failed or partial batch is parsed regardless of
-exit status and leaves absent references to the per-reference fallback. Per-tree
+per repository (20 per query), with the owner and name bound as variables so a slug
+can never be parsed as query syntax. A failed or partial batch is parsed regardless
+of exit status and leaves absent references to the per-reference fallback. Per-tree
 size walks are gone: `reclaimed_bytes` is the free-space delta on the base
 directory across the pass, and is 0 when nothing was removed.
+
+Those two changes are what make an always-on pass affordable. Measured on a busy
+host: `gh issue view` costs 1.05s per reference against 1.14s for a 20-reference
+batch, and a per-tree size walk cost 4.3s on a 5 GB worktree. A full 98-candidate
+scan fell from 442s to 45s, well inside a third of the 900s pressure budget. The
+local state checks were never the cost: `git status --untracked-files=all` takes
+0.2-0.3s even on those trees, because the large directories are gitignored and Git
+never walks them. Because GitHub is asked before local state, those checks run only
+for candidates whose work has finished.
 
 It removes a worktree only when every one of these holds, and names the first
 failure as its refusal reason:

@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Remove worktrees whose work is provably finished; refuse on any missing evidence.
 
-This is an always-on interim pass of the pulse cleanup stage, not the cleanup evidence collector that
+This is an always-on interim pass of the pulse cleanup stage, not the cleanup
+evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
 policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
 by explicit operator decision, so the checks in ``worktree_reclaim_evidence`` are
@@ -117,17 +118,22 @@ def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
 
 
 def prefetch_references(base_dir: Path, current: Pass) -> None:
-    """Resolve every candidate's references in batches before judging any of them.
+    """Resolve the references this pass will judge, in batches, before judging any.
 
-    A failed batch leaves the cache untouched, so judgement falls back to
-    per-reference queries.
+    The limit the candidate generator applies is applied here too, so a limited run
+    does not spend its budget resolving trees it will never reach. A failed batch
+    leaves the cache untouched, so judgement falls back to per-reference queries.
     """
     wanted: dict[str, list[tuple[str, int]]] = {}
+    examined = 0
     for path in sorted(base_dir.iterdir()):
-        if current.remaining() == 0:
+        if not path.is_dir():
+            continue
+        if current.remaining() == 0 or (current.limit and examined >= current.limit):
             break
+        examined += 1
         found = references(path.name)
-        if not path.is_dir() or path.is_symlink() or not found:
+        if path.is_symlink() or not found:
             continue
         slug = repository(path, timeout=min(current.remaining(), 60))
         if slug:
