@@ -664,6 +664,7 @@ CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) claim
 <!-- ops:end -->"
 		gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST --field body="$body" >/dev/null 2>&1 || return 1
+		_dch_ledger_remove_nonce "$nonce"
 	done < <(printf '%s' "$orphaned_claims" | jq -r '.[] | [.id, .nonce, .claim_author] | @tsv' 2>/dev/null)
 	return 0
 }
@@ -1428,11 +1429,9 @@ cmd_transition() {
 		fi
 	fi
 	local active_claims="" current_phase="" current_expires_at="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
-	# Runtime overrides quarantine peer claims only. Resolve and pass this runner
-	# before filtering so a stale self-ignore entry cannot hide the lease that
-	# this same authenticated runner is authorized to transition.
-	# GH#34057: each deny below emits one allowlisted reason on stderr via
-	# _transition_deny; exit codes and decisions are unchanged.
+	# Runtime overrides quarantine peer claims only: resolve this runner before
+	# filtering so a stale self-ignore entry cannot hide its own lease.
+	# GH#34057: each deny emits one allowlisted reason via _transition_deny.
 	if ! current_login=$(_resolve_runner "") || [[ -z "$current_login" ]]; then
 		_transition_deny identity_unavailable
 		return 1
@@ -1504,6 +1503,7 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
+	_dch_ledger_sync_transition "$phase" "$lease_token" "$expires_at"
 	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
 		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0
@@ -1760,6 +1760,9 @@ main() {
 		;;
 	sweep-pr-checkpoint-claim)
 		cmd_sweep_pr_checkpoint_claim "$@"
+		;;
+	sweep-checkpoint-ledger)
+		cmd_sweep_checkpoint_ledger "$@"
 		;;
 	close-expired-pr-checkpoint-lease)
 		cmd_close_expired_pr_checkpoint_lease "$@"

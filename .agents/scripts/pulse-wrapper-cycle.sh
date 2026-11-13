@@ -926,6 +926,17 @@ _pulse_stale_blocked_sweep_repo() {
 	return "$rc"
 }
 
+# GH#38104: release this device's own expired checkpoint claims straight from the
+# device-local ledger. Cost is O(own expired claims) with no repo scan and no
+# dependency on the shared stage deadline beyond a small floor; an empty or
+# unexpired ledger makes no GitHub reads.
+_pulse_sweep_checkpoint_ledger() {
+	local claim_ledger="${AIDEVOPS_CHECKPOINT_CLAIM_LEDGER:-${HOME}/.aidevops/state/checkpoint-claims.jsonl}"
+	[[ -s "$claim_ledger" && -x "${SCRIPT_DIR}/dispatch-claim-helper.sh" ]] || return 0
+	"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-checkpoint-ledger "$(($(date +%s) + ${PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS:-30}))" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
@@ -937,15 +948,15 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repos=() due=() weights=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
-	# Revision claims must be revisited even when the stale-blocked cadence is
-	# fresh: their issue is normally available, not status:blocked.
+	_pulse_sweep_checkpoint_ledger
+	# Fallback rotation (claims predating the ledger): revisited even when the
+	# stale-blocked cadence is fresh, as their issue is normally not blocked.
 	if declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1; then
 		local claim_repos=() claim_index=0 claim_start=0 claim_position=0
 		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
 		sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
 		now_epoch=$(date +%s) || return 0
-		# Reserve half the available stage for existing reconciliation work.
-		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2))
+		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2)) # half the stage
 		while IFS= read -r repo_slug; do
 			[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
 		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)

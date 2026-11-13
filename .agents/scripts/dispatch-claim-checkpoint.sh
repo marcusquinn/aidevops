@@ -4,6 +4,109 @@
 # Sourced by dispatch-claim-helper.sh; revised checkpoints use the same claim
 # producer, consensus and lease transitions, never an assignment-guard bypass.
 
+# GH#38104: device-local ledger of this device's own open revision-checkpoint
+# prelaunch claims, so the expired-claim sweep costs O(own expired claims)
+# instead of scanning every worker draft in every repo. It is a discovery hint
+# only: every release still passes the full fences in cmd_sweep_pr_checkpoint_claim.
+_dch_ledger_file() {
+	printf '%s' "${AIDEVOPS_CHECKPOINT_CLAIM_LEDGER:-${HOME}/.aidevops/state/checkpoint-claims.jsonl}"
+	return 0
+}
+
+# Args: repo issue claim_id nonce session expires_at. Best effort: a missing
+# entry only means the fallback repo rotation discovers the claim instead.
+_dch_ledger_add() {
+	local repo="$1" issue="$2" claim_id="$3" token="$4" session="$5" expires_at="$6" file="" line=""
+	[[ "$issue" =~ ^[1-9][0-9]*$ && "$claim_id" =~ ^[1-9][0-9]*$ && "$expires_at" =~ ^[1-9][0-9]*$ ]] || return 0
+	file=$(_dch_ledger_file)
+	line=$(jq -nc --arg repo "$repo" --argjson issue "$issue" --argjson claim_id "$claim_id" \
+		--arg nonce "$token" --arg session "$session" --argjson expires_at "$expires_at" \
+		'{repo:$repo,issue:$issue,claim_id:$claim_id,nonce:$nonce,session:$session,expires_at:$expires_at}') || return 0
+	(
+		umask 077
+		mkdir -p "${file%/*}" && printf '%s\n' "$line" >>"$file" && chmod 600 "$file"
+	) 2>/dev/null || true
+	return 0
+}
+
+# Rewrite the ledger through a jq filter over parsed entries (malformed lines are
+# dropped). Args: jq filter, then optional jq --arg/--argjson pairs.
+_dch_ledger_rewrite() {
+	local filter="$1" file="" tmp=""
+	shift
+	file=$(_dch_ledger_file)
+	[[ -f "$file" ]] || return 0
+	tmp=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	if jq -Rc "$@" "fromjson? | ${filter}" "$file" >"$tmp" 2>/dev/null; then
+		chmod 600 "$tmp" 2>/dev/null || true
+		mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+_dch_ledger_remove_nonce() {
+	local token="${1:-}"
+	[[ -n "$token" ]] || return 0
+	# shellcheck disable=SC2016 # jq variables, not shell expansions
+	_dch_ledger_rewrite 'select(.nonce != $n)' --arg n "$token"
+	return 0
+}
+
+# Args: nonce, new expires_at (renewal can only extend the deadline).
+_dch_ledger_update_expiry() {
+	local token="${1:-}" expires="${2:-}"
+	[[ -n "$token" && "$expires" =~ ^[1-9][0-9]*$ ]] || return 0
+	# shellcheck disable=SC2016 # jq variables, not shell expansions
+	_dch_ledger_rewrite 'if .nonce == $n and .expires_at < $e then .expires_at = $e else . end' \
+		--arg n "$token" --argjson e "$expires"
+	return 0
+}
+
+# Keep the ledger in step with a lease transition: renewal extends the deadline;
+# ready or terminal ends the prelaunch claim. Args: phase, lease token, expires_at.
+_dch_ledger_sync_transition() {
+	local phase="$1" token="$2" expires="$3"
+	if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
+		_dch_ledger_update_expiry "$token" "$expires"
+	else
+		_dch_ledger_remove_nonce "$token"
+	fi
+	return 0
+}
+
+#aidevops:trust-boundary — the ledger only nominates candidates; the release path
+# revalidates identity, device, session, live executor and the live timeline.
+# No GitHub reads happen unless an entry has expired. Arg: optional stop epoch.
+cmd_sweep_checkpoint_ledger() {
+	local stop="${1:-0}" file="" now="" due="" repo="" issue="" token="" session="" rc=0
+	[[ "$stop" =~ ^[0-9]+$ ]] || return 2
+	file=$(_dch_ledger_file)
+	[[ -s "$file" ]] || return 0
+	now=$(_now_epoch) || return 0
+	# Entries stuck for over a week are dropped; the repo rotation still covers them.
+	# shellcheck disable=SC2016 # jq variables, not shell expansions
+	_dch_ledger_rewrite 'select(.expires_at + 604800 >= $now)' --argjson now "$now"
+	due=$(jq -Rr --argjson now "$now" 'fromjson? | select((.expires_at | type) == "number" and .expires_at < $now
+		and (.repo | type) == "string" and (.issue | type) == "number")
+		| [.repo, (.issue | tostring), .nonce, .session] | @tsv' "$file" 2>/dev/null) || return 0
+	[[ -n "$due" ]] || return 0
+	while IFS=$'\t' read -r repo issue token session; do
+		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$issue" =~ ^[1-9][0-9]*$ &&
+			"$token" =~ ^[A-Za-z0-9._-]+$ && "$session" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+		[[ "$stop" -eq 0 || "$(date +%s)" -lt "$stop" ]] || break
+		_dch_session_has_live_executor "$session" && continue
+		DCH_SWEEP_FAILED=0
+		rc=0
+		cmd_sweep_pr_checkpoint_claim "$issue" "$repo" 0 || rc=$?
+		if [[ "$rc" -eq 0 && "$DCH_SWEEP_FAILED" -eq 0 ]]; then
+			_dch_ledger_remove_nonce "$token"
+		fi
+	done <<<"$due"
+	return 0
+}
+
 _dch_checkpoint_snapshot() {
 	local issue="$1" repo="$2" pr="$3" head="$4" ref="$5" runner="$6" session="$7"
 	local lease="${8:-}" pr_json="" issue_json="" comments=""
@@ -62,6 +165,7 @@ cmd_claim_pr_checkpoint() {
 	# (transition prelaunch) before the claim-only orphan grace expires.
 	expires_at=$(jq -r --arg n "$nonce" '[.[] | select(.nonce == $n)][0].lease_expires_at // 0' <<<"$claims") || expires_at=0
 	[[ "$expires_at" =~ ^[0-9]+$ ]] || expires_at=0
+	_dch_ledger_add "$repo" "$issue" "$comment_id" "$nonce" "$session" "$expires_at"
 	jq --arg lease "$nonce" --arg session "$session" --arg device "$(_resolve_device_id)" --argjson expires "$expires_at" --argjson claim_id "$comment_id" \
 		'{lease:$lease,session:$session,device:$device,claim_id:$claim_id,approval_id,previous_assignee,previous_status,prelaunch_expires_at:$expires}' <<<"$approval"
 	return 0
@@ -136,6 +240,7 @@ cmd_abort_pr_checkpoint_claim() {
 
 #aidevops:trust-boundary — only the authenticated runner's own device can
 # recover an expired revision claim, with a fresh timeline check at the write.
+DCH_SWEEP_FAILED=0
 cmd_sweep_pr_checkpoint_claim() {
 	local issue="${1:-}" repo="${2:-}" stop="${3:-0}" runner="" device="" comments candidates=""
 	local id="" nonce="" session="" release="" attempted=0
@@ -162,7 +267,8 @@ cmd_sweep_pr_checkpoint_claim() {
 		attempted=$((attempted + 1))
 		release=$(jq -nc --argjson id "$id" --arg nonce "$nonce" --arg runner "$runner" \
 			'[{id:$id,nonce:$nonce,claim_author:$runner}]') || return 1
-		AIDEVOPS_PR_CHECKPOINT_SESSION="$session" _post_orphan_claim_release "$issue" "$repo" "$runner" "$release" "$comments" || true
+		AIDEVOPS_PR_CHECKPOINT_SESSION="$session" _post_orphan_claim_release "$issue" "$repo" "$runner" "$release" "$comments" ||
+			DCH_SWEEP_FAILED=1
 		[[ "$attempted" -lt 10 ]] || break
 	done <<<"$candidates"
 	return 0
