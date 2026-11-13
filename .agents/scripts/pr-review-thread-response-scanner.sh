@@ -255,6 +255,9 @@ _prrts_prompt_metadata_line() {
 	return 0
 }
 
+# GH#38153: published blocker findings keep the full option set.
+_PRRTS_FINDING_DETAILS_MAX=2000
+
 _prrts_state_value_line() {
 	local value="$1"
 	local max_len="${2:-500}"
@@ -940,7 +943,7 @@ _prrts_publish_review_thread_blocker() {
 	[[ "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || head="$PRRTS_VALUE_UNKNOWN"
 	reason="$(_prrts_state_value_line "$reason" 240)"
 	if [[ -n "$details_file" && -f "$details_file" ]]; then
-		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
+		details="$(_prrts_state_value_line "$(<"$details_file")" "${_PRRTS_FINDING_DETAILS_MAX:-2000}")"
 	fi
 	marker="aidevops:review-thread-blocker pr=${pr_number} head=${head}"
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
@@ -1024,7 +1027,7 @@ _prrts_publish_continuation_blocker() {
 	blocked_by="$(_prrts_normalise_blocked_by "$blocked_by")"
 	reason="$(_prrts_state_value_line "$reason" 240)"
 	if [[ -n "$details_file" && -f "$details_file" ]]; then
-		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
+		details="$(_prrts_state_value_line "$(<"$details_file")" "${_PRRTS_FINDING_DETAILS_MAX:-2000}")"
 	fi
 	marker="aidevops:continuation-blocker pr=${pr_number} head=${head}"
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
