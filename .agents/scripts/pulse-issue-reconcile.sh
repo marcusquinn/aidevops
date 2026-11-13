@@ -1613,6 +1613,31 @@ _pir_backfill_pr_origin() {
 	return 0
 }
 
+# REST includes trust metadata unavailable in `gh issue list --json`. Fetch
+# one paginated list, stopping at the issue scan limit (PRs do not count).
+# Emit nothing on failure so a partial list cannot masquerade as a full scan.
+_pir_list_open_issues_with_trust() {
+	local slug="$1"
+	local limit="${PULSE_QUEUED_SCAN_LIMIT:-100}"
+	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	local page=1 page_rows="" page_count=0 issues="[]" issue_count=0
+	while [[ "$issue_count" -lt "$limit" ]]; do
+		page_rows=$(gh api "repos/${slug}/issues?state=open&per_page=100&page=${page}" 2>/dev/null) || return 1
+		page_count=$(printf '%s' "$page_rows" | jq -er --arg array_type "$_PIR_JSON_TYPE_ARRAY" \
+			'select(type == $array_type) | length') || return 1
+		issues=$(printf '%s\n%s\n' "$issues" "$page_rows" | jq -sc --argjson limit "$limit" '
+			add | map(select(.pull_request == null)) | .[:$limit]
+		') || return 1
+		issue_count=$(printf '%s' "$issues" | jq 'length') || return 1
+		[[ "$page_count" -lt 100 ]] && break
+		page=$((page + 1))
+	done
+	printf '%s' "$issues" | jq -c 'map({number, title, labels, body: (.body // ""),
+		updatedAt: .updated_at, assignees,
+		authorAssociation: .author_association, author: .user})' || return 1
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
@@ -1631,22 +1656,7 @@ _pir_reconcile_slug() {
 	if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json="$_cache_issues_sp"
 	else
-		# REST includes author association, unlike `gh issue list --json`.
-		# One paginated list replaces per-issue trust recovery on stale caches.
-		# Discard partial pages on failure; never reconcile an incomplete response.
-		local rest_issues=""
-		if rest_issues=$(gh api "repos/${slug}/issues?state=open&per_page=100" \
-			--paginate --slurp 2>/dev/null); then
-			issues_json=$(printf '%s' "$rest_issues" | jq -c \
-				--argjson limit "$PULSE_QUEUED_SCAN_LIMIT" '
-				add | map(select(.pull_request == null)) | .[:$limit] |
-				map({number, title, labels, body: (.body // ""),
-					updatedAt: .updated_at, assignees,
-					authorAssociation: .author_association, author: .user})
-			') || issues_json="[]"
-		else
-			issues_json="[]"
-		fi
+		issues_json=$(_pir_list_open_issues_with_trust "$slug") || issues_json="[]"
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
 

@@ -350,7 +350,7 @@ test_stale_cache_trust_fallback() {
 	result=$(
 		_PIR_SCRIPT_DIR="${TEST_TMPDIR}/absent"
 		RECONCILE_TIME_BUDGET_SECS=0
-		PULSE_QUEUED_SCAN_LIMIT=100
+		PULSE_QUEUED_SCAN_LIMIT=4
 		PULSE_EXTERNAL_TRUST_FALLBACK_MAX=0
 		_PIR_EXTERNAL_TRUST_FALLBACKS_USED=25
 		_PIR_MISSING_AUTHOR_METADATA_BLOCKED=99
@@ -365,16 +365,25 @@ test_stale_cache_trust_fallback() {
 		# Already-held external issue must never reach the status:done stage.
 		_pir_backfill_external_contributor_label() { return 0; }
 		gh() {
-			[[ "$*" == 'api repos/test/repo/issues?state=open&per_page=100 --paginate --slurp' ]] || return 1
+			local request="$*"
 			printf 'list\n' >>"${TEST_TMPDIR}/rest-list.log"
-			printf '%s\n' '[[
+			case "$request" in
+			'api repos/test/repo/issues?state=open&per_page=100&page=1')
+				jq -cn '[
 				{"number":1,"title":"member","body":null,"labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"}},
 				{"number":2,"title":"external","body":"","labels":[{"name":"status:done"},{"name":"needs-maintainer-review"}],"author_association":"NONE","user":{"login":"external","type":"User"}}
-			], [
+				] + [range(100;198) | {number:.,pull_request:{}}]'
+				;;
+			'api repos/test/repo/issues?state=open&per_page=100&page=2')
+				[[ "${fail_second_page:-0}" -eq 0 ]] || return 1
+				printf '%s\n' '[
 				{"number":3,"title":"owner","body":"","labels":[{"name":"status:done"}],"author_association":"OWNER","user":{"login":"owner","type":"User"}},
 				{"number":4,"title":"PR","body":"","labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"},"pull_request":{}},
 				{"number":5,"title":"unknown","body":"","labels":[{"name":"status:done"}]}
-			]]'
+				]'
+				;;
+			*) return 1 ;;
+			esac
 			return 0
 		}
 		_action_rsd_single() {
@@ -385,9 +394,17 @@ test_stale_cache_trust_fallback() {
 		HOME="$TEST_TMPDIR"
 		reconcile_issues_single_pass
 		reconcile_issues_single_pass
+		local rows="" rc=0
+		PULSE_QUEUED_SCAN_LIMIT=1
+		rows=$(_pir_list_open_issues_with_trust test/repo) || exit 1
+		[[ "$(printf '%s' "$rows" | jq -r 'map(.number) | join(",")')" == 1 ]] && printf 'bounded\n'
+		PULSE_QUEUED_SCAN_LIMIT=4
+		local fail_second_page=1
+		rows=$(_pir_list_open_issues_with_trust test/repo) || rc=$?
+		[[ "$rc" -eq 1 && -z "$rows" ]] && printf 'fail-closed\n'
 	)
-	if [[ "$result" == $'reset:1:MEMBER:member\nreset:3:OWNER:owner\nreset:1:MEMBER:member\nreset:3:OWNER:owner' ]] &&
-		[[ "$(grep -c '^list$' "${TEST_TMPDIR}/rest-list.log")" -eq 2 ]] &&
+	if [[ "$result" == $'reset:1:MEMBER:member\nreset:3:OWNER:owner\nreset:1:MEMBER:member\nreset:3:OWNER:owner\nbounded\nfail-closed' ]] &&
+		[[ "$(grep -c '^list$' "${TEST_TMPDIR}/rest-list.log")" -eq 7 ]] &&
 		[[ "$(grep -c 'missing_author_metadata_blocked=1$' "$LOGFILE")" -eq 2 ]]; then
 		_pass "stale cache: paginated trust reaches stage 2, external/unknown rows stay gated, counter resets"
 	else
