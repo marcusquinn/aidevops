@@ -106,7 +106,7 @@ _pmp_update_branch_conflict_cooldown_active() {
 	IFS=$'\t' read -r recorded_head_sha expires_at <"$state_file" || return 1
 	[[ "$recorded_head_sha" == "$expected_head_sha" ]] || return 1
 	[[ "$expires_at" =~ ^[0-9]+$ ]] || return 1
-	now=$(date +%s)
+	_pmp_now_epoch_into now
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
 	[[ "$now" -lt "$expires_at" ]] || return 1
 	return 0
@@ -132,7 +132,7 @@ _pmp_record_update_branch_conflict_cooldown() {
 
 	[[ -n "$expected_head_sha" ]] || return 1
 	[[ "$AIDEVOPS_UPDATE_BRANCH_CONFLICT_COOLDOWN_SECONDS" =~ ^[0-9]+$ ]] || return 1
-	now=$(date +%s)
+	_pmp_now_epoch_into now
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
 	expires_at=$((now + AIDEVOPS_UPDATE_BRANCH_CONFLICT_COOLDOWN_SECONDS))
 	state_file=$(_pmp_update_branch_conflict_cooldown_file "$pr_number" "$repo_slug") || return 1
@@ -291,7 +291,7 @@ _merge_ready_prs_for_repo() {
 	_pmp_apply_merge_api_deadline
 	local pr_json="" pr_merge_err="" _list_start="" pr_count="" pr_list_timeout="" pr_list_rc=0
 	local pr_list_complete=1 outcomes_complete=1
-	_list_start=$(_pmp_now_epoch)
+	_pmp_now_epoch_into _list_start
 	if ! pr_list_timeout=$(_pmp_merge_pr_list_timeout_seconds); then
 		_pmp_record_pr_list_timing "$_timing_prefix" "$_list_start" 0
 		if [[ -n "$_pr_count_var" ]]; then
