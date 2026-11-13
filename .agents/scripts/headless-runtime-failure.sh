@@ -956,6 +956,46 @@ _hrff_emit_release_terminal_lease() {
 }
 
 #######################################
+# Project a released draft checkpoint as available for exact-head continuation.
+# Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
+#######################################
+_hrff_project_draft_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local spec_restore_rc=0
+
+	# GH#36019: the draft is preserved work awaiting exact-head continuation
+	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+	# draft projected as status:blocked was rejected by that target fence and
+	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
+			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	fi
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	# A draft may have merged between checkpoint classification and release.
+	# Reconcile only after projection/unassignment; the shared guard requires
+	# available state and proves that NO open PR still owns the issue.
+	# shellcheck source=pulse-merge-partial-continuation.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
+	_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
+	# GH#38021: the escalation removed auto-dispatch, and a canonical
+	# consolidated spec is filtered out of dispatch without it. Put back
+	# only what this run removed; the draft still routes the exact head.
+	_pmpc_restore_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || spec_restore_rc=$?
+	if [[ "$spec_restore_rc" -eq 0 ]]; then
+		print_info "Restored auto-dispatch on consolidated spec #${issue_number} removed by this run's draft checkpoint"
+	elif [[ "$spec_restore_rc" -eq 2 ]]; then
+		print_warning "[lifecycle] checkpoint_spec_dispatch_not_restored issue=${issue_number} — this run's draft checkpoint removed auto-dispatch; the issue was unreadable, held, owned or not available afterwards"
+	fi
+	print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+	return 0
+}
+
+#######################################
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
@@ -991,22 +1031,7 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		# GH#36019: the draft is preserved work awaiting exact-head continuation
-		# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
-		# draft projected as status:blocked was rejected by that target fence and
-		# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
-				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
-		fi
-		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		# A draft may have merged between checkpoint classification and release.
-		# Reconcile only after projection/unassignment; the shared guard requires
-		# available state and proves that NO open PR still owns the issue.
-		# shellcheck source=pulse-merge-partial-continuation.sh
-		source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
-		_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
-		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
