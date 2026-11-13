@@ -1626,14 +1626,27 @@ _pir_reconcile_slug() {
 	# The cache (written each cycle by pulse-prefetch.sh) covers:
 	#   number, title, labels, updatedAt, assignees, body plus
 	#   authorAssociation/author trust metadata from canonical snapshots.
-	#   Legacy/fallback rows without trust metadata block lifecycle actions.
+	#   Legacy rows without trust metadata block lifecycle actions.
 	local issues_json="" _cache_issues_sp=""
 	if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json="$_cache_issues_sp"
 	else
-		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,title,labels,body \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json="[]"
+		# REST includes author association, unlike `gh issue list --json`.
+		# One paginated list replaces per-issue trust recovery on stale caches.
+		# Discard partial pages on failure; never reconcile an incomplete response.
+		local rest_issues=""
+		if rest_issues=$(gh api "repos/${slug}/issues?state=open&per_page=100" \
+			--paginate --slurp 2>/dev/null); then
+			issues_json=$(printf '%s' "$rest_issues" | jq -c \
+				--argjson limit "$PULSE_QUEUED_SCAN_LIMIT" '
+				add | map(select(.pull_request == null)) | .[:$limit] |
+				map({number, title, labels, body: (.body // ""),
+					updatedAt: .updated_at, assignees,
+					authorAssociation: .author_association, author: .user})
+			') || issues_json="[]"
+		else
+			issues_json="[]"
+		fi
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
 
@@ -1867,6 +1880,8 @@ _pir_finish_reconcile_cycle() {
 	elif [[ "$_total_actions" -gt 0 ]]; then
 		echo "[pulse-wrapper] reconcile_issues_single_pass: persistent_repaired=${persistent_repaired} external_gated=${external_gated} ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} cpt_reopened=${cpt_total_reopened} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	fi
+	# Always emit this diagnostic, including otherwise silent no-op passes.
+	echo "[pulse-wrapper] reconcile_issues_single_pass: missing_author_metadata_blocked=${_PIR_MISSING_AUTHOR_METADATA_BLOCKED:-0}" >>"$LOGFILE"
 	return 0
 }
 
@@ -1910,6 +1925,7 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local _PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
 	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
 	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
