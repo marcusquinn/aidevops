@@ -1406,9 +1406,9 @@ _pcc_unknown_digest() {
 # posted so one head never collects two attention records.
 # The newest attention record's age drives the per-runner re-arm
 # (_pcc_attention_rearm_allowed); with the release epoch it also anchors the
-# fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The newest ready-lease
-# attempt before the release only prefills the attention record's
-# approval-template command; approval-template revalidates it.
+# fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The same-episode ready
+# attempt and optional earlier checkpoint release prefill the command only
+# after approval-template validates the complete successor history.
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key, $4=trusted logins JSON,
 #       $5=PR creation ISO date (optional; empty disables the per-PR count),
@@ -1418,6 +1418,7 @@ _pcc_unknown_digest() {
 #         <TAB>releases_since_pr_creation<TAB>fuse_attention_posted
 #         <TAB>newest_attention_epoch (0 when none)<TAB>release_epoch
 #         <TAB>released attempt (attempt:<id>, or - when unknown)
+#         [<TAB>earlier checkpoint release id]
 # Returns: 0 when a stall release owns the draft, 1 otherwise
 #######################################
 _pcc_stall_release_evidence() {
@@ -1455,7 +1456,8 @@ _pcc_stall_release_evidence() {
 			($fuse_key != "" and any($c[]; (.body // "") | contains($fuse_key)) | tostring),
 			([$c[] | select(head_attention) | (.created_at // "") | (try epoch catch 0)] | max // 0 | tostring),
 			($release.created_at // "" | (try epoch catch 0) | tostring),
-			(if $pick.attempt == "" then "-" else $pick.attempt end), ($pick.id | tostring)]
+			(if $pick.attempt == "" then "-" else $pick.attempt end)]
+			+ (if $pick.id == $release.id then [] else [($pick.id | tostring)] end)
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -1815,6 +1817,7 @@ _pcc_dispatch_stalled() {
 	}
 	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
 		release_epoch attempt approval_release <<<"$evidence"
+	approval_release="${approval_release:-$release_id}"
 	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
 	[[ "$pr_releases" =~ ^[0-9]+$ ]] || pr_releases=0
 	[[ "$release_epoch" =~ ^[0-9]+$ ]] || release_epoch=0
