@@ -299,6 +299,38 @@ _gh_audit_signed_approval_flags() {
 }
 
 #######################################
+# Print one field of the logical caller frame of an audited wrapper.
+# Must be called directly from the wrapper (command substitution is fine):
+# frame 1 is the wrapper, frame 2 its caller. Frames whose source is exactly
+# protected-label-guard.sh are skipped so audit records name the logical caller.
+# aidevops:trust-boundary — match the guard's script suffix only, never a
+# function name, so another script cannot hide behind a lookalike function.
+# Falls back to frame 2 when no non-guard frame exists.
+# Args:
+#   $1  field — script | function | line
+#######################################
+_gh_audit_caller_frame() {
+	local field="$1"
+	local i=2 n="${#FUNCNAME[@]}" src
+	while ((i < n)); do
+		src="${BASH_SOURCE[i]:-}"
+		if [[ "$src" != */protected-label-guard.sh && "$src" != "protected-label-guard.sh" ]]; then
+			break
+		fi
+		i=$((i + 1))
+	done
+	if ((i >= n)); then
+		i=2
+	fi
+	case "$field" in
+	script) printf '%s\n' "${BASH_SOURCE[i]:-}" ;;
+	function) printf '%s\n' "${FUNCNAME[i]:-}" ;;
+	*) printf '%s\n' "${BASH_LINENO[i - 1]:-0}" ;;
+	esac
+	return 0
+}
+
+#######################################
 # Write one audit record via gh-audit-log-helper.sh record.
 # Non-blocking: silently returns 0 on any failure.
 # Args:
@@ -653,7 +685,7 @@ gh_issue_edit_safe() {
 	fi
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "$_GH_AUDIT_ISSUE_EDIT_OP" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
 
@@ -833,7 +865,7 @@ gh_pr_edit_safe() {
 	fi
 	_after="$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 _gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "pr_edit" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
 
@@ -859,7 +891,7 @@ gh_issue_close_safe() {
 	local _exit=$?
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "issue_close" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
 
@@ -879,7 +911,7 @@ gh_issue_reopen_safe() {
 	local _exit=$?
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "issue_reopen" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
 
@@ -899,7 +931,7 @@ gh_pr_close_safe() {
 	local _exit=$?
 	_after="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "pr_close" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
 
@@ -919,6 +951,6 @@ gh_pr_merge_safe() {
 	local _exit=$?
 	_after="$(_gh_audit_fetch_pr_state_json "$_num" "$_repo")"
 	_gh_audit_record_op "pr_merge" "$_repo" "$_num" "$_before" "$_after" \
-		"${BASH_SOURCE[1]:-}" "${FUNCNAME[1]:-}" "${BASH_LINENO[0]:-0}"
+		"$(_gh_audit_caller_frame script)" "$(_gh_audit_caller_frame function)" "$(_gh_audit_caller_frame line)"
 	return "$_exit"
 }
