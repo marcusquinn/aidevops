@@ -165,6 +165,8 @@ def lock(path, timeout=100):
 
 # Read permissions Pulse dispatch needs; `contents` backs the open-PR commits query.
 REQUIRED_PULSE_PERMISSIONS = ("contents", "pull_requests", "issues", "metadata", "checks", "statuses")
+OPTIONAL_PULSE_PERMISSIONS = ("actions",)
+DEFAULT_PULSE_READ_PERMISSIONS = REQUIRED_PULSE_PERMISSIONS + OPTIONAL_PULSE_PERMISSIONS
 
 
 def missing_permissions(granted):
@@ -174,11 +176,13 @@ def missing_permissions(granted):
 
 
 def cached_token(profile, installation, repo, cache):
-    permissions = profile.get("permissions", {name: "read" for name in REQUIRED_PULSE_PERMISSIONS})
-    # Migrate the historical generated default in memory. Other explicit maps
+    default = {name: "read" for name in DEFAULT_PULSE_READ_PERMISSIONS}
+    permissions = profile.get("permissions", default)
+    # Migrate historical generated defaults in memory. Other explicit maps
     # remain unchanged; actual token grants are capped by the installation.
-    if permissions == {"metadata": "read", "issues": "read", "pull_requests": "read"}:
-        permissions = {name: "read" for name in REQUIRED_PULSE_PERMISSIONS}
+    if permissions in ({"metadata": "read", "issues": "read", "pull_requests": "read"},
+                       {name: "read" for name in REQUIRED_PULSE_PERMISSIONS}):
+        permissions = default
     if (not isinstance(permissions, dict) or not permissions
             or any(value != "read" for value in permissions.values())):
         raise AuthError("Pulse App profiles support read-only permissions")

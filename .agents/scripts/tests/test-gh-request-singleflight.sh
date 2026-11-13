@@ -375,6 +375,29 @@ test_failed_stale_reclaim_reaches_timeout() (
 	return 0
 )
 
+test_orphaned_reclaim_marker_is_expired() {
+	local key="" request_dir="" generation="" started_at="" elapsed=0
+	key=$(gh_request_state_request_key owner/repo canonical issues/v1 orphan-reclaim rest-core)
+	request_dir="$(_ghrs_request_dir "$key")"
+	# GH#38138 production shape: a reclaimer killed mid-section leaves an
+	# ownerless lease and its reclaim marker behind, both long since stale.
+	mkdir "${request_dir}/lease" "${request_dir}/lease.reclaim"
+	touch -t 202601010000 "${request_dir}/lease" "${request_dir}/lease.reclaim"
+	export AIDEVOPS_GH_SINGLEFLIGHT_OWNER_GRACE_SECONDS=0
+	started_at="$(_ghrs_now)"
+	gh_request_state_singleflight_begin "$key"
+	elapsed=$(($(_ghrs_now) - started_at))
+	unset AIDEVOPS_GH_SINGLEFLIGHT_OWNER_GRACE_SECONDS
+	assert_eq "orphaned reclaim marker no longer blocks lease recovery" "leader" "$_GHRS_BEGIN_ROLE"
+	assert_eq "orphaned reclaim marker recovery is immediate" "true" \
+		"$([[ "$elapsed" -lt 2 ]] && printf 'true' || printf 'false')"
+	assert_eq "expired reclaim marker is released after recovery" "false" \
+		"$([[ -d "${request_dir}/lease.reclaim" ]] && printf 'true' || printf 'false')"
+	generation="$_GHRS_BEGIN_GENERATION"
+	gh_request_state_singleflight_finish "$key" "$generation" success
+	return 0
+}
+
 test_ownerless_lease_recovery_and_disabled_mode() {
 	local key="" request_dir="" generation=""
 	key=$(gh_request_state_request_key owner/repo canonical issues/v1 ownerless rest-core)
@@ -444,6 +467,92 @@ test_request_invalidation_generations_are_atomic() {
 		return 1
 	fi
 	printf 'PASS: concurrent invalidation leaves no temporary files\n'
+	return 0
+}
+
+backdate_request_dir() {
+	local request_dir="$1"
+	local entry=""
+	for entry in "${request_dir}"/lease/* "${request_dir}"/lease/.[!.]* "${request_dir}"/* "${request_dir}"/.[!.]*; do
+		[[ -e "$entry" ]] || continue
+		touch -t 202601010000 "$entry"
+	done
+	touch -t 202601010000 "$request_dir"
+	return 0
+}
+
+dir_exists() {
+	local path="$1"
+	[[ -d "$path" ]] && printf 'true' || printf 'false'
+	return 0
+}
+
+test_idle_request_state_is_garbage_collected() {
+	local idle_key="" live_key="" dead_key="" fresh_key="" marker_key=""
+	local idle_dir="" live_dir="" dead_dir="" fresh_dir="" marker_dir=""
+	local live_generation="" generation="" summary="" now=""
+	idle_key=$(gh_request_state_request_key owner/repo gc issues/v1 idle rest-core)
+	live_key=$(gh_request_state_request_key owner/repo gc issues/v1 live rest-core)
+	dead_key=$(gh_request_state_request_key owner/repo gc issues/v1 dead rest-core)
+	fresh_key=$(gh_request_state_request_key owner/repo gc issues/v1 fresh rest-core)
+	marker_key=$(gh_request_state_request_key owner/repo gc issues/v1 marker rest-core)
+
+	gh_request_state_singleflight_begin "$idle_key"
+	gh_request_state_singleflight_finish "$idle_key" "$_GHRS_BEGIN_GENERATION" success
+	idle_dir="$(_ghrs_request_dir "$idle_key")"
+	: >"${idle_dir}/.outcome.orphan1"
+	backdate_request_dir "$idle_dir"
+
+	# A live lease (this shell's PID, future expires_at) survives even when
+	# every timestamp is back-dated past the idle window.
+	export AIDEVOPS_GH_SINGLEFLIGHT_LEASE_SECONDS=300
+	gh_request_state_singleflight_begin "$live_key"
+	export AIDEVOPS_GH_SINGLEFLIGHT_LEASE_SECONDS=10
+	assert_eq "gc live-lease fixture elects a leader" "leader" "$_GHRS_BEGIN_ROLE"
+	live_generation="$_GHRS_BEGIN_GENERATION"
+	live_dir="$(_ghrs_request_dir "$live_key")"
+	backdate_request_dir "$live_dir"
+
+	dead_dir="$(_ghrs_request_dir "$dead_key")"
+	mkdir "${dead_dir}/lease"
+	now="$(_ghrs_now)"
+	jq -n --arg schema "$_GHRS_LEASE_SCHEMA" --arg key "$dead_key" \
+		--argjson created_at "$((now - 900))" --argjson expires_at "$((now - 600))" \
+		'{schema:$schema,key:$key,generation:"1:1:1:1",pid:1,created_at:$created_at,expires_at:$expires_at}' \
+		>"${dead_dir}/lease/owner.json"
+	backdate_request_dir "$dead_dir"
+
+	gh_request_state_singleflight_begin "$fresh_key"
+	gh_request_state_singleflight_finish "$fresh_key" "$_GHRS_BEGIN_GENERATION" success
+	fresh_dir="$(_ghrs_request_dir "$fresh_key")"
+	: >"${fresh_dir}/.outcome.orphan2"
+	touch -t 202601010000 "${fresh_dir}/.outcome.orphan2"
+
+	gh_request_state_invalidate "$marker_key"
+	marker_dir="$(_ghrs_request_dir "$marker_key")"
+	backdate_request_dir "$marker_dir"
+
+	: >"$EFFICIENCY_EVENTS"
+	summary="$(gh_request_state_gc --force)"
+	assert_eq "gc reports a completed sweep" "true" \
+		"$([[ "$summary" == *"removed=2 "* && "$summary" == *"temp_removed=2 "* && "$summary" == *"complete=1" ]] && printf true || printf false)"
+	assert_eq "back-dated idle request dir is removed" "false" "$(dir_exists "$idle_dir")"
+	assert_eq "back-dated dir with an expired lease is removed" "false" "$(dir_exists "$dead_dir")"
+	assert_eq "back-dated dir with a live lease is kept" "true" "$(dir_exists "$live_dir")"
+	assert_eq "live lease owner survives gc" "$live_generation" "$(_ghrs_owner_read "$live_key" | cut -f1)"
+	assert_eq "fresh request dir is kept" "true" "$([[ -f "${fresh_dir}/outcome.json" ]] && printf true || printf false)"
+	assert_eq "orphaned temp file in a fresh dir is removed" "false" \
+		"$([[ -e "${fresh_dir}/.outcome.orphan2" ]] && printf true || printf false)"
+	assert_eq "invalidation fencing marker is retained" "true" \
+		"$([[ -f "${marker_dir}/invalidation.json" ]] && printf true || printf false)"
+	assert_eq "gc lease cleanup does not count as a single-flight takeover" "0" \
+		"$(efficiency_event_total single_flight.takeovers)"
+
+	summary="$(gh_request_state_gc)"
+	assert_eq "gc is rate-limited by its stamp" "true" \
+		"$([[ "$summary" == "gh_request_state_gc: skipped"* ]] && printf true || printf false)"
+
+	gh_request_state_singleflight_finish "$live_key" "$live_generation" success
 	return 0
 }
 
@@ -548,8 +657,10 @@ main() {
 	test_expired_live_leader_is_fenced
 	test_live_leader_wait_is_bounded
 	test_failed_stale_reclaim_reaches_timeout
+	test_orphaned_reclaim_marker_is_expired
 	test_ownerless_lease_recovery_and_disabled_mode
 	test_request_invalidation_generations_are_atomic
+	test_idle_request_state_is_garbage_collected
 	test_rate_state_validation_scope_and_reset
 	test_relative_rate_path_uses_current_directory
 	test_concurrent_rate_probe_is_singleflight

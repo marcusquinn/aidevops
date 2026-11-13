@@ -1100,7 +1100,10 @@ _archive_expire_events() {
 		print_error "Archive event expiry refused — active and archive DB are the same file"
 		return 1
 	fi
-	local holders cutoff count start now total=0 bytes=0
+	local holders cutoff count start now total=0 bytes=0 remaining rc
+	local expiry_batch_size="${OPENCODE_ARCHIVE_EVENT_EXPIRY_BATCH_SIZE:-$DEFAULT_BATCH_SIZE}"
+	_validate_nonnegative_integer "$expiry_batch_size" "OPENCODE_ARCHIVE_EVENT_EXPIRY_BATCH_SIZE" || return 1
+	if ((expiry_batch_size == 0)); then return 1; fi
 	holders=$(_db_holder_count "$ARCHIVE_DB")
 	if [[ "$holders" == "$OPENCODE_DB_STATE_UNKNOWN" || "$holders" -gt 0 ]]; then
 		print_warning "Archive event expiry deferred — archive holder state is active or unknown"
@@ -1119,7 +1122,18 @@ _archive_expire_events() {
 	fi
 	start=$(date +%s)
 	while true; do
-		count=$(sqlite3 -cmd '.timeout 5000' "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $ARCHIVE_BATCH_SIZE); SELECT changes();") || return 1
+		now=$(date +%s)
+		remaining=$((max_duration - (now - start)))
+		((remaining > 0)) || break
+		rc=0
+		count=$(python3 -c 'import subprocess, sys
+try:
+    result = subprocess.run(["sqlite3", "-cmd", ".timeout 5000", sys.argv[2], sys.argv[3]], timeout=int(sys.argv[1]), check=False)
+    sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)' "$remaining" "$ARCHIVE_DB" "DELETE FROM event WHERE rowid IN (SELECT e.rowid FROM event e JOIN session s ON s.id=e.aggregate_id WHERE s.time_updated < $cutoff LIMIT $expiry_batch_size); SELECT changes();") || rc=$?
+		if ((rc == 124)); then break; fi
+		((rc == 0)) || return 1
 		total=$((total + count))
 		[[ "$count" -gt 0 ]] || break
 		now=$(date +%s)
@@ -1155,7 +1169,11 @@ cmd_archive() {
 		_archive_with_deadline "$max_duration" "${original_args[@]}"
 		return $?
 	fi
-	_archive_expire_events "$event_retention_days" "$dry_run" "$max_duration" || return $?
+	local expiry_budget="$max_duration"
+	((events_only)) || expiry_budget=$((max_duration / 4))
+	if ((expiry_budget > 0)); then
+		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || return $?
+	fi
 	((events_only)) && return 0
 	local preflight_rc=0
 	_archive_mutation_preflight || preflight_rc=$?
@@ -1386,6 +1404,8 @@ _archive_report_dry_run() {
 
 _archive_move_candidates() {
 	# Create archive DB and schema
+	local archive_created=0
+	[[ -f "$ARCHIVE_DB" ]] || archive_created=1
 	create_archive_schema "$ARCHIVE_DB"
 	if ! opencode_archive_schema_supported "$ARCHIVE_DB" required; then
 		local archive_schema_diagnostic=""
@@ -1418,11 +1438,49 @@ _archive_move_candidates() {
 	return $?
 }
 
+_archive_select_batch() {
+	local batch_limit="$1" byte_limit="$2" deadline="$3"
+	local candidates sid escaped_sid bytes cumulative=0 selected="" extra_bytes_sql=""
+	if ((has_session_message_table)); then
+		extra_bytes_sql=" + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM session_message WHERE session_id=c.id),0)"
+	fi
+	if ((has_event_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM event WHERE aggregate_id=c.id),0)"
+	fi
+	if ((has_session_input_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(prompt AS BLOB))) FROM session_input WHERE session_id=c.id),0)"
+	fi
+	if ((has_session_context_epoch_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(baseline AS BLOB)) + LENGTH(CAST(snapshot AS BLOB))) FROM session_context_epoch WHERE session_id=c.id),0)"
+	fi
+	# Discover IDs without touching payloads, then size only the needed prefix.
+	candidates=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit;") || return 1
+	while IFS= read -r sid; do
+		[[ -n "$sid" ]] || continue
+		if (($(date +%s) >= deadline)); then return 2; fi
+		escaped_sid="${sid//\'/\'\'}"
+		bytes=$(_archive_active_query "SELECT COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM message WHERE session_id=c.id),0)$extra_bytes_sql FROM session c WHERE id='$escaped_sid';") || return 1
+		# Never begin a write after discovery has used the remaining budget.
+		if (($(date +%s) >= deadline)); then return 2; fi
+		if [[ -n "$selected" ]] && ((cumulative + bytes > byte_limit)); then break; fi
+		selected="${selected}${selected:+$'\n'}${sid}"
+		cumulative=$((cumulative + bytes))
+		# Keep the oversized-single-session exception without sizing its followers.
+		if ((cumulative >= byte_limit)); then break; fi
+	done <<<"$candidates"
+	[[ -z "$selected" ]] || printf '%s\n' "$selected"
+	return 0
+}
+
 _archive_run_batches() {
 	local start_time
 	start_time=$(date +%s)
 	local batch_num=0
 	local first_batch=1
+	local next_limit="$ARCHIVE_BATCH_SIZE" last_seconds=0
+	local byte_limit="${OPENCODE_DB_ARCHIVE_BATCH_BYTES:-67108864}"
+	_validate_nonnegative_integer "$byte_limit" "OPENCODE_DB_ARCHIVE_BATCH_BYTES" || return 1
+	if ((byte_limit == 0)); then return 1; fi
 
 	while ((archived_total < total_eligible)); do
 		# Check time budget
@@ -1432,20 +1490,26 @@ _archive_run_batches() {
 			print_warning "Time budget exhausted (${elapsed}s >= ${max_duration}s). Archived $archived_total/$total_eligible sessions. Will resume next cycle."
 			return 2
 		fi
+		if ((batch_num > 0 && last_seconds >= max_duration - elapsed)); then
+			print_warning "Remaining budget is shorter than the previous batch; resuming next cycle."
+			return 2
+		fi
 		if ((batch_num > 0)) && ! _archive_held_gate_recheck; then
 			return 2
 		fi
 
 		batch_num=$((batch_num + 1))
-		local batch_limit="$ARCHIVE_BATCH_SIZE"
+		local batch_limit="$next_limit"
 		local remaining=$((total_eligible - archived_total))
 		if ((remaining < batch_limit)); then
 			batch_limit=$remaining
 		fi
 
 		# Collect batch session IDs
-		local session_ids
-		session_ids=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated ASC, time_created ASC, id ASC LIMIT $batch_limit;")
+		local session_ids batch_start
+		# Start the timer before sizing so selection cost counts toward adaptation.
+		batch_start=$(date +%s)
+		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -1462,6 +1526,11 @@ _archive_run_batches() {
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
 		_archive_write_batch "$in_clause" || return 1
+		last_seconds=$(($(date +%s) - batch_start))
+		elapsed=$(($(date +%s) - start_time))
+		if ((last_seconds * 3 > max_duration - elapsed && next_limit > 1)); then
+			next_limit=$(((batch_count + 1) / 2))
+		fi
 		archived_total=$((archived_total + batch_count))
 		_archive_report_batch || return 1
 	done
@@ -1508,14 +1577,21 @@ _archive_write_batch() {
 	# attached DBs: first commit the archive alone, then verify the durable
 	# copy under a fresh write lock before deleting anything from active.
 	# An interruption between commits leaves safe, retryable duplicates.
-	local verify_sql table_name columns row_filter
-	verify_sql="INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause) EXCEPT SELECT ${session_insert_columns} FROM archive.session WHERE id IN ($in_clause));"
+	local verify_sql table_name row_filter comparisons column
+	local session_columns_array=()
+	IFS=',' read -r -a session_columns_array <<<"$session_insert_columns"
+	comparisons=""
+	for column in "${session_columns_array[@]}"; do
+		column="${column// /}"
+		comparisons="${comparisons}${comparisons:+ AND }a.\"${column}\" IS s.\"${column}\""
+	done
+	verify_sql="INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT 1 FROM (SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause)) s WHERE NOT EXISTS (SELECT 1 FROM archive.session a WHERE a.id IS s.id AND $comparisons));"
 	for table_name in message part todo session_share session_message session_input session_context_epoch event_sequence event; do
 		_sqlite_has_table "$ACTIVE_DB" "$table_name" || continue
-		columns=$(opencode_db_table_columns "$ACTIVE_DB" "$table_name") || return 1
 		row_filter="$session_row_filter"
 		case "$table_name" in event_sequence | event) row_filter="$aggregate_row_filter" ;; esac
-		verify_sql="${verify_sql}INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT ${columns} FROM ${table_name} WHERE ${row_filter} EXCEPT SELECT ${columns} FROM archive.${table_name} WHERE ${row_filter});"
+		comparisons=$(sqlite3 "$ACTIVE_DB" "SELECT group_concat('a.' || quote(name) || ' IS s.' || quote(name), ' AND ') FROM pragma_table_info('$table_name');") || return 1
+		verify_sql="${verify_sql}INSERT INTO archive_copy_guard SELECT NOT EXISTS (SELECT 1 FROM ${table_name} s WHERE ${row_filter} AND NOT EXISTS (SELECT 1 FROM archive.${table_name} a WHERE $comparisons));"
 	done
 	_archive_execute_batch
 	return $?
@@ -1600,7 +1676,7 @@ BATCH_SQL
 
 _archive_report_batch() {
 	# Verify archive integrity after first batch
-	if ((first_batch)); then
+	if ((first_batch && archive_created)); then
 		local integrity
 		integrity=$(sqlite3 "$ARCHIVE_DB" "PRAGMA integrity_check;" 2>&1)
 		[[ "$integrity" == "ok" ]] || {

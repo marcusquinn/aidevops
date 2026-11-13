@@ -372,6 +372,9 @@ _dedup_layer4_pr_evidence() {
 				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
+			# GH#38142: name PR evidence as its own block, not an active claim, so
+			# the pulse can cache it while the issue and exact PR are unchanged.
+			printf 'pr_evidence_block: %s\n' "${dedup_helper_output%%$'\n'*}"
 			return 0
 		fi
 		if [[ "$dedup_helper_rc" -ne 1 ]]; then

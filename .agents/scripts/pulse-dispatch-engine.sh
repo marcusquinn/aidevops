@@ -145,6 +145,7 @@ source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-current-state-guardr
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved from this module's path
 source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-dispatch-preflight-lib.sh"
+source "${_PULSE_DISPATCH_ENGINE_SCRIPT_DIR}/pulse-macos-verification.sh"
 # GH#36122: runner-local dispatch breakers gate every launch path. Source
 # unconditionally so a missing definition fails loudly instead of open.
 # shellcheck source=./pulse-wrapper-dispatch-gates.sh
@@ -1542,6 +1543,7 @@ _run_preflight_stages() {
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"
+	_preflight_start_macos_verification || true
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
 		_preflight_cleanup_and_ledger || true
 	run_stage_with_timeout "preflight_capacity" "$_pflt_timeout" \
