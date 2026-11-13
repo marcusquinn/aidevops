@@ -1620,8 +1620,11 @@ _pir_list_open_issues_with_trust() {
 	local slug="$1"
 	local limit="${PULSE_QUEUED_SCAN_LIMIT:-100}"
 	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	local max_pages="${PULSE_QUEUED_MAX_PAGES:-20}"
+	[[ "$max_pages" =~ ^[1-9][0-9]*$ ]] || max_pages=20
 	local page=1 page_rows="" page_count=0 issues="[]" issue_count=0
 	while [[ "$issue_count" -lt "$limit" ]]; do
+		[[ "$page" -le "$max_pages" ]] || return 1
 		page_rows=$(gh api "repos/${slug}/issues?state=open&per_page=100&page=${page}" 2>/dev/null) || return 1
 		page_count=$(printf '%s' "$page_rows" | jq -er --arg array_type "$_PIR_JSON_TYPE_ARRAY" \
 			'select(type == $array_type) | length') || return 1
