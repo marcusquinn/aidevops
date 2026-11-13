@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import time
 from typing import TypeVar
 from uuid import UUID, uuid5
@@ -74,6 +75,23 @@ def within_contention_deadline(attempt: Callable[[], _Result],
             if wait.on_retry is not None:
                 wait.on_retry(retries, error)
         wait.sleep(pause)
+
+
+def _log_contention_retry(attempt: int, error: Exception) -> None:
+    # Fixed codes and a counter only, never paths or SQL (matches launch.py).
+    print(f"[worker-lifecycle] contention-retry reason={type(error).__name__} "
+          f"category={failure_category(error)} attempt={attempt}", file=sys.stderr)
+
+
+def wait_out_contention(attempt: Callable[[], _Result]) -> _Result:
+    """Retry an idempotent enrollment or admission across writer contention.
+
+    GH#38086: Pulse worktree pre-creation enrolls through the registry CLI, which
+    previously made one attempt while cleanup held the writer for seconds. Uses
+    the same operator-tunable bound as launch admission; 0 restores one attempt.
+    """
+    return within_contention_deadline(
+        attempt, ContentionWait(contention_deadline(), _log_contention_retry))
 
 
 class AdmissionClosed(StoreConflict):
