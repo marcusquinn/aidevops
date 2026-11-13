@@ -478,6 +478,38 @@ _full_loop_receipt_owner_alive() {
 	[[ -z "$current_start" || "$current_start" == "$recorded_start" ]]
 }
 
+# GH#38095: name a timed-out lock's live holder without leaking local paths or
+# argument values, which may carry credentials: the executable's basename plus,
+# for an interpreter, its script's basename. No other argv word is ever kept.
+_full_loop_receipt_holder_command() {
+	local pid="$1"
+	local raw=""
+	local script=""
+	local summary=""
+	local -a words=()
+	raw=$(LC_ALL=C ps -o command= -p "$pid" 2>/dev/null) || raw=""
+	read -r -a words <<<"$raw" || true
+	if [[ "${#words[@]}" -gt 0 ]]; then
+		summary="${words[0]##*/}"
+	fi
+	if [[ "${#words[@]}" -gt 1 ]]; then
+		script="${words[1]}"
+		if [[ "$script" != -* && "$script" != *=* && "$script" =~ \.(sh|py|mjs|js|ts)$ ]]; then
+			summary="${summary} ${script##*/}"
+		fi
+	fi
+	summary=$(printf '%s' "$summary" | tr -cd '[:alnum:] ._+-')
+	printf '%s\n' "${summary:0:80}"
+	return 0
+}
+
+# Lock failure reason plus the holder's command when a live holder was seen.
+_full_loop_receipt_lock_failure_detail() {
+	printf '%s%s\n' "${_FULL_LOOP_RECEIPT_LOCK_FAILURE:-receipt-lock-timeout}" \
+		"${_FULL_LOOP_RECEIPT_LOCK_HOLDER_CMD:+ holder-cmd=${_FULL_LOOP_RECEIPT_LOCK_HOLDER_CMD}}"
+	return 0
+}
+
 _full_loop_receipt_lock_acquire() {
 	local owner_start=""
 	local holder_age=0
@@ -489,6 +521,7 @@ _full_loop_receipt_lock_acquire() {
 	local ownerless_lock_minimum_age="${AIDEVOPS_FULL_LOOP_RECEIPT_LOCK_OWNERLESS_GRACE_SECONDS:-5}"
 	local attempt=0
 	_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-timeout"
+	_FULL_LOOP_RECEIPT_LOCK_HOLDER_CMD=""
 	[[ "$ownerless_lock_minimum_age" =~ ^[1-9][0-9]*$ ]] || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-config-invalid"; return 1; }
 	receipt_dir=$(_full_loop_cleanup_receipt_dir) || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-dir-unavailable"; return 1; }
 	mkdir -p "$receipt_dir" || { _FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-dir-unavailable"; return 1; }
@@ -538,6 +571,7 @@ _full_loop_receipt_lock_acquire() {
 			[[ "$holder_age" -lt 0 ]] && holder_age=0
 		fi
 		_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-timeout (holder ${owner_pid}, held ${holder_age}s)"
+		_FULL_LOOP_RECEIPT_LOCK_HOLDER_CMD=$(_full_loop_receipt_holder_command "$owner_pid")
 	fi
 	return 1
 }
@@ -555,6 +589,7 @@ _full_loop_receipt_lock_release() {
 # a fresh process can fail before it ever holds the receipt lock.
 _FULL_LOOP_CLEANUP_FAILURE_REASON=""
 _FULL_LOOP_RECEIPT_LOCK_FAILURE=""
+_FULL_LOOP_RECEIPT_LOCK_HOLDER_CMD=""
 _FULL_LOOP_REASON_WRITE_FAILED="receipt-write-failed"
 
 # Record a stable failure reason (global + stderr) and return 1.
@@ -618,7 +653,7 @@ full_loop_write_cleanup_deferred() {
 	[[ "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_FINALIZATION_PENDING" || "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_COMPLETE" ]] || { _full_loop_cleanup_fail "invalid-completion-state"; return 1; }
 	command -v jq >/dev/null 2>&1 || { _full_loop_cleanup_fail "jq-unavailable"; return 1; }
 	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || { _full_loop_cleanup_fail "receipt-path-unavailable"; return 1; }
-	_full_loop_receipt_lock_acquire || { _full_loop_cleanup_fail "${_FULL_LOOP_RECEIPT_LOCK_FAILURE:-receipt-lock-timeout}"; return 1; }
+	_full_loop_receipt_lock_acquire || { _full_loop_cleanup_fail "$(_full_loop_receipt_lock_failure_detail)"; return 1; }
 	kill -0 "$owner_pid" 2>/dev/null || {
 		_full_loop_receipt_lock_release
 		_full_loop_cleanup_fail "owner-not-live"
@@ -1074,7 +1109,7 @@ full_loop_supersede_cleaned_receipts_for_recreated_worktree() {
 		return 1
 	}
 	_full_loop_receipt_lock_acquire || {
-		_full_loop_supersede_reason "could not acquire the receipt lock for ${receipt_dir}"
+		_full_loop_supersede_reason "could not acquire the receipt lock: $(_full_loop_receipt_lock_failure_detail)"
 		return 1
 	}
 	receipt_file_count=$(_full_loop_valid_receipt_file_count "$receipt_dir") || {
