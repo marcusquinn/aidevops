@@ -117,23 +117,29 @@ def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: i
         cache[(kind, number, slug)] = (state == done, f"{noun}-{number}-{state.lower()}")
 
 
+def _uncapped() -> float:
+    """Stand in for a caller that tracks no budget, so ``cap`` alone bounds a batch."""
+    return float("inf")
+
+
 def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
-             *, remaining: Callable[[], float] | None = None, cap: int = 60) -> None:
+             *, remaining: Callable[[], float] = _uncapped, cap: int = 60) -> None:
     """Fill the cache ``reference_finished`` reads, one query per 20 references.
 
-    Any failure leaves the key absent, so judgement degrades to per-reference queries.
+    ``remaining`` reports the caller's live budget, which batches share with the
+    git and reference calls: a stalled batch returns empty instead of raising, so
+    a per-batch timeout would let one slow repository spend the whole pass share.
+    Any failure leaves the key absent, so judgement degrades to per-reference
+    queries, and a reference still unresolved refuses rather than authorizing.
     """
     for slug, items in wanted.items():
         pending = [item for item in dict.fromkeys(items)
                    if (item[0], item[1], slug) not in cache]
         for start in range(0, len(pending), BATCH_SIZE):
-            timeout = cap
-            if remaining is not None:
-                budget = remaining()
-                if budget <= 0:
-                    return
-                timeout = min(max(int(budget), 1), cap)
-            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, timeout)
+            budget = int(min(remaining(), cap))
+            if budget < 1:
+                return
+            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, budget)
 
 
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
