@@ -317,6 +317,21 @@ _missing_metadata_repo_paths() {
 	return 0
 }
 
+# Bound the whole repository sweep, not just each individual repository.
+_prune_turbo_caches() {
+	local helper="${SCRIPT_DIR}/worktree-artefact-reclaim.sh"
+	local repo="" deadline=$((SECONDS + 60)) remaining=0 rc=0
+	[[ -f "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	while IFS= read -r repo; do
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		rc=0
+		timeout_sec "$remaining" bash "$helper" --turbo-cache "$repo" >>"$LOGFILE" 2>&1 || rc=$?
+		[[ "$rc" -eq 0 ]] || printf '[cleanup-worktrees-async] turbo-cache-prune failed rc=%s\n' "$rc" >>"$LOGFILE"
+	done < <(_missing_metadata_repo_paths true)
+	return 0
+}
+
 # Print the first prunable entry whose directory is absent. Native
 # `git worktree prune` is repo-wide, so return 1 without output when any absent
 # entry's parent directory is also absent (for example an unmounted volume):
@@ -611,6 +626,7 @@ _run_cleanup_pass() {
 	if [[ "$lifecycle_only" -eq 0 ]]; then
 		_recover_interactive_capacity
 		_prune_dirty_worktree_backups
+		_prune_turbo_caches
 	fi
 
 	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then

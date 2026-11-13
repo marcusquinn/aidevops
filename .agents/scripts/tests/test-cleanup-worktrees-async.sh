@@ -906,6 +906,42 @@ test_capacity_mode_is_scoped_and_locked() {
 	return 0
 }
 
+test_turbo_cache_prune() {
+	local repo="${TEST_DIR}/turbo-repo"
+	local helper="${SCRIPT_DIR}/../worktree-artefact-reclaim.sh"
+	mkdir -p "$repo/.turbo/cache"
+	"$TEST_NATIVE_GIT" -C "$repo" init -q
+	printf '.turbo/\n' >"$repo/.gitignore"
+	printf '{}\n' >"$repo/turbo.json"
+	printf 'old' >"$repo/.turbo/cache/old"
+	printf 'new' >"$repo/.turbo/cache/new"
+	touch -t 202001010000 "$repo/.turbo/cache/old"
+	ln -s "$repo/turbo.json" "$repo/.turbo/cache/link"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=20G bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/old" && -f "$repo/.turbo/cache/new" && -L "$repo/.turbo/cache/link" ]] &&
+		grep -q 'removed_files=1' "$TEST_DIR/turbo-log"; then
+		print_result 'turbo: age pruning preserves new files and symlinks' 0
+	else
+		print_result 'turbo: age pruning preserves new files and symlinks' 1
+	fi
+	printf 'another' >"$repo/.turbo/cache/another"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/new" && ! -e "$repo/.turbo/cache/another" && -L "$repo/.turbo/cache/link" ]]; then
+		print_result 'turbo: size cap removes oldest regular entries' 0
+	else
+		print_result 'turbo: size cap removes oldest regular entries' 1
+	fi
+	printf 'preserve' >"$repo/.turbo/cache/keep"
+	printf '' >"$repo/.gitignore"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo"
+	if [[ -f "$repo/.turbo/cache/keep" ]]; then
+		print_result 'turbo: nonignored cache is untouched' 0
+	else
+		print_result 'turbo: nonignored cache is untouched' 1
+	fi
+	return 0
+}
+
 main() {
 	echo "Running cleanup-worktrees-async-helper.sh tests"
 	echo "================================================"
@@ -917,6 +953,9 @@ main() {
 
 	setup
 
+	test_turbo_cache_prune
+	teardown
+	setup
 	test_cold_start
 	teardown
 	setup
