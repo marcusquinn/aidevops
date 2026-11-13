@@ -151,7 +151,7 @@ _gh_audit_fetch_issue_state_json() {
 	local data=""
 	if command -v gh_issue_view >/dev/null 2>&1; then
 		data=$(gh_issue_view "$issue_num" --repo "$repo" \
-			--json title,body,labels 2>/dev/null) || data=""
+			--json title,body,labels,assignees 2>/dev/null) || data=""
 	fi
 	# REST-first routing can be locally unavailable while GitHub's GraphQL
 	# transport remains healthy. Audit capture must try the independent native
@@ -159,25 +159,26 @@ _gh_audit_fetch_issue_state_json() {
 	# aggregate deadline and the standard per-read timeout.
 	if [[ -z "$data" ]]; then
 		data=$(_gh_with_timeout read gh issue view "$issue_num" --repo "$repo" \
-			--json title,body,labels 2>/dev/null) || data=""
+			--json title,body,labels,assignees 2>/dev/null) || data=""
 	fi
 	# The routed wrapper's fallback decision can itself be stale or unavailable.
 	# Audit capture is read-only, so exhaust the independent REST transport before
 	# recording a visibility gap.
 	if [[ -z "$data" ]] && command -v _rest_issue_view >/dev/null 2>&1; then
 		data=$(_rest_issue_view "$issue_num" --repo "$repo" \
-			--json title,body,labels 2>/dev/null) || data=""
+			--json title,body,labels,assignees 2>/dev/null) || data=""
 	fi
 	if [[ -z "$data" ]]; then
 		printf '%s\n' "$unavailable"
 		return 0
 	fi
 
-	jq -c '{
+	jq -c --arg array_type array '{
 		capture_status: "ok",
 		title_len: ((.title // "") | length),
 		body_len:  ((.body  // "") | length),
-		labels:    ([.labels[]?.name // empty])
+		labels:    ([.labels[]?.name // empty]),
+		assignees: (if (.assignees | type) == $array_type then [.assignees[].login] else null end)
 	}' <<<"$data" 2>/dev/null || printf '%s\n' "$unavailable"
 	return 0
 }
@@ -358,6 +359,15 @@ _gh_audit_record_op() {
 	audit_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-audit-log-helper.sh"
 	[[ ! -x "$audit_helper" ]] && return 0
 	flags_json="$(_gh_audit_signed_approval_flags "$op" "$repo" "$number" "$caller_script" "$caller_function")"
+	# aidevops:trust-boundary — neither a CLI name nor token ownership alone
+	# authorizes suppressing another runner's claim removal.
+	if [[ "$op" == "$_GH_AUDIT_ISSUE_EDIT_OP" &&
+		("$caller_function" == "_issue_edit_signed" || "$caller_function" == "_issue_status") ]] &&
+		[[ "$caller_script" == */agents/scripts/gh-write-helper.sh ||
+			"$caller_script" == */.agents/scripts/gh-write-helper.sh ]] &&
+		_gh_audit_verify_lifecycle_transition "$repo" "$number" "$before_json" "$after_json"; then
+		flags_json='{"lifecycle_transition_verified":"v1-owned-current-state"}'
+	fi
 	# aidevops:trust-boundary — trusted-author NMR normalization is expected only
 	# when the immutable snapshots show a pure NMR removal and live GitHub state
 	# independently confirms both issue-author and current-token write authority.
@@ -421,6 +431,63 @@ _gh_audit_record_op() {
 		--flags-json "$flags_json" \
 		2>/dev/null || true
 
+	return 0
+}
+
+#######################################
+# Verify a pure core-status replacement against current GitHub ownership.
+# Active claims additionally require the exact live worker lease, not merely
+# the shared token login. Missing/legacy ownership evidence stays reportable.
+# Args: repo, issue number, before JSON, after JSON
+#######################################
+_gh_audit_verify_lifecycle_transition() {
+	local repo="$1" number="$2" before_json="$3" after_json="$4"
+	local actor="" issue_json="" permission="" comments="" leases=""
+	local helper_dir="${BASH_SOURCE[0]%/*}"
+	jq -en --arg array_type array --arg number_type number \
+		--argjson before "$before_json" --argjson after "$after_json" '
+		def core: test("^status:(available|queued|claimed|in-progress|in-review|done|blocked)$");
+		$before.capture_status == "ok" and $after.capture_status == "ok"
+		and ($before.labels | type) == $array_type and ($after.labels | type) == $array_type
+		and ($before.assignees | type) == $array_type and ($before.assignees | length) == 1
+		and $before.assignees == $after.assignees
+		and ($before.title_len | type) == $number_type and ($before.body_len | type) == $number_type
+		and $before.title_len == $after.title_len and $before.body_len == $after.body_len
+		and ([$before.labels[] | select(core)] | length) == 1
+		and ([$after.labels[] | select(core)] | length) == 1
+		and (($before.labels - $after.labels) | length) == 1
+		and (($after.labels - $before.labels) | length) == 1
+		and all(($before.labels - $after.labels)[]; core)
+		and all(($after.labels - $before.labels)[]; core)
+	' >/dev/null 2>&1 || return 1
+	actor=$(gh api user --jq .login 2>/dev/null) || return 1
+	[[ -n "$actor" && "$actor" != null ]] || return 1
+	permission=$(gh api "repos/${repo}/collaborators/${actor}/permission" --jq .permission 2>/dev/null) || return 1
+	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
+	issue_json=$(gh api "repos/${repo}/issues/${number}" 2>/dev/null) || return 1
+	jq -e --arg actor "$actor" --arg open "$_GH_AUDIT_OPEN_STATE" --argjson after "$after_json" '
+		.pull_request == null and (.state == $open or .state == "closed")
+		and $after.assignees == [$actor]
+		and [.assignees[].login] == [$actor]
+		and ([.labels[].name] | sort) == ($after.labels | sort)
+		and (.title | length) == $after.title_len and (.body // "" | length) == $after.body_len
+		and (if ($after.labels | index("status:done")) != null then .state == "closed" else .state == $open end)
+	' <<<"$issue_json" >/dev/null 2>&1 || return 1
+	if jq -e 'any(.labels[]; test("^status:(claimed|in-progress)$"))' <<<"$before_json" >/dev/null; then
+		[[ -n "${AIDEVOPS_DISPATCH_LEASE_TOKEN:-}" && -n "${AIDEVOPS_PR_CHECKPOINT_SESSION:-}" ]] || return 1
+		comments=$(gh api "repos/${repo}/issues/${number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+			jq -ce 'add | arrays') || return 1
+		leases=$(printf '%s\n%s\n' "$comments" "$comments" | jq -nc \
+			--argjson now "$(date +%s)" --argjson max_age 1800 --argjson include_terminal false \
+			-f "${helper_dir}/dispatch-lease-claims.jq" 2>/dev/null) || return 1
+		jq -e --arg actor "$actor" --arg token "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
+			--arg session "$AIDEVOPS_PR_CHECKPOINT_SESSION" --argjson now "$(date +%s)" '
+			length == 1 and .[0].claim_author == $actor
+			and .[0].lease_token == $token and .[0].session == $session
+			and .[0].lease_phase == "ready"
+			and .[0].lease_expires_at > $now
+		' <<<"$leases" >/dev/null 2>&1 || return 1
+	fi
 	return 0
 }
 

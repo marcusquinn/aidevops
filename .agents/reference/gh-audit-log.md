@@ -163,6 +163,44 @@ Do not treat null snapshot fields as proof that content or labels were removed.
 
 **Investigation:** Compare `before.labels` vs `after.labels`. Check `caller_script` and `caller_function` to identify the code path. Was this a legitimate state transition?
 
+### Verified lifecycle policy (GH#38135)
+
+Keep lifecycle labels protected alongside trust gates; do not demote unverified
+removals to a digest. New managed CLI edits (`issue edit` and `issue status`)
+can carry `flags.lifecycle_transition_verified: v1-owned-current-state` only
+after independent verification:
+
+- Comparable snapshots show exactly one core status replaced by one other core
+  status, no other label delta, unchanged title/body lengths and the same single
+  assignee. Issue snapshots capture assignee logins; missing ownership fails closed.
+- The authenticated actor has current write/maintain/admin permission, is that
+  assignee, and the live issue still matches the recorded labels and lengths.
+  `status:done` requires a closed issue; other targets require an open issue.
+- Removing `status:claimed` or `status:in-progress` additionally requires exactly
+  one live, trusted, unexpired ready dispatch lease matching the caller's lease
+  token and session. The existing dispatch lease parser checks authorship,
+  releases and renewals. A shared GitHub login alone cannot exempt claim theft.
+  Lease identifiers are verification inputs, never audit flags.
+
+The filter also checks the caller, exact version, pure status delta and absence
+of any other suspicious signal. Trust-gate removals (including
+`needs-maintainer-permissions`), content wipes, unknown statuses, missing proof,
+failed reads and different-runner claim removals remain alert-grade. Existing
+narrow approval/handoff exemptions are unchanged. Generic CLI edits are not
+redirected: only edits that independently meet the same proof contract qualify.
+
+`issue status` previously called `set_issue_status` through direct REST deltas
+without an audit record. The CLI now captures and records the entire operation,
+including partial writes on failure. Direct library callers of `set_issue_status`
+are not newly exempted by this policy.
+
+Historical records are immutable and must not gain flags retroactively. Therefore
+the old backlog's alert count cannot decrease from this new exemption alone.
+Measure the 70% noise-reduction target on newly verified representative records,
+and report historical scan counts separately; do not present a synthetic replay
+as proof of historical provenance. Reverting the filter restores alerting for
+the new records without changing the log.
+
 ## Forensics Workflow
 
 Use this workflow when a user reports "my issue was wiped" or when the anomaly scanner files an alert.

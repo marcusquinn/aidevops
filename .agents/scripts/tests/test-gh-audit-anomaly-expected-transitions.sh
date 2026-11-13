@@ -292,6 +292,119 @@ _gh_audit_record_op \
 jq -e -s 'map(select(.number == 27))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "read-only current actor produced trusted-author audit proof"
 
+# GH#38135: real CLI capture -> proof recorder -> dry-run scanner. Transport
+# fixtures exercise live ownership and the production lease parser, not a mocked
+# verification function. A shared login with another session must fail closed.
+(
+	CLI_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	# shellcheck source=../gh-write-helper.sh
+	source "${CLI_SCRIPT_DIR}/gh-write-helper.sh" help >/dev/null
+	export GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-audit.log"
+	LIFECYCLE_STAGE="status:in-review"
+	LIFECYCLE_CASE="valid"
+	LIFECYCLE_PERMISSION="write"
+	LIFECYCLE_OWNER="runner"
+	LIFECYCLE_BODY="Preserved body"
+	LIFECYCLE_CLOSED="false"
+	# Deliberately public fixture identifiers, never real lease credentials.
+	export AIDEVOPS_DISPATCH_LEASE_TOKEN="fixture-lease"
+	export AIDEVOPS_PR_CHECKPOINT_SESSION="fixture-session"
+	lifecycle_issue_json() {
+		jq -n --arg status "$LIFECYCLE_STAGE" --arg owner "$LIFECYCLE_OWNER" \
+			--arg body "$LIFECYCLE_BODY" --argjson closed "$LIFECYCLE_CLOSED" '
+			{state: (if $closed then "closed" else "open" end), title:"Owned issue",
+			 body:$body, labels:[{name:$status}], assignees:[{login:$owner}]}'
+		return 0
+	}
+	gh_issue_view() { lifecycle_issue_json; return 0; }
+	_gh_guard_public_write_args() { return 0; }
+	set_issue_status() {
+		local number="$1" repo="$2" status="$3"
+		[[ "$number" == 700 && "$repo" == example/repo ]] || return 1
+		LIFECYCLE_STAGE="status:${status}"
+		return 0
+	}
+	gh() {
+		local command="$1" resource="${2:-}"
+		[[ "$command" != api || "$LIFECYCLE_CASE" != unavailable ]] || return 1
+		case "${command}:${resource}" in
+		api:user) printf '%s\n' runner ;;
+		api:repos/example/repo/collaborators/runner/permission) printf '%s\n' "$LIFECYCLE_PERMISSION" ;;
+		api:repos/example/repo/issues/700) lifecycle_issue_json ;;
+		api:repos/example/repo/issues/700/comments?per_page=100)
+			jq -nc --arg scenario "$LIFECYCLE_CASE" '
+				now | floor as $now | [[
+				{id:1, created_at:(($now-30)|todateiso8601), user:{login:"runner"}, author_association:"MEMBER",
+				 body:("DISPATCH_CLAIM nonce=fixture-lease runner=runner ts=" + (($now-30)|todateiso8601)
+				 + " lease_token=fixture-lease device=fixture-device session=fixture-session expires_at=" + (($now+600)|tostring))},
+				{id:2, created_at:(($now-20)|todateiso8601), user:{login:"runner"}, author_association:"MEMBER",
+				 body:("DISPATCH_LEASE phase=" + (if $scenario == "released" then "terminal" else "ready" end)
+				 + " lease_token=fixture-lease device=fixture-device session=fixture-session expires_at=" + (($now+600)|tostring))}
+				]]'
+			;;
+		issue:edit) LIFECYCLE_STAGE="status:available" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	main issue status 700 --repo example/repo available || fail "status CLI mutation failed"
+	jq -e '.caller_function == "_issue_status" and
+		.flags.lifecycle_transition_verified == "v1-owned-current-state"' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+		fail "status CLI did not record verified lifecycle proof"
+	LIFECYCLE_STAGE="status:in-progress"
+	main issue edit 700 --repo example/repo --remove-label status:in-progress --add-label status:available ||
+		fail "generic CLI lifecycle mutation failed"
+	jq -se '.[-1].flags.lifecycle_transition_verified == "v1-owned-current-state"' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+		fail "owned active lease did not earn lifecycle proof"
+	# Repeat the exact mutation with failed independent evidence.
+	for LIFECYCLE_CASE in other-session released unavailable read-only unowned; do
+		LIFECYCLE_STAGE="status:in-progress"
+		AIDEVOPS_PR_CHECKPOINT_SESSION="fixture-session"
+		LIFECYCLE_PERMISSION="write"
+		LIFECYCLE_OWNER="runner"
+		case "$LIFECYCLE_CASE" in
+		other-session) AIDEVOPS_PR_CHECKPOINT_SESSION="other-session" ;;
+		read-only) LIFECYCLE_PERMISSION="read" ;;
+		unowned) LIFECYCLE_OWNER="other-runner" ;;
+		esac
+		main issue edit 700 --repo example/repo --remove-label status:in-progress --add-label status:available ||
+			fail "negative fixture mutation failed"
+		jq -se '.[-1].flags == {}' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+			fail "unverified lifecycle acquired proof: $LIFECYCLE_CASE"
+	done
+	LIFECYCLE_CASE="valid"
+	LIFECYCLE_PERMISSION="write"
+	LIFECYCLE_OWNER="runner"
+	LIFECYCLE_STAGE="status:available"
+	for gate in needs-maintainer-review needs-maintainer-permissions no-auto-dispatch origin:interactive; do
+		_gh_audit_record_op issue_edit example/repo 700 \
+			"{\"capture_status\":\"ok\",\"title_len\":11,\"body_len\":14,\"labels\":[\"$gate\"],\"assignees\":[\"runner\"]}" \
+			'{"capture_status":"ok","title_len":11,"body_len":14,"labels":["status:available"],"assignees":["runner"]}' \
+			"${CLI_SCRIPT_DIR}/gh-write-helper.sh" _issue_edit_signed 1
+		jq -se '.[-1].flags == {}' "$GH_AUDIT_LOG_FILE" >/dev/null || fail "trust-gate removal earned lifecycle proof"
+	done
+	# Filter negatives, even if a flag is copied onto a malformed/mixed event.
+	jq -sc '.[0] as $valid | [
+		$valid,
+		($valid | del(.flags)),
+		($valid | .caller_script="/workspace/issue-edit.sh"),
+		($valid | .delta.body_delta_pct=-100 | .suspicious += ["body_delta_pct=-100"]),
+		($valid | .delta.labels_removed += ["no-auto-dispatch"]),
+		($valid | .after.labels += ["status:blocked"])
+	] | .[]' "$GH_AUDIT_LOG_FILE" >"${TEST_ROOT}/lifecycle-filter.log"
+	filter_output=$(GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-filter.log" \
+		GH_ANOMALY_STATE_FILE="${TEST_ROOT}/lifecycle-filter-state.json" GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+	[[ "$filter_output" == *"**Anomalies found:** 5"* ]] || fail "lifecycle filter failed closed cases"
+	# Representative new backlog: the two independently verified CLI events are
+	# replayed 50 times each, alongside four real unverified trust-gate fixtures.
+	jq -sc '.[0:2][] as $verified | range(0;50) | $verified' "$GH_AUDIT_LOG_FILE" >"${TEST_ROOT}/lifecycle-backlog.log"
+	jq -sc '.[-4:][]' "$GH_AUDIT_LOG_FILE" >>"${TEST_ROOT}/lifecycle-backlog.log"
+	backlog_output=$(GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-backlog.log" \
+		GH_ANOMALY_STATE_FILE="${TEST_ROOT}/lifecycle-backlog-state.json" GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+	[[ "$backlog_output" == *"**Anomalies found:** 4"* ]] || fail "representative lifecycle backlog count mismatch"
+	printf 'PASS: verified lifecycle backlog 104 -> 4 alerts (96%%); five filter negatives retained\n'
+)
+
 # GH#38134: exercise the real call stack through protected-label-guard.sh.
 # The audit record must name the logical caller, not the guard's internal frame.
 STACK_DIR="${TEST_ROOT}/stack/agents/scripts"
