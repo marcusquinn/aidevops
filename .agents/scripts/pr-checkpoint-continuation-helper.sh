@@ -863,19 +863,23 @@ _pcc_issue_comments() {
 _pcc_dispatch_approved() {
 	local repo="$1" path="$2" issue="$3" login="$4" candidate="" pr="" runner=""
 	local comments="" trusted_logins=""
-	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || { printf 'approval_discovery=invalid_issue\n' >&2; return 1; }
 	# Discovery is not authorization: _pcc_dispatch freshly verifies the complete
 	# envelope and the claim helper rereads it again across distributed consensus.
-	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
-	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
+	comments=$(_pcc_issue_comments "$repo" "$issue") || { printf 'approval_discovery=comments_unavailable\n' >&2; return 1; }
+	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || { printf 'approval_discovery=trust_unavailable\n' >&2; return 1; }
 	candidate=$(jq -er --arg repo "$repo" --argjson issue "$issue" \
 		--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(trusted) |
 		select((.updated_at // .created_at) == .created_at) |
-		.body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
+		. as $comment | .body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
 		ltrimstr("CHECKPOINT_CONTINUATION_APPROVED ") | fromjson? |
-		select(.repo == $repo and .issue == $issue) | {pr,runner}] | unique |
-		select(length == 1) | .[0] | [.pr,.runner] | @tsv' <<<"$comments") || return 1
+		select(.repo == $repo and .issue == $issue) |
+		{pr,runner,created_at:$comment.created_at,id:$comment.id}] |
+		sort_by(.created_at, .id) | last | select(. != null) | [.pr,.runner] | @tsv' <<<"$comments") || {
+		printf 'approval_discovery=no_matching_trusted_unedited_approval\n' >&2
+		return 1
+	}
 	IFS=$'\t' read -r pr runner <<<"$candidate"
 	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login"
 	return $?
