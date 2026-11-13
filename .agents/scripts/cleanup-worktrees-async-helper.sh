@@ -290,6 +290,7 @@ _maintain_compact_archives() {
 }
 
 # Print the current repo plus every repos.json repository path, once each.
+# Arg: "true" = bounded git lookup, skip local_only repos (capacity); "bounded" = bounded lookup, include local_only.
 _missing_metadata_repo_paths() {
 	local capacity_only="${1:-false}"
 	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
@@ -297,7 +298,7 @@ _missing_metadata_repo_paths() {
 	local seen=$'\n'
 
 	{
-		if [[ "$capacity_only" == true ]]; then
+		if [[ "$capacity_only" == true || "$capacity_only" == bounded ]]; then
 			timeout_sec 5 git rev-parse --show-toplevel 2>/dev/null || true
 		else
 			git rev-parse --show-toplevel 2>/dev/null || true
@@ -328,7 +329,7 @@ _prune_turbo_caches() {
 		rc=0
 		timeout_sec "$remaining" bash "$helper" --turbo-cache "$repo" >>"$LOGFILE" 2>&1 || rc=$?
 		[[ "$rc" -eq 0 ]] || printf '[cleanup-worktrees-async] turbo-cache-prune failed rc=%s\n' "$rc" >>"$LOGFILE"
-	done < <(_missing_metadata_repo_paths true)
+	done < <(_missing_metadata_repo_paths bounded)
 	return 0
 }
 
