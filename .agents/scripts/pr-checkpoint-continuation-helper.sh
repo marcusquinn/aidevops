@@ -65,7 +65,7 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#36019: per-PR fuse across heads. A continuation that pushes a new head and
 # then releases again re-arms the per-head bound; this caps the total number of
 # continuation-eligible releases since the PR was created before attention.
