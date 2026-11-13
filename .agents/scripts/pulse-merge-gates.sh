@@ -858,13 +858,20 @@ _pulse_approve_pr_at_head() {
 		return $?
 	fi
 
+	# Parse stdout only. stderr (gh errors, privacy-shim advisories) passes to the
+	# caller's log capture; merging it here made valid review JSON unparsable
+	# and logged successful approvals as failures (GH#38082).
 	approval_response=$(gh api -X POST "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 		-f 'event=APPROVE' -f "body=${approval_body}" \
-		-f "commit_id=${expected_head_sha}" 2>&1) || return 1
+		-f "commit_id=${expected_head_sha}") || return 1
 	approval_state=$(printf '%s' "$approval_response" | jq -r '.state // ""' 2>/dev/null) || return 1
 	approval_head_sha=$(printf '%s' "$approval_response" | jq -r '.commit_id // ""' 2>/dev/null) || return 1
-	[[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]
-	return $?
+	if [[ "$approval_state" == "APPROVED" && "$approval_head_sha" == "$expected_head_sha" ]]; then
+		return 0
+	fi
+	printf 'approval response state=%s commit_id=%s (expected APPROVED at %s)\n' \
+		"${approval_state:-none}" "${approval_head_sha:-none}" "$expected_head_sha" >&2
+	return 1
 }
 
 #######################################

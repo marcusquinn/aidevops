@@ -916,11 +916,15 @@ privacy_scan_secret_material_text() {
 	if [[ -z "$text" ]]; then
 		return 0
 	fi
+	# Command substitution strips trailing newlines, and gh-shim bodies always end
+	# with one. The sentinel keeps them, so the advisory below reports only an
+	# actual script-reference redaction (GH#38082).
 	if [[ -n "$basenames_provided" ]]; then
-		scan_text=$(_privacy_redact_aidevops_script_references "$text" "$basenames_text")
+		scan_text=$(_privacy_redact_aidevops_script_references "$text" "$basenames_text" && printf '.')
 	else
-		scan_text=$(_privacy_redact_aidevops_script_references "$text")
+		scan_text=$(_privacy_redact_aidevops_script_references "$text" && printf '.')
 	fi
+	scan_text="${scan_text%.}"
 	if [[ "$scan_text" != "$text" ]]; then
 		printf '%s\n' '[privacy-scan][ALLOW] aidevops script file reference' >&2
 	fi
