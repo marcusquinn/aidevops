@@ -478,25 +478,27 @@ _full_loop_receipt_owner_alive() {
 	[[ -z "$current_start" || "$current_start" == "$recorded_start" ]]
 }
 
-# GH#38095: name a timed-out lock's live holder without leaking local paths:
-# basenames of its first three command words, restricted to a safe charset.
+# GH#38095: name a timed-out lock's live holder without leaking local paths or
+# argument values, which may carry credentials: the executable's basename plus,
+# for an interpreter, its script's basename. No other argv word is ever kept.
 _full_loop_receipt_holder_command() {
 	local pid="$1"
 	local raw=""
-	local word=""
+	local script=""
 	local summary=""
-	local count=0
 	local -a words=()
 	raw=$(LC_ALL=C ps -o command= -p "$pid" 2>/dev/null) || raw=""
 	read -r -a words <<<"$raw" || true
 	if [[ "${#words[@]}" -gt 0 ]]; then
-		for word in "${words[@]}"; do
-			[[ "$count" -lt 3 ]] || break
-			summary="${summary:+${summary} }${word##*/}"
-			count=$((count + 1))
-		done
+		summary="${words[0]##*/}"
 	fi
-	summary=$(printf '%s' "$summary" | tr -cd '[:alnum:] ._:=+-')
+	if [[ "${#words[@]}" -gt 1 ]]; then
+		script="${words[1]}"
+		if [[ "$script" != -* && "$script" != *=* && "$script" =~ \.(sh|py|mjs|js|ts)$ ]]; then
+			summary="${summary} ${script##*/}"
+		fi
+	fi
+	summary=$(printf '%s' "$summary" | tr -cd '[:alnum:] ._+-')
 	printf '%s\n' "${summary:0:80}"
 	return 0
 }
