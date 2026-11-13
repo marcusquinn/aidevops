@@ -1656,7 +1656,7 @@ _pcc_post_stall_attention() {
 		fuse_marker=$'\n'"<!-- ${_PCC_STALL_FUSE_MARKER} pr=${pr} -->"
 		posted_scope="Posted once per PR."
 	fi
-	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" ]]; then
+	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" || "$note" == 'Mismatched approval binding fields:'* ]]; then
 		# An unexpired approval fences the legacy route, even after a head
 		# change. Neither an aged record nor a push bypasses it before expiry.
 		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling until the approval expires; before then neither a new head nor an aged attention record re-arms automatic continuation"
@@ -1862,12 +1862,30 @@ _pcc_dispatch_stalled() {
 _pcc_approved_revision_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
 	local posted="${9:-false}"
+	local pr_json="" issue_json="" comments="" trusted_logins="" diagnostic="" keys="" note="$_PCC_APPROVAL_VALIDATION_NOTE"
+	local issue_api="repos/${repo}/issues"
 	if [[ "$posted" == true ]]; then
 		printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
 		return 0
 	fi
+	# Re-read the same binding metadata; failure leaves the conservative generic note.
+	if pr_json=$(gh pr view "$pr" --repo "$repo" --json number,headRefOid,headRefName,author) &&
+		issue_json=$(gh api "${issue_api}/${issue}") &&
+		comments=$(_pcc_issue_comments "$repo" "$issue") &&
+		trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo"); then
+		diagnostic=$(printf '%s\n' "$pr_json" "$issue_json" "$comments" "$trusted_logins" |
+			jq -se --arg repo "$repo" '{repo:$repo,pr:.[0],issue:.[1],comments:.[2],trusted_logins:.[3]}' |
+			python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" binding-diagnostic 2>/dev/null) || diagnostic=""
+		if [[ "$diagnostic" =~ ^APPROVAL_BINDING_MISMATCH\ keys=([a-z_,0-9]+)\ approval_comment=[1-9][0-9]*$ ]]; then
+			keys="${BASH_REMATCH[1]}"
+			note="Mismatched approval binding fields: ${keys}. The existing approval does not match the current target; regenerate it with \`approval-template\`."
+			if [[ ",$keys," == *,brief_sha256,* ]]; then
+				note="${note} The issue body changed after approval (check for an automated body refresh); regenerate the approval with \`approval-template\`."
+			fi
+		fi
+	fi
 	_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" \
-		false "$_PCC_APPROVAL_VALIDATION_NOTE" || return 1
+		false "$note" || return 1
 	printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s cause=approved_revision_not_continuable\n' \
 		"$pr" "$repo" "$head" "$release_id" "$stalls"
 	return 0
