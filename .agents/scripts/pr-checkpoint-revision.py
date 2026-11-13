@@ -21,6 +21,9 @@ from pr_checkpoint_history import explain_reviewed_successor_history
 from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
 
+LEASE_EXPIRED = "reason=prelaunch_lease_expired"
+
+
 def approval_matches(data, approval, comment, now):
     attempt = approval.get("attempt")
     return all((all(approval.get(key) == value for key, value in binding(data).items()),
@@ -114,7 +117,7 @@ def candidate_owners_valid(data, closing):
     return owners in allowed_owners
 
 
-def candidate(data, comments, comment, now, diagnose_expired=False):
+def candidate(data, comments, comment, now):
     approval = approved_comment(data, comment, now)
     if approval is None:
         return None
@@ -128,21 +131,27 @@ def candidate(data, comments, comment, now, diagnose_expired=False):
     # only events after the approval and never grants authority from closure.
     later = [c for c in comments if c["id"] >= comment["id"] and c["id"] not in reused]
     if not successors_valid({**data, "released_lease": closing}, later, approval["release_id"],
-                            comment["id"], now, diagnose_expired):
+                            comment["id"], now):
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
 
 
+def lease_expired(data, comments, now):
+    """GH#38145: exactly one approval would match if its own claim were live."""
+    expired = {**data, "diagnose_expired": True}
+    return bool(data.get("lease")) and sum(candidate(expired, comments, c, now) is not None
+                                           for c in comments) == 1
+
+
 def validate(data):
+    #aidevops:trust-boundary — the expiry bypass is diagnostic-only; no payload grants it.
+    data = {**data, "diagnose_expired": False}
     comments = sorted_comments(data)
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     candidates = [result for c in comments if (result := candidate(data, comments, c, now)) is not None]
+    if not candidates and lease_expired(data, comments, now):
+        raise ValueError(LEASE_EXPIRED)
     if len(candidates) != 1:
-        if not candidates and data.get("lease"):
-            expired = [result for c in comments
-                       if (result := candidate(data, comments, c, now, diagnose_expired=True)) is not None]
-            if len(expired) == 1:
-                raise ValueError("reason=prelaunch_lease_expired")
         raise ValueError("missing or ambiguous current revision approval")
     return candidates[0]
 
@@ -249,8 +258,8 @@ if __name__ == "__main__":
     except (ValueError, KeyError, TypeError, OverflowError) as error:
         if template_mode:
             print(f"approval-template: {error}", file=sys.stderr)
-        elif str(error) == "reason=prelaunch_lease_expired":
-            print("PR_CHECKPOINT_TARGET_LOST: reason=prelaunch_lease_expired", file=sys.stderr)
+        elif str(error) == LEASE_EXPIRED:
+            print(f"PR_CHECKPOINT_TARGET_LOST: {LEASE_EXPIRED}", file=sys.stderr)
         elif payload is not None and (diagnostic := binding_diagnostic(payload)):
             print(diagnostic, file=sys.stderr)
         sys.exit(1)
