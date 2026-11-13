@@ -38,7 +38,14 @@ cmd_claim_pr_checkpoint() {
 	comment_id=$(_post_claim "$issue" "$repo" "$runner" "$nonce" "$(_now_utc)" \
 		"checkpoint_mode=revision checkpoint_approval=${approval_id}" "$session") || return 1
 	sleep "$DISPATCH_CLAIM_WINDOW"
-	claims=$(_fetch_claims "$issue" "$repo" "$runner") || return 1
+	if ! claims=$(_fetch_claims "$issue" "$repo" "$runner"); then
+		printf 'PR_CHECKPOINT_CLAIM_FAILED stage=consensus_read issue=%s repo=%s claim_id=%s\n' "$issue" "$repo" "$comment_id" >&2
+		# Release only if the prelaunch lease has already expired. Otherwise the
+		# owning pulse retries after expiry; a premature release cannot authorize
+		# a fresh approval and would leave the history invalid.
+		cmd_sweep_pr_checkpoint_claim "$issue" "$repo" || true
+		return 1
+	fi
 	if ! race_output=$(_resolve_claim_race_result "$issue" "$repo" "$runner" "$nonce" "$comment_id" "$claims"); then
 		return 1
 	fi
@@ -124,6 +131,38 @@ cmd_abort_pr_checkpoint_claim() {
 		'[{id: $id, nonce: $nonce, claim_author: $runner}]') || return 1
 	_post_orphan_claim_release "$issue" "$repo" "$runner" "$release" || return 1
 	printf 'PR_CHECKPOINT_CLAIM_ABORTED claim_id=%s\n' "$result"
+	return 0
+}
+
+#aidevops:trust-boundary — only the authenticated runner's own device can
+# recover an expired revision claim, with a fresh timeline check at the write.
+cmd_sweep_pr_checkpoint_claim() {
+	local issue="${1:-}" repo="${2:-}" runner="" device="" comments candidates=""
+	local id="" nonce="" session="" release="" attempted=0
+	[[ "$issue" =~ ^[1-9][0-9]*$ && "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
+	runner=$(_resolve_runner "") || return 1
+	device=$(_resolve_device_id) || return 1
+	[[ -n "$runner" && -n "$device" ]] || return 1
+	aidevops_can_manage_repo_issue_state "$repo" "$runner" || return 1
+	comments=$(_fetch_claim_marker_comments "$issue" "$repo") || return 1
+	candidates=$(jq -r --arg runner "$runner" --arg device "$device" --arg phase "$LEASE_PHASE_PRELAUNCH" '
+		def fields: [scan("([a-z_]+)=([^ ]+)") | {key: .[0], value: .[1]}] | from_entries;
+		.[] | select(.author == $runner and (.author_association | test("^(OWNER|MEMBER|COLLABORATOR)$")))
+		| . as $c | .body | split("\n")[] | select(startswith("DISPATCH_CLAIM ")) | fields
+		| select(.runner == $runner and .device == $device and .phase == $phase
+			and .checkpoint_mode == "revision" and (.checkpoint_approval // "") != "")
+		| [($c.id | tostring), .nonce, .session] | @tsv
+	' <<<"$comments") || return 1
+	while IFS=$'\t' read -r id nonce session; do
+		[[ "$id" =~ ^[1-9][0-9]*$ && "$nonce" =~ ^[A-Za-z0-9._-]+$ && "$session" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+		_dch_orphan_release_valid "$comments" "$comments" "$id" "$nonce" "$runner" "$device" "$session" || continue
+		_dch_session_has_live_executor "$session" && continue
+		attempted=$((attempted + 1))
+		release=$(jq -nc --argjson id "$id" --arg nonce "$nonce" --arg runner "$runner" \
+			'[{id:$id,nonce:$nonce,claim_author:$runner}]') || return 1
+		AIDEVOPS_PR_CHECKPOINT_SESSION="$session" _post_orphan_claim_release "$issue" "$repo" "$runner" "$release" "$comments" || true
+		[[ "$attempted" -lt 10 ]] || break
+	done <<<"$candidates"
 	return 0
 }
 

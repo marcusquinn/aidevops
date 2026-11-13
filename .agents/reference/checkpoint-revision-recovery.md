@@ -279,8 +279,11 @@ release; unsupported histories remain blocked pending supported reconciliation.
 
 An approval-bound `claim-pr-checkpoint` can expire before the executor renews its prelaunch lease
 (`transition prelaunch` reports `lease_unmatched`); renew before the output's `prelaunch_expires_at`.
-If it still expires, the claim owner (same account, device and session) runs
-`dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION`. It refuses a
+If it still expires, the owner's pulse revisits open worker drafts in bounded,
+rotating batches and releases its own expired revision claims on the same device.
+It rechecks the exact session and live timeline and skips a running executor.
+For an issue outside that sweep, the claim owner may still run
+`dispatch-claim-helper.sh abort-pr-checkpoint-claim ISSUE OWNER/REPO LEASE SESSION`. Both refuse a
 live or ready lease, a worker launch, an existing release, edited or other-actor events and
 mismatched identity, then posts `CLAIM_RELEASED reason=claim_only_no_worker claim_id=… nonce=…`.
 That grants nothing: the consumed approval stays rejected; recovery needs a new approval whose

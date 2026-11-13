@@ -1758,6 +1758,9 @@ main() {
 	abort-pr-checkpoint-claim)
 		cmd_abort_pr_checkpoint_claim "$@"
 		;;
+	sweep-pr-checkpoint-claim)
+		cmd_sweep_pr_checkpoint_claim "$@"
+		;;
 	close-expired-pr-checkpoint-lease)
 		cmd_close_expired_pr_checkpoint_lease "$@"
 		;;
