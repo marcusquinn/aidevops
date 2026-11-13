@@ -147,8 +147,12 @@ macos_checks_verify_pr() {
 	gh pr edit "$pr" --repo "$repo" --remove-label needs-macos-verification || return 1
 	# A push between the check above and label removal would leave the new head
 	# without a handoff (the refresh workflow's addLabels no-ops while labelled).
-	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) || return 1
-	current_head=$(jq -r .headRefOid <<<"$metadata") || return 1
+	if ! metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) ||
+		! current_head=$(jq -er .headRefOid <<<"$metadata"); then
+		gh pr edit "$pr" --repo "$repo" --add-label needs-macos-verification || true
+		printf 'macOS verification failed: unable to confirm head after label removal; requested label restoration.\n' >&2
+		return 1
+	fi
 	if [[ "$current_head" != "$head" ]]; then
 		gh pr edit "$pr" --repo "$repo" --add-label needs-macos-verification || true
 		printf 'macOS verification failed: PR head changed from %s to %s during label removal; restored needs-macos-verification.\n' "$head" "$current_head" >&2

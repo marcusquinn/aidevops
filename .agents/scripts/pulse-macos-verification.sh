@@ -82,6 +82,7 @@ _pulse_macos_checks_pass() {
 	# Query the immutable commit, not the PR's mutable current-head check list.
 	# isRequired uses this PR's branch protection/ruleset context. Incomplete or
 	# unknown rollups fail closed, including a truncated (>100 contexts) response.
+	# shellcheck disable=SC2016 # GraphQL variables are bound by gh, not Bash.
 	checks=$(gh api graphql -f owner="${repo%/*}" -f name="${repo#*/}" -F pr="$pr" -f head="$head" -f query='
 		query($owner:String!, $name:String!, $pr:Int!, $head:GitObjectID!) {
 		  repository(owner:$owner, name:$name) { object(oid:$head) { ... on Commit {
@@ -121,7 +122,7 @@ _pulse_macos_candidates() {
 		write | maintain | admin) ;;
 		*) printf 'macos-verify skipped: untrusted-author (%s#%s)\n' "$repo" "$pr"; continue ;;
 		esac
-		attempt="$state/${repo//\//_}/$pr/$head"
+		attempt="$state/$repo/$pr/$head"
 		if [[ -d "$attempt" ]]; then
 			# The global lock proves a prior in-progress attempt is now interrupted.
 			if [[ ! -f "$attempt/outcome" ]]; then
@@ -162,7 +163,7 @@ _pulse_macos_cycle() {
 	login=$(gh api user --jq .login) || return 1
 	while IFS=$'\t' read -r repo path maintainer; do
 		[[ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$maintainer" | tr '[:upper:]' '[:lower:]')" ]] || continue
-		[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -d "$path" ]] || continue
+		[[ "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ && "${repo#*/}" != . && "${repo#*/}" != .. && -d "$path" ]] || continue
 		_pulse_macos_candidates "$repo" "$path" "$state" || rc=$?
 		[[ "$rc" != 10 ]] || return 0
 	done <<<"$entries"
@@ -178,10 +179,18 @@ _pulse_macos_run() {
 	mkdir -p "$state" || return 1
 	# shellcheck source=shared-constants.sh
 	source "$_PULSE_MACOS_DIR/shared-constants.sh" || return 1
+	local -a timer=(timeout_sec "$budget")
+	# Coreutils otherwise waits forever if a suite ignores TERM. The stock
+	# macOS timeout_sec fallback already escalates to KILL for the whole group.
+	if command -v timeout >/dev/null 2>&1; then
+		timer=(timeout --kill-after=5 "$budget")
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timer=(gtimeout --kill-after=5 "$budget")
+	fi
 	# Portable advisory lock: parent Perl holds it until the bounded cycle exits.
 	# A timeout kills the process group; the next cycle can acquire the same lock.
 	# shellcheck disable=SC2016 # Perl, not Bash, expands these variables.
-	timeout_sec "$budget" perl -MFcntl=:flock -e '
+	"${timer[@]}" perl -MFcntl=:flock -e '
 		open my $lock, ">>", shift @ARGV or exit 1;
 		flock($lock, LOCK_EX | LOCK_NB) or exit 0;
 		system @ARGV; exit($? == -1 ? 1 : ($? & 127 ? 1 : $? >> 8));
