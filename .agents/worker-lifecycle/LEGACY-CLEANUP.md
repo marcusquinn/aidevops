@@ -138,9 +138,10 @@ python3 -E -s -B ~/.aidevops/agents/worker-lifecycle/worker-legacy-cleanup.py --
 
 Add `--apply` to archive and remove the selected worktrees. `--min-age-seconds`,
 `--limit` and `--budget-seconds` bound a manual invocation. The budget starts
-before inventory and discovery, and items start only before it expires, so a pass
-ends within its budget plus at most one item's work; `budget_exhausted` reports
-that it expired (GH#38158). Both cleanup passes
+before inventory and discovery, which consume it and can overrun it; items start
+only before it expires, so once discovery ends a pass finishes within at most one
+item's work. The outer watchdog is the hard termination bound. `budget_exhausted`
+reports that the budget expired (GH#38158). Both cleanup passes
 use the same read-only archive-path validation described in [CLEANUP.md](CLEANUP.md).
 An owned archive root with mode 0755 is accepted without changing permissions;
 individual archives remain private. Unsafe paths prevent source retirement.

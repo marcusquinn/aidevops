@@ -145,6 +145,13 @@ export async function runSupervisor() {
   // This existing supervisor owns the operation until its normal drain completes.
   // Register its native identity before spawning, independently of the UI owner.
   const supervised = process.connected === true;
+  // Admission can wait for writer contention, and the main handler is registered
+  // only afterwards: record a terminate request now and honour it before spawning.
+  let preAdmissionCancel = null;
+  const recordPreAdmissionCancel = (message) => {
+    if (message?.action === "terminate") preAdmissionCancel ||= message.cause || "cancel";
+  };
+  process.on("message", recordPreAdmissionCancel);
   try {
     await admitWithContentionWait(() => admitToolOwner({
       scriptsDir: fileURLToPath(new URL("../../scripts/", import.meta.url)),
@@ -157,9 +164,12 @@ export async function runSupervisor() {
     const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
     process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
     return 75;
+  } finally {
+    process.off("message", recordPreAdmissionCancel);
   }
   // A manager that went away during a contention wait can no longer supervise.
   if (supervised && !process.connected) return 75;
+  if (preAdmissionCancel) return 75;
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 300 * 1000);

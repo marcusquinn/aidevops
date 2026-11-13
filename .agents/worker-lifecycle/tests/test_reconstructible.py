@@ -17,6 +17,7 @@ from worker_lifecycle import legacy_cleanup as cleanup
 from worker_lifecycle import legacy_inventory as inventory
 from worker_lifecycle import legacy_probe as probe
 from worker_lifecycle import legacy_proc
+from worker_lifecycle import legacy_resume
 from worker_lifecycle.admission import AdmissionRegistry
 from worker_lifecycle.cleanup_plan import enrolled_only_event_id, prepare_cleanup
 from worker_lifecycle.legacy_options import CleanupOptions
@@ -487,6 +488,10 @@ class ReconstructibleContract(unittest.TestCase):
                               side_effect=lambda path: self.real_census(path, self.proc))
         census.start()
         self.addCleanup(census.stop)
+        resume_census = patch.object(legacy_resume, "require_idle_processes",
+                                     side_effect=lambda path: self.real_census(path, self.proc))
+        resume_census.start()
+        self.addCleanup(resume_census.stop)
         fixtures.age_past_clock_slack()
 
     def interrupt_removal(self, late=None):

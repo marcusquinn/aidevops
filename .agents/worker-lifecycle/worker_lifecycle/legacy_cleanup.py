@@ -357,7 +357,8 @@ def process_reconstructible(store, item, repositories, adapter, options):
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         if receipt(connection, operation, RECONSTRUCTIBLE_REMOVING) is not None:
             plan, test_removal = resume_reconstructible_removal(
-                store, connection, item, adapter, remove_released, _git)
+                store, connection, item, adapter, remove_released, _git,
+                repositories)
         else:
             # GitHub lookups release the writer (GH#36921); this plan is only journaled.
             plan = reconstructible_plan(
