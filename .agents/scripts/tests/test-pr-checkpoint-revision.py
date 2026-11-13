@@ -98,6 +98,23 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
     comment = staticmethod(comment)
     revision = revision
     bash = BASH
+
+    def test_draft_checkpoint_with_never_ready_foreign_stale_reset(self):
+        data = fixture()
+        data["comments"] = data["comments"][:2]
+        data["comments"][1]["body"] = "CLAIM_RELEASED reason=worker_draft_checkpoint runner=worker"
+        data["comments"] += [
+            comment(4, "DISPATCH_CLAIM nonce=successor lease_token=successor runner=other "
+                       "device=devb session=issue-124 phase=prelaunch expires_at=1", "other"),
+            comment(5, "CLAIM_RELEASED reason=stale_assignment_reset runner=other device=devb", "other"),
+        ]
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        approval = json.loads(line[len(revision.PREFIX):])
+        self.assertEqual(approval["released_successors"][0]["outcome"], "stale_reset_before_ready")
+        data["comments"].append(comment(20, line, "maintainer", "OWNER"))
+        self.assertEqual(revision.validate(data)["approval_id"], 20)
+        with self.assertRaises(ValueError):
+            revision.template({**data, "release_id": 5, "attempt": "attempt:original"})
     scripts = SCRIPTS
 
     def test_legacy_release_and_ambiguous_attempt(self):

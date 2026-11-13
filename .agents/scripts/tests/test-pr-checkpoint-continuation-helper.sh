@@ -162,6 +162,15 @@ source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-fuse.sh"
 # shellcheck source=test-pr-checkpoint-tier-escalation.sh
 source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-tier-escalation.sh"
 
+# A never-ready successor must not borrow the earlier attempt as its own.
+episode_comments='[{"id":1,"created_at":"2026-09-30T01:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"DISPATCH_LEASE phase=ready attempt_id=attempt:original"},{"id":2,"created_at":"2026-09-30T02:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=a"},{"id":3,"created_at":"2026-09-30T03:00:00Z","author_association":"MEMBER","user":{"login":"b"},"body":"DISPATCH_CLAIM runner=b"},{"id":4,"created_at":"2026-09-30T04:00:00Z","author_association":"MEMBER","user":{"login":"b"},"body":"CLAIM_RELEASED reason=stale_assignment_reset runner=b"}]'
+episode_result=$(_pcc_stall_release_evidence "$episode_comments" "2026-09-30T00:00:00Z" key)
+if [[ "$episode_result" == *$'\tattempt:original\t2' ]]; then
+	print_result 'stall approval selects checkpoint episode' 0
+else
+	print_result 'stall approval selects checkpoint episode' 1 "$episode_result"
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0

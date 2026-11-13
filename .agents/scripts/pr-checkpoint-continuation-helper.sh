@@ -1430,7 +1430,8 @@ _pcc_stall_release_evidence() {
 			| if $attempt != "" then {id: $release.id, attempt: $attempt}
 			elif $start < 0 then null
 			else ([$c[] | select(.id < $start and any(body_lines; is_release))] | last) as $prior
-				| if $prior != null and ($prior | unedited and stall_release) then checkpoint($c; $prior) else null end
+				| if $prior != null and ($prior | unedited and (stall_release or release_reason == "worker_draft_checkpoint"))
+					then checkpoint($c; $prior) else null end
 			end;
 		($head_date | epoch) as $head_epoch
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
