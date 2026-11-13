@@ -148,8 +148,10 @@ FILING_ASK_RE = re.compile(
 )
 FILING_EXCLUDED_RE = re.compile(
     r"\bnot needed\b"
+    r"|\bor\s+(?:is|could|might)\s+(?:this|that|it)\s+(?:be\s+)?(?:expected|intended|normal)\b"
+    r"|\bor\s+(?:is|are)\s+(?:it|this|that|they)\s+(?:unnecessary|not\s+(?:needed|necessary))\b"
     r"|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b"
-    r"|\bexternal repos?(?:itory)?\b"
+    r"|\b(?:another|other|third[- ]party|external|upstream)\s+(?:repos?|repositories|repository)\b"
     r"|\b(?:secrets?|credentials?|spend|spending|billing)\b"
     r"|\bprivate[- ](?:data|repo)",
     re.IGNORECASE,

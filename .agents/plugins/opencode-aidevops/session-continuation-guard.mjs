@@ -277,8 +277,6 @@ function correctUncapturedCloseout(state, input, output) {
 function correctFilingPermissionAsk(state, input, output) {
   const scope = scopeFor(state, input);
   if (state.filingSteered.has(scope) || !asksFilingPermission(output?.text)) return { corrected: false };
-  state.filingSteered.add(scope);
-  capMap(state.filingSteered, state.maxScopes);
   queueSteering(state, input, "filing", "Your closeout asks permission to file an issue, task or TODO. Filing is already authorised: file it now under the capture rule in Framework Rules (deduplicate first) and cite the link in the body. Keep the ask only when the need itself is undecided, and then ask about the need.");
   state.qualityLog?.("WARN", `[session-continuation] queued filing-permission steering for session ${sessionHashFor(input)}`);
   return { corrected: true, filing: true };
@@ -324,6 +322,10 @@ function deliverSteering(state, input, output) {
     info: { id, sessionID: key, role: "user", time: { created: Date.now() }, parentID: "" },
     parts: [{ id: `${id}-part`, sessionID: key, messageID: id, type: "text", text: pending.text, synthetic: true }],
   });
+  if (pending.kind === "filing") {
+    state.filingSteered.add(scopeFor(state, { sessionID: key }));
+    capMap(state.filingSteered, state.maxScopes);
+  }
   return { injected: true, kind: pending.kind, text: pending.text };
 }
 

@@ -132,9 +132,22 @@ fi
   assert.equal(blockerGuard.injectSteering({ sessionID: "filing" }, fileCall).kind, "filing");
   assert.match(fileCall.messages.at(-1).parts[0].text, /file it now/);
   assert.equal(blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk }).corrected, false, "second matching closeout queues nothing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true);
+  blockerGuard.beforeTool({ sessionID: "filing-discarded", tool: "bash", callID: "filing-tool" }, { args: {} });
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).injected, false, "tool call discards pending filing steering");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true, "discarded steering does not consume the allowance");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).kind, "filing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).corrected, false, "delivered steering consumes the allowance");
   for (const [name, ask] of [
     ["not needed option", "1. **Should I file an issue for X?** y = file · n = not needed"],
+    ["undecided expected behaviour", "1. Should I file an issue, or is this expected behaviour?"],
+    ["undecided intended behavior", "1. Should I file an issue, or is this intended behavior?"],
+    ["undecided necessity", "1. Should I file an issue, or is it unnecessary?"],
     ["other organisation", "1. **Should I file an issue in another organisation's repository?**"],
+    ["third-party repository", "1. Should I file an issue in a third-party repository?"],
+    ["third party repo", "1. Should I file an issue in a third party repo?"],
+    ["external repository", "1. Should I file an issue in an external repository?"],
+    ["upstream repositories", "1. Should I file an issue in upstream repositories?"],
     ["secret", "1. **Should I file a task to rotate the secret?**"],
     ["spend", "1. **Should I file a task to approve the spend?**"],
     ["release", "1. **Should I release v1.2.3?**"],

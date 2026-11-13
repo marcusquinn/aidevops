@@ -256,6 +256,18 @@ test_filing_permission() {
 	expect_allow "ask offering not needed → allow" "$(run_hook f-notneeded "$t")"
 	write_transcript "$t" "Go" "none" "${pre}1. **Should I file an issue in another organisation's repository?**${post}"
 	expect_allow "ask naming another organisation → allow" "$(run_hook f-org "$t")"
+	local ask
+	for ask in \
+		"Should I file an issue, or is this expected behaviour?" \
+		"Should I file an issue, or is this intended behavior?" \
+		"Should I file an issue, or is it unnecessary?" \
+		"Should I file an issue in a third-party repository?" \
+		"Should I file an issue in a third party repo?" \
+		"Should I file an issue in an external repository?" \
+		"Should I file an issue in upstream repositories?"; do
+		write_transcript "$t" "Go" "none" "${pre}1. ${ask}${post}"
+		expect_allow "undecided need or external repository: $ask → allow" "$(run_hook "f-excluded-$ask" "$t")"
+	done
 	write_transcript "$t" "Go" "none" "${pre}1. **Should I release v1.2.3?**${post}"
 	expect_allow "release ask → allow (regression guard)" "$(run_hook f-release "$t")"
 	return 0

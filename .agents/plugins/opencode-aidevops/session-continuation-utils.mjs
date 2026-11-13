@@ -104,7 +104,7 @@ function hasWhatNextAsk(normalized) {
 const NEEDED_BLOCK_RE = /Needed from you:[\s\S]*?(?=Left to capture|\bClose(?: readiness)?:|$)/gi;
 const FILING_ASK_RE = /^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to|would you like me to|ok(?:ay)? to)?\s*(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*(?:[\w/-]+\s+){0,5}?(?:issue|task|todo|ticket|follow-?up)s?\b/im;
 // Authority the session lacks, or an ask where the need itself is the question.
-const FILING_EXCLUDED_RE = /\bnot needed\b|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b|\bexternal repos?(?:itory)?\b|\b(?:secrets?|credentials?|spend|spending|billing)\b|\bprivate[- ](?:data|repo)/i;
+const FILING_EXCLUDED_RE = /\bnot needed\b|\bor\s+(?:is|could|might)\s+(?:this|that|it)\s+(?:be\s+)?(?:expected|intended|normal)\b|\bor\s+(?:is|are)\s+(?:it|this|that|they)\s+(?:unnecessary|not\s+(?:needed|necessary))\b|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b|\b(?:another|other|third[- ]party|external|upstream)\s+(?:repos?|repositories|repository)\b|\b(?:secrets?|credentials?|spend|spending|billing)\b|\bprivate[- ](?:data|repo)/i;
 
 export function asksFilingPermission(text) {
   const blocks = [...withoutCode(text).matchAll(NEEDED_BLOCK_RE)].map((match) => match[0]);
