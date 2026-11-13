@@ -207,7 +207,8 @@ define_helpers_under_test() {
 	# shellcheck source=../protected-release-helper.sh
 	source "${SCRIPT_DIR}/../protected-release-helper.sh"
 	local release_function="" release_source=""
-	for release_function in _pmp_is_protected_release_pr _pmp_hold_protected_release_pr; do
+	for release_function in _pmp_is_protected_release_pr _pmp_protected_release_head_binding \
+		_pmp_protected_release_queue_decision _pmp_hold_protected_release_pr; do
 		release_source=$(awk -v name="$release_function" '$0 ~ "^" name "\\(\\) \\{" { active=1 } active { print } active && /^}$/ { exit }' "$PROCESS_SCRIPT")
 		eval "$release_source"
 	done
@@ -933,6 +934,126 @@ test_protected_release_staged_head_comparison() {
 	return 0
 }
 
+# Write a protected release PR REST projection for the hold under test.
+write_release_pr_fixture() {
+	local merge_method="$1"
+	local live_head="$2"
+	local pinned_object="$3"
+	local pinned_commit="$4"
+	jq -n --arg method "$merge_method" --arg head "$live_head" \
+		--arg marker "<!-- aidevops:release-provenance tag=v1.2.3 tag-object=${pinned_object} release-commit=${pinned_commit} merge-method=merge -->" '
+		{auto_merge: {enabled_at: "2026-11-13T02:19:48Z", merge_method: $method},
+		head: {ref: "chore/release-v1.2.3-provenance", sha: $head, repo: {full_name: "owner/repo"}},
+		base: {repo: {full_name: "owner/repo"}}, author_association: "OWNER",
+		labels: [{name: "release"}], body: ("Release PR\n\n" + $marker)}' \
+		>"${TEST_ROOT}/auto_merge_request.txt"
+	: >"$GH_LOG"
+	: >"$LOGFILE"
+	return 0
+}
+
+# GH#38012: a collaborator runner without the releaser's signer trust must not
+# disarm the release lane's exact merge queue, but proven drift still disarms.
+test_protected_release_exact_merge_queue_survives_collaborator_pulse() {
+	setup_test_env
+	define_helpers_under_test
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh"
+	local project_dir="${SCRIPT_DIR}/../../.." signed_head="" tag_object="" blob="" tree="" envelope=""
+	local other_commit="" result=0 fixture_ok=0
+	git init -q "${TEST_ROOT}/repo"
+	git -C "${TEST_ROOT}/repo" fetch -q --depth=1 "$project_dir" HEAD
+	signed_head=$(git -C "${TEST_ROOT}/repo" rev-parse FETCH_HEAD)
+	other_commit=$(git -C "${TEST_ROOT}/repo" commit-tree -m drift "${signed_head}^{tree}")
+	ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/release-key"
+	# Signing trust exists only inside this fixture builder; the consumer below
+	# models a collaborator runner whose verify-tag cannot match the signer.
+	if (
+		git() {
+			command git -c user.name=Release -c user.email=release@example.invalid \
+				-c gpg.format=ssh -c user.signingkey="${TEST_ROOT}/release-key" "$@"
+			return $?
+		}
+		git -C "${TEST_ROOT}/repo" tag -s v1.2.3 "$signed_head" -m Release || exit 1
+		blob=$(git -C "${TEST_ROOT}/repo" cat-file tag v1.2.3 | git -C "${TEST_ROOT}/repo" hash-object -w --stdin) || exit 1
+		tree=$(printf '100644 blob %s\ttag\n' "$blob" | git -C "${TEST_ROOT}/repo" mktree) || exit 1
+		envelope=$(git -C "${TEST_ROOT}/repo" commit-tree --no-gpg-sign -p "$signed_head" -m Envelope "$tree") || exit 1
+		git -C "${TEST_ROOT}/repo" update-ref refs/aidevops/release-tags/v1.2.3 "$envelope" || exit 1
+		git init -q "${TEST_ROOT}/consumer" || exit 1
+		git -C "${TEST_ROOT}/consumer" remote add origin "${TEST_ROOT}/repo" || exit 1
+	); then
+		fixture_ok=1
+	fi
+	tag_object=$(git -C "${TEST_ROOT}/repo" rev-parse v1.2.3 2>/dev/null) || tag_object=""
+	if [[ "$fixture_ok" -ne 1 || ! "$tag_object" =~ ^[0-9a-f]{40}$ ]]; then
+		print_result "Collaborator pulse release fixture builds" 1
+		teardown_test_env
+		return 0
+	fi
+	RELEASE_FIXTURE_REPO_PATH="${TEST_ROOT}/consumer"
+	_pulse_merge_repo_path_for_slug() {
+		[[ -n "${RELEASE_FIXTURE_REPO_PATH:-}" ]] || return 1
+		printf '%s\n' "$RELEASE_FIXTURE_REPO_PATH"
+		return 0
+	}
+
+	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"
+	result=0
+	_set_native_auto_merge_or_skip 904 owner/repo 0 APPROVED "$signed_head" || result=$?
+	if [[ "$result" -eq 2 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
+		grep -q 'bound to the remote signed release evidence' "$LOGFILE"; then
+		print_result "Collaborator pulse retains exact-merge queue bound to remote release evidence" 0
+	else
+		print_result "Collaborator pulse retains exact-merge queue bound to remote release evidence" 1 \
+			"rc=${result}; gh log: $(cat "$GH_LOG")"
+	fi
+
+	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"
+	result=0
+	RELEASE_FIXTURE_REPO_PATH="" _pmp_hold_protected_release_pr 904 owner/repo \
+		chore/release-v1.2.3-provenance "$signed_head" || result=$?
+	if [[ "$result" -eq 0 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
+		grep -q 'unavailable on this runner' "$LOGFILE"; then
+		print_result "Unavailable local staging evidence is not treated as drift" 0
+	else
+		print_result "Unavailable local staging evidence is not treated as drift" 1 "rc=${result}"
+	fi
+
+	local scenario="" fixture_head="" gated_head="" pinned_object="" pinned_commit="" method=""
+	for scenario in pinned-drift envelope-mismatch squash gated-head-drift; do
+		method=merge fixture_head="$signed_head" gated_head="$signed_head"
+		pinned_object="$tag_object" pinned_commit="$signed_head"
+		case "$scenario" in
+		pinned-drift) fixture_head="$other_commit" gated_head="$other_commit" ;;
+		envelope-mismatch) pinned_object="$other_commit" ;;
+		squash) method=squash ;;
+		gated-head-drift) gated_head="$other_commit" ;;
+		esac
+		write_release_pr_fixture "$method" "$fixture_head" "$pinned_object" "$pinned_commit"
+		result=0
+		_pmp_hold_protected_release_pr 904 owner/repo chore/release-v1.2.3-provenance "$gated_head" || result=$?
+		if [[ "$result" -eq 0 ]] && grep -qE 'gh pr merge 904 --repo owner/repo --disable-auto' "$GH_LOG"; then
+			print_result "Protected release ${scenario} still disarms native auto-merge" 0
+		else
+			print_result "Protected release ${scenario} still disarms native auto-merge" 1 "rc=${result}"
+		fi
+	done
+
+	git -C "${TEST_ROOT}/repo" update-ref -d refs/aidevops/release-tags/v1.2.3
+	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"
+	result=0
+	_pmp_hold_protected_release_pr 904 owner/repo chore/release-v1.2.3-provenance "$signed_head" || result=$?
+	if [[ "$result" -eq 0 ]] && grep -qE 'gh pr merge 904 --repo owner/repo --disable-auto' "$GH_LOG"; then
+		print_result "Deleted remote staging evidence still disarms native auto-merge" 0
+	else
+		print_result "Deleted remote staging evidence still disarms native auto-merge" 1 "rc=${result}"
+	fi
+	unset -f _pulse_merge_repo_path_for_slug
+	unset RELEASE_FIXTURE_REPO_PATH
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_a_pending_ci_sets_auto_merge
 	test_case_a_missing_head_does_not_set_auto_merge
@@ -954,6 +1075,7 @@ main() {
 	test_protected_release_pr_uses_exact_merge_owner
 	test_protected_release_native_auto_is_held
 	test_protected_release_staged_head_comparison
+	test_protected_release_exact_merge_queue_survives_collaborator_pulse
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
