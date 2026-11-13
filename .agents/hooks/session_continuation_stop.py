@@ -212,7 +212,7 @@ def _filing_marker(session_id: str) -> Path:
 def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str = ""):
     """Block reason for open todos, or (GH#35121) for an unasked closeout that
     leaves session-edited files uncommitted once every todo is terminal."""
-    if session_id and capture is not None and capture.asks_filing_permission(_without_code(final_text)):
+    if session_id and capture is not None and capture.asks_filing_permission(final_text):
         marker = _filing_marker(session_id)
         if not marker.exists():
             marker.parent.mkdir(parents=True, exist_ok=True)

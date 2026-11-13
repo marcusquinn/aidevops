@@ -274,7 +274,29 @@ test_filing_permission() {
 	expect_allow "create release for an issue → allow" "$(run_hook f-create-release "$t")"
 	write_transcript "$t" "Go" "none" "${pre}1. Should I open a pull request for this issue?${post}"
 	expect_allow "open pull request for an issue → allow" "$(run_hook f-open-pr "$t")"
-	local item
+	local item case_number=0
+	for ask in \
+		$'1. Should I file an issue?\n2. May I deploy the release?' \
+		$'1. May I deploy the release?\n2. Should I file an issue?' \
+		"1. Should I file an issue containing \`private data\`?" \
+		"1. Should I file an issue containing \`credentials\`?" \
+		$'```text\n1. Should I file an issue?\n```'; do
+		case_number=$((case_number + 1))
+		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"
+		expect_allow "mixed, sensitive or fenced ask $case_number → allow" "$(run_hook "f-preserve-$case_number" "$t")"
+	done
+	for ask in \
+		$'1. Should I file an issue?\n2. Should I log a task?' \
+		$'1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```'; do
+		case_number=$((case_number + 1))
+		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"
+		out=$(run_hook "f-only-$case_number" "$t")
+		if [[ "$out" == *'"decision": "block"'* && "$out" == *"file it now"* ]]; then
+			print_result "filing-only asks with fenced examples ignored → block" 0
+		else
+			print_result "filing-only asks with fenced examples ignored → block" 1 "got: ${out:-<empty>}"
+		fi
+	done
 	for item in "issue" "worker task" "local TODO" "actionable follow-up ticket" "follow-up"; do
 		write_transcript "$t" "Go" "none" "${pre}1. Should I create a ${item}?${post}"
 		out=$(run_hook "f-item-$item" "$t")

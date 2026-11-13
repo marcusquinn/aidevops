@@ -138,6 +138,7 @@ NEEDED_BLOCK_RE = re.compile(
     r"Needed from you:.*?(?=Left to capture|\bClose(?: readiness)?:|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
+NUMBERED_ASK_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\d+[.)][ \t]+", re.MULTILINE)
 FILING_ASK_RE = re.compile(
     r"^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*"
     r"(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to"
@@ -165,8 +166,14 @@ FILING_REASON = (
 )
 
 
-def asks_filing_permission(stripped_text: str) -> bool:
+def asks_filing_permission(text: str) -> bool:
     """GH#37979: the last Needed from you block only asks to file an item."""
-    blocks = [match.group(0) for match in NEEDED_BLOCK_RE.finditer(stripped_text)]
+    # Ignore fenced examples, but retain inline content for authority exclusions.
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    blocks = [match.group(0) for match in NEEDED_BLOCK_RE.finditer(text)]
     last = blocks[-1] if blocks else ""
-    return bool(FILING_ASK_RE.search(last)) and not FILING_EXCLUDED_RE.search(last)
+    starts = [match.start() for match in NUMBERED_ASK_RE.finditer(last)]
+    asks = [last[start:end] for start, end in zip(starts, starts[1:] + [len(last)])]
+    return bool(asks) and not FILING_EXCLUDED_RE.search(last) and all(
+        FILING_ASK_RE.match(re.sub(r"`[^`]*`", " ", ask)) for ask in asks
+    )

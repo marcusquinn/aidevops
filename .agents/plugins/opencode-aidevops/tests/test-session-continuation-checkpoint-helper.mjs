@@ -155,12 +155,23 @@ fi
     ["open pull request", "1. Should I open a pull request for this issue?"],
     ["merge", "1. **Should I merge the PR for the issue?**"],
     ["mention only", "1. **Is the issue fix acceptable?**"],
+    ["mixed deploy last", "1. Should I file an issue?\n2. May I deploy the release?"],
+    ["mixed deploy first", "1. May I deploy the release?\n2. Should I file an issue?"],
+    ["inline private data", "1. Should I file an issue containing `private data`?"],
+    ["inline secret", "1. Should I file an issue containing `credentials`?"],
+    ["fenced ask", "```text\n1. Should I file an issue?\n```"],
   ]) {
     assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).corrected, false, `${name} ask is not steered`);
   }
   assert.equal(blockerGuard.completeText({ sessionID: "filing-lead" }, { text: askWith("1. **File a worker task to add the warning?**") }).filing, true, "bare filing verb lead matches");
   for (const item of ["issue", "worker task", "local TODO", "actionable follow-up ticket", "follow-up"]) {
     assert.equal(blockerGuard.completeText({ sessionID: `filing-item-${item}` }, { text: askWith(`1. Should I create a ${item}?`) }).filing, true, `${item} remains a filing item`);
+  }
+  for (const [name, ask] of [
+    ["all filing", "1. Should I file an issue?\n2. Should I log a task?"],
+    ["fenced exclusions", "1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).filing, true, `${name} remains filing-only`);
   }
 
   // GH#35121: a closeout that asks for nothing while files this session
