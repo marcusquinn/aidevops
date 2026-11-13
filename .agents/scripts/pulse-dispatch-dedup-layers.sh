@@ -15,6 +15,8 @@
 #   - _dedup_layer1_ledger_check
 #   - _dedup_layer2_process_match
 #   - _dedup_layer3_title_match
+#   - _dedup_layer4_timing_enabled
+#   - _dedup_layer4_step
 #   - _dedup_layer4_pr_evidence
 #   - _dedup_layer5_dispatch_comment
 #   - _dispatch_blocked_checkpoint_attention
@@ -286,6 +288,35 @@ _dedup_layer3_title_match() {
 }
 
 #######################################
+# GH#38101: layer-4 steps are timed only when the dispatcher loaded both the
+# stage recorder and _dedup_layer_timed; other callers run them unchanged.
+# Returns: 0 when timing is available
+#######################################
+_dedup_layer4_timing_enabled() {
+	declare -F _dedup_layer_timed >/dev/null 2>&1 || return 1
+	declare -F _ds_record >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one layer-4 step as a dedup.layer4.<name> sub-stage when timing is
+# enabled. Runs in the current shell, so output, exit status and globals set
+# by the step pass through unchanged. Locals use a _dl4_ prefix.
+# Args: issue number, repo slug, step name, command and arguments
+#######################################
+_dedup_layer4_step() {
+	local _dl4_issue="$1" _dl4_repo="$2" _dl4_name="$3"
+	shift 3
+	local _dl4_rc=0
+	if _dedup_layer4_timing_enabled; then
+		_dedup_layer_timed "$_dl4_issue" "$_dl4_repo" "dedup.layer4.${_dl4_name}" "$@" || _dl4_rc=$?
+		return "$_dl4_rc"
+	fi
+	"$@" || _dl4_rc=$?
+	return "$_dl4_rc"
+}
+
+#######################################
 # Layer 4: open or merged PR evidence for this issue/task.
 # If a worker already produced a PR (open or merged), do not dispatch another.
 # Previously only checked --state merged, missing open PRs entirely.
@@ -300,7 +331,15 @@ _dedup_layer4_pr_evidence() {
 	local dedup_helper_output=""
 	local dedup_helper_rc=0
 	if [[ -x "$dedup_helper" ]]; then
-		dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE") || dedup_helper_rc=$?
+		# GH#38101: under a dispatcher, hand the helper the stage context so its
+		# parallel checks record dedup.layer4.<check> sub-stages.
+		local -a layer4_cmd=("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title")
+		if _dedup_layer4_timing_enabled; then
+			layer4_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
+				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer4_cmd[@]}")
+		fi
+		dedup_helper_output=$(_dedup_layer4_step "$issue_number" "$repo_slug" has_open_pr \
+			"${layer4_cmd[@]}" 2>>"$LOGFILE") || dedup_helper_rc=$?
 		if [[ "$dedup_helper_output" == *"PR_LOOKUP_RESULT=uncertain"* ]]; then
 			echo "[pulse-wrapper] Dedup: ${dedup_helper_output} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 			printf 'pr_lookup_uncertain\n'
@@ -309,7 +348,8 @@ _dedup_layer4_pr_evidence() {
 		if [[ "$dedup_helper_rc" -eq 0 ]]; then
 			# Recover an exact approved draft before treating existing PR evidence
 			# as terminal. Failure still blocks replacement implementation workers.
-			if _dispatch_revised_checkpoint "$issue_number" "$repo_slug" "${self_login:-}"; then
+			if _dedup_layer4_step "$issue_number" "$repo_slug" revised_checkpoint \
+				_dispatch_revised_checkpoint "$issue_number" "$repo_slug" "${self_login:-}"; then
 				return 0
 			fi
 			if [[ -n "$dedup_helper_output" ]]; then
@@ -318,7 +358,8 @@ _dedup_layer4_pr_evidence() {
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
-				if _dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
+				if _dedup_layer4_step "$issue_number" "$repo_slug" stalled_checkpoint \
+					_dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
 					"$dedup_helper_output" "${self_login:-}"; then
 					# The continuation helper verifies released/expired ownership;
 					# preserve that distinction through the outer dedup classifier.

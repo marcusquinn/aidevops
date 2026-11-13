@@ -1086,6 +1086,43 @@ _ddpr_denial_lookup_rc() {
 	return 1
 }
 
+#######################################
+# GH#38101: per-check sub-stage timing for has_open_pr. Records only when the
+# dispatcher hands over its stage context (AIDEVOPS_DISPATCH_STAGE_ISSUE and
+# AIDEVOPS_DISPATCH_STAGE_REPO); every other caller runs untimed and unchanged.
+# Returns: 0 when dispatch-stage-instrument.sh sub-stage recording is available
+#######################################
+_ddpr_load_stage_instrument() {
+	[[ "${AIDEVOPS_DISPATCH_STAGE_ISSUE:-}" =~ ^[0-9]+$ && -n "${AIDEVOPS_DISPATCH_STAGE_REPO:-}" ]] || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 && return 0
+	local ddpr_lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$ddpr_lib_dir" != "${BASH_SOURCE[0]}" ]] || ddpr_lib_dir="."
+	[[ -f "${ddpr_lib_dir}/dispatch-stage-instrument.sh" ]] || return 1
+	# shellcheck source=./dispatch-stage-instrument.sh
+	source "${ddpr_lib_dir}/dispatch-stage-instrument.sh" || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one has_open_pr check, timed as dedup.layer4.<name> when enabled.
+# Output and exit status pass through unchanged. Locals use a _ddpr_tc_
+# prefix so checks reading caller-scoped variables see no shadowing.
+# Args: check name, timing flag (1 = record), function and arguments
+#######################################
+_ddpr_timed_check() {
+	local _ddpr_tc_name="$1"
+	local _ddpr_tc_timed="$2"
+	shift 2
+	local _ddpr_tc_rc=0
+	if [[ "$_ddpr_tc_timed" == "1" ]]; then
+		_ds_substage_run "dedup.layer4.${_ddpr_tc_name}" "$@" || _ddpr_tc_rc=$?
+		return "$_ddpr_tc_rc"
+	fi
+	"$@" || _ddpr_tc_rc=$?
+	return "$_ddpr_tc_rc"
+}
+
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1110,39 +1147,53 @@ has_open_pr() {
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
 
+	# GH#38101: under a dispatch context each check and the whole parallel block
+	# are timed sub-stages, so the dominant layer-4 cost is measurable.
+	local _pr_timed=0 _pr_checks_t0=""
+	if _ddpr_load_stage_instrument; then
+		_pr_timed=1
+		_pr_checks_t0=$(_ds_substage_start)
+	fi
+
 	# Launch all checks in parallel, each writing exit code + output to a file
 	(
-		_result=$(_has_open_pr_check_healthy_sibling "$issue_number" "$repo_slug" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check healthy_sibling "$_pr_timed" \
+			_has_open_pr_check_healthy_sibling "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check0.out" || true
 	) &
 	local _pr_pid0=$!
 
 	(
-		_result=$(_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check open_commits "$_pr_timed" \
+			_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check1.out" || true
 	) &
 	local _pr_pid1=$!
 
 	(
-		_result=$(_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check open_body_keyword "$_pr_timed" \
+			_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check1b.out" || true
 	) &
 	local _pr_pid2=$!
 
 	(
-		_result=$(_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check merged_keywords "$_pr_timed" \
+			_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check2.out" || true
 	) &
 	local _pr_pid3=$!
 
 	(
-		_result=$(_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check task_id_title "$_pr_timed" \
+			_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check3.out" || true
 	) &
 	local _pr_pid4=$!
 
 	(
-		_result=$(_has_open_pr_check_superseded_issue_pr "$issue_number" "$repo_slug" 2>/dev/null) && \
+		_result=$(_ddpr_timed_check superseded_issue_pr "$_pr_timed" \
+			_has_open_pr_check_superseded_issue_pr "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check4.out" || true
 	) &
 	local _pr_pid5=$!
@@ -1154,6 +1205,7 @@ has_open_pr() {
 	wait "$_pr_pid3" 2>/dev/null || true
 	wait "$_pr_pid4" 2>/dev/null || true
 	wait "$_pr_pid5" 2>/dev/null || true
+	[[ "$_pr_timed" != "1" ]] || _ds_substage_record dedup.layer4.parallel_checks "$_pr_checks_t0"
 
 	# Uncertainty takes precedence over positive evidence. A partial API view is
 	# not sufficient to classify the block as an active claim or known PR.
