@@ -1956,6 +1956,7 @@ main() {
 	test_lifecycle_refusal_classification
 	test_lifecycle_refusal_backfill
 	test_owner_scoped_discovery
+	test_unclassified_hold_intake
 	test_recovery_graphql_fallback
 	test_fleet_capability_hold
 	test_fleet_escalation_upsert

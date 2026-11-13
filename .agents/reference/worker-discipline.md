@@ -386,6 +386,31 @@ AI brief owner:
    `dependency_change` or `human_decision`). A decision suppresses
    re-assessment for 24h; unchanged blockers are not retried blindly.
 
+Unclassified holds (GH#37978): a blocked label is not an instruction. Entries
+with `intake: unclassified_hold` are open issues whose only dispatch stop is
+`status:blocked`, unchanged for a day (`BLOCKER_RECOVERY_UNCLASSIFIED_MIN_AGE`),
+with no open dependency and no terminal-blocker record. The helper only queues
+them; missing evidence is never its reason to release. Read the body, the
+`status:blocked` label timeline and trusted OWNER/MEMBER comments, then take
+exactly one outcome and record it with `record`:
+
+- **A reason exists and still holds**: record the decision. If no public
+  comment states it, post one naming the reason, who or what must act, and the
+  wake condition.
+- **The reason no longer holds, or none exists and nothing blocks the work**:
+  run `gh-write-helper.sh issue status <N> --repo <owner/repo> available` and
+  post one receipt naming the evidence read. Never release when a trusted
+  OWNER/MEMBER comment made after the label states a hold that still applies.
+- **Only a person can resolve it**: name the smallest input and its owner on
+  the issue once, with `wake: human_decision`.
+
+Never remove `hold-for-review`, `needs-maintainer-review`,
+`needs-maintainer-permissions`, `no-auto-dispatch` or `parent-task`; issues
+carrying them are never queued here. Public comments carry no local paths,
+excerpts or secret names. A wrong release costs one worker run, whose blocker
+exit then records the reason. The entry retires once the issue closes, loses
+`status:blocked`, gains another hold label or gains a terminal-blocker record.
+
 Repo-delegated queue policy (GH#35129): before terminal-blocker or
 integration-recovery assessment, run `recovery-policy-helper.sh <repo>`. Exit 0
 returns the actions the repo enabled in its pinned default-branch policy
@@ -398,7 +423,8 @@ partial PR, and specifically pre-authorized brief repairs. Record holds with
 repairs with `wake=brief_revision`. Entries with `intake: policy_remote` are
 OWNER/MEMBER circuits opened by another runner, and entries with
 `intake: remote_observation` are holds only another runner observed (GH#36114);
-use only public issue/PR evidence for both.
+`intake: unclassified_hold` entries (above) have no observation at all. Use only
+public issue/PR evidence for all three.
 
 #### Recoverable policy denials (GH#33969)
 
