@@ -469,7 +469,9 @@ for_reject_case() {
 # and has-open-pr already holds the issue for them, so continuation must accept
 # the same exact single-target shape.
 WORKER_LABELS='[{"name":"origin:worker"}]'
-for worker_body in 'For #123' 'Ref #123. Incomplete checkpoint.' 'Notes\nRefs #123' 'For #123. Done part.\nRef #900'; do
+# The last body is the canonical commit-and-pr shape (GH#36864): one standalone
+# For line plus the parent under ## Related; For keeps precedence (GH#38111).
+for worker_body in 'For #123' 'Ref #123. Incomplete checkpoint.' 'Notes\nRefs #123' 'For #123. Done part.\nRef #900' 'For #123\n\n## Related\n\nRef #900'; do
 	STUB_PR_JSON="$(valid_pr_json "$worker_body" "$WORKER_LABELS" '[]')"
 	if row=$(_pcc_target_row "owner/repo" "42" "123" "worker-bot" "worker-bot") &&
 		[[ "$row" == *$'\tworker-bot\t0\tfor\t0' ]]; then
@@ -486,7 +488,8 @@ for_reject_case "unlabelled draft" 'For #123' '[{"name":"bug"}]' '[]'
 for_reject_case "ready PR" 'For #123' "$TAKEOVER_LABELS" '[]' ready
 for_reject_case "cross-repository head" 'For #123' "$TAKEOVER_LABELS" '[]' cross
 for_reject_case "protected label" 'For #123' '[{"name":"origin:worker-takeover"},{"name":"hold-for-review"}]' '[]'
-for_reject_case "bare #N mention" 'Recovered work for #123' "$TAKEOVER_LABELS" '[]'
+# GH#38111: an inline "for #N" is an explicit reference since GH#37915.
+for_reject_case "bare #N mention" 'Recovered work on #123' "$TAKEOVER_LABELS" '[]'
 for_reject_case "issue-number prefix collision" 'For #1234' "$TAKEOVER_LABELS" '[]'
 for_reject_case "closing link to another issue" 'For #123\nResolves #456' "$TAKEOVER_LABELS" \
 	'[{"number":456,"repository":{"name":"repo","owner":{"login":"owner"}}}]'

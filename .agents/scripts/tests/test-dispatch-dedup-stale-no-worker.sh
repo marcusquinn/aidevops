@@ -439,6 +439,9 @@ test_remote_branch_liveness() {
 			fi
 			# Capture the real normal-recovery audit comment without external writes.
 			_stale_recovery_final_evidence_recheck() { return 0; }
+			# GH#38111: no input circuit here. Its unreadable-comments fail-closed
+			# hold (#37819) is covered by test-stale-recovery-blocked-by-recheck.sh.
+			_stale_recovery_has_input_circuit() { return 1; }
 			set_issue_status() { return 0; }
 			_stale_recovery_verify_transition() { return 0; }
 			aidevops_ops_marker() { return 0; }

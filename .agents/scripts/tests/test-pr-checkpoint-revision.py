@@ -327,7 +327,9 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
                 comment(4, "Interactive session claimed", "maintainer")]}),
             ("prefix collision", {"pr": {**data["pr"], "body": "For #1234"}}),
             ("bare mention", {"pr": {**data["pr"], "body": "mentions #123"}}),
-            ("ambiguous linkage", {"pr": {**data["pr"], "body": "For #123 and #124"}}),
+            # GH#38111: "For #123 and #124" links only #123 for dedup and
+            # continuation alike since GH#37915; two For references are ambiguous.
+            ("ambiguous linkage", {"pr": {**data["pr"], "body": "For #123 and for #124"}}),
         )
         for case, overrides in invalidations:
             self.assertNotEqual(run({**data, **overrides}), 0, case)
