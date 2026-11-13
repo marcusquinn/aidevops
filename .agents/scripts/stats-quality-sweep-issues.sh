@@ -37,6 +37,9 @@ fi
 
 # Dashboard provenance label, shared by creation and label normalization.
 _QUALITY_DASHBOARD_SOURCE_LABEL="source:quality-sweep"
+# Dashboard titles: bare "Code Audit Routines" or the sweep's
+# "Code Audit Routines — <stats>" form (jq regex, embedded in --jq filters).
+_QUALITY_DASHBOARD_TITLE_RE='^Code Audit Routines( — |$)'
 # Sentinel for unavailable gate/grade/badge signals.
 _QUALITY_SIGNAL_UNKNOWN="UNKNOWN"
 
@@ -92,9 +95,11 @@ _quality_issue_title_search() {
 	local repo_slug="$1"
 
 	local raw_output exit_code
+	# Only dashboard titles qualify: an unrelated issue mentioning the phrase
+	# must never become the survivor that duplicate cleanup keeps.
 	raw_output=$(gh issue list --repo "$repo_slug" \
 		--state open --search "\"Code Audit Routines\" in:title" \
-		--json number --jq '.[0].number // empty' 2>&1)
+		--json number,title --jq "[.[] | select(.title | test(\"${_QUALITY_DASHBOARD_TITLE_RE}\"))] | .[0].number // empty" 2>&1)
 	exit_code=$?
 
 	if [[ "$exit_code" -ne 0 ]]; then
@@ -107,38 +112,113 @@ _quality_issue_title_search() {
 }
 
 #######################################
-# Close all open "Code Audit Routines" sibling issues except the survivor.
+# Close all open "Code Audit Routines" sibling issues except the canonical
+# survivor, and print that survivor.
 #
-# Self-healing sweep: called post-create to close any duplicates that
-# accumulated during prior label-search failures. Models on
+# Self-healing sweep: called post-create and after reusing a verified-open
+# dashboard to close duplicates from prior failures. Models on
 # pulse-merge.sh::_close_superseded_prs — close with comment, best-effort.
+#
+# GH#37957: the canonical survivor is the highest-numbered open dashboard
+# (including the caller's). Every sweep, on any runner, converges on the same
+# issue and never closes it, so concurrent sweeps cannot close each other's
+# survivors and no cross-runner lock is needed.
 #
 # Arguments:
 #   $1 - repo_slug
-#   $2 - survivor_issue_number (the one to keep open)
+#   $2 - survivor_issue_number (the caller's verified-open dashboard)
+# Output: the canonical survivor number (the caller's on any failure)
 # Returns: 0 always (best-effort, never blocks the caller)
 #######################################
 _quality_issue_close_duplicates() {
 	local repo_slug="$1"
 	local survivor="$2"
+	local canonical="$survivor"
 
 	local siblings_json
+	# Dashboard titles only: the bare title or the invariant "Code Audit
+	# Routines — <stats>" form written by the sweep. The search also returns
+	# unrelated issues that merely mention the phrase; those are never closed.
 	siblings_json=$(gh issue list --repo "$repo_slug" \
 		--state open --search "\"Code Audit Routines\" in:title" \
-		--json number --jq '[.[].number]' 2>/dev/null) || return 0
+		--json number,title --jq "[.[] | select(.title | test(\"${_QUALITY_DASHBOARD_TITLE_RE}\")) | .number]" 2>/dev/null) || siblings_json=""
 
-	[[ -z "$siblings_json" ]] && return 0
+	if [[ -n "$siblings_json" && "$survivor" =~ ^[0-9]+$ ]]; then
+		canonical=$(printf '%s\n' "$siblings_json" | jq -r --argjson s "$survivor" '(. + [$s]) | map(numbers) | max' 2>/dev/null) || canonical="$survivor"
+		[[ "$canonical" =~ ^[0-9]+$ ]] || canonical="$survivor"
+		[[ "$canonical" == "$survivor" ]] ||
+			echo "[stats] Quality sweep: adopting newer dashboard #${canonical} over #${survivor} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
 
-	local num
-	while IFS= read -r num; do
-		[[ -z "$num" ]] && continue
-		[[ "$num" == "$survivor" ]] && continue
-		local close_body="> Auto-closed: superseded by #${survivor} as duplicate quality dashboard."
-		gh issue comment "$num" --repo "$repo_slug" --body "$close_body" 2>/dev/null || true
-		gh issue close "$num" --repo "$repo_slug" 2>/dev/null || true
-		echo "[stats] Quality sweep: closed duplicate dashboard #${num} (survivor: #${survivor})" >>"${LOGFILE:-/dev/null}"
-	done < <(printf '%s\n' "$siblings_json" | jq -r '.[]' 2>/dev/null)
+		local num
+		while IFS= read -r num; do
+			[[ -z "$num" ]] && continue
+			[[ "$num" == "$canonical" ]] && continue
+			local close_body="> Auto-closed: superseded by #${canonical} as duplicate quality dashboard."
+			gh issue comment "$num" --repo "$repo_slug" --body "$close_body" >/dev/null 2>&1 || true
+			gh issue close "$num" --repo "$repo_slug" >/dev/null 2>&1 || true
+			echo "[stats] Quality sweep: closed duplicate dashboard #${num} (survivor: #${canonical})" >>"${LOGFILE:-/dev/null}"
+		done < <(printf '%s\n' "$siblings_json" | jq -r '.[]' 2>/dev/null)
+	fi
 
+	printf '%s\n' "$canonical"
+	return 0
+}
+
+#######################################
+# Create and pin a new "Code Audit Routines" dashboard issue.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - review label
+#   $3 - persistent label
+#   $4 - source label
+# Output: new issue number to stdout
+# Returns: 0 on success, 1 when creation fails
+#######################################
+_quality_issue_create_dashboard() {
+	local repo_slug="$1"
+	local lbl_review="$2"
+	local lbl_persist="$3"
+	local lbl_source="$4"
+	local issue_number=""
+
+	# Ensure labels exist
+	gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
+		--description "Daily code quality review" --force 2>/dev/null || true
+	gh label create "$lbl_persist" --repo "$repo_slug" --color "FBCA04" \
+		--description "Persistent issue — do not close" --force 2>/dev/null || true
+	gh label create "$lbl_source" --repo "$repo_slug" --color "C2E0C6" \
+		--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
+
+	local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
+	local qa_sig=""
+	qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
+	qa_body="${qa_body}${qa_sig}"
+
+	issue_number=$(gh_create_issue --repo "$repo_slug" \
+		--title "Code Audit Routines" \
+		--body "$qa_body" \
+		--label "$lbl_review" --label "$lbl_persist" --label "$lbl_source" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+
+	if [[ -z "$issue_number" ]]; then
+		echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	# Pin (best-effort)
+	local node_id
+	node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+	if [[ -n "$node_id" ]]; then
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"${node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+	fi
+
+	echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	printf '%s\n' "$issue_number"
 	return 0
 }
 
@@ -155,8 +235,9 @@ _quality_issue_close_duplicates() {
 #   4. Title-prefix fallback — runs only when label search returns empty.
 #      Abort if this API call also fails.
 #   5. Create only when BOTH searches confirmed zero matches.
-#   6. Post-create: run _quality_issue_close_duplicates to reclaim any
-#      siblings created during prior failures.
+#   6. Post-create, or after reusing a dashboard proven OPEN (GH#37957):
+#      run _quality_issue_close_duplicates to reclaim dashboard-titled siblings
+#      created during prior failures.
 #
 # Arguments:
 #   $1 - repo slug
@@ -177,6 +258,8 @@ _ensure_quality_issue() {
 
 	# Try cached issue number
 	local issue_number=""
+	# Set when the survivor is proven OPEN; only then may siblings be closed.
+	local survivor_verified=0
 	if [[ -f "$cache_file" ]]; then
 		issue_number=$(cat "$cache_file" 2>/dev/null || echo "")
 	fi
@@ -192,6 +275,8 @@ _ensure_quality_issue() {
 			# Definitively closed/merged — invalidate cache
 			issue_number=""
 			rm -f "$cache_file" 2>/dev/null || true
+		elif [[ "$gh_exit" -eq 0 && "$state" == "OPEN" ]]; then
+			survivor_verified=1
 		fi
 		# Transient failure: keep cache and proceed as if valid
 	fi
@@ -204,6 +289,7 @@ _ensure_quality_issue() {
 			return 1
 		}
 		issue_number="$label_result"
+		[[ -z "$issue_number" ]] || survivor_verified=1
 	fi
 
 	# Title-prefix fallback — only runs when label search returned empty
@@ -214,49 +300,19 @@ _ensure_quality_issue() {
 			return 1
 		}
 		issue_number="$title_result"
+		[[ -z "$issue_number" ]] || survivor_verified=1
 	fi
 
 	# Create only when BOTH searches confirmed zero open matches
 	if [[ -z "$issue_number" ]]; then
-		# Ensure labels exist
-		gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
-			--description "Daily code quality review" --force 2>/dev/null || true
-		gh label create "$lbl_persist" --repo "$repo_slug" --color "FBCA04" \
-			--description "Persistent issue — do not close" --force 2>/dev/null || true
-		gh label create "$lbl_source" --repo "$repo_slug" --color "C2E0C6" \
-			--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
-
-		local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
-		local qa_sig=""
-		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
-		qa_body="${qa_body}${qa_sig}"
-
-		issue_number=$(gh_create_issue --repo "$repo_slug" \
-			--title "Code Audit Routines" \
-			--body "$qa_body" \
-			--label "$lbl_review" --label "$lbl_persist" --label "$lbl_source" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
-
-		if [[ -z "$issue_number" ]]; then
-			echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
-			return 1
-		fi
-
-		# Pin (best-effort)
-		local node_id
-		node_id=$(gh issue view "$issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-		if [[ -n "$node_id" ]]; then
-			gh api graphql -f query="
-				mutation {
-					pinIssue(input: {issueId: \"${node_id}\"}) {
-						issue { number }
-					}
-				}" >/dev/null 2>&1 || true
-		fi
-
-		echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
-
+		issue_number=$(_quality_issue_create_dashboard "$repo_slug" "$lbl_review" "$lbl_persist" "$lbl_source") || return 1
 		# Post-create defensive sweep: close any siblings from prior failures
-		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
+		issue_number=$(_quality_issue_close_duplicates "$repo_slug" "$issue_number")
+	elif [[ "$survivor_verified" -eq 1 ]]; then
+		# GH#37957: a reused dashboard must also reclaim duplicates; otherwise
+		# a stale sibling survives indefinitely beside it. Adopt the canonical
+		# survivor so concurrent sweeps converge on one dashboard.
+		issue_number=$(_quality_issue_close_duplicates "$repo_slug" "$issue_number")
 	fi
 
 	# Cache the winner

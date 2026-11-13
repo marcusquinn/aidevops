@@ -351,7 +351,7 @@ unset -f _pm_reconcile_partial_continuations
 	reconcile_stale_blocked_issues() {
 		local repo="$1"
 		if [[ "$repo" == owner/large ]]; then
-			printf '[dependency-reconciler] stale sweep repo=%s pending=420 visited=2 prefiltered_open_blocker=8 complete=false\n' "$repo" >&2
+			printf '[dependency-reconciler] stale sweep repo=%s pending=420 visited=2 prefiltered_open_blocker=8 complete=false ready=2 ready_visited=2 skipped_unchanged=12\n' "$repo" >&2
 			return 3
 		fi
 		return 0

@@ -35,8 +35,9 @@ where the host supports the handoff, rather than the thinking-tier implementatio
 parent. Scripts and CI own deterministic work; the child invokes the canonical
 entry point below and interprets its evidence.
 This is a release-only exception to interactive advisory-only delegation, activated
-after verified merge and explicit trusted publication intent. The primary remains
-responsible for the full-loop outcome. No release intent means no release child.
+after verified merge, the primary's [Release-Scope Sweep](../reference/release-scope-sweep.md),
+and explicit trusted publication intent. The primary remains responsible for the
+full-loop outcome. No release intent means no release child.
 
 **OpenCode fallback (GH#33488):** Keep release execution in the primary session
 that owns the linked worktree. Do not launch a Task child to attempt publication
@@ -298,7 +299,7 @@ than rewriting history after publication. Before publication, a new explicitly
 authorized release may transition `release:not-requested` to `release:published`
 or `release:superseded`; other terminal receipts remain immutable.
 
-**DO NOT** run separate bump/tag/push commands. **Prerequisites**: terminal-success PR checks/reviews, observed merged state/SHA, authenticated `gh`, an accessible aidevops repository, and unreleased changelog content (or changelog-only `--force`). The helper fetches `origin/main` and creates its own detached release worktree; it does not require or mutate a clean canonical checkout.
+**DO NOT** run separate bump/tag/push commands. **Prerequisites**: a completed interactive [Release-Scope Sweep](../reference/release-scope-sweep.md) (same-repo issues this session filed are merged or left with reasons), terminal-success PR checks/reviews, observed merged state/SHA, authenticated `gh`, an accessible aidevops repository, and unreleased changelog content (or changelog-only `--force`). The helper fetches `origin/main` and creates its own detached release worktree; it does not require or mutate a clean canonical checkout.
 
 **Related**: `workflows/version-bump.md` · `workflows/changelog.md` · `workflows/postflight.md` · `reference/release-artifact-provenance.md` · `.agents/scripts/validate-version-consistency.sh`
 
@@ -337,6 +338,7 @@ process in `RELEASING.md`, `CONTRIBUTING.md` (Releasing) or `package.json` relea
 scripts, and follow it: bump versions in a linked worktree and PR, merge with
 `full-loop-helper.sh merge`, then tag. With no `VERSION` file, the latest tag
 (`git describe --tags --abbrev=0`) is the baseline for the commit range and bump type.
+Interactive sessions finish the [Release-Scope Sweep](../reference/release-scope-sweep.md) before the version-bump PR.
 
 Concurrent merges make release PRs conflict on the changelog. Coordinate with the
 advisory manual release hold (`manual-release-hold-helper.sh`; stored as a remote
