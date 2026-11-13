@@ -281,6 +281,20 @@ _heartbeat_row() {
 	return 0
 }
 
+# _heartbeat_busy <pid> — success when any heartbeat for the PID reports busy
+# sessions (covers multi-session heartbeats that _heartbeat_row rejects).
+_heartbeat_busy() {
+	local pid="$1"
+	local dir file busy
+	dir=$(opencode_db_activity_dir)
+	for file in "$dir/${pid}"-*.json; do
+		[[ -f "$file" ]] || continue
+		busy=$(jq -r '(.busy_sessions // 0) | tostring' "$file" 2>/dev/null || true)
+		[[ "$busy" =~ ^[0-9]+$ && "$busy" -gt 0 ]] && return 0
+	done
+	return 1
+}
+
 # _tmux_row <pid> — fallback row for a holder with neither session-bus presence
 # nor a single-session heartbeat (a TUI started before the heartbeat plugin).
 # Evidence is the tmux pane only: the busy footer marker plus window activity.
@@ -295,7 +309,7 @@ _tmux_row() {
 	activity=$(_tmux "$socket" display-message -p -t "$target" '#{window_activity}' 2>/dev/null || true)
 	activity=$(_uint_or "${activity//[[:space:]]/}" 0)
 	[[ "$activity" -gt 0 ]] || return 0
-	if grep -q 'esc interrupt' <<<"$screen"; then status=busy; fi
+	if grep -q 'esc interrupt' <<<"$screen" || _heartbeat_busy "$pid"; then status=busy; fi
 	_row "$pid" unknown "$status" "$(_pid_cwd "$pid")" "$activity" "$(_pid_start_token "$pid")" tmux "$(_pid_age_seconds "$pid")" "$kind" "$target" "$socket"
 	return 0
 }
@@ -571,14 +585,29 @@ _wait_for_exit() {
 # _continue_session_id <kind> <pane> <socket> — last session id from the
 # "Continue  opencode -s <id>" line OpenCode prints in the pane on exit. Only
 # the id token is extracted; pane text is never printed.
+_continue_matches() {
+	local pane="$1"
+	local socket="$2"
+	_tmux "$socket" capture-pane -p -S - -t "$pane" 2>/dev/null |
+		grep -Eo 'Continue[[:space:]]+opencode[[:space:]]+-s[[:space:]]+[A-Za-z0-9_-]{1,128}' | awk '{ print $NF }' || true
+	return 0
+}
+
+# _continue_session_id <kind> <pane> <socket> [before-count] — last session id
+# from a "Continue  opencode -s <id>" line emitted after the pre-stop boundary
+# (the number of such lines already in scrollback). Older lines are ignored.
 _continue_session_id() {
 	local kind="$1"
 	local pane="$2"
 	local socket="$3"
-	local found=""
+	local before="${4:-0}"
+	local matches found="" total
 	[[ "$kind" == tmux && "$pane" =~ ^%[0-9]+$ ]] || return 0
-	found=$(_tmux "$socket" capture-pane -p -S -80 -t "$pane" 2>/dev/null |
-		grep -Eo 'Continue[[:space:]]+opencode[[:space:]]+-s[[:space:]]+[A-Za-z0-9_-]{1,128}' | tail -n 1 | awk '{ print $NF }' || true)
+	matches=$(_continue_matches "$pane" "$socket")
+	total=$(printf '%s\n' "$matches" | awk 'NF' | wc -l | tr -d ' ')
+	[[ "$before" =~ ^[0-9]+$ ]] || before=0
+	[[ "$total" -gt "$before" ]] || return 0
+	found=$(printf '%s\n' "$matches" | awk 'NF' | tail -n 1)
 	if [[ "$found" =~ $RESTART_SESSION_RE ]]; then printf '%s' "$found"; fi
 	return 0
 }
@@ -592,12 +621,17 @@ _adopt_continue_session() {
 	local kind="$3"
 	local pane="$4"
 	local socket="$5"
+	local before="${6:-0}"
 	local found json newsid
-	found=$(_continue_session_id "$kind" "$pane" "$socket")
+	found=$(_continue_session_id "$kind" "$pane" "$socket" "$before")
 	newsid="${found:-$key}"
 	json=$(_manifest_read | jq -c --arg k "$key" --arg n "$newsid" --arg r "$(_resume_command "$cwd" "$found")" --argjson now "$(date +%s)" \
 		'.entries |= map(if .session_id == $k then .session_id = $n | .resume_command = $r | .status = "stopped" | .updated_epoch = $now else . end)')
-	_manifest_write "$json" || true
+	if ! _manifest_write "$json"; then
+		print_error "Session association for ${key} was not saved to the restart manifest"
+		printf '%s' "${found:-unknown}"
+		return 1
+	fi
 	printf '%s' "${found:-unknown}"
 	return 0
 }
@@ -620,10 +654,17 @@ _stop_one() {
 		'{session_id: $sid, pid: $pid, cwd: $cwd, pane_kind: $kind, pane: $pane, pane_socket: $socket, argv: $argv,
 		  resume_command: $resume, reason: $reason, age_seconds: $age, stopped_epoch: $now, updated_epoch: $now, status: "stopping"}')
 	_manifest_put "$entry" || { print_error "Cannot write restart manifest; not stopping ${sid}"; return 1; }
+	local before=0
+	if [[ "$sid" == unknown && "$kind" == tmux && "$target" =~ ^%[0-9]+$ ]]; then
+		before=$(_continue_matches "$target" "$socket" | awk 'NF' | wc -l | tr -d ' ')
+	fi
 	kill "-${OPENCODE_RESTART_SIGNAL}" "$pid" 2>/dev/null || true
 	if _wait_for_exit "$pid"; then
 		if [[ "$sid" == unknown ]]; then
-			sid=$(_adopt_continue_session "$msid" "$cwd" "$kind" "$target" "$socket")
+			if ! sid=$(_adopt_continue_session "$msid" "$cwd" "$kind" "$target" "$socket" "$before"); then
+				print_warning "Stopped PID ${pid} but its session association was not saved; resume will use a plain relaunch"
+				return 1
+			fi
 		else
 			_manifest_set_status "$sid" stopped
 		fi

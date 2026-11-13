@@ -73,7 +73,14 @@ if [[ "${1:-}" == display-message && "$*" == *window_activity* && -f "$FAKE_LOG_
 	cat "$FAKE_LOG_DIR/activity-${target}"
 fi
 if [[ "${1:-}" == capture-pane ]]; then
-	if [[ "$*" == *"-S -80"* && -f "$FAKE_LOG_DIR/exit-${target}" ]]; then
+	# The exit text appears only once the holder in exitpid-<pane> has exited.
+	holder_alive=0
+	if [[ -f "$FAKE_LOG_DIR/exitpid-${target}" ]]; then
+		hp=$(cat "$FAKE_LOG_DIR/exitpid-${target}")
+		hs=$(ps -o stat= -p "$hp" 2>/dev/null | tr -d '[:space:]')
+		[[ -n "$hs" && "$hs" != Z* ]] && holder_alive=1
+	fi
+	if [[ "$*" == *"-S -"* && -f "$FAKE_LOG_DIR/exit-${target}" && "$holder_alive" -eq 0 ]]; then
 		cat "$FAKE_LOG_DIR/exit-${target}"
 	elif [[ -f "$FAKE_LOG_DIR/screen-${target}" ]]; then
 		cat "$FAKE_LOG_DIR/screen-${target}"
@@ -247,13 +254,21 @@ _spawn T_IDLE TMUX_PANE=%11 TMUX="$SANDBOX/tmux-sock,1,0"
 _spawn T_BUSY TMUX_PANE=%12 TMUX="$SANDBOX/tmux-sock,1,0"
 _spawn T_RECENT TMUX_PANE=%13 TMUX="$SANDBOX/tmux-sock,1,0"
 _spawn T_HOME TMUX_PANE=%14 TMUX="$SANDBOX/tmux-sock,1,0"
-printf '%s\n%s\n%s\n%s\n' "$T_IDLE" "$T_BUSY" "$T_RECENT" "$T_HOME" >"$SANDBOX/pids"
+_spawn T_HB TMUX_PANE=%15 TMUX="$SANDBOX/tmux-sock,1,0"
+printf '%s\n%s\n%s\n%s\n%s\n' "$T_IDLE" "$T_BUSY" "$T_RECENT" "$T_HOME" "$T_HB" >"$SANDBOX/pids"
+# Ancestry fallback (macOS): map the new holders to their panes.
+printf '%s %%7\n%s %%11\n%s %%12\n%s %%13\n%s %%14\n%s %%15\n' "$IDLE_PID" "$T_IDLE" "$T_BUSY" "$T_RECENT" "$T_HOME" "$T_HB" >"$SANDBOX/panes"
+mkdir -p "$OPENCODE_DB_ACTIVITY_DIR"
+printf '{"sessions":["ses_a","ses_b"],"busy_sessions":1,"last_activity_epoch":1}\n' >"$OPENCODE_DB_ACTIVITY_DIR/${T_HB}-x.json"
+printf '%s\n' "$T_IDLE" >"$SANDBOX/exitpid-%11"
 sleep 0.3
 now=$(date +%s)
 printf '%s\n' "$((now - 7200))" >"$SANDBOX/activity-%11"
 printf '%s\n' "$((now - 7200))" >"$SANDBOX/activity-%12"
 printf '%s\n' "$((now - 60))" >"$SANDBOX/activity-%13"
 printf '%s\n' "$((now - 7200))" >"$SANDBOX/activity-%14"
+printf '%s\n' "$((now - 7200))" >"$SANDBOX/activity-%15"
+printf 'idle prompt\n' >"$SANDBOX/screen-%15"
 printf 'idle prompt\n' >"$SANDBOX/screen-%11"
 printf 'working  esc interrupt\n' >"$SANDBOX/screen-%12"
 printf 'idle prompt\n' >"$SANDBOX/screen-%13"
@@ -261,7 +276,7 @@ printf 'home screen\n' >"$SANDBOX/screen-%14"
 printf 'bye\nContinue  opencode -s ses_x\n' >"$SANDBOX/exit-%11"
 tinv_all=$("$HELPER" inventory --json --all </dev/null)
 tinv=$("$HELPER" inventory --json </dev/null)
-_check "tmux fallback lists 4 unknown-session rows" test "$(jq '[.[] | select(.source == "tmux")] | length' <<<"$tinv_all")" -eq 4
+_check "tmux fallback lists 5 unknown-session rows" test "$(jq '[.[] | select(.source == "tmux")] | length' <<<"$tinv_all")" -eq 5
 _check "tmux row session is unknown" test "$(jq -r --argjson p "$T_IDLE" '.[] | select(.pid == $p) | .session_id' <<<"$tinv_all")" == "unknown"
 _check "busy marker reports busy" test "$(jq -r --argjson p "$T_BUSY" '.[] | select(.pid == $p) | .status' <<<"$tinv_all")" == "busy"
 _check "idle pane reports idle" test "$(jq -r --argjson p "$T_IDLE" '.[] | select(.pid == $p) | .status' <<<"$tinv_all")" == "idle"
@@ -272,6 +287,7 @@ _check "stop exits 2 (busy and recent skipped)" test "$rc" -eq 2
 _check "idle quiet tmux holder stopped" _dead "$T_IDLE"
 _check "home-screen tmux holder stopped" _dead "$T_HOME"
 _check "busy-marker holder never signalled" _alive "$T_BUSY"
+_check "busy-heartbeat holder never signalled" _alive "$T_HB"
 _check "recently active holder left alone" _alive "$T_RECENT"
 _check "stop output never prints pane text" bash -c "! grep -q 'esc interrupt' '$SANDBOX/out'"
 _check "manifest adopts Continue session id" _manifest_is ses_x status stopped

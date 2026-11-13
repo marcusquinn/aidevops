@@ -224,7 +224,11 @@ _heartbeat_less_holders_summary() {
 	local pids pid age pane out file
 	local count=0 found=0
 	command -v lsof >/dev/null 2>&1 || return 0
-	pids=$(lsof -t "$db" 2>/dev/null | sort -u || true)
+	local targets=("$db") sidecar
+	for sidecar in "${db}-wal" "${db}-shm"; do
+		[[ -e "$sidecar" ]] && targets+=("$sidecar")
+	done
+	pids=$(lsof -t "${targets[@]}" 2>/dev/null | sort -u || true)
 	while IFS= read -r pid; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		found=0
@@ -271,8 +275,9 @@ _record_deferral() {
 	[[ ! -f "$BLOCKED_NOTICE_FILE" ]] || return 0
 	holder=$(_blocking_holder_summary)
 	hbless=$(_heartbeat_less_holders_summary)
-	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s.%s Safe action: close or restart those OpenCode sessions (opencode-session-restart-helper.sh stop --yes covers heartbeat-less tmux TUIs). Holders are never killed automatically.\n' \
-		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" "${hbless:+ Also: ${hbless}.}" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
+	local rdb="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
+	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s.%s Safe action: close or restart those OpenCode sessions (OPENCODE_DB_PATH=%q opencode-session-restart-helper.sh stop --yes covers heartbeat-less tmux TUIs). Holders are never killed automatically.\n' \
+		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" "${hbless:+ Also: ${hbless}.}" "$rdb" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
 	echo "[opencode-db-archive-async] NOTICE: $(<"$BLOCKED_NOTICE_FILE")" >>"$LOGFILE"
 	return 0
 }
