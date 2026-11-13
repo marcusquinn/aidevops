@@ -987,7 +987,7 @@ _dispatch_finish_enumeration_timing() {
 # Args: $1=scan limit $2=normalization mode $3=budget seconds
 _dispatch_bounded_ranked_candidates_json() {
 	local scan_limit="$1" normalization_mode="$2"
-	local _PULSE_FIRST_DISPATCH_WAVE=1 PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S="$3"
+	local _PULSE_FIRST_DISPATCH_WAVE=1 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S="$3"
 	_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode" || return 1
 	return 0
 }
