@@ -190,15 +190,13 @@ def remove(path: Path, verify) -> tuple[bool, str]:
     return (not path.exists()), ("removed" if not path.exists() else "removal-incomplete")
 
 
-def directory_size(path: Path) -> int:
-    total = 0
-    for root, _, files in os.walk(path, onerror=lambda _: None):
-        for name in files:
-            try:
-                total += (Path(root) / name).stat(follow_symlinks=False).st_size
-            except OSError:
-                continue
-    return total
+def free_bytes(path: Path) -> int | None:
+    """Report free bytes on the filesystem holding ``path``, or None if unreadable."""
+    try:
+        stats = os.statvfs(path)
+    except OSError:
+        return None
+    return stats.f_bavail * stats.f_frsize
 
 
 def common_directory(path: Path) -> Path | None:

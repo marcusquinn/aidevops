@@ -243,5 +243,51 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(self.worktree.exists())
 
 
+class BatchTests(unittest.TestCase):
+    def run_with(self, status, output):
+        original = collector.run
+        self.commands = []
+        def record(command, timeout=60):
+            self.commands.append(command)
+            return (status, output)
+        collector.run = record
+        self.addCleanup(setattr, collector, "run", original)
+
+    def test_repository_identity_is_bound_as_variables_not_query_text(self):
+        # A slug can carry a quote, and a slug parsed as query syntax is an injection.
+        self.run_with(0, '{"data":{"repository":{"g1":{"state":"CLOSED"}}}}')
+        hostile = 'owner", name: "other'
+        collector.prefetch({f'{hostile}/repo': [("gh", 1)]}, {})
+        command = self.commands[0]
+        query = next(argument.partition("=")[2] for argument in command
+                     if argument.startswith("query="))
+        self.assertNotIn(hostile, query)
+        self.assertIn("$owner", query)
+        self.assertIn(f"owner={hostile}", command)
+        self.assertEqual(command[command.index(f"owner={hostile}") - 1], "-f")
+        self.assertEqual(command[command.index("name=repo") - 1], "-f")
+
+    def test_batch_populates_cache_and_tolerates_nonzero_exit(self):
+        self.run_with(1, '{"data":{"repository":{"g1":{"state":"CLOSED"},'
+                         '"p2":{"state":"OPEN"},"g3":null}},"errors":[{}]}')
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1), ("pr", 2), ("gh", 3)]}, cache)
+        self.assertEqual(cache[("gh", 1, SLUG)], (True, "issue-1-closed"))
+        self.assertEqual(cache[("pr", 2, SLUG)], (False, "pr-2-open"))
+        self.assertNotIn(("gh", 3, SLUG), cache)
+
+    def test_failed_batch_leaves_cache_for_per_reference_fallback(self):
+        self.run_with(1, "not json")
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1)]}, cache)
+        self.assertEqual(cache, {})
+
+    def test_free_space_accounting(self):
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 2), 250)
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 0), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(None, 350, 2), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(350, 100, 2), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
