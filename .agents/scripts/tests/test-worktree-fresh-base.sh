@@ -9,6 +9,10 @@ HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
 ADD_HELPER="${SCRIPT_DIR}/../worktree-helper-add.sh"
 REAL_GIT=$(command -v git)
 ROOT=$(mktemp -d)
+# macOS returns a temp path under the /var symlink. The helper resolves
+# worktree paths to their physical form, and cleanup receipts are matched by
+# path string, so the fixture must use the physical form throughout.
+ROOT=$(cd "$ROOT" && pwd -P)
 trap 'rm -rf "$ROOT"' EXIT
 
 REMOTE="${ROOT}/remote.git"
@@ -18,6 +22,9 @@ WORKTREES="${ROOT}/worktrees"
 HOME="${ROOT}/home"
 export HOME AIDEVOPS_WORKTREE_BASE_DIR="$WORKTREES"
 export AIDEVOPS_FULL_LOOP_CLEANUP_DIR="${ROOT}/cleanup-receipts"
+# Never register fixture worktrees in the invoking session's lifecycle state.
+unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 REGISTRY_DB="${HOME}/.aidevops/.agent-workspace/worktree-registry.db"
 
 git init -q --bare "$REMOTE"
@@ -111,6 +118,56 @@ if ! grep -qF 'credential.helper=!gh auth git-credential' "$GITHUB_AUTH_RETRY_LO
 	exit 1
 fi
 printf 'PASS GitHub SSH askpass failure retries through transient gh HTTPS auth\n'
+
+# GH#38060: concurrent fetches of one remote-tracking ref make Git reject all
+# but one ref update. That is not a stale base. The fetch is repeated a bounded
+# number of times; any other failure is still returned after one attempt.
+RACE_FETCH_LOG="${ROOT}/race-fetch.log"
+# Args: $1 - fetches that fail before one succeeds, $2 - git error text
+race_fetch_case() {
+	local failures="$1"
+	local message="$2"
+	local case_rc=0
+	: >"$RACE_FETCH_LOG"
+	(
+		cd "$CANONICAL" || exit 1
+		SCRIPT_DIR="$(cd "$(dirname "$ADD_HELPER")" && pwd)"
+		# shellcheck source=../worktree-helper-add.sh
+		source "$ADD_HELPER"
+		sleep() { return 0; }
+		git() {
+			local git_args="$*"
+			local attempts=0
+			case "$git_args" in
+			*" fetch "*)
+				printf 'fetch\n' >>"$RACE_FETCH_LOG"
+				attempts=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+				[[ "$attempts" -le "$failures" ]] || return 0
+				printf 'error: fetching ref refs/remotes/origin/main failed: %s\n' "$message" >&2
+				return 1
+				;;
+			esac
+			"$REAL_GIT" "$@"
+			return $?
+		}
+		_worktree_fetch_origin_branch "$CANONICAL" main 2>/dev/null
+	) || case_rc=$?
+	RACE_FETCH_ATTEMPTS=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+	return "$case_rc"
+}
+if ! race_fetch_case 1 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL lost ref-update race was not recovered by one repeat fetch: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 9 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 3 ]]; then
+	printf 'FAIL persistent ref-update rejection was not bounded to two repeats: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 'unrelated transport failure' || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL unrelated fetch failure was retried as a ref-update race: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+printf 'PASS lost ref-update race repeats the fetch at most twice; other failures are not retried\n'
 
 # A registered sibling can exist while its index is unreadable. The fetch
 # selector must skip that candidate and use the bootstrap path instead of
@@ -236,9 +293,9 @@ REGISTRATION_FAILURE_OUTPUT=$(
 	HOME="$BROKEN_HOME" AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		"$HELPER" add "$REGISTRATION_FAILURE_BRANCH" "$REGISTRATION_FAILURE_PATH" 2>&1
 ) || REGISTRATION_FAILURE_RC=$?
-if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || ! -d "$REGISTRATION_FAILURE_PATH" ||
-	"$REGISTRATION_FAILURE_OUTPUT" != *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=REGISTRATION_FAILED"* ]]; then
-	printf 'FAIL registration failure did not preserve unverifiable path recreation: rc=%s output=%s\n' \
+if [[ "$REGISTRATION_FAILURE_RC" -eq 0 || -e "$REGISTRATION_FAILURE_PATH" ||
+	"$REGISTRATION_FAILURE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_STAGE=lifecycle:begin-create"* ]]; then
+	printf 'FAIL unavailable registry did not prevent worktree creation: rc=%s output=%s\n' \
 		"$REGISTRATION_FAILURE_RC" "$REGISTRATION_FAILURE_OUTPUT"
 	exit 1
 fi
@@ -253,7 +310,7 @@ jq -e '
 	printf 'FAIL registration failure retired selectable terminal receipt evidence\n'
 	exit 1
 }
-printf 'PASS registration failure preserves terminal receipt and unverifiable worktree generation\n'
+printf 'PASS unavailable registry prevents creation and preserves terminal receipt\n'
 
 ACTIVE_RECEIPT_BRANCH="test/recreated-active-path"
 ACTIVE_RECEIPT_PATH="${WORKTREES}/canonical-test-recreated-active-path"

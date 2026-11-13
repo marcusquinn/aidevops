@@ -1097,8 +1097,41 @@ _worktree_is_ssh_auth_failure() {
 }
 
 #######################################
-# Refresh one origin branch, retrying eligible GitHub SSH auth failures via gh.
-# The retry rewrites the URL only for this command and never mutates the remote.
+# Detect a rejected update of a remote-tracking ref that another process
+# changed while this fetch was running (GH#38060). Concurrent fetches of one
+# ref lose this way in all but one process; a repeat fetch then succeeds.
+# Arguments:
+#   $1 - captured git stderr
+# Returns: 0 for a concurrent ref-update rejection, 1 otherwise
+#######################################
+_worktree_is_ref_update_race() {
+	local stderr_text="$1"
+	case "$stderr_text" in
+	*"incorrect old value provided"*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
+# Run one plain fetch of an origin branch into its remote-tracking ref.
+# Arguments:
+#   $1 - clean linked/bootstrap worktree path
+#   $2 - target branch
+# Returns: git fetch exit code
+#######################################
+_worktree_fetch_origin_branch_once() {
+	local fetch_cwd="$1"
+	local target_branch="$2"
+	GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" fetch --quiet --no-tags origin \
+		"+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}"
+	return $?
+}
+
+#######################################
+# Refresh one origin branch. A fetch that lost a concurrent update of the ref
+# is repeated at most twice; only a fetch that succeeds proves a fresh base.
+# Eligible GitHub SSH auth failures are retried via gh: that retry rewrites the
+# URL only for this command and never mutates the remote.
 # Arguments:
 #   $1 - clean linked/bootstrap worktree path
 #   $2 - target branch
@@ -1111,14 +1144,30 @@ _worktree_fetch_origin_branch() {
 	local fetch_stderr=""
 	local fetch_rc=1
 	local rewrite_from=""
+	local race_retries=0
+	local retry_start=""
 
 	remote_url=$(git -C "$fetch_cwd" remote get-url origin 2>/dev/null || true)
-	if fetch_stderr=$(GIT_TERMINAL_PROMPT=0 git -C "$fetch_cwd" fetch --quiet --no-tags origin \
-		"+refs/heads/${target_branch}:refs/remotes/origin/${target_branch}" 2>&1); then
+	if fetch_stderr=$(_worktree_fetch_origin_branch_once "$fetch_cwd" "$target_branch" 2>&1); then
 		return 0
 	else
 		fetch_rc=$?
 	fi
+
+	# GH#38060: each repeat is recorded as precreate.base_fetch_retry under a
+	# dispatch context, so recovered races stay countable in the stage log.
+	while [[ "$race_retries" -lt 2 ]] && _worktree_is_ref_update_race "$fetch_stderr"; do
+		race_retries=$((race_retries + 1))
+		[[ "$race_retries" -eq 1 ]] || sleep 1
+		retry_start=$(_ds_substage_start)
+		if fetch_stderr=$(_worktree_fetch_origin_branch_once "$fetch_cwd" "$target_branch" 2>&1); then
+			fetch_rc=0
+		else
+			fetch_rc=$?
+		fi
+		_ds_substage_record precreate.base_fetch_retry "$retry_start"
+		[[ "$fetch_rc" -ne 0 ]] || return 0
+	done
 
 	if _worktree_is_github_ssh_remote "$remote_url" &&
 		_worktree_is_ssh_auth_failure "$fetch_stderr" &&
