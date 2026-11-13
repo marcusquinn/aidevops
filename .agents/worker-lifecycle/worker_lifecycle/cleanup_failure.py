@@ -1,5 +1,7 @@
 """Sanitize archive-helper failures without exposing command arguments or paths."""
 
+from __future__ import annotations
+
 from pathlib import Path
 import re
 import subprocess  # nosec B404 # classify exceptions, never execute error argv
