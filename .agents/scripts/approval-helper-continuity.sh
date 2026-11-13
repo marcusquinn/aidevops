@@ -326,6 +326,227 @@ _approval_continuity_body_edits_authorized() {
 	return 0
 }
 
+# GH#38006: review-bot body blocks live beside the review-bot identity config.
+_APPROVAL_REVIEW_BOT_BLOCKS_FILE="${SCRIPT_DIR}/../configs/review-bot-body-blocks.conf"
+_APPROVAL_TRUSTED_REVIEW_BOTS_FILE="${SCRIPT_DIR}/../configs/trusted-code-quality-bots.txt"
+
+# Prints the review-bot block rules as a JSON array of {login, start, end}.
+# #aidevops:trust-boundary — a rule needs an exact App login that is also in
+# the trusted review-bot identity allowlist plus distinct HTML comment
+# markers. A missing file yields no rules; any malformed line returns 1 so the
+# caller disables every rule (fail closed).
+_approval_continuity_review_bot_rules() {
+	local login="" rules='[]' line="" start_marker="" end_marker="" extra=""
+	[[ -f "$_APPROVAL_REVIEW_BOT_BLOCKS_FILE" ]] || {
+		printf '%s\n' "$rules"
+		return 0
+	}
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" || "$line" == \#* ]] && continue
+		IFS='|' read -r login start_marker end_marker extra <<<"$line"
+		[[ -z "$extra" && "$login" =~ ^[A-Za-z0-9_.-]+\[bot\]$ ]] || return 1
+		[[ "$start_marker" == '<!--'*'-->' && "$end_marker" == '<!--'*'-->' && "$start_marker" != "$end_marker" ]] || return 1
+		[[ -f "$_APPROVAL_TRUSTED_REVIEW_BOTS_FILE" ]] || return 1
+		grep -Fxq -- "$login" "$_APPROVAL_TRUSTED_REVIEW_BOTS_FILE" || return 1
+		rules=$(jq -c --arg login "$login" --arg start "$start_marker" --arg end "$end_marker" '. + [{login: $login, start: $start, end: $end}]' <<<"$rules") || return 1
+	done <"$_APPROVAL_REVIEW_BOT_BLOCKS_FILE"
+	printf '%s\n' "$rules"
+	return 0
+}
+
+# Reads one linked source's GraphQL body history (Issue or PullRequest node).
+_approval_continuity_source_edit_history() {
+	local node_id="$1"
+	# shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
+	local query='query($id:ID!){node(id:$id){__typename ... on Issue{id userContentEdits(first:100){pageInfo{hasNextPage} nodes{editedAt diff editor{__typename login}}}} ... on PullRequest{id userContentEdits(first:100){pageInfo{hasNextPage} nodes{editedAt diff editor{__typename login}}}}}}'
+	[[ "$node_id" =~ ^[A-Za-z0-9_=-]+$ ]] || return 1
+	gh api graphql -f query="$query" -f id="$node_id" 2>/dev/null || return 1
+	return 0
+}
+
+# jq program: restore one linked source body to its revision at signing time.
+# Inputs (stdin): the candidate snapshot, then the GraphQL history response.
+# Prints {changed:false} or {changed:true, candidate, edits}. Errors mean the
+# history cannot explain the current body (uncertainty).
+_approval_continuity_linked_restore_program() {
+	cat <<'JQ'
+def valid_timestamp:
+	type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$");
+def body_bound: (.source | type) == $object and (.source | has("body"));
+def blank_block($rule):
+	split($rule.start) as $parts
+	| $parts[0] + ([$parts[1:][] | split($rule.end) as $tail
+		| if ($tail | length) < 2 then error("unterminated review-bot block")
+		else $rule.start + $rule.end + ($tail[1:] | join($rule.end)) end] | join(""));
+def blank_blocks($bot_rules): reduce $bot_rules[] as $rule (.; blank_block($rule));
+def edit_entry($before; $after):
+	if (.editor | type) != $object
+		or (.editor.login | type) != $string_type
+		or (.editor.login | test("^[A-Za-z0-9_.-]+$") | not)
+		or .editor.login == "ghost"
+	then error("linked source editor identity is unavailable")
+	elif .editor.__typename == "User" then {type: "User", login: .editor.login}
+	elif .editor.__typename == "Bot" then
+		(.editor.login + "[bot]") as $app
+		| [$rules[] | select(.login == $app)] as $bot_rules
+		| {type: "Bot", login: $app,
+			block_only: (($bot_rules | length) > 0
+				and (try (($before | blank_blocks($bot_rules)) == ($after | blank_blocks($bot_rules))) catch false))}
+	else {type: (.editor.__typename // "unknown"), login: .editor.login} end;
+input as $candidate | input as $response | ($issued[0:19]) as $cutoff
+| ([$candidate.linked_references[]? | select(body_bound and .source.node_id == $id) | .source.body] | unique) as $bodies
+| ($response.data.node // null) as $node
+| ($node.userContentEdits // null) as $edits
+| if ($bodies | length) != 1 or ($bodies[0] | type) != $string_type then error("linked source body is ambiguous")
+elif ($response.errors // null) != null
+	or ($node | type) != $object or ($node.id // null) != $id
+	or ($edits | type) != $object or ($edits.pageInfo | type) != $object
+	or $edits.pageInfo.hasNextPage != false
+	or ($edits.nodes | type) != "array"
+	or any($edits.nodes[]; (.editedAt | valid_timestamp) | not)
+then error("linked source edit history is incomplete")
+else
+	($edits.nodes | sort_by(.editedAt[0:19])) as $revisions
+	| ($revisions | length) as $count
+	| if $count == 0 or $revisions[-1].editedAt[0:19] < $cutoff then {changed: false}
+	elif ($revisions | map(.editedAt[0:19]) | unique | length) != $count then error("linked source edit order is ambiguous")
+	elif $revisions[-1].diff != $bodies[0] then error("edit history does not explain the current body")
+	else
+		([range(0; $count) | select($revisions[.].editedAt[0:19] < $cutoff)] | last // null) as $base
+		| if $base == null or any($revisions[$base:][]; (.diff | type) != $string_type)
+		then error("signed linked source revision is unavailable")
+		elif $revisions[$base].diff == $bodies[0] then {changed: false}
+		else {
+			changed: true,
+			edits: [range($base + 1; $count) as $index
+				| $revisions[$index] | edit_entry($revisions[$index - 1].diff; .diff)],
+			candidate: ($candidate | .linked_references |= map(
+				if body_bound and .source.node_id == $id then .source.body = $revisions[$base].diff else . end))
+		} end
+	end
+end
+JQ
+	return 0
+}
+
+# #aidevops:trust-boundary — GH#38006: a content-bound linked source (an
+# external issue/PR) binds its body. Restore each changed source body to its
+# GraphQL userContentEdits revision live at issued_at so the caller can prove
+# the restored candidate reproduces the signed digest/frame. Payloads with
+# linked digests name the changed sources and must keep linked_frame; older
+# payloads try every body-bound source. Prints {candidate, edits} where edits
+# lists every post-signing editor for _approval_continuity_linked_edits_authorized.
+# Returns 1 when no linked body change can explain the drift, 2 on uncertainty
+# about a named changed source (GraphQL error, second page, missing/ghost
+# editor or unexplained history); older payloads map that uncertainty to 1.
+_approval_continuity_linked_source_candidate() {
+	local payload="$1"
+	local candidate="$2"
+	local issued_at="$3"
+	local signed_linked="" node_ids="" node_id="" current_frame="" current_bodies="" rules="" history="" result=""
+	local edits='[]' changed=0 named_sources=0 uncertain_rc=2
+	[[ "$issued_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	signed_linked=$(jq -c --arg sha "^[0-9a-f]{64}$" --arg object "$APPROVAL_JSON_OBJECT" --arg string_type "$_APPROVAL_CONTINUITY_JSON_STRING" '
+		.issue.content_digests
+		| select(type == $object and (.linked_frame | type) == $string_type and (.linked_frame | test($sha))
+			and (.linked_bodies | type) == $object and all(.linked_bodies[]; type == $string_type and test($sha)))
+		| {linked_frame, linked_bodies}
+	' <<<"$payload" 2>/dev/null) || signed_linked=""
+	if [[ -n "$signed_linked" ]]; then
+		named_sources=1
+		current_frame=$(approval_snapshot_v2_linked_frame_digest "$candidate") || return 1
+		current_bodies=$(approval_snapshot_v2_linked_body_digests "$candidate") || return 1
+		node_ids=$(jq -er --argjson signed "$signed_linked" --arg frame "$current_frame" '
+			select($signed.linked_frame == $frame and keys == ($signed.linked_bodies | keys))
+			| to_entries[] | select(.value != $signed.linked_bodies[.key]) | .key
+		' <<<"$current_bodies" 2>/dev/null) || return 1
+	else
+		node_ids=$(jq -er "[(.linked_references // [])[] | select($(_approval_snapshot_v2_body_bound_source_filter)) | .source.node_id // \"\"] | unique | .[]" <<<"$candidate" 2>/dev/null) || return 1
+	fi
+	# Named (GH#38006+) sources changed for certain, so unreadable history is
+	# uncertainty. Older payloads only guess which source changed; unreadable
+	# history there keeps their prior stale outcome instead of API_ERROR.
+	uncertain_rc=$((named_sources == 1 ? 2 : 1))
+	rules=$(_approval_continuity_review_bot_rules) || rules='[]'
+	while IFS= read -r node_id; do
+		[[ "$node_id" =~ ^[A-Za-z0-9_=-]+$ ]] || return 1
+		history=$(_approval_continuity_source_edit_history "$node_id") || return "$uncertain_rc"
+		result=$(printf '%s\n%s\n' "$candidate" "$history" | jq -c -n --arg id "$node_id" --arg issued "$issued_at" \
+			--arg object "$APPROVAL_JSON_OBJECT" --arg string_type "$_APPROVAL_CONTINUITY_JSON_STRING" --argjson rules "$rules" "$(_approval_continuity_linked_restore_program)" 2>/dev/null) || return "$uncertain_rc"
+		if ! jq -e '.changed == true' <<<"$result" >/dev/null 2>&1; then
+			# A named digest change with no post-signing history is unexplained.
+			[[ "$named_sources" -eq 0 ]] || return 2
+			continue
+		fi
+		changed=1
+		candidate=$(jq -cS '.candidate' <<<"$result") || return 1
+		edits=$(printf '%s\n%s\n' "$edits" "$result" | jq -c -n 'input as $edits | input | $edits + .edits') || return 1
+	done <<<"$node_ids"
+	[[ "$changed" -eq 1 ]] || return 1
+	printf '%s\n%s\n' "$candidate" "$edits" | jq -c -n 'input as $candidate | input as $edits | {candidate: $candidate, edits: $edits}'
+	return $?
+}
+
+# #aidevops:trust-boundary — GH#38006: every post-signing linked-source edit
+# must come from a live admin/maintain/write User, or from an allowlisted
+# review bot whose edit changed bytes only inside its configured blocks.
+# External/non-write editors, unknown bots and other actor types return 1;
+# permission API uncertainty returns 2.
+_approval_continuity_linked_edits_authorized() {
+	local slug="$1"
+	local edits="$2"
+	local login="" rows="" kind="" block_only="" login_rc=0
+	rows=$(jq -r '[.[] | [.type, .login, ((.block_only // false) | tostring)]] | unique | .[] | @tsv' <<<"$edits") || return 2
+	while IFS=$'\t' read -r kind login block_only; do
+		[[ -n "$kind" ]] || continue
+		case "$kind" in
+		User)
+			login_rc=0
+			_approval_continuity_actor_authorized "$slug" "$login" || login_rc=$?
+			[[ "$login_rc" -eq 0 ]] || return "$login_rc"
+			;;
+		Bot) [[ "$block_only" == "true" ]] || return 1 ;;
+		*) return 1 ;;
+		esac
+	done <<<"$rows"
+	return 0
+}
+
+# Replacing only lifecycle metadata and removing authority-equivalent
+# post-approval comments must recreate the signed digest. This proves title,
+# body, pre-approval comments, references, identity, and all other
+# scope-bearing bytes remain exactly as reviewed. GH#33097: payloads with
+# component digests may instead prove that only title/body changed; those
+# edits are then authenticated by the caller (renamed events, userContentEdits).
+# GH#38006: content-bound linked-source bodies may also be restored to their
+# signed revisions; the caller authenticates their post-signing edits.
+# Prints {changes: "title\nbody" subset, linked_edits: [...] | null}.
+_approval_continuity_content_proof() {
+	local payload="$1"
+	local current_snapshot="$2"
+	local signed_lifecycle="$3"
+	local signed_digest="$4"
+	local slug="$5"
+	local approval_comment_id="$6"
+	local issued_at="$7"
+	local filtered_snapshot="" candidate="" candidate_digest="" content_changes="" linked_result="" linked_edits="null"
+	filtered_snapshot=$(_approval_continuity_drop_trusted_comments "$current_snapshot" "$slug" "$approval_comment_id") || return $?
+	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$filtered_snapshot") || return 1
+	candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
+	if [[ "$candidate_digest" != "$signed_digest" ]] && ! content_changes=$(_approval_continuity_content_changes "$payload" "$candidate"); then
+		linked_result=$(_approval_continuity_linked_source_candidate "$payload" "$candidate" "$issued_at") || return $?
+		candidate=$(jq -cS '.candidate' <<<"$linked_result") || return 1
+		linked_edits=$(jq -c '.edits' <<<"$linked_result") || return 1
+		candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
+		content_changes=""
+		if [[ "$candidate_digest" != "$signed_digest" ]]; then
+			content_changes=$(_approval_continuity_content_changes "$payload" "$candidate") || return 1
+		fi
+	fi
+	jq -cn --arg changes "$content_changes" --argjson linked_edits "$linked_edits" '{changes: $changes, linked_edits: $linked_edits}'
+	return $?
+}
+
 _approval_verify_locked_issue_continuity() {
 	local payload="$1"
 	local current_snapshot="$2"
@@ -334,10 +555,10 @@ _approval_verify_locked_issue_continuity() {
 	local target_number="$5"
 	local issued_at="$6"
 	local approval_comment_id="$7"
-	local signed_lifecycle="" current_anchor="" signed_anchor="" candidate="" candidate_digest="" filtered_snapshot=""
+	local signed_lifecycle="" current_anchor="" signed_anchor="" content_proof=""
 	local timeline_pages="" mutation_rows="" event="" actor="" subject="" actor_id="" actor_type="" actor_rc=0
 	local signed_has_status=0 auto_dispatch_active=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
-	local content_changes="" title_changed=0 body_changed=0 body_rc=0
+	local content_changes="" title_changed=0 body_changed=0 body_rc=0 linked_edits="" linked_rc=0
 
 	# #aidevops:trust-boundary — no embedded lifecycle proof means this is a
 	# legacy exact-snapshot approval, never continuity authority.
@@ -359,20 +580,11 @@ _approval_verify_locked_issue_continuity() {
 		return 1
 	fi
 
-	# Replacing only lifecycle metadata and removing authority-equivalent
-	# post-approval comments must recreate the signed digest. This proves title,
-	# body, pre-approval comments, references, identity, and all other
-	# scope-bearing bytes remain exactly as reviewed. GH#33097: payloads with
-	# component digests may instead prove that only title/body changed; those
-	# edits are then authenticated below (renamed events, userContentEdits).
-	filtered_snapshot=$(_approval_continuity_drop_trusted_comments "$current_snapshot" "$slug" "$approval_comment_id") || return $?
-	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$filtered_snapshot") || return 1
-	candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
-	if [[ "$candidate_digest" != "$signed_digest" ]]; then
-		content_changes=$(_approval_continuity_content_changes "$payload" "$candidate") || return 1
-		[[ "$content_changes" != *title* ]] || title_changed=1
-		[[ "$content_changes" != *body* ]] || body_changed=1
-	fi
+	content_proof=$(_approval_continuity_content_proof "$payload" "$current_snapshot" "$signed_lifecycle" "$signed_digest" "$slug" "$approval_comment_id" "$issued_at") || return $?
+	content_changes=$(jq -r '.changes' <<<"$content_proof") || return 1
+	linked_edits=$(jq -c '.linked_edits // empty' <<<"$content_proof") || return 1
+	[[ "$content_changes" != *title* ]] || title_changed=1
+	[[ "$content_changes" != *body* ]] || body_changed=1
 	timeline_pages=$(_approval_snapshot_v2_fetch_pages "repos/${slug}/issues/${target_number}/timeline?per_page=100") || return 2
 	mutation_rows=$(_approval_continuity_ordered_mutation_rows "$timeline_pages" "$issued_at" "$approval_comment_id" 2>/dev/null) || return 2
 	if ! jq -e --argjson signed "$signed_lifecycle" '.lifecycle == $signed' <<<"$current_snapshot" >/dev/null 2>&1; then
@@ -420,6 +632,10 @@ _approval_verify_locked_issue_continuity() {
 	if [[ "$body_changed" -eq 1 ]]; then
 		_approval_continuity_body_edits_authorized "$slug" "$target_number" "$timeline_pages" "$approval_comment_id" || body_rc=$?
 		[[ "$body_rc" -eq 0 ]] || return "$body_rc"
+	fi
+	if [[ -n "$linked_edits" ]]; then
+		_approval_continuity_linked_edits_authorized "$slug" "$linked_edits" || linked_rc=$?
+		[[ "$linked_rc" -eq 0 ]] || return "$linked_rc"
 	fi
 	# A distinct result permits a single fresh snapshot/timeline read, but only
 	# after every content and actor authorization check has passed.
