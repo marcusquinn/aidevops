@@ -456,6 +456,17 @@ class ExpiredReadyLeaseHistoryTests(unittest.TestCase):
         data = expired_ready_fixture(comment(5, EXPIRED_READY_RELEASE, "worker"))
         assert_rejection(self, data, 5, "open_at_end")
 
+    def test_executorless_release_without_terminal_is_accepted(self):
+        # GH#38103: an expired, released, executor-less episode needs no owner terminal.
+        data = expired_ready_fixture(comment(5, EXPIRED_READY_RELEASE, "worker"))
+        data["executorless_release_ids"] = [5]
+        result = revision.validate(approved(data))
+        self.assertEqual(result["released_successors"], [{
+            "runner": "worker", "attempt": "attempt:a", "claim_id": 4, "ready_id": 4.6,
+            "release_id": 5, "outcome": fields(EXPIRED_READY_RELEASE)["reason"]}])
+        data["executorless_release_ids"] = [99]
+        assert_rejection(self, data, 5, "open_at_end")
+
 
 def ready_pages(*extra, claim_author="worker", approval="checkpoint_approval=3 ", ready_expiry=" expires_at=150"):
     lease = f"{LT}=tok device=dev session=s1"

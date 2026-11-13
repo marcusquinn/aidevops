@@ -45,6 +45,35 @@ def acknowledged_terminal(state, event, review):
             "release_provenance": "missing", "execution_status": "unrecovered"}
 
 
+EXPIRED_RELEASE_GRACE_SECONDS = 3600
+
+
+def released_without_terminal(state, review):
+    """Accept a released episode whose owning device never posted its terminal lease.
+
+    #aidevops:trust-boundary — GH#38103: only the owning device can close its
+    lease, so another machine's released episode would otherwise block approval
+    forever. The episode needs a ready lease, a release from its own runner, every
+    lease expired more than 60 minutes before approval time, and an
+    executor-less attestation naming the exact release comment. Liveness is
+    local machine state, so the template caller supplies the attestation and the
+    approval binds it; the release reason becomes the recorded outcome.
+    """
+    if state is None or state.get("terminal_id") or state.get("unbound_release_ids"):
+        return None
+    release_id, ready_id, reason = state.get("release_id"), state.get("ready_id"), state.get("release_reason")
+    expiries = state.get("expiries", [])
+    if not (release_id and ready_id and reason and expiries and
+            all(positive_expiry(value) for value in expiries) and
+            release_id in review.get("executorless_release_ids", ()) and
+            state["claim_id"] < ready_id < release_id):
+        return None
+    if max(int(value) for value in expiries) + EXPIRED_RELEASE_GRACE_SECONDS >= review.get("before", 0):
+        return None
+    episode = {key: state[key] for key in ("runner", "attempt", "claim_id", "ready_id", "release_id")}
+    return {**episode, "outcome": reason}
+
+
 def completed_episode(state):
     """Summarize a normally closed episode, preserving its ordered evidence IDs."""
     if state.get("outcome") == UNATTRIBUTED:

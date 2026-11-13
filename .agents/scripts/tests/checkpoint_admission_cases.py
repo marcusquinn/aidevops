@@ -57,7 +57,8 @@ class RevisionEnvelopeCases:
         approved = {**self.fixture(), "comments": template["comments"] + [
             self.comment(3, line, "maintainer", "OWNER")]}
         self.assertEqual(self.revision.validate(approved)["approval_id"], 3)
-        for reason in ("worker_draft_checkpoint", "crash_during_execution", "worker_failed"):
+        # GH#38103: worker_failed is stall-class and now accepted.
+        for reason in ("worker_draft_checkpoint", "crash_during_execution"):
             refused = copy.deepcopy(template)
             refused["comments"][1]["body"] = f"CLAIM_RELEASED reason={reason} runner=worker"
             with self.subTest(reason=reason), self.assertRaises(ValueError):

@@ -7,7 +7,7 @@ import hashlib
 import json
 
 from pr_checkpoint_events import closes_released_attempt, events, fields, normalized_attempt, trusted
-from pr_checkpoint_episodes import acknowledged_terminal, completed_episode
+from pr_checkpoint_episodes import acknowledged_terminal, completed_episode, released_without_terminal
 from pr_checkpoint_never_ready import (CLAIM_ONLY,
                                        advance_never_ready_release, close_claim_only)
 from pr_checkpoint_unattributed import unattributed_release
@@ -34,6 +34,7 @@ def close_release(state, comment, f):
                  normalized_attempt(f.get("attempt_id", state["attempt"])) == state["attempt"]))
     if valid:
         state["release_id"] = comment["id"]
+        state["release_reason"] = f["reason"]
     return valid
 
 
@@ -153,6 +154,12 @@ def explain_reviewed_successor_history(comments, bounds, released_lease, review)
             state = None
             episode_records = []
             continue
+        # GH#38103: an executor-less released episode needs no terminal lease
+        # before the next episode starts; the attestation names its release.
+        unterminated = released_without_terminal(state, review) if line.startswith("DISPATCH_CLAIM ") else None
+        if unterminated is not None:
+            history.append(unterminated)
+            state, episode_records = None, [episode_records[-1]]
         previous = state
         state = advance_history(state, comment, line, f, seen)
         if state is None:
@@ -162,6 +169,9 @@ def explain_reviewed_successor_history(comments, bounds, released_lease, review)
             history.append(episode)
             state = None
             episode_records = []
+    if state is not None and (unterminated := released_without_terminal(state, review)) is not None:
+        history.append(unterminated)
+        state = None
     if state is not None:
         return None, (comment, line, state, "open_at_end")
     return history, None

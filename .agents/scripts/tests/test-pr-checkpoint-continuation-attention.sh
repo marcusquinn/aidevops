@@ -223,6 +223,38 @@ else
 	print_result "unrelated terminal lease after a stall release still counts as ownership" 1
 fi
 
+# GH#38103: a never-launched continuation episode (edited claim and terminal
+# lease of the PR's own session) leaves the stall release current evidence; a
+# second one reaches the per-head fuse (stalls >= 2).
+failed_launch_comments() {
+	local episodes="$1" id=40 n=0 out=""
+	out='{"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},{"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=pulse-runner ts=2026-09-30T01:30:00Z"}'
+	while [[ "$n" -lt "$episodes" ]]; do
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"updated_at\":\"2026-09-30T02:0${n}:30Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=pulse-runner lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 phase=prelaunch\"}"
+		id=$((id + 1))
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:40Z\",\"updated_at\":\"2026-09-30T02:0${n}:50Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_LEASE phase=terminal lease_token=n${n} session=pr-checkpoint-continuation-o-r-9 expires_at=0\"}"
+		id=$((id + 1))
+		n=$((n + 1))
+	done
+	printf '[[%s]]\n' "$out"
+	return 0
+}
+failed_session="pr-checkpoint-continuation-o-r-9"
+for failed_episodes in 1 2; do
+	expected_stalls=$((failed_episodes))
+	if output=$(_pcc_stall_release_evidence "$(failed_launch_comments "$failed_episodes")" "2026-09-30T00:30:00Z" key "[]" "" "" "" "$failed_session") &&
+		[[ "$output" == "31"$'\t'"worker_draft_checkpoint"$'\t'"${expected_stalls}"$'\t'* ]]; then
+		print_result "never-launched continuation episodes (${failed_episodes}) keep the stall release current" 0
+	else
+		print_result "never-launched continuation episodes (${failed_episodes}) keep the stall release current" 1 "output=${output:-missing}"
+	fi
+done
+if ! _pcc_stall_release_evidence "$(failed_launch_comments 1)" "2026-09-30T00:30:00Z" key "[]" "" "" "" >/dev/null 2>&1; then
+	print_result "edited episode of an unknown session still fences the stall release" 0
+else
+	print_result "edited episode of an unknown session still fences the stall release" 1
+fi
+
 # GH#34008: a killed attempt runs no release path; the proactive sweep already
 # reset its issue. Its own expired claim, older than the recovery draft head,
 # is the only stall evidence accepted, and only for For #N recovery drafts.
