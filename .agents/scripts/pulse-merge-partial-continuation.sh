@@ -683,6 +683,31 @@ _pmpc_restore_checkpoint_spec_dispatch() {
 	return 0
 }
 
+# Revisit one in-review issue: find its newest merged cross-referenced PR and
+# let the merge-time guard decide. Timeline cross-references carry merged_at;
+# select the newest merged PR, not an older eligible partial hidden by a later
+# closing delivery.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
+_pmpc_revisit_in_review_issue() {
+	local repo_slug="$1" issue_num="$2" timeline="" pr_number=""
+	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+		if type != "array" then error("unreadable timeline")
+		elif (.[0]? | type) == "array" then [.[][]] else . end
+		| [ .[] | select(.event == "cross-referenced") | .source.issue
+			| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
+		| sort_by(.pull_request.merged_at, .number) | last
+		| if . == null then empty elif (.number | type) == "number" then .number
+			else error("unreadable PR number") end
+	' 2>/dev/null) || return 1
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	# All current issue/PR/comment metadata is re-read by the merge-time
+	# guard, including open PR ownership, held issues and marker idempotency.
+	_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+	return 0
+}
+
 # GH#34432: revisit one bounded page of candidate issues on the existing
 # per-repo stale-blocked cadence. GH#38039: only label-filtered candidates are
 # listed (status:in-review for the restore path, then status:available
@@ -699,7 +724,7 @@ _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
 	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" issue_num="" timeline="" pr_number="" now_epoch="" count=0
+	local cursor="" issues_json="" issues="" issue_num="" now_epoch="" count=0
 	local line="" loaded=0 remaining="" phase="review" pending_phase="review" labels="" last_page=0 resumed=0
 	local avail_phase="available"
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
@@ -788,22 +813,7 @@ _pm_reconcile_partial_continuations() {
 				_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
 				continue
 			fi
-			# Timeline cross-references carry merged_at. Select the newest merged
-			# PR, not an older eligible partial hidden by a later closing delivery.
-			timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-			pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
-				if type != "array" then error("unreadable timeline")
-				elif (.[0]? | type) == "array" then [.[][]] else . end
-				| [ .[] | select(.event == "cross-referenced") | .source.issue
-					| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
-				| sort_by(.pull_request.merged_at, .number) | last
-				| if . == null then empty elif (.number | type) == "number" then .number
-					else error("unreadable PR number") end
-			' 2>/dev/null) || return 1
-			[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-			# All current issue/PR/comment metadata is re-read by the merge-time
-			# guard, including open PR ownership, held issues and marker idempotency.
-			_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+			_pmpc_revisit_in_review_issue "$repo_slug" "$issue_num" || return 1
 		done <<<"$issues"
 		issues=""
 		if [[ "$token" == a1 && "$phase" == review ]]; then
