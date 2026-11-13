@@ -1472,8 +1472,16 @@ _archive_run_batches() {
 		fi
 
 		# Collect batch session IDs
-		local session_ids
-		session_ids=$(_archive_active_query "WITH candidates AS (SELECT id, time_updated, time_created FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit), sized AS (SELECT id, time_updated, time_created, COALESCE((SELECT SUM(LENGTH(data)) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(data)) FROM message WHERE session_id=c.id),0) AS bytes FROM candidates c), ranked AS (SELECT id, SUM(bytes) OVER (ORDER BY time_updated, time_created, id) AS cumulative, ROW_NUMBER() OVER (ORDER BY time_updated, time_created, id) AS rn FROM sized) SELECT id FROM ranked WHERE cumulative <= $byte_limit OR rn = 1 ORDER BY rn;") || return 1
+		local session_ids extra_bytes_sql="" batch_start
+		if ((has_session_message_table)); then
+			extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(data)) FROM session_message WHERE session_id=c.id),0)"
+		fi
+		if ((has_event_table)); then
+			extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(data)) FROM event WHERE aggregate_id=c.id),0)"
+		fi
+		# Start the timer before sizing so selection cost counts toward adaptation.
+		batch_start=$(date +%s)
+		session_ids=$(_archive_active_query "WITH candidates AS (SELECT id, time_updated, time_created FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit), sized AS (SELECT id, time_updated, time_created, COALESCE((SELECT SUM(LENGTH(data)) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(data)) FROM message WHERE session_id=c.id),0)$extra_bytes_sql AS bytes FROM candidates c), ranked AS (SELECT id, SUM(bytes) OVER (ORDER BY time_updated, time_created, id) AS cumulative, ROW_NUMBER() OVER (ORDER BY time_updated, time_created, id) AS rn FROM sized) SELECT id FROM ranked WHERE cumulative <= $byte_limit OR rn = 1 ORDER BY rn;") || return 1
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -1489,8 +1497,6 @@ _archive_run_batches() {
 		# archival and bloating the DB to multi-GB (3232+ sessions).
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
-		local batch_start
-		batch_start=$(date +%s)
 		_archive_write_batch "$in_clause" || return 1
 		last_seconds=$(($(date +%s) - batch_start))
 		elapsed=$(($(date +%s) - start_time))
