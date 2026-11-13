@@ -21,6 +21,9 @@ from pr_checkpoint_history import explain_reviewed_successor_history
 from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
 
+LEASE_EXPIRED = "reason=prelaunch_lease_expired"
+
+
 def approval_matches(data, approval, comment, now):
     attempt = approval.get("attempt")
     return all((all(approval.get(key) == value for key, value in binding(data).items()),
@@ -133,10 +136,21 @@ def candidate(data, comments, comment, now):
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
 
 
+def lease_expired(data, comments, now):
+    """GH#38145: exactly one approval would match if its own claim were live."""
+    expired = {**data, "diagnose_expired": True}
+    return bool(data.get("lease")) and sum(candidate(expired, comments, c, now) is not None
+                                           for c in comments) == 1
+
+
 def validate(data):
+    #aidevops:trust-boundary — the expiry bypass is diagnostic-only; no payload grants it.
+    data = {**data, "diagnose_expired": False}
     comments = sorted_comments(data)
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     candidates = [result for c in comments if (result := candidate(data, comments, c, now)) is not None]
+    if not candidates and lease_expired(data, comments, now):
+        raise ValueError(LEASE_EXPIRED)
     if len(candidates) != 1:
         raise ValueError("missing or ambiguous current revision approval")
     return candidates[0]
@@ -244,6 +258,8 @@ if __name__ == "__main__":
     except (ValueError, KeyError, TypeError, OverflowError) as error:
         if template_mode:
             print(f"approval-template: {error}", file=sys.stderr)
+        elif str(error) == LEASE_EXPIRED:
+            print(f"PR_CHECKPOINT_TARGET_LOST: {LEASE_EXPIRED}", file=sys.stderr)
         elif payload is not None and (diagnostic := binding_diagnostic(payload)):
             print(diagnostic, file=sys.stderr)
         sys.exit(1)

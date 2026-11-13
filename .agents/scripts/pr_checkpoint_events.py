@@ -177,6 +177,8 @@ def closes_released_attempt(released_lease, comment, line, f):
 
 
 def successors_valid(data, comments, release_id, approval_id, now):
+    """Fence events after the approval. ``diagnose_expired`` in data (GH#38145)
+    skips only the expiry test, so callers can name an expired own claim."""
     claim = None
     trusted_logins = data.get("trusted_logins", ())
     for comment, line, f in events(comments, release_id, float("inf"), trusted_logins):
@@ -192,4 +194,5 @@ def successors_valid(data, comments, release_id, approval_id, now):
             claim = {**claim, **f}
         else:
             return False
-    return not data.get("lease") or bool(claim and int(claim.get("expires_at", 0)) > now)
+    return not data.get("lease") or bool(claim and (data.get("diagnose_expired") or
+                                                   int(claim.get("expires_at", 0)) > now))
