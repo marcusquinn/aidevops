@@ -207,9 +207,8 @@ _check_tool_idle_gate() {
 # repeatedly run setup.sh — setup.sh is idempotent but does ~20
 # scheduler operations per run and isn't free.
 #
-# macOS only — systemd-user and cron paths don't have the same
-# deployment gap (setup.sh regenerates unit files on every run and
-# users typically restart them explicitly).
+# macOS only — systemd auto-update units are compared and refreshed by
+# idempotent enable during setup; cron has no unit templates to refresh.
 #######################################
 check_launchd_plist_drift() {
 	[[ "$(uname -s)" == "Darwin" ]] || return 0
