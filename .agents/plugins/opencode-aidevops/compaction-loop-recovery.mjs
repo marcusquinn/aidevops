@@ -9,9 +9,76 @@
 // ---------------------------------------------------------------------------
 
 import { createHash } from "node:crypto";
+import { isCompactionSummary } from "./compaction-history-repair.mjs";
 
 // Same text as OpenCode's own post-compaction continuation (compaction.ts).
 export const CONTINUE_TEXT = "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.";
+
+const MAX_RECOVERIES = 2;
+const RECOVERY_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Per-session rerun budget (MAX_RECOVERIES per RECOVERY_WINDOW_MS) and the
+ * chain origin: the first looping compaction's request and part ({ auto,
+ * overflow }). A rerun is a manual compaction whose parent has no variant, so
+ * a loop in a rerun must recover with the original identity. A clean summary
+ * or an expired window ends the chain.
+ */
+export class RecoveryLedger {
+  constructor(now, maxTracked) {
+    this.now = now;
+    this.maxTracked = maxTracked;
+    this.sessions = new Map(); // sessionID -> { attempts, pending, origin }
+  }
+
+  /** @returns {boolean} true when a rerun is reserved */
+  reserve(sessionID, messageID, origin) {
+    const entry = this.sessions.get(sessionID) || { attempts: [], pending: null, origin: null };
+    entry.attempts = entry.attempts.filter((at) => this.now() - at < RECOVERY_WINDOW_MS);
+    if (entry.attempts.length === 0) entry.origin = null;
+    entry.origin = entry.origin || origin;
+    const retry = entry.attempts.length < MAX_RECOVERIES;
+    if (retry) {
+      entry.attempts.push(this.now());
+      entry.pending = { messageID, ended: false };
+    }
+    this.sessions.set(sessionID, entry);
+    while (this.sessions.size > this.maxTracked) this.sessions.delete(this.sessions.keys().next().value);
+    return retry;
+  }
+
+  /** Track message.updated: the aborted summary ending, or a clean summary. */
+  observe(info) {
+    const entry = this.sessions.get(info?.sessionID);
+    if (!entry) return;
+    if (entry.pending?.messageID === info.id) {
+      if (info.error || info.time?.completed) entry.pending.ended = true;
+    } else if (!entry.pending && isCompactionSummary(info) && info.finish && !info.error) {
+      entry.origin = null;
+    }
+  }
+
+  /**
+   * Only the idle after the aborted summary has ended proves the run is torn
+   * down; an earlier idle would join the failing run.
+   * @returns {object|null} the chain origin when a rerun is due
+   */
+  take(sessionID) {
+    const entry = this.sessions.get(sessionID);
+    if (!entry?.pending?.ended) return null;
+    entry.pending = null;
+    return entry.origin || {};
+  }
+
+  cancel(sessionID) {
+    const entry = this.sessions.get(sessionID);
+    if (entry) entry.pending = null;
+  }
+
+  forget(sessionID) {
+    this.sessions.delete(sessionID);
+  }
+}
 
 export function sessionHash(sessionID) {
   return createHash("sha256").update(String(sessionID || "unknown-session")).digest("hex").slice(0, 12);

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { collapseRepetitions, repetitionAtTail } from "../compaction-loop-detect.mjs";
 import { repairCompactedHistory } from "../compaction-history-repair.mjs";
 import { createCompactionLoopGuard } from "../compaction-loop-guard.mjs";
+import { findCompactionAnchor } from "../compaction-replay-collect.mjs";
 import { CONTINUE_TEXT } from "../compaction-loop-recovery.mjs";
 
 // Shape of the GH#37997 incident: a summary that copies a quoted aim, then
@@ -54,8 +55,11 @@ test("history repair drops failed summaries and applies a misanchored boundary",
     msg("a3", "assistant", 7, { summary: true, mode: "compaction", parentID: "u2", finish: "stop" }),
     msg("u3", "user", 8, {}, [{ type: "text", text: CONTINUE_TEXT, synthetic: true }]),
   ];
+  assert.equal(findCompactionAnchor(messages.slice(4)), null, "a typed parent that does not lead is no boundary");
   assert.deepEqual(repairCompactedHistory(messages), { dropped: 1, trimmed: 4 });
   assert.deepEqual(messages.map((m) => m.info.id), ["u2", "a3", "u3"]);
+  // Verbatim replay (GH#35186) restores the user turns the trim hid.
+  assert.deepEqual(findCompactionAnchor(messages), { anchorIndex: 0, anchorID: "u2", summaryID: "a3", overflow: false });
 
   const anchored = [
     msg("u1", "user", 1, {}, [{ type: "compaction" }]),
@@ -125,6 +129,28 @@ test("interactive loop is aborted, compaction rerun, and the session continued w
   });
   assert.ok(logs.some((line) => line.startsWith("WARN [compaction-loop-guard] repetition loop")));
   assert.ok(logs.every((line) => !line.includes("continue refining")), "logs never carry summary text");
+});
+
+test("a loop in the rerun recovers with the original automatic compaction's identity", async () => {
+  const calls = [];
+  const guard = createCompactionLoopGuard({ client: fakeClient(calls), shouldContinue: async () => true });
+  startCompaction(guard);
+  stream(guard, looping(80));
+  endAborted(guard);
+  await settle();
+  await settle();
+  // The rerun: a manual compaction whose parent has no variant.
+  guard.handleEvent({ event: { type: "message.part.updated", properties: { part: { id: "p2", messageID: "u2", sessionID: "s1", type: "compaction", auto: false } } } });
+  guard.chatParams({ sessionID: "s1", agent: "compaction", message: { id: "u2", agent: "build", model: { providerID: "anthropic", modelID: "claude-x" } } });
+  guard.handleEvent({ event: { type: "message.updated", properties: { info: { id: "a2", sessionID: "s1", role: "assistant", mode: "compaction", summary: true, time: { created: 3 } } } } });
+  stream(guard, looping(80), "a2");
+  endAborted(guard, "a2");
+  await settle();
+  await settle();
+  assert.equal(calls.filter((c) => c.name === "summarize").length, 2);
+  const prompts = calls.filter((c) => c.name === "promptAsync");
+  assert.equal(prompts.length, 2, "both reruns continue the automatic compaction");
+  assert.equal(prompts.at(-1).request.body.variant, "xhigh");
 });
 
 test("manual compaction reruns without a continuation prompt", async () => {

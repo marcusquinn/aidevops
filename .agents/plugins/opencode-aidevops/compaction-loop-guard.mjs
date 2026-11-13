@@ -15,12 +15,16 @@
 
 import { collapseRepetitions, LOOP_DEFAULTS, repetitionAtTail } from "./compaction-loop-detect.mjs";
 import { isCompactionSummary, repairCompactedHistory } from "./compaction-history-repair.mjs";
-import { abortLoopingCompaction, continuationPolicy, rerunCompaction, sessionHash } from "./compaction-loop-recovery.mjs";
+import {
+  abortLoopingCompaction,
+  continuationPolicy,
+  RecoveryLedger,
+  rerunCompaction,
+  sessionHash,
+} from "./compaction-loop-recovery.mjs";
 
 const CHECK_EVERY_CHARS = 512;
 const MAX_TRACKED = 64;
-const MAX_RECOVERIES = 2;
-const RECOVERY_WINDOW_MS = 30 * 60 * 1000;
 
 function capMap(map) {
   while (map.size > MAX_TRACKED) map.delete(map.keys().next().value);
@@ -52,7 +56,7 @@ class CompactionLoopGuard {
     this.compactionParts = new Map(); // user messageID -> { auto, overflow }
     this.streams = new Map(); // partID -> { messageID, sessionID, tail, length, checkedAt }
     this.requests = new Map(); // sessionID -> parent request identity
-    this.recoveries = new Map(); // sessionID -> { attempts, pending }
+    this.recoveries = new RecoveryLedger(this.now, MAX_TRACKED);
   }
 
   // The compaction request's `message` is its parent user message: the
@@ -70,8 +74,7 @@ class CompactionLoopGuard {
       this.summaries.set(info.id, { sessionID: info.sessionID, looped: false });
       capMap(this.summaries);
     }
-    const pending = this.recoveries.get(info?.sessionID)?.pending;
-    if (pending && pending.messageID === info.id && (info.error || info.time?.completed)) pending.ended = true;
+    this.recoveries.observe(info);
   }
 
   trackCompactionPart(part) {
@@ -108,18 +111,10 @@ class CompactionLoopGuard {
     this.onLoop(stream, loop);
   }
 
-  // Up to MAX_RECOVERIES reruns per session within RECOVERY_WINDOW_MS.
-  reserveRecovery(sessionID, messageID) {
-    const recovery = this.recoveries.get(sessionID) || { attempts: [], pending: null };
-    recovery.attempts = recovery.attempts.filter((at) => this.now() - at < RECOVERY_WINDOW_MS);
-    const retry = recovery.attempts.length < MAX_RECOVERIES;
-    if (retry) {
-      recovery.attempts.push(this.now());
-      recovery.pending = { messageID, ended: false, request: this.requests.get(sessionID) };
-    }
-    this.recoveries.set(sessionID, recovery);
-    capMap(this.recoveries);
-    return retry;
+  // The looping compaction's parent identity and { auto, overflow } part.
+  origin(sessionID) {
+    const request = this.requests.get(sessionID);
+    return { request, part: this.compactionParts.get(request?.parentID) };
   }
 
   onLoop(stream, loop) {
@@ -129,28 +124,22 @@ class CompactionLoopGuard {
       this.log("WARN", `[compaction-loop-guard] repetition loop in compaction summary (${detail}); headless: output cap ends it, text is collapsed on completion`);
       return;
     }
-    const retry = this.reserveRecovery(sessionID, messageID);
+    const retry = this.recoveries.reserve(sessionID, messageID, this.origin(sessionID));
     this.log("WARN", `[compaction-loop-guard] repetition loop in compaction summary (${detail}); aborting${retry ? " and rerunning compaction" : "; retry limit reached"}`);
     void abortLoopingCompaction({ client: this.client, log: this.log, sessionID, retry }).then((aborted) => {
-      const recovery = this.recoveries.get(sessionID);
-      if (!aborted && recovery) recovery.pending = null;
+      if (!aborted) this.recoveries.cancel(sessionID);
     });
   }
 
-  // Only the idle after the aborted summary has ended proves the run is torn
-  // down; an earlier idle would join the failing run.
   maybeRecover(sessionID) {
-    const recovery = this.recoveries.get(sessionID);
-    const pending = recovery?.pending;
-    if (!pending?.ended) return;
-    recovery.pending = null;
-    const request = pending.request;
+    const origin = this.recoveries.take(sessionID);
+    if (!origin) return;
     rerunCompaction({
       client: this.client,
       log: this.log,
       sessionID,
-      request,
-      part: this.compactionParts.get(request?.parentID),
+      request: origin.request,
+      part: origin.part,
       shouldContinue: this.shouldContinue,
     }).catch((error) => {
       this.log("WARN", `[compaction-loop-guard] rerun failed: ${String(error?.message ?? error).slice(0, 200)}`);
@@ -171,7 +160,7 @@ class CompactionLoopGuard {
 
   forget(sessionID) {
     this.requests.delete(sessionID);
-    this.recoveries.delete(sessionID);
+    this.recoveries.forget(sessionID);
   }
 
   transformMessages(output) {
