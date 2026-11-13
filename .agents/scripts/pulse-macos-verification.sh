@@ -50,6 +50,11 @@ _pulse_macos_cleanup() {
 _pulse_macos_verify() {
 	local repo="$1" path="$2" pr="$3" head="$4" base="$5" attempt="$6"
 	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-$HOME/Git/_worktrees}" rc=0
+	# Bind controlled creation to this bounded verifier, not an inherited pulse
+	# owner. This selects the sanctioned registry creation path on canonical repos.
+	local AIDEVOPS_LIFECYCLE_RUNTIME_PID="$$"
+	local AIDEVOPS_LIFECYCLE_SESSION_ID="pulse-macos:$repo:$pr:$head:$$"
+	local AIDEVOPS_WORKTREE_CREATE_TASK="Native macOS verification $repo#$pr at $head"
 	# The scratch helper owns creation provenance, locking and non-force removal.
 	# shellcheck source=scratch-worktree-helper.sh
 	source "$_PULSE_MACOS_DIR/scratch-worktree-helper.sh" || return 1
@@ -78,27 +83,48 @@ _pulse_macos_verify() {
 }
 
 _pulse_macos_checks_pass() {
-	local repo="$1" pr="$2" head="$3" checks=""
+	local repo="$1" pr="$2" head="$3" checks="" branch="" rules=""
 	# Query the immutable commit, not the PR's mutable current-head check list.
 	# isRequired uses this PR's branch protection/ruleset context. Incomplete or
 	# unknown rollups fail closed, including a truncated (>100 contexts) response.
 	# shellcheck disable=SC2016 # GraphQL variables are bound by gh, not Bash.
 	checks=$(gh api graphql -f owner="${repo%/*}" -f name="${repo#*/}" -F pr="$pr" -f head="$head" -f query='
 		query($owner:String!, $name:String!, $pr:Int!, $head:GitObjectID!) {
-		  repository(owner:$owner, name:$name) { object(oid:$head) { ... on Commit {
+		  repository(owner:$owner, name:$name) {
+		    pullRequest(number:$pr) { headRefOid baseRefName baseRef { branchProtectionRule {
+		      requiresStatusChecks requiredStatusChecks { context app { databaseId } }
+		    } } }
+		    object(oid:$head) { ... on Commit {
 		    oid statusCheckRollup { contexts(first:100) {
 		      nodes { __typename
-		        ... on CheckRun { isRequired(pullRequestNumber:$pr) status conclusion }
-		        ... on StatusContext { isRequired(pullRequestNumber:$pr) state }
+		        ... on CheckRun { name isRequired(pullRequestNumber:$pr) status conclusion checkSuite { app { databaseId } } }
+		        ... on StatusContext { context isRequired(pullRequestNumber:$pr) state }
 		      } pageInfo { hasNextPage }
 		    } }
 		  } } }
 		}') || return 1
-	jq -e --arg head "$head" '.data.repository.object | select(.oid == $head) |
+	branch=$(jq -er --arg head "$head" '.data.repository.pullRequest |
+		select(.headRefOid == $head and .baseRef != null) | .baseRefName | select(type == "string" and length > 0) | @uri' <<<"$checks") || return 1
+	# Enumerate requirements too: absent required contexts are not in the rollup.
+	# This endpoint returns active rules, including inherited organization rules.
+	rules=$(gh api --paginate --slurp "repos/$repo/rules/branches/$branch") || return 1
+	jq -e --arg head "$head" --argjson pages "$rules" '
+		def passed: (.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or
+			(.__typename == "StatusContext" and .state == "SUCCESS");
+		($pages | add) as $rules |
+		select(($rules | type) == "array" and all($rules[]; .type != "workflows")) |
+		.data.repository as $repo | $repo.object | select(.oid == $head) |
 		.statusCheckRollup.contexts | select(.pageInfo.hasNextPage == false and (.nodes | type) == "array") |
-		all(.nodes[]; .isRequired == false or (.isRequired == true and
-			((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "SUCCESS") or
-			 (.__typename == "StatusContext" and .state == "SUCCESS"))))' <<<"$checks" >/dev/null || return 1
+		.nodes as $nodes |
+		([$repo.pullRequest.baseRef.branchProtectionRule.requiredStatusChecks[]? |
+			{context, app: .app.databaseId}] +
+		 [$rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] |
+			{context, app: .integration_id}]) as $required |
+		all($nodes[]; .isRequired == false or (.isRequired == true and passed)) and
+		all($required[]; . as $requirement | any($nodes[];
+			(.name // .context) == $requirement.context and passed and
+			($requirement.app == null or $requirement.app == -1 or
+			 .checkSuite.app.databaseId == $requirement.app)))' <<<"$checks" >/dev/null || return 1
 	return 0
 }
 
