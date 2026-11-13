@@ -100,8 +100,15 @@ cmd_sweep_checkpoint_ledger() {
 		DCH_SWEEP_FAILED=0
 		rc=0
 		cmd_sweep_pr_checkpoint_claim "$issue" "$repo" 0 || rc=$?
+		# GH#38144: one line per expired entry so a stranded claim is diagnosable
+		# from pulse.log (the pulse stage appends this stdout there). `released`
+		# also covers a claim the live timeline shows as already closed.
 		if [[ "$rc" -eq 0 && "$DCH_SWEEP_FAILED" -eq 0 ]]; then
 			_dch_ledger_remove_nonce "$token"
+			printf 'CHECKPOINT_LEDGER_SWEEP outcome=released issue=%s repo=%s session=%s\n' "$issue" "$repo" "$session"
+		else
+			printf 'CHECKPOINT_LEDGER_SWEEP outcome=retained issue=%s repo=%s session=%s rc=%s release_failed=%s\n' \
+				"$issue" "$repo" "$session" "$rc" "$DCH_SWEEP_FAILED"
 		fi
 	done <<<"$due"
 	return 0
