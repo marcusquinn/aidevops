@@ -23,8 +23,8 @@ reclaim = importlib.util.module_from_spec(SPEC)
 # module from sys.modules while the class body is processed.
 sys.modules[SPEC.name] = reclaim
 SPEC.loader.exec_module(reclaim)
-host = sys.modules["worktree_reclaim_host"]
-collector = sys.modules["worktree_reclaim_evidence"]
+host = sys.modules["worker_lifecycle.reclaim.host"]
+collector = sys.modules["worker_lifecycle.reclaim.evidence"]
 
 SLUG = "fixture/repo"
 ORIGIN = f"git@github.com:{SLUG}.git"

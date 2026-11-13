@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Evidence for reclaiming a finished worktree; every unreadable signal refuses.
@@ -17,7 +16,7 @@ import json
 from pathlib import Path
 import re
 
-from worktree_reclaim_host import Census, git, locked, metadata_directory, run
+from .host import Census, git, locked, metadata_directory, run
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the

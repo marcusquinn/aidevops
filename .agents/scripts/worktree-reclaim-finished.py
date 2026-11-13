@@ -7,7 +7,7 @@ This is an always-on interim pass of the pulse cleanup stage, not the cleanup
 evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
 policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
-by explicit operator decision, so the checks in ``worktree_reclaim_evidence`` are
+by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
 the only protection and each fails closed.
 """
 
@@ -21,9 +21,13 @@ from pathlib import Path
 import sys
 import time
 
-from worktree_reclaim_evidence import (
+# The package ships beside this script in both the repo and the deployed tree.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "worker-lifecycle"))
+
+from worker_lifecycle.reclaim.evidence import (  # noqa: E402
     evidence, nothing_to_lose, prefetch, references, repository)
-from worktree_reclaim_host import Census, common_directory, free_bytes, process_census, remove, run
+from worker_lifecycle.reclaim.host import (  # noqa: E402
+    Census, common_directory, free_bytes, process_census, remove, run)
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
