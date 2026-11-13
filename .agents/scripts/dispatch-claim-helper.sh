@@ -1505,12 +1505,7 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
-	# GH#38104: keep the device-local checkpoint ledger in step with the lease.
-	if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
-		_dch_ledger_update_expiry "$lease_token" "$expires_at"
-	else
-		_dch_ledger_remove_nonce "$lease_token"
-	fi
+	_dch_ledger_sync_transition "$phase" "$lease_token" "$expires_at"
 	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
 		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0

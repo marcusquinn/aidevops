@@ -64,6 +64,18 @@ _dch_ledger_update_expiry() {
 	return 0
 }
 
+# Keep the ledger in step with a lease transition: renewal extends the deadline;
+# ready or terminal ends the prelaunch claim. Args: phase, lease token, expires_at.
+_dch_ledger_sync_transition() {
+	local phase="$1" token="$2" expires="$3"
+	if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
+		_dch_ledger_update_expiry "$token" "$expires"
+	else
+		_dch_ledger_remove_nonce "$token"
+	fi
+	return 0
+}
+
 #aidevops:trust-boundary — the ledger only nominates candidates; the release path
 # revalidates identity, device, session, live executor and the live timeline.
 # No GitHub reads happen unless an entry has expired. Arg: optional stop epoch.

@@ -926,6 +926,17 @@ _pulse_stale_blocked_sweep_repo() {
 	return "$rc"
 }
 
+# GH#38104: release this device's own expired checkpoint claims straight from the
+# device-local ledger. Cost is O(own expired claims) with no repo scan and no
+# dependency on the shared stage deadline beyond a small floor; an empty or
+# unexpired ledger makes no GitHub reads.
+_pulse_sweep_checkpoint_ledger() {
+	local claim_ledger="${AIDEVOPS_CHECKPOINT_CLAIM_LEDGER:-${HOME}/.aidevops/state/checkpoint-claims.jsonl}"
+	[[ -s "$claim_ledger" && -x "${SCRIPT_DIR}/dispatch-claim-helper.sh" ]] || return 0
+	"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-checkpoint-ledger "$(($(date +%s) + ${PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS:-30}))" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
@@ -937,14 +948,7 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repos=() due=() weights=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
-	# GH#38104: release this device's own expired checkpoint claims straight from
-	# the device-local ledger first. Cost is O(own expired claims) with no repo
-	# scan and no dependency on the shared stage deadline beyond a small floor;
-	# an empty or unexpired ledger makes no GitHub reads.
-	local claim_ledger="${AIDEVOPS_CHECKPOINT_CLAIM_LEDGER:-${HOME}/.aidevops/state/checkpoint-claims.jsonl}"
-	if [[ -s "$claim_ledger" && -x "${SCRIPT_DIR}/dispatch-claim-helper.sh" ]]; then
-		"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-checkpoint-ledger "$(($(date +%s) + ${PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS:-30}))" >>"${LOGFILE:-/dev/null}" 2>&1 || true
-	fi
+	_pulse_sweep_checkpoint_ledger
 	# Revision claims must be revisited even when the stale-blocked cadence is
 	# fresh: their issue is normally available, not status:blocked.
 	# Fallback rotation: covers claims posted before the ledger existed.
