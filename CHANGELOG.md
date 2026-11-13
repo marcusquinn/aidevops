@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.188] - 2026-11-13
+
+### Added
+
+- routine policy for commit-tracked upstreams (#38018)
+
+### Changed
+
+- Documentation: note ssh cancel leaves remote command running (bounded_operation) (#38049)
+- Refactor: split mock builders out of test-dispatch-claim-helper.sh (GH#38030) (#38050)
+- Refactor: move finished-worktree reclaim into worker_lifecycle.reclaim (GH#38054) (#38057)
+- Maintenance: promote ruff and mypy configs to repository root (#38043)
+
+### Fixed
+
+- file follow-up issues by default instead of asking permission at closeout (#38064)
+- preserve author trust in stale-cache reconciliation (#38077)
+- report mismatched approval bindings (#38000)
+- surface failing archive helper and code in retire-worktree refusal (GH#38056)
+- bound shared turbo cache cleanup (#38070)
+- specific reasons for stale pnpm staging dirs, dangling links, over-budget source (GH#38065) (#38076)
+- reclaim ignores untracked full-loop cleanup-deferred marker (GH#38059) (#38074)
+- isolate fresh-base lifecycle and update failure contract (#38075)
+- repeat the base-ref fetch after a lost concurrent ref update
+- clear inherited Git repository selectors for every Git call (GH#38046) (#38052)
+- hand a completed full dispatch census across a cooperative bundle drain
+- make finished-worktree reclaim unconditional and batch GitHub lookups (GH#38036)
+- keep stale-blocked reserve and narrow partial-continuation revisit to candidates (GH#38039) (#38045)
+- fetch the CI repair PR head from a linked-worktree context
+- resume parallel dispatch when REST-core reserve recovers mid-round (GH#38033) (#38040)
+- keep exact-merge release queue armed on collaborator pulses (GH#38012) (#38015)
+- GraphQL fallback for review-decision refresh (#38029)
+- give open issues a guaranteed reconcile turn when repairs consume the budget (GH#37949) (#38034)
+- classify prompt-hook registry as low risk (#38035)
+- retain and prioritize unattempted first-wave backlog (#38024)
+- restore auto-dispatch removed by a draft checkpoint on a consolidated spec
+- refresh drifted auto-update systemd units (#38017)
+- authenticate authorized and review-bot edits to linked external source bodies in locked issue continuity (#38011)
+- bound label-maintenance starvation and re-check held issues first
+- clamp the reconcile pass's cooperative budget to its stage allocation (#38005)
+- external PR repair ends in one batch approval (GH#38007) (#38008)
+
 ## [3.39.187] - 2026-11-13
 
 ### Added
