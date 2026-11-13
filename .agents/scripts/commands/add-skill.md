@@ -1,1 +1,0 @@
-../../workflows/add-skill.md
