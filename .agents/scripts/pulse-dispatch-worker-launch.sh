@@ -932,6 +932,7 @@ _dlw_precreate_worktree() {
 	local _helper_session="${_precreate_session}-$$-${RANDOM}"
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
+		AIDEVOPS_WORKTREE_PULSE_CREATE=1 \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		OPENCODE_PID="$$" OPENCODE_SESSION_ID="$_helper_session" \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
