@@ -23,8 +23,14 @@ for branch in contained squash dirty open live unproven hidden-open unknown fres
 done
 printf 'preserve\n' >"$ROOT/dirty/wip"
 git -C "$ROOT/squash" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm squash --allow-empty
-git -C "$ROOT/unproven" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm unproven --allow-empty
-git -C "$ROOT/reused" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm reused --allow-empty
+# GH#38115: unproven/reused must carry unique content. Since GH#37500 an
+# identical-to-upstream tree is valid local merge proof, so empty commits would
+# make these "unmerged" fixtures provably reclaimable.
+for branch in unproven reused; do
+	printf '%s\n' "$branch" >"$ROOT/$branch/unique.txt"
+	git -C "$ROOT/$branch" add unique.txt
+	git -C "$ROOT/$branch" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$branch"
+done
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":true}\n' "$$" >"$ROOT/squash.receipt"
 printf '{"owner":{"pid":%s,"session":"fixture"},"aged":false}\n' "$$" >"$ROOT/live.receipt"
 jq -n --arg path "$ROOT/repo" '{initialized_repos:[{path:$path}]}' >"$HOME/.config/aidevops/repos.json"
