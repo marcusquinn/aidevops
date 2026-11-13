@@ -443,9 +443,15 @@ _approval_continuity_linked_source_candidate() {
 	local payload="$1"
 	local candidate="$2"
 	local issued_at="$3"
+	local source_profile="${4:-}"
 	local signed_linked="" node_ids="" node_id="" current_frame="" current_bodies="" rules="" history="" result=""
 	local edits='[]' changed=0 named_sources=0 uncertain_rc=2
 	[[ "$issued_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+	# #aidevops:trust-boundary — GH#38006: trusted-sources and stable profiles
+	# keep exact-match linked-body behaviour; never restore their linked bodies.
+	if [[ "$source_profile" == "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" || "$source_profile" == "$APPROVAL_SNAPSHOT_PROFILE_STABLE" ]]; then
+		return 1
+	fi
 	signed_linked=$(jq -c --arg sha "^[0-9a-f]{64}$" --arg object "$APPROVAL_JSON_OBJECT" --arg string_type "$_APPROVAL_CONTINUITY_JSON_STRING" '
 		.issue.content_digests
 		| select(type == $object and (.linked_frame | type) == $string_type and (.linked_frame | test($sha))
@@ -529,12 +535,13 @@ _approval_continuity_content_proof() {
 	local slug="$5"
 	local approval_comment_id="$6"
 	local issued_at="$7"
+	local source_profile="${8:-}"
 	local filtered_snapshot="" candidate="" candidate_digest="" content_changes="" linked_result="" linked_edits="null"
 	filtered_snapshot=$(_approval_continuity_drop_trusted_comments "$current_snapshot" "$slug" "$approval_comment_id") || return $?
 	candidate=$(jq -cS --argjson lifecycle "$signed_lifecycle" '.lifecycle = $lifecycle' <<<"$filtered_snapshot") || return 1
 	candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
 	if [[ "$candidate_digest" != "$signed_digest" ]] && ! content_changes=$(_approval_continuity_content_changes "$payload" "$candidate"); then
-		linked_result=$(_approval_continuity_linked_source_candidate "$payload" "$candidate" "$issued_at") || return $?
+		linked_result=$(_approval_continuity_linked_source_candidate "$payload" "$candidate" "$issued_at" "$source_profile") || return $?
 		candidate=$(jq -cS '.candidate' <<<"$linked_result") || return 1
 		linked_edits=$(jq -c '.edits' <<<"$linked_result") || return 1
 		candidate_digest=$(approval_snapshot_v2_digest "$candidate") || return 2
@@ -555,6 +562,7 @@ _approval_verify_locked_issue_continuity() {
 	local target_number="$5"
 	local issued_at="$6"
 	local approval_comment_id="$7"
+	local source_profile="${8:-}"
 	local signed_lifecycle="" current_anchor="" signed_anchor="" content_proof=""
 	local timeline_pages="" mutation_rows="" event="" actor="" subject="" actor_id="" actor_type="" actor_rc=0
 	local signed_has_status=0 auto_dispatch_active=0 saw_status_mutation=0 saw_status_default=0 saw_rename=0
@@ -580,7 +588,7 @@ _approval_verify_locked_issue_continuity() {
 		return 1
 	fi
 
-	content_proof=$(_approval_continuity_content_proof "$payload" "$current_snapshot" "$signed_lifecycle" "$signed_digest" "$slug" "$approval_comment_id" "$issued_at") || return $?
+	content_proof=$(_approval_continuity_content_proof "$payload" "$current_snapshot" "$signed_lifecycle" "$signed_digest" "$slug" "$approval_comment_id" "$issued_at" "$source_profile") || return $?
 	content_changes=$(jq -r '.changes' <<<"$content_proof") || return 1
 	linked_edits=$(jq -c '.linked_edits // empty' <<<"$content_proof") || return 1
 	[[ "$content_changes" != *title* ]] || title_changed=1
@@ -648,11 +656,11 @@ _approval_verify_locked_issue_continuity() {
 _approval_continuity_with_retry() {
 	local payload="$1" snapshot="$2" digest="$3" slug="$4" number="$5" issued="$6" comment="$7" profile="$8" lifecycle_profile="$9"
 	local rc=0
-	_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+	_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" "$profile" || rc=$?
 	if [[ "$rc" -eq 3 ]]; then
 		snapshot=$(approval_snapshot_v2_build "$APPROVAL_TARGET_ISSUE" "$number" "$slug" "$comment" "$issued" "$profile" "$lifecycle_profile") || return 2
 		rc=0
-		_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" || rc=$?
+		_approval_verify_locked_issue_continuity "$payload" "$snapshot" "$digest" "$slug" "$number" "$issued" "$comment" "$profile" || rc=$?
 	fi
 	[[ "$rc" -ne 3 ]] || return 1
 	return "$rc"

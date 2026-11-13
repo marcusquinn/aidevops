@@ -743,7 +743,7 @@ write_locked_issue_fixture() {
 	[[ -z "${LINKED_SOURCE_BODY:-}" ]] || set_linked_source_body 41 "$LINKED_SOURCE_BODY"
 	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" --arg extra_label "$extra_label" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end + if $extra_label != "" then [{id:13,node_id:"L_13",name:$extra_label}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
-	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199 "${SIGNED_SOURCE_PROFILE:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	return 0
 }
 
@@ -1283,6 +1283,15 @@ Repair notes by the maintainer" "Summary after the repair commit")
 	set_linked_source_body 41 "$repaired"
 	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
 	assert_verify "maintainer linked-source edit on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+
+	# Older profiles keep exact-match linked-body behaviour.
+	local profile=""
+	for profile in "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$APPROVAL_SNAPSHOT_PROFILE_STABLE"; do
+		LINKED_SOURCE_BODY="$signed" SIGNED_SOURCE_PROFILE="$profile" STRIP_LINKED_DIGESTS=1 write_locked_issue_fixture
+		set_linked_source_body 41 "$repaired"
+		write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+		assert_verify "${profile} profile linked-source body edit stays stale" issue 41 STALE_APPROVAL 4
+	done
 	return 0
 }
 
