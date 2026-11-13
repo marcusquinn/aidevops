@@ -130,3 +130,40 @@ def capture_block(edits: set, stripped_text: str, cwd: str):
         return None
     dirty = dirty_edits(edits, cwd)
     return capture_reason(dirty) if dirty else None
+
+
+# GH#37979: a numbered ask that only requests permission to file an issue,
+# task or TODO. Ported to session-continuation-utils.mjs (asksFilingPermission).
+NEEDED_BLOCK_RE = re.compile(
+    r"Needed from you:.*?(?=Left to capture|\bClose(?: readiness)?:|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+FILING_ASK_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*"
+    r"(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to"
+    r"|would you like me to|ok(?:ay)? to)?\s*"
+    r"(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*"
+    r"(?:[\w/-]+\s+){0,5}?(?:issue|task|todo|ticket|follow-?up)s?\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+FILING_EXCLUDED_RE = re.compile(
+    r"\bnot needed\b"
+    r"|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b"
+    r"|\bexternal repos?(?:itory)?\b"
+    r"|\b(?:secrets?|credentials?|spend|spending|billing)\b"
+    r"|\bprivate[- ](?:data|repo)",
+    re.IGNORECASE,
+)
+FILING_REASON = (
+    "Your closeout asks permission to file an issue, task or TODO. Filing is "
+    "already authorised: file it now under the capture rule in Framework Rules "
+    "(deduplicate first) and cite the link in the body. Keep the ask only when "
+    "the need itself is undecided, and then ask about the need."
+)
+
+
+def asks_filing_permission(stripped_text: str) -> bool:
+    """GH#37979: the last Needed from you block only asks to file an item."""
+    blocks = [match.group(0) for match in NEEDED_BLOCK_RE.finditer(stripped_text)]
+    last = blocks[-1] if blocks else ""
+    return bool(FILING_ASK_RE.search(last)) and not FILING_EXCLUDED_RE.search(last)
