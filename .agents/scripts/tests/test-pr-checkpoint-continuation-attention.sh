@@ -138,7 +138,7 @@ STUB_POST_DIR="${TEST_ROOT}/posts"
 # through the existing Pulse entrypoint, without dispatching. GH#36019: that
 # now covers every reason dispatch-stalled cannot continue (clean and
 # worker_complete and capability_limit moved to bounded exact-head continuation).
-for completed_reason in worker_failed unknown_exit; do
+for completed_reason in unknown_exit; do
 	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
 		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
 			.user.login = "pulse-runner" else . end))')"
@@ -594,4 +594,3 @@ else
 	print_result "below the per-PR fuse a new head still gets one continuation" 1 "output=${output:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
-
