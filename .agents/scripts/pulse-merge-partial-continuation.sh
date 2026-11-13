@@ -683,19 +683,70 @@ _pmpc_restore_checkpoint_spec_dispatch() {
 	return 0
 }
 
-# GH#34432: revisit one bounded page of open issues on the existing
-# per-repo stale-blocked cadence. Persist the next page and pending issue IDs
-# before processing so a killed/slow issue cannot starve the page suffix.
-# Full pages stay due next cycle;
-# the final page resets the cursor and starts the normal cadence interval.
+# GH#38039: list one page of label-filtered revisit candidates.
+# Args: $1=repo slug, $2=phase (review|available), $3=page, $4=page size
+# Stdout: the raw page length on line 1, then one candidate issue number per line
+# Returns: 0 on success, 1 on an unreadable listing
+_pmpc_list_candidates() {
+	local repo_slug="$1" phase="$2" page="$3" cap="$4" labels="status:in-review" page_json="" numbers="" count=""
+	[[ "$phase" != available ]] || labels="status:available,origin:worker"
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=${labels}&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+	numbers=$(printf '%s' "$page_json" | jq -r --arg phase "$phase" '
+		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
+		else .[] | select(.pull_request == null)
+			| select($phase != "available" or ([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not))
+			| .number end
+	' 2>/dev/null) || return 1
+	count=$(printf '%s' "$page_json" | jq 'length') || return 1
+	printf '%s\n' "$count"
+	[[ -z "$numbers" ]] || printf '%s\n' "$numbers"
+	return 0
+}
+
+# Revisit one in-review issue: find its newest merged cross-referenced PR and
+# let the merge-time guard decide. Timeline cross-references carry merged_at;
+# select the newest merged PR, not an older eligible partial hidden by a later
+# closing delivery.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
+_pmpc_revisit_in_review_issue() {
+	local repo_slug="$1" issue_num="$2" timeline="" pr_number=""
+	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+		if type != "array" then error("unreadable timeline")
+		elif (.[0]? | type) == "array" then [.[][]] else . end
+		| [ .[] | select(.event == "cross-referenced") | .source.issue
+			| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
+		| sort_by(.pull_request.merged_at, .number) | last
+		| if . == null then empty elif (.number | type) == "number" then .number
+			else error("unreadable PR number") end
+	' 2>/dev/null) || return 1
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	# All current issue/PR/comment metadata is re-read by the merge-time
+	# guard, including open PR ownership, held issues and marker idempotency.
+	_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+	return 0
+}
+
+# GH#34432: revisit one bounded page of candidate issues on the existing
+# per-repo stale-blocked cadence. GH#38039: only label-filtered candidates are
+# listed (status:in-review for the restore path, then status:available
+# origin:worker issues without auto-dispatch for _pmpc_restore_available_dispatch),
+# never every open issue. Persist the next page, pending issue IDs and their
+# phase before processing so a killed/slow issue cannot starve the page suffix.
+# Full pages stay due next cycle; the final available page resets the cursor and
+# starts the normal cadence interval.
+# Cursor: line 1 = next page ("N" in-review, "aN" available), optional
+# "phase=review|available" for the pending issues, then pending issue numbers.
 # Args: $1=repo slug, $2=deadline epoch
 # Returns: 0 at traversal end, 3 when more pages/time are needed, 1 on read failure
 _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
-	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1
+	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" issue_num="" timeline="" pr_number="" now_epoch="" count=0
-	local line="" loaded=0 remaining=""
+	local cursor="" issues_json="" issues="" issue_num="" now_epoch="" count=0
+	local line="" loaded=0 remaining="" phase="review" pending_phase="review" last_page=0 resumed=0
+	local avail_phase="available"
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cap" =~ ^[1-9][0-9]*$ && "$cap" -le 100 ]] || cap=10
 	cursor="${cursor_dir}/${repo_slug//\//__}"
@@ -703,59 +754,88 @@ _pm_reconcile_partial_continuations() {
 	if [[ -r "$cursor" ]]; then
 		while IFS= read -r line; do
 			if [[ "$loaded" -eq 0 ]]; then
-				page="$line"
+				token="$line"
 				loaded=1
+			elif [[ "$line" =~ ^phase=(review|available)$ ]]; then
+				pending_phase="${line#phase=}"
 			elif [[ "$line" =~ ^[0-9]+$ ]]; then
 				issues="${issues}${issues:+$'\n'}${line}"
 			fi
 		done <"$cursor"
 	fi
+	if [[ "$token" == a* ]]; then
+		phase="$avail_phase"
+		page="${token#a}"
+	else
+		page="$token"
+	fi
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
-	if [[ -z "$issues" ]]; then
-		issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
-		issues=$(printf '%s' "$issues_json" | jq -r '
-		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
-		else .[] | select(.pull_request == null) | .number end
-		' 2>/dev/null) || return 1
-		count=$(printf '%s' "$issues_json" | jq 'length') || return 1
-		[[ "$count" -lt "$cap" ]] || next_page=$((page + 1))
-	else
-		next_page="$page"
-	fi
-	remaining="$issues"
-	printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
-	while IFS= read -r issue_num; do
-		[[ -n "$issue_num" ]] || continue
-		now_epoch=$(date +%s) || return 1
-		[[ "$now_epoch" -lt "$deadline" ]] || return 3
-		# Advance past only the current issue before its potentially slow API
-		# reads. A deadline between issues retains every unstarted issue.
-		if [[ "$remaining" == *$'\n'* ]]; then
-			remaining="${remaining#*$'\n'}"
+	while true; do
+		if [[ -z "$issues" ]]; then
+			issues_json=$(_pmpc_list_candidates "$repo_slug" "$phase" "$page" "$cap") || return 1
+			count="${issues_json%%$'\n'*}"
+			issues="${issues_json#*$'\n'}"
+			[[ "$issues" != "$issues_json" ]] || issues=""
+			[[ "$count" =~ ^[0-9]+$ ]] || return 1
+			last_page=1
+			next_page="$page"
+			if [[ "$count" -ge "$cap" ]]; then
+				next_page=$((page + 1))
+				last_page=0
+			fi
+			pending_phase="$phase"
 		else
-			remaining=""
+			# Resume the pending suffix; the token already names the next page.
+			next_page="$page"
+			last_page=0
+			phase="$pending_phase"
+			resumed=1
 		fi
-		printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
-		_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
-		# Timeline cross-references carry merged_at. Select the newest merged
-		# PR, not an older eligible partial hidden by a later closing delivery.
-		timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-		pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
-			if type != "array" then error("unreadable timeline")
-			elif (.[0]? | type) == "array" then [.[][]] else . end
-			| [ .[] | select(.event == "cross-referenced") | .source.issue
-				| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
-			| sort_by(.pull_request.merged_at, .number) | last
-			| if . == null then empty elif (.number | type) == "number" then .number
-				else error("unreadable PR number") end
-		' 2>/dev/null) || return 1
-		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-		# All current issue/PR/comment metadata is re-read by the merge-time
-		# guard, including open PR ownership, held issues and marker idempotency.
-		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
-	done <<<"$issues"
-	[[ "$next_page" -eq 1 ]] || return 3
+		# Persist the next page, the available-phase start or a reset; a resumed suffix keeps its token.
+		if [[ "$resumed" -eq 1 ]]; then
+			resumed=0
+		elif [[ "$last_page" -eq 1 && "$phase" == review ]]; then
+			token="a1"
+		elif [[ "$last_page" -eq 1 ]]; then
+			token="1"
+		elif [[ "$phase" == available ]]; then
+			token="a${next_page}"
+		else
+			token="${next_page}"
+		fi
+		remaining="$issues"
+		printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+		while IFS= read -r issue_num; do
+			[[ -n "$issue_num" ]] || continue
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			# Advance past only the current issue before its potentially slow API
+			# reads. A deadline between issues retains every unstarted issue.
+			if [[ "$remaining" == *$'\n'* ]]; then
+				remaining="${remaining#*$'\n'}"
+			else
+				remaining=""
+			fi
+			printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+			if [[ "$pending_phase" == available ]]; then
+				_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
+				continue
+			fi
+			_pmpc_revisit_in_review_issue "$repo_slug" "$issue_num" || return 1
+		done <<<"$issues"
+		issues=""
+		if [[ "$token" == a1 && "$phase" == review ]]; then
+			phase="$avail_phase"
+			pending_phase="$avail_phase"
+			page=1
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			continue
+		fi
+		break
+	done
+	[[ "$token" == "1" ]] || return 3
 	return 0
 }

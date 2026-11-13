@@ -439,7 +439,12 @@ unset -f _pm_reconcile_partial_continuations
 	reconcile_stale_blocked_issues() {
 		STALE_DL="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
 		FAKE_NOW="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
-		[[ "$STALE_END" == share ]] || FAKE_NOW="$DER_STALE_BLOCKED_STOP_EPOCH"
+		STALE_STOP="$DER_STALE_BLOCKED_STOP_EPOCH"
+		case "$STALE_END" in
+		share) ;;
+		past) FAKE_NOW=1045 ;;
+		*) FAKE_NOW="$DER_STALE_BLOCKED_STOP_EPOCH" ;;
+		esac
 		return 3
 	}
 	_pm_reconcile_draft_checkpoint_blocks() {
@@ -496,8 +501,21 @@ unset -f _pm_reconcile_partial_continuations
 		printf '0\n'
 		return 0
 	}
-	# An exhausted sweep defers later passes with no call (no listing reads).
+	# GH#38039: a stale pass that overruns to its hard stop still leaves the
+	# later passes' reserve (sweep 1045 less 2 x 5s = 1035), so the optional
+	# passes run with a non-expired deadline instead of deferring every sweep.
 	STALE_END="stop"
+	run_sweep_repo 1005 1045
+	[[ "$STALE_STOP" == 1035 && "$PASSES" == "dc:5 pc:5 " && ! -f "$STAMP_DIR/owner__one" ]] || {
+		printf 'FAIL: overrunning stale pass consumed the later passes reserve: stop=%s passes=%s\n' "$STALE_STOP" "$PASSES"
+		exit 1
+	}
+	grep -q 'partial-continuation pass due for owner/one: complete_stamp_age_s=never' "$LOGFILE" || {
+		printf 'FAIL: pass stamp age was not logged\n'
+		exit 1
+	}
+	# An exhausted sweep defers later passes with no call (no listing reads).
+	STALE_END="past"
 	: >"$LOGFILE"
 	run_sweep_repo 1005 1045
 	[[ -z "$PASSES" && "$SWEEP_RC" == 3 && ! -d "$DC_STAMP_DIR" && ! -d "$PC_STAMP_DIR" ]] || {

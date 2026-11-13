@@ -43,6 +43,7 @@ setup_test_env() {
 	COMMENT_LOG="${TEST_ROOT}/comments.log"
 	COMMENT_ATTEMPTS="${TEST_ROOT}/comment-attempts.log"
 	API_LOG="${TEST_ROOT}/api.log"
+	UNFILTERED_LOG="${TEST_ROOT}/unfiltered.log"
 	return 0
 }
 
@@ -57,6 +58,8 @@ reset_case() {
 	: >"$COMMENT_LOG"
 	: >"$COMMENT_ATTEMPTS"
 	: >"$API_LOG"
+	: >"$UNFILTERED_LOG"
+	TEST_AVAILABLE_ISSUES='[]'
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
@@ -192,7 +195,13 @@ gh_pr_view() {
 gh() {
 	printf '%s\n' "$*" >>"$API_LOG"
 	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
-		if [[ "${2:-}" == *"&page=2" ]]; then
+		# GH#38039: only label-filtered candidates are listed.
+		if [[ "${2:-}" != *"labels="* ]]; then
+			printf 'unfiltered issue listing\n' >>"$UNFILTERED_LOG"
+			printf '[]'
+		elif [[ "${2:-}" == *"labels=status:available"* ]]; then
+			printf '%s' "$TEST_AVAILABLE_ISSUES"
+		elif [[ "${2:-}" == *"&page=2" ]]; then
 			printf '%s' "$TEST_REVIEW_PAGE2"
 		else
 			printf '%s' "$TEST_REVIEW_ISSUES"
@@ -952,10 +961,23 @@ test_available_dispatch_recovery() {
 	local label="" marker=""
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
-	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_ISSUES='[]'
+	TEST_AVAILABLE_ISSUES='[{"number":501,"labels":[{"name":"status:available"},{"name":"origin:worker"}]},{"number":503,"labels":[{"name":"auto-dispatch"}]}]'
 	TEST_TIMELINE='[[]]'
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "sweep-restored available issue regains dispatch without merged timeline"
+	# GH#38039: candidates only. No unfiltered listing, no timeline read, and an
+	# available issue already carrying auto-dispatch is never read at all.
+	if [[ ! -s "$UNFILTERED_LOG" ]] && ! grep -Fq '/timeline' "$API_LOG" && ! grep -Fq 'issues/503' "$API_LOG"; then
+		pass "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	else
+		fail "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	fi
+	if grep -Fq 'labels=status:in-review' "$API_LOG" && grep -Fq 'labels=status:available,origin:worker' "$API_LOG"; then
+		pass "revisit lists in-review then available worker candidates"
+	else
+		fail "revisit lists in-review then available worker candidates"
+	fi
 	if grep -q 'kind=available-dispatch-recovery' "$COMMENT_LOG"; then
 		pass "available dispatch recovery records audit"
 	else
