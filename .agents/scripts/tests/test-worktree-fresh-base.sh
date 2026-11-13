@@ -9,6 +9,10 @@ HELPER="${SCRIPT_DIR}/../worktree-helper.sh"
 ADD_HELPER="${SCRIPT_DIR}/../worktree-helper-add.sh"
 REAL_GIT=$(command -v git)
 ROOT=$(mktemp -d)
+# macOS returns a temp path under the /var symlink. The helper resolves
+# worktree paths to their physical form, and cleanup receipts are matched by
+# path string, so the fixture must use the physical form throughout.
+ROOT=$(cd "$ROOT" && pwd -P)
 trap 'rm -rf "$ROOT"' EXIT
 
 REMOTE="${ROOT}/remote.git"
@@ -111,6 +115,56 @@ if ! grep -qF 'credential.helper=!gh auth git-credential' "$GITHUB_AUTH_RETRY_LO
 	exit 1
 fi
 printf 'PASS GitHub SSH askpass failure retries through transient gh HTTPS auth\n'
+
+# GH#38060: concurrent fetches of one remote-tracking ref make Git reject all
+# but one ref update. That is not a stale base. The fetch is repeated a bounded
+# number of times; any other failure is still returned after one attempt.
+RACE_FETCH_LOG="${ROOT}/race-fetch.log"
+# Args: $1 - fetches that fail before one succeeds, $2 - git error text
+race_fetch_case() {
+	local failures="$1"
+	local message="$2"
+	local case_rc=0
+	: >"$RACE_FETCH_LOG"
+	(
+		cd "$CANONICAL" || exit 1
+		SCRIPT_DIR="$(cd "$(dirname "$ADD_HELPER")" && pwd)"
+		# shellcheck source=../worktree-helper-add.sh
+		source "$ADD_HELPER"
+		sleep() { return 0; }
+		git() {
+			local git_args="$*"
+			local attempts=0
+			case "$git_args" in
+			*" fetch "*)
+				printf 'fetch\n' >>"$RACE_FETCH_LOG"
+				attempts=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+				[[ "$attempts" -le "$failures" ]] || return 0
+				printf 'error: fetching ref refs/remotes/origin/main failed: %s\n' "$message" >&2
+				return 1
+				;;
+			esac
+			"$REAL_GIT" "$@"
+			return $?
+		}
+		_worktree_fetch_origin_branch "$CANONICAL" main 2>/dev/null
+	) || case_rc=$?
+	RACE_FETCH_ATTEMPTS=$(wc -l <"$RACE_FETCH_LOG" | tr -d ' ')
+	return "$case_rc"
+}
+if ! race_fetch_case 1 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 2 ]]; then
+	printf 'FAIL lost ref-update race was not recovered by one repeat fetch: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 9 'incorrect old value provided' || [[ "$RACE_FETCH_ATTEMPTS" != 3 ]]; then
+	printf 'FAIL persistent ref-update rejection was not bounded to two repeats: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+if race_fetch_case 1 'unrelated transport failure' || [[ "$RACE_FETCH_ATTEMPTS" != 1 ]]; then
+	printf 'FAIL unrelated fetch failure was retried as a ref-update race: attempts=%s\n' "$RACE_FETCH_ATTEMPTS"
+	exit 1
+fi
+printf 'PASS lost ref-update race repeats the fetch at most twice; other failures are not retried\n'
 
 # A registered sibling can exist while its index is unreadable. The fetch
 # selector must skip that candidate and use the bootstrap path instead of
