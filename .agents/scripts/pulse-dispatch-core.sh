@@ -225,7 +225,10 @@ _dispatch_cleanup_disk_pressure() {
 	echo "[dispatch_with_dedup] Async disk cleanup requested for #${issue_number} in ${repo_slug} (${target_path}): reason=${before_reason}, available=${before_kb}KB/${before_percent}%; dispatch remains fail-closed" >>"$LOGFILE"
 	# GH#38026: name space held outside aidevops ownership (Time Machine local
 	# snapshots) once per pulse process; read-only, never deletes backups.
-	if [[ -z "${_DISPATCH_DISK_RECLAIM_HINT_EMITTED:-}" ]]; then
+	# Only a free-space reason consumes the once-per-process probe, so an
+	# earlier quota/unknown failure cannot suppress a later applicable hint.
+	if [[ -z "${_DISPATCH_DISK_RECLAIM_HINT_EMITTED:-}" &&
+		("$before_reason" == below-minimum-kb || "$before_reason" == below-minimum-percent) ]]; then
 		_DISPATCH_DISK_RECLAIM_HINT_EMITTED=1
 		local hint=""
 		hint=$(aidevops_disk_capacity_reclaim_hint) || hint=""
