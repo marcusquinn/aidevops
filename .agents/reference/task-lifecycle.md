@@ -155,6 +155,13 @@ meet auto-dispatch readiness, repair it autonomously when possible; otherwise
 record the concrete blocker and missing irreplaceable input without converting
 routine uncertainty into `#no-auto-dispatch`.
 
+**Release-bound sessions:** when an interactive session holds release intent for a
+repository, or is working that repository's backlog, a fixable same-repo finding
+is still filed as above, but filing is its durable record, not a hand-off. Claim it
+at filing when eligible and solve it before the release through
+`reference/release-scope-sweep.md`; only ineligible issues wait for pulse.
+Headless workers keep the normal auto-dispatch hand-off.
+
 ## Auto-Dispatch and Completion
 
 - **Auto-dispatch default**: Worker-ready implementation issues/tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; issue creation is the implementation decision, so no second dispatch confirmation is allowed. Readiness is the gate, not an opt-in. Add the tag only when the brief/body has:

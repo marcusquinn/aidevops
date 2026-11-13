@@ -264,6 +264,8 @@ can follow them without knowing where the setting lives:
    worktree and changes under **Left to capture**, and keep **Close** at
    `Not yet`. Do not rely on an earlier status snapshot.
 3. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
+   With release intent still unspent, first solve eligible same-repo issues the
+   session filed (`reference/release-scope-sweep.md`).
 4. Route reusable lessons: shared framework lessons to the narrowest doc or
    `framework-issue-helper.sh log`; personal/install lessons to memory.
 5. Offer a reusable-capability TODO when the session invented or adapted tooling.
