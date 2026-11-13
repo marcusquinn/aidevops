@@ -137,9 +137,10 @@ cmd_abort_pr_checkpoint_claim() {
 #aidevops:trust-boundary — only the authenticated runner's own device can
 # recover an expired revision claim, with a fresh timeline check at the write.
 cmd_sweep_pr_checkpoint_claim() {
-	local issue="${1:-}" repo="${2:-}" runner="" device="" comments candidates=""
+	local issue="${1:-}" repo="${2:-}" stop="${3:-0}" runner="" device="" comments candidates=""
 	local id="" nonce="" session="" release="" attempted=0
 	[[ "$issue" =~ ^[1-9][0-9]*$ && "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
+	[[ "$stop" =~ ^[0-9]+$ ]] || return 2
 	runner=$(_resolve_runner "") || return 1
 	device=$(_resolve_device_id) || return 1
 	[[ -n "$runner" && -n "$device" ]] || return 1
@@ -157,6 +158,7 @@ cmd_sweep_pr_checkpoint_claim() {
 		[[ "$id" =~ ^[1-9][0-9]*$ && "$nonce" =~ ^[A-Za-z0-9._-]+$ && "$session" =~ ^[A-Za-z0-9._-]+$ ]] || continue
 		_dch_orphan_release_valid "$comments" "$comments" "$id" "$nonce" "$runner" "$device" "$session" || continue
 		_dch_session_has_live_executor "$session" && continue
+		[[ "$stop" -eq 0 || "$(date +%s)" -lt "$stop" ]] || break
 		attempted=$((attempted + 1))
 		release=$(jq -nc --argjson id "$id" --arg nonce "$nonce" --arg runner "$runner" \
 			'[{id:$id,nonce:$nonce,claim_author:$runner}]') || return 1

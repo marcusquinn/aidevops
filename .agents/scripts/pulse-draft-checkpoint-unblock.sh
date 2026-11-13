@@ -377,7 +377,7 @@ _pdcu_sweep_expired_claims() {
 		[[ "$issue_num" =~ ^[1-9][0-9]*$ ]] || continue
 		now=$(date +%s) || return 1
 		[[ "$stop" -eq 0 || "$now" -lt "$stop" ]] || return 3
-		"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-pr-checkpoint-claim "$issue_num" "$repo_slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-pr-checkpoint-claim "$issue_num" "$repo_slug" "$stop" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 		_pdcu_cursor_write "$cursor_file" "$issue_num"
 		count=$((count + 1))
 		[[ "$count" -lt "$cap" ]] || break
