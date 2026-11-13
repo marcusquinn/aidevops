@@ -1502,7 +1502,7 @@ _pulse_force_rest_reads_if_graphql_low() {
 # ---------------------------------------------------------------------------
 # _pulse_run_pre_dispatch_stages
 #
-# Bounded runaway-log detector, stale-blocked reconcile and the
+# Bounded runaway-log detector, checkpoint-claim ledger sweep, stale-blocked reconcile and the
 # fix-the-fixer detector, all clamped to the first-wave dispatch reserve.
 # Runs inside main()'s dynamic scope, so _PULSE_MAIN_DISPATCH_RESERVE_S stays
 # visible to the stage watchdogs exactly as it was inline.
@@ -1519,6 +1519,17 @@ _pulse_run_pre_dispatch_stages() {
 	# Sentinel-gated (every 5 min) — modelled on cache-prime pattern (t2994).
 	# Fail-open: never blocks the pulse cycle.
 	_pulse_check_runaway_log || true
+
+	# GH#38144: release this device's own expired revision-checkpoint claims
+	# from the device-local ledger. A critical stage of its own, because an
+	# empty or unexpired ledger makes no GitHub reads and a stranded claim
+	# blocks continuation; the deferrable stale_blocked_reconcile stage below
+	# keeps only the repo-scanning fallback rotation.
+	local _pulse_checkpoint_ledger_timeout="${PULSE_CHECKPOINT_LEDGER_SWEEP_TIMEOUT_SECONDS:-45}"
+	[[ "$_pulse_checkpoint_ledger_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_checkpoint_ledger_timeout=45
+	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
+		_pulse_run_budget_priority_stage_with_timeout "checkpoint_ledger_sweep" "$_pulse_checkpoint_ledger_timeout" \
+		_pulse_sweep_checkpoint_ledger || true
 
 	# Recover dependency close events missed by async merge/issue-close races.
 	# Cadence limits frequency, not duration: a cold sweep can visit hundreds of

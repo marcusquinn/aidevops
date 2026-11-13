@@ -268,7 +268,26 @@ registered `macos_maintainer` (falling back to `maintainer`); assignment is used
 when review cannot be requested, including self-review. No sensitive diff means
 no label or request. Missing/ambiguous registration is reported, never guessed.
 
-The maintainer checks out the exact clean PR head on a Mac and runs:
+On a Darwin pulse host authenticated as that repository's registered macOS
+maintainer, `pulse-macos-verification.sh` automatically checks open, non-draft PRs
+labelled `needs-macos-verification` after early dispatch. It only executes
+same-repository heads whose authors have write, maintain or admin permission and
+whose required checks have passed. Unknown permissions, forks and pending or
+failed required checks fail closed. Other hosts do not query GitHub for this stage;
+other logins do not query PRs.
+
+The isolated background stage attempts at most one PR per cycle, in an owned,
+locked, clean detached scratch worktree at the exact head SHA. Its default total
+budget is 1,200 seconds (`AIDEVOPS_PULSE_MACOS_VERIFICATION_BUDGET_SECONDS`), so
+native suites never consume dispatch budget. Guarded non-force cleanup preserves
+unexpected dirty state. Attempts are keyed by repository, PR and head under
+`~/.aidevops/.agent-workspace/state/macos-verification/`; a failed or interrupted
+head is not executed again. A failure retains the label and posts one SHA-keyed
+comment naming the failing suite with at most 40 output lines. Failed comment
+delivery is retried without rerunning code; a new head gets a fresh attempt.
+
+For a manual run (including retrying a failed head), the maintainer checks out the
+exact clean PR head on a Mac and runs:
 
 ```bash
 bash .agents/scripts/macos-local-checks.sh verify-pr PR_NUMBER OWNER/REPO

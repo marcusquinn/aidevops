@@ -541,8 +541,8 @@ fi
 PCC_ALLOW_RELEASED=false
 _PCC_ATTENTION_REARM_SECONDS="$ATTENTION_REARM_CLOSED"
 
-# GH#36019: the per-PR fuse stops continuation once enough eligible releases
-# accumulated since PR creation, even when each continuation pushed a new head.
+# GH#36019/GH#38131: releases with no proven attempt progress exhaust the
+# original fuse, even when a later head changes outside those attempts.
 fuse_comments="$(jq -nc '[[range(0; 6) as $i | {id:(60 + $i),
 	created_at:("2026-09-30T00:0" + ($i | tostring) + ":00Z"), author_association:"OWNER",
 	user:{login:"pulse-runner"}, body:"CLAIM_RELEASED reason=worker_complete runner=pulse-runner"}]]')"
@@ -582,6 +582,75 @@ else
 	print_result "per-PR fuse record is not repeated or re-armed for a later head" 1 "output=${output:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
+
+# GH#38131: exercise production dispatch, not just the count helper. Each
+# attempt has a fresh commit before a ready-lease renewal and its release.
+test_progress_fuse() (
+	local kind="$1" count="$2" expected="$3"
+	local fixture="" output="" evidence="" progress_count=0 nonprogress_count=0
+	fixture=$(jq -nc --argjson n "$count" --arg kind "$kind" '
+		def at($i; $s): "2026-09-30T" + ($i | tostring | if length == 1 then "0" + . else . end) + ":00:" + $s + "Z";
+		{comments: [[range(0; $n) as $i |
+			{id:($i*4+1),created_at:at($i; "00"),author_association:"OWNER",user:{login:"pulse-runner"},
+			 body:("DISPATCH_LEASE phase=ready lease_token=fixture-" + ($i|tostring))},
+			{id:($i*4+2),created_at:at($i; "20"),author_association:"OWNER",user:{login:"pulse-runner"},
+			 body:("DISPATCH_LEASE phase=ready lease_token=fixture-" + ($i|tostring))},
+			{id:($i*4+3),created_at:at($i; "30"),author_association:"OWNER",user:{login:"pulse-runner"},
+			 body:"CLAIM_RELEASED reason=worker_complete runner=pulse-runner"}]],
+		 commits:[range(0; $n) as $i | {parents:(if $kind == "merge" then [{sha:"a"},{sha:"b"}] else [{sha:"a"}] end),
+			commit:{author:{date:(if $kind == "imported" then "2026-09-29T00:00:00Z" else at($i; "10") end)},
+			committer:{date:at($i; "10")}}}]}')
+	STUB_COMMENTS_JSON=$(jq -c '.comments' <<<"$fixture")
+	STUB_COMMITS_JSON=$(jq -c '.commits' <<<"$fixture")
+	# Claim-only attempts must not inherit a replaced claim's earlier commit.
+	if [[ "$kind" == claim || "$kind" == replacement ]]; then
+		STUB_COMMENTS_JSON=$(printf '%s' "$STUB_COMMENTS_JSON" | jq -c --arg kind "$kind" '
+			map(map(if .id % 4 == 1 then .body = "DISPATCH_CLAIM nonce=original"
+				elif .id % 4 == 2 then .body = "DISPATCH_CLAIM nonce=replacement"
+				else . end) | if $kind == "claim" then map(select(.id % 4 != 2)) else . end)')
+	fi
+	[[ "$kind" != unchanged ]] || STUB_COMMITS_JSON='[]'
+	[[ "$kind" != missing ]] || export STUB_METADATA_FAILURE=commits
+	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
+	STUB_PR_JSON=$(valid_pr_json 'Resolves #123' '' '' | jq -c --argjson n "$count" '
+		. + {createdAt:"2026-09-29T23:00:00Z",commits:[{oid:.headRefOid,
+		committedDate:("2026-09-30T" + (($n-1) | tostring | if length == 1 then "0" + . else . end) + ":00:10Z")}]}')
+	export STUB_COMMITS_JSON STUB_COMMENTS_JSON STUB_ISSUE_JSON STUB_PR_JSON
+	# Keep this fixture below 24 hours while still exercising the total ceiling.
+	[[ "$kind" != ceiling ]] || _PCC_MAX_PR_PROGRESS_RELEASES="$count"
+	_PCC_TERMINAL_ACTION_SECONDS=0
+	DISPATCH_ARGS=""
+	printf '[]' >"$STUB_CLAIM_FILE"
+	_pcc_dispatch_stalled owner/repo "${TEST_ROOT}/repo" 123 42 current-runner >"$output_file" || true
+	output="$(<"$output_file")"
+	if [[ "$expected" == dispatch ]]; then
+		[[ "$output" == *PR_CHECKPOINT_CONTINUATION_DISPATCHED* && -n "$DISPATCH_ARGS" &&
+			"$output" != *STALLED_CHECKPOINT_ATTENTION_POSTED* ]] || return 1
+	else
+		[[ "$output" == *STALLED_CHECKPOINT_ATTENTION_POSTED* && -z "$DISPATCH_ARGS" ]] || return 1
+	fi
+	evidence=$(_pcc_stall_release_evidence "$STUB_COMMENTS_JSON" "2026-09-30T23:00:00Z" key '[]' \
+		"2026-09-29T23:00:00Z" '' '' "$([[ "$kind" == missing ]] && printf '[]' || printf '%s' "$STUB_COMMITS_JSON")") || return 1
+	IFS=$'\t' read -r -a evidence_fields <<<"$evidence"
+	progress_count="${evidence_fields[9]}"
+	nonprogress_count="${evidence_fields[10]}"
+	if [[ "$kind" == progress || "$kind" == ceiling || "$kind" == claim ]]; then
+		[[ "$progress_count" -eq "$count" && "$nonprogress_count" -eq 0 ]] || return 1
+	else
+		[[ "$progress_count" -eq 0 && "$nonprogress_count" -eq "$count" ]] || return 1
+	fi
+	[[ "$(_pcc_rearm_block_reason "$count" 0 '' "$nonprogress_count")" != per_pr_fuse && "$expected" == dispatch ]] ||
+		[[ "$expected" == fuse && "$(_pcc_rearm_block_reason "$count" 0 '' "$nonprogress_count")" == per_pr_fuse ]] || return 1
+	return 0
+)
+for progress_case in progress:7:dispatch claim:7:dispatch replacement:6:fuse unchanged:6:fuse merge:6:fuse imported:6:fuse missing:6:fuse ceiling:8:fuse; do
+	IFS=: read -r progress_kind progress_count progress_expected <<<"$progress_case"
+	if test_progress_fuse "$progress_kind" "$progress_count" "$progress_expected"; then
+		print_result "progress-aware fuse ${progress_kind}: ${progress_count} releases ${progress_expected}" 0
+	else
+		print_result "progress-aware fuse ${progress_kind}: ${progress_count} releases ${progress_expected}" 1
+	fi
+done
 STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
 	commits:[{oid:"1111111111111111111111111111111111111111",committedDate:"2026-09-30T00:04:30Z"}]}')"
 STUB_COMMENTS_JSON="$(jq -c 'map(.[1:])' <<<"$fuse_comments")"
@@ -594,4 +663,3 @@ else
 	print_result "below the per-PR fuse a new head still gets one continuation" 1 "output=${output:-missing}"
 fi
 PCC_ALLOW_RELEASED=false
-
