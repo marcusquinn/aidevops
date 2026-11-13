@@ -1086,6 +1086,97 @@ _ddpr_denial_lookup_rc() {
 	return 1
 }
 
+#######################################
+# GH#38101: per-check sub-stage timing for has_open_pr. Records only when the
+# dispatcher hands over its stage context (AIDEVOPS_DISPATCH_STAGE_ISSUE and
+# AIDEVOPS_DISPATCH_STAGE_REPO); every other caller runs untimed and unchanged.
+# Returns: 0 when dispatch-stage-instrument.sh sub-stage recording is available
+#######################################
+_ddpr_load_stage_instrument() {
+	[[ "${AIDEVOPS_DISPATCH_STAGE_ISSUE:-}" =~ ^[0-9]+$ && -n "${AIDEVOPS_DISPATCH_STAGE_REPO:-}" ]] || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 && return 0
+	local ddpr_lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$ddpr_lib_dir" != "${BASH_SOURCE[0]}" ]] || ddpr_lib_dir="."
+	[[ -f "${ddpr_lib_dir}/dispatch-stage-instrument.sh" ]] || return 1
+	# shellcheck source=./dispatch-stage-instrument.sh
+	source "${ddpr_lib_dir}/dispatch-stage-instrument.sh" || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one has_open_pr check, timed as dedup.layer4.<name> when enabled.
+# Output and exit status pass through unchanged. Locals use a _ddpr_tc_
+# prefix so checks reading caller-scoped variables see no shadowing.
+# Args: check name, timing flag (1 = record), function and arguments
+#######################################
+_ddpr_timed_check() {
+	local _ddpr_tc_name="$1"
+	local _ddpr_tc_timed="$2"
+	shift 2
+	local _ddpr_tc_rc=0
+	if [[ "$_ddpr_tc_timed" == "1" ]]; then
+		_ds_substage_run "dedup.layer4.${_ddpr_tc_name}" "$@" || _ddpr_tc_rc=$?
+		return "$_ddpr_tc_rc"
+	fi
+	"$@" || _ddpr_tc_rc=$?
+	return "$_ddpr_tc_rc"
+}
+
+#######################################
+# Run one check and write its output to a file only when it succeeds.
+# Launched in the background by _has_open_pr_run_checks.
+# Args: output file, check name, timing flag, function and arguments
+#######################################
+_ddpr_spawn_check() {
+	local _ddpr_sc_out="$1" _ddpr_sc_name="$2" _ddpr_sc_timed="$3"
+	shift 3
+	local _result=""
+	_result=$(_ddpr_timed_check "$_ddpr_sc_name" "$_ddpr_sc_timed" "$@" 2>/dev/null) &&
+		printf '%s' "$_result" >"$_ddpr_sc_out" || true
+	return 0
+}
+
+#######################################
+# Launch the six has_open_pr checks in parallel and wait for all of them.
+# Each successful check writes its output to <dir>/check*.out. GH#38101:
+# under a dispatch context each check and the whole block are timed
+# sub-stages, so the dominant layer-4 cost is measurable.
+# Args: output dir, issue number, repo slug, issue title
+#######################################
+_has_open_pr_run_checks() {
+	local _ddpr_rc_dir="$1" _ddpr_rc_issue="$2" _ddpr_rc_repo="$3" _ddpr_rc_title="$4"
+	local _ddpr_rc_timed=0 _ddpr_rc_t0="" _ddpr_rc_pid=""
+	local -a _ddpr_rc_pids=()
+	if _ddpr_load_stage_instrument; then
+		_ddpr_rc_timed=1
+		_ddpr_rc_t0=$(_ds_substage_start)
+	fi
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check0.out" healthy_sibling "$_ddpr_rc_timed" \
+		_has_open_pr_check_healthy_sibling "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check1.out" open_commits "$_ddpr_rc_timed" \
+		_has_open_pr_check_open_commits "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check1b.out" open_body_keyword "$_ddpr_rc_timed" \
+		_has_open_pr_check_open_body_keyword "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check2.out" merged_keywords "$_ddpr_rc_timed" \
+		_has_open_pr_check_merged_keywords "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check3.out" task_id_title "$_ddpr_rc_timed" \
+		_has_open_pr_check_task_id_title "$_ddpr_rc_issue" "$_ddpr_rc_repo" "$_ddpr_rc_title" &
+	_ddpr_rc_pids+=("$!")
+	_ddpr_spawn_check "${_ddpr_rc_dir}/check4.out" superseded_issue_pr "$_ddpr_rc_timed" \
+		_has_open_pr_check_superseded_issue_pr "$_ddpr_rc_issue" "$_ddpr_rc_repo" &
+	_ddpr_rc_pids+=("$!")
+	for _ddpr_rc_pid in "${_ddpr_rc_pids[@]}"; do
+		wait "$_ddpr_rc_pid" 2>/dev/null || true
+	done
+	[[ "$_ddpr_rc_timed" != "1" ]] || _ds_substage_record dedup.layer4.parallel_checks "$_ddpr_rc_t0"
+	return 0
+}
+
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1109,51 +1200,7 @@ has_open_pr() {
 	local _pr_tmpdir
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
-
-	# Launch all checks in parallel, each writing exit code + output to a file
-	(
-		_result=$(_has_open_pr_check_healthy_sibling "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check0.out" || true
-	) &
-	local _pr_pid0=$!
-
-	(
-		_result=$(_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check1.out" || true
-	) &
-	local _pr_pid1=$!
-
-	(
-		_result=$(_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check1b.out" || true
-	) &
-	local _pr_pid2=$!
-
-	(
-		_result=$(_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check2.out" || true
-	) &
-	local _pr_pid3=$!
-
-	(
-		_result=$(_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check3.out" || true
-	) &
-	local _pr_pid4=$!
-
-	(
-		_result=$(_has_open_pr_check_superseded_issue_pr "$issue_number" "$repo_slug" 2>/dev/null) && \
-			printf '%s' "$_result" >"${_pr_tmpdir}/check4.out" || true
-	) &
-	local _pr_pid5=$!
-
-	# Wait for all to complete
-	wait "$_pr_pid0" 2>/dev/null || true
-	wait "$_pr_pid1" 2>/dev/null || true
-	wait "$_pr_pid2" 2>/dev/null || true
-	wait "$_pr_pid3" 2>/dev/null || true
-	wait "$_pr_pid4" 2>/dev/null || true
-	wait "$_pr_pid5" 2>/dev/null || true
+	_has_open_pr_run_checks "$_pr_tmpdir" "$issue_number" "$repo_slug" "$issue_title"
 
 	# Uncertainty takes precedence over positive evidence. A partial API view is
 	# not sufficient to classify the block as an active claim or known PR.
