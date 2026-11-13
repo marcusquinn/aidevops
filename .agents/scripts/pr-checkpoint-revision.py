@@ -9,28 +9,17 @@ predicates in pr_checkpoint_events.
 """
 
 import datetime as dt
-import hashlib
 import json
 import re
 import sys
 
+from pr_checkpoint_binding import PREFIX, binding, binding_diagnostic, sorted_comments
 from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, released_attempt_token,
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
 from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
-
-PREFIX = "CHECKPOINT_CONTINUATION_APPROVED "
-
-
-def binding(data):
-    issue, pr = data["issue"], data["pr"]
-    return {"repo": data["repo"], "issue": issue["number"], "pr": pr["number"],
-            "head": pr["headRefOid"], "ref": pr["headRefName"],
-            "runner": pr["author"]["login"],
-            "brief_sha256": hashlib.sha256(issue["body"].encode()).hexdigest()}
-
 
 def approval_matches(data, approval, comment, now):
     attempt = approval.get("attempt")
@@ -142,39 +131,6 @@ def candidate(data, comments, comment, now):
                             comment["id"], now):
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
-
-
-def sorted_comments(data):
-    comments = data["comments"]
-    if comments and isinstance(comments[0], list):
-        comments = [c for page in comments for c in page]
-    return sorted(comments, key=lambda c: (c["created_at"], c["id"]))
-
-
-def newest_binding_mismatch(data):
-    """Report only fixed field names from the newest trusted unedited approval."""
-    try:
-        comments = (c for c in reversed(sorted_comments(data))
-                    if trusted(c, data.get("trusted_logins", ())) and
-                    len([line for line in c["body"].splitlines() if line.startswith(PREFIX)]) == 1)
-        comment = next(comments)
-        line = next(line for line in comment["body"].splitlines() if line.startswith(PREFIX))
-        approval = json.loads(line[len(PREFIX):])
-        keys = [key for key, value in binding(data).items() if approval.get(key) != value]
-        now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
-        age = now - timestamp(comment["created_at"])
-        checks = {"expired": not 0 <= age <= 86400,
-                  "attempt_malformed": not re.match(r"^attempt:", str(approval.get("attempt")))}
-        return keys + [key for key, failed in checks.items() if failed], comment["id"]
-    except (ValueError, KeyError, TypeError, OverflowError, StopIteration, AttributeError):
-        return None
-
-
-def binding_diagnostic(data):
-    mismatch = newest_binding_mismatch(data)
-    if mismatch and mismatch[0] and type(mismatch[1]) is int and mismatch[1] > 0:
-        return f"APPROVAL_BINDING_MISMATCH keys={','.join(mismatch[0])} approval_comment={mismatch[1]}"
-    return ""
 
 
 def validate(data):
