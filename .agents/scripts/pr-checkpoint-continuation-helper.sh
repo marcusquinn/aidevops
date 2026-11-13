@@ -812,11 +812,7 @@ _pcc_dispatch() {
 		return 0
 	fi
 	if [[ "$dispatch_rc" -eq "$PRRTS_RC_MAINTAINER_ATTENTION" ]]; then
-		printf 'PR_CHECKPOINT_CONTINUATION_EXHAUSTED: PR #%s in %s reached durable bounded-retry state\n' \
-			"$pr_number" "$repo_slug"
-		# GH#38103: the decision must not live only in runner-local state.
-		_pcc_post_continuation_attention "$repo_slug" "$linked_issue" "$pr_number" "$PCC_HEAD_OID" \
-			"${PRRTS_WORKTREE_FAILURE_REASON:-bounded_retry_exhausted}" || true
+		_pcc_exhausted_attention "$repo_slug" "$linked_issue" "$pr_number" "$PCC_HEAD_OID"
 		return 1
 	fi
 	if [[ "$dispatch_rc" -ne 0 ]]; then
@@ -1632,6 +1628,15 @@ See \`reference/checkpoint-revision-recovery.md\`. ${posted_scope}
 # Args: repo, issue, pr, head, blocker reason
 # Returns: 0 posted or already present, 1 lookup or post failed
 #######################################
+_pcc_exhausted_attention() {
+	local repo="$1" issue="$2" pr="$3" head="$4"
+	printf 'PR_CHECKPOINT_CONTINUATION_EXHAUSTED: PR #%s in %s reached durable bounded-retry state\n' "$pr" "$repo"
+	# The decision must not live only in runner-local scanner state.
+	_pcc_post_continuation_attention "$repo" "$issue" "$pr" "$head" \
+		"${PRRTS_WORKTREE_FAILURE_REASON:-bounded_retry_exhausted}" || true
+	return 0
+}
+
 _pcc_post_continuation_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" reason="$5"
 	local marker="aidevops:checkpoint-continuation-attention pr=${pr} head=${head}"
