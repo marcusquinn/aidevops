@@ -413,7 +413,7 @@ _ddpr_prepare_open_snapshot() {
 	[[ -f "$snapshot" && ! -L "$snapshot" ]] || return 1
 	jq -e --arg repo "$repo_slug" '
 		.repository == $repo and .collection == "prs" and .complete == true and
-		(.items | type) == "array" and
+		(.items | type) == "array" and (.items | length) <= 20 and
 		((now - (.timestamp | fromdateiso8601)) >= 0) and
 		((now - (.timestamp | fromdateiso8601)) < 900)
 	' "$snapshot" >/dev/null 2>&1 || return 1
