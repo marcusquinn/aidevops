@@ -49,6 +49,6 @@ def newest_binding_mismatch(data):
 
 def binding_diagnostic(data):
     mismatch = newest_binding_mismatch(data)
-    if mismatch and mismatch[0] and type(mismatch[1]) is int and mismatch[1] > 0:
+    if mismatch and mismatch[0] and isinstance(mismatch[1], int) and not isinstance(mismatch[1], bool) and mismatch[1] > 0:
         return f"APPROVAL_BINDING_MISMATCH keys={','.join(mismatch[0])} approval_comment={mismatch[1]}"
     return ""

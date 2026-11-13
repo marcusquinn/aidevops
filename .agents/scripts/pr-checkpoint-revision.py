@@ -234,16 +234,16 @@ def template(data):
 if __name__ == "__main__":
     template_mode = sys.argv[1:] == ["template"]
     diagnostic_mode = sys.argv[1:] == ["binding-diagnostic"]
+    payload = None
     try:
         payload = json.load(sys.stdin)
-        diagnostic = binding_diagnostic(payload)
-        if diagnostic:
-            print(diagnostic, file=sys.stderr)
         if diagnostic_mode:
-            print(diagnostic)
+            print(binding_diagnostic(payload))
             sys.exit(0)
         print(template(payload) if template_mode else json.dumps(validate(payload)))
     except (ValueError, KeyError, TypeError, OverflowError) as error:
         if template_mode:
             print(f"approval-template: {error}", file=sys.stderr)
+        elif payload is not None and (diagnostic := binding_diagnostic(payload)):
+            print(diagnostic, file=sys.stderr)
         sys.exit(1)
