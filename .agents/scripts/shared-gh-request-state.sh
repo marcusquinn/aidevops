@@ -308,6 +308,30 @@ _ghrs_owner_is_stale() {
 	return $?
 }
 
+# GH#38138: lease.reclaim guards a critical section of a few file operations.
+# A process killed inside it (gh timeouts and worker kills make that routine)
+# used to leave the marker forever, so every later reclaim failed and each
+# follower of that key waited the full single-flight timeout. A fresh marker
+# still belongs to a live reclaimer and is preserved; one older than the grace
+# is orphaned, so expire it and retry once. Any doubt keeps the fail-safe wait.
+_ghrs_acquire_reclaim_marker() {
+	local reclaim_dir="$1"
+	local grace="${AIDEVOPS_GH_SINGLEFLIGHT_RECLAIM_GRACE_SECONDS:-10}"
+	local now="" modified_at="" age=0
+	(umask 077 && mkdir "$reclaim_dir") 2>/dev/null && return 0
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=10
+	now="$(_ghrs_now)"
+	[[ "$now" =~ ^[0-9]+$ && "$now" -gt 0 ]] || return 1
+	modified_at="$(_file_mtime_epoch "$reclaim_dir")" || return 1
+	[[ "$modified_at" =~ ^[0-9]+$ ]] || return 1
+	age=$((now - modified_at))
+	[[ "$age" -ge "$grace" ]] || return 1
+	rmdir "$reclaim_dir" 2>/dev/null || return 1
+	_ghrs_record reclaim-marker-expired
+	(umask 077 && mkdir "$reclaim_dir") 2>/dev/null || return 1
+	return 0
+}
+
 _ghrs_reclaim_lease() {
 	local key="$1"
 	local observed_generation="$2"
@@ -319,7 +343,7 @@ _ghrs_reclaim_lease() {
 	request_dir="$(_ghrs_request_dir "$key")" || return 1
 	lease_dir="${request_dir}/lease"
 	reclaim_dir="${request_dir}/lease.reclaim"
-	mkdir "$reclaim_dir" 2>/dev/null || return 1
+	_ghrs_acquire_reclaim_marker "$reclaim_dir" || return 1
 
 	if [[ ! -d "$lease_dir" ]]; then
 		rmdir "$reclaim_dir" 2>/dev/null || true
