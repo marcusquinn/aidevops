@@ -63,6 +63,7 @@ readonly SEP=$'\x1f'
 : "${OPENCODE_RESTART_WAIT_TIMEOUT:=600}"   # max seconds to wait for busy sessions to go idle
 : "${OPENCODE_RESTART_POLL:=10}"            # seconds between idle polls
 : "${OPENCODE_RESTART_IDLE_SECONDS:=120}"   # quiet period after last activity before a stop
+: "${OPENCODE_RESTART_TMUX_QUIET_SECONDS:=3600}" # quiet period for heartbeat-less tmux TUIs (pane evidence only)
 : "${OPENCODE_RESTART_EXIT_TIMEOUT:=30}"    # seconds to wait for exit after the signal
 : "${OPENCODE_RESTART_SIGNAL:=TERM}"
 : "${OPENCODE_RESTART_OPENCODE_BIN:=opencode}"
@@ -280,13 +281,61 @@ _heartbeat_row() {
 	return 0
 }
 
+# _heartbeat_busy <pid> — success when any heartbeat for the PID reports busy
+# sessions (covers multi-session heartbeats that _heartbeat_row rejects).
+_heartbeat_busy() {
+	local pid="$1"
+	local dir file busy
+	dir=$(opencode_db_activity_dir)
+	for file in "$dir/${pid}"-*.json; do
+		[[ -f "$file" ]] || continue
+		busy=$(jq -r '(.busy_sessions // 0) | tostring' "$file" 2>/dev/null || true)
+		[[ "$busy" =~ ^[0-9]+$ && "$busy" -gt 0 ]] && return 0
+	done
+	return 1
+}
+
+# _tmux_row <pid> — fallback row for a holder with neither session-bus presence
+# nor a single-session heartbeat (a TUI started before the heartbeat plugin).
+# Evidence is the tmux pane only: the busy footer marker plus window activity.
+# Pane text is never printed or stored; the session id stays "unknown" until
+# the exit "Continue  opencode -s <id>" line is read.
+_tmux_row() {
+	local pid="$1"
+	local kind target socket screen activity status=idle
+	IFS="$SEP" read -r kind target socket < <(_pane_locate "$pid")
+	[[ "$kind" == tmux && "$target" =~ ^%[0-9]+$ ]] || return 0
+	screen=$(_tmux "$socket" capture-pane -p -t "$target" 2>/dev/null) || return 0
+	activity=$(_tmux "$socket" display-message -p -t "$target" '#{window_activity}' 2>/dev/null || true)
+	activity=$(_uint_or "${activity//[[:space:]]/}" 0)
+	[[ "$activity" -gt 0 ]] || return 0
+	if grep -q 'esc interrupt' <<<"$screen" || _heartbeat_busy "$pid"; then status=busy; fi
+	_row "$pid" unknown "$status" "$(_pid_cwd "$pid")" "$activity" "$(_pid_start_token "$pid")" tmux "$(_pid_age_seconds "$pid")" "$kind" "$target" "$socket"
+	return 0
+}
+
+# _all_interactive_pids — every live interactive OpenCode PID (for --all).
+_all_interactive_pids() {
+	local pid args
+	while read -r pid args; do
+		[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$args" ]] || continue
+		if _pid_is_interactive_opencode "$pid"; then printf '%s\n' "$pid"; fi
+	done < <("$OPENCODE_RESTART_PS" -eo pid=,args= 2>/dev/null || true)
+	return 0
+}
+
 # _inventory_rows [all] — verified interactive holders as TSV rows (see
 # _presence_rows) with age, pane kind, pane target and pane socket appended.
+# Default: active-DB holders. --all: a superset (every live interactive TUI).
 _inventory_rows() {
 	local all="${1:-false}"
-	local holders pid sid status cwd last token source seen=" " kind target socket
-	holders='*'
-	[[ "$all" == true ]] || holders=$(_db_holder_pids)
+	local holders candidates pid sid status cwd last token source seen=" " kind target socket row
+	holders=$(_db_holder_pids)
+	candidates="$holders"
+	if [[ "$all" == true || "$holders" == '*' ]]; then
+		candidates=$(printf '%s\n%s\n' "$holders" "$(_all_interactive_pids)" | awk 'NF && $0 != "*"' | sort -u)
+		holders='*'
+	fi
 	while IFS="$SEP" read -r pid sid status cwd last token source; do
 		[[ -n "$pid" && "$sid" =~ $RESTART_SESSION_RE ]] || continue
 		if [[ "$holders" != '*' ]] && ! grep -qx "$pid" <<<"$holders"; then continue; fi
@@ -296,15 +345,19 @@ _inventory_rows() {
 		IFS="$SEP" read -r kind target socket < <(_pane_locate "$pid")
 		_row "$pid" "$sid" "$status" "$cwd" "$last" "$token" "$source" "$(_pid_age_seconds "$pid")" "$kind" "$target" "$socket"
 	done < <(_presence_rows)
-	[[ "$holders" != '*' ]] || return 0
 	while IFS= read -r pid; do
 		[[ -n "$pid" && "$seen" != *" ${pid} "* ]] || continue
 		_pid_verified "$pid" "" || continue
-		IFS="$SEP" read -r pid sid status cwd last token source < <(_heartbeat_row "$pid") || continue
-		[[ "$sid" =~ $RESTART_SESSION_RE ]] || continue
-		IFS="$SEP" read -r kind target socket < <(_pane_locate "$pid")
-		_row "$pid" "$sid" "$status" "$cwd" "$last" "$token" "$source" "$(_pid_age_seconds "$pid")" "$kind" "$target" "$socket"
-	done <<<"$holders"
+		row=$(_heartbeat_row "$pid")
+		if [[ -n "$row" ]]; then
+			IFS="$SEP" read -r pid sid status cwd last token source <<<"$row"
+			[[ "$sid" =~ $RESTART_SESSION_RE ]] || continue
+			IFS="$SEP" read -r kind target socket < <(_pane_locate "$pid")
+			_row "$pid" "$sid" "$status" "$cwd" "$last" "$token" "$source" "$(_pid_age_seconds "$pid")" "$kind" "$target" "$socket"
+		else
+			_tmux_row "$pid"
+		fi
+	done <<<"$candidates"
 	return 0
 }
 
@@ -396,7 +449,11 @@ _resume_command() {
 	local sid="$2"
 	local cmd=""
 	[[ -z "$cwd" ]] || cmd="cd -- $(printf '%q' "$cwd") && "
-	printf '%s%s -s %s' "$cmd" "$OPENCODE_RESTART_OPENCODE_BIN" "$(printf '%q' "$sid")"
+	if [[ -z "$sid" || "$sid" == unknown ]]; then
+		printf '%s%s' "$cmd" "$OPENCODE_RESTART_OPENCODE_BIN"
+	else
+		printf '%s%s -s %s' "$cmd" "$OPENCODE_RESTART_OPENCODE_BIN" "$(printf '%q' "$sid")"
+	fi
 	return 0
 }
 
@@ -462,11 +519,13 @@ _authorize_stop() {
 _row_is_quiet() {
 	local status="$1"
 	local last="$2"
-	local now
+	local source="${3:-}"
+	local now threshold="$OPENCODE_RESTART_IDLE_SECONDS"
 	now=$(date +%s)
 	[[ "$status" == idle ]] || return 1
+	[[ "$source" != tmux ]] || threshold="$OPENCODE_RESTART_TMUX_QUIET_SECONDS"
 	last=$(_uint_or "$last" 0)
-	((now - last >= OPENCODE_RESTART_IDLE_SECONDS)) || return 1
+	((now - last >= threshold)) || return 1
 	return 0
 }
 
@@ -483,7 +542,7 @@ _current_row() {
 _wait_for_quiet() {
 	local targets="$1"
 	local all="$2"
-	local waited=0 rows pid row status last pending
+	local waited=0 rows pid row status last source pending
 	local poll
 	poll=$(_uint_or "$OPENCODE_RESTART_POLL" 10)
 	[[ "$poll" -gt 0 ]] || poll=1
@@ -493,8 +552,8 @@ _wait_for_quiet() {
 		while IFS="$SEP" read -r pid _rest; do
 			[[ -n "$pid" ]] || continue
 			row=$(_current_row "$pid" "$rows")
-			IFS="$SEP" read -r _ _ status _ last _ <<<"$row"
-			[[ -n "$row" ]] && ! _row_is_quiet "$status" "$last" && pending=$((pending + 1))
+			IFS="$SEP" read -r _ _ status _ last _ source _ <<<"$row"
+			[[ -n "$row" ]] && ! _row_is_quiet "$status" "$last" "$source" && pending=$((pending + 1))
 		done <<<"$targets"
 		if [[ "$pending" -eq 0 || "$waited" -ge "$OPENCODE_RESTART_WAIT_TIMEOUT" ]]; then
 			break
@@ -506,8 +565,8 @@ _wait_for_quiet() {
 	while IFS="$SEP" read -r pid _rest; do
 		[[ -n "$pid" ]] || continue
 		row=$(_current_row "$pid" "$rows")
-		IFS="$SEP" read -r _ _ status _ last _ <<<"$row"
-		if [[ -n "$row" ]] && _row_is_quiet "$status" "$last"; then printf '%s\n' "$row"; fi
+		IFS="$SEP" read -r _ _ status _ last _ source _ <<<"$row"
+		if [[ -n "$row" ]] && _row_is_quiet "$status" "$last" "$source"; then printf '%s\n' "$row"; fi
 	done <<<"$targets"
 	return 0
 }
@@ -523,29 +582,96 @@ _wait_for_exit() {
 	return 0
 }
 
+# _continue_session_id <kind> <pane> <socket> — last session id from the
+# "Continue  opencode -s <id>" line OpenCode prints in the pane on exit. Only
+# the id token is extracted; pane text is never printed.
+_continue_matches() {
+	local pane="$1"
+	local socket="$2"
+	_tmux "$socket" capture-pane -p -J -S - -t "$pane" 2>/dev/null |
+		grep -Eo 'Continue[[:space:]]+opencode[[:space:]]+-s[[:space:]]+[A-Za-z0-9_-]{1,128}' | awk '{ print $NF }' || true
+	return 0
+}
+
+# _continue_session_id <kind> <pane> <socket> [before-count] — last session id
+# from a "Continue  opencode -s <id>" line emitted after the pre-stop boundary
+# (the number of such lines already in scrollback). Older lines are ignored.
+_continue_session_id() {
+	local kind="$1"
+	local pane="$2"
+	local socket="$3"
+	local before="${4:-0}"
+	local matches found="" total
+	[[ "$kind" == tmux && "$pane" =~ ^%[0-9]+$ ]] || return 0
+	matches=$(_continue_matches "$pane" "$socket")
+	total=$(printf '%s\n' "$matches" | awk 'NF' | wc -l | tr -d ' ')
+	[[ "$before" =~ ^[0-9]+$ ]] || before=0
+	[[ "$total" -gt "$before" ]] || return 0
+	found=$(printf '%s\n' "$matches" | awk 'NF' | tail -n 1)
+	if [[ "$found" =~ $RESTART_SESSION_RE ]]; then printf '%s' "$found"; fi
+	return 0
+}
+
+# _adopt_continue_session <manifest-key> <cwd> <kind> <pane> <socket> — after a
+# heartbeat-less TUI exits, record the session it showed (or a plain relaunch
+# when it was on its home screen). Prints the session id, or "unknown".
+_adopt_continue_session() {
+	local key="$1"
+	local cwd="$2"
+	local kind="$3"
+	local pane="$4"
+	local socket="$5"
+	local before="${6:-0}"
+	local found json newsid
+	found=$(_continue_session_id "$kind" "$pane" "$socket" "$before")
+	newsid="${found:-$key}"
+	json=$(_manifest_read | jq -c --arg k "$key" --arg n "$newsid" --arg r "$(_resume_command "$cwd" "$found")" --argjson now "$(date +%s)" \
+		'.entries |= map(if .session_id == $k then .session_id = $n | .resume_command = $r | .status = "stopped" | .updated_epoch = $now else . end)')
+	if ! _manifest_write "$json"; then
+		print_error "Session association for ${key} was not saved to the restart manifest"
+		printf '%s' "${found:-unknown}"
+		return 1
+	fi
+	printf '%s' "${found:-unknown}"
+	return 0
+}
+
 # _stop_one <row> <reason> — record the manifest entry, signal, confirm exit.
 _stop_one() {
 	local row="$1"
 	local reason="$2"
-	local pid sid status cwd last token source age kind target socket entry
+	local pid sid status cwd last token source age kind target socket entry msid
 	IFS="$SEP" read -r pid sid status cwd last token source age kind target socket <<<"$row"
+	msid="$sid"
+	[[ "$sid" != unknown ]] || msid="unknown-${pid}"
 	if ! _pid_verified "$pid" "$token"; then
 		print_warning "Session ${sid}: PID ${pid} changed before stop; skipped"
 		return 1
 	fi
-	entry=$(jq -nc --arg sid "$sid" --argjson pid "$pid" --arg cwd "$cwd" --arg kind "$kind" --arg pane "$target" \
+	entry=$(jq -nc --arg sid "$msid" --argjson pid "$pid" --arg cwd "$cwd" --arg kind "$kind" --arg pane "$target" \
 		--arg socket "$socket" --arg argv "$(_pid_args "$pid")" --arg resume "$(_resume_command "$cwd" "$sid")" \
 		--arg reason "$reason" --argjson now "$(date +%s)" --argjson age "$(_uint_or "$age" 0)" \
 		'{session_id: $sid, pid: $pid, cwd: $cwd, pane_kind: $kind, pane: $pane, pane_socket: $socket, argv: $argv,
 		  resume_command: $resume, reason: $reason, age_seconds: $age, stopped_epoch: $now, updated_epoch: $now, status: "stopping"}')
 	_manifest_put "$entry" || { print_error "Cannot write restart manifest; not stopping ${sid}"; return 1; }
+	local before=0
+	if [[ "$sid" == unknown && "$kind" == tmux && "$target" =~ ^%[0-9]+$ ]]; then
+		before=$(_continue_matches "$target" "$socket" | awk 'NF' | wc -l | tr -d ' ')
+	fi
 	kill "-${OPENCODE_RESTART_SIGNAL}" "$pid" 2>/dev/null || true
 	if _wait_for_exit "$pid"; then
-		_manifest_set_status "$sid" stopped
+		if [[ "$sid" == unknown ]]; then
+			if ! sid=$(_adopt_continue_session "$msid" "$cwd" "$kind" "$target" "$socket" "$before"); then
+				print_warning "Stopped PID ${pid} but its session association was not saved; resume will use a plain relaunch"
+				return 1
+			fi
+		else
+			_manifest_set_status "$sid" stopped
+		fi
 		print_success "Stopped idle session ${sid} (PID ${pid}, ${kind}${target:+ ${target}})"
 		return 0
 	fi
-	_manifest_set_status "$sid" stop_failed
+	_manifest_set_status "$msid" stop_failed
 	print_warning "Session ${sid} (PID ${pid}) still running ${OPENCODE_RESTART_EXIT_TIMEOUT}s after SIG${OPENCODE_RESTART_SIGNAL}; left running"
 	return 1
 }
@@ -590,7 +716,7 @@ cmd_stop() {
 
 # _stop_targets — body of stop using the parsed STOP_* options.
 _stop_targets() {
-	local rows targets="" row pid sid status last quiet fresh skipped=0 stopped=0 auth=0
+	local rows targets="" row pid sid status last source quiet fresh skipped=0 stopped=0 auth=0
 	command -v jq >/dev/null 2>&1 || { print_error "jq is required"; return 1; }
 	rows=$(_inventory_rows "$STOP_ALL")
 	while IFS= read -r row; do
@@ -613,7 +739,9 @@ _stop_targets() {
 	# at a safe pause, and a queued message would arrive only after the resume.
 	while IFS="$SEP" read -r pid sid status _; do
 		[[ -n "$pid" ]] || continue
-		if [[ "$status" != idle ]]; then
+		if [[ "$status" != idle && "$sid" == unknown ]]; then
+			print_info "Session PID ${pid} (heartbeat-less tmux TUI) shows the busy marker; not stopped unless it goes idle"
+		elif [[ "$status" != idle ]]; then
 			_bus_send "$sid" "$(_checkpoint_request_text "$STOP_REASON")" ||
 				print_warning "Session ${sid}: checkpoint request not delivered (session bus unavailable)"
 			print_info "Session ${sid} (PID ${pid}) is busy; asked it to checkpoint and pause"
@@ -634,8 +762,8 @@ _stop_targets() {
 		# Re-check idleness right before the signal: a prompt may have arrived
 		# while earlier sessions were being stopped.
 		fresh=$(_current_row "$pid" "$(_inventory_rows "$STOP_ALL")")
-		IFS="$SEP" read -r _ _ status _ last _ <<<"$fresh"
-		if [[ -z "$fresh" ]] || ! _row_is_quiet "$status" "$last"; then
+		IFS="$SEP" read -r _ _ status _ last _ source _ <<<"$fresh"
+		if [[ -z "$fresh" ]] || ! _row_is_quiet "$status" "$last" "$source"; then
 			print_warning "Session ${sid} (PID ${pid}) became busy before the stop; not stopped"
 			skipped=$((skipped + 1))
 			continue
@@ -787,7 +915,7 @@ _notify_rows() {
 	now=$(date +%s)
 	mkdir -p "$RESTART_NOTIFIED_DIR"
 	while IFS="$SEP" read -r pid sid _ _ _ _ _ age _; do
-		[[ -n "$pid" && "$sid" =~ $RESTART_SESSION_RE ]] || continue
+		[[ -n "$pid" && "$sid" =~ $RESTART_SESSION_RE && "$sid" != unknown ]] || continue
 		marker="${RESTART_NOTIFIED_DIR}/${sid}"
 		last=$(_uint_or "$(cat "$marker" 2>/dev/null || true)" 0)
 		((now - last >= OPENCODE_RESTART_NOTIFY_INTERVAL)) || continue
@@ -862,6 +990,7 @@ main() {
 	shift || true
 	OPENCODE_RESTART_WAIT_TIMEOUT=$(_uint_or "$OPENCODE_RESTART_WAIT_TIMEOUT" 600)
 	OPENCODE_RESTART_IDLE_SECONDS=$(_uint_or "$OPENCODE_RESTART_IDLE_SECONDS" 120)
+	OPENCODE_RESTART_TMUX_QUIET_SECONDS=$(_uint_or "$OPENCODE_RESTART_TMUX_QUIET_SECONDS" 3600)
 	OPENCODE_RESTART_EXIT_TIMEOUT=$(_uint_or "$OPENCODE_RESTART_EXIT_TIMEOUT" 30)
 	OPENCODE_RESTART_NOTIFY_INTERVAL=$(_uint_or "$OPENCODE_RESTART_NOTIFY_INTERVAL" 86400)
 	[[ "$OPENCODE_RESTART_SIGNAL" =~ ^(TERM|INT|HUP)$ ]] || OPENCODE_RESTART_SIGNAL=TERM

@@ -216,10 +216,44 @@ _blocking_holder_summary() {
 	return 0
 }
 
+# List every DB holder with no activity heartbeat (TUIs that predate the
+# heartbeat plugin): PID, age and tmux pane when known. Never prints pane text.
+_heartbeat_less_holders_summary() {
+	local db="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
+	local dir="${OPENCODE_DB_ACTIVITY_DIR:-${HOME:-}/.aidevops/.agent-workspace/state/opencode-activity}"
+	local pids pid age pane out file
+	local count=0 found=0
+	command -v lsof >/dev/null 2>&1 || return 0
+	local targets=("$db") sidecar
+	for sidecar in "${db}-wal" "${db}-shm"; do
+		[[ -e "$sidecar" ]] && targets+=("$sidecar")
+	done
+	pids=$(lsof -t "${targets[@]}" 2>/dev/null | sort -u || true)
+	while IFS= read -r pid; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		found=0
+		for file in "$dir/${pid}"-*.json; do
+			[[ -f "$file" ]] && found=1
+		done
+		[[ "$found" -eq 0 ]] || continue
+		age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+		[[ -n "$age" ]] || age=unknown
+		pane=""
+		if [[ -r "/proc/${pid}/environ" ]]; then
+			pane=$(tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | awk -F= '$1 == "TMUX_PANE" && $2 ~ /^%[0-9]+$/ { print $2; exit }' || true)
+		fi
+		out+="${out:+, }PID ${pid} (up ${age:-unknown}${pane:+, tmux pane ${pane}})"
+		count=$((count + 1))
+	done <<<"$pids"
+	[[ "$count" -gt 0 ]] || return 0
+	printf '%s heartbeat-less holder(s): %s' "$count" "$out"
+	return 0
+}
+
 _record_deferral() {
 	local max_deferrals="${OPENCODE_DB_ARCHIVE_ESCALATE_DEFERRALS:-24}"
 	local stale_hours="${OPENCODE_DB_ARCHIVE_STALE_HOURS:-72}"
-	local count=0 last_run="" now="" stale=0 holder=""
+	local count=0 last_run="" now="" stale=0 holder="" hbless=""
 	[[ "$max_deferrals" =~ ^[0-9]+$ ]] || max_deferrals=24
 	[[ "$stale_hours" =~ ^[0-9]+$ ]] || stale_hours=72
 	if [[ -f "$DEFERRALS_FILE" ]]; then
@@ -238,10 +272,12 @@ _record_deferral() {
 	if ((count < max_deferrals && stale == 0)); then
 		return 0
 	fi
-	[[ ! -f "$BLOCKED_NOTICE_FILE" ]] || return 0
 	holder=$(_blocking_holder_summary)
-	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s. Safe action: close or restart that OpenCode session. Holders are never killed automatically.\n' \
-		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
+	hbless=$(_heartbeat_less_holders_summary)
+	local rdb="${OPENCODE_DB_PATH:-${OPENCODE_DB:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}}"
+	# Always rewrite so holder changes and the recovery command stay current.
+	printf 'OpenCode DB archive has not completed after %s consecutive deferral(s)%s. Blocking holder: %s.%s Safe action: close or restart those OpenCode sessions (OPENCODE_DB_PATH=%q opencode-session-restart-helper.sh stop --yes covers heartbeat-less tmux TUIs). Holders are never killed automatically.\n' \
+		"$count" "$([[ "$stale" == 1 ]] && printf ' (>%sh since last success)' "$stale_hours")" "${holder:-not identified}" "${hbless:+ Also: ${hbless}.}" "$rdb" >"$BLOCKED_NOTICE_FILE" 2>/dev/null || true
 	echo "[opencode-db-archive-async] NOTICE: $(<"$BLOCKED_NOTICE_FILE")" >>"$LOGFILE"
 	return 0
 }
