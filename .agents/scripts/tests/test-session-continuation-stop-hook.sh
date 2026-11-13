@@ -278,6 +278,11 @@ test_filing_permission() {
 	for ask in \
 		$'1. Should I file an issue?\n2. May I deploy the release?' \
 		$'1. May I deploy the release?\n2. Should I file an issue?' \
+		"1. Should I file an issue and deploy the release?" \
+		"1. Should I file an issue and merge the PR?" \
+		"1. Should I file an issue then release the fix?" \
+		"1. Should I file an issue and also publish the package?" \
+		"1. Should I file an issue, also ship the fix?" \
 		"1. Should I file an issue containing \`private data\`?" \
 		"1. Should I file an issue containing \`credentials\`?" \
 		$'```text\n1. Should I file an issue?\n```'; do
@@ -287,6 +292,8 @@ test_filing_permission() {
 	done
 	for ask in \
 		$'1. Should I file an issue?\n2. Should I log a task?' \
+		"1. Should I file an issue for the failing deploy test?" \
+		"1. Should I file an issue about release failures?" \
 		$'1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```'; do
 		case_number=$((case_number + 1))
 		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"

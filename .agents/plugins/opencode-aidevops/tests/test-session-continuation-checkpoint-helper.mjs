@@ -157,6 +157,11 @@ fi
     ["mention only", "1. **Is the issue fix acceptable?**"],
     ["mixed deploy last", "1. Should I file an issue?\n2. May I deploy the release?"],
     ["mixed deploy first", "1. May I deploy the release?\n2. Should I file an issue?"],
+    ["compound deploy", "1. Should I file an issue and deploy the release?"],
+    ["compound merge", "1. Should I file an issue and merge the PR?"],
+    ["compound release", "1. Should I file an issue then release the fix?"],
+    ["compound publish", "1. Should I file an issue and also publish the package?"],
+    ["compound ship", "1. Should I file an issue, also ship the fix?"],
     ["inline private data", "1. Should I file an issue containing `private data`?"],
     ["inline secret", "1. Should I file an issue containing `credentials`?"],
     ["fenced ask", "```text\n1. Should I file an issue?\n```"],
@@ -169,6 +174,8 @@ fi
   }
   for (const [name, ask] of [
     ["all filing", "1. Should I file an issue?\n2. Should I log a task?"],
+    ["deploy topic", "1. Should I file an issue for the failing deploy test?"],
+    ["release topic", "1. Should I file an issue about release failures?"],
     ["fenced exclusions", "1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```"],
   ]) {
     assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).filing, true, `${name} remains filing-only`);
