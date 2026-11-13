@@ -88,8 +88,9 @@ Cancellation ends only the local process group. For `["ssh","host","<cmd>"]`
 the remote non-TTY shell is not signalled and keeps running (for example a
 cancelled `sleep 3600; rm -f PAUSE` still fires at its original deadline).
 Run timers locally (`["bash","-c","sleep N"]`, then a separate ssh call), or use
-`ssh -tt` so the remote side gets SIGHUP when the client dies. Clean up remotely
-by PID from `ps -o pid,ppid,args`, never `pkill -f` on a pattern your own
+`ssh -tt` so the remote side gets SIGHUP when the client dies (commands that
+ignore SIGHUP, such as under `nohup`, keep running). Clean up remotely
+by PID from `ps -o pid,ppid,args` and confirm the process exited, never `pkill -f` on a pattern your own
 command line contains (it kills its own remote shell).
 
 Do not assume bounded operations inherit session secrets: wrap the command as
