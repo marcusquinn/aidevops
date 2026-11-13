@@ -4,7 +4,6 @@
 # Runtime override filters for dispatch-claim-helper.sh.
 # Sourced by the helper, which loads configuration and dispatch-override-resolve.sh.
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_DISPATCH_CLAIM_FILTERS_LOADED:-}" ]] && return 0
 _DISPATCH_CLAIM_FILTERS_LOADED=1
 

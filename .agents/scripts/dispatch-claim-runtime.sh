@@ -4,7 +4,6 @@
 # Runtime utilities for dispatch-claim-helper.sh: identity, time and diagnostics.
 # Sourced by the helper; configuration and sibling dependencies remain there.
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 [[ -n "${_DISPATCH_CLAIM_RUNTIME_LOADED:-}" ]] && return 0
 _DISPATCH_CLAIM_RUNTIME_LOADED=1
 
