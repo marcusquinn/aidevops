@@ -84,6 +84,14 @@ carries its first output window inline as `output` (`output_offset`/
 `output_limit`, default 1/120). One call then replaces start → status → output.
 A failed inline read becomes `output_error` on the receipt instead of failing it.
 
+Cancellation ends only the local process group. For `["ssh","host","<cmd>"]`
+the remote non-TTY shell is not signalled and keeps running (for example a
+cancelled `sleep 3600; rm -f PAUSE` still fires at its original deadline).
+Run timers locally (`["bash","-c","sleep N"]`, then a separate ssh call), or use
+`ssh -tt` so the remote side gets SIGHUP when the client dies. Clean up remotely
+by PID from `ps -o pid,ppid,args`, never `pkill -f` on a pattern your own
+command line contains (it kills its own remote shell).
+
 Do not assume bounded operations inherit session secrets: wrap the command as
 `aidevops secret NAME -- <argv>`, and never put a secret value in argv.
 
