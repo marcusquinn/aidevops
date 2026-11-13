@@ -363,6 +363,7 @@ _ddpr_closing_keyword_pattern() {
 }
 
 # One bounded rich read, shared by all three open-PR checks (GH#38163).
+# More than 20 open PRs stays live: never widen the body/sibling search bound.
 # Args: repository
 _ddpr_fetch_open_snapshot() {
 	local repo_slug="$1"
@@ -373,7 +374,7 @@ _ddpr_fetch_open_snapshot() {
 		-f owner="${repo_slug%%/*}" -f name="${repo_slug#*/}" -f query='
 		query($owner: String!, $name: String!) {
 			repository(owner: $owner, name: $name) {
-				pullRequests(first: 100, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+				pullRequests(first: 20, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
 					pageInfo { hasNextPage }
 					nodes {
 						number title body isDraft createdAt headRefOid updatedAt
@@ -437,6 +438,7 @@ _ddpr_prepare_open_snapshot() {
 	rich=$(printf '%s' "$response" | jq -ce --slurpfile snapshot "$snapshot" \
 			--arg bt "$_DDPR_JSON_BOOLEAN_TYPE" --arg st "$_DDPR_JSON_STRING_TYPE" \
 			--arg nt "$_DDPR_JSON_NUMBER_TYPE" --arg at "$_DDPR_JSON_ARRAY_TYPE" '
+			select((now - ($snapshot[0].timestamp | fromdateiso8601)) < 900) |
 			select(((.errors // []) | length) == 0) |
 			select((.data.rateLimit.cost | type) == $nt and .data.rateLimit.cost > 0) |
 			.data.repository.pullRequests |
@@ -633,7 +635,7 @@ _ddpr_graphql_open_commit_page() {
 
 # Match the live reader: slice the ten newest open PRs before excluding drafts.
 _ddpr_snapshot_open_commits() {
-	jq -c 'sort_by(.createdAt) | reverse | .[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
+	jq -c '.[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
 	return $?
 }
 
