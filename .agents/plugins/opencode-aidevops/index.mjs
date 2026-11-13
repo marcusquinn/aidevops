@@ -48,6 +48,7 @@ import {
 } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
+import { createCompactionLoopGuard } from "./compaction-loop-guard.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
 import { applyCompactionEffort } from "./compaction-effort.mjs";
 import { createCompactionResidencyWarning } from "./compaction-routing.mjs";
@@ -546,6 +547,18 @@ export async function AidevopsPlugin({ directory, client }) {
   const permissionBroker = createPermissionBroker({ client, isHeadless });
   const playwriterSelectionGuard = createPlaywriterSelectionGuard({ client, isHeadless, log: qualityLog });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
+  // GH#37997: stop and rerun compaction summaries that loop on repeated text;
+  // a rerun continues under the same autocontinue policy as OpenCode's own.
+  const compactionLoopGuard = createCompactionLoopGuard({
+    client,
+    isHeadless,
+    qualityLog,
+    shouldContinue: async (sessionID) => {
+      const decision = { enabled: true };
+      await compactionContinuation.autoContinue({ sessionID }, decision);
+      return decision.enabled;
+    },
+  });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
   // GH#35893: flag a local session compacted on a non-local provider.
@@ -626,6 +639,12 @@ export async function AidevopsPlugin({ directory, client }) {
   // so corrections are applied to the final message list. Fail-open — errors
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
+    // GH#37997: first, so replay and later hooks see the repaired history.
+    try {
+      compactionLoopGuard.transformMessages(input, output);
+    } catch (err) {
+      qualityLog("WARN", `[compaction-loop-guard] transform skipped: ${err?.message ?? err}`);
+    }
     await compactionInputReplay.inject(input, output);
     await annotateTurnTimesSafely(input, output, { client, isHeadless }, qualityLog);
     // GH#35529: attach receipts to interrupted Task results (fail-open).
@@ -641,8 +660,14 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // Observe completed text for TTSR violations and continuation steering.
   // GH#34123: neither hook modifies the user-visible text; model corrections
-  // travel through messagesTransformHook as synthetic messages.
+  // travel through messagesTransformHook as synthetic messages. The only
+  // rewrite is GH#37997: repeated runs in a compaction summary are collapsed.
   const completionTextHook = async (input, output) => {
+    try {
+      compactionLoopGuard.completeText(input, output);
+    } catch (err) {
+      qualityLog("WARN", `[compaction-loop-guard] collapse skipped: ${err?.message ?? err}`);
+    }
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
   };
@@ -752,6 +777,8 @@ export async function AidevopsPlugin({ directory, client }) {
       const { sessionId, modelId } = sessionModelIdentity(input);
       // Before remember(): compare against the parent's model, not this request's.
       compactionResidencyWarning(input, sessionModels.resolve(sessionId));
+      // GH#37997: remember the compaction's parent agent/model/variant for a rerun.
+      compactionLoopGuard.chatParams(input);
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
       const applied = await applyConversationRootVariant(
@@ -821,6 +848,7 @@ export async function AidevopsPlugin({ directory, client }) {
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),
         Promise.resolve(subagentEffortHooks.handleEvent(input)),
         compactionContinuation.handleEvent(input),
+        Promise.resolve().then(() => compactionLoopGuard.handleEvent(input)).catch((err) => debugEventError("compaction loop guard", err)),
         Promise.resolve(cancellationReceipt.handleEvent(input)),
         Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),
