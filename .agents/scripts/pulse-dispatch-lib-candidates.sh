@@ -1544,7 +1544,7 @@ _dispatch_consolidated_attention_fresh() {
 _dispatch_consolidated_checkpoint_attention() {
 	local repo="$1" issue="$2"
 	local stamp_file='' prs='' draft='' pr='' head='' key=''
-	local comments='' body='' ref_pattern=''
+	local comments='' body='' ref_pattern='' seen_rc=0
 	stamp_file=$(_dispatch_consolidated_attention_stamp_path "$repo" "$issue") || return 0
 	prs=$(gh pr list --repo "$repo" --state open --search "#${issue} draft:true" \
 		--json number,title,body,isDraft,headRefOid --limit 20 2>/dev/null) || return 0
@@ -1560,10 +1560,19 @@ _dispatch_consolidated_checkpoint_attention() {
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || return 0
 		key="${_DISPATCH_CONSOLIDATED_ATTENTION_MARKER} pr=${pr} head=${head}"
 		comments=$(gh api --paginate "repos/${repo}/issues/${issue}/comments?per_page=100" 2>/dev/null) || return 0
-		if jq -se --arg key "$key" 'flatten | any(.[];
-			((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") and
-			((.body // "") | contains($key)))' <<<"$comments" >/dev/null 2>&1; then
+		# GH#38021: App installation reads report a private organization member
+		# as CONTRIBUTOR, so resolve the author's write permission when possible.
+		if declare -F _gh_keyed_comment_has_write_author >/dev/null 2>&1; then
+			_gh_keyed_comment_has_write_author "$repo" "$comments" "$key" || seen_rc=$?
+		else
+			jq -se --arg key "$key" 'flatten | any(.[];
+				((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") and
+				((.body // "") | contains($key)))' <<<"$comments" >/dev/null 2>&1 || seen_rc=1
+		fi
+		if [[ "$seen_rc" -eq 0 ]]; then
 			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_EXISTS #${issue} (${repo}) draft PR #${pr} head=${head}" >>"$LOGFILE"
+		elif [[ "$seen_rc" -ne 1 ]]; then
+			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_UNVERIFIED #${issue} (${repo}) draft PR #${pr} head=${head} — author write access unconfirmed; not posting this TTL" >>"$LOGFILE"
 		else
 			body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} -->

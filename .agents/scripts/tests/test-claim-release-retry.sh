@@ -65,11 +65,32 @@ if [[ "${1:-}" == real-* ]]; then
 		printf '%s\n' "$3" >>"${ROOT}/published"
 		return 0
 	}
+	if [[ "$1" == real-spec-* ]]; then
+		# GH#38021: issue #42 is a canonical consolidated spec. SPEC_CARRIES=1 is
+		# the read before the checkpoint escalation; otherwise the released state.
+		# The drain shell loads the continuation module only through the replay.
+		_gh_with_timeout() { shift; "$@"; return $?; }
+		gh() {
+			local labels='["status:available","consolidated"]'
+			[[ "${SPEC_CARRIES:-0}" != 1 ]] || labels='["status:in-progress","consolidated","auto-dispatch"]'
+			[[ "$*" == "api repos/o/r/issues/42" ]] || return 1
+			jq -cn --argjson labels "$labels" --arg body '_Supersedes #7 — this issue is the consolidated spec._' \
+				'{state: "open", body: $body, assignees: [], labels: [$labels[] | {name: .}]}'
+			return 0
+		}
+		set_issue_status() { printf '%s\n' "$*" >>"${ROOT}/projection"; return 0; }
+	fi
 	if [[ "$1" == real-record ]]; then
 		export AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH="$ROOT"
 		AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT=$(_terminal_blocker_hash "v2:${TEST_REASON}")
 		export AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT
 		_release_dispatch_claim issue-42 blocked 1 1 || true
+	elif [[ "$1" == real-spec-record ]]; then
+		# The checkpoint escalation loads the module and reads the issue first.
+		# shellcheck source=../pulse-merge-partial-continuation.sh
+		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
+		_pmpc_record_checkpoint_spec_dispatch o/r 42 || true
+		_release_dispatch_claim issue-42 worker_draft_checkpoint 1 1 || true
 	else
 		_hrrr_drain
 	fi
@@ -186,6 +207,34 @@ RETRY_TEST_ROOT="$ROOT" TEST_REASON=permission_required bash "$0" real-record
 age_rows
 RETRY_TEST_ROOT="$ROOT" ADMISSION=1 TEST_OWNED=0 bash "$0" real-drain >/dev/null
 check "changed owner no write" "$(wc -c <"${ROOT}/published" | tr -d ' ')" "0"
+
+# GH#38021: a deferred draft-checkpoint release carries the recording run's
+# proof that it removed auto-dispatch from a consolidated spec. The replay runs
+# in another process and restores the label only with that proof.
+f=$(_hrrr_path o/r 42 issue-42)
+rm -f "$f" "${f}.binding"
+for carried in 1 0; do
+	expected_field=false expected_projection=available
+	if [[ "$carried" == 1 ]]; then
+		expected_field=true
+		expected_projection=$'available\n42 o/r available --add-label auto-dispatch'
+	fi
+	: >"${ROOT}/projection"
+	RETRY_TEST_ROOT="$ROOT" SPEC_CARRIES="$carried" bash "$0" real-spec-record
+	check "spec receipt carried=${carried} recorded" "$(jq -r '.spec_dispatch // false' "$f" 2>/dev/null)" "$expected_field"
+	age_rows
+	RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-spec-drain >/dev/null
+	check "spec replay carried=${carried} removed" "$(rows)" "0"
+	check "spec replay carried=${carried} projection" "$(<"${ROOT}/projection")" "$expected_projection"
+done
+# A receipt added to a row after it was written does not match the binding.
+: >"${ROOT}/projection"
+RETRY_TEST_ROOT="$ROOT" SPEC_CARRIES=0 bash "$0" real-spec-record
+age_rows
+jq '.spec_dispatch = true' "$f" >"${f}.t" && mv "${f}.t" "$f"
+RETRY_TEST_ROOT="$ROOT" ADMISSION=1 bash "$0" real-spec-drain >/dev/null
+check "edited spec receipt retained" "$(rows)" "1"
+check "edited spec receipt not replayed" "$(wc -c <"${ROOT}/projection" | tr -d ' ')" "0"
 
 printf 'pass=%s fail=%s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

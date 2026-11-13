@@ -581,6 +581,108 @@ Restored auto-dispatch on this unassigned available worker issue after verifying
 	return 0
 }
 
+# GH#38021: a worker draft checkpoint removes auto-dispatch so that no second
+# branch opens beside the draft. A canonical consolidated spec is a dispatch
+# candidate only while it carries that label (_has_consolidated_label), and the
+# restore above refuses while a PR is open, so the exact-head continuation
+# never started until a person re-added the label.
+# The pair below restores only the removal made by the same worker run. The
+# receipt comes from that run's read taken before the escalation, so a label a
+# person removed earlier is never re-added (GH#37600).
+# Keep the marker pattern in step with _has_consolidated_label.
+_PMPC_SPEC_MARKER_PATTERN='(^|\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\._(\n|$)'
+_PMPC_SPEC_HOLD_LABELS='no-auto-dispatch parent-task hold-for-review lockdown persistent'
+_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+
+# Classify one issue for the pair below from a single uncached read.
+# Args: $1=repo slug, $2=issue number
+# Stdout: "carries" when an open canonical spec has auto-dispatch; "restorable"
+#         when it has neither the label, an assignee, a hold nor any status
+#         other than status:available; nothing for every other issue.
+# Returns: 0 when the issue was read, 1 when it could not be read
+_pmpc_checkpoint_spec_state() {
+	local repo_slug="$1" issue_num="$2" issue_json=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -r --arg pattern "$_PMPC_SPEC_MARKER_PATTERN" \
+		--arg holds "$_PMPC_SPEC_HOLD_LABELS" --arg dispatch auto-dispatch \
+		--arg open open --arg status status: --arg available status:available '
+		[.labels[].name] as $labels
+		| ($holds | split(" ")) as $hold_list
+		| if (.state != $open or .pull_request != null
+			or ($labels | index("consolidated")) == null
+			or ((.body // "") | test($pattern) | not)) then empty
+		elif ($labels | index($dispatch)) != null then "carries"
+		elif (.assignees == []
+			and [$labels[] | select(startswith($status))] == [$available]
+			and ($labels - $hold_list) == $labels
+			and ($labels | any(startswith("needs-")) | not)) then "restorable"
+		else empty end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Call before the checkpoint escalation removes the label.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when the receipt names this issue, 1 otherwise (unreadable included)
+_pmpc_record_checkpoint_spec_dispatch() {
+	local repo_slug="$1" issue_num="$2" state=""
+	local receipt_key="${repo_slug}#${issue_num}"
+	# A repeated escalation in this run reads the label after the first removal;
+	# the earlier proof still stands.
+	[[ "$_PMPC_CHECKPOINT_SPEC_RECEIPT" != "$receipt_key" ]] || return 0
+	_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+	state=$(_pmpc_checkpoint_spec_state "$repo_slug" "$issue_num") || return 1
+	[[ "$state" == carries ]] || return 1
+	_PMPC_CHECKPOINT_SPEC_RECEIPT="$receipt_key"
+	return 0
+}
+
+# A release that cannot be published is replayed later by another process
+# (headless-runtime-release-retry.sh). Its private row carries the receipt
+# across: the recording run reports it with the first function and the replay
+# adopts it with the second. Nothing else may adopt a receipt.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when this process holds the receipt for the issue, 1 otherwise
+_pmpc_holds_checkpoint_spec_receipt() {
+	local repo_slug="$1" issue_num="$2"
+	[[ -n "$_PMPC_CHECKPOINT_SPEC_RECEIPT" &&
+		"$_PMPC_CHECKPOINT_SPEC_RECEIPT" == "${repo_slug}#${issue_num}" ]] || return 1
+	return 0
+}
+
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when the receipt was adopted, 1 for a malformed issue reference
+_pmpc_adopt_checkpoint_spec_receipt() {
+	local repo_slug="$1" issue_num="$2"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	_PMPC_CHECKPOINT_SPEC_RECEIPT="${repo_slug}#${issue_num}"
+	return 0
+}
+
+#aidevops:trust-boundary -- relabels only on the pre-removal receipt of the run
+# that removed the label; timeline or comment text is never evidence. The
+# receipt is consumed on use.
+# Call after the release projection. Holds added during the run stay in force.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when auto-dispatch was restored; 1 when there was nothing to
+#          restore (no receipt, or the label is already back); 2 when the
+#          receipt was held but the issue was unreadable, held, owned, not
+#          available, or the write failed.
+_pmpc_restore_checkpoint_spec_dispatch() {
+	local repo_slug="$1" issue_num="$2" state=""
+	_pmpc_holds_checkpoint_spec_receipt "$repo_slug" "$issue_num" || {
+		_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+		return 1
+	}
+	_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+	state=$(_pmpc_checkpoint_spec_state "$repo_slug" "$issue_num") || return 2
+	[[ "$state" != carries ]] || return 1
+	[[ "$state" == restorable ]] || return 2
+	set_issue_status "$issue_num" "$repo_slug" available --add-label auto-dispatch >/dev/null 2>&1 || return 2
+	return 0
+}
+
 # GH#34432: revisit one bounded page of open issues on the existing
 # per-repo stale-blocked cadence. Persist the next page and pending issue IDs
 # before processing so a killed/slow issue cannot starve the page suffix.

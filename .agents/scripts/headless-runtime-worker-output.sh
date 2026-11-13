@@ -303,6 +303,16 @@ _escalate_worker_pr_checkpoint() {
 		runner_login=$(_hrff_resolve_release_runner_login)
 		[[ -n "$runner_login" ]] && transition_args+=(--add-assignee "$runner_login")
 	fi
+	# GH#38021: before the transition removes auto-dispatch, record whether this
+	# draft checkpoint is on a canonical consolidated spec that carries it. The
+	# release projection restores only that removal; a failed read records nothing.
+	if [[ "$release_reason" == "$_HRW_REASON_DRAFT_CHECKPOINT" ]]; then
+		# shellcheck source=pulse-merge-partial-continuation.sh
+		source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh" 2>/dev/null || true
+		if declare -F _pmpc_record_checkpoint_spec_dispatch >/dev/null 2>&1; then
+			_pmpc_record_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || true
+		fi
+	fi
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		if ! set_issue_status "$issue_number" "$repo_slug" "in-review" "${transition_args[@]}"; then
 			_HRW_RECOVERY_CLASSIFICATION="$transition_failure_reason"
