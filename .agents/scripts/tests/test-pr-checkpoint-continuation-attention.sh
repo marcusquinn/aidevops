@@ -138,7 +138,8 @@ STUB_POST_DIR="${TEST_ROOT}/posts"
 # through the existing Pulse entrypoint, without dispatching. GH#36019: that
 # now covers every reason dispatch-stalled cannot continue (clean and
 # worker_complete and capability_limit moved to bounded exact-head continuation).
-for completed_reason in unknown_exit; do
+check_completed_attention() {
+	local completed_reason="$1"
 	STUB_COMMENTS_JSON="$(closing_lease_comments worker-bot closing-lease | jq --arg reason "$completed_reason" '
 		map(map(if .id == 21 then .body = ("CLAIM_RELEASED reason=" + $reason + " runner=pulse-runner") |
 			.user.login = "pulse-runner" else . end))')"
@@ -185,7 +186,9 @@ for completed_reason in unknown_exit; do
 			print_result "new ownership suppresses ${completed_reason} attention" 1
 		fi
 	done
-done
+	return 0
+}
+check_completed_attention unknown_exit
 for invalid_release in untrusted mismatched_runner continuable_reason blocked_reason; do
 	invalid_comments="$(blocked_comments | jq --arg invalid "$invalid_release" '
 		map(map(if .id == 21 then .body = "CLAIM_RELEASED reason=capability_limit runner=worker-bot" |

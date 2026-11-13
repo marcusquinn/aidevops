@@ -18,7 +18,8 @@ from pr_checkpoint_events import (EVENTS, attempt_owner, events, release_for, re
                                   successors_valid, timestamp, trusted)
 from pr_checkpoint_episodes import TERMINAL_WITHOUT_RELEASE
 from pr_checkpoint_history import explain_reviewed_successor_history
-from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES, not_launched_reuse_ids
+from pr_checkpoint_reuse import MAX_NOT_LAUNCHED_REUSES as MAX_NOT_LAUNCHED_REUSES
+from pr_checkpoint_reuse import not_launched_reuse_ids
 from pr_checkpoint_unattributed import UNATTRIBUTED
 
 def approval_matches(data, approval, comment, now):

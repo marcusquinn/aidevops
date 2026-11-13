@@ -126,6 +126,23 @@ def explain_released_successor_history(comments, release_id, approval_id, releas
         comments, (release_id, approval_id), released_lease, {"trusted_logins": trusted_logins})
 
 
+def advance_reviewed_episode(state, event, review, seen, episode_records):
+    """Advance one episode, preserving reviewed anomalies and rejection context."""
+    reconciled = acknowledged_terminal(state, event, review)
+    if reconciled is not None:
+        # Bind every observed record, including intermediate renewals; publish
+        # only the fingerprint, never the underlying lease credentials.
+        reconciled["evidence_sha256"] = hashlib.sha256(json.dumps(
+            episode_records, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+        return None, reconciled, None
+    comment, line, f = event
+    advanced = advance_history(state, comment, line, f, seen)
+    if advanced is None:
+        return None, None, (comment, line, state, "transition_rejected")
+    episode = completed_episode(advanced)
+    return (None if episode is not None else advanced), episode, None
+
+
 def explain_reviewed_successor_history(comments, bounds, released_lease, review):
     """Describe only fully closed, non-overlapping attempts preceding an approval.
 
@@ -144,32 +161,21 @@ def explain_reviewed_successor_history(comments, bounds, released_lease, review)
             continue
         episode_records.append((comment["id"], comment["created_at"],
                                 comment["user"]["login"], comment["body"]))
-        reconciled = acknowledged_terminal(state, (comment, line, f), review)
-        if reconciled is not None:
-            # Bind every observed episode record, including intermediate renewals;
-            # publish only the fingerprint, never the underlying lease credentials.
-            reconciled["evidence_sha256"] = hashlib.sha256(json.dumps(
-                episode_records, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
-            history.append(reconciled)
-            state = None
-            episode_records = []
-            continue
         # GH#38103: an executor-less released episode needs no terminal lease
         # before the next episode starts; the attestation names its release.
         unterminated = released_without_terminal(state, review) if line.startswith("DISPATCH_CLAIM ") else None
         if unterminated is not None:
             history.append(unterminated)
             state, episode_records = None, [episode_records[-1]]
-        previous = state
-        state = advance_history(state, comment, line, f, seen)
-        if state is None:
-            return None, (comment, line, previous, "transition_rejected")
-        episode = completed_episode(state)
+        state, episode, rejection = advance_reviewed_episode(
+            state, (comment, line, f), review, seen, episode_records)
+        if rejection is not None:
+            return None, rejection
         if episode is not None:
             history.append(episode)
-            state = None
             episode_records = []
-    if state is not None and (unterminated := released_without_terminal(state, review)) is not None:
+    unterminated = released_without_terminal(state, review)
+    if unterminated is not None:
         history.append(unterminated)
         state = None
     if state is not None:

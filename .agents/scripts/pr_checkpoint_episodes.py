@@ -63,12 +63,14 @@ def released_without_terminal(state, review):
         return None
     release_id, ready_id, reason = state.get("release_id"), state.get("ready_id"), state.get("release_reason")
     expiries = state.get("expiries", [])
-    if not (release_id and ready_id and reason and expiries and
-            all(positive_expiry(value) for value in expiries) and
-            release_id in review.get("executorless_release_ids", ()) and
-            state["claim_id"] < ready_id < release_id):
+    if not all((release_id, ready_id, reason, expiries)):
         return None
-    if max(int(value) for value in expiries) + EXPIRED_RELEASE_GRACE_SECONDS >= review.get("before", 0):
+    if not all(positive_expiry(value) for value in expiries):
+        return None
+    expired_before = max(int(value) for value in expiries) + EXPIRED_RELEASE_GRACE_SECONDS
+    if not all((release_id in review.get("executorless_release_ids", ()),
+                state["claim_id"] < ready_id < release_id,
+                expired_before < review.get("before", 0))):
         return None
     episode = {key: state[key] for key in ("runner", "attempt", "claim_id", "ready_id", "release_id")}
     return {**episode, "outcome": reason}

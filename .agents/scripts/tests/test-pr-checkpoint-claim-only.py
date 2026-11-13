@@ -15,14 +15,15 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from checkpoint_github_fixture import comment
+from pr_checkpoint_events import fields
+
 TESTS = pathlib.Path(__file__).resolve().parent
 SCRIPTS = TESTS.parent
 BASH = shutil.which("bash")
 if not BASH or not pathlib.Path(BASH).is_absolute():
     raise RuntimeError("An absolute path to the installed Bash runtime is required")
-sys.path.insert(0, str(SCRIPTS))
-from checkpoint_github_fixture import comment
-from pr_checkpoint_events import fields
 
 
 def load(name, path):
