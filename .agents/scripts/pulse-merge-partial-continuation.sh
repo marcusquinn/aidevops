@@ -793,9 +793,7 @@ _pm_reconcile_partial_continuations() {
 			phase="$pending_phase"
 			resumed=1
 		fi
-		# Token to persist: next page of this phase, the start of the available
-		# phase after the last in-review page, or a reset after the last page.
-		# A resumed suffix keeps the token it was persisted with.
+		# Persist the next page, the available-phase start or a reset; a resumed suffix keeps its token.
 		if [[ "$resumed" -eq 1 ]]; then
 			resumed=0
 		elif [[ "$last_page" -eq 1 && "$phase" == review ]]; then
@@ -829,7 +827,6 @@ _pm_reconcile_partial_continuations() {
 		done <<<"$issues"
 		issues=""
 		if [[ "$token" == a1 && "$phase" == review ]]; then
-			# In-review traversal finished: continue with the available phase.
 			phase="$avail_phase"
 			pending_phase="$avail_phase"
 			page=1
