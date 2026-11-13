@@ -916,8 +916,10 @@ _preflight_prefetch_starved() {
 # Reads the attempt epochs _preflight_label_maintenance_order reads, with the
 # same fallback to the completion epochs.
 # Arguments: $1 - bound multiplier (default 1). The caller passes 2 on a cycle
-#   that already promoted prefetch; a substage with no recorded attempt has no
-#   measurable age and then waits for the next cycle.
+#   that already promoted prefetch. A substage with no recorded attempt has no
+#   measurable age: at multiplier 1 it is starved, and above 1 the multiplied
+#   bound applies to the oldest recorded attempt. With no attempt recorded at
+#   all, a multiplier above 1 waits for a cycle that did not promote prefetch.
 # Stdout (when starved): seconds since the stalest substage last started, or
 #   "never" when a substage has no recorded attempt.
 # Returns: 0 when starved, 1 otherwise (or when the clock cannot be read).
@@ -933,7 +935,7 @@ _preflight_label_maintenance_starved() {
 	local key=""
 	local epoch=""
 	local extra=""
-	local now="" stalest=0 consolidation=0 backfill=0 simplification=0
+	local now="" stalest=0 missing=0 consolidation=0 backfill=0 simplification=0
 	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
 	if [[ -r "$state_file" && -f "$state_file" ]]; then
 		while read -r key epoch extra; do
@@ -947,16 +949,24 @@ _preflight_label_maintenance_starved() {
 	fi
 	now=$(date +%s 2>/dev/null) || return 1
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
-	stalest="$consolidation"
-	[[ "$backfill" -ge "$stalest" ]] || stalest="$backfill"
-	[[ "$simplification" -ge "$stalest" ]] || stalest="$simplification"
-	if [[ "$stalest" -eq 0 ]]; then
-		[[ "$factor" -eq 1 ]] || return 1
+	# stalest: the oldest recorded attempt; missing: a substage has none.
+	for epoch in "$consolidation" "$backfill" "$simplification"; do
+		if [[ "$epoch" -eq 0 ]]; then
+			missing=1
+		elif [[ "$stalest" -eq 0 || "$epoch" -lt "$stalest" ]]; then
+			stalest="$epoch"
+		fi
+	done
+	if [[ "$missing" -eq 1 && "$factor" -eq 1 ]]; then
 		printf 'never\n'
 		return 0
 	fi
-	[[ $((now - stalest)) -gt "$bound" ]] || return 1
-	printf '%s\n' "$((now - stalest))"
+	[[ "$stalest" -gt 0 && $((now - stalest)) -gt "$bound" ]] || return 1
+	if [[ "$missing" -eq 1 ]]; then
+		printf 'never\n'
+	else
+		printf '%s\n' "$((now - stalest))"
+	fi
 	return 0
 }
 

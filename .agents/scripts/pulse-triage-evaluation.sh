@@ -146,8 +146,9 @@ _pte_label_pass_finished() {
 # cannot keep the sweep from advancing its own cursor.
 #######################################
 
-# Print one compact JSON object {slug,number,body} per open issue carrying a
-# label, for the owners of the given repository rows.
+# Print one compact JSON object {slug,number} per open issue carrying a label,
+# for the owners of the given repository rows. The search index can lag an
+# edit, so it only names candidates: the body is read later, per issue.
 # Arguments: $1 - label, $2 - repo rows ("slug" or "slug|path", one per line)
 # Returns: 0 when every owner group answered, 1 otherwise (found rows still print)
 _pte_held_issues() {
@@ -172,7 +173,7 @@ _pte_held_issues() {
 		result=$(gh api -X GET search/issues \
 			-f q="is:issue is:open label:\"${label}\"${group}" \
 			-f sort=created -f order=asc -f per_page=100 \
-			--jq 'if .incomplete_results then error("incomplete search results") else .items[] | select(.pull_request == null) | {slug: (.repository_url | sub("^.*/repos/"; "")), number, body: (.body // "")} | tojson end' \
+			--jq 'if .incomplete_results then error("incomplete search results") else .items[] | select(.pull_request == null) | {slug: (.repository_url | sub("^.*/repos/"; "")), number} | tojson end' \
 			2>/dev/null) || {
 			rc=1
 			continue
@@ -186,7 +187,7 @@ _pte_held_issues() {
 # slug and path, and start after the issue a previous run reached, so a slice
 # that cannot finish the list does not re-check the same leading issues.
 # Arguments: $1 - JSON lines from _pte_held_issues, $2 - repo rows
-# Stdout: one compact JSON object {slug,path,number,body} per issue
+# Stdout: one compact JSON object {slug,path,number} per issue
 _pte_held_issue_order() {
 	local held="$1" rows="$2" cursor_slug="" cursor_issue=0
 	local cursor_file="${_LABEL_CURSOR_FILE:+${_LABEL_CURSOR_FILE%.cursor}.held}"
@@ -201,10 +202,10 @@ _pte_held_issue_order() {
 			| {key: (.[0] | ascii_downcase), value: {slug: .[0], path: (.[1] // "")}}) | from_entries) as $repos
 		| [$slug, ($issue | tonumber)] as $cursor
 		| map(objects
-			| {slug: (.slug | strings), number: (.number | numbers), body: (.body // "")}
+			| {slug: (.slug | strings), number: (.number | numbers)}
 			| ($repos[.slug | ascii_downcase]) as $repo
 			| select($repo != null)
-			| {slug: $repo.slug, path: $repo.path, number, body})
+			| {slug: $repo.slug, path: $repo.path, number})
 		| unique_by([.slug, .number])
 		| map(select([.slug, .number] > $cursor)) + map(select([.slug, .number] <= $cursor))
 		| .[]' 2>/dev/null
@@ -225,14 +226,17 @@ _pte_held_cursor_write() {
 # Re-check the held issues carrying a label before the caller's sweep.
 # Arguments: $1 - label, $2 - repo rows, $3 - per-issue function called with
 #   (number, slug, body, repo_path) that returns 0 when it cleared the label,
-#   $4 - budget-gate context prefix
+#   $4 - budget-gate context prefix, $5 - "current-body" when the function
+#   measures the issue body: the step then reads the current body, one call
+#   per issue, because a stale search result could clear a hold that a newer
+#   body still earns. Otherwise the function receives an empty body.
 # Sets in the caller's scope: _PTE_HELD_CLEARED (count), _PTE_HELD_DONE
 #   (space-delimited "slug#number" keys the sweep skips in this run)
 # Returns: 0 to continue with the sweep (also when the step used its time
 #   share; the next run resumes after the last issue it reached), 2 when a
 #   budget or deadline gate stopped the step (the caller defers the sweep)
 _pte_reevaluate_held_issues() {
-	local label="$1" rows="$2" evaluate_fn="$3" context="$4"
+	local label="$1" rows="$2" evaluate_fn="$3" context="$4" body_source="${5:-}"
 	local held="" issue="" body="" checked=0 rc=0
 	local slug="" num="" rpath=""
 	local now="" share_deadline=0 share_used=""
@@ -257,7 +261,13 @@ _pte_reevaluate_held_issues() {
 			break
 		fi
 		_pte_held_cursor_write "$slug" "$num" || true
-		body=$(jq -r '.body // ""' <<<"$issue")
+		body=""
+		if [[ "$body_source" == "current-body" ]]; then
+			# A failed or empty read leaves the issue to the sweep, which
+			# lists bodies itself.
+			body=$(gh_issue_view "$num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || body=""
+			[[ -n "$body" ]] || continue
+		fi
 		# Measure against the latest remote state, as the sweep does (t2433).
 		[[ -z "$rpath" ]] || _pulse_refresh_repo "$rpath"
 		if "$evaluate_fn" "$num" "$slug" "$body" "$rpath"; then
@@ -847,7 +857,7 @@ _reevaluate_simplification_labels() {
 	repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
 	# GH#37986: held issues first, then the per-repository sweep.
 	_pte_reevaluate_held_issues "$held_label" "$repo_rows" \
-		_pte_reevaluate_simplification_issue "simplification_held_issue" || rest_deferred=1
+		_pte_reevaluate_simplification_issue "simplification_held_issue" "current-body" || rest_deferred=1
 	total_cleared="$_PTE_HELD_CLEARED"
 	while IFS='|' read -r slug rpath; do
 		[[ "$rest_deferred" -eq 0 ]] || break

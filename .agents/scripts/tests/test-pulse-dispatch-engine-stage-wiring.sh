@@ -423,7 +423,7 @@ assert_label_maintenance_cycle_budget_contract() {
 # how far short of the refill reserve the cycle fell.
 assert_label_maintenance_starvation_contract() {
 	local test_root="" actual=""
-	local expected="never:never;doubled_never:no;fresh:no;stale:9000;partial:never;disabled:no;doubled:no;doubled_stale:15000;"
+	local expected="never:never;doubled_never:no;fresh:no;stale:9000;partial:never;doubled_partial:no;doubled_partial_stale:never;disabled:no;doubled:no;doubled_stale:15000;"
 	expected+="deficit:remaining=605s, required=606s;"
 	expected+="promoted:1:preflight_label_maintenance:180;current:0:;deferred:0:preflight_label_maintenance:180;"
 	expected+="prefetch:0:;prefetch_doubled:1:preflight_label_maintenance:180;stopped:0:;slice:1:preflight_label_maintenance:240;minimum:1:preflight_label_maintenance:180;"
@@ -453,6 +453,11 @@ assert_label_maintenance_starvation_contract() {
 			printf 'stale:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
 			printf 'consolidation 99000\nbackfill 99000\n' >"$test_root/epochs.attempts"
 			printf 'partial:%s;' "$(_preflight_label_maintenance_starved || printf 'no')"
+			# A missing substage must not block the doubled bound: it applies
+			# to the oldest recorded attempt.
+			printf 'doubled_partial:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
+			printf 'consolidation 85000\nbackfill 99000\n' >"$test_root/epochs.attempts"
+			printf 'doubled_partial_stale:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
 			attempts 91000
 			printf 'disabled:%s;' "$(AIDEVOPS_PULSE_LABEL_MAINTENANCE_STARVATION_S=0 _preflight_label_maintenance_starved || printf 'no')"
 			printf 'doubled:%s;' "$(_preflight_label_maintenance_starved 2 || printf 'no')"
@@ -510,9 +515,10 @@ assert_label_maintenance_starvation_contract() {
 	return 0
 }
 
-# GH#37986 held-first fixture: a fake clock, one search answer and one
-# per-repository list answer. Call inside the trace subshell after sourcing.
-# Reads: EVENTS, CLOCK, TEST_SEARCH_RC, TEST_MEASURE_SECONDS
+# GH#37986 held-first fixture: a fake clock, one search answer, one current
+# body per issue and one per-repository list answer. Call inside the trace
+# subshell after sourcing.
+# Reads: EVENTS, CLOCK, TEST_SEARCH_RC, TEST_MEASURE_SECONDS, TEST_UNREADABLE
 label_maintenance_held_first_stubs() {
 	date() {
 		local now=0
@@ -524,9 +530,16 @@ label_maintenance_held_first_stubs() {
 		[[ "$*" == "api -X GET search/issues"* ]] || return 1
 		printf 'search;' >>"$EVENTS"
 		[[ "$TEST_SEARCH_RC" -eq 0 ]] || return 1
-		printf '%s\n' '{"slug":"acme/held","number":12,"body":"b12"}' \
-			'{"slug":"acme/held","number":7,"body":"b7"}' \
-			'{"slug":"stranger/repo","number":3,"body":"b3"}'
+		printf '%s\n' '{"slug":"acme/held","number":12}' \
+			'{"slug":"acme/held","number":7}' \
+			'{"slug":"stranger/repo","number":3}'
+		return 0
+	}
+	gh_issue_view() {
+		local num="$1" slug="$3"
+		printf 'view:%s#%s;' "$slug" "$num" >>"$EVENTS"
+		[[ "$num" != "$TEST_UNREADABLE" ]] || return 1
+		printf 'current%s\n' "$num"
 		return 0
 	}
 	gh_issue_list() {
@@ -577,7 +590,7 @@ label_maintenance_held_first_trace() {
 		_LABEL_CURSOR_FILE="$test_root/epochs.simplification.cursor"
 		jq -n '{initialized_repos:[{slug:"acme/empty",path:"/e",pulse:true},{slug:"Acme/held",path:"/h",pulse:true}]}' >"$REPOS_JSON"
 		printf '0\n' >"$CLOCK"
-		TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=0
+		TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=0 TEST_UNREADABLE=""
 		label_maintenance_held_first_stubs
 		local rc=0 held_cursor="$test_root/epochs.simplification.held"
 
@@ -598,6 +611,15 @@ label_maintenance_held_first_trace() {
 		rc=0
 		_reevaluate_simplification_labels || rc=$?
 		printf 'fallback:%s:%s|' "$rc" "$(<"$EVENTS")"
+
+		# An issue whose current body cannot be read stays with the sweep.
+		TEST_SEARCH_RC=0 TEST_UNREADABLE=12
+		rm -f "$held_cursor"
+		: >"$EVENTS"
+		rc=0
+		_reevaluate_simplification_labels || rc=$?
+		printf 'unreadable:%s:%s|' "$rc" "$(<"$EVENTS")"
+		TEST_UNREADABLE=""
 
 		# 60s substage: the held-first step yields at 40s, the sweep
 		# re-checks #12 and the deadline defers #20 to the next cycle.
@@ -620,17 +642,23 @@ label_maintenance_held_first_trace() {
 }
 
 # GH#37986: each re-evaluation substage re-checks the issues that carry its
-# label before it sweeps repositories. The sweep remains the safety net for a
-# failed search, skips what the held-first step already re-checked, and keeps
-# a share of the substage's time.
+# label before it sweeps repositories. The search only names candidates: the
+# simplification step measures each issue's current body, and consolidation
+# reads none. The sweep remains the safety net for a failed search or an
+# unreadable issue, skips what the held-first step already re-checked, and
+# keeps a share of the substage's time.
 assert_label_maintenance_held_first_contract() {
 	local test_root="" actual="" expected=""
-	local held7="measure:Acme/held#7:b7:/h;cleared:Acme/held#7;" held12="measure:Acme/held#12:b12:/h;"
-	local sweep="list:acme/empty;list:Acme/held;" held20="measure:Acme/held#20:b20:/h;"
-	expected="first:0:search;${held7}${held12}${sweep}${held20}:Acme/held 12|"
-	expected+="rotated:0:search;${held12}${held7}${sweep}${held20}:Acme/held 7|"
-	expected+="fallback:0:search;${sweep}${held7}${held12}${held20}|"
-	expected+="share:2:search;${held7}${sweep}${held12}:Acme/held 7:Acme/held 2 20|"
+	local held7="view:Acme/held#7;measure:Acme/held#7:current7:/h;cleared:Acme/held#7;"
+	local held12="view:Acme/held#12;measure:Acme/held#12:current12:/h;"
+	local sweep="list:acme/empty;list:Acme/held;"
+	local swept7="measure:Acme/held#7:b7:/h;cleared:Acme/held#7;" swept12="measure:Acme/held#12:b12:/h;"
+	local swept20="measure:Acme/held#20:b20:/h;"
+	expected="first:0:search;${held7}${held12}${sweep}${swept20}:Acme/held 12|"
+	expected+="rotated:0:search;${held12}${held7}${sweep}${swept20}:Acme/held 7|"
+	expected+="fallback:0:search;${sweep}${swept7}${swept12}${swept20}|"
+	expected+="unreadable:0:search;${held7}view:Acme/held#12;${sweep}${swept12}${swept20}|"
+	expected+="share:2:search;${held7}${sweep}${swept12}:Acme/held 7:Acme/held 2 20|"
 	expected+="consolidation:0:search;c7;c12;${sweep}c20;|"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-held-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
