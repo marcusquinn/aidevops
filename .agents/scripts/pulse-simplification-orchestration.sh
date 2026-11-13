@@ -55,10 +55,12 @@ fi
 # Args:
 #   $1 - repo slug
 #   $2 - maximum issues to close
-#   $3 - optional interval close-count file, rewritten after every close so a
-#        watchdog kill mid-repo cannot lose spent budget (GH#38171)
+#   $3 - optional interval close-count file. Budget is reserved there before
+#        each remote close, so a watchdog kill at any point after GitHub
+#        closes the issue still leaves that close counted (GH#38171)
 #   $4 - close count already spent this interval (base for $3)
-# Stdout: number of issues closed
+# Stdout: close attempts charged to the interval budget. A failed close is
+#         uncertain (GitHub may have applied it), so it is charged too.
 # Returns 0 always.
 #######################################
 _dedup_cleanup_close_repo_dupes() {
@@ -68,7 +70,7 @@ _dedup_cleanup_close_repo_dupes() {
 	local count_base="${4:-0}"
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=0
 	[[ "$count_base" =~ ^[0-9]+$ ]] || count_base=0
-	local closed=0 dupe_numbers="" dupe_num=""
+	local spent=0 dupe_numbers="" dupe_num=""
 	dupe_numbers=$(gh_issue_list --repo "$slug" \
 		--label "function-complexity-debt" --state open \
 		--limit 500 --json number,title \
@@ -90,15 +92,16 @@ _dedup_cleanup_close_repo_dupes() {
 
 	while IFS= read -r dupe_num; do
 		[[ -n "$dupe_num" ]] || continue
-		[[ "$closed" -lt "$limit" ]] || break
-		if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
+		[[ "$spent" -lt "$limit" ]] || break
+		spent=$((spent + 1))
+		# Reserve before the remote close; never released, because a close
+		# that errored or was interrupted may still have been applied.
+		[[ -z "$count_file" ]] || printf '%s\n' "$((count_base + spent))" >"$count_file" 2>/dev/null || true
+		gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
 			--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
-			>/dev/null 2>&1; then
-			closed=$((closed + 1))
-			[[ -z "$count_file" ]] || printf '%s\n' "$((count_base + closed))" >"$count_file" 2>/dev/null || true
-		fi
+			>/dev/null 2>&1 || true
 	done <<<"$dupe_numbers"
-	printf '%s\n' "$closed"
+	printf '%s\n' "$spent"
 	return 0
 }
 
@@ -179,15 +182,15 @@ run_simplification_dedup_cleanup() {
 		fi
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
 		local repo_closed=0
-		# The helper persists the interval count after every close, so a yield
-		# or a watchdog kill mid-repo carries the spent budget forward.
+		# The helper reserves the interval budget before every close, so a
+		# yield or a watchdog kill mid-repo carries the spent budget forward.
 		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))" "$closed_file" "$total_closed") || repo_closed=0
 		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
 		total_closed=$((total_closed + repo_closed))
 	done <<<"$repo_slugs"
 
 	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt issue(s) closed this interval" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt close(s) charged this interval" >>"$LOGFILE"
 	fi
 	if [[ "$yielded" -eq 1 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
