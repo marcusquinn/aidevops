@@ -413,9 +413,10 @@ PR title: ${safe_title}
   worktree-helper.sh, or session-rename tools.
 - Work only in the supplied linked worktree. Do not create another branch,
   worktree, issue, or PR. Do not merge the PR, rebase, or force-push. You may
-  integrate the PR's base branch locally with \`git merge --no-edit origin/<base>\`
-  when the work or the repository's documentation needs a current base; it
-  ships in the single final push.
+  integrate the PR base branch locally when the work or repository documentation
+  needs a current base. First refresh the remote-tracking ref with
+  \`git fetch origin refs/heads/<base>:refs/remotes/origin/<base>\`, then run
+  \`git merge --no-edit origin/<base>\`. The merge ships in the single final push.
 
 PROMPT_EOF
 	return 0
