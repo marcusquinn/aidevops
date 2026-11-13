@@ -510,6 +510,115 @@ assert_label_maintenance_starvation_contract() {
 	return 0
 }
 
+# GH#37986 held-first fixture: a fake clock, one search answer and one
+# per-repository list answer. Call inside the trace subshell after sourcing.
+# Reads: EVENTS, CLOCK, TEST_SEARCH_RC, TEST_MEASURE_SECONDS
+label_maintenance_held_first_stubs() {
+	date() {
+		local now=0
+		read -r now <"$CLOCK"
+		printf '%s\n' "$now"
+		return 0
+	}
+	gh() {
+		[[ "$*" == "api -X GET search/issues"* ]] || return 1
+		printf 'search;' >>"$EVENTS"
+		[[ "$TEST_SEARCH_RC" -eq 0 ]] || return 1
+		printf '%s\n' '{"slug":"acme/held","number":12,"body":"b12"}' \
+			'{"slug":"acme/held","number":7,"body":"b7"}' \
+			'{"slug":"stranger/repo","number":3,"body":"b3"}'
+		return 0
+	}
+	gh_issue_list() {
+		local slug="$2"
+		printf 'list:%s;' "$slug" >>"$EVENTS"
+		if [[ "$slug" == "Acme/held" ]]; then
+			printf '%s\n' '[{"number":20,"body":"b20"},{"number":7,"body":"b7"},{"number":12,"body":"b12"}]'
+		else
+			printf '[]\n'
+		fi
+		return 0
+	}
+	_pulse_refresh_repo() { return 0; }
+	_backfill_simplification_auto_dispatch_labels() { printf '0\n'; return 0; }
+	_reevaluate_stale_continuations() { return 1; }
+	_post_simplification_gate_cleared_comment() {
+		printf 'cleared:%s#%s;' "$2" "$1" >>"$EVENTS"
+		return 0
+	}
+	_issue_targets_large_files() {
+		local num="$1" slug="$2" body="$3" rpath="$4" now=0
+		printf 'measure:%s#%s:%s:%s;' "$slug" "$num" "$body" "$rpath" >>"$EVENTS"
+		read -r now <"$CLOCK"
+		printf '%s\n' "$((now + TEST_MEASURE_SECONDS))" >"$CLOCK"
+		[[ "$num" != 7 ]]
+	}
+	_issue_needs_consolidation() {
+		local num="$1"
+		printf 'c%s;' "$num" >>"$EVENTS"
+		[[ "$num" != 7 ]]
+	}
+	return 0
+}
+
+# GH#37986: run the two re-evaluation substages against the fixture and print
+# one "name:rc:events[:cursors]|" record per scenario.
+# Arguments: $1 - test root directory
+label_maintenance_held_first_trace() {
+	local test_root="$1"
+	(
+		unset _PULSE_TRIAGE_EVALUATION_LIB_LOADED
+		# shellcheck source=../pulse-triage-evaluation.sh
+		source "$TRIAGE_EVALUATION"
+		unset _LABEL_MAINTENANCE_DEADLINE _LABEL_CURSOR_SLUG _LABEL_CURSOR_PHASE _LABEL_CURSOR_ISSUE
+		LOGFILE="$test_root/pulse.log" REPOS_JSON="$test_root/repos.json"
+		EVENTS="$test_root/events" CLOCK="$test_root/clock"
+		_LABEL_MAINTENANCE_KEY="simplification"
+		_LABEL_CURSOR_FILE="$test_root/epochs.simplification.cursor"
+		jq -n '{initialized_repos:[{slug:"acme/empty",path:"/e",pulse:true},{slug:"Acme/held",path:"/h",pulse:true}]}' >"$REPOS_JSON"
+		printf '0\n' >"$CLOCK"
+		TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=0
+		label_maintenance_held_first_stubs
+		local rc=0 held_cursor="$test_root/epochs.simplification.held"
+
+		: >"$EVENTS"
+		_reevaluate_simplification_labels || rc=$?
+		printf 'first:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
+
+		# A previous run stopped at #7: this run starts after it.
+		printf 'Acme/held 7\n' >"$held_cursor"
+		: >"$EVENTS"
+		rc=0
+		_reevaluate_simplification_labels || rc=$?
+		printf 'rotated:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
+
+		# A failed search proves nothing: the sweep re-checks every hold.
+		TEST_SEARCH_RC=1
+		: >"$EVENTS"
+		rc=0
+		_reevaluate_simplification_labels || rc=$?
+		printf 'fallback:%s:%s|' "$rc" "$(<"$EVENTS")"
+
+		# 60s substage: the held-first step yields at 40s, the sweep
+		# re-checks #12 and the deadline defers #20 to the next cycle.
+		TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=40 _LABEL_MAINTENANCE_DEADLINE=60
+		rm -f "$held_cursor"
+		: >"$EVENTS"
+		rc=0
+		_reevaluate_simplification_labels || rc=$?
+		printf 'share:%s:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")" "$(<"$_LABEL_CURSOR_FILE")"
+
+		unset _LABEL_MAINTENANCE_DEADLINE
+		TEST_MEASURE_SECONDS=0 _LABEL_MAINTENANCE_KEY="consolidation"
+		_LABEL_CURSOR_FILE="$test_root/epochs.consolidation.cursor"
+		: >"$EVENTS"
+		rc=0
+		_reevaluate_consolidation_labels || rc=$?
+		printf 'consolidation:%s:%s|' "$rc" "$(<"$EVENTS")"
+	)
+	return 0
+}
+
 # GH#37986: each re-evaluation substage re-checks the issues that carry its
 # label before it sweeps repositories. The sweep remains the safety net for a
 # failed search, skips what the held-first step already re-checked, and keeps
@@ -525,101 +634,7 @@ assert_label_maintenance_held_first_contract() {
 	expected+="consolidation:0:search;c7;c12;${sweep}c20;|"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-label-held-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
-	actual=$(
-		(
-			unset _PULSE_TRIAGE_EVALUATION_LIB_LOADED
-			# shellcheck source=../pulse-triage-evaluation.sh
-			source "$TRIAGE_EVALUATION"
-			unset _LABEL_MAINTENANCE_DEADLINE _LABEL_CURSOR_SLUG _LABEL_CURSOR_PHASE _LABEL_CURSOR_ISSUE
-			LOGFILE="$test_root/pulse.log" REPOS_JSON="$test_root/repos.json"
-			EVENTS="$test_root/events" CLOCK="$test_root/clock"
-			_LABEL_MAINTENANCE_KEY="simplification"
-			_LABEL_CURSOR_FILE="$test_root/epochs.simplification.cursor"
-			jq -n '{initialized_repos:[{slug:"acme/empty",path:"/e",pulse:true},{slug:"Acme/held",path:"/h",pulse:true}]}' >"$REPOS_JSON"
-			printf '0\n' >"$CLOCK"
-			TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=0
-			date() {
-				local now=0
-				read -r now <"$CLOCK"
-				printf '%s\n' "$now"
-				return 0
-			}
-			gh() {
-				[[ "$*" == "api -X GET search/issues"* ]] || return 1
-				printf 'search;' >>"$EVENTS"
-				[[ "$TEST_SEARCH_RC" -eq 0 ]] || return 1
-				printf '%s\n' '{"slug":"acme/held","number":12,"body":"b12"}' \
-					'{"slug":"acme/held","number":7,"body":"b7"}' \
-					'{"slug":"stranger/repo","number":3,"body":"b3"}'
-				return 0
-			}
-			gh_issue_list() {
-				local slug="$2"
-				printf 'list:%s;' "$slug" >>"$EVENTS"
-				if [[ "$slug" == "Acme/held" ]]; then
-					printf '%s\n' '[{"number":20,"body":"b20"},{"number":7,"body":"b7"},{"number":12,"body":"b12"}]'
-				else
-					printf '[]\n'
-				fi
-				return 0
-			}
-			_pulse_refresh_repo() { return 0; }
-			_backfill_simplification_auto_dispatch_labels() { printf '0\n'; return 0; }
-			_reevaluate_stale_continuations() { return 1; }
-			_post_simplification_gate_cleared_comment() {
-				printf 'cleared:%s#%s;' "$2" "$1" >>"$EVENTS"
-				return 0
-			}
-			_issue_targets_large_files() {
-				local num="$1" slug="$2" body="$3" rpath="$4" now=0
-				printf 'measure:%s#%s:%s:%s;' "$slug" "$num" "$body" "$rpath" >>"$EVENTS"
-				read -r now <"$CLOCK"
-				printf '%s\n' "$((now + TEST_MEASURE_SECONDS))" >"$CLOCK"
-				[[ "$num" != 7 ]]
-			}
-			_issue_needs_consolidation() {
-				local num="$1"
-				printf 'c%s;' "$num" >>"$EVENTS"
-				[[ "$num" != 7 ]]
-			}
-			local rc=0 held_cursor="$test_root/epochs.simplification.held"
-
-			: >"$EVENTS"
-			_reevaluate_simplification_labels || rc=$?
-			printf 'first:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
-
-			# A previous run stopped at #7: this run starts after it.
-			printf 'Acme/held 7\n' >"$held_cursor"
-			: >"$EVENTS"
-			rc=0
-			_reevaluate_simplification_labels || rc=$?
-			printf 'rotated:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")"
-
-			# A failed search proves nothing: the sweep re-checks every hold.
-			TEST_SEARCH_RC=1
-			: >"$EVENTS"
-			rc=0
-			_reevaluate_simplification_labels || rc=$?
-			printf 'fallback:%s:%s|' "$rc" "$(<"$EVENTS")"
-
-			# 60s substage: the held-first step yields at 40s, the sweep
-			# re-checks #12 and the deadline defers #20 to the next cycle.
-			TEST_SEARCH_RC=0 TEST_MEASURE_SECONDS=40 _LABEL_MAINTENANCE_DEADLINE=60
-			rm -f "$held_cursor"
-			: >"$EVENTS"
-			rc=0
-			_reevaluate_simplification_labels || rc=$?
-			printf 'share:%s:%s:%s:%s|' "$rc" "$(<"$EVENTS")" "$(<"$held_cursor")" "$(<"$_LABEL_CURSOR_FILE")"
-
-			unset _LABEL_MAINTENANCE_DEADLINE
-			TEST_MEASURE_SECONDS=0 _LABEL_MAINTENANCE_KEY="consolidation"
-			_LABEL_CURSOR_FILE="$test_root/epochs.consolidation.cursor"
-			: >"$EVENTS"
-			rc=0
-			_reevaluate_consolidation_labels || rc=$?
-			printf 'consolidation:%s:%s|' "$rc" "$(<"$EVENTS")"
-		)
-	)
+	actual=$(label_maintenance_held_first_trace "$test_root")
 	if [[ "$actual" == "$expected" ]] &&
 		grep -q 'held-first needs-simplification re-checked 2 issue(s), cleared 1 (GH#37986)' "$test_root/pulse.log" &&
 		grep -q 'held-first needs-simplification re-checked 1 issue(s), cleared 1; time share used' "$test_root/pulse.log" &&
