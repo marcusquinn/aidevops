@@ -1106,7 +1106,9 @@ _is_assigned_compute_blocking() {
 }
 
 #######################################
-# Load issue metadata for assignment checks.
+# Load issue metadata for assignment checks. The pulse dispatcher forwards
+# its candidate metadata as ISSUE_META_JSON (t2996), so this stays a local
+# parse unless that bundle is absent or incomplete (GH#38180).
 #
 # Args: $1 = issue number, $2 = repo slug
 # Sets: _IS_ASSIGNED_ISSUE_META_JSON, _IS_ASSIGNED_GH_RC,
@@ -1308,12 +1310,50 @@ _is_assigned_filter_override_assignees() {
 }
 
 #######################################
-# Run assignment guard checks that block before assignee interpretation.
+# GH#38180: per-sub-gate timing for is_assigned. Records dedup.layer6.<gate>
+# rows only when the dispatcher hands over its stage context
+# (AIDEVOPS_DISPATCH_STAGE_ISSUE and AIDEVOPS_DISPATCH_STAGE_REPO), mirroring
+# the layer-4 pattern in dispatch-dedup-pr.sh (GH#38101). Every other caller
+# runs untimed and unchanged.
+# Returns: 0 when dispatch-stage-instrument.sh sub-stage recording is available
+#######################################
+_is_assigned_load_stage_instrument() {
+	[[ "${AIDEVOPS_DISPATCH_STAGE_ISSUE:-}" =~ ^[0-9]+$ && -n "${AIDEVOPS_DISPATCH_STAGE_REPO:-}" ]] || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 && return 0
+	[[ -f "${SCRIPT_DIR}/dispatch-stage-instrument.sh" ]] || return 1
+	# shellcheck source=./dispatch-stage-instrument.sh
+	source "${SCRIPT_DIR}/dispatch-stage-instrument.sh" || return 1
+	declare -F _ds_substage_run >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one is_assigned sub-gate, timed as dedup.layer6.<name> when enabled.
+# Runs in the current shell, so output, exit status and globals set by the
+# gate pass through unchanged. Locals use a _iat_ prefix so gates reading
+# caller-scoped variables see no shadowing.
+# Args: gate name, function and arguments
+#######################################
+_is_assigned_timed() {
+	local _iat_name="$1"
+	shift
+	local _iat_rc=0
+	if _is_assigned_load_stage_instrument; then
+		_ds_substage_run "dedup.layer6.${_iat_name}" "$@" || _iat_rc=$?
+		return "$_iat_rc"
+	fi
+	"$@" || _iat_rc=$?
+	return "$_iat_rc"
+}
+
+#######################################
+# Metadata-only guards: every check reads only the issue metadata JSON and
+# makes no API or comment read. Order within the group is unchanged.
 #
 # Args: $1 = issue metadata JSON, $2 = issue number, $3 = repo slug
 # Returns: 0 when a guard blocked and emitted its signal, 1 otherwise
 #######################################
-_is_assigned_pre_assignee_guard_blocks() {
+_is_assigned_metadata_guard_blocks() {
 	local issue_meta_json="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
@@ -1336,20 +1376,47 @@ _is_assigned_pre_assignee_guard_blocks() {
 		return 0
 	fi
 
-	# Advisory/review/cooldown/cost/hydration gates short-circuit before assignees.
+	# Advisory/review/hydration gates short-circuit before assignees.
 	if _is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 	if _is_assigned_check_hold_for_review "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	if _is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
-		return 0
-	fi
+	# GH#38180: the hydration window reads only createdAt, so it runs before
+	# the comment-reading cooldown and cost gates. Only the emitted signal can
+	# differ, and only for an issue younger than the window that also carries
+	# a cooldown marker or spent budget; it is blocked either way.
 	if _is_assigned_check_hydration_window "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Run assignment guard checks that block before assignee interpretation.
+# Metadata-only guards run first; the comment-reading cooldown and cost gates
+# run only when none of them blocked. Each group is a timed sub-gate.
+#
+# Args: $1 = issue metadata JSON, $2 = issue number, $3 = repo slug
+# Returns: 0 when a guard blocked and emitted its signal, 1 otherwise
+#######################################
+_is_assigned_pre_assignee_guard_blocks() {
+	local issue_meta_json="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	if _is_assigned_timed metadata_guards _is_assigned_metadata_guard_blocks \
+		"$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_timed dispatch_cooldown _is_assigned_check_dispatch_cooldown \
+		"$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_timed cost_budget _is_assigned_check_cost_budget \
+		"$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 0
 	fi
 
@@ -1373,7 +1440,7 @@ _is_assigned_impl() {
 	fi
 
 	local issue_meta_json="" gh_rc=0 reprobe_state=""
-	_is_assigned_load_issue_meta "$issue_number" "$repo_slug"
+	_is_assigned_timed load_meta _is_assigned_load_issue_meta "$issue_number" "$repo_slug"
 	issue_meta_json="$_IS_ASSIGNED_ISSUE_META_JSON"
 	gh_rc="$_IS_ASSIGNED_GH_RC"
 	reprobe_state="$_IS_ASSIGNED_REPROBE_STATE"
@@ -1450,7 +1517,7 @@ _is_assigned_impl() {
 	# open issues. This was observed in production with 370 issues and 0
 	# active workers — 100% dispatch failure rate.
 	if [[ "$allow_stale_recovery" == "1" ]] \
-		&& _is_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees"; then
+		&& _is_assigned_timed stale_check _is_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees"; then
 		return 1
 	fi
 
