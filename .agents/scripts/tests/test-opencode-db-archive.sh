@@ -1355,6 +1355,47 @@ else
 	_fail "held-mode pause mismatch: rc=$rc output=$out"
 fi
 
+# Check discovery's query boundary directly: a payload prefix must not trigger
+# sizing of the rest of the candidate window, including oversized sessions.
+if python3 - "$HELPER" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+source = Path(sys.argv[1]).read_text()
+selector = source[source.index('_archive_select_batch() {'):source.index('_archive_run_batches() {')]
+setup = '''
+has_session_message_table=1 has_event_table=1
+has_session_input_table=1 has_session_context_epoch_table=1
+candidate_filter=1
+_archive_active_query() {
+    local sql="$1"
+    if [[ "$sql" == 'SELECT id FROM session '* ]]; then
+        printf 'one\\ntwo\\nthree\\n'
+    else
+        printf 'sized\\n' >&2
+        printf '%s\\n' "$TEST_BYTES"
+    fi
+    return 0
+}
+'''
+for size, deadline, expected, count, status in [
+    (6, 4102444800, 'one\n', 2, 0),
+    (20, 4102444800, 'one\n', 1, 0),
+    (5, 4102444800, 'one\ntwo\n', 2, 0),
+    (6, 0, '', 0, 2),
+]:
+    result = subprocess.run(['bash', '-c', selector + setup +
+                             f'TEST_BYTES={size}; _archive_select_batch 500 10 {deadline}'],
+                            capture_output=True, text=True, check=False)
+    assert (result.returncode, result.stdout, result.stderr.count('sized\n')) == (status, expected, count), result
+PY
+then
+	_pass "payload discovery stops at byte/deadline limits and keeps oversized first sessions"
+else
+	_fail "payload discovery exceeded the required prefix or deadline"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1

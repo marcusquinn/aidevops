@@ -1438,6 +1438,40 @@ _archive_move_candidates() {
 	return $?
 }
 
+_archive_select_batch() {
+	local batch_limit="$1" byte_limit="$2" deadline="$3"
+	local candidates sid escaped_sid bytes cumulative=0 selected="" extra_bytes_sql=""
+	if ((has_session_message_table)); then
+		extra_bytes_sql=" + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM session_message WHERE session_id=c.id),0)"
+	fi
+	if ((has_event_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM event WHERE aggregate_id=c.id),0)"
+	fi
+	if ((has_session_input_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(prompt AS BLOB))) FROM session_input WHERE session_id=c.id),0)"
+	fi
+	if ((has_session_context_epoch_table)); then
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(baseline AS BLOB)) + LENGTH(CAST(snapshot AS BLOB))) FROM session_context_epoch WHERE session_id=c.id),0)"
+	fi
+	# Discover IDs without touching payloads, then size only the needed prefix.
+	candidates=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit;") || return 1
+	while IFS= read -r sid; do
+		[[ -n "$sid" ]] || continue
+		if (($(date +%s) >= deadline)); then return 2; fi
+		escaped_sid="${sid//\'/\'\'}"
+		bytes=$(_archive_active_query "SELECT COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM message WHERE session_id=c.id),0)$extra_bytes_sql FROM session c WHERE id='$escaped_sid';") || return 1
+		# Never begin a write after discovery has used the remaining budget.
+		if (($(date +%s) >= deadline)); then return 2; fi
+		if [[ -n "$selected" ]] && ((cumulative + bytes > byte_limit)); then break; fi
+		selected="${selected}${selected:+$'\n'}${sid}"
+		cumulative=$((cumulative + bytes))
+		# Keep the oversized-single-session exception without sizing its followers.
+		if ((cumulative >= byte_limit)); then break; fi
+	done <<<"$candidates"
+	[[ -z "$selected" ]] || printf '%s\n' "$selected"
+	return 0
+}
+
 _archive_run_batches() {
 	local start_time
 	start_time=$(date +%s)
@@ -1472,16 +1506,10 @@ _archive_run_batches() {
 		fi
 
 		# Collect batch session IDs
-		local session_ids extra_bytes_sql="" batch_start
-		if ((has_session_message_table)); then
-			extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(data)) FROM session_message WHERE session_id=c.id),0)"
-		fi
-		if ((has_event_table)); then
-			extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(data)) FROM event WHERE aggregate_id=c.id),0)"
-		fi
+		local session_ids batch_start
 		# Start the timer before sizing so selection cost counts toward adaptation.
 		batch_start=$(date +%s)
-		session_ids=$(_archive_active_query "WITH candidates AS (SELECT id, time_updated, time_created FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit), sized AS (SELECT id, time_updated, time_created, COALESCE((SELECT SUM(LENGTH(data)) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(data)) FROM message WHERE session_id=c.id),0)$extra_bytes_sql AS bytes FROM candidates c), ranked AS (SELECT id, SUM(bytes) OVER (ORDER BY time_updated, time_created, id) AS cumulative, ROW_NUMBER() OVER (ORDER BY time_updated, time_created, id) AS rn FROM sized) SELECT id FROM ranked WHERE cumulative <= $byte_limit OR rn = 1 ORDER BY rn;") || return 1
+		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
 
 		if [[ -z "$session_ids" ]]; then
 			break
