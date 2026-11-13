@@ -930,7 +930,9 @@ _preflight_label_maintenance_starved() {
 	[[ "$factor" =~ ^[1-9]$ ]] || factor=1
 	bound=$((10#$bound * factor))
 	local state_file="${AIDEVOPS_LABEL_MAINTENANCE_STATE_FILE:-${PULSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse}/label-maintenance-epochs}.attempts"
-	local key epoch extra
+	local key=""
+	local epoch=""
+	local extra=""
 	local now="" stalest=0 consolidation=0 backfill=0 simplification=0
 	[[ -f "$state_file" ]] || state_file="${state_file%.attempts}"
 	if [[ -r "$state_file" && -f "$state_file" ]]; then

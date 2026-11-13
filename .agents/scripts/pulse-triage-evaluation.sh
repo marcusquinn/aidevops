@@ -234,7 +234,7 @@ _pte_held_cursor_write() {
 _pte_reevaluate_held_issues() {
 	local label="$1" rows="$2" evaluate_fn="$3" context="$4"
 	local held="" issue="" body="" checked=0 rc=0
-	local slug num rpath
+	local slug="" num="" rpath=""
 	local now="" share_deadline=0 share_used=""
 	if [[ "${_LABEL_MAINTENANCE_DEADLINE:-}" =~ ^[0-9]+$ ]] && now=$(date +%s 2>/dev/null) &&
 		[[ "$now" =~ ^[0-9]+$ && "$now" -lt "$_LABEL_MAINTENANCE_DEADLINE" ]]; then
