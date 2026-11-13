@@ -115,6 +115,9 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
         self.assertEqual(revision.validate(data)["approval_id"], 20)
         with self.assertRaises(ValueError):
             revision.template({**data, "release_id": 5, "attempt": "attempt:original"})
+        for history in ([], [{"runner": "worker", "outcome": "stale_reset_before_ready"}],
+                        [{"runner": "other", "outcome": "claim_only_no_worker"}]):
+            self.assertFalse(revision.draft_checkpoint_successors_valid(data["comments"][1], history))
     scripts = SCRIPTS
 
     def test_legacy_release_and_ambiguous_attempt(self):
