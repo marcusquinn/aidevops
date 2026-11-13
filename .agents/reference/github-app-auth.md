@@ -44,7 +44,7 @@ Use least privilege and add scopes only when a workflow proves it needs them.
 | Contents | Read by default; write only for app-scoped push automation | Repository metadata, future app-scoped content writes |
 | Checks | Read | Check suites and check runs |
 | Commit statuses | Read | Status contexts |
-| Actions | Read when enabled | Workflow run/check log inspection |
+| Actions | Read requested by default when granted by the installation (optional) | Workflow run/check log inspection |
 
 ## Routing policy
 
@@ -112,12 +112,21 @@ identifiers and a local key reference only):
       "permissions": {
         "metadata": "read",
         "issues": "read",
-        "pull_requests": "read"
+        "pull_requests": "read",
+        "contents": "read",
+        "checks": "read",
+        "statuses": "read",
+        "actions": "read"
       }
     }
   }
 }
 ```
+
+The default requests Actions read only when the installation grants it; it is
+not required for the auth check. Without it, workflow/run reads and GraphQL
+check-rollup `workflowRun` fields can fail with 403; App-routed reads are not
+retried with personal authentication. Explicit custom permission maps are not widened.
 
 The private key must be a current-user-owned regular file with no group/other
 permissions (use `0600`). Symlink keys are rejected. Each trusted operator may
