@@ -95,7 +95,7 @@ _pdcu_draft_closing_refs() {
 		--paginate --slurp 2>/dev/null) || return 1
 	printf '%s' "$prs_json" | jq -r --arg slug "$repo_slug" --argjson checkpoint "$include_checkpoint" "${_PDCU_LIST_JQ_DEFS}"'
 		($slug | ascii_downcase | gsub("[.]"; "\\.")) as $slug_re
-		| ("(^|[^a-z0-9_])(close[ds]?|fix(es|ed)?|resolve[ds]?" + (if $checkpoint then "|for|ref" else "" end) + ")[\\s:]+((" + $slug_re
+		| ("(^|[^a-z0-9_])(close[ds]?|fix(es|ed)?|resolve[ds]?" + (if $checkpoint then "|for|refs?" else "" end) + ")[\\s:]+((" + $slug_re
 			+ ")?#|https?://github\\.com/" + $slug_re + "/issues/)(?<n>[0-9]+)") as $ref
 		| items("PR list")[]
 		| if (type != "object") or ((.number | type) != "number") then error("unreadable PR")

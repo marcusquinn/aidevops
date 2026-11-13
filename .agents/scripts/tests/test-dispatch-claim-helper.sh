@@ -1046,6 +1046,44 @@ EOF
 	return 0
 }
 
+test_checkpoint_sweep_cycle_and_refs() {
+	local result=0
+	(
+		# shellcheck source=../pulse-draft-checkpoint-unblock.sh
+		source "${SCRIPT_DIR}/../pulse-draft-checkpoint-unblock.sh"
+		# shellcheck source=../pulse-wrapper-cycle.sh
+		source "${SCRIPT_DIR}/../pulse-wrapper-cycle.sh"
+		local tmp_dir refs keyword visits="" HOME REPOS_JSON
+		tmp_dir=$(mktemp -d)
+		HOME="$tmp_dir" REPOS_JSON="${tmp_dir}/repos.json"
+		_pmpc_gh_read() {
+			jq -nc --arg body "$keyword #42" '[{number:7, state:"open", draft:true,
+				labels:[{name:"origin:worker"}], body:$body, head:{sha:"head"},
+				base:{ref:"main", repo:{default_branch:"main"}}}]'
+			return 0
+		}
+		for keyword in For Ref Refs; do
+			refs=$(_pdcu_draft_closing_refs owner/repo true) || return 1
+			[[ "$refs" == $'42\t7\thead' ]] || return 1
+			refs=$(_pdcu_draft_closing_refs owner/repo) || return 1
+			[[ -z "$refs" ]] || return 1
+		done
+		mkdir -p "${HOME}/.aidevops/cache"
+		printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","pulse":true},{"slug":"owner/local","pulse":true,"local_only":true}]}' >"$REPOS_JSON"
+		touch "${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
+		_file_mtime_epoch() { date +%s; return 0; }
+		_pulse_stale_blocked_sweep_deadline() { printf '%s\n' "$(($(date +%s) + 60))"; return 0; }
+		_pdcu_sweep_expired_claims() { visits="${visits}${1} "; return 0; }
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		_pulse_reconcile_stale_blocked_if_due || return 1
+		[[ "$visits" == 'owner/repo owner/repo ' ]] || return 1
+		rm -rf "$tmp_dir"
+		return 0
+	) || result=1
+	print_result "checkpoint sweep recognizes For/Ref/Refs and runs every cycle despite fresh cadence" "$result"
+	return 0
+}
+
 test_checkpoint_consensus_failure_recovers() {
 	local result=0
 	(
@@ -1938,6 +1976,7 @@ main() {
 	test_check_releases_claim_only_orphan
 	test_sweep_checkpoint_orphan
 	test_checkpoint_sweep_rotation
+	test_checkpoint_sweep_cycle_and_refs
 	test_checkpoint_consensus_failure_recovers
 	test_checkpoint_sweep_cli
 	test_check_preserves_fresh_claim_only_marker
