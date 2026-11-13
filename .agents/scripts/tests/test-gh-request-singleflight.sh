@@ -375,6 +375,29 @@ test_failed_stale_reclaim_reaches_timeout() (
 	return 0
 )
 
+test_orphaned_reclaim_marker_is_expired() {
+	local key="" request_dir="" generation="" started_at="" elapsed=0
+	key=$(gh_request_state_request_key owner/repo canonical issues/v1 orphan-reclaim rest-core)
+	request_dir="$(_ghrs_request_dir "$key")"
+	# GH#38138 production shape: a reclaimer killed mid-section leaves an
+	# ownerless lease and its reclaim marker behind, both long since stale.
+	mkdir "${request_dir}/lease" "${request_dir}/lease.reclaim"
+	touch -t 202601010000 "${request_dir}/lease" "${request_dir}/lease.reclaim"
+	export AIDEVOPS_GH_SINGLEFLIGHT_OWNER_GRACE_SECONDS=0
+	started_at="$(_ghrs_now)"
+	gh_request_state_singleflight_begin "$key"
+	elapsed=$(($(_ghrs_now) - started_at))
+	unset AIDEVOPS_GH_SINGLEFLIGHT_OWNER_GRACE_SECONDS
+	assert_eq "orphaned reclaim marker no longer blocks lease recovery" "leader" "$_GHRS_BEGIN_ROLE"
+	assert_eq "orphaned reclaim marker recovery is immediate" "true" \
+		"$([[ "$elapsed" -lt 2 ]] && printf 'true' || printf 'false')"
+	assert_eq "expired reclaim marker is released after recovery" "false" \
+		"$([[ -d "${request_dir}/lease.reclaim" ]] && printf 'true' || printf 'false')"
+	generation="$_GHRS_BEGIN_GENERATION"
+	gh_request_state_singleflight_finish "$key" "$generation" success
+	return 0
+}
+
 test_ownerless_lease_recovery_and_disabled_mode() {
 	local key="" request_dir="" generation=""
 	key=$(gh_request_state_request_key owner/repo canonical issues/v1 ownerless rest-core)
@@ -548,6 +571,7 @@ main() {
 	test_expired_live_leader_is_fenced
 	test_live_leader_wait_is_bounded
 	test_failed_stale_reclaim_reaches_timeout
+	test_orphaned_reclaim_marker_is_expired
 	test_ownerless_lease_recovery_and_disabled_mode
 	test_request_invalidation_generations_are_atomic
 	test_rate_state_validation_scope_and_reset
