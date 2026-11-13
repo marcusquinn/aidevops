@@ -390,6 +390,26 @@ test_protected_draft_remains_immediate_pr_block() {
 	return 0
 }
 
+# Capture the real normal-recovery audit comment without external writes. Call
+# inside the test subshell; the caller owns `recovered` and `recovery_body`.
+_stub_recovery_capture() {
+	_stale_recovery_final_evidence_recheck() { return 0; }
+	# GH#38111: no input circuit here. Its unreadable-comments fail-closed
+	# hold (#37819) is covered by test-stale-recovery-blocked-by-recheck.sh.
+	_stale_recovery_has_input_circuit() { return 1; }
+	set_issue_status() { return 0; }
+	_stale_recovery_verify_transition() { return 0; }
+	aidevops_ops_marker() { return 0; }
+	gh_issue_comment() { recovery_body="$*"; return 0; }
+	_recover_stale_assignment() {
+		local issue="$1" repo="$2" assignees="$3" reason="$4"
+		recovered=$((recovered + 1))
+		_stale_recovery_apply "$issue" "$repo" "$assignees" "$reason" >/dev/null
+		return 0
+	}
+	return 0
+}
+
 test_remote_branch_liveness() {
 	local result=""
 	result=$(
@@ -437,21 +457,7 @@ test_remote_branch_liveness() {
 			if _stale_recovery_final_evidence_recheck 2905 owner/repo "" true; then
 				printf 'final recheck ignored recent push'; exit 1
 			fi
-			# Capture the real normal-recovery audit comment without external writes.
-			_stale_recovery_final_evidence_recheck() { return 0; }
-			# GH#38111: no input circuit here. Its unreadable-comments fail-closed
-			# hold (#37819) is covered by test-stale-recovery-blocked-by-recheck.sh.
-			_stale_recovery_has_input_circuit() { return 1; }
-			set_issue_status() { return 0; }
-			_stale_recovery_verify_transition() { return 0; }
-			aidevops_ops_marker() { return 0; }
-			gh_issue_comment() { recovery_body="$*"; return 0; }
-			_recover_stale_assignment() {
-				local issue="$1" repo="$2" assignees="$3" reason="$4"
-				recovered=$((recovered + 1))
-				_stale_recovery_apply "$issue" "$repo" "$assignees" "$reason" >/dev/null
-				return 0
-			}
+			_stub_recovery_capture
 			if _is_stale_assignment 2905 owner/repo runner; then
 				printf '120s-old branch was recovered'; exit 1
 			fi
