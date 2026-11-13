@@ -257,11 +257,9 @@ _cmd_enable_launchd() {
 # Returns: 0 on success, falls back to cron on failure
 # Modelled on worker-watchdog.sh:_install_systemd() (GH#17691)
 #######################################
-_cmd_enable_systemd() {
+_render_auto_update_systemd_units() {
 	local script_path="$1"
 	local interval="$2"
-	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
-	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
 	local interval_sec
 	interval_sec=$((interval * 60))
 	# Floor matches SYSTEMD_MIN_TIMEOUT_SEC in auto-update-helper.sh (GH#37991).
@@ -270,8 +268,6 @@ _cmd_enable_systemd() {
 		timeout_sec="${SYSTEMD_MIN_TIMEOUT_SEC:-600}"
 	fi
 
-	mkdir -p "${SYSTEMD_SERVICE_DIR}"
-
 	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; ${script_path} kept inside outer double quotes for safe expansion
 	# Set WorkingDirectory to the canonical agents dir so skill writes land in
 	# ~/.aidevops/agents/ not $HOME when the unit is started by systemd (#21542).
@@ -279,7 +275,7 @@ _cmd_enable_systemd() {
 	agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 	# TimeoutStartSec = one interval, floored: a version update (setup.sh ~80-110s)
 	# or the daily skill re-import routinely exceeded the former 120s and was killed.
-	printf '%s' "[Unit]
+	AUTO_UPDATE_SERVICE_CONTENT="[Unit]
 Description=aidevops auto-update
 After=network.target
 
@@ -294,9 +290,9 @@ Nice=10
 IOSchedulingClass=idle
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
-" >"$service_file"
+"
 
-	printf '%s' "[Unit]
+	AUTO_UPDATE_TIMER_CONTENT="[Unit]
 Description=aidevops auto-update Timer
 
 [Timer]
@@ -306,9 +302,48 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
-" >"$timer_file"
+"
+	return 0
+}
 
-	systemctl --user daemon-reload 2>/dev/null || true
+_refresh_auto_update_systemd_units() {
+	local script_path="$1" interval="$2"
+	local force_reload="${3:-0}"
+	local AUTO_UPDATE_SERVICE_CONTENT="" AUTO_UPDATE_TIMER_CONTENT=""
+	local unit content target temp changed=0
+	_render_auto_update_systemd_units "$script_path" "$interval"
+	mkdir -p "$SYSTEMD_SERVICE_DIR" || return 1
+	for unit in service timer; do
+		target="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.${unit}"
+		if [[ "$unit" == service ]]; then
+			content="$AUTO_UPDATE_SERVICE_CONTENT"
+		else
+			content="$AUTO_UPDATE_TIMER_CONTENT"
+		fi
+		if [[ -f "$target" ]] && printf '%s' "$content" | cmp -s - "$target"; then
+			continue
+		fi
+		temp=$(mktemp "${target}.tmp.XXXXXX") || return 1
+		if ! printf '%s' "$content" >"$temp" || ! chmod 644 "$temp" || ! mv -f "$temp" "$target"; then
+			rm -f "$temp"
+			return 1
+		fi
+		log_info "Updated systemd unit ${SYSTEMD_UNIT_NAME}.${unit}"
+		changed=1
+	done
+	if [[ "$changed" -eq 1 || "$force_reload" -eq 1 ]]; then
+		systemctl --user daemon-reload || return 1
+	fi
+	return 0
+}
+
+_cmd_enable_systemd() {
+	local script_path="$1"
+	local interval="$2"
+	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+	_refresh_auto_update_systemd_units "$script_path" "$interval" 1 || return 1
+
 	if ! systemctl --user enable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
 		print_error "Failed to enable systemd timer — falling back to cron" >&2
 		_cmd_enable_cron "$script_path" "$interval"
@@ -449,9 +484,14 @@ cmd_enable() {
 	# release so the daemon self-heals — but the existing user state must
 	# survive (custom intervals, env vars). "Loaded but stalled" is also a
 	# no-op here; the caller follows up with `health-check` to surface it.
+	local loaded=0 backend
 	if [[ "$idempotent" -eq 1 ]] && _daemon_is_loaded; then
-		log_info "auto-update daemon already loaded (idempotent enable — no-op)"
-		return 0
+		backend="$(_get_scheduler_backend)"
+		if [[ "$backend" != "systemd" ]]; then
+			log_info "auto-update daemon already loaded (idempotent enable — no-op)"
+			return 0
+		fi
+		loaded=1
 	fi
 
 	# Read from JSONC config (handles env var > user config > defaults priority)
@@ -474,8 +514,11 @@ cmd_enable() {
 		fi
 	fi
 
-	local backend
 	backend="$(_get_scheduler_backend)"
+	if [[ "$loaded" -eq 1 ]]; then
+		_refresh_auto_update_systemd_units "$script_path" "$interval"
+		return $?
+	fi
 
 	if [[ "$backend" == "launchd" ]]; then
 		_cmd_enable_launchd "$script_path" "$interval"

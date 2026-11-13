@@ -289,6 +289,38 @@ test_autoupdate_unit_timeout_floor() {
 
 # --- Tests ---
 
+test_auto_update_idempotent_refresh() {
+	local tmpdir rc=0
+	tmpdir=$(mktemp -d)
+	mkdir -p "${tmpdir}/home/.aidevops/agents/scripts" "${tmpdir}/home/.config/systemd/user"
+	ln -s "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" "${tmpdir}/home/.aidevops/agents/scripts/auto-update-helper.sh"
+	(
+		export HOME="${tmpdir}/home"
+		# Source the real command implementation, then replace only external dependencies.
+		source "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" help >/dev/null
+		_daemon_is_loaded() { return 0; }
+		_get_scheduler_backend() { printf 'systemd\n'; return 0; }
+		get_feature_toggle() { printf '17\n'; return 0; }
+		systemctl() { printf '%s\n' "$*" >>"${tmpdir}/calls"; return 0; }
+		local AUTO_UPDATE_SERVICE_CONTENT="" AUTO_UPDATE_TIMER_CONTENT=""
+		_render_auto_update_systemd_units "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17
+		printf '%s' "$AUTO_UPDATE_TIMER_CONTENT" >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
+		printf 'TimeoutStartSec=120\n' >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+		cmd_enable --idempotent
+		cmp -s "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service" <(printf '%s' "$AUTO_UPDATE_SERVICE_CONTENT") || exit 1
+		grep -q '^OnUnitActiveSec=1020$' "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer" || exit 1
+		local inode
+		inode=$(stat -c %i "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service")
+		cmd_enable --idempotent
+		[[ "$inode" == "$(stat -c %i "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service")" ]] || exit 1
+		[[ "$(wc -l <"${tmpdir}/calls" | tr -d ' ')" == 1 ]] || exit 1
+		grep -qx -- '--user daemon-reload' "${tmpdir}/calls" || exit 1
+	) || rc=1
+	rm -rf "$tmpdir"
+	print_result "auto-update idempotent enable repairs drift once" "$rc"
+	return 0
+}
+
 test_quoted_stdout_fails_verify() {
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -675,6 +707,7 @@ main() {
 	test_real_scheduler_units_verify
 	test_standalone_templates_use_control_group
 	test_autoupdate_unit_timeout_floor
+	test_auto_update_idempotent_refresh
 
 	if systemd_analyze_available; then
 		# Confirm the bug exists with quoted values (regression anchor)
