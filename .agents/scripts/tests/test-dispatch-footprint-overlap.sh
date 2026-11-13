@@ -468,6 +468,48 @@ unset MOCK_CLAIM_PRS AIDEVOPS_DISPATCH_LEDGER_DIR
 PATH="$OLD_PATH"
 
 # =============================================================================
+# Test 11d — GH#38055: one rebuild fetches the open-PR list once, however many
+# claimed issues need PR evidence; a linked-PR claim still reserves.
+# =============================================================================
+PR_LIST_COUNT_FILE="${TEST_ROOT}/pr-list-count"
+: >"$PR_LIST_COUNT_FILE"
+export PR_LIST_COUNT_FILE
+cat >"${COORD_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	printf 'x\n' >>"$PR_LIST_COUNT_FILE"
+	printf '%s\n' '[{"number":905,"headRefName":"feature/auto-gh413","body":""}]'
+elif [[ "$*" == *"--label status:claimed"* ]]; then
+	printf '%s\n' '[{"number":410,"body":"### Files Scope\n- `docs/a.md`","labels":[{"name":"status:claimed"}]},{"number":411,"body":"### Files Scope\n- `docs/b.md`","labels":[{"name":"status:claimed"}]},{"number":412,"body":"### Files Scope\n- `docs/c.md`","labels":[{"name":"status:claimed"}]},{"number":413,"body":"### Files Scope\n- `docs/d.md`","labels":[{"name":"status:claimed"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+PATH="${COORD_BIN}:$PATH"
+export AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/memo-ledger"
+mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+_FOOTPRINT_CACHE_REPO=""
+_FOOTPRINT_CACHE_DATA=""
+_FOOTPRINT_CACHE_EPOCH=0
+memo_result=""
+_footprint_get_inflight "test/repo" "999" memo_result
+pr_list_calls=$(grep -c . "$PR_LIST_COUNT_FILE")
+if [[ "$pr_list_calls" == "1" ]] &&
+	printf '%s' "$memo_result" | grep -q "docs/d.md|413" &&
+	! printf '%s' "$memo_result" | grep -q "docs/a.md|410"; then
+	print_result "get_inflight: one open-PR fetch per rebuild for many claimed issues" 0
+else
+	print_result "get_inflight: one open-PR fetch per rebuild for many claimed issues" 1 "(calls=${pr_list_calls}, got: ${memo_result})"
+fi
+if [[ "$_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE" == "0" && -z "$_FOOTPRINT_OPEN_PRS_JSON" ]]; then
+	print_result "get_inflight: open-PR memo is cleared after the rebuild" 0
+else
+	print_result "get_inflight: open-PR memo is cleared after the rebuild" 1
+fi
+unset PR_LIST_COUNT_FILE AIDEVOPS_DISPATCH_LEDGER_DIR
+PATH="$OLD_PATH"
+
+# =============================================================================
 # Test 12 — durable defer suppresses unchanged overlap across cycles
 # =============================================================================
 _FOOTPRINT_DEFER_STATE_DIR="${TEST_ROOT}/footprint-defers"
