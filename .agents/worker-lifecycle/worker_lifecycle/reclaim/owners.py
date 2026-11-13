@@ -31,6 +31,8 @@ RESIDUAL_RISK = "unregistered-processes-unobserved"
 OwnerCheck = Callable[[Path], "str | None"]
 
 _REGISTRY_ERRORS = (ValueError, OSError, sqlite3.Error, KeyError, TypeError)
+# Any status other than these two, including "unknown", refuses as unobservable.
+_OBSERVED: dict[str, str | None] = {"alive": "owner-alive", "ended": None}
 
 
 def default_state_dir() -> Path:
@@ -56,25 +58,21 @@ class RegisteredOwners:
 
     def __call__(self, path: Path) -> str | None:
         """Name why a registered owner may still be working here, or None."""
+        runs, refusal = self._generation_runs(path)
+        # Lazy: observation stops at the first run that refuses.
+        live = (self._observe(row) for row in runs if row["state"] != "ended")
+        return refusal or next((reason for reason in live if reason is not None), None)
+
+    def _generation_runs(self, path: Path) -> tuple[list[dict], str | None]:
+        """The runs admitted to this worktree's generation, or why they are unknown."""
         try:
             generation = GenerationEnrollment(self.store).inspect_retirement(path)
+            return _runs(self.store, generation), None
         except ValueError as error:
-            if str(error) == "not-enrolled":
-                return "owner-not-enrolled"
-            return "owner-registry-unreadable"
+            not_enrolled = str(error) == "not-enrolled"
+            return [], "owner-not-enrolled" if not_enrolled else "owner-registry-unreadable"
         except _REGISTRY_ERRORS:
-            return "owner-registry-unreadable"
-        try:
-            runs = _runs(self.store, generation)
-        except _REGISTRY_ERRORS:
-            return "owner-registry-unreadable"
-        for row in runs:
-            if row["state"] == "ended":
-                continue
-            reason = self._observe(row)
-            if reason is not None:
-                return reason
-        return None
+            return [], "owner-registry-unreadable"
 
     def _observe(self, row: dict) -> str | None:
         try:
@@ -85,9 +83,7 @@ class RegisteredOwners:
             status = self.adapter.observe(identity).status
         except (ObservationUnavailable, OSError, ValueError):
             return "owner-unobservable"
-        if status == "alive":
-            return "owner-alive"
-        return None if status == "ended" else "owner-unobservable"
+        return _OBSERVED.get(status, "owner-unobservable")
 
 
 def open_owners(state_dir: Path) -> RegisteredOwners | None:
