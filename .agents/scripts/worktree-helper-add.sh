@@ -1370,6 +1370,24 @@ _cmd_add_create_worktree() {
 		return 0
 	fi
 
+	# Interactive callers may be checking out a PR head pushed elsewhere. Pulse
+	# creates new auto branches and must not incur an additional network fetch.
+	# A missing remote branch is normal for a new branch.
+	if [[ -z "$_explicit_base" && -z "${AIDEVOPS_WORKTREE_MANAGER:-}" && -z "${AIDEVOPS_WORKTREE_PULSE_CREATE:-}" ]] &&
+		git remote get-url origin >/dev/null 2>&1; then
+		if ! _worktree_refresh_origin_branch "$_branch" 2>/dev/null; then
+			local _remote_status=0
+			git ls-remote --exit-code origin "refs/heads/${_branch}" >/dev/null 2>&1 || _remote_status=$?
+			# Only status 2 confirms absence, independent of Git's locale. An
+			# existing or unreachable branch must not fall back to the default base.
+			if [[ "$_remote_status" -ne 2 ]]; then
+				echo "Error: could not refresh or confirm absence of origin/${_branch}; refusing default-base fallback" >&2
+				echo "Retry when origin is reachable, or pass --base with a known commit." >&2
+				return 1
+			fi
+		fi
+	fi
+
 	# Branch doesn't exist locally — check for stale remote ref (t1060)
 	_ds_substage_run precreate.stale_remote_check handle_stale_remote_branch "$_branch" || return 1
 
