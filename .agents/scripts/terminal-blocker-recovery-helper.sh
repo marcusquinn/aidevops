@@ -627,7 +627,7 @@ _tbr_has_blocker_record() {
 	local comments="$1" rc=0
 	printf '%s' "$comments" | jq -e "${_TBR_SHAPE_JQ}"'
 		if arr | not then error("comments") else
-		any(flatten[]; (.body // "") | test("aidevops:terminal-blocker-(observation|circuit)|TERMINAL_BLOCKER_CIRCUIT|CLAIM_RELEASED reason=blocked|Terminal blocker")) end
+		any(flatten[]; (.body // "") | test("aidevops:terminal-blocker-(observation|circuit)|TERMINAL_BLOCKER_CIRCUIT|CLAIM_RELEASED reason=blocked|Terminal blocker: reason=")) end
 	' >/dev/null 2>&1 || rc=$?
 	[[ "$rc" -le 1 ]] || return 2
 	return "$rc"

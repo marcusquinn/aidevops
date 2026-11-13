@@ -398,7 +398,9 @@ exactly one outcome and record it with `record`:
   comment states it, post one naming the reason, who or what must act, and the
   wake condition.
 - **The reason no longer holds, or none exists and nothing blocks the work**:
-  run `gh-write-helper.sh issue status <N> --repo <owner/repo> available` and
+  re-read the labels and continue only when `status:blocked` is present and
+  `status:in-progress` is absent. Then run
+  `gh-write-helper.sh issue status <N> --repo <owner/repo> available` and
   post one receipt naming the evidence read. Never release when a trusted
   OWNER/MEMBER comment made after the label states a hold that still applies.
 - **Only a person can resolve it**: name the smallest input and its owner on
