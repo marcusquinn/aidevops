@@ -323,7 +323,7 @@ test_extracted_cycle_caps_and_order() {
 		# Force dedup availability without creating a new executable fixture.
 		HOME="$TEST_TMPDIR"
 		mkdir -p "$HOME/.aidevops/agents/scripts"
-		ln -s /usr/bin/true "$HOME/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+		ln -s "$(command -v bash)" "$HOME/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
 		reconcile_issues_single_pass
 		reconcile_issues_single_pass
 	)
@@ -340,6 +340,74 @@ test_extracted_cycle_caps_and_order() {
 	else
 		_fail "extracted cycle: action trace or caller-owned counter summary differs: ${result}"
 		grep 'actions completed:\|persistent_repaired=' "$LOGFILE" || true
+	fi
+	return 0
+}
+
+# GH#38047: stale-cache REST fallback must carry trust through the real gate.
+test_stale_cache_trust_fallback() {
+	local result=""
+	result=$(
+		_PIR_SCRIPT_DIR="${TEST_TMPDIR}/absent"
+		RECONCILE_TIME_BUDGET_SECS=0
+		PULSE_QUEUED_SCAN_LIMIT=4
+		PULSE_EXTERNAL_TRUST_FALLBACK_MAX=0
+		_PIR_EXTERNAL_TRUST_FALLBACKS_USED=25
+		_PIR_MISSING_AUTHOR_METADATA_BLOCKED=99
+		# Use the real reader with an expired snapshot, not a stubbed miss.
+		PULSE_PREFETCH_CACHE_FILE="${TEST_TMPDIR}/stale-cache.json"
+		printf '%s\n' '{"test/repo":{"last_prefetch":"2020-01-01T00:00:00Z","issues":[]}}' >"$PULSE_PREFETCH_CACHE_FILE"
+		_pir_initialize_backfill_gates() { return 0; }
+		_pir_reconcile_cycle_repairs() { return 0; }
+		_pir_backfill_pr_origin() { return 0; }
+		_build_oimp_lookup_for_slug() { return 0; }
+		_log_substage_timing() { return 0; }
+		# Already-held external issue must never reach the status:done stage.
+		_pir_backfill_external_contributor_label() { return 0; }
+		gh() {
+			local request="$*"
+			printf 'list\n' >>"${TEST_TMPDIR}/rest-list.log"
+			if [[ "$request" == 'api repos/test/repo/issues?state=open&per_page=100&page=1' ]]; then
+				jq -cn '[
+				{"number":1,"title":"member","body":null,"labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"}},
+				{"number":2,"title":"external","body":"","labels":[{"name":"status:done"},{"name":"needs-maintainer-review"}],"author_association":"NONE","user":{"login":"external","type":"User"}}
+				] + [range(100;198) | {number:.,pull_request:{}}]'
+				return 0
+			fi
+			if [[ "$request" == 'api repos/test/repo/issues?state=open&per_page=100&page=2' ]]; then
+				[[ "${fail_second_page:-0}" -eq 0 ]] || return 1
+				printf '%s\n' '[
+				{"number":3,"title":"owner","body":"","labels":[{"name":"status:done"}],"author_association":"OWNER","user":{"login":"owner","type":"User"}},
+				{"number":4,"title":"PR","body":"","labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"},"pull_request":{}},
+				{"number":5,"title":"unknown","body":"","labels":[{"name":"status:done"}]}
+				]'
+				return 0
+			fi
+			return 1
+		}
+		_action_rsd_single() {
+			printf 'reset:%s:%s:%s\n' "$issue_num" "$issue_author_association" "$issue_author_login"
+			return 2
+		}
+		# Force dedup availability with the existing test fixture.
+		HOME="$TEST_TMPDIR"
+		reconcile_issues_single_pass
+		reconcile_issues_single_pass
+		local rows="" rc=0
+		PULSE_QUEUED_SCAN_LIMIT=1
+		rows=$(_pir_list_open_issues_with_trust test/repo) || exit 1
+		[[ "$(printf '%s' "$rows" | jq -r 'map(.number) | join(",")')" == 1 ]] && printf 'bounded\n'
+		PULSE_QUEUED_SCAN_LIMIT=4
+		local fail_second_page=1
+		rows=$(_pir_list_open_issues_with_trust test/repo) || rc=$?
+		[[ "$rc" -eq 1 && -z "$rows" ]] && printf 'fail-closed\n'
+	)
+	if [[ "$result" == $'reset:1:MEMBER:member\nreset:3:OWNER:owner\nreset:1:MEMBER:member\nreset:3:OWNER:owner\nbounded\nfail-closed' ]] &&
+		[[ "$(grep -c '^list$' "${TEST_TMPDIR}/rest-list.log")" -eq 7 ]] &&
+		[[ "$(grep -c 'missing_author_metadata_blocked=1$' "$LOGFILE")" -eq 2 ]]; then
+		_pass "stale cache: paginated trust reaches stage 2, external/unknown rows stay gated, counter resets"
+	else
+		_fail "stale cache trust fallback: unexpected trace or counter: $result"
 	fi
 	return 0
 }
@@ -366,6 +434,7 @@ test_first_call_fast
 test_second_call_fast
 test_extracted_cycle_caps_and_order
 test_extracted_inner_budget_abort
+test_stale_cache_trust_fallback
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"

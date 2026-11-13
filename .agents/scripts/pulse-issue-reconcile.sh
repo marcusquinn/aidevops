@@ -1613,6 +1613,34 @@ _pir_backfill_pr_origin() {
 	return 0
 }
 
+# REST includes trust metadata unavailable in `gh issue list --json`. Fetch
+# one paginated list, stopping at the issue scan limit (PRs do not count).
+# Emit nothing on failure so a partial list cannot masquerade as a full scan.
+_pir_list_open_issues_with_trust() {
+	local slug="$1"
+	local limit="${PULSE_QUEUED_SCAN_LIMIT:-100}"
+	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	local max_pages="${PULSE_QUEUED_MAX_PAGES:-20}"
+	[[ "$max_pages" =~ ^[1-9][0-9]*$ ]] || max_pages=20
+	local page=1 page_rows="" page_count=0 issues="[]" issue_count=0
+	while [[ "$issue_count" -lt "$limit" ]]; do
+		[[ "$page" -le "$max_pages" ]] || return 1
+		page_rows=$(gh api "repos/${slug}/issues?state=open&per_page=100&page=${page}" 2>/dev/null) || return 1
+		page_count=$(printf '%s' "$page_rows" | jq -er --arg array_type "$_PIR_JSON_TYPE_ARRAY" \
+			'select(type == $array_type) | length') || return 1
+		issues=$(printf '%s\n%s\n' "$issues" "$page_rows" | jq -sc --argjson limit "$limit" '
+			add | map(select(.pull_request == null)) | .[:$limit]
+		') || return 1
+		issue_count=$(printf '%s' "$issues" | jq 'length') || return 1
+		[[ "$page_count" -lt 100 ]] && break
+		page=$((page + 1))
+	done
+	printf '%s' "$issues" | jq -c 'map({number, title, labels, body: (.body // ""),
+		updatedAt: .updated_at, assignees,
+		authorAssociation: .author_association, author: .user})' || return 1
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
@@ -1626,14 +1654,12 @@ _pir_reconcile_slug() {
 	# The cache (written each cycle by pulse-prefetch.sh) covers:
 	#   number, title, labels, updatedAt, assignees, body plus
 	#   authorAssociation/author trust metadata from canonical snapshots.
-	#   Legacy/fallback rows without trust metadata block lifecycle actions.
+	#   Legacy rows without trust metadata block lifecycle actions.
 	local issues_json="" _cache_issues_sp=""
 	if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json="$_cache_issues_sp"
 	else
-		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,title,labels,body \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json="[]"
+		issues_json=$(_pir_list_open_issues_with_trust "$slug") || issues_json="[]"
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
 
@@ -1867,6 +1893,8 @@ _pir_finish_reconcile_cycle() {
 	elif [[ "$_total_actions" -gt 0 ]]; then
 		echo "[pulse-wrapper] reconcile_issues_single_pass: persistent_repaired=${persistent_repaired} external_gated=${external_gated} ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} cpt_reopened=${cpt_total_reopened} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	fi
+	# Always emit this diagnostic, including otherwise silent no-op passes.
+	echo "[pulse-wrapper] reconcile_issues_single_pass: missing_author_metadata_blocked=${_PIR_MISSING_AUTHOR_METADATA_BLOCKED:-0}" >>"$LOGFILE"
 	return 0
 }
 
@@ -1910,6 +1938,7 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local _PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
 	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
 	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
