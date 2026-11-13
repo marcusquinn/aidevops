@@ -103,13 +103,11 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   the released attempt is the single ready lease before the release, so Pulse may release
   another runner's stale attempt. `worker_draft_checkpoint`, `capability_limit` and
   push/network policy timeouts are not approvable.
-  Progress requires a non-merge commit on the PR authored and committed after the attempt
-  began and no later than its release; base-integration merges alone do not qualify.
-  Trusted, unedited claims/ready leases bound the attempt; lease renewals do not reset its
-  start. REST PR commit metadata supplies parent counts absent from `gh pr view`.
-  Missing commit/attempt evidence conservatively counts as non-progress. Capability releases
-  retain their existing single-stall grouping. `STALLED_CHECKPOINT_REARM_BLOCKED` reports
-  `progress_releases` and `nonprogress_releases` alongside `pr_releases`.
+  Progress requires a non-merge PR commit authored and committed during the attempt; base merges alone do not qualify.
+  Trusted, unedited claims/ready leases bound the attempt; renewals do not reset its start.
+  REST PR commit metadata supplies parent counts absent from `gh pr view`; missing evidence counts as non-progress.
+  Capability releases retain single-stall grouping. `STALLED_CHECKPOINT_REARM_BLOCKED` reports
+  `progress_releases`, `nonprogress_releases` and `pr_releases`.
 - **Runner capability** (`blocked` with `runner_capability_unmet`, GH#34758): a capable runner continues the head.
 - **Every other reason except `blocked`** (for example `capability_limit`): `blocked-attention`
   posts one `BLOCKED_CHECKPOINT_ATTENTION` per PR head. It grants no approval, launches no
