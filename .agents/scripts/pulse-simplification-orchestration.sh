@@ -61,7 +61,8 @@ fi
 #   $4 - close count already spent this interval (base for $3)
 # Stdout: close attempts charged to the interval budget. A failed close is
 #         uncertain (GitHub may have applied it), so it is charged too.
-# Returns 0 always.
+# Returns 0, or 1 when a budget reservation could not be persisted; that
+#   close is not attempted, so a resumed slice cannot overspend the budget.
 #######################################
 _dedup_cleanup_close_repo_dupes() {
 	local slug="$1"
@@ -70,7 +71,7 @@ _dedup_cleanup_close_repo_dupes() {
 	local count_base="${4:-0}"
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=0
 	[[ "$count_base" =~ ^[0-9]+$ ]] || count_base=0
-	local spent=0 dupe_numbers="" dupe_num=""
+	local spent=0 dupe_numbers="" dupe_num="" reserve_failed=0
 	dupe_numbers=$(gh_issue_list --repo "$slug" \
 		--label "function-complexity-debt" --state open \
 		--limit 500 --json number,title \
@@ -93,15 +94,22 @@ _dedup_cleanup_close_repo_dupes() {
 	while IFS= read -r dupe_num; do
 		[[ -n "$dupe_num" ]] || continue
 		[[ "$spent" -lt "$limit" ]] || break
-		spent=$((spent + 1))
 		# Reserve before the remote close; never released, because a close
-		# that errored or was interrupted may still have been applied.
-		[[ -z "$count_file" ]] || printf '%s\n' "$((count_base + spent))" >"$count_file" 2>/dev/null || true
+		# that errored or was interrupted may still have been applied. An
+		# unpersisted reservation would let a resumed slice overspend, so a
+		# failed write stops the batch before closing anything else.
+		if [[ -n "$count_file" ]] && ! printf '%s\n' "$((count_base + spent + 1))" 2>/dev/null >"$count_file"; then
+			echo "[pulse-wrapper] Dedup cleanup: budget reservation write failed (${count_file}); no close attempted in ${slug} (GH#38171)" >>"${LOGFILE:-/dev/null}"
+			reserve_failed=1
+			break
+		fi
+		spent=$((spent + 1))
 		gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
 			--comment "Auto-closing duplicate: another function-complexity-debt issue exists for this file. Keeping the newest." \
 			>/dev/null 2>&1 || true
 	done <<<"$dupe_numbers"
 	printf '%s\n' "$spent"
+	[[ "$reserve_failed" -eq 0 ]] || return 1
 	return 0
 }
 
@@ -150,7 +158,7 @@ run_simplification_dedup_cleanup() {
 
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
-	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve=""
+	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve="" reserve_failed=0
 	local closed_file="${cursor_file}.closed"
 	if [[ -f "$cursor_file" ]]; then
 		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
@@ -181,16 +189,26 @@ run_simplification_dedup_cleanup() {
 			break
 		fi
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
-		local repo_closed=0
+		local repo_closed=0 close_rc=0
 		# The helper reserves the interval budget before every close, so a
 		# yield or a watchdog kill mid-repo carries the spent budget forward.
-		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))" "$closed_file" "$total_closed") || repo_closed=0
+		repo_closed=$(_dedup_cleanup_close_repo_dupes "$slug" "$((batch_limit - total_closed))" "$closed_file" "$total_closed") || close_rc=$?
 		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
 		total_closed=$((total_closed + repo_closed))
+		if [[ "$close_rc" -ne 0 ]]; then
+			reserve_failed=1
+			break
+		fi
 	done <<<"$repo_slugs"
 
 	if [[ "$total_closed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt close(s) charged this interval" >>"$LOGFILE"
+	fi
+	# Without a persisted budget the interval cannot be accounted for: keep the
+	# cursor and last-run untouched so a later run retries once storage works.
+	if [[ "$reserve_failed" -eq 1 ]]; then
+		echo "[pulse-wrapper] Dedup cleanup: stopped on budget reservation failure; cursor kept, interval not recorded" >>"$LOGFILE"
+		return 0
 	fi
 	if [[ "$yielded" -eq 1 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"

@@ -67,10 +67,16 @@ gh_issue_list() {
 
 gh() {
 	printf 'gh %s\n' "$*" >>"${TEST_ROOT}/gh.log"
-	# Simulate a watchdog SIGKILL after GitHub applied the close but before
-	# the caller could account for it.
+	# Model a close GitHub has applied while the caller has not accounted for
+	# it yet: signal the parent, then park until it delivers SIGKILL. Bash 3.2
+	# has no BASHPID, so the parent kills this background job via its $!.
 	if [[ -n "${DEDUP_TEST_KILL_AFTER_CLOSE:-}" && "$*" == "issue close ${DEDUP_TEST_KILL_AFTER_CLOSE} "* ]]; then
-		kill -KILL "$BASHPID"
+		: >"${TEST_ROOT}/close-applied"
+		local parked=0
+		while [[ "$parked" -lt 100 ]]; do
+			sleep 0.1
+			parked=$((parked + 1))
+		done
 	fi
 	[[ "${DEDUP_TEST_CLOSE_FAILS:-0}" == "1" ]] && return 1
 	return 0
@@ -173,17 +179,60 @@ test_yield_carries_interval_budget() {
 }
 
 test_kill_mid_repo_keeps_spent_budget() {
-	local failed=0 detail="" out="" count_file="${TEST_ROOT}/kill.closed"
-	rm -f "$count_file"
+	local failed=0 detail="" count_file="${TEST_ROOT}/kill.closed"
+	local out_file="${TEST_ROOT}/kill.out" pid="" waited=0 rc=0
+	rm -f "$count_file" "${TEST_ROOT}/close-applied"
 	: >"${TEST_ROOT}/gh.log"
 	# One close already spent; GitHub applies #31, then SIGKILL lands before
 	# the helper can account for it.
-	out=$(DEDUP_TEST_SATURATE_C=1 DEDUP_TEST_KILL_AFTER_CLOSE=31 _dedup_cleanup_close_repo_dupes o/c 5 "$count_file" 1) || true
-	[[ -z "$out" ]] || { failed=1; detail="not-killed=${out}"; }
+	DEDUP_TEST_SATURATE_C=1 DEDUP_TEST_KILL_AFTER_CLOSE=31 \
+		_dedup_cleanup_close_repo_dupes o/c 5 "$count_file" 1 >"$out_file" 2>/dev/null &
+	pid=$!
+	while [[ ! -f "${TEST_ROOT}/close-applied" && "$waited" -lt 100 ]]; do
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+	kill -KILL "$pid" 2>/dev/null || true
+	wait "$pid" 2>/dev/null || rc=$?
+	[[ "$rc" -eq 137 ]] || { failed=1; detail="rc=${rc}"; }
+	[[ ! -s "$out_file" ]] || { failed=1; detail="${detail} not-killed=$(cat "$out_file")"; }
 	grep -q 'issue close 31 --repo o/c' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} no-31"; }
 	! grep -q 'issue close 32 ' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} ran-32"; }
 	[[ "$(sed -n '1p' "$count_file" 2>/dev/null)" == "2" ]] || { failed=1; detail="${detail} count=$(sed -n '1p' "$count_file" 2>/dev/null)"; }
 	print_result "a kill after the remote close, before accounting, keeps the close charged" "$failed" "$detail"
+	return 0
+}
+
+test_reservation_failure_skips_close() {
+	local failed=0 detail="" out="" rc=0
+	local count_file="${TEST_ROOT}/missing-dir/unwritable.closed"
+	: >"${TEST_ROOT}/gh.log"
+	# The budget cannot be persisted, so no close may run at all.
+	out=$(DEDUP_TEST_SATURATE_C=1 _dedup_cleanup_close_repo_dupes o/c 5 "$count_file" 0) || rc=$?
+	[[ "$rc" -eq 1 ]] || { failed=1; detail="rc=${rc}"; }
+	[[ "$out" == "0" ]] || { failed=1; detail="${detail} out=${out}"; }
+	! grep -q 'issue close' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} closed"; }
+	grep -q 'budget reservation write failed' "$LOGFILE" || { failed=1; detail="${detail} no-log"; }
+	print_result "an unpersisted budget reservation stops the batch before any close" "$failed" "$detail"
+	return 0
+}
+
+test_reservation_failure_keeps_interval_open() {
+	local failed=0 detail=""
+	local cursor_file="${DEDUP_CLEANUP_LAST_RUN}.cursor"
+	rm -f "$DEDUP_CLEANUP_LAST_RUN" "$cursor_file" "${cursor_file}.closed"
+	: >"$CALLS_LOG"
+	: >"${TEST_ROOT}/gh.log"
+	# A directory in place of the count file makes every reservation fail.
+	mkdir -p "${cursor_file}.closed"
+	printf '6000\n' >"$CLOCK_FILE"
+	PULSE_STAGE_DEADLINE_EPOCH=6100 run_simplification_dedup_cleanup
+	[[ "$(calls)" == "o/a " ]] || { failed=1; detail="calls=$(calls)"; }
+	! grep -q 'issue close' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} closed"; }
+	[[ ! -f "$DEDUP_CLEANUP_LAST_RUN" ]] || { failed=1; detail="${detail} last-run"; }
+	[[ "$(sed -n '1p' "$cursor_file" 2>/dev/null)" == "o/a" ]] || { failed=1; detail="${detail} cursor"; }
+	rm -rf "${cursor_file}.closed"
+	print_result "a reservation failure stops the traversal without recording the interval" "$failed" "$detail"
 	return 0
 }
 
@@ -207,6 +256,8 @@ test_batch_exhaustion_keeps_cursor
 test_yield_carries_interval_budget
 test_kill_mid_repo_keeps_spent_budget
 test_failed_close_is_charged
+test_reservation_failure_skips_close
+test_reservation_failure_keeps_interval_open
 
 printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
