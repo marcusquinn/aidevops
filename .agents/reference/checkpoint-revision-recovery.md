@@ -94,14 +94,22 @@ terminal lease is ignored, GH#33839), Pulse routes the draft by release reason:
   continuation per window, anchored on the newer of the attention record and the latest
   stall release, doubled per further stall of the head (at most 2^6); the winner's fenced
   claim stops other runners in that window. A new head re-arms one continuation until a
-  per-PR fuse (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 eligible releases since PR
-  creation) posts one attention record per PR instead; later heads and aged records never
+  per-PR fuse (`AIDEVOPS_PCC_MAX_PR_RELEASES`, default 6 **non-progress** releases since PR
+  creation) or hard total-release ceiling (`AIDEVOPS_PCC_MAX_PR_PROGRESS_RELEASES`, default 30)
+  posts one attention record per PR instead; later heads and aged records never
   re-arm continuation or repeat that record (see the terminal action below). To resume sooner
   or after the fuse, a maintainer publishes the line printed by the record's `approval-template` command.
   Stall-class releases and a continuation's `clean`/`worker_complete` exit are approvable;
   the released attempt is the single ready lease before the release, so Pulse may release
   another runner's stale attempt. `worker_draft_checkpoint`, `capability_limit` and
   push/network policy timeouts are not approvable.
+  Progress requires a non-merge commit on the PR authored and committed after the attempt
+  began and no later than its release; base-integration merges alone do not qualify.
+  Trusted, unedited claims/ready leases bound the attempt; lease renewals do not reset its
+  start. REST PR commit metadata supplies parent counts absent from `gh pr view`.
+  Missing commit/attempt evidence conservatively counts as non-progress. Capability releases
+  retain their existing single-stall grouping. `STALLED_CHECKPOINT_REARM_BLOCKED` reports
+  `progress_releases` and `nonprogress_releases` alongside `pr_releases`.
 - **Runner capability** (`blocked` with `runner_capability_unmet`, GH#34758): a capable runner continues the head.
 - **Every other reason except `blocked`** (for example `capability_limit`): `blocked-attention`
   posts one `BLOCKED_CHECKPOINT_ATTENTION` per PR head. It grants no approval, launches no

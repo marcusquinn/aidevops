@@ -36,6 +36,11 @@ if [[ "$1" == "pr" && "$2" == "view" ]]; then
 	printf '%s\n' "${STUB_PR_JSON:-}"
 	exit 0
 fi
+if [[ "$1 $2 $3 $4" == "api --paginate --slurp repos/owner/repo/pulls/42/commits?per_page=100" ]]; then
+	[[ "${STUB_METADATA_FAILURE:-}" != commits ]] || exit 1
+	printf '%s\n' "${STUB_COMMITS_JSON:-[]}"
+	exit 0
+fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
 	[[ "${STUB_METADATA_FAILURE:-}" != issue ]] || exit 1
 	if [[ "${3:-}" == "--jq" ]]; then
@@ -133,8 +138,8 @@ valid_checkpoint_comments() {
 	return 0
 }
 
-STUB_PR_JSON="$(valid_pr_json)"
-STUB_ISSUE_JSON="$(valid_issue_json)"
+STUB_PR_JSON="$(valid_pr_json 'Resolves #123')"
+STUB_ISSUE_JSON="$(valid_issue_json '[{"name":"status:in-review"}]')"
 STUB_COMMENTS_JSON='[]'
 export STUB_PR_JSON STUB_ISSUE_JSON STUB_COMMENTS_JSON
 
