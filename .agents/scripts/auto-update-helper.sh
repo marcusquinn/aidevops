@@ -90,6 +90,9 @@ readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 readonly SYSTEMD_SERVICE_DIR="$HOME/.config/systemd/user"
 readonly SYSTEMD_UNIT_NAME="aidevops-auto-update"
+# Floor for the oneshot unit's TimeoutStartSec (GH#37991): a version update
+# (setup.sh ~80-110s) plus freshness checks must fit even at short intervals.
+readonly SYSTEMD_MIN_TIMEOUT_SEC=600
 
 #######################################
 # Logging
@@ -1053,6 +1056,14 @@ _cmd_enable_systemd() {
 	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
 	local interval_sec
 	interval_sec=$((interval * 60))
+	# TimeoutStartSec = one interval, floored at SYSTEMD_MIN_TIMEOUT_SEC: a version
+	# update (setup.sh ~80-110s) or the daily skill re-import routinely exceeded
+	# the former 120s and was killed. A oneshot unit never overlaps itself, so a
+	# timeout above the interval only delays the next tick.
+	local timeout_sec="$interval_sec"
+	if [[ "$timeout_sec" -lt "$SYSTEMD_MIN_TIMEOUT_SEC" ]]; then
+		timeout_sec="$SYSTEMD_MIN_TIMEOUT_SEC"
+	fi
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
@@ -1066,7 +1077,7 @@ Type=oneshot
 KillMode=control-group
 ExecStart=/usr/bin/env bash -lc '\"${script_path}\" check'
 $(aidevops_systemd_path_env)
-TimeoutStartSec=120
+TimeoutStartSec=${timeout_sec}
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=append:${LOG_FILE}

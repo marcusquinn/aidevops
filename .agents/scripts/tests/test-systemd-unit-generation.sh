@@ -230,6 +230,63 @@ test_standalone_templates_use_control_group() {
 	return 0
 }
 
+# Render the real auto-update service via `auto-update-helper.sh enable` in an
+# isolated HOME and print its TimeoutStartSec value.
+# Args: $1 = scratch dir, $2 = update interval (minutes)
+render_autoupdate_timeout() {
+	local tmpdir="$1"
+	local interval="$2"
+	local home_dir="${tmpdir}/home-${interval}"
+	local bin_dir="${tmpdir}/bin"
+	local service_file="${home_dir}/.config/systemd/user/aidevops-auto-update.service"
+
+	mkdir -p "$bin_dir" "${home_dir}/.aidevops"
+	ln -s "${REPO_ROOT}/.agents" "${home_dir}/.aidevops/agents"
+	# Hermetic stubs: never touch the real user's systemd, crontab or linger state.
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/systemctl"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/crontab"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${bin_dir}/loginctl"
+	chmod +x "${bin_dir}/systemctl" "${bin_dir}/crontab" "${bin_dir}/loginctl"
+
+	HOME="$home_dir" PATH="${bin_dir}:${PATH}" AIDEVOPS_SCHEDULER=systemd \
+		AIDEVOPS_UPDATE_INTERVAL="$interval" \
+		bash "${REPO_SCRIPTS_DIR}/auto-update-helper.sh" enable >/dev/null 2>&1 || true
+
+	if [[ -f "$service_file" ]]; then
+		sed -n 's/^TimeoutStartSec=//p' "$service_file"
+	fi
+	return 0
+}
+
+# GH#37991: the auto-update unit timeout must fit a version update plus the
+# freshness checks. It tracks the interval but never drops below 600s.
+test_autoupdate_unit_timeout_floor() {
+	local tmpdir=""
+	local short_timeout=""
+	local long_timeout=""
+	local stale_templates=""
+	local relative_path=""
+	tmpdir=$(mktemp -d)
+
+	short_timeout=$(render_autoupdate_timeout "$tmpdir" 1)
+	long_timeout=$(render_autoupdate_timeout "$tmpdir" 15)
+	rm -rf "$tmpdir"
+
+	for relative_path in auto-update-helper.sh auto-update-helper-scheduler.sh; do
+		if grep -q '^TimeoutStartSec=120$' "${REPO_SCRIPTS_DIR}/${relative_path}"; then
+			stale_templates+="${relative_path} "
+		fi
+	done
+
+	if [[ "$short_timeout" == "600" && "$long_timeout" == "900" && -z "$stale_templates" ]]; then
+		print_result "auto-update unit timeout tracks interval with a 600s floor" 0
+	else
+		print_result "auto-update unit timeout tracks interval with a 600s floor" 1 \
+			"interval 1m=>'${short_timeout}' (want 600), 15m=>'${long_timeout}' (want 900), hard-coded 120 in: ${stale_templates:-none}"
+	fi
+	return 0
+}
+
 # --- Tests ---
 
 test_quoted_stdout_fails_verify() {
@@ -617,6 +674,7 @@ main() {
 	printf 'Running systemd unit generation tests...\n\n'
 	test_real_scheduler_units_verify
 	test_standalone_templates_use_control_group
+	test_autoupdate_unit_timeout_floor
 
 	if systemd_analyze_available; then
 		# Confirm the bug exists with quoted values (regression anchor)
