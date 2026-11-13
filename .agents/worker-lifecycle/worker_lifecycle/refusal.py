@@ -16,7 +16,9 @@ import subprocess  # nosec B404 # exception types only; no process is started he
 from .filesystem import FilesystemValidationError
 
 CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
-RETIREMENT_OPERATIONS = frozenset({"cleanup-worktree", "retire-enrolled-only"})
+RETIREMENT_OPERATIONS = frozenset({
+    "cleanup-worktree", "retire-enrolled-only", "retire-foreign-worktree",
+})
 _REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 _SQLITE_CODES = (
     ("database is locked", "database-locked"),

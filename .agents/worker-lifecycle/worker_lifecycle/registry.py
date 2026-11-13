@@ -128,6 +128,17 @@ def argument_parser() -> argparse.ArgumentParser:
     retire.add_argument("--repo", required=True)
     retire.add_argument("--base-branch", required=True)
     retire.add_argument("--output-root", required=True, type=Path)
+    foreign = commands.add_parser(
+        "retire-foreign-worktree",
+        help="archive and remove a copied foreign-generation tree after rescue proof",
+    )
+    foreign.add_argument("--path", required=True, type=Path)
+    foreign.add_argument("--repo", required=True)
+    foreign.add_argument("--base-branch", required=True)
+    foreign.add_argument("--output-root", required=True, type=Path)
+    foreign.add_argument("--rescue-bundle", type=Path,
+                         help="verified rescue bundle; omit only for a clean, pushed tree")
+    foreign.add_argument("--generation-id", help="resume after relocation only")
     cleanup = commands.add_parser("cleanup", help="retire controlled registry candidates")
     cleanup.add_argument("--repos-config", required=True, type=Path)
     cleanup.add_argument("--output-root", required=True, type=Path)
@@ -202,14 +213,22 @@ def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> M
         return preserve_wip(store, args.path, args.repo, args.base_branch, args.output_root)
     if args.operation == "prepare-cleanup":
         return prepare_cleanup(store, args.path)
-    if args.operation == "retire-worktree":
-        from .retirement import ArchiveTarget, retire_worktree
+    return _retirement_operation(store, args)
 
-        return retire_worktree(
-            store, args.path, args.generation_id,
-            ArchiveTarget(args.repo, args.base_branch, args.output_root),
+
+def _retirement_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    from .retirement import ArchiveTarget, retire_worktree
+
+    archive = ArchiveTarget(args.repo, args.base_branch, args.output_root)
+    if args.operation == "retire-foreign-worktree":
+        from .foreign_retirement import retire_foreign_worktree
+
+        return retire_foreign_worktree(
+            store, args.path, archive, args.rescue_bundle, args.generation_id,
         )
-    raise ValueError("unsupported-worktree-operation")
+    if args.operation != "retire-worktree":
+        raise ValueError("unsupported-worktree-operation")
+    return retire_worktree(store, args.path, args.generation_id, archive)
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
@@ -261,7 +280,7 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",
-        "prepare-cleanup", "retire-worktree",
+        "prepare-cleanup", "retire-worktree", "retire-foreign-worktree",
     }:
         return _worktree_operation(store, args)
     if args.operation == "register":

@@ -16,7 +16,9 @@ REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "maco
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
                     "retirement.py", "recovery.py", "absence.py", "cleanup.py", "bundle.py",
                     "cleanup_failure.py", "cleanup_quarantine.py", "pull_requests.py",
-                    "pull_requests_graphql.py", "refusal.py", "legacy_proc.py", "legacy_proc_macos.py", "protected_proc.py", "interrupted_removal.py")
+                    "pull_requests_graphql.py", "refusal.py", "legacy_proc.py", "legacy_proc_macos.py", "protected_proc.py", "interrupted_removal.py",
+                    "retirement_fence.py", "foreign_git.py", "foreign_proof.py",
+                    "foreign_retirement.py")
 REGISTRY_TESTS = ("test_storage.py", "test_events.py", "test_launch.py", "test_admission.py",
                   "test_admitted_launch.py", "test_directory_handle.py", "test_cleanup_policy.py",
                   "test_creation.py", "test_preservation.py", "test_retirement.py",

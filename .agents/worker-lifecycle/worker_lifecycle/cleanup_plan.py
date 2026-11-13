@@ -1,13 +1,15 @@
 """Prepare registered runs for cleanup; never archive, remove or infer writers."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import time
 from uuid import UUID, uuid4, uuid5
 
 from .admission import AdmissionRegistry
-from .enrollment import GenerationEnrollment
+from .enrollment import MARKER, GenerationEnrollment, _git_directory, _read_marker
 from .process import ObservationUnavailable, ProcessAdapter, ProcessIdentity
 from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry, StoreConflict
@@ -68,6 +70,76 @@ def enrolled_only_authorized(store: LifecycleRegistry, generation: str) -> bool:
     if json.loads(event["payload"]) != expected or admission["state"] != "closed":
         return False
     return not _runs(store, generation)
+
+
+def marker_digest(marker: Path) -> str:
+    """SHA-256 of a marker regular file; never follows a link or reads a replacement."""
+    descriptor = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+            raise StoreConflict("foreign-marker-invalid")
+        return hashlib.sha256(os.read(descriptor, 4097)).hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def require_foreign_unregistered(store: LifecycleRegistry, path: Path, generation: str) -> None:
+    """Refuse any locally registered foreign generation or source path."""
+    with store.connection() as connection:
+        registered = (
+            connection.execute(
+                "SELECT 1 FROM generations WHERE generation_id=? OR path=?",
+                (generation, str(path))).fetchone()
+            or connection.execute(
+                "SELECT 1 FROM generation_admissions WHERE generation_id=? OR path=?",
+                (generation, str(path))).fetchone()
+            or connection.execute(
+                "SELECT 1 FROM bindings WHERE generation_id=?", (generation,)).fetchone()
+        )
+    if registered:
+        raise StoreConflict("foreign-generation-registered")
+
+
+def foreign_marker(store: LifecycleRegistry, path: Path) -> dict[str, object]:
+    """Classify a refused `generation-directory-mismatch` tree as foreign (GH#37828).
+
+    Eligible only when the marker belongs to another installation, nothing in
+    this registry names its generation or path, and Git itself registers the
+    tree at this exact path under its own common repository. This is evidence
+    for a guarded, archive-first retirement; it grants no admission, never
+    rewrites the marker and never authorizes any other path.
+    """
+    admin = _git_directory(path)
+    marker = admin / MARKER
+    if not os.path.lexists(marker):
+        raise StoreConflict("foreign-marker-absent")
+    value = _read_marker(marker)
+    generation = str(UUID(value["generation_id"]))
+    marker_installation = value.get("installation_id")
+    try:
+        marker_installation = str(UUID(str(marker_installation)))
+    except ValueError:
+        raise StoreConflict("foreign-installation-invalid") from None
+    if marker_installation == store.installation_id():
+        # Same installation: normal enrollment, cleanup and diagnostics apply.
+        raise StoreConflict("marker-matches-current-installation")
+    require_foreign_unregistered(store, path, generation)
+    common = Path(_native_common(path))
+    if (admin.parent != common / "worktrees" or admin.resolve(strict=True) != admin
+            or (admin / "gitdir").read_text(encoding="utf-8").rstrip("\n")
+            != str(path / ".git")):
+        raise StoreConflict("worktree-not-registered-at-path")
+    return {
+        "generation_id": generation, "admin": admin, "common": common,
+        "marker_sha256": marker_digest(marker),
+    }
+
+
+def _native_common(path: Path) -> str:
+    from .retirement import _git  # Deferred: retirement imports this module.
+
+    return _git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir")
 
 
 def _refresh_runs(
