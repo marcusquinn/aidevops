@@ -130,3 +130,50 @@ def capture_block(edits: set, stripped_text: str, cwd: str):
         return None
     dirty = dirty_edits(edits, cwd)
     return capture_reason(dirty) if dirty else None
+
+
+# GH#37979: a numbered ask that only requests permission to file an issue,
+# task or TODO. Ported to session-continuation-utils.mjs (asksFilingPermission).
+NEEDED_BLOCK_RE = re.compile(
+    r"Needed from you:.*?(?=Left to capture|\bClose(?: readiness)?:|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+NUMBERED_ASK_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\d+[.)][ \t]+", re.MULTILINE)
+FILING_ASK_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?\d+[.)]\s*[*_]*\s*"
+    r"(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to"
+    r"|would you like me to|ok(?:ay)? to)?\s*"
+    r"(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*"
+    r"(?:(?:worker(?:-ready)?|follow-?up|local|actionable)\s+){0,3}"
+    r"(?:issue|task|todo|ticket|follow-?up)s?\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+FILING_EXCLUDED_RE = re.compile(
+    r"\bnot needed\b"
+    r"|\bor\s+(?:is|could|might)\s+(?:this|that|it)\s+(?:be\s+)?(?:expected|intended|normal)\b"
+    r"|\bor\s+(?:is|are)\s+(?:it|this|that|they)\s+(?:unnecessary|not\s+(?:needed|necessary))\b"
+    r"|\b(?:another|other|third-party|external|upstream)\s+(?:organi[sz]ations?|orgs?)\b"
+    r"|\b(?:another|other|third[- ]party|external|upstream)\s+(?:repos?|repositories|repository)\b"
+    r"|\b(?:secrets?|credentials?|spend|spending|billing)\b"
+    r"|\bprivate[- ](?:data|repo)",
+    re.IGNORECASE,
+)
+FILING_REASON = (
+    "Your closeout asks permission to file an issue, task or TODO. Filing is "
+    "already authorised: file it now under the capture rule in Framework Rules "
+    "(deduplicate first) and cite the link in the body. Keep the ask only when "
+    "the need itself is undecided, and then ask about the need."
+)
+
+
+def asks_filing_permission(text: str) -> bool:
+    """GH#37979: the last Needed from you block only asks to file an item."""
+    # Ignore fenced examples, but retain inline content for authority exclusions.
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    blocks = [match.group(0) for match in NEEDED_BLOCK_RE.finditer(text)]
+    last = blocks[-1] if blocks else ""
+    starts = [match.start() for match in NUMBERED_ASK_RE.finditer(last)]
+    asks = [last[start:end] for start, end in zip(starts, starts[1:] + [len(last)])]
+    return bool(asks) and not FILING_EXCLUDED_RE.search(last) and all(
+        FILING_ASK_RE.match(re.sub(r"`[^`]*`", " ", ask)) for ask in asks
+    )

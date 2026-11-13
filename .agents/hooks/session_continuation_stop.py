@@ -204,9 +204,20 @@ def _hands_back_to_user(text: str, open_count: int) -> bool:
     return open_count <= 1 and _reports_blocker(text)
 
 
-def _stop_reason(state: dict, final_text: str, cwd: str):
+def _filing_marker(session_id: str) -> Path:
+    """One-shot marker: the filing steer fires once per session (GH#37979)."""
+    return _state_file(session_id).with_suffix(".filing")
+
+
+def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str = ""):
     """Block reason for open todos, or (GH#35121) for an unasked closeout that
     leaves session-edited files uncommitted once every todo is terminal."""
+    if session_id and capture is not None and capture.asks_filing_permission(final_text):
+        marker = _filing_marker(session_id)
+        if not marker.exists():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1")
+            return capture.FILING_REASON
     open_todos = _open_todos(state["todos"])
     if _hands_back_to_user(final_text, len(open_todos)):
         return None
@@ -265,7 +276,7 @@ def decide(payload: dict):
         final_text = state["assistant"]
     reason = None
     if not USER_STOP_RE.search(state["user"]):
-        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""))
+        reason = _stop_reason(state, final_text, str(payload.get("cwd") or ""), session_id)
     if reason:
         _record_block(session_id, blocks + 1)
     return reason

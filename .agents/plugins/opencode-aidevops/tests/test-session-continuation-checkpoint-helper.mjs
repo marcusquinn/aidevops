@@ -121,6 +121,59 @@ fi
   assert.equal(blockerGuard.injectSteering({ sessionID: "mixed" }, claimCall).kind, "completion");
   assert.match(claimCall.messages.at(-1).parts[0].text, /not yet valid/);
 
+  // GH#37979: a closeout whose only ask is permission to file an issue is
+  // steered once per session scope; authority, "not needed" and release asks
+  // are left alone.
+  const askWith = (ask) => ["Done.", "", "**What next**", "- **Session:** x — Done", "- **Needed from you:**", `  ${ask}`, "- **Left to capture:** None", "- **Close:** Ready to close"].join("\n");
+  const fileAsk = askWith("1. **Should I file a worker-ready issue so X warns about Y?**");
+  const fileResult = blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk });
+  assert.equal(fileResult.filing, true, "filing-permission ask is steered");
+  const fileCall = request("filing");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing" }, fileCall).kind, "filing");
+  assert.match(fileCall.messages.at(-1).parts[0].text, /file it now/);
+  assert.equal(blockerGuard.completeText({ sessionID: "filing" }, { text: fileAsk }).corrected, false, "second matching closeout queues nothing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true);
+  blockerGuard.beforeTool({ sessionID: "filing-discarded", tool: "bash", callID: "filing-tool" }, { args: {} });
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).injected, false, "tool call discards pending filing steering");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).filing, true, "discarded steering does not consume the allowance");
+  assert.equal(blockerGuard.injectSteering({ sessionID: "filing-discarded" }, request("filing-discarded")).kind, "filing");
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-discarded" }, { text: fileAsk }).corrected, false, "delivered steering consumes the allowance");
+  for (const [name, ask] of [
+    ["not needed option", "1. **Should I file an issue for X?** y = file · n = not needed"],
+    ["undecided expected behaviour", "1. Should I file an issue, or is this expected behaviour?"],
+    ["undecided intended behavior", "1. Should I file an issue, or is this intended behavior?"],
+    ["undecided necessity", "1. Should I file an issue, or is it unnecessary?"],
+    ["other organisation", "1. **Should I file an issue in another organisation's repository?**"],
+    ["third-party repository", "1. Should I file an issue in a third-party repository?"],
+    ["third party repo", "1. Should I file an issue in a third party repo?"],
+    ["external repository", "1. Should I file an issue in an external repository?"],
+    ["upstream repositories", "1. Should I file an issue in upstream repositories?"],
+    ["secret", "1. **Should I file a task to rotate the secret?**"],
+    ["spend", "1. **Should I file a task to approve the spend?**"],
+    ["release", "1. **Should I release v1.2.3?**"],
+    ["create release", "1. Should I create a release for this issue?"],
+    ["open pull request", "1. Should I open a pull request for this issue?"],
+    ["merge", "1. **Should I merge the PR for the issue?**"],
+    ["mention only", "1. **Is the issue fix acceptable?**"],
+    ["mixed deploy last", "1. Should I file an issue?\n2. May I deploy the release?"],
+    ["mixed deploy first", "1. May I deploy the release?\n2. Should I file an issue?"],
+    ["inline private data", "1. Should I file an issue containing `private data`?"],
+    ["inline secret", "1. Should I file an issue containing `credentials`?"],
+    ["fenced ask", "```text\n1. Should I file an issue?\n```"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).corrected, false, `${name} ask is not steered`);
+  }
+  assert.equal(blockerGuard.completeText({ sessionID: "filing-lead" }, { text: askWith("1. **File a worker task to add the warning?**") }).filing, true, "bare filing verb lead matches");
+  for (const item of ["issue", "worker task", "local TODO", "actionable follow-up ticket", "follow-up"]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-item-${item}` }, { text: askWith(`1. Should I create a ${item}?`) }).filing, true, `${item} remains a filing item`);
+  }
+  for (const [name, ask] of [
+    ["all filing", "1. Should I file an issue?\n2. Should I log a task?"],
+    ["fenced exclusions", "1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```"],
+  ]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).filing, true, `${name} remains filing-only`);
+  }
+
   // GH#35121: a closeout that asks for nothing while files this session
   // edited remain uncommitted is steered toward the Capture Check, across
   // every touched repository. Read-only sessions, asks, committed edits and

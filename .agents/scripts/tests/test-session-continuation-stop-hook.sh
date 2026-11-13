@@ -238,6 +238,77 @@ test_capture_check() {
 	return 0
 }
 
+# GH#37979: a closeout whose only ask is permission to file is blocked once.
+test_filing_permission() {
+	local t="$WORK_DIR/filing.jsonl" out
+	local pre=$'Done.\n\n**What next**\n- **Session:** x — Done\n- **Needed from you:**\n  '
+	local post=$'\n- **Left to capture:** None\n- **Close:** Ready to close'
+
+	write_transcript "$t" "Go" "none" "${pre}1. **Should I file a worker-ready issue so X warns about Y?**${post}"
+	out=$(run_hook f-ask "$t")
+	if [[ "$out" == *'"decision": "block"'* && "$out" == *"file it now"* ]]; then
+		print_result "filing-permission ask → one block reason" 0
+	else
+		print_result "filing-permission ask → one block reason" 1 "got: ${out:-<empty>}"
+	fi
+	expect_allow "second matching closeout in the session → allow" "$(run_hook f-ask "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. **Should I file an issue for X?** y = file · n = not needed${post}"
+	expect_allow "ask offering not needed → allow" "$(run_hook f-notneeded "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. **Should I file an issue in another organisation's repository?**${post}"
+	expect_allow "ask naming another organisation → allow" "$(run_hook f-org "$t")"
+	local ask
+	for ask in \
+		"Should I file an issue, or is this expected behaviour?" \
+		"Should I file an issue, or is this intended behavior?" \
+		"Should I file an issue, or is it unnecessary?" \
+		"Should I file an issue in a third-party repository?" \
+		"Should I file an issue in a third party repo?" \
+		"Should I file an issue in an external repository?" \
+		"Should I file an issue in upstream repositories?"; do
+		write_transcript "$t" "Go" "none" "${pre}1. ${ask}${post}"
+		expect_allow "undecided need or external repository: $ask → allow" "$(run_hook "f-excluded-$ask" "$t")"
+	done
+	write_transcript "$t" "Go" "none" "${pre}1. **Should I release v1.2.3?**${post}"
+	expect_allow "release ask → allow (regression guard)" "$(run_hook f-release "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. Should I create a release for this issue?${post}"
+	expect_allow "create release for an issue → allow" "$(run_hook f-create-release "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. Should I open a pull request for this issue?${post}"
+	expect_allow "open pull request for an issue → allow" "$(run_hook f-open-pr "$t")"
+	local item case_number=0
+	for ask in \
+		$'1. Should I file an issue?\n2. May I deploy the release?' \
+		$'1. May I deploy the release?\n2. Should I file an issue?' \
+		"1. Should I file an issue containing \`private data\`?" \
+		"1. Should I file an issue containing \`credentials\`?" \
+		$'```text\n1. Should I file an issue?\n```'; do
+		case_number=$((case_number + 1))
+		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"
+		expect_allow "mixed, sensitive or fenced ask $case_number → allow" "$(run_hook "f-preserve-$case_number" "$t")"
+	done
+	for ask in \
+		$'1. Should I file an issue?\n2. Should I log a task?' \
+		$'1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```'; do
+		case_number=$((case_number + 1))
+		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"
+		out=$(run_hook "f-only-$case_number" "$t")
+		if [[ "$out" == *'"decision": "block"'* && "$out" == *"file it now"* ]]; then
+			print_result "filing-only asks with fenced examples ignored → block" 0
+		else
+			print_result "filing-only asks with fenced examples ignored → block" 1 "got: ${out:-<empty>}"
+		fi
+	done
+	for item in "issue" "worker task" "local TODO" "actionable follow-up ticket" "follow-up"; do
+		write_transcript "$t" "Go" "none" "${pre}1. Should I create a ${item}?${post}"
+		out=$(run_hook "f-item-$item" "$t")
+		if [[ "$out" == *'"decision": "block"'* && "$out" == *"file it now"* ]]; then
+			print_result "$item remains a filing item" 0
+		else
+			print_result "$item remains a filing item" 1 "got: ${out:-<empty>}"
+		fi
+	done
+	return 0
+}
+
 test_settings_registration() {
 	local home="$WORK_DIR/home"
 	mkdir -p "$home/.claude"
@@ -267,6 +338,7 @@ main() {
 	echo "=== session_continuation_stop.py tests (GH#33143) ==="
 	test_hook_decisions
 	test_capture_check
+	test_filing_permission
 	test_settings_registration
 	echo ""
 	echo "Tests: $TESTS_RUN, failed: $TESTS_FAILED"
