@@ -696,14 +696,35 @@ _dedup_layer6_assignee_and_stale() {
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		local assigned_output=""
-		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
-			local assigned_reason="unknown"
-			assigned_reason=$("$dedup_helper" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
+		local assigned_output="" assigned_rc=0
+		# GH#38180: the helper classifies its own block into a private file, so
+		# a block no longer starts a second helper process for classify-blocker.
+		local layer6_reason_file=""
+		layer6_reason_file=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/layer6-reason.XXXXXX" 2>/dev/null) || layer6_reason_file=""
+		# Under a dispatcher, hand the helper the stage context so it records
+		# dedup.layer6.<sub_gate> rows (same pattern as layer 4, GH#38101).
+		local -a layer6_cmd=("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login")
+		if _dedup_layer4_timing_enabled; then
+			layer6_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
+				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer6_cmd[@]}")
+		fi
+		assigned_output=$(AIDEVOPS_DDH_BLOCKER_REASON_FILE="$layer6_reason_file" \
+			"${layer6_cmd[@]}" 2>>"$LOGFILE") || assigned_rc=$?
+		if [[ "$assigned_rc" -eq 0 ]]; then
+			local assigned_reason=""
+			if [[ -n "$layer6_reason_file" && -s "$layer6_reason_file" ]]; then
+				IFS= read -r assigned_reason <"$layer6_reason_file" || true
+			fi
+			[[ "$assigned_reason" =~ ^[a-z0-9_]+$ ]] || assigned_reason=""
+			if [[ -z "$assigned_reason" ]]; then
+				assigned_reason=$("$dedup_helper" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
+			fi
+			[[ -z "$layer6_reason_file" ]] || rm -f "$layer6_reason_file"
 			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
 			printf '%s\n' "$assigned_output"
 			return 0
 		fi
+		[[ -z "$layer6_reason_file" ]] || rm -f "$layer6_reason_file"
 		if [[ "$assigned_output" == *STALE_PR_CONTINUATION* ]]; then
 			_dispatch_stale_pr_checkpoint_continuation "$issue_number" "$repo_slug" "$assigned_output" "$self_login" || true
 			return 0
