@@ -965,7 +965,7 @@ _hrff_project_draft_checkpoint() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner_name="$3"
-	local spec_restore_rc=0
+	local spec_restore_rc=0 dispatch_restored=0
 
 	# GH#36019: the draft is preserved work awaiting exact-head continuation
 	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
@@ -975,21 +975,32 @@ _hrff_project_draft_checkpoint() {
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
 			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
 	fi
-	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 	# A draft may have merged between checkpoint classification and release.
 	# Reconcile only after projection/unassignment; the shared guard requires
 	# available state and proves that NO open PR still owns the issue.
 	# shellcheck source=pulse-merge-partial-continuation.sh
 	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
-	_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
+	if _pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1; then
+		dispatch_restored=1
+	fi
 	# GH#38021: the escalation removed auto-dispatch, and a canonical
 	# consolidated spec is filtered out of dispatch without it. Put back
 	# only what this run removed; the draft still routes the exact head.
 	_pmpc_restore_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || spec_restore_rc=$?
 	if [[ "$spec_restore_rc" -eq 0 ]]; then
+		dispatch_restored=1
 		print_info "Restored auto-dispatch on consolidated spec #${issue_number} removed by this run's draft checkpoint"
 	elif [[ "$spec_restore_rc" -eq 2 ]]; then
 		print_warning "[lifecycle] checkpoint_spec_dispatch_not_restored issue=${issue_number} — this run's draft checkpoint removed auto-dispatch; the issue was unreadable, held, owned or not available afterwards"
+	fi
+	# aidevops:trust-boundary — the lock decision follows the label state left
+	# by the restores above (GH#30180). A restore returns the issue to the
+	# dispatch queue, so this release must not reopen its conversation; the
+	# unlock helper re-reads the labels in every other case.
+	if [[ "$dispatch_restored" -eq 1 ]]; then
+		print_info "Retaining conversation lock for #${issue_number} in ${repo_slug}: this release restored auto-dispatch"
+	else
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 	fi
 	print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
 	return 0
