@@ -999,8 +999,8 @@ test_routine_evaluation_precedes_preflight() {
 	routine_match=$(printf '%s\n' "$main_body" | grep -nxE '[[:space:]]*_pulse_run_cycle_routines;?' || true)
 	preflight_match=$(printf '%s\n' "$main_body" | grep -nF 'if ! _run_preflight_stages; then' || true)
 	# The full-cycle pass publishes; only the busy-lock pass skips publication.
-	if printf '%s\n' "$routines_body" | grep -qF '_pulse_run_budget_priority_stage_with_timeout "evaluate_routines"' &&
-		printf '%s\n' "$routines_body" | grep -qE 'evaluate_routines_locked( \|\||$)'; then
+	if grep -qF '_pulse_run_budget_priority_stage_with_timeout "evaluate_routines"' <<<"$routines_body" &&
+		grep -qE 'evaluate_routines_locked( \|\||$)' <<<"$routines_body"; then
 		helper_evaluates=1
 	fi
 	graphql_budget_line="${graphql_budget_match%%:*}"
