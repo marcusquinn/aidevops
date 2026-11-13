@@ -752,6 +752,42 @@ _preflight_post_label_refill() {
 # _run_preflight_stages() with independent timeouts. See the call site below.
 
 #######################################
+# GH#37939: cooperative budget for the single-pass reconcile child. It must
+# end before the stage watchdog, keeping the 20s allowance of the former
+# 380/360 pair: min(configured RECONCILE_TIME_BUDGET_SECS, stage - 20), floor
+# 1s. A configured 0 (unbounded) or longer budget is clamped; a shorter one
+# is kept. A non-numeric value uses the child's own 360s default.
+# Arguments: $1 - stage watchdog budget in seconds
+# Output: cooperative budget in seconds
+#######################################
+_preflight_reconcile_cooperative_budget() {
+	local stage_budget="$1"
+	local configured="${RECONCILE_TIME_BUDGET_SECS:-360}" cap=1
+	[[ "$configured" =~ ^[0-9]+$ ]] || configured=360
+	[[ "$stage_budget" =~ ^[0-9]+$ ]] && cap=$((stage_budget - 20))
+	[[ "$cap" -ge 1 ]] || cap=1
+	if [[ "$configured" -eq 0 || "$configured" -gt "$cap" ]]; then
+		configured="$cap"
+	fi
+	printf '%s\n' "$configured"
+	return 0
+}
+
+#######################################
+# Run reconcile_issues_single_pass under its stage watchdog with the clamped
+# cooperative budget. The function-local shadow reaches only this stage's
+# child (dynamic scope), never later stages or direct callers.
+# Arguments: $1 - stage watchdog budget in seconds
+#######################################
+_preflight_run_reconcile_single_pass() {
+	local stage_budget="$1" cooperative_budget
+	cooperative_budget=$(_preflight_reconcile_cooperative_budget "$stage_budget")
+	local RECONCILE_TIME_BUDGET_SECS="$cooperative_budget"
+	run_stage_with_timeout "reconcile_issues_single_pass" "$stage_budget" reconcile_issues_single_pass
+	return $?
+}
+
+#######################################
 # Ownership normalization + issue reconciliation stages.
 # Ensures active labels reflect ownership (prevents multi-worker overlap),
 # closes issues whose linked PRs already merged, and reconciles status:done
@@ -791,7 +827,7 @@ _preflight_ownership_reconcile() {
 	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
 	# GH#36908: live intake has its own timeout, before the cache/cursor pass
-	# starts its internal 360-second budget. A stale snapshot cannot hide intake.
+	# starts its internal cooperative budget. A stale snapshot cannot hide intake.
 	local intake_budget=$((outer_budget - (SECONDS - ownership_start) - reserve))
 	if [[ "$intake_budget" -gt 0 ]]; then
 		[[ "$intake_budget" -le 60 ]] || intake_budget=60
@@ -803,8 +839,9 @@ _preflight_ownership_reconcile() {
 	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
 	# Replaces the five sequential stage calls that each had their own per-repo
 	# fetch loop; now 5N → N iterations per cycle.
-	# Run the shorter, higher-value pass first. The 360s internal budget gets a
-	# watchdog allowance; normalization receives only the time actually left.
+	# Run the shorter, higher-value pass first. Its cooperative budget (at most
+	# 360s) is clamped 20s inside this stage budget so it yields at its cursor
+	# before the watchdog (GH#37939); normalization receives the time left.
 	# GH#35684: normalization is the only recovery for stranded dispatch claims,
 	# so when the budget allows both stages, keep a floor for it.
 	local normalize_floor="${AIDEVOPS_PULSE_NORMALIZE_FLOOR_S:-60}"
@@ -816,7 +853,7 @@ _preflight_ownership_reconcile() {
 			reconcile_budget=$((remaining - normalize_floor))
 		fi
 		[[ "$reconcile_budget" -le 380 ]] || reconcile_budget=380
-		run_stage_with_timeout "reconcile_issues_single_pass" "$reconcile_budget" reconcile_issues_single_pass || true
+		_preflight_run_reconcile_single_pass "$reconcile_budget" || true
 	fi
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
