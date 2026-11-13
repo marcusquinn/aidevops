@@ -1700,7 +1700,8 @@ _pulse_run_supervisor_phase() {
 	_pulse_cycle_state_publish supervising || true
 	# GH#37907: read a deploy drain request before lock release removes it. A
 	# drained earlier-bundle cycle skips the optional LLM supervisor and exits
-	# so the scheduler starts the activated bundle without another long phase.
+	# so the scheduler starts the activated bundle without another long phase,
+	# unless the supervisor is starved (GH#38162 drain escape below).
 	local _pulse_drain_bundle=""
 	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1; then
 		_pulse_drain_bundle=$(_pulse_drain_requested_bundle) || _pulse_drain_bundle=""
@@ -1720,24 +1721,56 @@ _pulse_run_supervisor_phase() {
 	# re-exec can kill it. The next cycle must not wait for maintenance to finish.
 	release_instance_lock
 	_pulse_finish_post_dispatch_housekeeping
+	local _pulse_supervisor_age=""
+	_pulse_supervisor_age=$(_pulse_supervisor_last_attempt_age) || _pulse_supervisor_age="unknown"
 	if [[ -n "$_pulse_drain_bundle" ]]; then
-		echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
+		# GH#38162: hourly drift redeploys drain most cycles on a loaded runner,
+		# so an unconditional skip starved the supervisor (and terminal-blocker
+		# recovery) for days. Once the latest attempt/success is older than
+		# PULSE_LLM_DRAIN_ESCAPE_SECONDS (default 2h, below the 3h recovery
+		# interval; 0 disables), make one normally gated supervisor decision.
+		# The lock is already released and the census handed off, so the drain
+		# contract (no new census or dispatch from this bundle) is unchanged.
+		if ! _pulse_supervisor_starved_for "${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}"; then
+			echo "[pulse-wrapper] Skipping LLM supervisor: cooperative drain requested; activated bundle ${_pulse_drain_bundle} starts next cycle (GH#37907, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+			return 0
+		fi
+		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested, but no supervisor attempt within ${PULSE_LLM_DRAIN_ESCAPE_SECONDS:-7200}s — evaluating supervisor before bundle ${_pulse_drain_bundle} starts (GH#38162 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+		# The drain marker is removed with the lock, so flag the escape for the
+		# supervisor stage: it must not run the dispatch_max recycle loop.
+		_PULSE_DRAIN_ESCAPE=1 _pulse_run_supervisor_decision "$_pulse_supervisor_age"
 		return 0
 	fi
-	# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
-	# the supervisor prompt reads STATE_FILE, so defer it to a complete cycle —
-	# unless prefetch has degraded long enough that the supervisor would starve;
-	# then run it with the state file marked incomplete.
-	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" == "1" ]]; then
-		if _pulse_degraded_prefetch_supervisor_escape_due; then
-			echo "[pulse-wrapper] LLM supervisor: prefetch incomplete, but no supervisor attempt within ${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}s — running with state marked incomplete (GH#34000 starvation escape)" >>"$LOGFILE"
-			_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
-		else
-			echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete this cycle (GH#34000)" >>"$LOGFILE"
-		fi
-	else
-		_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
+	_pulse_run_supervisor_decision "$_pulse_supervisor_age"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_supervisor_decision
+#
+# GH#34000: an incomplete prefetch still runs the deterministic pipeline, but
+# the supervisor prompt reads STATE_FILE, so defer the snapshot-driven
+# triggers (daily sweep, stall) to a complete cycle — unless prefetch has
+# degraded long enough that the supervisor would starve; then run the full
+# trigger set with the state file marked incomplete. GH#38162: queue-driven
+# blocker recovery does not depend on STATE_FILE, so evaluate it on every
+# degraded cycle (state still marked incomplete for the prompt).
+# Args: $1=latest supervisor attempt/success age in seconds (for log lines)
+# ---------------------------------------------------------------------------
+_pulse_run_supervisor_decision() {
+	local _pulse_supervisor_age="$1"
+	local _stage="llm_supervisor"
+	if [[ "${_PULSE_PREFETCH_DEGRADED:-0}" != "1" ]]; then
+		_pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
+		return 0
 	fi
+	if _pulse_degraded_prefetch_supervisor_escape_due; then
+		echo "[pulse-wrapper] LLM supervisor: prefetch incomplete, but no supervisor attempt within ${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}s — running with state marked incomplete (GH#34000 starvation escape, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+		_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
+		return 0
+	fi
+	echo "[pulse-wrapper] LLM supervisor: prefetch state incomplete this cycle; evaluating queue-driven triggers only (GH#38162, last_attempt_age_s=${_pulse_supervisor_age})" >>"$LOGFILE"
+	_PULSE_SUPERVISOR_STATE_INCOMPLETE=1 _PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY=1 _pulse_run_optional_stage "$_stage" _pulse_maybe_run_llm_supervisor || true
 	return 0
 }
 

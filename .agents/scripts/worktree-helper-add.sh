@@ -1583,8 +1583,10 @@ _cmd_add_verify_created_generation() {
 	_ADD_PROVISION_OWNER_CONTRACT=""
 	_cmd_add_verify_collision_tip "$branch" "$path" || return 1
 	owner_pid=$(_resolve_worktree_owner_pid "") || return 1
-	register_worktree "$path" "$branch" --task "$explicit_issue" || registration_status=$?
-	registration_contract=$(_cmd_add_created_registration_contract \
+	# GH#38149: time each verification step so the dominant cost is visible.
+	_ds_substage_run precreate.verify.register \
+		register_worktree "$path" "$branch" --task "$explicit_issue" || registration_status=$?
+	registration_contract=$(_ds_substage_run precreate.verify.contract _cmd_add_created_registration_contract \
 		"$path" "$owner_pid" "$owner_session" "$explicit_issue" 2>/dev/null) || registration_contract=""
 	if [[ "$registration_status" -ne 0 ]] ||
 		[[ -z "$registration_contract" ]]; then
@@ -1596,7 +1598,8 @@ _cmd_add_verify_created_generation() {
 	IFS='|' read -r registered_owner_pid registered_owner_session registered_owner_batch \
 		registered_task registered_created_at <<<"$registration_contract"
 
-	if _cmd_add_reconcile_cleanup_generation "$branch" "$path" "$owner_pid" "$owner_session"; then
+	if _ds_substage_run precreate.verify.reconcile \
+		_cmd_add_reconcile_cleanup_generation "$branch" "$path" "$owner_pid" "$owner_session"; then
 		_ADD_PROVISION_OWNER_CONTRACT="${registered_owner_pid}|${registered_owner_session}|${registered_owner_batch}|${registered_task}|${registered_created_at}"
 		return 0
 	fi

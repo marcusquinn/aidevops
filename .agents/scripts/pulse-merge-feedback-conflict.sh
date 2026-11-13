@@ -13,6 +13,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
     unset _pmf_module_path
 fi
 
+# GH#38169: on-branch repair is tried before _dispatch_conflict_fix_worker
+# (the close-and-redispatch fallback below stays unchanged).
+if [[ -f "${BASH_SOURCE[0]%/*}/pulse-merge-conflict-repair.sh" ]]; then
+	# shellcheck source=./pulse-merge-conflict-repair.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-conflict-repair.sh"
+fi
+
 _conflict_add_add_path_set() {
 	local repo_path="${1:-}"
 	local add_add_files=""
