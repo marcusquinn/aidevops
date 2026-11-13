@@ -949,16 +949,14 @@ _pulse_reconcile_stale_blocked_if_due() {
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
 	_pulse_sweep_checkpoint_ledger
-	# Revision claims must be revisited even when the stale-blocked cadence is
-	# fresh: their issue is normally available, not status:blocked.
-	# Fallback rotation: covers claims posted before the ledger existed.
+	# Fallback rotation (claims predating the ledger): revisited even when the
+	# stale-blocked cadence is fresh, as their issue is normally not blocked.
 	if declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1; then
 		local claim_repos=() claim_index=0 claim_start=0 claim_position=0
 		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
 		sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
 		now_epoch=$(date +%s) || return 0
-		# Reserve half the available stage for existing reconciliation work.
-		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2))
+		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2)) # half the stage
 		while IFS= read -r repo_slug; do
 			[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
 		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)

@@ -1429,11 +1429,9 @@ cmd_transition() {
 		fi
 	fi
 	local active_claims="" current_phase="" current_expires_at="" claim_record="" claim_author="" claim_device="" claim_session="" current_login="" current_device=""
-	# Runtime overrides quarantine peer claims only. Resolve and pass this runner
-	# before filtering so a stale self-ignore entry cannot hide the lease that
-	# this same authenticated runner is authorized to transition.
-	# GH#34057: each deny below emits one allowlisted reason on stderr via
-	# _transition_deny; exit codes and decisions are unchanged.
+	# Runtime overrides quarantine peer claims only: resolve this runner before
+	# filtering so a stale self-ignore entry cannot hide its own lease.
+	# GH#34057: each deny emits one allowlisted reason via _transition_deny.
 	if ! current_login=$(_resolve_runner "") || [[ -z "$current_login" ]]; then
 		_transition_deny identity_unavailable
 		return 1
