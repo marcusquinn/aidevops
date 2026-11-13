@@ -940,11 +940,13 @@ write_release_pr_fixture() {
 	local live_head="$2"
 	local pinned_object="$3"
 	local pinned_commit="$4"
+	local head_repo="${5:-owner/repo}" base_repo="${6:-owner/repo}"
 	jq -n --arg method "$merge_method" --arg head "$live_head" \
+		--arg head_repo "$head_repo" --arg base_repo "$base_repo" \
 		--arg marker "<!-- aidevops:release-provenance tag=v1.2.3 tag-object=${pinned_object} release-commit=${pinned_commit} merge-method=merge -->" '
 		{auto_merge: {enabled_at: "2026-11-13T02:19:48Z", merge_method: $method},
-		head: {ref: "chore/release-v1.2.3-provenance", sha: $head, repo: {full_name: "owner/repo"}},
-		base: {repo: {full_name: "owner/repo"}}, author_association: "OWNER",
+		head: {ref: "chore/release-v1.2.3-provenance", sha: $head, repo: {full_name: $head_repo}},
+		base: {repo: {full_name: $base_repo}}, author_association: "OWNER",
 		labels: [{name: "release"}], body: ("Release PR\n\n" + $marker)}' \
 		>"${TEST_ROOT}/auto_merge_request.txt"
 	: >"$GH_LOG"
@@ -964,7 +966,8 @@ test_protected_release_exact_merge_queue_survives_collaborator_pulse() {
 	git init -q "${TEST_ROOT}/repo"
 	git -C "${TEST_ROOT}/repo" fetch -q --depth=1 "$project_dir" HEAD
 	signed_head=$(git -C "${TEST_ROOT}/repo" rev-parse FETCH_HEAD)
-	other_commit=$(git -C "${TEST_ROOT}/repo" commit-tree -m drift "${signed_head}^{tree}")
+	other_commit=$(git -c user.name=Release -c user.email=release@example.invalid \
+		-C "${TEST_ROOT}/repo" commit-tree --no-gpg-sign -m drift "${signed_head}^{tree}")
 	ssh-keygen -q -t ed25519 -N '' -f "${TEST_ROOT}/release-key"
 	# Signing trust exists only inside this fixture builder; the consumer below
 	# models a collaborator runner whose verify-tag cannot match the signer.
@@ -1006,6 +1009,17 @@ test_protected_release_exact_merge_queue_survives_collaborator_pulse() {
 	else
 		print_result "Collaborator pulse retains exact-merge queue bound to remote release evidence" 1 \
 			"rc=${result}; gh log: $(cat "$GH_LOG")"
+	fi
+
+	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head" Owner/Repo OWNER/REPO
+	result=0
+	_pmp_hold_protected_release_pr 904 oWner/rEpo \
+		chore/release-v1.2.3-provenance "$signed_head" || result=$?
+	if [[ "$result" -eq 0 ]] && ! grep -qE 'gh pr (merge|ready)' "$GH_LOG" &&
+		grep -q 'bound to the remote signed release evidence' "$LOGFILE"; then
+		print_result "Mixed-case repository names retain the exact-merge queue" 0
+	else
+		print_result "Mixed-case repository names retain the exact-merge queue" 1 "rc=${result}"
 	fi
 
 	write_release_pr_fixture merge "$signed_head" "$tag_object" "$signed_head"

@@ -221,11 +221,12 @@ _pmp_protected_release_queue_decision() {
 	local head_ref="$3"
 	local head_oid="$4"
 	local auto_method="" live_head="" head_repo="" base_repo="" author_association=""
-	local pr_body="" repo_path="" binding_rc=0
+	local pr_body="" repo_path="" binding_rc=0 normalized_repo=""
 	auto_method=$(printf '%s' "$pr_json" | jq -r '.auto_merge.merge_method // ""' 2>/dev/null) || auto_method=""
 	live_head=$(printf '%s' "$pr_json" | jq -r '.head.sha // ""' 2>/dev/null) || live_head=""
-	head_repo=$(printf '%s' "$pr_json" | jq -r '.head.repo.full_name // ""' 2>/dev/null) || head_repo=""
-	base_repo=$(printf '%s' "$pr_json" | jq -r '.base.repo.full_name // ""' 2>/dev/null) || base_repo=""
+	head_repo=$(printf '%s' "$pr_json" | jq -r '(.head.repo.full_name // "") | ascii_downcase' 2>/dev/null) || head_repo=""
+	base_repo=$(printf '%s' "$pr_json" | jq -r '(.base.repo.full_name // "") | ascii_downcase' 2>/dev/null) || base_repo=""
+	normalized_repo=$(printf '%s' "$repo_slug" | jq -Rr 'ascii_downcase') || return 1
 	author_association=$(printf '%s' "$pr_json" | jq -r '.author_association // ""' 2>/dev/null) || author_association=""
 	pr_body=$(printf '%s' "$pr_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
 	# aidevops:trust-boundary — only the release lane's ancestry-preserving
@@ -234,8 +235,8 @@ _pmp_protected_release_queue_decision() {
 		printf "protected release PR native auto-merge uses '%s', not the ancestry-preserving exact merge" "${auto_method:-unknown}"
 		return 1
 	fi
-	if [[ -z "$head_oid" || "$live_head" != "$head_oid" || "$head_repo" != "$repo_slug" ||
-		"$base_repo" != "$repo_slug" ]]; then
+	if [[ -z "$head_oid" || "$live_head" != "$head_oid" || "$head_repo" != "$normalized_repo" ||
+		"$base_repo" != "$normalized_repo" ]]; then
 		printf '%s' "protected release PR live head or repository no longer matches the gated head"
 		return 1
 	fi
