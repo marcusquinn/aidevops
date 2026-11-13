@@ -367,24 +367,23 @@ test_stale_cache_trust_fallback() {
 		gh() {
 			local request="$*"
 			printf 'list\n' >>"${TEST_TMPDIR}/rest-list.log"
-			case "$request" in
-			'api repos/test/repo/issues?state=open&per_page=100&page=1')
+			if [[ "$request" == 'api repos/test/repo/issues?state=open&per_page=100&page=1' ]]; then
 				jq -cn '[
 				{"number":1,"title":"member","body":null,"labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"}},
 				{"number":2,"title":"external","body":"","labels":[{"name":"status:done"},{"name":"needs-maintainer-review"}],"author_association":"NONE","user":{"login":"external","type":"User"}}
 				] + [range(100;198) | {number:.,pull_request:{}}]'
-				;;
-			'api repos/test/repo/issues?state=open&per_page=100&page=2')
+				return 0
+			fi
+			if [[ "$request" == 'api repos/test/repo/issues?state=open&per_page=100&page=2' ]]; then
 				[[ "${fail_second_page:-0}" -eq 0 ]] || return 1
 				printf '%s\n' '[
 				{"number":3,"title":"owner","body":"","labels":[{"name":"status:done"}],"author_association":"OWNER","user":{"login":"owner","type":"User"}},
 				{"number":4,"title":"PR","body":"","labels":[{"name":"status:done"}],"author_association":"MEMBER","user":{"login":"member","type":"User"},"pull_request":{}},
 				{"number":5,"title":"unknown","body":"","labels":[{"name":"status:done"}]}
 				]'
-				;;
-			*) return 1 ;;
-			esac
-			return 0
+				return 0
+			fi
+			return 1
 		}
 		_action_rsd_single() {
 			printf 'reset:%s:%s:%s\n' "$issue_num" "$issue_author_association" "$issue_author_login"
