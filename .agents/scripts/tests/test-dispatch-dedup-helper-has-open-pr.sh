@@ -97,7 +97,14 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 				break
 			fi
 		done <"${GH_FIXTURE_FILE}"
-		jq -cn --argjson nodes "$fixture_payload" --argjson cost "$graphql_cost" '
+		# Like GitHub, derive closing references from body keywords unless the
+		# fixture supplies them; PRs are same-repository unless stated (GH#38124).
+		jq -cn --argjson nodes "$fixture_payload" --argjson cost "$graphql_cost" --arg repo "$local_repo" '
+			($repo | split("/")) as $slug |
+			def closing_refs($body):
+				[($body // "") | scan("(?i)(?:^|[^a-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \\t]+#([1-9][0-9]*)") |
+					.[0] | tonumber] | unique |
+				map({number: ., repository: {name: $slug[1], owner: {login: $slug[0]}}});
 			{
 				data: {
 					search: {
@@ -111,6 +118,9 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 							mergeStateStatus: ($pr.mergeStateStatus // null),
 							mergeable: ($pr.mergeable // null),
 							changedFiles: ($pr.changedFiles // 0),
+							isCrossRepository: ($pr.isCrossRepository // false),
+							headRefName: ($pr.headRefName // ""),
+							closingIssuesReferences: {nodes: ($pr.closingIssuesReferences // closing_refs($pr.body))},
 							files: {
 								nodes: ($pr.files // []),
 								pageInfo: {hasNextPage: ($pr.filesHasNextPage // false)}
@@ -563,9 +573,15 @@ test_has_open_pr_distinguishes_body_mentions_from_references() {
 			title="Implement another issue"
 			expected=0
 			[[ "$body" == 'The results phase (#33653) stays open.' ]] && expected=1
+			# GH#38124: a worker draft blocks only when continuation can adopt it.
+			# Slug-qualified and GH#N body references are context the shared
+			# predicate rejects, so blocking on them would stall the issue.
+			if [[ "$is_draft" == true && "$body" != 'For #33653.' ]]; then
+				expected=1
+			fi
 			set_gh_fixtures "marcusquinn/aidevops|open|#33653|[{\"number\":33654,\"title\":\"${title}\",\"body\":\"${body}\",\"isDraft\":${is_draft},\"reviewDecision\":\"APPROVED\",\"mergeStateStatus\":\"CLEAN\",\"labels\":[{\"name\":\"origin:worker\"}]}]"
 			rc=0
-			output=$("$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'body reference regression') || rc=$?
+			output=$("$HELPER_SCRIPT" has-open-pr 33653 marcusquinn/aidevops 'body reference regression' 2>&1) || rc=$?
 			if [[ "$rc" -eq "$expected" ]]; then
 				print_result "has-open-pr body reference (draft=${is_draft}): ${body}" 0
 			else
@@ -615,6 +631,61 @@ test_has_open_pr_inline_for_matches_continuation_predicate() {
 		return 0
 	fi
 	print_result "has-open-pr and continuation agree on inline 'For #N' draft" 1 "Unexpected output: ${output}"
+	return 0
+}
+
+# Args: $1=label, $2=issue, $3=checkpoint | unlinked:<reason>
+_assert_worker_draft_route() {
+	local label="$1" issue="$2" expected="$3"
+	local stdout="" stderr="" rc=0 matched=false
+	local stderr_file="${TEST_ROOT}/worker-draft-route.err"
+	stdout=$("$HELPER_SCRIPT" has-open-pr "$issue" marcusquinn/aidevops 'worker draft route' 2>"$stderr_file") || rc=$?
+	stderr=$(<"$stderr_file")
+	case "$expected" in
+	checkpoint)
+		[[ "$rc" -eq 0 && "$stdout" == WORKER_DRAFT_CHECKPOINT:* ]] && matched=true
+		;;
+	unlinked:*)
+		[[ "$rc" -eq 1 && -z "$stdout" &&
+			"$stderr" == *"WORKER_DRAFT_CHECKPOINT_UNLINKED: issue=#${issue} pr=#"*"reason=${expected#unlinked:};"* ]] && matched=true
+		;;
+	esac
+	if [[ "$matched" == true ]]; then
+		print_result "$label" 0
+		return 0
+	fi
+	print_result "$label" 1 "rc=${rc} stdout=${stdout} stderr=${stderr}"
+	return 0
+}
+
+# GH#38124: dedup blocks a worker draft only for the issue continuation adopts.
+test_has_open_pr_worker_draft_routes_follow_continuation() {
+	local fixture_prefix='{"number":18920,"title":"Worker checkpoint","isDraft":true,"labels":[{"name":"origin:worker"}],'
+	local related="${fixture_prefix}"'"body":"For #18791\n\n## Related\n\nRef #18792"}'
+	set_gh_fixtures "marcusquinn/aidevops|open|#18791|[${related}]"$'\n'"marcusquinn/aidevops|open|#18792|[${related}]"
+	_assert_worker_draft_route "related draft: For target keeps its checkpoint" 18791 checkpoint
+	_assert_worker_draft_route "related draft: Ref target dispatches normally" 18792 unlinked:related_reference
+
+	local body='For #18793 data phase.\nFor #18794 publication phase.' ambiguous=""
+	ambiguous="${fixture_prefix}\"headRefName\":\"feature/auto-20261113-000000-gh18794-r2\",\"body\":\"${body}\"}"
+	set_gh_fixtures "marcusquinn/aidevops|open|#18793|[${ambiguous}]"$'\n'"marcusquinn/aidevops|open|#18794|[${ambiguous}]"
+	_assert_worker_draft_route "ambiguous draft: dispatch identity keeps its checkpoint" 18794 checkpoint
+	_assert_worker_draft_route "ambiguous draft: other For target dispatches normally" 18793 unlinked:related_reference
+	local pr_json=""
+	pr_json=$(jq -c '{body,isDraft,labels,headRefName,isCrossRepository:false,closingIssuesReferences:[]}' <<<"$ambiguous")
+	if bash -c 'source "$1" && _pr_checkpoint_nonclosing_draft_links_issue "$2" 18794 &&
+		! _pr_checkpoint_nonclosing_draft_links_issue "$2" 18793' _ \
+		"${SCRIPT_DIR}/../pr-checkpoint-target-lib.sh" "$pr_json"; then
+		print_result "continuation adopts the ambiguous draft only for its dispatch identity" 0
+	else
+		print_result "continuation adopts the ambiguous draft only for its dispatch identity" 1 "pr=${pr_json}"
+	fi
+
+	# A numeric-boundary miss (gh187940) proves no identity: neither issue blocks.
+	ambiguous="${fixture_prefix}\"headRefName\":\"feature/auto-20261113-000000-gh187940\",\"body\":\"${body}\"}"
+	set_gh_fixtures "marcusquinn/aidevops|open|#18793|[${ambiguous}]"$'\n'"marcusquinn/aidevops|open|#18794|[${ambiguous}]"
+	_assert_worker_draft_route "unproven ambiguous draft does not block its first target" 18793 unlinked:ambiguous
+	_assert_worker_draft_route "unproven ambiguous draft does not block its second target" 18794 unlinked:ambiguous
 	return 0
 }
 
@@ -1393,6 +1464,7 @@ main() {
 	test_has_open_pr_distinguishes_body_mentions_from_references
 	test_has_open_pr_marks_worker_draft_for_stale_routing
 	test_has_open_pr_inline_for_matches_continuation_predicate
+	test_has_open_pr_worker_draft_routes_follow_continuation
 	test_has_open_pr_keeps_protected_draft_unroutable
 	test_has_open_pr_ignores_seed_draft_only_for_its_issue
 	test_has_open_pr_fails_closed_when_sibling_lookup_fails

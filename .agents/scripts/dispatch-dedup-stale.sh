@@ -298,7 +298,7 @@ _stale_recovery_find_open_pr() {
 	[[ "$_scan_limit" =~ ^[1-9][0-9]*$ ]] || _scan_limit=1000
 	_open_pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--limit "$_scan_limit" \
-		--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup 2>/dev/null) || return 1
+		--json number,closingIssuesReferences,isDraft,isCrossRepository,headRefName,labels,body,statusCheckRollup 2>/dev/null) || return 1
 	_open_pr_count=$(printf '%s' "$_open_pr_json" | jq -er 'length' 2>/dev/null) || return 1
 	# Reaching the bound means authoritative linkage may exist outside this page.
 	[[ "$_open_pr_count" -lt "$_scan_limit" ]] || return 1

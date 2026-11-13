@@ -89,9 +89,15 @@ _pr_checkpoint_trusted_logins() {
 # word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name exactly
 # issue N or, without any `For` reference, whose `Ref(s) #N` references do.
 # `For` keeps precedence (GH#38111) so a `For #N ... Ref #M` checkpoint still
-# links N, as it did before GH#37915. Several targets are ambiguous and never
-# match. Continuation turns that reference into a closing link only once the
-# issue criteria are met (_prrts_write_prompt_file).
+# links N, as it did before GH#37915. Several targets are ambiguous and match
+# only through dispatch identity (GH#38124): the same-repository head branch
+# the dispatcher created (`...-gh<N>` or `...-gh<N>-r<k>`, numeric boundary)
+# must name exactly one of them. Without headRefName or a proven identity the
+# draft never matches. Continuation turns that reference into a closing link
+# only once the issue criteria are met (_prrts_write_prompt_file).
+#aidevops:trust-boundary — GH#38124: identity reuses the same-repository,
+# worker-origin and no-protective-label gates above; a head ref on a
+# same-repository PR requires push access, so it adds no new writer.
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
@@ -116,12 +122,19 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_reference_issues:
 		checkpoint_line_issues("For") as $for |
 		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
+	def checkpoint_dispatch_identity:
+		[(.headRefName // "") | strings |
+			capture("(?:^|[/-])gh(?<n>[1-9][0-9]*)(?:-r[0-9]+)?$") | .n | tonumber] | first;
+	def checkpoint_reference_links($issue):
+		checkpoint_reference_issues as $refs |
+		($refs == [$issue]) or
+		(($refs | length) > 1 and any($refs[]; . == $issue) and checkpoint_dispatch_identity == $issue);
 	def worker_checkpoint_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
 		(checkpoint_has_label(worker_origin_label) or checkpoint_has_label(takeover_origin_label)) and
 		(checkpoint_protected | not) and
-		(checkpoint_reference_issues == [$issue]);
+		checkpoint_reference_links($issue);
 	def checkpoint_draft_links($issue):
 		recovery_draft_links($issue) or worker_checkpoint_draft_links($issue);
 '

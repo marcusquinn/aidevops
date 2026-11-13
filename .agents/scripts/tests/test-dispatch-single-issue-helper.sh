@@ -953,7 +953,9 @@ test_manual_dispatch_refuses_preserved_pr_ownership() {
 		_dsi_launch_and_report() { printf 'launch\n' >>"$EVENTS"; return 0; }
 
 		launched="claim,ceremony,worktree,auth,lock,launch"
-		worker='[{"number":901,"isDraft":true,"title":"checkpoint for #123","body":"","labels":[{"name":"origin:worker"}]}]'
+		# GH#38124: the real sibling query returns linkage fields; a worker draft
+		# blocks as a checkpoint only in the shape continuation can adopt.
+		worker='[{"number":901,"isDraft":true,"title":"checkpoint for #123","body":"For #123","isCrossRepository":false,"headRefName":"feature/auto-20261113-000000-gh123","closingIssuesReferences":[],"labels":[{"name":"origin:worker"}]}]'
 		protected='[{"number":902,"isDraft":true,"title":"GH#123: interactive wip","body":"","labels":[{"name":"origin:worker"},{"name":"hold-for-review"}]}]'
 		seed='[{"number":903,"isDraft":true,"title":"seed for #123","body":"<!-- aidevops:seed-pr issue=123 -->","labels":[{"name":"seed-pr"}]}]'
 		prose='[{"number":904,"isDraft":true,"title":"unrelated cleanup","body":"Context: see #123 discussion","labels":[{"name":"origin:worker"}]}]'

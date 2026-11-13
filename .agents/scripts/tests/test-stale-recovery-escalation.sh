@@ -368,7 +368,7 @@ else
 	print_result "Reset path: STALE_ESCALATED NOT emitted" 1 "(got: '$output')"
 fi
 
-if grep -q -- "--json number,closingIssuesReferences,isDraft,isCrossRepository,labels,body,statusCheckRollup" "$GH_CALLS_FILE" &&
+if grep -q -- "--json number,closingIssuesReferences,isDraft,isCrossRepository,headRefName,labels,body,statusCheckRollup" "$GH_CALLS_FILE" &&
 	! grep -q -- "--search" "$GH_CALLS_FILE"; then
 	print_result "Open PR lookup scans authoritative metadata without body-search filtering" 0
 else
