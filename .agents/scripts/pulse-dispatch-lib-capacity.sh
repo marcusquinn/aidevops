@@ -62,6 +62,10 @@ _dispatch_invalidate_candidate_snapshot() {
 	local snapshot_file="" dependency_normalization_mode="" removed_snapshot=0
 	local _PULSE_FIRST_DISPATCH_WAVE=0 wave=""
 	for wave in 0 1; do
+		# A worker exit frees capacity, not candidate eligibility. Preserve the
+		# durable remainder even if the refill's later dispatch gates block it;
+		# eligibility mutations still invalidate both waves below.
+		[[ "$reason" == "event_refill" && "$wave" == 1 ]] && continue
 		_PULSE_FIRST_DISPATCH_WAVE="$wave"
 		for dependency_normalization_mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
 			snapshot_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$dependency_normalization_mode") || continue

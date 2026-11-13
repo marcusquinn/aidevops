@@ -165,6 +165,21 @@ printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-ce
 	[[ "$(REPOS_JSON="${REPOS_JSON}.test" _dispatch_filter_partial_snapshot_candidates "$initial")" == '[]' ]]
 	partial=$(_dispatch_candidate_snapshot_path 50 skip)
 	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	# Refill-only invalidation precedes dispatch admission. It must clear the
+	# ordinary cache without losing the durable queue or its attempt ledger.
+	for mode in normalize skip; do
+		normal=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_candidate_snapshot_path 50 "$mode")
+		cp "$partial" "$normal"
+		cp "${partial}.consumed" "${normal}.consumed"
+	done
+	_dispatch_invalidate_candidate_snapshot event_refill 50
+	for mode in normalize skip; do
+		normal=$(_PULSE_FIRST_DISPATCH_WAVE=0 _dispatch_candidate_snapshot_path 50 "$mode")
+		[[ ! -f "$normal" && ! -f "${normal}.consumed" ]]
+	done
+	[[ -f "$partial" && -f "${partial}.consumed" ]]
+	remaining=$(_dispatch_ranked_candidates_json 50 skip)
+	jq -e 'length == 1 and .[0].number == 2' <<<"$remaining" >/dev/null
 	_dispatch_cleanup_cycle_cache 50
 	_PULSE_CYCLE_ID="partial-next-cycle"
 	remaining=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
