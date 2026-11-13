@@ -311,7 +311,7 @@ _merge_report_author_lookup_failure() {
 _merge_pr_label_holds_clear() {
 	local pr_number="$1"
 	local labels_padded="$2"
-	local repo="${3:-}" head="${4:-}" diagnostic_only="${5:-0}"
+	local repo="${3:-}" head="${4:-}" diagnostic_only="${5:-0}" advisory="${6:-0}"
 	#aidevops:trust-boundary — a release hold survives removal of the ordinary
 	# PR hold, and an unlabelled Cloudron manifest version bump (GH#37955) is a
 	# release too. Every merge caller must prove authorization for this head.
@@ -323,7 +323,10 @@ _merge_pr_label_holds_clear() {
 	fi
 	#aidevops:trust-boundary GH#17671/GH#28622 -- a live PR NMR label is an
 	# explicit hold. Marker text is never merge authority at this boundary.
-	if [[ "$labels_padded" == *",needs-maintainer-review,"* ]]; then
+	# GH#38007: only the read-only preflight (advisory=1) continues, so it can
+	# report the PR as an approval target; the caller records the hold and the
+	# merge transports (which never pass advisory) stay blocked.
+	if [[ "$labels_padded" == *",needs-maintainer-review,"* && "$advisory" != "1" ]]; then
 		print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
 		return 1
 	fi
@@ -388,6 +391,7 @@ _merge_collect_external_authority_gaps() {
 	local repo="$2"
 	local expected_head_sha="${3:-}"
 	local diagnostic_only="${4:-0}"
+	local advisory="${5:-0}" pr_nmr_hold=0
 	local pr_json="" pr_author="" current_head_sha="" labels_csv="" labels_padded="" is_fork="false"
 	local issue_numbers="" cross_repo_refs=""
 	local author_rc=0 treat_as_external=0 trusted_dependabot=0 trusted_issue_sync=0
@@ -424,7 +428,10 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 
-	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" "$diagnostic_only" || return 1
+	_merge_pr_label_holds_clear "$pr_number" "$labels_padded" "$repo" "$current_head_sha" "$diagnostic_only" "$advisory" || return 1
+	if [[ "$advisory" == "1" && "$labels_padded" == *",needs-maintainer-review,"* ]]; then
+		pr_nmr_hold=1
+	fi
 	_merge_interactive_preference_clear "$pr_number" "$repo" "$labels_csv" || return 1
 
 	#aidevops:trust-boundary -- repository-generated Issue Sync and Dependabot
@@ -462,6 +469,11 @@ _merge_collect_external_authority_gaps() {
 	_merge_parent_task_open_children_clear "$issue_numbers" "$repo" || return 1
 	_merge_collect_linked_issue_authority_gaps "$issue_numbers" "$repo" "$treat_as_external" "$cross_repo_refs" "$diagnostic_only" || return 1
 	if [[ "$trusted_dependabot" -eq 1 || "$trusted_issue_sync" -eq 1 || "$treat_as_external" -eq 0 ]]; then
+		# A PR hold that no external approval target can clear stays a hard stop.
+		if [[ "$pr_nmr_hold" -eq 1 ]]; then
+			print_error "Merge blocked: PR #${pr_number} still requires maintainer review"
+			return 1
+		fi
 		return 0
 	fi
 	if [[ -z "$issue_numbers" ]]; then
@@ -469,7 +481,9 @@ _merge_collect_external_authority_gaps() {
 		return 1
 	fi
 	FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS+=("pr:${pr_number}")
-	if ! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
+	# GH#38007: `approve pr` clears the live label, so a held PR is always a target.
+	if [[ "$pr_nmr_hold" -eq 1 ]] ||
+		! _merge_target_crypto_approved pr "$pr_number" "$repo" "$current_head_sha"; then
 		FULL_LOOP_EXTERNAL_AUTHORITY_TARGETS+=("pr:${pr_number}")
 	fi
 

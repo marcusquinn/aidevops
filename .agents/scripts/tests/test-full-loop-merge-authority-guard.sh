@@ -879,6 +879,23 @@ test_pre_merge_authority_preflight() {
 			"rc=$actual_rc output=$output"
 	fi
 
+	# GH#38007: a live PR needs-maintainer-review label is an approval target in
+	# the preflight, while the merge transport guard stays blocked.
+	reset_fixture
+	set_pr_fixture external '[{"name":"needs-maintainer-review"}]' false '[{"number":42}]' 'Resolves #42'
+	FIXTURE_PERMISSION="none"
+	actual_rc=0
+	output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+	local merge_rc=0
+	_merge_guard_admin_merge_maintainer_review 900 owner/repo >/dev/null 2>&1 || merge_rc=$?
+	if [[ "$actual_rc" -eq 1 && "$merge_rc" -eq 1 ]] &&
+		grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 0
+	else
+		print_result "PR NMR label preflight prints one batch command; merge stays blocked" 1 \
+			"rc=$actual_rc merge_rc=$merge_rc output=$output"
+	fi
+
 	reset_fixture
 	set_pr_fixture external '[]' false '[{"number":42},{"number":43}]' 'Resolves #42\nResolves #43'
 	FIXTURE_PERMISSION="none"

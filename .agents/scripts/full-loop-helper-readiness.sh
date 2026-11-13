@@ -639,7 +639,11 @@ _full_loop_report_external_authority_preflight() {
 	fi
 	declare -p FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS >/dev/null 2>&1 ||
 		FULL_LOOP_EXTERNAL_AUTHORITY_APPROVAL_TARGETS=()
-	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo" "" "$diagnostic_only"; then
+	# GH#38007: advisory=1 (separate from diagnostic_only, which also makes the
+	# Cloudron guard read-only) lets a live PR needs-maintainer-review label
+	# become target pr:N so one batch command covers every missing approval.
+	# Merge transports never pass it and keep the unconditional hold.
+	if ! _merge_collect_external_authority_gaps "$pr_number" "$repo" "" "$diagnostic_only" 1; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="external-authority"
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="unable to verify external/fork authority"
 		return 1

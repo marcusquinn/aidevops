@@ -261,6 +261,8 @@ Assessment language describes a recommendation, not an exercised authority actio
 
 For an issue with an imperfect linked PR, recommend issue approval when the problem and root-cause direction are valid, then record a separate PR disposition: `merge`, `repair`, `replace`, or `close`. Do not downgrade the issue to `Request Changes` because implementation needs work.
 
+When the linked PR is external/fork and the disposition is `repair` or `replace` (or any approval-bound PR edit is planned), withhold the issue approval command: repairing changes the PR head and body, which stales an earlier issue approval. Record the disposition and give the single post-repair `full-loop-helper.sh pre-merge-gate` batch command instead (`workflows/review.md` "External PR authority preflight"). Issue approval stays immediate for `merge`, `close`, or no linked PR.
+
 For batch reviews, group approved targets by repository and use the batch syntax
 in `reference/task-lifecycle.md`. One command must list all eligible targets and
 accept one exact `APPROVE`; never mix repositories or include non-Approve targets.
@@ -337,7 +339,9 @@ accept one exact `APPROVE`; never mix repositories or include non-Approve target
 
 [`sudo aidevops approve issue|pr <numbers...> <owner/repo>` or mixed
 `sudo aidevops approve batch issue:<N> pr:<N>... <owner/repo>`; otherwise
-`No approval command — <reason>`.]
+`No approval command — <reason>`. For a repair/replace of an external PR:
+`No approval command yet — repair first, then use the single batch command
+from full-loop-helper.sh pre-merge-gate`.]
 ```
 
 **Why this section exists**: Tier recommendations without brief verification led to issues being labelled `tier:simple` when no brief with code blocks existed — making them undispatchable at that tier. This section forces the reviewer to check prerequisites before recommending a tier, whether invoked via `/review-issue-pr` or encountered mid-session. See AGENTS.md "Briefs, Tiers, and Dispatchability" for the full prerequisite chain.
