@@ -176,6 +176,7 @@ fi
     ["all filing", "1. Should I file an issue?\n2. Should I log a task?"],
     ["deploy topic", "1. Should I file an issue for the failing deploy test?"],
     ["release topic", "1. Should I file an issue about release failures?"],
+    ["compound topic", "1. Should I file an issue about the build and release pipeline?"],
     ["fenced exclusions", "1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```"],
   ]) {
     assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).filing, true, `${name} remains filing-only`);

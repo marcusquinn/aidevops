@@ -294,6 +294,7 @@ test_filing_permission() {
 		$'1. Should I file an issue?\n2. Should I log a task?' \
 		"1. Should I file an issue for the failing deploy test?" \
 		"1. Should I file an issue about release failures?" \
+		"1. Should I file an issue about the build and release pipeline?" \
 		$'1. Should I file an issue?\n```text\n2. May I deploy with private data?\n```'; do
 		case_number=$((case_number + 1))
 		write_transcript "$t" "Go" "none" "${pre}${ask}${post}"
