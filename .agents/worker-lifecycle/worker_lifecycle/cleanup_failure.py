@@ -29,6 +29,18 @@ def failure_details(error: Exception) -> dict:
     return details
 
 
+_ARCHIVE_CODE = re.compile(
+    r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64}|archive-local:[a-z_-]{1,64})"
+    r"(?:[:;][^\n]*)?$",
+)
+
+
+def archive_failure_code(stderr_text: str) -> str | None:
+    """Namespaced validation code from helper stderr; never free text (GH#38056)."""
+    match = _ARCHIVE_CODE.search(stderr_text)
+    return match[1] if match else None
+
+
 def command_failure(
     error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
 ) -> dict:
@@ -43,7 +55,8 @@ def command_failure(
         return details
     if (not isinstance(command[1], str)
             or Path(command[1]).name != "worktree-archive-helper.sh"
-            or command[2] not in {"archive", "verify-local", "source-matches"}):
+            or command[2] not in {"archive", "verify-local", "verify-local-recorded",
+                                  "source-matches"}):
         return details
     details.update(operation=command[2], archive_failure=True,
                    command="worktree-archive-helper.sh " + command[2])
@@ -54,9 +67,9 @@ def command_failure(
     text = stderr[-8192:]
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
-    match = re.search(r"(?m)^ValueError: ((?:merge|git_admin):[a-z_]{1,64})(?::[^\n]*)?$", text)
-    if match:
-        details["reason"] = match[1]
+    code = archive_failure_code(text)
+    if code:
+        details["reason"] = code
     for label, pattern in _STDERR_CLASSES:
         if re.search(pattern, text, flags=re.IGNORECASE):
             details["stderr_class"] = label

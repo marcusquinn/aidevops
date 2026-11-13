@@ -1,5 +1,8 @@
 """Stable, path-safe lifecycle CLI failure diagnostics."""
 
+import subprocess  # nosec B404 # exception type only; no process is started here
+
+from .cleanup_failure import command_failure
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .process import ObservationUnavailable
 from .protected_proc import ProcessCensusUnavailable
@@ -32,6 +35,13 @@ def error_details(error: Exception, operation: str) -> dict:
     category = failure_category(error)
     if category:
         detail["category"] = category
+    # GH#38056: name the failing helper and its stable code, not bare
+    # CalledProcessError. Only allowlisted, path-free fields are copied.
+    if mode == "retirement" and isinstance(error, subprocess.CalledProcessError):
+        failure = command_failure(error)
+        for key in ("command", "reason", "stderr_class"):
+            if key in failure:
+                detail["helper_" + key if key != "command" else "helper"] = failure[key]
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)
