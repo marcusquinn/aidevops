@@ -177,3 +177,12 @@ def asks_filing_permission(text: str) -> bool:
     return bool(asks) and not FILING_EXCLUDED_RE.search(last) and all(
         FILING_ASK_RE.match(re.sub(r"`[^`]*`", " ", ask)) for ask in asks
     )
+
+
+def filing_block(text: str, marker):
+    """GH#37979: one-shot steer per session; `marker` is a pathlib.Path."""
+    if marker.exists() or not asks_filing_permission(text):
+        return None
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("1")
+    return FILING_REASON

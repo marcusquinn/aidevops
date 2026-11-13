@@ -278,7 +278,6 @@ function correctFilingPermissionAsk(state, input, output) {
   const scope = scopeFor(state, input);
   if (state.filingSteered.has(scope) || !asksFilingPermission(output?.text)) return { corrected: false };
   queueSteering(state, input, "filing", "Your closeout asks permission to file an issue, task or TODO. Filing is already authorised: file it now under the capture rule in Framework Rules (deduplicate first) and cite the link in the body. Keep the ask only when the need itself is undecided, and then ask about the need.");
-  state.qualityLog?.("WARN", `[session-continuation] queued filing-permission steering for session ${sessionHashFor(input)}`);
   return { corrected: true, filing: true };
 }
 
@@ -286,8 +285,7 @@ function completeText(state, input, output) {
   const result = correctTodoYield(state, input, output);
   if (result.corrected) return result;
   const filing = correctFilingPermissionAsk(state, input, output);
-  if (filing.corrected) return filing;
-  return correctUncapturedCloseout(state, input, output);
+  return filing.corrected ? filing : correctUncapturedCloseout(state, input, output);
 }
 
 function correctTodoYield(state, input, output) {
