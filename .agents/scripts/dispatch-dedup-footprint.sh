@@ -980,47 +980,51 @@ _footprint_refresh_inflight_cache() {
 	local all_inflight
 	all_inflight=$(_footprint_fetch_active_issues "$repo_slug")
 
-	local issue_count
-	issue_count=$(printf '%s' "$all_inflight" | jq 'length' 2>/dev/null) || issue_count=0
-	[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
+	# GH#38089: one jq pass emits each issue's number, parent-task and
+	# status:claimed flags, and base64 body as a TSV row. The previous
+	# per-index loop parsed the whole array four times per issue (O(n^2)
+	# bytes: ~394 MB for 82 enrichment briefs), which dominated
+	# dedup.footprint under host load. Issues without a number contributed
+	# nothing before and are filtered here; tab is IFS whitespace, so every
+	# emitted field must be non-empty except the trailing body.
+	local issue_rows=""
+	issue_rows=$(printf '%s' "$all_inflight" | jq -r '
+		.[]? | select(.number != null)
+		| [(.number | tostring),
+			(any((.labels // [])[]?; .name == "parent-task") | tostring),
+			(any((.labels // [])[]?; .name == "status:claimed") | tostring),
+			((.body // "") | tostring | @base64)]
+		| @tsv' 2>/dev/null) || issue_rows=""
 
 	local cache_data=""
-	local i=0
+	local num="" is_parent_task="" is_claimed="" body_b64="" body="" paths="" p=""
 	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=1
 	_FOOTPRINT_OPEN_PRS_REPO=""
 	_FOOTPRINT_OPEN_PRS_JSON=""
-	while [[ "$i" -lt "$issue_count" ]]; do
-		local num body is_parent_task is_claimed paths
-		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
-		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
-		is_parent_task=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"parent-task\")" 2>/dev/null) || is_parent_task="false"
-		if [[ "$is_parent_task" == "true" ]]; then
-			i=$((i + 1))
-			continue
-		fi
+	while IFS=$'\t' read -r num is_parent_task is_claimed body_b64; do
+		[[ -n "$num" ]] || continue
+		[[ "$is_parent_task" == "true" ]] && continue
 
 		# GH#36817: any claimed issue only
 		# holds its footprint when there is evidence of active
 		# implementation; otherwise it is skipped like parent-task.
-		is_claimed=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"status:claimed\")" 2>/dev/null) || is_claimed="false"
 		if [[ "$is_claimed" == "true" ]] &&
-			[[ -n "$num" ]] && ! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
+			! _footprint_claimed_coordinator_has_evidence "$repo_slug" "$num"; then
 			_footprint_coordinator_log "event=footprint_stale_coordinator issue=#${num} repo=${repo_slug}"
-			i=$((i + 1))
 			continue
 		fi
 
-		if [[ -n "$num" && -n "$body" ]]; then
-			paths=$(_footprint_extract_paths "$body")
-			if [[ -n "$paths" ]]; then
-				while IFS= read -r p; do
-					[[ -n "$p" ]] || continue
-					cache_data="${cache_data}${p}|${num}\n"
-				done <<<"$paths"
-			fi
+		[[ -n "$body_b64" ]] || continue
+		body=$(printf '%s' "$body_b64" | base64 -d 2>/dev/null) || body=""
+		[[ -n "$body" ]] || continue
+		paths=$(_footprint_extract_paths "$body")
+		if [[ -n "$paths" ]]; then
+			while IFS= read -r p; do
+				[[ -n "$p" ]] || continue
+				cache_data="${cache_data}${p}|${num}\n"
+			done <<<"$paths"
 		fi
-		i=$((i + 1))
-	done
+	done <<<"$issue_rows"
 	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=0
 	_FOOTPRINT_OPEN_PRS_REPO=""
 	_FOOTPRINT_OPEN_PRS_JSON=""
