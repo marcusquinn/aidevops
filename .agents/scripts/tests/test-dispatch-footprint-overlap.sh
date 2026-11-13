@@ -494,9 +494,8 @@ _FOOTPRINT_CACHE_EPOCH=0
 memo_result=""
 _footprint_get_inflight "test/repo" "999" memo_result
 pr_list_calls=$(grep -c . "$PR_LIST_COUNT_FILE")
-if [[ "$pr_list_calls" == "1" ]] &&
-	printf '%s' "$memo_result" | grep -q "docs/d.md|413" &&
-	! printf '%s' "$memo_result" | grep -q "docs/a.md|410"; then
+if [[ "$pr_list_calls" == "1" && "$memo_result" == *"docs/d.md|413"* &&
+	"$memo_result" != *"docs/a.md|410"* ]]; then
 	print_result "get_inflight: one open-PR fetch per rebuild for many claimed issues" 0
 else
 	print_result "get_inflight: one open-PR fetch per rebuild for many claimed issues" 1 "(calls=${pr_list_calls}, got: ${memo_result})"
