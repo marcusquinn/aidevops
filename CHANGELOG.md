@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.189] - 2026-11-13
+
+### Added
+
+- restart heartbeat-less tmux TUI holders (#38087)
+
+### Changed
+
+- Tests: accept the bounded commit-read adapter in the page-bounds guard
+- Refactor: split unknown-digest functions out of pr-checkpoint-continuation-helper.sh (GH#38105) (#38110)
+- Tests: fix capacity-recovery fixture drift after identical-tree merge proof
+
+### Fixed
+
+- align has-open-pr worker draft checkpoints with the continuation predicate
+- full-loop complete points to finalize-receipt when no lifecycle state but a cleanup receipt exists (GH#38117) (#38126)
+- restore For precedence in checkpoint linkage; repair drifted stale-recovery fixtures
+- cap the 5% free-space floor at 50 GiB and add a read-only Time Machine snapshot hint
+- refresh unfetched remote branch before add (#38100)
+- surface why cleanup-receipt reconciliation refused worktree pre-creation
+- classify closed-issue dispatch skips (GH#38091) (#38092)
+- wait out registry writer contention in enroll and admit-session
+- stop logging successful public-repo approvals as failures
+- select newest checkpoint continuation approval (#38081)
+
 ## [3.39.188] - 2026-11-13
 
 ### Added
