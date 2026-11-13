@@ -1752,8 +1752,9 @@ cmd_add() {
 	_ds_substage_run precreate.capacity_check aidevops_worktree_capacity_check "$path" || capacity_rc=$?
 	if [[ "$capacity_rc" -ne 0 ]]; then
 		echo -e "${RED}Error: Refusing to create a worktree because filesystem capacity is unsafe.${NC}" >&2
-		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%." >&2
+		echo "Capacity reason: ${AIDEVOPS_DISK_CAPACITY_REASON}; available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB (${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%); minimum=${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}% (percentage floor ${AIDEVOPS_DISK_PERCENT_FLOOR_KB:-0}KB after the large-volume ceiling)." >&2
 		echo "Free disk space before creating another worktree." >&2
+		aidevops_disk_capacity_reclaim_hint >&2 || true
 		return 1
 	fi
 

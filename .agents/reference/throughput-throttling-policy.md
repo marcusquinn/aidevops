@@ -52,4 +52,8 @@ with a root-cause fix in the same change.
 - Pressure cleanup starts at the lower of 80% of the cap and
   `AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD` (default 150), so a large cap never
   delays cleanup of redundant worktrees.
+- The disk gate needs 5 GiB and 5% free; the 5% floor is capped at 50 GiB
+  (`AIDEVOPS_MIN_WORKTREE_FREE_PERCENT_CEILING_KB`) so large volumes are not
+  idled with ample space. On macOS a blocked gate names Time Machine local
+  snapshots as reclaimable; aidevops never deletes backups.
 - Async cleanup prunes ignored shared Turborepo caches after 3 days and caps them at 20G (`AIDEVOPS_TURBO_CACHE_MAX_AGE_DAYS`, `AIDEVOPS_TURBO_CACHE_MAX_SIZE`) to reclaim disk headroom.

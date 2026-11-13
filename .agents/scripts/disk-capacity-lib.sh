@@ -15,6 +15,12 @@ AIDEVOPS_DISK_CAPACITY_REASON="unknown"
 # headroom. These keep the raw df numbers for the filesystem thresholds.
 AIDEVOPS_DISK_FILESYSTEM_TOTAL_KB=0
 AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB=0
+AIDEVOPS_DISK_FILESYSTEM_MOUNT_POINT=""
+# GH#38026: effective percentage floor after the large-volume ceiling, so
+# block messages report the threshold that actually applied.
+AIDEVOPS_DISK_PERCENT_FLOOR_KB=0
+# 50 GiB: 5% of a 1 TB volume. Volumes up to 1 TB keep the plain 5% floor.
+AIDEVOPS_DEFAULT_MIN_WORKTREE_FREE_PERCENT_CEILING_KB=52428800
 # filesystem: df headroom is binding; quota: account quota headroom is lower.
 AIDEVOPS_DISK_CAPACITY_SOURCE="filesystem"
 # GH#37922: disabled | unsupported | unavailable | none | limited | exhausted.
@@ -127,6 +133,7 @@ aidevops_disk_capacity_snapshot() {
 	AIDEVOPS_DISK_CAPACITY_REASON="unknown"
 	AIDEVOPS_DISK_FILESYSTEM_TOTAL_KB=0
 	AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB=0
+	AIDEVOPS_DISK_FILESYSTEM_MOUNT_POINT=""
 	AIDEVOPS_DISK_CAPACITY_SOURCE="filesystem"
 	_aidevops_disk_quota_reset
 
@@ -136,6 +143,7 @@ aidevops_disk_capacity_snapshot() {
 	[[ "$total_kb" =~ ^[0-9]+$ && "$available_kb" =~ ^[0-9]+$ && "$total_kb" -gt 0 ]] || return 1
 	AIDEVOPS_DISK_FILESYSTEM_TOTAL_KB="$total_kb"
 	AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB="$available_kb"
+	AIDEVOPS_DISK_FILESYSTEM_MOUNT_POINT="$mount_point"
 
 	aidevops_disk_quota_snapshot "$mount_point"
 	if [[ "$AIDEVOPS_DISK_QUOTA_STATE" == exhausted ]]; then
@@ -158,6 +166,53 @@ aidevops_disk_capacity_snapshot() {
 	return 0
 }
 
+# GH#38026: the percentage floor in KB for a filesystem of total_kb, capped by
+# AIDEVOPS_MIN_WORKTREE_FREE_PERCENT_CEILING_KB (default 50 GiB). An uncapped
+# 5% demands ~100 GiB on a 2 TB volume and idled every worker with 80 GiB free;
+# the absolute floor still guards against filling the disk.
+aidevops_worktree_percent_floor_kb() {
+	local total_kb="$1"
+	local minimum_percent="${2:-5}"
+	local ceiling_kb="${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT_CEILING_KB:-$AIDEVOPS_DEFAULT_MIN_WORKTREE_FREE_PERCENT_CEILING_KB}"
+	local floor_kb=0
+	[[ "$total_kb" =~ ^[0-9]+$ ]] || total_kb=0
+	[[ "$ceiling_kb" =~ ^[0-9]+$ ]] || ceiling_kb="$AIDEVOPS_DEFAULT_MIN_WORKTREE_FREE_PERCENT_CEILING_KB"
+	floor_kb=$(((total_kb * minimum_percent + 99) / 100))
+	[[ "$floor_kb" -le "$ceiling_kb" ]] || floor_kb="$ceiling_kb"
+	printf '%s\n' "$floor_kb"
+	return 0
+}
+
+# GH#38026: read-only Darwin advisory for a blocked capacity check. APFS df
+# space excludes blocks held by Time Machine local snapshots, which macOS thins
+# only under acute pressure. Prints one line when snapshots exist; prints
+# nothing elsewhere or when tmutil is unavailable, slow or empty. Never thins,
+# deletes or modifies backups: retention belongs to the backup owner.
+aidevops_disk_capacity_reclaim_hint() {
+	local mount_point="${AIDEVOPS_DISK_FILESYSTEM_MOUNT_POINT:-}"
+	local listing="" count=0
+	case "${AIDEVOPS_DISK_CAPACITY_REASON:-}" in
+	below-minimum-kb | below-minimum-percent) ;;
+	*) return 0 ;;
+	esac
+	[[ "$(uname -s 2>/dev/null)" == Darwin && -n "$mount_point" ]] || return 0
+	command -v tmutil >/dev/null 2>&1 || return 0
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		listing=$(timeout_sec 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
+	elif command -v timeout >/dev/null 2>&1; then
+		listing=$(timeout 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
+	elif command -v gtimeout >/dev/null 2>&1; then
+		listing=$(gtimeout 5 tmutil listlocalsnapshots "$mount_point" 2>/dev/null) || return 0
+	else
+		return 0
+	fi
+	count=$(printf '%s\n' "$listing" | grep -c '^com\.apple\.TimeMachine\.' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || return 0
+	printf 'Advisory: %s Time Machine local snapshot(s) on %s may hold space that df does not report as free. To reclaim it, let Time Machine complete a backup or run: tmutil thinlocalsnapshots %s <bytes> 4 (see man tmutil). aidevops never deletes backups automatically.\n' \
+		"$count" "$mount_point" "$mount_point"
+	return 0
+}
+
 # Return 0 when a new worktree may be created, 1 when a threshold blocks it,
 # and 2 when capacity cannot be established. Callers fail closed on 1 or 2.
 # GH#37922: a positively exhausted quota blocks first; a binding quota adds
@@ -170,10 +225,12 @@ aidevops_worktree_capacity_check() {
 
 	[[ "$minimum_kb" =~ ^[0-9]+$ ]] || minimum_kb=5242880
 	[[ "$minimum_percent" =~ ^[0-9]+$ && "$minimum_percent" -le 100 ]] || minimum_percent=5
+	AIDEVOPS_DISK_PERCENT_FLOOR_KB=0
 	if ! aidevops_disk_capacity_snapshot "$target_path"; then
 		AIDEVOPS_DISK_CAPACITY_REASON="capacity-unknown"
 		return 2
 	fi
+	AIDEVOPS_DISK_PERCENT_FLOOR_KB=$(aidevops_worktree_percent_floor_kb "$AIDEVOPS_DISK_FILESYSTEM_TOTAL_KB" "$minimum_percent")
 	if [[ "$AIDEVOPS_DISK_QUOTA_STATE" == exhausted ]]; then
 		AIDEVOPS_DISK_CAPACITY_REASON="quota-exhausted"
 		return 1
@@ -182,7 +239,7 @@ aidevops_worktree_capacity_check() {
 		AIDEVOPS_DISK_CAPACITY_REASON="below-minimum-kb"
 		return 1
 	fi
-	if [[ $((AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB * 100)) -lt $((AIDEVOPS_DISK_FILESYSTEM_TOTAL_KB * minimum_percent)) ]]; then
+	if [[ "$AIDEVOPS_DISK_FILESYSTEM_AVAILABLE_KB" -lt "$AIDEVOPS_DISK_PERCENT_FLOOR_KB" ]]; then
 		AIDEVOPS_DISK_CAPACITY_REASON="below-minimum-percent"
 		return 1
 	fi

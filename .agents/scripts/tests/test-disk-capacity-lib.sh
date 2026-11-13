@@ -81,6 +81,10 @@ run_check 209715200 20971520 0 available
 run_check 209715200 4194304 1 below-minimum-kb
 run_check 1048576000 41943040 1 below-minimum-percent
 run_check 104857600 5242880 0 available
+# GH#38026: on 2000 GiB the 5% floor is capped at 50 GiB: 80 GiB admits,
+# 40 GiB still blocks.
+run_check 2097152000 83886080 0 available
+run_check 2097152000 41943040 1 below-minimum-percent
 
 capacity_rc=0
 DF_FAIL=1 PATH="$TEST_ROOT/bin:$(dirname "$REAL_AWK"):/usr/bin:/bin" \
