@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.187] - 2026-11-13
+
+### Added
+
+- queue bare status:blocked holds as unclassified_hold (#38002)
+
+### Fixed
+
+- stop runaway compaction summary loops and repair misanchored compaction boundaries
+- stop skill-check timeout retry loop and size unit timeout to interval
+- release watchdog hard-kills as watchdog_kill:hard_kill_stall, not worker_failed (GH#37984) (#37995)
+- publish decision/maintainer review-thread blocker on the PR (#37996)
+
 ## [3.39.186] - 2026-11-13
 
 ### Added
