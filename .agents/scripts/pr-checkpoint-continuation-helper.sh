@@ -1656,7 +1656,7 @@ _pcc_post_stall_attention() {
 		fuse_marker=$'\n'"<!-- ${_PCC_STALL_FUSE_MARKER} pr=${pr} -->"
 		posted_scope="Posted once per PR."
 	fi
-	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE"* ]]; then
+	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" || "$note" == 'Mismatched approval binding fields:'* ]]; then
 		# An unexpired approval fences the legacy route, even after a head
 		# change. Neither an aged record nor a push bypasses it before expiry.
 		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling until the approval expires; before then neither a new head nor an aged attention record re-arms automatic continuation"
@@ -1878,7 +1878,7 @@ _pcc_approved_revision_attention() {
 			python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" binding-diagnostic 2>/dev/null) || diagnostic=""
 		if [[ "$diagnostic" =~ ^APPROVAL_BINDING_MISMATCH\ keys=([a-z_,0-9]+)\ approval_comment=[1-9][0-9]*$ ]]; then
 			keys="${BASH_REMATCH[1]}"
-			note="${note} Mismatched approval binding fields: ${keys}."
+			note="Mismatched approval binding fields: ${keys}. The existing approval does not match the current target; regenerate it with \`approval-template\`."
 			if [[ ",$keys," == *,brief_sha256,* ]]; then
 				note="${note} The issue body changed after approval (check for an automated body refresh); regenerate the approval with \`approval-template\`."
 			fi
