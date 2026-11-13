@@ -136,12 +136,7 @@ function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand
   return false;
 }
 
-export async function runSupervisor() {
-  const config = await readPrivateConfig();
-  if (!validCommand(config?.command)) return 125;
-  const { command } = config;
-  const operationID = String(config.operationID || "");
-
+async function admitSupervisor(command, operationID) {
   // This existing supervisor owns the operation until its normal drain completes.
   // Register its native identity before spawning, independently of the UI owner.
   const supervised = process.connected === true;
@@ -163,13 +158,20 @@ export async function runSupervisor() {
     // The admission error carries only a safe protocol reason, never host paths.
     const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
     process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
-    return 75;
+    return false;
   } finally {
     process.off("message", recordPreAdmissionCancel);
   }
   // A manager that went away during a contention wait can no longer supervise.
-  if (supervised && !process.connected) return 75;
-  if (preAdmissionCancel) return 75;
+  return !(supervised && !process.connected) && !preAdmissionCancel;
+}
+
+export async function runSupervisor() {
+  const config = await readPrivateConfig();
+  if (!validCommand(config?.command)) return 125;
+  const { command } = config;
+  const operationID = String(config.operationID || "");
+  if (!await admitSupervisor(command, operationID)) return 75;
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 300 * 1000);

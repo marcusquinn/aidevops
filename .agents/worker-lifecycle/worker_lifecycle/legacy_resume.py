@@ -1,5 +1,7 @@
 """Resume of an interrupted reconstructible native removal (GH#38158)."""
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -9,10 +11,11 @@ from .interrupted_removal import removal_started, require_deletion_only
 from .interrupted_removal import restore_git_link
 from .legacy_discovery import same_tree
 from .legacy_inventory import inventory
-from .legacy_probe import event_id, operation_id, receipt
+from .legacy_probe import event_id, host_probe, interrupted_probe, operation_id, receipt
+from .legacy_probe import prepare_reconstructible_probe, verify_reconstructible
 from .legacy_proc import require_ended, require_idle_processes
 from .legacy_takeover import require_managed_authority
-from .retirement import _id
+from .retirement import _id, _lock
 
 # Journaled start of a reconstructible native removal; distinct from finish()'s
 # "removing" phase, which shares the operation id.
@@ -45,14 +48,22 @@ def remove_orphaned_admin(plan, source):
     shutil.rmtree(admin)
 
 
-def resume_reconstructible_removal(store, connection, item, adapter, remove, git,
-                                   repositories=None):
+@dataclass(frozen=True)
+class RemovalContext:
+    """Dependencies and repository scope retained across an interrupted removal."""
+    adapter: object
+    remove: Callable
+    git: Callable
+    repositories: dict | None = None
+
+
+def resume_reconstructible_removal(store, connection, item, context):
     """Finish a journaled non-forced removal that timed out or was interrupted.
 
     Removal authority was established when the start was journaled. Like
     `finish`, a remaining tree must keep its identity and an idle census, and
     only deletions may follow the validation boundary; then a forced removal
-    completes what the non-forced one began. `remove` runs native removal.
+    completes what the non-forced one began. `context.remove` runs native removal.
     """
     operation = operation_id(store, item["path"])
     journaled = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
@@ -61,7 +72,7 @@ def resume_reconstructible_removal(store, connection, item, adapter, remove, git
         raise ValueError("interrupted-removal-time-unavailable")
     plan = journaled["plan"]
     source = Path(plan["source"])
-    if repositories is not None and plan["common"] not in repositories:
+    if context.repositories is not None and plan["common"] not in context.repositories:
         raise ValueError("repository-out-of-scope")
     if os.path.lexists(source):
         # Census before opening our own handle on the tree.
@@ -69,15 +80,41 @@ def resume_reconstructible_removal(store, connection, item, adapter, remove, git
         with DirectoryHandle(source):
             restore_link(source, plan)
             same_tree(source, plan)
-            if git("-C", str(source), "rev-parse", "HEAD").strip() != plan["head"]:
+            if context.git("-C", str(source), "rev-parse", "HEAD").strip() != plan["head"]:
                 raise ValueError("interrupted-removal-head-changed")
             current = current_legacy_item(connection, item)
-            require_ended(current, adapter, operator_confirmed=True)
+            require_ended(current, context.adapter, operator_confirmed=True)
             if item["modern"]:
                 require_managed_authority(store, connection, current, plan)
-            require_deletion_only(source, started, git)
-            remove(connection, "--git-dir", plan["common"], "worktree", "remove",
-                   "--force", str(source))
+            require_deletion_only(source, started, context.git)
+            context.remove(connection, "--git-dir", plan["common"], "worktree", "remove",
+                           "--force", str(source))
     else:
         remove_orphaned_admin(plan, source)
     return plan, bool(journaled.get("probe", False))
+
+
+def recover_interrupted_probe(store, item, apply):
+    """Recover an interrupted probe removal; preview reports verification pending."""
+    host = host_probe(store)
+    with store.connection() as connection:
+        if not interrupted_probe(store, connection, item):
+            return
+    if not apply:
+        raise ValueError("reconstructible-probe-verification-pending")
+    with _lock(store, host), store.connection(write=True) as connection:
+        if interrupted_probe(store, connection, item):
+            prepare_reconstructible_probe(store, connection, host, None, verify_reconstructible)
+
+
+def plan_reconstructible(store, connection, item, inspect_source, open_prs):
+    """Refresh the inventory row, build its plan and require managed authority.
+
+    The managed flag is read from the caller's item, never the refreshed row, so
+    every recheck keeps the managed path guard, idle floor and authority evidence.
+    """
+    current = current_legacy_item(connection, item)
+    plan = inspect_source(current, open_prs=open_prs)
+    if item["modern"]:
+        require_managed_authority(store, connection, current, plan)
+    return plan

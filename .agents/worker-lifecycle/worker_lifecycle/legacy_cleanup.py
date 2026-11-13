@@ -15,7 +15,6 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
-from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
@@ -25,13 +24,14 @@ from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
-from .legacy_probe import checkpoint, event_id, host_probe, interrupted_probe
+from .legacy_probe import checkpoint, event_id, host_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
 from .legacy_proc import require_idle_processes
-from .legacy_resume import RECONSTRUCTIBLE_REMOVING, current_legacy_item
+from .legacy_resume import RECONSTRUCTIBLE_REMOVING, RemovalContext, plan_reconstructible
+from .legacy_resume import recover_interrupted_probe
 from .legacy_resume import restore_link, resume_reconstructible_removal
 from .legacy_probe import verify_reconstructible
-from .legacy_takeover import require_managed_authority
+from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
@@ -252,20 +252,6 @@ def take_over_managed(store, item, repositories, adapter, options):
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
-def close_quiescent_admission(store, item):
-    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
-
-    Uses the admission pass's own primitive, which re-samples bound runs and
-    closes only when every run is admitted and ended. Unenrolled, changed, empty
-    or unfinished generations stay open, so the authority check that follows
-    still reports `managed-admission-not-closed`. Never called in preview.
-    """
-    try:
-        prepare_cleanup(store, Path(item["path"]))
-    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
-        return
-
-
 def process_item(store, item, repositories, adapter, options):
     """Plan and, when applying, retire one legacy item and report the outcome."""
     outcome = {"path": item["path"]}
@@ -307,32 +293,6 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
-def recover_interrupted_probe(store, item, apply):
-    """Recover an interrupted probe removal; preview reports verification pending."""
-    host = host_probe(store)
-    with store.connection() as connection:
-        if not interrupted_probe(store, connection, item):
-            return
-    if not apply:
-        raise ValueError("reconstructible-probe-verification-pending")
-    with _lock(store, host), store.connection(write=True) as connection:
-        if interrupted_probe(store, connection, item):
-            prepare_reconstructible_probe(store, connection, host, None, verify_reconstructible)
-
-
-def plan_reconstructible(store, connection, item, inspect_source, open_prs):
-    """Refresh the inventory row, build its plan and require managed authority.
-
-    The managed flag is read from the caller's item, never the refreshed row, so
-    every recheck keeps the managed path guard, idle floor and authority evidence.
-    """
-    current = current_legacy_item(connection, item)
-    plan = inspect_source(current, open_prs=open_prs)
-    if item["modern"]:
-        require_managed_authority(store, connection, current, plan)
-    return plan
-
-
 def process_reconstructible(store, item, repositories, adapter, options):
     """Journal a non-forced removal; the first successful probe unlocks batching.
 
@@ -357,8 +317,8 @@ def process_reconstructible(store, item, repositories, adapter, options):
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
         if receipt(connection, operation, RECONSTRUCTIBLE_REMOVING) is not None:
             plan, test_removal = resume_reconstructible_removal(
-                store, connection, item, adapter, remove_released, _git,
-                repositories)
+                store, connection, item,
+                RemovalContext(adapter, remove_released, _git, repositories))
         else:
             # GitHub lookups release the writer (GH#36921); this plan is only journaled.
             plan = reconstructible_plan(
