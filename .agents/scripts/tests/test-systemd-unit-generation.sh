@@ -309,12 +309,50 @@ test_auto_update_idempotent_refresh() {
 		cmd_enable --idempotent
 		cmp -s "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service" <(printf '%s' "$AUTO_UPDATE_SERVICE_CONTENT") || exit 1
 		grep -q '^OnUnitActiveSec=1020$' "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer" || exit 1
-		local inode
-		inode=$(stat -c %i "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service")
+		local inode inode_after
+		inode=$(ls -di "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service") || exit 1
+		[[ -n "$inode" ]] || exit 1
 		cmd_enable --idempotent
-		[[ "$inode" == "$(stat -c %i "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service")" ]] || exit 1
+		inode_after=$(ls -di "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service") || exit 1
+		[[ -n "$inode_after" && "$inode" == "$inode_after" ]] || exit 1
 		[[ "$(wc -l <"${tmpdir}/calls" | tr -d ' ')" == 1 ]] || exit 1
 		grep -qx -- '--user daemon-reload' "${tmpdir}/calls" || exit 1
+
+		# Exercise recovery in both shipped copies without a live user manager.
+		local implementation reload_status reload_attempts fallback_calls status
+		local unit_dir="$SYSTEMD_SERVICE_DIR"
+		for implementation in standalone scheduler; do
+			if [[ "$implementation" == scheduler ]]; then
+				source "${REPO_SCRIPTS_DIR}/auto-update-helper-scheduler.sh"
+			fi
+			_daemon_is_loaded() { return 0; }
+			_get_scheduler_backend() { printf 'systemd\n'; return 0; }
+			reload_status=1 reload_attempts=0 fallback_calls=0
+			systemctl() { reload_attempts=$((reload_attempts + 1)); return "$reload_status"; }
+			_cmd_enable_cron() { fallback_calls=$((fallback_calls + 1)); return 0; }
+			printf 'stale\n' >"${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
+			status=0
+			cmd_enable --idempotent || status=$?
+			[[ "$status" -ne 0 && "$reload_attempts" -eq 1 ]] || exit 1
+			[[ -f "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending" ]] || exit 1
+			reload_status=0
+			cmd_enable --idempotent || exit 1
+			[[ "$reload_attempts" -eq 2 ]] || exit 1
+			[[ ! -f "${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending" ]] || exit 1
+			cmd_enable --idempotent || exit 1
+			[[ "$reload_attempts" -eq 2 ]] || exit 1
+			reload_status=1
+			_cmd_enable_systemd "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17 || exit 1
+			[[ "$fallback_calls" -eq 1 ]] || exit 1
+			# A unit-directory error must fail rather than claim cron recovery.
+			mv "$unit_dir" "${unit_dir}.saved" || exit 1
+			printf 'not a directory\n' >"$unit_dir"
+			status=0
+			_cmd_enable_systemd "$HOME/.aidevops/agents/scripts/auto-update-helper.sh" 17 || status=$?
+			rm -f "$unit_dir"
+			mv "${unit_dir}.saved" "$unit_dir" || exit 1
+			[[ "$status" -eq 1 && "$fallback_calls" -eq 1 ]] || exit 1
+		done
 	) || rc=1
 	rm -rf "$tmpdir"
 	print_result "auto-update idempotent enable repairs drift once" "$rc"

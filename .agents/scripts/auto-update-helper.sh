@@ -1098,6 +1098,7 @@ _refresh_auto_update_systemd_units() {
 	local script_path="$1" interval="$2"
 	local force_reload="${3:-0}"
 	local AUTO_UPDATE_SERVICE_CONTENT="" AUTO_UPDATE_TIMER_CONTENT=""
+	local pending_reload="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.reload-pending"
 	local unit content target temp changed=0
 	_render_auto_update_systemd_units "$script_path" "$interval"
 	mkdir -p "$SYSTEMD_SERVICE_DIR" || return 1
@@ -1111,6 +1112,8 @@ _refresh_auto_update_systemd_units() {
 		if [[ -f "$target" ]] && printf '%s' "$content" | cmp -s - "$target"; then
 			continue
 		fi
+		# Persist before replacement so partial writes also trigger a later reload.
+		touch "$pending_reload" || return 1
 		temp=$(mktemp "${target}.tmp.XXXXXX") || return 1
 		if ! printf '%s' "$content" >"$temp" || ! chmod 644 "$temp" || ! mv -f "$temp" "$target"; then
 			rm -f "$temp"
@@ -1119,8 +1122,11 @@ _refresh_auto_update_systemd_units() {
 		log_info "Updated systemd unit ${SYSTEMD_UNIT_NAME}.${unit}"
 		changed=1
 	done
-	if [[ "$changed" -eq 1 || "$force_reload" -eq 1 ]]; then
-		systemctl --user daemon-reload || return 1
+	if [[ "$changed" -eq 1 || "$force_reload" -eq 1 || -f "$pending_reload" ]]; then
+		touch "$pending_reload" || return 1
+		# Status 2 distinguishes manager failure from unit-file errors for fallback.
+		systemctl --user daemon-reload || return 2
+		rm -f "$pending_reload" || return 1
 	fi
 	return 0
 }
@@ -1130,7 +1136,15 @@ _cmd_enable_systemd() {
 	local interval="$2"
 	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
 	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
-	_refresh_auto_update_systemd_units "$script_path" "$interval" 1 || return 1
+	local refresh_status=0
+	_refresh_auto_update_systemd_units "$script_path" "$interval" 1 || refresh_status=$?
+	if [[ "$refresh_status" -eq 2 ]]; then
+		print_error "Failed to reload systemd user manager — falling back to cron" >&2
+		_cmd_enable_cron "$script_path" "$interval"
+		return $?
+	elif [[ "$refresh_status" -ne 0 ]]; then
+		return 1
+	fi
 
 	if ! systemctl --user enable --now "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null; then
 		print_error "Failed to enable systemd timer — falling back to cron" >&2
