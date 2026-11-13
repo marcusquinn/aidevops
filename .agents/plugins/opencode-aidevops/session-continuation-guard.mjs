@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { addEditedPaths, captureCheck, defaultDirtyEdits } from "./session-continuation-capture.mjs";
+import { correctFilingPermissionAsk, markFilingDelivered } from "./session-continuation-filing.mjs";
 import {
   detectLoop,
   emptyLoopState,
@@ -273,7 +274,8 @@ function correctUncapturedCloseout(state, input, output) {
 function completeText(state, input, output) {
   const result = correctTodoYield(state, input, output);
   if (result.corrected) return result;
-  return correctUncapturedCloseout(state, input, output);
+  const filing = correctFilingPermissionAsk(state, scopeFor(state, input), output, (kind, text) => queueSteering(state, input, kind, text));
+  return filing.corrected ? filing : correctUncapturedCloseout(state, input, output);
 }
 
 function correctTodoYield(state, input, output) {
@@ -308,6 +310,7 @@ function deliverSteering(state, input, output) {
     info: { id, sessionID: key, role: "user", time: { created: Date.now() }, parentID: "" },
     parts: [{ id: `${id}-part`, sessionID: key, messageID: id, type: "text", text: pending.text, synthetic: true }],
   });
+  if (pending.kind === "filing") markFilingDelivered(state, scopeFor(state, { sessionID: key }));
   return { injected: true, kind: pending.kind, text: pending.text };
 }
 
@@ -352,6 +355,7 @@ export function createSessionContinuationGuard(options = {}) {
     steering: new Map(),
     edits: new Map(),
     captureSteered: new Map(),
+    filingSteered: new Set(),
     dirtyEdits: options.dirtyEdits || defaultDirtyEdits,
   };
 
