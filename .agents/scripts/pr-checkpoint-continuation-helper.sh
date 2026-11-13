@@ -500,9 +500,16 @@ ${durability_cleanup}
    ready PR, write a concise local details file and run
    \`"${scanner_path}" mark-blocked "${repo_slug_ref}" "${repair_number_ref}" <code|decision|maintainer|infrastructure> <short_reason> <details_file>\` exactly once.
    This includes a draft whose work already landed on the default branch or in
-   another merged PR (\`decision already_landed\`, naming the merged evidence),
-   and a draft whose remaining acceptance needs a human choice the brief does
-   not make (\`decision\`, naming the exact choice). Never close the draft.
+   another merged PR (\`decision already_landed\`, naming the merged evidence).
+   A choice the brief does not make is not a blocker by itself (GH#38153). When
+   it is in scope and reversible, choose the option that best preserves the
+   brief's stated outcome and the repository's existing patterns (if unsure,
+   first use the one decision-only consultation in \`reference/agent-routing.md\`),
+   record the choice and its reason in the PR body's decisions, and continue.
+   Use \`decision\` only when the choice needs authority, consent, taste or
+   values, inaccessible context, unknown secrets or an irreversible commitment,
+   or contradicts the brief's explicit text; the details file then lists every
+   option with your recommendation. Never close the draft.
 ${progress_step}
 Do not invoke more than one terminal-state command. A prose report or successful process
 exit is not a terminal state: exiting without one leaves the draft for human
