@@ -219,6 +219,21 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
             with self.subTest(key=key), self.assertRaises(ValueError):
                 revision.validate({**data, key: value})
 
+    def test_prelaunch_renewal_survives_slow_preparation(self):
+        data = fixture()
+        start = int(data["now"])
+        data.update(lease="new", session="checkpoint-42", assignee="next-worker",
+                    require_prelaunch=True, now=start + 150)
+        data["issue"]["assignees"] = [{"login": "next-worker"}]
+        data["comments"].append(comment(4, "DISPATCH_CLAIM nonce=new lease_token=new runner=next-worker "
+                                           f"checkpoint_approval=3 session=checkpoint-42 expires_at={start + 120}",
+                                        "next-worker"))
+        with self.assertRaisesRegex(ValueError, "reason=prelaunch_lease_expired"):
+            revision.validate(data)
+        data["comments"].append(comment(5, "DISPATCH_LEASE phase=prelaunch lease_token=new "
+                                           f"session=checkpoint-42 expires_at={start + 600}", "next-worker"))
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
+
     def not_launched_attempt(self, first_id, lease, reason="worker_not_launched", author="next-worker"):
         field = "lease_" + "token"
         return [

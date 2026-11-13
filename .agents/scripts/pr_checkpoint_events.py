@@ -176,7 +176,7 @@ def closes_released_attempt(released_lease, comment, line, f):
                 f.get("lease_token") == token, comment["user"]["login"] == runner))
 
 
-def successors_valid(data, comments, release_id, approval_id, now):
+def successors_valid(data, comments, release_id, approval_id, now, diagnose_expired=False):
     claim = None
     trusted_logins = data.get("trusted_logins", ())
     for comment, line, f in events(comments, release_id, float("inf"), trusted_logins):
@@ -192,4 +192,5 @@ def successors_valid(data, comments, release_id, approval_id, now):
             claim = {**claim, **f}
         else:
             return False
-    return not data.get("lease") or bool(claim and int(claim.get("expires_at", 0)) > now)
+    return not data.get("lease") or bool(claim and (diagnose_expired or
+                                                   int(claim.get("expires_at", 0)) > now))

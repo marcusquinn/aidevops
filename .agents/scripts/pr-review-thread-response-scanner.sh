@@ -1342,6 +1342,9 @@ _prrts_final_dispatch_fence() {
 	_prrts_release_dispatch_gate "$repo_slug" "$pr_number" "$head_ref" dispatch || return $?
 	if [[ -n "$repair_linked_issue" ]]; then
 		PRRTS_WORKTREE_FAILURE_REASON="checkpoint_final_target_verification_failed"
+		if [[ "${PCC_CLAIM_ACQUIRED:-0}" == 1 && "${PCC_PRELAUNCH_EXPIRES_AT:-0}" -le $(( $(date +%s) + 90 )) ]]; then
+			_pcc_renew_prelaunch_lease "$repo_slug" || return 1
+		fi
 		_prrts_prelaunch_target_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" || return 1
 	fi
 	return 0

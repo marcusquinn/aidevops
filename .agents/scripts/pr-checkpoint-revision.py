@@ -114,7 +114,7 @@ def candidate_owners_valid(data, closing):
     return owners in allowed_owners
 
 
-def candidate(data, comments, comment, now):
+def candidate(data, comments, comment, now, diagnose_expired=False):
     approval = approved_comment(data, comment, now)
     if approval is None:
         return None
@@ -128,7 +128,7 @@ def candidate(data, comments, comment, now):
     # only events after the approval and never grants authority from closure.
     later = [c for c in comments if c["id"] >= comment["id"] and c["id"] not in reused]
     if not successors_valid({**data, "released_lease": closing}, later, approval["release_id"],
-                            comment["id"], now):
+                            comment["id"], now, diagnose_expired):
         return None
     return {**approval, "approval_id": comment["id"], "approval_actor": comment["user"]["login"]}
 
@@ -138,6 +138,11 @@ def validate(data):
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
     candidates = [result for c in comments if (result := candidate(data, comments, c, now)) is not None]
     if len(candidates) != 1:
+        if not candidates and data.get("lease"):
+            expired = [result for c in comments
+                       if (result := candidate(data, comments, c, now, diagnose_expired=True)) is not None]
+            if len(expired) == 1:
+                raise ValueError("reason=prelaunch_lease_expired")
         raise ValueError("missing or ambiguous current revision approval")
     return candidates[0]
 
@@ -244,6 +249,8 @@ if __name__ == "__main__":
     except (ValueError, KeyError, TypeError, OverflowError) as error:
         if template_mode:
             print(f"approval-template: {error}", file=sys.stderr)
+        elif str(error) == "reason=prelaunch_lease_expired":
+            print("PR_CHECKPOINT_TARGET_LOST: reason=prelaunch_lease_expired", file=sys.stderr)
         elif payload is not None and (diagnostic := binding_diagnostic(payload)):
             print(diagnostic, file=sys.stderr)
         sys.exit(1)

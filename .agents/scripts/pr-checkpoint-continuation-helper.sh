@@ -192,6 +192,8 @@ _pcc_claim_checkpoint() {
 	PCC_CLAIM_ACQUIRED=1
 	PCC_PREVIOUS_ASSIGNEE=$(jq -r '.previous_assignee' <<<"$claim") || return 1
 	PCC_ORIGINAL_STATUS=$(jq -r '.previous_status' <<<"$claim") || return 1
+	PRRTS_WORKTREE_FAILURE_REASON="checkpoint_prelaunch_renewal_failed"
+	_pcc_renew_prelaunch_lease "$repo" || return 1
 	# The distributed claim is acquired before modifying assignment. The generic
 	# assignment guard is unchanged and no synthetic release marker is posted.
 	local -a owner_args=(--add-assignee "$PCC_AUTHENTICATED_LOGIN")
@@ -207,6 +209,16 @@ _pcc_claim_checkpoint() {
 		"$PCC_LINKED_ISSUE" "$PCC_ISSUE_ASSIGNEE" "$PCC_CHECKPOINT_ASSIGNEE" >/dev/null || return 1
 	# Worker startup renews prelaunch before transitioning ready. Pre-transitioning
 	# here makes its required renewal fail before the model can start.
+	return 0
+}
+
+_pcc_renew_prelaunch_lease() {
+	local repo="$1" now=""
+	now=$(date +%s) || return 1
+	AIDEVOPS_DEVICE_ID="$AIDEVOPS_DISPATCH_LEASE_DEVICE" "${SCRIPT_DIR}/dispatch-claim-helper.sh" \
+		transition prelaunch "$PCC_LINKED_ISSUE" "$repo" "$AIDEVOPS_DISPATCH_LEASE_TOKEN" \
+		"$AIDEVOPS_PR_CHECKPOINT_SESSION" 600 >/dev/null || return 1
+	PCC_PRELAUNCH_EXPIRES_AT=$((now + 600))
 	return 0
 }
 
