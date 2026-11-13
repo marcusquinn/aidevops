@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import time
 
 from worktree_reclaim_host import Census, git, locked, metadata_directory, run
 
@@ -100,8 +101,11 @@ def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: i
     resolved aliases, so stdout is parsed regardless of the exit status.
     """
     owner, name = slug.split("/", 1)
+    # -f keeps both as strings, as _batch_query declares them. -F would convert:
+    # an all-digit owner would become a JSON integer, and a value opening with @
+    # would make gh read that file and send its contents as the field.
     _, output = run(["gh", "api", "graphql", "--hostname", "github.com",
-                     "-F", f"owner={owner}", "-F", f"name={name}",
+                     "-f", f"owner={owner}", "-f", f"name={name}",
                      "-f", f"query={_batch_query(items)}"], timeout=timeout)
     try:
         data = ((json.loads(output) or {}).get("data") or {}).get("repository") or {}
@@ -120,13 +124,21 @@ def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
              *, timeout: int = 60) -> None:
     """Fill the cache ``reference_finished`` reads, one query per 20 references.
 
-    Any failure leaves the key absent, so judgement degrades to per-reference queries.
+    ``timeout`` bounds the whole call, not each batch. A stalled batch returns
+    empty instead of raising, so a per-batch timeout would let one slow repository
+    spend the pass's entire share of the cleanup stage budget. Batches stop once
+    the budget is gone; absent keys degrade to per-reference queries, and a
+    reference that stays unresolved refuses rather than authorizing removal.
     """
+    deadline = time.monotonic() + timeout
     for slug, items in wanted.items():
         pending = [item for item in dict.fromkeys(items)
                    if (item[0], item[1], slug) not in cache]
         for start in range(0, len(pending), BATCH_SIZE):
-            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, timeout)
+            remaining = int(deadline - time.monotonic())
+            if remaining < 1:
+                return
+            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, remaining)
 
 
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
