@@ -203,14 +203,16 @@ _dispatch_negative_pr_rest_fingerprint() {
 # GH#38142: fingerprint the exact PR behind a layer-4 PR-evidence block with
 # one bounded REST read. Close, merge, draft toggle, title/body/label edits and
 # pushes all change at least one field (GitHub bumps updated_at for each), so
-# any change that can lift the block invalidates the hint. Any open, draft or
-# merged state is accepted because each one blocks; errors return 1 and the
-# full ceremony runs.
+# any change that can lift the block invalidates the hint. Open (draft or
+# ready) and merged states are accepted because each one blocks; a closed,
+# unmerged PR no longer blocks, so it and any read error return 1 and the full
+# ceremony runs.
 _dispatch_pr_evidence_fingerprint() {
 	local repo="$1" pr="$2" pr_json=""
 	pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
 	jq -er '
 		select((.state | type) == "string" and (.updated_at | type) == "string" and (.head.sha | type) == "string") |
+		select(.state != "closed" or ((.merged_at | type) == "string" and (.merged_at | length) > 0)) |
 		select((.updated_at | length) > 0 and (.head.sha | length) > 0) |
 		[.state, (.merged_at // "unmerged"), ((.draft // false) | tostring), .updated_at, .head.sha] |
 		map(gsub("[^A-Za-z0-9_.:-]"; "-")) | join("_")
@@ -612,11 +614,15 @@ _dispatch_cache_confirmed_block() {
 		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
 		return 0
 	fi
-	# GH#38142: open, draft or merged PR evidence named by layer 4. Evidence
-	# without one exact PR number (task-id or coverage matches) is not cached.
-	local evidence_pattern='DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: [^#]*PR #([1-9][0-9]*) '
+	# GH#38142: open, draft or merged PR evidence naming exactly one PR. Evidence
+	# without a PR number (task-id matches) or naming several PRs (superseded
+	# coverage) is not cached: a change to an unrecorded PR could lift the block.
+	local evidence_pattern='DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: [^#]*PR #([1-9][0-9]*) ([^'$'\n'']*)'
+	local second_pr_pattern='PR #[0-9]'
 	if [[ "$lines" =~ $evidence_pattern ]]; then
-		_dispatch_negative_cache_record "$candidate" dedup_pr_evidence "${BASH_REMATCH[1]}"
+		pr="${BASH_REMATCH[1]}"
+		[[ "${BASH_REMATCH[2]}" =~ $second_pr_pattern ]] ||
+			_dispatch_negative_cache_record "$candidate" dedup_pr_evidence "$pr"
 		return 0
 	fi
 	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
