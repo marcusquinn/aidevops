@@ -159,7 +159,9 @@ _pmcr_attempt_records() {
 	state_file=$(_pmcr_state_file "$repo_slug" "$pr_number")
 	fingerprint=$(_pmcr_state_value "$state_file" fingerprint)
 	dispatched_at=$(_pmcr_state_value "$state_file" dispatched_at)
-	if [[ "$fingerprint" =~ ^conflict-repair:([0-9a-f]{40}):([0-9a-f]{40})$ && "$dispatched_at" =~ ^[0-9]+$ ]]; then
+	# Validate the timestamp first: a later =~ would overwrite BASH_REMATCH.
+	if [[ "$dispatched_at" =~ ^[0-9]+$ ]] &&
+		[[ "$fingerprint" =~ ^conflict-repair:([0-9a-f]{40}):([0-9a-f]{40})$ ]]; then
 		head="${BASH_REMATCH[1]}"
 		base="${BASH_REMATCH[2]}"
 		printf '%s %s %s\n' "$head" "$base" "$dispatched_at"
@@ -256,12 +258,16 @@ _pmcr_fallback_allowed() {
 	local repo_slug="$2"
 	local observed_head="$3"
 	local reason="$4"
-	local snapshot="" pr_state="" live_head=""
+	local snapshot="" pr_state="" live_head="" live_mergeable=""
 	snapshot=$(_pmcr_pr_snapshot "$repo_slug" "$pr_number") || {
 		_pmcr_log "PR #${pr_number} in ${repo_slug} fallback deferred — live head unreadable (${reason})"
 		return 1
 	}
-	IFS="$_PMCR_FIELD_SEP" read -r pr_state live_head _ <<<"$snapshot"
+	IFS="$_PMCR_FIELD_SEP" read -r pr_state live_head _ _ _ _ live_mergeable <<<"$snapshot"
+	if [[ "$live_mergeable" == "$_PMCR_TRUE" ]]; then
+		_pmcr_log "PR #${pr_number} in ${repo_slug} fallback abandoned — conflict no longer present (${reason}); preserving PR"
+		return 1
+	fi
 	if [[ "$pr_state" != "$_PMCR_PR_OPEN" || "$live_head" != "$observed_head" ]]; then
 		_pmcr_log "PR #${pr_number} in ${repo_slug} fallback abandoned — head moved or PR not open (${reason}); re-evaluating next cycle"
 		return 1
