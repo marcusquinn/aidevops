@@ -14,6 +14,14 @@
 #     Exit 0 = PR evidence exists or lookup is uncertain (do NOT dispatch).
 #     Exit 1 = complete lookup with no evidence.
 
+# GH#38124: worker draft checkpoints use the continuation linkage predicate.
+_DDPR_LIB_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$_DDPR_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _DDPR_LIB_DIR="."
+# shellcheck source=pr-checkpoint-target-lib.sh
+source "${_DDPR_LIB_DIR}/pr-checkpoint-target-lib.sh"
+unset _DDPR_LIB_DIR
+_DDPR_UNLINKED_PREFIX="WORKER_DRAFT_CHECKPOINT_UNLINKED:"
+
 _ddpr_gh_read() {
 	local rc=0
 	if declare -F _gh_with_timeout >/dev/null 2>&1; then
@@ -390,6 +398,10 @@ _ddpr_graphql_open_siblings() {
 					... on PullRequest {
 						number title body isDraft reviewDecision
 						mergeStateStatus mergeable changedFiles
+						isCrossRepository headRefName
+						closingIssuesReferences(first: 10) {
+							nodes { number repository { name owner { login } } }
+						}
 						files(first: 100) {
 							nodes { path }
 							pageInfo { hasNextPage }
@@ -408,7 +420,8 @@ _ddpr_graphql_open_siblings() {
 	pr_json=$(printf '%s' "$response" | jq -ce \
 		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
 		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
-		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" '
+		--arg number_type "$_DDPR_JSON_NUMBER_TYPE" \
+		--arg string_type "$_DDPR_JSON_STRING_TYPE" '
 		select(((.errors // []) | type) == $array_type)
 		| select(((.errors // []) | length) == 0)
 		| select((.data.rateLimit.cost | type) == $number_type)
@@ -419,6 +432,9 @@ _ddpr_graphql_open_siblings() {
 			.__typename == "PullRequest" and
 			(.number | type) == $number_type and
 			(.isDraft | type) == $boolean_type and
+			(.isCrossRepository | type) == $boolean_type and
+			(.headRefName | type) == $string_type and
+			((.closingIssuesReferences.nodes // []) | type) == $array_type and
 			((.files.nodes // []) | type) == $array_type and
 			(.files.pageInfo.hasNextPage | type) == $boolean_type and
 			((.labels.nodes // []) | type) == $array_type and
@@ -433,6 +449,9 @@ _ddpr_graphql_open_siblings() {
 			mergeStateStatus,
 			mergeable,
 			changedFiles,
+			isCrossRepository,
+			headRefName,
+			closingIssuesReferences: (.closingIssuesReferences.nodes // []),
 			files: (.files.nodes // []),
 			filesTruncated: .files.pageInfo.hasNextPage,
 			labels: (.labels.nodes // [])
@@ -595,6 +614,65 @@ _ddpr_graphql_open_commits() {
 }
 
 #######################################
+# Classify reference-matched open drafts for has_open_pr Check 0.
+#
+#aidevops:trust-boundary — GH#38124: an unprotected same-repository worker
+# draft without closing references is this issue's WORKER_DRAFT_CHECKPOINT only
+# when the continuation predicate (checkpoint_draft_links) accepts it, so dedup
+# never blocks an issue that continuation will reject. A rejected draft is
+# context, not ownership: it no longer blocks ordinary dispatch, because a fresh
+# worker costs less than a permanent stall and the fuse/terminal actions retire
+# the orphaned draft. Closing-reference drafts keep the worker route; protected,
+# cross-repository and non-worker drafts keep the plain durable block.
+#
+# Args: $1 = issue number, $2 = sibling JSON, $3 = title pattern, $4 = body pattern
+# Output: `unlinked|PR|reason` rows, then at most one `block|PR|worker|protected`
+#######################################
+_ddpr_classify_sibling_drafts() {
+	local issue_number="$1"
+	local pr_json="$2"
+	local title_pattern="$3"
+	local body_pattern="$4"
+	printf '%s' "$pr_json" | jq -r \
+		--argjson issue "$issue_number" \
+		--arg title_pattern "$title_pattern" \
+		--arg body_pattern "$body_pattern" \
+		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" \
+		--arg unlinked "unlinked" \
+		"${_PR_CHECKPOINT_FOR_LINK_JQ_DEFS}"'
+		def names: [.labels[]?.name];
+		def dedup_protected: names | any(
+			. == "origin:interactive" or . == "hold-for-review" or
+			. == "no-auto-dispatch" or . == "needs-maintainer-review"
+		);
+		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
+		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
+		# A proven dispatch identity for another target makes this issue related.
+		def unlinked_reason:
+			checkpoint_reference_issues as $refs | checkpoint_dispatch_identity as $identity |
+			if ($refs | length) == 0 then "unrecognised_reference"
+			elif (any($refs[]; . == $issue) | not) or ($identity != null and any($refs[]; . == $identity))
+			then "related_reference"
+			else "ambiguous" end;
+		[
+			.[] | select(
+				(.isDraft == true) and (seed_for_issue | not) and
+				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
+			) |
+			if worker_owned and (dedup_protected | not) and (checkpoint_protected | not) and
+				.isCrossRepository == false then
+				if ((.closingIssuesReferences // []) | length) > 0 or checkpoint_draft_links($issue) then
+					{number, kind: "worker"}
+				else {number, kind: $unlinked, reason: unlinked_reason} end
+			else {number, kind: "protected"} end
+		] |
+		(.[] | select(.kind == $unlinked) | "\(.kind)|\(.number)|\(.reason)"),
+		(map(select(.kind != $unlinked)) | .[0] | select(. != null) | "block|\(.number)|\(.kind)")
+	' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # has_open_pr Check 0: healthy open sibling PRs for this issue.
 #
 # Redispatch should not create another worker when an existing sibling PR for
@@ -602,7 +680,8 @@ _ddpr_graphql_open_commits() {
 # ready for the merge path but do not use a closing keyword in the body (for
 # example parent/phase work using `For #NNN`). Drafts are durable checkpoints:
 # worker drafts must be continued/escalated, while interactive/held/NMR drafts
-# must remain untouched. Both kinds block competing ordinary dispatch.
+# must remain untouched. Both kinds block competing ordinary dispatch; a worker
+# draft the continuation predicate rejects does not (_ddpr_classify_sibling_drafts).
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
@@ -630,25 +709,21 @@ _has_open_pr_check_healthy_sibling() {
 	# companion files the worker starts from; it is not an implementation
 	# checkpoint. Applying the label already requires triage access; the worker
 	# launch path re-checks author trust and same-repository heads.
-	draft_pr=$(printf '%s' "$pr_json" | jq -r \
-		--arg title_pattern "$title_ref_pattern" \
-		--arg body_pattern "$body_ref_pattern" \
-		--arg seed_marker "<!-- aidevops:seed-pr issue=${issue_number} -->" '
-		def names: [.labels[]?.name];
-		def protected: names | any(
-			. == "origin:interactive" or . == "hold-for-review" or
-			. == "no-auto-dispatch" or . == "needs-maintainer-review"
-		);
-		def worker_owned: names | any(. == "origin:worker" or . == "origin:worker-takeover");
-		def seed_for_issue: (names | any(. == "seed-pr")) and ((.body // "") | contains($seed_marker));
-		[
-			.[] | select(
-				(.isDraft == true) and (seed_for_issue | not) and
-				(((.title // "") | test($title_pattern; "i")) or ((.body // "") | test($body_pattern; "i")))
-			)
-		] | .[0] |
-		if . then "\(.number)|\(if worker_owned and (protected | not) then "worker" else "protected" end)"
-		else "" end' 2>/dev/null) || draft_pr=""
+	local draft_rows="" draft_row="" unlinked_reason=""
+	draft_rows=$(_ddpr_classify_sibling_drafts "$issue_number" "$pr_json" \
+		"$title_ref_pattern" "$body_ref_pattern") || draft_rows=""
+	draft_pr=""
+	while IFS= read -r draft_row; do
+		case "$draft_row" in
+		unlinked\|*)
+			draft_row="${draft_row#unlinked|}"
+			unlinked_reason="${draft_row#*|}"
+			printf '%s issue=#%s pr=#%s reason=%s; draft does not block ordinary dispatch\n' \
+				"$_DDPR_UNLINKED_PREFIX" "$issue_number" "${draft_row%%|*}" "$unlinked_reason" >&2
+			;;
+		block\|*) draft_pr="${draft_row#block|}" ;;
+		esac
+	done <<<"$draft_rows"
 	if [[ -n "$draft_pr" ]]; then
 		draft_pr_number="${draft_pr%%|*}"
 		draft_pr_kind="${draft_pr#*|}"
@@ -1132,8 +1207,23 @@ _ddpr_spawn_check() {
 	local _ddpr_sc_out="$1" _ddpr_sc_name="$2" _ddpr_sc_timed="$3"
 	shift 3
 	local _result=""
-	_result=$(_ddpr_timed_check "$_ddpr_sc_name" "$_ddpr_sc_timed" "$@" 2>/dev/null) &&
+	# Stderr stays private to the temp dir; has_open_pr replays only known
+	# diagnostic prefixes, never raw gh error text (GH#38124).
+	_result=$(_ddpr_timed_check "$_ddpr_sc_name" "$_ddpr_sc_timed" "$@" 2>"${_ddpr_sc_out}.err") &&
 		printf '%s' "$_result" >"$_ddpr_sc_out" || true
+	return 0
+}
+
+# Replay only check-0 unlinked-draft diagnostics to the caller's stderr.
+# Args: $1 = has_open_pr temp dir
+_ddpr_replay_diagnostics() {
+	local _ddpr_rd_file="${1}/check0.out.err" _ddpr_rd_line=""
+	[[ -f "$_ddpr_rd_file" ]] || return 0
+	while IFS= read -r _ddpr_rd_line; do
+		if [[ "$_ddpr_rd_line" == "${_DDPR_UNLINKED_PREFIX}"* ]]; then
+			printf '%s\n' "$_ddpr_rd_line" >&2
+		fi
+	done <"$_ddpr_rd_file"
 	return 0
 }
 
@@ -1201,6 +1291,7 @@ has_open_pr() {
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
 	_has_open_pr_run_checks "$_pr_tmpdir" "$issue_number" "$repo_slug" "$issue_title"
+	_ddpr_replay_diagnostics "$_pr_tmpdir"
 
 	# Uncertainty takes precedence over positive evidence. A partial API view is
 	# not sufficient to classify the block as an active claim or known PR.
