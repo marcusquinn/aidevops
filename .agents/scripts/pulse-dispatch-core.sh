@@ -223,6 +223,14 @@ _dispatch_cleanup_disk_pressure() {
 	local before_percent="$6"
 	_dispatch_launch_pressure_cleanup || true
 	echo "[dispatch_with_dedup] Async disk cleanup requested for #${issue_number} in ${repo_slug} (${target_path}): reason=${before_reason}, available=${before_kb}KB/${before_percent}%; dispatch remains fail-closed" >>"$LOGFILE"
+	# GH#38026: name space held outside aidevops ownership (Time Machine local
+	# snapshots) once per pulse process; read-only, never deletes backups.
+	if [[ -z "${_DISPATCH_DISK_RECLAIM_HINT_EMITTED:-}" ]]; then
+		_DISPATCH_DISK_RECLAIM_HINT_EMITTED=1
+		local hint=""
+		hint=$(aidevops_disk_capacity_reclaim_hint) || hint=""
+		[[ -z "$hint" ]] || echo "[dispatch_with_dedup] ${hint}" >>"$LOGFILE"
+	fi
 	return 1
 }
 
@@ -252,8 +260,9 @@ _dispatch_dedup_capacity_gates() {
 	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 
 	# GH#18987/GH#28543: refuse dispatch when the worktree filesystem has less
-	# than 5 GiB or 5% available. The same fail-closed policy runs at the actual
-	# worktree creation boundary, covering interactive and non-Pulse callers.
+	# than 5 GiB or 5% available (GH#38026: the 5% floor is capped at 50 GiB on
+	# large volumes). The same fail-closed policy runs at the actual worktree
+	# creation boundary, covering interactive and non-Pulse callers.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "disk_space" "$_dss_t0" _ds_stage_attempt_id
 	local _capacity_rc=0
@@ -263,7 +272,7 @@ _dispatch_dedup_capacity_gates() {
 		_dispatch_cleanup_disk_pressure "$issue_number" "$repo_slug" "$_capacity_path" \
 			"${AIDEVOPS_DISK_CAPACITY_REASON}" "${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}" \
 			"${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}" || true
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}% = ${AIDEVOPS_DISK_PERCENT_FLOOR_KB}KB after the large-volume ceiling)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 		return 1
 	fi
