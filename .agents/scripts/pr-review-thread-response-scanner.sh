@@ -905,6 +905,93 @@ cmd_mark_blocked() {
 	fi
 	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "$blocked_by" "$PRRTS_BOOL_TRUE" "$reason" "$details_file"
 	_prrts_publish_continuation_blocker "$repo_slug" "$pr_number" "$blocked_by" "$reason" "$details_file" || true
+	_prrts_publish_review_thread_blocker "$repo_slug" "$pr_number" "$blocked_by" "$reason" "$details_file" || true
+	return 0
+}
+
+# Publish an ordinary review-thread worker's decision/maintainer finding once
+# per PR head, so a parked PR shows why. Inactive for continuation workers
+# (linked issue exported) and for code/infrastructure/none blocks. Failures
+# never change the local state result; a pending file drives retry.
+# Args: repo slug, PR number, blocked_by, reason, optional details file
+_prrts_publish_review_thread_blocker() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local blocked_by="$3"
+	local reason="$4"
+	local details_file="${5:-}"
+	local marker="" details="" pending_file="" tmp_file="" head="" current_head=""
+	local body
+	[[ "${AIDEVOPS_PR_REPAIR_LINKED_ISSUE:-}" =~ ^[1-9][0-9]*$ ]] && return 0
+	blocked_by="$(_prrts_normalise_blocked_by "$blocked_by")"
+	case "$blocked_by" in
+	decision | maintainer) ;;
+	*) return 0 ;;
+	esac
+	_prrts_ensure_dirs
+	pending_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}.review-blocker-pending.json"
+	# Never overwrite an unacknowledged finding with a later worker result.
+	if [[ -f "$pending_file" ]]; then
+		_prrts_retry_review_thread_blocker "$repo_slug" "$pr_number" || return 1
+	fi
+	head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
+	current_head=$(_prrts_gh_call read gh api "repos/${repo_slug}/pulls/${pr_number}" --jq '.head.sha' 2>/dev/null) || current_head=""
+	[[ "$current_head" =~ ^[0-9a-fA-F]{40,64}$ ]] && head="$current_head"
+	[[ "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || head="$PRRTS_VALUE_UNKNOWN"
+	reason="$(_prrts_state_value_line "$reason" 240)"
+	if [[ -n "$details_file" && -f "$details_file" ]]; then
+		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
+	fi
+	marker="aidevops:review-thread-blocker pr=${pr_number} head=${head}"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- ${marker} -->
+REVIEW_THREAD_BLOCKER_FINDING pr=${pr_number} head=${head} blocked_by=${blocked_by}
+
+The review-thread response worker inspected PR #${pr_number} and stopped because it needs a decision it cannot make itself.
+
+- Blocked by: ${blocked_by}
+- Reason: ${reason}
+- Details: ${details:-none recorded}
+
+Actions that re-arm automation: reply on or resolve the open review thread, or push a commit to the PR branch (a changed thread fingerprint or head launches the response worker again).
+<!-- ops:end -->"
+	tmp_file=$(mktemp "${pending_file}.XXXXXX") || return 1
+	if ! jq -n --arg marker "$marker" --arg body "$body" \
+		'{marker: $marker, body: $body}' >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv "$tmp_file" "$pending_file" || return 1
+	_prrts_retry_review_thread_blocker "$repo_slug" "$pr_number"
+	return $?
+}
+
+# Post the saved review-thread payload unless a trusted comment already carries
+# its marker. Retains the pending file on any lookup or write failure.
+_prrts_retry_review_thread_blocker() {
+	local repo_slug="$1" pr_number="$2"
+	local pending_file="" marker="" existing=""
+	local body
+	pending_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}.review-blocker-pending.json"
+	[[ -f "$pending_file" ]] || return 0
+	jq -e '(.marker | length > 0) and (.body | length > 0)' "$pending_file" >/dev/null || return 1
+	marker=$(jq -r '.marker' "$pending_file") || return 1
+	body=$(jq -r '.body' "$pending_file") || return 1
+	if ! existing=$(_prrts_gh_call read gh api "repos/${repo_slug}/issues/${pr_number}/comments" --paginate \
+		--jq ".[] | select(((.author_association // \"\") | IN(\"OWNER\",\"MEMBER\",\"COLLABORATOR\")) and ((.body // \"\") | contains(\"${marker} \"))) | .id" 2>/dev/null); then
+		_prrts_log "review-blocker-publish: ${repo_slug}#${pr_number} duplicate lookup failed; retaining pending finding"
+		return 1
+	fi
+	if [[ -n "$existing" ]]; then
+		rm -f "$pending_file"
+		return 0
+	fi
+	if ! _prrts_gh_call write gh api "repos/${repo_slug}/issues/${pr_number}/comments" --method POST --raw-field body="$body" >/dev/null 2>&1; then
+		_prrts_log "review-blocker-publish: ${repo_slug}#${pr_number} comment post failed"
+		return 1
+	fi
+	rm -f "$pending_file"
+	_prrts_log "review-blocker-publish: ${repo_slug}#${pr_number} posted"
 	return 0
 }
 
