@@ -352,38 +352,44 @@ _prrts_progress_step() {
 	return 0
 }
 
-_prrts_write_prompt_file() {
-	local repo_slug="$1"
-	local worktree_path="$2"
-	local pr_number="$3"
-	local title="$4"
-	local _thread_count="$5"
-	local _fingerprint="$6"
-	local _preview="$7"
-	local prompt_file="" recovery_dir="" safe_slug="" safe_title=""
-	local scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
-	local ownership_helper="${HOME}/.aidevops/agents/scripts/dispatch-claim-helper.sh"
-	local repair_number_ref="\$AIDEVOPS_PR_REPAIR_NUMBER"
-	local repo_slug_ref="\$WORKER_REPO_SLUG"
-	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
-	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
-	local closing_link_step="" progress_step=""
-	: "$_thread_count" "$_fingerprint" "$_preview"
-	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
-	progress_step="$(_prrts_progress_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
-
-	_prrts_ensure_dirs
-	safe_slug="$(_prrts_safe_slug "$repo_slug")"
-	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
-	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
-	if [[ -n "$PCC_DIAGNOSTIC_TOOLING_COMMIT" ]]; then
-		[[ "$PCC_REVISION_APPROVAL" =~ ^[1-9][0-9]*$ ]] || return 1
-		_pcc_write_diagnostic_prompt "$prompt_file" "$repo_slug" "$pr_number" "$worktree_path" || return 1
-		printf '%s\n' "$prompt_file"
+# Prompt steps 4-5 durability side-ref rule (non-PR ref; PR head stays unchanged).
+# Args: part (push|cleanup), side-ref name
+_prrts_durability_text() {
+	local part="$1"
+	local side_ref="$2"
+	# Literal backticks and $VAR names are prompt text for the worker, not expansions.
+	# shellcheck disable=SC2016
+	if [[ "$part" == "push" ]]; then
+		printf '%s\n' \
+			'   Durability push (only when a repository tool refuses to act until HEAD is' \
+			'   remote-contained, for example a guard using `git for-each-ref --contains HEAD refs/remotes/`;' \
+			'   name that tool in your final report):' \
+			'   push only fast-forward commits on top of `$AIDEVOPS_PR_REPAIR_HEAD_SHA` to the side ref with' \
+			"   \`git push origin \"HEAD:refs/heads/${side_ref}\"\`. Never push it to" \
+			'   `$AIDEVOPS_PR_REPAIR_HEAD_REF`, never force-push it, never open a PR from it.' \
+			'   The PR head stays unchanged, so the exact-target fence below stays valid.' \
+			"   Record \`${side_ref}\` in the continuation checkpoint so a resumed attempt can reuse or remove it."
 		return 0
 	fi
-	recovery_dir=$(mktemp -d "${STATE_DIR}/${safe_slug}-${pr_number}-recovery.XXXXXXXX") || return 1
-	cat >"$prompt_file" <<PROMPT_EOF
+	# shellcheck disable=SC2016
+	printf '%s\n' \
+		'   The final push must contain every durability-pushed commit. After a successful' \
+		'   push make no further push to the PR branch (stale fence), then delete any side ref:' \
+		"   \`git push origin --delete \"refs/heads/${side_ref}\"\`. Also delete it before any" \
+		'   terminal-state command (mark-complete, mark-blocked, mark-progress). Repos with' \
+		'   unfiltered push-event CI should exclude the `aidevops-durability/` prefix.'
+	return 0
+}
+
+# Prompt header: trusted metadata and dispatcher setup contract (unquoted
+# heredoc so PCC_* values expand; backticks are escaped).
+# Args: repo slug, PR number, worktree path, sanitised title
+_prrts_prompt_header() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local safe_title="$4"
+	cat <<PROMPT_EOF
 # STALE WORKER DRAFT CONTINUATION — BOUNDED WORKER
 
 Trusted dispatch metadata:
@@ -408,6 +414,45 @@ PR title: ${safe_title}
 - Work only in the supplied linked worktree. Do not create another branch,
   worktree, issue, or PR, and do not merge or force-push.
 
+PROMPT_EOF
+	return 0
+}
+
+_prrts_write_prompt_file() {
+	local repo_slug="$1"
+	local worktree_path="$2"
+	local pr_number="$3"
+	local title="$4"
+	local _thread_count="$5"
+	local _fingerprint="$6"
+	local _preview="$7"
+	local prompt_file="" recovery_dir="" safe_slug="" safe_title=""
+	local scanner_path="${HOME}/.aidevops/agents/scripts/pr-review-thread-response-scanner.sh"
+	local ownership_helper="${HOME}/.aidevops/agents/scripts/dispatch-claim-helper.sh"
+	local repair_number_ref="\$AIDEVOPS_PR_REPAIR_NUMBER"
+	local repo_slug_ref="\$WORKER_REPO_SLUG"
+	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
+	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
+	local closing_link_step="" progress_step="" durability_push="" durability_cleanup=""
+	: "$_thread_count" "$_fingerprint" "$_preview"
+	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
+	progress_step="$(_prrts_progress_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
+
+	_prrts_ensure_dirs
+	safe_slug="$(_prrts_safe_slug "$repo_slug")"
+	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
+	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
+	if [[ -n "$PCC_DIAGNOSTIC_TOOLING_COMMIT" ]]; then
+		[[ "$PCC_REVISION_APPROVAL" =~ ^[1-9][0-9]*$ ]] || return 1
+		_pcc_write_diagnostic_prompt "$prompt_file" "$repo_slug" "$pr_number" "$worktree_path" || return 1
+		printf '%s\n' "$prompt_file"
+		return 0
+	fi
+	recovery_dir=$(mktemp -d "${STATE_DIR}/${safe_slug}-${pr_number}-recovery.XXXXXXXX") || return 1
+	durability_push="$(_prrts_durability_text push "aidevops-durability/pr-${pr_number}-${recovery_dir##*.}")"
+	durability_cleanup="$(_prrts_durability_text cleanup "aidevops-durability/pr-${pr_number}-${recovery_dir##*.}")"
+	_prrts_prompt_header "$repo_slug" "$pr_number" "$worktree_path" "$safe_title" >"$prompt_file"
+	cat >>"$prompt_file" <<PROMPT_EOF
 ## Required workflow
 
 1. Inspect linked issue #${PCC_LINKED_ISSUE}, PR #${pr_number}, its commits,
@@ -422,8 +467,10 @@ PR title: ${safe_title}
    ShellCheck or markdownlint) is delegated to CI, not a blocker: name the tool
    and covering CI job in the PR body (GH#34758).
 4. Make all continuation commits locally, including intermediate data artifacts;
-   do not push them mid-run. If publication evidence must be durable mid-run,
-   record receipts in the private workspace and include them in the final commit.
+   do not push them to the PR branch mid-run. If publication evidence must be
+   durable mid-run, record receipts in the private workspace and include them
+   in the final commit.
+${durability_push}
    Recovery bundle for this repository and attempt: ${recovery_dir}/continuation.bundle
    Retain this path in the continuation checkpoint for recovery after a restart.
    After each commit save a recovery copy: \`git bundle create "${recovery_dir}/continuation.bundle" "\$AIDEVOPS_PR_REPAIR_HEAD_SHA"..HEAD\`; on resume keep and verify unpushed local commits, never reset them away.
@@ -433,7 +480,9 @@ PR title: ${safe_title}
    Stop without pushing if it no longer reports PR_CHECKPOINT_TARGET_VALID.
 5. Push exactly once, without force, to the existing remote branch using
    \`git push origin "HEAD:\$AIDEVOPS_PR_REPAIR_HEAD_REF"\`. Never open a
-   replacement PR. After a successful push make no further push (stale fence). Retry a failed or ambiguous push only if the remote head still equals \`\$AIDEVOPS_PR_REPAIR_HEAD_SHA\`, after rerunning the fence.
+   replacement PR.
+${durability_cleanup}
+   Retry a failed or ambiguous push only if the remote head still equals \`\$AIDEVOPS_PR_REPAIR_HEAD_SHA\`, after rerunning the fence.
 6. If the issue criteria are satisfied and focused verification passes, verify
    the remote PR head equals local HEAD, mark PR #${pr_number} ready, then run
    \`"${scanner_path}" mark-complete "${repo_slug_ref}" "${repair_number_ref}" continuation_complete\` exactly once.${closing_link_step}
