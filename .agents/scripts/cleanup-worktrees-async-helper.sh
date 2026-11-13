@@ -290,6 +290,7 @@ _maintain_compact_archives() {
 }
 
 # Print the current repo plus every repos.json repository path, once each.
+# Arg: "true" = bounded git lookup, skip local_only repos (capacity); "bounded" = bounded lookup, include local_only.
 _missing_metadata_repo_paths() {
 	local capacity_only="${1:-false}"
 	local repos_json="${HOME:+${HOME}/.config/aidevops/repos.json}"
@@ -297,7 +298,7 @@ _missing_metadata_repo_paths() {
 	local seen=$'\n'
 
 	{
-		if [[ "$capacity_only" == true ]]; then
+		if [[ "$capacity_only" == true || "$capacity_only" == bounded ]]; then
 			timeout_sec 5 git rev-parse --show-toplevel 2>/dev/null || true
 		else
 			git rev-parse --show-toplevel 2>/dev/null || true
@@ -314,6 +315,21 @@ _missing_metadata_repo_paths() {
 		fi
 		printf '%s\n' "$repo_path"
 	done
+	return 0
+}
+
+# Bound the whole repository sweep, not just each individual repository.
+_prune_turbo_caches() {
+	local helper="${SCRIPT_DIR}/worktree-artefact-reclaim.sh"
+	local repo="" deadline=$((SECONDS + 60)) remaining=0 rc=0
+	[[ -f "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
+	while IFS= read -r repo; do
+		remaining=$((deadline - SECONDS))
+		[[ "$remaining" -gt 0 ]] || break
+		rc=0
+		timeout_sec "$remaining" bash "$helper" --turbo-cache "$repo" >>"$LOGFILE" 2>&1 || rc=$?
+		[[ "$rc" -eq 0 ]] || printf '[cleanup-worktrees-async] turbo-cache-prune failed rc=%s\n' "$rc" >>"$LOGFILE"
+	done < <(_missing_metadata_repo_paths bounded)
 	return 0
 }
 
@@ -611,6 +627,7 @@ _run_cleanup_pass() {
 	if [[ "$lifecycle_only" -eq 0 ]]; then
 		_recover_interactive_capacity
 		_prune_dirty_worktree_backups
+		_prune_turbo_caches
 	fi
 
 	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then

@@ -52,3 +52,4 @@ with a root-cause fix in the same change.
 - Pressure cleanup starts at the lower of 80% of the cap and
   `AIDEVOPS_WORKTREE_CLEANUP_THRESHOLD` (default 150), so a large cap never
   delays cleanup of redundant worktrees.
+- Async cleanup prunes ignored shared Turborepo caches after 3 days and caps them at 20G (`AIDEVOPS_TURBO_CACHE_MAX_AGE_DAYS`, `AIDEVOPS_TURBO_CACHE_MAX_SIZE`) to reclaim disk headroom.
