@@ -74,8 +74,9 @@ _pr_checkpoint_trusted_logins() {
 # shared rule links such a draft to issue N for continuation and stale
 # recovery: no closing identity at all, an exact `For #N` line, an open
 # same-repository draft labelled origin:worker-takeover, and no
-# origin:worker or protective label. Bare mentions, ready PRs and conflicting
-# closing links never match.
+# origin:worker or protective label. Bare `#N` mentions without a For/Ref
+# keyword, ready PRs and conflicting closing links never match. The worker
+# rule below also accepts inline For/Ref references (GH#37915).
 #
 # Ordinary worker checkpoint drafts link the same way: full-loop deliberately
 # keeps `For #N`/`Ref #N` on incomplete work (GH#33374), and has-open-pr already
@@ -84,10 +85,13 @@ _pr_checkpoint_trusted_logins() {
 # continuation, stale-recovery or approval path, so the issue stalled
 # permanently. worker_checkpoint_draft_links accepts an open same-repository
 # origin:worker/origin:worker-takeover draft with no closing identity and no
-# protective label whose explicit `For #N` / `Ref(s) #N` references (anywhere in
-# the body, word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name
-# exactly issue N. Several targets are ambiguous and never match. Continuation turns that line into a
-# closing link only once the issue criteria are met (_prrts_write_prompt_file).
+# protective label whose explicit `For #N` references (anywhere in the body,
+# word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name exactly
+# issue N or, without any `For` reference, whose `Ref(s) #N` references do.
+# `For` keeps precedence (GH#38111) so a `For #N ... Ref #M` checkpoint still
+# links N, as it did before GH#37915. Several targets are ambiguous and never
+# match. Continuation turns that reference into a closing link only once the
+# issue criteria are met (_prrts_write_prompt_file).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
@@ -110,7 +114,8 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_line_issues($keyword):
 		[(.body // "") | scan("(?i)(?:^|[^a-z0-9_])" + $keyword + "[ \\t]+#([1-9][0-9]*)(?![a-z0-9_])") | .[0] | tonumber] | unique;
 	def checkpoint_reference_issues:
-		(checkpoint_line_issues("For") + checkpoint_line_issues("Refs?")) | unique;
+		checkpoint_line_issues("For") as $for |
+		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
 	def worker_checkpoint_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
