@@ -430,6 +430,29 @@ _provision_worktree_owner_still_exact() {
 	return 0
 }
 
+# GH#38065: cheap bounded pre-check so a source that can never fit the byte
+# budget is refused without the full validator walk. Returns 0 only when the
+# apparent size clearly (>2x) exceeds the budget; any uncertainty (no timeout
+# tool, no GNU --apparent-size, timeout, error) returns 1 and the validator decides.
+# Args: $1=source node_modules path, $2=max bytes
+_provision_source_clearly_over_budget() {
+	local source_dir="$1"
+	local max_bytes="$2"
+	local timeout_cmd="" size_kb=""
+	[[ -d "$source_dir" && "$max_bytes" =~ ^[0-9]+$ ]] || return 1
+	if command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout"
+	else
+		return 1
+	fi
+	size_kb=$("$timeout_cmd" 5 du -sk --apparent-size -- "$source_dir" 2>/dev/null | cut -f1) || return 1
+	[[ "$size_kb" =~ ^[0-9]+$ ]] || return 1
+	((size_kb > (max_bytes / 1024) * 2)) || return 1
+	return 0
+}
+
 # Controller-only copy into a newly owned worktree. No resume or permission
 # mutation: a continuation owned by another process (even dead) is left intact.
 # Args: $1=worktree path, $2=canonical repo root, $3=relative package dir,
@@ -473,6 +496,10 @@ _provision_worktree_node_modules() (
 	fi
 	[[ ! -e "$destination" && ! -L "$destination" ]] || return 1
 	validator="$(dirname "${BASH_SOURCE[0]}")/worktree-dependency-provision.py"
+	if _provision_source_clearly_over_budget "${repo_root}/${relative}/node_modules" "$max_bytes"; then
+		printf 'dependency-provision-rejected reason=source-exceeds-budget\n' >&2
+		return 1
+	fi
 	before=$(python3 "$validator" "$repo_root" "$wt_path" "$relative" --max-bytes "$max_bytes") || return 1
 	stage=$(mktemp -d "${wt_path}/.aidevops-deps-XXXXXXXX") || return 1
 	trap 'rm -rf -- "$stage"' EXIT

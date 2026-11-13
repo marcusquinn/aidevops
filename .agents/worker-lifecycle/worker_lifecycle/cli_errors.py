@@ -1,10 +1,31 @@
 """Stable, path-safe lifecycle CLI failure diagnostics."""
 
+import subprocess  # nosec B404 # exception type only; no process is started here
+
+from .cleanup_failure import command_failure
 from .filesystem import FilesystemValidationError, filesystem_error_details
 from .process import ObservationUnavailable
 from .protected_proc import ProcessCensusUnavailable
 from .refusal import failure_category, refusal_code
 from .storage import StoreCapacity, StoreConflict
+
+# Allowlisted, path-free fields copied from a failed helper; never its stderr text.
+_HELPER_FIELDS = (
+    ("command", "helper"), ("reason", "helper_reason"),
+    ("stderr_class", "helper_stderr_class"),
+)
+
+
+def _helper_failure(error: Exception, mode: str) -> dict:
+    """GH#38056: name the failing helper and its stable code, not bare CalledProcessError.
+
+    Covers every retirement operation, including `retire-worktree`, which
+    `refusal.RETIREMENT_OPERATIONS` does not list.
+    """
+    if mode != "retirement" or not isinstance(error, subprocess.CalledProcessError):
+        return {}
+    failure = command_failure(error)
+    return {name: failure[key] for key, name in _HELPER_FIELDS if key in failure}
 
 
 def error_details(error: Exception, operation: str) -> dict:
@@ -32,6 +53,7 @@ def error_details(error: Exception, operation: str) -> dict:
     category = failure_category(error)
     if category:
         detail["category"] = category
+    detail.update(_helper_failure(error, mode))
     code = refusal_code(error, operation)
     if code:
         detail.setdefault("detail", code)
