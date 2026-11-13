@@ -243,5 +243,33 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(self.worktree.exists())
 
 
+class BatchTests(unittest.TestCase):
+    def run_with(self, status, output):
+        original = collector.run
+        collector.run = lambda command, timeout=60: (status, output)
+        self.addCleanup(setattr, collector, "run", original)
+
+    def test_batch_populates_cache_and_tolerates_nonzero_exit(self):
+        self.run_with(1, '{"data":{"repository":{"g1":{"state":"CLOSED"},'
+                         '"p2":{"state":"OPEN"},"g3":null}},"errors":[{}]}')
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1), ("pr", 2), ("gh", 3)]}, cache)
+        self.assertEqual(cache[("gh", 1, SLUG)], (True, "issue-1-closed"))
+        self.assertEqual(cache[("pr", 2, SLUG)], (False, "pr-2-open"))
+        self.assertNotIn(("gh", 3, SLUG), cache)
+
+    def test_failed_batch_leaves_cache_for_per_reference_fallback(self):
+        self.run_with(1, "not json")
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1)]}, cache)
+        self.assertEqual(cache, {})
+
+    def test_free_space_accounting(self):
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 2), 250)
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 0), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(None, 350, 2), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(350, 100, 2), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

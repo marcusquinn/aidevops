@@ -76,6 +76,52 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
     return query.cache[key]
 
 
+BATCH_SIZE = 20
+
+
+def _batch_query(owner: str, name: str, items: list[tuple[str, int]]) -> str:
+    fields = " ".join(
+        f"{'g' if kind == 'gh' else 'p'}{number}: "
+        f"{'issue' if kind == 'gh' else 'pullRequest'}(number: {number}) {{ state }}"
+        for kind, number in items)
+    return f'query {{ repository(owner: "{owner}", name: "{name}") {{ {fields} }} }}'
+
+
+def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: int) -> None:
+    """Resolve one batch into the cache; absent aliases stay for the fallback.
+
+    A batch naming a nonexistent number exits non-zero yet still returns the
+    resolved aliases, so stdout is parsed regardless of the exit status.
+    """
+    owner, name = slug.split("/", 1)
+    _, output = run(["gh", "api", "graphql", "--hostname", "github.com",
+                     "-f", f"query={_batch_query(owner, name, items)}"], timeout=timeout)
+    try:
+        data = ((json.loads(output) or {}).get("data") or {}).get("repository") or {}
+    except (ValueError, AttributeError):
+        return
+    for kind, number in items:
+        node = data.get(f"{'g' if kind == 'gh' else 'p'}{number}")
+        state = node.get("state") if isinstance(node, dict) else None
+        if not isinstance(state, str):
+            continue
+        noun, done = ("issue", "CLOSED") if kind == "gh" else ("pr", "MERGED")
+        cache[(kind, number, slug)] = (state == done, f"{noun}-{number}-{state.lower()}")
+
+
+def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
+             *, timeout: int = 60) -> None:
+    """Fill the cache ``reference_finished`` reads, one query per 20 references.
+
+    Any failure leaves the key absent, so judgement degrades to per-reference queries.
+    """
+    for slug, items in wanted.items():
+        pending = [item for item in dict.fromkeys(items)
+                   if (item[0], item[1], slug) not in cache]
+        for start in range(0, len(pending), BATCH_SIZE):
+            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, timeout)
+
+
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
     """Confirm no uncommitted, untracked, or unpushed work exists in the worktree.
 
