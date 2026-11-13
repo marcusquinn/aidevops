@@ -197,11 +197,13 @@ _rescue_hash_untracked() {
 	local root="$1"
 	local list="$2"
 	local output="$3"
-	local entry
+	local entry hash
 	: >"$output"
 	while IFS= read -r -d '' entry; do
 		entry="${entry%/}"
-		printf '%s\t%s\0' "$(_rescue_entry_hash "$root/$entry")" "$entry" >>"$output"
+		# Sentinel keeps trailing newlines in symlink targets through $(...).
+		hash="$(_rescue_entry_hash "$root/$entry"; printf x)"
+		printf '%s\t%s\0' "${hash%x}" "$entry" >>"$output"
 	done <"$list"
 	return 0
 }
@@ -517,7 +519,8 @@ cmd_verify() {
 _rescue_write_receipt() {
 	local bundle="$1"
 	local dest="$2"
-	local tmp="$bundle/.${RESCUE_RECEIPT}.tmp"
+	local tmp
+	tmp=$(mktemp "$bundle/.${RESCUE_RECEIPT}.XXXXXX") || return 1
 	local key
 	{
 		printf 'format=%s\n' "$RESCUE_FORMAT"

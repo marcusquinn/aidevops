@@ -243,6 +243,8 @@ class LifecycleRegistry:
         identifier(generation_id)
         if not isinstance(path, str) or len(path) > 4096 or not Path(path).is_absolute() or "\0" in path:
             raise ValueError("absolute-generation-path-required")
+        if os.path.normpath(path) != path:  # Same spelling is required for fence equality.
+            raise ValueError("canonical-generation-path-required")
         from .retirement_fence import require_unfenced
 
         require_unfenced(connection, generation_id, path)  # GH#37828 retirement reservation

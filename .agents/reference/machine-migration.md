@@ -108,7 +108,10 @@ the export, and the export refuses if they changed.
 5. Ignored files (for example `.env`, local config, `node_modules/`) are listed in
    `<BUNDLE>/ignored.txt` but not copied, because they can hold secrets or be very
    large. Copy any you need by hand, or reinstall dependencies.
-6. Commit and push from the fresh worktree as normal.
+6. Commit and push from the fresh worktree as normal. If you retire the copies
+   with the guarded path below, retire them first: a commit changes the
+   destination HEAD, and guarded retirement refuses a destination that no
+   longer matches the rescued HEAD.
 
 `worktree-rescue-helper.sh verify <BUNDLE>` repeats the check at any time. A
 successful `verify` (including the one `import` runs) writes

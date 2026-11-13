@@ -122,6 +122,8 @@ class AdmissionRegistry:
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
             require_unfenced(connection, generation_id, value)  # GH#37828 reservation
+            if not path.is_dir():
+                raise ValueError("canonical-directory-required")
             _, duplicate = self.store._event(connection, event_id, payload)
             if duplicate:
                 return  # Replaying an old open must never reopen a closed gate.
