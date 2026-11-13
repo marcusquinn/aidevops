@@ -251,6 +251,41 @@ class EvidenceTests(unittest.TestCase):
         self.commit_data["parents"] = [{"sha": self.parent}]
         self.commit_data["commit"] = {"message": "Publish catalog\n\nCloudron-Source: " + self.source}
 
+    def sign_catalog_commit(self, verified=True):
+        # REST shape of the Git Database API commit GitHub signs for the job token;
+        # the publisher keeps the local message bytes, including the final newline.
+        message = self.commit_data.get("commit", {}).get("message", "Publish catalog\n\nCloudron-Source: " + self.source)
+        self.commit_data["commit"] = {
+            "message": message + "\n",
+            "author": {"name": "github-actions[bot]", "email": "41898282+github-actions[bot]@users.noreply.github.com"},
+            "committer": {"name": "GitHub", "email": "noreply@github.com"},
+            "verification": {"verified": verified, "reason": "valid" if verified else "unsigned",
+                             "signature": "-----BEGIN PGP SIGNATURE-----\n" if verified else None,
+                             "payload": "tree x\n" if verified else None},
+        }
+
+    def test_signed_and_unsigned_publish_commits(self):
+        for rebased in (False, True):
+            for verified in (False, True):
+                self.setUp()
+                if rebased:
+                    self.rebase_catalog()
+                self.sign_catalog_commit(verified)
+                with self.subTest(rebased=rebased, verified=verified):
+                    self.assertTrue(self.verify())
+
+    def test_signed_publish_commit_keeps_boundaries(self):
+        self.rebase_catalog()
+        self.sign_catalog_commit()
+        self.commit_data["commit"]["message"] = "Publish catalog\n"
+        with self.assertRaisesRegex(MODULE.EvidenceError, "trailer"):
+            self.verify()
+        self.rebase_catalog()
+        self.sign_catalog_commit()
+        self.commit_data["files"].append({"filename": "README.md", "status": "modified"})
+        with self.assertRaisesRegex(MODULE.EvidenceError, "modify only the existing catalog"):
+            self.verify()
+
     def test_docs_only_rebase_accepts_publisher_allowlist(self):
         self.rebase_catalog()
         self.workflow = self.managed_workflow()
