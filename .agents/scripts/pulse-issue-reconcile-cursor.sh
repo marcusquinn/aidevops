@@ -140,3 +140,22 @@ _pir_sp_cursor_seek_for_slug() {
 	fi
 	return 0
 }
+
+#######################################
+# GH#37949: alternate priority between repairs and the issue loop so repairs
+# cannot starve open issues. The marker `${_sp_cursor_file}.issues-first` is
+# written BEFORE a repairs-first pass (a watchdog kill still hands the next
+# pass to issues) and consumed by the issues-first pass. Missing or unwritable
+# state falls back to issues first.
+# Returns: 0 = issues first, 1 = repairs first
+#######################################
+_pir_sp_issues_first() {
+	[[ -n "${_sp_cursor_file:-}" ]] || return 0
+	local marker="${_sp_cursor_file}.issues-first"
+	if [[ -e "$marker" ]]; then
+		rm -f "$marker" 2>/dev/null || true
+		return 0
+	fi
+	printf '1\n' >"$marker" 2>/dev/null || return 0
+	return 1
+}
