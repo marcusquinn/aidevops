@@ -1163,10 +1163,22 @@ _route_pr_guard_and_dispatch_with_retry() {
 	local routed_label="$6"
 	local pr_title="$7"
 	local checks_json="$8"
+	local repair_labels="${9:-}"
+	local repair_head="${10:-}"
 	local route_rc=0
 
 	# Classify closed issues before recovering old terminal markers or dispatching.
 	_feedback_route_guard_closed_issue "$pr_number" "$repo_slug" "$linked_issue" "$kind" || route_rc=$?
+	# GH#38169: a worker-origin conflict first gets one bounded on-branch repair
+	# attempt per head; the close-and-redispatch route below is the fallback.
+	if [[ "$route_rc" -eq 0 && "$kind" == "conflict" && "$has_routed_label" -eq 0 && -n "$repair_labels" ]] \
+		&& declare -F _route_pr_to_conflict_repair_worker >/dev/null 2>&1; then
+		local repair_rc=0
+		_route_pr_to_conflict_repair_worker "$pr_number" "$repo_slug" "$linked_issue" \
+			"$repair_labels" "$repair_head" || repair_rc=$?
+		[[ "$repair_rc" -ne "${PULSE_CONFLICT_REPAIR_ACTIVE_RC:-77}" ]] || return "$repair_rc"
+		[[ "$repair_rc" -ne "${PULSE_FEEDBACK_ROUTE_DEFERRED_RC:-75}" ]] || route_rc="$repair_rc"
+	fi
 	if [[ "$route_rc" -eq 0 ]]; then
 		_route_pr_feedback_terminal_guard "$has_routed_label" "$pr_number" "$repo_slug" \
 			"$linked_issue" "$kind" "$routed_label" || route_rc=$?
@@ -1201,7 +1213,11 @@ _route_pr_guard_and_dispatch_with_retry() {
 #   $9 = checks_json   (optional — head-bound terminal blocker evidence for CI repair)
 #
 # Returns: 0 if dispatched, 1 if not routable, 75 if finalization is deferred,
-#          or 76 if ambiguous state was preserved for maintainer review.
+#          76 if ambiguous state was preserved for maintainer review, or
+#          77 (conflict only) while an on-branch repair attempt owns the PR
+#          (GH#38169, pulse-merge-conflict-repair.sh). Only the worker-origin
+#          branch passes repair context; stale interactive handovers keep the
+#          close-and-redispatch route.
 #
 # Design: case-statement dispatch over kind — no dynamic function calls.
 # Per-kind return semantics are handled by the CALLER, not here.
@@ -1280,7 +1296,8 @@ _route_pr_to_fix_worker() {
 			fi
 		fi
 		_route_pr_guard_and_dispatch_with_retry "$has_routed_label" "$pr_number" "$repo_slug" \
-			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json"
+			"$linked_issue" "$kind" "$routed_label" "$pr_title" "$checks_json" \
+			"${label_list}${issue_labels:+${issue_labels},}" "$head_ref_oid"
 		return $?
 	fi
 

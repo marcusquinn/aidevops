@@ -1363,6 +1363,12 @@ _pmp_stage_handle_conflict() {
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
 	fi
+	# GH#38169: an on-branch repair attempt owns the PR; keep it open and let a
+	# later cycle merge it or fall back once the attempt fails or expires.
+	if [[ "$conflict_route_rc" -eq "${PULSE_CONFLICT_REPAIR_ACTIVE_RC:-77}" ]]; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+		return 1
+	fi
 	if _pulse_route_dependabot_pr_to_worker_issue "$pr_number" "$repo_slug" "$pr_author" "$pr_head_ref_oid" "merge-conflict"; then
 		echo "[pulse-wrapper] Merge pass: preserving authentic Dependabot PR #${pr_number} in ${repo_slug} after routing its merge conflict to worker intake (GH#30351)" >>"$LOGFILE"
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
