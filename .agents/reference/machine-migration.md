@@ -175,6 +175,11 @@ remote-tracking ref that `git ls-remote` confirms still points at the same commi
 If interrupted after relocation, repeat the command with `--generation-id <ID>`
 (the marker's `generation_id`, also printed in an earlier result).
 
+Retirement permanently fences both the foreign generation ID and its original
+path in this local registry, including after successful removal. Create fresh
+worktrees at a different path: reusing the old directory name cannot distinguish
+a new caller from a delayed registration validated before retirement.
+
 For canonical (non-linked) checkouts with unexpected state, use
 `reference/dirty-worktree-preservation.md` instead.
 

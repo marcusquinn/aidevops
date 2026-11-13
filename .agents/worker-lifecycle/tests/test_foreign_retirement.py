@@ -281,18 +281,25 @@ class ForeignRetirementContract(unittest.TestCase):
         self.assertEqual(outcomes, ["generation-retirement-reserved"])
         self.assertEqual(result["status"], "retired")
 
-    def test_completed_retirement_frees_path_but_keeps_generation_fenced(self):
+    def test_completed_retirement_keeps_path_and_generation_fenced(self):
         self.isolate_census()
         (self.target / "work.txt").unlink()
         self.pushed()
         generation = json.loads((self.admin() / MARKER).read_text())["generation_id"]
         self.retire()
+        # Legacy binding accepts a previously validated path without resolving it.
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            self.store.bind(str(uuid4()), str(uuid4()), str(uuid4()), str(self.target))
         self.target.mkdir()
         with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
             AdmissionRegistry(self.store).open_generation(
                 str(uuid4()), generation, self.target)
-        AdmissionRegistry(self.store).open_generation(
-            str(uuid4()), str(uuid4()), self.target)
+        # A replacement directory cannot distinguish a stale writer from a new one.
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            AdmissionRegistry(self.store).open_generation(
+                str(uuid4()), str(uuid4()), self.target)
+        with self.assertRaisesRegex(StoreConflict, "generation-retirement-reserved"):
+            self.store.bind(str(uuid4()), str(uuid4()), str(uuid4()), str(self.target))
 
     def test_registration_committed_first_blocks_reservation(self):
         self.pushed()
