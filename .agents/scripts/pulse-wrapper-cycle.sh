@@ -937,8 +937,17 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repos=() due=() weights=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
+	# GH#38104: release this device's own expired checkpoint claims straight from
+	# the device-local ledger first. Cost is O(own expired claims) with no repo
+	# scan and no dependency on the shared stage deadline beyond a small floor;
+	# an empty or unexpired ledger makes no GitHub reads.
+	local claim_ledger="${AIDEVOPS_CHECKPOINT_CLAIM_LEDGER:-${HOME}/.aidevops/state/checkpoint-claims.jsonl}"
+	if [[ -s "$claim_ledger" && -x "${SCRIPT_DIR}/dispatch-claim-helper.sh" ]]; then
+		"${SCRIPT_DIR}/dispatch-claim-helper.sh" sweep-checkpoint-ledger "$(($(date +%s) + ${PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS:-30}))" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+	fi
 	# Revision claims must be revisited even when the stale-blocked cadence is
 	# fresh: their issue is normally available, not status:blocked.
+	# Fallback rotation: covers claims posted before the ledger existed.
 	if declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1; then
 		local claim_repos=() claim_index=0 claim_start=0 claim_position=0
 		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"

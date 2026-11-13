@@ -664,6 +664,7 @@ CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) claim
 <!-- ops:end -->"
 		gh api "$(_issue_comments_endpoint "$repo_slug" "$issue_number")" \
 			--method POST --field body="$body" >/dev/null 2>&1 || return 1
+		_dch_ledger_remove_nonce "$nonce"
 	done < <(printf '%s' "$orphaned_claims" | jq -r '.[] | [.id, .nonce, .claim_author] | @tsv' 2>/dev/null)
 	return 0
 }
@@ -1504,6 +1505,12 @@ DISPATCH_LEASE phase=${phase} lease_token=${lease_token} device=$(_resolve_devic
 		_transition_deny mutation_failed
 		return 1
 	fi
+	# GH#38104: keep the device-local checkpoint ledger in step with the lease.
+	if [[ "$phase" == "$LEASE_PHASE_PRELAUNCH" ]]; then
+		_dch_ledger_update_expiry "$lease_token" "$expires_at"
+	else
+		_dch_ledger_remove_nonce "$lease_token"
+	fi
 	_minimize_finished_attempt_comments "$issue_number" "$repo_slug" "$current_login" \
 		"$lease_token" "$current_device" "${session_key:-issue-${issue_number}}" "$attempt_id" "$phase" || true
 	return 0
@@ -1760,6 +1767,9 @@ main() {
 		;;
 	sweep-pr-checkpoint-claim)
 		cmd_sweep_pr_checkpoint_claim "$@"
+		;;
+	sweep-checkpoint-ledger)
+		cmd_sweep_checkpoint_ledger "$@"
 		;;
 	close-expired-pr-checkpoint-lease)
 		cmd_close_expired_pr_checkpoint_lease "$@"
