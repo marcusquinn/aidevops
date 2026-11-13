@@ -458,7 +458,7 @@ test_opencode_session_env_wrapper_strips_session_vars_only() {
 }
 
 test_ambient_server_attachment_respects_isolation() {
-	(
+	if (
 		_detect_opencode_server() {
 			printf '%s\n' 'http://localhost:4096' 'fixture-password'
 			return 0
@@ -466,33 +466,21 @@ test_ambient_server_attachment_respects_isolation() {
 		local role="worker" AIDEVOPS_OPENCODE_PROFILE="v1" args=""
 		local AIDEVOPS_HEADLESS_AUTH_ISOLATION=""
 		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
-		if [[ "$args" != *--attach* ]]; then
-			print_result "default isolation does not attach to ambient server" 0
-		else
-			print_result "default isolation does not attach to ambient server" 1
-		fi
+		[[ "$args" != *--attach* ]] || exit 1
 		AIDEVOPS_HEADLESS_AUTH_ISOLATION=0
 		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
-		if [[ "$args" == *$'--attach\nhttp://localhost:4096\n--password\nfixture-password'* ]]; then
-			print_result "non-isolated v1 attaches to ambient server" 0
-		else
-			print_result "non-isolated v1 attaches to ambient server" 1
-		fi
+		[[ "$args" == *$'--attach\nhttp://localhost:4096\n--password\nfixture-password'* ]] || exit 1
 		role="triage"
 		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
-		if [[ "$args" != *--attach* ]]; then
-			print_result "ephemeral role does not attach to ambient server" 0
-		else
-			print_result "ephemeral role does not attach to ambient server" 1
-		fi
+		[[ "$args" != *--attach* ]] || exit 1
 		role="worker" AIDEVOPS_OPENCODE_PROFILE="v2"
 		args=$(_build_run_cmd "provider/model" "$TEST_ROOT" "prompt" "title" "" "" "" | tr '\0' '\n')
-		if [[ "$args" != *--attach* && "$args" == *--standalone* ]]; then
-			print_result "v2 remains standalone with isolation disabled" 0
-		else
-			print_result "v2 remains standalone with isolation disabled" 1
-		fi
-	)
+		[[ "$args" != *--attach* && "$args" == *--standalone* ]] || exit 1
+	); then
+		print_result "ambient attachment respects isolation, ephemeral roles, and v2" 0
+	else
+		print_result "ambient attachment respects isolation, ephemeral roles, and v2" 1
+	fi
 	return 0
 }
 
