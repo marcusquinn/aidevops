@@ -362,6 +362,107 @@ _ddpr_closing_keyword_pattern() {
 	return 0
 }
 
+# GH#38163: enrich the canonical cycle snapshot once, not once per candidate.
+# The canonical reader has already checked repository, projection, auth scope
+# and invalidation generation. Never use partial/old snapshots as negative
+# evidence. The private derivative is keyed by the entire envelope, so a new
+# generation, invalidation, auth scope or PR fingerprint cannot reuse it.
+# Args: repository, private output directory
+_ddpr_prepare_open_snapshot() {
+	local repo_slug="$1" output_dir="$2"
+	local snapshot="${AIDEVOPS_DDPR_OPEN_SNAPSHOT_FILE:-}"
+	local key="" cache_dir="" cache_file="" response="" rich="" temporary=""
+	_DDPR_OPEN_SNAPSHOT_JSON=""
+	[[ -f "$snapshot" && ! -L "$snapshot" ]] || return 1
+	jq -e --arg repo "$repo_slug" '
+		.repository == $repo and .collection == "prs" and .complete == true and
+		(.items | type) == "array" and
+		((now - (.timestamp | fromdateiso8601)) >= 0) and
+		((now - (.timestamp | fromdateiso8601)) < 900)
+	' "$snapshot" >/dev/null 2>&1 || return 1
+	key=$(shasum -a 256 "$snapshot") || return 1
+	key="${key%% *}"
+	[[ "$key" =~ ^[a-f0-9]{64}$ ]] || return 1
+	cache_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-pr-snapshots"
+	cache_file="${cache_dir}/${key}.json"
+	if [[ -f "$cache_file" && ! -L "$cache_file" ]]; then
+		rich=$(jq -ce 'select(type == "array")' "$cache_file" 2>/dev/null) || return 1
+	else
+		# The lightweight prefetch projection lacks body, commits and merge/draft
+		# classification. Fetch these together once for this exact snapshot. If
+		# any nested page is incomplete, the original paginated live readers win.
+		# shellcheck disable=SC2016
+		response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
+			AIDEVOPS_GH_ROUTE_DECISION="dispatch-dedup-snapshot-exact-cost" \
+			_ddpr_bounded_gh_read _ddpr_commit_read_attempt "$repo_slug" gh api graphql \
+			-f owner="${repo_slug%%/*}" -f name="${repo_slug#*/}" -f query='
+			query($owner: String!, $name: String!) {
+				repository(owner: $owner, name: $name) {
+					pullRequests(first: 100, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+						pageInfo { hasNextPage }
+						nodes {
+							number title body isDraft createdAt headRefOid updatedAt
+							reviewDecision mergeStateStatus mergeable changedFiles
+							isCrossRepository headRefName
+							closingIssuesReferences(first: 100) {
+								nodes { number repository { name owner { login } } }
+								pageInfo { hasNextPage }
+							}
+							files(first: 100) { nodes { path } pageInfo { hasNextPage } }
+							labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+							commits(first: 100) {
+								nodes { commit { messageHeadline } }
+								pageInfo { hasNextPage }
+							}
+						}
+					}
+				}
+				rateLimit { cost }
+			}' 2>/dev/null) || return 1
+		rich=$(printf '%s' "$response" | jq -ce --slurpfile snapshot "$snapshot" \
+			--arg bt "$_DDPR_JSON_BOOLEAN_TYPE" --arg st "$_DDPR_JSON_STRING_TYPE" \
+			--arg nt "$_DDPR_JSON_NUMBER_TYPE" --arg at "$_DDPR_JSON_ARRAY_TYPE" '
+			select(((.errors // []) | length) == 0) |
+			select((.data.rateLimit.cost | type) == $nt and .data.rateLimit.cost > 0) |
+			.data.repository.pullRequests |
+			select(.pageInfo.hasNextPage == false and (.nodes | type) == $at) |
+			.nodes |
+			select(all(.[];
+				(.number | type) == $nt and (.title | type) == $st and
+				(.body | type) == $st and (.isDraft | type) == $bt and
+				(.isCrossRepository | type) == $bt and (.headRefName | type) == $st and
+				(.changedFiles | type) == $nt and (.createdAt | type) == $st and
+				(.files.nodes | type) == $at and (.files.pageInfo.hasNextPage | type) == $bt and
+				(.labels.nodes | type) == $at and .labels.pageInfo.hasNextPage == false and
+				(.closingIssuesReferences.nodes | type) == $at and
+				.closingIssuesReferences.pageInfo.hasNextPage == false and
+				(.commits.nodes | type) == $at and .commits.pageInfo.hasNextPage == false and
+				all(.commits.nodes[]; (.commit.messageHeadline | type) == $st))) |
+			# Reject membership/head changes since prefetch rather than combining
+			# two generations. updatedAt also fences body/label/draft changes.
+			select((map({number, headRefOid, updatedAt}) | sort_by(.number)) ==
+				($snapshot[0].items | map({number, headRefOid, updatedAt}) | sort_by(.number))) |
+			map(.filesTruncated = .files.pageInfo.hasNextPage |
+				.files = .files.nodes | .labels = .labels.nodes |
+				.closingIssuesReferences = .closingIssuesReferences.nodes |
+				.commits = [.commits.nodes[].commit | {messageHeadline}])
+		' 2>/dev/null) || return 1
+		# Atomic, private, best-effort publication. Failure only loses reuse;
+		# the current invocation still has complete validated evidence.
+		mkdir -p "$cache_dir" 2>/dev/null || return 1
+		temporary=$(umask 077; mktemp "${cache_dir}/.snapshot.XXXXXX") || return 1
+		if ! printf '%s' "$rich" >"$temporary" || ! mv -f "$temporary" "$cache_file"; then
+			rm -f "$temporary"
+			return 1
+		fi
+	fi
+	# Keep large evidence off argv/environment; six forked checks share this
+	# attempt-local file. Existing per-check instrumentation remains unchanged.
+	printf '%s' "$rich" >"${output_dir}/open-snapshot.json" || return 1
+	_DDPR_OPEN_SNAPSHOT_JSON="${output_dir}/open-snapshot.json"
+	return 0
+}
+
 #######################################
 # Fetch open sibling PR candidates with response-owned GraphQL quota cost.
 #
@@ -386,6 +487,11 @@ _ddpr_graphql_open_siblings() {
 	local search_query="repo:${repo_slug} is:pr is:open #${issue_number}"
 	local response=""
 	local pr_json=""
+
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		jq -c '.' "$_DDPR_OPEN_SNAPSHOT_JSON"
+		return $?
+	fi
 
 	# shellcheck disable=SC2016
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
@@ -517,6 +623,12 @@ _ddpr_graphql_open_commit_page() {
 #######################################
 _ddpr_graphql_open_commits() {
 	local repo_slug="$1"
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		# Match the live reader: only the ten newest open PRs, including drafts
+		# before slicing (the verdict check excludes drafts afterwards).
+		jq -c 'sort_by(.createdAt) | reverse | .[:10]' "$_DDPR_OPEN_SNAPSHOT_JSON"
+		return $?
+	fi
 	local owner="${repo_slug%%/*}"
 	local repo="${repo_slug#*/}"
 	local response=""
@@ -854,9 +966,13 @@ _has_open_pr_check_open_body_keyword() {
 	local lookup_rc=0
 	# Fetch up to 20 open PRs mentioning the issue in the body; body is
 	# included in this single request to avoid separate gh pr view calls.
-	pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state open \
-		--search "#${issue_number} in:body" --limit 20 \
-		--json number,body,isDraft 2>/dev/null) || lookup_rc=$?
+	if [[ -n "${_DDPR_OPEN_SNAPSHOT_JSON:-}" ]]; then
+		pr_json=$(jq -c '.' "$_DDPR_OPEN_SNAPSHOT_JSON") || lookup_rc=$_DDPR_LOOKUP_RC_RESPONSE_INVALID
+	else
+		pr_json=$(_ddpr_read_json_array gh pr list --repo "$repo_slug" --state open \
+			--search "#${issue_number} in:body" --limit 20 \
+			--json number,body,isDraft 2>/dev/null) || lookup_rc=$?
+	fi
 	if [[ "$lookup_rc" -ne 0 ]]; then
 		_ddpr_emit_lookup_uncertain "open_body" "$issue_number" "$repo_slug" "$lookup_rc"
 		return 0
@@ -1290,6 +1406,8 @@ has_open_pr() {
 	local _pr_tmpdir
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
+	local _DDPR_OPEN_SNAPSHOT_JSON=""
+	_ddpr_prepare_open_snapshot "$repo_slug" "$_pr_tmpdir" || true
 	_has_open_pr_run_checks "$_pr_tmpdir" "$issue_number" "$repo_slug" "$issue_title"
 	_ddpr_replay_diagnostics "$_pr_tmpdir"
 
