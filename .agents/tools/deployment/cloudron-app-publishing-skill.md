@@ -85,8 +85,15 @@ re-proved immediately before merge, and the closing comment records
 `authority: standing policy #N`. Anything else, and any stale or unverifiable
 per-release signature, keeps the per-release path. Under an active policy, an
 unsigned request whose head moved is closed so a fresh exact-head request
-follows. Close the policy issue to revoke it; any edit or comment makes its
-signature stale.
+follows. Any edit or comment makes its signature stale.
+
+The policy issue is a long-lived non-task record (GH#37993): `policy-request`
+creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
+`status:*` label or assignee to `persistent`, dashboard, `release-approval-required`
+or `release-standing-policy` issues. Adding `persistent` to an already-signed
+policy keeps its signature valid; removing it does not. To revoke, remove
+`persistent` and close the issue. Closing alone also revokes: the persistent
+reopen guard reopens the issue with a comment, which stales the signature.
 
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
