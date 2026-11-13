@@ -71,6 +71,8 @@ _PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_rese
 # continuation-eligible releases since the PR was created before attention.
 _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
 [[ "$_PCC_MAX_PR_RELEASES" =~ ^[1-9][0-9]*$ ]] || _PCC_MAX_PR_RELEASES=6
+_PCC_MAX_PR_PROGRESS_RELEASES="${AIDEVOPS_PCC_MAX_PR_PROGRESS_RELEASES:-30}"
+[[ "$_PCC_MAX_PR_PROGRESS_RELEASES" =~ ^[1-9][0-9]*$ ]] || _PCC_MAX_PR_PROGRESS_RELEASES=30
 # Per-head attention is a pause, not a permanent stop: once the newest attention
 # record for the head is this old with no human change, each runner that has
 # not tried the head gets one exact-head continuation (_pcc_attention_rearm_allowed).
@@ -1302,10 +1304,10 @@ Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-boun
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
-	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}"
+	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
-		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
+		--argjson commits "$commits" --argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
 		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		def count_since($c; $since):
@@ -1318,6 +1320,16 @@ _pcc_stall_release_evidence() {
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
+		| [$c[] | select(unedited and stall_release and $pr_epoch != null and
+			((.created_at // "") | (try epoch catch 0)) > $pr_epoch)] as $releases
+		| ([$releases[] | . as $r |
+			([$c[] | select(unedited and .id < $r.id and coordination and (stall_release | not))] | last) as $start |
+			select($start != null and any($start | body_lines; test("^DISPATCH_(CLAIM |LEASE phase=ready )"))) |
+			($start.created_at | try epoch catch 0) as $begin |
+			($r.created_at | try epoch catch 0) as $end |
+			select($begin > 0 and any($commits[]; (.parents | type) == "array" and (.parents | length) == 1 and
+				((.commit.committer.date // "") | (try epoch catch 0)) > $begin and
+				((.commit.committer.date // "") | (try epoch catch 0)) <= $end))] | length) as $progress
 		| ([$c[] | select(ownership($c))] | last) as $release
 		| select($release != null and ($release | unedited and stall_release))
 		| [($release.id | tostring), ($release | release_reason), (count_since($c; $head_epoch) | tostring),
@@ -1328,7 +1340,7 @@ _pcc_stall_release_evidence() {
 			($release.created_at // "" | (try epoch catch 0) | tostring),
 			([$c[] | select(.id < $release.id) | body_lines | ready_lease_line | field("attempt_id")
 				| ltrimstr("attempt:") | select(test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-				| "attempt:\(.)"] | last // "-")]
+				| "attempt:\(.)"] | last // "-"), ($progress | tostring), (($releases | length) - $progress | tostring)]
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -1452,8 +1464,8 @@ _pcc_fleet_rearm_allowed() {
 #         fleet_window_pending window=<seconds>s
 #######################################
 _pcc_rearm_block_reason() {
-	local pr_releases="$1" attention_epoch="$2" fleet_window="${3:-}"
-	if [[ "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]]; then
+	local pr_releases="$1" attention_epoch="$2" fleet_window="${3:-}" nonprogress="${4:-$1}"
+	if [[ "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
 		printf 'per_pr_fuse\n'
 	elif [[ "$_PCC_ATTENTION_REARM_SECONDS" -eq 0 ]]; then
 		printf 'rearm_disabled\n'
@@ -1479,8 +1491,9 @@ _pcc_rearm_block_reason() {
 _pcc_stalled_rearm_or_block() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" stalls="$6" pr_releases="$7"
 	local attention_epoch="$8" release_epoch="$9" comments="${10}" head_date="${11}" login="${12}"
+	local progress="${13:-0}" nonprogress="${14:-$pr_releases}"
 	local rearm_mode="" fleet_window="" rearm_block=""
-	if [[ "$pr_releases" -lt "$_PCC_MAX_PR_RELEASES" ]]; then
+	if [[ "$nonprogress" -lt "$_PCC_MAX_PR_RELEASES" && "$pr_releases" -lt "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
 		if _pcc_attention_rearm_allowed "$attention_epoch" &&
 			! _pcc_runner_tried_head "$comments" "$head_date" "$login"; then
 			rearm_mode="untried_runner"
@@ -1493,10 +1506,10 @@ _pcc_stalled_rearm_or_block() {
 			"$pr" "$repo" "$head" "$login" "$stalls" "$pr_releases" "$issue" "$rearm_mode"
 		return 0
 	fi
-	rearm_block=$(_pcc_rearm_block_reason "$pr_releases" "$attention_epoch" "$fleet_window")
+	rearm_block=$(_pcc_rearm_block_reason "$pr_releases" "$attention_epoch" "$fleet_window" "$nonprogress")
 	printf 'STALLED_CHECKPOINT_ATTENTION_EXISTS: PR #%s in %s head=%s\n' "$pr" "$repo" "$head"
-	printf 'STALLED_CHECKPOINT_REARM_BLOCKED: PR #%s in %s head=%s reason=%s stalls=%s pr_releases=%s issue=#%s\n' \
-		"$pr" "$repo" "$head" "$rearm_block" "$stalls" "$pr_releases" "$issue"
+	printf 'STALLED_CHECKPOINT_REARM_BLOCKED: PR #%s in %s head=%s reason=%s stalls=%s pr_releases=%s progress_releases=%s nonprogress_releases=%s issue=#%s\n' \
+		"$pr" "$repo" "$head" "$rearm_block" "$stalls" "$pr_releases" "$progress" "$nonprogress" "$issue"
 	if [[ "$rearm_block" == per_pr_fuse ]] && _pcc_terminal_action_due "$attention_epoch" "$release_epoch"; then
 		# A current trusted revision approval owns scheduling; never act then.
 		local fuse_logins=""
@@ -1646,7 +1659,7 @@ _pcc_dispatch_stalled() {
 	local pr_json="" head="" head_date="" pr_created="" assignees="" comments="" evidence="" key=""
 	local trusted_logins=""
 	local release_id="" reason="" stalls="" posted="" pr_releases="" fuse_posted="" attention_epoch=""
-	local release_epoch="" attempt=""
+	local release_epoch="" attempt="" commits="[]" progress=0 nonprogress=0
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
@@ -1668,10 +1681,13 @@ _pcc_dispatch_stalled() {
 	fi
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
+	# REST supplies parent counts, which gh pr view's commit projection omits.
+	# Missing metadata is conservative: no release is credited as progress.
+	commits=$(gh api --paginate --slurp "repos/${repo}/pulls/${pr}/commits?per_page=100" --jq 'flatten') || commits='[]'
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
 		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \
-		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->") || {
+		"${_PCC_STALL_FUSE_MARKER} pr=${pr} -->" "$commits") || {
 		local expired_rc=0
 		_pcc_dispatch_expired_recovery_draft "$repo" "$path" "$issue" "$pr" "$login" \
 			"$runner" "$pr_json" "$comments" "$head_date" "$trusted_logins" || expired_rc=$?
@@ -1680,12 +1696,14 @@ _pcc_dispatch_stalled() {
 		return 1
 	}
 	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
-		release_epoch attempt <<<"$evidence"
+		release_epoch attempt progress nonprogress <<<"$evidence"
 	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
 	[[ "$pr_releases" =~ ^[0-9]+$ ]] || pr_releases=0
+	[[ "$progress" =~ ^[0-9]+$ && "$nonprogress" =~ ^[0-9]+$ ]] || return 1
+	pr_releases=$((progress + nonprogress))
 	[[ "$release_epoch" =~ ^[0-9]+$ ]] || release_epoch=0
 	[[ "$attempt" =~ ^attempt:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || attempt=""
-	if [[ "$stalls" -ge 2 || "$pr_releases" -ge "$_PCC_MAX_PR_RELEASES" ]]; then
+	if [[ "$stalls" -ge 2 || "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
 		# GH#36019: a fuse-only stop reports the per-PR count in the record and
 		# is posted once per PR, so later human-pushed heads add no comments.
 		local fuse=false
@@ -1702,7 +1720,7 @@ _pcc_dispatch_stalled() {
 			return 0
 		fi
 		_pcc_stalled_rearm_or_block "$repo" "$issue" "$pr" "$head" "$release_id" "$stalls" "$pr_releases" \
-			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" || return 0
+			"${attention_epoch:-0}" "$release_epoch" "$comments" "$head_date" "$login" "$progress" "$nonprogress" || return 0
 	fi
 	local self_release=""
 	if self_release=$(_pcc_self_capability_release "$comments" "$head_date" "$login" 2>/dev/null); then
