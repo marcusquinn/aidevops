@@ -8,6 +8,7 @@ unreadable process census is not an absence of writers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -152,7 +153,7 @@ def locked(path: Path) -> bool:
     return metadata is not None and (metadata / "locked").exists()
 
 
-def _removal_blocked(path: Path, verify) -> str | None:
+def _removal_blocked(path: Path, verify: Callable[[Path], tuple[bool, str]]) -> str | None:
     """Re-check liveness and state at the last moment, naming the first blocker."""
     census = process_census()
     if census is None:
@@ -169,7 +170,7 @@ def _removal_blocked(path: Path, verify) -> str | None:
     return None if clean else f"changed-{detail}"
 
 
-def remove(path: Path, verify) -> tuple[bool, str]:
+def remove(path: Path, verify: Callable[[Path], tuple[bool, str]]) -> tuple[bool, str]:
     """Remove one worktree, re-verifying liveness and state immediately first.
 
     ``verify`` re-runs the caller's state checks, so an edit landing between
