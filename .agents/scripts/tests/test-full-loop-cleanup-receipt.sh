@@ -379,6 +379,7 @@ printf 'PASS reused worktree paths select the newest lifecycle receipt\n'
 		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
 	[[ "$(full_loop_cleanup_receipt_for_worktree precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
 	[[ "$(_full_loop_cleanup_receipt_for_worktree_unlocked_fallback precision)" == "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json" ]]
+	[[ "$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" precision | sed -n '4p')" == "\"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json\"" ]]
 	full_loop_cleanup_owner_lease_aged "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/precise.json"
 )
 printf 'PASS precise receipts retain chronological lookup and lease-age compatibility\n'
@@ -389,6 +390,7 @@ jq '.repository = "example/migrated" | .pr_number = 104
 	"$newest_receipt" >"$migrated_receipt"
 selected_receipt=$(full_loop_cleanup_receipt_for_worktree "${TEST_ROOT}/worktree-one")
 [[ "$selected_receipt" == "$migrated_receipt" ]]
+[[ "$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" "${TEST_ROOT}/worktree-one" | sed -n '4p')" == "\"${migrated_receipt}\"" ]]
 printf 'PASS equal-time receipt lookup preserves migrated-receipt preference\n'
 
 lookup_bin="${TEST_ROOT}/lookup-bin"
@@ -437,15 +439,29 @@ printf 'PASS receipt lookup scans all valid receipts with one jq process\n'
 	_full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target
 	IFS= read -r lookup_count <"$lookup_counter"
 	[[ "$lookup_count" -eq 2 ]]
+	# GH#38149: reconciliation validates, selects and checks CLEANED state in
+	# one jq process over the same set.
+	printf '0\n' >"$lookup_counter"
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target)
+	IFS= read -r lookup_count <"$lookup_counter"
+	[[ "$lookup_count" -eq 1 ]]
+	[[ "$scan_output" == "3001"$'\n'"1"$'\n'"1"$'\n'"\"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json\"" ]]
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" absent)
+	[[ "$scan_output" == "3001"$'\n'"0"$'\n'"0"$'\n''""' ]]
 	export PATH="$lookup_original_path"
 	printf '{"worktree":"target","resource_cleanup_state":"CLEANUP_DEFERRED"}\n' \
 		>"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/active.json"
 	if _full_loop_active_recreated_receipts_are_cleaned "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target; then
 		exit 1
 	fi
+	scan_output=$(_full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target)
+	[[ "$scan_output" == "3002"$'\n'"2"$'\n'"0"$'\n'* ]]
 	for invalid_json in '{bad' '[]' ''; do
 		printf '%s' "$invalid_json" >"${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 		if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
+			exit 1
+		fi
+		if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
 			exit 1
 		fi
 	done
@@ -454,13 +470,19 @@ printf 'PASS receipt lookup scans all valid receipts with one jq process\n'
 	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
 		exit 1
 	fi
+	if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
+		exit 1
+	fi
 	rm "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 	ln -s "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/target.json" "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/linked.json"
 	if _full_loop_valid_receipt_file_count "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR"; then
 		exit 1
 	fi
+	if _full_loop_recreated_receipt_scan "$AIDEVOPS_FULL_LOOP_CLEANUP_DIR" target >/dev/null; then
+		exit 1
+	fi
 )
-printf 'PASS 3000-receipt validation uses two jq processes and rejects unsafe evidence\n'
+printf 'PASS 3000-receipt validation uses bounded jq processes and rejects unsafe evidence\n'
 
 invalid_receipt="${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}/invalid.json"
 printf '%s\n' '{invalid-json' >"$invalid_receipt"
