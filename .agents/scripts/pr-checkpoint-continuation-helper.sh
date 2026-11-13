@@ -1307,7 +1307,7 @@ _pcc_stall_release_evidence() {
 	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
-		--argjson commits "$commits" --argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
+		--arg extended "${8:+true}" --argjson commits "$commits" --argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
 		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		def count_since($c; $since):
@@ -1323,7 +1323,8 @@ _pcc_stall_release_evidence() {
 		| [$c[] | select(unedited and stall_release and $pr_epoch != null and
 			((.created_at // "") | (try epoch catch 0)) > $pr_epoch)] as $releases
 		| ([$releases[] | . as $r |
-			([$c[] | select(unedited and .id < $r.id and coordination and (stall_release | not))] | last) as $start |
+			([$c[] | select(.id < $r.id and ownership($c))] | last) as $start |
+			select($start | unedited) |
 			select($start != null and any($start | body_lines; test("^DISPATCH_(CLAIM |LEASE phase=ready )"))) |
 			($start.created_at | try epoch catch 0) as $begin |
 			($r.created_at | try epoch catch 0) as $end |
@@ -1340,7 +1341,8 @@ _pcc_stall_release_evidence() {
 			($release.created_at // "" | (try epoch catch 0) | tostring),
 			([$c[] | select(.id < $release.id) | body_lines | ready_lease_line | field("attempt_id")
 				| ltrimstr("attempt:") | select(test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-				| "attempt:\(.)"] | last // "-"), ($progress | tostring), (($releases | length) - $progress | tostring)]
+				| "attempt:\(.)"] | last // "-")] +
+			(if $extended == "true" then [($progress | tostring), (($releases | length) - $progress | tostring)] else [] end)
 		| @tsv
 	' <<<"$comments"
 	return $?
