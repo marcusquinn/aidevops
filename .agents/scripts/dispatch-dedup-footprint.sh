@@ -81,6 +81,15 @@ _FOOTPRINT_LOW_INFO_BASENAMES="${AIDEVOPS_FOOTPRINT_LOW_INFO_BASENAMES:-VERSION 
 # immediate eviction on known-close events (t2927/GH#21103).
 _FOOTPRINT_CACHE_TTL=30
 
+# GH#38055: open-PR list for claimed-issue PR evidence, fetched at most once
+# per in-flight cache rebuild. One rebuild can evaluate dozens of claimed
+# issues; fetching per issue made the footprint stage take minutes. Only
+# valid inside _footprint_refresh_inflight_cache, which activates and clears
+# it, so standalone evidence checks always read the live PR list.
+_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=0
+_FOOTPRINT_OPEN_PRS_REPO=""
+_FOOTPRINT_OPEN_PRS_JSON=""
+
 #######################################
 # Compute a portable SHA-256 digest for text.
 # Args: $1 = text
@@ -905,10 +914,22 @@ _footprint_claimed_coordinator_has_evidence() {
 	fi
 
 	# Evidence 2 — an open PR linked to the issue (closing keyword in its
-	# body) or a branch whose name encodes the issue number.
+	# body) or a branch whose name encodes the issue number. GH#38055: reuse
+	# the list fetched earlier in the same rebuild. A failed fetch is reused
+	# as "no PR evidence" (the existing failure semantics) for that rebuild
+	# only, so a failing API is not retried once per claimed issue.
 	local prs="" pr_hit="0"
-	prs=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
+	if [[ -n "$_FOOTPRINT_OPEN_PRS_REPO" && "$_FOOTPRINT_OPEN_PRS_REPO" == "$repo_slug" ]]; then
+		prs="$_FOOTPRINT_OPEN_PRS_JSON"
+	else
+		prs=$(gh pr list --repo "$repo_slug" --state open \
+			--json number,headRefName,body --limit 100 2>/dev/null) || prs=""
+		[[ -n "$prs" ]] || prs="[]"
+		if [[ "${_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE:-0}" == "1" ]]; then
+			_FOOTPRINT_OPEN_PRS_REPO="$repo_slug"
+			_FOOTPRINT_OPEN_PRS_JSON="$prs"
+		fi
+	fi
 	[[ -n "$prs" ]] || prs="[]"
 	pr_hit=$(printf '%s' "$prs" | jq -r --arg n "$issue_number" '
 		[.[] | select(
@@ -965,6 +986,9 @@ _footprint_refresh_inflight_cache() {
 
 	local cache_data=""
 	local i=0
+	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=1
+	_FOOTPRINT_OPEN_PRS_REPO=""
+	_FOOTPRINT_OPEN_PRS_JSON=""
 	while [[ "$i" -lt "$issue_count" ]]; do
 		local num body is_parent_task is_claimed paths
 		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
@@ -997,6 +1021,9 @@ _footprint_refresh_inflight_cache() {
 		fi
 		i=$((i + 1))
 	done
+	_FOOTPRINT_OPEN_PRS_MEMO_ACTIVE=0
+	_FOOTPRINT_OPEN_PRS_REPO=""
+	_FOOTPRINT_OPEN_PRS_JSON=""
 
 	# Store in cache
 	_FOOTPRINT_CACHE_REPO="$repo_slug"

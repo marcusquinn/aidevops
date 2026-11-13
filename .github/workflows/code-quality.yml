@@ -718,12 +718,12 @@ jobs:
         pip install ruff==0.11.13 mypy==1.15.0
 
     - name: Lint Worker Lifecycle Python
-      run: ruff check --no-cache .agents/worker-lifecycle
+      run: ruff check --no-cache
 
     - name: Typecheck Worker Lifecycle Python
       run: |
-        mypy --config-file .agents/worker-lifecycle/mypy.ini --platform linux
-        mypy --config-file .agents/worker-lifecycle/mypy.ini --platform darwin
+        mypy --config-file mypy.ini --platform linux
+        mypy --config-file mypy.ini --platform darwin
 
     - name: Verify Worker Lifecycle Linux contract
       env:

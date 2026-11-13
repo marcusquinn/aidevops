@@ -142,6 +142,38 @@ _expect "unknown repo cursor uses original order" "test/a#1 test/a#2 test/a#3 te
 printf 'test/b\t99\t0\n' >"$CURSOR"
 _expect "closed cursor issue restarts its repo" "test/b#4 test/b#5 test/a#1 test/a#2 test/a#3" "$(_run_pass 0)"
 
+# GH#37949: expensive repairs must not starve the issue loop or reset the cursor.
+REPAIR_RUNS="${TEST_TMPDIR}/repair-runs"
+MARKER="${CURSOR}.issues-first"
+# shellcheck disable=SC2317
+_repair_pending_planning_publications() {
+	printf 'r\n' >>"$REPAIR_RUNS"
+	SECONDS=$((SECONDS + ${REPAIR_COST:-0}))
+	return 0
+}
+_repairs() { wc -l <"$REPAIR_RUNS" 2>/dev/null | tr -d ' ' || printf 0; return 0; }
+rm -f "$CURSOR" "$MARKER"
+: >"$REPAIR_RUNS"
+printf 'test/a\t2\t0\n' >"$CURSOR"
+export REPAIR_COST=300; _expect "repairs-first pass yields before issues" "" "$(_run_pass 250)"
+_expect "repairs-first pass keeps saved position" "test/a,2,0" "$(_cursor)"
+_expect "marker written for next pass" "yes" "$([[ -e "$MARKER" ]] && echo yes || echo no)"
+export REPAIR_COST=300; _expect "next pass runs issues first from saved issue" "test/a#2 test/a#3 test/b#4" "$(_run_pass 250)"
+_expect "issues-first aborted pass skips repairs" "1" "$(_repairs)"
+rm -f "$CURSOR"
+export REPAIR_COST=0; _expect "following pass runs repairs again" "test/a#1 test/a#2 test/a#3" "$(_run_pass 250)"
+_expect "repairs ran on alternate pass" "2" "$(_repairs)"
+rm -f "$CURSOR" "$MARKER"
+: >"$REPAIR_RUNS"
+printf '1\n' >"$MARKER"
+_run_pass 1000 >/dev/null
+_expect "completed issues-first pass runs repairs after loop" "1" "$(_repairs)"
+rm -f "$CURSOR" "$MARKER"
+: >"$REPAIR_RUNS"
+_run_pass 0 >/dev/null
+_expect "unbudgeted pass keeps repairs first, no marker" "1/no" "$(_repairs)/$([[ -e "$MARKER" ]] && echo yes || echo no)"
+rm -f "$MARKER"
+
 # Direct callers keep the 360s default (100s issues: abort before b#5).
 rm -f "$CURSOR"
 _expect "direct caller defaults to 360s" "test/a#1 test/a#2 test/a#3 test/b#4" "$(_run_pass "")"

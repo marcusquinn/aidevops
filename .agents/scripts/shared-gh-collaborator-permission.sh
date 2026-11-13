@@ -123,6 +123,49 @@ _gh_actor_has_repo_write_authority() {
 }
 
 #######################################
+# Decide whether a comment that contains a key was written by an account with
+# repository write authority (GH#38021).
+#
+# Keyed audit comments are deduplicated by reading them back. Read through a
+# GitHub App installation, a private organization member's comment reports
+# CONTRIBUTOR, so an association-only test never finds the runner's own comment
+# and the comment is posted again. Each distinct author is resolved once through
+# _gh_actor_has_repo_write_authority.
+#
+# Args: $1=repo_slug owner/repo, $2=comments JSON (one array or concatenated
+#       pages), $3=key text
+# Returns: 0=an author with write authority posted the key, 1=no comment has the
+#          key or every author is confirmed without write authority,
+#          2=unreadable input, or a lookup failed and no author was confirmed.
+#######################################
+_gh_keyed_comment_has_write_author() {
+	local repo_slug="$1"
+	local comments_json="$2"
+	local key="$3"
+	local authors="" association="" login="" authority_rc=0 unknown=0
+
+	[[ -n "$repo_slug" && -n "$key" ]] || return 2
+	# Association first: it is never empty, so a deleted author (no login) cannot
+	# shift fields when read splits on the tab.
+	authors=$(printf '%s' "$comments_json" | jq -rs --arg key "$key" '
+		flatten | map(select(type == "object" and ((.body // "") | contains($key)))
+			| [(.author_association // "NONE"), (.user.login // "")])
+		| unique | .[] | @tsv' 2>/dev/null) || return 2
+	[[ -n "$authors" ]] || return 1
+	#aidevops:trust-boundary -- a comment suppresses a repeat only when its author
+	# is confirmed to hold write authority; an unconfirmed author never does.
+	# The list is read on fd 3 so a lookup that reads stdin cannot consume it.
+	while IFS=$'\t' read -r association login <&3; do
+		authority_rc=0
+		_gh_actor_has_repo_write_authority "$repo_slug" "$login" "$association" || authority_rc=$?
+		[[ "$authority_rc" -ne 0 ]] || return 0
+		[[ "$authority_rc" -eq 1 ]] || unknown=1
+	done 3<<<"$authors"
+	[[ "$unknown" -eq 0 ]] || return 2
+	return 1
+}
+
+#######################################
 # Verify that an actor is the current owner of a canonical user repository.
 #
 # A matching slug prefix is only a candidate signal: repositories can be

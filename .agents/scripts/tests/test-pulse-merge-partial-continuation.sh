@@ -43,6 +43,7 @@ setup_test_env() {
 	COMMENT_LOG="${TEST_ROOT}/comments.log"
 	COMMENT_ATTEMPTS="${TEST_ROOT}/comment-attempts.log"
 	API_LOG="${TEST_ROOT}/api.log"
+	UNFILTERED_LOG="${TEST_ROOT}/unfiltered.log"
 	return 0
 }
 
@@ -57,6 +58,8 @@ reset_case() {
 	: >"$COMMENT_LOG"
 	: >"$COMMENT_ATTEMPTS"
 	: >"$API_LOG"
+	: >"$UNFILTERED_LOG"
+	TEST_AVAILABLE_ISSUES='[]'
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
@@ -103,15 +106,16 @@ pr_json() {
 	return 0
 }
 
-# Args: $1=labels CSV, $2=assignees CSV
+# Args: $1=labels CSV, $2=assignees CSV, $3=body (optional; omitted when empty)
 issue_json() {
 	local labels="$1"
 	local assignees="$2"
-	jq -cn --arg labels "$labels" --arg assignees "$assignees" '{
+	local body="${3:-}"
+	jq -cn --arg labels "$labels" --arg assignees "$assignees" --arg body "$body" '{
 		number: 501, state: "open",
 		labels: ($labels | split(",") | map(select(length > 0) | {name: .})),
 		assignees: ($assignees | split(",") | map(select(length > 0) | {login: .}))
-	}'
+	} + (if $body == "" then {} else {body: $body} end)'
 	return 0
 }
 
@@ -191,7 +195,13 @@ gh_pr_view() {
 gh() {
 	printf '%s\n' "$*" >>"$API_LOG"
 	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
-		if [[ "${2:-}" == *"&page=2" ]]; then
+		# GH#38039: only label-filtered candidates are listed.
+		if [[ "${2:-}" != *"labels="* ]]; then
+			printf 'unfiltered issue listing\n' >>"$UNFILTERED_LOG"
+			printf '[]'
+		elif [[ "${2:-}" == *"labels=status:available"* ]]; then
+			printf '%s' "$TEST_AVAILABLE_ISSUES"
+		elif [[ "${2:-}" == *"&page=2" ]]; then
 			printf '%s' "$TEST_REVIEW_PAGE2"
 		else
 			printf '%s' "$TEST_REVIEW_ISSUES"
@@ -951,10 +961,23 @@ test_available_dispatch_recovery() {
 	local label="" marker=""
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
-	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_ISSUES='[]'
+	TEST_AVAILABLE_ISSUES='[{"number":501,"labels":[{"name":"status:available"},{"name":"origin:worker"}]},{"number":503,"labels":[{"name":"auto-dispatch"}]}]'
 	TEST_TIMELINE='[[]]'
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "sweep-restored available issue regains dispatch without merged timeline"
+	# GH#38039: candidates only. No unfiltered listing, no timeline read, and an
+	# available issue already carrying auto-dispatch is never read at all.
+	if [[ ! -s "$UNFILTERED_LOG" ]] && ! grep -Fq '/timeline' "$API_LOG" && ! grep -Fq 'issues/503' "$API_LOG"; then
+		pass "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	else
+		fail "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	fi
+	if grep -Fq 'labels=status:in-review' "$API_LOG" && grep -Fq 'labels=status:available,origin:worker' "$API_LOG"; then
+		pass "revisit lists in-review then available worker candidates"
+	else
+		fail "revisit lists in-review then available worker candidates"
+	fi
 	if grep -q 'kind=available-dispatch-recovery' "$COMMENT_LOG"; then
 		pass "available dispatch recovery records audit"
 	else
@@ -1009,6 +1032,140 @@ test_available_dispatch_recovery() {
 	return 0
 }
 
+# GH#38021: a draft checkpoint on a canonical consolidated spec gets back the
+# auto-dispatch label that the same worker run removed, and nothing else does.
+test_checkpoint_spec_dispatch_restore() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	TEST_OPEN_PRS='[{"number":901,"body":"For #501","draft":true}]'
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec regains dispatch beside its open draft"
+	if [[ ! -s "$COMMENT_LOG" ]]; then
+		pass "checkpoint spec restore posts no comment"
+	else
+		fail "checkpoint spec restore posts no comment"
+	fi
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec receipt is consumed on use"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "label removed before the checkpoint stays removed"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "restore without a receipt writes nothing"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 'Hand-written body.')
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' '' 'Hand-written body.')
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "consolidated issue without the canonical marker is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,auto-dispatch' runner1 "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available' '' "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "ordinary issue is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON='unreadable'
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "unreadable pre-checkpoint state records no receipt"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 502 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "receipt for another issue is discarded without a write"
+
+	for label in auto-dispatch no-auto-dispatch parent-task hold-for-review lockdown persistent needs-maintainer-review needs-simplification status:blocked; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated,${label}" '' "$spec")
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+		assert_no_write "checkpoint spec restore preserves ${label}"
+	done
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' runner2 "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "checkpoint spec restore preserves an assigned issue"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:in-review,consolidated' '' "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "repeated escalation keeps the first receipt"
+	return 0
+}
+
+# GH#38021: the restore reports its outcome, and a deferred release replay in
+# another process adopts the recording run's receipt.
+test_checkpoint_spec_receipt_outcomes() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after="" rc=0 outcomes=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	# 0 restored, 1 nothing to restore (label already back, then no receipt),
+	# 2 receipt held but the issue is on hold.
+	for label in '' auto-dispatch hold-for-review; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated${label:+,${label}}" '' "$spec")
+		rc=0
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+		outcomes+="${rc} "
+	done
+	rc=0
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+	outcomes+="$rc"
+	if [[ "$outcomes" == "0 1 2 1" ]]; then
+		pass "checkpoint spec restore reports restored, nothing to restore and refused"
+	else
+		fail "checkpoint spec restore reports restored, nothing to restore and refused (got ${outcomes})"
+	fi
+
+	# A deferred release replay adopts the recording run's receipt.
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_adopt_checkpoint_spec_receipt 'not a slug' 501 || true
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 0 || true
+	if _pmpc_holds_checkpoint_spec_receipt "$SLUG" 501; then
+		fail "malformed issue reference adopts no receipt"
+	else
+		pass "malformed issue reference adopts no receipt"
+	fi
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "adopted receipt restores dispatch"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1056,6 +1213,8 @@ main() {
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_available_dispatch_recovery
+	test_checkpoint_spec_dispatch_restore
+	test_checkpoint_spec_receipt_outcomes
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

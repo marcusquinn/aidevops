@@ -1,18 +1,19 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Remove worktrees whose work is provably finished; refuse on any missing evidence.
 
-This is an explicitly opt-in interim pass, not the cleanup evidence collector that
+This is an always-on interim pass of the pulse cleanup stage, not the cleanup
+evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
 policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
-by explicit operator decision, so the checks in ``worktree_reclaim_evidence`` are
+by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
 the only protection and each fails closed.
 """
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 import json
 import os
@@ -20,8 +21,9 @@ from pathlib import Path
 import sys
 import time
 
-from worktree_reclaim_evidence import evidence, nothing_to_lose, references
-from worktree_reclaim_host import Census, common_directory, directory_size, process_census, remove, run
+from .evidence import (
+    evidence, nothing_to_lose, prefetch, references, repository)
+from .host import Census, common_directory, free_bytes, process_census, remove, run
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
@@ -77,7 +79,6 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
         receipt["refused"] += 1
         return None
     receipt["authorized"] += 1
-    verdict["bytes"] = directory_size(path)
     if not current.apply_removal:
         return None
     if current.remaining() == 0:
@@ -92,11 +93,10 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
         receipt["failed"] += 1
         return None
     receipt["removed"] += 1
-    receipt["reclaimed_bytes"] += verdict["bytes"]
     return common
 
 
-def candidates(base_dir: Path, current: Pass, receipt: dict):
+def candidates(base_dir: Path, current: Pass, receipt: dict) -> Iterator[Path]:
     """Yield each worktree directory until the budget or limit stops the pass."""
     for path in sorted(base_dir.iterdir()):
         if not path.is_dir():
@@ -108,6 +108,37 @@ def candidates(base_dir: Path, current: Pass, receipt: dict):
             return
         receipt["scanned"] += 1
         yield path
+
+
+def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
+    """Report the pass-level free-space gain; unreadable or no removal means zero."""
+    if before is None or after is None or removed == 0:
+        return 0
+    return max(after - before, 0)
+
+
+def prefetch_references(base_dir: Path, current: Pass) -> None:
+    """Resolve the references this pass will judge, in batches, before judging any.
+
+    The limit the candidate generator applies is applied here too, so a limited run
+    does not spend its budget resolving trees it will never reach. A failed batch
+    leaves the cache untouched, so judgement falls back to per-reference queries.
+    """
+    wanted: dict[str, list[tuple[str, int]]] = {}
+    examined = 0
+    for path in sorted(base_dir.iterdir()):
+        if not path.is_dir():
+            continue
+        if current.remaining() == 0 or (current.limit and examined >= current.limit):
+            break
+        examined += 1
+        found = references(path.name)
+        if path.is_symlink() or not found:
+            continue
+        slug = repository(path, timeout=min(current.remaining(), 60))
+        if slug:
+            wanted.setdefault(slug, []).extend(found)
+    prefetch(wanted, current.finished, remaining=current.remaining)
 
 
 def main() -> int:
@@ -123,12 +154,16 @@ def main() -> int:
                    limit=arguments.limit)
     receipt["unplaceable_processes"] = census.unplaceable if census else 0
     repositories: set[Path] = set()
+    free_before = free_bytes(arguments.base_dir)
+    prefetch_references(arguments.base_dir, current)
     for path in candidates(arguments.base_dir, current, receipt):
         common = reclaim_one(path, current, receipt)
         if common is not None:
             repositories.add(common)
     for common in repositories:
         run(["git", "--git-dir", str(common), "worktree", "prune"])
+    receipt["reclaimed_bytes"] = reclaimed_bytes(
+        free_before, free_bytes(arguments.base_dir), receipt["removed"])
     print(json.dumps(receipt))
     return 0
 

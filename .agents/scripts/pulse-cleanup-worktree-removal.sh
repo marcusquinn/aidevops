@@ -52,7 +52,7 @@ _cleanup_log_diagnostics() {
 	return 0
 }
 
-# Opt-in interim pass: removes worktrees whose work is provably finished while
+# Always-on interim pass: removes worktrees whose work is provably finished while
 # cleanup_policy.decide_cleanup still lacks a production evidence collector. It
 # supplies none of that policy's six proofs and claims no cleanup authorization;
 # it answers only whether the work finished and whether removal would lose it.
@@ -61,7 +61,7 @@ _cleanup_reclaim_finished_worktrees() {
 	local python="$1"
 	local budget="$2"
 	local result="" removed="" refused="" failed="" reclaimed=""
-	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/worktree-reclaim-finished.py" \
+	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
 		--apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
 		printf '[pulse-wrapper] Finished-worktree reclaim unavailable\n' >>"$LOGFILE"
 		return 0
@@ -93,8 +93,10 @@ _cleanup_observation_era_worktrees() {
 	retained=$(jq -c '[.results[] | select(.status == "retained")] | group_by(.reason) | map({reason: .[0].reason, count: length})' <<<"$result") || return 0
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
 	_cleanup_log_diagnostics "$result" || return 0
-	CLEANUP_WORKTREES_REMOVED_COUNT="$retired"
-	CLEANUP_WORKTREES_ARCHIVED_COUNT="$retired"
+	# Accumulate: an earlier pass in the same stage may already have retired trees,
+	# and assignment here would drop its removals from the stage metrics.
+	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + retired))
 	# Only the admission pass may acknowledge completion of the scheduled run.
 	printf '[pulse-wrapper] Observation-era cleanup: retired=%s retained=%s skipped_nondumpable=%s\n' "$retired" "$retained" "$skipped_nondumpable" >>"$LOGFILE"
 	return 0
@@ -103,7 +105,7 @@ _cleanup_observation_era_worktrees() {
 # Retain the public pass orchestrator here for source-location contract checks.
 cleanup_worktrees() {
 	local cleanup_budget="${1:-120}"
-	local state_dir="" python="" result="" retired="" pass_budget=0 reclaim_enabled=0
+	local state_dir="" python="" result="" retired="" pass_budget=0
 	local failed="" archive_failed="" held="" reconciled="" quarantined=0
 	CLEANUP_WORKTREES_SKIPPED=1
 	CLEANUP_WORKTREES_REMOVED_COUNT=0
@@ -116,20 +118,15 @@ cleanup_worktrees() {
 	source "${_PULSE_CLEANUP_SCRIPT_DIR}/worker-lifecycle-state.sh" || return 0
 	state_dir=$(worker_lifecycle_state_dir) || return 0
 	[[ -n "$state_dir" && -d "$state_dir" ]] || return 0
-	[[ "$cleanup_budget" =~ ^[0-9]+$ && "$cleanup_budget" -ge 2 ]] || return 0
-	pass_budget=$((cleanup_budget / 2))
-	# The reclaim pass is opt-in and takes an equal share only when enabled, so a
-	# host without the flag keeps today's budget split and today's behaviour.
-	if [[ "${AIDEVOPS_WORKTREE_RECLAIM_FINISHED:-0}" == 1 && "$cleanup_budget" -ge 3 ]]; then
-		reclaim_enabled=1
-		pass_budget=$((cleanup_budget / 3))
-	fi
+	[[ "$cleanup_budget" =~ ^[0-9]+$ && "$cleanup_budget" -ge 3 ]] || return 0
+	pass_budget=$((cleanup_budget / 3))
+	# Reclaim runs first: it is the only pass that reliably retires anything, and a
+	# budget this stage can exhaust must not be spent ahead of it. Measured on a
+	# busy host, the observation-era pass retired nothing in 866 of 934 runs.
+	_cleanup_reclaim_finished_worktrees "$python" "$pass_budget"
 	_cleanup_observation_era_worktrees "$state_dir" "$python" "$pass_budget"
-	if [[ "$reclaim_enabled" == 1 ]]; then
-		_cleanup_reclaim_finished_worktrees "$python" "$pass_budget"
-	fi
-	# Neither pass initializes/migrates state or consults old owner files.
-	# Each gets half the budget; the scheduler retains its hard watchdog.
+	# No pass initializes/migrates state or consults old owner files.
+	# Each gets a third of the budget; the scheduler retains its hard watchdog.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" cleanup --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}" \

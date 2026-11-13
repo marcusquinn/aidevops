@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Evidence for reclaiming a finished worktree; every unreadable signal refuses.
@@ -11,12 +10,13 @@ archive-free, each check here fails closed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
 
-from worktree_reclaim_host import Census, git, locked, metadata_directory, run
+from .host import Census, git, locked, metadata_directory, run
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the
@@ -74,6 +74,71 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
         state = json.loads(output).get("state") if status == 0 and output else None
         query.cache[key] = (state == done, f"{noun}-{number}-{str(state).lower()}")
     return query.cache[key]
+
+
+BATCH_SIZE = 20
+
+
+def _batch_query(items: list[tuple[str, int]]) -> str:
+    """Build the batch query; the owner and name stay variables, never query text.
+
+    Aliases interpolate safely because REFERENCE yields only digits, but a slug can
+    carry a quote, and a slug parsed as query syntax is an injection.
+    """
+    fields = " ".join(
+        f"{'g' if kind == 'gh' else 'p'}{number}: "
+        f"{'issue' if kind == 'gh' else 'pullRequest'}(number: {number}) {{ state }}"
+        for kind, number in items)
+    return ("query($owner: String!, $name: String!) "
+            f"{{ repository(owner: $owner, name: $name) {{ {fields} }} }}")
+
+
+def _fill_batch(slug: str, items: list[tuple[str, int]], cache: dict, timeout: int) -> None:
+    """Resolve one batch into the cache; absent aliases stay for the fallback.
+
+    A batch naming a nonexistent number exits non-zero yet still returns the
+    resolved aliases, so stdout is parsed regardless of the exit status.
+    """
+    owner, name = slug.split("/", 1)
+    _, output = run(["gh", "api", "graphql", "--hostname", "github.com",
+                     "-f", f"owner={owner}", "-f", f"name={name}",
+                     "-f", f"query={_batch_query(items)}"], timeout=timeout)
+    try:
+        data = ((json.loads(output) or {}).get("data") or {}).get("repository") or {}
+    except (ValueError, AttributeError):
+        return
+    for kind, number in items:
+        node = data.get(f"{'g' if kind == 'gh' else 'p'}{number}")
+        state = node.get("state") if isinstance(node, dict) else None
+        if not isinstance(state, str):
+            continue
+        noun, done = ("issue", "CLOSED") if kind == "gh" else ("pr", "MERGED")
+        cache[(kind, number, slug)] = (state == done, f"{noun}-{number}-{state.lower()}")
+
+
+def _uncapped() -> float:
+    """Stand in for a caller that tracks no budget, so ``cap`` alone bounds a batch."""
+    return float("inf")
+
+
+def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
+             *, remaining: Callable[[], float] = _uncapped, cap: int = 60) -> None:
+    """Fill the cache ``reference_finished`` reads, one query per 20 references.
+
+    ``remaining`` reports the caller's live budget, which batches share with the
+    git and reference calls: a stalled batch returns empty instead of raising, so
+    a per-batch timeout would let one slow repository spend the whole pass share.
+    Any failure leaves the key absent, so judgement degrades to per-reference
+    queries, and a reference still unresolved refuses rather than authorizing.
+    """
+    for slug, items in wanted.items():
+        pending = [item for item in dict.fromkeys(items)
+                   if (item[0], item[1], slug) not in cache]
+        for start in range(0, len(pending), BATCH_SIZE):
+            budget = int(min(remaining(), cap))
+            if budget < 1:
+                return
+            _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, budget)
 
 
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:

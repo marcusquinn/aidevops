@@ -218,7 +218,15 @@ _pmp_rest_review_decision_from_reviews() {
 	local reviews_json=""
 
 	reviews_json=$(_pmp_rest_reviews_json "$pr_number" "$repo_slug") || return 1
-	printf '%s' "$reviews_json" | jq -r '
+	printf '%s' "$reviews_json" | _pmp_reduce_reviews_json || return 1
+	return 0
+}
+
+#######################################
+# Reduce a REST-shaped review array (stdin) to the active review state.
+#######################################
+_pmp_reduce_reviews_json() {
+	jq -r '
 		def state_changing: .state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED";
 		if type != "array" then error("expected review array")
 		elif any(.[]?; state_changing and (
@@ -239,6 +247,46 @@ _pmp_rest_review_decision_from_reviews() {
 	return 0
 }
 
+#######################################
+# GraphQL fallback for the review state when REST is at the worker reserve.
+# One bounded history read (GraphQL budget is separate from REST core).
+# Preserve state-changing reviews even after later comments. Pagination metadata
+# makes incomplete history fail closed, independently of gh's internal limits.
+# Args: $1=PR number, $2=repo slug
+# Stdout: CHANGES_REQUESTED | OBSERVED_APPROVED | NONE
+#######################################
+_pmp_graphql_review_decision_from_reviews() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_json=""
+	local owner="${repo_slug%%/*}" name="${repo_slug#*/}"
+	local mapped=""
+
+	# GraphQL variables must remain literal, not shell-expanded.
+	# shellcheck disable=SC2016
+	pr_json=$(_pmrs_gh_call read gh api graphql -f query='
+		query($owner:String!,$name:String!,$number:Int!) {
+			repository(owner:$owner,name:$name) {
+				pullRequest(number:$number) {
+					reviews(first:100) {
+						pageInfo { hasNextPage }
+						nodes { databaseId author { login } state submittedAt }
+					}
+				}
+			}
+		}' -f owner="$owner" -f name="$name" -F number="$pr_number" 2>/dev/null) || return 1
+	mapped=$(printf '%s' "$pr_json" | jq -ce '
+		if .errors != null then error("GraphQL errors") else
+		.data.repository.pullRequest.reviews
+		| if .pageInfo.hasNextPage != false or (.nodes | type) != "array"
+		  then error("incomplete review history") else .nodes end
+		| map({user: {login: .author.login}, state: .state, submitted_at: .submittedAt, id: .databaseId})
+		end
+	' 2>/dev/null) || return 1
+	printf '%s' "$mapped" | _pmp_reduce_reviews_json || return 1
+	return 0
+}
+
 _pmp_refresh_unknown_review_decision_into() {
 	local dest_var="$1"
 	local pr_number="$2"
@@ -249,7 +297,9 @@ _pmp_refresh_unknown_review_decision_into() {
 	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	_pmp_normalize_review_decision_into refreshed_review "$current_review"
 	if [[ "$refreshed_review" == "UNKNOWN" ]]; then
-		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) || refreshed_review="UNKNOWN"
+		refreshed_review=$(_pmp_rest_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review=$(_pmp_graphql_review_decision_from_reviews "$pr_number" "$repo_slug" 2>/dev/null) ||
+			refreshed_review="UNKNOWN"
 		_pmp_normalize_review_decision_into refreshed_review "$refreshed_review"
 	fi
 	printf -v "$dest_var" '%s' "$refreshed_review"

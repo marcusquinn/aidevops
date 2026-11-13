@@ -606,7 +606,10 @@ _dispatch_record_and_cache_block() {
 # _pulse_request_cycle_drain) asks a deferred earlier-bundle lock owner to stop
 # at its next candidate boundary via LOCKDIR/drain_requested. Only the named
 # owner honours it ($$ is the wrapper PID in dispatch subshells too); releasing
-# the lock removes it. In-flight candidates finish; no new census starts.
+# the lock removes it. In-flight candidates finish; no new census starts. A
+# census already running completes: the drained cycle launches nothing from it
+# and hands it to the activated bundle before releasing the lock (GH#38048,
+# _dispatch_cleanup_cycle_cache).
 # Stdout: the activated bundle id the scheduler starts next
 # Returns: 0 when this cycle should drain, 1 otherwise
 #######################################
@@ -914,6 +917,30 @@ _dispatch_maybe_engage_throttle() {
 #######################################
 _dispatch_max_compute_parallel() {
 	local effective_slots="$1"
+	local max_parallel=""
+	max_parallel=$(_dispatch_max_compute_base_parallel "$effective_slots")
+	if _dispatch_rest_core_requires_serial; then
+		max_parallel=1
+		echo "[pulse-wrapper] Dispatch_max: REST-core reserve-adjacent mode forces serial launch ceremony (GH#29742)" >>"$LOGFILE"
+	fi
+	[[ "$max_parallel" =~ ^[1-9][0-9]*$ ]] || max_parallel=1
+	printf '%d\n' "$max_parallel"
+	return 0
+}
+
+#######################################
+# GH#38033: parallelism from the round-start constraints that cannot change
+# mid-round (ceremony cap, slot cap, throttle file), excluding the REST-core
+# reserve. When this exceeds 1 while the round is serial, the REST reserve is
+# the only serial cause and _dispatch_floor_loop may revisit it.
+#
+# Arguments:
+#   $1 - effective_slots
+# Stdout: integer parallelism level (>= 1)
+#######################################
+_dispatch_max_compute_base_parallel() {
+	local effective_slots="$1"
+	[[ "$effective_slots" =~ ^[0-9]+$ ]] || effective_slots=1
 	# t3015 back-compat: honour deprecated DISPATCH_FILL_FLOOR_PARALLEL name.
 	# Operators who set the old name in their environment / launchd plist
 	# before upgrading should not silently lose their override. Bridge the
@@ -938,12 +965,8 @@ _dispatch_max_compute_parallel() {
 	# are soft signals; keep parallelism eligible until the floor is reached.
 	# Defensive: also short-circuit on direct file presence in case caller
 	# passes a non-throttled effective_slots while throttle is active.
-	if [[ -f "$_DISPATCH_THROTTLE_FILE" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; then
+	if [[ -f "${_DISPATCH_THROTTLE_FILE:-}" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; then
 		max_parallel=1
-	fi
-	if _dispatch_rest_core_requires_serial; then
-		max_parallel=1
-		echo "[pulse-wrapper] Dispatch_max: REST-core reserve-adjacent mode forces serial launch ceremony (GH#29742)" >>"$LOGFILE"
 	fi
 	((max_parallel < 1)) && max_parallel=1
 	printf '%d\n' "$max_parallel"
@@ -963,7 +986,14 @@ _dispatch_max_compute_parallel() {
 #   $2 - effective_slots (slot budget at loop start, may be throttled to 1)
 #   $3 - available_slots (unthrottled slot budget — restored if throttle clears)
 #   $4 - self_login (GitHub login for dedup)
+#   $5 - optional outcomes file (priority phases)
 # Stdout: "<dispatched_count> <processed_count>"
+#
+# GH#38033: when the REST-core reserve is the only reason this round is serial,
+# the reserve is re-evaluated every DISPATCH_REST_SERIAL_RECHECK_ITERATIONS
+# candidates or DISPATCH_REST_SERIAL_RECHECK_SECONDS. Once it clears, the
+# remaining candidates move to _dispatch_max_loop with the remaining slot budget.
+# Throttle-file and slot-budget serial rounds never qualify.
 #######################################
 _dispatch_floor_loop() {
 	local candidate_file="$1"
@@ -973,7 +1003,13 @@ _dispatch_floor_loop() {
 	local outcomes_file="${5:-}"
 
 	local dispatched_count=0 processed_count=0 candidate_json
+	local line_no=0 resume_line=0 rest_recovery=0 iters_since_check=0 last_check_epoch=0
+	if _dispatch_floor_rest_recovery_eligible "$effective_slots"; then
+		rest_recovery=1
+		last_check_epoch=$(date +%s)
+	fi
 	while IFS= read -r candidate_json; do
+		line_no=$((line_no + 1))
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
 		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — entering body" >>"$LOGFILE"
@@ -1002,6 +1038,21 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: REST-core launch headroom unavailable during serial loop" >>"$LOGFILE"
 			break
 		fi
+		if ((rest_recovery == 1)) && _dispatch_floor_rest_recheck_due "$iters_since_check" "$last_check_epoch"; then
+			iters_since_check=0
+			last_check_epoch=$(date +%s)
+			local remaining_parallel=""
+			remaining_parallel=$(_dispatch_max_compute_base_parallel "$((effective_slots - dispatched_count))")
+			if ((remaining_parallel <= 1)); then
+				# One slot left: parallel ceremony cannot help this round.
+				rest_recovery=0
+			elif ! _dispatch_rest_core_requires_serial; then
+				resume_line="$line_no"
+				processed_count=$((processed_count - 1))
+				break
+			fi
+		fi
+		iters_since_check=$((iters_since_check + 1))
 		local _dispatch_proc_rc=0
 		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _dispatch_proc_rc=$?
 		if [[ -n "$outcomes_file" ]]; then
@@ -1017,7 +1068,114 @@ _dispatch_floor_loop() {
 			fi
 		fi
 	done <"$candidate_file"
+	if ((resume_line > 0)); then
+		local parallel_result="" parallel_dispatched=0 parallel_processed=0
+		parallel_result=$(_dispatch_floor_resume_parallel "$candidate_file" "$resume_line" \
+			"$((effective_slots - dispatched_count))" "$available_slots" "$self_login" \
+			"$outcomes_file" "$((processed_count + 1))") || return 1
+		read -r parallel_dispatched parallel_processed <<<"$parallel_result"
+		[[ "$parallel_dispatched" =~ ^[0-9]+$ ]] || parallel_dispatched=0
+		[[ "$parallel_processed" =~ ^[0-9]+$ ]] || parallel_processed=0
+		dispatched_count=$((dispatched_count + parallel_dispatched))
+		processed_count=$((processed_count + parallel_processed))
+	fi
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# GH#38033: return 0 when this serial loop starts serial only because of the
+# REST-core reserve, so the reserve may be revisited mid-round. Concurrent
+# priority pools disable this via _DISPATCH_REST_SERIAL_RECOVERY_ALLOWED=0 so
+# a recovered pool cannot exceed its share of the shared ceremony cap.
+#
+# Arguments:
+#   $1 - effective_slots at loop start
+#######################################
+_dispatch_floor_rest_recovery_eligible() {
+	local effective_slots="$1"
+	local base_parallel=""
+	[[ "${_DISPATCH_REST_SERIAL_RECOVERY_ALLOWED:-1}" == "1" ]] || return 1
+	base_parallel=$(_dispatch_max_compute_base_parallel "$effective_slots")
+	((base_parallel > 1)) || return 1
+	_dispatch_rest_core_requires_serial || return 1
+	echo "[pulse-wrapper] Dispatch_max: serial round caused by REST-core reserve; rechecking for parallel recovery (GH#38033)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#38033: return 0 when the REST-core reserve should be re-evaluated.
+#
+# Arguments:
+#   $1 - candidates processed since the last check
+#   $2 - epoch of the last check
+#######################################
+_dispatch_floor_rest_recheck_due() {
+	local iters_since_check="$1"
+	local last_check_epoch="$2"
+	local interval="${DISPATCH_REST_SERIAL_RECHECK_ITERATIONS:-3}"
+	local max_seconds="${DISPATCH_REST_SERIAL_RECHECK_SECONDS:-60}"
+	[[ "$interval" =~ ^[1-9][0-9]*$ ]] || interval=3
+	[[ "$max_seconds" =~ ^[0-9]+$ ]] || max_seconds=60
+	((iters_since_check > 0)) || return 1
+	((iters_since_check >= interval)) && return 0
+	((max_seconds > 0)) || return 1
+	local now=""
+	now=$(date +%s)
+	[[ "$now" =~ ^[0-9]+$ && "$last_check_epoch" =~ ^[0-9]+$ ]] || return 1
+	((now - last_check_epoch >= max_seconds)) && return 0
+	return 1
+}
+
+#######################################
+# GH#38033: hand the unprocessed candidates of a REST-recovered serial round
+# to the bounded parallel loop. The parallel loop keeps every per-iteration
+# fence (stop flag, drain, GraphQL breaker, REST progress, slot budget).
+#
+# Arguments:
+#   $1 - candidate_file
+#   $2 - first unprocessed line number (1-based)
+#   $3 - remaining slot budget
+#   $4 - available_slots
+#   $5 - self_login
+#   $6 - caller outcomes file (empty for the non-priority path)
+#   $7 - iteration number at which parallel processing resumes
+# Stdout: "<dispatched_count> <processed_count>" for the parallel part
+#######################################
+_dispatch_floor_resume_parallel() {
+	local candidate_file="$1"
+	local from_line="$2"
+	local remaining_slots="$3"
+	local available_slots="$4"
+	local self_login="$5"
+	local outcomes_file="$6"
+	local resume_iter="$7"
+	local parallel="" remaining_file="" parallel_outcomes="" result=""
+
+	parallel=$(_dispatch_max_compute_base_parallel "$remaining_slots")
+	remaining_file=$(mktemp) || return 1
+	parallel_outcomes=$(mktemp) || {
+		rm -f "$remaining_file"
+		return 1
+	}
+	tail -n "+${from_line}" "$candidate_file" >"$remaining_file"
+	echo "[pulse-wrapper] Dispatch_max: REST-core recovered; resuming parallel launch ceremony at iter=${resume_iter} (max_parallel=${parallel}, remaining_slots=${remaining_slots})" >>"$LOGFILE"
+	result=$(_dispatch_max_loop "$remaining_file" "$remaining_slots" "$available_slots" "$self_login" "$parallel" "$parallel_outcomes")
+	if [[ -n "$outcomes_file" ]]; then
+		# Priority phases aggregate their own outcomes file after the round.
+		cat "$parallel_outcomes" >>"$outcomes_file" || {
+			rm -f "$remaining_file" "$parallel_outcomes"
+			return 1
+		}
+	else
+		local prior_dispatched="${_DISPATCH_ROUND_DISPATCHED:-0}"
+		local prior_no_worker="${_DISPATCH_ROUND_NO_WORKER_FAILURES:-0}"
+		_dispatch_max_aggregate_outcomes "$parallel_outcomes"
+		_DISPATCH_ROUND_DISPATCHED=$((prior_dispatched + _DISPATCH_ROUND_DISPATCHED))
+		_DISPATCH_ROUND_NO_WORKER_FAILURES=$((prior_no_worker + _DISPATCH_ROUND_NO_WORKER_FAILURES))
+	fi
+	rm -f "$remaining_file" "$parallel_outcomes"
+	printf '%s\n' "$result"
 	return 0
 }
 
@@ -1332,6 +1490,16 @@ _dispatch_run_priority_phase() {
 		return 0
 	fi
 	((parallel <= budget)) || parallel="$budget"
+	if ((parallel <= 1)) && [[ "${_DISPATCH_REST_SERIAL_ROUND:-0}" == "1" &&
+		"${_DISPATCH_REST_SERIAL_RECOVERY_ALLOWED:-1}" == "1" ]] &&
+		! _dispatch_rest_core_requires_serial; then
+		local recovered_parallel=""
+		recovered_parallel=$(_dispatch_max_compute_base_parallel "$budget")
+		if ((recovered_parallel > 1)); then
+			echo "[pulse-wrapper] Dispatch_max: REST-core recovered; resuming parallel launch ceremony at phase start (max_parallel=${recovered_parallel}, remaining_slots=${budget}) (GH#38033)" >>"$LOGFILE"
+			parallel="$recovered_parallel"
+		fi
+	fi
 	if ((parallel <= 1)); then
 		_dispatch_floor_loop "$candidates" "$budget" "$budget" "$login" "$outcomes"
 	else
@@ -1445,6 +1613,9 @@ _dispatch_priority_reserved_pools() {
 	: >"$phase_dir/ordinary.outcomes"
 	if ((parallel > 1 && reserved > 0 && ordinary > 0)) &&
 		[[ -s "$phase_dir/product.candidates" && -s "$phase_dir/ordinary.candidates" ]]; then
+		# GH#38033: concurrent pools split one ceremony cap; a serial pool
+		# must not widen to the full cap if the REST reserve recovers.
+		local _DISPATCH_REST_SERIAL_RECOVERY_ALLOWED=0
 		product_parallel=$(((parallel * reserved + budget - 1) / budget))
 		((product_parallel < parallel)) || product_parallel=$((parallel - 1))
 		ordinary_parallel=$((parallel - product_parallel))
@@ -1477,6 +1648,12 @@ _dispatch_priority_reserved_pools() {
 _dispatch_priority_loop() {
 	local candidates="$1" budget="$2" login="$3" parallel="$4" outcomes="$5"
 	local reserved="$6" complete="$7"
+	# GH#38033: phases started after a REST-reserve serial round recovers run
+	# with the recovered parallelism (see _dispatch_run_priority_phase).
+	local _DISPATCH_REST_SERIAL_ROUND=0
+	if ((parallel <= 1)) && _dispatch_floor_rest_recovery_eligible "$budget"; then
+		_DISPATCH_REST_SERIAL_ROUND=1
+	fi
 	local phase_dir="" phase="" phase_budget=0 launched=0 processed=0 result=""
 	local phase_launched=0 phase_processed=0 product_launched=0 product_unknown=0 held=0
 	phase_dir=$(mktemp -d) || return 1

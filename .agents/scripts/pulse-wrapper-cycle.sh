@@ -803,6 +803,38 @@ _pulse_stale_blocked_stale_deadline() {
 	return 0
 }
 
+# GH#38039: log the age of a pass's complete stamp so starvation is visible.
+# Args: repo kind now_epoch. Never fails.
+_pulse_stale_blocked_log_stamp_age() {
+	local repo="$1" kind="$2" now_epoch="$3" stamp="" mtime="" age="never"
+	stamp=$(_pulse_stale_blocked_repo_stamp "$repo" "$kind") || return 0
+	if [[ -f "$stamp" ]]; then
+		mtime=$(_file_mtime_epoch "$stamp")
+		[[ "$mtime" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$mtime" ]] && age=$((now_epoch - mtime))
+	fi
+	echo "[pulse-wrapper] stale-blocked sweep: ${kind%-complete} pass due for ${repo}: complete_stamp_age_s=${age}" >>"$LOGFILE"
+	return 0
+}
+
+# GH#38039: hard stop for the stale pass: the sweep deadline minus the due
+# optional passes' reserve, never earlier than its own deadline (so it keeps its
+# share) and never later than the sweep deadline.
+# Args: repo stale_deadline sweep_deadline interval now_epoch. Prints the stop epoch.
+_pulse_stale_blocked_stale_stop() {
+	local repo="$1" stale_deadline="$2" sweep_deadline="$3" interval="$4" now_epoch="$5"
+	local reserve=0 stop=0
+	[[ "$stale_deadline" =~ ^[0-9]+$ && "$sweep_deadline" =~ ^[0-9]+$ ]] || {
+		printf '%s\n' "$sweep_deadline"
+		return 0
+	}
+	reserve=$(_pulse_stale_blocked_later_reserve "$repo" "$interval" "$now_epoch")
+	stop=$((sweep_deadline - reserve))
+	[[ "$stop" -ge "$stale_deadline" ]] || stop="$stale_deadline"
+	[[ "$stop" -le "$sweep_deadline" ]] || stop="$sweep_deadline"
+	printf '%s\n' "$stop"
+	return 0
+}
+
 # GH#36041: the stale sweep stops at the repo deadline, so a later pass given
 # that same deadline found it already expired. It spent its listing reads,
 # returned partial before its first candidate, and never completed on large
@@ -846,6 +878,7 @@ _pulse_stale_blocked_optional_pass() {
 		echo "[pulse-wrapper] stale-blocked sweep: ${kind%-complete} pass deferred for ${repo}: sweep deadline reached (GH#36041)" >>"$LOGFILE"
 		return "${DER_SWEEP_PARTIAL:-3}"
 	fi
+	_pulse_stale_blocked_log_stamp_age "$repo" "$kind" "$pass_now"
 	later_reserve=$(_pulse_stale_blocked_later_reserve "$repo" "$interval" "$now_epoch" "$kind")
 	pass_deadline=$(_pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now" "$later_reserve")
 	"$pass_fn" "$repo" "$pass_deadline" "$sweep_deadline" 2>>"$LOGFILE" || pass_rc=$?
@@ -869,10 +902,13 @@ _pulse_stale_blocked_optional_pass() {
 #          more time, another non-zero code when a pass failed (failure wins)
 _pulse_stale_blocked_sweep_repo() {
 	local repo="$1" repo_deadline="$2" sweep_deadline="$3" interval="$4" now_epoch="$5"
-	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0 pass_spec="" stale_deadline=""
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" rc=0 pass_rc=0 pass_spec="" stale_deadline="" stale_stop=""
 	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch"; then
 		stale_deadline=$(_pulse_stale_blocked_stale_deadline "$repo" "$repo_deadline" "$interval" "$now_epoch")
-		_pulse_stale_blocked_run_and_measure "$repo" "$stale_deadline" "$sweep_deadline" || pass_rc=$?
+		# GH#38039: the hard stop must keep the later passes' reserve; handing
+		# over sweep_deadline let an overrunning stale pass consume it.
+		stale_stop=$(_pulse_stale_blocked_stale_stop "$repo" "$stale_deadline" "$sweep_deadline" "$interval" "$now_epoch")
+		_pulse_stale_blocked_run_and_measure "$repo" "$stale_deadline" "$stale_stop" || pass_rc=$?
 		if [[ "$pass_rc" -eq 0 ]]; then
 			_pulse_stale_blocked_repo_mark_complete "$repo"
 		else

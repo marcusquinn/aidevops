@@ -3,7 +3,6 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Fixture-only reclaim evidence tests: every incomplete signal must refuse removal."""
 
-import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -12,19 +11,15 @@ import sys
 import tempfile
 import unittest
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+LIFECYCLE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LIFECYCLE))
 GIT = shutil.which("git")
 if not GIT:
     raise RuntimeError("Git is required for fixture verification")
-SPEC = importlib.util.spec_from_file_location("reclaim", SCRIPTS / "worktree-reclaim-finished.py")
-reclaim = importlib.util.module_from_spec(SPEC)
-# Register before executing: the module defines a dataclass, which resolves its own
-# module from sys.modules while the class body is processed.
-sys.modules[SPEC.name] = reclaim
-SPEC.loader.exec_module(reclaim)
-host = sys.modules["worktree_reclaim_host"]
-collector = sys.modules["worktree_reclaim_evidence"]
+
+from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
+from worker_lifecycle.reclaim import host  # noqa: E402
+from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
 
 SLUG = "fixture/repo"
 ORIGIN = f"git@github.com:{SLUG}.git"
@@ -236,11 +231,57 @@ class EvidenceTests(unittest.TestCase):
 
     def test_reports_without_removing_when_apply_is_absent(self):
         result = subprocess.run(  # nosec B603
-            [sys.executable, "-E", "-s", "-B", str(SCRIPTS / "worktree-reclaim-finished.py"),
+            [sys.executable, "-E", "-s", "-B", str(LIFECYCLE / "worktree-reclaim.py"),
              "--base-dir", str(self.root), "--budget-seconds", "30"],
             check=True, capture_output=True, text=True)
         self.assertIn('"dry_run": true', result.stdout)
         self.assertTrue(self.worktree.exists())
+
+
+class BatchTests(unittest.TestCase):
+    def run_with(self, status, output):
+        original = collector.run
+        self.commands = []
+        def record(command, timeout=60):
+            self.commands.append(command)
+            return (status, output)
+        collector.run = record
+        self.addCleanup(setattr, collector, "run", original)
+
+    def test_repository_identity_is_bound_as_variables_not_query_text(self):
+        # A slug can carry a quote, and a slug parsed as query syntax is an injection.
+        self.run_with(0, '{"data":{"repository":{"g1":{"state":"CLOSED"}}}}')
+        hostile = 'owner", name: "other'
+        collector.prefetch({f'{hostile}/repo': [("gh", 1)]}, {})
+        command = self.commands[0]
+        query = next(argument.partition("=")[2] for argument in command
+                     if argument.startswith("query="))
+        self.assertNotIn(hostile, query)
+        self.assertIn("$owner", query)
+        self.assertIn(f"owner={hostile}", command)
+        self.assertEqual(command[command.index(f"owner={hostile}") - 1], "-f")
+        self.assertEqual(command[command.index("name=repo") - 1], "-f")
+
+    def test_batch_populates_cache_and_tolerates_nonzero_exit(self):
+        self.run_with(1, '{"data":{"repository":{"g1":{"state":"CLOSED"},'
+                         '"p2":{"state":"OPEN"},"g3":null}},"errors":[{}]}')
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1), ("pr", 2), ("gh", 3)]}, cache)
+        self.assertEqual(cache[("gh", 1, SLUG)], (True, "issue-1-closed"))
+        self.assertEqual(cache[("pr", 2, SLUG)], (False, "pr-2-open"))
+        self.assertNotIn(("gh", 3, SLUG), cache)
+
+    def test_failed_batch_leaves_cache_for_per_reference_fallback(self):
+        self.run_with(1, "not json")
+        cache = {}
+        collector.prefetch({SLUG: [("gh", 1)]}, cache)
+        self.assertEqual(cache, {})
+
+    def test_free_space_accounting(self):
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 2), 250)
+        self.assertEqual(reclaim.reclaimed_bytes(100, 350, 0), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(None, 350, 2), 0)
+        self.assertEqual(reclaim.reclaimed_bytes(350, 100, 2), 0)
 
 
 if __name__ == "__main__":

@@ -177,18 +177,33 @@ Do not introduce a second independent lease database. Reuse the registry's
 identity contract and keep process containment separate from SQLite queries.
 Cooperative locks cannot prove that arbitrary external shells are absent.
 
-## Opt-in reclaim of finished worktrees (interim)
+## Reclaim of finished worktrees (interim, always on)
 
 `cleanup_policy.py` requires six proofs that no production collector supplies, so
 `decide_cleanup` always holds and nothing is ever retired. On a busy host that is
 unbounded growth, not slow cleanup: 101 of 143 worktrees were finished but
 retained, and free space fell 24 GB in 50 minutes.
 
-`worktree-reclaim-finished.py` is the interim answer, and it has two entry points.
-Run directly it reports only, unless `--apply`. Setting
-`AIDEVOPS_WORKTREE_RECLAIM_FINISHED=1` adds it to the pulse cleanup stage as a
-third pass sharing the budget in thirds, and that pass always applies: enabling
-the flag enables unattended, archive-free deletion.
+`.agents/worker-lifecycle/worktree-reclaim.py` (logic in `worker_lifecycle/reclaim/`) is the interim answer, and it has two entry points.
+Run directly it reports only, unless `--apply`. The pulse cleanup stage always runs
+it as a third pass sharing the budget in thirds (stage minimum budget 3), and that
+pass always applies: unattended, archive-free deletion with no opt-out flag.
+
+To fit the budget, references are resolved up front with one batched GraphQL query
+per repository (20 per query), with the owner and name bound as variables so a slug
+can never be parsed as query syntax. A failed or partial batch is parsed regardless
+of exit status and leaves absent references to the per-reference fallback. Per-tree
+size walks are gone: `reclaimed_bytes` is the free-space delta on the base
+directory across the pass, and is 0 when nothing was removed.
+
+Those two changes are what make an always-on pass affordable. Measured on a busy
+host: `gh issue view` costs 1.05s per reference against 1.14s for a 20-reference
+batch, and a per-tree size walk cost 4.3s on a 5 GB worktree. A full 98-candidate
+scan fell from 442s to 45s, well inside a third of the 900s pressure budget. The
+local state checks were never the cost: `git status --untracked-files=all` takes
+0.2-0.3s even on those trees, because the large directories are gitignored and Git
+never walks them. Because GitHub is asked before local state, those checks run only
+for candidates whose work has finished.
 
 It removes a worktree only when every one of these holds, and names the first
 failure as its refusal reason:
@@ -224,9 +239,9 @@ prerequisites in the section above. Two residual gaps are known and reported
 rather than assumed away. A registered owner process whose working directory and
 arguments both sit outside the worktree is not detected. Live same-user processes
 whose working directory cannot be read are counted in the receipt as
-`unplaceable_processes` and matched only by their arguments. The flag exists so
+`unplaceable_processes` and matched only by their arguments. The pass exists so
 the real collector can be designed deliberately rather than under disk pressure;
-enabling it accepts those risks on that host.
+running it accepts those risks on every host.
 
 ## Process-first activity observation
 

@@ -316,8 +316,11 @@ _dispatch_first_wave_enumeration_done() {
 
 # Emit managed repository rows, optionally rotated after a first-wave cursor.
 _dispatch_repository_rows() {
-	local cursor="$1"
-	jq -r --arg cursor "$cursor" '
+	local cursor="$1" backlog=""
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
+		backlog=$(_dispatch_first_wave_backlog_repos)
+	fi
+	jq -r --arg cursor "$cursor" --arg backlog "$backlog" '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
 			else .pulse_hours.start
@@ -329,7 +332,11 @@ _dispatch_repository_rows() {
 		[.initialized_repos[] |
 		select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "")] as $repos |
 		($repos | map(.slug) | index($cursor)) as $index |
-		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end)[] |
+		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end) as $rotated |
+		($backlog | split("\n")) as $known |
+		# Stable partition preserves cursor fairness for unknown/attempted work.
+		(($rotated | map(select(.slug as $s | $known | index($s)))) +
+		 ($rotated | map(select(.slug as $s | $known | index($s) | not))))[] |
 		[
 			.slug,
 			.path,
