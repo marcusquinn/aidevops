@@ -1365,6 +1365,12 @@ classify_dispatch_blocker_reason() {
 	local signal="$1"
 	local lower_signal
 	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+	# GH#38142: layer-4 PR evidence text can name a consolidated or closed
+	# issue; its exact prefix must win before the structural keyword chain.
+	if [[ "$lower_signal" == pr_evidence_block:* ]]; then
+		printf 'dedup_pr_evidence\n'
+		return 0
+	fi
 	if _classify_structural_dispatch_blocker_reason "$lower_signal" ||
 		_classify_runtime_dispatch_blocker_reason "$lower_signal" ||
 		_classify_intake_dispatch_blocker_reason "$lower_signal" ||

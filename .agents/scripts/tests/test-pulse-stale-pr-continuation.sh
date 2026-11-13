@@ -67,6 +67,18 @@ else
 	print_result "Layer 4 allows dispatch after a subsequent valid empty lookup" 1
 fi
 
+# GH#38142: non-worker PR evidence is a named, cacheable block signal.
+export STUB_OPEN_PR_OUTPUT='open PR #241 is approved or mergeable for issue #123'
+export STUB_OPEN_PR_RC=0
+LAYER4_OUTPUT=""
+LAYER4_RC=0
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "123" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == "pr_evidence_block: open PR #241 is approved or mergeable for issue #123" ]]; then
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 0
+else
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 1
+fi
+
 # Exercise the production router's event parsing/argument fence before replacing
 # it with a counter stub for the Layer 6 return-semantics tests below.
 ROUTE_ARGS_FILE="${TEST_ROOT}/route-args"

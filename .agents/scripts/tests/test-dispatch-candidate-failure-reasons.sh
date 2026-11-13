@@ -65,6 +65,9 @@ assert_reason 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=aaaaaaaaaaaaaaaaaaaaaaa
 assert_reason 'TERMINAL_BLOCKER_FLEET_HOLD task_revision=aaaaaaaaaaaaaaaaaaaaaaaa wake=capability:bbbbbbbbbbbbbbbbbbbbbbbb' 'terminal_blocker_fleet_hold'
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
+# GH#38142: layer-4 PR evidence is its own reason, ahead of the keyword chain.
+assert_reason 'pr_evidence_block: open PR #241 is approved or mergeable for issue #240' 'dedup_pr_evidence'
+assert_reason 'pr_evidence_block: merged PR #9 references superseded issue #8 for consolidated issue #7' 'dedup_pr_evidence'
 
 # GH#34526: exercise the production classifier/cache/filter across two cycles.
 TEST_ROOT=$(mktemp -d)
@@ -358,5 +361,60 @@ printf 'PASS missing-isDraft snapshot falls back to REST fingerprint\n'
 	rm -f "$cache"
 ) || exit 1
 printf 'PASS empty-pool active-claim hints: foreign owners cached, own/mixed/unknown rechecked\n'
+
+# GH#38142: a PR-evidence hint holds whoever owns the issue, even with an empty
+# pool, and wakes on any issue or exact-PR change, a failed read or TTL expiry.
+(
+	rm -f "$cache"
+	timeout_sec() { shift; "$@"; return $?; }
+	REST_RC=0
+	gh() { [[ "$REST_RC" == 0 ]] || return 1; printf '%s\n' "$REST_JSON"; return 0; }
+	REST_JSON='{"state":"open","draft":false,"merged_at":null,"updated_at":"2026-10-13T00:00:00Z","head":{"sha":"pr-head"}}'
+	_DISPATCH_ACTIVE_WORKERS=0
+	_DISPATCH_SELF_LOGIN='self-runner'
+	held=$(jq -c '.assignees = [{login:"self-runner"}] | .labels = ["status:queued"]' <<<"$candidate")
+	ATTEMPT_REASON=dedup_pr_evidence
+	ATTEMPT_LINES='[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: open PR #241 is approved or mergeable for issue #34526 issue=#34526 repo=example/repo'
+	_dispatch_candidate_benign_block_reason dedup_pr_evidence
+	_dispatch_record_nonzero_dispatch_result 34526 example/repo 1 "$held"
+	_dispatch_cache_confirmed_block "$held" 34526 example/repo
+	[[ "$(cut -f3,4 "$cache")" == $'dedup_pr_evidence\t241' ]]
+	for cycle in 1 2; do
+		[[ "$(_dispatch_negative_cache_reason "$held")" == dedup_pr_evidence ]]
+		_dispatch_max_prefilter_cached_block "$held" "$TEST_ROOT/outcomes"
+	done
+	grep -q 'cross-cycle block:dedup_pr_evidence' "$LOGFILE"
+	# No owner-label gate: an unassigned available issue is held the same way.
+	[[ "$(_dispatch_negative_cache_reason "$candidate")" == dedup_pr_evidence ]]
+	changed=$(jq -c '.updatedAt = "2026-10-13T00:00:01Z"' <<<"$held")
+	if _dispatch_negative_cache_reason "$changed"; then exit 1; fi
+	base="$REST_JSON"
+	for change in '.updated_at = "2026-10-13T00:00:02Z"' '.draft = true' '.state = "closed"' \
+		'.merged_at = "2026-10-13T00:00:03Z"' '.head.sha = "new-head"'; do
+		REST_JSON=$(jq -c "$change" <<<"$base")
+		if _dispatch_negative_cache_reason "$held"; then exit 1; fi
+	done
+	REST_JSON="$base"
+	REST_RC=1
+	if _dispatch_negative_cache_reason "$held"; then exit 1; fi
+	REST_RC=0
+	[[ "$(_dispatch_negative_cache_reason "$held")" == dedup_pr_evidence ]]
+	fingerprint=$(_dispatch_pr_evidence_fingerprint example/repo 241)
+	printf '%s\t%s\t%s\t241\t%s\t\t\n' "$(($(date +%s) - 1800))" \
+		'2026-10-13T00:00:00Z' dedup_pr_evidence "$fingerprint" >"$cache"
+	if _dispatch_negative_cache_reason "$held"; then exit 1; fi
+	rm -f "$cache"
+	# Evidence without one exact PR number is never cached.
+	ATTEMPT_LINES='[pulse-wrapper] DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: merged PR found by task id t123 in title issue=#34526 repo=example/repo'
+	_dispatch_cache_confirmed_block "$held" 34526 example/repo
+	[[ ! -f "$cache" ]]
+	# Merged PR evidence is cached against its merged fingerprint.
+	REST_JSON='{"state":"closed","draft":false,"merged_at":"2026-10-12T00:00:00Z","updated_at":"2026-10-12T00:00:00Z","head":{"sha":"merged-head"}}'
+	ATTEMPT_LINES='[pulse-wrapper] DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: merged PR #77 references issue #34526 via keyword issue=#34526 repo=example/repo'
+	_dispatch_cache_confirmed_block "$held" 34526 example/repo
+	[[ "$(_dispatch_negative_cache_reason "$held")" == dedup_pr_evidence ]]
+	rm -f "$cache"
+) || exit 1
+printf 'PASS PR-evidence hints: owner-independent, issue/PR/read/TTL wake, exact PR only\n'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'

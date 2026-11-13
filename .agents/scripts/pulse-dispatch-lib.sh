@@ -170,23 +170,50 @@ _dispatch_negative_pr_fingerprint() {
 	return $?
 }
 
+# One bounded REST read of the exact PR, shared by every fingerprint path.
+# Invalid slug/number, a missing timeout helper or any API error returns 1 so
+# callers fall back to the full ceremony. The pulse puts the gh shim first on
+# PATH, and its plain REST read path records this call, so it is not recorded
+# here as well.
+_dispatch_exact_pr_rest_json() {
+	local repo="$1" pr="$2"
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	declare -F timeout_sec >/dev/null 2>&1 || return 1
+	timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/pulls/${pr}" 2>/dev/null
+	return $?
+}
+
 # GH#34402: one bounded REST read of the exact PR, mapped like the prefetch
 # REST snapshot (updated_at -> updatedAt, head.sha -> headRefOid) so either
 # source yields the same fingerprint. Only an open draft can be a worker
 # checkpoint; any error or other state returns 1 and the full ceremony runs.
-# The pulse puts the gh shim first on PATH, and its plain REST read path
-# records this call, so it is not recorded here as well.
 _dispatch_negative_pr_rest_fingerprint() {
 	local repo="$1" pr="$2" pr_json=""
-	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
-	declare -F timeout_sec >/dev/null 2>&1 || return 1
-	pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
-		gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+	pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
 	jq -er '
 		select(.state == "open" and .draft == true) |
 		select((.updated_at | type) == "string" and (.head.sha | type) == "string") |
 		select((.updated_at | length) > 0 and (.head.sha | length) > 0) |
 		[.updated_at, .head.sha] | join("_")
+	' <<<"$pr_json" 2>/dev/null
+	return $?
+}
+
+# GH#38142: fingerprint the exact PR behind a layer-4 PR-evidence block with
+# one bounded REST read. Close, merge, draft toggle, title/body/label edits and
+# pushes all change at least one field (GitHub bumps updated_at for each), so
+# any change that can lift the block invalidates the hint. Any open, draft or
+# merged state is accepted because each one blocks; errors return 1 and the
+# full ceremony runs.
+_dispatch_pr_evidence_fingerprint() {
+	local repo="$1" pr="$2" pr_json=""
+	pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
+	jq -er '
+		select((.state | type) == "string" and (.updated_at | type) == "string" and (.head.sha | type) == "string") |
+		select((.updated_at | length) > 0 and (.head.sha | length) > 0) |
+		[.state, (.merged_at // "unmerged"), ((.draft // false) | tostring), .updated_at, .head.sha] |
+		map(gsub("[^A-Za-z0-9_.:-]"; "-")) | join("_")
 	' <<<"$pr_json" 2>/dev/null
 	return $?
 }
@@ -270,11 +297,9 @@ _dispatch_checkpoint_pr_head() {
 	if ! jq -e 'select(.complete == true) |
 		select((now - (.timestamp | fromdateiso8601)) >= 0 and
 			(now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
-		[[ "$mode" == allow_rest && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
-		declare -F timeout_sec >/dev/null 2>&1 || return 1
+		[[ "$mode" == allow_rest ]] || return 1
 		local pr_json=""
-		pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
-			gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+		pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
 		jq -er 'select(.state == "open" and .draft == true) |
 			select((.head.sha | type) == "string" and (.head.sha | length) > 0) |
 			.head.sha + "_" + ([.labels[]? | (.name? // .) | select(type == "string") | gsub("[\\t\\n\\r]"; " ")] | sort | join(","))
@@ -340,7 +365,7 @@ _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dedup_pr_evidence | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -361,6 +386,9 @@ _dispatch_negative_cache_record() {
 	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
 		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
 		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
+	fi
+	if [[ "$reason" == dedup_pr_evidence ]]; then
+		fingerprint=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 0
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
@@ -436,7 +464,7 @@ _dispatch_negative_cache_reason() {
 	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
 		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
 		"$reason" != worker_draft_checkpoint_blocked && "$reason" != stale_draft_checkpoint &&
-		"$reason" != worker_draft_checkpoint_cooldown &&
+		"$reason" != worker_draft_checkpoint_cooldown && "$reason" != dedup_pr_evidence &&
 		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
 		! _dispatch_maintainer_gate_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
@@ -501,6 +529,17 @@ _dispatch_negative_cache_reason() {
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;
+	dedup_pr_evidence)
+		# GH#38142: PR evidence blocks whoever owns the issue, so neither the
+		# owner-label gate nor the GH#37780 empty-pool recheck applies. The
+		# unchanged updatedAt above covers issue edits, comments and reopen.
+		[[ "$pr" =~ ^[1-9][0-9]*$ && -n "$fingerprint" ]] || return 1
+		# Expire before the REST read.
+		now=$(date +%s)
+		((now >= stamp && now - stamp < ttl)) || return 1
+		current=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 1
+		[[ "$current" == "$fingerprint" ]] || return 1
+		;;
 	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
@@ -556,6 +595,13 @@ _dispatch_cache_confirmed_block() {
 		reason=worker_draft_checkpoint_blocked
 		[[ "$lines" != *"stale_draft_checkpoint"* ]] || reason=stale_draft_checkpoint
 		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
+		return 0
+	fi
+	# GH#38142: open, draft or merged PR evidence named by layer 4. Evidence
+	# without one exact PR number (task-id or coverage matches) is not cached.
+	local evidence_pattern='DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: [^#]*PR #([1-9][0-9]*) '
+	if [[ "$lines" =~ $evidence_pattern ]]; then
+		_dispatch_negative_cache_record "$candidate" dedup_pr_evidence "${BASH_REMATCH[1]}"
 		return 0
 	fi
 	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
