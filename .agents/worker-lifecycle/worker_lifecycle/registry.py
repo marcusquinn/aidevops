@@ -11,6 +11,7 @@ import time
 from typing import TypedDict
 from uuid import uuid4
 
+from .admission import wait_out_contention
 from .process import ObservationUnavailable, ProcessIdentity
 from .events import ingest
 from .enrollment import GenerationEnrollment
@@ -191,6 +192,13 @@ def enrollment_result(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     return {"generation_id": generation, "cleanup_authorized": False}
 
 
+def _enroll_or_admit(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
+    """One complete enrollment or session admission attempt; safe to repeat."""
+    if args.operation == "enroll":
+        return enrollment_result(store, args)
+    return _worktree_operation(store, args)
+
+
 def _worktree_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
     if args.operation == "create-worktree":
         from .creation import WorktreeSpec, create_worktree
@@ -275,6 +283,10 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
         return _maintenance_operation(store, args)
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
+    if args.operation in {"enroll", "admit-session"}:
+        # GH#38086: both replay idempotently, so wait out writer contention
+        # instead of refusing worktree pre-creation after one busy timeout.
+        return wait_out_contention(lambda: _enroll_or_admit(store, args))
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
                           "release-vacant-path", "release-replaced-path"}:
         return _cleanup_operation(store, args)
