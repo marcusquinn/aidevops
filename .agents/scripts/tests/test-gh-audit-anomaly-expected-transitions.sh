@@ -291,6 +291,73 @@ _gh_audit_record_op \
 	"_nmr_edit_issue_labels" "1"
 jq -e -s 'map(select(.number == 27))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "read-only current actor produced trusted-author audit proof"
+
+# GH#38134: exercise the real call stack through protected-label-guard.sh.
+# The audit record must name the logical caller, not the guard's internal frame.
+STACK_DIR="${TEST_ROOT}/stack/agents/scripts"
+mkdir -p "$STACK_DIR"
+cat >"${STACK_DIR}/pulse-nmr-approval.sh" <<'EOF'
+_nmr_edit_issue_labels() {
+	protected_label_edit "$@"
+	return $?
+}
+EOF
+cat >"${STACK_DIR}/other-script.sh" <<'EOF'
+_nmr_edit_issue_labels() {
+	_protected_label_raw_edit "$@"
+	return $?
+}
+_protected_label_raw_edit() {
+	gh_issue_edit_safe "$@"
+	return $?
+}
+EOF
+_STACK_PHASE="before"
+_gh_audit_fetch_issue_state_json() {
+	if [[ "$_STACK_PHASE" == "before" ]]; then
+		_STACK_PHASE="after"
+		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review","needs-maintainer-review"]}'
+	else
+		_STACK_PHASE="before"
+		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review"]}'
+	fi
+	return 0
+}
+_gh_wrapper_enter_cleanup_scope() { return 0; }
+gh_record_call() { return 0; }
+_gh_guard_public_write_args() { return 0; }
+gh() {
+	local command="$1"
+	local resource="${2:-}"
+	[[ "$command" == "issue" ]] && return 0
+	[[ "$command" == "api" ]] || return 1
+	case "$resource" in
+	repos/example/repo/issues/25 | repos/example/repo/issues/26)
+		printf '%s\n' '{"user":{"login":"trusted-author","type":"User"},"author_association":"COLLABORATOR","labels":[{"name":"hold-for-review"}]}'
+		;;
+	user) printf '%s\n' "$CURRENT_ACTOR" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+CURRENT_ACTOR="trusted-runner"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/../protected-label-guard.sh"
+# shellcheck source=/dev/null
+source "${STACK_DIR}/pulse-nmr-approval.sh"
+_nmr_edit_issue_labels 25 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 25 and .caller_function == "_nmr_edit_issue_labels"))
+	| length == 1 and (.[0].caller_script | endswith("/pulse-nmr-approval.sh"))
+	and .[0].flags.trusted_author_nmr_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "real-stack NMR edit did not record the logical caller with verified proof"
+# Negative: same function name from a non-framework script, with a guard-named
+# function defined outside the guard file, must not acquire the flag.
+# shellcheck source=/dev/null
+source "${STACK_DIR}/other-script.sh"
+_nmr_edit_issue_labels 26 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 26))[-1]
+	| (.caller_script | endswith("/other-script.sh")) and .flags == {}' "$PROOF_LOG" >/dev/null ||
+	fail "non-framework script acquired trusted NMR proof through a lookalike guard function"
 unset CURRENT_ACTOR
 unset GH_AUDIT_LOG_FILE
 
