@@ -204,6 +204,10 @@ printf 'PASS first wave registers dispatch before paced housekeeping; timing/sna
 )
 printf 'PASS async cleanup helpers start even when early dispatch exhausts the cycle budget\n'
 
+# The launch stub above deliberately stops after one attempt. Isolate the
+# rotation-only cases below from that retained interrupted-wave remainder.
+_dispatch_invalidate_candidate_snapshot fixture_reset 1000
+
 # The later global scan remains complete and keeps all repositories eligible.
 : >"$EVENTS"
 full=$(build_ranked_dispatch_candidates_json 50 normalize)
