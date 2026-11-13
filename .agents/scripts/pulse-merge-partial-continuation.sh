@@ -683,6 +683,26 @@ _pmpc_restore_checkpoint_spec_dispatch() {
 	return 0
 }
 
+# GH#38039: list one page of label-filtered revisit candidates.
+# Args: $1=repo slug, $2=phase (review|available), $3=page, $4=page size
+# Stdout: the raw page length on line 1, then one candidate issue number per line
+# Returns: 0 on success, 1 on an unreadable listing
+_pmpc_list_candidates() {
+	local repo_slug="$1" phase="$2" page="$3" cap="$4" labels="status:in-review" page_json="" numbers="" count=""
+	[[ "$phase" != available ]] || labels="status:available,origin:worker"
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=${labels}&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+	numbers=$(printf '%s' "$page_json" | jq -r --arg phase "$phase" '
+		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
+		else .[] | select(.pull_request == null)
+			| select($phase != "available" or ([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not))
+			| .number end
+	' 2>/dev/null) || return 1
+	count=$(printf '%s' "$page_json" | jq 'length') || return 1
+	printf '%s\n' "$count"
+	[[ -z "$numbers" ]] || printf '%s\n' "$numbers"
+	return 0
+}
+
 # Revisit one in-review issue: find its newest merged cross-referenced PR and
 # let the merge-time guard decide. Timeline cross-references carry merged_at;
 # select the newest merged PR, not an older eligible partial hidden by a later
@@ -725,7 +745,7 @@ _pm_reconcile_partial_continuations() {
 	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
 	local cursor="" issues_json="" issues="" issue_num="" now_epoch="" count=0
-	local line="" loaded=0 remaining="" phase="review" pending_phase="review" labels="" last_page=0 resumed=0
+	local line="" loaded=0 remaining="" phase="review" pending_phase="review" last_page=0 resumed=0
 	local avail_phase="available"
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cap" =~ ^[1-9][0-9]*$ && "$cap" -le 100 ]] || cap=10
@@ -754,19 +774,11 @@ _pm_reconcile_partial_continuations() {
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
 	while true; do
 		if [[ -z "$issues" ]]; then
-			if [[ "$phase" == available ]]; then
-				labels="status:available,origin:worker"
-			else
-				labels="status:in-review"
-			fi
-			issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=${labels}&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
-			issues=$(printf '%s' "$issues_json" | jq -r --arg phase "$phase" '
-			if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
-			else .[] | select(.pull_request == null)
-				| select($phase != "available" or ([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not))
-				| .number end
-			' 2>/dev/null) || return 1
-			count=$(printf '%s' "$issues_json" | jq 'length') || return 1
+			issues_json=$(_pmpc_list_candidates "$repo_slug" "$phase" "$page" "$cap") || return 1
+			count="${issues_json%%$'\n'*}"
+			issues="${issues_json#*$'\n'}"
+			[[ "$issues" != "$issues_json" ]] || issues=""
+			[[ "$count" =~ ^[0-9]+$ ]] || return 1
 			last_page=1
 			next_page="$page"
 			if [[ "$count" -ge "$cap" ]]; then
