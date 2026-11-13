@@ -1287,7 +1287,7 @@ cmd_enable() {
 	# no-op here; the caller follows up with `health-check` to surface it.
 	local loaded=0 backend
 	if [[ "$idempotent" -eq 1 ]] && _daemon_is_loaded; then
-		backend="$(_get_scheduler_backend)"
+		backend="$(_resolve_status_backend "$(_get_scheduler_backend)")"
 		if [[ "$backend" != "systemd" ]]; then
 			log_info "auto-update daemon already loaded (idempotent enable — no-op)"
 			return 0
