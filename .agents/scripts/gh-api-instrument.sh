@@ -979,7 +979,11 @@ gh_aggregate_calls() {
 		rm -f "$tmp" "$snapshot"
 		return 1
 	fi
-	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" \
+	local foreign_hint=""
+	foreign_hint=$(python3 "${BASH_SOURCE[0]%/*}/gh_quota_foreign_device.py" \
+		"${AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE:-}" "${AIDEVOPS_QUOTA_SELF_LOGIN:-}" 2>/dev/null) || foreign_hint=""
+	[[ "$foreign_hint" =~ ^(same_login_foreign_device|none|unknown)$ ]] || foreign_hint=unknown
+	if ! awk -F'\t' -v now="$now" -v cutoff="$cutoff" -v window="$window" -v foreign_hint="$foreign_hint" \
 		-f "$awk_script" "$snapshot" >"$tmp" 2>/dev/null; then
 		rm -f "$tmp" "$snapshot"
 		return 1

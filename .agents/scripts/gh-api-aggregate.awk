@@ -266,6 +266,7 @@ function emit_quota(    series, values, n, i, parts) {
 	print "    \"sample_time_basis\": \"command-completion-under-credential-lock\","
 	print "    \"unattributed_is_upper_bound\": true,"
 	print "    \"same_login_external_cost_is_upper_bound\": true,"
+	printf "    \"foreign_device_hint\": \"%s\",\n", (foreign_hint == "same_login_foreign_device" || foreign_hint == "none") ? foreign_hint : "unknown"
 	printf "    \"missing_metadata_attempts\": %d,\n", unattributed_missing_metadata_attempts + 0
 	print "    \"series\": ["
 	for (series in quota_series) values[++n] = series
