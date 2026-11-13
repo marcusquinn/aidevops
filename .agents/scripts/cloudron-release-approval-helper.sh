@@ -256,7 +256,7 @@ release_policy_body() {
 	case "$mode" in
 	semver) [[ -z "$upstream" ]] || return 1 ;;
 	commits)
-		[[ "$upstream" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+		[[ "$upstream" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
 		policy=$(jq -c --arg upstream "$upstream" '. + {upstream_mode:"commits",upstream_repository:$upstream}' <<<"$policy") || return 1
 		# This additional signed text replaces the semver boundary only for an
 		# explicit commit policy. Legacy semver bodies remain byte-for-byte stable.
@@ -336,7 +336,7 @@ release_raw_contents() {
 release_commit_proof() {
 	local repo="$1" policy="$2" finding="$3" contents="$4" issue="$5"
 	local upstream='' old='' new='' base='' head='' comparison='' snapshot='' versions=''
-	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' <<<"$policy") || return 1
+	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
 	versions=$(jq -er '."CloudronManifest.json" | [.base, .head] | map(@base64d | fromjson | .upstreamVersion | strings | select(test("^[a-fA-F0-9]{7,40}$"))) | select(length == 2) | @tsv' <<<"$contents") || return 1
 	IFS=$'\t' read -r old new <<<"$versions"
 	# aidevops:trust-boundary — bind the trusted monitor's structured summary

@@ -43,7 +43,7 @@ PACKAGE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)
 UPSTREAM_VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 COMMIT_VERSION = re.compile(r"[a-fA-F0-9]{7,40}")
 FULL_COMMIT = re.compile(r"[a-f0-9]{40}")
-UPSTREAM_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+UPSTREAM_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*")
 REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 # Characters Python treats as line breaks (or that hide content) but a shell
 # reads as ordinary bytes; a check file containing any of them is not routine.
