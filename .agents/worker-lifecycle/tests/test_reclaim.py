@@ -3,7 +3,6 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Fixture-only reclaim evidence tests: every incomplete signal must refuse removal."""
 
-import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -12,19 +11,15 @@ import sys
 import tempfile
 import unittest
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(SCRIPTS))
+LIFECYCLE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LIFECYCLE))
 GIT = shutil.which("git")
 if not GIT:
     raise RuntimeError("Git is required for fixture verification")
-SPEC = importlib.util.spec_from_file_location("reclaim", SCRIPTS / "worktree-reclaim-finished.py")
-reclaim = importlib.util.module_from_spec(SPEC)
-# Register before executing: the module defines a dataclass, which resolves its own
-# module from sys.modules while the class body is processed.
-sys.modules[SPEC.name] = reclaim
-SPEC.loader.exec_module(reclaim)
-host = sys.modules["worktree_reclaim_host"]
-collector = sys.modules["worktree_reclaim_evidence"]
+
+from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
+from worker_lifecycle.reclaim import host  # noqa: E402
+from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
 
 SLUG = "fixture/repo"
 ORIGIN = f"git@github.com:{SLUG}.git"
@@ -236,7 +231,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_reports_without_removing_when_apply_is_absent(self):
         result = subprocess.run(  # nosec B603
-            [sys.executable, "-E", "-s", "-B", str(SCRIPTS / "worktree-reclaim-finished.py"),
+            [sys.executable, "-E", "-s", "-B", str(LIFECYCLE / "worktree-reclaim.py"),
              "--base-dir", str(self.root), "--budget-seconds", "30"],
             check=True, capture_output=True, text=True)
         self.assertIn('"dry_run": true', result.stdout)
