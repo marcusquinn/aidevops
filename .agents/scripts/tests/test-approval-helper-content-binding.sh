@@ -871,6 +871,27 @@ test_locked_issue_tier_backfill_continuity() {
 	jq '.labels += [{id:12,node_id:"L_12",name:"fix-the-fixer"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	append_issue_timeline_event '{"id":4215,"node_id":"EV_4215","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"fix-the-fixer"}}'
 	assert_verify "untrusted fix-the-fixer classification remains stale" issue 41 STALE_APPROVAL 4
+
+	# GH#37993: persistent is add-only after signing. It marks a long-lived
+	# non-task record and only restricts automation.
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4216,"node_id":"EV_4216","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "trusted persistent addition preserves locked issue approval" issue 41 VERIFIED 0
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4217,"node_id":"EV_4217","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":2,"login":"contributor","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "untrusted persistent addition remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:14,node_id:"L_14",name:"persistent"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	assert_verify "persistent addition without a visible event remains stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture true "" persistent
+	jq '.labels |= map(select(.name != "persistent"))' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4218,"node_id":"EV_4218","event":"unlabeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"persistent"}}'
+	assert_verify "trusted persistent removal remains stale" issue 41 STALE_APPROVAL 4
 	return 0
 }
 
