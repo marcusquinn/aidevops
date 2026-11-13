@@ -539,23 +539,69 @@ approval_snapshot_v2_digest() {
 	return 0
 }
 
+# GH#38006: a linked source binds its body when the snapshot carries one
+# (content-bound external sources, or every source under older profiles).
+_approval_snapshot_v2_body_bound_source_filter() {
+	printf '%s' '(.source | type) == "object" and (.source | has("body"))'
+	return 0
+}
+
+# Prints {"<source node_id>": "<sha256 of the JSON body>"} for every body-bound
+# linked source. Bodies pass through here-strings, never argv.
+approval_snapshot_v2_linked_body_digests() {
+	local snapshot_json="$1"
+	local sources="" source="" node_id="" body_json="" digest="" result='{}'
+	sources=$(jq -c "[(.linked_references // [])[] | select($(_approval_snapshot_v2_body_bound_source_filter)) | .source
+		| {node_id: (.node_id // \"\"), body: (.body // \"\")}] | unique_by(.node_id) | .[]" <<<"$snapshot_json") || return 1
+	while IFS= read -r source; do
+		[[ -n "$source" ]] || continue
+		node_id=$(jq -r '.node_id' <<<"$source") || return 1
+		body_json=$(jq -cS '.body' <<<"$source") || return 1
+		digest=$(approval_snapshot_v2_digest "$body_json") || return 1
+		result=$(jq -cS --arg id "$node_id" --arg digest "$digest" '. + {($id): $digest}' <<<"$result") || return 1
+	done <<<"$sources"
+	printf '%s\n' "$result"
+	return 0
+}
+
+# Digest of the snapshot without the issue title/body and without every
+# body-bound linked-source body: everything a linked-source edit cannot touch.
+approval_snapshot_v2_linked_frame_digest() {
+	local snapshot_json="$1"
+	local frame_json=""
+	frame_json=$(jq -cS "del(.title, .body)
+		| if has(\"linked_references\") then .linked_references |= map(if $(_approval_snapshot_v2_body_bound_source_filter) then del(.source.body) else . end) else . end" <<<"$snapshot_json") || return 1
+	approval_snapshot_v2_digest "$frame_json"
+	return $?
+}
+
 # #aidevops:trust-boundary — GH#33097: per-component digests for issue
 # snapshots. `frame` covers every scope-bearing byte except the title and body
 # (comments, linked references, identity, lifecycle), so a verifier can prove
 # that only the title/body changed and then authenticate those edits separately.
-# Prints compact JSON {title, body, frame}. Snapshot bytes pass through
-# here-strings, not argv, so large issues stay within argument limits.
+# GH#38006: `linked_frame` additionally excludes body-bound linked-source
+# bodies and `linked_bodies` names each one's digest, so a verifier can tell
+# which linked source changed before reading its edit history. These are only
+# a pre-filter: continuity still requires the restored signed revisions to
+# reproduce the complete signed digest or frame.
+# Prints compact JSON {title, body, frame, linked_frame, linked_bodies}.
+# Snapshot bytes pass through here-strings, not argv, so large issues stay
+# within argument limits.
 approval_snapshot_v2_content_digests() {
 	local snapshot_json="$1"
 	local title_json="" body_json="" frame_json="" title_digest="" body_digest="" frame_digest=""
+	local linked_frame_digest="" linked_bodies=""
 	title_json=$(jq -cS '.title // ""' <<<"$snapshot_json") || return 1
 	body_json=$(jq -cS '.body // ""' <<<"$snapshot_json") || return 1
 	frame_json=$(jq -cS 'del(.title, .body)' <<<"$snapshot_json") || return 1
 	title_digest=$(approval_snapshot_v2_digest "$title_json") || return 1
 	body_digest=$(approval_snapshot_v2_digest "$body_json") || return 1
 	frame_digest=$(approval_snapshot_v2_digest "$frame_json") || return 1
+	linked_frame_digest=$(approval_snapshot_v2_linked_frame_digest "$snapshot_json") || return 1
+	linked_bodies=$(approval_snapshot_v2_linked_body_digests "$snapshot_json") || return 1
 	jq -cS -n --arg title "$title_digest" --arg body "$body_digest" --arg frame "$frame_digest" \
-		'{title: $title, body: $body, frame: $frame}'
+		--arg linked_frame "$linked_frame_digest" --argjson linked_bodies "$linked_bodies" \
+		'{title: $title, body: $body, frame: $frame, linked_frame: $linked_frame, linked_bodies: $linked_bodies}'
 	return $?
 }
 
