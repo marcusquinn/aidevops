@@ -218,6 +218,20 @@ _dispatch_pr_evidence_fingerprint() {
 	return $?
 }
 
+# GH#38142: PR evidence blocks whoever owns the issue, so neither the owner-label
+# gate nor the GH#37780 empty-pool recheck applies. The caller's unchanged
+# updatedAt check covers issue edits, comments and reopen; this expires the
+# record before the REST read, then requires the exact PR to be unchanged.
+_dispatch_pr_evidence_hint_valid() {
+	local repo="$1" pr="$2" fingerprint="$3" stamp="$4" ttl="$5" now="" current=""
+	[[ "$pr" =~ ^[1-9][0-9]*$ && -n "$fingerprint" && "$stamp" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s)
+	((now >= stamp && now - stamp < ttl)) || return 1
+	current=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 1
+	[[ "$current" == "$fingerprint" ]] || return 1
+	return 0
+}
+
 _DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
 
 # GH#33026: a live-owner hold is valid only while the exact refusing process
@@ -445,6 +459,20 @@ _dispatch_claim_owned_elsewhere() {
 	return 0
 }
 
+# Reasons whose hint carries its own validity evidence (exact PR fingerprint,
+# owner generation, maintainer gate or a self-expiring window) instead of the
+# claimed-owner snapshot check that active-claim hints require.
+_dispatch_negative_cache_self_validating_reason() {
+	local reason="$1"
+	case "$reason" in
+	terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | dedup_pr_evidence | "$_DISPATCH_LIVE_OWNER_HOLD_REASON")
+		return 0
+		;;
+	esac
+	_dispatch_maintainer_gate_reason "$reason"
+	return $?
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
@@ -461,12 +489,7 @@ _dispatch_negative_cache_reason() {
 	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
 	# hold is keyed to the owner generation rather than the issue revision.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
-		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
-		"$reason" != worker_draft_checkpoint_blocked && "$reason" != stale_draft_checkpoint &&
-		"$reason" != worker_draft_checkpoint_cooldown && "$reason" != dedup_pr_evidence &&
-		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
-		! _dispatch_maintainer_gate_reason "$reason"; then
+	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
 		# fresh complete snapshot or one bounded REST read; neither permits a launch.
@@ -530,15 +553,7 @@ _dispatch_negative_cache_reason() {
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;
 	dedup_pr_evidence)
-		# GH#38142: PR evidence blocks whoever owns the issue, so neither the
-		# owner-label gate nor the GH#37780 empty-pool recheck applies. The
-		# unchanged updatedAt above covers issue edits, comments and reopen.
-		[[ "$pr" =~ ^[1-9][0-9]*$ && -n "$fingerprint" ]] || return 1
-		# Expire before the REST read.
-		now=$(date +%s)
-		((now >= stamp && now - stamp < ttl)) || return 1
-		current=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 1
-		[[ "$current" == "$fingerprint" ]] || return 1
+		_dispatch_pr_evidence_hint_valid "$repo" "$pr" "$fingerprint" "$stamp" "$ttl" || return 1
 		;;
 	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
