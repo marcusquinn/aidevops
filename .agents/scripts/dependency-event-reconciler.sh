@@ -484,6 +484,7 @@ _der_try_unblock() {
 	local issue_number="$2"
 	local candidate_json="$3"
 	local labels="" body="" comments_json="" comments="" upstream_gated=false
+	_DER_RESULT=not_ready
 	labels=$(printf '%s' "$candidate_json" | jq -r '[.labels.nodes[].name] | join(",")') || return 1
 	body=$(printf '%s' "$candidate_json" | jq -r '.body // ""') || return 1
 	_der_labels_has "$labels" status:blocked || return 0
@@ -492,7 +493,10 @@ _der_try_unblock() {
 	_der_json_pages_valid "$comments_json" || return 1
 	# aidevops:trust-boundary — external comments cannot assert a hold.
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
-	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
+	if _der_has_hold "$body" "$comments" "$labels" "$comments_json"; then
+		_DER_RESULT=held
+		return 0
+	fi
 	upstream_release_gate_declared "$body" && upstream_gated=true
 	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
 	if [[ "$upstream_gated" == true ]]; then
@@ -511,7 +515,26 @@ _der_try_unblock() {
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
 	gh issue edit "$issue_number" --repo "$repo" --remove-label status:blocked --add-label status:available >/dev/null 2>&1 || return 1
+	_DER_RESULT=unblocked
 	return 0
+}
+
+# Append-only retry records avoid losing concurrently recorded failures. A stale
+# sweep consumes a snapshot; duplicate entries are harmless guarded retries.
+_der_retry_append() {
+	local repo="$1" kind="$2" number="$3"
+	local dir="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$number" =~ ^[0-9]+$ ]] || return 1
+	mkdir -p "$dir" || return 1
+	printf '%s %s\n' "$kind" "$number" >>"${dir}/${repo//\//__}.txt" || return 1
+	return 0
+}
+
+_der_closure_failure() {
+	local repo="$1" number="$2" reason="$3"
+	printf '[dependency-reconciler] closure repo=%s closed=#%s reason=%s dependants=0 unblocked=0 not_ready=0 held=0 failed=1\n' "$repo" "$number" "$reason" >&2
+	_der_retry_append "$repo" closure "$number" || printf '[dependency-reconciler] retry ledger write failed repo=%s closed=#%s\n' "$repo" "$number" >&2
+	return 1
 }
 
 # Reconcile only direct dependants after the named issue is positively closed.
@@ -521,11 +544,10 @@ reconcile_dependants_after_verified_closure() {
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
 	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo="" try_status=0
-	local candidate
-	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$owner" && -n "$name" ]] || return 1
-	_der_live_issue_closed "$repo" "$closed_number" || return 1
-	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || return 1
+	local candidate count=0 unblocked=0 not_ready=0 held=0 failed=0
+	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ && -n "$owner" && -n "$name" ]] || { _der_closure_failure "$repo" "$closed_number" invalid_input; return 1; }
+	_der_live_issue_closed "$repo" "$closed_number" || { _der_closure_failure "$repo" "$closed_number" live_closed_check; return 1; }
+	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || { _der_closure_failure "$repo" "$closed_number" context_fetch; return 1; }
 	printf '%s' "$context" | jq -e --arg repo "$repo" --arg closed "$DER_STATE_CLOSED" '
       .data.repository.nameWithOwner == $repo
       and .data.repository.issue.state == $closed
@@ -533,21 +555,39 @@ reconcile_dependants_after_verified_closure() {
       and all(.data.repository.issue.blocking.nodes[];
           (.repository.nameWithOwner | type == "string")
           and (.repository.nameWithOwner | test("^[^/[:space:]]+/[^/[:space:]]+$"))
-          and .labels.pageInfo.hasNextPage == false)' >/dev/null 2>&1 || return 1
+          and .labels.pageInfo.hasNextPage == false)' >/dev/null 2>&1 || { _der_closure_failure "$repo" "$closed_number" invalid_context; return 1; }
 	_der_reconcile_terminal_worker_blockers "$repo" "$closed_number" || true
 	closed_task_id=$(task_identity_parse_title_prefix "$(printf '%s' "$context" | jq -r '.data.repository.issue.title')" || true)
-	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || return 1
+	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || { _der_closure_failure "$repo" "$closed_number" candidate_collection; return 1; }
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
-		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
-		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || return 1
-		[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
-		[[ "$candidate_repo" == */* ]] || return 1
+		count=$((count + 1))
+		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || issue_number=""
+		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || candidate_repo=""
+		if [[ ! "$issue_number" =~ ^[0-9]+$ || "$candidate_repo" != */* ]]; then
+			failed=$((failed + 1))
+			_der_retry_append "$repo" closure "$closed_number" || true
+			printf '[dependency-reconciler] invalid candidate repo=%s closed=#%s\n' "$repo" "$closed_number" >&2
+			continue
+		fi
 		try_status=0
 		_der_try_unblock "$candidate_repo" "$issue_number" "$candidate" || try_status=$?
-		# A dependant still waiting on another blocker must not stop the rest.
-		[[ "$try_status" -eq 0 || "$try_status" -eq "$DER_NOT_READY" ]] || return 1
+		if [[ "$try_status" -ne 0 && "$try_status" -ne "$DER_NOT_READY" ]]; then
+			failed=$((failed + 1))
+			printf '[dependency-reconciler] dependant failed repo=%s issue=#%s status=%s\n' "$candidate_repo" "$issue_number" "$try_status" >&2
+			_der_retry_append "$candidate_repo" issue "$issue_number" || printf '[dependency-reconciler] retry ledger write failed repo=%s issue=#%s\n' "$candidate_repo" "$issue_number" >&2
+		elif [[ "$try_status" -eq "$DER_NOT_READY" ]]; then
+			not_ready=$((not_ready + 1))
+		else
+			case "${_DER_RESULT:-not_ready}" in
+			unblocked) unblocked=$((unblocked + 1)) ;;
+			held) held=$((held + 1)) ;;
+			*) not_ready=$((not_ready + 1)) ;;
+			esac
+		fi
 	done <<<"$candidates"
+	printf '[dependency-reconciler] closure repo=%s closed=#%s dependants=%s unblocked=%s not_ready=%s held=%s failed=%s\n' "$repo" "$closed_number" "$count" "$unblocked" "$not_ready" "$held" "$failed" >&2
+	[[ "$failed" -eq 0 ]] || return 3
 	return 0
 }
 
