@@ -394,7 +394,12 @@ assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
 `.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
 Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
 fail closed. Catalog bytes remain unchanged, and the commit records the original
-validated SHA for both catalog and image attestation verification. Caller concurrency
+validated SHA for both catalog and image attestation verification. The publish
+commit is created through the Git Database API so GitHub signs it, then rebuilt
+locally and pushed atomically with the tag; if signing is unavailable, the
+workflow warns and pushes the unsigned commit. Check with `gh api
+repos/OWNER/REPO/commits/vX.Y.Z --jq .commit.verification` (`verified: true` for
+signed releases; tags published earlier stay unsigned). Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.
