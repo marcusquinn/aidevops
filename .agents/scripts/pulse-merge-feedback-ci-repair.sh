@@ -1168,6 +1168,52 @@ _ci_repair_record_worktree_failure() {
 }
 
 #######################################
+# Fetch the PR branch so its head commit is available to the repair worktree.
+# The canonical Git guard denies `git fetch` in a canonical checkout, so the
+# fetch runs from a linked-worktree context (GH#38031). Output is discarded:
+# the caller runs in command substitution and git stderr can name the remote.
+#
+# Returns: 0 fetched, 1 `git fetch` failed, 2 no linked fetch context.
+#######################################
+_ci_repair_fetch_pr_head() {
+	local repo_path="$1"
+	local pr_head_ref="$2"
+	local worktree_base="$3"
+	local lib_dir="${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}"
+
+	if ! declare -F scratch_worktree_fetch >/dev/null 2>&1; then
+		# shellcheck source=scratch-worktree-helper.sh
+		source "${lib_dir}/scratch-worktree-helper.sh" >/dev/null 2>&1 || return 2
+	fi
+	declare -F scratch_worktree_fetch >/dev/null 2>&1 || return 2
+	if scratch_worktree_fetch "$repo_path" "$worktree_base" "ci-repair-fetch" \
+		"pulse-merge-feedback-ci-repair.sh" --no-tags --quiet --no-write-fetch-head origin \
+		"+refs/heads/${pr_head_ref}:refs/remotes/origin/${pr_head_ref}" >/dev/null 2>&1; then
+		return 0
+	fi
+	[[ "${SCRATCH_WORKTREE_FETCH_FAILURE:-}" == "context" ]] && return 2
+	return 1
+}
+
+#######################################
+# Return 0 when the remote-tracking ref written by _ci_repair_fetch_pr_head is
+# the expected PR head. A branch that advanced after the PR was read still
+# delivers the expected commit as an ancestor, so object availability alone
+# would start a repair at a superseded head.
+#######################################
+_ci_repair_fetched_tip_is_head() {
+	local repo_path="$1"
+	local pr_head_ref="$2"
+	local pr_head_sha="$3"
+	local fetched_tip=""
+
+	fetched_tip=$(git -C "$repo_path" rev-parse --verify --quiet \
+		"refs/remotes/origin/${pr_head_ref}^{commit}" 2>/dev/null) || fetched_tip=""
+	[[ -n "$fetched_tip" && "$fetched_tip" == "$pr_head_sha" ]] || return 1
+	return 0
+}
+
+#######################################
 # Create a linked repair worktree at the exact PR head SHA.
 #
 # Output: absolute worktree path.
@@ -1190,6 +1236,10 @@ _ci_repair_create_worktree() {
 	local repair_branch=""
 	local worktree_path=""
 	local actual_head=""
+	local head_fetch_stage="head_fetch"
+	local head_validation_stage="head_validation"
+	local head_fetch_rc=0
+	local head_fetched=0
 
 	[[ -x "$worktree_helper" ]] || {
 		_ci_repair_record_worktree_failure "$diagnostic_file" "worktree_preflight" \
@@ -1197,22 +1247,37 @@ _ci_repair_create_worktree() {
 		return 1
 	}
 	[[ "$pr_head_sha" =~ ^[0-9a-fA-F]{7,64}$ && -n "$pr_head_ref" ]] || {
-		_ci_repair_record_worktree_failure "$diagnostic_file" "head_validation" \
+		_ci_repair_record_worktree_failure "$diagnostic_file" "$head_validation_stage" \
 			"invalid_pr_head_identity" "$refresh_head_action"
 		return 1
 	}
 	if ! git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
-		git -C "$repo_path" fetch --no-tags --quiet origin "$pr_head_ref" >/dev/null 2>&1 || {
-			_ci_repair_record_worktree_failure "$diagnostic_file" "head_fetch" \
+		head_fetched=1
+		_ci_repair_fetch_pr_head "$repo_path" "$pr_head_ref" "$worktree_base" || head_fetch_rc=$?
+		if [[ "$head_fetch_rc" -eq 2 ]]; then
+			echo "[pulse-wrapper] _dispatch_ci_repair_session: no linked-worktree fetch context for ${repo_slug} PR #${pr_number} head ${pr_head_sha}" >>"$LOGFILE"
+			_ci_repair_record_worktree_failure "$diagnostic_file" "$head_fetch_stage" \
+				"pr_head_fetch_context_unavailable" "restore_linked_worktree_creation_and_retry"
+			return 1
+		fi
+		if [[ "$head_fetch_rc" -ne 0 ]]; then
+			echo "[pulse-wrapper] _dispatch_ci_repair_session: PR head fetch failed from linked-worktree context for ${repo_slug} PR #${pr_number} head ${pr_head_sha}" >>"$LOGFILE"
+			_ci_repair_record_worktree_failure "$diagnostic_file" "$head_fetch_stage" \
 				"pr_head_fetch_failed" "verify_remote_branch_access_and_retry"
 			return 1
-		}
+		fi
 	fi
 	git -C "$repo_path" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null || {
-		_ci_repair_record_worktree_failure "$diagnostic_file" "head_validation" \
+		_ci_repair_record_worktree_failure "$diagnostic_file" "$head_validation_stage" \
 			"pr_head_commit_unavailable" "$refresh_head_action"
 		return 1
 	}
+	if [[ "$head_fetched" -eq 1 ]] && ! _ci_repair_fetched_tip_is_head "$repo_path" "$pr_head_ref" "$pr_head_sha"; then
+		echo "[pulse-wrapper] _dispatch_ci_repair_session: fetched branch tip is not the expected head for ${repo_slug} PR #${pr_number} head ${pr_head_sha}" >>"$LOGFILE"
+		_ci_repair_record_worktree_failure "$diagnostic_file" "$head_validation_stage" \
+			"pr_head_moved" "$refresh_head_action"
+		return 1
+	fi
 
 	repo_name=$(basename "$repo_path")
 	repo_hash=$(_ci_repair_hash_text "$repo_slug") || return 1

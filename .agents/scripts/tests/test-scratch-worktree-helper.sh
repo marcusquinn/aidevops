@@ -8,13 +8,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-ROOT=$(mktemp -d)
+# The lifecycle registry requires a canonical state parent; macOS mktemp
+# returns a path under the /var symlink.
+ROOT=$(cd "$(mktemp -d)" && pwd -P) || exit 1
 trap 'rm -rf "$ROOT"' EXIT
+# The invoking session must not redirect the fixture to its own lifecycle
+# state or enroll fixture worktrees under its identity.
+unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 HOME="${ROOT}/home"
 AIDEVOPS_CLEANUP_LOG="${ROOT}/cleanup.log"
 export HOME AIDEVOPS_CLEANUP_LOG
 export WORKTREE_REGISTRY_DIR="${ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
+# Generation enrollment initialises its registry under an existing parent only.
+mkdir -p "${HOME}/.aidevops/.agent-workspace"
 REPO="${ROOT}/repo"
 BASE="${ROOT}/worktrees"
 FAILURES=0
