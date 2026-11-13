@@ -463,17 +463,17 @@ test_revision_attention_guidance() (
 		"$body" != *'Push a corrected commit'* && "$body" != *'a new head re-arms'* &&
 		"$body" != *'each runner that has not tried this head gets one'* ]] || return 1
 	# Ordinary, approval-free attention retains its useful automatic recovery.
+	_pcc_approval_template() { return 0; }
 	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 2 key false "" attempt:a1 >/dev/null || return 1
 	body="$(<"$post_file")"
 	[[ "$body" == *'a new head re-arms one automatic continuation'* &&
 		"$body" == *'once every runner has tried it Pulse continues it once per window'* &&
 		"$body" == *'approval-template owner/repo 42 123 31 attempt:a1`'* ]] || return 1
-	# GH#37514: the resume route survives the per-PR fuse; the attempt falls
-	# back to a placeholder when no ready lease was found.
+	# No command is offered when the attempt is unknown, including at the fuse.
 	_pcc_post_stall_attention owner/repo 123 42 "$head" 31 clean 6 key true >/dev/null || return 1
 	body="$(<"$post_file")"
 	[[ "$body" == *'per-PR automatic continuation limit'* &&
-		"$body" == *'approval-template owner/repo 42 123 31 attempt:<RELEASED_ATTEMPT_ID>`'* ]] || return 1
+		"$body" != *'approval-template owner/repo 42 123 31'* ]] || return 1
 	return 0
 )
 for approval_case in older_head expired_older_head current_head; do
