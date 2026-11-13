@@ -270,6 +270,20 @@ test_filing_permission() {
 	done
 	write_transcript "$t" "Go" "none" "${pre}1. **Should I release v1.2.3?**${post}"
 	expect_allow "release ask → allow (regression guard)" "$(run_hook f-release "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. Should I create a release for this issue?${post}"
+	expect_allow "create release for an issue → allow" "$(run_hook f-create-release "$t")"
+	write_transcript "$t" "Go" "none" "${pre}1. Should I open a pull request for this issue?${post}"
+	expect_allow "open pull request for an issue → allow" "$(run_hook f-open-pr "$t")"
+	local item
+	for item in "issue" "worker task" "local TODO" "actionable follow-up ticket" "follow-up"; do
+		write_transcript "$t" "Go" "none" "${pre}1. Should I create a ${item}?${post}"
+		out=$(run_hook "f-item-$item" "$t")
+		if [[ "$out" == *'"decision": "block"'* && "$out" == *"file it now"* ]]; then
+			print_result "$item remains a filing item" 0
+		else
+			print_result "$item remains a filing item" 1 "got: ${out:-<empty>}"
+		fi
+	done
 	return 0
 }
 

@@ -151,12 +151,17 @@ fi
     ["secret", "1. **Should I file a task to rotate the secret?**"],
     ["spend", "1. **Should I file a task to approve the spend?**"],
     ["release", "1. **Should I release v1.2.3?**"],
+    ["create release", "1. Should I create a release for this issue?"],
+    ["open pull request", "1. Should I open a pull request for this issue?"],
     ["merge", "1. **Should I merge the PR for the issue?**"],
     ["mention only", "1. **Is the issue fix acceptable?**"],
   ]) {
     assert.equal(blockerGuard.completeText({ sessionID: `filing-${name}` }, { text: askWith(ask) }).corrected, false, `${name} ask is not steered`);
   }
   assert.equal(blockerGuard.completeText({ sessionID: "filing-lead" }, { text: askWith("1. **File a worker task to add the warning?**") }).filing, true, "bare filing verb lead matches");
+  for (const item of ["issue", "worker task", "local TODO", "actionable follow-up ticket", "follow-up"]) {
+    assert.equal(blockerGuard.completeText({ sessionID: `filing-item-${item}` }, { text: askWith(`1. Should I create a ${item}?`) }).filing, true, `${item} remains a filing item`);
+  }
 
   // GH#35121: a closeout that asks for nothing while files this session
   // edited remain uncommitted is steered toward the Capture Check, across

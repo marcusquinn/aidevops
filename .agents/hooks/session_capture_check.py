@@ -143,7 +143,8 @@ FILING_ASK_RE = re.compile(
     r"(?:(?:should|shall|can|could|may) (?:I|we)|(?:do you )?want me to"
     r"|would you like me to|ok(?:ay)? to)?\s*"
     r"(?:file|capture|log|open|create|record|track)\s+(?:an?|the|another)?\s*"
-    r"(?:[\w/-]+\s+){0,5}?(?:issue|task|todo|ticket|follow-?up)s?\b",
+    r"(?:(?:worker(?:-ready)?|follow-?up|local|actionable)\s+){0,3}"
+    r"(?:issue|task|todo|ticket|follow-?up)s?\b",
     re.IGNORECASE | re.MULTILINE,
 )
 FILING_EXCLUDED_RE = re.compile(
