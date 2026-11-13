@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Remove worktrees whose work is provably finished; refuse on any missing evidence.
@@ -7,13 +6,14 @@ This is an always-on interim pass of the pulse cleanup stage, not the cleanup
 evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
 policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
-by explicit operator decision, so the checks in ``worktree_reclaim_evidence`` are
+by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
 the only protection and each fails closed.
 """
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 import json
 import os
@@ -21,9 +21,9 @@ from pathlib import Path
 import sys
 import time
 
-from worktree_reclaim_evidence import (
+from .evidence import (
     evidence, nothing_to_lose, prefetch, references, repository)
-from worktree_reclaim_host import Census, common_directory, free_bytes, process_census, remove, run
+from .host import Census, common_directory, free_bytes, process_census, remove, run
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Re-exported for callers and tests that treat this script as the entry point.
@@ -96,7 +96,7 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     return common
 
 
-def candidates(base_dir: Path, current: Pass, receipt: dict):
+def candidates(base_dir: Path, current: Pass, receipt: dict) -> Iterator[Path]:
     """Yield each worktree directory until the budget or limit stops the pass."""
     for path in sorted(base_dir.iterdir()):
         if not path.is_dir():
