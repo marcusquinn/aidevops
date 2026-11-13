@@ -1,8 +1,10 @@
 """Remote-recoverable retirement, exclusively using disposable repositories."""
 
+from contextlib import closing
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import time
@@ -472,6 +474,95 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertEqual(result["status"], "retired", result)
         self.assertFalse(self.target.exists())
 
+    def tracked_content(self):
+        """Commit tracked files on the remote, aged before the deletion-only boundary."""
+        for name in ("first.txt", "second.txt"):
+            (self.target / name).write_text(name)
+        self.git("-C", str(self.target), "add", "first.txt", "second.txt")
+        self.git("-C", str(self.target), "-c", "user.name=Fixture", "-c",
+                 "user.email=fixture@example.invalid", "commit", "-qm", "content")
+        self.head = self.git("-C", str(self.target), "rev-parse", "HEAD")
+        self.git("update-ref", "refs/remotes/origin/feature", self.head)
+        census = patch.object(cleanup, "require_idle_processes",
+                              side_effect=lambda path: self.real_census(path, self.proc))
+        census.start()
+        self.addCleanup(census.stop)
+        fixtures.age_past_clock_slack()
+
+    def interrupt_removal(self, late=None):
+        """Delete part of the source, then time out like a slow native removal."""
+        self.tracked_content()
+        native = cleanup._git
+
+        def interrupted(*arguments):
+            if arguments[2:4] == ("worktree", "remove") and arguments[-1] == str(self.target):
+                (self.target / "first.txt").unlink()
+                if late is not None:
+                    late()
+                raise subprocess.TimeoutExpired(list(arguments), 300)
+            return native(*arguments)
+
+        with patch.object(cleanup, "_git", side_effect=interrupted):
+            result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+        self.assertTrue(self.target.exists())
+
+    def test_native_removal_releases_registry_writer(self):
+        """GH#38158: another connection takes the writer during native removal."""
+        self.tracked_content()
+        native = cleanup._git
+        acquired = []
+
+        def removal(*arguments):
+            if arguments[2:4] == ("worktree", "remove"):
+                with closing(sqlite3.connect(self.store.path, timeout=0.01)) as other:
+                    other.execute("BEGIN IMMEDIATE")
+                    other.rollback()
+                acquired.append(arguments[-1])
+            return native(*arguments)
+
+        with patch.object(cleanup, "_git", side_effect=removal):
+            result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertEqual(acquired, [str(self.target)])
+
+    def test_interrupted_removal_resumes_with_deletions_only(self):
+        self.interrupt_removal()
+        self.options = CleanupOptions(self.output, apply=False, min_age=0)
+        preview, _, attempted = self.retire()
+        self.assertEqual((preview["status"], attempted), ("pending-retry", 0), preview)
+        self.options = CleanupOptions(self.output, apply=True, min_age=0)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.git("rev-parse", "feature"), self.head)
+        self.assertNotIn(str(self.target), self.git("worktree", "list", "--porcelain"))
+
+    def test_write_after_interrupted_removal_began_retains_source(self):
+        self.interrupt_removal(lambda: (self.target / "second.txt").write_text("late\n"))
+        self.assert_retained("interrupted-removal-content-changed")
+        self.assertEqual((self.target / "second.txt").read_text(), "late\n")
+
+    def test_completed_removal_before_receipt_is_verified_and_retired(self):
+        """A removal that finished before the retired receipt resumes as retired."""
+        self.tracked_content()
+        native = cleanup._git
+
+        def completed(*arguments):
+            value = native(*arguments)
+            if arguments[2:4] == ("worktree", "remove"):
+                raise subprocess.TimeoutExpired(list(arguments), 300)
+            return value
+
+        with patch.object(cleanup, "_git", side_effect=completed):
+            result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retained", result)
+        self.assertFalse(self.target.exists())
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "retired", result)
+        result, _, _ = self.retire()
+        self.assertEqual(result["status"], "already-retired", result)
+
     def test_unremoved_probe_can_retry_after_head_changes(self):
         native = cleanup.reconstructible
         calls = 0
@@ -498,10 +589,13 @@ class ReconstructibleContract(unittest.TestCase):
         self.assertFalse(self.target.exists())
         self.options = CleanupOptions(self.output, apply=False, min_age=0)
         result, _, _ = self.retire()
-        self.assertEqual(result["reason"], "reconstructible-probe-verification-pending", result)
+        # The journaled removal start resumes verification (GH#38158).
+        self.assertEqual(result["status"], "pending-retry", result)
         self.options = CleanupOptions(self.output, apply=True, min_age=0)
         result, _, _ = self.retire()
-        self.assertEqual(result["status"], "already-absent", result)
+        self.assertEqual(result["status"], "retired", result)
+        with self.store.connection() as connection:
+            self.assertIsNotNone(probe.receipt(connection, probe.host_probe(self.store), "verified"))
         result, _, _ = self.retire()
         self.assertEqual(result["status"], "already-retired", result)
 
