@@ -860,22 +860,37 @@ _pcc_issue_comments() {
 	return 0
 }
 
-_pcc_dispatch_approved() {
-	local repo="$1" path="$2" issue="$3" login="$4" candidate="" pr="" runner=""
-	local comments="" trusted_logins=""
-	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
-	# Discovery is not authorization: _pcc_dispatch freshly verifies the complete
-	# envelope and the claim helper rereads it again across distributed consensus.
-	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
-	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
-	candidate=$(jq -er --arg repo "$repo" --argjson issue "$issue" \
-		--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
+# Print "<pr><TAB><runner>" for the newest trusted, unedited approval.
+# Failure stage is reported on stderr as approval_discovery=<reason>.
+# Args: $1=repo slug, $2=issue number
+_pcc_approval_candidate() {
+	local repo="$1" issue="$2" comments="" trusted_logins="" n=0
+	local -a stages=(invalid_issue comments_unavailable trust_unavailable no_matching_trusted_unedited_approval)
+	[[ "$issue" =~ ^[1-9][0-9]*$ ]] &&
+		n=1 &&
+		comments=$(_pcc_issue_comments "$repo" "$issue") &&
+		n=2 &&
+		trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") &&
+		n=3 &&
+		jq -er --arg repo "$repo" --argjson issue "$issue" \
+			--argjson trusted_logins "$trusted_logins" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(trusted) |
 		select((.updated_at // .created_at) == .created_at) |
-		.body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
+		. as $comment | .body | split("\n")[] | select(startswith("CHECKPOINT_CONTINUATION_APPROVED ")) |
 		ltrimstr("CHECKPOINT_CONTINUATION_APPROVED ") | fromjson? |
-		select(.repo == $repo and .issue == $issue) | {pr,runner}] | unique |
-		select(length == 1) | .[0] | [.pr,.runner] | @tsv' <<<"$comments") || return 1
+		select(.repo == $repo and .issue == $issue) |
+		{pr,runner,created_at:$comment.created_at,id:$comment.id}] |
+		sort_by(.created_at, .id) | last | select(. != null) | [.pr,.runner] | @tsv' <<<"$comments" &&
+		return 0
+	printf 'approval_discovery=%s\n' "${stages[$n]}" >&2
+	return 1
+}
+
+_pcc_dispatch_approved() {
+	local repo="$1" path="$2" issue="$3" login="$4" candidate="" pr="" runner=""
+	# Discovery is not authorization: _pcc_dispatch freshly verifies the complete
+	# envelope and the claim helper rereads it again across distributed consensus.
+	candidate=$(_pcc_approval_candidate "$repo" "$issue") || return 1
 	IFS=$'\t' read -r pr runner <<<"$candidate"
 	_pcc_dispatch "$repo" "$path" "$pr" "$issue" "$runner" "$login"
 	return $?
