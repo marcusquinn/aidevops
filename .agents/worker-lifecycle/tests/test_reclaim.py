@@ -159,6 +159,26 @@ class EvidenceTests(unittest.TestCase):
         (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
         self.assertEqual(self.decide()["reason"], "uncommitted-changes")
 
+    def test_authorizes_when_only_the_cleanup_deferred_marker_is_untracked(self):
+        marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text("deferred\n", encoding="utf-8")
+        self.assertEqual(self.decide()["reason"], "work-finished")
+
+    def test_refuses_the_marker_alongside_another_untracked_file(self):
+        marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text("deferred\n", encoding="utf-8")
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        self.assertEqual(self.decide()["reason"], "uncommitted-changes")
+
+    def test_refuses_a_tracked_modification_of_the_marker_path(self):
+        marker = self.worktree / ".agents" / ".full-loop-cleanup-deferred"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text("deferred\n", encoding="utf-8")
+        git(self.worktree, "add", "-f", str(marker))
+        self.assertEqual(self.decide()["reason"], "uncommitted-changes")
+
     def test_refuses_untracked_files_hidden_by_configuration(self):
         git(self.worktree, "config", "status.showUntrackedFiles", "no")
         (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
