@@ -204,15 +204,10 @@ def _hands_back_to_user(text: str, open_count: int) -> bool:
     return open_count <= 1 and _reports_blocker(text)
 
 
-def _filing_marker(session_id: str) -> Path:
-    """One-shot marker: the filing steer fires once per session (GH#37979)."""
-    return _state_file(session_id).with_suffix(".filing")
-
-
-def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str = ""):
+def _stop_reason(state: dict, final_text: str, cwd: str, session_id: str):
     """Block reason for open todos, or (GH#35121) for an unasked closeout that
     leaves session-edited files uncommitted once every todo is terminal."""
-    filing = capture and session_id and capture.filing_block(final_text, _filing_marker(session_id))
+    filing = capture and capture.filing_block(final_text, _state_file(session_id))
     if filing:
         return filing
     open_todos = _open_todos(state["todos"])

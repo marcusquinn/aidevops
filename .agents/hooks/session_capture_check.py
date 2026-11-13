@@ -179,8 +179,10 @@ def asks_filing_permission(text: str) -> bool:
     )
 
 
-def filing_block(text: str, marker):
-    """GH#37979: one-shot steer per session; `marker` is a pathlib.Path."""
+def filing_block(text: str, state_file):
+    """GH#37979: one-shot steer per session, tracked by a `.filing` marker
+    beside the session's pathlib.Path `state_file`."""
+    marker = state_file.with_suffix(".filing")
     if marker.exists() or not asks_filing_permission(text):
         return None
     marker.parent.mkdir(parents=True, exist_ok=True)

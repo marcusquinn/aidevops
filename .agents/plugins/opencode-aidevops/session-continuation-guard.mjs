@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { addEditedPaths, captureCheck, defaultDirtyEdits } from "./session-continuation-capture.mjs";
+import { correctFilingPermissionAsk, markFilingDelivered } from "./session-continuation-filing.mjs";
 import {
   detectLoop,
   emptyLoopState,
@@ -15,7 +16,6 @@ import {
 } from "./session-continuation-loops.mjs";
 import {
   activeTodos,
-  asksFilingPermission,
   boundedText,
   capMap,
   classifyToolOutcome,
@@ -271,20 +271,10 @@ function correctUncapturedCloseout(state, input, output) {
   return { corrected: true, capture: true, dirty: check.dirty };
 }
 
-// GH#37979: filing a follow-up on a managed repository is already delegated
-// (Framework Rules), so a closeout that only asks permission to file gets one
-// steer per session scope to file it and report the link.
-function correctFilingPermissionAsk(state, input, output) {
-  const scope = scopeFor(state, input);
-  if (state.filingSteered.has(scope) || !asksFilingPermission(output?.text)) return { corrected: false };
-  queueSteering(state, input, "filing", "Your closeout asks permission to file an issue, task or TODO. Filing is already authorised: file it now under the capture rule in Framework Rules (deduplicate first) and cite the link in the body. Keep the ask only when the need itself is undecided, and then ask about the need.");
-  return { corrected: true, filing: true };
-}
-
 function completeText(state, input, output) {
   const result = correctTodoYield(state, input, output);
   if (result.corrected) return result;
-  const filing = correctFilingPermissionAsk(state, input, output);
+  const filing = correctFilingPermissionAsk(state, scopeFor(state, input), output, (kind, text) => queueSteering(state, input, kind, text));
   return filing.corrected ? filing : correctUncapturedCloseout(state, input, output);
 }
 
@@ -320,10 +310,7 @@ function deliverSteering(state, input, output) {
     info: { id, sessionID: key, role: "user", time: { created: Date.now() }, parentID: "" },
     parts: [{ id: `${id}-part`, sessionID: key, messageID: id, type: "text", text: pending.text, synthetic: true }],
   });
-  if (pending.kind === "filing") {
-    state.filingSteered.add(scopeFor(state, { sessionID: key }));
-    capMap(state.filingSteered, state.maxScopes);
-  }
+  if (pending.kind === "filing") markFilingDelivered(state, scopeFor(state, { sessionID: key }));
   return { injected: true, kind: pending.kind, text: pending.text };
 }
 
