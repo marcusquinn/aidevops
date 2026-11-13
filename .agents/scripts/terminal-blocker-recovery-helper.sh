@@ -651,7 +651,8 @@ _tbr_release_legacy_hold() {
 	fi
 	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" legacy legacy && return 3
 	printf 'rearm_decision issue=%s observed_rev=legacy current_rev=legacy reason=trusted_retry\n' "$issue" >&2
-	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" legacy legacy
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" legacy legacy \
+		"$(_tbr_rearm_reason_line trusted_retry legacy legacy)"
 	return $?
 }
 
@@ -910,12 +911,26 @@ _tbr_release_decided_hold() {
 		 + (if $decision == "unevidenced_permission_window" then {window: ($window | tonumber), brief: $brief} else {} end)') || return 2
 	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
-	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev" "$brief_line"
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev" \
+		"$(_tbr_rearm_reason_line "$decision" "$observed_rev" "$current_rev" "$brief_line")"
 	return $?
 }
 
+# GH#37970: tell the re-armed worker why it was woken, so a brief revision is
+# not mistaken for an unchanged body. Informational only: replay suppression
+# still matches the keyed marker line, never this line.
+# Args: decision observed_rev current_rev [extra_line]. Prints the receipt lines.
+_tbr_rearm_reason_line() {
+	local decision="$1" observed_rev="$2" current_rev="$3" extra="${4:-}"
+	printf '<!-- aidevops:terminal-blocker-rearm-reason reason=%s observed_rev=%s current_rev=%s -->' \
+		"$decision" "$observed_rev" "$current_rev"
+	[[ -z "$extra" ]] || printf '\n%s' "$extra"
+	return 0
+}
+
 # Shared idempotent projection for structured and legacy re-arm decisions.
-# Optional $8: one extra receipt line (GH#36342 window brief record).
+# Optional $8: extra receipt lines (GH#37970 re-arm reason, GH#36342 window
+# brief record).
 _tbr_project_rearm() {
 	local repo="$1" issue="$2" issue_json="$3" comments="$4" receipt="$5"
 	local observed_rev="$6" current_rev="$7" extra="${8:-}"
