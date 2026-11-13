@@ -1332,10 +1332,13 @@ _pcc_stall_release_evidence() {
 			([$latest | body_lines | ready_lease_line | lease_token] | first // "") as $token |
 			([$c[] | select(.id < $r.id and coordination and (any(body_lines;
 				is_release or startswith("Interactive session claimed")))) | .id] | max // 0) as $boundary |
-			([$c[] | select(.id > $boundary and .id <= $latest.id and unedited and login == ($latest | login)) |
-				select(any(body_lines; if $token != "" then
-					ready_lease_line | lease_token == $token
-				else claim_line end))] | first) as $start |
+			(if $token != "" then
+				[$c[] | select(.id > $boundary and .id <= $latest.id and unedited and login == ($latest | login)) |
+					select(any(body_lines; ready_lease_line | lease_token == $token))] | first
+			else
+				# A replacement claim starts its own window, even for the same login.
+				$latest | select(any(body_lines; claim_line))
+			end) as $start |
 			select($start != null) |
 			($start.created_at | try epoch catch 0) as $begin |
 			($r.created_at | try epoch catch 0) as $end |

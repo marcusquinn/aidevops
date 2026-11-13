@@ -602,6 +602,13 @@ test_progress_fuse() (
 			committer:{date:at($i; "10")}}}]}')
 	STUB_COMMENTS_JSON=$(jq -c '.comments' <<<"$fixture")
 	STUB_COMMITS_JSON=$(jq -c '.commits' <<<"$fixture")
+	# Claim-only attempts must not inherit a replaced claim's earlier commit.
+	if [[ "$kind" == claim || "$kind" == replacement ]]; then
+		STUB_COMMENTS_JSON=$(printf '%s' "$STUB_COMMENTS_JSON" | jq -c --arg kind "$kind" '
+			map(map(if .id % 4 == 1 then .body = "DISPATCH_CLAIM nonce=original"
+				elif .id % 4 == 2 then .body = "DISPATCH_CLAIM nonce=replacement"
+				else . end) | if $kind == "claim" then map(select(.id % 4 != 2)) else . end)')
+	fi
 	[[ "$kind" != unchanged ]] || STUB_COMMITS_JSON='[]'
 	[[ "$kind" != missing ]] || export STUB_METADATA_FAILURE=commits
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
@@ -627,7 +634,7 @@ test_progress_fuse() (
 	IFS=$'\t' read -r -a evidence_fields <<<"$evidence"
 	progress_count="${evidence_fields[9]}"
 	nonprogress_count="${evidence_fields[10]}"
-	if [[ "$kind" == progress || "$kind" == ceiling ]]; then
+	if [[ "$kind" == progress || "$kind" == ceiling || "$kind" == claim ]]; then
 		[[ "$progress_count" -eq "$count" && "$nonprogress_count" -eq 0 ]] || return 1
 	else
 		[[ "$progress_count" -eq 0 && "$nonprogress_count" -eq "$count" ]] || return 1
@@ -636,7 +643,7 @@ test_progress_fuse() (
 		[[ "$expected" == fuse && "$(_pcc_rearm_block_reason "$count" 0 '' "$nonprogress_count")" == per_pr_fuse ]] || return 1
 	return 0
 )
-for progress_case in progress:7:dispatch unchanged:6:fuse merge:6:fuse imported:6:fuse missing:6:fuse ceiling:8:fuse; do
+for progress_case in progress:7:dispatch claim:7:dispatch replacement:6:fuse unchanged:6:fuse merge:6:fuse imported:6:fuse missing:6:fuse ceiling:8:fuse; do
 	IFS=: read -r progress_kind progress_count progress_expected <<<"$progress_case"
 	if test_progress_fuse "$progress_kind" "$progress_count" "$progress_expected"; then
 		print_result "progress-aware fuse ${progress_kind}: ${progress_count} releases ${progress_expected}" 0
