@@ -331,6 +331,19 @@ _dedup_layer4_pr_evidence() {
 	local dedup_helper_output=""
 	local dedup_helper_rc=0
 	if [[ -x "$dedup_helper" ]]; then
+		# GH#38163: read through the canonical snapshot interface, retaining its
+		# auth/projection/invalidation checks. Pass a private file, not large JSON
+		# on argv; the helper only uses fresh complete evidence for all three
+		# open-PR checks together. Missing/partial snapshots stay on the live path.
+		local layer4_snapshot="" layer4_snapshot_reader="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+		if [[ -x "$layer4_snapshot_reader" ]]; then
+			layer4_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/layer4-prs.XXXXXX") || layer4_snapshot=""
+			if [[ -n "$layer4_snapshot" ]] &&
+				! "$layer4_snapshot_reader" read-snapshot --kind prs --slug "$repo_slug" >"$layer4_snapshot" 2>/dev/null; then
+				rm -f "$layer4_snapshot"
+				layer4_snapshot=""
+			fi
+		fi
 		# GH#38101: under a dispatcher, hand the helper the stage context so its
 		# parallel checks record dedup.layer4.<check> sub-stages.
 		local -a layer4_cmd=("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title")
@@ -338,8 +351,10 @@ _dedup_layer4_pr_evidence() {
 			layer4_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
 				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer4_cmd[@]}")
 		fi
-		dedup_helper_output=$(_dedup_layer4_step "$issue_number" "$repo_slug" has_open_pr \
+		dedup_helper_output=$(AIDEVOPS_DDPR_OPEN_SNAPSHOT_FILE="$layer4_snapshot" \
+			_dedup_layer4_step "$issue_number" "$repo_slug" has_open_pr \
 			"${layer4_cmd[@]}" 2>>"$LOGFILE") || dedup_helper_rc=$?
+		[[ -z "$layer4_snapshot" ]] || rm -f "$layer4_snapshot"
 		if [[ "$dedup_helper_output" == *"PR_LOOKUP_RESULT=uncertain"* ]]; then
 			echo "[pulse-wrapper] Dedup: ${dedup_helper_output} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 			printf 'pr_lookup_uncertain\n'
