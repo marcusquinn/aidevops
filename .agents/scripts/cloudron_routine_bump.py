@@ -9,12 +9,19 @@ stdin/stdout, so its decision is reproducible from the recorded document.
 
 stdin JSON:
   policy            signed standing-policy object (schema 1)
-  finding_upstream  X.Y.Z from the PR's trusted upstream monitor finding
+  finding_upstream  X.Y.Z or full SHA from the trusted upstream monitor finding
+  upstream_proof    resolved base/head SHAs, repository, status and merge base
+                    from the caller's upstream commit/compare API reads
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
                     every changed pinned or check file (merge-base and exact head)
 
 Prints ROUTINE_BUMP and exits 0, or prints NOT_ROUTINE: <reason> and exits 1.
+
+Tag-monitored packages (including Buzz) must pin strict X.Y.Z, not a main-build
+suffix: a tag finding cannot prove which main build was packaged. Migrating an
+existing X.Y.Z-main.<sha> pin to a tag requires one per-release signature; later
+strict-tag bumps use the unchanged semver policy and its major/0.x boundaries.
 """
 
 import argparse
@@ -34,6 +41,9 @@ MAX_PATTERN = 500
 # Patterns are applied with fullmatch, so a trailing newline never qualifies.
 PACKAGE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 UPSTREAM_VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+COMMIT_VERSION = re.compile(r"[a-fA-F0-9]{7,40}")
+FULL_COMMIT = re.compile(r"[a-f0-9]{40}")
+UPSTREAM_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 # Characters Python treats as line breaks (or that hide content) but a shell
 # reads as ordinary bytes; a check file containing any of them is not routine.
@@ -102,8 +112,50 @@ def substitute_versions(text, mapping):
     Boundaries stop 0.20.3 matching inside 10.20.3 or 3.39.8 inside 3.39.87.
     """
     olds = sorted(mapping, key=len, reverse=True)
-    pattern = re.compile(r"(?<![0-9.])(?:" + "|".join(re.escape(old) for old in olds) + r")(?![0-9]|\.[0-9])")
+    alternatives = []
+    for old in olds:
+        if COMMIT_VERSION.fullmatch(old):
+            alternatives.append(r"(?<![A-Za-z0-9_])" + re.escape(old) + r"(?![A-Za-z0-9_])")
+        else:
+            alternatives.append(r"(?<![0-9.])" + re.escape(old) + r"(?![0-9]|\.[0-9])")
+    pattern = re.compile("|".join(alternatives))
     return pattern.sub(lambda match: mapping[match.group(0)], text)
+
+
+def check_upstream(doc, policy, old_up, new_up):
+    mode = policy.get("upstream_mode", "semver")
+    require(mode in ("semver", "commits"), "unsupported upstream mode")
+    finding = doc.get("finding_upstream")
+    if mode == "commits":
+        upstream = policy.get("upstream_repository")
+        require(isinstance(upstream, str) and UPSTREAM_REPO.fullmatch(upstream) is not None,
+                "commit policy needs an upstream repository")
+        for value in (old_up, new_up):
+            require(isinstance(value, str) and COMMIT_VERSION.fullmatch(value) is not None,
+                    "commit upstreamVersion must be a SHA prefix of 7 to 40 characters")
+        require(isinstance(finding, str) and FULL_COMMIT.fullmatch(finding) is not None,
+                "commit finding must be a full SHA")
+        require(finding.startswith(new_up.lower()), "upstreamVersion must equal the monitor finding")
+        proof = doc.get("upstream_proof")
+        require(isinstance(proof, dict) and proof.get("repository") == upstream,
+                "upstream proof repository mismatch")
+        base = proof.get("base")
+        require(isinstance(base, str) and FULL_COMMIT.fullmatch(base) is not None
+                and base.startswith(old_up.lower()) and proof.get("head") == finding,
+                "upstream proof commit mismatch")
+        # aidevops:trust-boundary — commits have no major-version boundary;
+        # only strict ancestry, never timestamps or lexical SHA order, proves progress.
+        require(base != finding and proof.get("status") == "ahead"
+                and proof.get("merge_base") == base, "upstream commits must be strictly ahead")
+        return
+    new_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
+    old_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
+    require(new_tuple > old_tuple, "upstreamVersion must increase")
+    require(new_tuple[0] == old_tuple[0], "a major upstream bump needs a per-release signature")
+    require(old_tuple[0] > 0 or new_tuple[1] == old_tuple[1],
+            "a 0.x minor upstream bump needs a per-release signature")
+    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
+    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
 
 def insertion_pattern(policy):
@@ -180,16 +232,7 @@ def check(doc, repository):
     old_tuple = version_tuple(old_version, PACKAGE_VERSION, "base package version")
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
-    new_up_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
-    old_up_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
-    require(new_up_tuple > old_up_tuple, "upstreamVersion must increase")
-    require(new_up_tuple[0] == old_up_tuple[0], "a major upstream bump needs a per-release signature")
-    # Under 0.x a minor bump is breaking by semver convention.
-    require(old_up_tuple[0] > 0 or new_up_tuple[1] == old_up_tuple[1],
-            "a 0.x minor upstream bump needs a per-release signature")
-    finding = doc.get("finding_upstream")
-    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
-    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
+    check_upstream(doc, policy, old_up, new_up)
     require(old_up != old_version, "package and upstream versions are ambiguous")
     unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
