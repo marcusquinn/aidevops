@@ -362,8 +362,8 @@ _prrts_durability_text() {
 	if [[ "$part" == "push" ]]; then
 		printf '%s\n' \
 			'   Durability push (only when a repository tool refuses to act until HEAD is' \
-			'   remote-contained, for example a guard using `git for-each-ref --contains HEAD refs/remotes/`' \
-			'   or `git diff --quiet @{upstream}`; name that tool in your final report):' \
+			'   remote-contained, for example a guard using `git for-each-ref --contains HEAD refs/remotes/`;' \
+			'   name that tool in your final report):' \
 			'   push only fast-forward commits on top of `$AIDEVOPS_PR_REPAIR_HEAD_SHA` to the side ref with' \
 			"   \`git push origin \"HEAD:refs/heads/${side_ref}\"\`. Never push it to" \
 			'   `$AIDEVOPS_PR_REPAIR_HEAD_REF`, never force-push it, never open a PR from it.' \
