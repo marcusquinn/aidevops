@@ -923,7 +923,7 @@ _init_root_file_allowlist() {
 		".qlty/qlty.toml" ".qlty.toml" ".qltyignore"
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
-		"biome.json"
+		"biome.json" "ruff.toml" "mypy.ini"
 		"eslint.config.js" "eslint.config.mjs" "eslint.config.cjs"
 		"eslint.config.ts" "eslint.config.mts" "eslint.config.cts"
 		# Vitest resolves vitest.config.{ts,mts,cts,js,mjs,cjs}; Vitest 4
