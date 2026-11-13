@@ -632,6 +632,35 @@ else
 	fail "native Git probe timeout is bounded (rc=$TIMEOUT_RC output=$TIMEOUT_OUTPUT)"
 fi
 
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- status --short >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 0 ]]; then
+	pass "guard accepts positional argv after -- (allowed)"
+else
+	fail "guard accepts positional argv after -- (rc=$POSITIONAL_RC)"
+fi
+POSITIONAL_RC=0
+python3 "$GUARD" --cwd "$REPO" --real-git "$NATIVE_GIT" -- switch --detach main >/dev/null 2>&1 || POSITIONAL_RC=$?
+if [[ "$POSITIONAL_RC" -eq 42 ]]; then
+	pass "guard blocks canonical mutation via positional argv"
+else
+	fail "guard blocks canonical mutation via positional argv (rc=$POSITIONAL_RC)"
+fi
+
+BARE_REPO="${TEST_ROOT}/bare-probe.git"
+"$NATIVE_GIT" init -q --bare "$BARE_REPO"
+NONREPO_DIR="${TEST_ROOT}/not-a-repo"
+mkdir -p "$NONREPO_DIR"
+BARE_RC=0
+python3 "$GUARD" --cwd "$BARE_REPO" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || BARE_RC=$?
+NONREPO_RC=0
+python3 "$GUARD" --cwd "$NONREPO_DIR" --real-git "$NATIVE_GIT" -- status >/dev/null 2>&1 || NONREPO_RC=$?
+if [[ "$BARE_RC" -eq 0 && "$NONREPO_RC" -eq 0 ]]; then
+	pass "rev-parse fallback handles bare repo and non-repository cwd"
+else
+	fail "rev-parse fallback (bare rc=$BARE_RC non-repo rc=$NONREPO_RC)"
+fi
+
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
 mkdir -p "$LITERAL_REPO"
 "$NATIVE_GIT" -C "$LITERAL_REPO" init -q -b main
