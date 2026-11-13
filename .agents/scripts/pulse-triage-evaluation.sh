@@ -123,11 +123,163 @@ _pte_label_pass_finished() {
 	local deferred="$1"
 	[[ -n "${_LABEL_CURSOR_FILE:-}" ]] || return 0
 	if [[ "$deferred" -ne 0 ]]; then
-		echo "[pulse-wrapper] Label maintenance: partial ${_LABEL_MAINTENANCE_KEY:-}; resume $(<"$_LABEL_CURSOR_FILE")" >>"${LOGFILE:-/dev/null}"
+		# GH#37986: the held-first step can stop before the sweep writes a cursor.
+		local resume="sweep start"
+		[[ ! -r "$_LABEL_CURSOR_FILE" ]] || resume=$(<"$_LABEL_CURSOR_FILE")
+		echo "[pulse-wrapper] Label maintenance: partial ${_LABEL_MAINTENANCE_KEY:-}; resume ${resume}" >>"${LOGFILE:-/dev/null}"
 		return 2
 	fi
 	rm -f "$_LABEL_CURSOR_FILE" || return 1
 	return 0
+}
+
+#######################################
+# GH#37986: held-first helpers. The per-repository sweeps below spend their
+# slices listing repositories that hold nothing, so a held issue in a
+# repository late in sweep order could wait for days. Each re-evaluation
+# substage first re-checks the open issues that carry its label, found with
+# one search call per group of five owners (the pattern tbr_discover in
+# terminal-blocker-recovery-helper.sh uses), and only then starts its sweep.
+# The sweep stays the safety net: a failed, incomplete, truncated or empty
+# search never proves that nothing is held. Inside the orchestrated stage the
+# step uses at most two thirds of the substage's time, so a long held list
+# cannot keep the sweep from advancing its own cursor.
+#######################################
+
+# Print one compact JSON object {slug,number} per open issue carrying a label,
+# for the owners of the given repository rows. The search index can lag an
+# edit, so it only names candidates: the body is read later, per issue.
+# Arguments: $1 - label, $2 - repo rows ("slug" or "slug|path", one per line)
+# Returns: 0 when every owner group answered, 1 otherwise (found rows still print)
+_pte_held_issues() {
+	local label="$1" rows="$2"
+	local owners="" line="" owner="" group="" result="" rc=0
+	local -a owner_list=()
+	owners=$(printf '%s\n' "$rows" | sed -n 's|^\([A-Za-z0-9_.-][A-Za-z0-9_.-]*\)/.*$|\1|p' | sort -fu)
+	[[ -n "$owners" ]] || return 1
+	while IFS= read -r line; do
+		[[ -n "${line// /}" ]] || continue
+		read -ra owner_list <<<"$line"
+		group=""
+		for owner in "${owner_list[@]}"; do
+			group+=" user:${owner}"
+		done
+		if ! _pte_rest_core_deferrable_allows_next "held_query:${label}"; then
+			rc=1
+			break
+		fi
+		# One page per owner group bounds the query; the sweep covers the rest.
+		# GitHub's incomplete_results flag is a failed read, never absence.
+		result=$(gh api -X GET search/issues \
+			-f q="is:issue is:open label:\"${label}\"${group}" \
+			-f sort=created -f order=asc -f per_page=100 \
+			--jq 'if .incomplete_results then error("incomplete search results") else .items[] | select(.pull_request == null) | {slug: (.repository_url | sub("^.*/repos/"; "")), number} | tojson end' \
+			2>/dev/null) || {
+			rc=1
+			continue
+		}
+		[[ -z "$result" ]] || printf '%s\n' "$result"
+	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
+	return "$rc"
+}
+
+# Keep held issues that belong to the given repository rows, attach each row's
+# slug and path, and start after the issue a previous run reached, so a slice
+# that cannot finish the list does not re-check the same leading issues.
+# Arguments: $1 - JSON lines from _pte_held_issues, $2 - repo rows
+# Stdout: one compact JSON object {slug,path,number} per issue
+_pte_held_issue_order() {
+	local held="$1" rows="$2" cursor_slug="" cursor_issue=0
+	local cursor_file="${_LABEL_CURSOR_FILE:+${_LABEL_CURSOR_FILE%.cursor}.held}"
+	if [[ -n "$cursor_file" && -r "$cursor_file" ]]; then
+		read -r cursor_slug cursor_issue <"$cursor_file" || true
+		if [[ ! "$cursor_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$cursor_issue" =~ ^[0-9]{1,9}$ ]]; then
+			cursor_slug="" cursor_issue=0
+		fi
+	fi
+	printf '%s\n' "$held" | jq -cs --arg rows "$rows" --arg slug "$cursor_slug" --arg issue "$cursor_issue" '
+		($rows | split("\n") | map(select(length > 0) | split("|")
+			| {key: (.[0] | ascii_downcase), value: {slug: .[0], path: (.[1] // "")}}) | from_entries) as $repos
+		| [$slug, ($issue | tonumber)] as $cursor
+		| map(objects
+			| {slug: (.slug | strings), number: (.number | numbers)}
+			| ($repos[.slug | ascii_downcase]) as $repo
+			| select($repo != null)
+			| {slug: $repo.slug, path: $repo.path, number})
+		| unique_by([.slug, .number])
+		| map(select([.slug, .number] > $cursor)) + map(select([.slug, .number] <= $cursor))
+		| .[]' 2>/dev/null
+	return 0
+}
+
+# Record the held issue being re-checked. Inert outside the orchestrated stage.
+_pte_held_cursor_write() {
+	local slug="$1" issue="$2"
+	[[ -n "${_LABEL_CURSOR_FILE:-}" ]] || return 0
+	local file="${_LABEL_CURSOR_FILE%.cursor}.held" tmp=""
+	tmp=$(mktemp "${file}.XXXXXX") || return 1
+	printf '%s %s\n' "$slug" "$issue" >"$tmp"
+	mv -f "$tmp" "$file" || return 1
+	return 0
+}
+
+# Re-check the held issues carrying a label before the caller's sweep.
+# Arguments: $1 - label, $2 - repo rows, $3 - per-issue function called with
+#   (number, slug, body, repo_path) that returns 0 when it cleared the label,
+#   $4 - budget-gate context prefix, $5 - "current-body" when the function
+#   measures the issue body: the step then reads the current body, one call
+#   per issue, because a stale search result could clear a hold that a newer
+#   body still earns. Otherwise the function receives an empty body.
+# Sets in the caller's scope: _PTE_HELD_CLEARED (count), _PTE_HELD_DONE
+#   (space-delimited "slug#number" keys the sweep skips in this run)
+# Returns: 0 to continue with the sweep (also when the step used its time
+#   share; the next run resumes after the last issue it reached), 2 when a
+#   budget or deadline gate stopped the step (the caller defers the sweep)
+_pte_reevaluate_held_issues() {
+	local label="$1" rows="$2" evaluate_fn="$3" context="$4" body_source="${5:-}"
+	local held="" issue="" body="" checked=0 rc=0
+	local slug="" num="" rpath=""
+	local now="" share_deadline=0 share_used=""
+	if [[ "${_LABEL_MAINTENANCE_DEADLINE:-}" =~ ^[0-9]+$ ]] && now=$(date +%s 2>/dev/null) &&
+		[[ "$now" =~ ^[0-9]+$ && "$now" -lt "$_LABEL_MAINTENANCE_DEADLINE" ]]; then
+		share_deadline=$((now + (_LABEL_MAINTENANCE_DEADLINE - now) * 2 / 3))
+	fi
+	held=$(_pte_held_issues "$label" "$rows") || true
+	[[ -n "$held" ]] || return 0
+	while IFS= read -r issue; do
+		[[ -n "$issue" ]] || continue
+		# read assigns all three, empty when the row cannot be parsed.
+		IFS=$'\t' read -r slug num rpath < <(jq -r '[.slug, .number, .path] | @tsv' <<<"$issue") || true
+		[[ -n "$slug" && "$num" =~ ^[0-9]+$ ]] || continue
+		if [[ "$share_deadline" -gt 0 ]] && now=$(date +%s 2>/dev/null) &&
+			[[ "$now" =~ ^[0-9]+$ && "$now" -ge "$share_deadline" ]]; then
+			share_used="; time share used, the sweep continues"
+			break
+		fi
+		if ! _pte_rest_core_deferrable_allows_next "${context}:${slug}#${num}"; then
+			rc=2
+			break
+		fi
+		_pte_held_cursor_write "$slug" "$num" || true
+		body=""
+		if [[ "$body_source" == "current-body" ]]; then
+			# A failed or empty read leaves the issue to the sweep, which
+			# lists bodies itself.
+			body=$(gh_issue_view "$num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || body=""
+			[[ -n "$body" ]] || continue
+		fi
+		# Measure against the latest remote state, as the sweep does (t2433).
+		[[ -z "$rpath" ]] || _pulse_refresh_repo "$rpath"
+		if "$evaluate_fn" "$num" "$slug" "$body" "$rpath"; then
+			_PTE_HELD_CLEARED=$((_PTE_HELD_CLEARED + 1))
+		fi
+		_PTE_HELD_DONE+="${slug}#${num} "
+		checked=$((checked + 1))
+	done < <(_pte_held_issue_order "$held" "$rows")
+	if [[ "$checked" -gt 0 || -n "$share_used" ]]; then
+		echo "[pulse-wrapper] Label maintenance: held-first ${label} re-checked ${checked} issue(s), cleared ${_PTE_HELD_CLEARED}${share_used} (GH#37986)" >>"${LOGFILE:-/dev/null}"
+	fi
+	return "$rc"
 }
 
 # t2161: Idempotently remove the `needs-consolidation` label from an issue
@@ -371,12 +523,28 @@ _consolidation_dispatch_preflight_skips() {
 # issue. Runs between the initial fill and the post-maintenance refill so this
 # cross-repository sweep cannot delay already-eligible work (GH#28880).
 #######################################
+_pte_reevaluate_consolidation_issue() {
+	local num="$1" slug="$2"
+	# _issue_needs_consolidation returns 1 (no consolidation needed)
+	# AND auto-clears the label when was_already_labeled=true
+	_issue_needs_consolidation "$num" "$slug" && return 1
+	return 0
+}
+
 _reevaluate_consolidation_labels() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
 
 	local total_cleared=0 rest_deferred=0
+	local held_label="needs-consolidation"
+	local repo_rows="" _PTE_HELD_CLEARED=0 _PTE_HELD_DONE=" "
+	repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+	# GH#37986: held issues first, then the per-repository sweep.
+	_pte_reevaluate_held_issues "$held_label" "$repo_rows" \
+		_pte_reevaluate_consolidation_issue "consolidation_held_issue" || rest_deferred=1
+	total_cleared="$_PTE_HELD_CLEARED"
 	while IFS= read -r slug; do
+		[[ "$rest_deferred" -eq 0 ]] || break
 		[[ -n "$slug" ]] || continue
 		_pte_label_issue_start "$slug" 0 0 || { [[ "$?" -eq 1 ]] || return 1; }
 		if ! _pte_rest_core_deferrable_allows_next "consolidation_repo:${slug}"; then
@@ -385,24 +553,24 @@ _reevaluate_consolidation_labels() {
 		fi
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--label "needs-consolidation" \
+			--label "$held_label" \
 			--json number --limit 50 2>/dev/null) || { rest_deferred=1; break; }
 
 		while IFS= read -r num; do
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			# Already re-checked by the held-first step in this run.
+			[[ "$_PTE_HELD_DONE" != *" ${slug}#${num} "* ]] || continue
 			_pte_label_issue_start "$slug" 1 "$num" || { [[ "$?" -eq 1 ]] && continue; return 1; }
 			if ! _pte_rest_core_deferrable_allows_next "consolidation_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
 			fi
-			# _issue_needs_consolidation returns 1 (no consolidation needed)
-			# AND auto-clears the label when was_already_labeled=true
-			if ! _issue_needs_consolidation "$num" "$slug"; then
+			if _pte_reevaluate_consolidation_issue "$num" "$slug"; then
 				total_cleared=$((total_cleared + 1))
 			fi
 		done < <(printf '%s' "$issues_json" | jq -r 'sort_by(.number) | .[]?.number // ""')
 		[[ "$rest_deferred" -eq 0 ]] || break
-	done < <(_pte_label_repos "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)")
+	done < <(_pte_label_repos "$repo_rows")
 
 	if [[ "$total_cleared" -gt 0 ]]; then
 		echo "[pulse-wrapper] Consolidation re-evaluation: cleared ${total_cleared} stale needs-consolidation label(s)" >>"$LOGFILE"
@@ -653,6 +821,30 @@ _backfill_simplification_auto_dispatch_labels() {
 # the deadlock where phantom continuation citations block the gate from
 # re-firing and creating a fresh (accurate) debt issue.
 #######################################
+_pte_reevaluate_simplification_issue() {
+	local num="$1" slug="$2" body="$3" rpath="$4"
+	# _issue_targets_large_files returns 1 (no large files) AND
+	# auto-clears the label when was_already_labeled.
+	# t1998: pass force_recheck=true to bypass the
+	# skip-if-already-labeled short-circuit at pulse-dispatch-core.sh:592.
+	# Without this flag, the re-eval loop never sees a cleared case
+	# because the function returns 0 immediately on any already-labeled
+	# issue, keeping stale needs-simplification labels forever.
+	if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath" "true"; then
+		# t2042: post follow-up "CLEARED" comment so the original
+		# "Held from dispatch" comment doesn't mislead readers.
+		_post_simplification_gate_cleared_comment "$num" "$slug"
+		return 0
+	fi
+	# t2170 Fix E (secondary): file still targets large files but
+	# check if ALL cited continuation issues are stale/phantom.
+	# Clears the label so the next dispatch cycle re-evaluates
+	# the gate fresh — breaking the deadlock where a phantom
+	# continuation blocks new accurate debt issue creation.
+	_reevaluate_stale_continuations "$num" "$slug" "$rpath" && return 0
+	return 1
+}
+
 _reevaluate_simplification_labels() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -660,7 +852,15 @@ _reevaluate_simplification_labels() {
 	local total_cleared=0
 	local total_backfilled=0
 	local rest_deferred=0
+	local held_label="needs-simplification"
+	local repo_rows="" _PTE_HELD_CLEARED=0 _PTE_HELD_DONE=" "
+	repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
+	# GH#37986: held issues first, then the per-repository sweep.
+	_pte_reevaluate_held_issues "$held_label" "$repo_rows" \
+		_pte_reevaluate_simplification_issue "simplification_held_issue" "current-body" || rest_deferred=1
+	total_cleared="$_PTE_HELD_CLEARED"
 	while IFS='|' read -r slug rpath; do
+		[[ "$rest_deferred" -eq 0 ]] || break
 		[[ -n "$slug" && -n "$rpath" ]] || continue
 		_pte_label_issue_start "$slug" 0 0 || { [[ "$?" -eq 1 ]] || return 1; }
 		if ! _pte_rest_core_deferrable_allows_next "simplification_repo:${slug}"; then
@@ -687,44 +887,27 @@ _reevaluate_simplification_labels() {
 
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--label "needs-simplification" \
+			--label "$held_label" \
 			--json number,body --limit 50 2>/dev/null) || { rest_deferred=1; break; }
 
 		local issue="" num="" body=""
 		while IFS= read -r issue; do
 			num=$(jq -r '.number // ""' <<<"$issue")
 			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			# Already re-checked by the held-first step in this run.
+			[[ "$_PTE_HELD_DONE" != *" ${slug}#${num} "* ]] || continue
 			_pte_label_issue_start "$slug" 2 "$num" || { [[ "$?" -eq 1 ]] && continue; return 1; }
 			if ! _pte_rest_core_deferrable_allows_next "simplification_issue:${slug}#${num}"; then
 				rest_deferred=1
 				break
 			fi
 			body=$(jq -r '.body // ""' <<<"$issue")
-			# _issue_targets_large_files returns 1 (no large files) AND
-			# auto-clears the label when was_already_labeled.
-			# t1998: pass force_recheck=true to bypass the
-			# skip-if-already-labeled short-circuit at pulse-dispatch-core.sh:592.
-			# Without this flag, the re-eval loop never sees a cleared case
-			# because the function returns 0 immediately on any already-labeled
-			# issue, keeping stale needs-simplification labels forever.
-			if ! _issue_targets_large_files "$num" "$slug" "$body" "$rpath" "true"; then
+			if _pte_reevaluate_simplification_issue "$num" "$slug" "$body" "$rpath"; then
 				total_cleared=$((total_cleared + 1))
-				# t2042: post follow-up "CLEARED" comment so the original
-				# "Held from dispatch" comment doesn't mislead readers.
-				_post_simplification_gate_cleared_comment "$num" "$slug"
-			else
-				# t2170 Fix E (secondary): file still targets large files but
-				# check if ALL cited continuation issues are stale/phantom.
-				# Clears the label so the next dispatch cycle re-evaluates
-				# the gate fresh — breaking the deadlock where a phantom
-				# continuation blocks new accurate debt issue creation.
-				if _reevaluate_stale_continuations "$num" "$slug" "$rpath"; then
-					total_cleared=$((total_cleared + 1))
-				fi
 			fi
 		done < <(printf '%s' "$issues_json" | jq -c 'sort_by(.number) | .[]?')
 		[[ "$rest_deferred" -eq 0 ]] || break
-	done < <(_pte_label_repos "$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)")
+	done < <(_pte_label_repos "$repo_rows")
 
 	if [[ "$total_cleared" -gt 0 ]]; then
 		echo "[pulse-wrapper] Simplification re-evaluation: cleared ${total_cleared} stale needs-simplification label(s)" >>"$LOGFILE"

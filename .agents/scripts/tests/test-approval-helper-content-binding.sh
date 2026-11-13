@@ -55,11 +55,17 @@ fi
 case "$endpoint" in
 	user) printf '%s\n' "${GH_AUTH_USER:-maintainer}" ;;
 graphql)
+	# Linked-source history queries pass the source node as `-f id=...`.
+	if [[ " $* " == *" id="* ]]; then
+		[[ -f "${FIXTURES}/graphql-source-edits.json" ]] || exit 1
+		cat "${FIXTURES}/graphql-source-edits.json"
+		exit 0
+	fi
 	[[ -f "${FIXTURES}/graphql-edits-41.json" ]] || exit 1
 	cat "${FIXTURES}/graphql-edits-41.json"
 	;;
 repos/owner/repo/collaborators/trusted-collab/permission | repos/owner/repo/collaborators/maintainer/permission) printf '%s\n' "${GH_PERMISSION:-write}" ;;
-repos/owner/repo/collaborators/contributor/permission) printf '%s\n' "read" ;;
+repos/owner/repo/collaborators/contributor/permission | repos/owner/repo/collaborators/link-author/permission) printf '%s\n' "read" ;;
 repos/owner/repo/collaborators/github-actions%5Bbot%5D/permission | repos/owner/repo/collaborators/github-actions\[bot\]/permission) printf '%s\n' "none" ;;
 	repos/owner/repo/issues/41)
 		if [[ "${GH_RACE_FIRST_ISSUE:-0}" == 1 && ! -f "${FIXTURES}/race-read" ]]; then
@@ -86,7 +92,7 @@ EOF
 }
 
 write_baseline_fixtures() {
-	rm -f "${FIXTURES}/graphql-edits-41.json"
+	rm -f "${FIXTURES}/graphql-edits-41.json" "${FIXTURES}/graphql-source-edits.json"
 	cat >"${FIXTURES}/issue-41.json" <<'EOF'
 {"id":4100,"node_id":"I_41","number":41,"user":{"id":101,"node_id":"U_101","login":"external-author","type":"User"},"author_association":"CONTRIBUTOR","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","title":"Reviewed issue","body":"Issue body with https://example.invalid/opaque"}
 EOF
@@ -135,6 +141,10 @@ append_signed_comment() {
 	# Simulate a pre-GH#33097 signature that carries no component digests.
 	if [[ "${STRIP_CONTENT_DIGESTS:-0}" == "1" ]]; then
 		payload=$(jq -cS 'del(.issue.content_digests)' <<<"$payload") || return 1
+	fi
+	# Simulate a pre-GH#38006 signature without linked-source digests.
+	if [[ "${STRIP_LINKED_DIGESTS:-0}" == "1" ]]; then
+		payload=$(jq -cS 'del(.issue.content_digests.linked_frame, .issue.content_digests.linked_bodies)' <<<"$payload") || return 1
 	fi
 	signature_file="${TEST_ROOT}/signature-${number}.txt"
 	sign_payload "$payload" "$signature_file" || return 1
@@ -730,9 +740,10 @@ write_locked_issue_fixture() {
 	local initial_status="${2:-}"
 	local extra_label="${3:-}"
 	write_baseline_fixtures
+	[[ -z "${LINKED_SOURCE_BODY:-}" ]] || set_linked_source_body 41 "$LINKED_SOURCE_BODY"
 	jq --arg include_tier "$include_tier" --arg initial_status "$initial_status" --arg extra_label "$extra_label" '.locked = true | .active_lock_reason = "resolved" | .labels = ([{id:6,node_id:"L_6",name:"external-contributor"},{id:7,node_id:"L_7",name:"origin:interactive"},{id:8,node_id:"L_8",name:"review:approve"}] + if $include_tier == "true" then [{id:9,node_id:"L_9",name:"tier:standard"}] else [] end + if $initial_status != "" then [{id:10,node_id:"L_10",name:("status:" + $initial_status)}] else [] end + if $extra_label != "" then [{id:13,node_id:"L_13",name:$extra_label}] else [] end) | .assignees = []' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
 	jq '.[0] += [{id:418,node_id:"EV_418",event:"locked",created_at:"2026-01-01T00:04:00Z",actor:{id:1,node_id:"U_1",login:"maintainer",type:"User"}}]' "${FIXTURES}/timeline-41.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-41.json"
-	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z" 4199 "${SIGNED_SOURCE_PROFILE:-$APPROVAL_SNAPSHOT_PROFILE_SOURCE_STATE_UNBOUND}"
 	return 0
 }
 
@@ -954,6 +965,7 @@ run_locked_issue_continuity_tests() {
 	test_unanchored_lock_signature
 	test_locked_issue_trusted_comment_continuity
 	test_locked_issue_trusted_content_edits
+	test_locked_issue_linked_source_edits
 	test_locked_issue_tier_backfill_continuity
 	test_locked_issue_permission_hold_continuity
 	test_locked_issue_label_replay
@@ -1139,6 +1151,147 @@ test_locked_issue_trusted_content_edits() {
 	write_body_edit_history "$maintainer_editor"
 	append_issue_timeline_event '{"id":4422,"node_id":"EV_4422","event":"renamed","created_at":"2026-01-01T00:08:00Z","actor":{"id":2,"login":"contributor","type":"User"},"rename":{"from":"Reviewed issue","to":"Retitled by contributor"}}'
 	assert_verify "trusted body edit cannot mask an untrusted rename" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
+LINKED_BLOCK_START="<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+LINKED_BLOCK_END="<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+
+set_linked_source_body() {
+	local number="$1"
+	local body="$2"
+	jq --arg body "$body" '.[0][0].source.issue.body = $body' "${FIXTURES}/timeline-${number}.json" >"${FIXTURES}/timeline.tmp" && mv "${FIXTURES}/timeline.tmp" "${FIXTURES}/timeline-${number}.json"
+	return $?
+}
+
+linked_block_body() {
+	local prefix="$1"
+	local summary="$2"
+	printf '%s\n%s\n%s\n%s' "$prefix" "$LINKED_BLOCK_START" "$summary" "$LINKED_BLOCK_END"
+	return 0
+}
+
+# Args: JSON array of {editedAt, login, type, diff}; optional hasNextPage.
+write_source_edit_history() {
+	local revisions_json="$1"
+	local has_next="${2:-false}"
+	jq -nc --argjson revisions "$revisions_json" --argjson has_next "$has_next" '
+		{data:{node:{__typename:"Issue",id:"I_9001",userContentEdits:{pageInfo:{hasNextPage:$has_next},nodes:(
+			$revisions | reverse | map({editedAt, diff, editor:(if .login == null then null else {__typename:.type, login} end)}))}}}}' >"${FIXTURES}/graphql-source-edits.json"
+	return 0
+}
+
+# Revision JSON: original source body before the 00:05 signature, then edits.
+source_revisions() {
+	local signed_body="$1"
+	shift
+	local revisions='[]'
+	revisions=$(jq -nc --arg body "$signed_body" '[{editedAt:"2026-01-01T00:00:30Z",login:"link-author",type:"User",diff:$body}]')
+	while [[ $# -ge 3 ]]; do
+		revisions=$(jq -c --arg at "$1" --arg editor "$2" --arg body "$3" '
+			. + [{editedAt:$at, login:($editor | split(":")[1]), type:($editor | split(":")[0]), diff:$body}]' <<<"$revisions")
+		shift 3
+	done
+	printf '%s\n' "$revisions"
+	return 0
+}
+
+# GH#38006: authorized and review-bot edits to a content-bound external linked
+# source body must not stale a continuously locked issue approval.
+test_locked_issue_linked_source_edits() {
+	local signed="" repaired="" refreshed="" revisions=""
+	signed=$(linked_block_body "Linked body" "Summary at signing")
+	repaired=$(linked_block_body "Linked body
+
+Repair notes by the maintainer" "Summary at signing")
+	refreshed=$(linked_block_body "Linked body
+
+Repair notes by the maintainer" "Summary after the repair commit")
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "maintainer linked-source body edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$(linked_block_body "Linked body" "Summary after the repair commit")"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:09:00Z Bot:coderabbitai "$(linked_block_body "Linked body" "Summary after the repair commit")")"
+	assert_verify "CodeRabbit block-only linked-source edit preserves locked issue approval" issue 41 VERIFIED 0
+
+	# GH#37991 replay shape: maintainer repair notes, then a CodeRabbit refresh,
+	# against a payload signed before linked-source digests existed.
+	revisions=$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired" 2026-01-01T00:09:00Z Bot:coderabbitai "$refreshed")
+	LINKED_SOURCE_BODY="$signed" STRIP_LINKED_DIGESTS=1 write_locked_issue_fixture
+	set_linked_source_body 41 "$refreshed"
+	write_source_edit_history "$revisions"
+	assert_verify "pre-GH#38006 payload verifies maintainer plus CodeRabbit linked-source edits" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$refreshed"
+	write_source_edit_history "$revisions"
+	assert_verify "maintainer plus CodeRabbit linked-source edits preserve locked issue approval" issue 41 VERIFIED 0
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:link-author "$repaired")"
+	assert_verify "external author linked-source body edit stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z Bot:coderabbitai "$repaired")"
+	assert_verify "CodeRabbit edit outside its block stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$(linked_block_body "Linked body" "Unlisted bot summary")"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z Bot:other-review-bot "$(linked_block_body "Linked body" "Unlisted bot summary")")"
+	assert_verify "unlisted bot linked-source edit stales locked issue approval" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	assert_verify "linked-source GraphQL uncertainty fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")" true
+	assert_verify "paginated linked-source history fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:ghost "$repaired")"
+	assert_verify "ghost linked-source editor fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "an unexplained revision")"
+	assert_verify "history that does not explain the current body fails closed" issue 41 API_ERROR 6
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	append_issue_comment 4430 contributor CONTRIBUTOR "Untrusted addition" 2
+	assert_verify "authorized linked-source edit cannot mask an untrusted comment" issue 41 STALE_APPROVAL 4
+
+	LINKED_SOURCE_BODY="$signed" write_locked_issue_fixture
+	set_linked_source 41 '.title = "Retitled linked scope"'
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "linked-source title stays bound" issue 41 STALE_APPROVAL 4
+
+	write_baseline_fixtures
+	set_linked_source_body 41 "$signed"
+	append_signed_comment issue 41 "2026-01-01T00:05:00Z"
+	set_linked_source_body 41 "$repaired"
+	write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+	assert_verify "maintainer linked-source edit on an unlocked issue remains stale" issue 41 STALE_APPROVAL 4
+
+	# Older profiles keep exact-match linked-body behaviour.
+	local profile=""
+	for profile in "$APPROVAL_SNAPSHOT_PROFILE_TRUSTED_SOURCES" "$APPROVAL_SNAPSHOT_PROFILE_STABLE"; do
+		LINKED_SOURCE_BODY="$signed" SIGNED_SOURCE_PROFILE="$profile" STRIP_LINKED_DIGESTS=1 write_locked_issue_fixture
+		set_linked_source_body 41 "$repaired"
+		write_source_edit_history "$(source_revisions "$signed" 2026-01-01T00:08:00Z User:maintainer "$repaired")"
+		assert_verify "${profile} profile linked-source body edit stays stale" issue 41 STALE_APPROVAL 4
+	done
 	return 0
 }
 
