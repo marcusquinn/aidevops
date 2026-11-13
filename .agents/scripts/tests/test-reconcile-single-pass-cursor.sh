@@ -11,7 +11,10 @@
 #   2. the next pass resumes there and rotates repos, so coverage completes;
 #   3. a pass that reaches the end of the rotated list clears the cursor;
 #   4. an issue resumed repeatedly without finishing is skipped;
-#   5. a malformed cursor falls back to the original order.
+#   5. a malformed cursor falls back to the original order;
+#   6. GH#37939: the preflight stage clamps the cooperative budget to
+#      min(configured, stage - 20), so the pass yields at its cursor before
+#      the stage watchdog, without leaking the clamp to later stages.
 #
 # Usage: bash .agents/scripts/tests/test-reconcile-single-pass-cursor.sh
 
@@ -71,7 +74,7 @@ _pir_reconcile_issue_stages() {
 	printf '%s#%s\n' "$slug" "$issue_num" >>"$VISITS"
 	# Snapshot the in-flight cursor, i.e. what a stage-timeout kill would leave.
 	tr '\t' ',' <"$CURSOR" >"$INFLIGHT" 2>/dev/null || true
-	SECONDS=$((SECONDS + 100))
+	SECONDS=$((SECONDS + ${ISSUE_COST:-100}))
 	return 0
 }
 
@@ -138,6 +141,73 @@ printf 'test/gone\t9\t0\n' >"$CURSOR"
 _expect "unknown repo cursor uses original order" "test/a#1 test/a#2 test/a#3 test/b#4 test/b#5" "$(_run_pass 0)"
 printf 'test/b\t99\t0\n' >"$CURSOR"
 _expect "closed cursor issue restarts its repo" "test/b#4 test/b#5 test/a#1 test/a#2 test/a#3" "$(_run_pass 0)"
+
+# Direct callers keep the 360s default (100s issues: abort before b#5).
+rm -f "$CURSOR"
+_expect "direct caller defaults to 360s" "test/a#1 test/a#2 test/a#3 test/b#4" "$(_run_pass "")"
+
+# GH#37939: the preflight stage clamps the child's cooperative budget to
+# min(configured, stage - 20), floor 1, so it yields before the watchdog.
+unset PULSE_STAGE_DEADLINE_EPOCH RECONCILE_TIME_BUDGET_SECS
+# shellcheck source=../pulse-dispatch-preflight-lib.sh
+source "${TEST_DIR}/../pulse-dispatch-preflight-lib.sh"
+STAGES="${TEST_TMPDIR}/stages"
+# shellcheck disable=SC2317
+prefetch_contribution_watch() { return 0; }
+# shellcheck disable=SC2317
+_log_substage_timing() { return 0; }
+# shellcheck disable=SC2317
+reconcile_new_external_issues() { return 0; }
+# shellcheck disable=SC2317
+normalize_active_issue_assignments() { return 0; }
+# shellcheck disable=SC2317
+run_stage_with_timeout() {
+	local stage_name="$1" timeout_seconds="$2"
+	shift 2
+	printf '%s:%s:%s\n' "$stage_name" "$timeout_seconds" "${RECONCILE_TIME_BUDGET_SECS-unset}" >>"$STAGES"
+	"$@" >/dev/null 2>&1
+	return 0
+}
+
+_cooperative() {
+	local configured="$1" stage_budget="$2"
+	if [[ "$configured" == "unset" ]]; then
+		_preflight_reconcile_cooperative_budget "$stage_budget"
+	else
+		RECONCILE_TIME_BUDGET_SECS="$configured" _preflight_reconcile_cooperative_budget "$stage_budget"
+	fi
+	return 0
+}
+_expect "160s stage clamps default to 140s" "140" "$(_cooperative unset 160)"
+_expect "380s stage keeps the 360s default" "360" "$(_cooperative unset 380)"
+_expect "shorter configured budget is kept" "50" "$(_cooperative 50 160)"
+_expect "configured 0 (unbounded) is clamped" "140" "$(_cooperative 0 160)"
+_expect "invalid configured budget is clamped" "140" "$(_cooperative abc 160)"
+_expect "tiny stage floors at 1s" "1" "$(_cooperative unset 10)"
+
+# Outer 228s - 8s reserve = 220s; 60s normalize floor leaves a 160s stage.
+rm -f "$CURSOR" "$STAGES"
+: >"$VISITS"
+: >"$LOGFILE"
+ISSUE_COST=50
+_preflight_ownership_reconcile 228 >/dev/null 2>&1
+unset ISSUE_COST
+_expect "stage child sees clamped budget" "reconcile_issues_single_pass:160:140" \
+	"$(grep '^reconcile_issues_single_pass:' "$STAGES")"
+_expect "pass yields before the 160s watchdog" "test/a#1 test/a#2 test/a#3" \
+	"$(tr '\n' ' ' <"$VISITS" | sed 's/ $//')"
+# Simulated cost is 150s; real wall-clock seconds may add a little.
+abort_at=$(sed -n 's/.*time-budget abort at \([0-9]*\)s (budget=140s).*/\1/p' "$LOGFILE")
+if [[ "$abort_at" =~ ^[0-9]+$ && "$abort_at" -lt 160 ]]; then
+	_pass "cooperative abort is logged inside the stage budget"
+else
+	_fail "cooperative abort is logged inside the stage budget: '${abort_at}'"
+fi
+_expect "cooperative yield saves the resume cursor" "test/b,,0" "$(_cursor)"
+_expect "later stage does not inherit the clamp" "normalize_active_issue_assignments:unset" \
+	"$(grep '^normalize_active_issue_assignments:' "$STAGES" | cut -d: -f1,3)"
+_expect "caller does not inherit the clamp" "unset" "${RECONCILE_TIME_BUDGET_SECS-unset}"
+_expect "next pass resumes from the saved cursor" "test/b#4 test/b#5 test/a#1 test/a#2 test/a#3" "$(_run_pass 0)"
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"

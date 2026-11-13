@@ -264,6 +264,11 @@ _cmd_enable_systemd() {
 	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
 	local interval_sec
 	interval_sec=$((interval * 60))
+	# Floor matches SYSTEMD_MIN_TIMEOUT_SEC in auto-update-helper.sh (GH#37991).
+	local timeout_sec="$interval_sec"
+	if [[ "$timeout_sec" -lt "${SYSTEMD_MIN_TIMEOUT_SEC:-600}" ]]; then
+		timeout_sec="${SYSTEMD_MIN_TIMEOUT_SEC:-600}"
+	fi
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
@@ -272,6 +277,8 @@ _cmd_enable_systemd() {
 	# ~/.aidevops/agents/ not $HOME when the unit is started by systemd (#21542).
 	local agents_dir
 	agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+	# TimeoutStartSec = one interval, floored: a version update (setup.sh ~80-110s)
+	# or the daily skill re-import routinely exceeded the former 120s and was killed.
 	printf '%s' "[Unit]
 Description=aidevops auto-update
 After=network.target
@@ -282,7 +289,7 @@ KillMode=control-group
 ExecStart=/usr/bin/env bash -lc '${script_path} check'
 $(aidevops_systemd_path_env)
 WorkingDirectory=${agents_dir}
-TimeoutStartSec=120
+TimeoutStartSec=${timeout_sec}
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=append:${LOG_FILE}

@@ -1175,6 +1175,15 @@ _watchdog_kill() {
 
 	# Release the dispatch claim so the issue is immediately available
 	# for re-dispatch instead of waiting for the 30-min TTL.
+	# GH#37984: this inline watchdog is only the fallback when the standalone
+	# worker-activity-watchdog.sh is missing (headless-runtime-invoke.sh
+	# _invoke_opencode_start_monitors). The standalone _release_claim posts an
+	# unbound best-effort audit comment (no claim_id/lease, runner=whoami) that
+	# checkpoint approval cannot trust and that may not be posted at all. The
+	# authoritative lease-bound release for a hard-kill is
+	# headless-runtime-worker.sh _hrw_finish_failed_run, which releases
+	# watchdog_kill:hard_kill_stall. Keep both under the watchdog_kill: prefix so
+	# they stay stall-class (STALL_RELEASE_PATTERN); never use worker_failed here.
 	if [[ -n "$session_key" ]]; then
 		_release_dispatch_claim "$session_key" "watchdog_kill:${reason}"
 	fi
