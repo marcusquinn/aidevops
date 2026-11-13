@@ -383,6 +383,7 @@ In an interactive session, `complete` and `finalize-receipt` also end that
 session's own registry run and record `owner_relinquished` on its receipt
 (GH#37448), so Pulse can retire the merged tree while the shared app PID lives.
 Run them last: re-admission then refuses with `session-owner-already-ended`.
+Loops without `start` state finalize with `finalize-receipt <PR> [REPO]` after `merge`; `complete` there prints that exact command when a receipt exists.
 
 Direct merge-wrapper flows without local lifecycle state use
 `full-loop-helper.sh finalize-receipt <PR> [REPO]` after terminal release evidence

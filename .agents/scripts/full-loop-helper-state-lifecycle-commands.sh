@@ -654,8 +654,23 @@ _full_loop_reconcile_detached_publication_receipt() {
 	return 0
 }
 
+_full_loop_hint_finalize_receipt() {
+	local receipt_path=""
+	local receipt_pr=""
+	local receipt_repo=""
+	declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1 || return 1
+	receipt_path=$(full_loop_cleanup_receipt_for_worktree "$PWD" 2>/dev/null) || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	receipt_pr=$(jq -r '.pr_number // empty' "$receipt_path" 2>/dev/null || true)
+	receipt_repo=$(jq -r '.repository // empty' "$receipt_path" 2>/dev/null || true)
+	[[ "$receipt_pr" =~ ^[0-9]+$ && -n "$receipt_repo" ]] || return 1
+	print_error "No lifecycle state, but a cleanup receipt exists for this worktree. Finalize it with: full-loop-helper.sh finalize-receipt ${receipt_pr} ${receipt_repo}"
+	return 0
+}
+
 cmd_complete() {
 	load_state 2>/dev/null || {
+		_full_loop_hint_finalize_receipt && return 1
 		print_error "Cannot complete full loop without persisted lifecycle state"
 		return 1
 	}
