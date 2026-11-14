@@ -205,8 +205,10 @@ else
 fi
 
 # GH#38248: a PR the paused walk passed while failing becomes merge-ready at
-# the same head. The resumed walk evaluates it ahead of the tail instead of
-# after the walk wraps, and never repeats PRs already evaluated merge-ready.
+# the same head. The advisory cache still holds the failing state, so the
+# resumed walk refreshes the passed-over PR, evaluates it ahead of the tail
+# instead of after the walk wraps, and never repeats PRs already evaluated
+# merge-ready.
 rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
 PROCESSED_PRS=""
 FAKE_NOW=100
@@ -215,8 +217,8 @@ _PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
 lane_first_rc=0
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_first_rc=$?
 assert_eq "lane setup pauses after the ready and failing PRs" "5|103 102 " "${lane_first_rc}|${PROCESSED_PRS}"
+assert_eq "lane setup retains the stale advisory failure for PR 102" "FAILURE" "$(jq -r '.prs[] | select(.number == 102) | .statusCheckRollup[0].conclusion' "$PULSE_MERGE_ENRICHMENT_CACHE_FILE")"
 PR102_CHECK_STATE="SUCCESS"
-rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
 PROCESSED_PRS=""
 FAKE_NOW=200
 export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
@@ -225,7 +227,7 @@ lane_second_rc=0
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_second_rc=$?
 assert_eq "resume lane evaluates the newly ready PR before the tail" "0|102 101 104 " "${lane_second_rc}|${PROCESSED_PRS}"
 assert_eq "resume lane is logged" "1" "$(grep -c 'resume priority lane for org/repo moved 1 ' "$LOGFILE")"
-assert_eq "completed walk clears the lane record" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" ]] && printf true || printf false)"
+assert_eq "completed walk clears the lane records" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-refreshed" ]] && printf true || printf false)"
 PR102_CHECK_STATE="FAILURE"
 
 assert_budget_pause_after_phase() {

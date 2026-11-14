@@ -442,7 +442,7 @@ _merge_ready_prs_for_repo() {
 		return "$preparation_rc"
 	fi
 
-	local i=0 _PMP_RESUME_LANE_END=0
+	local i=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_LANE_LAST_PR=""
 	_pmp_resume_cursor_with_priority_lane "$repo_slug" i || i=0 # GH#38248
 	local _evaluated_from_start=$((i == 0 && _PMP_RESUME_LANE_END == 0))
 	while [[ "$i" -lt "$pr_count" ]]; do
@@ -454,7 +454,7 @@ _merge_ready_prs_for_repo() {
 			i=$((i + 1))
 			continue
 		}
-		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha="" _cursor_write_index=0
+		local _cursor_last_pr="" _cursor_next_pr="" _pr_head_sha="" _cursor_write_index=0 _cursor_write_last=""
 		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 
@@ -465,10 +465,11 @@ _merge_ready_prs_for_repo() {
 			return $?
 		fi
 		i=$((i + 1))
-		_pmp_lane_clamped_cursor "$repo_slug" "$i" _cursor_write_index _cursor_next_pr || { _cursor_write_index="$i"; _cursor_next_pr=""; }
+		_cursor_write_last="$_cursor_last_pr"
+		_pmp_lane_clamped_cursor "$repo_slug" "$i" _cursor_write_index _cursor_next_pr "$pr_obj" _cursor_write_last || { _cursor_write_index="$i"; _cursor_next_pr=""; }
 		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
-		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$_cursor_write_index" "$_cursor_last_pr" "$_cursor_next_pr"
+		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$_cursor_write_index" "$_cursor_write_last" "$_cursor_next_pr"
 	done
 	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug"
 	_pmp_clear_merge_enrichment_state "$repo_slug"

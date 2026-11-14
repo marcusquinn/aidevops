@@ -1704,9 +1704,10 @@ _process_single_ready_pr() {
 	local _PULSE_MERGE_QUEUE_CONTEXT="" _PULSE_MERGE_QUEUE_OWNED=0 _PULSE_MERGE_QUEUE_DIRTY=0
 	# GH#38248: set by draft/hold gates. Such a PR cannot progress without a
 	# human, so its wake hint is satisfied; ready/unhold or polling re-wakes it.
-	local _PMP_HUMAN_GATED=0 queue_result=0
+	local _PMP_HUMAN_GATED=0 queue_result=0 queue_borrowed=0
 	if declare -F _pulse_merge_queue_begin_object >/dev/null 2>&1; then
 		_pulse_merge_queue_begin_object "$repo_slug" "$pr_obj" "$queue_parent_context" || return 4
+		[[ "$_PULSE_MERGE_QUEUE_OWNED" == 0 && -n "$_PULSE_MERGE_QUEUE_CONTEXT" ]] && queue_borrowed=1
 		if [[ "$_PULSE_MERGE_QUEUE_DIRTY" -eq 1 && "${4:-0}" != 1 ]]; then
 			_pulse_merge_queue_refresh_object "$repo_slug" pr_obj || { _pulse_merge_queue_finish 1; return 1; }
 		fi
@@ -1726,7 +1727,12 @@ _process_single_ready_pr() {
 		"$stage" || stage_rc=$?
 		if [[ "$stage_rc" -ne 10 ]]; then
 			queue_result="$stage_rc"
-			[[ "$_PMP_HUMAN_GATED" -eq 1 ]] && queue_result=2
+			if [[ "$_PMP_HUMAN_GATED" -eq 1 ]]; then
+				queue_result=2
+				# A borrowed lease is finished by its owner (process_pr), which
+				# declares this variable; hand it the acknowledgement.
+				[[ "$queue_borrowed" -eq 1 ]] && _PMP_OWNER_QUEUE_FINISH_RESULT=2
+			fi
 			declare -F _pulse_merge_queue_finish >/dev/null 2>&1 && _pulse_merge_queue_finish "$queue_result"
 			return "$stage_rc"
 		fi
@@ -1806,8 +1812,11 @@ process_pr() {
 
 	echo "[pulse-merge] process_pr: webhook-triggered merge attempt for ${repo_slug}#${pr_number} (t3038)" >>"$LOGFILE"
 	local process_result=0
+	# GH#38248: the child borrows this lease, so it reports a human-gated
+	# acknowledgement here; the returned status stays the child's own.
+	local _PMP_OWNER_QUEUE_FINISH_RESULT=""
 	_process_single_ready_pr "$repo_slug" "$pr_obj" "" 1 || process_result=$?
-	declare -F _pulse_merge_queue_finish >/dev/null 2>&1 && _pulse_merge_queue_finish "$process_result"
+	declare -F _pulse_merge_queue_finish >/dev/null 2>&1 && _pulse_merge_queue_finish "${_PMP_OWNER_QUEUE_FINISH_RESULT:-$process_result}"
 	return "$process_result"
 }
 

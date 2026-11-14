@@ -94,6 +94,25 @@ _pmp_rewrite_merge_pr_cursor_file() {
 	return 0
 }
 
+# GH#38248: the walk's resume-lane records end with its cursor. Clears every
+# repo's records, or only one repo's lines when $2 is given.
+_pmp_clear_merge_lane_records() {
+	local cursor_file="$1"
+	local repo_slug="${2:-}"
+	local record=""
+
+	[[ -n "$cursor_file" ]] || return 0
+	for record in "${cursor_file}.lane-served" "${cursor_file}.lane-refreshed"; do
+		[[ -f "$record" ]] || continue
+		if [[ -n "$repo_slug" ]]; then
+			_pmp_rewrite_merge_pr_cursor_file "$record" "$repo_slug"
+		else
+			rm -f "$record" 2>/dev/null || true
+		fi
+	done
+	return 0
+}
+
 # Clear the whole cursor file, or only one repo's line when $2 is given.
 _pmp_clear_merge_pr_cursor() {
 	local cursor_file="$1"
@@ -102,11 +121,11 @@ _pmp_clear_merge_pr_cursor() {
 	[[ -n "$cursor_file" ]] || return 0
 	if [[ -n "$repo_slug" ]]; then
 		_pmp_rewrite_merge_pr_cursor_file "$cursor_file" "$repo_slug"
-		# GH#38248: the walk's resume-lane record ends with its cursor.
-		[[ -f "${cursor_file}.lane-served" ]] && _pmp_rewrite_merge_pr_cursor_file "${cursor_file}.lane-served" "$repo_slug"
+		_pmp_clear_merge_lane_records "$cursor_file" "$repo_slug"
 		return 0
 	fi
-	rm -f "$cursor_file" "${cursor_file}.lane-served" 2>/dev/null || true
+	rm -f "$cursor_file" 2>/dev/null || true
+	_pmp_clear_merge_lane_records "$cursor_file"
 	return 0
 }
 
@@ -487,6 +506,24 @@ _pmp_write_merge_enrichment_cache() {
 		rm -f "$temporary_file"
 		return 1
 	fi
+	return 0
+}
+
+# GH#38248: replace one PR's advisory cache entry after a resume-lane refresh.
+# A missing or foreign cache is left alone; the next snapshot rebuilds it.
+# Args: $1=repo slug, $2=freshly enriched PR object
+_pmp_update_merge_enrichment_cache_entry() {
+	local repo_slug="$1"
+	local pr_obj="$2"
+	local cache_file="" cache_state="" cache_json=""
+	cache_file=$(_pmp_merge_enrichment_cache_file "$repo_slug")
+	[[ -f "$cache_file" ]] || return 0
+	cache_state=$(<"$cache_file")
+	cache_json=$(printf '%s' "$cache_state" | jq -c --arg repo "$repo_slug" --argjson pr "$pr_obj" '
+		select(.repo == $repo) | .prs | arrays
+		| [.[] | select(.number != $pr.number)] + [$pr]' 2>/dev/null) || return 1
+	[[ -n "$cache_json" ]] || return 0
+	_pmp_write_merge_enrichment_cache "$cache_file" "$repo_slug" "$cache_json" || return 1
 	return 0
 }
 
