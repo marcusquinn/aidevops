@@ -259,17 +259,34 @@ _pmp_merge_pass_budget_deadline() {
 	return 0
 }
 
-_pmp_merge_pass_budget_exhausted() {
+#######################################
+# Effective graceful deadline for the current unit of merge work. The per-repo
+# slice is the earlier deadline only after the repo completed one unit of real
+# work in the current phase (_PMP_MERGE_REPO_SLICE_PROGRESS=1); before that the
+# whole-pass deadline applies, so a PR whose enrichment or evaluation exceeds
+# one slice still completes instead of repeating every pass (GH#38213).
+# Stdout: deadline epoch (0 = unbounded)
+#######################################
+_pmp_merge_effective_deadline_epoch() {
 	local deadline_epoch="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
 	local slice_epoch="${_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH:-0}"
-	local now_epoch=""
 
 	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
 	[[ "$slice_epoch" =~ ^[0-9]+$ ]] || slice_epoch=0
-	# The per-repo slice is the earlier deadline while a repo is being walked.
-	if [[ "$slice_epoch" -gt 0 && ("$deadline_epoch" -eq 0 || "$slice_epoch" -lt "$deadline_epoch") ]]; then
+	if [[ "${_PMP_MERGE_REPO_SLICE_PROGRESS:-0}" == "1" && "$slice_epoch" -gt 0 ]] \
+		&& [[ "$deadline_epoch" -eq 0 || "$slice_epoch" -lt "$deadline_epoch" ]]; then
 		deadline_epoch="$slice_epoch"
 	fi
+	printf '%s' "$deadline_epoch"
+	return 0
+}
+
+_pmp_merge_pass_budget_exhausted() {
+	local deadline_epoch=""
+	local now_epoch=""
+
+	deadline_epoch=$(_pmp_merge_effective_deadline_epoch)
+	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
 	[[ "$deadline_epoch" -gt 0 ]] || return 1
 	now_epoch=$(_pmp_now_epoch)
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
@@ -292,6 +309,8 @@ _pmp_merge_whole_pass_budget_exhausted() {
 # Compute the per-repo slice deadline for the repo about to be walked: the
 # earlier of now+slice and the pass deadline. Slice defaults to a third of the
 # graceful pass budget; PULSE_MERGE_REPO_SLICE_SECONDS=0 disables slicing.
+# A repo walk may overrun the slice by at most one backlog enrichment or one
+# processed PR: see _pmp_merge_effective_deadline_epoch (progress guarantee).
 # Stdout: deadline epoch (0 = no slice)
 #######################################
 _pmp_merge_repo_slice_deadline() {
@@ -558,6 +577,7 @@ _pmp_prepare_enriched_pr_backlog() {
 			[[ "$enrichment_rc" -eq 0 && -n "$enriched_obj" ]] || enriched_obj=$(printf '%s' "$pr_obj" | jq -c '. + {mergeable:"UNKNOWN", reviewDecision:"UNKNOWN", statusCheckRollup:[]}') || return 1
 			filtered_cache=$(jq -cn --argjson cache "$filtered_cache" --argjson pr "$enriched_obj" '[$cache[] | select(.number != $pr.number)] + [$pr]') || return 1
 			_pmp_write_merge_enrichment_cache "$cache_file" "$repo_slug" "$filtered_cache" || return 1
+			_PMP_MERGE_REPO_SLICE_PROGRESS=1 # real enrichment done; slice now binds
 		fi
 		cursor_index=$((cursor_index + 1))
 		_pmp_write_merge_pr_cursor "$cursor_file" "$repo_slug" "$cursor_index" "$(printf '%s' "$pr_obj" | jq -r '.number // empty')" "$(_pmp_pr_number_at_index "$fresh_json" "$cursor_index")"
@@ -991,6 +1011,7 @@ _pmp_process_merge_repo_for_pass() {
 
 	local _mr_repo_rc=0
 	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=$(_pmp_merge_repo_slice_deadline)
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_" || _mr_repo_rc=$?
 	local _mr_slice_hit=0
 	# Slice-only pause: the slice deadline elapsed but the pass budget did not.
@@ -999,6 +1020,7 @@ _pmp_process_merge_repo_for_pass() {
 		_mr_slice_hit=1
 	fi
 	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	_pmp_add_counter_var "$total_merged_var" "$repo_merged"
 	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
 	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
@@ -1035,6 +1057,7 @@ _pmp_init_merge_pass_deadlines() {
 	_PMP_MERGE_PASS_START_EPOCH="$pass_start"
 	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$pass_start")
 	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	_PMP_REPO_SLICE_PAUSED=0
 	return 0
 }

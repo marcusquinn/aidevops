@@ -238,6 +238,9 @@ _pmp_enrich_single_pr_for_processing() {
 	local repo_slug="$1"
 	local pr_obj="$2"
 	local enriched_json=""
+	# Bound nested GitHub reads by the effective (slice-aware) deadline.
+	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
+	_pmp_apply_merge_api_deadline
 
 	[[ -n "$repo_slug" && -n "$pr_obj" ]] || return 1
 	_pmp_merge_pass_budget_exhausted && return 5
@@ -341,6 +344,7 @@ _pmp_record_processed_pr_result() {
 	3) _pmp_add_counter_var "$failed_var" 1 || return 1; outcome="eligible-unmerged" ;;
 	4) outcome="deferred" ;;
 	esac
+	_PMP_MERGE_REPO_SLICE_PROGRESS=1 # one PR processed; repo slice now binds (GH#38213)
 	_pmp_record_same_pass_pr_outcome "$repo_slug" "$pr_number" "$head_sha" "$outcome" || return 1
 	return 0
 }
@@ -522,11 +526,18 @@ _pmp_prepare_enriched_pr_backlog_timed() {
 }
 
 # Set the caller's dynamically scoped deadline, preserving an earlier bound.
+# Uses the effective deadline, so the per-repo slice also bounds blocking calls
+# once it binds (GH#38213).
 _pmp_apply_merge_api_deadline() {
-	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]]; then
+	local effective_deadline="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	if declare -F _pmp_merge_effective_deadline_epoch >/dev/null 2>&1; then
+		effective_deadline=$(_pmp_merge_effective_deadline_epoch)
+	fi
+	[[ "$effective_deadline" =~ ^[0-9]+$ ]] || effective_deadline=0
+	if [[ "$effective_deadline" -gt 0 ]]; then
 		if [[ ! "${AIDEVOPS_GH_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]] ||
-			[[ "$_PMP_MERGE_PASS_DEADLINE_EPOCH" -lt "$AIDEVOPS_GH_DEADLINE_EPOCH" ]]; then
-			AIDEVOPS_GH_DEADLINE_EPOCH="$_PMP_MERGE_PASS_DEADLINE_EPOCH"
+			[[ "$effective_deadline" -lt "$AIDEVOPS_GH_DEADLINE_EPOCH" ]]; then
+			AIDEVOPS_GH_DEADLINE_EPOCH="$effective_deadline"
 		fi
 	fi
 	export AIDEVOPS_GH_DEADLINE_EPOCH
@@ -538,6 +549,8 @@ _pmp_apply_merge_api_deadline() {
 _pmp_evaluate_pr_with_deadline() {
 	local repo_slug="$1" pr_obj="$2" timing_prefix="$3"
 	local result=0 remaining=0
+	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
+	_pmp_apply_merge_api_deadline
 	_pmu_should_skip_pr "$repo_slug" "$pr_obj" && return 4
 	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]] && declare -F _gh_run_bounded_function >/dev/null 2>&1; then
 		remaining=$((AIDEVOPS_GH_DEADLINE_EPOCH - $(_pmp_now_epoch)))
@@ -555,6 +568,8 @@ _pmp_evaluate_pr_with_deadline() {
 _pmp_prepare_repo_processing_backlog() {
 	local repo_slug="$1" timing_prefix="$2" prepared_pr_json=""
 	_pmp_prepare_enriched_pr_backlog_timed "$repo_slug" "$pr_json" prepared_pr_json "$timing_prefix" || return $?
+	# The processing phase gets its own one-PR progress guarantee (GH#38213).
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	pr_json="$prepared_pr_json"
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
 	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
