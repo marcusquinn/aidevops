@@ -484,6 +484,33 @@ for approval_case in older_head expired_older_head current_head; do
 	fi
 done
 
+test_consumed_revision_approval() (
+	local now="" comments="" variant="" expected=""
+	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	for variant in consumed edited_claim edited_release untrusted_claim untrusted_release wrong_claim wrong_nonce newer_approval; do
+		comments=$(jq -nc --arg now "$now" --arg variant "$variant" '
+			[{id:77,author_association:"OWNER",created_at:$now,updated_at:$now,body:"CHECKPOINT_CONTINUATION_APPROVED {}"},
+			 {id:78,author_association:(if $variant == "untrusted_claim" then "NONE" else "MEMBER" end),created_at:$now,updated_at:(if $variant == "edited_claim" then "changed" else $now end),body:"DISPATCH_CLAIM nonce=abc checkpoint_approval=77"},
+			 {id:79,author_association:(if $variant == "untrusted_release" then "NONE" else "MEMBER" end),created_at:$now,updated_at:(if $variant == "edited_release" then "changed" else $now end),body:("CLAIM_RELEASED reason=worker_complete claim_id=" + (if $variant == "wrong_claim" then "80" else "78" end) + " nonce=" + (if $variant == "wrong_nonce" then "wrong" else "abc" end))}] +
+			(if $variant == "newer_approval" then [{id:80,author_association:"OWNER",created_at:$now,updated_at:$now,body:"CHECKPOINT_CONTINUATION_APPROVED {}"}] else [] end)')
+		expected=blocked
+		[[ "$variant" != consumed ]] || expected=eligible
+		if [[ "$expected" == eligible ]]; then
+			! _pcc_comments_have_revision_approval "$comments" '[]' || return 1
+			_pr_checkpoint_issue_metadata_is_eligible "$STUB_ISSUE_JSON" 123 worker-bot "$comments" worker-bot || return 1
+		else
+			_pcc_comments_have_revision_approval "$comments" '[]' || return 1
+			! _pr_checkpoint_issue_metadata_is_eligible "$STUB_ISSUE_JSON" 123 worker-bot "$comments" worker-bot || return 1
+		fi
+	done
+	return 0
+)
+if test_consumed_revision_approval; then
+	print_result "only trusted unedited matching released approval claims stop fencing" 0
+else
+	print_result "only trusted unedited matching released approval claims stop fencing" 1
+fi
+
 if [[ "$_PCC_APPROVAL_VALIDATION_NOTE" == *'does not prove that the approval was consumed'* &&
 	"$_PCC_APPROVAL_VALIDATION_NOTE" == *'Retry when those checks are available'* ]]; then
 	print_result "revision attention does not diagnose consumption from validation failure" 0
