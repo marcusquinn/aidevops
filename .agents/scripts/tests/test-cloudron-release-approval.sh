@@ -951,11 +951,19 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_UPSTREAM" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
 	BASE_DOCKERFILE="ARG COMMIT=$OLD_UPSTREAM"
 	HEAD_DOCKERFILE="ARG COMMIT=$NEW_UPSTREAM"
-	assert_routine routine 'commit full SHA pin and license URL' "$commit_filter"
-	assert_routine routine 'commit unchanged license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
-	assert_routine not 'commit wrong full SHA pin' "$commit_filter | $(dockerfile_head "ARG COMMIT=${NEW_UPSTREAM}0")" 'pinned file changes beyond version substitution'
+	assert_routine routine 'commit full SHA pin' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
+	assert_routine not 'commit license URL change is outside the signed policy' "$commit_filter" 'manifest changes beyond'
+	# Coincident keys: full old SHA in the Dockerfile may become the short new version.
+	collision_base=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = $sha' <<<"$BASE_MANIFEST")
+	collision_head=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = "abcdef1" | .upstreamLicense.url |= sub("[0-9a-f]{40}"; $sha)' <<<"$HEAD_MANIFEST")
+	collision_filter="del(.files[4]) | $commit_filter | $(manifest_base "$collision_base") | $(manifest_head "$collision_head")"
+	assert_routine routine 'commit full-to-abbreviated pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef1")"
+	assert_routine routine 'commit full-to-full pin with coincident keys' "$collision_filter"
+	assert_routine not 'commit coincident keys wrong pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef2")" 'pinned file changes beyond version substitution'
+	unchanged_license_head="${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}"
+	assert_routine not 'commit wrong full SHA pin' "$commit_filter | $(manifest_head "$unchanged_license_head") | $(dockerfile_head "ARG COMMIT=${NEW_UPSTREAM}0")" 'pinned file changes beyond version substitution'
 	assert_routine not 'commit wrong license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
-	assert_routine not 'commit license metadata changed' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+	assert_routine not 'commit license metadata changed' "$commit_filter | $(manifest_head "${unchanged_license_head/MIT/Apache}")" 'manifest changes beyond'
 )
 # Main-build suffixes cannot borrow tag authority; the documented migration
 # needs one per-release signature before strict-tag routine bumps can start.
