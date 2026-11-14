@@ -290,6 +290,37 @@ _pulse_should_defer_budget_priority_stage() {
 }
 
 #######################################
+# GH#38273: when REST quota blocks progress, refresh the offline App-read
+# routing advisory at most once per 6h. Background, fail-open: it never
+# blocks the stage or changes its return code.
+#######################################
+_pulse_github_app_advise_maybe() {
+	local state_dir="${AIDEVOPS_STATE_DIR:-$HOME/.aidevops/state}"
+	local stamp="${state_dir}/github-app-advise.stamp"
+	local interval="${AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL:-21600}"
+	local helper="${BASH_SOURCE[0]%/*}/github_auth_cli.py"
+	local now=0 last=0
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=21600
+	[[ -f "$helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	if ! declare -F _file_mtime_epoch >/dev/null 2>&1; then
+		# shellcheck source=./portable-stat.sh
+		source "${BASH_SOURCE[0]%/*}/portable-stat.sh" 2>/dev/null || return 0
+	fi
+	now=$(date +%s)
+	if [[ -f "$stamp" ]]; then
+		last=$(_file_mtime_epoch "$stamp" 2>/dev/null) || last=0
+		[[ "$last" =~ ^[0-9]+$ ]] || last=0
+		[[ $((now - last)) -ge "$interval" ]] || return 0
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	touch "$stamp" 2>/dev/null || return 0
+	AIDEVOPS_REPOS_CONFIG="${AIDEVOPS_REPOS_CONFIG:-${REPOS_JSON:-$HOME/.config/aidevops/repos.json}}" \
+		python3 "$helper" advise --write-advisory >/dev/null 2>&1 </dev/null &
+	return 0
+}
+
+#######################################
 # Record a stage-boundary deferral with pool-specific counters.
 #######################################
 _pulse_defer_budget_priority_stage() {
@@ -303,6 +334,7 @@ _pulse_defer_budget_priority_stage() {
 	# Keep the identity stable as remaining quota changes within the same mode.
 	if [[ "$priority" == "progress" ]] && declare -F _pulse_cycle_state_note_blocker >/dev/null 2>&1; then
 		_pulse_cycle_state_note_blocker rest-core-quota pulse-budget "$rest_mode" || true
+		_pulse_github_app_advise_maybe || true
 	fi
 	echo "[pulse-wrapper] budget-priority: deferred ${priority} stage '${stage}' (graphql=${graphql_mode}:${AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING:-?}/${AIDEVOPS_PULSE_GRAPHQL_BUDGET_LIMIT:-?}@${AIDEVOPS_PULSE_GRAPHQL_BUDGET_THRESHOLD:-?}, rest=${rest_mode}:${AIDEVOPS_PULSE_REST_CORE_BUDGET_REMAINING:-?}/${AIDEVOPS_PULSE_REST_CORE_BUDGET_LIMIT:-?}@${AIDEVOPS_PULSE_REST_CORE_BUDGET_ADAPTIVE_THRESHOLD:-?}, hard_floor=${AIDEVOPS_PULSE_REST_CORE_BUDGET_HARD_FLOOR:-?}, progress_start_floor=${AIDEVOPS_PULSE_REST_CORE_BUDGET_PROGRESS_START_FLOOR:-?})" >>"$LOGFILE"
 	if ! declare -F pulse_stats_increment >/dev/null 2>&1; then

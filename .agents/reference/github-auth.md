@@ -137,6 +137,27 @@ them rather than guessing. Zero filtered events may mean the updated runtime has
 not emitted tagged records yet. Other hosts' calls and remaining GitHub quota are
 not inferred from this report. A failed aggregator is reported as an error.
 
+`usage` also reports `app_routing_opportunity`: attempts and known quota cost
+with auth reason `not-configured` (reads an App binding would route), the
+total known quota cost, their `routable_share`, the window's REST-core
+`rest_core_min_remaining`, and `owners_without_app_read` (owners with a
+pulse-enabled repository lacking an App read route). Missing per-reason cost
+data yields `routable_share: null`.
+
+```bash
+aidevops github auth advise [--since 24h] [--write-advisory]
+```
+
+`advise` computes the same object offline. With `--write-advisory` it writes
+`~/.aidevops/advisories/github-app-read-routing.advisory` only when the
+routable share is at least 0.5, REST-core `min_remaining` reached 0 or fell
+below the pulse hard floor, and at least one pulse owner lacks an App read
+binding; otherwise it removes that file. The session-start advisory display
+shows its first line once, and `aidevops security dismiss
+github-app-read-routing` suppresses it. Pulse refreshes it in the background at
+most every 6 hours (`AIDEVOPS_GITHUB_APP_ADVISE_INTERVAL`) when REST quota
+defers a progress stage; failures never affect the pulse.
+
 ## Upgrade and migration
 
 1. Stop old Pulse processes and old config writers. Install the new runtime on

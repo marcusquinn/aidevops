@@ -15,7 +15,7 @@ from github_auth_policy import policy
 from github_auth_profiles import manage_profile
 from github_auth_routing import APP, decide, valid_slug
 from github_auth_runtime import execute
-from github_auth_usage import usage
+from github_auth_usage import advise, usage
 
 
 def parser():
@@ -34,6 +34,9 @@ def parser():
     command = actions.add_parser("usage")
     command.add_argument("--since", default="1h")
     command.add_argument("--consumer", choices=("pulse",))
+    command = actions.add_parser("advise")
+    command.add_argument("--since", default="24h")
+    command.add_argument("--write-advisory", action="store_true")
     command = actions.add_parser("migrate")
     command.add_argument("--confirm-stopped", action="store_true")
     profiles = actions.add_parser("profile").add_subparsers(dest="profile_action", required=True)
@@ -84,6 +87,8 @@ def main():
         return migrate(registry_path, config_path, args.confirm_stopped)
     if args.action == "usage":
         return usage(args.since, registry(registry_path), args.consumer)
+    if args.action == "advise":
+        return advise(args.since, registry(registry_path), args.write_advisory)
     if not valid_slug(args.repo):
         raise AuthError("Repository must be owner/repo")
     if args.action == "set" and args.inherit and args.installation_id:
