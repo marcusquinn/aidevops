@@ -187,18 +187,19 @@ def _unfinished(path: Path, found: list[tuple[str, int]],
 
 
 def _unsafe_to_remove(path: Path, owner: OwnerCheck, verdict: dict,
-                      timeout: int) -> str | None:
+                      timeout: int, label: str) -> str | None:
     """Name what removal would disturb or discard, or nothing when it is safe.
 
     Runs only for finished candidates, so the registry is read after GitHub.
-    ``finished`` is recorded only once every registered owner has ended, so local
-    state found after that point is preservable (``decision.classify``), never a
-    live writer's work in progress.
+    ``finished`` is recorded only for ``work-finished`` work once every registered
+    owner has ended, so local state found after that point is preservable
+    (``decision.classify``), never a live writer's work in progress. An idle
+    review tree's PR is still open, so its local state is never archive.
     """
     reason = owner(path)
     if reason is not None:
         return reason
-    verdict["finished"] = True
+    verdict["finished"] = label == "work-finished"
     clean, detail = nothing_to_lose(path, timeout=timeout)
     return None if clean else detail
 
@@ -221,7 +222,7 @@ def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
         reason, finished = _unfinished(path, found,
                                        Query(verdict["repository"], cache, timeout))
     if reason is None and owner is not None:
-        reason = _unsafe_to_remove(path, owner, verdict, timeout)
+        reason = _unsafe_to_remove(path, owner, verdict, timeout, finished)
     verdict["authorized"] = reason is None
     verdict["reason"] = reason or finished
     return verdict

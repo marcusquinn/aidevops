@@ -118,7 +118,8 @@ def record(store: LifecycleRegistry, kind: str, verdict: dict, digest: str) -> s
             append_event(connection, event_id(installation, payload), payload)
     except StoreConflict:
         return "journal-conflict"
-    except (StoreCapacity, ValueError, OSError, sqlite3.Error):
+    except (StoreCapacity, ValueError, TypeError, LookupError, RuntimeError, OSError,
+            sqlite3.Error):
         # An unwritable journal refuses removal; it must not end the pass.
         return "journal-unavailable"
     return None

@@ -188,6 +188,14 @@ class EvidenceTests(GitFixture):
         self.assertTrue(verdict["authorized"], verdict)
         self.assertEqual(verdict["reason"], "review-idle")
 
+    def test_dirty_idle_review_tree_is_refused_not_archived(self):
+        # Its PR is still open, so local state is not finished work to preserve.
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        (tree / "notes.md").write_text("local\n", encoding="utf-8")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW)
+        self.assertFalse(verdict["finished"], verdict)
+        self.assertEqual(decision.classify(verdict), (decision.REFUSE, "uncommitted-changes"))
+
     def test_refuses_a_recently_active_review_tree(self):
         tree = self.worktree_idle("repo-pr9001-review-fixture", idle=60)
         self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
