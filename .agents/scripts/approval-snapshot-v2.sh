@@ -100,40 +100,8 @@ JQ
 	return 0
 }
 
-_approval_snapshot_v2_comments_json() {
-	local pages_json="$1"
-	local excluded_comment_id="${2:-}"
-	local source_name="${3:-conversation}"
-	local issued_at_cutoff="${4:-}"
-	local target_number="${5:-}" target_repo="${6:-}"
-	local selection="${7:-snapshot}"
-	local pr_head="${8:-}"
-	local empty_string=""
-
-	# #aidevops:trust-boundary — exclude the exact approval comment whose
-	# signature is being verified plus the strict trusted-association lifecycle
-	# audit written after verification. Marker text is attacker-controlled:
-	# excluding arbitrary marker comments would let an external contributor hide
-	# later drift by copying the marker into an unsigned comment.
-	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
-		'"$(_approval_snapshot_v2_comment_filters)"'
-		def canonical_ever_nmr_remediation:
-			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
-			| (conversation_source and $number != "" and $repo != "")
-			and startswith($body)
-			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
-		# aidevops:trust-boundary — accept the renamed deterministic audit text
-		# while preserving already-published round-robin audit compatibility.
-		def canonical_dispatch_audit:
-			gsub("auto-select \\(ordered fallback\\)"; "auto-select (round-robin)")
-			| test(
-				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n(?:" +
-				"DISPATCH_CLAIM nonce=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z max_age_s=[0-9]+ version=[A-Za-z0-9._+-]+ opencode_version=[A-Za-z0-9._+-]+ lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ phase=prelaunch expires_at=[0-9]+(?: [a-z_]+=[A-Za-z0-9._:-]+)*" +
-				"|DISPATCH_LEASE phase=(?:prelaunch|ready|terminal) lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ expires_at=[0-9]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z attempt_id=[A-Za-z0-9._:-]+" +
-				"|Dispatching worker \\(deterministic\\)\\.\\n<!-- aidevops:dispatch lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ attempt_id=[A-Za-z0-9._:-]+ claim_id=[0-9]+ -->\\n- \\*\\*Worker PID\\*\\*: [0-9]+\\n- \\*\\*Model\\*\\*: (?:[A-Za-z0-9._/+:-]+|auto-select \\(round-robin\\))\\n- \\*\\*Tier\\*\\*: [a-z]+\\n- \\*\\*Runner\\*\\*: [A-Za-z0-9._:-]+\\n- \\*\\*aidevops\\*\\*: v?[A-Za-z0-9._+-]+\\n- \\*\\*OpenCode\\*\\*: v?[A-Za-z0-9._+-]+\\n- \\*\\*Issue\\*\\*: #[0-9]+" +
-				"|CLAIM_RELEASED reason=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*" +
-				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
-			);
+_approval_snapshot_v2_terminal_blocker_filters() {
+	cat <<'JQ'
 		# #aidevops:trust-boundary — exclude only complete writer-produced recovery envelopes; copied markers, altered guidance, and extra prose stay bound.
 		def terminal_blocker_envelope: test("^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n" + "CLAIM_RELEASED reason=blocked runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*\\n" + "<!-- aidevops:terminal-blocker-observation revision=[0-9a-f]{16,64} blocker=[0-9a-f]{16,64} -->\\n\\n" + "Terminal blocker: reason=(?:missing_files_scope owner=brief-author|files_scope_excluded owner=brief-author|target_code_blocker owner=target-maintainer|external_trigger_pending owner=dependency-owner|permission_required owner=permission-maintainer|source_access_blocked owner=access-owner|(?:push_policy_timeout|network_policy_timeout|runner_capability_unmet) owner=runner-recovery|input_required owner=(?:user|contributor|maintainer|admin)|unknown owner=worker-triage) task=[0-9]+ attempt=[0-9a-f]{16,64}\\.\\n" + "Projected state: status:(?:blocked|available)\\.\\n" + "Next action: (?:Add a canonical ### Files Scope \\(or legacy ## Files Scope\\) section listing the permitted paths in the issue body\\.|The AI brief owner must review the protected integration dossier, check concurrent ownership and correct the permitted paths before resuming the existing checkpoint\\. Preserve explicit hard boundaries and security guarantees; do not retry an unchanged brief\\.|Review the protected blocker dossier and correct the target code or task dependencies before retrying\\.|Resolve the evidenced permission prerequisite through the human-owned approval flow, then post the explicit retry directive\\. Retry is scheduling consent only: the original permission guard must independently verify the exact context\\. Do not regenerate requests or bypass the guard\\.|Wait for the specified external trigger\\. When it is verified, correct the brief or post an authorized retry directive; unrelated repository merges do not clear this hold\\.|Verify access to the denied source through its approved human-owned flow, or supply the required source evidence in the brief or a linked dependency\\. A brief or dependency change, or an explicit retry after verified access, re-arms dispatch; unrelated merges do not\\. Never bypass source verification or source-access guards\\.|Release for a capable runner\\. Recheck declared secret and local-data requirements before claiming; do not impose a global issue hold or publish secret values\\.|Retry policy evaluation and publication of the recorded local branch/HEAD on the same runner after host contention clears\\. Preserve all policy and publication guards\\.|Retry the same outbound HTTPS command on the same runner after host contention clears\\. The policy guard timed out; it was not a policy denial\\. Preserve all policy guards\\.|Supply the (?:specific input named in the protected dossier|requested input) in the issue brief; a brief or dependency change re-arms dispatch\\. The recovery supervisor first decides anything AI can resolve within delegated authority\\.|no sanitized question recorded; the originating runner\u0027s recovery supervisor must publish one\\. No maintainer action is possible until then\\.|Interpret the protected dossier and record a known blocker class or repair the brief\\. (?:No global dispatch hold is imposed|A brief or dependency change, or an OWNER/MEMBER retry directive, re-arms dispatch)\\.)\\n" + "Raw evidence remains in protected worker telemetry\\.\\n(?:Input requested: [^\\x00-\\x1f\\x7f<>`@]{1,500}\\n|CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=[a-f0-9]{64} head=[a-f0-9]{40,64}\\n)?<!-- ops:end -->" + aidevops_worker_footer + "$");
 		# Correlate reason, action and optional trailer lines exactly as the writer
@@ -168,6 +136,45 @@ _approval_snapshot_v2_comments_json() {
 						and ($q | test("\\bbasic\\s+\\S"; "i") | not)) end)
 				and (($triage | not) or $r == "unknown")
 			);
+JQ
+	return 0
+}
+
+_approval_snapshot_v2_comments_json() {
+	local pages_json="$1"
+	local excluded_comment_id="${2:-}"
+	local source_name="${3:-conversation}"
+	local issued_at_cutoff="${4:-}"
+	local target_number="${5:-}" target_repo="${6:-}"
+	local selection="${7:-snapshot}"
+	local pr_head="${8:-}"
+	local empty_string=""
+
+	# #aidevops:trust-boundary — exclude the exact approval comment whose
+	# signature is being verified plus the strict trusted-association lifecycle
+	# audit written after verification. Marker text is attacker-controlled:
+	# excluding arbitrary marker comments would let an external contributor hide
+	# later drift by copying the marker into an unsigned comment.
+	jq -cS --arg excluded "$excluded_comment_id" --arg source "$source_name" --arg cutoff "$issued_at_cutoff" --arg empty "$empty_string" --arg number "$target_number" --arg repo "$target_repo" --arg selection "$selection" --arg head "$pr_head" "$(_approval_snapshot_v2_comment_identity)"'
+		'"$(_approval_snapshot_v2_comment_filters)"'
+		def canonical_ever_nmr_remediation:
+			("<!-- ever-nmr-remediation -->\n> Label `needs-maintainer-review` was removed, but the `ever-NMR` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:\n>\n> ```\n> sudo aidevops approve issue " + $number + " " + $repo + "\n> ```\n>\n> This gate cannot be bypassed by label manipulation (security design — see `reference/auto-merge.md` NMR section).") as $body
+			| (conversation_source and $number != "" and $repo != "")
+			and startswith($body)
+			and (.[$body | length:] | test("^(?:\\n<!-- aidevops:origin:worker -->)?\\n<!-- aidevops:sig -->\\n---\\n\\[aidevops\\.sh\\]\\(https://aidevops\\.sh\\) v[0-9]+\\.[0-9]+\\.[0-9]+ automated scan\\.\\n?$"));
+		# aidevops:trust-boundary — accept the renamed deterministic audit text
+		# while preserving already-published round-robin audit compatibility.
+		def canonical_dispatch_audit:
+			gsub("auto-select \\(ordered fallback\\)"; "auto-select (round-robin)")
+			| test(
+				"^<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\\n(?:" +
+				"DISPATCH_CLAIM nonce=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z max_age_s=[0-9]+ version=[A-Za-z0-9._+-]+ opencode_version=[A-Za-z0-9._+-]+ lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ phase=prelaunch expires_at=[0-9]+(?: [a-z_]+=[A-Za-z0-9._:-]+)*" +
+				"|DISPATCH_LEASE phase=(?:prelaunch|ready|terminal) lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ expires_at=[0-9]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z attempt_id=[A-Za-z0-9._:-]+" +
+				"|Dispatching worker \\(deterministic\\)\\.\\n<!-- aidevops:dispatch lease_token=[A-Za-z0-9._:-]+ device=[A-Za-z0-9._:-]+ session=issue-[0-9]+ attempt_id=[A-Za-z0-9._:-]+ claim_id=[0-9]+ -->\\n- \\*\\*Worker PID\\*\\*: [0-9]+\\n- \\*\\*Model\\*\\*: (?:[A-Za-z0-9._/+:-]+|auto-select \\(round-robin\\))\\n- \\*\\*Tier\\*\\*: [a-z]+\\n- \\*\\*Runner\\*\\*: [A-Za-z0-9._:-]+\\n- \\*\\*aidevops\\*\\*: v?[A-Za-z0-9._+-]+\\n- \\*\\*OpenCode\\*\\*: v?[A-Za-z0-9._+-]+\\n- \\*\\*Issue\\*\\*: #[0-9]+" +
+				"|CLAIM_RELEASED reason=[A-Za-z0-9._:-]+ runner=[A-Za-z0-9._:-]+ ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?: [a-z_]+=[A-Za-z0-9._:@/+:-]+)*" +
+				")\\n<!-- ops:end -->" + aidevops_worker_footer + "$"
+			);
+		'"$(_approval_snapshot_v2_terminal_blocker_filters)"'
 		def canonical_self_hosting_override:
 			test(
 				"^<!-- self-hosting-tier-override -->\\n<!-- provenance:start -->\\n## Self-Hosting Tier Override\\n\\nPre-dispatch self-hosting detector replaced lower workload-tier labels with `tier:thinking` on this issue\\.\\n\\n\\*\\*Matched pattern:\\*\\* `[A-Za-z0-9._-]+` in issue body\\n\\n\\*\\*Rationale:\\*\\* Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed\\. Applying the terminal workload tier upfront avoids wasted lower-tier attempts while runtime routing retains control of the exact model and reasoning level\\.\\n\\n\\*\\*Bypass:\\*\\* `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`\\n\\n_Automated by `pre-dispatch-validator-helper\\.sh` \\(t2819\\)\\. This comment is posted once via the `<!-- self-hosting-tier-override -->` marker; re-runs are no-ops\\._\\n<!-- provenance:end -->" + aidevops_worker_footer + "$"
