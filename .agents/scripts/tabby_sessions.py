@@ -12,6 +12,7 @@ from pathlib import Path
 if sys.version_info < (3, 9):
     sys.exit("Python 3.9+ is required; no packages will be installed")
 
+from tabby_session_auth import authentication_slot
 from tabby_session_config import SessionError, endpoint, equivalent_aliases, load_hosts
 from tabby_session_launch import LaunchContext, check_tabby, describe_session, report, request, tabby_executable
 from tabby_session_legacy import local_legacy
@@ -29,10 +30,14 @@ def paths():
 def host_action(args, host, hosts, binary):
     endpoint_id = endpoint(host)
     aliases = equivalent_aliases(hosts, host, endpoint_id)
-    sessions, clients = inventory(host)
+    # Probes share the handshake slot so list/repeated restore cannot race an
+    # authenticating tab. Never hold it while yielding/launching Tabby requests.
+    with authentication_slot(args.state_dir, host, create=not (args.action == "list" or args.dry_run)):
+        sessions, clients = inventory(host)
+        if args.action == "new" and not args.dry_run:
+            session, clients = create(host)
+            sessions = [session]
     if args.action == "new" and not args.dry_run:
-        session, clients = create(host)
-        sessions = [session]
         report(host, session, "created", "detached; recover with aidevops tabby sessions restore " + host["id"])
         yield "created"
     context = LaunchContext(args, binary, host, endpoint_id, clients, sessions)
@@ -75,7 +80,8 @@ def doctor(args, hosts):
             endpoint(host)  # ssh -G only: no network connection.
             print(host["id"] + ": config valid; OpenSSH resolved privately")
             if args.remote:
-                sessions, _clients = inventory(host)
+                with authentication_slot(args.state_dir, host, create=False):
+                    sessions, _clients = inventory(host)
                 print(host["id"] + ": remote tmux probe passed; {} matching sessions".format(len(sessions)))
         except (SessionError, OSError) as exc:
             print(host["id"] + ": " + safe_error(exc))
