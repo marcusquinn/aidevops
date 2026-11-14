@@ -276,6 +276,30 @@ test_inventory_is_names_only_deterministic_json() {
 	return 0
 }
 
+test_inventory_skips_nested_gopass_names() {
+	setup
+	trap 'teardown' RETURN
+	cat >"$TEST_DIR/bin/gopass" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+	ls) printf '%s\n' 'aidevops/GOOD_NAME' 'aidevops/tool-state/abc' 'aidevops/other/private';;
+	*) exit 1 ;;
+esac
+EOF
+	chmod +x "$TEST_DIR/bin/gopass"
+	local output="" exit_code=0
+	output=$(HOME="$TEST_DIR/home" bash "$HELPER" inventory 2>"$TEST_DIR/inventory-stderr") || exit_code=$?
+	local diagnostic=""
+	diagnostic=$(<"$TEST_DIR/inventory-stderr")
+	if [[ "$exit_code" -eq 0 && "$output" == '{"version":1,"backends":{"gopass":"available","credentials":"missing"},"secrets":[{"name":"GOOD_NAME","status":"configured"}]}' &&
+		"$diagnostic" == 'Skipped 2 nested gopass inventory entries' ]]; then
+		print_result "inventory skips nested gopass entries without leaking names" 0
+	else
+		print_result "inventory skips nested gopass entries without leaking names" 1 "Unexpected inventory output or diagnostic"
+	fi
+	return 0
+}
+
 test_inventory_rejects_malformed_gopass_name() {
 	setup
 	trap 'teardown' RETURN
@@ -283,7 +307,7 @@ test_inventory_rejects_malformed_gopass_name() {
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >>"${AIDEVOPS_TEST_DIR}/gopass_calls"
 case "${1:-}" in
-	ls) printf '%s\n' 'aidevops/../ESCAPE'; exit 0 ;;
+	ls) printf '%s\n' 'aidevops/bad-name'; exit 0 ;;
 	show) printf '%s' 'actual-secret-value'; exit 0 ;;
 	*) exit 1 ;;
 esac
@@ -1471,6 +1495,7 @@ main() {
 	test_list_preserves_direct_credentials
 	test_list_rejects_unsafe_tenant_files
 	test_inventory_is_names_only_deterministic_json
+	test_inventory_skips_nested_gopass_names
 	test_inventory_rejects_malformed_gopass_name
 	test_inventory_cleans_up_after_gopass_listing_failure
 	test_inventory_requires_owner_only_credentials
