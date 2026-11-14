@@ -2065,6 +2065,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18992 fix(pulse-merge): finish interactive PRs left idle by a still-running session — targeted review-thread guard, session-bus idle handover, takeover worktree #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38291
 
+- [ ] t18993 test(review-thread-scanner): fake git stub predates registered scratch-worktree creation; 2 fetch-context tests fail #auto-dispatch #bug ref:GH#38296
+
+- [ ] t18994 fix(complexity-guard): pre-push hook judges HEAD instead of pushed refs and blocks task-id-counter CAS pushes #auto-dispatch #bug ref:GH#38297
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
