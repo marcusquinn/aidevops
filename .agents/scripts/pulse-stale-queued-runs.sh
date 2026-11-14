@@ -15,13 +15,17 @@ _sq_api() {
 	local endpoint="$2"
 	local output="$3"
 	SQ_HTTP=""
+	SQ_DENIED=0
 	# Clear previous observations even when admission denies the next read.
 	: >"$output"
 	# Guard every request, not just admission of the outer Pulse stage.
-	[[ ! -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse.stop}" ]] || return 1
-	[[ ! -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] || return 1
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 1
-	pulse_rest_core_priority_allows_next deferrable stale-queued-runs || return 1
+	if [[ -f "${STOP_FLAG:-${HOME}/.aidevops/logs/pulse.stop}" ]] ||
+		[[ -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]] ||
+		[[ -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] ||
+		! pulse_rest_core_priority_allows_next deferrable stale-queued-runs; then
+		SQ_DENIED=1
+		return 1
+	fi
 	if gh api --method "$method" "$endpoint" >"$output" 2>"${output}.err"; then
 		return 0
 	fi
@@ -152,9 +156,14 @@ _sq_scan_repo() {
 	fi
 	[[ "$last" =~ ^[0-9]+$ ]] || last=0
 	((SQ_NOW - last >= 3600)) || return 0
-	# Claim cadence before network I/O, including failed/permission-denied scans.
+	# Admission denial makes no request and must not consume the cadence.
+	_sq_api GET "repos/${repo}" "${SQ_WORK}/repo.json" || {
+		[[ "$SQ_DENIED" -eq 1 ]] && return 2
+		printf '%s\n' "$SQ_NOW" >"${state}/last-scan" || return 1
+		return 0
+	}
+	# Admitted failures still consume cadence to avoid hammering a failing repo.
 	printf '%s\n' "$SQ_NOW" >"${state}/last-scan" || return 1
-	_sq_api GET "repos/${repo}" "${SQ_WORK}/repo.json" || return 0
 	jq -e '.permissions | (.admin == true or .maintain == true or .push == true)' "${SQ_WORK}/repo.json" >/dev/null 2>&1 || return 0
 	_sq_scan_queued "$repo" "$state" || return 1
 	_sq_scan_orphans "$repo" "$state" || return 1
@@ -266,7 +275,7 @@ _sq_cleanup() {
 pulse_stale_queued_runs_scan() (
 	local max_age="${AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS:-8}"
 	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local helper_dir repo rc=0
+	local helper_dir repo status rc=0
 	[[ "$max_age" =~ ^[0-9]{1,5}$ ]] || {
 		printf '[pulse-stale-queued-runs] invalid max age\n'
 		return 1
@@ -282,7 +291,7 @@ pulse_stale_queued_runs_scan() (
 		# shellcheck source=./pulse-rate-limit-circuit-breaker.sh
 		source "${helper_dir}/pulse-rate-limit-circuit-breaker.sh"
 	fi
-	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF
+	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_DENIED=0 SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF
 	SQ_ORPHAN_MAX_AGE="${AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS:-2}"
 	[[ "$SQ_ORPHAN_MAX_AGE" =~ ^[0-9]{1,5}$ ]] || SQ_ORPHAN_MAX_AGE=2
 	SQ_ORPHAN_MAX_AGE=$((10#$SQ_ORPHAN_MAX_AGE))
@@ -306,7 +315,10 @@ pulse_stale_queued_runs_scan() (
 	SQ_WORK=$(mktemp -d "${SQ_STATE}/work.XXXXXX") || return 1
 	_SQ_WORK_CLEANUP="$SQ_WORK"
 	while IFS= read -r repo; do
-		_sq_scan_repo "$repo" || rc=1
+		status=0
+		_sq_scan_repo "$repo" || status=$?
+		[[ "$status" -ne 2 ]] || break
+		[[ "$status" -eq 0 ]] || rc=1
 	done < <(jq -r '.initialized_repos[]? |
 		select(.maintenance != false and .pulse == true and (.local_only // false) == false) |
 		select((.role // "maintainer") != "contributor") | .slug // empty' "$repos_json")
