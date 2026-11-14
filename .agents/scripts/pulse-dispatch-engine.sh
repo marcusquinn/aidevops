@@ -492,6 +492,30 @@ _dispatch_enumerate_repo_bounded() {
 	return "$rc"
 }
 
+# GH#38274: scan one repository with its adaptive budget, clamped to the
+# remaining census time per call so one escalated budget never leaks.
+# Args: slug, path, base budget, remaining census seconds, per-repo limit,
+#   dependency normalization mode, completeness file.
+# Stdout: candidate JSON ('[]' on failure). Returns the scan status.
+_dispatch_census_enumerate_repo() {
+	local repo_slug="$1" repo_path="$2" base="$3" remaining="$4" per_repo_limit="$5"
+	local normalization_mode="$6" completeness_file="$7"
+	local budget=0 started=0 rc=0 candidates=""
+	budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$base")
+	((remaining >= budget)) || budget="$remaining"
+	started=$(_dispatch_first_wave_now_s)
+	candidates=$(_dispatch_enumerate_repo_bounded "$budget" "$repo_slug" "$repo_path" "$per_repo_limit" \
+		"$normalization_mode" "$completeness_file") || rc=$?
+	_dispatch_record_repo_enumeration_outcome "$repo_slug" "$base" "$budget" "$rc" \
+		"$(($(_dispatch_first_wave_now_s) - started))"
+	if ((rc != 0)); then
+		echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${rc} budget=${budget}s (GH#38226)" >>"$LOGFILE"
+		candidates='[]'
+	fi
+	printf '%s\n' "$candidates"
+	return "$rc"
+}
+
 # Total budget applies even to an empty census. Full rounds rotate separately
 # from first waves, preventing a slow registry prefix from starving its tail.
 _dispatch_census_deadline() {
@@ -524,7 +548,6 @@ build_ranked_dispatch_candidates_json() {
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
 	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 repo_rc=0
-	local repo_scan_budget=0 repo_scan_started=0
 	[[ "$repo_budget" =~ ^[1-9][0-9]{0,2}$ ]] || repo_budget=15
 	repo_budget=$((10#$repo_budget))
 	deadline=$(_dispatch_census_deadline)
@@ -568,17 +591,10 @@ build_ranked_dispatch_candidates_json() {
 		[[ -n "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug" pulse-census-cursor
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
-		# GH#38274: clamp per repository so one escalated budget never leaks.
-		repo_scan_budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$repo_budget")
-		((remaining >= repo_scan_budget)) || repo_scan_budget="$remaining"
 		repo_rc=0
-		repo_scan_started=$(_dispatch_first_wave_now_s)
-		repo_candidates_json=$(_dispatch_enumerate_repo_bounded "$repo_scan_budget" "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
-		_dispatch_record_repo_enumeration_outcome "$repo_slug" "$repo_budget" "$repo_scan_budget" "$repo_rc" \
-			"$(($(_dispatch_first_wave_now_s) - repo_scan_started))"
+		repo_candidates_json=$(_dispatch_census_enumerate_repo "$repo_slug" "$repo_path" "$repo_budget" "$remaining" \
+			"$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
 		if ((repo_rc != 0)); then
-			echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${repo_rc} budget=${repo_scan_budget}s (GH#38226)" >>"$LOGFILE"
-			repo_candidates_json='[]'
 			scan_failed=1
 			[[ "$repo_priority" != product ]] || product_complete=false
 		fi
