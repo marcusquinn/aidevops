@@ -339,7 +339,7 @@ _pmr_require_gh_auth() {
 
 _pmr_release_lock() {
 	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
-		local hits=0 misses=0 line=""
+		local hits=0 misses=0 line="" distinct=0
 		while IFS= read -r line; do
 			case "$line" in
 			hit) hits=$((hits + 1)) ;;
@@ -347,6 +347,8 @@ _pmr_release_lock() {
 			esac
 		done <"$AIDEVOPS_GH_COLLAB_STATS_FILE"
 		_pmr_log INFO "collab_memo hits=${hits} misses=${misses}"
+		distinct=$(sort -u "$AIDEVOPS_GH_COLLAB_STATS_FILE" | awk '/^miss / { n++ } END { print n+0 }')
+		_pmr_log INFO "collab_memo distinct_miss_keys=${distinct}"
 		rm -f "$AIDEVOPS_GH_COLLAB_STATS_FILE"
 	fi
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
