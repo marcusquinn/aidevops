@@ -404,8 +404,8 @@ class DecisionTests(GitFixture):
         self.assertNotEqual(decision.fingerprint(self.worktree), first)
         self.assertIsNone(decision.fingerprint(self.root / "absent"))
 
-    def test_removal_refuses_when_head_moved_to_other_clean_pushed_work(self):
-        digest = decision.fingerprint(self.worktree)
+    def move_to_other_pushed_work(self):
+        """Move the worktree's HEAD to different work that is clean and pushed."""
         (self.canonical / "OTHER.md").write_text("other\n", encoding="utf-8")
         git(self.canonical, "add", "OTHER.md")
         git(self.canonical, "commit", "-qm", "fixture: other")
@@ -414,11 +414,46 @@ class DecisionTests(GitFixture):
         git(self.canonical, "update-ref", "refs/remotes/origin/main", "HEAD")
         git(self.worktree, "checkout", "-q", "--detach", "origin/main")
         self.assertEqual(host.nothing_to_lose(self.worktree), (True, "nothing-to-lose"))
+
+    def test_removal_refuses_when_head_moved_to_other_clean_pushed_work(self):
+        digest = decision.fingerprint(self.worktree)
+        self.move_to_other_pushed_work()
         removed, detail = host.remove(
             self.worktree, decision.cas_verify(digest, host.nothing_to_lose), no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "evidence-changed")
         self.assertTrue(self.worktree.exists())
+
+    def test_head_moved_during_judgement_refuses_removal(self):
+        original = reclaim.evidence
+
+        def moving(*arguments, **options):
+            self.move_to_other_pushed_work()
+            return original(*arguments, **options)
+
+        reclaim.evidence = moving
+        try:
+            receipt = reclaim.new_receipt(self.root, dry_run=False)
+            reclaim.reclaim_one(self.worktree, self.a_pass(), receipt)
+        finally:
+            reclaim.evidence = original
+        self.assertEqual(receipt["results"][0]["removal"], "evidence-changed")
+        self.assertTrue(self.worktree.exists())
+
+    def test_fingerprint_distinguishes_a_recreated_tree(self):
+        digest = decision.fingerprint(self.worktree)
+        aside = self.root / "aside"
+        os.rename(self.worktree, aside)
+        # Copy while the original still exists, so the new directory has its own inode.
+        shutil.copytree(aside, self.worktree, symlinks=True)
+        try:
+            self.assertIsNotNone(decision.fingerprint(self.worktree))
+            self.assertNotEqual(decision.fingerprint(self.worktree), digest)
+        finally:
+            shutil.rmtree(aside)
+
+    def test_fingerprint_stops_when_the_budget_is_spent(self):
+        self.assertIsNone(decision.fingerprint(self.worktree, remaining=lambda: 0))
 
     def test_dry_run_reports_decisions_and_writes_nothing(self):
         receipt = reclaim.new_receipt(self.root, dry_run=True)

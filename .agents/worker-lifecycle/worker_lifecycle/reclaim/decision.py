@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import hashlib
+import os
 from pathlib import Path
 import sqlite3
 from uuid import UUID, uuid5
@@ -62,17 +63,31 @@ def classify(verdict: dict) -> tuple[str, str]:
     return REFUSE, reason
 
 
-def fingerprint(path: Path, *, timeout: int = 60) -> str | None:
-    """Hash HEAD, porcelain status and unpushed count, or None when unreadable.
+Budget = Callable[[], int]
 
-    Any commit, checkout, edit or push between judgement and removal changes it.
+
+def fingerprint(path: Path, *, timeout: int = 60, remaining: Budget | None = None) -> str | None:
+    """Hash the tree instance, HEAD, porcelain status and unpushed count.
+
+    Any commit, checkout, edit or push between judgement and removal changes it,
+    and so does replacing the directory: its device and inode identify this
+    instance, so a tree recreated at the same path never inherits an earlier
+    instance's journaled authorization. Returns None when anything is unreadable
+    or ``remaining`` (the live pass budget) cannot cover the next command.
     """
-    parts = []
+    try:
+        identity = os.lstat(path)
+    except OSError:
+        return None
+    parts = [f"{identity.st_dev}:{identity.st_ino}"]
     for arguments in (("rev-parse", "--verify", "HEAD"),
                       ("status", "--porcelain", "-z", "--untracked-files=all",
                        "--ignore-submodules=none"),
                       ("rev-list", "--count", "HEAD", "--not", "--remotes")):
-        status, output = git(path, *arguments, timeout=timeout)
+        budget = timeout if remaining is None else min(timeout, remaining())
+        if budget < 1:
+            return None
+        status, output = git(path, *arguments, timeout=budget)
         if status != 0:
             return None
         parts.append(output)
@@ -82,10 +97,10 @@ def fingerprint(path: Path, *, timeout: int = 60) -> str | None:
 Verifier = Callable[[Path], "tuple[bool, str]"]
 
 
-def cas_verify(expected: str, verify: Verifier) -> Verifier:
+def cas_verify(expected: str, verify: Verifier, remaining: Budget | None = None) -> Verifier:
     """Wrap a removal-time verifier with the fingerprint compare-and-swap."""
     def check(target: Path) -> tuple[bool, str]:
-        if fingerprint(target) != expected:
+        if fingerprint(target, remaining=remaining) != expected:
             return False, EVIDENCE_CHANGED
         return verify(target)
     return check

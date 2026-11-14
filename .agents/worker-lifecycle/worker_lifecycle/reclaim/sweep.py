@@ -82,7 +82,12 @@ def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
 
 
 def judge(path: Path, current: Pass, receipt: dict) -> dict:
-    """Collect evidence and the three-way decision for one worktree; never writes."""
+    """Collect evidence and the three-way decision for one worktree; never writes.
+
+    The fingerprint is taken before evidence is collected, so a change at any
+    point after it (during judgement included) fails the removal-time CAS.
+    """
+    digest = fingerprint(path, remaining=current.remaining)
     verdict = evidence(path, current.owner, current.finished,
                        timeout=min(current.remaining(), 60))
     verdict["decision"], _ = classify(verdict)
@@ -95,7 +100,7 @@ def judge(path: Path, current: Pass, receipt: dict) -> dict:
     else:
         receipt["authorized"] += 1
     if verdict["decision"] != REFUSE:
-        verdict["fingerprint"] = fingerprint(path, timeout=min(current.remaining(), 60))
+        verdict["fingerprint"] = digest
     return verdict
 
 
@@ -128,7 +133,7 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     common = common_directory(path)
     # A review tree was authorized for being quiet, so removal re-checks that too.
     verify = verify_idle_review if verdict["reason"] == "review-idle" else nothing_to_lose
-    removed, detail = remove(path, cas_verify(digest, verify), current.owner)
+    removed, detail = remove(path, cas_verify(digest, verify, current.remaining), current.owner)
     verdict["removal"] = detail
     if not removed:
         receipt["failed"] += 1
