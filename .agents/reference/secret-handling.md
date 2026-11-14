@@ -186,26 +186,29 @@ pasted into the shell or appears in scrollback/history, revoke and replace it.
 ## Headless runner GPG availability
 
 `aidevops secret check NAME` is status-only: exit 0 means readable, 1 means
-missing (or empty plaintext), and 3 means a gopass-owned entry is unreadable
-or empty. It never prints values or decryption errors. The runner capability
+missing (or empty plaintext), 3 means a gopass-owned entry is unreadable
+or empty, and 5 means the non-interactive read timed out. It never prints values or decryption errors. The runner capability
 log reports `reason=secret_missing name=NAME`, `secret_unreadable`,
 `check_timeout`, or `probe_failed path=...` without secret material.
 
 Gopass is authoritative for names it owns: failed decryption **does not** fall
 back to `credentials.sh`. Deferrals state `store=gopass fallback=disabled`.
 A locked agent is the common cause, but an unreadable entry can also mean
-corruption or missing decryption keys. Status-only decryption is bounded using
-the existing four-second headless resolver; an owned entry that times out
-returns 3. The outer capability watchdog reports `check_timeout` if the whole
-command (including store listing) exceeds five seconds.
+corruption or missing decryption keys. Headless decryption uses
+`AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS` (default 12, clamped 1–55 seconds).
+The outer capability watchdog defaults to 15 seconds and also reports
+`check_timeout` when the whole command, including store listing, exceeds its limit.
 Pulse emits one `runner_health: gpg store locked or entry unreadable` line
-per cycle and skips subsequent secret-gated checks for that cycle; ungated
+for each fresh unreadable result and skips subsequent secret-gated checks until
+the cache expires; ungated
 candidates can still run. `runner_capability_health secret_gated_deferred=N`
 records the running count of rejected gate calls, not a final candidate total.
-Cycle state contains only names/counts in a mode-600 file under the runner's
+`AIDEVOPS_RUNNER_CAPABILITY_UNREADABLE_TTL_SECONDS` sets the cache lifetime
+(default 120 seconds). An expired entry is rechecked under the exclusive lock;
+timeouts are not cached. Cycle state contains only names/counts/timestamps in a mode-600 file under the runner's
 workspace temp directory, with an exclusive lock shared across watchdog
 subshells and concurrent candidates. Old cycle metadata expires after a day.
-The next cycle retries, so unlocking does not require restarting pulse.
+An unlocked store is retried after expiry without restarting pulse.
 
 For unattended runners, provision the agent unlock outside AI chat. Set both
 `default-cache-ttl` and `max-cache-ttl` in the operator's `gpg-agent.conf` long
