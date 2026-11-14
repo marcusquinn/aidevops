@@ -73,6 +73,12 @@ _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SEC
 _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS:-10}"
 [[ "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=10
 ((_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS <= 30)) || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=30
+# GH#38261: one bounded issue read per candidate revision supplies the body
+# that ranking candidates omit (GH#35038); memoised by repo#issue@updatedAt.
+_DISPATCH_NEGATIVE_CACHE_SOURCE=""
+_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON=""
+_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ='[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv'
 # A terminal-blocker circuit is keyed to material issue revisions: an edit, a
 # retry directive or a non-ops comment invalidates the hint at once.
 # Only target-code revisions can re-arm it silently, so bound that delay. Each
@@ -391,6 +397,40 @@ _dispatch_negative_cache_material() {
 	return 0
 }
 
+# GH#38261: ranking candidates carry no body, so their material can never
+# prove a bump is noise. Set _DISPATCH_NEGATIVE_CACHE_SOURCE to body-bearing
+# material: the candidate itself, else one bounded issue read. `exact` also
+# requires the read to show the candidate's own revision, so a record never
+# vouches for an edit its ceremony did not evaluate. Failure is a cache miss.
+_dispatch_negative_cache_load_source() {
+	local candidate="$1" checkpoint_mode="$2" revision="${3:-}"
+	local fields issue repo updated key issue_json
+	_DISPATCH_NEGATIVE_CACHE_SOURCE=""
+	if jq -e '.body | type == "string"' <<<"$candidate" >/dev/null 2>&1; then
+		_DISPATCH_NEGATIVE_CACHE_SOURCE="$candidate"
+		return 0
+	fi
+	[[ "$checkpoint_mode" != snapshot_only ]] || return 1
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate" 2>/dev/null) || return 1
+	IFS=$'\t' read -r issue repo updated <<<"$fields"
+	_dispatch_negative_cache_path "$issue" "$repo" >/dev/null || return 1
+	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	key="${repo}#${issue}@${updated}"
+	if [[ "$_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY" != "$key" ]]; then
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+		issue_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+			gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON=$(jq -ce 'select(type == "object") | {labels: (.labels // []),
+			assignees: (.assignees // []), body: (.body // ""), updatedAt: (.updated_at // "")}' <<<"$issue_json" 2>/dev/null) || return 1
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY="$key"
+	fi
+	if [[ "$revision" == exact ]]; then
+		jq -e --arg updated "$updated" '.updatedAt == $updated' <<<"$_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON" >/dev/null 2>&1 || return 1
+	fi
+	_DISPATCH_NEGATIVE_CACHE_SOURCE="$_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON"
+	return 0
+}
+
 # Reuse the gh shim's audit classifier; only the legacy first-token events need
 # the dispatch-specific fallback. Keep the shim's globals isolated from pulse.
 _dispatch_negative_cache_ops_only() (
@@ -429,7 +469,7 @@ _dispatch_negative_cache_record() {
 		owner_path=""
 		fingerprint=""
 	fi
-	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
 	# Unassigned/available claim hints cannot pass the reader's owner gate.
@@ -451,7 +491,12 @@ _dispatch_negative_cache_record() {
 		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) || return 0
 		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
 	fi
-	material=$(_dispatch_negative_cache_material "$candidate") || return 0
+	# Live-owner holds never consult material; skip the issue read for them.
+	if [[ "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
+		_dispatch_negative_cache_load_source "$candidate" allow_rest exact; then
+		material=$(_dispatch_negative_cache_material "$_DISPATCH_NEGATIVE_CACHE_SOURCE") || material=""
+	fi
+	[[ -n "$material" ]] || material=$(_dispatch_negative_cache_material "$candidate") || return 0
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
@@ -518,7 +563,8 @@ _dispatch_negative_cache_self_validating_reason() {
 _dispatch_negative_cache_material_matches() {
 	local candidate="$1" checkpoint_mode="$2" material="$3" current=''
 	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* ]] || return 1
-	current=$(_dispatch_negative_cache_material "$candidate") || return 1
+	_dispatch_negative_cache_load_source "$candidate" "$checkpoint_mode" || return 1
+	current=$(_dispatch_negative_cache_material "$_DISPATCH_NEGATIVE_CACHE_SOURCE") || return 1
 	[[ "$current" == "$material" ]] || return 1
 	return 0
 }
@@ -526,11 +572,10 @@ _dispatch_negative_cache_material_matches() {
 _dispatch_negative_cache_refresh_revision() {
 	local candidate="$1" checkpoint_mode="$2" record="$3" file="$4"
 	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material='' revision_anchor=''
-	local current='' comments='' updated='' repo='' issue='' tmp=''
+	local comments='' updated='' repo='' issue='' tmp=''
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
-	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* && "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
-	current=$(_dispatch_negative_cache_material "$candidate") || return 1
-	[[ "$current" == "$material" ]] || return 1
+	[[ "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	_dispatch_negative_cache_material_matches "$candidate" "$checkpoint_mode" "$material" || return 1
 	IFS=$'\t' read -r issue repo updated < <(jq -r '[.number, .repo_slug, .updatedAt] | @tsv' <<<"$candidate") || return 1
 	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
 		gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
@@ -561,7 +606,7 @@ _dispatch_negative_cache_reason() {
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material="" revision_anchor=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
-	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
@@ -571,8 +616,10 @@ _dispatch_negative_cache_reason() {
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	# GH#38261: only the cheap gate here. The material and comment reads run in
+	# the refresh below, after the TTL checks, so expired hints cost no API call.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] ||
-		_dispatch_negative_cache_material_matches "$candidate" "$checkpoint_mode" "$material" || return 1
+		[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* ]] || return 1
 	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
