@@ -719,6 +719,8 @@ test_selection_holds_for_all_origins() {
 				: >"$LOGFILE"
 				fn_src=$(awk '/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge.sh")
 				eval "$fn_src"
+				fn_src=$(awk '/^_pm_gate_unlabeled_worker_branch\(\) \{/,/^}$/ { print }' "${SCRIPT_DIR}/../pulse-merge-partial-continuation.sh")
+				eval "$fn_src"
 				fn_src=$(awk '/^_stop_external_native_auto_merge\(\) \{/,/^}$/ { print }' "$PROCESS_SCRIPT")
 				eval "$fn_src"
 				DRY_RUN=0

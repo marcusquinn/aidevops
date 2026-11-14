@@ -666,7 +666,7 @@ _pm_gate_repository_and_issue() {
 _pm_gate_origin_authority() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" pr_author="$4"
 	local trusted_issue_sync="$5" author_permission="$6" info_json="" labels_str="" is_draft="false"
-	info_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,autoMergeRequest 2>/dev/null) || info_json=""
+	info_json=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json labels,isDraft,autoMergeRequest,headRefName,body 2>/dev/null) || info_json=""
 	# #aidevops:trust-boundary — holds apply to every origin, including takeover.
 	if ! printf '%s' "$info_json" | jq -e '(.isDraft | type) == "boolean" and (.labels | type) == "array"' >/dev/null 2>&1; then
 		return 1
@@ -692,6 +692,9 @@ _pm_gate_origin_authority() {
 		_PMP_HUMAN_GATED=1 # GH#38248: live draft/hold read
 		return 1
 	fi
+	# #aidevops:trust-boundary — GH#38042; a missing module fails closed.
+	declare -F _pm_gate_unlabeled_worker_branch >/dev/null 2>&1 || return 1
+	_pm_gate_unlabeled_worker_branch "$pr_number" "$repo_slug" "$pr_author" "$labels_str" "$info_json" || return 1
 	if [[ "$labels_str" == *"origin:interactive"* ]]; then
 		_check_interactive_pr_gates "$pr_number" "$repo_slug" "$labels_str" "$is_draft" || return 1
 	fi
