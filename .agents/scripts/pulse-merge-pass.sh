@@ -102,9 +102,11 @@ _pmp_clear_merge_pr_cursor() {
 	[[ -n "$cursor_file" ]] || return 0
 	if [[ -n "$repo_slug" ]]; then
 		_pmp_rewrite_merge_pr_cursor_file "$cursor_file" "$repo_slug"
+		# GH#38248: the walk's resume-lane record ends with its cursor.
+		[[ -f "${cursor_file}.lane-served" ]] && _pmp_rewrite_merge_pr_cursor_file "${cursor_file}.lane-served" "$repo_slug"
 		return 0
 	fi
-	rm -f "$cursor_file" 2>/dev/null || true
+	rm -f "$cursor_file" "${cursor_file}.lane-served" 2>/dev/null || true
 	return 0
 }
 
@@ -419,7 +421,11 @@ _pmp_pause_merge_pr_cursor() {
 	local next_pr="" last_pr=""
 	local cursor_file="${PULSE_MERGE_PR_CURSOR_FILE:-}"
 	local logfile="${LOGFILE:-/dev/null}"
+	local lane_end="${_PMP_RESUME_LANE_END:-0}"
 
+	# GH#38248: unprocessed resume-lane items sit before the original resume
+	# item; persisting that item keeps the walk from rewinding.
+	[[ "$lane_end" =~ ^[0-9]+$ && "$cursor_index" =~ ^[0-9]+$ && "$cursor_index" -lt "$lane_end" ]] && cursor_index="$lane_end"
 	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$cursor_index") || next_pr=""
 	_pmp_read_merge_pr_cursor_last "$cursor_file" "$repo_slug" last_pr || last_pr=""
 	_pmp_write_merge_pr_cursor "$cursor_file" "$repo_slug" "$cursor_index" "$last_pr" "$next_pr"
@@ -561,6 +567,11 @@ _pmp_prepare_enriched_pr_backlog() {
 		fi
 		pr_obj=$(_pmp_pr_object_at_index "$fresh_json" "$cursor_index")
 		cached_obj=$(jq -cn --argjson cache "$filtered_cache" --argjson pr "$pr_obj" '$cache | map(select(.number == $pr.number and ((.headRefOid // "") == ($pr.headRefOid // "")))) | last // empty') || cached_obj=""
+		# GH#38248: non-worker drafts classify from list fields alone.
+		if [[ -z "$cached_obj" ]] && declare -F _pmp_draft_enrichment_unneeded >/dev/null 2>&1 &&
+			_pmp_draft_enrichment_unneeded "$pr_obj" advisory; then
+			cached_obj="$pr_obj"
+		fi
 		if [[ -z "$cached_obj" ]]; then
 			if ! _pmp_rest_core_priority_allows_next progress "merge_backlog_enrichment:${repo_slug}"; then
 				_pmp_pause_merge_enrichment_cursor "$repo_slug" "$fresh_json" "$cursor_index" "$cursor_file" rest-core

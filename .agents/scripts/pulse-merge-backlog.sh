@@ -178,7 +178,11 @@ _pmp_sort_prs_by_backlog_priority() {
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		priority=$(_pmp_backlog_priority "$category")
-		printf '%s' "$pr_obj" | jq -e '._pulseDeferredRetry == true' >/dev/null 2>&1 && retry_priority=0
+		# GH#38248: a retry hint on a draft/hold-for-review PR cannot progress
+		# without a human, so it must not outrank merge-ready work. Ordering
+		# only; the evaluator still re-reads and enforces every gate.
+		printf '%s' "$pr_obj" | jq -e '._pulseDeferredRetry == true and (.isDraft // false) != true
+			and (any((.labels // [])[]; (.name? // .) == "hold-for-review") | not)' >/dev/null 2>&1 && retry_priority=0
 		if [[ -n "$dirty_keys" ]]; then
 			pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
 			[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
@@ -260,6 +264,34 @@ _pmp_enrich_single_pr_for_processing() {
 }
 
 #######################################
+# GH#38248: true when a listed PR needs no REST enrichment. The evaluator
+# rejects drafts from list fields before reading any enriched field, and
+# backlog classification maps drafts to human-approval-needed first. Advisory
+# mode keeps worker-owned drafts enriched because duplicate consolidation
+# scores them (_pmp_pr_is_worker_owned_for_consolidation).
+# Args: $1=PR object, $2=mode (advisory|authoritative)
+#######################################
+_pmp_draft_enrichment_unneeded() {
+	local pr_obj="$1"
+	local mode="${2:-authoritative}"
+	if printf '%s' "$pr_obj" | jq -e --arg mode "$mode" '
+		def names: [(.labels // [])[] | (.name? // .)];
+		def worker_owned: (names | any(.[]; . == "origin:worker" or . == "origin:worker-takeover"))
+			and (names | any(.[]; . == "origin:interactive" or . == "needs-maintainer-review") | not);
+		(.isDraft // false) == true and ($mode == "authoritative" or (worker_owned | not))' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# Stdout: the PR object with explicit unknown enrichment placeholders.
+_pmp_pr_with_unknown_enrichment() {
+	local pr_obj="$1"
+	printf '%s' "$pr_obj" | jq -c '. + {mergeable:"UNKNOWN", reviewDecision:"UNKNOWN", statusCheckRollup:[]}' 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # Prepare one cursor item for eligibility processing. Stop, budget, and
 # cooldown pauses persist the current item before returning status 5.
 # Args: $1=repo, $2=PR array, $3=index, $4=output var,
@@ -304,7 +336,11 @@ _pmp_prepare_pr_at_cursor() {
 		# change. Remove them so authoritative processing always refreshes all
 		# eligibility state from bounded REST endpoints.
 		prepared_pr_obj=$(printf '%s' "$prepared_pr_obj" | jq -c 'del(.mergeable, .reviewDecision, .statusCheckRollup)') || return 1
-		enriched_pr_obj=$(_pmp_enrich_single_pr_for_processing "$repo_slug" "$prepared_pr_obj") || enrichment_rc=$?
+		if _pmp_draft_enrichment_unneeded "$prepared_pr_obj" authoritative; then
+			enriched_pr_obj=$(_pmp_pr_with_unknown_enrichment "$prepared_pr_obj") || enrichment_rc=1
+		else
+			enriched_pr_obj=$(_pmp_enrich_single_pr_for_processing "$repo_slug" "$prepared_pr_obj") || enrichment_rc=$?
+		fi
 		if [[ "$enrichment_rc" -eq 5 || "$enrichment_rc" -eq 6 ]]; then
 			local pause_reason="budget"
 			[[ "$enrichment_rc" -eq 6 ]] && pause_reason="rest-core"
@@ -576,5 +612,103 @@ _pmp_prepare_repo_processing_backlog() {
 	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || { pr_count=0; outcomes_complete=0; }
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	return 0
+}
+
+# GH#38248: the walk records `repo|number|head` for each PR it evaluated in a
+# merge-ready state (`<cursor file>.lane-served`, cleared with the cursor).
+# Stdout: the record key when the advisory PR object classifies merge-ready.
+_pmp_lane_served_key() {
+	local repo_slug="$1" pr_obj="$2" number_head=""
+	[[ "$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")" == "$_PMP_BACKLOG_MERGE_READY" ]] || return 1
+	number_head=$(printf '%s' "$pr_obj" | jq -er '"\(.number)|\(.headRefOid // "")"' 2>/dev/null) || return 1
+	printf '%s|%s' "$repo_slug" "$number_head"
+	return 0
+}
+
+# Args: $1=repo slug, $2=advisory PR object that was just evaluated
+_pmp_record_lane_served() {
+	local repo_slug="$1" pr_obj="$2" key=""
+	[[ -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 0
+	key=$(_pmp_lane_served_key "$repo_slug" "$pr_obj") || return 0
+	printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" 2>/dev/null || true
+	return 0
+}
+
+# A PR before the resume cursor qualifies for the lane when it is merge-ready
+# now but this walk has not yet evaluated it merge-ready at this head: it
+# became ready after the walk passed it. Args: $1=repo, $2=advisory PR object
+_pmp_resume_lane_candidate() {
+	local repo_slug="$1" pr_obj="$2" key="" served_file="${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-served"
+	key=$(_pmp_lane_served_key "$repo_slug" "$pr_obj") || return 1
+	[[ -f "$served_file" ]] && grep -Fxq -- "$key" "$served_file" 2>/dev/null && return 1
+	return 0
+}
+
+#######################################
+# GH#38248: resolve the caller's resume index, then move up to
+# PULSE_MERGE_RESUME_PRIORITY_LIMIT (default 2; 0 disables) lane candidates
+# from before the cursor to just ahead of it. Work that became merge-ready
+# after the previous walk passed it is evaluated now instead of after the
+# walk wraps. The original resume item keeps its index (_PMP_RESUME_LANE_END)
+# so durable cursor writes never rewind the walk. Ordering only: every gate
+# still runs. Uses the caller's dynamically scoped pr_json, pr_count and
+# _PMP_RESUME_LANE_END.
+# Args: $1=repo slug, $2=start index output var
+#######################################
+_pmp_resume_cursor_with_priority_lane() {
+	local repo_slug="$1" start_var="$2"
+	# Not named start_index: the resume helper's own local would shadow it.
+	local lane_resume_index=0 limit="${PULSE_MERGE_RESUME_PRIORITY_LIMIT:-2}" idx=0 moved=0 lane="" reordered=""
+	[[ "$start_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_PMP_RESUME_LANE_END=0
+	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" lane_resume_index || lane_resume_index=0
+	[[ "$lane_resume_index" =~ ^[0-9]+$ ]] || lane_resume_index=0
+	printf -v "$start_var" '%s' "$lane_resume_index"
+	if [[ "$lane_resume_index" -eq 0 ]]; then
+		# A fresh walk starts with an empty record (covers pruned cursors).
+		[[ -f "${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-served" ]] && _pmp_rewrite_merge_pr_cursor_file "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" "$repo_slug"
+		return 0
+	fi
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=2
+	[[ "$limit" -gt 0 ]] || return 0
+	local start_index="$lane_resume_index"
+	while [[ "$idx" -lt "$start_index" && "$moved" -lt "$limit" ]]; do
+		if _pmp_resume_lane_candidate "$repo_slug" "$(_pmp_pr_object_at_index "$pr_json" "$idx")"; then
+			lane="${lane}${lane:+,}${idx}"
+			moved=$((moved + 1))
+		fi
+		idx=$((idx + 1))
+	done
+	[[ "$moved" -gt 0 ]] || return 0
+	reordered=$(printf '%s' "$pr_json" | jq -c --argjson start "$start_index" --argjson lane "[${lane}]" '
+		. as $all
+		| [range(0; $start) | select(. as $i | $lane | any(.[]; . == $i) | not) | $all[.]]
+			+ [$lane[] | $all[.]] + $all[$start:]' 2>/dev/null) || return 0
+	[[ -n "$reordered" ]] || return 0
+	pr_json="$reordered"
+	_PMP_RESUME_LANE_END="$start_index"
+	printf -v "$start_var" '%s' "$((start_index - moved))"
+	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${moved} merge-ready PR(s) ahead of cursor index=${start_index} (GH#38248)" >>"$LOGFILE"
+	return 0
+}
+
+# GH#38248: after the PR at next_index-1 was evaluated, record it in the
+# walk's lane record, then compute the durable cursor. While lane items run,
+# cursor writes keep the original resume item so a pause or crash cannot
+# rewind the walk past already-processed PRs.
+# Args: $1=repo slug, $2=next index, $3=index output var, $4=next-PR output var
+# Uses the caller's dynamically scoped pr_json and _PMP_RESUME_LANE_END.
+_pmp_lane_clamped_cursor() {
+	local repo_slug="$1" next_index="$2" index_var="$3" next_pr_var="$4"
+	local lane_end="${_PMP_RESUME_LANE_END:-0}" next_pr=""
+	[[ "$index_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$next_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	[[ "$next_index" =~ ^[0-9]+$ ]] || next_index=0
+	[[ "$next_index" -gt 0 ]] && _pmp_record_lane_served "$repo_slug" "$(_pmp_pr_object_at_index "$pr_json" "$((next_index - 1))")"
+	[[ "$lane_end" =~ ^[0-9]+$ ]] || lane_end=0
+	[[ "$next_index" -lt "$lane_end" ]] && next_index="$lane_end"
+	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$next_index") || next_pr=""
+	printf -v "$index_var" '%s' "$next_index"
+	printf -v "$next_pr_var" '%s' "$next_pr"
 	return 0
 }

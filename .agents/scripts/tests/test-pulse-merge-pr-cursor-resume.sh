@@ -60,6 +60,7 @@ set +o pipefail 2>/dev/null || true
 
 FAKE_NOW=100
 PROCESSED_PRS=""
+PR102_CHECK_STATE="FAILURE"
 ENRICH_TRIGGER_PHASE=""
 REST_BLOCK_AFTER_PHASE=""
 ENRICH_PHASE_LOG="${TMPDIR_TEST}/enrichment-phases.log"
@@ -133,7 +134,7 @@ _pmp_enrich_prs_with_rest_check_status() {
 	[[ -n "$repo_slug" ]] || return 1
 	require_single_pr_enrichment_input "$pr_json" || return 1
 	record_enrichment_phase checks
-	printf '%s' "$pr_json" | jq -c 'map(. + {statusCheckRollup:(if .number == 101 then [{status:"IN_PROGRESS",conclusion:null,state:"PENDING"}] elif .number == 102 then [{status:"COMPLETED",conclusion:"FAILURE",state:"FAILURE"}] else [{status:"COMPLETED",conclusion:"SUCCESS",state:"SUCCESS"}] end)})'
+	printf '%s' "$pr_json" | jq -c --arg c102 "$PR102_CHECK_STATE" 'map(. + {statusCheckRollup:(if .number == 101 then [{status:"IN_PROGRESS",conclusion:null,state:"PENDING"}] elif .number == 102 then [{status:"COMPLETED",conclusion:$c102,state:$c102}] else [{status:"COMPLETED",conclusion:"SUCCESS",state:"SUCCESS"}] end)})'
 	return 0
 }
 
@@ -202,6 +203,30 @@ else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
 	printf '%sFAIL%s: cursor clears after repo completes\n' "$TEST_RED" "$TEST_NC"
 fi
+
+# GH#38248: a PR the paused walk passed while failing becomes merge-ready at
+# the same head. The resumed walk evaluates it ahead of the tail instead of
+# after the walk wraps, and never repeats PRs already evaluated merge-ready.
+rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
+PROCESSED_PRS=""
+FAKE_NOW=100
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=2
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+lane_first_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_first_rc=$?
+assert_eq "lane setup pauses after the ready and failing PRs" "5|103 102 " "${lane_first_rc}|${PROCESSED_PRS}"
+PR102_CHECK_STATE="SUCCESS"
+rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
+PROCESSED_PRS=""
+FAKE_NOW=200
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+lane_second_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_second_rc=$?
+assert_eq "resume lane evaluates the newly ready PR before the tail" "0|102 101 104 " "${lane_second_rc}|${PROCESSED_PRS}"
+assert_eq "resume lane is logged" "1" "$(grep -c 'resume priority lane for org/repo moved 1 ' "$LOGFILE")"
+assert_eq "completed walk clears the lane record" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" ]] && printf true || printf false)"
+PR102_CHECK_STATE="FAILURE"
 
 assert_budget_pause_after_phase() {
 	local phase="$1"
