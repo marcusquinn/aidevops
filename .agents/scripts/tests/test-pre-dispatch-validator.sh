@@ -1220,6 +1220,59 @@ test_brief_scope_signed_approval_external() {
 	return 0
 }
 
+# GH#38178: the release stage runs in a 12 s housekeeping slice. It must yield
+# (rc 0, cursor kept, no repo work) at the deadline, rotate from the cursor,
+# and stop before the next candidate inside a repo once the deadline is near.
+test_brief_hold_release_rotates_and_yields() {
+	local rc=0 tmp=""
+	tmp=$(mktemp -d) || return 1
+	(
+		# shellcheck source=../shared-constants.sh
+		source "${SCRIPT_DIR}/../shared-constants.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-simplification-review.sh
+		source "${SCRIPT_DIR}/../pulse-simplification-review.sh" >/dev/null 2>&1
+		# shellcheck source=../pulse-dispatch-brief-scope.sh
+		source "${SCRIPT_DIR}/../pulse-dispatch-brief-scope.sh" >/dev/null 2>&1
+		declare -F _pulse_scanner_deadline_reached >/dev/null || exit 9
+		declare -F release_repaired_brief_holds >/dev/null || exit 11
+		LOGFILE="${tmp}/log"
+		# Inside a repo: a near deadline stops before the next candidate.
+		repo_allows_pulse_write_actions() { return 0; }
+		gh() { printf '%s\n' '[{"number":7,"body":"x","author":{"login":"m"},"labels":[]}]'; return 0; }
+		_release_repaired_brief_hold() { printf 'released\n' >>"${tmp}/holds"; return 0; }
+		[[ "$(PULSE_STAGE_DEADLINE_EPOCH=$(date +%s) _release_repaired_brief_holds_repo o/a 1)" == "0" ]] || exit 7
+		[[ ! -s "${tmp}/holds" ]] || exit 8
+		[[ "$(PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 600)) _release_repaired_brief_holds_repo o/a 1)" == "1" ]] || exit 10
+		# Across repos: rotate from the cursor and yield with it kept.
+		export AIDEVOPS_BRIEF_HOLD_RELEASE_CURSOR_DIR="${tmp}/cursor"
+		DEP_GRAPH_CACHE_FILE="${tmp}/graph.json"
+		printf '%s\n' '{"repos":{"o/a":{},"o/b":{},"o/c":{}}}' >"$DEP_GRAPH_CACHE_FILE"
+		mkdir -p "${tmp}/cursor"
+		printf 'o/a\n' >"${tmp}/cursor/repo.cursor"
+		_release_repaired_brief_holds_repo() {
+			printf '%s ' "$1" >>"${tmp}/visits"
+			printf '0\n'
+			return 0
+		}
+		# Deadline already reached: yield before any repo, cursor unchanged.
+		PULSE_STAGE_DEADLINE_EPOCH=$(date +%s) release_repaired_brief_holds || exit 1
+		[[ ! -s "${tmp}/visits" ]] || exit 2
+		[[ "$(sed -n '1p' "${tmp}/cursor/repo.cursor")" == "o/a" ]] || exit 3
+		grep -q 'yielded after 0 repo' "$LOGFILE" || exit 4
+		# Comfortable deadline: one full rotation after the cursor.
+		PULSE_STAGE_DEADLINE_EPOCH=$(($(date +%s) + 600)) release_repaired_brief_holds || exit 5
+		[[ "$(cat "${tmp}/visits")" == "o/b o/c o/a " ]] || exit 6
+		exit 0
+	) >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "brief-hold release rotates repos and yields before the stage deadline" 0
+	else
+		print_result "brief-hold release rotates repos and yields before the stage deadline" 1 "rc=${rc}"
+	fi
+	rm -rf "$tmp"
+	return 0
+}
+
 test_brief_hold_release_is_body_bound() {
 	local rc=0
 	(
@@ -1659,6 +1712,7 @@ main() {
 	test_brief_scope_self_heal_and_release
 	test_brief_scope_worker_discovery
 	test_brief_scope_signed_approval_external
+	test_brief_hold_release_rotates_and_yields
 	test_brief_hold_release_is_body_bound
 	test_zero_progress_meta_recovered_blocks_dispatch
 	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write
