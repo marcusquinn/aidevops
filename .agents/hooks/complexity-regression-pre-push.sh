@@ -92,6 +92,7 @@ fi
 _ZERO_SHA="0000000000000000000000000000000000000000"
 if [[ -z "${COMPLEXITY_GUARD_TIP:-}" ]]; then
 	_tips=()
+	_trefs=()
 	_stdin_seen=0
 	while read -r _lref _lsha _rref _rsha; do
 		_stdin_seen=1
@@ -104,7 +105,10 @@ if [[ -z "${COMPLEXITY_GUARD_TIP:-}" ]]; then
 		esac
 		case " ${_tips[*]:-} " in
 		*" $_lsha "*) ;;
-		*) _tips+=("$_lsha") ;;
+		*)
+			_tips+=("$_lsha")
+			_trefs+=("${_lref:-}")
+			;;
 		esac
 	done
 	if [[ "$_stdin_seen" == "1" ]]; then
@@ -114,12 +118,13 @@ if [[ -z "${COMPLEXITY_GUARD_TIP:-}" ]]; then
 		fi
 		if [[ ${#_tips[@]} -gt 1 ]]; then
 			_multi_rc=0
-			for _t in "${_tips[@]}"; do
-				COMPLEXITY_GUARD_TIP="$_t" "${BASH_SOURCE[0]}" "$@" </dev/null || _multi_rc=1
+			for _i in "${!_tips[@]}"; do
+				COMPLEXITY_GUARD_TIP="${_tips[$_i]}" COMPLEXITY_GUARD_REF="${_trefs[$_i]}" "${BASH_SOURCE[0]}" "$@" </dev/null || _multi_rc=1
 			done
 			exit "$_multi_rc"
 		fi
 		COMPLEXITY_GUARD_TIP="${_tips[0]}"
+		COMPLEXITY_GUARD_REF="${_trefs[0]}"
 	fi
 fi
 TIP_SHA="${COMPLEXITY_GUARD_TIP:-HEAD}"
@@ -154,7 +159,11 @@ _compute_baseline() {
 		# Last resort: old behaviour (warn)
 		printf '[%s] warning: no origin HEAD resolved; falling back to @{u}\n' \
 			"$GUARD_NAME" >&2
-		git merge-base "${TIP_SHA:-HEAD}" '@{u}' 2>/dev/null
+		# Use the pushed branch's upstream, not the checked-out branch's.
+		local pushed_branch="${COMPLEXITY_GUARD_REF:-}"
+		pushed_branch="${pushed_branch#refs/heads/}"
+		[[ -z "$pushed_branch" || "$pushed_branch" == refs/* ]] && pushed_branch="HEAD"
+		git merge-base "${TIP_SHA:-HEAD}" "${pushed_branch}@{u}" 2>/dev/null
 		return
 	fi
 	# Happy path: merge-base against default remote head
