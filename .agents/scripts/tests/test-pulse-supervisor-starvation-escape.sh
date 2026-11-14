@@ -180,8 +180,8 @@ check "(b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape immediately" "$rc"
 
 # (b4) the supervisor phase follows the cycle's dispatch pipeline in main().
 rc=1
-pipeline_line=$(grep -n '^[[:space:]]*_pulse_run_deterministic_pipeline$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | head -1 | cut -d: -f1)
-phase_line=$(grep -n '^[[:space:]]*_pulse_run_supervisor_phase$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | head -1 | cut -d: -f1)
+pipeline_line=$(grep -n -m1 '^[[:space:]]*_pulse_run_deterministic_pipeline$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | cut -d: -f1)
+phase_line=$(grep -n -m1 '^[[:space:]]*_pulse_run_supervisor_phase$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | cut -d: -f1)
 [[ -n "$pipeline_line" && -n "$phase_line" && "$pipeline_line" -lt "$phase_line" ]] && rc=0
 check "(b4) the supervisor phase runs after the dispatch pipeline" "$rc"
 
