@@ -50,7 +50,13 @@ source "${_SC_SELF%/*}/runtime-env.sh"
 #     OUTERMOST caller (the top-level script) rather than using [1],
 #     so the re-exec targets the correct entry point even when sourced
 #     via intermediate helpers (GH#19632 / t2176).
+#   - Only the top-level shell may re-exec (GH#38197). From a subshell
+#     ( `( ... )` or `$(...)` ), exec would replace just that subshell
+#     with a second full run of the caller: duplicated side effects, and
+#     the subshell's status/output become the nested run's. Subshells fall
+#     through to the no-modern-bash path instead.
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
+	[[ "${BASH_SUBSHELL:-0}" -eq 0 ]] &&
 	[[ -z "${AIDEVOPS_BASH_REEXECED:-}" ]] &&
 	[[ -n "${BASH_SOURCE[1]:-}" ]]; then
 	# Walk BASH_SOURCE[] to find the outermost caller, not just
