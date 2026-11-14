@@ -909,6 +909,14 @@ _full_loop_release_sha256_stream() {
 	return 0
 }
 
+# Print which release channel is still pending so a silent reconcile exit 8
+# is diagnosable. Informational only; never changes exit codes.
+_full_loop_release_channel_pending() {
+	local channel="$1"
+	printf 'CHANNEL_PENDING=%s\n' "$channel"
+	return 0
+}
+
 _full_loop_release_verify_npm_provenance() {
 	local repo="$1"
 	local tag_name="$2"
@@ -925,36 +933,36 @@ _full_loop_release_verify_npm_provenance() {
 
 	_FULL_LOOP_RELEASE_NPM_VERSION=""
 	_FULL_LOOP_RELEASE_NPM_INTEGRITY=""
-	command -v npm >/dev/null 2>&1 || return 1
-	command -v node >/dev/null 2>&1 || return 1
-	npm_metadata=$(npm view "aidevops@${version}" version dist --json 2>/dev/null) || return 1
+	command -v npm >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	command -v node >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	npm_metadata=$(npm view "aidevops@${version}" version dist --json 2>/dev/null) || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_version=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.version | select(type == $string_type)' <<<"$npm_metadata") || return 1
+		'.version | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_integrity=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.dist.integrity | select(type == $string_type)' <<<"$npm_metadata") || return 1
+		'.dist.integrity | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	npm_shasum=$(jq -er --arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" \
-		'.dist.shasum | select(type == $string_type)' <<<"$npm_metadata") || return 1
-	[[ "$npm_version" == "$version" ]] || return 1
-	[[ "$npm_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || return 1
-	[[ "$npm_shasum" =~ ^[0-9a-f]{40}$ ]] || return 1
+		'.dist.shasum | select(type == $string_type)' <<<"$npm_metadata") || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_version" == "$version" ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$npm_shasum" =~ ^[0-9a-f]{40}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
 	jq -e --arg provenance_predicate "$_FULL_LOOP_RELEASE_PROVENANCE_PREDICATE" \
 		--arg string_type "$_FULL_LOOP_RELEASE_JSON_STRING_TYPE" '
 		.dist.attestations.provenance.predicateType == $provenance_predicate
 		and ((.dist.attestations.url // "") | type == $string_type and length > 0)
-	' <<<"$npm_metadata" >/dev/null || return 1
+	' <<<"$npm_metadata" >/dev/null || { _full_loop_release_channel_pending npm-provenance; return 1; }
 	expected_digest=$(node -e \
 		'process.stdout.write(Buffer.from(process.argv[1], "base64").toString("hex"))' \
-		"${npm_integrity#sha512-}") || return 1
-	[[ "$expected_digest" =~ ^[0-9a-f]{128}$ ]] || return 1
+		"${npm_integrity#sha512-}") || { _full_loop_release_channel_pending npm-metadata; return 1; }
+	[[ "$expected_digest" =~ ^[0-9a-f]{128}$ ]] || { _full_loop_release_channel_pending npm-metadata; return 1; }
 
-	audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-npm-provenance.XXXXXX") || return 1
+	audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-npm-provenance.XXXXXX") || { _full_loop_release_channel_pending npm-provenance; return 1; }
 	(
 		_FULL_LOOP_RELEASE_AUDIT_DIR="$audit_dir"
 		trap 'command rm -rf -- "$_FULL_LOOP_RELEASE_AUDIT_DIR"' EXIT
 		npm install --prefix "$audit_dir" --ignore-scripts --no-audit --no-fund --save-exact \
-			"aidevops@${version}" >/dev/null 2>&1 || exit 1
+			"aidevops@${version}" >/dev/null 2>&1 || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		audit_json=$(npm --prefix "$audit_dir" audit signatures \
-			--json --include-attestations 2>/dev/null) || exit 1
+			--json --include-attestations 2>/dev/null) || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		if ! jq -e --arg array_type "$_FULL_LOOP_RELEASE_JSON_ARRAY_TYPE" --arg object_type 'object' '
 			type == $object_type and (.invalid | type == $array_type)
 			and (.missing | type == $array_type) and (.verified | type == $array_type)
@@ -974,7 +982,7 @@ _full_loop_release_verify_npm_provenance() {
 			| .attestationBundles[]
 			| select(.predicateType == $provenance_predicate)
 		] | length == 1)
-	' <<<"$audit_json" >/dev/null || exit 1
+	' <<<"$audit_json" >/dev/null || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		provenance_payload=$(jq -er --arg version "$version" \
 			--arg provenance_predicate "$_FULL_LOOP_RELEASE_PROVENANCE_PREDICATE" '
 		[.verified[]
@@ -983,7 +991,7 @@ _full_loop_release_verify_npm_provenance() {
 			| select(.predicateType == $provenance_predicate)
 			| .bundle.dsseEnvelope.payload
 		] | if length == 1 then .[0] | @base64d else empty end
-	' <<<"$audit_json") || exit 1
+	' <<<"$audit_json") || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		jq -e --arg subject "pkg:npm/aidevops@${version}" \
 			--arg digest "$expected_digest" --arg repository "https://github.com/${repo}" \
 			--arg tag_ref "refs/tags/${tag_name}" --arg recovery_ref "refs/heads/main" \
@@ -1002,7 +1010,7 @@ _full_loop_release_verify_npm_provenance() {
 		and (.predicate.buildDefinition.externalParameters.workflow.ref == $tag_ref
 			or .predicate.buildDefinition.externalParameters.workflow.ref == $recovery_ref)
 		and .predicate.runDetails.builder.id == "https://github.com/actions/runner/github-hosted"
-	' <<<"$provenance_payload" >/dev/null || exit 1
+	' <<<"$provenance_payload" >/dev/null || { _full_loop_release_channel_pending npm-provenance; exit 1; }
 		exit 0
 	) || audit_rc=$?
 	[[ "$audit_rc" -eq 0 ]] || return "$audit_rc"
@@ -1050,21 +1058,21 @@ _full_loop_release_verify_channels() {
 	local expected_sha=""
 	local npm_rc=0
 
-	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || return 1
+	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || { _full_loop_release_channel_pending github-release; return 1; }
 	jq -e --arg tag "$tag_name" '
 		.tag_name == $tag and .draft == false and ((.published_at // "") | length > 0)
-	' <<<"$release_json" >/dev/null || return 1
+	' <<<"$release_json" >/dev/null || { _full_loop_release_channel_pending github-release; return 1; }
 	_full_loop_release_verify_npm_provenance "$repo" "$tag_name" "$version" || npm_rc=$?
 	[[ "$npm_rc" -eq 0 ]] || return "$npm_rc"
 	npm_version="$_FULL_LOOP_RELEASE_NPM_VERSION"
 	npm_integrity="$_FULL_LOOP_RELEASE_NPM_INTEGRITY"
 	formula=$(gh api "repos/${tap_owner}/homebrew-tap/contents/Formula/aidevops.rb" \
-		--jq '.content | @base64d' 2>/dev/null) || return 1
-	command -v curl >/dev/null 2>&1 || return 1
-	expected_sha=$(curl -fsSL "$tarball_url" | _full_loop_release_sha256_stream) || return 1
+		--jq '.content | @base64d' 2>/dev/null) || { _full_loop_release_channel_pending homebrew-formula; return 1; }
+	command -v curl >/dev/null 2>&1 || { _full_loop_release_channel_pending homebrew-sha; return 1; }
+	expected_sha=$(curl -fsSL "$tarball_url" | _full_loop_release_sha256_stream) || { _full_loop_release_channel_pending homebrew-sha; return 1; }
 	expected_formula=$(_full_loop_release_expected_homebrew_formula \
-		"$repo" "$tag_name" "$expected_sha") || return 1
-	[[ "$formula" == "$expected_formula" ]] || return 1
+		"$repo" "$tag_name" "$expected_sha") || { _full_loop_release_channel_pending homebrew-formula; return 1; }
+	[[ "$formula" == "$expected_formula" ]] || { _full_loop_release_channel_pending homebrew-formula; return 1; }
 	formula_sha="$expected_sha"
 	printf 'GITHUB_RELEASE=%s\n' "$tag_name"
 	printf 'NPM_VERSION=%s\n' "$npm_version"
@@ -1157,7 +1165,12 @@ _full_loop_release_unverified_channels_action() {
 			return 8
 		fi
 	fi
-	_full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON" || return 8
+	if ! _full_loop_release_success_grace_expired "$_FULL_LOOP_RELEASE_RUN_JSON"; then
+		retry_after=$(jq -r '.updated_at | try (fromdateiso8601 + 900 | todateiso8601) catch empty' \
+			<<<"$_FULL_LOOP_RELEASE_RUN_JSON" 2>/dev/null) || retry_after=""
+		[[ -z "$retry_after" ]] || printf 'RELEASE_WAIT=channel-propagation retry_after=%s\n' "$retry_after"
+		return 8
+	fi
 	return 5
 }
 
