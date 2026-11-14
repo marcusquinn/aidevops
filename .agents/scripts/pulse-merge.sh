@@ -1159,9 +1159,14 @@ _pmp_stage_handle_conflict() {
 # in every merge gate before the final snapshot blocked it on the same
 # unresolved bot threads. One 1-point GraphQL read now confirms they remain;
 # resolved threads, a new head, or a failed read fall through to full gates.
+# Draft/held PRs fall through so _pm_gate_origin_authority still revokes an
+# armed native auto-merge (#aidevops:trust-boundary); repeat-exhausted parks
+# fall through so the CHANGES_REQUESTED fix-worker route stays reachable.
 _pmp_review_threads_parked_skip() {
 	local blocker=""
+	[[ "${pr_is_draft:-}" != "$PULSE_MERGE_BOOL_TRUE" && ",${pr_labels:-}," != *",hold-for-review,"* ]] || return 1
 	_pulse_merge_review_thread_parked_at_head "$repo_slug" "$pr_number" "$pr_head_ref_oid" || return 1
+	! _pulse_merge_review_thread_repeat_exhausted "$repo_slug" "$pr_number" || return 1
 	declare -F _pmrc_snapshot_review_threads_clear >/dev/null 2>&1 || return 1
 	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
 	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$pr_base_ref_name" || blocker="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
