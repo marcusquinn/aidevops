@@ -356,6 +356,7 @@ privacy_enumerate_private_entities() {
 #   $1 - text content
 #   $2 - entity file from privacy_enumerate_private_entities
 #   $3 - optional precomputed aidevops script basename allowlist
+#   $4 - optional target slug; $5 - verified public tree
 # Output: generic hit classes only
 #######################################
 privacy_scan_public_text() {
@@ -364,6 +365,7 @@ privacy_scan_public_text() {
 	local aidevops_script_basenames_provided="${3+x}"
 	local aidevops_script_basenames="${3:-}"
 	local target_repo="${4:-}"
+	local public_tree="${5:-}"
 	local hits=0 class value secret_hits path_hits basename escaped scan_text
 
 	[[ -f "$entities_file" ]] || return 2
@@ -385,6 +387,9 @@ privacy_scan_public_text() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		if [[ "$text" == *"$value"* ]]; then
+			if [[ -n "$public_tree" ]] && git grep -Iq -F -e "$value" "$public_tree" -- 2>/dev/null; then
+				continue
+			fi
 			printf '[private-%s]\n' "$class"
 			hits=$((hits + 1))
 		elif [[ "$class" == "repo" ]]; then
@@ -397,6 +402,9 @@ privacy_scan_public_text() {
 				fi
 				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
 				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
+					if [[ -n "$public_tree" ]] && git grep -Iq -F -e "$basename" "$public_tree" -- 2>/dev/null; then
+						continue
+					fi
 					printf '[private-repo]\n'
 					hits=$((hits + 1))
 				fi
@@ -477,7 +485,7 @@ privacy_redact_local_paths() {
 privacy_guard_public_write() {
 	local repo="$1"
 	local text="$2"
-	local target_status entities_file hits scan_rc
+	local target_status entities_file hits scan_rc remote_url public_tree="" remote_head
 
 	if [[ -z "$repo" || ! "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
 		printf '[privacy-guard][BLOCK] Public-write target privacy could not be established.\n' >&2
@@ -501,7 +509,12 @@ privacy_guard_public_write() {
 		printf '[privacy-guard][BLOCK] Private entity inventory could not be loaded.\n' >&2
 		return 1
 	fi
-	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo")
+	remote_url=$(git remote get-url origin 2>/dev/null) || remote_url=""
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[1]%.git}" == "$repo" ]]; then
+		remote_head=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || remote_head=""
+		[[ -n "$remote_head" ]] && public_tree=$(git rev-parse --verify "${remote_head}^{commit}" 2>/dev/null)
+	fi
+	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo" "$public_tree")
 	scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 ]]; then
@@ -1396,7 +1409,7 @@ privacy_scan_public_diff() {
 		"+"*)
 			[[ "$line" == "+""++ " ]] && continue
 			added="${line:1}"
-			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames" "$target_repo")
+			matching_hits=$(privacy_scan_public_text "$added" "$entities_file" "$aidevops_script_basenames" "$target_repo" "$public_head")
 			scan_rc=$?
 			if [[ "$scan_rc" -eq 1 ]]; then
 				while IFS= read -r hit; do

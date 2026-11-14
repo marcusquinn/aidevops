@@ -270,6 +270,43 @@ else
 	fail "public README basename diff" "rc=$rc hits=$hits"
 fi
 
+# Only a verified public tree can establish that an entity is already public.
+(
+	cd "$REPO" || exit 1
+	printf '%s\n' 'https://www.vendor.example/' >vendor.txt
+	git add vendor.txt
+	git commit -qm 'publish vendor domain'
+	printf '%s\n' 'https://www.vendor.example/?page_id=1' 'new-private.example' >>vendor.txt
+	git add vendor.txt
+	git commit -qm 'update vendor and add private domain'
+) || fail "could not seed public entity diff"
+public_base=$(git -C "$REPO" rev-parse HEAD~1)
+public_tip=$(git -C "$REPO" rev-parse HEAD)
+printf 'repo\ttestorg/vendor.example\nclient\tvendor.example\nclient\tnew-private.example\n' >"${TMP}/public-entities.tsv"
+pushd "$REPO" >/dev/null || exit 1
+hits=$(privacy_scan_public_diff "$public_base" "$public_tip" "${TMP}/public-entities.tsv" "$public_base")
+rc=$?
+if [[ "$rc" -eq 1 && "$hits" == *'[private-client]'* && "$hits" != *'[private-repo]'* ]]; then
+	pass "public base domain allowed while new private client remains blocked"
+else
+	fail "public base domain and private client" "rc=$rc hits=$hits"
+fi
+hits=$(privacy_scan_public_text 'https://www.vendor.example/?page_id=1' "${TMP}/public-entities.tsv" '' '' "$public_base")
+rc=$?
+if [[ "$rc" -eq 0 && -z "$hits" ]]; then
+	pass "public text permits entities present in verified public tree"
+else
+	fail "public text verified tree" "rc=$rc hits=$hits"
+fi
+hits=$(privacy_scan_public_text 'https://www.vendor.example/?page_id=1' "${TMP}/public-entities.tsv")
+rc=$?
+if [[ "$rc" -eq 1 && "$hits" == *'[private-repo]'* && "$hits" == *'[private-client]'* ]]; then
+	pass "public text without verified tree fails closed"
+else
+	fail "public text without verified tree" "rc=$rc hits=$hits"
+fi
+popd >/dev/null || exit 1
+
 # -----------------------------------------------------------------------------
 # Test 2: sanitised TODO.md → does not block
 # -----------------------------------------------------------------------------
@@ -681,8 +718,8 @@ else
 	fi
 	(
 		cd "$HOOK_REPO" || exit 1
-		printf -- '- [x] rNNN testorg/private-mirror leak test\n' >>TODO.md
-		printf -- '- [x] rNNN testorg/private-mirror leak test\n' >$'z\tquoted.txt'
+		printf -- '- [x] rNNN testorg/local-only leak test\n' >>TODO.md
+		printf -- '- [x] rNNN testorg/local-only leak test\n' >$'z\tquoted.txt'
 		git add TODO.md $'z\tquoted.txt'
 		git commit -qm 'quoted-path feature entity'
 	) || fail "hook dispatch: could not seed quoted-path entity"
