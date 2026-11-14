@@ -1241,6 +1241,22 @@ _prrts_append_headless_contract() {
 	return 0
 }
 
+# Append model arguments to the dispatch worker's caller-local cmd array.
+# Explicit operator overrides and ordinary thread workers retain their route.
+_prrts_append_worker_model_args() {
+	local repair_linked_issue="$1" model="$PR_REVIEW_THREAD_RESPONSE_MODEL"
+	if [[ -n "$repair_linked_issue" && -z "$model" &&
+		"${PCC_ESCALATION_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
+		model="$PCC_ESCALATION_MODEL"
+		cmd+=(--tier "$PCC_ESCALATION_TIER")
+	fi
+	if [[ -n "$model" ]]; then
+		cmd+=(--model "$model")
+	fi
+	return 0
+}
+
 _prrts_dispatch_worker() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1250,7 +1266,7 @@ _prrts_dispatch_worker() {
 	local head_ref="$8" head_oid="$9"
 	local outcome_id="${10}" now_epoch="${11}" attempt_count="${12}"
 	local maintainer_attention="${13}" infrastructure_failure_count="${14}" reservation_file="${15}"
-	local prompt_file="" session_key="" model="" worker_worktree_path="" outcome_file="" attempt_state_file=""
+	local prompt_file="" session_key="" worker_worktree_path="" outcome_file="" attempt_state_file=""
 	local worker_task="" repair_linked_issue="" worker_login=""
 	local batch_fingerprint="" batch_thread_count="0"
 	local -a cmd worker_cmd
@@ -1291,16 +1307,7 @@ _prrts_dispatch_worker() {
 		--dir "$worker_worktree_path"
 		--title "PR #${pr_number}: ${PR_REVIEW_THREAD_RESPONSE_WORKER_TITLE_SUFFIX}"
 		--prompt-file "$prompt_file")
-	model="$PR_REVIEW_THREAD_RESPONSE_MODEL"
-	if [[ -n "$repair_linked_issue" && -z "$model" &&
-		"${PCC_ESCALATION_TIER:-}" =~ ^(simple|standard|thinking)$ &&
-		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
-		model="$PCC_ESCALATION_MODEL"
-		cmd+=(--tier "$PCC_ESCALATION_TIER")
-	fi
-	if [[ -n "$model" ]]; then
-		cmd+=(--model "$model")
-	fi
+	_prrts_append_worker_model_args "$repair_linked_issue"
 	worker_cmd=(env
 		"HEADLESS=1"
 		"WORKER_ISSUE_NUMBER=${worker_task}"
