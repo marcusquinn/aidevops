@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.196] - 2026-11-14
+
+### Fixed
+
+- copy transitive shared-constants deps in test fixtures (GH#38342)
+- fix hook self-test admission and keep git hooks installed on self-test failure
+- file one Dependabot remediation issue per package
+
 ## [3.39.195] - 2026-11-14
 
 ### Added
