@@ -8,31 +8,44 @@
 source "${SCRIPT_DIR}/shared-model-tier.sh"
 
 # Args: comments, trusted logins, admitted release id, exact head
-# Output: next tier<TAB>available concrete model. Unknown/ceiling stays paused.
+# Output: next tier<TAB>available concrete model<TAB>reasoning variant.
 _pcc_next_stalled_tier() {
 	local comments="$1" trusted_logins="$2" release_id="$3" head="$4"
-	local previous="" next="" model=""
+	local previous="" next="" model="" route="" previous_model="" previous_variant="" variant=""
 	[[ -z "${PR_REVIEW_THREAD_RESPONSE_MODEL:-}" ]] || return 1
 	# aidevops:trust-boundary — the caller's admitted release is rechecked for
 	# trusted authorship, unedited body, unique fields and exact head binding.
-	previous=$(jq -er --argjson trusted_logins "$trusted_logins" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
+	route=$(jq -er --argjson trusted_logins "$trusted_logins" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--argjson release "$release_id" --arg head "$head" "${_PCC_JQ_RELEASE_DEFS}"'
 		[flatten[] | select(.id == $release and trusted_event and unedited) |
 			select(release_reason | test($pattern)) |
 			[body_lines | select(is_release)] | select(length == 1) | .[0] |
 			select(([scan("(?:^| )checkpoint_head=([^ ]+)")] | length) == 1) |
 			select(([scan("(?:^| )checkpoint_tier=([^ ]+)")] | length) == 1) |
-			select(field("checkpoint_head") == $head) | field("checkpoint_tier") |
-			select(test("^(simple|standard|thinking)$"))] |
-		select(length == 1) | .[0]
+			select(([scan("(?:^| )checkpoint_model=([^ ]+)")] | length) == 1) |
+			select(([scan("(?:^| )checkpoint_variant=([^ ]+)")] | length) == 1) |
+			select(field("checkpoint_head") == $head) |
+			select(field("checkpoint_tier") | test("^(simple|standard|thinking)$")) |
+			[field("checkpoint_tier"),field("checkpoint_model"),field("checkpoint_variant")]] |
+		select(length == 1) | .[0] | @tsv
 	' <<<"$comments") || return 1
+	IFS=$'\t' read -r previous previous_model previous_variant <<<"$route"
 	next=$(model_tier_next "$previous") || return 1
 	while [[ -n "$next" ]]; do
 		# Never accept a resolver fallback from another tier. Both arguments
 		# preserve tier-specific reasoning when one model serves multiple tiers.
 		if model=$("${SCRIPT_DIR}/model-availability-helper.sh" resolve "$next" --quiet) &&
-			model_tier_candidate_index "$next" "$model" >/dev/null 2>&1; then
-			printf '%s\t%s\n' "$next" "$model"
+			model_tier_candidate_index "$next" "$model" >/dev/null 2>&1 &&
+			variant=$(model_tier_variant "$next" "$model"); then
+			if [[ "$model" == "$previous_model" && "${variant:-default}" == "$previous_variant" ]]; then
+				# A different tier name is not a capability improvement when the
+				# configured model and reasoning are identical (GH#32929).
+				if ! variant=$(model_tier_next_variant "$next" "$model" "$variant"); then
+					next=$(model_tier_next "$next") || return 1
+					continue
+				fi
+			fi
+			printf '%s\t%s\t%s\n' "$next" "$model" "${variant:-default}"
 			return 0
 		fi
 		next=$(model_tier_next "$next") || return 1
@@ -63,7 +76,7 @@ _pcc_prepare_stall_escalation() {
 			"$pr" "$repo" "$head" "$release_id"
 		return 1
 	fi
-	IFS=$'\t' read -r PCC_ESCALATION_TIER PCC_ESCALATION_MODEL <<<"$escalation"
+	IFS=$'\t' read -r PCC_ESCALATION_TIER PCC_ESCALATION_MODEL PCC_ESCALATION_VARIANT <<<"$escalation"
 	PCC_ESCALATION_RELEASE="$release_id"
 	PCC_ESCALATION_HEAD="$head"
 	printf 'STALLED_CHECKPOINT_TIER_ESCALATED: PR #%s in %s head=%s release=%s tier=%s\n' \

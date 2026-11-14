@@ -1798,7 +1798,7 @@ _pcc_dispatch_stalled() {
 	local release_epoch="" attempt="" commits="[]" progress=0 nonprogress=0
 	# Dynamic scope confines routing to this dispatch; other PR/review workers
 	# cannot inherit a previous checkpoint's escalation in a long-lived scanner.
-	local PCC_ESCALATION_TIER="" PCC_ESCALATION_MODEL="" PCC_ESCALATION_RELEASE="" PCC_ESCALATION_HEAD=""
+	local PCC_ESCALATION_TIER="" PCC_ESCALATION_MODEL="" PCC_ESCALATION_VARIANT="" PCC_ESCALATION_RELEASE="" PCC_ESCALATION_HEAD=""
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2

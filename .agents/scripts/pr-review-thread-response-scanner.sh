@@ -1250,6 +1250,9 @@ _prrts_append_worker_model_args() {
 		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
 		model="$PCC_ESCALATION_MODEL"
 		cmd+=(--tier "$PCC_ESCALATION_TIER")
+		if [[ -n "${PCC_ESCALATION_VARIANT:-}" && "$PCC_ESCALATION_VARIANT" != default ]]; then
+			cmd+=(--variant "$PCC_ESCALATION_VARIANT")
+		fi
 	fi
 	if [[ -n "$model" ]]; then
 		cmd+=(--model "$model")
