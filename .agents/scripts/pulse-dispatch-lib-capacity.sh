@@ -47,13 +47,21 @@ _dispatch_candidate_snapshot_path() {
 
 # A snapshot is reusable from capture for the longer of the enumeration
 # estimate and the census that built it. A census read across runtime bundles
-# must also carry the reader's snapshot schema (GH#38048).
+# must also carry the reader's snapshot schema (GH#38048). GH#38210: a drain
+# handoff (handed_off_at) is reusable for that window from the handoff, so the
+# drained cycle's tail does not expire it, but never past twice the window
+# from capture. Adopted candidates still pass every live dispatch gate.
 # Args: $1=snapshot file $2=now epoch $3=ttl seconds $4=required schema (optional)
 _dispatch_candidate_snapshot_is_fresh() {
 	local snapshot_file="$1" now_epoch="$2" snapshot_ttl="$3" schema="${4:-}"
 	[[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] || return 1
 	jq -e --argjson now "$now_epoch" --argjson ttl "$snapshot_ttl" --arg schema "$schema" \
-		'type == "object" and ($schema == "" or .schema == $schema) and (.captured_at | type == "number") and .captured_at <= $now and .captured_at > ($now - ([$ttl, (.census_seconds // 0)] | max)) and (.candidates | type == "array")' \
+		'if type == "object" and ($schema == "" or .schema == $schema) and (.captured_at | type == "number") and .captured_at <= $now and (.candidates | type == "array") then
+			([$ttl, (.census_seconds // 0)] | max) as $window |
+			if ([.handed_off_at | numbers] | length) > 0 then
+				.handed_off_at >= .captured_at and .handed_off_at <= $now and .handed_off_at > ($now - $window) and .captured_at > ($now - 2 * $window)
+			else .captured_at > ($now - $window) end
+		else false end' \
 		"$snapshot_file" >/dev/null 2>&1
 	return $?
 }
@@ -72,16 +80,25 @@ _dispatch_candidate_handoff_path() {
 # GH#38048: a cooperatively drained cycle moves its full census and attempt
 # ledger to the handoff slot. It launches nothing from it (GH#37907); the
 # activated bundle's first wave decides whether the census is still usable.
+# GH#38210: the census is stamped with handed_off_at, from which that reuse
+# window is measured (see _dispatch_candidate_snapshot_is_fresh).
 # Args: $1=per-repo limit $2=activated bundle id
 _dispatch_hand_off_candidate_snapshots() {
-	local per_repo_limit="$1" bundle="$2" mode="" snapshot="" handoff=""
+	local per_repo_limit="$1" bundle="$2" mode="" snapshot="" handoff="" staged="" now_epoch=""
 	local _PULSE_FIRST_DISPATCH_WAVE=0
+	now_epoch=$(date +%s) || return 0
 	for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
 		snapshot=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$mode") || continue
 		handoff=$(_dispatch_candidate_handoff_path "$per_repo_limit" "$mode") || continue
 		[[ -f "$snapshot" && ! -L "$snapshot" && ! -L "${snapshot}.consumed" ]] || continue
 		rm -f "$handoff" "${handoff}.consumed" 2>/dev/null || continue
-		mv -f "$snapshot" "$handoff" 2>/dev/null || continue
+		staged=$(mktemp "${handoff}.tmp.XXXXXX" 2>/dev/null) || continue
+		if ! jq -ce --argjson at "$now_epoch" 'objects | .handed_off_at = $at' "$snapshot" >"$staged" 2>/dev/null ||
+			! mv -f "$staged" "$handoff" 2>/dev/null; then
+			rm -f "$staged" 2>/dev/null || true
+			continue
+		fi
+		rm -f "$snapshot" 2>/dev/null || true
 		if [[ -f "${snapshot}.consumed" ]] && ! mv -f "${snapshot}.consumed" "${handoff}.consumed" 2>/dev/null; then
 			rm -f "$handoff" 2>/dev/null || true
 			continue
@@ -370,13 +387,17 @@ _dispatch_ranked_candidates_json() {
 	fi
 	now_epoch=$(date +%s) || return 1
 	((now_epoch - started_epoch <= snapshot_ttl)) || snapshot_ttl=$((now_epoch - started_epoch))
-	# Exhaustion must not perpetually renew the durable attempt ledger's TTL.
+	# Exhaustion must not perpetually renew the durable attempt ledger's TTL,
+	# nor end an adopted handoff's window early (GH#38210).
+	local carried="{}"
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 1 ]]; then
 		now_epoch=$(jq -r '.captured_at' "$snapshot_file") || return 1
+		carried=$(jq -c '[.handed_off_at | numbers] | if length > 0 then {handed_off_at: .[0]} else {} end' "$snapshot_file" 2>/dev/null) || carried="{}"
 	fi
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured_at "$now_epoch" \
-		--argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" '{schema:$schema,captured_at:$captured_at,census_seconds:$census_seconds,candidates:$candidates}' >"$snapshot_tmp") 2>/dev/null; then
+		--argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" --argjson carried "$carried" \
+		'{schema:$schema,captured_at:$captured_at,census_seconds:$census_seconds,candidates:$candidates} + $carried' >"$snapshot_tmp") 2>/dev/null; then
 		mv "$snapshot_tmp" "$snapshot_file" 2>/dev/null || rm -f "$snapshot_tmp" 2>/dev/null || true
 	elif [[ -n "$snapshot_tmp" ]]; then
 		rm -f "$snapshot_tmp" 2>/dev/null || true

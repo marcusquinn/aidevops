@@ -112,9 +112,11 @@ reset_case() {
 	SUPERVISOR_QUEUE_ONLY=""
 	RECOVERY_CALLS=0
 	_PULSE_PREFETCH_DEGRADED=0
-	unset PULSE_LLM_DRAIN_ESCAPE_SECONDS PULSE_LLM_DEGRADED_ESCAPE_SECONDS
+	unset PULSE_LLM_DRAIN_ESCAPE_SECONDS PULSE_LLM_DEGRADED_ESCAPE_SECONDS PULSE_LLM_DRAIN_ESCAPE_DEFER
 	return 0
 }
+
+DEFERRAL_MARKER="${PULSE_DIR}/llm_drain_escape_deferred"
 
 REPOS_JSON="${TEST_ROOT}/repos.json"
 printf '{"initialized_repos":[]}\n' >"$REPOS_JSON"
@@ -131,15 +133,57 @@ rc=1
 	grep -Eq 'Skipping LLM supervisor: cooperative drain requested.*last_attempt_age_s=[0-9]+' "$LOGFILE" && rc=0
 check "(a) drain with recent attempt skips with last_attempt_age_s" "$rc"
 
-# (b) drain with a stale attempt runs the normally gated supervisor.
+# (b) GH#38210: drain with a stale attempt defers the escape, so the drained
+# cycle exits and the activated bundle's first dispatch wave goes first.
 reset_case 7300
 STUB_DRAIN_BUNDLE="bundle-next"
 STUB_RECOVERY_DUE=0
 _pulse_run_supervisor_phase
 rc=1
-[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && "$SUPERVISOR_QUEUE_ONLY" == "0" ]] &&
+[[ "$SUPERVISOR_CALLS" -eq 0 && -f "$DEFERRAL_MARKER" ]] &&
+	grep -q 'deferring the GH#38162 escape until after bundle bundle-next' "$LOGFILE" &&
+	! grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
+check "(b) drain with stale attempt defers the escape past the activated bundle's first wave" "$rc"
+
+# (b1) the activated bundle's cycle (no drain) evaluates the deferred escape
+# after its dispatch wave, in that same cycle, and clears the deferral.
+STUB_DRAIN_BUNDLE=""
+: >"$LOGFILE"
+_pulse_run_supervisor_phase
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
+	grep -q 'evaluating the deferred drain escape' "$LOGFILE" && rc=0
+check "(b1) activated bundle cycle runs the deferred supervisor and clears the deferral" "$rc"
+
+# (b2a) a drained activated cycle runs the already-deferred escape itself.
+reset_case 7300
+STUB_DRAIN_BUNDLE="bundle-next"
+STUB_RECOVERY_DUE=0
+_pulse_run_supervisor_phase
+STUB_DRAIN_BUNDLE="bundle-after"
+_pulse_run_supervisor_phase
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && "$SUPERVISOR_QUEUE_ONLY" == "0" && ! -f "$DEFERRAL_MARKER" ]] &&
 	grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b) drain with stale attempt runs supervisor" "$rc"
+check "(b2a) a second drained cycle runs the deferred escape" "$rc"
+
+# (b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape in the drained cycle.
+reset_case 7300
+STUB_DRAIN_BUNDLE="bundle-next"
+STUB_RECOVERY_DUE=0
+PULSE_LLM_DRAIN_ESCAPE_DEFER=0
+_pulse_run_supervisor_phase
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
+	grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
+check "(b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape immediately" "$rc"
+
+# (b4) the supervisor phase follows the cycle's dispatch pipeline in main().
+rc=1
+pipeline_line=$(grep -n '^[[:space:]]*_pulse_run_deterministic_pipeline$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | head -1 | cut -d: -f1)
+phase_line=$(grep -n '^[[:space:]]*_pulse_run_supervisor_phase$' "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" | head -1 | cut -d: -f1)
+[[ -n "$pipeline_line" && -n "$phase_line" && "$pipeline_line" -lt "$phase_line" ]] && rc=0
+check "(b4) the supervisor phase runs after the dispatch pipeline" "$rc"
 
 # (b2) PULSE_LLM_DRAIN_ESCAPE_SECONDS=0 disables the drain escape.
 reset_case 999999

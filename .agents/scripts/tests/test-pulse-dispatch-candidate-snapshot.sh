@@ -260,6 +260,8 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	_dispatch_cleanup_cycle_cache 50
 	[[ ! -e "$full" && ! -e "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
 	[[ "$(jq -r '.schema' "$handoff")" == "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" ]]
+	# GH#38210: the handoff records when it left the drained cycle.
+	jq -e '(.handed_off_at | type) == "number" and .handed_off_at >= .captured_at' "$handoff" >/dev/null
 	rm -rf "$LOCKDIR"
 
 	# A full round of the activated bundle scans for itself; a freed slot
@@ -287,6 +289,38 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 		: >"$builds"
 		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
 		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+	done
+
+	# GH#38210: a census captured census_seconds + 1800s ago is adopted while
+	# its handoff is inside the reuse window and its capture is inside twice
+	# that window. A handoff past either bound is removed unserved.
+	write_handed_off() {
+		local target="$1" captured_age="$2" handed_age="$3" issues="$4" now=""
+		now=$(date +%s)
+		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured "$((now - captured_age))" \
+			--argjson handed "$((now - handed_age))" --arg issues "$issues" \
+			'{schema:$schema,captured_at:$captured,handed_off_at:$handed,census_seconds:2000,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
+		return 0
+	}
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	write_handed_off "$handoff" 3800 1000 5,6
+	: >"$builds"
+	: >"$stats"
+	adopted=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$adopted")" == '5,6' && ! -s "$builds" && ! -e "$handoff" ]]
+	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
+	# The adopted census keeps serving later waves of the same window.
+	_dispatch_ranked_candidate_consumed '{"number":5,"repo_slug":"o/product"}'
+	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$later")" == '6' && ! -s "$builds" ]]
+	for fixture in '4001|100' '2100|2001' '100|200'; do
+		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+		write_handed_off "$handoff" "${fixture%%|*}" "${fixture##*|}" 5,6
+		: >"$builds"
+		: >"$stats"
+		scanned=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+		[[ "$(numbers "$scanned")" == '1,2,3' && -s "$builds" && ! -e "$handoff" ]]
+		grep -qx 'dispatch_candidate_handoff_discarded' "$stats"
 	done
 
 	# A normalize round never takes a census that skipped dependency
