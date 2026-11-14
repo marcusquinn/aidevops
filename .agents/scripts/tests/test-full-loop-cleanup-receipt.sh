@@ -126,6 +126,36 @@ rm -f "${receipt_lock_dir}/owner"
 rmdir "$receipt_lock_dir"
 printf 'PASS timeout names holder\n'
 
+# Exercise the real timeout and both callers with a deterministic ps response:
+# arguments and local paths must not reach either operator-facing failure.
+(
+	ps() {
+		printf '%s\n' '/private/bin/bash /private/jobs/worker.sh --token=example-secret /private/data'
+		return 0
+	}
+	sleep() { return 0; }
+	_full_loop_recreated_worktree_identity_matches() { return 0; }
+	mkdir -p "$receipt_lock_dir"
+	printf '%s\n' "$OWNER_PID" >"${receipt_lock_dir}/owner"
+	[[ "$(_full_loop_receipt_holder_command "$OWNER_PID")" == 'bash worker.sh' ]]
+	if full_loop_write_cleanup_deferred example/repo 101 "${TEST_ROOT}/worktree-one" feature/one "$OWNER_PID" session-one; then
+		printf 'FAIL cleanup receipt unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" == *'holder-cmd=bash worker.sh' ]]
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *example-secret* && "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *'/private/'* ]]
+	if refusal=$(full_loop_supersede_cleaned_receipts_for_recreated_worktree "${TEST_ROOT}/worktree-one" feature/one \
+		0123456789012345678901234567890123456789 "$OWNER_PID" session-one 2>&1); then
+		printf 'FAIL reconciliation unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$refusal" == *'Cleanup-receipt reconciliation refused: could not acquire the receipt lock:'*'holder-cmd=bash worker.sh'* ]]
+	[[ "$refusal" != *example-secret* && "$refusal" != *'/private/'* ]]
+	rm -f "${receipt_lock_dir}/owner"
+	rmdir "$receipt_lock_dir"
+)
+printf 'PASS holder diagnostic is sanitized and propagated to both failures\n'
+
 mkdir -p "$receipt_lock_dir"
 touch -t 202001010000 "$receipt_lock_dir"
 (
