@@ -518,7 +518,7 @@ cmd_setup_backblaze() {
 		return 0
 	fi
 
-	local bzinfo_file="/Library/Backblaze.bzpkg/bzdata/bzinfo.xml"
+	local bzinfo_file="${AIDEVOPS_BACKBLAZE_BZINFO:-/Library/Backblaze.bzpkg/bzdata/bzinfo.xml}"
 	if [[ ! -f "$bzinfo_file" ]]; then
 		_we_warn "setup-backblaze: bzinfo.xml not found at $bzinfo_file"
 		_we_warn "setup-backblaze: Backblaze may be a different version — skipping"
@@ -528,7 +528,7 @@ cmd_setup_backblaze() {
 	# Parse the use_time_machine_excludes attribute. Read-only, no sudo needed.
 	# The attribute is typically: use_time_machine_excludes="true" or "false"
 	local tm_excludes=""
-	tm_excludes=$(grep -oP 'use_time_machine_excludes="\K[^"]+' "$bzinfo_file" 2>/dev/null || true)
+	tm_excludes=$(sed -n 's/.*use_time_machine_excludes="\([a-z]*\)".*/\1/p' "$bzinfo_file" | head -n 1 || true)
 
 	if [[ "$tm_excludes" == "true" ]]; then
 		cat <<'EOF'
