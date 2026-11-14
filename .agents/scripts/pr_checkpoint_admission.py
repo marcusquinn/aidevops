@@ -13,7 +13,8 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import EVENTS, fields, normalized_attempt, timestamp, trusted
+from pr_checkpoint_consumption import approval_consumed, authorizes
+from pr_checkpoint_events import EVENTS, author_trusted, fields, normalized_attempt, timestamp
 
 
 def require(condition):
@@ -45,12 +46,6 @@ def seal(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def authorizes(comment, logins):
-    # Positive edit metadata is supplied by the shared GraphQL collector. REST
-    # second-resolution timestamps alone cannot exclude a same-second edit.
-    return trusted(comment, logins) and comment.get("_release_body_unedited") is True
-
-
 APPROVAL_TTL_SECONDS = 86400  # pr-checkpoint-revision.py approval_matches
 
 
@@ -60,6 +55,26 @@ def approval_unexpired(comment, now):
         return now - timestamp(comment["created_at"]) <= APPROVAL_TTL_SECONDS
     except (AttributeError, KeyError, TypeError, ValueError):
         return True
+
+
+def has_line(comment, prefix):
+    return any(line.startswith(prefix) for line in comment["body"].splitlines())
+
+
+def blocking_approvals(comments, logins, now):
+    """Unexpired approvals that still own scheduling (consumed ones do not)."""
+    approvals = [c for c in comments if has_line(c, "CHECKPOINT_CONTINUATION_APPROVED ")
+                 and approval_unexpired(c, now)]
+    trusted_ids = [c["id"] for c in comments if has_line(c, "CHECKPOINT_CONTINUATION_APPROVED ")
+                   and author_trusted(c, logins)]
+    latest = max(trusted_ids, default=None)
+    if latest is not None:
+        newest = next(c for c in comments if c["id"] == latest)
+        if approval_unexpired(newest, now) and approval_consumed(comments, newest, logins):
+            # Older trusted approvals are superseded; untrusted ones still fence.
+            return [c for c in approvals if c["id"] != latest
+                    and not author_trusted(c, logins)]
+    return approvals
 
 
 def own_events(data, comments, claim, claim_fields):
@@ -102,8 +117,7 @@ def admission(data):
     # once it is past the 24-hour revision expiry it no longer owns scheduling,
     # so the legacy automatic route may admit again.
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
-    require(not any(line.startswith("CHECKPOINT_CONTINUATION_APPROVED ") and approval_unexpired(comment, now)
-                    for comment in comments for line in comment["body"].splitlines()))
+    require(not blocking_approvals(comments, logins, now))
     # Never erase edited or foreign coordination while constructing the view.
     require(all(authorizes(comment, logins) for comment in comments if coordination(comment)))
     owners = [actor["login"] for actor in data["issue"].get("assignees", [])]

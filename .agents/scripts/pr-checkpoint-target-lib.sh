@@ -380,6 +380,35 @@ _PCTL_COORDINATION_JQ_DEFS='
 	def pctl_approval_unexpired($ttl):
 		((.created_at // "") | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $created |
 		($created == null or (now - $created) <= $ttl);
+	def pctl_field($key):
+		[split(" ")[] | select(startswith($key + "=")) | ltrimstr($key + "=")] | if length == 1 then .[0] else "" end;
+	# Duplicated identity fields are ambiguous evidence, never consumption.
+	def pctl_unambiguous:
+		[split(" ")[] | select(contains("=")) | split("=")[0]] | group_by(.) | all(length == 1);
+	# An explicit _release_body_unedited=false (collector saw a possible
+	# same-second body edit) is edited evidence; absent means raw REST input.
+	def pctl_unedited:
+		([.created_at | strings] | length) == 1 and (.updated_at // .created_at) == .created_at and
+		(._release_body_unedited != false);
+	def pctl_approval_owns_scheduling($ttl):
+		(pctl_trusted_comments | sort_by(.created_at, .id)) as $comments |
+		([$comments[] | select((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))] | last) as $approval |
+		if $approval == null then false
+		elif ($approval | pctl_approval_unexpired($ttl) | not) then false
+		else
+			([ $comments[] | select(.id > $approval.id and pctl_unedited) as $claim |
+			  ($claim.body // "" | split("\n")[] | select(startswith("DISPATCH_CLAIM ") and pctl_unambiguous)) as $line |
+			  select(($line | pctl_field("checkpoint_approval")) == ($approval.id | tostring)) |
+			  ($line | pctl_field("nonce")) as $nonce |
+			  $comments[] | select(.id > $claim.id and pctl_unedited) |
+			  (.body // "" | split("\n")[] | select(startswith("CLAIM_RELEASED ") and pctl_unambiguous)) as $release |
+			  ($release | pctl_field("claim_id")) as $release_claim |
+			  ($release | pctl_field("nonce")) as $release_nonce |
+			  select(($release | pctl_field("reason")) != "" and
+			         ($release_claim != "" or ($nonce != "" and $release_nonce != "")) and
+			         ($release_claim == "" or $release_claim == ($claim.id | tostring)) and
+			         ($release_nonce == "" or ($nonce != "" and $release_nonce == $nonce))) ] | length == 0)
+		end;
 '
 # Revision approvals expire after this many seconds (pr-checkpoint-revision.py).
 _PCTL_APPROVAL_TTL_SECONDS=86400
@@ -448,8 +477,7 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	# expiry the revision route can no longer launch, so the legacy route and
 	# its re-arm windows apply again; a newer approval re-fences it.
 	if jq -e --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" "${_PCTL_COORDINATION_JQ_DEFS}"'
-		(pctl_trusted_comments | any(((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED ")) and
-			pctl_approval_unexpired($ttl))) or
+		pctl_approval_owns_scheduling($ttl) or
 		(pctl_newest_coordination_body |
 			test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
 			(test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ") | not))

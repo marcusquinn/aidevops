@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.191] - 2026-11-14
+
+### Fixed
+
+- name the malformed token and its source in block diagnostics (GH#38221)
+- planning-publication PRs are not open-PR dedup evidence (GH#38217)
+- release registry writer during legacy native removal; bounded admission waits out contention
+- preserve stale scan cadence on denial (#38202) (#38206)
+- detect Backblaze Time Machine inheritance portably (#38205)
+- give post-merge review scanner the batch housekeeping slice and stop interrupted repos pinning the traversal
+
 ## [3.39.190] - 2026-11-14
 
 ### Added
