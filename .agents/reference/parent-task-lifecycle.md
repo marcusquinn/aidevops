@@ -96,6 +96,8 @@ The sequential phase auto-file mechanism reads phase declarations from the paren
 
 Parent reconciliation also bootstraps phase-only parents with zero filed children: when a `parent-task` issue has a parseable `## Phases` section but no `## Children`, GraphQL sub-issues, or prose child references, the reconcile pass files the first unfiled phase as a worker-dispatchable child before falling back to advisory decomposition nudges. This prevents phase-only parents from sitting open forever with `parent-task` blocking dispatch and `auto-decomposer-scanner.sh` skipping because a phase plan exists.
 
+**Idle-parent progression (GH#38349):** when every filed child is closed and the next declared phase has no child, an unfiled phase is not a human decision. Reconciliation files that next phase (`auto_file_next_unfiled_parent_phase … sequential`), or links an existing child with the deterministic `Phase N of #P:` title, instead of posting the unfiled-phases nudge and `hold-for-review`. It holds only when that phase is `[requires-decision]`, the parent already carries `hold-for-review`, live author trust fails, or filing fails. Filing writes `#<child>` back onto the phase line in every accepted form (list, bold, numbered `N. desc`), only inside `## Phases`. Workers and interactive sessions follow the same rule: on an idle parent, file the next phase rather than asking whether to.
+
 **Feature flag:** `AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE` — defaults to `1` (ON) since t2787. Set to `0` to disable.
 
 ### Canonical Phase Formats
@@ -133,14 +135,15 @@ Detailed implementation notes for Phase 2...
 |--------|-----------|
 | `[auto-fire:on-prior-merge]` | File this phase when the prior phase PR merges (recommended) |
 | `[auto-fire:on]` | File immediately — no wait for prior merge |
-| *(no marker — list/bullet-bold format)* | Eligible for the initial zero-child bootstrap; post-merge sequencing still requires an explicit auto-fire marker |
+| `[requires-decision]` | Never auto-filed; idle-parent progression stops here and holds for a maintainer decision |
+| *(no marker — list/bullet-bold/numbered format)* | Eligible for the zero-child bootstrap and for idle-parent progression once every filed child is closed; immediate post-merge sequencing still requires an explicit auto-fire marker |
 | *(no marker — narrative format)* | NOT auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body |
 
 The `<!-- phase-auto-fire:on -->` HTML comment is the opt-in for narrative phases without per-phase markers. It applies the `on-prior-merge` behaviour to every unmarked narrative phase in the issue.
 
 ### Close Guard
 
-The close guard (t2755 Phase 2) prevents premature parent-task closure while any declared phase is still unfiled or open. If a PR uses a closing keyword (`Closes #NNN`) on a parent-task issue that still has pending phases, the merge is accepted but the issue is re-opened with an explanatory comment. Deterministic incomplete close-contract repairs use `hold-for-review`; the ordinary 7-day decomposition escalation remains advisory-only.
+The close guard (t2755 Phase 2) prevents premature parent-task closure while any declared phase is still unfiled or open. If a PR uses a closing keyword (`Closes #NNN`) on a parent-task issue that still has pending phases, the merge is accepted but the issue is re-opened with an explanatory comment. Deterministic incomplete close-contract repairs use `hold-for-review`, except an open idle parent whose next phase can be filed (see idle-parent progression above); the ordinary 7-day decomposition escalation remains advisory-only.
 
 ## Close Contract Markers
 
