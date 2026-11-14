@@ -60,6 +60,10 @@ if [[ "$1" == "pr" && "${2:-}" == "view" ]]; then
 	if [[ "$*" == *"comments"* ]]; then
 		printf '%s\n' "$STUB_REVIEWER_COMMENTS_RESPONSE"
 	elif [[ "$*" == *"--json isCrossRepository"* ]]; then exit 1
+	# GH#38291: opt-in fresh labels-only read (takeover classification).
+	elif [[ "$*" == *"--json labels "* && -n "${STUB_PR_LABELS+x}" ]]; then
+		[[ "$STUB_PR_LABELS" == "__FAIL__" ]] && exit 1
+		printf '%s\n' "$STUB_PR_LABELS"
 	else printf '%s\n' "${STUB_PR_VIEW:-Fix active PR	feature/review	${TEST_HEAD_OID_1}	worker-bot}"
 	fi
 	exit 0
@@ -496,7 +500,7 @@ setup_test_env() {
 	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 	# Native lifecycle enrollment requires real Git metadata, not this fake repo.
 	export AIDEVOPS_LIFECYCLE_DISABLED=1
-	unset STUB_PR_LIST STUB_PR_VIEW STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
+	unset STUB_PR_LIST STUB_PR_VIEW STUB_PR_LABELS STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
 	unset STUB_GH_REST_FAIL STUB_GH_GRAPHQL_FAIL STUB_GH_GRAPHQL_LOGIN
 	unset STUB_PULL_HEAD_OID STUB_PULL_STATE STUB_PULL_DRAFT STUB_REVIEWS_RESPONSE STUB_REREVIEW_REQUEST_FAIL
 	unset STUB_GIT_INVALID_BRANCH STUB_GIT_FETCH_FAIL STUB_GIT_CANONICAL_FETCH_FAIL
@@ -512,6 +516,8 @@ setup_test_env() {
 	unset PR_REVIEW_THREAD_RESPONSE_MAX_THREADS_PER_DISPATCH
 	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
 	export HOME="${TEST_ROOT}/home"
+	# Detached attempt logs (GH#37718) must not leak into the host workspace.
+	export AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
 	export LOGFILE="${TEST_ROOT}/scanner.log"
 	export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="${TEST_ROOT}/state"
 	export HEADLESS_LOG="${TEST_ROOT}/headless.log"
@@ -532,7 +538,7 @@ setup_test_env() {
 	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/ownership-registry"
 	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 	export SHARED_CONSTANTS_PATH="${TEST_SCRIPT_DIR}/../shared-constants.sh"
-	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	mkdir -p "${HOME}" "${AIDEVOPS_TEMP_DIR}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
 	# Registered scratch creation reserves a row before registering its owner.
 	# Initialize the same isolated registry used by the owner fixtures first.
 	# shellcheck source=../shared-worktree-registry.sh

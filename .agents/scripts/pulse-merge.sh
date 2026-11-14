@@ -80,6 +80,7 @@ PULSE_REVIEW_REMEDIATION_NO_MATCH_RC=11
 PULSE_REVIEW_REMEDIATION_MAINTAINER_ATTENTION_RC=12
 PULSE_REVIEW_REMEDIATION_RETRYABLE_FAILURE_RC=13
 PULSE_REVIEW_REMEDIATION_REPEAT_EXHAUSTED="repeat_exhausted"
+PULSE_REVIEW_REMEDIATION_DEFERRED="deferred"
 PULSE_MERGE_BOOL_TRUE="true"
 _PULSE_MERGE_REMEDIATION_OUTCOME=""
 PULSE_REVIEW_DECISION_CHANGES_REQUESTED="CHANGES_REQUESTED"
@@ -187,6 +188,33 @@ _pulse_merge_review_thread_parked_at_head() {
 	return 1
 }
 
+#######################################
+# GH#38291: an origin:interactive PR without worker-takeover belongs to its
+# session. Hand it over first when that session is gone or proven idle;
+# otherwise defer (the scanner's dispatch-pr guard would defer it anyway).
+# Reads caller-scope pr_labels/pr_updated_at/pr_head_ref_oid when present
+# (_process_single_ready_pr); unknown labels fall through to that guard.
+# Returns: 0 to continue to dispatch-pr, 1 when the caller must defer.
+#######################################
+_pulse_merge_review_thread_interactive_handover() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local labels_csv=",${pr_labels:-},"
+
+	[[ "$labels_csv" == *",origin:interactive,"* && "$labels_csv" != *",origin:worker-takeover,"* ]] || return 0
+	if declare -F _interactive_pr_is_stale >/dev/null 2>&1 \
+		&& _interactive_pr_is_stale "$pr_number" "$repo_slug" "${pr_updated_at:-}" "${pr_head_ref_oid:-}"; then
+		if _interactive_pr_trigger_handover "$pr_number" "$repo_slug" "unresolved review threads ${reason}"; then
+			return 0
+		fi
+		echo "[pulse-merge] review-thread remediation deferred for PR #${pr_number} in ${repo_slug} — interactive handover was not confirmed ${reason}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] review-thread remediation deferred for PR #${pr_number} in ${repo_slug} — origin:interactive PR still owned by an active or unverified session ${reason} (GH#38291)" >>"$LOGFILE"
+	return 1
+}
+
 _pulse_merge_dispatch_review_thread_remediation() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -195,6 +223,10 @@ _pulse_merge_dispatch_review_thread_remediation() {
 	local scanner_rc=0
 	_PULSE_MERGE_REMEDIATION_OUTCOME=""
 
+	if ! _pulse_merge_review_thread_interactive_handover "$pr_number" "$repo_slug" "$reason"; then
+		_PULSE_MERGE_REMEDIATION_OUTCOME="$PULSE_REVIEW_REMEDIATION_DEFERRED"
+		return 0
+	fi
 	if [[ ! -x "$scanner" ]]; then
 		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: scanner missing or not executable (${scanner})" >>"$LOGFILE"
 		return 1
@@ -205,7 +237,7 @@ _pulse_merge_dispatch_review_thread_remediation() {
 	fi
 	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true "$scanner" dispatch-pr "$repo_slug" "$repo_path" "$pr_number" >>"$LOGFILE" 2>&1 || scanner_rc=$?
 	if [[ "$scanner_rc" -eq "$PULSE_REVIEW_REMEDIATION_DEFERRED_RC" ]]; then
-		_PULSE_MERGE_REMEDIATION_OUTCOME="deferred"
+		_PULSE_MERGE_REMEDIATION_OUTCOME="$PULSE_REVIEW_REMEDIATION_DEFERRED"
 		echo "[pulse-merge] review-thread remediation deferred for PR #${pr_number} in ${repo_slug} — response dispatch active or recently deduplicated ${reason}" >>"$LOGFILE"
 		return 0
 	fi
@@ -465,7 +497,7 @@ _handle_changes_requested_review_gate() {
 		&& [[ "$_cr_label_list" != *",no-takeover,"* ]] \
 		&& [[ "$_cr_label_list" != *",review-routed-to-issue,"* ]] \
 		&& _pulse_merge_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "after CHANGES_REQUESTED review gate"; then
-		if [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "deferred" ]]; then
+		if [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "$PULSE_REVIEW_REMEDIATION_DEFERRED" ]]; then
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED; response remediation already active/deferred, preserving PR" >>"$LOGFILE"
 		elif [[ "$_PULSE_MERGE_REMEDIATION_OUTCOME" == "converged" ]]; then
 			if declare -F _review_feedback_has_trusted_body_change_request >/dev/null 2>&1 \

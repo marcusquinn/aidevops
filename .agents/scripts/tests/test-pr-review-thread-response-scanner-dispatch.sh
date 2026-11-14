@@ -332,8 +332,9 @@ test_dispatch_detaches_worker_from_parent_process_group() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
-	if grep -Fq 'setsid nohup env HEADLESS=1 WORKER_ISSUE_NUMBER=1' "$DETACH_LAUNCH_LOG" 2>/dev/null &&
-		grep -Fq 'nohup env HEADLESS=1 WORKER_ISSUE_NUMBER=1' "$DETACH_LAUNCH_LOG" 2>/dev/null &&
+	# GH#37718: the launcher prefixes the owned attempt-log path to the worker env.
+	if grep -Eq 'setsid nohup env AIDEVOPS_WORKER_ATTEMPT_LOG=[^ ]+ env HEADLESS=1 WORKER_ISSUE_NUMBER=1' "$DETACH_LAUNCH_LOG" 2>/dev/null &&
+		grep -Eq '(^|;)nohup env AIDEVOPS_WORKER_ATTEMPT_LOG=[^ ]+ env HEADLESS=1 WORKER_ISSUE_NUMBER=1' "$DETACH_LAUNCH_LOG" 2>/dev/null &&
 		grep -q 'session_key=pr-review-thread-response-owner-repo-1 .* detach=setsid+nohup' "$LOGFILE" 2>/dev/null; then
 		print_result "dispatch detaches review worker from parent process group" 0
 	else
@@ -353,6 +354,7 @@ test_dispatch_uses_scope_without_duplicate_fallback() {
 		output=$(
 			# shellcheck source=../pr-review-thread-response-launch.sh
 			source "${SCANNER%/*}/pr-review-thread-response-launch.sh"
+			_prrts_log() { return 0; }
 			systemd_scope_available() { return 0; }
 			systemd_scope_launch() {
 				printf 'scope %s\n' "$*" >>"$DETACH_LAUNCH_LOG"
@@ -449,10 +451,14 @@ SHARED_CONSTANTS
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-state.sh"
 	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner-worktree.sh" \
 		"$(dirname "$bundled_scanner")/pr-review-thread-response-scanner-worktree.sh"
-	cp "${TEST_SCRIPT_DIR}/../pr-review-thread-response-launch.sh" \
-		"$(dirname "$bundled_scanner")/pr-review-thread-response-launch.sh"
-	cp "${TEST_SCRIPT_DIR}/../systemd-scope-launch.sh" \
-		"$(dirname "$bundled_scanner")/systemd-scope-launch.sh"
+	# The launcher sources the shared detached-log allocator (GH#37718) and its
+	# module chain; a bundle without them aborts before dispatch.
+	local module=""
+	for module in pr-review-thread-response-launch.sh systemd-scope-launch.sh \
+		headless-runtime-worker-prepare.sh project-node-runtime.sh \
+		pulse-dispatch-worker-systemd.sh pulse-dispatch-sealed-worktree.sh shared-temp-workspace.sh; do
+		cp "${TEST_SCRIPT_DIR}/../${module}" "$(dirname "$bundled_scanner")/${module}"
+	done
 	chmod +x "$bundled_scanner"
 	"$bundled_scanner" dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
@@ -626,6 +632,40 @@ test_dispatch_pr_launches_targeted_worker_with_human_opt_in() {
 		print_result "dispatch-pr launches bounded targeted worker with human opt-in" 0
 	else
 		print_result "dispatch-pr launches bounded targeted worker with human opt-in" 1 "headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=${state_file}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_defers_session_owned_interactive_pr() {
+	setup_test_env
+	export STUB_PR_VIEW=$'Interactive PR\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tmaintainer\torigin:interactive,status:in-review'
+	local dispatch_rc=0
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	if [[ "$dispatch_rc" -eq 10 && ! -s "$HEADLESS_LOG" ]] &&
+		grep -Fq 'dispatch-pr: owner/repo#1 skipped — interactive PR owned by its session (no worker-takeover)' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch-pr defers an interactive PR still owned by its session (GH#38291)" 0
+	else
+		print_result "dispatch-pr defers an interactive PR still owned by its session (GH#38291)" 1 \
+			"rc=${dispatch_rc}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_launches_after_confirmed_worker_takeover() {
+	setup_test_env
+	export STUB_PR_VIEW=$'Interactive PR\tfeature/review\t'"${TEST_HEAD_OID_1}"$'\tmaintainer\torigin:interactive,origin:worker-takeover'
+	local dispatch_rc=0
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1 || dispatch_rc=$?
+	wait_for_headless_log || true
+	if [[ "$dispatch_rc" -eq 0 && -s "$HEADLESS_LOG" ]] &&
+		grep -q 'Target: PR #1 in owner/repo' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
+		! grep -Fq 'interactive PR owned by its session' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch-pr launches an interactive PR after confirmed worker-takeover (GH#38291)" 0
+	else
+		print_result "dispatch-pr launches an interactive PR after confirmed worker-takeover (GH#38291)" 1 \
+			"rc=${dispatch_rc}, headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
 	fi
 	teardown_test_env
 	return 0
