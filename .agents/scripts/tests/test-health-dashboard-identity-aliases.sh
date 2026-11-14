@@ -643,6 +643,38 @@ else
 	fail "aged holds paginate, sort exact ages, select latest trusted recommendation and respect role"
 fi
 
+# GH#38311: decision comments name their ask with other labels or point to
+# the issue that holds the decision; the newest trusted comment with an ask
+# wins, and labels are taken in priority order within one comment.
+test_hold_ask_extraction() (
+	gh() {
+		case "$*" in
+		*"/issues/1/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"**Needs:** budget\n**Owner/action:** @ops must record the quote | now\n**Unblock evidence:** receipt"},
+				{author_association:"NONE",body:"Recommended path: untrusted"}]]' ;;
+		*"/issues/2/comments?"*)
+			jq -n '[[{author_association:"MEMBER",body:"Recommended path: older ask"},
+				{author_association:"OWNER",body:"Held with the chain. The decision and evidence are on #13780 (https://github.com/o/r/issues/13780)."}]]' ;;
+		*"/issues/3/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"- **Next action:** later\n- **Recommended path**: pick B"}]]' ;;
+		*"/issues/4/comments?"*)
+			jq -n '[[{author_association:"OWNER",body:"Claimed for work."}]]' ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	[[ "$(_health_hold_recommendation owner/repo 1)" == "ops must record the quote  now" ]] || return 1
+	[[ "$(_health_hold_recommendation owner/repo 2)" == "Decision on #13780" ]] || return 1
+	[[ "$(_health_hold_recommendation owner/repo 3)" == "pick B" ]] || return 1
+	[[ -z "$(_health_hold_recommendation owner/repo 4)" ]] || return 1
+	return 0
+)
+if test_hold_ask_extraction; then
+	pass "hold ask extraction reads Owner/action lines, decision pointers and label priority from trusted comments"
+else
+	fail "hold ask extraction reads Owner/action lines, decision pointers and label priority from trusted comments"
+fi
+
 printf '\n== Summary ==\n'
 if ((TESTS_FAILED > 0)); then
 	printf '  %d failed of %d tests\n' "$TESTS_FAILED" "$TESTS_RUN"

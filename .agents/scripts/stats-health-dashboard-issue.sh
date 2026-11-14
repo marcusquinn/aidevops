@@ -1080,20 +1080,32 @@ _archive_stale_operator_dashboards() {
 }
 
 #######################################
-# One sanitized line from the latest maintainer-side decision comment's
-# "Recommended path" (worker-discipline.md decision-ready comment). Only
-# OWNER/MEMBER/COLLABORATOR comments count; output keeps plain words and
+# One sanitized line naming the ask from the newest maintainer-side comment
+# that states one. GH#38311: besides "Recommended path" (worker-discipline.md
+# decision-ready comment), decision comments use "Decision needed",
+# "Specific question", "Owner/action", "Owner/next action" or "Next action"
+# lines, taken in that order within a comment; a comment that only points
+# elsewhere ("The decision and evidence are on #N") yields "Decision on #N".
+# Only OWNER/MEMBER/COLLABORATOR comments count; output keeps plain words and
 # punctuation only (no URLs, markup or pipes), at most 160 characters.
 # Args: $1=repo slug, $2=issue number
-# Output: one line (empty when no decision comment exists)
+# Output: one line (empty when no comment states an ask)
 #######################################
 _health_hold_recommendation() {
 	local repo_slug="$1" issue_number="$2" comments=""
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_number" =~ ^[1-9][0-9]*$ ]] || return 0
 	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 0
-	jq -r '[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
-		| (.body // "") | capture("(?i)recommended path\\W*(?<t>[^\\n]*)")? | .t] | last // ""
-		| gsub("https?://[^ ]*"; "") | gsub("[^A-Za-z0-9 .,;:()/_-]"; "") | .[0:160]' <<<"$comments" 2>/dev/null || true
+	jq -r '
+		def order: ["recommended path", "decision needed", "specific question", "owner/action", "owner/next action", "next action"];
+		def asks: [(.body // "") | split("\n")[]
+			| capture("(?i)^[\\s>*_.0-9-]*(?<k>recommended path|decision needed|specific question|owner/next action|owner/action|next action)\\W*(?<t>.+)$")?
+			| .k |= ascii_downcase];
+		def ask: asks as $a | [order[] as $k | $a[] | select(.k == $k) | .t] | first // null;
+		def pointer: (.body // "") | capture("(?i)decision(?: and evidence)? (?:is|are|lives|live) on #(?<n>[0-9]+)")?
+			| "Decision on #\(.n)";
+		[.[][] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+			| (ask // pointer) | select(. != null)] | last // ""
+		| gsub("https?://[^ ]*"; "") | gsub("[^A-Za-z0-9 .,;:()/_#-]"; "") | .[0:160]' <<<"$comments" 2>/dev/null || true
 	return 0
 }
 
@@ -1129,11 +1141,14 @@ _health_aged_hold_section() {
 	total=$(jq -s '.[1] // 0' <<<"$rows" 2>/dev/null) || return 0
 	[[ "$total" =~ ^[0-9]+$ && "$total" -gt 0 ]] || return 0
 	printf 'Maintainer decision holds older than %s days (%s). Surfacing grants nothing: the hold stays until a maintainer decides.\n\n' "$age_days" "$total"
-	printf '| Age | Issue | Recommended path | URL |\n| --- | --- | --- | --- |\n'
+	# GH#38311: terminal-blocker-recovery-holds.sh queues a plain reply for the
+	# replying maintainer's own runner, so no interactive session is needed.
+	printf 'To decide, reply on the issue in plain words (no session needed): your runner'\''s recovery supervisor carries out the reply and posts a receipt.\n\n'
+	printf '| Age | Issue | Ask | URL |\n| --- | --- | --- | --- |\n'
 	while IFS=$'\t' read -r number age title url; do
 		[[ "$number" =~ ^[1-9][0-9]*$ ]] || continue
 		rec=$(_health_hold_recommendation "$repo_slug" "$number")
-		printf '| %sd | #%s %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No decision comment yet}" "$url"
+		printf '| %sd | #%s %s | %s | %s |\n' "$age" "$number" "$title" "${rec:-No ask stated in a maintainer comment yet}" "$url"
 	done < <(jq -rs '.[0][0:10][] | [.number, .age, .title, .url] | @tsv' <<<"$rows" 2>/dev/null)
 	[[ "$total" -le "$max_rows" ]] || printf '\n_%s more not shown._\n' "$((total - max_rows))"
 	return 0
