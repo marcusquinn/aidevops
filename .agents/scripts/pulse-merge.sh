@@ -1425,12 +1425,12 @@ _pmp_stage_finalize_merge() {
 		if [[ -n "${_OW_LABEL_PAT:-}" && ",${labels}," == *"${_OW_LABEL_PAT:-}"* ]]; then
 			echo "[pulse-merge] auto-merged origin:worker (worker-briefed) PR #${pr_number} (author=${pr_author}, linked_issue=#${linked_issue:-unknown})" >>"$LOGFILE"
 		fi
-		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$labels" "$pr_base_ref_name"
+		_pmp_run_timed_stage _handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$labels" "$pr_base_ref_name"
 		return 0
 	fi
 	if [[ "$merge_output" == *"Merge already in progress"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} in ${repo_slug} already has a merge in progress; counting as merge progress (GH#24383): ${merge_output}" >>"$LOGFILE"
-		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$labels" "$pr_base_ref_name"
+		_pmp_run_timed_stage _handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$labels" "$pr_base_ref_name"
 		return $?
 	fi
 	if declare -F _pulse_merge_failure_is_terminal >/dev/null 2>&1 && _pulse_merge_failure_is_terminal "$pr_number" "$repo_slug"; then
@@ -1468,7 +1468,7 @@ _process_single_ready_pr() {
 		_pmp_stage_review_and_gates _pmp_stage_required_checks _pmp_stage_pre_merge \
 		_pmp_stage_admin_merge _pmp_stage_ruleset_fallback; do
 		stage_rc=0
-		"$stage" || stage_rc=$?
+		_pmp_run_timed_stage "$stage" || stage_rc=$? # GH#38259
 		if [[ "$stage_rc" -ne 10 ]]; then
 			queue_result="$stage_rc"
 			if [[ "$_PMP_HUMAN_GATED" -eq 1 ]]; then
@@ -1482,7 +1482,7 @@ _process_single_ready_pr() {
 		fi
 	done
 	stage_rc=0
-	_pmp_stage_finalize_merge || stage_rc=$?
+	_pmp_run_timed_stage _pmp_stage_finalize_merge || stage_rc=$?
 	declare -F _pulse_merge_queue_finish >/dev/null 2>&1 && _pulse_merge_queue_finish "$stage_rc"
 	return "$stage_rc"
 }

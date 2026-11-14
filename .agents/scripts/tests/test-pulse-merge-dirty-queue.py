@@ -21,6 +21,17 @@ module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
 
 
+def evaluator_definitions():
+    """Extract the PR evaluators plus the stage runner they call (GH#38259)."""
+    merge_source = (SCRIPTS / "pulse-merge.sh").read_text()
+    timing_source = (SCRIPTS / "pulse-merge-timing.sh").read_text()
+    return "\n".join(
+        [re.search(r"(?ms)^" + name + r"\(\) \{.*?^\}", merge_source)[0]
+         for name in ("_process_single_ready_pr", "process_pr")]
+        + [re.search(r"(?ms)^_pmp_run_timed_stage\(\) \{.*?^\}", timing_source)[0]]
+    )
+
+
 class QueueTests(unittest.TestCase):
     def setUp(self):
         root = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
@@ -141,11 +152,7 @@ _pulse_merge_queue_finish 1
                 child.communicate()
 
     def test_poll_refresh_and_event_borrow_keep_one_fresh_read(self):
-        source = (SCRIPTS / "pulse-merge.sh").read_text()
-        definitions = "\n".join(
-            re.search(r"(?ms)^" + name + r"\(\) \{.*?^\}", source)[0]
-            for name in ("_process_single_ready_pr", "process_pr")
-        )
+        definitions = evaluator_definitions()
         common = r'''
 set -eu
 source "$1"
@@ -192,11 +199,7 @@ fi
     def test_human_gated_result_acknowledges_hint_on_both_paths(self):
         # GH#38248: on the webhook path the child borrows process_pr's lease,
         # so the human-gated acknowledgement must reach the owning finish.
-        source = (SCRIPTS / "pulse-merge.sh").read_text()
-        definitions = "\n".join(
-            re.search(r"(?ms)^" + name + r"\(\) \{.*?^\}", source)[0]
-            for name in ("_process_single_ready_pr", "process_pr")
-        )
+        definitions = evaluator_definitions()
         common = r'''
 set -eu
 source "$1"
