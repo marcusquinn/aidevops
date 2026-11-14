@@ -307,6 +307,25 @@ else
 fi
 popd >/dev/null || exit 1
 
+# A longer public token must not exempt a standalone private basename.
+(
+	cd "$REPO" || exit 1
+	printf '%s\n' 'private-project-template' >basename.txt
+	git add basename.txt
+	git commit -qm 'publish longer basename only'
+) || fail "could not seed basename boundary fixture"
+boundary_tree=$(git -C "$REPO" rev-parse HEAD)
+printf 'repo\ttestorg/private-project\n' >"${TMP}/boundary-entities.tsv"
+pushd "$REPO" >/dev/null || exit 1
+hits=$(privacy_scan_public_text 'See private-project for details' "${TMP}/boundary-entities.tsv" '' '' "$boundary_tree")
+rc=$?
+popd >/dev/null || exit 1
+if [[ "$rc" -eq 1 && "$hits" == *'[private-repo]'* ]]; then
+	pass "longer hyphenated public name does not exempt private basename"
+else
+	fail "public basename exemption must use detector boundaries (rc=$rc)"
+fi
+
 # -----------------------------------------------------------------------------
 # Test 2: sanitised TODO.md → does not block
 # -----------------------------------------------------------------------------
@@ -616,6 +635,39 @@ else
 	fi
 
 	# GH#34504: an existing feature imports a public entity from the default tip.
+	git -C "$HOOK_REPO" remote add origin 'git@github.com:test/private.git'
+	git -C "$HOOK_REPO" remote set-url --push origin 'git@github.com:test/public.git'
+	(
+		cd "$HOOK_REPO" || exit 1
+		git checkout -qb split-target "$CLEAN_HEAD"
+		printf 'new reference to testorg/private-mirror\n' >TODO.md
+		git add TODO.md
+		git commit -qm 'split target entity'
+		git update-ref refs/remotes/origin/main "$LEAK_HEAD"
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+	) || fail "hook dispatch: could not seed split-target fixture"
+	SPLIT_HEAD=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	for SPLIT_BASE in "$CLEAN_HEAD" 0000000000000000000000000000000000000000; do
+		_run_hook origin "git@github.com:test/public.git" \
+			"refs/heads/split-target ${SPLIT_HEAD} refs/heads/split-target ${SPLIT_BASE}"
+		rc=$?
+		if [[ "$rc" -eq 1 ]] && grep -q 'private references' "${TMP}/hook-output"; then
+			pass "hook dispatch: private fetch tree cannot exempt public push (base=$SPLIT_BASE)"
+		else
+			fail "hook dispatch: split fetch/push repositories must retain strict scanning (rc=$rc)"
+		fi
+	done
+	git -C "$HOOK_REPO" remote remove origin
+	git -C "$HOOK_REPO" update-ref refs/remotes/origin/main "$LEAK_HEAD"
+	_run_hook origin "git@github.com:test/public.git" \
+		"refs/heads/split-target ${SPLIT_HEAD} refs/heads/split-target ${CLEAN_HEAD}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]] && grep -q 'private references' "${TMP}/hook-output"; then
+		pass "hook dispatch: unknown fetch identity cannot exempt public push"
+	else
+		fail "hook dispatch: unknown fetch identity must retain strict scanning (rc=$rc)"
+	fi
+	git -C "$HOOK_REPO" remote add origin 'https://github.com/test/public.git'
 	(
 		cd "$HOOK_REPO" || exit 1
 		git checkout -qb feature "$CLEAN_HEAD"

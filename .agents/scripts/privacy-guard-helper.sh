@@ -402,7 +402,7 @@ privacy_scan_public_text() {
 				fi
 				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
 				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
-					if [[ -n "$public_tree" ]] && git grep -Iq -F -e "$basename" "$public_tree" -- 2>/dev/null; then
+					if [[ -n "$public_tree" ]] && git grep -Iq -E -e "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)" "$public_tree" -- 2>/dev/null; then
 						continue
 					fi
 					printf '[private-repo]\n'
