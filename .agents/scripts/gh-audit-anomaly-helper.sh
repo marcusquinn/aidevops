@@ -329,13 +329,48 @@ _cmd_scan_parse_args() {
 	return 0
 }
 
+# Write every parsable NDJSON object in the scan window to parsable_file and
+# record how many lines were unparsable in the caller-scoped _sc_malformed_count.
+#
+# An interrupted append leaves the log without a trailing newline, so the next
+# event concatenates onto the partial one and both become unreadable (GH#38229).
+# Aborting the whole scan on such a line froze the checkpoint and ended anomaly
+# detection for every later entry, which is strictly worse than reporting the
+# corruption: a torn line is itself an audit finding, so it is counted here and
+# surfaced in the report rather than suppressed or allowed to block the scan.
+# Only objects are accepted; any other JSON value is counted as malformed.
+# Args: log_file skip_count parsable_file
+# Returns 1 when the window cannot be read at all.
+_cmd_scan_partition_parsable() {
+	local log_file="$1" skip_count="$2" parsable_file="$3"
+	local window_lines parsable_lines
+
+	if ! tail -n +"$((skip_count + 1))" "$log_file" |
+		jq -Rr 'if (fromjson? | type) == "object" then . else empty end' \
+			>"$parsable_file" 2>/dev/null; then
+		return 1
+	fi
+
+	window_lines="$(tail -n +"$((skip_count + 1))" "$log_file" | wc -l | tr -d ' ')"
+	parsable_lines="$(wc -l <"$parsable_file" | tr -d ' ')"
+	_sc_malformed_count=$((window_lines - parsable_lines))
+	[[ "$_sc_malformed_count" -lt 0 ]] && _sc_malformed_count=0
+	if [[ "$_sc_malformed_count" -gt 0 ]]; then
+		_ga_warn "Malformed audit NDJSON: ${_sc_malformed_count} unparsable line(s) reported, scan continues"
+	fi
+	return 0
+}
+
 # Collect NDJSON entries with non-empty suspicious[] arrays into the
-# caller-scoped array _sc_anomaly_entries.
+# caller-scoped array _sc_anomaly_entries. Unparsable lines are counted in the
+# caller-scoped _sc_malformed_count and reported, never silently dropped.
 # Args: log_file skip_count
-# Returns 1 when jq cannot parse the scan window so the checkpoint is preserved.
+# Returns 1 only when the anomaly filter itself fails on parsable records, so
+# the checkpoint is preserved for genuine filter failures.
 _cmd_scan_collect_anomalies() {
 	local log_file="$1" skip_count="$2"
 	_sc_anomaly_entries=()
+	_sc_malformed_count=0
 
 	if command -v jq &>/dev/null; then
 		# Single jq pass: skip counted lines, emit only actionable anomalies.
@@ -343,29 +378,39 @@ _cmd_scan_collect_anomalies() {
 		# Verified approvals and permission-block transitions intentionally remove
 		# protected labels. Keep them in the immutable log, but suppress alerts only
 		# when capture, provenance, proof, and the complete semantic delta match.
-		local line filtered_file
+		local line filtered_file parsable_file
 		filtered_file="$(mktemp -t gh-audit-anomaly-filter.XXXXXX)" || {
 			_ga_warn "Could not create anomaly scan buffer"
 			return 1
 		}
+		parsable_file="$(mktemp -t gh-audit-anomaly-parsable.XXXXXX)" || {
+			rm -f "$filtered_file"
+			_ga_warn "Could not create anomaly parse buffer"
+			return 1
+		}
+		if ! _cmd_scan_partition_parsable "$log_file" "$skip_count" "$parsable_file"; then
+			rm -f "$filtered_file" "$parsable_file"
+			_ga_warn "Could not read the audit scan window — checkpoint not advanced"
+			return 1
+		fi
 		# aidevops:trust-boundary — fail closed unless each expected transition has
 		# independently meaningful end-state evidence and no extra state change.
-		if ! tail -n +"$((skip_count + 1))" "$log_file" |
-			jq -c --arg nmr "$GH_ANOMALY_NMR_LABEL" --arg permission "$GH_ANOMALY_PERMISSION_LABEL" \
-				--arg issue_edit "issue_edit" --arg approval_script "approval-helper.sh" \
-				--arg permission_script "worker-permission-helper.sh" \
-				--arg nmr_script "pulse-nmr-approval.sh" \
-				--arg full_loop_commit_script "full-loop-helper-commit.sh" \
-				--arg full_loop_script "full-loop-helper.sh" \
-				-f "${SCRIPT_DIR}/gh-audit-anomaly-filter.jq" >"$filtered_file" 2>/dev/null; then
-			rm -f "$filtered_file"
-			_ga_warn "Malformed audit NDJSON detected — checkpoint not advanced"
+		if ! jq -c --arg nmr "$GH_ANOMALY_NMR_LABEL" --arg permission "$GH_ANOMALY_PERMISSION_LABEL" \
+			--arg issue_edit "issue_edit" --arg approval_script "approval-helper.sh" \
+			--arg permission_script "worker-permission-helper.sh" \
+			--arg nmr_script "pulse-nmr-approval.sh" \
+			--arg full_loop_commit_script "full-loop-helper-commit.sh" \
+			--arg full_loop_script "full-loop-helper.sh" \
+			-f "${SCRIPT_DIR}/gh-audit-anomaly-filter.jq" \
+			<"$parsable_file" >"$filtered_file" 2>/dev/null; then
+			rm -f "$filtered_file" "$parsable_file"
+			_ga_warn "Anomaly filter failed on parsable audit records — checkpoint not advanced"
 			return 1
 		fi
 		while IFS= read -r line; do
 			_sc_anomaly_entries+=("$line")
 		done <"$filtered_file"
-		rm -f "$filtered_file"
+		rm -f "$filtered_file" "$parsable_file"
 		_ga_filter_self_reversals
 		return 0
 	fi
@@ -451,12 +496,14 @@ _cmd_scan_advance_checkpoint() {
 }
 
 # Build the markdown issue body for an anomaly report.
+# Reads the caller-scoped _sc_malformed_count set by _cmd_scan_collect_anomalies.
 # Args: scan_ts anomaly_count scan_desc issue_repo entry1 entry2 ...
 # Output: issue body markdown on stdout.
 _cmd_scan_build_issue_body() {
 	local scan_ts="$1" anomaly_count="$2" scan_desc="$3"
 	local issue_repo="$4"
 	shift 4
+	local malformed_count="${_sc_malformed_count:-0}"
 
 	# Header (heredoc is easier to review than concatenation).
 	cat <<BODY
@@ -464,6 +511,7 @@ _cmd_scan_build_issue_body() {
 
 **Scan time:** ${scan_ts}
 **Anomalies found:** ${anomaly_count}
+**Malformed lines:** ${malformed_count}
 **Log scanned:** ${scan_desc}
 
 ## Anomalous Entries
@@ -482,6 +530,30 @@ BODY
 		_ga_format_anomaly_row "$entry" "$issue_repo"
 		included=$((included + 1))
 	done
+
+	if [[ "$malformed_count" -gt 0 ]]; then
+		cat <<INTEGRITY
+
+## Log Integrity
+
+${malformed_count} line(s) in the scanned window were not parsable NDJSON objects and
+were excluded from anomaly matching. The usual cause is an interrupted append that left
+the log without a trailing newline, merging a partial event with the next one; the events
+on those lines were therefore not checked for suspicious signals.
+
+Locate them without mutating the append-only log:
+
+\`\`\`bash
+jq -nR '[inputs | input_line_number as \$n | [fromjson?] | if length == 0 then \$n else empty end]' \\
+  ~/.aidevops/logs/gh-audit.log
+\`\`\`
+
+If a reported line shows a truncated prefix followed by a complete later event, the
+truncation is a write fault rather than evidence of tampering. If it shows edited or
+reordered content, treat it as a tampering finding and follow the forensics workflow in
+\`reference/gh-audit-log.md\`.
+INTEGRITY
+	fi
 
 	cat <<FOOTER
 
@@ -550,6 +622,45 @@ _cmd_scan_file_issue() {
 	return 0
 }
 
+# Render the findings and file the alert issue.
+# Reads the caller-scoped _sc_* scan state set by cmd_scan.
+# Args: anomaly_count
+_cmd_scan_report_findings() {
+	local anomaly_count="$1"
+	local scan_ts
+	scan_ts="$(_ga_now_ts)"
+
+	# Build the body in a tempfile; gh issue create --body-file is safer than
+	# --body for large content (avoids argv size limits and shell quoting).
+	local body_file
+	body_file="$(mktemp -t gh-audit-anomaly-body.XXXXXX)"
+	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$_sc_scan_desc" \
+		"$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
+
+	if [[ "$_sc_dry_run" -eq 1 ]]; then
+		_ga_info "DRY RUN — findings detected, would file issue on ${_sc_issue_repo}"
+		cat "$body_file"
+		rm -f "$body_file"
+		return 0
+	fi
+
+	if ! command -v gh &>/dev/null; then
+		_ga_warn "gh CLI not available — cannot file issue. Body printed to stderr."
+		cat "$body_file" >&2
+		rm -f "$body_file"
+		return 0
+	fi
+
+	local title="GH Audit Anomaly Alert: ${anomaly_count} suspicious operations detected"
+	if [[ "$anomaly_count" -eq 0 ]]; then
+		title="GH Audit Log Integrity Alert: ${_sc_malformed_count} malformed audit line(s)"
+	fi
+	local exit_code=0
+	_cmd_scan_file_issue "$_sc_issue_repo" "$title" "$body_file" || exit_code=$?
+	rm -f "$body_file"
+	return "$exit_code"
+}
+
 # Scan the gh-audit.log for entries with non-empty suspicious[] arrays.
 # Files a GitHub issue if anomalies are found.
 #
@@ -608,6 +719,7 @@ cmd_scan() {
 	_ga_info "Scanning ${_sc_lines_to_scan} entries (${_sc_scan_desc})"
 
 	local -a _sc_anomaly_entries=()
+	local _sc_malformed_count=0
 	if ! _cmd_scan_collect_anomalies "$window_file" 0; then
 		rm -f "$window_file"
 		_ga_warn "Audit scan aborted without updating state"
@@ -617,43 +729,18 @@ cmd_scan() {
 
 	local anomaly_count="${#_sc_anomaly_entries[@]}"
 	_ga_info "Found ${anomaly_count} anomalous entries"
+	[[ "$_sc_malformed_count" -gt 0 ]] &&
+		_ga_info "Found ${_sc_malformed_count} malformed audit line(s) — reported as a log-integrity finding"
 
 	[[ "$_sc_dry_run" -eq 0 ]] && _cmd_scan_advance_checkpoint "$log_file" "$total_lines" "$scan_started_ts"
 
-	if [[ "$anomaly_count" -eq 0 ]]; then
+	if [[ "$anomaly_count" -eq 0 && "$_sc_malformed_count" -eq 0 ]]; then
 		_ga_info "No anomalies found — no issue filed"
 		return 0
 	fi
 
-	local scan_ts
-	scan_ts="$(_ga_now_ts)"
-
-	# Build the body in a tempfile; gh issue create --body-file is safer than
-	# --body for large content (avoids argv size limits and shell quoting).
-	local body_file
-	body_file="$(mktemp -t gh-audit-anomaly-body.XXXXXX)"
-	_cmd_scan_build_issue_body "$scan_ts" "$anomaly_count" "$_sc_scan_desc" \
-		"$_sc_issue_repo" "${_sc_anomaly_entries[@]}" >"$body_file"
-
-	if [[ "$_sc_dry_run" -eq 1 ]]; then
-		_ga_info "DRY RUN — anomalies found, would file issue on ${_sc_issue_repo}"
-		cat "$body_file"
-		rm -f "$body_file"
-		return 0
-	fi
-
-	if ! command -v gh &>/dev/null; then
-		_ga_warn "gh CLI not available — cannot file issue. Body printed to stderr."
-		cat "$body_file" >&2
-		rm -f "$body_file"
-		return 0
-	fi
-
-	local title="GH Audit Anomaly Alert: ${anomaly_count} suspicious operations detected"
-	local exit_code=0
-	_cmd_scan_file_issue "$_sc_issue_repo" "$title" "$body_file" || exit_code=$?
-	rm -f "$body_file"
-	return "$exit_code"
+	_cmd_scan_report_findings "$anomaly_count"
+	return $?
 }
 
 # Show scanner status.
@@ -708,6 +795,10 @@ gh-audit-anomaly-helper.sh — Scan gh-audit.log for anomalous operations
 
 Reads the gh-audit.log, finds entries with non-empty suspicious[] arrays,
 and opens a GitHub issue summary when anomalies are detected.
+
+Lines that are not parsable NDJSON objects (typically a torn append) are
+excluded from signal matching, counted as a log-integrity finding, and reported
+without blocking the scan or the checkpoint.
 
 Commands:
   scan [--all] [--dry-run] [--repo SLUG]   Scan for anomalies, file issue
