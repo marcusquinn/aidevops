@@ -18,6 +18,8 @@ FIXTURE="" ROUTES=0 REVIEWS=0 READ_FAIL=0 LAST_ERROR=""
 eval "$(awk '/^_check_pr_merge_gates\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/pulse-merge.sh")"
 eval "$(awk '/^_merge_check_closure_metadata\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 eval "$(awk '/^_merge_check_closing_guards\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
+# GH#38318: cmd_merge reaches the pre-merge gate through this wrapper.
+eval "$(awk '/^_merge_gate_or_reconcile\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 eval "$(awk '/^cmd_merge\(\)/ { capture=1 } capture { print } capture && /^}/ { exit }' "${SCRIPT_DIR}/full-loop-helper-merge.sh")"
 
 gh_pr_view() {
