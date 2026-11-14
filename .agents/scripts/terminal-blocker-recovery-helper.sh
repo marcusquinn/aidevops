@@ -1291,6 +1291,25 @@ _tbr_print_entry() {
 }
 
 #######################################
+# GH#35129: cross-runner intake exists only while repo policy enables it.
+# Returns 0 to continue, 1 after retiring a disabled entry, 2 when the
+# policy is unreadable (keep the entry for the next pass).
+# Args: file repo issue key
+#######################################
+_tbr_check_entry_policy() {
+	local file="$1" repo="$2" issue="$3" key="$4"
+	local policy_rc=0
+	printf 'blocker-recovery: checking stage=entry_policy repo=%s issue=%s\n' "$repo" "$issue" >&2
+	_tbr_policy_enabled "$repo" || policy_rc=$?
+	[[ "$policy_rc" -lt 2 ]] || return 2
+	if [[ "$policy_rc" -eq 1 ]]; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
 # printed, 1 otherwise.
@@ -1316,16 +1335,8 @@ _tbr_check_entry() {
 	case "$intake" in
 	unclassified_hold | answered_hold | unexplained_hold) [[ "$mode" != rearm ]] || return 1 ;;
 	esac
-	# GH#35129: cross-runner intake exists only while repo policy enables it.
 	if [[ "$intake" == policy_remote ]]; then
-		local policy_rc=0
-		printf 'blocker-recovery: checking stage=entry_policy repo=%s issue=%s\n' "$repo" "$issue" >&2
-		_tbr_policy_enabled "$repo" || policy_rc=$?
-		[[ "$policy_rc" -lt 2 ]] || return 2
-		if [[ "$policy_rc" -eq 1 ]]; then
-			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
-			return 1
-		fi
+		_tbr_check_entry_policy "$file" "$repo" "$issue" "$key" || return $?
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
