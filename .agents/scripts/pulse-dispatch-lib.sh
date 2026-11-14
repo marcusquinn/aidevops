@@ -539,7 +539,7 @@ _dispatch_negative_cache_refresh_revision() {
 	# new comments that introduce such events must force a recompute.
 	case "$reason" in
 	worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown)
-		if jq -e 'any(.[]; (.body // "") | test("expires_at=[0-9]|aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))' <<<"$comments" >/dev/null 2>&1; then
+		if jq -e 'any(.[]; (.body // "") | test("expires_at=[0-9]|aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED |(^|\n)CHECKPOINT_CONTINUATION_APPROVED "))' <<<"$comments" >/dev/null 2>&1; then
 			return 1
 		fi
 		;;
