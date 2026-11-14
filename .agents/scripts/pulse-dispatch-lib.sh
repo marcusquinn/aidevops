@@ -401,6 +401,10 @@ _dispatch_negative_cache_ops_only() (
 		body=$(jq -r '.' <<<"$body") || return 1
 		# The footer classifier also accepts unmarked routine descriptions and
 		# embedded dispatch text; only its explicit ops markers are noise here.
+		# Actionable directives (e.g. a standalone retry line) are never noise.
+		if [[ "$body" =~ (^|$'\n')[[:space:]]*terminal-blocker-circuit:retry ]]; then
+			return 1
+		fi
 		if [[ "$body" == *'<!-- ops:start'* ]] && _shim_body_is_ops_audit "$body"; then
 			continue
 		fi
@@ -531,6 +535,15 @@ _dispatch_negative_cache_refresh_revision() {
 	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
 		gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
 	_dispatch_negative_cache_ops_only "$comments" || return 1
+	# Checkpoint hints embed boundary evidence (expiries, re-arm deadlines);
+	# new comments that introduce such events must force a recompute.
+	case "$reason" in
+	worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown)
+		if jq -e 'any(.[]; (.body // "") | test("expires_at=[0-9]|aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))' <<<"$comments" >/dev/null 2>&1; then
+			return 1
+		fi
+		;;
+	esac
 	# Refresh the revision, never the TTL or reason-specific evidence. Preserve
 	# the original revision anchor used for write-time quiet-TTL eligibility.
 	tmp=$(mktemp "${file}.XXXXXX") || return 1
