@@ -352,6 +352,33 @@ class RetirementContract(unittest.TestCase):
         self.git("worktree", "unlock", str(private))
         self.assertEqual(self.retire()["status"], "retired")
 
+    def test_compaction_removes_only_free_terminal_retirement_locks(self):
+        generation = str(uuid4())
+        retirement._record(self.store, generation, "retired", {
+            "type": "worktree-retired", "generation_id": generation})
+        terminal = self.store.directory / f"retirement-{generation}.lock"
+        terminal.write_bytes(b"")
+        terminal.chmod(0o600)
+        unknown = self.store.directory / f"retirement-{uuid4()}.lock"
+        self.assertTrue(terminal.exists())
+        unknown.write_bytes(b"")
+        unknown.chmod(0o600)
+        self.assertFalse(
+            "retirement_locks_removed" in self.store.compact(apply=False))
+        held = os.open(terminal, os.O_RDWR)
+        try:
+            import fcntl
+            fcntl.flock(held, fcntl.LOCK_EX)
+            result = self.store.compact(apply=True)
+            self.assertEqual(result["retirement_locks_refused"], 1)
+            self.assertTrue(terminal.exists())
+        finally:
+            os.close(held)
+        result = self.store.compact(apply=True)
+        self.assertEqual(result["retirement_locks_removed"], 1)
+        self.assertFalse(terminal.exists())
+        self.assertTrue(unknown.exists())
+
     def test_live_creator_keeps_admission_open(self):
         create_worktree(
             self.store, WorktreeSpec(self.repo, self.target, "HEAD", ("--detach",)),
