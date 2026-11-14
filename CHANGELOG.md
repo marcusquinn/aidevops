@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.197] - 2026-11-14
+
+### Added
+
+- one-command GitHub App setup (manifest create + bulk bind)
+
 ## [3.39.196] - 2026-11-14
 
 ### Fixed
