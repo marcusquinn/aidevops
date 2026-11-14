@@ -178,9 +178,19 @@ release_request() {
 	if [[ -n "$existing" ]]; then
 		metadata=$(release_metadata "$(jq -r '.body' <<<"$existing")" "$repo") || return 1
 		if ! jq -e --arg sha "$sha" --argjson pr "$pr" '.head == $sha and .pr == $pr' <<<"$metadata" >/dev/null; then
-			release_error 'Existing version request has a different PR/head: refresh its signed body and obtain re-approval.'
-			return 1
+			# A same-version request bound to another PR/head is superseded only
+			# when unsigned. Signed or unverifiable requests fail closed, unedited.
+			issue=$(jq -r '.number' <<<"$existing") || return 1
+			[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+			rc=0
+			verdict=$(release_verify "$repo" "$issue") || rc=$?
+			[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing version request has a different PR/head and is signed or unverifiable: refresh its signed body and obtain re-approval.' || return 1
+			release_comment "$repo" "$issue" "Superseded by a new request for PR #${pr} (head ${sha}) at version ${version}. No release was authorized by this unsigned request." || return 1
+			gh issue close "$issue" --repo "$repo" --reason 'not planned' || return 1
+			existing=""
 		fi
+	fi
+	if [[ -n "$existing" ]]; then
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		issue="${url##*/}"
 		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
