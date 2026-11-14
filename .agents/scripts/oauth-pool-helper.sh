@@ -14,6 +14,7 @@
 #   oauth-pool-helper.sh rotate [anthropic|openai|cursor|google]        # Switch active account
 #   oauth-pool-helper.sh status [anthropic|openai|cursor|google|all]    # Pool rotation statistics
 #   oauth-pool-helper.sh assign-pending <provider> [email]              # Assign pending token
+#   oauth-pool-helper.sh remote-sync <sync|status|install|enable|disable> --host H --provider P --email E
 #   oauth-pool-helper.sh help                                           # Show usage
 #
 # Security: Tokens are written to ~/.aidevops/oauth-pool.json (600 perms).
@@ -355,6 +356,10 @@ source "${SCRIPT_DIR}/oauth-pool-manage.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/oauth-pool-diagnose.sh"
 
+# shellcheck source=./oauth-pool-remote-sync.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/oauth-pool-remote-sync.sh"
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -376,6 +381,8 @@ main() {
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
+	remote-sync | remote_sync) cmd_remote_sync "$@" ;;
+	entry) cmd_entry "$@" ;;
 	set-priority | set_priority) cmd_set_priority "$@" ;;
 	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;
