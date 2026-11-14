@@ -643,6 +643,18 @@ assert_eq "proven local plus CI coverage is non-null" "0.8" "$(jq '.accounted_fr
 assert_eq "unattributed residual retains upper-bound semantics" "1:true:unknown" \
 	"$(jq -r '[.unattributed_cost,.unattributed_is_upper_bound,.other_devices] | join(":")' <<<"$quota_report")"
 assert_eq "duplicate attempt ID is visible but adds no coverage" "1" "$(jq '.duplicate_attempt_ids' <<<"$quota_report")"
+assert_eq "no claim evidence leaves foreign-device hint unknown" "unknown" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+claim_fixture="${TEST_TMP_DIR:-${TMPDIR:-/tmp}}/claims.$$.txt"
+printf 'DISPATCH_CLAIM nonce=n1 runner=Self-Login ts=t max_age_s=1 device=dev-a\nDISPATCH_CLAIM nonce=n2 runner=other ts=t device=dev-z\n' >"$claim_fixture"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "same-login claims from only the local device report none" "none" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+printf 'DISPATCH_CLAIM nonce=n3 runner=self-login ts=t device=dev-b\n' >>"$claim_fixture"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "same-login claim from another device reports the hint" "same_login_foreign_device" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLAIM_EVIDENCE_FILE="$claim_fixture" \
+	bash "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" 3600 >/dev/null 2>&1 || true
+assert_eq "instrument report carries the same hint" "same_login_foreign_device" "$(jq -r '.rest_core_attribution.foreign_device_hint' "$AIDEVOPS_GH_API_REPORT")"
+rm -f "$claim_fixture"
 quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600)
 assert_eq "no CI evidence never invents CI cost" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
 : >"$ci_fixture"
