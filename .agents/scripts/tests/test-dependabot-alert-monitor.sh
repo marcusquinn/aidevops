@@ -99,7 +99,10 @@ gh() {
 [[
   {"state":"open","dependency":{"package":{"name":"litellm","ecosystem":"pip"},"manifest_path":"requirements.txt"},"security_advisory":{"severity":"high"},"security_vulnerability":{"first_patched_version":{"identifier":"1.84.0"}}},
   {"state":"open","dependency":{"package":{"name":"litellm","ecosystem":"pip"},"manifest_path":"requirements-lock.txt"},"security_advisory":{"severity":"critical"},"security_vulnerability":{"first_patched_version":{"identifier":"1.84.0"}}},
-  {"state":"open","dependency":{"package":{"name":"diskcache","ecosystem":"pip"},"manifest_path":"requirements.txt"},"security_advisory":{"severity":"medium"},"security_vulnerability":{"first_patched_version":null}}
+  {"state":"open","dependency":{"package":{"name":"diskcache","ecosystem":"pip"},"manifest_path":"requirements.txt"},"security_advisory":{"severity":"medium"},"security_vulnerability":{"first_patched_version":null}},
+  {"state":"open","dependency":{"package":{"name":"aiohttp","ecosystem":"pip"},"manifest_path":"uv.lock"},"security_advisory":{"severity":"high"},"security_vulnerability":{"first_patched_version":{"identifier":"3.9.4"}}},
+  {"state":"open","dependency":{"package":{"name":"aiohttp","ecosystem":"pip"},"manifest_path":"uv.lock"},"security_advisory":{"severity":"medium"},"security_vulnerability":{"first_patched_version":{"identifier":"3.10.11"}}},
+  {"state":"open","dependency":{"package":{"name":"aiohttp","ecosystem":"pip"},"manifest_path":"uv.lock"},"security_advisory":{"severity":"low"},"security_vulnerability":{"first_patched_version":null}}
 ]]
 JSON
 				;;
@@ -249,7 +252,22 @@ if ! grep -q '^dependabot-alert-monitor-alerts-rest|repos/owner/project/dependab
 fi
 
 issue_count="$(wc -l <"${TEST_TMP}/issues.log" | tr -d ' ')"
-[[ "$issue_count" == "2" ]] || fail "expected 2 grouped issues, got ${issue_count}"
+[[ "$issue_count" == "3" ]] || fail "expected 3 grouped issues, got ${issue_count}"
+
+# GH#38328: alerts for one package with different patched versions (and one
+# with no patch yet) produce exactly one remediation issue listing every version.
+aiohttp_count="$(grep -c 'owner/project|Remediate dependency alert: aiohttp (pip)|' "${TEST_TMP}/issues.log")"
+[[ "$aiohttp_count" == "1" ]] || fail "expected 1 aiohttp issue across patched versions, got ${aiohttp_count}"
+if grep -q 'Investigate dependency alert: aiohttp' "${TEST_TMP}/issues.log"; then
+	fail "partially patched package filed a separate investigation issue"
+fi
+aiohttp_body="$(grep -l "for \`aiohttp\`" "${TEST_TMP}"/body-*.md)"
+[[ -n "$aiohttp_body" ]] || fail "aiohttp issue body missing"
+grep -Fq "Patched versions reported by GitHub across these alerts: \`3.10.11, 3.9.4\`" "$aiohttp_body" ||
+	fail "aiohttp body does not list every patched version"
+grep -Fq 'Alerts with no patched version reported yet: 1' "$aiohttp_body" ||
+	fail "aiohttp body does not report the unpatched alert"
+grep -Fq 'report 3 open alert(s)' "$aiohttp_body" || fail "aiohttp body alert count is wrong"
 
 if ! grep -q 'owner/project|Remediate dependency alert: litellm (pip)|.*auto-dispatch.*origin:worker.*tier:standard' "${TEST_TMP}/issues.log"; then
 	fail "patched alert group did not create worker-ready remediation issue"
@@ -269,7 +287,7 @@ fi
 
 dependabot_alert_monitor_scan_repos "$repos_json" "0" || fail "second scan failed"
 second_issue_count="$(wc -l <"${TEST_TMP}/issues.log" | tr -d ' ')"
-[[ "$second_issue_count" == "2" ]] || fail "state dedupe created duplicate issues"
+[[ "$second_issue_count" == "3" ]] || fail "state dedupe created duplicate issues"
 
 # Low budget must stop before the first repository alert request.
 : >"${TEST_TMP}/api.log"
