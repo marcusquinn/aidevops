@@ -64,8 +64,8 @@ function oauthHeaders(auth) {
 
 const MAX_ROUTER_CANDIDATES = 3;
 
-export const NO_IMAGE_ENTITLEMENT_MESSAGE =
-  "This ChatGPT account has no image-capable Codex model: the backend does not expose the image_generation tool for any model it lists. Use auth=\"openrouter\" or auth=\"api\" (explicit billing routes) instead.";
+export const NO_COMPATIBLE_IMAGE_MODEL_MESSAGE =
+  "No compatible image-capable Codex model was found among the attempted candidates; this bounded probe does not establish account-wide image entitlement. Use auth=\"openrouter\" or auth=\"api\" (explicit billing routes) instead.";
 
 function isImageToolStripped(error) {
   return /Tool choice 'image_generation' not found/i.test(String(error?.message || ""));
@@ -99,11 +99,18 @@ async function attemptOAuthRouter(auth, args, images, model, ctx) {
     signal,
   }, "oauth", started);
   if (!response.ok) return { response, base64: "", error: await imageRequestError(response, "oauth") };
+  let base64;
+  try {
+    base64 = await parseImageSse(response.body, (error) => {
+      throw transportFailure("oauth", "response-body", error, { started, response, signal });
+    });
+  } catch (error) {
+    if (error?.code !== "model_not_found" && !isImageToolStripped(error)) throw error;
+    return { response, base64: "", error };
+  }
   return {
     response,
-    base64: await parseImageSse(response.body, (error) => {
-      throw transportFailure("oauth", "response-body", error, { started, response, signal });
-    }),
+    base64,
     routerModel: model,
     requestedModel: null,
     providerModel: null,
@@ -116,7 +123,7 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
     let result = await attemptOAuthRouter(auth, args, images, CODEX_FALLBACK_MODEL, ctx);
     const rejected = result.error?.code === "model_not_found";
     if (!rejected) {
-      if (isImageToolStripped(result.error)) result.error = entitlementError(result.error);
+      if (isImageToolStripped(result.error)) result.error = compatibilityError(result.error);
       return result;
     }
     // The hardcoded router slug is not available to this account: try the
@@ -127,7 +134,7 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
     let stripped = false;
     for (const model of candidates) {
       const next = await attemptOAuthRouter(auth, args, images, model, ctx);
-      if (next.response.ok) return next;
+      if (next.response.ok && !next.error) return next;
       if (isImageToolStripped(next.error)) {
         stripped = true;
         continue;
@@ -135,14 +142,14 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
       if (next.error?.code === "model_not_found") continue;
       return next;
     }
-    if (stripped) result.error = entitlementError(result.error);
+    if (stripped) result.error = compatibilityError(result.error);
     return result;
   });
 }
 
-function entitlementError(cause) {
-  const error = new Error(NO_IMAGE_ENTITLEMENT_MESSAGE);
-  error.code = "no_image_entitlement";
+function compatibilityError(cause) {
+  const error = new Error(NO_COMPATIBLE_IMAGE_MODEL_MESSAGE);
+  error.code = "no_compatible_image_model";
   error.status = cause?.status || 400;
   return error;
 }
