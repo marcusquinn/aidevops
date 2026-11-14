@@ -313,6 +313,17 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	_dispatch_ranked_candidate_consumed '{"number":5,"repo_slug":"o/product"}'
 	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
 	[[ "$(numbers "$later")" == '6' && ! -s "$builds" ]]
+	# Exhaustion/refill keeps the original census duration and handoff window,
+	# even when the replacement enumeration is much faster than the census.
+	metadata=$(jq -c '{captured_at,handed_off_at,census_seconds}' "$partial")
+	_dispatch_ranked_candidate_consumed '{"number":6,"repo_slug":"o/product"}'
+	refilled=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$refilled")" == '1,2,3' && "$(wc -l <"$builds" | tr -d ' ')" == 1 ]]
+	[[ "$(jq -c '{captured_at,handed_off_at,census_seconds}' "$partial")" == "$metadata" ]]
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	later=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	[[ "$(numbers "$later")" == '2,3' && "$(wc -l <"$builds" | tr -d ' ')" == 1 ]]
+	jq -e 'length == 3' < <(jq -s . "${partial}.consumed") >/dev/null
 	for fixture in '4001|100' '2100|2001' '100|200'; do
 		_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
 		write_handed_off "$handoff" "${fixture%%|*}" "${fixture##*|}" 5,6

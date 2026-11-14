@@ -392,7 +392,7 @@ _dispatch_ranked_candidates_json() {
 	local carried="{}"
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 1 ]]; then
 		now_epoch=$(jq -r '.captured_at' "$snapshot_file") || return 1
-		carried=$(jq -c '[.handed_off_at | numbers] | if length > 0 then {handed_off_at: .[0]} else {} end' "$snapshot_file" 2>/dev/null) || carried="{}"
+		carried=$(jq -c '{handed_off_at,census_seconds} | with_entries(select(.value | type == "number"))' "$snapshot_file" 2>/dev/null) || carried="{}"
 	fi
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured_at "$now_epoch" \
