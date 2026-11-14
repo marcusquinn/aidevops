@@ -160,7 +160,7 @@ class EvidenceTests(unittest.TestCase):
     def test_reads_owners_only_for_finished_work(self):
         asked = []
         cache = {("gh", 4242, SLUG): (False, "issue-4242-open")}
-        self.decide(owner=lambda path: asked.append(path), cache=cache)
+        self.decide(owner=asked.append, cache=cache)
         self.assertEqual(asked, [])
 
     def worktree_idle(self, name, idle=review.IDLE_SECONDS + 60):
