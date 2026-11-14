@@ -235,12 +235,20 @@ def check(doc, repository):
     check_upstream(doc, policy, old_up, new_up)
     require(old_up != old_version, "package and upstream versions are ambiguous")
     unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
+    if policy.get("upstream_mode", "semver") == "commits":
+        proof = doc["upstream_proof"]
+        license_info = unchanged.get("upstreamLicense")
+        if isinstance(license_info, dict) and isinstance(license_info.get("url"), str):
+            unchanged["upstreamLicense"] = dict(license_info, url=substitute_versions(
+                license_info["url"], {proof["base"]: proof["head"]}))
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
             "manifest changes beyond version and upstreamVersion")
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
     pinned_mapping = {old_up: new_up}
+    if policy.get("upstream_mode", "semver") == "commits":
+        pinned_mapping[proof["base"]] = proof["head"]
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
