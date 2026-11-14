@@ -79,6 +79,81 @@ run_worker_no_output_classification_tests() {
 	test_pr_less_rejection_evidence
 	test_review_triage_completion_evidence
 	test_already_satisfied_completion_evidence
+	test_signal_less_exit_after_own_pr_handoff
+	return 0
+}
+
+# GH#38303: synthetic exact-head PR state per scenario.
+_signal_less_fixture_pr_state() {
+	case "$1" in
+	missing_summary) printf 'ready_missing_summary|7' ;;
+	merged_closed) printf 'merged|7' ;;
+	draft) printf 'draft_checkpoint|7' ;;
+	merged_missing_summary) printf 'merged_missing_summary|7' ;;
+	*) printf 'ready|7' ;;
+	esac
+	return 0
+}
+
+# GH#38303: classify one scenario. Callers run this in $(...), so the stubs
+# below stay scoped to that subshell.
+_signal_less_fixture_result() {
+	local scenario="$1" work_dir="$2"
+	_headless_private_workload_enabled() { return 1; }
+	_run_result_capture_live_blocker() { return 1; }
+	output_has_post_pr_handoff_signal() { return 1; }
+	output_has_blocked_signal() { return 1; }
+	output_has_missing_context_blocked_signal() { return 1; }
+	output_has_capability_blocked_signal() { return 1; }
+	_run_result_terminal_completion_confirmed() { return 1; }
+	_log_empty_result_gaps() { return 0; }
+	print_warning() { return 0; }
+	print_info() { return 0; }
+	_pr_handoff_state_for_branch_or_issue() { _signal_less_fixture_pr_state "$scenario"; return 0; }
+	gh() {
+		[[ "$*" == "api repos/owner/repo/issues/42" && "$scenario" != unreadable ]] || return 1
+		jq -cn --arg scenario "$scenario" '{number:42,state:"open",assignees:[{login:"runner"}],
+			labels:[{name:"auto-dispatch"},{name:"status:in-review"}]}
+			| if $scenario == "merged_closed" or $scenario == "merged_missing_summary" then .state = "closed"
+			elif $scenario == "foreign_assignee" then .assignees += [{login:"other"}]
+			elif $scenario == "still_owned" then .labels = [{name:"status:in-progress"}]
+			else . end'
+		return 0
+	}
+	# shellcheck disable=SC2034 # Classifier inputs read by sourced result phases.
+	local WORKER_ISSUE_NUMBER=42 DISPATCH_REPO_SLUG=owner/repo WORKER_GITHUB_LOGIN=runner
+	# shellcheck disable=SC2034
+	local AIDEVOPS_PR_REPAIR_NUMBER="" role=worker session_key=issue-42 discovered_session="" selected_model=fixture
+	[[ "$scenario" != repair_contract ]] || AIDEVOPS_PR_REPAIR_NUMBER=7
+	local output_file="${work_dir}.ndjson" rc=0
+	printf '%s\n' '{"type":"text","text":"Opened the PR."}' >"$output_file"
+	_run_result_label="" _run_failure_reason="unset" _run_classification_source="" _run_classification_pattern=""
+	_handle_run_result_success_output || rc=$?
+	printf 'rc=%s label=%s reason=%s source=%s pattern=%s' "$rc" "$_run_result_label" \
+		"$_run_failure_reason" "$_run_classification_source" "$_run_classification_pattern"
+	return 0
+}
+
+# GH#38303: a no-signal exit after the worker's own non-draft PR becomes a
+# post-PR handoff only when the continuation would be ownership-fenced.
+# Forge reads are synthetic; the worktree cleanliness check uses real Git.
+test_signal_less_exit_after_own_pr_handoff() {
+	local scenario expected evidence work_dir
+	for scenario in ready missing_summary merged_closed draft foreign_assignee still_owned unreadable dirty repair_contract merged_missing_summary; do
+		work_dir="${TEST_ROOT}/signal-less-${scenario}"
+		_setup_test_git_repo "$work_dir" 1
+		[[ "$scenario" != dirty ]] || touch "$work_dir/unpublished"
+		evidence=$(_signal_less_fixture_result "$scenario" "$work_dir")
+		case "$scenario" in
+		ready) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=ready' ;;
+		missing_summary) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=ready_missing_summary' ;;
+		merged_closed) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=merged' ;;
+		*) expected='rc=77 label=premature_exit ' ;;
+		esac
+		local result=1
+		[[ "$evidence" == "$expected"* ]] && result=0
+		print_result "Signal-less exit ${scenario}: own PR handoff routes to gate only when continuation is fenced" "$result" "$evidence"
+	done
 	return 0
 }
 
