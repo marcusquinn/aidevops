@@ -925,6 +925,7 @@ _refresh_graph_repo() {
 	if [[ "$complete" == true ]]; then
 		_refresh_graph_cursor_write "$cursor_file" 0 || cursor_failed=true
 	fi
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + unblocked_count + blocked_count))
 	printf '[pulse-wrapper] dep-graph-cache: refresh repo=%s candidates=%s resumed_after=%s pending=%s visited=%s blocked=%s unblocked=%s batch_limit=%s budget_secs=%s complete=%s cursor_write_failed=%s\n' \
 		"$slug" "$total" "$cursor" "$pending" "$visited" "$blocked_count" "$unblocked_count" "$max_candidates" "$budget_secs" "$complete" "$cursor_failed" >>"$LOGFILE"
 	[[ "$cursor_failed" == false ]] || return 1
@@ -950,6 +951,8 @@ _refresh_graph_repo() {
 #######################################
 refresh_blocked_status_from_graph() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
+	# GH#38275: report label mutations to in-process callers (census refetch gate).
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 
 	if [[ ! -f "$cache_file" ]]; then
 		echo "[pulse-wrapper] dep-graph-cache: no cache file, skipping blocked-status refresh" >>"$LOGFILE"
@@ -1040,8 +1043,14 @@ normalize_repo_dependency_readiness() {
 	return 0
 }
 
+# Sets DEP_NORMALIZE_LAST_STATUS (GH#38275): fresh = skipped within TTL,
+# ran = normalization completed, failed = unavailable. When "ran",
+# DEP_GRAPH_REFRESH_CHANGED_COUNT is the number of labels changed.
+# The return contract is unchanged.
 normalize_repo_dependency_readiness_if_due() {
 	local slug="$1"
+	DEP_NORMALIZE_LAST_STATUS="failed"
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 	local ttl_secs="${PULSE_DEP_NORMALIZE_TTL_SECS:-60}"
 	local marker_dir="${HOME:+$HOME/.aidevops/cache/dependency-normalization}"
 	local marker_file=""
@@ -1053,11 +1062,15 @@ normalize_repo_dependency_readiness_if_due() {
 
 	if [[ -f "$marker_file" ]]; then
 		marker_age=$(($(date +%s) - $(date -r "$marker_file" +%s 2>/dev/null || echo 0)))
-		[[ "$marker_age" -lt "$ttl_secs" ]] && return 0
+		if [[ "$marker_age" -lt "$ttl_secs" ]]; then
+			DEP_NORMALIZE_LAST_STATUS="fresh"
+			return 0
+		fi
 	fi
 	mkdir -p "$marker_dir" 2>/dev/null || return 1
 	if normalize_repo_dependency_readiness "$slug"; then
 		: >"$marker_file"
+		DEP_NORMALIZE_LAST_STATUS="ran"
 		return 0
 	fi
 	return 1

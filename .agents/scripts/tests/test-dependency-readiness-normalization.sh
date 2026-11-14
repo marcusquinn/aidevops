@@ -701,6 +701,25 @@ assert_eq "next dependency-ready child reaches shared candidate stream" "20" \
 	"$(printf '%s' "$recovered_candidates" | jq -r 'map(select(.number == 20))[0].number')"
 assert_eq "successful normal readiness scan retains completeness" "1" "$(<"$completeness_file")"
 
+# GH#38275: skip the full refetch when normalization was fresh, or ran and
+# changed no labels; refetch only when it changed labels.
+normalization_stub_status="" normalization_stub_changed=""
+export normalization_stub_status normalization_stub_changed
+normalize_repo_dependency_readiness_if_due() {
+	DEP_NORMALIZE_LAST_STATUS="$normalization_stub_status"
+	DEP_GRAPH_REFRESH_CHANGED_COUNT="$normalization_stub_changed"
+	return 0
+}
+export -f normalize_repo_dependency_readiness_if_due
+for refetch_case in "fresh::1" "ran:0:1" "ran:2:2" "failed::2"; do
+	IFS=: read -r normalization_stub_status normalization_stub_changed expected_fetches <<<"$refetch_case"
+	export normalization_stub_status normalization_stub_changed
+	printf '0\n' >"$candidate_fetch_file"
+	list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file" >/dev/null
+	assert_eq "normalization ${normalization_stub_status}/${normalization_stub_changed:-n/a} fetch count" \
+		"$expected_fetches" "$(<"$candidate_fetch_file")"
+done
+
 # A successful command that returns null after dependency normalization is not
 # a complete empty snapshot. Preserve failure provenance so campaign renewal
 # cannot infer that every previously open issue completed.
