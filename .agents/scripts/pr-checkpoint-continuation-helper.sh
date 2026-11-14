@@ -1384,8 +1384,7 @@ _PCC_JQ_LAUNCH_DEFS='
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
-	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
-	local session="${9:-}"
+	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}" session="${9:-}"
 	# Preserve orphan boundaries in history for both fuses, but never turn a
 	# normal closing terminal lease into a second release. Edited events fence.
 	comments=$(jq -c --arg pr_created "$pr_created" --arg session "$session" --argjson trusted_logins "$trusted_logins" \
