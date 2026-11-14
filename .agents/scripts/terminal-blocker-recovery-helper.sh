@@ -125,6 +125,7 @@ _tbr_run_stage() {
 	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
 	fi
+	# GH#38232: the seed stops early enough to leave unclassified its share.
 	if [[ "$stage" == seed && -n "${TBR_SEED_DEADLINE:-}" ]]; then
 		remaining=$((TBR_SEED_DEADLINE - SECONDS))
 	fi
@@ -183,7 +184,10 @@ _tbr_rotate() {
 	return 0
 }
 
-# Seed and discovery save the item about to start, not the last completed item.
+# GH#38232: resume AT the cursor. The seed repo cursor names the repo that was
+# interrupted; exclusive rotation sends it to the back, where faster repos use
+# the stage cap first and it never completes. Per-item cursors (seed issues,
+# discovery) keep _tbr_rotate so one stalled item cannot block the rest.
 _tbr_rotate_inclusive() {
 	local lines="$1" cursor="$2"
 	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
@@ -323,10 +327,20 @@ tbr_seed() {
 		return 0
 	fi
 	local self="" slug="" issue="" policy_enabled="" candidates="" incomplete=0 policy_rc=0
-	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
+	local repos="" repo_cursor="" issue_cursor="" cursor_name="" retried="" first=1
 	repos=$(_tbr_pulse_repos) || return 2
 	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
-	repos=$(_tbr_rotate_inclusive "$repos" "$repo_cursor") || return 2
+	[[ ! -f "${TBR_ROOT}/seed_repo_retry" ]] || read -r retried <"${TBR_ROOT}/seed_repo_retry" || true
+	# GH#38232: start at the interrupted repo so it gets the stage cap first.
+	# If it already started first last run and was interrupted again, let
+	# the other repos run before it this time; per-repo issue cursors keep
+	# its progress either way.
+	if [[ -n "$repo_cursor" && "$retried" == "$repo_cursor" ]]; then
+		rm -f "${TBR_ROOT}/seed_repo_retry"
+		repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	else
+		repos=$(_tbr_rotate_inclusive "$repos" "$repo_cursor") || return 2
+	fi
 	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -337,6 +351,10 @@ tbr_seed() {
 			incomplete=1
 			continue
 		}
+		if [[ "$first" -eq 1 && -n "$repo_cursor" && "$slug" == "$repo_cursor" ]]; then
+			_tbr_save_cursor seed_repo_retry "$slug" || return 2
+		fi
+		first=0
 		_tbr_save_cursor seed_repo_cursor "$slug" || return 2
 		printf 'blocker-recovery: checking stage=seed_policy repo=%s\n' "$slug" >&2
 		policy_enabled=false
@@ -351,7 +369,7 @@ tbr_seed() {
 		cursor_name="seed-${slug//\//--}.cursor"
 		issue_cursor=""
 		[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r issue_cursor <"${TBR_ROOT}/${cursor_name}" || true
-		candidates=$(_tbr_rotate_inclusive "$candidates" "$issue_cursor") || return 2
+		candidates=$(_tbr_rotate "$candidates" "$issue_cursor") || return 2
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			_tbr_save_cursor "$cursor_name" "$issue" || return 2
@@ -361,7 +379,7 @@ tbr_seed() {
 		rm -f "${TBR_ROOT}/${cursor_name}"
 	done <<<"$repos"
 	[[ "$incomplete" -eq 0 ]] || return 2
-	rm -f "${TBR_ROOT}/seed_repo_cursor"
+	rm -f "${TBR_ROOT}/seed_repo_cursor" "${TBR_ROOT}/seed_repo_retry"
 	printf '%s\n' "$now" >"$stamp"
 	return 0
 }
@@ -489,7 +507,7 @@ tbr_discover() {
 	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
 	candidates=$(_tbr_discovery_candidates "$refs" "$repos") || return 2
 	[[ ! -f "${TBR_ROOT}/discovery_cursor" ]] || read -r cursor <"${TBR_ROOT}/discovery_cursor" || true
-	candidates=$(_tbr_rotate_inclusive "$candidates" "$cursor") || return 2
+	candidates=$(_tbr_rotate "$candidates" "$cursor") || return 2
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS=$'\t' read -r repo issue updated; do
@@ -1440,6 +1458,8 @@ tbr_pending() {
 		_tbr_entry_registered "$file" || rc=$?
 		[[ "$rc" -lt 2 ]] || return 2
 	done
+	# GH#38232: reserve one stage cap each for seed and unclassified (still at
+	# most half the budget), so a slow seed cannot starve unclassified intake.
 	reserve=$((TBR_BUDGET_SECONDS / 2))
 	[[ "$reserve" -le $((TBR_STAGE_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS * 2))
 	unclassified_reserve=$((reserve / 2))
