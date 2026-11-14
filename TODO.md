@@ -2091,7 +2091,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19008 fix(approval): accept every canonical terminal-blocker release the writer emits #auto-dispatch #bug tier:standard ref:GH#38351 logged:2026-11-14 -> [todo/tasks/t19008-brief.md]
 
-- [ ] t19009 fix(checkpoints): a failed continuation launch must not turn a stalled draft into a permanent maintainer hold #bug #interactive tier:standard ref:GH#38358 assignee:marcusquinn logged:2026-11-14 started:2026-11-14 -> [todo/tasks/t19009-brief.md]
+- [x] t19009 fix(checkpoints): a failed continuation launch must not turn a stalled draft into a permanent maintainer hold #bug #interactive tier:standard ref:GH#38358 assignee:marcusquinn logged:2026-11-14 started:2026-11-14 -> [todo/tasks/t19009-brief.md] pr:#38367 completed:2026-11-14
+
+- [ ] t19010 fix(tests): test_decision_policy_decide/escalate/races fail on main #auto-dispatch #bug tier:standard ref:GH#38365 logged:2026-11-14 -> [todo/tasks/t19010-brief.md]
 
 ## In Progress
 
