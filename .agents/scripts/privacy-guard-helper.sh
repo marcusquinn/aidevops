@@ -510,7 +510,7 @@ privacy_guard_public_write() {
 		return 1
 	fi
 	remote_url=$(git remote get-url origin 2>/dev/null) || remote_url=""
-	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[1]%.git}" == "$repo" ]]; then
+	if [[ "$remote_url" =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[2]%.git}" == "$repo" ]]; then
 		remote_head=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || remote_head=""
 		[[ -n "$remote_head" ]] && public_tree=$(git rev-parse --verify "${remote_head}^{commit}" 2>/dev/null)
 	fi

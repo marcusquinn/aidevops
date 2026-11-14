@@ -195,13 +195,12 @@ for _ref_entry in "${_all_refs[@]}"; do
 
 	_scan_base="$remote_sha"
 	_public_head=""
+	if [[ -n "$_default_remote_head" ]]; then
+		_public_head=$(git rev-parse --verify "${_default_remote_head}^{commit}" 2>/dev/null) || _public_head=""
+	fi
 	if [[ -z "$_scan_base" || "$_scan_base" =~ ^0+$ ]]; then
 		_scan_base=$(git merge-base "$local_sha" "$_default_remote_head" 2>/dev/null || echo "")
 		[[ -z "$_scan_base" ]] && _scan_base="$remote_sha"
-	elif [[ -n "$_default_remote_head" ]]; then
-		# Existing branches may import already-public lines when merging main.
-		# Pin the default tip; an unknown tip retains the unfiltered scan.
-		_public_head=$(git rev-parse --verify "${_default_remote_head}^{commit}" 2>/dev/null) || _public_head=""
 	fi
 	hits_output=$(privacy_scan_public_diff "$_scan_base" "$local_sha" "$entities_file" "$_public_head" "$target_repo")
 	scan_rc=$?
