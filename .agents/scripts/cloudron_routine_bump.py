@@ -238,7 +238,9 @@ def check(doc, repository):
     if policy.get("upstream_mode", "semver") == "commits":
         proof = doc["upstream_proof"]
         license_info = unchanged.get("upstreamLicense")
-        if isinstance(license_info, dict) and isinstance(license_info.get("url"), str):
+        head_license = head_manifest.get("upstreamLicense")
+        if (isinstance(license_info, dict) and isinstance(license_info.get("url"), str)
+                and isinstance(head_license, dict) and license_info["url"] != head_license.get("url")):
             unchanged["upstreamLicense"] = dict(license_info, url=substitute_versions(
                 license_info["url"], {proof["base"]: proof["head"]}))
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
