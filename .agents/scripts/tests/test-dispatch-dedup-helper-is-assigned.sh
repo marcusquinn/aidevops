@@ -665,6 +665,12 @@ _test_cycle_assignment_cache() (
 	first=$(_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner") || return 1
 	second=$(_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner") || return 1
 	[[ "$first" == "$second" && "$(wc -l <"$calls")" -eq 1 ]] || return 1
+	# Preserve main's in-process reason handoff even when the guard is cached.
+	export AIDEVOPS_DDH_BLOCKER_REASON_FILE="${TEST_ROOT}/cached-assignment-reason"
+	: >"$AIDEVOPS_DDH_BLOCKER_REASON_FILE"
+	second=$(_ddh_is_assigned_with_reason 1 "$repo_slug" "$runner") || return 1
+	[[ "$first" == "$second" && "$(wc -l <"$calls")" -eq 1 ]] || return 1
+	[[ "$(<"$AIDEVOPS_DDH_BLOCKER_REASON_FILE")" == "$(classify_dispatch_blocker_reason "$first")" ]] || return 1
 	_ddh_is_assigned_for_cycle 2 "$repo_slug" "$runner" >/dev/null || return 1
 	_ddh_is_assigned_for_cycle 1 other/repo "$runner" >/dev/null || return 1
 	_ddh_is_assigned_for_cycle 1 "$repo_slug" other >/dev/null || return 1
@@ -684,9 +690,12 @@ _test_cycle_assignment_cache() (
 	if _ddh_is_assigned_for_cycle 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
 	if _ddh_is_assigned_for_cycle 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
 	[[ "$(wc -l <"$calls")" -eq 10 ]] || return 1
+	: >"$AIDEVOPS_DDH_BLOCKER_REASON_FILE"
+	if _ddh_is_assigned_with_reason 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
+	[[ ! -s "$AIDEVOPS_DDH_BLOCKER_REASON_FILE" && "$(wc -l <"$calls")" -eq 11 ]] || return 1
 	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE
 	if _ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null; then return 1; fi
-	[[ "$(wc -l <"$calls")" -eq 11 ]] || return 1
+	[[ "$(wc -l <"$calls")" -eq 12 ]] || return 1
 	return 0
 )
 
