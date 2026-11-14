@@ -114,6 +114,9 @@ _tbr_run_stage() {
 	if [[ "$stage" != seed && "$stage" != unclassified && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
 	fi
+	if [[ "$stage" == seed && -n "${TBR_SEED_DEADLINE:-}" ]]; then
+		remaining=$((TBR_SEED_DEADLINE - SECONDS))
+	fi
 	[[ "$remaining" -gt 0 ]] || {
 		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
 		return 2
@@ -164,6 +167,15 @@ _tbr_rotate() {
 	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
 		[inputs | select(length > 0)] | unique |
 		(map(select(. > $cursor)) + map(select(. <= $cursor)))[]' || return 1
+	return 0
+}
+
+# Seed and discovery save the item about to start, not the last completed item.
+_tbr_rotate_inclusive() {
+	local lines="$1" cursor="$2"
+	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
+		[inputs | select(length > 0)] | unique |
+		(map(select(. >= $cursor)) + map(select(. < $cursor)))[]' || return 1
 	return 0
 }
 
@@ -295,7 +307,7 @@ tbr_seed() {
 	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
 	repos=$(_tbr_pulse_repos) || return 2
 	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
-	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	repos=$(_tbr_rotate_inclusive "$repos" "$repo_cursor") || return 2
 	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -320,7 +332,7 @@ tbr_seed() {
 		cursor_name="seed-${slug//\//--}.cursor"
 		issue_cursor=""
 		[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r issue_cursor <"${TBR_ROOT}/${cursor_name}" || true
-		candidates=$(_tbr_rotate "$candidates" "$issue_cursor") || return 2
+		candidates=$(_tbr_rotate_inclusive "$candidates" "$issue_cursor") || return 2
 		while IFS= read -r issue; do
 			[[ "$issue" =~ ^[0-9]+$ ]] || continue
 			_tbr_save_cursor "$cursor_name" "$issue" || return 2
@@ -458,7 +470,7 @@ tbr_discover() {
 	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
 	candidates=$(_tbr_discovery_candidates "$refs" "$repos") || return 2
 	[[ ! -f "${TBR_ROOT}/discovery_cursor" ]] || read -r cursor <"${TBR_ROOT}/discovery_cursor" || true
-	candidates=$(_tbr_rotate "$candidates" "$cursor") || return 2
+	candidates=$(_tbr_rotate_inclusive "$candidates" "$cursor") || return 2
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	while IFS=$'\t' read -r repo issue updated; do
@@ -1372,7 +1384,7 @@ tbr_pending() {
 		entry_mode=rearm
 	fi
 	_tbr_init_dirs || return 1
-	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
 	_tbr_start_budget || return 2
 	# Retire stale fixtures before any identity/API call, including entries past
 	# the remote scan budget. Never retire evidence on an unreadable registry.
@@ -1383,8 +1395,10 @@ tbr_pending() {
 		[[ "$rc" -lt 2 ]] || return 2
 	done
 	reserve=$((TBR_BUDGET_SECONDS / 2))
-	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
+	[[ "$reserve" -le $((TBR_STAGE_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS * 2))
+	unclassified_reserve=$((reserve / 2))
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
+	TBR_SEED_DEADLINE=$((TBR_DEADLINE - unclassified_reserve))
 	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
 	# GH#36114: discover unqueued holds first, so a trusted retry on a hold this
 	# runner never queued is applied by the queue pass below in the same run.
