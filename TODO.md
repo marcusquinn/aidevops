@@ -2027,33 +2027,33 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18963 feat: auto-unblock issues gated on an upstream release tag (upstream-release-gate marker) #auto-dispatch #feat #framework ref:GH#37696 pr:#37700 logged:2026-11-11 -> [todo/tasks/t18963-brief.md] completed:2026-11-11
 
-- [ ] t18966 secret-helper: empty gopass aidevops/ folder makes every secret unresolvable #bug ref:GH#37723
+- [x] t18966 secret-helper: empty gopass aidevops/ folder makes every secret unresolvable #bug ref:GH#37723 pr:#37724 completed:2026-11-11
 
 - [x] t18965 Regression test: emptied gopass namespace must not block plaintext secret resolution (implementation superseded by GH#37724) #bug #interactive ~1h ref:GH#37720 pr:#37721 logged:2026-11-11 -> [todo/tasks/t18965-brief.md] completed:2026-11-11
 
-- [ ] t18969 docs(cloudron): ca.cloudron.io Package link now uses packageUrl #documentation ref:GH#37825
+- [x] t18969 docs(cloudron): ca.cloudron.io Package link now uses packageUrl #documentation ref:GH#37825 pr:#37826 completed:2026-11-11
 
-- [ ] t18970 docs(cloudron): new package repository onboarding checklist #documentation ref:GH#37830
+- [x] t18970 docs(cloudron): new package repository onboarding checklist #documentation ref:GH#37830 pr:#37832 completed:2026-11-12
 
-- [ ] t18971 feat(cloudron): audit package repository setup gaps in the weekly compatibility routine #auto-dispatch #feat ref:GH#37831
+- [x] t18971 feat(cloudron): audit package repository setup gaps in the weekly compatibility routine #auto-dispatch #feat ref:GH#37831 pr:#37838 completed:2026-11-12
 
-- [ ] t18972 docs: general repository onboarding checklist #documentation ref:GH#37837
+- [x] t18972 docs: general repository onboarding checklist #documentation ref:GH#37837 pr:#37839 completed:2026-11-12
 
 - [ ] t18973 feat(repos): surface incomplete repository onboarding in the session toast #auto-dispatch #feat ref:GH#37842
 
-- [ ] t18974 fix(ci): actions-event-policy status reads policy details, not list summaries #auto-dispatch #bug #priority:high ref:GH#37846
+- [x] t18974 fix(ci): actions-event-policy status reads policy details, not list summaries #auto-dispatch #bug #priority:high ref:GH#37846 pr:#37855 completed:2026-11-12
 
-- [ ] t18975 feat(ci): opt-in Pulse routine that auto-applies the pull_request_target Actions event policy #auto-dispatch #feat #priority:high blocked-by:t18974 ref:GH#37848
+- [x] t18975 feat(ci): opt-in Pulse routine that auto-applies the pull_request_target Actions event policy #auto-dispatch #feat #priority:high blocked-by:t18974 ref:GH#37848 pr:#37860 completed:2026-11-12
 
 - [x] t18976 feat(cloudron): GitHub-signed catalog publish commits with atomic tag push #auto-dispatch #feat #priority:low ref:GH#37852 pr:#37980 completed:2026-11-13
 
-- [ ] t18979 Flag-gated reclaim of finished worktrees while the cleanup evidence collector is missing #bug ref:GH#37901
+- [x] t18979 Flag-gated reclaim of finished worktrees while the cleanup evidence collector is missing #bug ref:GH#37901 pr:#37903 completed:2026-11-12
 
 - [ ] t18987 fix(task-id-guard): name the malformed token and its source in block diagnostics #auto-dispatch #bug #fix-the-fixer #priority:medium ref:GH#38221
 
-- [ ] t18985 fix(checkpoints): escalate the model tier when a draft head stalls twice, instead of pausing it 12-96h at the same tier #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38215
+- [x] t18985 fix(checkpoints): escalate the model tier when a draft head stalls twice, instead of pausing it 12-96h at the same tier #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38215 pr:#38245 completed:2026-11-14
 
-- [ ] t18986 fix(dispatch): planning-publication PRs must not count as open-PR dedup evidence #bug #fix-the-fixer #priority:high ref:GH#38217
+- [x] t18986 fix(dispatch): planning-publication PRs must not count as open-PR dedup evidence #bug #fix-the-fixer #priority:high ref:GH#38217 pr:#38218 completed:2026-11-14
 
 ## In Progress
 
@@ -5673,6 +5673,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [-] t18829 Attribute and govern REST core spend outside the local transport governor #bug ref:GH#36212 declined:2026-10-31
 
-- [ ] t18942 pulse-merge-routine: cut fork overhead in the merge pass (~0.45-0.5 core per user) #auto-dispatch #bug ref:GH#37538
+- [x] t18942 pulse-merge-routine: cut fork overhead in the merge pass (~0.45-0.5 core per user) #auto-dispatch #bug ref:GH#37538 pr:#37543 completed:2026-11-13
 
 - [ ] t18941 pulse-wrapper: cut per-call fork overhead (~0.7-1.2 core per user) #auto-dispatch #bug ref:GH#37537
+- [ ] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107
+- [ ] t18967 secret-helper: systemd-creds backend for unattended worker secrets (encrypted at rest, no passphrase) #auto-dispatch #enhancement ref:GH#37725
