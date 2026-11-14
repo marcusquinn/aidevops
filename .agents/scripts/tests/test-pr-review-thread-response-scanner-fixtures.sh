@@ -186,10 +186,17 @@ if [[ "$*" == *"worktree list --porcelain"* && -f "${GIT_WORKTREE_REGISTRY}" ]];
 	done <"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
-if [[ "$*" == *" worktree add -q --detach "* ]]; then
-	bootstrap_path="${7:-}"
+if [[ "$*" == *" worktree add "* && " $* " == *" --detach "* ]]; then
+	while [[ $# -gt 0 && "$1" != "--" ]]; do
+		shift
+	done
+	[[ $# -ge 3 ]] || exit 1
+	bootstrap_path="$2"
 	mkdir -p "$bootstrap_path"
 	printf '%s\t%s\t%s\n' "$bootstrap_path" '__DETACHED__' "$TEST_HEAD_OID_1" >>"${GIT_WORKTREE_REGISTRY}"
+	exit 0
+fi
+if [[ "$*" == *" worktree lock "* ]]; then
 	exit 0
 fi
 if [[ "$*" == *" worktree remove --force "* ]]; then
