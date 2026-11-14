@@ -229,6 +229,45 @@ test_protected_release_merge_reconciles_matching_lane() {
 	return 0
 }
 
+test_provenance_merge_during_readiness() {
+	local scenario="" rc=0
+	for scenario in merged ordinary closed verify_failure reconcile_failure; do
+		rc=0
+		(
+			SCRIPT_DIR="${SCRIPT_DIR}/.."
+			# shellcheck source=../full-loop-helper-merge.sh
+			source "${SCRIPT_DIR}/shared-constants.sh"
+			source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+			local state_file="${TEST_ROOT}/race-state" log="${TEST_ROOT}/race-log" output="${TEST_ROOT}/race-output"
+			printf 'open' >"$state_file"
+			: >"$log"
+			_flm_gh_read() {
+				local merged=false ref='chore/release-v8.0.0-provenance'
+				[[ "$(<"$state_file")" == merged && "$scenario" != closed ]] && merged=true
+				[[ "$scenario" == ordinary ]] && ref='feature/ordinary'
+				printf '{"merged":%s,"head":{"ref":"%s","repo":{"full_name":"test/repo"}},"base":{"ref":"main","repo":{"full_name":"test/repo"}}}\n' "$merged" "$ref"
+				return 0
+			}
+			_merge_check_closing_guards() { return 0; }
+			source() { _merge_worker_briefed_gate_pinned() { return 0; }; return 0; }
+			_merge_pre_merge_gate_with_admission_retry() { printf 'merged' >"$state_file"; printf 'PR #77 is not open\n'; return 1; }
+			_merge_verify_completed_state() { FULL_LOOP_MERGE_SHA=abc123; [[ "$scenario" != verify_failure ]]; }
+			_merge_reconcile_provenance_release() { printf 'reconcile\n' >>"$log"; [[ "$scenario" != reconcile_failure ]]; }
+			_merge_execute() { printf 'merge write\n' >>"$log"; return 1; }
+			local result=0
+			cmd_merge 77 test/repo >"$output" 2>&1 || result=$?
+			case "$scenario" in
+			merged) [[ "$result" -eq 0 && "$(<"$output")" == *'already merged; no merge write'* && "$(<"$log")" == reconcile ]] ;;
+			ordinary|closed) [[ "$result" -eq 1 && "$(<"$output")" == *'is not open'* && ! -s "$log" ]] ;;
+			verify_failure) [[ "$result" -eq 1 && ! -s "$log" ]] ;;
+			reconcile_failure) [[ "$result" -eq 1 && "$(<"$log")" == reconcile ]] ;;
+			esac
+		) || rc=$?
+		print_result "mid-readiness provenance race: ${scenario}" "$rc"
+	done
+	return 0
+}
+
 test_qlty_billing_skip_note_is_idempotent() {
 	local rc=0
 	(
@@ -371,6 +410,7 @@ main() {
 	test_graphql_rate_limit_rest_fallback
 	test_transient_server_error_recovery
 	test_protected_release_merge_reconciles_matching_lane
+	test_provenance_merge_during_readiness
 	test_qlty_billing_skip_note_is_idempotent
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
