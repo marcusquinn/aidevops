@@ -877,11 +877,110 @@ gh_run_transport_attempt() {
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
 		elapsed_ms=$((end_ms - start_ms))
 	fi
+	# GH#38327: label normal-mode rows from argv; exact capture uses wire frames.
+	if [[ "${executable##*/}" == gh ]]; then
+		_gh_static_request_labels "${@:2}"
+	else
+		_gh_static_request_labels
+	fi
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 		"${AIDEVOPS_GH_HTTP_STATUS:-${_GH_TRANSPORT_ERROR_HTTP_STATUS:-}}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
-		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint"
+		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint" \
+		"" "" "" "$_GH_REQ_METHOD" "$_GH_REQ_CLASS" "$_GH_REQ_FAMILY"
 	return "$rc"
+}
+
+# --- _gh_static_request_labels [gh-args...] -------------------------------
+# Derive the allowlisted method/class/family of one native `gh api` request
+# from its argv, mirroring gh_quota_debug_request.py, without forking. Sets
+# _GH_REQ_METHOD/_GH_REQ_CLASS/_GH_REQ_FAMILY; only static labels are kept and
+# the writer re-validates them. Non-api commands and unparseable shapes (for
+# example full URLs) remain unknown rather than guessed.
+_gh_static_request_labels() {
+	_GH_REQ_METHOD=unknown
+	_GH_REQ_CLASS=unknown
+	_GH_REQ_FAMILY=unknown
+	local subcommand="${1:-}"
+	[[ "$subcommand" == api ]] || return 0
+	local -a argv=("$@")
+	local arg="" method="" target="" implied_post=0 index=1 count="${#argv[@]}"
+	while [[ "$index" -lt "$count" ]]; do
+		arg="${argv[$index]}"
+		index=$((index + 1))
+		case "$arg" in
+		-X | --method)
+			method="${argv[$index]:-}"
+			index=$((index + 1))
+			;;
+		--method=*) method="${arg#--method=}" ;;
+		-X?*) method="${arg#-X}" ;;
+		-f | -F | --field | --raw-field | --input)
+			implied_post=1
+			index=$((index + 1))
+			;;
+		--field=* | --raw-field=* | --input=* | -f?* | -F?*) implied_post=1 ;;
+		-H | --header | -q | --jq | -t | --template | --cache | --hostname | -p | --preview)
+			index=$((index + 1))
+			;;
+		--)
+			[[ -n "$target" ]] || target="${argv[$index]:-}"
+			break
+			;;
+		-*) ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
+	done
+	[[ -n "$target" && "$target" != *://* ]] || return 0
+	case "$method" in
+	"")
+		method=GET
+		if [[ "$implied_post" -ne 0 ]]; then method=POST; fi
+		;;
+	[Gg][Ee][Tt]) method=GET ;;
+	[Hh][Ee][Aa][Dd]) method=HEAD ;;
+	[Pp][Oo][Ss][Tt]) method=POST ;;
+	[Pp][Uu][Tt]) method=PUT ;;
+	[Pp][Aa][Tt][Cc][Hh]) method=PATCH ;;
+	[Dd][Ee][Ll][Ee][Tt][Ee]) method=DELETE ;;
+	[Oo][Pp][Tt][Ii][Oo][Nn][Ss]) method=OPTIONS ;;
+	*) method=unknown ;;
+	esac
+	target="${target%%\?*}"
+	target="${target%%#*}"
+	while [[ "$target" == /* ]]; do target="${target#/}"; done
+	while [[ "$target" == */ ]]; do target="${target%/}"; done
+	local class="" family="" repo_classes="issues|pulls|actions|commits|git|contents|releases|check-runs|check-suites|statuses"
+	if [[ "$target" != repos && "$target" != repos/* ]]; then
+		case "${target%%/*}" in
+		rate_limit) class=rate-limit ;;
+		graphql | search | users | orgs | notifications | installation) class="${target%%/*}" ;;
+		user) class=users ;;
+		*) class=other ;;
+		esac
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/([^/]+) ]]; then
+		case "${BASH_REMATCH[1]}" in
+		issues | pulls | actions | commits | git | contents | releases | statuses) class="repos-${BASH_REMATCH[1]}" ;;
+		check-runs | check-suites) class=repos-checks ;;
+		*) class=repos-other ;;
+		esac
+	else
+		class=repos-other
+	fi
+	family="$class"
+	if [[ "$target" == user ]]; then
+		family=user
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
+		family="repos/:o/:r/collaborators/:u/permission"
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/(${repo_classes})($|(/[^/]+)(/(reviews|comments|commits|files|checks|runs)(/|$))?) ]]; then
+		family="repos/:o/:r/${BASH_REMATCH[1]}"
+		[[ -z "${BASH_REMATCH[3]}" ]] || family="${family}/:id"
+		[[ -z "${BASH_REMATCH[5]}" ]] || family="${family}/${BASH_REMATCH[5]}"
+	fi
+	_GH_REQ_METHOD="$method"
+	_GH_REQ_CLASS="$class"
+	_GH_REQ_FAMILY="$family"
+	return 0
 }
 
 # Generate a digest-bound sidecar for the production aggregate. Evidence build
