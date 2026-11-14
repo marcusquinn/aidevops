@@ -182,7 +182,7 @@ run_simplification_dedup_cleanup() {
 
 	local total_closed=0
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
-	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve="" reserve_failed=0
+	local resume_after="" outcome="complete" stage_reserve=""
 	local closed_file="${cursor_file}.closed"
 	# A reservation failure leaves its repo's slug here, so the next run
 	# retries that repo instead of resuming after it.
@@ -208,7 +208,7 @@ run_simplification_dedup_cleanup() {
 			[[ "$retry_cursor" -eq 1 ]] || continue
 		fi
 		if [[ "$total_closed" -ge "$batch_limit" ]]; then
-			batch_exhausted=1
+			outcome="batch_exhausted"
 			break
 		fi
 		# t2145: skip repos where the user is a contributor — simplification
@@ -217,7 +217,7 @@ run_simplification_dedup_cleanup() {
 		_dedup_role=$(get_repo_role_by_slug "$slug")
 		[[ "$_dedup_role" != "maintainer" ]] && continue
 		if _pulse_scanner_deadline_reached "$stage_reserve"; then
-			yielded=1
+			outcome="yielded"
 			break
 		fi
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
@@ -229,7 +229,7 @@ run_simplification_dedup_cleanup() {
 		[[ "$repo_closed" =~ ^[0-9]+$ ]] || repo_closed=0
 		total_closed=$((total_closed + repo_closed))
 		if [[ "$close_rc" -ne 0 ]]; then
-			reserve_failed=1
+			outcome="reserve_failed"
 			# No close ran past the failed reservation; retry this repo next.
 			printf '%s\n' "$slug" 2>/dev/null >"$retry_file" ||
 				echo "[pulse-wrapper] Dedup cleanup: retry marker write failed (${retry_file}); next run resumes after ${slug}" >>"$LOGFILE"
@@ -240,26 +240,47 @@ run_simplification_dedup_cleanup() {
 	if [[ "$total_closed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Dedup cleanup: ${total_closed} duplicate function-complexity-debt close(s) charged this interval" >>"$LOGFILE"
 	fi
-	# Without a persisted budget the interval cannot be accounted for: keep the
-	# cursor and last-run untouched so a later run retries once storage works.
-	if [[ "$reserve_failed" -eq 1 ]]; then
+	_dedup_cleanup_finish_run "$outcome" "$cursor_file" "$now_epoch" "$stage_reserve" "$batch_limit"
+	return 0
+}
+
+#######################################
+# GH#38171: record how one dedup cleanup run ended.
+# Args:
+#   $1 - outcome: reserve_failed | yielded | batch_exhausted | complete
+#   $2 - cursor file (.closed and .retry siblings derive from it)
+#   $3 - run epoch, $4 - stage reserve seconds, $5 - batch limit
+# Returns: 0 always
+#######################################
+_dedup_cleanup_finish_run() {
+	local outcome="$1"
+	local cursor_file="$2"
+	local now_epoch="$3"
+	local stage_reserve="$4"
+	local batch_limit="$5"
+	case "$outcome" in
+	reserve_failed)
+		# Without a persisted budget the interval cannot be accounted for:
+		# keep cursor, budget and last-run so a later run retries.
 		echo "[pulse-wrapper] Dedup cleanup: stopped on budget reservation failure; cursor kept, interval not recorded" >>"$LOGFILE"
 		return 0
-	fi
-	if [[ "$yielded" -eq 1 ]]; then
+		;;
+	yielded)
 		echo "[pulse-wrapper] Dedup cleanup: yielded before the stage deadline (reserve ${stage_reserve}s); cursor kept for the next run" >>"$LOGFILE"
 		return 0
-	fi
-	# Batch exhaustion honours the per-interval close budget (last-run is
-	# written) but keeps the cursor, so the next interval starts after the
-	# saturating repo instead of starving later repos behind earlier ones.
-	if [[ "$batch_exhausted" -eq 1 ]]; then
+		;;
+	batch_exhausted)
+		# Batch exhaustion honours the per-interval close budget (last-run is
+		# written) but keeps the cursor, so the next interval starts after the
+		# saturating repo instead of starving later repos behind earlier ones.
 		echo "[pulse-wrapper] Dedup cleanup: batch limit ${batch_limit} reached before traversal end; cursor kept for the next interval" >>"$LOGFILE"
-	else
+		;;
+	*)
 		rm -f "$cursor_file" 2>/dev/null || true
-	fi
+		;;
+	esac
 	# The interval ends here, so the next one starts with a fresh close budget.
-	rm -f "$closed_file" "$retry_file" 2>/dev/null || true
+	rm -f "${cursor_file}.closed" "${cursor_file}.retry" 2>/dev/null || true
 	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	return 0
 }
