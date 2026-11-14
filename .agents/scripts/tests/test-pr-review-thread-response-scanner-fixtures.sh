@@ -190,14 +190,32 @@ if [[ "$*" == *"worktree list --porcelain"* && -f "${GIT_WORKTREE_REGISTRY}" ]];
 	done <"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
-if [[ "$*" == *" worktree add -q --detach "* ]]; then
-	bootstrap_path="${7:-}"
-	mkdir -p "$bootstrap_path"
+if [[ "$*" == *" worktree add "* && " $* " == *" --detach "* ]]; then
+	lock_reason=""
+	while [[ $# -gt 0 && "$1" != "--" ]]; do
+		if [[ "$1" == "--reason" ]]; then
+			lock_reason="${2:-}"
+			shift
+		fi
+		shift
+	done
+	[[ $# -ge 3 ]] || exit 1
+	bootstrap_path="$2"
+	mkdir -p "$bootstrap_path/.git-admin" "${GIT_CANONICAL_REPO_PATH}/.git"
+	[[ -z "$lock_reason" ]] || printf '%s\n' "$lock_reason" >"$bootstrap_path/.git-admin/locked"
 	printf '%s\t%s\t%s\n' "$bootstrap_path" '__DETACHED__' "$TEST_HEAD_OID_1" >>"${GIT_WORKTREE_REGISTRY}"
 	exit 0
 fi
-if [[ "$*" == *" worktree remove --force "* ]]; then
-	bootstrap_path="${6:-}"
+if [[ "$*" == *" worktree lock "* ]]; then
+	printf '%s\n' "${6:-}" >"${2}/.git-admin/locked"
+	exit 0
+fi
+if [[ "$*" == *" worktree unlock "* ]]; then
+	rm -f "${2}/.git-admin/locked"
+	exit 0
+fi
+if [[ "$*" == *" worktree remove "* ]]; then
+	bootstrap_path="${@: -1}"
 	rm -rf "$bootstrap_path"
 	while IFS=$'\t' read -r path branch oid; do
 		[[ "$path" == "$bootstrap_path" ]] || printf '%s\t%s\t%s\n' "$path" "$branch" "$oid"
@@ -222,6 +240,18 @@ GIT_STUB
 
 append_fake_git_reconciliation_stub() {
 	cat >>"${TEST_ROOT}/bin/git" <<'GIT_STUB'
+if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--absolute-git-dir" && -d "${2}/.git-admin" ]]; then
+	printf '%s\n' "${2}/.git-admin"
+	exit 0
+fi
+if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" && "${4:-}" == "--path-format=absolute" && -d "${2}/.git-admin" ]]; then
+	case "${5:-}" in
+	--git-common-dir) printf '%s\n' "${GIT_CANONICAL_REPO_PATH}/.git" ;;
+	--git-dir) printf '%s\n' "${2}/.git-admin" ;;
+	*) exit 1 ;;
+	esac
+	exit 0
+fi
 if [[ "$*" == *"rev-parse refs/remotes/origin/"* ]]; then
 	if [[ -f "${GIT_FETCHED_HEAD_STATE}" ]]; then
 		cat "${GIT_FETCHED_HEAD_STATE}"
@@ -467,6 +497,9 @@ DIRTY_BACKUP_STUB
 
 setup_test_env() {
 	unset INVOCATION_ID # Fixture workers do not belong to the host's service.
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	# Native lifecycle enrollment requires real Git metadata, not this fake repo.
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_PR_LABELS STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN
 	unset STUB_GH_REST_FAIL STUB_GH_GRAPHQL_FAIL STUB_GH_GRAPHQL_LOGIN
 	unset STUB_PULL_HEAD_OID STUB_PULL_STATE STUB_PULL_DRAFT STUB_REVIEWS_RESPONSE STUB_REREVIEW_REQUEST_FAIL
@@ -506,6 +539,12 @@ setup_test_env() {
 	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 	export SHARED_CONSTANTS_PATH="${TEST_SCRIPT_DIR}/../shared-constants.sh"
 	mkdir -p "${HOME}" "${AIDEVOPS_TEMP_DIR}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	# Registered scratch creation reserves a row before registering its owner.
+	# Initialize the same isolated registry used by the owner fixtures first.
+	# shellcheck source=../shared-worktree-registry.sh
+	# shellcheck disable=SC1091
+	source "${TEST_SCRIPT_DIR}/../shared-worktree-registry.sh"
+	_init_registry_db
 	mkdir -p "${TEST_ROOT}/fetch-worktree"
 	printf '%s\t%s\t%s\n' "${TEST_ROOT}/fetch-worktree" 'support/fetch' "$TEST_HEAD_OID_1" >"$GIT_WORKTREE_REGISTRY"
 	write_fake_gh_stub
