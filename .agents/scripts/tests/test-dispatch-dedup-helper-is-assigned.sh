@@ -645,6 +645,60 @@ test_dispatch_comment_terminal_marker_allows() {
 	return 0
 }
 
+# Source the existing CLI in an isolated shell; stub only its assignment guard
+# to count cache misses without adding network access or a new test interface.
+_test_cycle_assignment_cache() (
+	# shellcheck source=/dev/null
+	source "$HELPER_SCRIPT" --help >/dev/null
+	local calls="${TEST_ROOT}/assignment-calls" repo_slug="owner/repo" runner="runner"
+	local guard_status=0 guard_output="ASSIGNED: synthetic live owner"
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE="${TEST_ROOT}/assignment-cache"
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-123"
+	: >"$calls"
+	: >"$AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE"
+	is_assigned() {
+		printf 'call\n' >>"$calls"
+		printf '%s\n' "$guard_output"
+		return "$guard_status"
+	}
+	local first="" second=""
+	first=$(_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner") || return 1
+	second=$(_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner") || return 1
+	[[ "$first" == "$second" && "$(wc -l <"$calls")" -eq 1 ]] || return 1
+	# Preserve main's in-process reason handoff even when the guard is cached.
+	export AIDEVOPS_DDH_BLOCKER_REASON_FILE="${TEST_ROOT}/cached-assignment-reason"
+	: >"$AIDEVOPS_DDH_BLOCKER_REASON_FILE"
+	second=$(_ddh_is_assigned_with_reason 1 "$repo_slug" "$runner") || return 1
+	[[ "$first" == "$second" && "$(wc -l <"$calls")" -eq 1 ]] || return 1
+	[[ "$(<"$AIDEVOPS_DDH_BLOCKER_REASON_FILE")" == "$(classify_dispatch_blocker_reason "$first")" ]] || return 1
+	_ddh_is_assigned_for_cycle 2 "$repo_slug" "$runner" >/dev/null || return 1
+	_ddh_is_assigned_for_cycle 1 other/repo "$runner" >/dev/null || return 1
+	_ddh_is_assigned_for_cycle 1 "$repo_slug" other >/dev/null || return 1
+	[[ "$(wc -l <"$calls")" -eq 4 ]] || return 1
+	: >"$AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE"
+	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-456"
+	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
+	[[ "$(wc -l <"$calls")" -eq 6 ]] || return 1
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="2147483647-456"
+	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
+	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
+	[[ "$(wc -l <"$calls")" -eq 8 ]] || return 1
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-456"
+	guard_status=1
+	guard_output="STALE_RECOVERED"
+	if _ddh_is_assigned_for_cycle 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
+	if _ddh_is_assigned_for_cycle 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
+	[[ "$(wc -l <"$calls")" -eq 10 ]] || return 1
+	: >"$AIDEVOPS_DDH_BLOCKER_REASON_FILE"
+	if _ddh_is_assigned_with_reason 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi
+	[[ ! -s "$AIDEVOPS_DDH_BLOCKER_REASON_FILE" && "$(wc -l <"$calls")" -eq 11 ]] || return 1
+	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE
+	if _ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null; then return 1; fi
+	[[ "$(wc -l <"$calls")" -eq 12 ]] || return 1
+	return 0
+)
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -674,6 +728,11 @@ main() {
 	test_ops_wrapped_dispatch_comment_blocks_inside_active_worker_window
 	test_dispatch_comment_expires_after_active_worker_window
 	test_dispatch_comment_terminal_marker_allows
+	if _test_cycle_assignment_cache; then
+		print_result "cycle cache isolates keys and lifetime; never caches dispatch permission or recovery" 0
+	else
+		print_result "cycle cache isolates keys and lifetime; never caches dispatch permission or recovery" 1
+	fi
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

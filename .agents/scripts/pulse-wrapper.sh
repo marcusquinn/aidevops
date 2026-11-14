@@ -1396,6 +1396,8 @@ _pulse_configure_gh_read_routing() {
 # ---------------------------------------------------------------------------
 _pulse_cycle_entry_gates() {
 	_pulse_configure_gh_read_routing
+	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE
+	unset AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE
 
 	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
 	# and acquire_instance_lock have all passed cleanly. The EXIT trap releases
@@ -1405,6 +1407,18 @@ _pulse_cycle_entry_gates() {
 		printf 'canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock passed)\n'
 		_pw_skip_cycle=1
 		return 0
+	fi
+	# The instance lock serializes cycles. Reset even on an inherited environment
+	# so an assignment change is visible on the next cycle. Cache only blockers;
+	# dispatch-permitting checks must still consult current ownership.
+	local assigned_cache_file="${PULSE_DIR}/is-assigned-cycle.cache"
+	if [[ "${PULSE_DRY_RUN:-0}" != "1" && ! -L "$assigned_cache_file" ]] &&
+		(
+			umask 077
+			: >"$assigned_cache_file"
+		); then
+		export AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE="$assigned_cache_file"
+		export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-${RANDOM}"
 	fi
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		_pulse_cycle_state_start
