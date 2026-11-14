@@ -377,9 +377,42 @@ _dispatch_draft_hint_boundary() {
 	return $?
 }
 
+# GH#38237: use the existing hasher over canonical material inputs, not updatedAt.
+# A missing body can still be recorded, but cannot prove a later bump is noise.
+_dispatch_negative_cache_material() {
+	local candidate="$1" material="" fingerprint="" body_state="metadata"
+	material=$(jq -cS '{labels: ([.labels[]? | .name? // .] | sort),
+		assignees: ([.assignees[]? | .login? // .] | sort), body: (.body // null)}' <<<"$candidate" 2>/dev/null) || return 1
+	if jq -e '.body | type == "string"' <<<"$candidate" >/dev/null 2>&1; then
+		body_state="body"
+	fi
+	fingerprint=$(_dispatch_capability_fingerprint "" "$material" "") || return 1
+	printf '%s:%s\n' "$body_state" "$fingerprint"
+	return 0
+}
+
+# Reuse the gh shim's audit classifier; only the legacy first-token events need
+# the dispatch-specific fallback. Keep the shim's globals isolated from pulse.
+_dispatch_negative_cache_ops_only() (
+	local comments="$1" body=""
+	source "${_PULSE_DISPATCH_LIB_DIR}/gh-api-guards-lib.sh"
+	jq -e 'type == "array" and length < 100 and all(.[]; (.body | type) == "string")' <<<"$comments" >/dev/null 2>&1 || return 1
+	while IFS= read -r body; do
+		body=$(jq -r '.' <<<"$body") || return 1
+		if _shim_body_is_ops_audit "$body"; then
+			continue
+		fi
+		case "$body" in
+		DISPATCH_CLAIM[[:space:]]* | DISPATCH_LEASE[[:space:]]* | CLAIM_RELEASED[[:space:]]* | CHECKPOINT_CONTINUATION_APPROVED[[:space:]]* | 'Dispatching worker'[[:space:]]*) ;;
+		*) return 1 ;;
+		esac
+	done < <(jq -c '.[].body' <<<"$comments")
+	return 0
+)
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
-	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary=""
+	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary="" material=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
 		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dedup_pr_evidence | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
@@ -412,11 +445,12 @@ _dispatch_negative_cache_record() {
 		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) || return 0
 		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
 	fi
+	material=$(_dispatch_negative_cache_material "$candidate") || return 0
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" >"$tmp"; then
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp"; then
 		if mv -f "$tmp" "$file"; then
 			if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 				_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=1
@@ -478,6 +512,7 @@ _dispatch_negative_cache_self_validating_reason() {
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
+	local record="" material="" comments="" refresh=0 tmp=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
@@ -485,12 +520,19 @@ _dispatch_negative_cache_reason() {
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary <"$file" || return 1
+	IFS= read -r record <"$file" || return 1
+	# Non-whitespace separators preserve empty optional fields in old/new records.
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
 	# hold is keyed to the owner generation rather than the issue revision.
-	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
+	if [[ "$cached" != "$updated" && "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* && "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
+		current=$(_dispatch_negative_cache_material "$candidate") || return 1
+		[[ "$current" == "$material" ]] || return 1
+		refresh=1
+	fi
 	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
@@ -568,6 +610,20 @@ _dispatch_negative_cache_reason() {
 	esac
 	now=$(date +%s)
 	((now >= stamp && now - stamp < ttl)) || return 1
+	if [[ "$refresh" == 1 ]]; then
+		comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+			gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
+		_dispatch_negative_cache_ops_only "$comments" || return 1
+		# Refresh the revision, never the TTL or reason-specific evidence. An old
+		# record or a failed refresh simply runs the ceremony again next cycle.
+		tmp=$(mktemp "${file}.XXXXXX") || return 1
+		chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+		if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp" ||
+			! mv -f "$tmp" "$file"; then
+			rm -f "$tmp"
+			return 1
+		fi
+	fi
 	printf '%s\n' "$reason"
 	return 0
 }
