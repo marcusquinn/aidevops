@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.194] - 2026-11-14
+
+### Added
+
+- maintainer replies on held issues wake the AI supervisor; unexplained holds get a stated why
+
+### Changed
+
+- Tests: supply GH#37708 launch evidence in finish-path fixtures (#38308)
+- Tests: update scratch worktree git fixture (#38300)
+
+### Fixed
+
+- print CHANNEL_PENDING and RELEASE_WAIT when reconcile waits on channels (#38310)
+- judge pushed refs, skip task-id-counter pushes (#38304)
+- route signal-less exits after own PR handoff through the post-PR handoff gate
+
 ## [3.39.193] - 2026-11-14
 
 ### Added
