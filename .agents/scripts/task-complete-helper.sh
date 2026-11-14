@@ -70,6 +70,13 @@ SKIP_MERGE_CHECK=false
 VALID_TESTING_LEVELS="runtime-verified self-assessed untested"
 TASK_COMPLETE_ID_BOUNDARY="([[:space:]]|$)"
 
+# Escape ERE metacharacters so task IDs (e.g. t12.1) match literally.
+_tc_escape_ere() {
+	local raw="$1"
+	printf '%s' "$raw" | sed -e 's/[][\.^$*+?(){}|/]/\\&/g'
+	return 0
+}
+
 # Logging: uses shared log_* from shared-constants.sh
 
 # Show help
@@ -606,7 +613,9 @@ _complete_task_is_indented() {
 	local task_id="$1"
 	local todo_file="$2"
 
-	grep -qE "^[[:space:]]+- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	grep -qE "^[[:space:]]+- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"
 	return $?
 }
 
@@ -618,8 +627,12 @@ _complete_task_in_place() {
 	local todo_file="$4"
 	local tmp_out="${todo_file}.in_place"
 
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	# tid via ENVIRON: awk -v would reinterpret the backslash escapes.
 	# shellcheck disable=SC2016
-	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" '
+	TC_TID_RE="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" '
+BEGIN { tid = ENVIRON["TC_TID_RE"] }
 !done && $0 ~ ("^[[:space:]]+-[[:space:]]\\[[ >]\\][[:space:]]" tid boundary) {
     line=$0
     sub(/\[[ >]\]/, "[x]", line)
@@ -647,7 +660,7 @@ _complete_task_in_place() {
 	}
 	mv "$tmp_out" "$todo_file"
 
-	if ! grep -qE "^[[:space:]]+- \[x\] ${task_id} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
+	if ! grep -qE "^[[:space:]]+- \[x\] ${id_re} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
 		log_error "Failed to add proof-log to $task_id"
 		return 1
 	fi
@@ -929,15 +942,17 @@ task_issue_number() {
 	local todo_file="$2"
 	local task_line=""
 	local issue_number=""
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" || true)
+	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >x]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" || true)
 	if [[ -z "$task_line" ]]; then
 		log_error "Task $task_id not found in an open TODO.md entry"
 		return 1
 	fi
 	# An already-completed task is an idempotent no-op, so it does not need a
 	# footer for a commit that will not be created.
-	if [[ "$task_line" == "- [x]"* ]]; then
+	if [[ "$task_line" =~ ^[[:space:]]*-\ \[x\] ]]; then
 		return 0
 	fi
 
