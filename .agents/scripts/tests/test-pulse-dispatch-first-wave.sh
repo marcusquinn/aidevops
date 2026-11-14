@@ -661,3 +661,18 @@ jq -e '.[0].number == 1 and .[1].number == 100' <<<"$ordered" >/dev/null
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=1 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 printf 'PASS ordinary retries, launch clearing, disabled rotation and expired stamps preserve recency semantics\n'
+
+# GH#38333: claimed candidates (assignee or in-progress/in-review/claimed)
+# follow unclaimed work in a stable partition; nothing is dropped.
+claims=$(jq -nc '[
+	{number:1, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"], assignees:[]},
+	{number:2, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"], assignees:["runner"]},
+	{number:3, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch","status:in-review"], assignees:[]},
+	{number:4, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"]},
+	{number:5, repo_slug:"owner/a", priority_rank:0, labels:[{name:"status:claimed"}]},
+	{number:6, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch","status:available"]}]')
+ordered=$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$claims" 20)
+jq -e '[.[].number] == [1,4,6,2,3,5]' <<<"$ordered" >/dev/null
+[[ "$(_dispatch_order_claim_state_candidates "$backlog")" == "$backlog" ]]
+[[ "$(_dispatch_order_claim_state_candidates 'not-json')" == 'not-json' ]]
+printf 'PASS fresh-first lane orders claimed candidates after unclaimed work, no-op otherwise\n'

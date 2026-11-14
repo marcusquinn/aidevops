@@ -661,11 +661,47 @@ _dispatch_order_idle_borrowing_candidates() {
 }
 
 #######################################
+# GH#38333: attempt unclaimed candidates before claimed ones. The candidate
+# filter admits assigned, in-progress, in-review and claimed auto-dispatch
+# issues so dedup can recover stale claims, but on a 20-slot runner those
+# guards rejected ~590 such candidates in 41h at 27-75s each while unclaimed
+# ready work waited. Stable partition, order-only: every candidate still passes
+# its live gates and claimed ones are attempted once fresh work is exhausted.
+# No claimed candidate, or any jq failure, returns the input byte-for-byte.
+#
+# Arguments:
+#   $1 - ranked candidate JSON array
+# Returns: reordered JSON array
+#######################################
+_dispatch_order_claim_state_candidates() {
+	local candidates_json="$1" result="" demoted="" ordered=""
+	if ! result=$(jq -c '
+		def claimed:
+			((.assignees // []) | length > 0) or
+			(((.labels // []) | map(.name? // .)) as $labels |
+				any($labels[]; . == "status:in-progress" or . == "status:in-review" or . == "status:claimed"));
+		([.[] | select(claimed)] | length),
+		([.[] | select(claimed | not)] + [.[] | select(claimed)])
+	' <<<"$candidates_json" 2>/dev/null) || ! { IFS= read -r demoted && IFS= read -r ordered; } <<<"$result" ||
+		[[ ! "$demoted" =~ ^[1-9][0-9]*$ || -z "$ordered" ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
+	echo "[pulse-wrapper] Dispatch_max: fresh-first lane — ${demoted} claimed candidate(s) (assignee or in-progress/in-review/claimed) ordered after unclaimed work (GH#38333)" >>"$LOGFILE"
+	if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
+		_dispatch_stats_increment "dispatch_candidate_claimed_demoted"
+	fi
+	printf '%s\n' "$ordered"
+	return 0
+}
+
+#######################################
 # Order one dispatch round: attempt-recency rotation (GH#34363) when the
-# candidate library is loaded, then the trusted review-debt fairness share.
-# The debt cap takes precedence even for fresh rank-0 review-debt work; the
-# recency share does not exempt candidates from the established debt policy.
-# Both are order-only; every candidate still passes its live gates.
+# candidate library is loaded, then fresh-first claim state (GH#38333), then
+# the trusted review-debt fairness share. The debt cap takes precedence even
+# for fresh rank-0 review-debt work; the recency share does not exempt
+# candidates from the established debt policy. All are order-only; every
+# candidate still passes its live gates.
 #
 # Arguments:
 #   $1 - ranked candidate JSON array
@@ -678,6 +714,7 @@ _dispatch_order_round_candidates() {
 	if declare -F _dispatch_order_attempt_recency_candidates >/dev/null 2>&1; then
 		candidates_json=$(_dispatch_order_attempt_recency_candidates "$candidates_json")
 	fi
+	candidates_json=$(_dispatch_order_claim_state_candidates "$candidates_json")
 	_dispatch_order_idle_borrowing_candidates "$candidates_json" "$available_slots"
 	return 0
 }
