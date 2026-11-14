@@ -249,9 +249,10 @@ _full_loop_cleanup_receipt_path() {
 	fi
 	# Identity consumers still need historical evidence. Never scan archives on
 	# the hot path when the canonical receipt exists; ambiguous history fails closed.
+	[[ ! -L "$receipt_dir/archive" ]] || return 1
 	for match in "$receipt_dir"/archive/*/"$safe_repo-$pr_number.json"; do
 		[[ -e "$match" || -L "$match" ]] || continue
-		[[ -z "$archived_path" && ! -L "$match" ]] || return 1
+		[[ -z "$archived_path" && ! -L "$match" && ! -L "${match%/*}" ]] || return 1
 		archived_path="$match"
 	done
 	printf '%s\n' "${archived_path:-$receipt_path}"
@@ -1869,6 +1870,10 @@ _full_loop_archive_cleanup_receipts() {
 	(( 10#$days != 0 )) || return 0
 	now=$(date +%s) || return 1
 	_full_loop_receipt_lock_acquire || return 1
+	if [[ -L "$receipt_dir/.archive-housekeeping" ]]; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
 	last=$(jq -r '.last_run // 0' "$receipt_dir/.archive-housekeeping" 2>/dev/null || true)
 	if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < 3600 )); then
 		_full_loop_receipt_lock_release
@@ -1893,8 +1898,10 @@ _full_loop_archive_cleanup_receipts() {
 			input_filename as $path
 			| if .seen[$path] then error("multiple receipt documents") else .seen[$path] = true end
 			| if $r.resource_cleanup_state == "CLEANED" then
-				[$r | paths(scalars) as $p | select(($p[-1] | type) == $string_type and ($p[-1] | endswith("_at")))
-					| $r | getpath($p) | select(. != null) | epoch] as $times
+				[$r | paths(scalars) as $p | ($r | getpath($p)) as $value
+					| select((($p[-1] | type) == $string_type and ($p[-1] | endswith("_at")))
+						or (($value | type) == $string_type and ($value | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))))
+					| $value | select(. != null) | epoch] as $times
 				| if ($times | length) > 0 and all($times[]; . != null) and ($times | max) < $cutoff
 					then .candidates += [[$path, ($times | max | strftime("%Y-%m"))]] else . end
 			  else . end)
@@ -1907,7 +1914,7 @@ _full_loop_archive_cleanup_receipts() {
 		[[ -n "$receipt_path" && "$month" =~ ^[0-9]{4}-[0-9]{2}$ ]] || continue
 		destination="$receipt_dir/archive/$month"
 		if [[ -L "$receipt_path" || -L "$receipt_dir/archive" || -L "$destination" ]] ||
-			! mkdir -p "$destination" || [[ -e "$destination/${receipt_path##*/}" ]] ||
+			! mkdir -p "$destination" || [[ -e "$destination/${receipt_path##*/}" || -L "$destination/${receipt_path##*/}" ]] ||
 			! mv "$receipt_path" "$destination/"; then
 			_full_loop_receipt_lock_release
 			return 1
