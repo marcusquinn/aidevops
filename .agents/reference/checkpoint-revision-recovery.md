@@ -3,30 +3,31 @@
 
 # Corrected blocked checkpoint recovery
 
-An authorised brief owner may approve continuation of a released worker draft after correcting its brief.
-This never permits taking over a live interactive session, clearing a sensitive-scope hold, or replacing the existing PR.
+An authorised brief owner may approve continuation of a released worker draft after correcting its brief. This never permits taking over a live interactive session, clearing a sensitive-scope hold, or replacing the existing PR.
 
 ## Approval and continuation
 
-When a draft blocks ordinary redispatch (`WORKER_DRAFT_CHECKPOINT`), Pulse runs
-`pr-checkpoint-continuation-helper.sh blocked-attention OWNER/REPO ISSUE PR`. If the newest trusted release
-is the PR author's `blocked` release with no later coordination event, it posts one `BLOCKED_CHECKPOINT_ATTENTION`
-comment per head and release. The comment names the release ID, attempt and both exits: approve after correcting
-the brief, or close the draft to restart dispatch (GH#33132). It grants nothing, starts no line with an event prefix
-and never dispatches.
+When a draft blocks ordinary redispatch (`WORKER_DRAFT_CHECKPOINT`), Pulse runs `pr-checkpoint-continuation-helper.sh blocked-attention OWNER/REPO ISSUE PR`. If the newest trusted release is the PR author's `blocked` release with no later coordination event, it posts one `BLOCKED_CHECKPOINT_ATTENTION` comment per head and release.
+The comment names the release ID, attempt and both exits: approve after correcting the brief, or close the draft to restart dispatch (GH#33132). It grants nothing, starts no line with an event prefix and never dispatches.
+
+### AI brief-owner decisions (GH#38155)
+
+Decision-blocked drafts opt in independently of unknown-blocker continuation: set `checkpoint_policy.auto_resolve_decisions: true` beside `configured_by` in the registered `repos.json` entry.
+The default is off, preserving attention-only behaviour. No issue body, model output or comment can enable the policy.
+
+- **Eligibility:** after existing blocked-release checks, use the newest unedited current-head decision finding (excluding `already_landed`), or an explicitly decision-class blocked release bound to that head. Require an open, unassigned, auto-dispatchable issue without unknown-policy hold labels; validate the exact worker draft, release and attempt through `approval-template` before inference.
+- **Authority:** policy owner, publisher, releasing runner, issue author and finding poster all need current repository write permission. Revalidate the policy and finding after inference; copied markers from outsiders never suppress resolution.
+- **Decision:** one thinking-tier inference, bounded to 180 seconds, receives the brief, full finding, PR title, diff stat and bounded named-file excerpts as untrusted evidence. Only high-confidence `decide` can append a dated **Decision record (AI brief owner)**. Check the original brief before editing and verify the resulting body equals the original plus that section before generating approval bound to the new complete brief SHA. Reuse the unknown-policy signed publication/permission tail; all `dispatch-approved` gates remain.
+- **Escalation:** an allowlisted escalation, malformed response, non-high confidence, timeout or missing inference prerequisite produces one `DECISION_ESCALATION` audit record with class, reason and options, never an approval or label change. Existing decision records and authenticated, unedited escalation records suppress repeat processing.
+- **Bounds:** native atomic audit refs under `refs/aidevops/checkpoint-decisions/ISSUE/` reserve each PR/head/finding and at most two attempt slots per issue across runners. These are not branches, tags, labels or dispatch authority. Reservations persist after crashes or ambiguous publication failures; a consumed reservation proves neither a successful decision nor continuation authority.
 
 ### Unknown-blocker triage (GH#36525)
 
-Before publishing an unclassified blocked release, the runner performs one bounded (45-second, simple-tier)
-inference over the protected final report and logs its sanitized outcome. Tool output and public PR prose are not
-evidence. Explicit classes win; inferred external triggers require a named event, owner or date quoted from the report.
+Before publishing an unclassified blocked release, the runner performs one bounded (45-second, simple-tier) inference over the protected final report and logs its sanitized outcome. Tool output and public PR prose are not evidence. Explicit classes win; inferred external triggers require a named event, owner or date quoted from the report.
 Known dependencies, access, input, scope and runner prerequisites use the normal class/owner path, never this feature's automatic approval.
 
-Continue in-scope work where possible. If execution must stop with a pushed draft and only in-scope work remaining,
-report it without `BLOCKED:` for the runtime's `worker_draft_checkpoint` continuation path; remaining work alone is
-not a blocker. Only a complete report positively establishing unfinished authorised work without a prerequisite emits
-`CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`. Missing tooling, timeout, invalid JSON, conflicting
-declarations, truncation or uncertainty retain the unknown hold; draft prose is not evidence.
+Continue in-scope work where possible. If execution must stop with a pushed draft and only in-scope work remaining, report it without `BLOCKED:` for the runtime's `worker_draft_checkpoint` continuation path; remaining work alone is not a blocker.
+Only a complete report positively establishing unfinished authorised work without a prerequisite emits `CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`. Missing tooling, timeout, invalid JSON, conflicting declarations, truncation or uncertainty retain the unknown hold; draft prose is not evidence.
 
 Automatic approval is **off by default**. An operator with current repository
 write/maintain/admin permission can configure the registered `repos.json` entry:
@@ -41,9 +42,8 @@ write/maintain/admin permission can configure the registered `repos.json` entry:
 }
 ```
 
-Both `configured_by`, the releasing runner and the publishing account must have
-current write authority. The policy is local operator configuration, not an
-issue/PR-body directive. `blocked-attention` checks the runner's head/brief binding,
+`configured_by`, the releasing runner and the publishing account must have current write authority.
+The policy is local operator configuration, not an issue/PR-body directive. `blocked-attention` checks the runner's head/brief binding,
 fresh unassigned/unheld issue and eligible worker draft, then generates the line
 through `approval-template` and publishes it through `gh-write-helper.sh`. It
 does not launch directly, remove labels or transfer ownership. `dispatch-approved`

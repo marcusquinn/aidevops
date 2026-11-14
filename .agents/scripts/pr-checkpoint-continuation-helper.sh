@@ -25,6 +25,8 @@ source "${SCRIPT_DIR}/pr-checkpoint-compensation.sh"
 source "${SCRIPT_DIR}/pr-checkpoint-terminal-action.sh"
 # shellcheck source=pr-checkpoint-unknown-digest.sh
 source "${SCRIPT_DIR}/pr-checkpoint-unknown-digest.sh"
+# shellcheck source=pr-checkpoint-decision-resolver.sh
+source "${SCRIPT_DIR}/pr-checkpoint-decision-resolver.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -1249,7 +1251,7 @@ _pcc_blocked_attention() {
 	[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || return 1
 	[[ "$successor" =~ ^([1-9][0-9]*|unpaired|-)$ ]] || return 1
 	if [[ "$successor" == "-" && -n "$attempt" ]] &&
-		_pcc_unknown_pending_work "$repo" "$issue" "$pr" "$head" "$runner" "$release_id" "$attempt" "$comments"; then
+		_pcc_policy_route "$repo" "$issue" "$pr" "$head" "$runner" "$release_id" "$attempt" "$comments"; then
 		return 0
 	fi
 	if [[ "$posted" == "true" ]]; then
