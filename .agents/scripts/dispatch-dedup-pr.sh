@@ -680,7 +680,7 @@ _ddpr_graphql_open_commits() {
 					orderBy: {field: CREATED_AT, direction: DESC}
 				) {
 					nodes {
-						number title isDraft
+						number title isDraft headRefName changedFiles files(first: 10) { nodes { path } pageInfo { hasNextPage } }
 						commits(first: 100) {
 							nodes { commit { messageHeadline } }
 							pageInfo { hasNextPage endCursor }
@@ -712,9 +712,9 @@ _ddpr_graphql_open_commits() {
 			all(.commits.nodes[]; (.commit.messageHeadline | type) == $string_type)
 		))
 		| map({
-			number,
-			title,
-			isDraft,
+			number, title, isDraft, headRefName: (.headRefName // ""), changedFiles: (.changedFiles // 0),
+			# Optional planning-exclusion evidence; absent or partial means "not exempt".
+			files: [(.files.nodes // [])[] | {path}], filesTruncated: (.files.pageInfo.hasNextPage != false),
 			commits: [.commits.nodes[].commit | {messageHeadline}],
 			hasNextPage: .commits.pageInfo.hasNextPage,
 			endCursor: .commits.pageInfo.endCursor
@@ -935,14 +935,25 @@ _has_open_pr_check_open_commits() {
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 	[[ "$open_pr_count" -eq 0 ]] && return 1
 
-	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
+	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title.
+	# A planning-publication PR (planning-publisher.sh: `planning/` head that only
+	# adds the TODO entry and brief, titled "<task-id>: plan: ... (GH#NNN)")
+	# references the issue it registers but never implements it; counting it
+	# blocked dispatch of every interactively created issue until the TODO PR
+	# merged (GH#38217). Exemption needs the complete file list, never the title:
+	# absent, partial or code-touching file evidence keeps the PR as evidence.
 	local close_pattern=""
 	close_pattern=$(_ddpr_closing_keyword_pattern "$issue_number")
 	local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 
 	local match_pr
 	match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
-		'[.[] | select(((.isDraft // false) | not) and (
+		'def planning_publication:
+			((.headRefName // "") | startswith("planning/")) and
+			((.files | type) == "array") and (.filesTruncated == false) and
+			((.changedFiles // 0) > 0) and (([.files[]?.path] | length) == .changedFiles) and
+			([.files[]?.path] | all(.[]; type == "string" and test("^(TODO\\.md$|todo/)")));
+		[.[] | select(((.isDraft // false) | not) and (planning_publication | not) and (
 			((.title // "") | test($tp)) or
 			any((.commits // [])[]?; ((.messageHeadline // "") | test($cp; "i")))
 		))
