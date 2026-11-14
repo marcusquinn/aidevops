@@ -69,7 +69,7 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#38131: count non-progress releases toward the original per-PR fuse.
 # A separate total-release ceiling bounds even steadily advancing drafts.
 _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
@@ -1364,6 +1364,25 @@ _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
 	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
 	local session="${9:-}"
+	# Preserve orphan boundaries in history for both fuses, but never turn a
+	# normal closing terminal lease into a second release. Edited events fence.
+	comments=$(jq -c --arg pr_created "$pr_created" --argjson trusted_logins "$trusted_logins" \
+		--argjson grace "${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" \
+		"${_PCC_JQ_RELEASE_DEFS}"'
+		[flatten[]] as $all |
+		[$all[] | select(trusted_event and coordination)] as $events |
+		[$all[] | if (trusted_event and unedited and coordination) and $pr_created != "" and
+			([body_lines | select(coordination_line)] | all(is_terminal_lease)) and
+			((.created_at | try epoch catch 0) > ($pr_created | try epoch catch now)) and
+			((.created_at | try epoch catch now) <= (now - $grace)) then . as $terminal |
+			([$events[] | select(.id < $terminal.id and any(body_lines;
+				claim_line or (startswith("DISPATCH_LEASE ") and (is_terminal_lease | not)))) | .id] | max // 0) as $start |
+			([$events[] | select(.id > $terminal.id and any(body_lines;
+				claim_line or (startswith("DISPATCH_LEASE ") and (is_terminal_lease | not)))) | .id] | min // 999999999999999) as $next |
+			if (any($events[]; .id > $start and .id < $terminal.id and any(body_lines; is_release)) | not) and
+				(any($events[]; .id > $terminal.id and .id < $next and any(body_lines; is_release)) | not)
+			then .body = "CLAIM_RELEASED reason=orphaned_terminal_lease" else . end else . end]
+	' <<<"$comments") || return 1
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
 		--arg extended "${8:+true}" --argjson commits "$commits" --arg session "$session" \
