@@ -186,22 +186,32 @@ def _unfinished(path: Path, found: list[tuple[str, int]],
     return None, "work-finished"
 
 
-def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
+def _unsafe_to_remove(path: Path, owner: OwnerCheck, verdict: dict,
+                      timeout: int) -> str | None:
     """Name what removal would disturb or discard, or nothing when it is safe.
 
     Runs only for finished candidates, so the registry is read after GitHub.
+    ``finished`` is recorded only once every registered owner has ended, so local
+    state found after that point is preservable (``decision.classify``), never a
+    live writer's work in progress.
     """
     reason = owner(path)
     if reason is not None:
         return reason
+    verdict["finished"] = True
     clean, detail = nothing_to_lose(path, timeout=timeout)
     return None if clean else detail
 
 
 def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
              *, timeout: int = 60) -> dict:
-    """Decide one worktree, reporting the first missing proof as the reason."""
-    verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated"}
+    """Decide one worktree, reporting the first missing proof as the reason.
+
+    ``finished`` reports that the work is finished and no registered owner is
+    alive, independently of whether removal would lose local state.
+    """
+    verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated",
+                     "finished": False}
     found = references(path.name)
     finished = "work-finished"
     reason = _preconditions(path, owner)
@@ -211,7 +221,7 @@ def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
         reason, finished = _unfinished(path, found,
                                        Query(verdict["repository"], cache, timeout))
     if reason is None and owner is not None:
-        reason = _unsafe_to_remove(path, owner, timeout)
+        reason = _unsafe_to_remove(path, owner, verdict, timeout)
     verdict["authorized"] = reason is None
     verdict["reason"] = reason or finished
     return verdict

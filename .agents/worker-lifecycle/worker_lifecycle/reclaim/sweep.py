@@ -8,6 +8,11 @@ evidence collector that
 policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
 by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
 the only protection and each fails closed.
+
+Each candidate gets one decision (``reclaim.decision.classify``): ``remove``,
+``archive`` (finished work with local state to preserve, queued and skipped until
+the archive stage exists) or ``refuse``. Dry runs write nothing; applied removals
+are journaled as ``reclaim-authorized`` then ``reclaim-removed`` (GH#38348).
 """
 
 from __future__ import annotations
@@ -21,8 +26,12 @@ from pathlib import Path
 import sys
 import time
 
+from .decision import (
+    ARCHIVE, AUTHORIZED, REFUSE, REMOVE, REMOVED, cas_verify, classify, fingerprint, record,
+)
 from .evidence import evidence, prefetch, references, repository
 from .host import common_directory, free_bytes, nothing_to_lose, remove, run
+from ..storage import LifecycleRegistry
 from .owners import RESIDUAL_RISK, OwnerCheck, default_state_dir, open_owners
 from .review import verify_idle_review
 
@@ -66,40 +75,69 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
     return {"schema": SCHEMA, "base_dir": str(base_dir), "dry_run": dry_run,
-            "scanned": 0, "authorized": 0, "removed": 0, "failed": 0, "refused": 0,
+            "scanned": 0, "authorized": 0, "archive_queued": 0, "removed": 0,
+            "failed": 0, "refused": 0,
             "reclaimed_bytes": 0, "budget_exhausted": False,
             "residual_risk": RESIDUAL_RISK, "results": []}
 
 
-def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
-    """Judge one worktree and, when authorized and applying, remove it.
-
-    Returns the repository needing a worktree prune, or None.
-    """
+def judge(path: Path, current: Pass, receipt: dict) -> dict:
+    """Collect evidence and the three-way decision for one worktree; never writes."""
     verdict = evidence(path, current.owner, current.finished,
                        timeout=min(current.remaining(), 60))
+    verdict["decision"], _ = classify(verdict)
     receipt["results"].append(verdict)
-    if not verdict["authorized"]:
+    if verdict["decision"] == REFUSE:
         receipt["refused"] += 1
-        return None
-    receipt["authorized"] += 1
-    # An authorized verdict implies owners were observed; the check narrows the type.
-    if not current.apply_removal or current.owner is None:
+    elif verdict["decision"] == ARCHIVE:
+        # Queued for the preserving archive stage, which is not yet enabled.
+        receipt["archive_queued"] += 1
+    else:
+        receipt["authorized"] += 1
+    if verdict["decision"] != REFUSE:
+        verdict["fingerprint"] = fingerprint(path, timeout=min(current.remaining(), 60))
+    return verdict
+
+
+def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
+    """Judge one worktree and, when removable and applying, remove it.
+
+    Removal is journaled before and after (``decision.record``) and refused when
+    the evidence fingerprint changed since judgement. Returns the repository
+    needing a worktree prune, or None.
+    """
+    verdict = judge(path, current, receipt)
+    # A remove decision implies owners were observed; the check narrows the type.
+    if (verdict["decision"] != REMOVE or not current.apply_removal
+            or current.owner is None):
         return None
     if current.remaining() == 0:
         # Never start destructive work the budget can no longer cover.
         receipt["budget_exhausted"] = True
         verdict["removal"] = "budget-exhausted"
         return None
+    store: LifecycleRegistry | None = getattr(current.owner, "store", None)
+    digest = verdict["fingerprint"]
+    blocked = ("fingerprint-unavailable" if digest is None
+               else "journal-unavailable" if store is None
+               else record(store, AUTHORIZED, verdict, digest))
+    if blocked is not None or store is None:
+        verdict["removal"] = blocked or "journal-unavailable"
+        receipt["failed"] += 1
+        return None
     common = common_directory(path)
     # A review tree was authorized for being quiet, so removal re-checks that too.
     verify = verify_idle_review if verdict["reason"] == "review-idle" else nothing_to_lose
-    removed, detail = remove(path, verify, current.owner)
+    removed, detail = remove(path, cas_verify(digest, verify), current.owner)
     verdict["removal"] = detail
     if not removed:
         receipt["failed"] += 1
         return None
     receipt["removed"] += 1
+    # The tree is gone either way; an unrecorded outcome is reported, not hidden.
+    unrecorded = record(store, REMOVED, verdict, digest)
+    if unrecorded is not None:
+        verdict["journal"] = unrecorded
     return common
 
 
