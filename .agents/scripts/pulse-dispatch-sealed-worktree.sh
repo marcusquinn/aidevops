@@ -3,6 +3,52 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # Sealed-generation recovery. Removal always delegates to the archive-backed
 # helper (including its fresh process/ownership checks); never force removal.
+# Also fences reuse of a candidate whose commits a closed PR rejected (GH#38355).
+
+# GH#38355: a candidate whose committed head belongs to a PR closed without
+# merging (and with no open PR on its branch) holds rejected work. Resuming it
+# reopened the same draft and checkpointed again, stripping auto-dispatch.
+# The candidate is skipped, never reset or removed, so dirty or extra commits
+# stay preserved (GH#27138) and a fresh branch starts from the default.
+# Only clean-or-dirty trees ahead of the default spend the one GitHub read;
+# zero-ahead trees already restart from the default branch.
+# Args: $1=worktree path, $2=branch, $3=repo slug
+# Sets _DLW_REJECTED_HEAD_PR. Returns 0 rejected; 1 not rejected or unproven
+# (unproven keeps the existing reuse decision and is logged).
+_dlw_reuse_head_rejected() {
+	local path="$1" branch="$2" repo="$3"
+	local base=""
+	local ahead=""
+	local head=""
+	local prs="" rows="" pr="" sha=""
+	_DLW_REJECTED_HEAD_PR=""
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && -n "$branch" ]] || return 1
+	base=$(git -C "$path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null) || return 1
+	ahead=$(git -C "$path" rev-list --count "${base}..HEAD" 2>/dev/null) || return 1
+	[[ "$ahead" =~ ^[1-9][0-9]*$ ]] || return 1
+	head=$(git -C "$path" rev-parse HEAD 2>/dev/null) || return 1
+	if ! prs=$(gh api "repos/${repo}/pulls?state=all&head=${repo%%/*}:${branch}&per_page=100" 2>/dev/null) ||
+		! rows=$(jq -r --arg slug "$repo" --arg ref "$branch" '
+			if type != "array" then error("unreadable PR list") else . end
+			| [.[] | select(.head.ref == $ref and .head.repo.full_name? == $slug)]
+			| if any(.[]; .state == "open") then "open"
+			else (sort_by(.number) | reverse | .[]
+				| select(.state == "closed" and .merged_at == null and (.head.sha | type) == "string")
+				| "\(.number) \(.head.sha)") end
+		' <<<"$prs" 2>/dev/null); then
+		echo "[dispatch_worker_launch] reuse_rejected_head_unverified branch_ahead=${ahead}; keeping existing reuse decision" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	[[ "$rows" != open ]] || return 1
+	while read -r pr sha; do
+		[[ "$pr" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40,64}$ ]] || continue
+		if [[ "$sha" == "$head" ]] || git -C "$path" merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+			_DLW_REJECTED_HEAD_PR="$pr"
+			return 0
+		fi
+	done <<<"$rows"
+	return 1
+}
 
 _dlw_classify_sealed_candidate() {
 	local path="$1" issue="$2" repo="$3"

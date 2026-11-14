@@ -668,6 +668,164 @@ Restored auto-dispatch on this unassigned available worker issue after verifying
 	return 0
 }
 
+# GH#38355: a worker draft checkpoint removes auto-dispatch only so that no
+# second branch opens beside the open draft. When that draft is closed without
+# merging, nothing continues it (dispatch-stalled acts on open drafts only) and
+# the issue stayed undispatchable for any origin. Any closer counts: workers
+# often share the maintainer's login, and the removal's only reason is gone.
+_PMPC_CLOSED_CHECKPOINT_KIND="closed-checkpoint-dispatch-recovery"
+
+# Classify the issue for the closed-checkpoint restore.
+# Args: $1=issue JSON (REST)
+# Stdout: "unassigned" (status:available) or "review <login>" (status:in-review,
+#         one assignee); nothing when closed, held, already dispatchable or other
+_pmpc_closed_checkpoint_issue_mode() {
+	local issue_json="$1"
+	printf '%s' "$issue_json" | jq -r '
+		[.labels[].name] as $labels
+		| ([$labels[] | select(test("^status:"))] | join(",")) as $status
+		| if (.state != "open" or .pull_request != null
+			or ($labels | any(test("^((no-)?auto-dispatch|parent-task|hold-for-review|lockdown|persistent|needs-.*)$")))) then empty
+		elif (($status | test("^status:available$")) and .assignees == []) then "unassigned"
+		elif (($status | test("^status:in-review$")) and (.assignees | length) == 1) then "review " + .assignees[0].login
+		else empty end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# The newest trusted ownership event must be this checkpoint's release, with no
+# recovery-circuit hold and no restore already recorded for the PR.
+# Args: $1=comments JSON (pages), $2=PR number
+# Stdout: "<release epoch> <runner login>"; nothing when ineligible
+_pmpc_closed_checkpoint_release() {
+	local comments_json="$1" pr_number="$2"
+	printf '%s' "$comments_json" | jq -r --arg pattern "$_PMPC_EVENT_PATTERN" \
+		--arg marker "kind=${_PMPC_CLOSED_CHECKPOINT_KIND} pr=${pr_number} " "${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted) | .body //= ""] | sort_by(.created_at, .id) as $trusted
+		| ([$trusted[] | select(.body | test($pattern))] | last) as $owner
+		| if any($trusted[]; .body | contains($marker)) then empty
+		elif any($trusted[]; .body | test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop|stale-recovery-tick:escalated")) then empty
+		elif $owner == null then empty
+		else $owner.body | capture("(?m)^CLAIM_RELEASED reason=worker_draft_checkpoint runner=(?<runner>[^ \\r\\n]+)")
+			| "\($owner.created_at | fromdateiso8601) \(.runner)" end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Prove the PR is this issue's checkpoint draft and was closed unmerged after
+# the release: same-repo worker branch for the issue, opened before the release.
+# Args: $1=repo slug, $2=PR number, $3=issue number, $4=release epoch
+# Returns: 0 when proven, 1 otherwise (unreadable included)
+_pmpc_closed_checkpoint_pr_void() {
+	local repo_slug="$1" pr_number="$2" issue_num="$3" release_epoch="$4" pr_json=""
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number:?}" 2>/dev/null) || return 1
+	printf '%s' "$pr_json" | jq -e --arg slug "$repo_slug" --arg issue "$issue_num" \
+		--argjson release "$release_epoch" '
+		.state == "closed" and .merged == false and .merged_at == null
+		and .head.repo.full_name == $slug
+		and (.head.ref | type) == "string"
+		and (.head.ref | test("(^|[/_-])gh-?" + $issue + "$"))
+		and ((.created_at | fromdateiso8601) <= $release)
+		and ((.closed_at | fromdateiso8601) >= $release)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#37600: re-add only the label that the checkpoint removed. The newest
+# auto-dispatch label event must be a removal in the checkpoint's own window:
+# the escalation removes it moments before posting the release, so a removal
+# more than an hour earlier was a person's (during the run) and is respected,
+# as is a removal after the release or an issue that never had the label.
+# Args: $1=repo slug, $2=issue number, $3=release epoch
+# Returns: 0 when the checkpoint made the last removal, 1 otherwise
+_pmpc_checkpoint_removed_dispatch() {
+	local repo_slug="$1" issue_num="$2" release_epoch="$3" events_json=""
+	events_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/events?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$events_json" | jq -e --argjson release "$release_epoch" '
+		if type != "array" then error("unreadable events")
+		elif (.[0]? | type) == "array" then [.[][]] else . end
+		| [.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name? == "auto-dispatch")]
+		| last
+		| . != null and .event == "unlabeled"
+			and ((.created_at | fromdateiso8601) as $removed | $removed <= $release and $removed >= $release - 3600)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#aidevops:trust-boundary -- trusted release comments, the live PR and the label
+# timeline prove the restore; any unreadable or held state means no write.
+# Args: $1=repo slug, $2=issue number, $3=closed checkpoint PR number
+# Returns: 0 when auto-dispatch was restored, 1 otherwise
+_pmpc_restore_closed_checkpoint_dispatch() {
+	local repo_slug="$1" issue_num="$2" pr_number="$3"
+	local issue_json="" mode="" assignee=""
+	local comments_json="" release="" release_epoch="" runner="" body=""
+	local -a transition_args=(--add-label auto-dispatch)
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ &&
+		"$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num:?}" 2>/dev/null) || return 1
+	mode=$(_pmpc_closed_checkpoint_issue_mode "$issue_json") || return 1
+	[[ -n "$mode" ]] || return 1
+	comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	release=$(_pmpc_closed_checkpoint_release "$comments_json" "$pr_number") || return 1
+	read -r release_epoch runner <<<"$release"
+	[[ "$release_epoch" =~ ^[0-9]+$ && "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	if [[ "$mode" == review\ * ]]; then
+		# A runner left assigned in review is released only when it is the checkpoint's runner.
+		assignee="${mode#review }"
+		[[ "$assignee" == "$runner" ]] || return 1
+		transition_args+=(--remove-assignee "$runner")
+	fi
+	_pmpc_closed_checkpoint_pr_void "$repo_slug" "$pr_number" "$issue_num" "$release_epoch" || return 1
+	_pmpc_checkpoint_removed_dispatch "$repo_slug" "$issue_num" "$release_epoch" || return 1
+	_pmpc_other_open_pr_owns_issue "$repo_slug" "$issue_num" 0 && return 1
+	set_issue_status "$issue_num" "$repo_slug" available "${transition_args[@]}" >/dev/null 2>&1 || return 1
+	body="<!-- ops:start -->
+<!-- aidevops:ops kind=${_PMPC_CLOSED_CHECKPOINT_KIND} pr=${pr_number} -->
+Draft checkpoint PR #${pr_number} was closed without merging, so it no longer holds this issue. Restored the auto-dispatch label that the checkpoint removed, after verifying no open linked PR, hold or newer owner. The next worker starts from the default branch; it does not resume the closed PR's head.
+<!-- ops:end -->"
+	gh_issue_comment "$issue_num" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
+		printf '[pulse-wrapper] Closed checkpoint recovery: #%s restored after PR #%s but audit write failed\n' "$issue_num" "$pr_number" >>"$LOGFILE"
+		return 0
+	}
+	printf '[pulse-wrapper] Closed checkpoint recovery: #%s regained auto-dispatch after draft PR #%s closed unmerged (GH#38355)\n' "$issue_num" "$pr_number" >>"$LOGFILE"
+	return 0
+}
+
+# Scan recently closed, unmerged worker-branch PRs once per partial-continuation
+# traversal and offer each linked issue to the restore above. One list read;
+# per-PR reads happen only for recent closed worker branches.
+# Args: $1=repo slug, $2=deadline epoch, $3=traversal cursor "<phase>:<page>:<pending>";
+#       only a fresh traversal ("review:1:") scans, so resumed pages do not repeat it
+# Returns: 0 when scanned or not due, 1 on an unreadable listing
+_pmpc_reconcile_closed_checkpoints() {
+	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" prs_json="" rows="" pr="" issue=""
+	local now_epoch=""
+	[[ "$traversal" == "review:1:" ]] || return 0
+	local lookback="${PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS:-604800}"
+	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
+	prs_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30" 2>/dev/null) || return 1
+	now_epoch=$(date +%s) || return 1
+	rows=$(printf '%s' "$prs_json" | jq -r --arg slug "$repo_slug" --argjson now "$now_epoch" \
+		--argjson lookback "$lookback" '
+		if type != "array" then error("unreadable PR list") else .[] end
+		| select(.merged_at == null and (.closed_at | type) == "string" and (.number | type) == "number")
+		| select(.head.repo.full_name? == $slug)
+		| select((.closed_at | fromdateiso8601) >= ($now - $lookback))
+		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)$").issue) as $issue
+		| "\(.number) \($issue)"
+	' 2>/dev/null) || return 1
+	while read -r pr issue; do
+		[[ "$pr" =~ ^[0-9]+$ && "$issue" =~ ^[0-9]+$ ]] || continue
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 0
+		_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || true
+	done <<<"$rows"
+	return 0
+}
+
 # GH#38021: a worker draft checkpoint removes auto-dispatch so that no second
 # branch opens beside the draft. A canonical consolidated spec is a dispatch
 # candidate only while it carries that label (_has_consolidated_label), and the
@@ -859,6 +1017,7 @@ _pm_reconcile_partial_continuations() {
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	_pmpc_reconcile_closed_checkpoints "$repo_slug" "$deadline" "${phase}:${page}:${issues:+pending}" || true
 	while true; do
 		if [[ -z "$issues" ]]; then
 			issues_json=$(_pmpc_list_candidates "$repo_slug" "$phase" "$page" "$cap") || return 1
