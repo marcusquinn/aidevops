@@ -8,7 +8,7 @@
 # dispatch-approved checks still run. Never infer eligibility from draft prose.
 _pcc_unknown_pending_work() {
 	local repo="$1" issue="$2" pr="$3" head="$4" runner="$5" release="$6" attempt="$7" comments="$8"
- local issue_json='' pr_json='' brief='' marker='' approval='' policy=''
+	local issue_json='' pr_json='' brief='' marker='' approval='' policy=''
 	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local mode="${9:-route}"
 	local issue_api="repos/${repo}/issues"

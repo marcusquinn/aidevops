@@ -32,8 +32,8 @@ if mode:
  path=root+("/repos.json" if mode=="policy" else "/comments.json" if mode=="finding" else "/issue.json")
  with open(path) as f: data=json.load(f)
  if mode=="policy": data["initialized_repos"]=[]
- elif mode=="finding": data[-1]["body"]+="\nReason: already_landed"
- else: data["body"]+="\nConcurrent brief correction"
+ elif mode=="finding": data[-1]["body"]+=chr(10)+"Reason: already_landed"
+ else: data["body"]+=chr(10)+"Concurrent brief correction"
  with open(path,"w") as f: json.dump(data,f)'
 [[ "${DECISION_MODEL_STATUS:-0}" == 0 ]] || exit "$DECISION_MODEL_STATUS"
 jq -c . "${DECISION_ROOT}/result.json"
