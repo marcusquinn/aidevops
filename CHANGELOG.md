@@ -10,6 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.190] - 2026-11-14
+
+### Added
+
+- observe owners through the lifecycle registry, retire idle review trees
+- resolve decision-blocked drafts with an AI brief-owner pass (#38166)
+- automate trusted native macOS PR verification (#38108)
+
+### Changed
+
+- Tests: stop Bash 3.2 re-exec guard from nesting suite runs in scope-gate cases
+- Tests: remove second-boundary flake in abandoned CI-repair claim test
+- Performance: prevent stale blocked sweep starvation (#38187)
+- Tests: refresh stale stage-wiring assertion 11f after GH#38162 (#38190)
+- Refactor: split secret-helper.sh redaction/env functions into secret-redaction-lib.sh (GH#37726) (#38179)
+- Tests: resolve macOS temp root for lifecycle enrollment fixture (#38159)
+- Maintenance: garbage-collect stale github-request-state request dirs (GH#38141) (#38143)
+- Refactor: split handoff tests out of test-dispatch-claim-helper.sh (#38114)
+- Performance: bound OpenCode archive work (#38120)
+
+### Fixed
+
+- never re-exec the caller from a subshell under bash 3.2
+- brief-hold release rotates repos and yields before the 12s housekeeping deadline
+- replace gh api --slurp --jq with standalone jq; add pre-commit gate
+- let cheap housekeeping scanners make progress in the 12s slice
+- classify consolidation deferrals as benign consolidated blocks
+- bounded LLM supervisor starvation escapes for cooperative drains and degraded prefetch (#38167)
+- pin cold-start ceremony floor and follow routine helper in pulse suites (#38176)
+- verify owned lifecycle audit transitions (#38161)
+- renew checkpoint prelaunch leases (#38148)
+- request optional actions read by default
+- decide reversible in-scope choices instead of parking drafts as decision blockers
+- attribute protected-label-guard audit edits to the logical caller (GH#38134) (#38136)
+- run checkpoint-claim ledger sweep as its own critical stage (GH#38144) (#38146)
+- expire orphaned single-flight lease.reclaim markers
+
 ## [3.39.189] - 2026-11-13
 
 ### Added
