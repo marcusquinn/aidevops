@@ -647,7 +647,7 @@ _complete_task_in_place() {
 	}
 	mv "$tmp_out" "$todo_file"
 
-	if ! grep -E "^[[:space:]]+- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+	if ! grep -qE "^[[:space:]]+- \[x\] ${task_id} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
 		log_error "Failed to add proof-log to $task_id"
 		return 1
 	fi
