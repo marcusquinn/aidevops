@@ -100,14 +100,18 @@ if [[ "${1:-}" == "api" ]]; then
 			*) shift ;;
 		esac
 	done
-	if [[ "$path" == */comments ]]; then
+	if [[ "$path" == */comments || "$path" == */comments\?* ]]; then
 		[[ "${STUB_COMMENT_ERROR:-0}" != 1 ]] || exit 1
+		# GH#38185: mirror real gh, which rejects --slurp with --jq. The old
+		# stub emulated the combination and hid a production-only failure.
+		if [[ "$slurp" == 1 && -n "$jq_filter" ]]; then
+			printf 'the `--slurp` option is not supported with `--jq` or `--template`\n' >&2
+			exit 1
+		fi
 		if [[ -n "$jq_filter" ]]; then
-			if [[ "$slurp" == 1 ]]; then
-				jq -s -r "$jq_filter" "$COMMENTS_FIXTURE"
-			else
-				jq -r "$jq_filter" <"$COMMENTS_FIXTURE"
-			fi
+			jq -r "$jq_filter" <"$COMMENTS_FIXTURE"
+		elif [[ "$slurp" == 1 ]]; then
+			jq -s '.' "$COMMENTS_FIXTURE"
 		else
 			cat "$COMMENTS_FIXTURE"
 		fi
