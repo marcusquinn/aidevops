@@ -692,8 +692,6 @@ _ddpr_graphql_open_commits() {
 		}
 	' 2>/dev/null) || return $?
 
-	# headRefName is optional evidence (planning-publication exclusion only), so
-	# its absence never invalidates the response.
 	pr_json=$(printf '%s' "$response" | jq -ce \
 		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
 		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
@@ -716,8 +714,7 @@ _ddpr_graphql_open_commits() {
 		| map({
 			number,
 			title,
-			isDraft,
-			headRefName: (.headRefName // ""),
+			isDraft, headRefName: (.headRefName // ""), # optional: planning exclusion only
 			commits: [.commits.nodes[].commit | {messageHeadline}],
 			hasNextPage: .commits.pageInfo.hasNextPage,
 			endCursor: .commits.pageInfo.endCursor
