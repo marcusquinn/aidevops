@@ -428,12 +428,20 @@ printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor
 	# repository and rotation, and merge the remainder back without a rescan.
 	remainder207='[{"number":207,"repo_slug":"owner/repo61","repo_path":"/fixture","product_discovery_complete":false}]'
 	seed_snapshot "$remainder207"
+	# An expired opposite-mode ledger must not hide arrivals from the fresh
+	# skip remainder, even when it records every currently launchable issue.
+	opposite_snapshot=$(_dispatch_candidate_snapshot_path 50 normalize)
+	jq -nc --argjson now "$now" \
+		'{captured_at:($now - 86400),census_seconds:739,candidates:[]}' >"$opposite_snapshot"
+	jq -nc 'range(21;36) | ["owner/repo4", .]' >"${opposite_snapshot}.consumed"
+	[[ "$(_dispatch_first_wave_arrival_repos)" == $'owner/repo4\t15' ]]
 	short=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=15 _dispatch_ranked_candidates_json 50 skip)
 	[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo4;' ]]
 	jq -e 'length == 16 and any(.[]; .number == 207) and ([.[] | select(.repo_slug == "owner/repo4")] | length) == 15' <<<"$short" >/dev/null
 	jq -e '[.candidates[] | select(.number == 207)] | length == 1' "$snapshot" >/dev/null
 	grep -qx 'first_wave_new_arrival_refresh' "$stats"
 	grep -qx 'first_wave_new_arrival_lead' "$stats"
+	rm -f "$opposite_snapshot" "${opposite_snapshot}.consumed"
 	# An arrival repository the census may not poll (interval-throttled) never
 	# forces a re-census: its hint could not clear.
 	seed_snapshot "$remainder207"
