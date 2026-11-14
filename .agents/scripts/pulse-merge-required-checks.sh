@@ -611,6 +611,9 @@ _pmrc_record_preflight_check_mismatch() {
 	return 0
 }
 
+# GH#38234: GitHub can leave a finished check run reporting status=in_progress
+# after an Actions incident. A conclusion is set only on completion, so a check
+# run with both conclusion and completed_at is normalized to completed.
 _pmrc_normalize_snapshot_checks_json() {
 	local repo_slug="$1"
 	local head_sha="$2"
@@ -628,12 +631,12 @@ _pmrc_normalize_snapshot_checks_json() {
 		.[0] as $pages | .[1] as $statuses |
 		"pending" as $pending | "in_progress" as $in_progress | "error" as $error |
 		[
-			$pages[]?.check_runs[]? | {
+			$pages[]?.check_runs[]? | ((.conclusion // "") | ascii_downcase) as $run_conclusion | {
 				source: "check_run",
 				name: (.name // ""),
 				app_slug: (.app.slug // ""),
-				status: ((.status // "") | ascii_downcase),
-				conclusion: ((.conclusion // "") | ascii_downcase),
+				status: (if $run_conclusion != "" and .completed_at != null then $completed else ((.status // "") | ascii_downcase) end),
+				conclusion: $run_conclusion,
 				link: (.details_url // .html_url // ""),
 				observed_at: (.completed_at // .started_at // "")
 			}

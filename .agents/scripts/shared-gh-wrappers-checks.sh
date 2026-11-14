@@ -1468,8 +1468,11 @@ gh_pr_check_runs_rest() {
 	# distinguishing retryable admission deferrals/timeouts; /status alone is
 	# insufficient signal for branch-protection gating.
 	local runs="" runs_rc=0
+	# GH#38234: a conclusion with completed_at is terminal even when GitHub
+	# still reports a stale status=in_progress after an Actions incident.
 	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs?per_page=100" --paginate \
-		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs_rc=$?
+		--jq '[.check_runs[]? | {name, conclusion,
+			status: (if .conclusion != null and .completed_at != null then "completed" else .status end)}]' 2>/dev/null) || runs_rc=$?
 	[[ "$runs_rc" -eq 0 ]] || return "$runs_rc"
 
 	if [[ -z "$runs" ]]; then
