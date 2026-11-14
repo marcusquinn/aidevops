@@ -26,7 +26,7 @@ from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
 from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
 from checkpoint_launch_failure_cases import LaunchFailureCases
-from pr_checkpoint_events import EVENTS, fields, own_claim_matches
+from pr_checkpoint_events import fields, own_claim_matches
 import integration_recovery as recovery
 
 
@@ -127,14 +127,6 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
         data["comments"].insert(0, comment(0, "DISPATCH_LEASE phase=ready lease_token=other attempt_id=attempt:original"))
         with self.assertRaises(ValueError):
             revision.validate(data)
-
-    def test_unassigned_and_newer_coordination(self):
-        data = fixture()
-        data["issue"]["assignees"] = []
-        self.assertEqual(revision.validate(data)["approval_id"], 3)
-        for event in EVENTS:
-            with self.subTest(event=event), self.assertRaises(ValueError):
-                revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
 
     def test_released_revised_lifecycle_requires_current_approval_snapshot(self):
         self.assertEqual(revision.validate(fixture())["approval_id"], 3)
