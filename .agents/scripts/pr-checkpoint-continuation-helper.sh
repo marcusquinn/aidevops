@@ -71,7 +71,7 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#38131: count non-progress releases toward the original per-PR fuse.
 # A separate total-release ceiling bounds even steadily advancing drafts.
 _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
@@ -1329,6 +1329,22 @@ Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-boun
 	return 0
 }
 
+# Shared before and after orphan synthesis; requires _PCC_JQ_RELEASE_DEFS.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PCC_JQ_LAUNCH_DEFS='
+	def ready_event: startswith("DISPATCH_LEASE ") and field("phase") == "ready";
+	def claim_event: split(" ")[0] == "DISPATCH_CLAIM";
+	def in_session: field("session") == $session;
+	def launch_lines: [body_lines | select(coordination_line)];
+	def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines;
+		startswith("Dispatching worker") or (ready_event and in_session)));
+	def unlaunched_episode($c):
+		$session != "" and (launch_lines | length) > 0 and
+		all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ")) and
+			in_session and (ready_event | not)) and
+		(launched_after($c) | not);
+'
+
 #######################################
 # Find the stall/timeout release that left an open worker draft (GH#33654).
 # The newest trusted coordination event (claim, lease, dispatch, release or
@@ -1367,10 +1383,33 @@ _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
 	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
 	local session="${9:-}"
+	# Preserve orphan boundaries in history for both fuses, but never turn a
+	# normal closing terminal lease into a second release. Edited events fence.
+	comments=$(jq -c --arg pr_created "$pr_created" --arg session "$session" --argjson trusted_logins "$trusted_logins" \
+		--argjson grace "${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" \
+		"${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
+		[flatten[]] as $all |
+		[$all[] | select(trusted_event and coordination)] as $events |
+		[$events[] | select(unedited and (unlaunched_episode($events) | not) and $pr_created != "" and
+			([body_lines | select(coordination_line)] | all(is_terminal_lease)) and
+			((.created_at | try epoch catch 0) > ($pr_created | try epoch catch now)) and
+			((.created_at | try epoch catch now) <= (now - $grace))) | . as $terminal |
+			([$events[] | select(.id < $terminal.id and any(body_lines;
+				claim_line or (startswith("DISPATCH_LEASE ") and (is_terminal_lease | not)))) | .id] | max // 0) as $start |
+			([$events[] | select(.id > $terminal.id and any(body_lines;
+				claim_line or (startswith("DISPATCH_LEASE ") and (is_terminal_lease | not)))) | .id] | min // 999999999999999) as $next |
+			select((any($events[]; .id > $start and .id < $terminal.id and any(body_lines; is_release)) | not) and
+				(any($events[]; .id > $terminal.id and .id < $next and any(body_lines; is_release)) | not)) |
+			{id: .id, start: $start}] |
+		# Concurrent terminal posts in one ownership window are one orphan.
+		(group_by(.start) | map(max_by(.id).id)) as $orphans |
+		[$all[] | if (.id as $id | $orphans | index($id)) != null
+			then .body = "CLAIM_RELEASED reason=orphaned_terminal_lease" else . end]
+	' <<<"$comments") || return 1
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
 		--arg extended "${8:+true}" --argjson commits "$commits" --arg session "$session" \
-		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}"'
+		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
 		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		def count_since($c; $since):
@@ -1378,22 +1417,11 @@ _pcc_stall_release_evidence() {
 			| ([$stalls[] | select(capability_release | not)] | length) +
 				(if any($stalls[]; capability_release) then 1 else 0 end);
 		def head_attention: (.body // "") | contains($key) or ($alt_key != "" and contains($alt_key));
-		def ready_event: startswith("DISPATCH_LEASE ") and field("phase") == "ready";
-		def claim_event: split(" ")[0] == "DISPATCH_CLAIM";
-		def in_session: field("session") == $session;
 		def ready_lease_line: select(ready_event);
 		# GH#38103: a continuation episode of this PR'"'"'s own session that never
 		# launched (claim/lease lines only, no ready lease, no "Dispatching worker"
 		# afterwards) is transparent, even when its comments were edited. Other
 		# edited coordination stays a fence.
-		def launch_lines: [body_lines | select(coordination_line)];
-		def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines;
-			startswith("Dispatching worker") or (ready_event and in_session)));
-		def unlaunched_episode($c):
-			$session != "" and (launch_lines | length) > 0 and
-			all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ")) and
-				in_session and (ready_event | not)) and
-			(launched_after($c) | not);
 		($head_date | epoch) as $head_epoch
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
