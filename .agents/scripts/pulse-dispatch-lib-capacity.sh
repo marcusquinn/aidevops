@@ -304,15 +304,20 @@ _dispatch_snapshot_runnable_count() {
 	return 0
 }
 
-# GH#38200: every [repo_slug, number] key the first-wave snapshots hold, as
+# GH#38200: every [repo_slug, number] key fresh first-wave snapshots hold, as
 # candidates or in their attempt ledgers, as one JSON array (fails open: []).
 _dispatch_first_wave_snapshot_keys() {
 	local _PULSE_FIRST_DISPATCH_WAVE=1
 	local mode=""
 	local snapshot=""
+	local now_epoch="" snapshot_ttl=300
+	now_epoch=$(date +%s) || { printf '[]\n'; return 0; }
+	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		snapshot_ttl=$(_dispatch_enumeration_expected_seconds)
+	fi
 	for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
 		snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "$mode") || continue
-		[[ -f "$snapshot" && ! -L "$snapshot" ]] || continue
+		_dispatch_candidate_snapshot_is_fresh "$snapshot" "$now_epoch" "$snapshot_ttl" || continue
 		jq -c '.candidates[]? | [.repo_slug, .number]' "$snapshot" 2>/dev/null || true
 		if [[ -f "${snapshot}.consumed" && ! -L "${snapshot}.consumed" ]]; then
 			jq -c 'arrays' "${snapshot}.consumed" 2>/dev/null || true
