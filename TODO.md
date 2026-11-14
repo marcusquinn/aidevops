@@ -5699,4 +5699,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18967 secret-helper: systemd-creds backend for unattended worker secrets (encrypted at rest, no passphrase) #auto-dispatch #enhancement ref:GH#37725 pr:#37734 completed:2026-11-14
 
-- [ ] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 ref:GH#38313
+- [ ] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313
