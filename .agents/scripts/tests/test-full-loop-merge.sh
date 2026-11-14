@@ -236,8 +236,8 @@ test_provenance_merge_during_readiness() {
 		(
 			SCRIPT_DIR="${SCRIPT_DIR}/.."
 			# shellcheck source=../full-loop-helper-merge.sh
-			source "${SCRIPT_DIR}/shared-constants.sh"
-			source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
+			builtin source "${SCRIPT_DIR}/shared-constants.sh"
+			builtin source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 			local state_file="${TEST_ROOT}/race-state" log="${TEST_ROOT}/race-log" output="${TEST_ROOT}/race-output"
 			printf 'open' >"$state_file"
 			: >"$log"
