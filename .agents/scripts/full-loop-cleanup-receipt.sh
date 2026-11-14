@@ -1883,6 +1883,12 @@ _full_loop_archive_cleanup_receipts() {
 		_full_loop_receipt_lock_release
 		return 1
 	}
+	for receipt_path in "$receipt_dir"/*.json; do
+		if [[ -L "$receipt_path" ]]; then
+			_full_loop_receipt_lock_release
+			return 1
+		fi
+	done
 	if ! file_count=$(_full_loop_valid_receipt_file_count "$receipt_dir"); then
 		_full_loop_receipt_lock_release
 		return 1
