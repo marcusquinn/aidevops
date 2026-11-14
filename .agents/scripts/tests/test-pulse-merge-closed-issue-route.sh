@@ -5,6 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../pulse-merge-feedback-finalizer.sh"
+source "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh"
 source "${SCRIPT_DIR}/../pulse-merge-process.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -22,6 +23,12 @@ HEAD="abc123repairsha"
 WRITES=0 COMMENTS=0 DISPATCHES=0 FINISHED=0 FAIL_HOLD=0 COMMENT_NOOP=0
 COMMENT_JSON='[]'
 AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
+PR_BODY=""
+
+gh_pr_view() {
+	printf '%s\n' "$PR_BODY"
+	return 0
+}
 
 gh() {
 	local command="$1" endpoint="$2"
@@ -33,6 +40,9 @@ gh() {
 		;;
 	"repos/owner/repo/issues/100/comments?per_page=100")
 		printf '%s\n' "$COMMENT_JSON"
+		;;
+	"repos/owner/repo/issues/100/timeline?per_page=100")
+		printf '%s\n' '[{"id":99,"created_at":"2026-01-01T00:00:02Z"}]'
 		;;
 	user)
 		[[ "${IDENTITY_FAIL:-0}" == "0" ]] || return 1
@@ -82,7 +92,11 @@ _feedback_route_gh_write() {
 		;;
 	edit)
 		[[ "$FAIL_HOLD" == "0" ]] || return 1
-		PR_LABELS="${PR_LABELS},hold-for-review"
+		if [[ "${6:-}" == "--remove-label" ]]; then
+			PR_LABELS="${PR_LABELS/,hold-for-review/}"
+		else
+			PR_LABELS="${PR_LABELS},hold-for-review"
+		fi
 		[[ -z "$AFTER_HOLD_HEAD" ]] || HEAD="$AFTER_HOLD_HEAD"
 		;;
 	*) return 1 ;;
@@ -118,6 +132,36 @@ route ci
 [[ "$COMMENTS" == "1" && "$WRITES" == "2" && "$DISPATCHES" == "0" && "$FINISHED" == "3" ]]
 [[ ! -e "${TEST_ROOT}/deferred" ]]
 printf 'PASS: completed closed issue held once across conflict/CI retries\n'
+
+PR_BODY='<!-- aidevops:pulse-todo-handoff id=example -->'
+WRITES=0 COMMENTS=0
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "75" && "$WRITES" == "0" && "$COMMENTS" == "0" ]]
+PR_BODY=""
+printf 'PASS: TODO projection defers without writing a hold\n'
+
+_feedback_route_latest_hold_event() {
+	printf '99\t%s\n' "${EVENT_ACTOR:-other-runner}"
+	return 0
+}
+HEAD="0123456789012345678901234567890123456789"
+PR_BODY='<!-- aidevops:pulse-todo-handoff id=example -->'
+PR_LABELS="origin:worker,hold-for-review"
+COMMENT_JSON='[{"id":1,"created_at":"2026-01-01T00:00:00Z","body":"<!-- feedback-route:closed-issue:PR100:ISSUE42:SHA0123456789012345678901234567890123456789:RUNNERa --> Holding for review","user":{"login":"other-runner"},"author_association":"CONTRIBUTOR"}]'
+WRITES=0
+_feedback_route_release_projection_hold 100 owner/repo
+[[ "$WRITES" == "1" && "$PR_LABELS" == "origin:worker" ]]
+PR_LABELS="origin:worker,hold-for-review"
+EVENT_ACTOR="maintainer"
+if _feedback_route_release_projection_hold 100 owner/repo; then exit 1; fi
+[[ "$WRITES" == "1" ]]
+EVENT_ACTOR="other-runner"
+COMMENT_JSON=$(printf '%s' "$COMMENT_JSON" | jq '. + [{id:2,created_at:"2026-01-02T00:00:00Z",body:"Holding for review",user:{login:"maintainer"}}]')
+if _feedback_route_release_projection_hold 100 owner/repo; then exit 1; fi
+[[ "$WRITES" == "1" ]]
+HEAD="abc123repairsha" PR_BODY="" EVENT_ACTOR=""
+printf 'PASS: stale projection hold requires latest trusted receipt and matching label actor\n'
 
 PR_LABELS="origin:worker"
 COMMENT_JSON='[]'
