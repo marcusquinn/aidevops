@@ -62,6 +62,12 @@ _MANAGED_DEPENDABOT_INTAKE_LABEL_SPECS=(
 	"dependencies" "Pull requests that update a dependency file" "0366D6"
 )
 
+# GH#38344: the planning PR fallback opts into automated merge (GH#23238);
+# new repos must not fail PR creation because the label was never created.
+_MANAGED_PLANNING_PR_LABEL_SPECS=(
+	"allow-auto-merge" "Allow approved automation to merge after required checks pass" "0E8A16"
+)
+
 managed_label_snapshot_has() {
 	local snapshot="$1"
 	local expected_name="$2"
@@ -163,5 +169,14 @@ managed_labels_ensure_release_policy_set() {
 	local create_runner="$3"
 	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
 		"${_MANAGED_RELEASE_POLICY_LABEL_SPECS[@]}"
+	return $?
+}
+
+managed_labels_ensure_planning_pr_set() {
+	local repo="$1"
+	local inventory_runner="$2"
+	local create_runner="$3"
+	managed_labels_ensure_specs "$repo" "$inventory_runner" "$create_runner" \
+		"${_MANAGED_PLANNING_PR_LABEL_SPECS[@]}"
 	return $?
 }

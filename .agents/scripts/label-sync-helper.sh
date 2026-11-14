@@ -135,6 +135,7 @@ SYSTEM_LABELS=(
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
 	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
 	"do-not-close|EDEDED|Opt-out: never auto-close this PR in pulse sweeps"
+	"allow-auto-merge|0E8A16|Allow approved automation to merge after required checks pass"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"

@@ -680,6 +680,21 @@ _todo_commit_planning_worktree() {
 	return 0
 }
 
+# GH#38344: best-effort creation of the labels the planning PR applies, so a
+# newly initialised repo does not reject PR creation. A provisioning failure is
+# logged and PR creation still runs, which is never worse than the prior path.
+_todo_ensure_planning_pr_labels() {
+	local slug="$1"
+	local log_target="$2"
+	declare -F managed_labels_ensure_planning_pr_set >/dev/null 2>&1 || return 0
+	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 0
+	declare -F _gh_managed_label_create_runner >/dev/null 2>&1 || return 0
+	managed_labels_ensure_planning_pr_set "$slug" \
+		_gh_managed_label_names_snapshot _gh_managed_label_create_runner && return 0
+	printf '%s\n' "[todo_commit_push] Planning PR label provisioning failed; attempting PR creation anyway" >>"$log_target"
+	return 0
+}
+
 _todo_open_planning_pr() {
 	local slug="$1"
 	local default_branch="$2"
@@ -699,6 +714,7 @@ _todo_open_planning_pr() {
 		printf '[todo_commit_push] Planning PR fallback failed: cannot allocate diagnostic capture.\n' >&2
 		return 1
 	}
+	_todo_ensure_planning_pr_labels "$slug" "$log_target"
 	pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr \
 		--repo "$slug" \
 		--base "$default_branch" \
