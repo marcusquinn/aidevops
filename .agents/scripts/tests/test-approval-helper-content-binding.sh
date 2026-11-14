@@ -737,6 +737,16 @@ ${worker_footer}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "input_required release with unlisted owner remains content-bound" issue 41 STALE_APPROVAL 4
 
+	local mismatch_bodies=("${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=source_access_blocked owner=access-owner}" "${terminal_blocker_release/<!-- ops:end -->/Input requested: Which region?
+<!-- ops:end -->}" "${input_release/Which region should be used?/-----BEGIN key}")
+	local mismatch_body=""
+	for mismatch_body in "${mismatch_bodies[@]}"; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$mismatch_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "uncorrelated terminal-blocker release remains content-bound" issue 41 STALE_APPROVAL 4
+	done
+
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${terminal_blocker_release}
 extra trusted commentary" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
