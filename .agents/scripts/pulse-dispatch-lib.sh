@@ -73,8 +73,8 @@ _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SEC
 _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS:-10}"
 [[ "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=10
 ((_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS <= 30)) || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=30
-# A terminal-blocker circuit is keyed to the issue revision: an edit, a retry
-# directive or any new comment bumps updatedAt and invalidates the hint at once.
+# A terminal-blocker circuit is keyed to material issue revisions: an edit, a
+# retry directive or a non-ops comment invalidates the hint at once.
 # Only target-code revisions can re-arm it silently, so bound that delay. Each
 # re-check costs a full 40-110s dispatch ceremony per runner per cycle.
 _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS:-7200}"
@@ -88,7 +88,7 @@ _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKO
 # GH#33538: maintainer-gated blocks (unverified/expired permission grant,
 # pending permission request, cost circuit breaker, comment consolidation) only
 # clear through an issue change: a signed grant comment, label edit or body
-# rewrite bumps updatedAt and invalidates the hint at once. Out-of-band changes
+# rewrite invalidates the hint at once (verified ops-only bumps do not). Out-of-band changes
 # (budget config, signing keys) re-arm within this bounded TTL.
 _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS:-7200}"
 [[ "$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=7200
@@ -399,7 +399,9 @@ _dispatch_negative_cache_ops_only() (
 	jq -e 'type == "array" and length < 100 and all(.[]; (.body | type) == "string")' <<<"$comments" >/dev/null 2>&1 || return 1
 	while IFS= read -r body; do
 		body=$(jq -r '.' <<<"$body") || return 1
-		if _shim_body_is_ops_audit "$body"; then
+		# The footer classifier also accepts unmarked routine descriptions and
+		# embedded dispatch text; only its explicit ops markers are noise here.
+		if [[ "$body" == *'<!-- ops:start'* ]] && _shim_body_is_ops_audit "$body"; then
 			continue
 		fi
 		case "$body" in
@@ -509,6 +511,14 @@ _dispatch_negative_cache_self_validating_reason() {
 	return $?
 }
 
+_dispatch_negative_cache_material_matches() {
+	local candidate="$1" checkpoint_mode="$2" material="$3" current=''
+	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* ]] || return 1
+	current=$(_dispatch_negative_cache_material "$candidate") || return 1
+	[[ "$current" == "$material" ]] || return 1
+	return 0
+}
+
 _dispatch_negative_cache_refresh_revision() {
 	local candidate="$1" checkpoint_mode="$2" record="$3" file="$4"
 	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material=''
@@ -547,6 +557,8 @@ _dispatch_negative_cache_reason() {
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] ||
+		_dispatch_negative_cache_material_matches "$candidate" "$checkpoint_mode" "$material" || return 1
 	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
@@ -574,8 +586,6 @@ _dispatch_negative_cache_reason() {
 		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
 		;;
 	terminal_blocker_circuit)
-		# The circuit hold applies to unowned available issues by design.
-		# Revision validation below rejects edits and material comments.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
 	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
