@@ -127,7 +127,7 @@ _PCC_JQ_RELEASE_DEFS='
 			| select(startswith("DISPATCH_LEASE ") and field("phase") == "ready")
 			| field("attempt_id") | select(startswith("attempt:"))
 			| {login: ($e | login), attempt: .}] as $leases
-		# Empty $runner (stall-class release): the single ready-lease owner binds the attempt.
+		# Empty $runner (stall-class release, mirrors pr_checkpoint_events.attempt_owner): the single ready-lease owner binds the attempt.
 		| if $runner != "" then ([$leases[] | select(.login == $runner) | .attempt] | last // "")
 		elif ([$leases[].login] | unique | length) == 1 then $leases[-1].attempt
 		else "" end;
@@ -1431,7 +1431,6 @@ _pcc_stall_release_evidence() {
 		# afterwards) is transparent, even when its comments were edited. Other
 		# edited coordination stays a fence.
 		def checkpoint($c; $release):
-			# Mirrors pr_checkpoint_events.attempt_owner: stall-class releases bind the ready-lease owner.
 			episode_attempt($c; $release.id; (if ($release | release_reason | (length > 0 and test($pattern))) then "" else ($release | login) end)) as $attempt
 			| episode_start($c; $release.id) as $start
 			| if $attempt != "" then {id: $release.id, attempt: $attempt}
