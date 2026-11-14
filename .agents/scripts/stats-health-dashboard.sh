@@ -641,6 +641,15 @@ _refresh_health_repo_bounded() {
 		recovery_timeout=$(_stats_seconds "${STATS_HEALTH_RECOVERY_REPO_TIMEOUT:-120}" 120)
 		[[ "$recovery_timeout" -le "$repo_timeout" ]] || repo_timeout="$recovery_timeout"
 	fi
+	# GH#38122: the priority (framework) dashboard is the largest repository and
+	# the primary health surface. The recovery lane only ever covers the second
+	# entry, so a priority data-gather slower than the base cap (~95s measured
+	# against 60s) never completed and the dashboard stayed stale for days.
+	if [[ -n "${_HEALTH_PRIORITY_SLUG:-}" && "$slug" == "$_HEALTH_PRIORITY_SLUG" ]]; then
+		local priority_timeout
+		priority_timeout=$(_stats_seconds "${STATS_HEALTH_PRIORITY_REPO_TIMEOUT:-180}" 180)
+		[[ "$priority_timeout" -le "$repo_timeout" ]] || repo_timeout="$priority_timeout"
+	fi
 	_stats_run_bounded "$repo_timeout" \
 		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@" "${cache}.stage" || result=$?
 	if [[ "$result" -ne 0 && -f "${cache}.stage" ]]; then
@@ -677,6 +686,7 @@ _refresh_priority_health_issue() {
 		echo "[stats] Health dashboard priority refresh backed off for ${priority_slug}" >>"$LOGFILE"
 		return 75
 	fi
+	local _HEALTH_PRIORITY_SLUG="$priority_slug"
 	_refresh_health_repo_bounded "$priority_slug" "$priority_path" "" "" "" || update_ec=$?
 	if [[ "$update_ec" -ne 0 ]]; then
 		mkdir -p "${cache%/*}" || return 1
