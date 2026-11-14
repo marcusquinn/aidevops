@@ -205,6 +205,9 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090
 	source "${SCRIPT_DIR}/../gh-merge-cache-remediation-lib.sh"
+	# GH#38259: the stage loop runs stages through the timing wrapper.
+	# shellcheck source=../pulse-merge-timing.sh
+	source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 	# shellcheck disable=SC1090
 	eval "$src_invalidate"
 	# shellcheck disable=SC1090
