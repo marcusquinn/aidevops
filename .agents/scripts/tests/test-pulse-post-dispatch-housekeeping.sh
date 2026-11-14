@@ -807,7 +807,9 @@ test_housekeeping_weighted_timeouts() {
 		grep -q '^optional:cache_prime:72$' "$STAGE_LOG" || exit 1
 		grep -q '^budget:refresh_blocked_status_from_graph:72$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:auto_decomposer_scanner:72$' "$STAGE_LOG" || exit 1
-		grep -q '^optional:post_merge_scanner:12$' "$STAGE_LOG" || exit 1
+		# GH#38204: post-merge per-repo setup outlives the cheap slice.
+		grep -q '^optional:post_merge_scanner:72$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:pr_review_thread_response:12$' "$STAGE_LOG" || exit 1
 		# Explicit caller and cache-prime ceilings must still win.
 		PULSE_CACHE_PRIME_TIMEOUT=3
 		_pulse_start_post_dispatch_housekeeping 7
@@ -815,6 +817,7 @@ test_housekeeping_weighted_timeouts() {
 		grep -q '^budget:build_dependency_graph_cache:7$' "$STAGE_LOG" || exit 1
 		grep -q '^budget:refresh_blocked_status_from_graph:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:auto_decomposer_scanner:7$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:post_merge_scanner:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:3$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:preflight_ownership_reconcile:7$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:post_dispatch_housekeeping:307$' "$STAGE_LOG" || exit 1

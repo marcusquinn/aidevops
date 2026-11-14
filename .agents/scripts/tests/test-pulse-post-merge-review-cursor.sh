@@ -205,6 +205,64 @@ STUB
 	return 0
 }
 
+# GH#38204: the stage watchdog kills the outer loop with its child, so a repo
+# whose setup outlives the slice used to pin the traversal forever. The start
+# is counted before launch, reset on any return, and deferred at the limit.
+test_interrupted_starts_do_not_pin_traversal() {
+	local stub_scripts_dir="${TEST_ROOT}/interrupted-scripts"
+	local cursor_dir="${TEST_ROOT}/interrupted-cursor"
+	mkdir -p "$stub_scripts_dir" "$cursor_dir"
+	cat >"${stub_scripts_dir}/post-merge-review-scanner.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'STUB scan %s starts=%s\n' "${2:-}" "$(sed -n '2p' "${SCANNER_CURSOR_DIR}/repo.cursor")"
+if [[ "${2:-}" == pinned/repo ]]; then
+	printf '{"next_pr":"5"}\n' >"${SCANNER_CURSOR_DIR}/pinned_repo.cursor"
+fi
+STUB
+	chmod +x "${stub_scripts_dir}/post-merge-review-scanner.sh"
+	local SCRIPT_DIR="$stub_scripts_dir" LOGFILE="${TEST_ROOT}/interrupted.log"
+	local POST_MERGE_SCANNER_LAST_RUN="${TEST_ROOT}/interrupted.last" POST_MERGE_SCANNER_INTERVAL=0
+	local REPOS_JSON="${TEST_ROOT}/repos.json"
+	local AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR="$cursor_dir"
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_BUDGET_SECONDS=600
+	local AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS=30
+	_pulse_enabled_repo_slugs() {
+		local repos_json="$1"
+		printf 'first/repo\npinned/repo\nlater/repo\n'
+		return 0
+	}
+	local output="" state=""
+	# Below the limit: resume the repo, count this start, reset on its yield.
+	printf 'pinned/repo\n2\n' >"${cursor_dir}/repo.cursor"
+	: >"$LOGFILE"
+	_run_post_merge_review_scanner
+	output=$(<"$LOGFILE")
+	assert_contains "interrupted repo is retried below the limit" "STUB scan pinned/repo starts=3" "$output"
+	[[ "$output" != *"STUB scan first/repo"* ]] && state="resumed"
+	assert_contains "retry resumes at the cursor repo" "resumed" "$state"
+	assert_contains "clean child return resets the start count" "pinned/repo 0" "$(tr '\n' ' ' <"${cursor_dir}/repo.cursor")"
+	state=""
+	[[ ! -f "$POST_MERGE_SCANNER_LAST_RUN" ]] && state="incomplete"
+	assert_contains "yielded retry does not mark the traversal complete" "incomplete" "$state"
+
+	# At the limit: defer the repo, keep its PR cursor, finish the traversal.
+	printf 'pinned/repo\n3\n' >"${cursor_dir}/repo.cursor"
+	: >"$LOGFILE"
+	_run_post_merge_review_scanner
+	output=$(<"$LOGFILE")
+	assert_contains "repeated kills defer the repo" "deferring pinned/repo after 3 interrupted start(s)" "$output"
+	state=""
+	[[ "$output" != *"STUB scan pinned/repo"* ]] && state="not-relaunched"
+	assert_contains "deferred repo is not relaunched" "not-relaunched" "$state"
+	assert_contains "repo after the deferred one scans" "STUB scan later/repo starts=1" "$output"
+	assert_contains "deferred repo keeps its PR cursor" "5" "$(jq -r '.next_pr' "${cursor_dir}/pinned_repo.cursor")"
+	state=""
+	[[ ! -f "${cursor_dir}/repo.cursor" && -f "$POST_MERGE_SCANNER_LAST_RUN" ]] && state="complete"
+	assert_contains "traversal completes past the deferred repo" "complete" "$state"
+	return 0
+}
+
 test_home_unset_does_not_abort
 test_interval_unset_does_not_abort
 test_stale_repo_cursor_resets_to_enabled_repos
@@ -220,6 +278,7 @@ test_deadline_budget expired 999 600 none 0
 test_deadline_budget absent "" 600 570 0
 test_deadline_budget invalid invalid 600 570 0
 test_listing_failure_does_not_starve_later_repos
+test_interrupted_starts_do_not_pin_traversal
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then
