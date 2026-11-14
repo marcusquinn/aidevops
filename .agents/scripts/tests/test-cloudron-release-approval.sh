@@ -952,8 +952,9 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	BASE_DOCKERFILE="ARG COMMIT=$OLD_UPSTREAM"
 	HEAD_DOCKERFILE="ARG COMMIT=$NEW_UPSTREAM"
 	assert_routine routine 'commit full SHA pin and license URL' "$commit_filter"
+	assert_routine routine 'commit unchanged license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
 	assert_routine not 'commit wrong full SHA pin' "$commit_filter | $(dockerfile_head "ARG COMMIT=${NEW_UPSTREAM}0")" 'pinned file changes beyond version substitution'
-	assert_routine not 'commit wrong license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")" 'manifest changes beyond'
+	assert_routine not 'commit wrong license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
 	assert_routine not 'commit license metadata changed' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
 )
 # Main-build suffixes cannot borrow tag authority; the documented migration
