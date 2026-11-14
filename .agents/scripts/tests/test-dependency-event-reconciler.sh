@@ -40,6 +40,8 @@ SUCCESSOR_REASON=""
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
 DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
+DER_RETRY_DIR="${DER_STALE_BLOCKED_CURSOR_DIR}/retries"
+HOME="${DER_STALE_BLOCKED_CURSOR_DIR}/home"
 trap 'rm -f "$BLOCKER_RECONCILE_LOG"; rm -rf "$DER_STALE_BLOCKED_CURSOR_DIR"' EXIT
 
 pass() {
@@ -447,6 +449,7 @@ assert_eq 1 "$completion_status" "completion fails closed on null native blocker
 NATIVE_NULL_NODE=false
 
 # These independent scenarios change the mocked body and labels between passes.
+rm -rf "$DER_RETRY_DIR"
 DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true

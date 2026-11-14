@@ -634,6 +634,36 @@ _der_stale_epoch_reached() {
 	return $?
 }
 
+_der_retry_drain() {
+	local repo="$1" deadline="$2" kind="" retry_number="" candidate="" status=0 complete=true
+	local file="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}/${repo//\//__}.txt"
+	if [[ ! -s "${file}.pending" && -s "$file" ]]; then
+		mv "$file" "${file}.pending" || return 1
+	fi
+	[[ -s "${file}.pending" ]] || return 0
+	while read -r kind retry_number; do
+		if _der_stale_epoch_reached "$deadline"; then
+			complete=false
+			break
+		fi
+		[[ "$retry_number" =~ ^[0-9]+$ ]] || continue
+		status=0
+		if [[ "$kind" == closure ]]; then
+			reconcile_dependants_after_verified_closure "$repo" "$retry_number" || status=$?
+		elif [[ "$kind" == issue ]]; then
+			candidate=$(gh issue view "$retry_number" --repo "$repo" --json number,title,body,labels,updatedAt 2>/dev/null) || { complete=false; continue; }
+			candidate=$(printf '%s' "$candidate" | jq -ce --arg repo "$repo" 'select((.number | type) == "number" and (.labels | type) == "array") | . + {updated_at:.updatedAt,repository:{nameWithOwner:$repo},labels:{nodes:.labels,pageInfo:{hasNextPage:false}}}') || { complete=false; continue; }
+			_der_try_unblock "$repo" "$retry_number" "$candidate" || status=$?
+		else
+			complete=false
+		fi
+		[[ "$status" -eq 0 || "$status" -eq "$DER_NOT_READY" ]] || complete=false
+	done <"${file}.pending"
+	[[ "$complete" == true ]] || return "$DER_SWEEP_PARTIAL"
+	rm -f "${file}.pending" || return 1
+	return 0
+}
+
 # Print candidates from one paginated listing. An incomplete blockedBy
 # connection can prove an open blocker, but cannot prove readiness. Any read or
 # shape failure prints nothing (including no memo eligibility). Never a verdict
@@ -750,6 +780,7 @@ reconcile_stale_blocked_issues() {
 	local ready_cursor=0 ready_file="" ready=0 ready_visited=0 skipped=0 is_ready=false
 	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
+	local retry_status=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
 	[[ "$ready_max" =~ ^[1-9][0-9]*$ ]] || ready_max=10
@@ -765,6 +796,9 @@ reconcile_stale_blocked_issues() {
 	candidates=$(_der_stale_candidates "$pages" "$repo" "$cursor" "$ready_cursor") || return 1
 	pending=$(printf '%s\n' "$candidates" | jq -s length) || return 1
 	ready=$(printf '%s\n' "$candidates" | jq -s '[.[] | select(.sweep_ready)] | length') || return 1
+	mkdir -p "${ready_hint%/*}" 2>/dev/null && printf '%s\n' "$ready" >"$ready_hint" || true
+	_der_retry_drain "$repo" "$stop_deadline" || retry_status=$?
+	[[ "$retry_status" -eq 0 ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number' 2>/dev/null) || issue_number=""
@@ -786,10 +820,14 @@ reconcile_stale_blocked_issues() {
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
 			continue
 		fi
-		if [[ "$is_ready" == false && "$memo_enabled" == true ]] &&
+		if [[ "$memo_enabled" == true ]] &&
 			_der_stale_memo_matches "$memo" "$candidate" "$ttl"; then
 			skipped=$((skipped + 1))
-			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+			if [[ "$is_ready" == true ]]; then
+				_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
+			else
+				_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+			fi
 			continue
 		fi
 		if [[ "$is_ready" == false && "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; then
@@ -822,9 +860,9 @@ reconcile_stale_blocked_issues() {
 			_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
 		else
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
-			if [[ "$memo_enabled" == true ]]; then
-				memo=$(_der_stale_memo_record "$repo" "$candidate" "$try_status" "$memo_file" "$memo") || memo_enabled=false
-			fi
+		fi
+		if [[ "$memo_enabled" == true ]]; then
+			memo=$(_der_stale_memo_record "$repo" "$candidate" "$try_status" "$memo_file" "$memo") || memo_enabled=false
 		fi
 	done <<<"$candidates"
 	# A finished traversal restarts from the lowest issue on the next pass.

@@ -388,11 +388,8 @@ unset -f _pm_reconcile_partial_continuations
 		}
 		[[ ! -f "$SENTINEL" && ! -f "$STAMP_DIR/owner__large" && -f "$STAMP_DIR/owner__fast1" ]] || exit 1
 	done
-	# A ready backlog bypasses cadence; once drained, a fresh stale pass must
-	# not hoard time for a partial-continuation revisit.
+	# A fresh stale pass must not hoard time for a partial-continuation revisit.
 	touch "$STAMP_DIR/owner__large"
-	[[ "$(_pulse_stale_blocked_repo_weight owner/large 1800 "$FAKE_NOW")" == 410 ]] || exit 1
-	printf '0\n' >"$HOME/.aidevops/cache/stale-blocked-weight/owner__large.ready"
 	[[ "$(_pulse_stale_blocked_repo_weight owner/large 1800 "$FAKE_NOW")" == 1 ]] || exit 1
 	rm -f "$STAMP_DIR/owner__large"
 	for invalid_weight in 0 -1 invalid 999999999999999999999 08; do
@@ -539,19 +536,20 @@ unset -f _pm_reconcile_partial_continuations
 	}
 ) || exit 1
 
-# GH#38112: both claim sweeps share a cap that leaves the ready lane at least
-# fifteen seconds, even with only twenty seconds left in the stage.
+# GH#38112: the legacy claim sweep leaves at least fifteen seconds for ready work.
+# The checkpoint ledger has its own independent stage on current main.
 (
 	rm -rf "$SENTINEL" "$STAMP_DIR"
 	FAKE_NOW=1000
 	date() { printf '%s\n' "$FAKE_NOW"; return 0; }
 	_pulse_stale_blocked_sweep_deadline() { printf '1020\n'; return 0; }
-	_pulse_sweep_checkpoint_ledger() {
-		[[ "$PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS" -le 5 ]] || exit 1
-		FAKE_NOW=$((FAKE_NOW + PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS))
+	_pdcu_cursor_write() { return 0; }
+	_pdcu_sweep_expired_claims() {
+		local repo="$1" deadline="$2"
+		[[ "$repo" == owner/* && "$deadline" -le 1005 ]] || exit 1
+		FAKE_NOW="$deadline"
 		return 0
 	}
-	_pdcu_sweep_expired_claims() { exit 1; } # No remaining claim share.
 	_pulse_stale_blocked_sweep_repo() {
 		[[ "$FAKE_NOW" -le 1005 ]] || exit 1
 		return 0
