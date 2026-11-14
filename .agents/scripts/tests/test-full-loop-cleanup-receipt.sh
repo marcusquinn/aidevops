@@ -87,6 +87,45 @@ _full_loop_receipt_lock_acquire
 _full_loop_receipt_lock_release
 printf 'PASS failed owner write leaves no permanent empty-owner lock\n'
 
+# GH#38267: a holder killed mid-publication left a 0-byte owner file that no
+# reclaim path accepted, wedging every receipt mutation until manual deletion.
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+if _full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5; then
+	printf 'FAIL fresh empty receipt lock owner was reclaimed\n'
+	exit 1
+fi
+[[ -f "${receipt_lock_dir}/owner" ]]
+printf 'PASS fresh empty receipt lock owner remains protected\n'
+
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale empty receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+printf '%s\n' 'not-a-pid garbage' >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale unparseable receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_lock_acquire
+IFS=' ' read -r published_pid _ <"${receipt_lock_dir}/owner"
+[[ "$published_pid" =~ ^[0-9]+$ ]]
+for leaked_owner_tmp in "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}"/.mutation.lock.owner.*; do
+	[[ ! -e "$leaked_owner_tmp" ]] || {
+		printf 'FAIL owner publication leaked temp file: %s\n' "$leaked_owner_tmp"
+		exit 1
+	}
+done
+_full_loop_receipt_lock_release
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS acquire reclaims stale empty owner and publishes atomically\n'
+
 # GH#34808: a lock taken inside $(...) and abandoned by a SIGKILLed subshell
 # must be reclaimable while the parent shell is still alive.
 subshell_pidfile="${TEST_ROOT}/subshell-holder.pid"
