@@ -122,14 +122,14 @@ project `status:blocked` unless the blocker is `runner_capability_unmet`. Existi
 `status:blocked`, brief holds and protected labels are preserved, and
 `WORKER_DRAFT_CHECKPOINT` keeps blocking ordinary redispatch.
 
-While a trusted `CHECKPOINT_CONTINUATION_APPROVED` record is younger than its 24-hour
+While the newest trusted `CHECKPOINT_CONTINUATION_APPROVED` record is unconsumed and younger than its 24-hour
 expiry, the revision-approval route owns scheduling, even for an older head; neither a push
 nor an aged attention record reopens the legacy route. If revision target validation fails,
 retry unavailable metadata/permission checks first, or publish a fresh `approval-template`
 approval as a new issue comment (below); an exact-head approval still needs full revision
 validation and a fenced claim. An expired approval with no newer one stops owning scheduling
 (GH#37779): it can never launch and `worker_draft_checkpoint` releases cannot be re-approved,
-so the re-arm windows and fuse apply again. A paused head that does not re-arm logs
+so the re-arm windows and fuse apply again. A trusted unedited approval-bound claim and its trusted unedited matching release also consume the approval; existing re-arm rules and fuses then apply. A paused head that does not re-arm logs
 `STALLED_CHECKPOINT_REARM_BLOCKED` and signals `stale_draft_checkpoint: rearm_blocked=<reason>`
 (`per_pr_fuse`, `rearm_disabled`, `rearm_window_pending`, `fleet_window_pending:<window>s`).
 

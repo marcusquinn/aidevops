@@ -92,7 +92,7 @@ _PCC_ATTENTION_REARM_MAX_DOUBLINGS=6
 _PCC_CAPABILITY_RELEASE_LINE='Terminal blocker: reason=runner_capability_unmet '
 # GH#36186: attention detail when an approved revision can no longer continue.
 # shellcheck disable=SC2016 # Markdown backticks, not command substitution.
-_PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled until the trusted approval expires (24 hours after it was posted); the re-arm window does not bypass revision validation before then (see `reference/checkpoint-revision-recovery.md`).'
+_PCC_APPROVAL_VALIDATION_NOTE='A trusted `CHECKPOINT_CONTINUATION_APPROVED` decision exists, but the current target could not be validated. This does not prove that the approval was consumed: approval validation also requires live metadata and permission checks. Retry when those checks are available before requesting a new revision approval. The legacy continuation route stays disabled while the trusted approval is unconsumed and unexpired (24 hours after it was posted); the re-arm window does not bypass revision validation (see `reference/checkpoint-revision-recovery.md`).'
 # Shared jq definitions for trusted coordination-event evidence in issue
 # comments (blocked and stall release lookups).
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
@@ -1646,9 +1646,9 @@ _pcc_post_stall_attention() {
 		posted_scope="Posted once per PR."
 	fi
 	if [[ "$note" == "$_PCC_APPROVAL_VALIDATION_NOTE" || "$note" == 'Mismatched approval binding fields:'* ]]; then
-		# An unexpired approval fences the legacy route, even after a head
+		# An unconsumed, unexpired approval fences the legacy route, even after a head
 		# change. Neither an aged record nor a push bypasses it before expiry.
-		scope="for draft PR #${pr} at head \`${head}\`. The revision-approval route owns scheduling until the approval expires; before then neither a new head nor an aged attention record re-arms automatic continuation"
+		scope="for draft PR #${pr} at head \`${head}\`. An unconsumed revision approval owns scheduling until it expires; before then neither a new head nor an aged attention record re-arms automatic continuation"
 		push_step="2. Revalidate the existing revision approval after retrying unavailable metadata or permission checks. If it expired or no longer matches the head or brief, generate a fresh approval with \`pr-checkpoint-continuation-helper.sh approval-template\` and publish the generated approval as a new issue comment."
 		resume_step=""
 	fi
@@ -1938,8 +1938,7 @@ _pcc_comments_have_revision_approval() {
 	local trusted_logins="${2:-[]}"
 	jq -e --argjson trusted_logins "$trusted_logins" --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" \
 		"${_PCC_JQ_RELEASE_DEFS}${_PCTL_COORDINATION_JQ_DEFS}"'
-		any(flatten[] | objects | select(trusted);
-			any(body_lines; startswith("CHECKPOINT_CONTINUATION_APPROVED ")) and pctl_approval_unexpired($ttl))
+		[flatten[] | objects | select(trusted) | .author_association = "MEMBER"] | pctl_approval_owns_scheduling($ttl)
 	' <<<"$comments" >/dev/null 2>&1 || return 1
 	return 0
 }
