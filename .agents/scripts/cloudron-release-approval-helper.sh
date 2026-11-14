@@ -384,7 +384,10 @@ release_policy_authorizes() {
 	case "${mode}:${fingerprint}" in
 	semver:upstream-v*) finding_version="${fingerprint#upstream-v}" ;;
 	commits:upstream-commit-*) finding_version="${fingerprint#upstream-commit-}" ;;
-	*) return 1 ;;
+	*)
+		printf '%s PR #%s: standing policy #%s does not apply (policy mode %s vs finding %s)\n' "$repo" "$pr" "$number" "$mode" "$fingerprint" >&2
+		return 1
+		;;
 	esac
 	# Squash merge applies the merge-base diff; main moving does not change it.
 	# Resolve the branch to a SHA so a same-named tag cannot shift the base.

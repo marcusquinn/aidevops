@@ -235,12 +235,20 @@ def check(doc, repository):
     check_upstream(doc, policy, old_up, new_up)
     require(old_up != old_version, "package and upstream versions are ambiguous")
     unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
+    # The signed policy permits no manifest field change beyond the version
+    # keys, so upstreamLicense stays subject to canonical equality.
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
             "manifest changes beyond version and upstreamVersion")
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
-    pinned_mapping = {old_up: new_up}
+    # Candidate mappings: the manifest version substitution, plus the proven
+    # full-SHA substitution. When their source keys coincide both stay valid.
+    pinned_mappings = [{old_up: new_up}]
+    if policy.get("upstream_mode", "semver") == "commits":
+        proof = doc["upstream_proof"]
+        pinned_mappings = [{**{old_up: new_up}, **{proof["base"]: proof["head"]}},
+                           {**{proof["base"]: proof["head"]}, **{old_up: new_up}}]
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
@@ -254,7 +262,8 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(head_text != base_text and substitute_versions(base_text, pinned_mapping) == head_text,
+            require(head_text != base_text
+                    and any(substitute_versions(base_text, candidate) == head_text for candidate in pinned_mappings),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
