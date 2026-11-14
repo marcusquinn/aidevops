@@ -2051,6 +2051,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18987 fix(task-id-guard): name the malformed token and its source in block diagnostics #auto-dispatch #bug #fix-the-fixer #priority:medium ref:GH#38221 pr:#38224 completed:2026-11-14
 
+- [ ] t18989 perf(pulse): routine comment responder resolves runner login once per cycle and skips repos without routine-tracking issues #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38281
+
+- [ ] t18990 perf(pulse-merge): verify GH#38242 permission memo survives merge-routine subshells; share it per run #auto-dispatch #feat #fix-the-fixer #priority:medium ref:GH#38282
+
 - [x] t18985 fix(checkpoints): escalate the model tier when a draft head stalls twice, instead of pausing it 12-96h at the same tier #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38215 pr:#38245 completed:2026-11-14
 
 - [x] t18986 fix(dispatch): planning-publication PRs must not count as open-PR dedup evidence #bug #fix-the-fixer #priority:high ref:GH#38217 pr:#38218 completed:2026-11-14
