@@ -53,30 +53,30 @@ class ProcessBirthTests(unittest.TestCase):
             [ps, "-p", str(pid), "-o", "lstart="], timeout=2,
         )
         legacy = hashlib.sha256(output.strip()).hexdigest()
-        with patch("gh_transport_budget.subprocess.check_output", side_effect=AssertionError("fork")):
+        with patch("gh_process_birth.subprocess.check_output", side_effect=AssertionError("fork")):
             self.assertEqual(process_birth(pid), legacy)
             self.assertEqual(process_birth(-1), "")
             self.assertEqual(process_birth(2147483647), "")
 
     def test_linux_parses_binary_comm_after_final_parenthesis(self):
         stat = b"123 (odd ) \xff name) " + b" ".join([b"S"] + [b"0"] * 18 + [b"12345"])
-        with patch("gh_transport_budget.sys.platform", "linux"), \
+        with patch("gh_process_birth.sys.platform", "linux"), \
                 patch.object(Path, "read_bytes", return_value=stat), \
-                patch("gh_transport_budget._linux_boot_time", return_value=1000), \
-                patch("gh_transport_budget.os.sysconf", return_value=100):
+                patch("gh_process_birth._linux_boot_time", return_value=1000), \
+                patch("gh_process_birth.os.sysconf", return_value=100):
             self.assertEqual(process_birth(123), hashlib.sha256(time.ctime(1123).encode()).hexdigest())
 
     def test_linux_malformed_or_unreadable_procfs_is_unknown(self):
-        with patch("gh_transport_budget.sys.platform", "linux"), \
+        with patch("gh_process_birth.sys.platform", "linux"), \
                 patch.object(Path, "read_bytes", return_value=b"malformed"):
             self.assertEqual(process_birth(123), "")
-        with patch("gh_transport_budget.sys.platform", "linux"), \
+        with patch("gh_process_birth.sys.platform", "linux"), \
                 patch.object(Path, "read_bytes", side_effect=PermissionError):
             self.assertEqual(process_birth(123), "")
 
     def test_darwin_retains_ps_identity(self):
-        with patch("gh_transport_budget.sys.platform", "darwin"), \
-                patch("gh_transport_budget.subprocess.check_output", return_value=b"  legacy\n") as ps:
+        with patch("gh_process_birth.sys.platform", "darwin"), \
+                patch("gh_process_birth.subprocess.check_output", return_value=b"  legacy\n") as ps:
             self.assertEqual(process_birth(123), hashlib.sha256(b"legacy").hexdigest())
             self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
 
