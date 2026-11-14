@@ -76,8 +76,10 @@ _post_merge_scanner_scan_repo() {
 	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"${LOGFILE:-/dev/null}"
 	# The scan is deferrable maintenance: share the REST-core priority budget so
 	# it yields with a cursor before draining quota needed by dispatch/merge.
+	# GH#38171: the child checks the same deadline, so pass the scaled reserve.
 	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
 		SCANNER_BUDGET_SECONDS="$repo_budget" \
+		AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS="$stage_reserve" \
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
 		SCANNER_REST_CORE_GATE="${SCANNER_REST_CORE_GATE:-1}" \
 		"$scanner" scan "$slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
@@ -171,6 +173,59 @@ _pulse_scanner_mark_started() {
 	return 0
 }
 
+#######################################
+# GH#38171: size a scanner's deadline reserve to fit its real watchdog window.
+# Housekeeping gives cheap scanners a 12s slice (GH#37501), so a fixed 30s
+# reserve left no window at all and the post-merge scanner yielded before its
+# first repo on every run. Cap the reserve at a quarter of the window left at
+# stage start (at least 1s). Without a deadline the configured reserve stands.
+#
+# Args:
+#   $1 - configured reserve seconds
+#   $2 - stage start epoch
+# Stdout: effective reserve seconds
+# Returns 0 always.
+#######################################
+_pulse_scanner_effective_reserve() {
+	local configured="$1"
+	local start_epoch="$2"
+	[[ "$configured" =~ ^[0-9]+$ ]] || configured=30
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	if [[ ! "$deadline" =~ ^[0-9]+$ || ! "$start_epoch" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$configured"
+		return 0
+	fi
+	local scaled=$(((deadline - start_epoch) / 4))
+	[[ "$scaled" -ge 1 ]] || scaled=1
+	[[ "$scaled" -lt "$configured" ]] || scaled="$configured"
+	printf '%s\n' "$scaled"
+	return 0
+}
+
+#######################################
+# GH#38171: cooperative deadline check before a scanner starts another repo.
+# Yielding with the cursor kept is cheaper than the watchdog's SIGKILL, which
+# can land mid-dispatch (worktree preparation, lock or state writes).
+#
+# Args:
+#   $1 - reserve seconds to keep before PULSE_STAGE_DEADLINE_EPOCH
+# Returns 0 when the scanner should yield now, 1 otherwise (no deadline set,
+# or more than the reserve remains).
+#######################################
+_pulse_scanner_deadline_reached() {
+	local reserve="$1"
+	[[ "$reserve" =~ ^[0-9]+$ ]] || reserve=0
+	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
+	[[ "$deadline" =~ ^[0-9]+$ ]] || return 1
+	local now=""
+	now=$(date +%s)
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	if [[ $((deadline - now)) -le "$reserve" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _run_post_merge_review_scanner() {
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -180,6 +235,7 @@ _run_post_merge_review_scanner() {
 	[[ "$stage_budget" =~ ^[0-9]+$ ]] || stage_budget=600
 	local stage_reserve="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS:-30}"
 	[[ "$stage_reserve" =~ ^[0-9]+$ ]] || stage_reserve=30
+	stage_reserve=$(_pulse_scanner_effective_reserve "$stage_reserve" "$stage_start_epoch")
 	local post_merge_scanner_interval="${POST_MERGE_SCANNER_INTERVAL:-86400}"
 	[[ "$post_merge_scanner_interval" =~ ^[0-9]+$ ]] || post_merge_scanner_interval=86400
 	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/post-merge-review-scanner}"
@@ -298,6 +354,8 @@ _run_pr_review_thread_response_scanner() {
 	local skipped_contributor=0
 	local slug="" repo_path="" repo_role="" enabled_slugs=""
 	local cursor_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_CURSOR_DIR:-${HOME:-}/.aidevops/logs/pr-review-thread-response-scanner}/repo.cursor"
+	local stage_start_seconds="$SECONDS" stage_reserve="" yielded=0
+	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STAGE_RESERVE_SECONDS:-10}" "$(date +%s)")
 	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -305,6 +363,13 @@ _run_pr_review_thread_response_scanner() {
 		if [[ "$repo_role" != "maintainer" ]]; then
 			skipped_contributor=$((skipped_contributor + 1))
 			continue
+		fi
+		# GH#38171: yield before the watchdog can kill a dispatch mid-flight;
+		# the rotation cursor still names the last started repo.
+		if _pulse_scanner_deadline_reached "$stage_reserve"; then
+			echo "[pulse-wrapper] PR review-thread response: yielding before $slug (deadline reserve ${stage_reserve}s); rotation cursor kept" >>"$LOGFILE"
+			yielded=1
+			break
 		fi
 		repo_path=$(jq -r --arg s "$slug" 'first(.initialized_repos[]? | select(.slug == $s)) | .path // ""' "$repos_json" 2>/dev/null) || repo_path=""
 		repo_path="${repo_path/#\~/$HOME}"
@@ -315,6 +380,13 @@ _run_pr_review_thread_response_scanner() {
 	done < <(_pulse_scanner_rotated_slugs "$cursor_file" "$enabled_slugs")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] PR review-thread response: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+	fi
+	if [[ "$yielded" -eq 1 ]]; then
+		if declare -F _log_substage_timing >/dev/null; then
+			_log_substage_timing "pr_review_thread_response:yielded" "$stage_start_seconds" 0
+		fi
+		echo "[pulse-wrapper] PR review-thread response: yielded after ${total_repos} repo(s)" >>"$LOGFILE"
+		return 0
 	fi
 
 	echo "[pulse-wrapper] PR review-thread response: completed ${total_repos} repo(s)" >>"$LOGFILE"
@@ -358,6 +430,8 @@ _run_auto_decomposer_scanner() {
 	local skipped_contributor=0
 	local enabled_slugs=""
 	local cursor_file="${AIDEVOPS_AUTO_DECOMPOSER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/auto-decomposer-scanner}/repo.cursor"
+	local stage_start_seconds="$SECONDS" stage_reserve="" yielded=0
+	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_AUTO_DECOMPOSER_STAGE_RESERVE_SECONDS:-10}" "$(date +%s)")
 	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -370,6 +444,12 @@ _run_auto_decomposer_scanner() {
 			skipped_contributor=$((skipped_contributor + 1))
 			continue
 		fi
+		# GH#38171: yield before the watchdog kills an issue filing mid-flight.
+		if _pulse_scanner_deadline_reached "$stage_reserve"; then
+			echo "[pulse-wrapper] Auto-decomposer: yielding before $slug (deadline reserve ${stage_reserve}s); rotation cursor kept" >>"$LOGFILE"
+			yielded=1
+			break
+		fi
 		total_repos=$((total_repos + 1))
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
 		echo "[pulse-wrapper] Auto-decomposer: scanning $slug" >>"$LOGFILE"
@@ -377,6 +457,13 @@ _run_auto_decomposer_scanner() {
 	done < <(_pulse_scanner_rotated_slugs "$cursor_file" "$enabled_slugs")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] Auto-decomposer: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+	fi
+	if [[ "$yielded" -eq 1 ]]; then
+		if declare -F _log_substage_timing >/dev/null; then
+			_log_substage_timing "auto_decomposer_scanner:yielded" "$stage_start_seconds" 0
+		fi
+		echo "[pulse-wrapper] Auto-decomposer: yielded after ${total_repos} repo(s)" >>"$LOGFILE"
+		return 0
 	fi
 
 	echo "[pulse-wrapper] Auto-decomposer: completed ${total_repos} repo(s) (per-parent re-file gate: $((AUTO_DECOMPOSER_INTERVAL / 86400))d)" >>"$LOGFILE"
