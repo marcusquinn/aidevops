@@ -238,10 +238,24 @@ _full_loop_cleanup_receipt_path() {
 	local pr_number="$2"
 	local receipt_dir=""
 	local safe_repo="${repo//\//_}"
+	local receipt_path="" archived_path="" match=""
 
 	[[ -n "$repo" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	receipt_dir=$(_full_loop_cleanup_receipt_dir) || return 1
-	printf '%s/%s-%s.json\n' "$receipt_dir" "$safe_repo" "$pr_number"
+	receipt_path="$receipt_dir/$safe_repo-$pr_number.json"
+	if [[ -e "$receipt_path" || -L "$receipt_path" ]]; then
+		printf '%s\n' "$receipt_path"
+		return 0
+	fi
+	# Identity consumers still need historical evidence. Never scan archives on
+	# the hot path when the canonical receipt exists; ambiguous history fails closed.
+	[[ ! -L "$receipt_dir/archive" ]] || return 1
+	for match in "$receipt_dir"/archive/*/"$safe_repo-$pr_number.json"; do
+		[[ -e "$match" || -L "$match" ]] || continue
+		[[ -z "$archived_path" && ! -L "$match" && ! -L "${match%/*}" ]] || return 1
+		archived_path="$match"
+	done
+	printf '%s\n' "${archived_path:-$receipt_path}"
 	return 0
 }
 
@@ -652,8 +666,12 @@ full_loop_write_cleanup_deferred() {
 	[[ -n "$worktree" && -n "$branch" && "$owner_pid" =~ ^[0-9]+$ ]] || { _full_loop_cleanup_fail "invalid-receipt-arguments"; return 1; }
 	[[ "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_FINALIZATION_PENDING" || "$executor_completion_state" == "$_FULL_LOOP_EXECUTOR_COMPLETE" ]] || { _full_loop_cleanup_fail "invalid-completion-state"; return 1; }
 	command -v jq >/dev/null 2>&1 || { _full_loop_cleanup_fail "jq-unavailable"; return 1; }
-	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || { _full_loop_cleanup_fail "receipt-path-unavailable"; return 1; }
 	_full_loop_receipt_lock_acquire || { _full_loop_cleanup_fail "$(_full_loop_receipt_lock_failure_detail)"; return 1; }
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || {
+		_full_loop_receipt_lock_release
+		_full_loop_cleanup_fail "receipt-path-unavailable"
+		return 1
+	}
 	kill -0 "$owner_pid" 2>/dev/null || {
 		_full_loop_receipt_lock_release
 		_full_loop_cleanup_fail "owner-not-live"
@@ -1677,9 +1695,12 @@ full_loop_migrate_cleanup_receipt() {
 	local existing_destination_rc=0
 	[[ "$old_repo" != "$new_repo" ]] || return 1
 	[[ "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_SUPERSEDED" || "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_NOT_REQUESTED" ]] || return 1
-	source_receipt=$(_full_loop_cleanup_receipt_path "$old_repo" "$pr_number") || return 1
-	destination_receipt=$(_full_loop_cleanup_receipt_path "$new_repo" "$pr_number") || return 1
 	_full_loop_receipt_lock_acquire || return 1
+	source_receipt=$(_full_loop_cleanup_receipt_path "$old_repo" "$pr_number") &&
+		destination_receipt=$(_full_loop_cleanup_receipt_path "$new_repo" "$pr_number") || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
 
 	_full_loop_reconcile_complete_migration "$old_repo" "$new_repo" "$pr_number" \
 		"$source_receipt" "$source_release" "$destination_receipt" "$destination_release" \
@@ -1748,9 +1769,15 @@ full_loop_update_cleanup_release_status() {
 	local now=""
 
 	[[ "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_PUBLISHED" || "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_SUPERSEDED" || "$release_status" == "$_FULL_LOOP_RECEIPT_RELEASE_NOT_REQUESTED" ]] || return 1
-	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || return 1
-	[[ -f "$receipt_path" ]] || return 0
 	_full_loop_receipt_lock_acquire || return 1
+	receipt_path=$(_full_loop_cleanup_receipt_path "$repo" "$pr_number") || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
+	if [[ ! -f "$receipt_path" ]]; then
+		_full_loop_receipt_lock_release
+		return 0
+	fi
 	if ! jq -e --arg repo "$repo" --argjson pr "$pr_number" \
 		'.repository == $repo and .pr_number == $pr' "$receipt_path" >/dev/null 2>&1; then
 		_full_loop_receipt_lock_release
@@ -1831,6 +1858,80 @@ full_loop_mark_cleanup_cleaned_for_worktree() {
 	return $?
 }
 
+# Archive only after validating the complete hot set. This housekeeping runs
+# from cleanup, never from worktree admission, and shares the mutation lock.
+_full_loop_archive_cleanup_receipts() {
+	local receipt_dir="$1"
+	local days="${AIDEVOPS_CLEANUP_RECEIPT_ARCHIVE_DAYS:-7}"
+	local now="" last="" candidates="" receipt_path="" month="" destination=""
+	local count=0 file_count=""
+
+	[[ "$days" =~ ^[0-9]+$ && ${#days} -le 4 ]] || return 1
+	(( 10#$days != 0 )) || return 0
+	now=$(date +%s) || return 1
+	_full_loop_receipt_lock_acquire || return 1
+	if [[ -L "$receipt_dir/.archive-housekeeping" ]]; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	last=$(jq -r '.last_run // 0' "$receipt_dir/.archive-housekeeping" 2>/dev/null || true)
+	if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < 3600 )); then
+		_full_loop_receipt_lock_release
+		return 0
+	fi
+	printf '{"last_run":%s}\n' "$now" >"$receipt_dir/.archive-housekeeping" || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
+	for receipt_path in "$receipt_dir"/*.json; do
+		if [[ -L "$receipt_path" ]]; then
+			_full_loop_receipt_lock_release
+			return 1
+		fi
+	done
+	if ! file_count=$(_full_loop_valid_receipt_file_count "$receipt_dir"); then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	if [[ "$file_count" -eq 0 ]]; then
+		_full_loop_receipt_lock_release
+		return 0
+	fi
+	candidates=$(jq -nr --argjson cutoff "$((now - 10#$days * 86400))" --arg string_type "$_FULL_LOOP_RECEIPT_JSON_STRING_TYPE" '
+		def epoch: if type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$")
+			then try (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null else null end;
+		reduce inputs as $r ({seen: {}, candidates: []};
+			input_filename as $path
+			| if .seen[$path] then error("multiple receipt documents") else .seen[$path] = true end
+			| if $r.resource_cleanup_state == "CLEANED" then
+				[$r | paths(scalars) as $p | ($r | getpath($p)) as $value
+					| select((($p[-1] | type) == $string_type and ($p[-1] | endswith("_at")))
+						or (($value | type) == $string_type and ($value | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))))
+					| $value | select(. != null) | epoch] as $times
+				| if ($times | length) > 0 and all($times[]; . != null) and ($times | max) < $cutoff
+					then .candidates += [[$path, ($times | max | strftime("%Y-%m"))]] else . end
+			  else . end)
+		| .candidates[:128][] | @tsv
+	' "$receipt_dir"/*.json 2>/dev/null) || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
+	while IFS=$'\t' read -r receipt_path month; do
+		[[ -n "$receipt_path" && "$month" =~ ^[0-9]{4}-[0-9]{2}$ ]] || continue
+		destination="$receipt_dir/archive/$month"
+		if [[ -L "$receipt_path" || -L "$receipt_dir/archive" || -L "$destination" ]] ||
+			! mkdir -p "$destination" || [[ -e "$destination/${receipt_path##*/}" || -L "$destination/${receipt_path##*/}" ]] ||
+			! mv "$receipt_path" "$destination/"; then
+			_full_loop_receipt_lock_release
+			return 1
+		fi
+		count=$((count + 1))
+		[[ "$count" -lt 128 ]] || break
+	done <<<"$candidates"
+	_full_loop_receipt_lock_release
+	return 0
+}
+
 full_loop_reconcile_cleanup_receipts() {
 	local receipt_dir=""
 	local receipt_path=""
@@ -1840,6 +1941,7 @@ full_loop_reconcile_cleanup_receipts() {
 
 	receipt_dir=$(_full_loop_cleanup_receipt_dir) || return 0
 	[[ -d "$receipt_dir" && -f "$cleanup_log" ]] || return 0
+	_full_loop_archive_cleanup_receipts "$receipt_dir" || true
 	for receipt_path in "$receipt_dir"/*.json; do
 		[[ -f "$receipt_path" ]] || continue
 		state=$(jq -r '.resource_cleanup_state // empty' "$receipt_path" 2>/dev/null || true)
