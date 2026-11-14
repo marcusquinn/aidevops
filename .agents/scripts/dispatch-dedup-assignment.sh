@@ -1133,7 +1133,7 @@ _is_assigned_load_issue_meta() {
 		# Existing callers that pass ISSUE_META_JSON without createdAt will skip that
 		# check (fail-open), which is correct — the primary fix is label sync at creation.
 		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
+			--json state,assignees,labels,createdAt,updatedAt 2>/dev/null) || gh_rc=$?
 		if [[ "$gh_rc" -ne 0 || -z "$issue_meta_json" ]]; then
 			# A wrapper/cache/GraphQL-path failure is uncertainty, not stale proof.
 			# Make one bounded, independent REST reprobe now; if it also fails the
@@ -1148,7 +1148,8 @@ _is_assigned_load_issue_meta() {
 						state: ((.state // "") | ascii_upcase),
 						assignees: [(.assignees // [])[] | {login: (.login // "")}],
 						labels: [(.labels // [])[] | {name: (.name // "")}],
-						createdAt: (.created_at // "")
+						createdAt: (.created_at // ""),
+						updatedAt: (.updated_at // "")
 					}
 				' 2>/dev/null) || direct_rc=$?
 			fi
@@ -1415,8 +1416,11 @@ _is_assigned_pre_assignee_guard_blocks() {
 		"$issue_number" "$repo_slug"; then
 		return 0
 	fi
-	if _is_assigned_timed cost_budget _is_assigned_check_cost_budget \
-		"$issue_number" "$repo_slug" "$issue_meta_json"; then
+	# Only the final claim guard sets this: a cost check passed seconds earlier
+	# in the same claim, and the comments added since are the claim's own.
+	if [[ "${AIDEVOPS_DDH_SKIP_COST_BUDGET:-}" != "1" ]] \
+		&& _is_assigned_timed cost_budget _is_assigned_check_cost_budget \
+			"$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 0
 	fi
 
