@@ -15,6 +15,7 @@ from github_auth_policy import policy
 from github_auth_profiles import manage_profile
 from github_auth_routing import APP, decide, valid_slug
 from github_auth_runtime import execute
+from github_auth_setup import add_app_parser, manage_app
 from github_auth_usage import advise, usage
 
 
@@ -48,6 +49,7 @@ def parser():
     command.add_argument("--client-id")
     command.add_argument("--private-key-path", required=True)
     command.add_argument("--replace", action="store_true")
+    add_app_parser(actions)
     return root
 
 
@@ -82,6 +84,7 @@ def repo_free_action(args, registry_path, config_path):
     """Return the handler for actions that take no OWNER/REPO, or None."""
     handlers = {
         "profile": lambda: manage_profile(args, config_path),
+        "app": lambda: manage_app(args, registry_path, config_path),
         "migrate": lambda: migrate(registry_path, config_path, args.confirm_stopped),
         "usage": lambda: usage(args.since, registry(registry_path), args.consumer),
         "advise": lambda: advise(args.since, registry(registry_path), args.write_advisory),

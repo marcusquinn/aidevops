@@ -102,11 +102,10 @@ def advisory_text(opportunity):
         f"GitHub REST quota is the pulse ceiling: {share}% of known API cost could move to a GitHub App read route.",
         f"Owners without an App read binding: {owners}",
         "An App installation has its own primary rate limit, so pulse reads stop competing with your token.",
-        "Setup (owner action): reference/github-auth.md 'Create and install the App', then:",
-        "  aidevops github auth profile set NAME --app-id APP_ID --private-key-path KEY_PATH",
-        "  aidevops github auth set OWNER/REPO --consumer pulse --operation read --profile NAME --installation-id ID",
-        "  aidevops github auth check OWNER/REPO --consumer pulse",
-        "Evidence: aidevops github auth advise",
+        "Setup (owner clicks Create, then Install; binding and checks are automatic):",
+        "  aidevops github auth app create --owner OWNER [--install-on OTHER_OWNER ...]",
+        "Existing App profile: aidevops github auth app bind --profile NAME",
+        "Details: reference/github-auth.md 'Fast path'. Evidence: aidevops github auth advise",
         "This notice is removed automatically once the conditions no longer hold.",
     ]) + "\n"
 

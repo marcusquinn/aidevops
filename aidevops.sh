@@ -1022,7 +1022,7 @@ _repos_actions() {
 cmd_github() {
 	local action="${1:-}"
 	if [[ "$action" != "auth" ]]; then
-		print_error "Usage: aidevops github auth <set|status|check|clear|profile|usage|advise|migrate>"
+		print_error "Usage: aidevops github auth <app|set|status|check|clear|profile|usage|advise|migrate>"
 		return 1
 	fi
 	shift
