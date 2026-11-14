@@ -935,6 +935,37 @@ test_locked_issue_permission_hold_continuity() {
 	return 0
 }
 
+# GH#38279: the CI/review/conflict feedback redispatch swaps origin:interactive
+# for origin:worker and adds a source:*-feedback label. Those provenance labels
+# never widen scope, so an authorized transition must not stale the approval.
+_provenance_redispatch_fixture() {
+	local actor_id="$1" actor_login="$2"
+	local event="" event_id="" event_name="" event_label=""
+	write_locked_issue_fixture
+	jq '.labels |= (map(select(.name != "origin:interactive")) + [{id:15,node_id:"L_15",name:"origin:worker"},{id:16,node_id:"L_16",name:"source:ci-feedback"}])' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	for event in "4231 labeled origin:worker" "4232 labeled source:ci-feedback" "4233 unlabeled origin:interactive"; do
+		read -r event_id event_name event_label <<<"$event"
+		append_issue_timeline_event "$(jq -nc --argjson id "$event_id" --arg event "$event_name" --arg label "$event_label" \
+			--argjson actor_id "$actor_id" --arg actor "$actor_login" \
+			'{id:$id,node_id:("EV_" + ($id | tostring)),event:$event,created_at:"2026-01-01T00:06:00Z",actor:{id:$actor_id,login:$actor,type:"User"},label:{name:$label}}')"
+	done
+	return 0
+}
+
+test_locked_issue_provenance_label_continuity() {
+	_provenance_redispatch_fixture 1 maintainer
+	assert_verify "trusted feedback-redispatch provenance labels preserve locked issue approval" issue 41 VERIFIED 0
+
+	_provenance_redispatch_fixture 2 contributor
+	assert_verify "untrusted provenance label changes remain stale" issue 41 STALE_APPROVAL 4
+
+	write_locked_issue_fixture
+	jq '.labels += [{id:17,node_id:"L_17",name:"hold-for-review"}]' "${FIXTURES}/issue-41.json" >"${FIXTURES}/issue.tmp" && mv "${FIXTURES}/issue.tmp" "${FIXTURES}/issue-41.json"
+	append_issue_timeline_event '{"id":4234,"node_id":"EV_4234","event":"labeled","created_at":"2026-01-01T00:06:00Z","actor":{"id":1,"login":"maintainer","type":"User"},"label":{"name":"hold-for-review"}}'
+	assert_verify "trusted non-provenance label change remains stale" issue 41 STALE_APPROVAL 4
+	return 0
+}
+
 test_locked_issue_label_replay() {
 	local label="" output="" rc=0
 	for label in needs-maintainer-review status:available; do
@@ -968,6 +999,7 @@ run_locked_issue_continuity_tests() {
 	test_locked_issue_linked_source_edits
 	test_locked_issue_tier_backfill_continuity
 	test_locked_issue_permission_hold_continuity
+	test_locked_issue_provenance_label_continuity
 	test_locked_issue_label_replay
 	test_signed_tier_self_hosting_continuity
 	return 0

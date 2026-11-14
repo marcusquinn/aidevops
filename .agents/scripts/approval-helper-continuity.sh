@@ -18,6 +18,10 @@ _APPROVAL_OBSERVABILITY_LABEL="fix-the-fixer"
 _APPROVAL_PERMISSION_HOLD_LABEL="needs-maintainer-permissions"
 # GH#37993: long-lived non-task marker; add-only after signing.
 _APPROVAL_PERSISTENT_LABEL="persistent"
+# GH#38279: provenance labels written by trusted claim and feedback-redispatch
+# transitions (_transition_issue_for_redispatch). They record who routed work
+# and never widen the approved title/body, which keep authenticated-edit checks.
+_APPROVAL_PROVENANCE_LABELS_JSON='["origin:worker","origin:interactive","origin:worker-takeover","source:ci-feedback","source:review-feedback","source:conflict-feedback","source:review-repair"]'
 _APPROVAL_CONTINUITY_JSON_NUMBER="number"
 _APPROVAL_CONTINUITY_JSON_STRING="string"
 
@@ -38,6 +42,15 @@ _approval_continuity_actor_authorized() {
 	admin | maintain | write) return 0 ;;
 	esac
 	return 1
+}
+
+# GH#38279: returns 0 only for an exact framework provenance label.
+_approval_continuity_is_provenance_label() {
+	local label="$1"
+	[[ -n "$label" ]] || return 1
+	jq -en --arg label "$label" --argjson provenance "$_APPROVAL_PROVENANCE_LABELS_JSON" \
+		'$provenance | index($label) != null' >/dev/null 2>&1 || return 1
+	return 0
 }
 
 _approval_continuity_is_repository_status_default() {
@@ -154,12 +167,16 @@ _approval_continuity_lifecycle_change_allowed() {
 	# GH#37993: persistent may only be added. It marks a long-lived non-task
 	# record and only restricts automation; removing it stays approval-bound,
 	# so a removal (revocation path) stales the signature.
+	# GH#38279: origin:/source: provenance labels from trusted redispatch
+	# transitions may be added or removed; they never widen scope.
 	jq -e --argjson signed "$signed_lifecycle" --argjson self_hosting "$self_hosting" \
 		--arg observability "$_APPROVAL_OBSERVABILITY_LABEL" \
 		--arg persistent "$_APPROVAL_PERSISTENT_LABEL" \
+		--argjson provenance "$_APPROVAL_PROVENANCE_LABELS_JSON" \
 		--argjson tiers '["tier:simple","tier:standard","tier:thinking"]' '
 		def tier_label: . as $label | $tiers | index($label) != null;
-		def allowed_label: . == "needs-maintainer-review" or . == "needs-maintainer-permissions" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label;
+		def provenance_label: . as $label | $provenance | index($label) != null;
+		def allowed_label: . == "needs-maintainer-review" or . == "needs-maintainer-permissions" or . == "auto-dispatch" or . == "status:available" or . == "status:queued" or . == "status:claimed" or . == "status:in-progress" or . == "status:in-review" or . == "status:done" or . == "status:blocked" or . == $observability or tier_label or provenance_label;
 		def allowed_added_label: allowed_label or . == $persistent;
 		.lifecycle as $current |
 		($current.labels | map(.name)) as $current_labels |
@@ -612,6 +629,8 @@ _approval_verify_locked_issue_continuity() {
 		labeled:"$_APPROVAL_OBSERVABILITY_LABEL" | unlabeled:"$_APPROVAL_OBSERVABILITY_LABEL") ;;
 		labeled:"$_APPROVAL_PERSISTENT_LABEL") ;; # GH#37993: add-only; unlabeled stays stale
 		assigned:* | unassigned:* | labeled:needs-maintainer-review | unlabeled:needs-maintainer-review | labeled:needs-maintainer-permissions | unlabeled:needs-maintainer-permissions | labeled:auto-dispatch | unlabeled:auto-dispatch | labeled:status:available | unlabeled:status:available | labeled:status:queued | unlabeled:status:queued | labeled:status:claimed | unlabeled:status:claimed | labeled:status:in-progress | unlabeled:status:in-progress | labeled:status:in-review | unlabeled:status:in-review | labeled:status:done | unlabeled:status:done | labeled:status:blocked | unlabeled:status:blocked | labeled:tier:simple | unlabeled:tier:simple | labeled:tier:standard | unlabeled:tier:standard | labeled:tier:thinking | unlabeled:tier:thinking) ;;
+		# GH#38279: provenance toggles; the actor authorization below still applies.
+		labeled:* | unlabeled:*) _approval_continuity_is_provenance_label "$subject" || return 1 ;;
 		*) return 1 ;;
 		esac
 		# #aidevops:trust-boundary — GitHub's official Actions bot has no
