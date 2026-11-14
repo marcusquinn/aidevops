@@ -161,6 +161,32 @@ _pulse_merge_review_thread_repeat_exhausted() {
 	return 1
 }
 
+# GH#38259: true when the review-thread worker finished analysing this exact
+# head and parked the PR for maintainer attention.
+_pulse_merge_review_thread_parked_at_head() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local state_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pr-review-thread-response}"
+	local state_file="" key="" value="" analysed="" attention="" parked_head=""
+
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$head_sha" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+	state_file="${state_dir}/${repo_slug//\//-}-${pr_number}.state"
+	[[ -f "$state_file" ]] || return 1
+	while IFS='=' read -r key value; do
+		case "$key" in
+		analysis_complete) analysed="$value" ;;
+		maintainer_attention) attention="$value" ;;
+		last_head_sha) parked_head="$value" ;;
+		esac
+	done <"$state_file"
+	if [[ "$analysed" == "$PULSE_MERGE_BOOL_TRUE" && "$attention" == "$PULSE_MERGE_BOOL_TRUE" && "$parked_head" == "$head_sha" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _pulse_merge_dispatch_review_thread_remediation() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -1129,8 +1155,28 @@ _pmp_stage_handle_conflict() {
 	return 2
 }
 
+# GH#38259: a head parked by its review-thread worker spent 60-300s per cycle
+# in every merge gate before the final snapshot blocked it on the same
+# unresolved bot threads. One 1-point GraphQL read now confirms they remain;
+# resolved threads, a new head, or a failed read fall through to full gates.
+_pmp_review_threads_parked_skip() {
+	local blocker=""
+	_pulse_merge_review_thread_parked_at_head "$repo_slug" "$pr_number" "$pr_head_ref_oid" || return 1
+	declare -F _pmrc_snapshot_review_threads_clear >/dev/null 2>&1 || return 1
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	_pmrc_snapshot_review_threads_clear "$repo_slug" "$pr_number" "$pr_base_ref_name" || blocker="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	[[ "$blocker" == "$PMRC_BLOCKER_REVIEW_BOT_THREADS" ]] || return 1
+	echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — review-thread worker parked head ${pr_head_ref_oid:0:12} for maintainer attention and its bot threads remain unresolved; merge gates not re-run (GH#38259)" >>"$LOGFILE"
+	_PMP_HUMAN_GATED=1
+	return 0
+}
+
 _pmp_stage_review_and_gates() {
 	local early_linked_issue="" early_dismissed="0"
+	if declare -F _pmp_review_threads_parked_skip >/dev/null 2>&1 && _pmp_review_threads_parked_skip; then
+		return 1
+	fi
 	if [[ "$pr_review" == "$_changes_requested" ]]; then
 		if [[ "${DRY_RUN:-0}" == "1" ]]; then
 			echo "[pulse-wrapper] DRY-RUN: PR #${pr_number} in ${repo_slug} has CHANGES_REQUESTED; would evaluate review remediation or repair routing" >>"$LOGFILE"
