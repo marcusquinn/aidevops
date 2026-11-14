@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 import json
 from pathlib import Path
 import re
 
 from .host import git, locked, metadata_directory, nothing_to_lose, run
 from .owners import OwnerCheck
-from .review import idle_shape, still_idle
+from .review import idle_shape, unfinished
 
 __all__ = ["evidence", "prefetch", "references", "repository"]
 
@@ -168,38 +169,6 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
     return None if found or (shape and shape[0].kind is None) else "reference-unknown"
 
 
-def _unfinished(path: Path, found: list[tuple[str, int]],
-                query: Query) -> tuple[str | None, str]:
-    """Name the first unfinished reference, or how the work counts as finished.
-
-    A tree of an idle shape (``reclaim.review.SHAPES``) is judged by its own
-    reference alone; one whose reference is confirmed open, or absent for the
-    unreferenced shape, qualifies once idle for the shape's threshold. Every
-    later check still applies to it.
-    """
-    match = idle_shape(path.name, query.slug)
-    shape, own = match if match else (None, None)
-    if shape is not None and shape.kind is None:
-        quiet = not found and still_idle(path, shape.seconds)
-        return (None, shape.reason) if quiet else ("reference-unknown", "")
-    judged = [(shape.kind, own)] if shape is not None and own is not None else found
-    for kind, number in judged:
-        finished, detail = reference_finished(kind, number, query)
-        if not finished:
-            return _open_reference(path, shape, (kind, number), detail)
-    return None, "work-finished"
-
-
-def _open_reference(path: Path, shape, ref: tuple[str, int],
-                    detail: str) -> tuple[str | None, str]:
-    """An open reference blocks, unless its idle shape has been quiet long enough."""
-    noun = "issue" if ref[0] == "gh" else "pr"
-    if shape is not None and detail == f"{noun}-{ref[1]}-open" \
-            and still_idle(path, shape.seconds):
-        return None, shape.reason
-    return detail, ""
-
-
 def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
     """Name what removal would disturb or discard, or nothing when it is safe.
 
@@ -222,8 +191,9 @@ def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason, finished = _unfinished(path, found,
-                                       Query(verdict["repository"], cache, timeout))
+        query = Query(verdict["repository"], cache, timeout)
+        reason, finished = unfinished(
+            path, found, query.slug, partial(reference_finished, query=query))
     if reason is None and owner is not None:
         reason = _unsafe_to_remove(path, owner, timeout)
     verdict["authorized"] = reason is None

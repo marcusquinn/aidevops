@@ -85,6 +85,40 @@ def still_idle(path: Path, seconds: int = IDLE_SECONDS) -> bool:
     return idle is not None and idle >= seconds
 
 
+def unfinished(path: Path, found: list[tuple[str, int]], slug: str,
+               reference_finished: Callable[[str, int], tuple[bool, str]],
+               ) -> tuple[str | None, str]:
+    """Name the first unfinished reference, or how the work counts as finished.
+
+    An idle shape is judged by its own reference alone; one confirmed open, or
+    absent for the unreferenced shape, qualifies once idle for its threshold.
+    Every later evidence check still applies to it.
+    """
+    match = idle_shape(path.name, slug)
+    shape, own = match if match else (None, None)
+    if shape is not None and shape.kind is None:
+        quiet = not found and still_idle(path, shape.seconds)
+        return (None, shape.reason) if quiet else ("reference-unknown", "")
+    judged = ([(shape.kind, own)]
+              if shape is not None and shape.kind is not None and own is not None
+              else found)
+    for kind, number in judged:
+        finished, detail = reference_finished(kind, number)
+        if not finished:
+            return _open_reference(path, shape, (kind, number), detail)
+    return None, "work-finished"
+
+
+def _open_reference(path: Path, shape: Shape | None, ref: tuple[str, int],
+                    detail: str) -> tuple[str | None, str]:
+    """An open reference blocks, unless its idle shape has been quiet long enough."""
+    noun = "issue" if ref[0] == "gh" else "pr"
+    if shape is not None and detail == f"{noun}-{ref[1]}-open" \
+            and still_idle(path, shape.seconds):
+        return None, shape.reason
+    return detail, ""
+
+
 def idle_verifier(reason: str) -> Callable[[Path], tuple[bool, str]]:
     """Removal-time re-check for an idle reason: still quiet, still nothing to lose.
 
