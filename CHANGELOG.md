@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.198] - 2026-11-14
+
+### Changed
+
+- Maintenance: add t19006 dispatch ceremony latency, t19007 external-trigger revisit, t19008 approval release reader drift (#38354)
+
+### Fixed
+
+- provision allow-auto-merge label before planning PR fallback
+- resolve OAuth image router from live Codex models; add OpenRouter image route (#38346)
+- Pulse files the next phase of an idle parent instead of holding it
+
 ## [3.39.197] - 2026-11-14
 
 ### Added
