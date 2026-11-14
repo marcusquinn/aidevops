@@ -177,19 +177,39 @@ _pulse_set_rest_core_budget_priority() {
 	return 0
 }
 
+_pulse_dependency_recovery_pending() {
+	local file="" count=""
+	for file in "${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"/*.txt "${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"/*.pending; do
+		[[ -s "$file" ]] && return 0
+	done
+	for file in "${HOME}/.aidevops/cache/stale-blocked-weight"/*.ready; do
+		[[ -f "$file" ]] || continue
+		IFS= read -r count <"$file" || continue
+		[[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] && return 0
+	done
+	return 1
+}
+
 #######################################
 # Return the deterministic priority class for a Pulse stage.
 #######################################
 _pulse_stage_priority_class() {
 	local stage="$1"
 	case "$stage" in
+	stale_blocked_reconcile)
+		if _pulse_dependency_recovery_pending; then
+			printf 'critical\n'
+		else
+			printf 'deferrable\n'
+		fi
+		;;
 	evaluate_routines | checkpoint_ledger_sweep)
 		# Local calendar evaluation spends no API quota; dispatch is gated inside.
 		# GH#38144: the own-claim ledger sweep reads GitHub only for expired
 		# entries, and a deferral strands claims that block continuation.
 		printf 'critical\n'
 		;;
-	cache_prime | fix_the_fixer_detector | coderabbit_review | post_merge_scanner | pr_review_thread_response | auto_decomposer_scanner | dedup_cleanup | fast_fail_prune_expired | dependabot_alert_monitor | worker_bus_relay | canonical_maintenance | dashboard_freshness_check | llm_supervisor | dirty_pr_sweep | stale_blocked_reconcile | sync_todo_refs_all_repos | build_dependency_graph_cache | refresh_blocked_status_from_graph | release_repaired_brief_holds | preflight_label_maintenance | preflight_trusted_nmr_reconcile | "$_PULSE_BUDGET_PREFETCH_STAGE")
+	cache_prime | fix_the_fixer_detector | coderabbit_review | post_merge_scanner | pr_review_thread_response | auto_decomposer_scanner | dedup_cleanup | fast_fail_prune_expired | dependabot_alert_monitor | worker_bus_relay | canonical_maintenance | dashboard_freshness_check | llm_supervisor | dirty_pr_sweep | sync_todo_refs_all_repos | build_dependency_graph_cache | refresh_blocked_status_from_graph | release_repaired_brief_holds | preflight_label_maintenance | preflight_trusted_nmr_reconcile | "$_PULSE_BUDGET_PREFETCH_STAGE")
 		printf 'deferrable\n'
 		;;
 	approval_merge_trigger | deterministic_merge_pass | dispatch_max | preflight_early_dispatch | preflight_post_label_refill)
