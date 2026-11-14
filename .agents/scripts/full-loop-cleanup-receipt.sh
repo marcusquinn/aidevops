@@ -434,29 +434,81 @@ _full_loop_recover_recreated_receipt_transactions() {
 	return 0
 }
 
+# GH#38267: an owner file that is empty or lacks a leading decimal pid carries
+# no liveness evidence; a holder killed mid-publication left one, which wedged
+# every receipt mutation on the host until it was deleted by hand.
+_full_loop_receipt_owner_unparseable() {
+	local owner_path="$1"
+	local owner_pid=""
+	[[ -f "$owner_path" && ! -L "$owner_path" ]] || return 1
+	IFS=' ' read -r owner_pid _ <"$owner_path" 2>/dev/null || true
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] && return 1
+	return 0
+}
+
+# Succeeds when <path>'s mtime is at least <minimum_age> seconds old.
+_full_loop_receipt_path_is_stale() {
+	local path="$1"
+	local minimum_age="$2"
+	local path_mtime=""
+	local now=""
+	local path_age=0
+	path_mtime=$(_file_mtime_epoch "$path") || return 1
+	[[ "$path_mtime" =~ ^[0-9]+$ && "$path_mtime" -gt 0 ]] || return 1
+	now=$(date '+%s') || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	path_age=$((now - path_mtime))
+	[[ "$path_age" -lt 0 ]] && path_age=0
+	[[ "$path_age" -ge "$minimum_age" ]] || return 1
+	return 0
+}
+
+# Revalidate, after electing a reclaimer, that the lock is still in the exact
+# stale state observed before election. A missing owner must still be missing
+# (a holder may be publishing); an unparseable one must still be unparseable
+# and stale (a legacy non-atomic writer refreshes the mtime as it truncates).
+_full_loop_receipt_reclaim_still_valid() {
+	local lock_dir="$1"
+	local owner_path="$2"
+	local had_owner="$3"
+	local minimum_age="$4"
+	[[ -d "$lock_dir" ]] || return 1
+	if [[ "$had_owner" == 0 ]]; then
+		[[ ! -e "$owner_path" ]] || return 1
+		return 0
+	fi
+	_full_loop_receipt_owner_unparseable "$owner_path" || return 1
+	_full_loop_receipt_path_is_stale "$owner_path" "$minimum_age" || return 1
+	return 0
+}
+
+# Reclaim a lock with no owner, or an unparseable one, once it is older than
+# the grace; the owner file's own mtime dates an unparseable record.
 _full_loop_receipt_reclaim_stale_ownerless_lock() {
 	local lock_dir="$1"
 	local minimum_age="$2"
 	local owner_path="${lock_dir}/owner"
 	local reclaim_dir="${lock_dir}/.reclaim"
-	local lock_mtime=""
-	local now=""
-	local lock_age=0
+	local stamp_path="$lock_dir"
+	local had_owner=0
 
 	[[ "$minimum_age" =~ ^[1-9][0-9]*$ ]] || return 1
-	[[ -d "$lock_dir" && ! -L "$lock_dir" && ! -e "$owner_path" ]] || return 1
-	lock_mtime=$(_file_mtime_epoch "$lock_dir") || return 1
-	[[ "$lock_mtime" =~ ^[0-9]+$ && "$lock_mtime" -gt 0 ]] || return 1
-	now=$(date '+%s') || return 1
-	[[ "$now" =~ ^[0-9]+$ ]] || return 1
-	lock_age=$((now - lock_mtime))
-	[[ "$lock_age" -lt 0 ]] && lock_age=0
-	[[ "$lock_age" -ge "$minimum_age" ]] || return 1
+	[[ -d "$lock_dir" && ! -L "$lock_dir" ]] || return 1
+	if [[ -e "$owner_path" ]]; then
+		_full_loop_receipt_owner_unparseable "$owner_path" || return 1
+		stamp_path="$owner_path"
+		had_owner=1
+	fi
+	_full_loop_receipt_path_is_stale "$stamp_path" "$minimum_age" || return 1
 
 	# Elect one reclaimer, then revalidate ownership before removing the exact
-	# empty lock directory. rmdir fails safely if an owner publishes meanwhile.
+	# lock directory. rmdir fails safely if an owner publishes meanwhile.
 	mkdir "$reclaim_dir" 2>/dev/null || return 1
-	if [[ ! -d "$lock_dir" || -e "$owner_path" ]]; then
+	if ! _full_loop_receipt_reclaim_still_valid "$lock_dir" "$owner_path" "$had_owner" "$minimum_age"; then
+		rmdir "$reclaim_dir" 2>/dev/null || true
+		return 1
+	fi
+	if [[ "$had_owner" == 1 ]] && ! rm -f "$owner_path" 2>/dev/null; then
 		rmdir "$reclaim_dir" 2>/dev/null || true
 		return 1
 	fi
@@ -524,11 +576,33 @@ _full_loop_receipt_lock_failure_detail() {
 	return 0
 }
 
+# Publish "pid start" for a freshly created lock dir. GH#38267: build the
+# record in a temp file outside the lock dir and rename it into place, so a
+# writer killed mid-publication leaves an ownerless (reclaimable) lock, never
+# an empty owner file. Failure (e.g. ENOSPC) removes the lock and returns 1.
+_full_loop_receipt_lock_publish_owner() {
+	local receipt_dir="$1"
+	local lock_dir="$2"
+	local owner_tmp="${receipt_dir}/.mutation.lock.owner.$$"
+	local self_pid=""
+	# Redirect straight to the file: a $(...) here would make sh's parent a
+	# throwaway subshell instead of the real holder.
+	_full_loop_receipt_self_pid >"$owner_tmp" 2>/dev/null || true
+	IFS= read -r self_pid <"$owner_tmp" 2>/dev/null || self_pid=""
+	[[ "$self_pid" =~ ^[0-9]+$ ]] || self_pid="$$"
+	if printf '%s %s\n' "$self_pid" "$(_full_loop_receipt_pid_start "$self_pid")" >"$owner_tmp" &&
+		mv -f "$owner_tmp" "${lock_dir}/owner" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$owner_tmp" "${lock_dir}/owner" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 1
+}
+
 _full_loop_receipt_lock_acquire() {
 	local owner_start=""
 	local holder_age=0
 	local holder_mtime=""
-	local self_pid=""
 	local receipt_dir=""
 	local lock_dir=""
 	local owner_pid=""
@@ -542,16 +616,7 @@ _full_loop_receipt_lock_acquire() {
 	lock_dir="${receipt_dir}/.mutation.lock.d"
 	while [[ "$attempt" -lt 200 ]]; do
 		if mkdir "$lock_dir" 2>/dev/null; then
-			# Redirect straight to the owner file: a $(...) here would make sh's
-			# parent a throwaway subshell instead of the real holder.
-			_full_loop_receipt_self_pid >"${lock_dir}/owner" || true
-			IFS= read -r self_pid <"${lock_dir}/owner" || self_pid=""
-			[[ "$self_pid" =~ ^[0-9]+$ ]] || self_pid="$$"
-			printf '%s %s\n' "$self_pid" "$(_full_loop_receipt_pid_start "$self_pid")" >"${lock_dir}/owner" || {
-				# ENOSPC can leave an empty owner file. rmdir alone cannot remove
-				# that file, permanently blocking subsequent cleanup leases.
-				rm -f "${lock_dir}/owner" 2>/dev/null || true
-				rmdir "$lock_dir" 2>/dev/null || true
+			_full_loop_receipt_lock_publish_owner "$receipt_dir" "$lock_dir" || {
 				_FULL_LOOP_RECEIPT_LOCK_FAILURE="receipt-lock-owner-write-failed"
 				return 1
 			}
