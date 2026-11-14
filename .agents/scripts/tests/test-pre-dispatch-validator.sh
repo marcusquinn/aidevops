@@ -27,6 +27,17 @@ export TEST_NATIVE_GIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh"
 
+# GH#38192: under macOS /bin/bash 3.2, the first test subshell that sources
+# shared-constants.sh hits its Bash 4 re-exec guard, which execs this whole
+# suite again inside that subshell with output discarded. The subshell then
+# exits 0 and scope-gate cases see rc=0. Let the guard re-exec the suite once,
+# here, before any test runs; no redirect, since exec would inherit it. Bash 4+
+# skips this block.
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/../shared-constants.sh" || true
+fi
+
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
