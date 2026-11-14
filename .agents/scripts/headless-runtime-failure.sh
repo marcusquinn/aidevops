@@ -389,6 +389,13 @@ _hrff_build_claim_released_line() {
 
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	# GH#38215: publish the effective runtime tier, not the dispatcher's initial
+	# guess. The attempt loop updates it after model rotation/escalation. Only
+	# checkpoint workers carry this head binding; legacy releases stay unknown.
+	if [[ "${AIDEVOPS_DISPATCH_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		"${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[a-f0-9]{40,64}$ ]]; then
+		machine_readable_part+=" checkpoint_tier=${AIDEVOPS_DISPATCH_TIER} checkpoint_head=${AIDEVOPS_PR_REPAIR_HEAD_SHA}"
+	fi
 	if [[ -n "$exit_code_arg" ]]; then
 		machine_readable_part+=" exit=${exit_code_arg}"
 	fi

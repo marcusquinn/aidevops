@@ -29,6 +29,8 @@ source "${SCRIPT_DIR}/pr-checkpoint-unknown-digest.sh"
 source "${SCRIPT_DIR}/pr-checkpoint-decision-resolver.sh"
 # shellcheck source=pr-checkpoint-continuation-approval.sh
 source "${SCRIPT_DIR}/pr-checkpoint-continuation-approval.sh"
+# shellcheck source=pr-checkpoint-tier-escalation.sh
+source "${SCRIPT_DIR}/pr-checkpoint-tier-escalation.sh"
 
 PCC_LINKED_ISSUE=""
 PCC_HEAD_REF=""
@@ -828,6 +830,9 @@ _pcc_dispatch() {
 	fingerprint="draft-checkpoint:${PCC_HEAD_OID}:contract-4:${PCC_REVISION_APPROVAL}"
 	if [[ -n "$PCC_DIAGNOSTIC_TOOLING_COMMIT" ]]; then
 		fingerprint="draft-checkpoint:${PCC_HEAD_OID}:contract-5:${PCC_REVISION_APPROVAL}:diagnostic-${PCC_DIAGNOSTIC_TOOLING_COMMIT}"
+	fi
+	if [[ -n "${PCC_ESCALATION_TIER:-}" ]]; then
+		fingerprint="${fingerprint}:tier-${PCC_ESCALATION_TIER}:release-${PCC_ESCALATION_RELEASE}"
 	fi
 	_prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "0" \
 		"$fingerprint" "stale worker draft continuation" "$now_epoch" "$PRRTS_BOOL_FALSE" \
@@ -1793,6 +1798,10 @@ _pcc_dispatch_stalled() {
 	local trusted_logins=""
 	local release_id="" reason="" stalls="" posted="" pr_releases="" fuse_posted="" attention_epoch=""
 	local release_epoch="" attempt="" commits="[]" progress=0 nonprogress=0
+	# Dynamic scope confines routing to this dispatch; other PR/review workers
+	# cannot inherit a previous checkpoint's escalation in a long-lived scanner.
+	local PCC_ESCALATION_TIER="" PCC_ESCALATION_MODEL="" PCC_ESCALATION_RELEASE=""
+	local escalation=""
 	if [[ ! "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ || ! "$issue" =~ ^[1-9][0-9]*$ ||
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
@@ -1839,7 +1848,15 @@ _pcc_dispatch_stalled() {
 	pr_releases=$((progress + nonprogress))
 	[[ "$release_epoch" =~ ^[0-9]+$ ]] || release_epoch=0
 	[[ "$attempt" =~ ^attempt:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || attempt=""
-	if [[ "$stalls" -ge 2 || "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
+	if [[ "$stalls" -ge 2 && "$nonprogress" -lt "$_PCC_MAX_PR_RELEASES" &&
+		"$pr_releases" -lt "$_PCC_MAX_PR_PROGRESS_RELEASES" ]] &&
+		escalation=$(_pcc_next_stalled_tier "$comments" "$trusted_logins" "$release_id" "$head"); then
+		IFS=$'\t' read -r PCC_ESCALATION_TIER PCC_ESCALATION_MODEL <<<"$escalation"
+		PCC_ESCALATION_RELEASE="$release_id"
+		printf 'STALLED_CHECKPOINT_TIER_ESCALATED: PR #%s in %s head=%s release=%s tier=%s\n' \
+			"$pr" "$repo" "$head" "$release_id" "$PCC_ESCALATION_TIER"
+	fi
+	if [[ ( "$stalls" -ge 2 && -z "$PCC_ESCALATION_TIER" ) || "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
 		# GH#36019: a fuse-only stop reports the per-PR count in the record and
 		# is posted once per PR, so later human-pushed heads add no comments.
 		local fuse=false

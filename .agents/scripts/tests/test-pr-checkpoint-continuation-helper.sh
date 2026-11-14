@@ -159,6 +159,8 @@ source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-selfhold.sh"
 source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-attention.sh"
 # shellcheck source=test-pr-checkpoint-continuation-fuse.sh
 source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-fuse.sh"
+# shellcheck source=test-pr-checkpoint-tier-escalation.sh
+source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-tier-escalation.sh"
 
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"

@@ -1292,6 +1292,12 @@ _prrts_dispatch_worker() {
 		--title "PR #${pr_number}: ${PR_REVIEW_THREAD_RESPONSE_WORKER_TITLE_SUFFIX}"
 		--prompt-file "$prompt_file")
 	model="$PR_REVIEW_THREAD_RESPONSE_MODEL"
+	if [[ -n "$repair_linked_issue" && -z "$model" &&
+		"${PCC_ESCALATION_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		-n "${PCC_ESCALATION_MODEL:-}" ]]; then
+		model="$PCC_ESCALATION_MODEL"
+		cmd+=(--tier "$PCC_ESCALATION_TIER")
+	fi
 	if [[ -n "$model" ]]; then
 		cmd+=(--model "$model")
 	fi
