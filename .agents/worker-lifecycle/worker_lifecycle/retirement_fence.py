@@ -34,6 +34,19 @@ def require_unfenced(connection: sqlite3.Connection, generation_id: str, path: s
         raise StoreConflict("generation-retirement-reserved")
 
 
+def require_not_removing(connection: sqlite3.Connection, path: str) -> None:
+    """Refuse a path whose reconstructible native removal started and has not retired (GH#38158)."""
+    if connection.execute(
+        "SELECT 1 FROM events s WHERE json_extract(s.payload,'$.type')="
+        "'reconstructible-worktree-removing' AND json_extract(s.payload,'$.plan.source')=? "
+        "AND NOT EXISTS (SELECT 1 FROM events r WHERE json_extract(r.payload,'$.type')="
+        "'reconstructible-worktree-retired' AND json_extract(r.payload,'$.source')=? "
+        "AND r.sequence > s.sequence) LIMIT 1",
+        (path, path),
+    ).fetchone():
+        raise StoreConflict("generation-retirement-reserved")
+
+
 def reserve(connection: sqlite3.Connection, generation_id: str, path: str) -> None:
     """Atomically verify absence of registration, then fence; idempotent on resume."""
     if not _exists(connection):
