@@ -224,9 +224,6 @@ define_process_helper() {
 	process_stage_src=$(extract_process_stage_functions "$MERGE_SCRIPT")
 	fn_src=$(extract_function _process_single_ready_pr "$MERGE_SCRIPT")
 	[[ -n "$review_gate_src" && -n "$repair_helper_src" && -n "$process_stage_src" && -n "$fn_src" ]] || return 1
-	# GH#38259: the stage loop runs stages through the timing wrapper.
-	# shellcheck source=../pulse-merge-timing.sh
-	source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 	_OW_LABEL_PAT=",origin:worker,"
 	PULSE_MERGE_BOOL_TRUE="true"
