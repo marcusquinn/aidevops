@@ -43,17 +43,35 @@ print_result() {
 	return 0
 }
 
+# Finish-path fixtures model a run whose runtime launched (GH#37669). Spawn
+# intent alone is not launch proof (GH#37708): _hrw_runtime_launch_confirmed
+# also needs this invocation's result session ID, so supply a fixture one.
+# Not-launched cases set _WORKER_RUNTIME_LAUNCH_STARTED=0 explicitly.
+mark_fixture_runtime_launched() {
+	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	_run_metric_session_id="ses_fixture"
+	return 0
+}
+
 setup_test_env() {
-	TEST_ROOT=$(mktemp -d)
+	local raw_root=""
+	raw_root=$(mktemp -d)
+	# macOS mktemp returns /var/... (a symlink to /private/var/...); worker
+	# lifecycle admission requires a canonical state parent
+	# (state-parent-must-be-canonical), so resolve the root physically.
+	TEST_ROOT=$(cd "$raw_root" && pwd -P)
 	export HOME="${TEST_ROOT}/home"
+	# A headless worker running this suite exports its real workspace,
+	# lifecycle session and prewarm state; keep fixtures independent of them.
+	unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_TEMP_DIR AIDEVOPS_WORKER_PREWARM_DIR \
+		AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID \
+		AIDEVOPS_LIFECYCLE_WORKTREE AIDEVOPS_MANAGED_WORKTREE
 	mkdir -p "${HOME}/.aidevops/logs"
 	set +e
 	# shellcheck source=/dev/null
 	source "$HELPER_SCRIPT" >/dev/null 2>&1
 	set -e
-	# Finish-path fixtures model a run whose runtime launched (GH#37669);
-	# not-launched cases set _WORKER_RUNTIME_LAUNCH_STARTED=0 explicitly.
-	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	mark_fixture_runtime_launched
 	return 0
 }
 
@@ -397,11 +415,17 @@ test_detached_worker_log_uses_managed_root() {
 	[[ -n "$escape_path" && "${escape_path%/*}" == "$root" ]] || failures+=" path-escape"
 	sleep 0.3
 	rm -f "${TEST_ROOT}/stub-spawned"
-	for bad_root in "" "relative/root" "${TEST_ROOT}/linked-root" "${TEST_ROOT}/unwritable" "${TEST_ROOT}/missing"; do
+	for bad_root in "relative/root" "${TEST_ROOT}/linked-root" "${TEST_ROOT}/unwritable" "${TEST_ROOT}/missing"; do
 		second=$(_detach_with_stub "$bad_root" "gh34556-refused")
-		[[ "$second" == rc=1* && "$second" == *"log root is unusable"* && "$second" != *"Dispatched PID"* ]] || failures+=" refuse:${bad_root:-unset}"
+		[[ "$second" == rc=1* && "$second" == *"log root is unusable"* && "$second" != *"Dispatched PID"* ]] || failures+=" refuse:${bad_root}"
 	done
 	[[ ! -e "${TEST_ROOT}/stub-spawned" ]] || failures+=" spawned-after-refusal"
+	# GH#37718: pulse-side callers have no root yet, so an unset root is
+	# initialised from the managed workspace contract instead of refused.
+	second=$(_detach_with_stub "" "gh37718-unset")
+	path2=$(printf '%s\n' "$second" | sed -n 's/^\[INFO\] Detaching worker (log: \(.*\))$/\1/p')
+	[[ "$second" == rc=0* && "${path2%/*}" == "${HOME}/.aidevops/.agent-workspace/tmp" ]] || failures+=" unset-root-init"
+	sleep 0.3
 	chmod 700 "${TEST_ROOT}/unwritable"
 	print_result "detached worker log uses approved managed root, unique private files, and fails before spawn" \
 		"$([[ -z "$failures" ]] && printf 0 || printf 1)" "failed:${failures}"
@@ -521,8 +545,8 @@ main() {
 	test_deleted_cwd_recovery_uses_worker_worktree
 	run_cmd_run_orchestration_tests
 	# Prelaunch and cmd_run cases above reset the launch flag; the finish-path
-	# fixtures below model launched runtimes (GH#37669).
-	_WORKER_RUNTIME_LAUNCH_STARTED=1
+	# fixtures below model launched runtimes (GH#37669, GH#37708).
+	mark_fixture_runtime_launched
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_stale_session_retry_clears_continuation_state
