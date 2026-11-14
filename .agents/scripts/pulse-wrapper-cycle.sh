@@ -658,6 +658,13 @@ _pulse_stale_blocked_repo_stamp() {
 # Args: repo interval now_epoch [pass kind]
 _pulse_stale_blocked_repo_fresh() {
 	local repo="$1" interval="$2" now_epoch="$3" kind="${4:-stale-blocked-complete}" stamp="" stamp_epoch=""
+	local retry="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}/${repo//\//__}.txt"
+	[[ ! -s "$retry" && ! -s "${retry}.pending" ]] || return 1
+	local ready_hint="" ready_file="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
+	if [[ "$kind" == stale-blocked-complete && -f "$ready_file" ]]; then
+		IFS= read -r ready_hint <"$ready_file" || ready_hint=""
+		[[ ! "$ready_hint" =~ ^[1-9][0-9]*$ ]] || return 1
+	fi
 	stamp=$(_pulse_stale_blocked_repo_stamp "$repo" "$kind") || return 1
 	[[ -f "$stamp" ]] || return 1
 	stamp_epoch=$(_file_mtime_epoch "$stamp")
@@ -706,7 +713,7 @@ _pulse_stale_blocked_repo_weight() {
 # backlog for the next sweep. Capture only this invocation, never scan a growing
 # Pulse log. A missing summary or failed cache write leaves scheduling fail-open.
 _pulse_stale_blocked_run_and_measure() {
-	local repo="$1" repo_deadline="$2" sweep_deadline="$3" rc=0 diagnostic="" weight=""
+	local repo="$1" repo_deadline="$2" sweep_deadline="$3" rc=0 diagnostic="" weight="" ready_hint=""
 	local file="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}"
 	if ! mkdir -p "${file%/*}" 2>/dev/null || ! diagnostic=$(mktemp "${file}.XXXXXX" 2>/dev/null); then
 		DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
@@ -716,6 +723,10 @@ _pulse_stale_blocked_run_and_measure() {
 	DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" DER_STALE_BLOCKED_STOP_EPOCH="$sweep_deadline" \
 		reconcile_stale_blocked_issues "$repo" 2>"$diagnostic" || rc=$?
 	cat "$diagnostic" >>"$LOGFILE"
+	ready_hint=$(awk '/^\[dependency-reconciler\] stale sweep / {for(i=1;i<=NF;i++) if($i ~ /^ready=[0-9]+$/) {split($i,a,"="); print a[2]}}' "$diagnostic")
+	if [[ "$ready_hint" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$ready_hint" >"${file}.ready" || true
+	fi
 	weight=$(awk '/^\[dependency-reconciler\] stale sweep / {
 		pending = visited = prefiltered = 0
 		for (i = 1; i <= NF; i++) {
@@ -948,7 +959,15 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repos=() due=() weights=()
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
-	_pulse_sweep_checkpoint_ledger
+	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
+	now_epoch=$(date +%s) || return 0
+	local ready_min="${PULSE_STALE_BLOCKED_READY_MIN_SECONDS:-15}" claim_deadline=0
+	[[ "$ready_min" =~ ^[0-9]+$ ]] || ready_min=15
+	claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2))
+	[[ "$claim_deadline" -le $((sweep_deadline - ready_min)) ]] || claim_deadline=$((sweep_deadline - ready_min))
+	if [[ "$claim_deadline" -gt "$now_epoch" ]]; then
+		PULSE_CHECKPOINT_LEDGER_SWEEP_SECONDS=$((claim_deadline - now_epoch)) _pulse_sweep_checkpoint_ledger
+	fi
 	# Fallback rotation (claims predating the ledger): revisited even when the
 	# stale-blocked cadence is fresh, as their issue is normally not blocked.
 	if declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1; then
@@ -956,7 +975,6 @@ _pulse_reconcile_stale_blocked_if_due() {
 		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
 		sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
 		now_epoch=$(date +%s) || return 0
-		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2)) # half the stage
 		while IFS= read -r repo_slug; do
 			[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
 		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
@@ -974,7 +992,9 @@ _pulse_reconcile_stale_blocked_if_due() {
 		now_epoch=$(date +%s 2>/dev/null) || return 0
 		stamp_epoch=$(_file_mtime_epoch "$sentinel")
 		age_s=$((now_epoch - ${stamp_epoch:-0}))
-		[[ "$age_s" -ge "$interval" ]] || return 0
+		if [[ "$age_s" -lt "$interval" ]]; then
+			declare -F _pulse_dependency_recovery_pending >/dev/null 2>&1 && _pulse_dependency_recovery_pending || return 0
+		fi
 	fi
 	mkdir -p "${sentinel%/*}" 2>/dev/null || return 0
 	while IFS= read -r repo_slug; do

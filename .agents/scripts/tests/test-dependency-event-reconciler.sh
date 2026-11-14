@@ -40,6 +40,10 @@ SUCCESSOR_REASON=""
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
 DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
+DER_RETRY_DIR="${DER_STALE_BLOCKED_CURSOR_DIR}/retries"
+# These independent guard scenarios do not replay failures from earlier cases.
+# Retry persistence and consumption are exercised by the partial reconciler test.
+_der_retry_drain() { return 0; }
 trap 'rm -f "$BLOCKER_RECONCILE_LOG"; rm -rf "$DER_STALE_BLOCKED_CURSOR_DIR"' EXIT
 
 pass() {
@@ -590,7 +594,7 @@ _run_ready_pass() (
 		if [[ "$command $1" == "api graphql" && "$*" == *'issues(states:OPEN'* ]]; then
 			[[ "${SCHEDULE_LISTING:-ok}" != fail ]] || return 1
 			jq -cn --arg mode "${SCHEDULE_LISTING:-ok}" --argjson ready "${SCHEDULE_READY:-true}" '
-				[{data:{repository:{issues:{pageInfo:{hasNextPage:($mode == "truncated"),endCursor:"next"},nodes:[range(1;34) | {number:.,blockedBy:{
+				[{data:{repository:{issues:{pageInfo:{hasNextPage:($mode == "truncated"),endCursor:"next"},nodes:[range(1;34) | {number:.,updatedAt:"v1",blockedBy:{
 					pageInfo:{hasNextPage:($mode == "partial")},
 					nodes:(if . > 30 and $ready then [{state:"CLOSED"}] else [] end)}}]}}}}]'
 			return 0
@@ -622,7 +626,13 @@ _run_ready_pass() (
 					(if $n > 30 and $ready then [{number:99,state:"CLOSED",stateReason:"COMPLETED",
 						repository:{nameWithOwner:"owner/schedule"}}] else [] end)}}}}}'
 			;;
-		'issue view') printf 'status:blocked\n' ;;
+		'issue view')
+			if [[ "$*" == *number,title,body,labels,updatedAt* ]]; then
+				jq -cn --argjson n "$2" '{number:$n,title:"fixture",body:"",updatedAt:"v1",labels:[{name:"status:blocked"}]}'
+			else
+				printf 'status:blocked\n'
+			fi
+			;;
 		'issue edit') printf 'release %s\n' "$2" >>"$SCHEDULE_LOG" ;;
 		*) return 1 ;;
 		esac
