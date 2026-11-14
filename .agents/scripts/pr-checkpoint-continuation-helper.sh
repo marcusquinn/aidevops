@@ -122,13 +122,21 @@ _PCC_JQ_RELEASE_DEFS='
 		[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
 	def episode_attempt($c; $rid; $runner):
 		episode_start($c; $rid) as $start
-		| [$c[] | select(unedited and .id > $start and .id < $rid) as $lease | body_lines
+		| [$c[] | select(unedited and .id > $start and .id < $rid) as $e
+			| $e | body_lines
 			| select(startswith("DISPATCH_LEASE ") and field("phase") == "ready")
 			| field("attempt_id") | select(startswith("attempt:"))
-			| {login: ($lease | login), attempt: .}] as $leases
+			| {login: ($e | login), attempt: .}] as $leases
+		# Empty $runner (stall-class release, mirrors pr_checkpoint_events.attempt_owner): the single ready-lease owner binds the attempt.
 		| if $runner != "" then ([$leases[] | select(.login == $runner) | .attempt] | last // "")
-		  elif ([$leases[].login] | unique | length) == 1 then $leases[-1].attempt
-		  else "" end;
+		elif ([$leases[].login] | unique | length) == 1 then $leases[-1].attempt
+		else "" end;
+	# Mirror pr_checkpoint_events.stall_release, not the broader fuse classes.
+	def validator_stall: release_reason as $r
+		| ($r | IN("no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
+			"worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
+			"worker_claim_ready_transition_failed"))
+		or ($r | test("^(?!(push|network)_policy_timeout$)(watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$"));
 	def coordination_line: claim_line or
 		startswith("DISPATCH_LEASE ") or is_release or
 		startswith("Dispatching worker") or startswith("Interactive session claimed");
@@ -1428,12 +1436,6 @@ _pcc_stall_release_evidence() {
 		# launched (claim/lease lines only, no ready lease, no "Dispatching worker"
 		# afterwards) is transparent, even when its comments were edited. Other
 		# edited coordination stays a fence.
-		# Mirror pr_checkpoint_events.stall_release, not the broader fuse classes.
-		def validator_stall: release_reason as $r
-			| ($r | IN("no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
-				"worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
-				"worker_claim_ready_transition_failed"))
-			or ($r | test("^(?!(push|network)_policy_timeout$)(watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$"));
 		def checkpoint($c; $release):
 			episode_attempt($c; $release.id; (if ($release | validator_stall) then "" else ($release | login) end)) as $attempt
 			| episode_start($c; $release.id) as $start
