@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.195] - 2026-11-14
+
+### Added
+
+- add on-demand NetBird MCP server (read-only allowlist, token from aidevops secrets)
+
+### Changed
+
+- Refactor: split full-loop-helper-commit.sh below 2000 lines
+
+### Fixed
+
+- treat ESRCH from exited /proc tasks as vanished in worker-lifecycle census
+- reconcile release provenance readiness race (#38321)
+- label normal-mode native REST attempts with method/class/family
+- signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker
+- skip nested gopass entries in secret inventory (#38324)
+- give the priority health dashboard a recovery-sized refresh budget
+- task-complete-helper completes indented subtasks in place (GH#37919) (#38294)
+- resume blocker-recovery seed at the interrupted repo
+
 ## [3.39.194] - 2026-11-14
 
 ### Added
