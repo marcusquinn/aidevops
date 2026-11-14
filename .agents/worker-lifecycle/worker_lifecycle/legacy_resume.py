@@ -82,6 +82,10 @@ def resume_reconstructible_removal(store, connection, item, context):
             same_tree(source, plan)
             if context.git("-C", str(source), "rev-parse", "HEAD").strip() != plan["head"]:
                 raise ValueError("interrupted-removal-head-changed")
+            # Forced removal discards the index, including index-only staged content.
+            if context.git("-C", str(source), "diff", "--cached", "--name-only",
+                           plan["head"]).strip():
+                raise ValueError("interrupted-removal-index-changed")
             current = current_legacy_item(connection, item)
             require_ended(current, context.adapter, operator_confirmed=True)
             if item["modern"]:

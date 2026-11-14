@@ -548,6 +548,17 @@ class ReconstructibleContract(unittest.TestCase):
         self.assert_retained("interrupted-removal-content-changed")
         self.assertEqual((self.target / "second.txt").read_text(), "late\n")
 
+    def test_index_only_change_after_interrupted_removal_retains_source(self):
+        self.interrupt_removal()
+        blob = self.git("-C", str(self.target), "rev-parse", "HEAD:second.txt")
+        self.git("-C", str(self.target), "update-index", "--cacheinfo",
+                 f"100644,{blob},first.txt")
+        with patch.object(cleanup, "remove_released") as remove:
+            self.assert_retained("interrupted-removal-index-changed")
+        remove.assert_not_called()
+        self.assertEqual(self.git("-C", str(self.target), "show", ":first.txt"), "second.txt")
+        self.assertFalse((self.target / "first.txt").exists())
+
     def test_completed_removal_before_receipt_is_verified_and_retired(self):
         """A removal that finished before the retired receipt resumes as retired."""
         self.tracked_content()
