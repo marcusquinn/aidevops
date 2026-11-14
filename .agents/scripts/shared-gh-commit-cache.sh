@@ -6,16 +6,26 @@
 [[ -n "${_SHARED_GH_COMMIT_CACHE_LOADED:-}" ]] && return 0
 _SHARED_GH_COMMIT_CACHE_LOADED=1
 
+_gh_commit_fetch() {
+	local endpoint="$1"
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read gh api "$endpoint"
+	else
+		gh api "$endpoint"
+	fi
+	return $?
+}
+
 gh_commit_by_sha_cached() {
 	local repo="$1" sha="$2"
-	local root="${HOME}/.aidevops/cache/gh-commit" dir="" file="" tmp=""
+	local root="${HOME}/.aidevops/cache/gh-commit" dir="" file="" tmp="" response=""
 	# jq expands its own $sha argument.
 	# shellcheck disable=SC2016
 	local validation='type == "object" and .sha == $sha and (.commit | type == "object")'
 	# Unqualified refs and malformed slugs must never select a cache entry.
 	if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
 		[[ ! "$sha" =~ ^([[:xdigit:]]{40}|[[:xdigit:]]{64})$ ]]; then
-		gh api "repos/${repo}/commits/${sha}"
+		_gh_commit_fetch "repos/${repo}/commits/${sha}"
 		return $?
 	fi
 	dir="${root}/${repo/\//--}"
@@ -24,18 +34,20 @@ gh_commit_by_sha_cached() {
 		command cat -- "$file"
 		return $?
 	fi
-	(umask 077; mkdir -p -- "$dir") || return 1
-	tmp=$(umask 077; mktemp "${dir}/.commit.XXXXXXXX") || return 1
-	if ! gh api "repos/${repo}/commits/${sha}" >"$tmp" ||
-		! jq -e --arg sha "$sha" "$validation" "$tmp" >/dev/null 2>&1; then
-		rm -f -- "$tmp"
+	if ! response=$(_gh_commit_fetch "repos/${repo}/commits/${sha}") ||
+		! printf '%s\n' "$response" | jq -e --arg sha "$sha" "$validation" >/dev/null 2>&1; then
 		return 1
 	fi
-	if ! mv -f -- "$tmp" "$file"; then
+	# Persistence is optional: a validated GitHub response remains usable even
+	# when directory creation, temporary writes or atomic publication fail.
+	if (umask 077; mkdir -p -- "$dir") 2>/dev/null &&
+		tmp=$(umask 077; mktemp "${dir}/.commit.XXXXXXXX" 2>/dev/null); then
+		if printf '%s\n' "$response" >"$tmp" && mv -f -- "$tmp" "$file"; then
+			: # Published atomically with the private mktemp mode.
+		fi
 		rm -f -- "$tmp"
-		return 1
 	fi
-	command cat -- "$file"
+	printf '%s\n' "$response"
 	return $?
 }
 

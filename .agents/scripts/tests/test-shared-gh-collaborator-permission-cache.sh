@@ -41,7 +41,7 @@ expect() {
 
 perm=""
 MODE="fail"
-_gh_collaborator_permission_lookup_uncached() { _gh_collaborator_permission_request >/dev/null; return 2; }
+_gh_collaborator_permission_lookup_uncached() { _gh_collaborator_permission_request "$@" >/dev/null; return 2; }
 _gh_collaborator_permission_lookup o/r alice perm
 rc=$?
 expect "failure returns 2" 2 "$rc"
@@ -75,6 +75,33 @@ expect "memo hit value (case-insensitive key)" write "$perm"
 expect "memo hit makes no request" 1 "$(calls)"
 _gh_collaborator_permission_lookup o/r bob perm
 expect "different login is a new lookup" 2 "$(calls)"
+
+# Recovery must write through to the outer memo wrapper's output variable.
+_gh_collaborator_permission_request() {
+	local route="$1"
+	printf x >>"$CALL_FILE"
+	if [[ "$route" == "gh-fallback" || "$(calls)" -gt 1 ]]; then
+		printf 'HTTP/2 200\n\n{"permission":"admin"}\n'
+		return 0
+	fi
+	return 1
+}
+github_app_is_configured() { return 0; }
+: >"$CALL_FILE"
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+perm=""
+_gh_collaborator_permission_lookup o/r recovery perm
+expect "app fallback returns success" 0 "$?"
+expect "app fallback returns recovered value" admin "$perm"
+expect "app fallback makes two requests" 2 "$(calls)"
+github_app_is_configured() { return 1; }
+: >"$CALL_FILE"
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+perm=""
+_gh_collaborator_permission_lookup o/r recovery perm
+expect "same-route retry returns success" 0 "$?"
+expect "same-route retry returns recovered value" admin "$perm"
+expect "same-route retry makes two requests" 2 "$(calls)"
 
 if [[ "$FAILURES" -eq 0 ]]; then
 	exit 0

@@ -474,7 +474,7 @@ _gh_collaborator_permission_retry_with_gh() {
 		return 3
 	fi
 
-	_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
 	if [[ "$retry_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -509,7 +509,7 @@ _gh_collaborator_permission_resolve_failure() {
 		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "unexpected-http" ) ]]; then
 			#aidevops:trust-boundary -- retry uncertainty only, never a parsed verdict.
 			sleep 1
-			_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$auth_route" 1
+			_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$auth_route" 1
 			return $?
 		fi
 	fi

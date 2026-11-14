@@ -1158,7 +1158,7 @@ prune_expired_gh_read_caches() {
 		[[ "$_timed_out" -eq 0 ]] || break
 	done < <(_pulse_gh_read_cache_dirs)
 	if [[ "$_timed_out" -eq 0 ]]; then
-		_removed=$(_pulse_prune_gh_commit_cache "$_deadline")
+		_removed=$(_pulse_prune_gh_commit_cache "$_deadline") || _timed_out=1
 		_deleted=$((_deleted + _removed))
 	fi
 	echo "[pulse-wrapper] gh read-cache prune (GH#32957): dirs=${_dirs} deleted=${_deleted} max_age=${_PC_GH_READ_CACHE_MAX_AGE_DAYS}d elapsed=$((SECONDS - _start))s budget=${_budget}s timed_out=${_timed_out}" >>"${LOGFILE:-/dev/null}"
@@ -1170,6 +1170,7 @@ prune_expired_gh_read_caches() {
 # plus orphaned temp files) older than seven days. Two levels only: the
 # per-repository dirs sit one level below the root. Prints the deleted count.
 # Args: $1=SECONDS deadline.
+# Returns: 1 when the deadline is exhausted, 0 otherwise.
 #######################################
 _pulse_prune_gh_commit_cache() {
 	local _deadline="$1"
@@ -1177,15 +1178,18 @@ _pulse_prune_gh_commit_cache() {
 	local _file="" _removed=0 _deleted=0
 	local -a _batch=()
 	[[ -d "$_root" && ! -L "$_root" ]] || { printf '0\n'; return 0; }
+	[[ "$SECONDS" -lt "$_deadline" ]] || { printf '0\n'; return 1; }
 	while IFS= read -r -d '' _file; do
 		_batch+=("$_file")
 		[[ "${#_batch[@]}" -ge "$_PC_GH_READ_CACHE_RM_BATCH" ]] || continue
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
 		_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
 		_deleted=$((_deleted + _removed))
 		_batch=()
-		[[ "$SECONDS" -lt "$_deadline" ]] || break
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
 	done < <(find "$_root" -mindepth 2 -maxdepth 2 -type f -mmin "+10080" -print0 2>/dev/null)
 	if [[ "${#_batch[@]}" -gt 0 ]]; then
+		[[ "$SECONDS" -lt "$_deadline" ]] || { printf '%s\n' "$_deleted"; return 1; }
 		_removed=$(_pulse_gh_read_cache_rm_batch "${_batch[@]}")
 		_deleted=$((_deleted + _removed))
 	fi
