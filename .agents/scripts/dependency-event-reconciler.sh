@@ -545,7 +545,7 @@ reconcile_dependants_after_verified_closure() {
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
 	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo="" try_status=0
-	local candidate count=0 unblocked=0 not_ready=0 held=0 failed=0
+	local candidate count=0 unblocked=0 not_ready=0 held=0 failed=0 deferred=0
 	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ && -n "$owner" && -n "$name" ]] || { _der_closure_failure "$repo" "$closed_number" invalid_input; return 1; }
 	_der_live_issue_closed "$repo" "$closed_number" || { _der_closure_failure "$repo" "$closed_number" live_closed_check; return 1; }
 	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || { _der_closure_failure "$repo" "$closed_number" context_fetch; return 1; }
@@ -562,10 +562,6 @@ reconcile_dependants_after_verified_closure() {
 	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || { _der_closure_failure "$repo" "$closed_number" candidate_collection; return 1; }
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
-		# Partial: the caller keeps the closure entry; replay is idempotent.
-		if [[ -n "$deadline" ]] && _der_stale_epoch_reached "$deadline"; then
-			return "$DER_SWEEP_PARTIAL"
-		fi
 		count=$((count + 1))
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || issue_number=""
 		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || candidate_repo=""
@@ -573,6 +569,18 @@ reconcile_dependants_after_verified_closure() {
 			failed=$((failed + 1))
 			_der_retry_append "$repo" closure "$closed_number" || true
 			printf '[dependency-reconciler] invalid candidate repo=%s closed=#%s\n' "$repo" "$closed_number" >&2
+			continue
+		fi
+		# Transfer unvisited dependants to individual retries instead of replaying
+		# held predecessors on every bounded closure pass. Only acknowledge the
+		# closure when every deferred candidate has been durably queued.
+		if [[ -n "$deadline" ]] && _der_stale_epoch_reached "$deadline"; then
+			if _der_retry_append "$candidate_repo" issue "$issue_number"; then
+				deferred=$((deferred + 1))
+			else
+				failed=$((failed + 1))
+				_der_closure_failure "$repo" "$closed_number" deferred_retry_write || true
+			fi
 			continue
 		fi
 		try_status=0
@@ -591,7 +599,7 @@ reconcile_dependants_after_verified_closure() {
 			esac
 		fi
 	done <<<"$candidates"
-	printf '[dependency-reconciler] closure repo=%s closed=#%s dependants=%s unblocked=%s not_ready=%s held=%s failed=%s\n' "$repo" "$closed_number" "$count" "$unblocked" "$not_ready" "$held" "$failed" >&2
+	printf '[dependency-reconciler] closure repo=%s closed=#%s dependants=%s unblocked=%s not_ready=%s held=%s failed=%s deferred=%s\n' "$repo" "$closed_number" "$count" "$unblocked" "$not_ready" "$held" "$failed" "$deferred" >&2
 	[[ "$failed" -eq 0 ]] || return 3
 	return 0
 }
@@ -652,6 +660,9 @@ _der_retry_drain() {
 		rm -f "$incoming"
 	fi
 	[[ -s "$pending" ]] || return 0
+	# A failed closure can be present in both the retained snapshot and the
+	# append-only ledger. Attempt each record only once in this pass.
+	awk '!seen[$0]++' "$pending" >"$incoming" && mv -f "$incoming" "$pending" || return 1
 	: >"$remaining" || return 1
 	while read -r kind retry_number <&3; do
 		[[ "$retry_number" =~ ^[0-9]+$ ]] || continue

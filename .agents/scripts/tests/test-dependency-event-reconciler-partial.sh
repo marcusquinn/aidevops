@@ -119,4 +119,47 @@ _der_retry_append owner/repo closure 10
 _der_retry_drain owner/repo 0 2>"$ROOT/replayed.log"
 grep -q 'dependants=3 unblocked=0 not_ready=0 held=3 failed=0' "$ROOT/replayed.log"
 [[ ! -e "$DER_RETRY_DIR/owner__repo.txt.pending" ]]
+
+# A held predecessor must not consume every closure retry's budget. Remaining
+# dependants move to issue retries, including dependants in another repo.
+(
+	DER_RETRY_DIR="$ROOT/progress"
+	CALLS="$ROOT/progress.calls"
+	NOW=1000
+	_der_collect_candidates() {
+		jq -cn 'range(20;23) | {number:.,repository:{nameWithOwner:(if . == 22 then "owner/other" else "owner/repo" end)}}'
+		return 0
+	}
+	_der_retry_append owner/repo closure 10
+	_der_retry_drain owner/repo 1001
+	[[ $(grep -c '^try ' "$CALLS") == 1 ]]
+	[[ ! -e "$DER_RETRY_DIR/owner__repo.txt.pending" ]]
+	grep -qx 'issue 21' "$DER_RETRY_DIR/owner__repo.txt"
+	grep -qx 'issue 22' "$DER_RETRY_DIR/owner__other.txt"
+	NOW=1000
+	_der_retry_drain owner/repo 1001
+	NOW=1000
+	_der_retry_drain owner/other 1001
+	grep -q 'try owner/repo 21' "$CALLS"
+	grep -q 'try owner/other 22' "$CALLS"
+	[[ $(grep -c 'try owner/repo 20' "$CALLS") == 1 ]]
+)
+
+# A closure failing before collection appends itself as well as being retained.
+# Each subsequent drain still gets exactly one attempt per unique record.
+(
+	DER_RETRY_DIR="$ROOT/dedup"
+	CALLS="$ROOT/dedup.calls"
+	_der_fetch_closed_context() {
+		printf 'fetch\n' >>"$CALLS"
+		return 1
+	}
+	_der_retry_append owner/repo closure 10
+	for pass in 1 2 3; do
+		rc=0
+		_der_retry_drain owner/repo 0 || rc=$?
+		[[ "$rc" == "$DER_SWEEP_PARTIAL" ]]
+		[[ $(grep -c '^fetch$' "$CALLS") == "$pass" ]]
+	done
+)
 printf 'PASS: partial closure, retry recovery, ready-first deadlines, held memo and budget priority\n'
