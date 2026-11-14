@@ -409,8 +409,10 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
 			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
 	fi
+	# GH#38204: per-repo setup (gate probe, merged-PR list, issue index) takes
+	# 6-28s before the first cursor write, so the cheap slice killed every run.
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || incomplete=1
+		_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$heavy_timeout" _run_post_merge_review_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "pr_review_thread_response" "$state_file" \
 		_pulse_run_optional_stage_with_timeout "pr_review_thread_response" "$stage_timeout" _run_pr_review_thread_response_scanner || incomplete=1
 	_pulse_run_resumable_housekeeping_stage "auto_decomposer_scanner" "$state_file" \
@@ -475,8 +477,8 @@ _pulse_start_post_dispatch_housekeeping() {
 	[[ "$ownership_timeout" -le "$stage_timeout" ]] || ownership_timeout="$stage_timeout"
 	local lane_watchdog=$((lane_budget + ownership_timeout))
 	# Batch ceilings are six times the cheap scanner slice. Graph rebuild,
-	# blocked refresh, decomposition and cache prime need a full batch before
-	# checkpointing. These are per-call ceilings, not reserved time: the outer
+	# blocked refresh, decomposition, post-merge review scan and cache prime
+	# need a full batch before checkpointing. These are per-call ceilings, not reserved time: the outer
 	# watchdog bounds the whole lane and successful checkpoints survive it.
 	# Keep the caller's ceiling, ownership allowance and total lane unchanged.
 	local stage_slice=$((lane_budget / 24))

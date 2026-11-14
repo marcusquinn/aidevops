@@ -238,6 +238,55 @@ _dispatch_first_wave_backlog_repos() {
 	return 0
 }
 
+# GH#38211: the supervisor launch, active refill and early-exit recycle gates
+# only ask whether runnable work exists. A fresh cycle, drain-handoff or
+# first-wave census already answers that without another all-repository
+# enumeration. Read-only: never adopts, consumes or invalidates a snapshot.
+# Cross-cycle censuses get the same registry/schedule recheck as a first wave.
+# Output: "<unconsumed count> <wave>:<mode>" for the largest fresh census.
+# Returns: 0 when a fresh census still holds candidates, 1 otherwise.
+_dispatch_snapshot_runnable_count() {
+	local per_repo_limit="${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}"
+	local snapshot="" _PULSE_FIRST_DISPATCH_WAVE=0 wave="" mode="" schema=""
+	local now_epoch="" ttl=300 candidates="" count=0 best_count=0 best_source=""
+	[[ "${PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED:-1}" != "0" ]] || return 1
+	now_epoch=$(date +%s) || return 1
+	for wave in 0 handoff 1; do
+		_PULSE_FIRST_DISPATCH_WAVE=0
+		[[ "$wave" != 1 ]] || _PULSE_FIRST_DISPATCH_WAVE=1
+		ttl=300
+		if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+			ttl=$(_dispatch_enumeration_expected_seconds) || ttl=300
+		fi
+		[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=300
+		schema=""
+		[[ "$wave" != handoff ]] || schema="$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA"
+		for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
+			if [[ "$wave" == handoff ]]; then
+				snapshot=$(_dispatch_candidate_handoff_path "$per_repo_limit" "$mode") || continue
+			else
+				snapshot=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$mode") || continue
+			fi
+			[[ ! -L "${snapshot}.consumed" ]] || continue
+			_dispatch_candidate_snapshot_is_fresh "$snapshot" "$now_epoch" "$ttl" "$schema" || continue
+			candidates=$(jq -c '.candidates' "$snapshot" 2>/dev/null) || continue
+			candidates=$(_dispatch_filter_consumed_ranked_candidates "$snapshot" "$candidates" 2>/dev/null) || continue
+			if [[ "$wave" != 0 ]] && declare -F _dispatch_repository_rows >/dev/null 2>&1; then
+				candidates=$(_dispatch_filter_partial_snapshot_candidates "$candidates" 2>/dev/null) || continue
+			fi
+			count=$(jq 'length' <<<"$candidates" 2>/dev/null) || continue
+			[[ "$count" =~ ^[0-9]+$ ]] || continue
+			if ((count > best_count)); then
+				best_count="$count"
+				best_source="${wave}:${mode}"
+			fi
+		done
+	done
+	((best_count > 0)) || return 1
+	printf '%s %s\n' "$best_count" "$best_source"
+	return 0
+}
+
 _dispatch_filter_consumed_ranked_candidates() {
 	local snapshot="$1" candidates="$2" consumed="[]"
 	if [[ -f "${snapshot}.consumed" && ! -L "${snapshot}.consumed" ]]; then

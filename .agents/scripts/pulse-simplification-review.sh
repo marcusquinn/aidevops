@@ -45,6 +45,8 @@ fi
 #######################################
 _post_merge_scanner_scan_repo() {
 	local slug="$1" scanner="$2" scanner_cursor_dir="$3" stage_start_epoch="$4" stage_budget="$5" stage_reserve="$6"
+	local prior_starts="${7:-0}"
+	[[ "$prior_starts" =~ ^[0-9]+$ ]] || prior_starts=0
 	local repo_role
 	repo_role=$(get_repo_role_by_slug "$slug")
 	if [[ "$repo_role" != "maintainer" ]]; then
@@ -52,7 +54,9 @@ _post_merge_scanner_scan_repo() {
 	fi
 
 	mkdir -p "$scanner_cursor_dir" 2>/dev/null || true
-	printf '%s\n' "$slug" >"${scanner_cursor_dir}/repo.cursor" 2>/dev/null || true
+	# Line 2 counts consecutive interrupted starts of this repo (GH#38204).
+	local repo_cursor_file="${scanner_cursor_dir}/repo.cursor"
+	printf '%s\n%s\n' "$slug" "$prior_starts" >"$repo_cursor_file" 2>/dev/null || true
 
 	local now_for_budget="" elapsed_for_budget="" remaining_budget="" repo_budget=""
 	now_for_budget=$(date +%s)
@@ -77,12 +81,16 @@ _post_merge_scanner_scan_repo() {
 	# The scan is deferrable maintenance: share the REST-core priority budget so
 	# it yields with a cursor before draining quota needed by dispatch/merge.
 	# GH#38171: the child checks the same deadline, so pass the scaled reserve.
+	# GH#38204: count the start before launch. A watchdog kill leaves the count
+	# raised; any return resets it, so only repeated kills defer this repo.
+	printf '%s\n%s\n' "$slug" "$((prior_starts + 1))" >"$repo_cursor_file" 2>/dev/null || true
 	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
 		SCANNER_BUDGET_SECONDS="$repo_budget" \
 		AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS="$stage_reserve" \
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
 		SCANNER_REST_CORE_GATE="${SCANNER_REST_CORE_GATE:-1}" \
 		"$scanner" scan "$slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+	printf '%s\n0\n' "$slug" >"$repo_cursor_file" 2>/dev/null || true
 
 	local safe_slug="" repo_scan_cursor=""
 	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
@@ -226,6 +234,48 @@ _pulse_scanner_deadline_reached() {
 	return 1
 }
 
+#######################################
+# Post-merge scanner interval gate.
+#
+# Args:
+#   $1 - current epoch
+#   $2 - interval seconds
+# Returns 0 when a traversal is due, 1 while the last completed one is recent.
+#######################################
+_post_merge_scanner_interval_due() {
+	local now_epoch="$1"
+	local interval="$2"
+	[[ -f "$POST_MERGE_SCANNER_LAST_RUN" ]] || return 0
+	local last_run=""
+	last_run=$(cat "$POST_MERGE_SCANNER_LAST_RUN" 2>/dev/null || echo "0")
+	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+	if [[ $((now_epoch - last_run)) -lt "$interval" ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# GH#38204: consecutive interrupted starts of the resume repo (repo.cursor
+# line 2). The watchdog kills the whole stage, so a repo whose setup outlives
+# the slice would otherwise pin the traversal and starve every later repo.
+#
+# Args:
+#   $1 - repo cursor file
+# Stdout: interrupted-start count (0 when absent, legacy or invalid)
+# Returns 0 always.
+#######################################
+_post_merge_scanner_interrupted_starts() {
+	local cursor_file="$1"
+	local starts=""
+	if [[ -f "$cursor_file" ]]; then
+		starts=$(sed -n '2p' "$cursor_file" 2>/dev/null || true)
+	fi
+	[[ "$starts" =~ ^[0-9]+$ ]] || starts=0
+	printf '%s\n' "$starts"
+	return 0
+}
+
 _run_post_merge_review_scanner() {
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -241,16 +291,7 @@ _run_post_merge_review_scanner() {
 	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/post-merge-review-scanner}"
 	local repo_cursor_file="${scanner_cursor_dir}/repo.cursor"
 
-	# Time gate: skip if last run was within the interval
-	if [[ -f "$POST_MERGE_SCANNER_LAST_RUN" ]]; then
-		local last_run
-		last_run=$(cat "$POST_MERGE_SCANNER_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
-		local elapsed=$((now_epoch - last_run))
-		if [[ "$elapsed" -lt "$post_merge_scanner_interval" ]]; then
-			return 0
-		fi
-	fi
+	_post_merge_scanner_interval_due "$now_epoch" "$post_merge_scanner_interval" || return 0
 
 	local scanner="${SCRIPT_DIR}/post-merge-review-scanner.sh"
 	if [[ ! -x "$scanner" ]]; then
@@ -268,11 +309,14 @@ _run_post_merge_review_scanner() {
 	local total_repos=0
 	local skipped_contributor=0
 	local scan_yielded=0
-	local resume_slug=""
+	local resume_slug="" resume_starts=0 slug_starts=0
+	local max_interrupted="${AIDEVOPS_POST_MERGE_SCANNER_MAX_INTERRUPTED_STARTS:-3}"
+	[[ "$max_interrupted" =~ ^[1-9][0-9]*$ ]] || max_interrupted=3
 	local enabled_slugs=""
 	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	if [[ -f "$repo_cursor_file" ]]; then
 		resume_slug=$(sed -n '1p' "$repo_cursor_file" 2>/dev/null || true)
+		resume_starts=$(_post_merge_scanner_interrupted_starts "$repo_cursor_file")
 		if [[ -n "$resume_slug" ]] && ! _pulse_slug_list_contains "$resume_slug" "$enabled_slugs"; then
 			echo "[pulse-wrapper] Post-merge scanner: resume cursor repo $resume_slug is no longer enabled; starting fresh scan" >>"${LOGFILE:-/dev/null}"
 			resume_slug=""
@@ -280,16 +324,19 @@ _run_post_merge_review_scanner() {
 	fi
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		slug_starts=0
 		if [[ -n "$resume_slug" ]]; then
-			if [[ "$slug" == "$resume_slug" ]]; then
-				resume_slug=""
-			else
+			[[ "$slug" == "$resume_slug" ]] || continue
+			resume_slug=""
+			slug_starts="$resume_starts"
+			if [[ "$slug_starts" -ge "$max_interrupted" ]]; then
+				echo "[pulse-wrapper] Post-merge scanner: deferring $slug after ${slug_starts} interrupted start(s); PR cursor kept for next traversal" >>"${LOGFILE:-/dev/null}"
 				continue
 			fi
 		fi
 		local scan_rc=0
 		_post_merge_scanner_scan_repo "$slug" "$scanner" "$scanner_cursor_dir" \
-			"$stage_start_epoch" "$stage_budget" "$stage_reserve" || scan_rc=$?
+			"$stage_start_epoch" "$stage_budget" "$stage_reserve" "$slug_starts" || scan_rc=$?
 		case "$scan_rc" in
 		0)
 			total_repos=$((total_repos + 1))

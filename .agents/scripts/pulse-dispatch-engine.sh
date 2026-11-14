@@ -1384,6 +1384,33 @@ run_underfill_worker_recycler() {
 }
 
 #######################################
+# Runnable-work count for the supervisor launch, active refill and early-exit
+# recycle gates (GH#38211). Those gates only decide whether to run the
+# recycler or dispatch_max, which keeps its own census and live gates. A fresh
+# candidate census answers the question; the all-repository
+# count_runnable_candidates enumeration (lock reconcile and dependency
+# normalization per pulse repo) delayed one supervisor launch ~20 min with the
+# pool at 0 workers. With no fresh census holding candidates, the broad count
+# still runs, so cold-cache and failing-PR behaviour are unchanged.
+# Arguments: $1 - caller label for the log line
+# Returns: count via stdout
+#######################################
+_pulse_gate_runnable_count() {
+	local caller="${1:-gate}" snapshot_result="" count="" source=""
+	if declare -F _dispatch_snapshot_runnable_count >/dev/null 2>&1 &&
+		snapshot_result=$(_dispatch_snapshot_runnable_count); then
+		read -r count source <<<"$snapshot_result"
+		if [[ "$count" =~ ^[0-9]+$ ]] && ((count > 0)); then
+			echo "[pulse-wrapper] Runnable gate (${caller}): census_snapshot count=${count} source=${source} (GH#38211)" >>"${LOGFILE:-/dev/null}"
+			printf '%s\n' "$count"
+			return 0
+		fi
+	fi
+	normalize_count_output "$(count_runnable_candidates)"
+	return 0
+}
+
+#######################################
 # Refill an underfilled worker pool while the pulse session is still alive.
 #
 # The pulse prompt asks the LLM to monitor every 60s, but the live session can
@@ -1435,7 +1462,7 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 	local max_workers active_workers refill_target runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	runnable_count=$(_pulse_gate_runnable_count "active_refill")
 	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
@@ -1729,7 +1756,7 @@ _compute_initial_underfill() {
 	fi
 
 	local runnable_count queued_without_worker
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	runnable_count=$(_pulse_gate_runnable_count "supervisor_launch")
 	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 
@@ -1810,7 +1837,7 @@ _run_early_exit_recycle_loop() {
 		local post_max post_active post_target post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_runnable=$(_pulse_gate_runnable_count "early_exit_recycle")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
@@ -1830,7 +1857,7 @@ _run_early_exit_recycle_loop() {
 		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
 		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
 		post_active=$((post_active + early_dispatched))
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_runnable=$(_pulse_gate_runnable_count "early_exit_recycle_post_fill")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
 		post_target=$(_dispatch_floor_aware_worker_target "$post_max")
