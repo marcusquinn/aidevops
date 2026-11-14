@@ -9,6 +9,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 export HOME="${TMP_DIR}/home"
+unset DER_RETRY_DIR
 export PULSE_JITTER_MAX=0
 export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 export WRAPPER_LOGFILE="$LOGFILE"

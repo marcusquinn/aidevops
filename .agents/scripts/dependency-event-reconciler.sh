@@ -541,6 +541,7 @@ _der_closure_failure() {
 reconcile_dependants_after_verified_closure() {
 	local repo="$1"
 	local closed_number="$2"
+	local deadline="${3:-}"
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
 	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo="" try_status=0
@@ -561,6 +562,10 @@ reconcile_dependants_after_verified_closure() {
 	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || { _der_closure_failure "$repo" "$closed_number" candidate_collection; return 1; }
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
+		# Partial: the caller keeps the closure entry; replay is idempotent.
+		if [[ -n "$deadline" ]] && _der_stale_epoch_reached "$deadline"; then
+			return "$DER_SWEEP_PARTIAL"
+		fi
 		count=$((count + 1))
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || issue_number=""
 		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || candidate_repo=""
@@ -637,30 +642,52 @@ _der_stale_epoch_reached() {
 _der_retry_drain() {
 	local repo="$1" deadline="$2" kind="" retry_number="" candidate="" status=0 complete=true
 	local file="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}/${repo//\//__}.txt"
-	if [[ ! -s "${file}.pending" && -s "$file" ]]; then
-		mv "$file" "${file}.pending" || return 1
+	local pending="${file}.pending" incoming="${file}.incoming.$$" remaining="${file}.remaining.$$"
+	local stopped=false
+	# Merge newly appended records into the pending snapshot so one failing
+	# retry cannot hide later independent records.
+	if [[ -s "$file" ]]; then
+		mv "$file" "$incoming" || return 1
+		cat "$incoming" >>"$pending" || return 1
+		rm -f "$incoming"
 	fi
-	[[ -s "${file}.pending" ]] || return 0
-	while read -r kind retry_number; do
-		if _der_stale_epoch_reached "$deadline"; then
-			complete=false
-			break
-		fi
+	[[ -s "$pending" ]] || return 0
+	: >"$remaining" || return 1
+	while read -r kind retry_number <&3; do
 		[[ "$retry_number" =~ ^[0-9]+$ ]] || continue
+		if [[ "$stopped" == true ]] || _der_stale_epoch_reached "$deadline"; then
+			# Deadline reached: keep this and every unvisited entry.
+			stopped=true
+			complete=false
+			printf '%s %s\n' "$kind" "$retry_number" >>"$remaining"
+			continue
+		fi
 		status=0
 		if [[ "$kind" == closure ]]; then
-			reconcile_dependants_after_verified_closure "$repo" "$retry_number" || status=$?
+			reconcile_dependants_after_verified_closure "$repo" "$retry_number" "$deadline" || status=$?
 		elif [[ "$kind" == issue ]]; then
-			candidate=$(gh issue view "$retry_number" --repo "$repo" --json number,title,body,labels,updatedAt 2>/dev/null) || { complete=false; continue; }
-			candidate=$(printf '%s' "$candidate" | jq -ce --arg repo "$repo" 'select((.number | type) == "number" and (.labels | type) == "array") | . + {updated_at:.updatedAt,repository:{nameWithOwner:$repo},labels:{nodes:.labels,pageInfo:{hasNextPage:false}}}') || { complete=false; continue; }
-			_der_try_unblock "$repo" "$retry_number" "$candidate" || status=$?
+			status=1
+			if candidate=$(gh issue view "$retry_number" --repo "$repo" --json number,title,body,labels,updatedAt 2>/dev/null) &&
+				candidate=$(printf '%s' "$candidate" | jq -ce --arg repo "$repo" 'select((.number | type) == "number" and (.labels | type) == "array") | . + {updated_at:.updatedAt,repository:{nameWithOwner:$repo},labels:{nodes:.labels,pageInfo:{hasNextPage:false}}}'); then
+				status=0
+				_der_try_unblock "$repo" "$retry_number" "$candidate" || status=$?
+			fi
 		else
-			complete=false
+			continue
 		fi
-		[[ "$status" -eq 0 || "$status" -eq "$DER_NOT_READY" ]] || complete=false
-	done <"${file}.pending"
+		if [[ "$status" -ne 0 && "$status" -ne "$DER_NOT_READY" ]]; then
+			# Failed (or partial) entries stay queued; completed ones are dropped.
+			complete=false
+			printf '%s %s\n' "$kind" "$retry_number" >>"$remaining"
+		fi
+	done 3<"$pending"
+	if [[ -s "$remaining" ]]; then
+		awk '!seen[$0]++' "$remaining" >"${remaining}.dedup" && mv -f "${remaining}.dedup" "$pending" || { rm -f "$remaining" "${remaining}.dedup"; return 1; }
+	else
+		rm -f "$pending" || return 1
+	fi
+	rm -f "$remaining"
 	[[ "$complete" == true ]] || return "$DER_SWEEP_PARTIAL"
-	rm -f "${file}.pending" || return 1
 	return 0
 }
 
@@ -791,7 +818,7 @@ reconcile_stale_blocked_issues() {
 	local ready_cursor=0 ready_file="" ready=0 ready_visited=0 skipped=0 is_ready=false
 	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
-	local retry_status=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
+	local retry_status=0 actionable=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
 	[[ "$ready_max" =~ ^[1-9][0-9]*$ ]] || ready_max=10
@@ -801,14 +828,21 @@ reconcile_stale_blocked_issues() {
 	ready_file="${cursor_file}.ready"
 	ready_cursor=$(_der_stale_cursor_read "$ready_file")
 	memo_file="${cursor_file}.skip.json"
+	# Drain queued retries first: they do not depend on the listing.
+	_der_retry_drain "$repo" "$stop_deadline" || retry_status=$?
 	pages=$(_der_stale_listing "$repo") || return 1
 	total=$(printf '%s' "$pages" | jq 'length') || return 1
 	memo=$(_der_stale_memo_load "$memo_file" "$ttl") && memo_enabled=true
 	candidates=$(_der_stale_candidates "$pages" "$repo" "$cursor" "$ready_cursor") || return 1
 	pending=$(printf '%s\n' "$candidates" | jq -s length) || return 1
 	ready=$(printf '%s\n' "$candidates" | jq -s '[.[] | select(.sweep_ready)] | length') || return 1
-	mkdir -p "${ready_hint%/*}" 2>/dev/null && printf '%s\n' "$ready" >"$ready_hint" || true
-	_der_retry_drain "$repo" "$stop_deadline" || retry_status=$?
+	# Hint counts only actionable ready work: exclude unchanged memo-skipped issues.
+	actionable=$(printf '%s\n' "$candidates" | jq -s --argjson memo "$memo" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
+		[.[] | select(.sweep_ready)
+			| select((($memo[.number | tostring] // null) as $m
+				| ($m != null and $m.updated_at == .updated_at and $m.epoch <= $now and $now - $m.epoch < $ttl)) | not)]
+		| length') || actionable="$ready"
+	mkdir -p "${ready_hint%/*}" 2>/dev/null && printf '%s\n' "$actionable" >"$ready_hint" || true
 	[[ "$retry_status" -eq 0 ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
