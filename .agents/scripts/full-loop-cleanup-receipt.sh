@@ -1831,6 +1831,57 @@ full_loop_mark_cleanup_cleaned_for_worktree() {
 	return $?
 }
 
+# Archive only after validating the complete hot set. This housekeeping runs
+# from cleanup, never from worktree admission, and shares the mutation lock.
+_full_loop_archive_cleanup_receipts() {
+	local receipt_dir="$1"
+	local days="${AIDEVOPS_CLEANUP_RECEIPT_ARCHIVE_DAYS:-7}"
+	local now="" last="" candidates="" receipt_path="" month="" destination=""
+	local count=0
+
+	[[ "$days" =~ ^[0-9]+$ && ${#days} -le 4 ]] || return 1
+	[[ "$days" != 0 ]] || return 0
+	now=$(date +%s) || return 1
+	_full_loop_receipt_lock_acquire || return 1
+	last=$(jq -r '.last_run // 0' "$receipt_dir/.archive-housekeeping" 2>/dev/null || true)
+	if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < 3600 )); then
+		_full_loop_receipt_lock_release
+		return 0
+	fi
+	if ! _full_loop_valid_receipt_file_count "$receipt_dir" >/dev/null; then
+		_full_loop_receipt_lock_release
+		return 1
+	fi
+	candidates=$(jq -nr --argjson cutoff "$((now - 10#$days * 86400))" '
+		inputs | select(.resource_cleanup_state == "CLEANED")
+		| [.. | strings | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"))
+			| sub("\\.[0-9]+Z$"; "Z") | (try fromdateiso8601 catch empty)] | max as $newest
+		| select($newest != null and $newest < $cutoff)
+		| [input_filename, ($newest | strftime("%Y-%m"))] | @tsv
+	' "$receipt_dir"/*.json 2>/dev/null) || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
+	while IFS=$'\t' read -r receipt_path month; do
+		[[ -n "$receipt_path" && "$month" =~ ^[0-9]{4}-[0-9]{2}$ ]] || continue
+		destination="$receipt_dir/archive/$month"
+		if [[ -L "$receipt_path" || -L "$receipt_dir/archive" || -L "$destination" ]] ||
+			! mkdir -p "$destination" || [[ -e "$destination/${receipt_path##*/}" ]] ||
+			! mv "$receipt_path" "$destination/"; then
+			_full_loop_receipt_lock_release
+			return 1
+		fi
+		count=$((count + 1))
+		[[ "$count" -lt 128 ]] || break
+	done <<<"$candidates"
+	printf '{"last_run":%s}\n' "$now" >"$receipt_dir/.archive-housekeeping" || {
+		_full_loop_receipt_lock_release
+		return 1
+	}
+	_full_loop_receipt_lock_release
+	return 0
+}
+
 full_loop_reconcile_cleanup_receipts() {
 	local receipt_dir=""
 	local receipt_path=""
