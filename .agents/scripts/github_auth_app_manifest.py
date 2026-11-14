@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
-import subprocess
+import subprocess  # nosec B404 -- fixed `gh api` argv only, never a shell
 import sys
 import threading
 import time
@@ -81,6 +81,7 @@ class ManifestFlow:
         self.state = secrets.token_urlsafe(24)
         self.code = None
         self.done = threading.Event()
+        self._accept = threading.Lock()
         self.manifest_json = ""
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
 
@@ -101,10 +102,14 @@ class ManifestFlow:
     def callback(self, query):
         state = (query.get("state") or [""])[0]
         code = (query.get("code") or [""])[0]
-        if not secrets.compare_digest(state, self.state) or not CODE.fullmatch(code):
-            return 400, "<p>Invalid or stale setup response. Return to the terminal.</p>"
-        self.code = code
-        self.done.set()
+        # The state is single-use: validate and consume it atomically so a
+        # concurrent or replayed callback cannot replace the accepted code.
+        with self._accept:
+            if (self.done.is_set() or not secrets.compare_digest(state, self.state)
+                    or not CODE.fullmatch(code)):
+                return 400, "<p>Invalid or stale setup response. Return to the terminal.</p>"
+            self.code = code
+            self.done.set()
         return 200, "<p>App created. Return to the terminal to install it.</p>"
 
     def respond(self, path):
@@ -179,7 +184,7 @@ def _key_directory():
     info = keys.lstat()
     if not keys.is_dir() or keys.is_symlink() or info.st_uid != os.getuid():
         raise AuthError("Unsafe key directory")
-    os.chmod(keys, 0o700)
+    os.chmod(keys, 0o700)  # nosec B103 nosemgrep -- owner-only private-key directory; traversal needs +x
     return keys
 
 

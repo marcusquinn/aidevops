@@ -11,12 +11,13 @@ from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import subprocess
+import subprocess  # nosec B404 -- fixed sibling runtime check argv only, never a shell
 import sys
 
 from github_app_auth import AuthError, api, atomic_json, exchange, jwt
 from github_auth_config import entry_for, load_profiles, registry, registry_lock, settings
 from github_auth_policy import policy, validate_routes
+from github_auth_routing import valid_slug
 
 PAGE = 100
 
@@ -150,8 +151,14 @@ def _apply(registry_path, config_path, index, options):
 
 
 def _check(repo):
-    cli = Path(__file__).with_name("github_auth_cli.py")
-    result = subprocess.run([sys.executable, str(cli), "check", repo, "--consumer", "pulse"],  # nosec B603
+    """Run the full Pulse runtime check: installation grants, minted-token
+    permissions and a live App read. A metadata-only read is not enough,
+    because App read failures never fall back to the personal token."""
+    if not valid_slug(repo):
+        return "failed"
+    runtime = Path(__file__).with_name("github_auth_runtime.py")
+    # Fixed sibling script and a validated owner/repo slug; argv list, no shell.
+    result = subprocess.run([sys.executable, str(runtime), "check", repo],  # nosec B603 nosemgrep
                             capture_output=True, text=True, timeout=120, check=False)
     return "passed" if result.returncode == 0 and '"read_check": "passed"' in result.stdout else "failed"
 
