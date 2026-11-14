@@ -220,6 +220,13 @@ failure as its refusal reason:
   `OPEN`, it qualifies once Git has not moved its `HEAD` or index for 2 hours
   (`review-idle`), re-checked just before removal (`changed-review-active`).
   Unknown PR state still refuses, and every other check below still applies.
+  Two more idle rules share that mechanism and re-check at removal
+  (`changed-worker-active`, `changed-unreferenced-active`): a worker tree
+  (`<repo>-feature-auto-<timestamp>-gh<N>`) whose issue N is confirmed `OPEN`
+  qualifies after 6 hours idle (`worker-idle`; a redispatch creates a fresh
+  tree), and a `<repo>-feature-auto-<timestamp>-<pid>` tree with no reference
+  qualifies after 72 hours idle (`unreferenced-idle`), its repository still
+  resolving to a GitHub origin. Other shapes, such as `ci-repair-pr<N>`, refuse.
   Reclaim runs Git with `GIT_OPTIONAL_LOCKS=0`, so its own status reads never
   rewrite the index and reset that clock.
 - The origin is a GitHub remote. A hostless slug would query an unrelated

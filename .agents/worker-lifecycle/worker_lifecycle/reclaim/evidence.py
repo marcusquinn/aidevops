@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 import json
 from pathlib import Path
 import re
 
 from .host import git, locked, metadata_directory, nothing_to_lose, run
 from .owners import OwnerCheck
-from .review import own_pull_request, still_idle
+from .review import idle_shape, unfinished
 
 __all__ = ["evidence", "prefetch", "references", "repository"]
 
@@ -164,26 +165,8 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
         return "repository-unknown"
     verdict["repository"] = slug
     verdict["references"] = [f"{kind}{number}" for kind, number in found]
-    return None if found else "reference-unknown"
-
-
-def _unfinished(path: Path, found: list[tuple[str, int]],
-                query: Query) -> tuple[str | None, str]:
-    """Name the first unfinished reference, or how the work counts as finished.
-
-    A review worktree is judged by its own pull request alone, and an idle one
-    whose PR is confirmed open is the one exception (``reclaim.review``); every
-    later check still applies to it.
-    """
-    own = own_pull_request(path.name, query.slug)
-    for kind, number in found if own is None else [("pr", own)]:
-        finished, detail = reference_finished(kind, number, query)
-        if finished:
-            continue
-        if own is not None and detail == f"pr-{own}-open" and still_idle(path):
-            return None, "review-idle"
-        return detail, ""
-    return None, "work-finished"
+    shape = idle_shape(path.name, slug)
+    return None if found or (shape and shape[0].kind is None) else "reference-unknown"
 
 
 def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
@@ -208,8 +191,9 @@ def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason, finished = _unfinished(path, found,
-                                       Query(verdict["repository"], cache, timeout))
+        query = Query(verdict["repository"], cache, timeout)
+        reason, finished = unfinished(
+            path, found, query.slug, partial(reference_finished, query=query))
     if reason is None and owner is not None:
         reason = _unsafe_to_remove(path, owner, timeout)
     verdict["authorized"] = reason is None

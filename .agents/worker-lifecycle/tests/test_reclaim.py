@@ -198,6 +198,34 @@ class EvidenceTests(unittest.TestCase):
         verdict = self.decide(path=tree, cache={("pr", 9001, SLUG): (False, "pr-9001-none")})
         self.assertEqual(verdict["reason"], "pr-9001-none")
 
+    OPEN_ISSUE = {("gh", 4242, SLUG): (False, "issue-4242-open")}
+    WORKER = "repo-feature-auto-20261114-023500-gh4242"
+
+    def test_authorizes_an_idle_worker_tree_of_an_open_issue(self):
+        tree = self.worktree_idle(self.WORKER, idle=review.WORKER_IDLE_SECONDS + 60)
+        verdict = self.decide(path=tree, cache=self.OPEN_ISSUE)
+        self.assertTrue(verdict["authorized"], verdict)
+        self.assertEqual(verdict["reason"], "worker-idle")
+
+    def test_refuses_a_worker_tree_idle_under_six_hours(self):
+        tree = self.worktree_idle(self.WORKER, idle=review.IDLE_SECONDS + 60)
+        self.assertEqual(self.decide(path=tree, cache=self.OPEN_ISSUE)["reason"],
+                         "issue-4242-open")
+
+    def test_idle_worker_tree_removal_recheck_refuses_when_active(self):
+        tree = self.worktree_idle(self.WORKER, idle=60)
+        self.assertEqual(review.idle_verifier("worker-idle")(tree), (False, "worker-active"))
+
+    def test_authorizes_an_idle_unreferenced_tree_only_after_72_hours(self):
+        name = "repo-feature-auto-20261114-023500-4321"
+        tree = self.worktree_idle(name, idle=review.UNREFERENCED_IDLE_SECONDS + 60)
+        verdict = self.decide(path=tree)
+        self.assertTrue(verdict["authorized"], verdict)
+        self.assertEqual(verdict["reason"], "unreferenced-idle")
+        recent = self.worktree_idle("repo-feature-auto-20261114-023501-4322",
+                                    idle=review.WORKER_IDLE_SECONDS + 60)
+        self.assertEqual(self.decide(path=recent)["reason"], "reference-unknown")
+
     def test_open_pull_request_still_refuses_outside_review_trees(self):
         tree = self.worktree_idle("repo-pr9001-ci-repair-fixture")
         self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
