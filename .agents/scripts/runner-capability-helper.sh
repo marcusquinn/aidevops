@@ -119,10 +119,19 @@ def check_rejections(names):
 
 def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
+    env = os.environ.copy()
+    if secret:
+        # The inner supervisor must time out first so it can kill its gopass
+        # group before this watchdog SIGKILLs the supervisor.
+        try:
+            inner = int(env.get('AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS', '12'))
+        except ValueError:
+            inner = 12
+        env['AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS'] = str(max(1, min(inner, timeout - 1)))
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   start_new_session=True)
+                                   start_new_session=True, env=env)
     except OSError:
         return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
