@@ -172,7 +172,7 @@ _pmpc_unlabeled_worker_provenance() {
 #######################################
 _pm_gate_unlabeled_worker_branch() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" labels_str="$4" info_json="$5"
-	local head_ref pr_body
+	local head_ref="" pr_body=""
 	[[ ",${labels_str}," != *",origin:"* ]] || return 0
 	head_ref=$(printf '%s' "$info_json" | jq -r '.headRefName // ""' 2>/dev/null) || head_ref=""
 	[[ "$head_ref" == feature/auto-* ]] || return 0
