@@ -1128,9 +1128,11 @@ notify_ever_nmr_without_approval() {
 	local already_notified
 	# Check all pages together. A signature published since verification also
 	# suppresses notification; presence alone never grants dispatch authority.
-	already_notified=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp \
-		--jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
-		2>/dev/null) || return 0
+	# GH#38185: gh rejects --slurp with --jq, so filter with standalone jq.
+	already_notified=$(set -o pipefail
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" --paginate --slurp 2>/dev/null |
+			jq '[.[][] | select((.body // "") | test("ever-nmr-remediation|aidevops-signed-approval"))] | length' \
+				2>/dev/null) || return 0
 	[[ "$already_notified" =~ ^[0-9]+$ ]] || return 0
 	if [[ "$already_notified" -gt 0 ]]; then
 		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — remediation comment already posted, skipping" >>"$LOGFILE"

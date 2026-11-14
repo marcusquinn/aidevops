@@ -1812,7 +1812,10 @@ _pcc_dispatch_stalled() {
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
 	# REST supplies parent counts, which gh pr view's commit projection omits.
 	# Missing metadata is conservative: no release is credited as progress.
-	commits=$(gh api --paginate --slurp "repos/${repo}/pulls/${pr}/commits?per_page=100" --jq 'flatten') || commits='[]'
+	# GH#38185: gh rejects --slurp with --jq, so flatten the pages with jq.
+	commits=$(set -o pipefail
+		gh api --paginate --slurp "repos/${repo}/pulls/${pr}/commits?per_page=100" |
+			jq -c 'if type == "array" then flatten else error("invalid commit pages") end') || commits='[]'
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
 		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \

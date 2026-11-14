@@ -500,6 +500,57 @@ validate_portable_stat() {
 	return $violations
 }
 
+# Print logical lines (backslash continuations joined) where one `gh api`
+# pipeline segment combines --slurp with --jq/--template. Quoted strings are
+# blanked first, so a jq filter's own `|` cannot split a segment and a later
+# `| jq --slurp` stage is not mistaken for a gh flag.
+# Stdin: shell source. Stdout: offending lines. Returns 0 always.
+_gh_api_slurp_filter_hits() {
+	sed -e :a -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' |
+		awk -v sq="'" '
+			/^[[:space:]]*#/ { next }
+			{
+				line = $0
+				gsub(sq "[^" sq "]*" sq, "Q", line)
+				gsub(/"[^"]*"/, "Q", line)
+				n = split(line, seg, "|")
+				for (i = 1; i <= n; i++) {
+					s = " " seg[i] " "
+					if (s ~ /gh[[:space:]]+api[[:space:]]/ &&
+						s ~ /[[:space:]]--slurp[[:space:]=]/ &&
+						s ~ /[[:space:]]--(jq|template)[[:space:]=]/) {
+						print $0
+						break
+					}
+				}
+			}'
+	return 0
+}
+
+# ABSOLUTE gate (GH#38185): native `gh api` rejects --slurp combined with
+# --jq/--template before sending any request, so such a call fails on every
+# run (t2572, GH#20219, GH#38185). Use `--paginate --slurp | jq '...'`.
+# Test files are exempt: they model the invalid combination on purpose.
+validate_gh_api_slurp_filter() {
+	local violations=0
+	local file="" base="" hits=""
+
+	print_info "Validating gh api --slurp/--jq usage (absolute)..."
+	for file in "$@"; do
+		base="${file##*/}"
+		case "$base" in
+			test-*) continue ;;
+		esac
+		hits=$(git show ":$file" 2>/dev/null | _gh_api_slurp_filter_hits)
+		if [[ -n "$hits" ]]; then
+			print_error "gh api combines --slurp with --jq/--template in $file; gh rejects it on every call. Pipe the --slurp output to jq instead:"
+			printf '%s\n' "$hits" >&2
+			((++violations))
+		fi
+	done
+	return $violations
+}
+
 # GH#36686: parse modified scripts with the macOS-shipped /bin/bash 3.2, which
 # launchd uses and which rejects constructs Bash 5 accepts (GH#19252). Runs
 # only where /bin/bash is really 3.x (every Mac); CI runs the same parse on
@@ -1299,6 +1350,9 @@ main_pre_commit() {
 	echo "" >&2
 
 	validate_portable_stat "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_gh_api_slurp_filter "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
 	validate_bash32_parse "${modified_files[@]}" || ((total_violations += $?))

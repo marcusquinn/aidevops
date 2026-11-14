@@ -38,6 +38,13 @@ if [[ "$1" == "pr" && "$2" == "view" ]]; then
 fi
 if [[ "$1 $2 $3 $4" == "api --paginate --slurp repos/owner/repo/pulls/42/commits?per_page=100" ]]; then
 	[[ "${STUB_METADATA_FAILURE:-}" != commits ]] || exit 1
+	# GH#38185: mirror real gh, which rejects --slurp with --jq/--template.
+	for arg in "$@"; do
+		if [[ "$arg" == --jq* || "$arg" == --template* ]]; then
+			printf 'the `--slurp` option is not supported with `--jq` or `--template`\n' >&2
+			exit 1
+		fi
+	done
 	printf '%s\n' "${STUB_COMMITS_JSON:-[]}"
 	exit 0
 fi
