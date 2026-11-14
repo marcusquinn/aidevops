@@ -1897,6 +1897,12 @@ test_ci_repair_consumes_abandoned_append_only_claim() {
 	local action=""
 	mkdir -p "${lease_dir}/attempt-1.claim"
 	printf '{"pid":999999,"pid_start":"stale"}\n' >"${lease_dir}/attempt-1.claim/owner.json"
+	# GH#38194: the harness stub reports every mtime as `date +%s`, sampled after
+	# _ci_repair_lock_is_stale has read `now`. Across a second boundary the claim
+	# looks one second in the future, and zero grace then reports it "active".
+	# Pin this abandoned claim in the past; the next define_feedback_helpers call
+	# restores the harness stub.
+	_file_mtime_epoch() { local file_path="$1"; [[ -e "$file_path" ]] || return 1; printf '0\n'; return 0; }
 	action=$(_ci_repair_claim_lease "$lease_dir" "owner/repo" "100" "$TEST_PR_HEAD_SHA" \
 		"fingerprint" "2" "feature/repair" "ci-repair-test")
 
