@@ -125,6 +125,10 @@ _tbr_run_stage() {
 	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
 	fi
+	# GH#38232: the seed stops early enough to leave unclassified its share.
+	if [[ "$stage" == seed && -n "${TBR_SEED_DEADLINE:-}" ]]; then
+		remaining=$((TBR_SEED_DEADLINE - SECONDS))
+	fi
 	[[ "$remaining" -gt 0 ]] || {
 		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
 		return 2
@@ -177,6 +181,18 @@ _tbr_rotate() {
 	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
 		[inputs | select(length > 0)] | unique |
 		(map(select(. > $cursor)) + map(select(. <= $cursor)))[]' || return 1
+	return 0
+}
+
+# GH#38232: resume AT the cursor. The seed repo cursor names the repo that was
+# interrupted; exclusive rotation sends it to the back, where faster repos use
+# the stage cap first and it never completes. Per-item cursors (seed issues,
+# discovery) keep _tbr_rotate so one stalled item cannot block the rest.
+_tbr_rotate_inclusive() {
+	local lines="$1" cursor="$2"
+	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
+		[inputs | select(length > 0)] | unique |
+		(map(select(. >= $cursor)) + map(select(. < $cursor)))[]' || return 1
 	return 0
 }
 
@@ -311,10 +327,20 @@ tbr_seed() {
 		return 0
 	fi
 	local self="" slug="" issue="" policy_enabled="" candidates="" incomplete=0 policy_rc=0
-	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
+	local repos="" repo_cursor="" issue_cursor="" cursor_name="" retried="" first=1
 	repos=$(_tbr_pulse_repos) || return 2
 	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
-	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	[[ ! -f "${TBR_ROOT}/seed_repo_retry" ]] || read -r retried <"${TBR_ROOT}/seed_repo_retry" || true
+	# GH#38232: start at the interrupted repo so it gets the stage cap first.
+	# If it already started first last run and was interrupted again, let
+	# the other repos run before it this time; per-repo issue cursors keep
+	# its progress either way.
+	if [[ -n "$repo_cursor" && "$retried" == "$repo_cursor" ]]; then
+		rm -f "${TBR_ROOT}/seed_repo_retry"
+		repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	else
+		repos=$(_tbr_rotate_inclusive "$repos" "$repo_cursor") || return 2
+	fi
 	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -325,6 +351,10 @@ tbr_seed() {
 			incomplete=1
 			continue
 		}
+		if [[ "$first" -eq 1 && -n "$repo_cursor" && "$slug" == "$repo_cursor" ]]; then
+			_tbr_save_cursor seed_repo_retry "$slug" || return 2
+		fi
+		first=0
 		_tbr_save_cursor seed_repo_cursor "$slug" || return 2
 		printf 'blocker-recovery: checking stage=seed_policy repo=%s\n' "$slug" >&2
 		policy_enabled=false
@@ -349,7 +379,7 @@ tbr_seed() {
 		rm -f "${TBR_ROOT}/${cursor_name}"
 	done <<<"$repos"
 	[[ "$incomplete" -eq 0 ]] || return 2
-	rm -f "${TBR_ROOT}/seed_repo_cursor"
+	rm -f "${TBR_ROOT}/seed_repo_cursor" "${TBR_ROOT}/seed_repo_retry"
 	printf '%s\n' "$now" >"$stamp"
 	return 0
 }
@@ -1418,7 +1448,7 @@ tbr_pending() {
 		entry_mode=rearm
 	fi
 	_tbr_init_dirs || return 1
-	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
 	_tbr_start_budget || return 2
 	# Retire stale fixtures before any identity/API call, including entries past
 	# the remote scan budget. Never retire evidence on an unreadable registry.
@@ -1428,9 +1458,13 @@ tbr_pending() {
 		_tbr_entry_registered "$file" || rc=$?
 		[[ "$rc" -lt 2 ]] || return 2
 	done
+	# GH#38232: reserve one stage cap each for seed and unclassified (still at
+	# most half the budget), so a slow seed cannot starve unclassified intake.
 	reserve=$((TBR_BUDGET_SECONDS / 2))
-	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
+	[[ "$reserve" -le $((TBR_STAGE_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS * 2))
+	unclassified_reserve=$((reserve / 2))
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
+	TBR_SEED_DEADLINE=$((TBR_DEADLINE - unclassified_reserve))
 	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
 	# GH#36114: discover unqueued holds first, so a trusted retry on a hold this
 	# runner never queued is applied by the queue pass below in the same run.
