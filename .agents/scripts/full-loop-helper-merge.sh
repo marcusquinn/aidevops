@@ -1810,6 +1810,13 @@ cmd_merge() {
 
 	# Gate: enforce review-bot-gate before merge.
 	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
+		# Native auto-merge may have landed a protected release after the first
+		# probe. Reuse the same identity and merge-SHA checks before reconciling.
+		_already_merged_rc=0
+		_merge_handle_already_merged_provenance "$pr_number" "$repo" || _already_merged_rc=$?
+		if [[ "$_already_merged_rc" -ne 2 ]]; then
+			return "$_already_merged_rc"
+		fi
 		_merge_report_pre_merge_gate_failure
 		return 1
 	}
