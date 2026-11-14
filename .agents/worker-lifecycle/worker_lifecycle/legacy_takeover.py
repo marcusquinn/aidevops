@@ -6,9 +6,26 @@ evidence and, for a detached HEAD, a verified creation receipt.
 """
 
 import json
+from pathlib import Path
+import sqlite3
 from uuid import UUID, uuid5
 
-from .cleanup_plan import _runs, enrolled_only_authorized
+from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .process import ObservationUnavailable
+
+
+def close_quiescent_admission(store, item):
+    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
+
+    Uses the admission pass's own primitive, which re-samples bound runs and
+    closes only when every run is admitted and ended. Unenrolled, changed, empty
+    or unfinished generations stay open, so the authority check that follows
+    still reports `managed-admission-not-closed`. Never called in preview.
+    """
+    try:
+        prepare_cleanup(store, Path(item["path"]))
+    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
+        return
 
 
 def _require_closed_admission(connection, generation):

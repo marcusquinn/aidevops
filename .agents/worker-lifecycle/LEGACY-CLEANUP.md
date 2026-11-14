@@ -36,7 +36,12 @@ historical rows into `generation_admissions`.
    pathname that might have been reused.
 
 The existing SQLite writer transaction serializes registration changes during
-native move/removal. Non-destructive archive capture and verification release it.
+native move. Non-destructive archive capture and verification release it. Native
+removal, which can run up to its 300-second limit, also runs without the writer
+(GH#38158): every pre-removal guard runs under the writer, the removal start is
+journaled, and only then is the writer released, so unrelated admissions and
+bounded operations are not refused with `database-locked` meanwhile. A timeout or
+crash before the retired receipt resumes through the interrupted-removal path.
 After committing a checkpoint or releasing the writer and reacquiring it, the
 script checks the bindings and native identities again. This transition uses
 **recorded processes**, not a claim that historical observation proves complete
@@ -81,9 +86,17 @@ GitHub state and a lookup can outlast the admission busy timeout (GH#36921).
 Under the reacquired registry writer, eligibility, the fetched GitHub PR absence,
 registered writers and the process census are checked again immediately before
 native `git worktree remove` **without `--force`**. Branches are never deleted. The event
-journal records the exact plan before deletion and a
+journal records the exact plan before deletion, then a
+`reconstructible-worktree-removing` start (with its validation boundary) that
+commits as the writer is released for the removal, and a
 `reconstructible-worktree-retired` receipt after verifying directory absence,
-commit presence and the unchanged branch ref. Results identify the class; receipts
+commit presence and the unchanged branch ref under the reacquired writer. A
+removal that timed out or was interrupted resumes on a later pass ahead of other
+class checks, like the private-tree path: the remaining tree must keep its
+identity, an idle census and ended registered writers, and every remaining
+Git-visible path must predate the boundary (deletions only) before a forced
+removal finishes it. Any later change retains the tree as
+`interrupted-removal-content-changed`; preview reports `pending-retry`. Results identify the class; receipts
 remain in the existing journal, not a new database or fabricated admission.
 
 Before batch mode on each host/installation, one source is removed and its commit
@@ -124,7 +137,11 @@ python3 -E -s -B ~/.aidevops/agents/worker-lifecycle/worker-legacy-cleanup.py --
 ```
 
 Add `--apply` to archive and remove the selected worktrees. `--min-age-seconds`,
-`--limit` and `--budget-seconds` bound a manual invocation. Both cleanup passes
+`--limit` and `--budget-seconds` bound a manual invocation. The budget starts
+before inventory and discovery, which consume it and can overrun it; items start
+only before it expires, so once discovery ends a pass finishes within at most one
+item's work. The outer watchdog is the hard termination bound. `budget_exhausted`
+reports that the budget expired (GH#38158). Both cleanup passes
 use the same read-only archive-path validation described in [CLEANUP.md](CLEANUP.md).
 An owned archive root with mode 0755 is accepted without changing permissions;
 individual archives remain private. Unsafe paths prevent source retirement.

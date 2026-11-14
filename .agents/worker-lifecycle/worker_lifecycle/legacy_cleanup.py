@@ -15,21 +15,23 @@ import tempfile
 import time
 from uuid import UUID, uuid5
 
-from .cleanup_plan import prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import BOUNDARY, removal_started, require_deletion_only
-from .interrupted_removal import restore_git_link, validation_boundary
+from .interrupted_removal import validation_boundary
 from .legacy_discovery import same_tree
 from .legacy_inventory import inspect, inventory, unchanged
 from .legacy_inventory import reconstructible, requires_reconstructible
 from .legacy_options import require_manual_confirmation, require_managed_takeover
 from .legacy_options import retained_outcome, unrecorded
-from .legacy_probe import checkpoint, event_id, host_probe, interrupted_probe
+from .legacy_probe import checkpoint, event_id, host_probe
 from .legacy_probe import operation_id, prepare_reconstructible_probe, receipt
 from .legacy_proc import require_idle_processes
+from .legacy_resume import RECONSTRUCTIBLE_REMOVING, RemovalContext, plan_reconstructible
+from .legacy_resume import recover_interrupted_probe
+from .legacy_resume import restore_link, resume_reconstructible_removal
 from .legacy_probe import verify_reconstructible
-from .legacy_takeover import require_managed_authority
+from .legacy_takeover import close_quiescent_admission
 from .preservation import _helper, _retain_base, _snapshot, verify_preservation
 from .pull_requests import open_pull_requests
 from .process import ObservationUnavailable
@@ -46,17 +48,30 @@ def require_confirmation(connection, operation, confirmed):
 
 @contextmanager
 def writer_released(connection):
-    """Release the global writer only for non-destructive archive or network work.
+    """Release the global writer for archive, network or journaled removal work.
 
     The caller retains its operation lock and must revalidate registry writers
-    after reacquisition. Native source move/removal never runs in this scope.
-    Body failures propagate unchanged through the outer transaction's rollback.
-    Only successful work reacquires the writer; failure to reacquire still
-    aborts the next phase.
+    after reacquisition. Native source move never runs in this scope; native
+    removal runs here only through `remove_released`, after its start is
+    journaled. Body failures propagate unchanged through the outer transaction's
+    rollback. Only successful work reacquires the writer; failure to reacquire
+    still aborts the next phase.
     """
     connection.commit()
     yield
     connection.execute("BEGIN IMMEDIATE")
+
+
+def remove_released(connection, *arguments):
+    """Run one native `git worktree remove` without the registry writer (GH#38158).
+
+    Removal of a large tree can take up to `REMOVAL_TIMEOUT` (300 s); holding the
+    writer meanwhile refused unrelated admissions with `database-locked`. Callers
+    run every pre-removal guard under the writer and journal the removal start
+    first, so a crash or timeout resumes through the interrupted-removal path.
+    """
+    with writer_released(connection):
+        _git(*arguments)
 
 
 def pass_pull_requests(options):
@@ -122,14 +137,6 @@ def archive_source(store, connection, operation, plan, adapter):
     return previous
 
 
-def _restore_link(target, plan):
-    """Bind tree and administration to the plan before restoring a deleted `.git`."""
-    admin = Path(plan["admin"])
-    if _id(target) != plan["directory"] or _id(admin) != plan["admin_identity"]:
-        raise ValueError("worktree-replaced")
-    restore_git_link(target, admin)
-
-
 def finish(store, connection, operation, plan, adapter):
     """Only the journaled private pathname is ever passed to native removal."""
     root = Path(plan["output_root"])
@@ -159,7 +166,7 @@ def finish(store, connection, operation, plan, adapter):
         require_idle_processes(target)
     with DirectoryHandle(target):
         if started is not None:
-            _restore_link(target, plan)
+            restore_link(target, plan)
         same_tree(target, plan)
         unchanged(connection, plan, adapter)
         if started is None:
@@ -173,7 +180,11 @@ def finish(store, connection, operation, plan, adapter):
             unchanged(connection, plan, adapter)
         else:
             require_deletion_only(target, started, _git)
-        _git("--git-dir", plan["common"], "worktree", "remove", "--force", str(target))
+        # The journaled start authorizes resume; other writers may proceed.
+        remove_released(connection, "--git-dir", plan["common"], "worktree", "remove",
+                        "--force", str(target))
+    if os.path.lexists(target):
+        raise ValueError("private-worktree-still-present")
     checkpoint(store, connection, operation, "retired",
                {"type": "legacy-worktree-retired", "archive": plan["archive"]})
     container.rmdir()
@@ -241,20 +252,6 @@ def take_over_managed(store, item, repositories, adapter, options):
     return process_reconstructible(store, item, repositories, adapter, options)
 
 
-def close_quiescent_admission(store, item):
-    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
-
-    Uses the admission pass's own primitive, which re-samples bound runs and
-    closes only when every run is admitted and ended. Unenrolled, changed, empty
-    or unfinished generations stay open, so the authority check that follows
-    still reports `managed-admission-not-closed`. Never called in preview.
-    """
-    try:
-        prepare_cleanup(store, Path(item["path"]))
-    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
-        return
-
-
 def process_item(store, item, repositories, adapter, options):
     """Plan and, when applying, retire one legacy item and report the outcome."""
     outcome = {"path": item["path"]}
@@ -265,10 +262,15 @@ def process_item(store, item, repositories, adapter, options):
         with store.connection() as connection:
             done = receipt(connection, operation, "retired")
             pending = receipt(connection, operation, "plan")
+            removing = receipt(connection, operation, RECONSTRUCTIBLE_REMOVING)
             if not done:
                 require_confirmation(connection, operation, confirmed)
         if done:
             outcome["status"] = "already-retired"
+        elif removing:
+            # An interrupted reconstructible removal resumes before any other
+            # class check: its partial tree can no longer pass them (GH#38158).
+            return process_reconstructible(store, item, repositories, adapter, options)
         elif not pending and not os.path.lexists(item["path"]):
             # No removal or preservation is claimed. Admission cleanup separately
             # reconciles absent generations using its existing identity guards.
@@ -291,38 +293,6 @@ def process_item(store, item, repositories, adapter, options):
     return outcome, eligible, attempted
 
 
-def recover_interrupted_probe(store, item, apply):
-    """Recover an interrupted probe removal; preview reports verification pending."""
-    host = host_probe(store)
-    with store.connection() as connection:
-        if not interrupted_probe(store, connection, item):
-            return
-    if not apply:
-        raise ValueError("reconstructible-probe-verification-pending")
-    with _lock(store, host), store.connection(write=True) as connection:
-        if interrupted_probe(store, connection, item):
-            prepare_reconstructible_probe(store, connection, host, None, verify_reconstructible)
-
-
-def current_legacy_item(connection, item):
-    """Return the current inventory row for an item, or the item itself."""
-    return next((row for row in inventory(connection)
-                  if row["path"] == item["path"]), item)
-
-
-def plan_reconstructible(store, connection, item, inspect_source, open_prs):
-    """Refresh the inventory row, build its plan and require managed authority.
-
-    The managed flag is read from the caller's item, never the refreshed row, so
-    every recheck keeps the managed path guard, idle floor and authority evidence.
-    """
-    current = current_legacy_item(connection, item)
-    plan = inspect_source(current, open_prs=open_prs)
-    if item["modern"]:
-        require_managed_authority(store, connection, current, plan)
-    return plan
-
-
 def process_reconstructible(store, item, repositories, adapter, options):
     """Journal a non-forced removal; the first successful probe unlocks batching.
 
@@ -337,25 +307,41 @@ def process_reconstructible(store, item, repositories, adapter, options):
     outcome = {"path": item["path"], "class": "reconstructible", "status": "eligible"}
     if not options.apply:
         with store.connection() as connection:
-            reconstructible_plan(connection, open_prs=pass_pull_requests(options))
+            if receipt(connection, operation, RECONSTRUCTIBLE_REMOVING) is not None:
+                outcome["status"] = "pending-retry"
+            else:
+                reconstructible_plan(connection, open_prs=pass_pull_requests(options))
         return outcome, 1, 0
     probe = host_probe(store)
     # Serialize host probes across checkpoint commits and independent invocations.
     with _lock(store, probe), _lock(store, operation), store.connection(write=True) as connection:
-        # GitHub lookups release the writer (GH#36921); this plan is only journaled.
-        plan = reconstructible_plan(
-            connection, open_prs=partial(released_pull_requests, connection, options))
-        test_removal = prepare_reconstructible_probe(store, connection, probe, plan,
-                                                     verify_reconstructible)
-        revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
-        checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
-        # Fetch GitHub without the writer, then refresh every registry, Git and
-        # /proc check under the reacquired writer immediately before removal.
-        current = reconstructible_plan(
-            connection, open_prs=prefetched_pull_requests(connection, options, plan["repo"]))
-        if current != plan:
-            raise ValueError("reconstructible-source-changed")
-        _git("--git-dir", plan["common"], "worktree", "remove", plan["source"])
+        if receipt(connection, operation, RECONSTRUCTIBLE_REMOVING) is not None:
+            plan, test_removal = resume_reconstructible_removal(
+                store, connection, item,
+                RemovalContext(adapter, remove_released, _git, repositories))
+        else:
+            # GitHub lookups release the writer (GH#36921); this plan is only journaled.
+            plan = reconstructible_plan(
+                connection, open_prs=partial(released_pull_requests, connection, options))
+            test_removal = prepare_reconstructible_probe(store, connection, probe, plan,
+                                                         verify_reconstructible)
+            revision = str(uuid5(UUID(operation), json.dumps(plan, sort_keys=True)))
+            checkpoint(store, connection, operation, "reconstructible-plan-" + revision, plan)
+            # Taken before the final checks: a resume may only find deletions after it.
+            boundary = validation_boundary()
+            # Fetch GitHub without the writer, then refresh every registry, Git and
+            # /proc check under the reacquired writer immediately before removal.
+            current = reconstructible_plan(
+                connection, open_prs=prefetched_pull_requests(connection, options, plan["repo"]))
+            if current != plan:
+                raise ValueError("reconstructible-source-changed")
+            # The start receipt commits together with the writer release, so no
+            # other writer runs between the final checks and native removal (GH#38158).
+            store._event(connection, event_id(operation, RECONSTRUCTIBLE_REMOVING),
+                         {"type": "reconstructible-worktree-removing", "plan": plan,
+                          "probe": test_removal, BOUNDARY: boundary})
+            remove_released(connection, "--git-dir", plan["common"], "worktree", "remove",
+                            plan["source"])
         verify_reconstructible(plan, probe=test_removal)
         checkpoint(store, connection, operation, "retired",
                    dict(plan, type="reconstructible-worktree-retired", branch_preserved=True))

@@ -318,7 +318,11 @@ Each retry logs `admission-retry`; contention past the deadline exits 75 as befo
 (GH#36921). The registry CLI's `enroll` and `admit-session`, and the admission
 and provenance write after `create-worktree`'s `git worktree add`, wait under the
 same bound and variable and log `contention-retry`; contention past it still
-refuses with `database-locked` (GH#38086). No scheduler or persistent
+refuses with `database-locked` (GH#38086). The detached bounded-operation
+supervisor waits under the same bound and variable, measured from its first
+attempt, retrying only `database-locked` with 0.5-4 second backoff before
+refusing with exit 75; the
+synchronous Bash/Edit/Write hook admission is unchanged (GH#38158). No scheduler or persistent
 global environment is installed. Set `AIDEVOPS_LIFECYCLE_DISABLED=1` to disable launch
 observation and Pulse reconciliation; preserve the store. This is not permission
 to run on enrolled worktrees without admission. Observation on unregistered paths

@@ -34,6 +34,10 @@ chmod +x "${TMP}/bin/gh"
 export PATH="${TMP}/bin:${PATH}"
 
 pulse_rest_core_priority_allows_next() {
+	if [[ "${DENY_ADMISSION:-0}" == 1 ]]; then
+		printf 'denied\n' >>"$ADMISSION_LOG"
+		return 1
+	fi
 	return 0
 }
 export -f pulse_rest_core_priority_allows_next
@@ -58,4 +62,19 @@ scan
 [[ "$(reruns)" == 1 ]] || fail "completed run with orphan job must rerun once"
 scan
 [[ "$(reruns)" == 1 ]] || fail "second pass on same run must be a no-op"
+
+# A global admission denial stops after one repo without changing cadence.
+export ADMISSION_LOG="${TMP}/admission.log"
+printf '{"initialized_repos":[{"slug":"o/r","pulse":true},{"slug":"o/missing","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+state="${HOME}/.aidevops/.agent-workspace/pulse/stale-queued-runs"
+printf '1\n' >"${state}/o/r/last-scan"
+DENY_ADMISSION=1 bash -c "source '$SCRIPT'; pulse_stale_queued_runs_scan" >/dev/null
+[[ "$(<"${state}/o/r/last-scan")" == 1 ]] || fail "denial must preserve existing cadence"
+[[ ! -f "${state}/o/missing/last-scan" ]] || fail "denial must not stamp later repos"
+[[ "$(wc -l <"$ADMISSION_LOG")" -eq 1 ]] || fail "denial must stop after one admission attempt"
+
+# An admitted API failure still consumes cadence for the failing repo.
+printf '{"initialized_repos":[{"slug":"o/missing","pulse":true}]}' >"${HOME}/.config/aidevops/repos.json"
+bash -c "source '$SCRIPT'; pulse_stale_queued_runs_scan" >/dev/null
+[[ -s "${state}/o/missing/last-scan" ]] || fail "admitted API failure must consume cadence"
 printf 'PASS\n'
