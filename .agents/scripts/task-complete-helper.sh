@@ -376,12 +376,14 @@ annotate_solved_label_for_pr() {
 _complete_task_require_open_task() {
 	local task_id="$1"
 	local todo_file="$2"
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	if grep -qE "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+	if grep -qE "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
 		return 0
 	fi
 
-	if grep -qE "^[[:space:]]*- \[x\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+	if grep -qE "^[[:space:]]*- \[x\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
 		log_warn "Task $task_id is already marked complete"
 		return 2
 	fi
@@ -394,8 +396,10 @@ _complete_task_guard_explicit_subtasks() {
 	local task_id="$1"
 	local todo_file="$2"
 	local explicit_subtasks=""
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	explicit_subtasks=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+	explicit_subtasks=$(grep -E "^[[:space:]]*- \[[ >]\] ${id_re}\.[0-9]+( |$)" "$todo_file" || true)
 	if [[ -z "$explicit_subtasks" ]]; then
 		return 0
 	fi
@@ -411,14 +415,16 @@ _complete_task_guard_indented_subtasks() {
 	local task_id="$1"
 	local todo_file="$2"
 	local task_line=""
-	task_line=$(grep -E "^[[:space:]]*- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
+	task_line=$(grep -E "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
 	local task_indent=""
 	task_indent=$(printf '%s\n' "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
 
 	local open_subtasks=""
-	open_subtasks=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
-		BEGIN { found=0 }
+	open_subtasks=$(TC_TID_RE_GUARD="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
+		BEGIN { found=0; tid=ENVIRON["TC_TID_RE_GUARD"] }
 		$0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) { found=1; next }
 		found && /^[[:space:]]*- \[/ {
 			match($0, /^[[:space:]]*/);
@@ -473,9 +479,11 @@ _complete_task_extract_block() {
 	local tmp_no_block="$5"
 	local tmp_block="$6"
 
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 	# shellcheck disable=SC2016
-	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
-BEGIN { in_block=0; block_done=0; block="" }
+	TC_TID_RE_EXTRACT="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
+BEGIN { in_block=0; block_done=0; block=""; tid=ENVIRON["TC_TID_RE_EXTRACT"] }
 
 !in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[[ >]\\] " tid boundary) {
     in_block=1
@@ -571,19 +579,22 @@ END {
 _complete_task_verify_update() {
 	local task_id="$1"
 	local todo_file="$2"
+	local id_re
+	id_re=$(_tc_escape_ere "$task_id")
 
-	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
+	if ! grep -qE "^[[:space:]]*- \[x\] ${id_re} " "$todo_file"; then
 		log_error "Failed to update TODO.md for $task_id"
 		return 1
 	fi
 
-	if ! grep -E "^[[:space:]]*- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+	if ! grep -E "^[[:space:]]*- \[x\] ${id_re} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
 		log_error "Failed to add proof-log to $task_id"
 		return 1
 	fi
 
 	local in_done_section=""
-	in_done_section=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" '
+	in_done_section=$(TC_TID_RE_VERIFY="$id_re" awk -v boundary="$TASK_COMPLETE_ID_BOUNDARY" '
+		BEGIN { tid=ENVIRON["TC_TID_RE_VERIFY"] }
 		/^## (Done|Completed|Complete|Finished)$/ { in_done=1; next }
 		/^## /      { in_done=0; next }
 		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid boundary) { found=1 }

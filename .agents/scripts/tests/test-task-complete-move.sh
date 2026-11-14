@@ -581,6 +581,27 @@ else
 fi
 
 # =============================================================================
+# Test 12: task IDs match literally (t12.1 must not match t1201)
+# =============================================================================
+printf '\nTest 12: dotted task ID does not match look-alike ID\n'
+
+FIXTURE="${FIXTURE_HEADER}- [ ] t12 parent ref:GH#1200
+  - [ ] t1201 lookalike child ref:GH#1201
+  - [ ] t12.1 dotted child ref:GH#1202
+${FIXTURE_SECTIONS}"
+
+setup_repo "$FIXTURE" "repo12-literal-id"
+"$HELPER" t12.1 --verified 2026-01-15 --no-push --skip-merge-check \
+	--repo-path "$REPO_PATH" >/dev/null 2>&1 || true
+
+if grep -qE "^  - \[x\] t12\.1 .*verified:2026-01-15" "$REPO_PATH/TODO.md" \
+	&& grep -qE "^  - \[ \] t1201 lookalike child ref:GH#1201$" "$REPO_PATH/TODO.md"; then
+	pass "t12.1 completed; t1201 left open"
+else
+	fail "t12.1 completed; t1201 left open" "wrong task matched"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s----%s\n' "$TEST_BLUE" "$TEST_NC"
