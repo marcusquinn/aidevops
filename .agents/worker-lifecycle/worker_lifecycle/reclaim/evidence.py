@@ -18,7 +18,7 @@ import re
 
 from .host import git, locked, metadata_directory, nothing_to_lose, run
 from .owners import OwnerCheck
-from .review import own_pull_request, still_idle
+from .review import idle_shape, still_idle
 
 __all__ = ["evidence", "prefetch", "references", "repository"]
 
@@ -164,24 +164,35 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
         return "repository-unknown"
     verdict["repository"] = slug
     verdict["references"] = [f"{kind}{number}" for kind, number in found]
-    return None if found else "reference-unknown"
+    shape = idle_shape(path.name, slug)
+    return None if found or (shape and shape[0].kind is None) else "reference-unknown"
 
 
 def _unfinished(path: Path, found: list[tuple[str, int]],
                 query: Query) -> tuple[str | None, str]:
     """Name the first unfinished reference, or how the work counts as finished.
 
-    A review worktree is judged by its own pull request alone, and an idle one
-    whose PR is confirmed open is the one exception (``reclaim.review``); every
+    A tree of an idle shape (``reclaim.review.SHAPES``) is judged by its own
+    reference alone; one whose reference is confirmed open, or absent for the
+    unreferenced shape, qualifies once idle for the shape's threshold. Every
     later check still applies to it.
     """
-    own = own_pull_request(path.name, query.slug)
-    for kind, number in found if own is None else [("pr", own)]:
+    match = idle_shape(path.name, query.slug)
+    shape, own = match if match else (None, None)
+    if shape is not None and shape.kind is None:
+        if not found and still_idle(path, shape.seconds):
+            return None, shape.reason
+        return "reference-unknown", ""
+    judged = found if shape is None or shape.kind is None or own is None \
+        else [(shape.kind, own)]
+    for kind, number in judged:
         finished, detail = reference_finished(kind, number, query)
         if finished:
             continue
-        if own is not None and detail == f"pr-{own}-open" and still_idle(path):
-            return None, "review-idle"
+        noun = "issue" if kind == "gh" else "pr"
+        if shape is not None and detail == f"{noun}-{own}-open" \
+                and still_idle(path, shape.seconds):
+            return None, shape.reason
         return detail, ""
     return None, "work-finished"
 
