@@ -1249,6 +1249,43 @@ _prrts_retry_continuation_blocker() {
 	return 0
 }
 
+# t18991: classification bullet for findings owned by another managed repository.
+_prrts_prompt_upstream_rule() {
+	local scanner_path="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	cat <<RULE_EOF
+    - If the defect is real but the cited file is owned by another repository
+      (synced/vendored core file, template-owned path), run
+      '${scanner_path} route-upstream ${repo_slug} ${pr_number} <thread_id> <owner_repo> <details_file>'
+      for that thread (details file: files, the defect, suggested verification;
+      no secrets or verbatim review text). Reply in-thread with the printed issue
+      link and note that the fix will arrive via the owning repository's next
+      sync. Then resolve the thread with the resolve command above; the scanner
+      never resolves threads itself. If route-upstream refuses, use
+      'mark-blocked decision'.
+RULE_EOF
+	return 0
+}
+
+_prrts_prompt_verification_context() {
+	local scanner_path="$1"
+	local repo_slug="$2"
+	cat <<CONTEXT_EOF
+Verification context:
+- Prefer focused tests/lint for changed files.
+- Do not use shell redirection syntax in Bash commands (less-than, greater-than,
+  append, here-string, or descriptor redirects such as 2>&1); the sandbox
+  command policy rejects it. Use direct command output, supported pipelines,
+  gh --jq, and file tools for persisted content.
+- Preserve existing PR scope and provenance labels.
+- Keep comments concise and cite files/commands as evidence.
+- Completion requires each verified-addressed assigned thread to be resolved with
+  resolveReviewThread via '${scanner_path} resolve ${repo_slug} <thread_id>'.
+CONTEXT_EOF
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1312,17 +1349,9 @@ Thread preview: ${safe_preview}
      resolve with '${scanner_path} resolve ${repo_slug} <thread_id>'.
    - If it is a correctness/security defect in PR-owned code, hand-apply the fix,
      run the relevant focused verification, commit, and push to the PR branch.
-       - If the defect is real but the cited file is owned by another repository
-      (synced/vendored core file, template-owned path), run
-      '${scanner_path} route-upstream ${repo_slug} ${pr_number} <thread_id> <owner_repo> <details_file>'
-      for that thread (details file: files, the defect, suggested verification;
-      no secrets or verbatim review text). Reply in-thread with the printed issue
-      link and note that the fix will arrive via the owning repository's next
-      sync. Then resolve the thread with the resolve command above; the scanner
-      never resolves threads itself. If route-upstream refuses, use
-      'mark-blocked decision'.
+$(_prrts_prompt_upstream_rule "$scanner_path" "$repo_slug" "$pr_number")
     - If it is additive/non-critical, create or recommend a follow-up task per
-     review-bot-gate policy instead of expanding the PR unnecessarily.
+      review-bot-gate policy instead of expanding the PR unnecessarily.
    - If the thread is outdated, verify the current PR diff no longer contains
      the affected code/path before replying in-thread and resolving.
    - If the premise is false, leave a concise in-thread reply with file:line evidence.
@@ -1344,16 +1373,7 @@ Thread preview: ${safe_preview}
    The reason and details are sanitized into local state; do not include secrets
    or untrusted review text verbatim.
 
-Verification context:
-- Prefer focused tests/lint for changed files.
-- Do not use shell redirection syntax in Bash commands (less-than, greater-than,
-  append, here-string, or descriptor redirects such as 2>&1); the sandbox
-  command policy rejects it. Use direct command output, supported pipelines,
-  gh --jq, and file tools for persisted content.
-- Preserve existing PR scope and provenance labels.
-- Keep comments concise and cite files/commands as evidence.
-- Completion requires each verified-addressed assigned thread to be resolved with
-  resolveReviewThread via '${scanner_path} resolve ${repo_slug} <thread_id>'.
+$(_prrts_prompt_verification_context "$scanner_path" "$repo_slug")
 PROMPT_EOF
 	_prrts_append_reviewer_comments "$prompt_file" "$repo_slug" "$pr_number"
 	printf '%s\n' "$prompt_file"
