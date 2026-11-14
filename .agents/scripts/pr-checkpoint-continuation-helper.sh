@@ -1326,6 +1326,22 @@ Draft PR #${pr} preserves the exact checkpoint. No brief change or revision-boun
 	return 0
 }
 
+# Shared before and after orphan synthesis; requires _PCC_JQ_RELEASE_DEFS.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PCC_JQ_LAUNCH_DEFS='
+	def ready_event: startswith("DISPATCH_LEASE ") and field("phase") == "ready";
+	def claim_event: split(" ")[0] == "DISPATCH_CLAIM";
+	def in_session: field("session") == $session;
+	def launch_lines: [body_lines | select(coordination_line)];
+	def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines;
+		startswith("Dispatching worker") or (ready_event and in_session)));
+	def unlaunched_episode($c):
+		$session != "" and (launch_lines | length) > 0 and
+		all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ")) and
+			in_session and (ready_event | not)) and
+		(launched_after($c) | not);
+'
+
 #######################################
 # Find the stall/timeout release that left an open worker draft (GH#33654).
 # The newest trusted coordination event (claim, lease, dispatch, release or
@@ -1364,26 +1380,11 @@ _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
 	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
 	local session="${9:-}"
-	# Share the never-launched predicate before and after terminal synthesis.
-	# shellcheck disable=SC2016 # jq program text, not shell expansion.
-	local launch_defs='
-		def ready_event: startswith("DISPATCH_LEASE ") and field("phase") == "ready";
-		def claim_event: split(" ")[0] == "DISPATCH_CLAIM";
-		def in_session: field("session") == $session;
-		def launch_lines: [body_lines | select(coordination_line)];
-		def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines;
-			startswith("Dispatching worker") or (ready_event and in_session)));
-		def unlaunched_episode($c):
-			$session != "" and (launch_lines | length) > 0 and
-			all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ")) and
-				in_session and (ready_event | not)) and
-			(launched_after($c) | not);
-	'
 	# Preserve orphan boundaries in history for both fuses, but never turn a
 	# normal closing terminal lease into a second release. Edited events fence.
 	comments=$(jq -c --arg pr_created "$pr_created" --arg session "$session" --argjson trusted_logins "$trusted_logins" \
 		--argjson grace "${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-${DISPATCH_COMMENT_MAX_AGE:-600}}" \
-		"${_PCC_JQ_RELEASE_DEFS}${launch_defs}"'
+		"${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
 		[flatten[]] as $all |
 		[$all[] | select(trusted_event and coordination)] as $events |
 		[$events[] | select(unedited and (unlaunched_episode($events) | not) and $pr_created != "" and
@@ -1405,7 +1406,7 @@ _pcc_stall_release_evidence() {
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
 		--arg extended "${8:+true}" --argjson commits "$commits" --arg session "$session" \
-		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}${launch_defs}"'
+		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
 		def capability_release: blocked_release and any(body_lines; startswith($capability));
 		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
 		def count_since($c; $since):
