@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.192] - 2026-11-14
+
+### Changed
+
+- Tests: cover cleanup receipt holder diagnostics (#38252)
+- Maintenance: sync GitHub issue refs to TODO.md (#37768)
+- Refactor: split checkpoint approval helpers (#38230)
+
+### Fixed
+
+- make negative-cache reuse work for body-less candidates
+- stop human-gated retry hints starving merge-ready PRs
+- torn audit line no longer blocks gh-audit anomaly scanning
+- defer closed issue holds for TODO projections (#38254)
+- exempt previously public privacy entities (#38231)
+- recover orphaned checkpoint terminal leases (#38238)
+- treat check runs with conclusion+completed_at as terminal
+- stop spent approvals blocking checkpoint rearm (#38196)
+
 ## [3.39.191] - 2026-11-14
 
 ### Fixed
