@@ -528,7 +528,7 @@ cmd_setup_backblaze() {
 	# Parse the use_time_machine_excludes attribute. Read-only, no sudo needed.
 	# The attribute is typically: use_time_machine_excludes="true" or "false"
 	local tm_excludes=""
-	tm_excludes=$(sed -n 's/.*use_time_machine_excludes="\([a-z]*\)".*/\1/p' "$bzinfo_file" | head -n 1 || true)
+	tm_excludes=$(sed -n '/use_time_machine_excludes="[a-z]*"/{s/.*use_time_machine_excludes="\([a-z]*\)".*/\1/p; q;}' "$bzinfo_file" 2>/dev/null || true)
 
 	if [[ "$tm_excludes" == "true" ]]; then
 		cat <<'EOF'
