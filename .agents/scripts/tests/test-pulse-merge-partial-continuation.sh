@@ -371,6 +371,80 @@ test_unlabeled_worker_provenance() {
 	return 0
 }
 
+# GH#38042: marker-less worker PR proven by the author's own matching claim.
+# Args: $1=claim author login, $2=claim line, $3=head ref (optional)
+claim_case() {
+	local claim_author="$1"
+	local claim_line="$2"
+	local branch="${3:-feature/auto-20261108-155943-gh501}"
+	reset_case
+	TEST_PR_LABELS="tier:standard"
+	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq --arg ref "$branch" '. + {body: "Partial work.\n\nFor #501", head: {ref: $ref}}')
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER "$claim_author" "$claim_line")" \
+		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_ready_missing_linkage runner=runner1 ts=2026-10-10T10:20:00Z")")
+	return 0
+}
+
+test_claim_matched_worker_provenance() {
+	local good="DISPATCH_CLAIM nonce=n1 runner=runner1 ts=2026-11-08T15:59:30Z max_age_s=600 session=issue-501 phase=prelaunch"
+	claim_case runner1 "$good"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" "claim-matched marker-less worker returns to queue"
+	claim_case runner2 "${good//runner1/runner2}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim from a different login is refused"
+	claim_case runner1 "${good//session=issue-501/session=issue-777}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim for a different session is refused"
+	claim_case runner1 "$good" "feature/auto-20261108-155943-gh777"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim on a different issue than the branch is refused"
+	claim_case runner1 "${good//15:59:30Z/15:48:30Z}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim more than 10 minutes from the branch is refused"
+	claim_case runner1 "$good"
+	TEST_PERMISSION="read"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim-matched author without write access is refused"
+	return 0
+}
+
+set_origin_label() {
+	printf 'origin %s\n' "$*" >>"$STATUS_LOG"
+	return 0
+}
+
+test_unlabeled_worker_branch_merge_gate() {
+	local good="DISPATCH_CLAIM nonce=n1 runner=runner1 ts=2026-11-08T15:59:30Z session=issue-501 phase=prelaunch"
+	local info="" rc=0
+	claim_case runner1 "${good//runner1/runner2}"
+	info='{"headRefName":"feature/auto-20261108-155943-gh501","body":"For #501"}'
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info" || rc=$?
+	if [[ "$rc" -eq 1 && ! -s "$STATUS_LOG" ]]; then
+		assert_log_contains "no provable worker provenance" "unprovable worker branch is not merged"
+	else
+		fail "unprovable worker branch is not merged" "rc=${rc} writes=$(tr '\n' ' ' <"$STATUS_LOG")"
+	fi
+	claim_case runner1 "$good"
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info" || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		assert_status_call "origin 900 ${SLUG} worker --pr" "proven worker branch is relabelled and deferred"
+	else
+		fail "proven worker branch is relabelled and deferred" "rc=${rc}"
+	fi
+	reset_case
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "origin:worker" "$info" || rc=$?
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" '{"headRefName":"bugfix/x","body":""}' || rc=$?
+	if [[ "$rc" -eq 0 && ! -s "$STATUS_LOG" ]]; then
+		pass "labelled or non-worker branches pass through unchanged"
+	else
+		fail "labelled or non-worker branches pass through unchanged" "rc=${rc}"
+	fi
+	return 0
+}
+
 test_eligible_leaf_returns_to_queue() {
 	reset_case
 	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker,tier:standard"
@@ -1173,6 +1247,8 @@ main() {
 	source "$MODULE_FILE"
 
 	test_unlabeled_worker_provenance
+	test_claim_matched_worker_provenance
+	test_unlabeled_worker_branch_merge_gate
 	test_eligible_leaf_returns_to_queue
 	test_parent_tracker_skips_auto_dispatch
 	test_terminal_lease_proves_finished_run

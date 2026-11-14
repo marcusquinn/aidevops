@@ -918,7 +918,8 @@ _dlw_precreate_worktree() {
 	local _branch _wt_output="" _managed_create="" _pc_t0=""
 	_dlw_managed_creation_env || return 1
 	_managed_create="$_DLW_MANAGED_CREATE_MODE"
-	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
+	# UTC, matching DISPATCH_CLAIM ts= for provenance proofs (GH#38042).
+	_branch="feature/auto-$(date -u +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Enrollment is only permitted for this creation, never an existing branch.
 	if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$_branch"; then
 		return 1

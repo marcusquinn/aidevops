@@ -56,6 +56,9 @@ gate_src=$(awk '
 	/^_pm_gate_review_bot\(\) \{/,/^}$/ { print }
 	/^_check_pr_merge_gates\(\) \{/,/^}$/ { print }
 ' "$MERGE_SCRIPT")
+# GH#38042: origin authority calls the unlabeled worker-branch gate.
+gate_src+=$'\n'$(awk '/^_pm_gate_unlabeled_worker_branch\(\) \{/,/^}$/ { print }' \
+	"${MERGE_SCRIPT%/*}/pulse-merge-partial-continuation.sh")
 [[ -n "$gate_src" ]] || {
 	printf 'FAIL could not extract _check_pr_merge_gates\n' >&2
 	exit 1

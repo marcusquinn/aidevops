@@ -86,23 +86,110 @@ _pmpc_merged_pr_author() {
 	return 1
 }
 
-# GH#37204: merged worker partial PRs created without an origin label stranded
-# their target in status:in-review. Accept missing labels only with
-# independently verified worker provenance: merged, worker branch name, body
-# marker AND an author with current write access. Never infer trust from the
-# body marker or branch name alone.
-_pmpc_unlabeled_worker_provenance() {
-	local repo_slug="$1" pr_number="$2" pr_json="" author="" permission=""
-	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
-	author=$(printf '%s' "$pr_json" | jq -er '
-		select(.merged == true and (.body | type == "string")
-			and (.body | contains("<!-- aidevops:origin:worker -->"))
-			and (.head.ref | type == "string" and test("^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$"))
-			and (.user.login | type == "string" and test("^[A-Za-z0-9-]+$"))) | .user.login
-	' 2>/dev/null) || return 1
+# Maximum distance between a DISPATCH_CLAIM ts= and the UTC branch timestamp.
+_PMPC_CLAIM_BRANCH_WINDOW_S=600
+
+#######################################
+# GH#38042: prove that the PR author's own dispatch claim created this worker
+# branch. Branches are feature/auto-<YYYYMMDD>-<HHMMSS>-gh<N> (UTC). The target
+# issue must carry a DISPATCH_CLAIM comment written by the author with
+# runner=<author>, session=issue-<N> and a ts= within the window.
+# Args: $1=repo slug, $2=head ref, $3=author login
+# Returns: 0 when a matching claim exists, 1 otherwise or when unreadable
+#######################################
+_pmpc_branch_claim_matches() {
+	local repo_slug="$1" head_ref="$2" author="$3"
+	local claims_json
+	local stamp="" issue_num="" branch_iso=""
+	[[ "$head_ref" =~ ^feature/auto-([0-9]{8})-([0-9]{6})-gh([0-9]+)$ ]] || return 1
+	stamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+	issue_num="${BASH_REMATCH[3]}"
+	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+	branch_iso="${stamp:0:4}-${stamp:4:2}-${stamp:6:2}T${stamp:8:2}:${stamp:10:2}:${stamp:12:2}Z"
+	claims_json=$(_pmpc_gh_read api "$(_pm_issue_api "$repo_slug" "$issue_num")/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$claims_json" | jq -e --arg author "$author" --arg issue "$issue_num" \
+		--arg branch "$branch_iso" --argjson window "$_PMPC_CLAIM_BRANCH_WINDOW_S" "${_PMPC_COMMENTS_JQ_DEFS}"'
+		($branch | fromdateiso8601) as $branch_epoch
+		| any(comments[] | select((.user.login // "") == $author)
+			| (.body // "") | split("\n")[] | sub("\r$"; "")
+			| select(test("^DISPATCH_CLAIM nonce=[^ ]+ "))
+			| select(test(" runner=" + $author + "( |$)"))
+			| select(test(" session=issue-" + $issue + "( |$)"))
+			| (capture(" ts=(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)( |$)").ts
+				| fromdateiso8601 - $branch_epoch);
+			(if . < 0 then -. else . end) <= $window)
+	' >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# Prove worker provenance for a PR that lacks an origin:* label.
+# Requires a worker branch name, an author with current write access, and
+# either the aidevops worker body marker (GH#37204) or a claim matching the
+# branch (GH#38042). Never infer trust from the marker or branch name alone.
+# Args: $1=repo slug, $2=head ref, $3=author login, $4=PR body
+# Returns: 0 when proven, 1 otherwise
+#######################################
+_pmpc_worker_branch_provenance() {
+	local pr_body="$4"
+	local repo_slug="$1" head_ref="$2" author="$3" permission=""
+	[[ "$head_ref" =~ ^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$ ]] || return 1
+	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
 	# aidevops:trust-boundary: require current repository write access.
 	permission=$(_pmpc_gh_read api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
-	case "$permission" in admin | maintain | write) return 0 ;; esac
+	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
+	[[ "$pr_body" == *"<!-- aidevops:origin:worker -->"* ]] && return 0
+	_pmpc_branch_claim_matches "$repo_slug" "$head_ref" "$author"
+	return $?
+}
+
+# GH#37204/GH#38042: merged worker partial PRs created without an origin label
+# stranded their target in status:in-review. Accept a missing label only for a
+# merged PR with independently verified worker provenance.
+_pmpc_unlabeled_worker_provenance() {
+	local pr_body
+	local repo_slug="$1" pr_number="$2" pr_json="" fields="" author="" head_ref=""
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	fields=$(printf '%s' "$pr_json" | jq -er '
+		select(.merged == true and (.head.ref | type == "string")
+			and (.user.login | type == "string")) | [.user.login, .head.ref] | @tsv
+	' 2>/dev/null) || return 1
+	IFS=$'\t' read -r author head_ref <<<"$fields"
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.body // ""' 2>/dev/null) || return 1
+	_pmpc_worker_branch_provenance "$repo_slug" "$head_ref" "$author" "$pr_body"
+	return $?
+}
+
+#######################################
+# GH#38042: never merge a worker-branch PR whose origin is unproven. A
+# feature/auto-* PR without any origin:* label is reconciled to origin:worker
+# only on marker or claim-matched provenance, then re-evaluated next pass under
+# the worker gates. Unprovable provenance blocks the merge.
+# Args: $1=PR number, $2=repo slug, $3=PR author, $4=labels CSV,
+#       $5=PR JSON (headRefName, body)
+# Returns: 0 to continue gating, 1 to skip this merge
+#######################################
+_pm_gate_unlabeled_worker_branch() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" labels_str="$4" info_json="$5"
+	local head_ref pr_body
+	[[ ",${labels_str}," != *",origin:"* ]] || return 0
+	head_ref=$(printf '%s' "$info_json" | jq -r '.headRefName // ""' 2>/dev/null) || head_ref=""
+	[[ "$head_ref" == feature/auto-* ]] || return 0
+	pr_body=$(printf '%s' "$info_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
+	# #aidevops:trust-boundary — fail closed when worker origin cannot be proven.
+	if ! _pmpc_worker_branch_provenance "$repo_slug" "$head_ref" "$pr_author" "$pr_body"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — worker branch ${head_ref} has no origin label and no provable worker provenance (GH#38042)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — would restore origin:worker from verified provenance (GH#38042)" >>"$LOGFILE"
+	elif declare -F set_origin_label >/dev/null 2>&1 &&
+		set_origin_label "$pr_number" "$repo_slug" worker --pr >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — restored origin:worker from verified provenance; re-evaluating under worker gates next pass (GH#38042)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:worker reconciliation failed (GH#38042)" >>"$LOGFILE"
+	fi
 	return 1
 }
 
