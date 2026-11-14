@@ -213,7 +213,10 @@ fi
 auth_test_home=$(mktemp -d)
 auth_output=""
 auth_exit=0
-auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" \
+# GH#38271: isolate the gh-auth refusal from the macOS keychain gate (6c-2 covers it)
+# and from any host gh config that GH_CONFIG_DIR/XDG_CONFIG_HOME would select.
+auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" AIDEVOPS_KEYCHAIN_FORCE_STATE=unlocked \
+	GH_CONFIG_DIR="$auth_test_home/.config/gh" XDG_CONFIG_HOME="$auth_test_home/.config" \
 	LC_ALL=C timeout 30 "$ROUTINE_FILE" --repo example/repo 2>&1) || auth_exit=$?
 rm -rf "$auth_test_home"
 
