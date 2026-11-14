@@ -939,7 +939,10 @@ _dispatch_cycle_budget_admits_round() {
 
 # GH#37623: a full-census call that served a candidate snapshot captured before
 # it started measured a cache read, not a scan. Recording it would decay the
-# full-census estimate the cold-cache minimum protects (GH#33560).
+# full-census estimate the cold-cache minimum protects (GH#33560). A durable
+# first wave that re-enumerates an exhausted or short remainder keeps its
+# original captured_at (attempt-ledger expiry), so the scan time is read from
+# enumerated_at; that re-scan was real work, not a snapshot read (GH#38200).
 # Args: $1=scan limit $2=normalization mode $3=started_ms
 _dispatch_enumeration_served_snapshot() {
 	local scan_limit="$1" normalization_mode="$2" started_ms="$3" snapshot_file="" captured=""
@@ -948,7 +951,7 @@ _dispatch_enumeration_served_snapshot() {
 	[[ "$started_ms" =~ ^[0-9]{1,16}$ ]] || return 1
 	snapshot_file=$(_dispatch_candidate_snapshot_path "$scan_limit" "$normalization_mode" 2>/dev/null) || return 1
 	[[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] || return 1
-	captured=$(jq -r '.captured_at // empty' "$snapshot_file" 2>/dev/null) || return 1
+	captured=$(jq -r '.enumerated_at // .captured_at // empty' "$snapshot_file" 2>/dev/null) || return 1
 	[[ "$captured" =~ ^[0-9]{1,12}$ ]] || return 1
 	((captured < started_ms / 1000)) && return 0
 	return 1
