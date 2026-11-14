@@ -118,6 +118,25 @@ _PCC_JQ_RELEASE_DEFS='
 	def is_release: startswith("CLAIM_RELEASED ");
 	def release_reason: ([body_lines | select(is_release)] | first // "") | field("reason");
 	def blocked_release: release_reason == "blocked";
+	def episode_start($c; $rid):
+		[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
+	def episode_attempt($c; $rid; $runner):
+		episode_start($c; $rid) as $start
+		| [$c[] | select(unedited and .id > $start and .id < $rid) as $e
+			| $e | body_lines
+			| select(startswith("DISPATCH_LEASE ") and field("phase") == "ready")
+			| field("attempt_id") | select(startswith("attempt:"))
+			| {login: ($e | login), attempt: .}] as $leases
+		# Empty $runner (stall-class release, mirrors pr_checkpoint_events.attempt_owner): the single ready-lease owner binds the attempt.
+		| if $runner != "" then ([$leases[] | select(.login == $runner) | .attempt] | last // "")
+		elif ([$leases[].login] | unique | length) == 1 then $leases[-1].attempt
+		else "" end;
+	# Mirror pr_checkpoint_events.stall_release, not the broader fuse classes.
+	def validator_stall: release_reason as $r
+		| ($r | IN("no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
+			"worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
+			"worker_claim_ready_transition_failed"))
+		or ($r | test("^(?!(push|network)_policy_timeout$)(watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$"));
 	def coordination_line: claim_line or
 		startswith("DISPATCH_LEASE ") or is_release or
 		startswith("Dispatching worker") or startswith("Interactive session claimed");
@@ -1022,13 +1041,8 @@ _pcc_blocked_release_evidence() {
 			unedited and login == $runner and
 			([body_lines | select(is_release)] | first // ""
 				| field("reason") == "blocked" and field("runner") == $runner);
-		def episode_start($c; $rid):
-			[$c[] | select(.id < $rid and any(body_lines; startswith("DISPATCH_CLAIM "))) | .id] | max // -1;
 		def episode_attempt($c; $rid):
-			episode_start($c; $rid) as $start
-			| [$c[] | select(unedited and .id > $start and .id < $rid and login == $runner) | body_lines
-				| select(startswith("DISPATCH_LEASE ") and (field("phase") == "ready"))
-				| field("attempt_id") | select(startswith("attempt:"))] | last // "";
+			episode_attempt($c; $rid; $runner);
 		# Walk back over blocked releases that closed never-ready claims.
 		def checkpoint($c; $rid):
 			episode_attempt($c; $rid) as $attempt
@@ -1363,9 +1377,9 @@ _PCC_JQ_LAUNCH_DEFS='
 # posted so one head never collects two attention records.
 # The newest attention record's age drives the per-runner re-arm
 # (_pcc_attention_rearm_allowed); with the release epoch it also anchors the
-# fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The newest ready-lease
-# attempt before the release only prefills the attention record's
-# approval-template command; approval-template revalidates it.
+# fleet re-arm (_pcc_fleet_rearm_allowed, GH#37514). The same-episode ready
+# attempt and optional earlier checkpoint release prefill the command only
+# after approval-template validates the complete successor history.
 # Args: $1=comments JSON (paginated or flat), $2=head commit ISO date,
 #       $3=attention dedup key, $4=trusted logins JSON,
 #       $5=PR creation ISO date (optional; empty disables the per-PR count),
@@ -1377,12 +1391,12 @@ _PCC_JQ_LAUNCH_DEFS='
 #         <TAB>newest_attention_epoch (0 when none)<TAB>release_epoch
 #         <TAB>released attempt (attempt:<id>, or - when unknown)
 #         <TAB>progress releases<TAB>non-progress releases (only with $8)
+#         [<TAB>earlier checkpoint release id]
 # Returns: 0 when a stall release owns the draft, 1 otherwise
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
-	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}"
-	local session="${9:-}"
+	local trusted_logins="${4:-[]}" pr_created="${5:-}" alt_key="${6:-}" fuse_key="${7:-}" commits="${8:-[]}" session="${9:-}"
 	# Preserve orphan boundaries in history for both fuses, but never turn a
 	# normal closing terminal lease into a second release. Edited events fence.
 	comments=$(jq -c --arg pr_created "$pr_created" --arg session "$session" --argjson trusted_logins "$trusted_logins" \
@@ -1422,6 +1436,15 @@ _pcc_stall_release_evidence() {
 		# launched (claim/lease lines only, no ready lease, no "Dispatching worker"
 		# afterwards) is transparent, even when its comments were edited. Other
 		# edited coordination stays a fence.
+		def checkpoint($c; $release):
+			episode_attempt($c; $release.id; (if ($release | validator_stall) then "" else ($release | login) end)) as $attempt
+			| episode_start($c; $release.id) as $start
+			| if $attempt != "" then {id: $release.id, attempt: $attempt}
+			elif $start < 0 then null
+			else ([$c[] | select(.id < $start and any(body_lines; is_release))] | last) as $prior
+				| if $prior != null and ($prior | unedited and (stall_release or release_reason == "worker_draft_checkpoint"))
+					then checkpoint($c; $prior) else null end
+			end;
 		($head_date | epoch) as $head_epoch
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
@@ -1457,17 +1480,17 @@ _pcc_stall_release_evidence() {
 		| ([$c[] | select(.id > $release.id and unlaunched_episode($c) and
 			any(body_lines; claim_event))] | length) as $failed_launches
 		| ([$failed_launches - 1, 0] | max) as $extra_stalls
+		| (checkpoint($c; $release) // {id: $release.id, attempt: ""}) as $pick
 		| [($release.id | tostring), ($release | release_reason), ((count_since($c; $head_epoch) + $extra_stalls) | tostring),
 			(any($c[]; head_attention) | tostring),
 			(if $pr_epoch == null then "0" else (count_since($c; $pr_epoch) | tostring) end),
 			($fuse_key != "" and any($c[]; (.body // "") | contains($fuse_key)) | tostring),
 			([$c[] | select(head_attention) | (.created_at // "") | (try epoch catch 0)] | max // 0 | tostring),
 			($release.created_at // "" | (try epoch catch 0) | tostring),
-			([$c[] | select(.id < $release.id) | body_lines | ready_lease_line | field("attempt_id")
-				| ltrimstr("attempt:") | select(test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-				| "attempt:\(.)"] | last // "-")] +
+			(if $pick.attempt == "" then "-" else $pick.attempt end)] +
 			(if $extended == "true" then [($progress | tostring),
 				((if $pr_epoch == null then 0 else count_since($c; $pr_epoch) end) - $progress | tostring)] else [] end)
+			+ (if $pick.id == $release.id then [] else [($pick.id | tostring)] end)
 		| @tsv
 	' <<<"$comments"
 	return $?
@@ -1660,7 +1683,7 @@ _pcc_stalled_rearm_or_block() {
 #######################################
 _pcc_post_stall_attention() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" reason="$6" stalls="$7" key="$8"
-	local fuse="${9:-false}" note="${10:-}" attempt="${11:-}"
+	local fuse="${9:-false}" note="${10:-}" attempt="${11:-}" approval_release="${12:-$5}"
 	local rearm_window="$((_PCC_ATTENTION_REARM_SECONDS / 3600))h"
 	[[ "$_PCC_ATTENTION_REARM_SECONDS" -ge 3600 ]] || rearm_window="${_PCC_ATTENTION_REARM_SECONDS}s"
 	local scope="after draft PR #${pr} reached head \`${head}\`, including one automatic exact-head continuation. Pulse pauses this head"
@@ -1668,9 +1691,16 @@ _pcc_post_stall_attention() {
 		scope="${scope}; after ${rearm_window} without a human change, each runner that has not tried this head gets one exact-head continuation, and once every runner has tried it Pulse continues it once per window (${rearm_window}, doubling for each further stall of this head) until ${_PCC_MAX_PR_RELEASES} non-progress releases or ${_PCC_MAX_PR_PROGRESS_RELEASES} total releases"
 	fi
 	local push_step="2. Push a corrected commit to the PR branch; a new head re-arms one automatic continuation."
-	local resume_step="4. To resume this exact head sooner without changing it, publish the single line printed by
-   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${release_id} ${attempt:-attempt:<RELEASED_ATTEMPT_ID>}\`
+	local resume_step=""
+	if [[ -n "$attempt" ]] && _pcc_approval_template "$repo" "$pr" "$issue" "$approval_release" "$attempt" >/dev/null 2>&1; then
+		resume_step="4. To resume this exact head sooner without changing it, publish the single line printed by
+   \`pr-checkpoint-continuation-helper.sh approval-template ${repo} ${pr} ${issue} ${approval_release} ${attempt}\`
    as a new issue comment. The approval binds this head, release and the current brief, expires after 24 hours, and Pulse then continues the head through the fenced claim."
+		if [[ "$approval_release" != "$release_id" ]]; then
+			resume_step="${resume_step}
+   Newer release comment ${release_id} closed a claim that never reached a ready lease; the command names the checkpoint's own release."
+		fi
+	fi
 	local fuse_marker="" posted_scope="Posted once per PR head."
 	if [[ "$fuse" == true ]]; then
 		scope="since draft PR #${pr} was opened, reaching the per-PR automatic continuation limit (${_PCC_MAX_PR_RELEASES}) for non-progress releases or the total-release ceiling (${_PCC_MAX_PR_PROGRESS_RELEASES}) at head \`${head}\`. Pulse will not continue this draft automatically again"
@@ -1823,7 +1853,7 @@ _pcc_dispatch_stalled() {
 	local pr_json="" head="" head_date="" pr_created="" assignees="" comments="" evidence="" key=""
 	local trusted_logins=""
 	local release_id="" reason="" stalls="" posted="" pr_releases="" fuse_posted="" attention_epoch=""
-	local release_epoch="" attempt="" commits="[]" progress=0 nonprogress=0
+	local release_epoch="" attempt="" approval_release="" commits="[]" progress=0 nonprogress=0
 	# Dynamic scope confines routing to this dispatch; other PR/review workers
 	# cannot inherit a previous checkpoint's escalation in a long-lived scanner.
 	local PCC_ESCALATION_TIER="" PCC_ESCALATION_MODEL="" PCC_ESCALATION_VARIANT="" PCC_ESCALATION_RELEASE="" PCC_ESCALATION_HEAD=""
@@ -1866,7 +1896,8 @@ _pcc_dispatch_stalled() {
 		return 1
 	}
 	IFS=$'\t' read -r release_id reason stalls posted pr_releases fuse_posted attention_epoch \
-		release_epoch attempt progress nonprogress <<<"$evidence"
+		release_epoch attempt progress nonprogress approval_release <<<"$evidence"
+	approval_release="${approval_release:-$release_id}"
 	[[ "$release_id" =~ ^[1-9][0-9]*$ && "$stalls" =~ ^[0-9]+$ ]] || return 1
 	[[ "$pr_releases" =~ ^[0-9]+$ ]] || pr_releases=0
 	[[ "$progress" =~ ^[0-9]+$ && "$nonprogress" =~ ^[0-9]+$ ]] || return 1
@@ -1886,7 +1917,7 @@ _pcc_dispatch_stalled() {
 		fi
 		if [[ "$posted" != true ]]; then
 			_pcc_post_stall_attention "$repo" "$issue" "$pr" "$head" "$release_id" "$reason" "$stalls" "$key" \
-				"$fuse" "" "$attempt" || return 1
+				"$fuse" "" "$attempt" "$approval_release" || return 1
 			printf 'STALLED_CHECKPOINT_ATTENTION_POSTED: PR #%s in %s head=%s release=%s stalls=%s\n' \
 				"$pr" "$repo" "$head" "$release_id" "$stalls"
 			return 0

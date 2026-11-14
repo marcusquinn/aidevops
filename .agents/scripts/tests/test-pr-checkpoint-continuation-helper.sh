@@ -162,6 +162,48 @@ source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-continuation-fuse.sh"
 # shellcheck source=test-pr-checkpoint-tier-escalation.sh
 source "${TEST_SCRIPT_DIR}/test-pr-checkpoint-tier-escalation.sh"
 
+# A never-ready successor must not borrow the earlier attempt as its own.
+episode_comments='[{"id":1,"created_at":"2026-09-30T01:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"DISPATCH_LEASE phase=ready attempt_id=attempt:original"},{"id":2,"created_at":"2026-09-30T02:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=a"},{"id":3,"created_at":"2026-09-30T03:00:00Z","author_association":"MEMBER","user":{"login":"b"},"body":"DISPATCH_CLAIM runner=b"},{"id":4,"created_at":"2026-09-30T04:00:00Z","author_association":"MEMBER","user":{"login":"b"},"body":"CLAIM_RELEASED reason=stale_assignment_reset runner=b"}]'
+episode_result=$(_pcc_stall_release_evidence "$episode_comments" "2026-09-30T00:00:00Z" key)
+if [[ "$episode_result" == *$'\tattempt:original\t2' ]]; then
+	print_result 'stall approval selects checkpoint episode' 0
+else
+	print_result 'stall approval selects checkpoint episode' 1 "$episode_result"
+fi
+
+# Stall observers may differ from the sole ready-lease owner. Exercise the
+# attention publisher too: an ambiguous episode must not offer a command.
+test_stall_observer_pairing() (
+	local STUB_POST_DIR="${TEST_ROOT}/posts-stall-observer" comments="" evidence="" status=0
+	local release="" reason="" stalls="" posted="" count="" fuse="" attention="" epoch="" attempt=""
+	export STUB_POST_DIR
+	mkdir -p "$STUB_POST_DIR"
+	_pcc_approval_template() {
+		local repo="$1" pr="$2" issue="$3" release_id="$4" attempt_id="$5"
+		[[ "$repo/$pr/$issue/$release_id/$attempt_id" == owner/repo/42/123/3/attempt:original ]] || return 1
+		return 0
+	}
+	comments='[{"id":1,"created_at":"2026-09-30T01:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"DISPATCH_CLAIM runner=a"},{"id":2,"created_at":"2026-09-30T02:00:00Z","author_association":"MEMBER","user":{"login":"a"},"body":"DISPATCH_LEASE phase=ready attempt_id=attempt:original"},{"id":3,"created_at":"2026-09-30T03:00:00Z","author_association":"MEMBER","user":{"login":"b"},"body":"CLAIM_RELEASED reason=stale_assignment_reset runner=b"}]'
+	evidence=$(_pcc_stall_release_evidence "$comments" "2026-09-30T00:00:00Z" key)
+	IFS=$'\t' read -r release reason stalls posted count fuse attention epoch attempt <<<"$evidence"
+	[[ "$attempt" == attempt:original ]] || status=1
+	_pcc_post_stall_attention owner/repo 123 42 head "$release" "$reason" "$stalls" key false "" "$attempt" >/dev/null
+	grep -Fq 'approval-template owner/repo 42 123 3 attempt:original' "${STUB_POST_DIR}/post-1" || status=1
+	comments=$(jq '. + [.[1] | .id = 2.5 | .user.login = "b"]' <<<"$comments")
+	evidence=$(_pcc_stall_release_evidence "$comments" "2026-09-30T00:00:00Z" key)
+	IFS=$'\t' read -r release reason stalls posted count fuse attention epoch attempt <<<"$evidence"
+	[[ "$attempt" == - ]] || status=1
+	_pcc_post_stall_attention owner/repo 123 42 head "$release" "$reason" "$stalls" key false "" "$attempt" >/dev/null
+	if grep -Fq 'approval-template owner/repo' "${STUB_POST_DIR}/post-2"; then status=1; fi
+	[[ "$status" == 0 ]] || return 1
+	return 0
+)
+if test_stall_observer_pairing; then
+	print_result 'stall observer uses sole lease owner and refuses ambiguous owners' 0
+else
+	print_result 'stall observer uses sole lease owner and refuses ambiguous owners' 1
+fi
+
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
 	exit 0
