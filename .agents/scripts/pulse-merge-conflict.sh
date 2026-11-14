@@ -40,6 +40,9 @@
 [[ -n "${_PULSE_MERGE_CONFLICT_LOADED:-}" ]] && return 0
 _PULSE_MERGE_CONFLICT_LOADED=1
 
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${BASH_SOURCE[0]%/*}/shared-gh-commit-cache.sh"
+
 # t2863: Module-level variable defaults (set -u guards).
 # Ensures LOGFILE is safe to dereference in all functions when this module
 # is sourced outside the pulse-wrapper.sh bootstrap context.
@@ -337,8 +340,8 @@ _interactive_pr_is_stale() {
 			activity_source="head_commit"
 		fi
 		if [[ -z "$activity_at" ]]; then
-			activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
-				--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
+			activity_at=$(gh_commit_by_sha_cached "$repo_slug" "$head_ref_oid" 2>/dev/null | \
+				jq -r '.commit.committer.date // .commit.author.date // empty') || activity_at=""
 			[[ -n "$activity_at" ]] && activity_source="head_commit"
 		fi
 	fi
@@ -549,8 +552,8 @@ _verify_pr_overlaps_commit() {
 	fi
 	[[ -n "$pr_files" ]] || return 1
 
-	commit_files=$(gh api "repos/${repo_slug}/commits/${commit_sha}" \
-		--jq '.files[].filename' 2>/dev/null) || return 1
+	commit_files=$(gh_commit_by_sha_cached "$repo_slug" "$commit_sha" 2>/dev/null | \
+		jq -r '.files[].filename') || return 1
 	[[ -n "$commit_files" ]] || return 1
 
 	# Compute intersection, excluding planning paths. Iterate the closing
