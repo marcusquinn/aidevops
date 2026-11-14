@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.193] - 2026-11-14
+
+### Added
+
+- route-upstream for findings owned by another managed repo (#38293)
+- surface App-read routing opportunity when PAT REST quota is the pulse ceiling
+
+### Changed
+
+- Maintenance: add t18993 t18994 scanner harness drift and complexity-guard counter-push scoping
+- Tests: isolate standalone 6c from the macOS keychain gate
+- Maintenance: sync GitHub issue refs to TODO.md (#38269)
+
+### Fixed
+
+- write-access probe and accurate admin wording
+- do not quote WorkingDirectory in Linux unit
+- finish interactive PRs left idle by a still-running session
+- framework provenance labels no longer stale signed issue approvals
+- reclaim stale empty receipt-lock owner and publish owner atomically
+
 ## [3.39.192] - 2026-11-14
 
 ### Changed
