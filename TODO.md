@@ -2049,6 +2049,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18979 Flag-gated reclaim of finished worktrees while the cleanup evidence collector is missing #bug ref:GH#37901
 
+- [ ] t18987 fix(task-id-guard): name the malformed token and its source in block diagnostics #auto-dispatch #bug #fix-the-fixer #priority:medium ref:GH#38221
+
 - [ ] t18985 fix(checkpoints): escalate the model tier when a draft head stalls twice, instead of pausing it 12-96h at the same tier #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38215
 
 ## In Progress
