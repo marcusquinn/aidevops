@@ -44,11 +44,88 @@ _pmp_clear_merge_checkpoint() {
 	return 0
 }
 
-_pmp_clear_merge_pr_cursor() {
+# PR cursor files hold one `repo|next_index|last_pr|next_pr` line per repository
+# so a repo paused mid-walk keeps its position while other repos are visited
+# (GH#38213). Single-line files from older versions remain valid.
+
+# Print the cursor line for one repo (nothing when absent).
+_pmp_merge_pr_cursor_line_for_repo() {
 	local cursor_file="$1"
+	local repo_slug="$2"
+	local line=""
+
+	[[ -n "$cursor_file" && -f "$cursor_file" && -n "$repo_slug" ]] || return 0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "${line%%|*}" == "$repo_slug" ]]; then
+			printf '%s\n' "$line"
+			return 0
+		fi
+	done <"$cursor_file"
+	return 0
+}
+
+# Rewrite the cursor file without the repo's line, then optionally append a
+# replacement line. Removes the file when nothing remains.
+# Args: $1=cursor file, $2=repo slug, $3=replacement line (optional)
+_pmp_rewrite_merge_pr_cursor_file() {
+	local cursor_file="$1"
+	local repo_slug="$2"
+	local new_line="${3:-}"
+	local kept="" line="" cursor_dir=""
 
 	[[ -n "$cursor_file" ]] || return 0
+	if [[ -f "$cursor_file" ]]; then
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			[[ -n "$line" ]] || continue
+			[[ "${line%%|*}" == "$repo_slug" ]] && continue
+			kept="${kept}${line}"$'\n'
+		done <"$cursor_file"
+	fi
+	[[ -n "$new_line" ]] && kept="${kept}${new_line}"$'\n'
+	if [[ -z "$kept" ]]; then
+		rm -f "$cursor_file" 2>/dev/null || true
+		return 0
+	fi
+	cursor_dir="${cursor_file%/*}"
+	if [[ -n "$cursor_dir" && "$cursor_dir" != "$cursor_file" ]]; then
+		mkdir -p "$cursor_dir" 2>/dev/null || return 0
+	fi
+	printf '%s' "$kept" >"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+# Clear the whole cursor file, or only one repo's line when $2 is given.
+_pmp_clear_merge_pr_cursor() {
+	local cursor_file="$1"
+	local repo_slug="${2:-}"
+
+	[[ -n "$cursor_file" ]] || return 0
+	if [[ -n "$repo_slug" ]]; then
+		_pmp_rewrite_merge_pr_cursor_file "$cursor_file" "$repo_slug"
+		return 0
+	fi
 	rm -f "$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+# Drop cursor lines for repos no longer in the walk. Args: $1=file, $2=repo rows
+_pmp_prune_merge_pr_cursors() {
+	local cursor_file="$1"
+	local repo_rows="$2"
+	local logfile="$3"
+	local line="" stale_repo="" snapshot=""
+
+	[[ -n "$cursor_file" && -f "$cursor_file" ]] || return 0
+	# Snapshot first: the rewrite truncates the file being iterated.
+	snapshot=$(<"$cursor_file") || return 0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -n "$line" ]] || continue
+		stale_repo="${line%%|*}"
+		if ! _pmp_repo_rows_contain_slug "$repo_rows" "$stale_repo"; then
+			echo "[pulse-wrapper] Merge pass: ignoring stale PR cursor repo=${stale_repo}" >>"$logfile"
+			_pmp_rewrite_merge_pr_cursor_file "$cursor_file" "$stale_repo"
+		fi
+	done <<<"$snapshot"
 	return 0
 }
 
@@ -61,7 +138,8 @@ _pmp_write_merge_pr_cursor() {
 
 	[[ -n "$cursor_file" && -n "$repo_slug" ]] || return 0
 	[[ "$next_index" =~ ^[0-9]+$ ]] || next_index=0
-	printf '%s|%s|%s|%s\n' "$repo_slug" "$next_index" "$last_pr_number" "$next_pr_number" >"$cursor_file" 2>/dev/null || true
+	_pmp_rewrite_merge_pr_cursor_file "$cursor_file" "$repo_slug" \
+		"${repo_slug}|${next_index}|${last_pr_number}|${next_pr_number}"
 	return 0
 }
 
@@ -69,15 +147,14 @@ _pmp_read_merge_pr_cursor_last() {
 	local cursor_file="$1"
 	local repo_slug="$2"
 	local last_pr_var="$3"
-	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr=""
+	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr="" cursor_line=""
 
 	[[ "$last_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-	if [[ -n "$cursor_file" && -f "$cursor_file" ]]; then
-		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <"$cursor_file" || true
-		if [[ "$cursor_repo" == "$repo_slug" ]]; then
-			printf -v "$last_pr_var" '%s' "$cursor_last_pr"
-			return 0
-		fi
+	cursor_line=$(_pmp_merge_pr_cursor_line_for_repo "$cursor_file" "$repo_slug")
+	if [[ -n "$cursor_line" ]]; then
+		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <<<"$cursor_line"
+		printf -v "$last_pr_var" '%s' "$cursor_last_pr"
+		return 0
 	fi
 	printf -v "$last_pr_var" '%s' ''
 	return 0
@@ -117,14 +194,15 @@ _pmp_prepare_merge_pr_cursor_resume() {
 	local cursor_file="$4"
 	local logfile="$5"
 	local start_index_var="$6"
-	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr=""
+	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr="" cursor_line=""
 	local start_index=0 located_index=""
 
 	[[ "$start_index_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
-	if [[ -n "$cursor_file" && -f "$cursor_file" ]]; then
-		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <"$cursor_file" || true
+	cursor_line=$(_pmp_merge_pr_cursor_line_for_repo "$cursor_file" "$repo_slug")
+	if [[ -n "$cursor_line" ]]; then
+		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <<<"$cursor_line"
 		if [[ "$cursor_repo" == "$repo_slug" ]]; then
 			located_index=$(_pmp_pr_cursor_index_for_number "$pr_json" "$cursor_next_pr") || located_index=""
 			if [[ "$located_index" =~ ^[0-9]+$ ]]; then
@@ -138,14 +216,11 @@ _pmp_prepare_merge_pr_cursor_resume() {
 				fi
 			fi
 			if [[ "$start_index" -ge "$pr_count" ]]; then
-				_pmp_clear_merge_pr_cursor "$cursor_file"
+				_pmp_clear_merge_pr_cursor "$cursor_file" "$repo_slug"
 				start_index=0
 			else
 				echo "[pulse-wrapper] Merge pass: resuming ${repo_slug} at PR cursor index=${start_index} last_pr=${cursor_last_pr:-none} next_pr=${cursor_next_pr:-none}" >>"$logfile"
 			fi
-		elif [[ -n "$cursor_repo" ]]; then
-			echo "[pulse-wrapper] Merge pass: ignoring stale PR cursor repo=${cursor_repo} while processing ${repo_slug}" >>"$logfile"
-			_pmp_clear_merge_pr_cursor "$cursor_file"
 		fi
 	fi
 
@@ -184,15 +259,85 @@ _pmp_merge_pass_budget_deadline() {
 	return 0
 }
 
-_pmp_merge_pass_budget_exhausted() {
+#######################################
+# Effective graceful deadline for the current unit of merge work. The per-repo
+# slice is the earlier deadline only after the repo completed one unit of real
+# work in the current phase (_PMP_MERGE_REPO_SLICE_PROGRESS=1); before that the
+# whole-pass deadline applies, so a PR whose enrichment or evaluation exceeds
+# one slice still completes instead of repeating every pass (GH#38213).
+# Stdout: deadline epoch (0 = unbounded)
+#######################################
+_pmp_merge_effective_deadline_epoch() {
 	local deadline_epoch="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	local slice_epoch="${_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH:-0}"
+
+	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
+	[[ "$slice_epoch" =~ ^[0-9]+$ ]] || slice_epoch=0
+	if [[ "${_PMP_MERGE_REPO_SLICE_PROGRESS:-0}" == "1" && "$slice_epoch" -gt 0 ]] \
+		&& [[ "$deadline_epoch" -eq 0 || "$slice_epoch" -lt "$deadline_epoch" ]]; then
+		deadline_epoch="$slice_epoch"
+	fi
+	printf '%s' "$deadline_epoch"
+	return 0
+}
+
+_pmp_merge_pass_budget_exhausted() {
+	local deadline_epoch=""
 	local now_epoch=""
 
+	deadline_epoch=$(_pmp_merge_effective_deadline_epoch)
 	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
 	[[ "$deadline_epoch" -gt 0 ]] || return 1
 	now_epoch=$(_pmp_now_epoch)
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
 	[[ "$now_epoch" -ge "$deadline_epoch" ]] || return 1
+	return 0
+}
+
+# Whole-pass budget only (ignores the per-repo slice).
+_pmp_merge_whole_pass_budget_exhausted() {
+	local slice_saved="${_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH:-0}"
+	local rc=0
+
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_pmp_merge_pass_budget_exhausted || rc=$?
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH="$slice_saved"
+	return "$rc"
+}
+
+#######################################
+# Compute the per-repo slice deadline for the repo about to be walked: the
+# earlier of now+slice and the pass deadline. Slice defaults to a third of the
+# graceful pass budget; PULSE_MERGE_REPO_SLICE_SECONDS=0 disables slicing.
+# A repo walk may overrun the slice by at most one backlog enrichment or one
+# processed PR: see _pmp_merge_effective_deadline_epoch (progress guarantee).
+# Stdout: deadline epoch (0 = no slice)
+#######################################
+_pmp_merge_repo_slice_deadline() {
+	local slice_seconds="${PULSE_MERGE_REPO_SLICE_SECONDS:-}"
+	local pass_deadline="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	local pass_start="${_PMP_MERGE_PASS_START_EPOCH:-0}"
+	local now_epoch="" deadline=0
+
+	[[ "$pass_deadline" =~ ^[0-9]+$ ]] || pass_deadline=0
+	[[ "$pass_start" =~ ^[0-9]+$ ]] || pass_start=0
+	now_epoch=$(_pmp_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	if [[ -z "$slice_seconds" ]]; then
+		if [[ "$pass_deadline" -gt "$pass_start" && "$pass_start" -gt 0 ]]; then
+			slice_seconds=$(((pass_deadline - pass_start) / 3))
+		else
+			slice_seconds=0
+		fi
+	fi
+	[[ "$slice_seconds" =~ ^[0-9]+$ ]] || slice_seconds=0
+	if [[ "$slice_seconds" -gt 0 && "$now_epoch" -gt 0 ]]; then
+		deadline=$((now_epoch + slice_seconds))
+		if [[ "$pass_deadline" -gt 0 && "$pass_deadline" -lt "$deadline" ]]; then
+			deadline="$pass_deadline"
+		fi
+	fi
+	printf '%s' "$deadline"
 	return 0
 }
 
@@ -296,15 +441,32 @@ _pmp_pause_merge_pr_cursor() {
 	return 5
 }
 
+# Enrichment state is per repository (GH#38213) so visiting other repos between
+# turns does not discard a large repo's partial enrichment. Optional $1=repo
+# slug; explicit PULSE_MERGE_ENRICHMENT_*_FILE overrides stay single-file.
+_pmp_merge_enrichment_repo_suffix() {
+	local repo_slug="${1:-}"
+	local safe=""
+
+	[[ -n "$repo_slug" ]] || return 0
+	safe="${repo_slug//[^A-Za-z0-9._-]/_}"
+	printf '.%s' "$safe"
+	return 0
+}
+
 _pmp_merge_enrichment_cache_file() {
 	local process_cursor_file="${PULSE_MERGE_PR_CURSOR_FILE:-${LOGFILE:-/tmp/aidevops-pulse}.pr-cursor}"
-	printf '%s' "${PULSE_MERGE_ENRICHMENT_CACHE_FILE:-${process_cursor_file}.enrichment-cache}"
+	local suffix=""
+	suffix=$(_pmp_merge_enrichment_repo_suffix "${1:-}")
+	printf '%s' "${PULSE_MERGE_ENRICHMENT_CACHE_FILE:-${process_cursor_file}.enrichment-cache${suffix}}"
 	return 0
 }
 
 _pmp_merge_enrichment_cursor_file() {
 	local process_cursor_file="${PULSE_MERGE_PR_CURSOR_FILE:-${LOGFILE:-/tmp/aidevops-pulse}.pr-cursor}"
-	printf '%s' "${PULSE_MERGE_ENRICHMENT_CURSOR_FILE:-${process_cursor_file}.enrichment-cursor}"
+	local suffix=""
+	suffix=$(_pmp_merge_enrichment_repo_suffix "${1:-}")
+	printf '%s' "${PULSE_MERGE_ENRICHMENT_CURSOR_FILE:-${process_cursor_file}.enrichment-cursor${suffix}}"
 	return 0
 }
 
@@ -324,8 +486,8 @@ _pmp_write_merge_enrichment_cache() {
 
 _pmp_clear_merge_enrichment_state() {
 	local cache_file="" cursor_file=""
-	cache_file=$(_pmp_merge_enrichment_cache_file)
-	cursor_file=$(_pmp_merge_enrichment_cursor_file)
+	cache_file=$(_pmp_merge_enrichment_cache_file "${1:-}")
+	cursor_file=$(_pmp_merge_enrichment_cursor_file "${1:-}")
 	[[ -n "$cache_file" ]] && rm -f "$cache_file"
 	[[ -n "$cursor_file" ]] && _pmp_clear_merge_pr_cursor "$cursor_file"
 	return 0
@@ -369,8 +531,8 @@ _pmp_prepare_enriched_pr_backlog() {
 		printf -v "$output_var" '%s' "$fresh_json"
 		return 0
 	fi
-	cache_file=$(_pmp_merge_enrichment_cache_file)
-	cursor_file=$(_pmp_merge_enrichment_cursor_file)
+	cache_file=$(_pmp_merge_enrichment_cache_file "$repo_slug")
+	cursor_file=$(_pmp_merge_enrichment_cursor_file "$repo_slug")
 	if [[ -f "$cache_file" ]]; then
 		cache_state=$(<"$cache_file")
 		if printf '%s' "$cache_state" | jq -e --arg repo "$repo_slug" '.repo == $repo and (.prs | type == "array")' >/dev/null 2>&1; then
@@ -415,6 +577,7 @@ _pmp_prepare_enriched_pr_backlog() {
 			[[ "$enrichment_rc" -eq 0 && -n "$enriched_obj" ]] || enriched_obj=$(printf '%s' "$pr_obj" | jq -c '. + {mergeable:"UNKNOWN", reviewDecision:"UNKNOWN", statusCheckRollup:[]}') || return 1
 			filtered_cache=$(jq -cn --argjson cache "$filtered_cache" --argjson pr "$enriched_obj" '[$cache[] | select(.number != $pr.number)] + [$pr]') || return 1
 			_pmp_write_merge_enrichment_cache "$cache_file" "$repo_slug" "$filtered_cache" || return 1
+			_PMP_MERGE_REPO_SLICE_PROGRESS=1 # real enrichment done; slice now binds
 		fi
 		cursor_index=$((cursor_index + 1))
 		_pmp_write_merge_pr_cursor "$cursor_file" "$repo_slug" "$cursor_index" "$(printf '%s' "$pr_obj" | jq -r '.number // empty')" "$(_pmp_pr_number_at_index "$fresh_json" "$cursor_index")"
@@ -847,25 +1010,68 @@ _pmp_process_merge_repo_for_pass() {
 	_mr_repo_start=$(_pmp_now_epoch)
 
 	local _mr_repo_rc=0
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=$(_pmp_merge_repo_slice_deadline)
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_" || _mr_repo_rc=$?
+	local _mr_slice_hit=0
+	# Slice-only pause: the slice deadline elapsed but the pass budget did not.
+	if [[ "$_mr_repo_rc" -eq 5 && "${_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH:-0}" -gt 0 ]] \
+		&& _pmp_merge_pass_budget_exhausted && ! _pmp_merge_whole_pass_budget_exhausted; then
+		_mr_slice_hit=1
+	fi
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
 	_pmp_add_counter_var "$total_merged_var" "$repo_merged"
 	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
 	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
 	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
 	_PMP_LAST_REPO_TIMING_ROW="${repo_slug}|${_mr_repo_total_s}|${_mr_repo_list_s}|${_mr_repo_mergeability_s}|${_mr_repo_ruleset_s}|${_mr_repo_branch_protection_s}|${repo_merged}|${repo_closed}|${repo_failed}|${_mr_repo_pr_count}|${_mr_repo_list_state}|${_mr_repo_enrichment_s}|${_mr_repo_pr_s}|${_mr_repo_slowest_pr}|${_mr_repo_trust_gate_s}"
 	if [[ "$_mr_repo_rc" -eq 5 ]]; then
+		if [[ "$_mr_slice_hit" -eq 1 && ! -f "$stop_flag" ]]; then
+			# Per-repo slice used (GH#38213): keep this repo's own PR cursor,
+			# checkpoint here and let the walk continue with the next repo.
+			echo "[pulse-wrapper] Deterministic merge pass: repo slice used for ${repo_slug}; PR cursor persisted, continuing with next repo" >>"$logfile"
+			_PMP_REPO_SLICE_PAUSED=1
+			_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
+			return 0
+		fi
 		echo "[pulse-wrapper] Deterministic merge pass paused mid-repo ${repo_slug}; PR cursor persisted" >>"$logfile"
 		printf -v "$completed_all_var" '%s' '0'
 		return 0
 	fi
 
 	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
-	_pmp_clear_merge_pr_cursor "${PULSE_MERGE_PR_CURSOR_FILE:-}"
+	_pmp_clear_merge_pr_cursor "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$repo_slug"
 
 	if [[ -f "$stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$logfile"
 		printf -v "$completed_all_var" '%s' '0'
 	fi
+	return 0
+}
+
+# Initialise pass-level deadlines and per-repo slice state. Args: $1=pass start
+_pmp_init_merge_pass_deadlines() {
+	local pass_start="$1"
+
+	_PMP_MERGE_PASS_START_EPOCH="$pass_start"
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$pass_start")
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_PMP_MERGE_REPO_SLICE_PROGRESS=0
+	_PMP_REPO_SLICE_PAUSED=0
+	return 0
+}
+
+# Create the same-pass outcome directory. Stdout: path (empty when unavailable)
+_pmp_create_merge_outcome_dir() {
+	local logfile="$1"
+	local outcome_dir=""
+
+	outcome_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-merge-outcomes.XXXXXX" 2>/dev/null) || outcome_dir=""
+	if [[ -z "$outcome_dir" ]]; then
+		echo "[pulse-wrapper] Same-pass merge outcome cache unavailable; zero-progress aggregate will fail closed" >>"$logfile"
+	fi
+	printf '%s' "$outcome_dir"
 	return 0
 }
 
@@ -882,7 +1088,7 @@ merge_ready_prs_all_repos() {
 	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
 	local _mr_pass_start
 	_mr_pass_start=$(_pmp_now_epoch)
-	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$_mr_pass_start")
+	_pmp_init_merge_pass_deadlines "$_mr_pass_start"
 
 	if [[ -f "$_mr_stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$_mr_logfile"
@@ -899,19 +1105,11 @@ merge_ready_prs_all_repos() {
 	local total_eligible_unmerged=0
 	local AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=""
 	local _mr_repo_rows=""
-	local _mr_checkpoint=""
-	local _mr_resume_pending=0
-	local _mr_resumed_from_checkpoint=0
-	local _mr_completed_all=1
-	local _mr_outcomes_complete=1
-	local _mr_diagnostics_complete=1
+	local _mr_checkpoint="" _mr_resume_pending=0 _mr_resumed_from_checkpoint=0
+	local _mr_completed_all=1 _mr_outcomes_complete=1 _mr_diagnostics_complete=1
 	local _mr_primary_timing_rows="" _mr_diagnostic_timing_rows=""
-	local repo_slug=""
-	local repo_path=""
-	AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-merge-outcomes.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=""
-	if [[ -z "$AIDEVOPS_PULSE_MERGE_OUTCOME_DIR" ]]; then
-		echo "[pulse-wrapper] Same-pass merge outcome cache unavailable; zero-progress aggregate will fail closed" >>"$_mr_logfile"
-	fi
+	local repo_slug="" repo_path=""
+	AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=$(_pmp_create_merge_outcome_dir "$_mr_logfile")
 
 	_mr_repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null) || _mr_repo_rows=""
 	_pmp_prepare_merge_checkpoint_resume "$_mr_repo_rows" "$_mr_checkpoint_file" "$_mr_logfile" \
@@ -934,14 +1132,16 @@ merge_ready_prs_all_repos() {
 
 	if [[ "$_mr_completed_all" -eq 1 ]]; then
 		_pmp_clear_merge_checkpoint "$_mr_checkpoint_file"
-		_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
+		# Per-repo cursors survive the pass; only drop repos no longer walked.
+		_pmp_prune_merge_pr_cursors "$PULSE_MERGE_PR_CURSOR_FILE" "$_mr_repo_rows" "$_mr_logfile"
 	fi
 	if [[ "$_mr_completed_all" -eq 1 ]]; then
-		if [[ "$_mr_resumed_from_checkpoint" -eq 0 ]]; then
+		if [[ "$_mr_resumed_from_checkpoint" -eq 0 && "${_PMP_REPO_SLICE_PAUSED:-0}" -eq 0 ]]; then
 			_pmp_collect_same_pass_eligible_unmerged "$_mr_repo_rows" "$_mr_logfile" \
 				total_eligible_unmerged _mr_outcomes_complete || _mr_outcomes_complete=0
 		fi
 	fi
+	[[ "${_PMP_REPO_SLICE_PAUSED:-0}" -eq 1 ]] && _mr_outcomes_complete=0
 	# Record the all-repository throughput signal before expensive diagnostics so
 	# the watchdog cannot erase a completed primary-pass result (t3193).
 	_pmp_record_pass_zero_progress "$total_eligible_unmerged" "$total_merged" "$total_closed" \

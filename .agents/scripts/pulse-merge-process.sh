@@ -426,7 +426,7 @@ _merge_ready_prs_for_repo() {
 	if [[ "$pr_count" -eq 0 ]] || _pmu_skip_unchanged_repo "$repo_slug" "$pr_json" "$pr_list_complete"; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		if [[ "$pr_count" -eq 0 && "$pr_list_complete" -eq 1 ]]; then
-			_pmp_clear_merge_enrichment_state; _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true
+			_pmp_clear_merge_enrichment_state "$repo_slug"; _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true
 		fi
 		return 0
 	fi
@@ -470,8 +470,8 @@ _merge_ready_prs_for_repo() {
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
-	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
-	_pmp_clear_merge_enrichment_state
+	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug"
+	_pmp_clear_merge_enrichment_state "$repo_slug"
 
 	_pmp_cleanup_merge_repo_caches
 	if [[ "$pr_list_complete" -eq 1 && "$outcomes_complete" -eq 1 ]]; then _pmp_mark_same_pass_repo_complete "$repo_slug" 2>/dev/null || true; fi
