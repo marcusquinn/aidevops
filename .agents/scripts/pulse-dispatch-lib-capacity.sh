@@ -545,6 +545,8 @@ _dispatch_ranked_candidates_json() {
 	if ! candidates_json=$(build_ranked_dispatch_candidates_json "$per_repo_limit" "$dependency_normalization_mode"); then
 		# An unavailable arrival census must not suppress fresh known work.
 		[[ -n "$first_wave_remainder" ]] || return 1
+		now_epoch=$(date +%s) || return 1
+		_dispatch_candidate_snapshot_is_fresh "$snapshot_file" "$now_epoch" "$snapshot_ttl" || return 1
 		printf '%s\n' "$first_wave_remainder"
 		return 0
 	fi

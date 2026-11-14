@@ -287,6 +287,14 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	[[ ! -e "$handoff" && ! -e "${handoff}.consumed" && -f "$partial" && -f "${partial}.consumed" ]]
 	grep -qx 'dispatch_candidate_handoff_adopted' "$stats"
 	grep -qx 'dispatch_candidate_snapshot_hit' "$stats"
+	# GH#38226: the reported 107-candidate census survives activation intact;
+	# its next first wave serves all candidates without another repository scan.
+	_dispatch_invalidate_candidate_snapshot large_handoff_fixture 50
+	write_handoff "$handoff" "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" 0 "$(jq -nr '[range(1;108)] | join(",")')"
+	: >"$builds"
+	retained=$(_dispatch_bounded_ranked_candidates_json 50 skip 180)
+	jq -e 'length == 107 and .[0].number == 1 and .[106].number == 107' <<<"$retained" >/dev/null
+	[[ ! -s "$builds" ]]
 
 	# Past its reuse window, or in another snapshot format, a handoff is
 	# removed unserved and the wave scans.
