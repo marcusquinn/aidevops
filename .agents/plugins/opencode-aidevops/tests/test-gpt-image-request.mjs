@@ -218,7 +218,7 @@ describe("GPT image provider requests", () => {
     assert.equal(result.base64, "");
   });
 
-  test("reports a clear entitlement error when live models strip image_generation", async () => {
+  test("reports only probed-route incompatibility when live models strip image_generation", async () => {
     const models = [];
     const result = await requestOAuthImage(
       { accessToken: "oauth-test-token" },
@@ -232,8 +232,67 @@ describe("GPT image provider requests", () => {
       },
     );
     assert.deepEqual(models, ["gpt-6-sol", "gpt-reserve", "gpt-6-luna"]);
-    assert.equal(result.error.code, "no_image_entitlement");
-    assert.match(result.error.message, /no image-capable Codex model/);
+    assert.equal(result.error.code, "no_compatible_image_router");
+    assert.match(result.error.message, /among the attempted candidates/);
+  });
+
+  test("classifies a stripped initial SSE route without claiming account-wide entitlement", async () => {
+    let calls = 0;
+    const result = await requestOAuthImage(
+      { accessToken: "test" }, { prompt: "draw a test" }, [],
+      async () => {
+        calls += 1;
+        return new Response(`data: ${JSON.stringify({
+          type: "response.failed",
+          response: { error: { message: "Tool choice 'image_generation' not found in 'tools' parameter" } },
+        })}\n\n`);
+      },
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.error.code, "no_compatible_image_router");
+    assert.match(result.error.message, /Other models may support images/);
+    assert.equal(result.base64, "");
+  });
+
+  test("discovers live models after SSE rejection and skips error-bearing HTTP 200 candidates", async () => {
+    const models = [];
+    const result = await requestOAuthImage(
+      { accessToken: "test" }, { prompt: "draw a test" }, [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: ["gpt-first", "gpt-second", "gpt-third"] });
+        models.push(JSON.parse(init.body).model);
+        const error = models.length === 2
+          ? { message: "Tool choice 'image_generation' not found in 'tools' parameter" }
+          : { code: "model_not_found", message: "unavailable" };
+        const event = models.length === 4
+          ? { type: "response.output_item.done", item: { type: "image_generation_call", result: IMAGE_RESULT } }
+          : { type: "response.failed", response: { error } };
+        return new Response(`data: ${JSON.stringify(event)}\n\n`);
+      },
+    );
+    assert.deepEqual(models, ["gpt-6-sol", "gpt-first", "gpt-second", "gpt-third"]);
+    assert.equal(result.routerModel, "gpt-third");
+    assert.equal(result.base64, IMAGE_RESULT);
+    assert.equal(result.error, undefined);
+  });
+
+  test("keeps the candidate bound without inferring entitlement for unattempted models", async () => {
+    const models = [];
+    const result = await requestOAuthImage(
+      { accessToken: "test" }, { prompt: "draw a test" }, [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: ["gpt-first", "gpt-second", "gpt-third", "gpt-fourth"] });
+        models.push(JSON.parse(init.body).model);
+        const error = models.length === 1
+          ? { code: "model_not_found", message: "unavailable" }
+          : { message: "Tool choice 'image_generation' not found in 'tools' parameter" };
+        return new Response(`data: ${JSON.stringify({ type: "response.failed", response: { error } })}\n\n`);
+      },
+    );
+    assert.deepEqual(models, ["gpt-6-sol", "gpt-first", "gpt-second", "gpt-third"]);
+    assert.equal(result.error.code, "no_compatible_image_router");
+    assert.match(result.error.message, /among the attempted candidates/);
+    assert.equal(result.base64, "");
   });
 
   test("retries a rejected router with an image-capable live model", async () => {

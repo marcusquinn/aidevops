@@ -147,7 +147,7 @@ async function executeImageGeneration(rawArgs, options, context) {
     args.model ||= DEFAULT_API_IMAGE_MODEL;
     result = await requestApiImage(auth, args, images, options.fetchImpl);
   }
-  if (!result.response.ok) throw result.error;
+  if (result.error || !result.response.ok) throw result.error;
 
   const saved = await saveGeneratedImage(args.out, project.root, result.base64, args.format, {
     // Codex size is best-effort; keep native raster validation and secure writes.
