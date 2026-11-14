@@ -22,7 +22,7 @@ Evidence from one runner, 24h to 2026-11-14T20:30Z:
 
 ## How
 
-- New module `.agents/scripts/github_auth_setup.py`; wire `app create|bind` into `.agents/scripts/github_auth_cli.py` (`repo_free_action`).
+- New modules: `.agents/scripts/github_auth_setup.py` (parser, create orchestration), `.agents/scripts/github_auth_app_manifest.py` (loopback Manifest flow, conversion, key save), `.agents/scripts/github_auth_app_bind.py` (installation discovery, planner, locked bind). Split to stay under qlty file-complexity and parameter/return smells. Wire `app create|bind` into `.agents/scripts/github_auth_cli.py` (`repo_free_action`).
 - Reuse: `github_app_auth.jwt/exchange/api/atomic_json/private_read`, `DEFAULT_PULSE_READ_PERMISSIONS`, `github_auth_profiles.manage_profile`, `github_auth_config.registry/registry_lock/settings`, `github_auth_policy.validate_routes`.
 - Manifest: `public: false`, no webhook (`hook_attributes.active: false`), `default_permissions` = read for `DEFAULT_PULSE_READ_PERMISSIONS`, no events, `redirect_url` = loopback callback. Org owners post to `https://github.com/organizations/<org>/settings/apps/new`, users to `https://github.com/settings/apps/new`.
 - Bind skips: legacy `pulse_auth` entries (needs `migrate`), `local_only`, non-pulse, owners without an installation, repos outside a `selected` installation, suspended installations. Report each skip reason.
@@ -31,6 +31,8 @@ Evidence from one runner, 24h to 2026-11-14T20:30Z:
 ## Files Scope
 
 - .agents/scripts/github_auth_setup.py
+- .agents/scripts/github_auth_app_manifest.py
+- .agents/scripts/github_auth_app_bind.py
 - .agents/scripts/github_auth_cli.py
 - .agents/reference/github-auth.md
 - TODO.md
@@ -44,6 +46,7 @@ Evidence from one runner, 24h to 2026-11-14T20:30Z:
 
 ## Verification
 
-- `python3 -m py_compile .agents/scripts/github_auth_setup.py .agents/scripts/github_auth_cli.py`
+- `python3 -m py_compile .agents/scripts/github_auth_setup.py .agents/scripts/github_auth_app_manifest.py .agents/scripts/github_auth_app_bind.py .agents/scripts/github_auth_cli.py`
+- `qlty smells --no-snippets` on the three new modules reports no smells.
 - `bash .agents/scripts/tests/test-github-app-auth-helper.sh`
 - Operator-run end-to-end: `app create`, install, `app bind`, `auth check`, then `aidevops github auth usage --since 1h` shows App-mode reads.
