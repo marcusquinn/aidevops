@@ -36,7 +36,7 @@ _der_try_unblock() {
 rc=0
 reconcile_dependants_after_verified_closure owner/repo 10 2>"$ROOT/closure.log" || rc=$?
 [[ "$rc" == 3 ]]
-[[ $(wc -l <"$CALLS") == 3 ]]
+[[ $(grep -c '' "$CALLS") == 3 ]]
 grep -q 'dependants=3 unblocked=2 not_ready=0 held=0 failed=1' "$ROOT/closure.log"
 grep -q 'issue=#21 status=1' "$ROOT/closure.log"
 grep -qx 'issue 21' "$DER_RETRY_DIR/owner__repo.txt"
