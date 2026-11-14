@@ -159,15 +159,18 @@ _run_result_issue_handed_off_by_runner() {
 # fence refuses. Route it through the post-PR handoff gate, which owns exact-head
 # verification and summary/linkage preservation. Draft PRs, repair/checkpoint
 # contracts, dirty worktrees, merged PRs lacking evidence and unreadable state
-# keep the premature_exit continuation path.
+# keep the premature_exit continuation path. GH#38329: cleanliness uses the
+# shared task-worktree status, so the post-merge cleanup-deferred marker that
+# `full-loop-helper.sh merge` writes does not hide a merged own-PR handoff.
 _run_result_reconcile_signal_less_handoff() {
 	[[ -z "${AIDEVOPS_PR_REPAIR_NUMBER:-}" ]] || return 1
 	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	declare -F _hrw_task_worktree_status >/dev/null 2>&1 || return 1
 	local issue_number="${WORKER_ISSUE_NUMBER:-${session_key#issue-}}" repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local runner="${WORKER_GITHUB_LOGIN:-${AIDEVOPS_WORKER_GITHUB_LOGIN:-}}"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" && -n "$runner" && -d "${work_dir:-}" ]] || return 1
 	local dirty="" branch="" head="" handoff=""
-	dirty=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
+	dirty=$(_hrw_task_worktree_status "$work_dir") || return 1
 	[[ -z "$dirty" ]] || return 1
 	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
 	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1

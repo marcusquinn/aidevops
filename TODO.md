@@ -2077,6 +2077,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18999 fix(full-loop): merge helper should reconcile a release-provenance PR that native auto-merge lands mid-run #auto-dispatch #bug ref:GH#38318
 
+- [ ] t19001 fix(headless-runtime): signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker #bug ref:GH#38329
+
 - [ ] t19002 plan(pulse): simplify dispatch to an interactive-equivalent lane — workers run 0.6/20 slots while 121 ready issues wait #feat #parent-task ref:GH#38332
 
 - [ ] t19003 perf(pulse): fresh-first dispatch lane — attempt unclaimed candidates before claimed ones (For #38332 phase 1) #feat ref:GH#38333
