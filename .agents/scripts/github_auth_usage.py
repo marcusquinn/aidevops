@@ -90,8 +90,9 @@ def _hard_floor():
 
 def advisory_due(opportunity, floor):
     share, low = opportunity["routable_share"], opportunity["rest_core_min_remaining"]
-    return (share is not None and share >= 0.5 and low is not None
-            and (low == 0 or low < floor) and bool(opportunity["owners_without_app_read"]))
+    if share is None or low is None or not opportunity["owners_without_app_read"]:
+        return False
+    return share >= 0.5 and (low == 0 or low < floor)
 
 
 def advisory_text(opportunity):

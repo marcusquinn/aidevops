@@ -78,17 +78,23 @@ def describe(args, registry_path, config_path):
     return 0
 
 
+def repo_free_action(args, registry_path, config_path):
+    """Return the handler for actions that take no OWNER/REPO, or None."""
+    handlers = {
+        "profile": lambda: manage_profile(args, config_path),
+        "migrate": lambda: migrate(registry_path, config_path, args.confirm_stopped),
+        "usage": lambda: usage(args.since, registry(registry_path), args.consumer),
+        "advise": lambda: advise(args.since, registry(registry_path), args.write_advisory),
+    }
+    return handlers.get(args.action)
+
+
 def main():
     args = parser().parse_args()
     registry_path, config_path = paths()
-    if args.action == "profile":
-        return manage_profile(args, config_path)
-    if args.action == "migrate":
-        return migrate(registry_path, config_path, args.confirm_stopped)
-    if args.action == "usage":
-        return usage(args.since, registry(registry_path), args.consumer)
-    if args.action == "advise":
-        return advise(args.since, registry(registry_path), args.write_advisory)
+    handler = repo_free_action(args, registry_path, config_path)
+    if handler:
+        return handler()
     if not valid_slug(args.repo):
         raise AuthError("Repository must be owner/repo")
     if args.action == "set" and args.inherit and args.installation_id:
