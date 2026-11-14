@@ -680,7 +680,7 @@ _ddpr_graphql_open_commits() {
 					orderBy: {field: CREATED_AT, direction: DESC}
 				) {
 					nodes {
-						number title isDraft
+						number title isDraft headRefName
 						commits(first: 100) {
 							nodes { commit { messageHeadline } }
 							pageInfo { hasNextPage endCursor }
@@ -692,6 +692,8 @@ _ddpr_graphql_open_commits() {
 		}
 	' 2>/dev/null) || return $?
 
+	# headRefName is optional evidence (planning-publication exclusion only), so
+	# its absence never invalidates the response.
 	pr_json=$(printf '%s' "$response" | jq -ce \
 		--arg array_type "$_DDPR_JSON_ARRAY_TYPE" \
 		--arg boolean_type "$_DDPR_JSON_BOOLEAN_TYPE" \
@@ -715,6 +717,7 @@ _ddpr_graphql_open_commits() {
 			number,
 			title,
 			isDraft,
+			headRefName: (.headRefName // ""),
 			commits: [.commits.nodes[].commit | {messageHeadline}],
 			hasNextPage: .commits.pageInfo.hasNextPage,
 			endCursor: .commits.pageInfo.endCursor
@@ -935,14 +938,27 @@ _has_open_pr_check_open_commits() {
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 	[[ "$open_pr_count" -eq 0 ]] && return 1
 
-	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title
+	# Match: closing keyword + #NNN in commit messages, or GH#NNN/#NNN in PR title.
+	# A planning-publication PR (planning-publisher.sh: `planning/` head that only
+	# adds the TODO entry, titled "tNNN: plan: ... (GH#NNN)") references the
+	# issue it registers but never implements it; counting it blocked dispatch
+	# of every interactively created issue until the TODO PR merged.
 	local close_pattern=""
 	close_pattern=$(_ddpr_closing_keyword_pattern "$issue_number")
 	local title_pattern="(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 
 	local match_pr
 	match_pr=$(printf '%s' "$open_pr_json" | jq -r --arg cp "$close_pattern" --arg tp "$title_pattern" \
-		'[.[] | select(((.isDraft // false) | not) and (
+		'def planning_publication:
+			((.headRefName // "") | startswith("planning/")) and
+			(if ((.files // null) | type) == "array" then
+				((.filesTruncated // false) | not) and ((.changedFiles // 0) > 0) and
+				(([.files[]?.path] | length) == (.changedFiles // 0)) and
+				([.files[]?.path] | all(.[]; test("^(TODO\\.md$|todo/)")))
+			else
+				((.title // "") | test("(^|: )plan: "))
+			end);
+		[.[] | select(((.isDraft // false) | not) and (planning_publication | not) and (
 			((.title // "") | test($tp)) or
 			any((.commits // [])[]?; ((.messageHeadline // "") | test($cp; "i")))
 		))
