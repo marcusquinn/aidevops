@@ -565,17 +565,6 @@ reconcile_dependants_after_verified_closure() {
 		count=$((count + 1))
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || issue_number=""
 		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || candidate_repo=""
-		# Deadline: queue this and every unvisited dependant individually so
-		# the next drain makes forward progress instead of replaying the prefix.
-		if [[ -n "$deadline" ]] && _der_stale_epoch_reached "$deadline" && [[ "$issue_number" =~ ^[0-9]+$ && "$candidate_repo" == */* ]]; then
-			if _der_retry_append "$candidate_repo" issue "$issue_number"; then
-				not_ready=$((not_ready + 1))
-			else
-				failed=$((failed + 1))
-				_der_retry_append "$repo" closure "$closed_number" || true
-			fi
-			continue
-		fi
 		if [[ ! "$issue_number" =~ ^[0-9]+$ || "$candidate_repo" != */* ]]; then
 			failed=$((failed + 1))
 			_der_retry_append "$repo" closure "$closed_number" || true
@@ -667,10 +656,7 @@ _der_retry_drain() {
 	# retry cannot hide later independent records.
 	if [[ -s "$file" ]]; then
 		mv "$file" "$incoming" || return 1
-		# Deduplicate the merged snapshot so a repeated failure is attempted once.
-		[[ -e "$pending" ]] || : >"$pending" || return 1
-		cat "$pending" "$incoming" | awk '!seen[$0]++' >"${incoming}.merged" &&
-			mv -f "${incoming}.merged" "$pending" || { rm -f "$incoming" "${incoming}.merged"; return 1; }
+		cat "$incoming" >>"$pending" || return 1
 		rm -f "$incoming"
 	fi
 	[[ -s "$pending" ]] || return 0
