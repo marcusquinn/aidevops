@@ -515,7 +515,12 @@ _dispatch_ranked_candidates_json() {
 			return $?
 		}
 	fi
-	candidates_json=$(build_ranked_dispatch_candidates_json "$per_repo_limit" "$dependency_normalization_mode") || return 1
+	if ! candidates_json=$(build_ranked_dispatch_candidates_json "$per_repo_limit" "$dependency_normalization_mode"); then
+		# An unavailable arrival census must not suppress fresh known work.
+		[[ -n "$first_wave_remainder" ]] || return 1
+		printf '%s\n' "$first_wave_remainder"
+		return 0
+	fi
 	if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$candidates_json"; then
 		return 1
 	fi

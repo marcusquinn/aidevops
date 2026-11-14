@@ -249,10 +249,11 @@ _append_ranked_repo_candidates() {
 #######################################
 _dispatch_first_wave_advance_cursor() {
 	local slug="$1" cursor_dir="${HOME}/.aidevops/cache" temporary=""
+	local name="${2:-pulse-first-wave-cursor}"
 	mkdir -p "$cursor_dir" 2>/dev/null || return 0
-	temporary=$(mktemp "${cursor_dir}/pulse-first-wave-cursor.XXXXXX") || return 0
+	temporary=$(mktemp "${cursor_dir}/${name}.XXXXXX") || return 0
 	printf '%s\n' "$slug" >"$temporary"
-	mv -f "$temporary" "${cursor_dir}/pulse-first-wave-cursor" 2>/dev/null || rm -f "$temporary"
+	mv -f "$temporary" "${cursor_dir}/${name}" 2>/dev/null || rm -f "$temporary"
 	return 0
 }
 
@@ -384,6 +385,49 @@ _dispatch_repository_rows() {
 	return 0
 }
 
+# GH#38226: cap a repository's whole enumeration tree, not just individual
+# API calls. Follow _gh_run_bounded_function's portable process-group cleanup
+# pattern so a timed-out child cannot retain the command-substitution pipe.
+# Args: budget seconds, then the candidate adapter's arguments.
+_dispatch_enumerate_repo_bounded() {
+	local seconds="$1"
+	shift
+	local monitor_was_enabled=false pid="" process_group="" remaining=0 rc=0
+	[[ $- != *m* ]] || monitor_was_enabled=true
+	set -m
+	pulse_campaign_shadow_candidates_json "$@" &
+	pid=$!
+	process_group="-${pid}"
+	$monitor_was_enabled && set -m || set +m
+	remaining=$((seconds * 2))
+	# A completed adapter may leave a descendant holding stdout open.
+	while kill -0 -- "$process_group" 2>/dev/null; do
+		if ((remaining <= 0)); then
+			kill -TERM -- "$process_group" 2>/dev/null || true
+			sleep 0.2
+			kill -KILL -- "$process_group" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 0.5
+		remaining=$((remaining - 1))
+	done
+	wait "$pid" 2>/dev/null || rc=$?
+	return "$rc"
+}
+
+# Total budget applies even to an empty census. Full rounds rotate separately
+# from first waves, preventing a slow registry prefix from starving its tail.
+_dispatch_census_deadline() {
+	local budget="${PULSE_CENSUS_ENUMERATION_BUDGET_S:-180}" first="${PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S:-180}"
+	[[ "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || budget=180
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$first" =~ ^[0-9]{1,5}$ ]] && ((10#$first > 0 && 10#$first < budget)); then
+		budget=$((10#$first))
+	fi
+	printf '%s\n' "$(($(_dispatch_first_wave_now_s) + budget))"
+	return 0
+}
+
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -403,11 +447,16 @@ build_ranked_dispatch_candidates_json() {
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
+	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 repo_rc=0
+	[[ "$repo_budget" =~ ^[1-9][0-9]{0,2}$ ]] || repo_budget=15
+	deadline=$(_dispatch_census_deadline)
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
 		first_wave_bounds=$(_dispatch_first_wave_bounds)
-		if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
-			IFS= read -r cursor <"$cursor_file" || cursor=""
-		fi
+	else
+		cursor_file="${HOME}/.aidevops/cache/pulse-census-cursor"
+	fi
+	if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
+		IFS= read -r cursor <"$cursor_file" || cursor=""
 	fi
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
@@ -418,6 +467,12 @@ build_ranked_dispatch_candidates_json() {
 
 	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval repo_lead; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		remaining=$((deadline - $(_dispatch_first_wave_now_s)))
+		if ((remaining <= 0)); then
+			echo "[pulse-wrapper] Candidate census deadline reached; retaining partial candidates and rotation cursor (GH#38226)" >>"$LOGFILE"
+			product_complete=false
+			break
+		fi
 		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
 		if [[ -n "$first_wave_bounds" && -s "$tmp_candidates" ]] &&
 			_dispatch_first_wave_enumeration_done "$tmp_candidates" "$first_wave_bounds"; then
@@ -434,13 +489,18 @@ build_ranked_dispatch_candidates_json() {
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
 		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_note_polled "$repo_slug" "$repo_lead"
+		[[ -n "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug" pulse-census-cursor
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
-		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {
+		((remaining >= repo_budget)) || repo_budget="$remaining"
+		repo_rc=0
+		repo_candidates_json=$(_dispatch_enumerate_repo_bounded "$repo_budget" "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
+		if ((repo_rc != 0)); then
+			echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${repo_rc} budget=${repo_budget}s (GH#38226)" >>"$LOGFILE"
 			repo_candidates_json='[]'
 			scan_failed=1
 			[[ "$repo_priority" != product ]] || product_complete=false
-		}
+		fi
 		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
 			product_complete=false
 		fi

@@ -209,9 +209,9 @@ printf 'PASS async cleanup helpers start even when early dispatch exhausts the c
 # shellcheck disable=SC2218 # Production definition is sourced above; later stub is unrelated.
 _dispatch_invalidate_candidate_snapshot fixture_reset 1000
 
-# The later global scan remains complete and keeps all repositories eligible.
+# A global scan that fits its budget keeps all repositories eligible.
 : >"$EVENTS"
-full=$(build_ranked_dispatch_candidates_json 50 normalize)
+full=$(PULSE_CENSUS_ENUMERATION_BUDGET_S=300 build_ranked_dispatch_candidates_json 50 normalize)
 [[ "$(wc -l <"$EVENTS")" -eq 40 ]]
 jq -e 'length == 39 and all(.[]; .product_discovery_complete == true)' <<<"$full" >/dev/null
 printf 'PASS normal refill retains full repository discovery and product completeness\n'
@@ -250,11 +250,49 @@ PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=12 _PULSE_FIRST_DISPATCH_WAVE=1 _PULSE_FIR
 	build_ranked_dispatch_candidates_json 50 skip >/dev/null
 [[ "$(tr '\n' ';' <"$EVENTS")" == "$(scan_events 4 6)" ]]
 [[ "$(<"${HOME}/.aidevops/cache/pulse-first-wave-cursor")" == owner/repo6 ]]
-# A normal (non-first-wave) round ignores the slot target and budget entirely.
+# A normal round ignores the first-wave target, but has its own census budget.
 : >"$EVENTS"
-PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=0 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=1 build_ranked_dispatch_candidates_json 50 normalize >/dev/null
+PULSE_CENSUS_ENUMERATION_BUDGET_S=300 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=0 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=1 build_ranked_dispatch_candidates_json 50 normalize >/dev/null
 [[ "$(wc -l <"$EVENTS")" -eq 40 ]]
-printf 'PASS first-wave enumeration budget bounds an unfilled wave; normal rounds stay unbounded\n'
+printf 'PASS first-wave target is isolated from normal census bounds\n'
+
+# GH#38226: even an all-empty census stops at its deadline, and the next
+# census resumes after the last polled repository rather than repeating it.
+(
+	pulse_campaign_shadow_candidates_json() {
+		local slug="$1"
+		printf 'scan:%s\n' "$slug" >>"$EVENTS"
+		advance_clock 5
+		printf '[]\n'
+		return 0
+	}
+	printf 'owner/repo40\n' >"${HOME}/.aidevops/cache/pulse-census-cursor"
+	: >"$EVENTS"
+	PULSE_CENSUS_ENUMERATION_BUDGET_S=10 build_ranked_dispatch_candidates_json 50 skip >/dev/null
+	[[ "$(tr '\n' ';' <"$EVENTS")" == "$(scan_events 1 2)" ]]
+	: >"$EVENTS"
+	PULSE_CENSUS_ENUMERATION_BUDGET_S=10 build_ranked_dispatch_candidates_json 50 skip >/dev/null
+	[[ "$(tr '\n' ';' <"$EVENTS")" == "$(scan_events 3 4)" ]]
+	# Exercise actual process-tree timeout, not a simulated deadline. The
+	# child must not retain stdout or write its delayed completion marker.
+	pulse_campaign_shadow_candidates_json() {
+		sleep 3
+		printf 'leaked\n' >>"$EVENTS"
+		return 0
+	}
+	: >"$EVENTS"
+	rc=0
+	_dispatch_enumerate_repo_bounded 1 owner/repo /fixture 50 skip "" >/dev/null || rc=$?
+	[[ "$rc" == 124 && ! -s "$EVENTS" ]]
+	pulse_campaign_shadow_candidates_json() {
+		sleep 3 &
+		return 0
+	}
+	rc=0
+	_dispatch_enumerate_repo_bounded 1 owner/repo /fixture 50 skip "" >/dev/null || rc=$?
+	[[ "$rc" == 124 ]]
+)
+printf 'PASS empty censuses rotate at the total deadline and repository timeout drains descendants\n'
 
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"
@@ -442,6 +480,11 @@ printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor
 	grep -qx 'first_wave_new_arrival_refresh' "$stats"
 	grep -qx 'first_wave_new_arrival_lead' "$stats"
 	rm -f "$opposite_snapshot" "${opposite_snapshot}.consumed"
+	# A failed refresh still serves the fresh remainder without rewriting it.
+	seed_snapshot "$remainder207"
+	fallback=$(build_ranked_dispatch_candidates_json() { return 1; }
+		_PULSE_FIRST_WAVE_CANDIDATE_TARGET=15 _dispatch_ranked_candidates_json 50 skip)
+	jq -e 'length == 1 and .[0].number == 207' <<<"$fallback" >/dev/null
 	# An arrival repository the census may not poll (interval-throttled) never
 	# forces a re-census: its hint could not clear.
 	seed_snapshot "$remainder207"
