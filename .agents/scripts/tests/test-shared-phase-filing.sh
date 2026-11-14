@@ -836,14 +836,14 @@ bold_out=$(_phase_body_with_child_ref "$backfill_body" 3 33)
 list_out=$(_phase_body_with_child_ref "$backfill_body" 4 44)
 repeat_out=$(_phase_body_with_child_ref "$backfill_body" 1 11)
 
-if printf '%s\n' "$numbered_out" | grep -qx '2. Second phase #22' &&
-	printf '%s\n' "$numbered_out" | grep -qx '2. Unrelated numbered note'; then
+if grep -qx '2. Second phase #22' <<<"$numbered_out" &&
+	grep -qx '2. Unrelated numbered note' <<<"$numbered_out"; then
 	pass "Numbered phase line gets the ref; numbered lines outside ## Phases do not"
 else
 	fail "Numbered-form backfill wrong" "$numbered_out"
 fi
-if printf '%s\n' "$bold_out" | grep -qx '\*\*Phase 3 — Bold phase\*\* #33' &&
-	printf '%s\n' "$list_out" | grep -qx -- '- Phase 4 - List phase #44'; then
+if grep -qx '\*\*Phase 3 — Bold phase\*\* #33' <<<"$bold_out" &&
+	grep -qx -- '- Phase 4 - List phase #44' <<<"$list_out"; then
 	pass "Bold and list phase lines get the ref"
 else
 	fail "Bold/list backfill wrong" "${bold_out}"$'\n'"${list_out}"
@@ -853,6 +853,19 @@ if [[ "$repeat_out" == "$backfill_body" ]] &&
 	pass "Existing ref is idempotent and the parser reads the backfilled ref"
 else
 	fail "Backfill idempotency or parser round-trip failed"
+fi
+# The parser reads "* Phase 2" as no phase, so backfill must skip it and
+# write the ref on the numbered Phase 2 the parser does select.
+star_body=$'## Phases\n* Phase 2 - Design notes\n2. Implement next phase\n- **Phase 3 - Bulleted bold**'
+star_out=$(_phase_body_with_child_ref "$star_body" 2 22)
+star_bold_out=$(_phase_body_with_child_ref "$star_body" 3 33)
+if grep -qx '\* Phase 2 - Design notes' <<<"$star_out" &&
+	grep -qx '2. Implement next phase #22' <<<"$star_out" &&
+	grep -qx -- '- \*\*Phase 3 - Bulleted bold\*\* #33' <<<"$star_bold_out" &&
+	[[ "$(_parse_phases_section "$star_out" | awk -F'\t' '$1 == 2 { print $4 }')" == "22" ]]; then
+	pass "Backfill matches only the list forms the parser accepts"
+else
+	fail "Backfill wrote to a line the parser does not select" "${star_out}"$'\n'"${star_bold_out}"
 fi
 
 # =============================================================================

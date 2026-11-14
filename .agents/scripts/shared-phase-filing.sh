@@ -401,9 +401,11 @@ _phase_body_with_child_ref() {
 	printf '%s\n' "$body" | awk -v n="$phase_num" -v c="$child_issue_num" '
 		/^## / { in_phases = ($0 ~ /^## Phases/) }
 		in_phases && !filed {
+			# Exactly the forms the _parse_phase_line_* parsers accept: a bare
+			# list phase uses "-" only; "*"/"+" bullets count only before bold.
 			end_re = "([^0-9]|$)"
-			list_re = "^[[:space:]]*[-*+][[:space:]]+(\\*\\*)?[Pp]hase[[:space:]]+" n end_re
-			bold_re = "^[[:space:]]*\\*\\*[Pp]hase[[:space:]]+" n end_re
+			list_re = "^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+" n end_re
+			bold_re = "^[[:space:]]*([-*+][[:space:]]+)?\\*\\*[Pp]hase[[:space:]]+" n end_re
 			num_re = "^[[:space:]]*" n "\\.[[:space:]]+"
 			if ($0 ~ list_re || $0 ~ bold_re || $0 ~ num_re) {
 				filed = 1
