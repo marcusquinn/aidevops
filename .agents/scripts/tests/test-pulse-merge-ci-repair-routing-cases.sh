@@ -166,6 +166,8 @@ extract_merge_gate_functions() {
 		_pm_gate_origin_authority _pm_gate_review_bot _check_pr_merge_gates; do
 		extract_function "$fn_name" "$source_file"
 	done
+	# GH#38042: _check_pr_merge_gates fails closed without the provenance gate.
+	extract_function _pm_gate_unlabeled_worker_branch "${source_file%/*}/pulse-merge-partial-continuation.sh"
 	return 0
 }
 
