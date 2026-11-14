@@ -948,17 +948,10 @@ _pulse_sweep_checkpoint_ledger() {
 	return 0
 }
 
-_pulse_reconcile_stale_blocked_if_due() {
-	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
-	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
-	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
-	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
-	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0 weight=0 weight_left=0
-	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
-	local repos=() due=() weights=()
-	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
-	[[ -f "$repos_json" ]] || return 0
+# Share one claim-recovery allowance across the ledger and legacy repo scan.
+# Neither path can consume the ready lane's reserved stage time.
+_pulse_stale_blocked_claim_sweeps() {
+	local repos_json="$1" sweep_deadline="" now_epoch="" repo_slug=""
 	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
 	now_epoch=$(date +%s) || return 0
 	local ready_min="${PULSE_STALE_BLOCKED_READY_MIN_SECONDS:-15}" claim_deadline=0
@@ -986,8 +979,23 @@ _pulse_reconcile_stale_blocked_if_due() {
 			claim_position=$(((claim_start + claim_index) % ${#claim_repos[@]}))
 			_pdcu_cursor_write "$claim_cursor" "$(((claim_position + 1) % ${#claim_repos[@]}))"
 			_pdcu_sweep_expired_claims "${claim_repos[claim_position]}" "$claim_deadline" || true
-		done
+		 done
 	fi
+	return 0
+}
+
+_pulse_reconcile_stale_blocked_if_due() {
+	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
+	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
+	local interval="${PULSE_STALE_BLOCKED_RECONCILE_INTERVAL:-1800}"
+	local now_epoch="" stamp_epoch="" age_s="" repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
+	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0 weight=0 weight_left=0
+	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
+	local repos=() due=() weights=()
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
+	[[ -f "$repos_json" ]] || return 0
+	_pulse_stale_blocked_claim_sweeps "$repos_json"
 	if [[ -f "$sentinel" ]]; then
 		now_epoch=$(date +%s 2>/dev/null) || return 0
 		stamp_epoch=$(_file_mtime_epoch "$sentinel")
