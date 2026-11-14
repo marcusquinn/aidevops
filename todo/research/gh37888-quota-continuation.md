@@ -3,6 +3,65 @@
 
 # GH#37888 quota diagnostic continuation
 
+## Continuation at 2026-11-14
+
+This section supersedes the earlier consumer-identity gap below, but not the
+open operational acceptance criteria. New maintainer evidence on the linked
+issue reports local native `gh` routine subprocesses carrying burst traffic on
+the maintainer host. In its reset window ending 05:10:51Z, three minutes had
+187, 389 and 446 unexplained requests; the first 15 minutes had 2003 used versus
+1127 logged attempts. Composite commands and opaque pagination are reported as
+an instrumentation gap. A browser's steady traffic remains a hypothesis, not
+an attributed request count. These are reported owner-host observations, not
+measurements reproduced on this continuation runner.
+
+The existing `_ghqa_run_transport_attempt` exact-capture path already parses
+multiple native response frames when `AIDEVOPS_GH_EXACT_QUOTA_CAPTURE=1` and
+`GH_DEBUG` is unset. It is opt-in, suppresses native stderr and serializes by
+credential; automatically enabling it everywhere would change command behavior.
+Use a bounded affected-host reproduction rather than a guessed command-cost
+table. The diagnostics reference now explains this path and its limitations.
+No thresholds, credentials, processes or budget gates were changed.
+
+Fresh local `quota-report 5400` ending at epoch 1794632302:
+
+| Reset epoch | Sample start | Sample end | Used delta | Known local cost | Unattributed upper bound | Counter regressions |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1794629726 | 1794626931 | 1794629562 | 235 | 103 | 132 | 0 |
+| 1794630400 | 1794626903 | 1794630400 | 4862 | 3362 | 1500 | 35 |
+| 1794633488 | 1794629891 | 1794632226 | 213 | 106 | 107 | 1 |
+| 1794634002 | 1794630403 | 1794632302 | 2784 | 2388 | 396 | 16 |
+
+All rows have `accounted_fraction=null`; none proves a clean full post-fix reset
+window. The report contains 520 missing-metadata attempts. Reset buckets are
+kept separate and residuals are not assigned to a particular consumer. Claim
+evidence was not supplied to this invocation, so the hint is correctly unknown.
+`api-budget` reports real REST families (60-minute attempts: issue reads 1669,
+issue comments 1078, pull reads 373, unknown 365). The independent instrument
+report was retained privately; its cutoff differs from the table above.
+
+Focused verification on this runner: the instrumentation suite exits zero,
+including foreign-device positive/local-only negative/missing-evidence cases;
+all 73 transport-budget tests pass. The native ShellCheck binary is unavailable
+(the installed wrapper reports that fact); **Code Quality Analysis / ShellCheck
+(ubuntu-latest)** covers the existing changed shell files in CI. No shell or
+Python production files were changed by this continuation.
+
+`linters-local.sh --changed --base-ref 73a9e150f` exits zero. Markdown style,
+secret scanning and diff-whitespace checks pass; shfmt differences on the two
+pre-existing changed shell files remain advisory. Its ShellCheck summary is not
+independent evidence of the native tool being available: direct invocation
+reports a missing real binary, so that check remains delegated to CI.
+
+Remaining infrastructure need: access to the affected maintainer-host routine's
+bounded execution/capture and a complete post-remediation reset window with
+matching dispatch logs. This runner's local counters cannot validate another
+host's caller, and replaying its bulk publication is not authorized by this
+brief. Recommend scoped exact capture there, then fixing the measured routine
+consumer or using an operator-configured App installation profile. Do not label
+the drain off-host, claim remediation, or make this checkpoint ready from these
+partial local windows.
+
 ## Outcome at 2026-11-13
 
 PR #37889 remains a diagnostic checkpoint, not a verified drain remediation.
