@@ -1386,6 +1386,10 @@ _PCC_JQ_LAUNCH_DEFS='
 #         <TAB>progress releases<TAB>non-progress releases (only with $8)
 #         [<TAB>earlier checkpoint release id]
 # Returns: 0 when a stall release owns the draft, 1 otherwise
+# GH#38103: a never-launched continuation episode of this PR's own session
+# (claim/lease lines only) is transparent, even when edited; other edited
+# coordination stays a fence. Stall-class releases bind the single ready-lease
+# owner of the episode (mirrors attempt_owner); other releases bind the poster.
 #######################################
 _pcc_stall_release_evidence() {
 	local comments="$1" head_date="$2" key="$3"
@@ -1425,14 +1429,9 @@ _pcc_stall_release_evidence() {
 				(if any($stalls[]; capability_release) then 1 else 0 end);
 		def head_attention: (.body // "") | contains($key) or ($alt_key != "" and contains($alt_key));
 		def ready_lease_line: select(ready_event);
-		# GH#38103: a continuation episode of this PR'"'"'s own session that never
-		# launched (claim/lease lines only, no ready lease, no "Dispatching worker"
-		# afterwards) is transparent, even when its comments were edited. Other
-		# edited coordination stays a fence.
+		def release_runner: if (release_reason | (length > 0 and test($pattern))) then "" else login end;
 		def checkpoint($c; $release):
-			# Stall-class releases bind the single ready-lease owner (attempt_owner).
-			episode_attempt($c; $release.id;
-				(if ($release | release_reason | (length > 0 and test($pattern))) then "" else ($release | login) end)) as $attempt
+			episode_attempt($c; $release.id; ($release | release_runner)) as $attempt
 			| episode_start($c; $release.id) as $start
 			| if $attempt != "" then {id: $release.id, attempt: $attempt}
 			elif $start < 0 then null
