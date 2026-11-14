@@ -585,11 +585,13 @@ _launch_recovery_owns_registered_attempt() {
 	fi
 
 	local comments_endpoint="" latest_dispatch="" latest_dispatch_json=""
-	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
-	latest_dispatch_json=$(gh api "$comments_endpoint" --paginate --slurp --jq \
-		'[.[][] | select(.body | contains("<!-- aidevops:dispatch "))] | last \
-		| {body:(.body // ""), author_association:(.author_association // ""), login:(.user.login // "")}' \
-		2>/dev/null) || return 1
+	comments_endpoint=$(printf 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number")
+	# GH#38185: gh rejects --slurp with --jq, so filter all pages with jq.
+	latest_dispatch_json=$(set -o pipefail
+		gh api "$comments_endpoint" --paginate --slurp 2>/dev/null |
+			jq -c '[.[][] | select((.body // "") | contains("<!-- aidevops:dispatch "))] | last
+				| {body:(.body // ""), author_association:(.author_association // ""), login:(.user.login // "")}' \
+				2>/dev/null) || return 1
 	latest_dispatch=$(printf '%s' "$latest_dispatch_json" | jq -r --arg runner "$self_login" '
 		select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
 		| select(.login == $runner)
