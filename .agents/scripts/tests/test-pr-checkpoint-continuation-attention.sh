@@ -258,6 +258,43 @@ else
 	print_result "edited episode of an unknown session still fences the stall release" 1
 fi
 
+# The orphan rewrite must not erase the session on an unedited prelaunch
+# cleanup, including a terminal-only cleanup with no recorded claim.
+for cleanup_shape in claim terminal_only; do
+	cleanup_comments="$(failed_launch_comments 1 | jq -c --arg shape "$cleanup_shape" '
+		map(map(select($shape != "terminal_only" or .id != 40) |
+			if .id == 41 then del(.updated_at) else . end))')"
+	if output=$(_pcc_stall_release_evidence "$cleanup_comments" "2026-09-30T00:30:00Z" key "[]" \
+		"2026-09-30T00:00:00Z" "" "" "" "$failed_session") &&
+		[[ "$output" == $'31\tworker_draft_checkpoint\t1\tfalse\t1\t'* ]]; then
+		print_result "unedited ${cleanup_shape} cleanup stays transparent before orphan synthesis" 0
+	else
+		print_result "unedited ${cleanup_shape} cleanup stays transparent before orphan synthesis" 1 "output=${output:-missing}"
+	fi
+done
+
+# Duplicate terminal posts are one release, while a later ready lease starts
+# another episode. A normal explicit release still prevents synthesis.
+for orphan_episodes in 1 2; do
+	orphan_comments="$(stall_comments stall-lease | jq -c --argjson episodes "$orphan_episodes" '
+		flatten | map(select(.id != 31)) | . + [(last | .id = 33)] |
+		if $episodes == 2 then . + [
+			(.[0] | .id = 40), (.[1] | .id = 41), (.[1] | .id = 42)] else . end')"
+	if output=$(_pcc_stall_release_evidence "$orphan_comments" "2026-09-30T00:30:00Z" key "[]" \
+		"2026-09-30T00:00:00Z") &&
+		[[ "$output" == *$'\torphaned_terminal_lease\t'"${orphan_episodes}"$'\tfalse\t'"${orphan_episodes}"$'\t'* ]]; then
+		print_result "duplicate terminals count once per orphan episode (${orphan_episodes})" 0
+	else
+		print_result "duplicate terminals count once per orphan episode (${orphan_episodes})" 1 "output=${output:-missing}"
+	fi
+done
+if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key "[]" \
+	"2026-09-30T00:00:00Z") && [[ "$output" == $'31\tno_activity\t1\tfalse\t1\t'* ]]; then
+	print_result "explicit release suppresses orphan synthesis with PR fuse enabled" 0
+else
+	print_result "explicit release suppresses orphan synthesis with PR fuse enabled" 1 "output=${output:-missing}"
+fi
+
 # GH#34008: a killed attempt runs no release path; the proactive sweep already
 # reset its issue. Its own expired claim, older than the recovery draft head,
 # is the only stall evidence accepted, and only for For #N recovery drafts.
