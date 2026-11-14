@@ -1,5 +1,7 @@
 """Resume of an interrupted reconstructible native removal (GH#38158)."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 import os
