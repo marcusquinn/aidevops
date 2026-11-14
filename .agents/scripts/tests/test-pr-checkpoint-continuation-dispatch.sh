@@ -4,6 +4,187 @@
 # Sourced by test-pr-checkpoint-continuation-helper.sh; relies on its fixtures.
 # shellcheck disable=SC2154  # fixtures and variables are defined by sibling modules
 
+# Decision-policy fixtures exercise the actual inference parser and publication
+# tail. External GitHub/model operations are replaced, never the trust checks.
+decision_fixture() {
+	local root="$1"
+	mkdir -p "$root"
+	export DECISION_ROOT="$root"
+	export DECISION_MUTATION=''
+	SCRIPT_DIR="$root"
+	AIDEVOPS_REPOS_JSON="${root}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","checkpoint_policy":{"auto_resolve_decisions":true,"configured_by":"maintainer"}}]}' >"$AIDEVOPS_REPOS_JSON"
+	valid_issue_json '[{"name":"auto-dispatch"},{"name":"status:blocked"}]' |
+		jq '.assignees=[] | .user={login:"issue-author"} | .updated_at="2026-11-13T00:00:00Z" | .body="Original brief\n\n"' >"${root}/issue.json"
+	jq -nc --arg head "$head" '
+		[{id:19,user:{login:"worker-bot"},body:"DISPATCH_LEASE phase=ready lease_token=fixture session=issue-123 attempt_id=attempt:old"},
+		 {id:20,user:{login:"worker-bot"},body:"CLAIM_RELEASED reason=blocked runner=worker-bot lease_token=fixture"},
+		 {id:21,user:{login:"finding-author"},body:("CONTINUATION_BLOCKER_FINDING pr=42 head="+$head+" blocked_by=decision\n- Details: helper.sh choose a reversible default")}] |
+		map(. + {author_association:"MEMBER",created_at:"2026-11-13T00:00:00Z"})' >"${root}/comments.json"
+	printf '%s\n' '{"action":"decide","confidence":"high","decision_record":"Choose the existing reversible default; preserve all scope and security boundaries."}' >"${root}/result.json"
+	cat >"${root}/ai-research-helper.sh" <<'DECISION_MODEL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${DECISION_ROOT}/inferences"
+python3 -c 'import sys,os; open(os.environ["DECISION_ROOT"]+"/prompt","w").write(sys.stdin.read())'
+python3 -c 'import json,os
+root=os.environ["DECISION_ROOT"]; mode=os.environ.get("DECISION_MUTATION","")
+if mode:
+ path=root+("/repos.json" if mode=="policy" else "/comments.json" if mode=="finding" else "/issue.json")
+ with open(path) as f: data=json.load(f)
+ if mode=="policy": data["initialized_repos"]=[]
+ elif mode=="finding": data[-1]["body"]+=chr(10)+"Reason: already_landed"
+ else: data["body"]+=chr(10)+"Concurrent brief correction"
+ with open(path,"w") as f: json.dump(data,f)'
+[[ "${DECISION_MODEL_STATUS:-0}" == 0 ]] || exit "$DECISION_MODEL_STATUS"
+jq -c . "${DECISION_ROOT}/result.json"
+DECISION_MODEL
+	cat >"${root}/gh-write-helper.sh" <<'DECISION_WRITE'
+#!/usr/bin/env bash
+python3 -c 'import sys,json,os
+root=os.environ["DECISION_ROOT"]; body=sys.stdin.read()
+with open(root+"/writes","a") as f: f.write(sys.argv[1]+"\n")
+if sys.argv[1]=="edit":
+ with open(root+"/issue.json") as f: issue=json.load(f)
+ issue["body"]=body+os.environ.get("DECISION_CORRUPTION","")
+ with open(root+"/issue.json","w") as f: json.dump(issue,f)
+else:
+ with open(root+"/published","a") as f: f.write(body+"\n")' "$2"
+DECISION_WRITE
+	chmod +x "${root}/ai-research-helper.sh" "${root}/gh-write-helper.sh"
+	gh() {
+		local args="$*" ref=''
+		case "$args" in
+		'api repos/owner/repo/issues/123') jq . "${root}/issue.json" ;;
+		pr\ view*) valid_pr_json ;;
+		'api user --jq .login') printf 'maintainer\n' ;;
+		api\ repos/owner/repo/collaborators/*)
+			if [[ "$args" == *"/${denied_actor:-nobody}/"* ]]; then printf 'read\n'; else printf 'write\n'; fi ;;
+		'api repos/owner/repo/pulls/42/files?per_page=100') printf '[{"filename":"helper.sh","additions":1,"deletions":0,"patch":"+default=existing"}]' ;;
+		'api repos/owner/repo/pulls/42 --jq .head.sha') printf '%s\n' "$head" ;;
+		'api repos/owner/repo/git/refs --method POST'*)
+			ref="${args#*ref=}"; ref="${ref%% *}"; mkdir "${root}/${ref//\//_}" ;;
+		'api repos/owner/repo/git/ref/'*) ref="refs/${args#*git/ref/}"; test -d "${root}/${ref//\//_}" ;;
+		*) return 1 ;;
+		esac
+		return $?
+	}
+	_pcc_issue_comments() { jq . "${root}/comments.json"; return 0; }
+	_pcc_approval_template() {
+		jq -nc --argjson pr "$(valid_pr_json)" --argjson issue "$(jq . "${root}/issue.json")" \
+			--argjson comments "$(jq . "${root}/comments.json")" \
+			'{repo:"owner/repo",pr:$pr,issue:$issue,comments:$comments,release_id:20,attempt:"attempt:old"}' |
+			python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" template
+		return $?
+	}
+	_pr_checkpoint_revised_target() { return 1; }
+	return 0
+}
+
+test_decision_policy_decide() (
+	local root="${TEST_ROOT}/decision-decide" head="1111111111111111111111111111111111111111" comments=''
+	local denied_actor='outsider'
+	decision_fixture "$root" || return 1
+	comments=$(_pcc_issue_comments)
+	comments=$(jq --arg head "$head" '. + [{id:22,user:{login:"outsider"},created_at:"2026-11-13T00:00:00Z",body:("<!-- aidevops:decision-resolution pr=42 head="+$head+" finding=21 -->\nDECISION_ESCALATION head="+$head+" class=authority")}]' <<<"$comments")
+	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+	jq -e '.body | startswith("Original brief\n\n\n\n### Decision record (AI brief owner, ")' "${root}/issue.json" >/dev/null || return 1
+	[[ "$(wc -l <"${root}/writes")" == 2 && "$(wc -l <"${root}/inferences")" == 1 ]] || return 1
+	jq -eRs 'contains("CHECKPOINT_CONTINUATION_APPROVED")' "${root}/published" >/dev/null || return 1
+	jq -eRs 'contains("--model thinking")' "${root}/inferences" >/dev/null || return 1
+	jq -eRs 'contains("+default=existing") and contains("UNTRUSTED")' "${root}/prompt" >/dev/null || return 1
+	# dispatch-approved uses this same revision validator. Validate the published
+	# full envelope against the newly appended body, not the original brief SHA.
+	jq -nc --argjson pr "$(valid_pr_json)" --argjson issue "$(jq . "${root}/issue.json")" \
+		--argjson comments "$(jq . "${root}/comments.json")" --arg approval "$(<"${root}/published")" \
+		--arg now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		'{repo:"owner/repo",pr:$pr,issue:$issue,assignee:"worker-bot",comments:($comments +
+		 [{id:30,body:$approval,user:{login:"maintainer"},author_association:"OWNER",created_at:$now}])}' |
+		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" >/dev/null || return 1
+	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+	[[ "$(wc -l <"${root}/inferences")" == 1 ]] || return 1
+	return 0
+)
+
+test_decision_policy_escalate() (
+	local head="1111111111111111111111111111111111111111" root='' comments='' mode=''
+	for mode in medium low invalid timeout escalate corrupt; do
+		root="${TEST_ROOT}/decision-${mode}"
+		decision_fixture "$root" || return 1
+		comments=$(_pcc_issue_comments)
+		export DECISION_MODEL_STATUS=0 DECISION_CORRUPTION=''
+		case "$mode" in
+		medium | low) printf '{"action":"decide","confidence":"%s","decision_record":"choose"}' "$mode" >"${root}/result.json" ;;
+		invalid) printf '[]' >"${root}/result.json" ;;
+		timeout) DECISION_MODEL_STATUS=124 ;;
+		escalate) printf '{"action":"escalate","class":"consent","why":"Needs consent; retain the hold."}' >"${root}/result.json" ;;
+		corrupt) DECISION_CORRUPTION='unexpected wrapper mutation' ;;
+		esac
+		if [[ "$mode" == corrupt ]]; then
+			! _pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+			[[ ! -f "${root}/published" ]] || return 1
+			continue
+		fi
+		_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+		_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+		[[ "$(wc -l <"${root}/inferences")" == 1 && "$(wc -l <"${root}/writes")" == 1 ]] || return 1
+		jq -eRs 'contains("DECISION_ESCALATION") and (contains("CHECKPOINT_CONTINUATION_APPROVED") | not)' "${root}/published" >/dev/null || return 1
+	done
+	return 0
+)
+
+test_decision_policy_trust_and_bounds() (
+	local head="1111111111111111111111111111111111111111" root='' comments='' mode='' denied_actor=''
+	for mode in off hold owner issue-author finding-author worker-bot maintainer landed; do
+		root="${TEST_ROOT}/decision-trust-${mode}"
+		decision_fixture "$root" || return 1
+		comments=$(_pcc_issue_comments)
+		case "$mode" in
+		off) printf '{"initialized_repos":[]}' >"$AIDEVOPS_REPOS_JSON" ;;
+		hold) jq '.labels += [{name:"hold-for-review"}]' "${root}/issue.json" >"${root}/next"; mv "${root}/next" "${root}/issue.json" ;;
+		owner) jq '.assignees=[{login:"maintainer"}]' "${root}/issue.json" >"${root}/next"; mv "${root}/next" "${root}/issue.json" ;;
+		landed) comments=$(jq '.[-1].body += "\nReason: already_landed"' <<<"$comments") ;;
+		*) denied_actor="$mode" ;;
+		esac
+		! _pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+		[[ ! -f "${root}/inferences" && ! -f "${root}/writes" ]] || return 1
+		denied_actor=''
+	done
+	root="${TEST_ROOT}/decision-slots"
+	decision_fixture "$root" || return 1
+	_pcc_decision_reserve owner/repo 123 42 "$head" 21 || return 1
+	! _pcc_decision_reserve owner/repo 123 42 "$head" 21 || return 1
+	_pcc_decision_reserve owner/repo 123 42 "$head" 22 || return 1
+	! _pcc_decision_reserve owner/repo 123 42 "$head" 23 || return 1
+	return 0
+)
+
+test_decision_policy_races() (
+	local head="1111111111111111111111111111111111111111" root='' comments='' mode='' first='' second=''
+	for mode in policy finding brief; do
+		root="${TEST_ROOT}/decision-race-${mode}"
+		decision_fixture "$root" || return 1
+		comments=$(_pcc_issue_comments)
+		DECISION_MUTATION="$mode"
+		! _pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
+		[[ ! -f "${root}/writes" ]] || return 1
+	done
+	root="${TEST_ROOT}/decision-concurrent"
+	decision_fixture "$root" || return 1
+	comments=$(_pcc_issue_comments)
+	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" &
+	first=$!
+	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" &
+	second=$!
+	wait "$first" || return 1
+	wait "$second" || return 1
+	[[ "$(wc -l <"${root}/inferences")" == 1 && "$(wc -l <"${root}/writes")" == 2 ]] || return 1
+	return 0
+)
+
+for decision_test in test_decision_policy_decide test_decision_policy_escalate test_decision_policy_trust_and_bounds test_decision_policy_races; do
+	if "$decision_test"; then print_result "$decision_test" 0; else print_result "$decision_test" 1; fi
+done
+
 test_diagnostic_tooling_profile() (
 	local repo="${TEST_ROOT}/tooling-repo" commit="" prompt_file="" content="" row="" status=0
 	local AIDEVOPS_HEADLESS_APPEND_CONTRACT=1
@@ -610,4 +791,3 @@ else
 		"calls=${STATUS_CALLS:-missing} assignee=${PCC_ISSUE_ASSIGNEE:-missing}"
 fi
 DISPATCH_RESULT=0
-

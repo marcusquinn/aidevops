@@ -8,7 +8,7 @@
 # dispatch-approved checks still run. Never infer eligibility from draft prose.
 _pcc_unknown_pending_work() {
 	local repo="$1" issue="$2" pr="$3" head="$4" runner="$5" release="$6" attempt="$7" comments="$8"
-	local issue_json='' pr_json='' brief='' marker='' approval='' login='' permission='' policy='' configured_by='' actor=''
+	local issue_json='' pr_json='' brief='' marker='' approval='' policy=''
 	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local mode="${9:-route}"
 	local issue_api="repos/${repo}/issues"
@@ -44,16 +44,30 @@ _pcc_unknown_pending_work() {
 		_pcc_unknown_digest "$repo" "$issue" "$pr" "$head" "$release" "$attempt"
 		return $?
 	fi
+	_pcc_policy_permissions "$repo" "$policy" "$runner" || return 1
+	_pcc_publish_policy_approval "$repo" "$issue" "$pr_json" "$issue_json" "$comments" "$approval" || return 1
+	printf 'UNKNOWN_CHECKPOINT_APPROVED pr=%s head=%s release=%s\n' "$pr" "$head" "$release"
+	return 0
+}
+
+# Shared by opt-in checkpoint policies. Extra actors are checked by the decision
+# resolver (issue author and finding poster); unknown triage retains its policy.
+_pcc_policy_permissions() {
+	local repo="$1" policy="$2" runner="$3" configured_by='' login='' actor='' permission=''
+	shift 3
 	configured_by=$(jq -er '.configured_by' <<<"$policy") || return 1
-	_pcc_login_is_safe "$configured_by" || return 1
 	login=$(gh api user --jq '.login') || return 1
-	_pcc_login_is_safe "$login" || return 1
-	# Both the policy owner and publishing actor need current repository write
-	# authority. Association labels and template generation grant none.
-	for actor in "$configured_by" "$login" "$runner"; do
+	# #aidevops:trust-boundary — every policy/publication/evidence actor needs write.
+	for actor in "$configured_by" "$login" "$runner" "$@"; do
+		_pcc_login_is_safe "$actor" || return 1
 		permission=$(gh api "repos/${repo}/collaborators/${actor}/permission" --jq '.permission') || return 1
 		case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
 	done
+	return 0
+}
+
+_pcc_publish_policy_approval() {
+	local repo="$1" issue="$2" pr_json="$3" issue_json="$4" comments="$5" approval="$6"
 	# Only an authoritative, unedited, unexpired full-envelope approval can
 	# suppress publication; approval-looking text from a commenter grants nothing.
 	if _pr_checkpoint_revised_target "$repo" "$pr_json" "$issue_json" "$comments" "" >/dev/null 2>&1; then
@@ -62,7 +76,6 @@ _pcc_unknown_pending_work() {
 	# Publish through the same signed wrapper used by a maintainer. No direct
 	# dispatch, label change, claim transfer or security exemption is introduced.
 	printf '%s\n' "$approval" | "${SCRIPT_DIR}/gh-write-helper.sh" issue comment "$issue" --repo "$repo" --body-file - >/dev/null || return 1
-	printf 'UNKNOWN_CHECKPOINT_APPROVED pr=%s head=%s release=%s\n' "$pr" "$head" "$release"
 	return 0
 }
 
