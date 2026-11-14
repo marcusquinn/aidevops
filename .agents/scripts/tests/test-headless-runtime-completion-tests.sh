@@ -87,7 +87,7 @@ run_worker_no_output_classification_tests() {
 _signal_less_fixture_pr_state() {
 	case "$1" in
 	missing_summary) printf 'ready_missing_summary|7' ;;
-	merged_closed) printf 'merged|7' ;;
+	merged_closed | merged_marker | merged_marker_dirty) printf 'merged|7' ;;
 	draft) printf 'draft_checkpoint|7' ;;
 	merged_missing_summary) printf 'merged_missing_summary|7' ;;
 	*) printf 'ready|7' ;;
@@ -114,7 +114,7 @@ _signal_less_fixture_result() {
 		[[ "$*" == "api repos/owner/repo/issues/42" && "$scenario" != unreadable ]] || return 1
 		jq -cn --arg scenario "$scenario" '{number:42,state:"open",assignees:[{login:"runner"}],
 			labels:[{name:"auto-dispatch"},{name:"status:in-review"}]}
-			| if $scenario == "merged_closed" or $scenario == "merged_missing_summary" then .state = "closed"
+			| if ($scenario | startswith("merged_")) then .state = "closed"
 			elif $scenario == "foreign_assignee" then .assignees += [{login:"other"}]
 			elif $scenario == "still_owned" then .labels = [{name:"status:in-progress"}]
 			else . end'
@@ -137,17 +137,22 @@ _signal_less_fixture_result() {
 # GH#38303: a no-signal exit after the worker's own non-draft PR becomes a
 # post-PR handoff only when the continuation would be ownership-fenced.
 # Forge reads are synthetic; the worktree cleanliness check uses real Git.
+# GH#38329: the post-merge cleanup-deferred marker alone is not unpublished work.
 test_signal_less_exit_after_own_pr_handoff() {
 	local scenario expected evidence work_dir
-	for scenario in ready missing_summary merged_closed draft foreign_assignee still_owned unreadable dirty repair_contract merged_missing_summary; do
+	for scenario in ready missing_summary merged_closed merged_marker merged_marker_dirty draft foreign_assignee still_owned unreadable dirty repair_contract merged_missing_summary; do
 		work_dir="${TEST_ROOT}/signal-less-${scenario}"
 		_setup_test_git_repo "$work_dir" 1
-		[[ "$scenario" != dirty ]] || touch "$work_dir/unpublished"
+		[[ "$scenario" != dirty && "$scenario" != merged_marker_dirty ]] || touch "$work_dir/unpublished"
+		if [[ "$scenario" == merged_marker || "$scenario" == merged_marker_dirty ]]; then
+			mkdir -p "$work_dir/.agents"
+			touch "$work_dir/.agents/.full-loop-cleanup-deferred"
+		fi
 		evidence=$(_signal_less_fixture_result "$scenario" "$work_dir")
 		case "$scenario" in
 		ready) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=ready' ;;
 		missing_summary) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=ready_missing_summary' ;;
-		merged_closed) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=merged' ;;
+		merged_closed | merged_marker) expected='rc=0 label=post_pr_handoff reason= source=worker_pr_handoff_without_signal pattern=merged' ;;
 		*) expected='rc=77 label=premature_exit ' ;;
 		esac
 		local result=1
