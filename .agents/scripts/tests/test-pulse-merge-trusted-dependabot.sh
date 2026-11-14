@@ -204,6 +204,8 @@ define_helpers_under_test() {
 	source "$AUTHOR_CHECKS_SCRIPT"
 	# shellcheck source=../trusted-dependabot-lib.sh
 	source "$TRUSTED_DEPENDABOT_LIB"
+	# shellcheck source=../shared-gh-commit-cache.sh
+	source "${SCRIPT_DIR}/../shared-gh-commit-cache.sh"
 	# shellcheck disable=SC1090
 	eval "$runner_src"
 	# shellcheck disable=SC1090
