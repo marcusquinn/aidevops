@@ -9,8 +9,9 @@ for the preserving archive stage rather than refused alongside unsafe trees.
 
 An applied removal is journaled as evidence-backed authorization (GH#38348):
 ``reclaim-authorized`` before removal and ``reclaim-removed`` after, keyed by the
-worktree path and an evidence fingerprint. Event IDs are deterministic, so a
-repeated pass replays the same events instead of appending new ones, and removal
+worktree path and an evidence fingerprint. Event IDs are derived from the full
+canonical payload, so an identical repeated pass replays the same events instead
+of appending new ones, while changed evidence never collides; removal
 re-computes the fingerprint and refuses with ``evidence-changed`` on mismatch.
 """
 
@@ -23,7 +24,7 @@ import sqlite3
 from uuid import UUID, uuid5
 
 from ..journal import append_event
-from ..storage import LifecycleRegistry, StoreCapacity, StoreConflict
+from ..storage import LifecycleRegistry, StoreCapacity, StoreConflict, encode
 from .host import EVIDENCE_CHANGED, git
 
 __all__ = ["ARCHIVE", "AUTHORIZED", "REFUSE", "REMOVE", "REMOVED", "cas_verify",
@@ -90,9 +91,15 @@ def cas_verify(expected: str, verify: Verifier) -> Verifier:
     return check
 
 
-def event_id(installation_id: str, kind: str, path: str, digest: str) -> str:
-    """Derive the deterministic event ID for one (kind, path, fingerprint)."""
-    return str(uuid5(UUID(installation_id), f"{kind}\0{path}\0{digest}"))
+def event_id(installation_id: str, payload: dict) -> str:
+    """Derive the deterministic event ID from the complete canonical payload.
+
+    Keying on the whole payload (not just kind, path and fingerprint) means a
+    later pass that sees the same tree with different reason or references
+    appends a new event instead of colliding with the earlier one, which would
+    otherwise refuse that tree permanently as ``journal-conflict``.
+    """
+    return str(uuid5(UUID(installation_id), encode(payload)))
 
 
 def record(store: LifecycleRegistry, kind: str, verdict: dict, digest: str) -> str | None:
@@ -108,8 +115,7 @@ def record(store: LifecycleRegistry, kind: str, verdict: dict, digest: str) -> s
         with store.connection(write=True) as connection:
             installation = connection.execute(
                 "SELECT installation_id FROM metadata").fetchone()[0]
-            append_event(connection, event_id(installation, kind, verdict["path"], digest),
-                         payload)
+            append_event(connection, event_id(installation, payload), payload)
     except StoreConflict:
         return "journal-conflict"
     except (StoreCapacity, ValueError, OSError, sqlite3.Error):
