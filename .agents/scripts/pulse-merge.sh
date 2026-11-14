@@ -615,6 +615,10 @@ _pm_gate_origin_authority() {
 	fi
 	labels_str=$(printf '%s' "$info_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
 	is_draft=$(printf '%s' "$info_json" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
+	if [[ "$is_draft" == false ]] && _feedback_route_labels_include "$labels_str" hold-for-review; then
+		# Recheck on the next merge pass after any verified recovery.
+		_feedback_route_release_projection_hold "$pr_number" "$repo_slug" || true
+	fi
 	if [[ "$is_draft" == "true" || ",${labels_str}," == *",hold-for-review,"* ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — PR is draft or has hold-for-review" >>"$LOGFILE"
 		# #aidevops:trust-boundary — selection must revoke an already armed merge.

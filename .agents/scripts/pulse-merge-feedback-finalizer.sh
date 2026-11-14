@@ -889,6 +889,49 @@ _feedback_route_closed_issue_current_labels() {
 	return 0
 }
 
+# Release only a hold whose latest hold-related comment and label event agree.
+_feedback_route_release_projection_hold() {
+	local pr_number="$1" repo_slug="$2"
+	local snapshot="" pr_status="" sha="" labels="" body="" comments="" candidate="" trusted="" event="" event_id="" actor="" author="" marker="" timeline="" comment_time=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 1
+	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return 1
+	IFS=$'\t' read -r pr_status sha labels <<<"$snapshot"
+	[[ "$pr_status" == "OPEN" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	_feedback_route_labels_allow_worker_route "$labels" 1 || return 1
+	_feedback_route_labels_include "$labels" "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" || return 1
+	body=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return 1
+	_pm_pr_body_is_todo_projection "$body" || return 1
+	comments=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	marker="<!-- feedback-route:closed-issue:PR${pr_number}:ISSUE"
+	# aidevops:trust-boundary: never let an older receipt override a later hold comment.
+	candidate=$(printf '%s' "$comments" | jq -c --arg marker "$marker" --arg head "$sha" --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" '
+		(if (.[0]? | type) == $array_type then add else . end)
+		| [ .[]? | select((.body // "") | test("hold|feedback-route:"; "i")) ]
+		| sort_by([.created_at, .id]) | last
+		| select(. != null and ((.body // "") | startswith($marker))
+			and ((.body // "") | contains(":SHA" + $head + ":RUNNER")))
+		| [{login: .user.login, association: .author_association, created_at}]' 2>/dev/null) || return 1
+	[[ -n "$candidate" ]] || return 1
+	trusted=$(_feedback_route_trusted_entries "$repo_slug" <<<"$candidate") || return 1
+	author=$(printf '%s' "$trusted" | jq -r 'if length == 1 then .[0].login else empty end') || return 1
+	[[ -n "$author" ]] || return 1
+	event=$(_feedback_route_latest_hold_event "$pr_number" "$repo_slug") || return 1
+	IFS=$'\t' read -r event_id actor <<<"$event"
+	[[ "$event_id" =~ ^[0-9]+$ && "$actor" == "$author" ]] || return 1
+	comment_time=$(printf '%s' "$trusted" | jq -r '.[0].created_at // empty') || return 1
+	timeline=$(gh api "repos/${repo_slug}/issues/${pr_number}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	# A later re-applied hold by the same account is not the original receipt.
+	printf '%s' "$timeline" | jq -e --arg id "$event_id" --arg time "$comment_time" --arg array_type "$PULSE_FEEDBACK_ROUTE_JSON_ARRAY_TYPE" '
+		(if (.[0]? | type) == $array_type then add else . end)
+		| any(.[]?; ((.id // 0) | tostring) == $id and
+			(((.created_at | fromdateiso8601) - ($time | fromdateiso8601)) as $age | $age >= 0 and $age <= 300))' >/dev/null 2>&1 || return 1
+	[[ "$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug")" == "$snapshot" ]] || return 1
+	[[ "$(_feedback_route_latest_hold_event "$pr_number" "$repo_slug")" == "$event" ]] || return 1
+	_feedback_route_gh_write pr edit "$pr_number" --repo "$repo_slug" --remove-label "$PULSE_FEEDBACK_ROUTE_HOLD_LABEL" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] feedback finalizer: released stale closed-issue projection hold on PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
 # Closed issues have no redispatch executor. Hold only the PR, without creating
 # recoverable automation-hold provenance or changing the closed issue (GH#34531).
 _feedback_route_guard_closed_issue() {
