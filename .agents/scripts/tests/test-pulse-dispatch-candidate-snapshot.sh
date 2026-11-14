@@ -191,6 +191,13 @@ printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-ce
 	captured=$(jq -r '.captured_at' "$partial")
 	[[ "$(_dispatch_ranked_candidates_json 50 skip)" == '[]' ]]
 	[[ "$(jq -r '.captured_at' "$partial")" == "$captured" ]]
+	# GH#38200: that rebuild was a scan; census timing must not log it as a
+	# snapshot read just because the ledger expiry kept the old capture time.
+	enumerated=$(jq -r '.enumerated_at' "$partial")
+	[[ "$enumerated" =~ ^[0-9]+$ ]]
+	((enumerated > captured))
+	if _dispatch_enumeration_served_snapshot 50 skip "$((enumerated * 1000))"; then exit 1; fi
+	_dispatch_enumeration_served_snapshot 50 skip "$(((enumerated + 1) * 1000))"
 	jq '.captured_at = 0' "$partial" >"${partial}.test"
 	mv "${partial}.test" "$partial"
 	refreshed=$(_dispatch_ranked_candidates_json 50 skip)

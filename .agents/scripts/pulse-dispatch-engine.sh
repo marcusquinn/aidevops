@@ -256,6 +256,23 @@ _dispatch_first_wave_advance_cursor() {
 	return 0
 }
 
+# GH#33647/GH#34331: rotate the first-wave cursor past every polled
+# repository, even if its candidates later fail live dispatch gates, so one
+# repository's backlog cannot monopolize every first wave. Lead repositories
+# (GH#38022/GH#38200) were polled out of rotation order; they leave the
+# cursor where the plain rotation reached. Args: slug, lead field.
+_dispatch_first_wave_note_polled() {
+	local slug="$1" lead="${2:-}"
+	case "$lead" in
+	"") _dispatch_first_wave_advance_cursor "$slug" ;;
+	arrival:*)
+		echo "[pulse-wrapper] First-wave new-arrival lead: repo=${slug} launchable=${lead#arrival:} (GH#38200)" >>"$LOGFILE"
+		_dispatch_stats_increment "first_wave_new_arrival_lead"
+		;;
+	esac
+	return 0
+}
+
 # GH#34331: whole-second clock for first-wave bounds. Reuses the dispatch
 # millisecond clock when loaded so the enumeration budget shares its source.
 _dispatch_first_wave_now_s() {
@@ -316,12 +333,18 @@ _dispatch_first_wave_enumeration_done() {
 }
 
 # Emit managed repository rows, optionally rotated after a first-wave cursor.
+# A first wave leads with repositories holding prefetch-visible new arrivals
+# (GH#38200), then those with unattempted snapshot backlog (GH#38022); the
+# eighth field names the lead ("arrival:<count>", "backlog" or empty).
 _dispatch_repository_rows() {
-	local cursor="$1" backlog=""
+	local cursor="$1" backlog="" arrivals=""
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
 		backlog=$(_dispatch_first_wave_backlog_repos)
+		if declare -F _dispatch_first_wave_arrival_repos >/dev/null 2>&1; then
+			arrivals=$(_dispatch_first_wave_arrival_repos)
+		fi
 	fi
-	jq -r --arg cursor "$cursor" --arg backlog "$backlog" '
+	jq -r --arg cursor "$cursor" --arg backlog "$backlog" --arg arrivals "$arrivals" '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
 			else .pulse_hours.start
@@ -335,9 +358,18 @@ _dispatch_repository_rows() {
 		($repos | map(.slug) | index($cursor)) as $index |
 		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end) as $rotated |
 		($backlog | split("\n")) as $known |
-		# Stable partition preserves cursor fairness for unknown/attempted work.
-		(($rotated | map(select(.slug as $s | $known | index($s)))) +
-		 ($rotated | map(select(.slug as $s | $known | index($s) | not))))[] |
+		($arrivals | split("\n") | map(select(length > 0) | split("\t") |
+			{key: .[0], value: ("arrival:" + (.[1] // "0"))}) | from_entries) as $arrived |
+		($rotated | map(.slug as $s | {repo: ., lead: ($arrived[$s] //
+			(if ($known | index($s)) != null then "backlog" else "" end))})) as $marked |
+		# Stable partitions preserve cursor fairness for repositories without
+		# known or newly arrived launchable work (GH#33647). Arrivals come
+		# first: a short remainder that triggered their re-census is merged
+		# back without rescanning its repositories (GH#38200).
+		(($marked | map(select(.lead | startswith("arrival:")))) +
+		 ($marked | map(select(.lead == "backlog"))) +
+		 ($marked | map(select(.lead == ""))))[] |
+		.lead as $lead | .repo |
 		[
 			.slug,
 			.path,
@@ -345,7 +377,8 @@ _dispatch_repository_rows() {
 			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
 			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
 			(.pulse_expires // ""),
-			(.pulse_interval // "")
+			(.pulse_interval // ""),
+			$lead
 		] | join("|")
 	' "$REPOS_JSON" 2>/dev/null || return 1
 	return 0
@@ -383,7 +416,7 @@ build_ranked_dispatch_candidates_json() {
 	}
 	: >"$tmp_candidates"
 
-	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do
+	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval repo_lead; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
 		if [[ -n "$first_wave_bounds" && -s "$tmp_candidates" ]] &&
@@ -400,10 +433,7 @@ build_ranked_dispatch_candidates_json() {
 		fi
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
-		# GH#33647/GH#34331: rotate the first-wave cursor past every polled
-		# repository, even if its candidates later fail live dispatch gates,
-		# so one repository's backlog cannot monopolize every first wave.
-		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug"
+		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_note_polled "$repo_slug" "$repo_lead"
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
 		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {

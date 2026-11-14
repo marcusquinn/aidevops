@@ -352,6 +352,114 @@ printf 'PASS first-wave dispatch extends only a fresh, matching owner lease\n'
 )
 printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor remainder and restore cursor fairness after attempts\n'
 
+# GH#38200: the product backlog of a census-fresh first-wave snapshot is fully
+# attempted and the cursor is past the product repository. Fifteen issues that
+# arrived after the census last polled it are visible only in the prefetch
+# cache. They must lead the next first wave without any API read, and a short
+# remainder elsewhere must not hide them for a census-length window.
+(
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	_PULSE_FIRST_DISPATCH_WAVE=1
+	PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=3600
+	PULSE_PREFETCH_CACHE_FILE="${TEST_ROOT}/prefetch-cache.json"
+	PULSE_LAST_PER_REPO_FILE="${TEST_ROOT}/last-per-repo.json"
+	stats="${TEST_ROOT}/arrival-stats"
+	: >"$stats"
+	_dispatch_stats_increment() { printf '%s\n' "$1" >>"$stats"; return 0; }
+	jq -n '{initialized_repos:[range(1;71) | {slug:("owner/repo" + tostring),
+		path:"/fixture",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
+	pulse_campaign_shadow_candidates_json() {
+		local slug="$1"
+		printf 'scan:%s\n' "$slug" >>"$EVENTS"
+		advance_clock 5
+		case "$slug" in
+		owner/repo4) jq -nc '[range(21;36) | {number:.,labels:["auto-dispatch","status:available"]}]' ;;
+		*) printf '[]\n' ;;
+		esac
+		return 0
+	}
+	now=$(date +%s)
+	launchable='[{name:"auto-dispatch"},{name:"status:available"}]'
+	# repo4: 20 launched (assigned) plus 15 arrivals. repo30: nothing
+	# launchable. repo40: stale prefetch. repo50: census polled after the
+	# prefetch. repo55: arrival already attempted on this runner.
+	jq -n --argjson now "$now" "($launchable) as \$ok | (\$now | todate) as \$at | {
+		\"owner/repo4\": {last_prefetch:\$at, issues:(
+			[range(1;21) | {number:., state:\"OPEN\", labels:[{name:\"auto-dispatch\"},{name:\"status:queued\"}], assignees:[{login:\"runner\"}]}] +
+			[range(21;36) | {number:., state:\"OPEN\", labels:\$ok, assignees:[]}])},
+		\"owner/repo30\": {last_prefetch:\$at, issues:[{number:5, labels:[{name:\"status:available\"}], assignees:[]},
+			{number:6, labels:\$ok, assignees:[{login:\"other\"}]}, {number:7, state:\"CLOSED\", labels:\$ok, assignees:[]}]},
+		\"owner/repo40\": {last_prefetch:\"2020-01-01T00:00:00Z\", issues:[{number:8, labels:\$ok, assignees:[]}]},
+		\"owner/repo50\": {last_prefetch:\$at, issues:[{number:9, labels:\$ok, assignees:[]}]},
+		\"owner/repo55\": {last_prefetch:\$at, issues:[{number:10, labels:[\"auto-dispatch\",\"status:available\"], assignees:[]}]}
+	}" >"$PULSE_PREFETCH_CACHE_FILE"
+	jq -n --argjson now "$now" '{last_pulsed:{"owner/repo4":($now - 600),"owner/repo50":$now}}' >"$PULSE_LAST_PER_REPO_FILE"
+	_dispatch_attempt_recency_stamp 10 owner/repo55 "$now"
+	snapshot=$(_dispatch_candidate_snapshot_path 50 skip)
+	seed_snapshot() {
+		local extra="$1"
+		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson now "$now" --argjson extra "$extra" \
+			'{schema:$schema,captured_at:($now - 60),census_seconds:739,
+			candidates:([range(1;21) | {number:.,repo_slug:"owner/repo4",repo_path:"/fixture",product_discovery_complete:false}] + $extra)}' >"$snapshot"
+		jq -nc 'range(1;21) | ["owner/repo4", .]' >"${snapshot}.consumed"
+		printf 'owner/repo61\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
+		: >"$EVENTS"
+		: >"$stats"
+		return 0
+	}
+	seed_snapshot '[]'
+	[[ "$(_dispatch_first_wave_arrival_repos)" == $'owner/repo4\t15' ]]
+	[[ -z "$(PULSE_FIRST_WAVE_ARRIVAL_HINT_MAX_AGE_S=0 _dispatch_first_wave_arrival_repos)" ]]
+
+	# Exhausted snapshot: the arrival repository is scanned first, out of
+	# rotation, and the cursor stays where the plain rotation reached.
+	exhausted=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=15 _dispatch_ranked_candidates_json 50 skip)
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo4;' ]]
+	jq -e 'length == 15 and all(.[]; .repo_slug == "owner/repo4" and .number > 20)' <<<"$exhausted" >/dev/null
+	[[ "$(<"${HOME}/.aidevops/cache/pulse-first-wave-cursor")" == owner/repo61 ]]
+	grep -qx 'first_wave_new_arrival_lead' "$stats"
+	grep -qF 'First-wave new-arrival lead: repo=owner/repo4 launchable=15 (GH#38200)' "$LOGFILE"
+	# The re-scan keeps the ledger expiry but is timed as a scan, not a read.
+	jq -e --argjson now "$now" '.captured_at == ($now - 60) and .enumerated_at >= $now' "$snapshot" >/dev/null
+	if _dispatch_enumeration_served_snapshot 50 skip "$((now * 1000))"; then exit 1; fi
+
+	# A fresh remainder smaller than the free slots is stale while arrivals
+	# wait outside it: re-enumerate with arrivals ahead of the remainder's
+	# repository and rotation, and merge the remainder back without a rescan.
+	remainder207='[{"number":207,"repo_slug":"owner/repo61","repo_path":"/fixture","product_discovery_complete":false}]'
+	seed_snapshot "$remainder207"
+	short=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=15 _dispatch_ranked_candidates_json 50 skip)
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'scan:owner/repo4;' ]]
+	jq -e 'length == 16 and any(.[]; .number == 207) and ([.[] | select(.repo_slug == "owner/repo4")] | length) == 15' <<<"$short" >/dev/null
+	jq -e '[.candidates[] | select(.number == 207)] | length == 1' "$snapshot" >/dev/null
+	grep -qx 'first_wave_new_arrival_refresh' "$stats"
+	grep -qx 'first_wave_new_arrival_lead' "$stats"
+	# An arrival repository the census may not poll (interval-throttled) never
+	# forces a re-census: its hint could not clear.
+	seed_snapshot "$remainder207"
+	throttled=$(check_repo_pulse_interval() { return 1; }
+		_PULSE_FIRST_WAVE_CANDIDATE_TARGET=15 _dispatch_ranked_candidates_json 50 skip)
+	[[ ! -s "$EVENTS" ]]
+	jq -e 'length == 1 and .[0].number == 207' <<<"$throttled" >/dev/null
+	if grep -qx 'first_wave_new_arrival_refresh' "$stats"; then exit 1; fi
+	# A remainder that fills the slots is still served without a scan.
+	seed_snapshot "$remainder207"
+	served=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=1 _dispatch_ranked_candidates_json 50 skip)
+	[[ ! -s "$EVENTS" ]]
+	jq -e 'length == 1 and .[0].number == 207' <<<"$served" >/dev/null
+
+	# Inverse: once the arrivals are attempted, no repository holds launchable
+	# work the snapshot lacks, and plain rotation resumes after the cursor.
+	seed_snapshot '[]'
+	jq -nc 'range(21;36) | ["owner/repo4", .]' >>"${snapshot}.consumed"
+	[[ -z "$(_dispatch_first_wave_arrival_repos)" ]]
+	rows=$(_dispatch_repository_rows owner/repo61)
+	[[ "${rows%%|*}" == owner/repo62 ]]
+	_dispatch_attempt_recency_clear 10 owner/repo55
+	_dispatch_invalidate_candidate_snapshot fixture_complete 50
+)
+printf 'PASS new product arrivals lead the next first wave from the prefetch cache; short remainders re-enumerate; quiet repositories keep rotation\n'
+
 # GH#33944: post-label refill must not spend its admission budget normalizing
 # the entire blocked backlog before already-available candidates can launch.
 rm -f "$STOP_FLAG"
