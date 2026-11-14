@@ -378,6 +378,7 @@ _hrff_build_claim_released_line() {
 	local opencode_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
 	local release_ts=""
 	local machine_readable_part=""
+	local checkpoint_variant=""
 
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -389,6 +390,23 @@ _hrff_build_claim_released_line() {
 
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	# GH#38215: publish the effective runtime tier, not the dispatcher's initial
+	# guess. The attempt loop updates it after model rotation/escalation. Only
+	# checkpoint workers carry this head binding; legacy releases stay unknown.
+	# Pinned models can leave the runtime's default tier unchanged: verify the
+	# actual model and reasoning variant against that tier before publishing it.
+	if [[ "${AIDEVOPS_DISPATCH_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		"${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[a-f0-9]{40,64}$ &&
+		"${AIDEVOPS_ROUTING_MODEL:-}" =~ ^[A-Za-z0-9._:/-]+$ &&
+		"${AIDEVOPS_ROUTING_VARIANT:-}" =~ ^[A-Za-z0-9_-]*$ ]] &&
+		declare -F model_tier_candidate_index >/dev/null &&
+		model_tier_candidate_index "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" >/dev/null 2>&1 &&
+		checkpoint_variant=$(model_tier_variant "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" 2>/dev/null); then
+		if [[ "$checkpoint_variant" == "${AIDEVOPS_ROUTING_VARIANT:-}" ]]; then
+			machine_readable_part+=" checkpoint_tier=${AIDEVOPS_DISPATCH_TIER} checkpoint_head=${AIDEVOPS_PR_REPAIR_HEAD_SHA}"
+			machine_readable_part+=" checkpoint_model=${AIDEVOPS_ROUTING_MODEL} checkpoint_variant=${AIDEVOPS_ROUTING_VARIANT:-default}"
+		fi
+	fi
 	if [[ -n "$exit_code_arg" ]]; then
 		machine_readable_part+=" exit=${exit_code_arg}"
 	fi
