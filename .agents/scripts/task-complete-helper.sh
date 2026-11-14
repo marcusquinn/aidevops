@@ -601,6 +601,60 @@ _complete_task_restore_backup() {
 	return 0
 }
 
+# Succeeds when the open task line has leading whitespace (a subtask).
+_complete_task_is_indented() {
+	local task_id="$1"
+	local todo_file="$2"
+
+	grep -qE "^[[:space:]]+- \[[ >]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"
+	return $?
+}
+
+# Tick an indented subtask in place: keep indentation, parent and continuation lines.
+_complete_task_in_place() {
+	local task_id="$1"
+	local proof_log="$2"
+	local today="$3"
+	local todo_file="$4"
+	local tmp_out="${todo_file}.in_place"
+
+	# shellcheck disable=SC2016
+	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" '
+!done && $0 ~ ("^[[:space:]]+-[[:space:]]\\[[ >]\\][[:space:]]" tid boundary) {
+    line=$0
+    sub(/\[[ >]\]/, "[x]", line)
+    sub(/[[:space:]]*$/, "", line)
+    line_token_count=split(line, line_tokens, /[[:space:]]+/)
+    proof_token_count=split(proof, proof_tokens, /[[:space:]]+/)
+    for (p=1; p <= proof_token_count; p++) {
+        present=0
+        for (l=1; l <= line_token_count; l++) {
+            if (line_tokens[l] == proof_tokens[p]) { present=1; break }
+        }
+        if (!present) {
+            line = line " " proof_tokens[p]
+            line_tokens[++line_token_count] = proof_tokens[p]
+        }
+    }
+    print line " completed:" today
+    done=1
+    next
+}
+{ print }
+' "$todo_file" >"$tmp_out" || {
+		rm -f "$tmp_out"
+		return 1
+	}
+	mv "$tmp_out" "$todo_file"
+
+	if ! grep -E "^[[:space:]]+- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+		log_error "Failed to add proof-log to $task_id"
+		return 1
+	fi
+	log_success "Marked $task_id complete in place under its parent with proof-log: $proof_log"
+	return 0
+}
+
 # Mark task complete in TODO.md
 complete_task() {
 	local task_id="$1"
@@ -625,6 +679,13 @@ complete_task() {
 
 	local today=""
 	today=$(date +%Y-%m-%d)
+
+	# Indented subtasks are completed in place under their parent (GH#37919).
+	if _complete_task_is_indented "$task_id" "$todo_file"; then
+		_complete_task_in_place "$task_id" "$proof_log" "$today" "$todo_file"
+		return $?
+	fi
+
 	COMPLETE_TASK_DONE_HEADING=""
 	_complete_task_set_done_heading "$todo_file" || return 1
 
@@ -869,7 +930,7 @@ task_issue_number() {
 	local task_line=""
 	local issue_number=""
 
-	task_line=$(grep -E "^[[:space:]]*- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1 || true)
+	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >x]\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" || true)
 	if [[ -z "$task_line" ]]; then
 		log_error "Task $task_id not found in an open TODO.md entry"
 		return 1
