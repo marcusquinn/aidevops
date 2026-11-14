@@ -509,10 +509,32 @@ _dispatch_negative_cache_self_validating_reason() {
 	return $?
 }
 
+_dispatch_negative_cache_refresh_revision() {
+	local candidate="$1" checkpoint_mode="$2" record="$3" file="$4"
+	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material=''
+	local current='' comments='' updated='' repo='' issue='' tmp=''
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
+	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* && "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	current=$(_dispatch_negative_cache_material "$candidate") || return 1
+	[[ "$current" == "$material" ]] || return 1
+	IFS=$'\t' read -r issue repo updated < <(jq -r '[.number, .repo_slug, .updatedAt] | @tsv' <<<"$candidate") || return 1
+	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
+	_dispatch_negative_cache_ops_only "$comments" || return 1
+	# Refresh the revision, never the TTL or reason-specific evidence.
+	tmp=$(mktemp "${file}.XXXXXX") || return 1
+	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp" ||
+		! mv -f "$tmp" "$file"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	return 0
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
-	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
-	local record="" material="" comments="" refresh=0 tmp=""
+	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
@@ -525,14 +547,6 @@ _dispatch_negative_cache_reason() {
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
-	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
-	# hold is keyed to the owner generation rather than the issue revision.
-	if [[ "$cached" != "$updated" && "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
-		[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* && "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
-		current=$(_dispatch_negative_cache_material "$candidate") || return 1
-		[[ "$current" == "$material" ]] || return 1
-		refresh=1
-	fi
 	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
@@ -560,8 +574,8 @@ _dispatch_negative_cache_reason() {
 		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
 		;;
 	terminal_blocker_circuit)
-		# The circuit hold applies to unowned available issues by design. An
-		# unchanged updatedAt proves no edit, retry directive or new comment.
+		# The circuit hold applies to unowned available issues by design.
+		# Revision validation below rejects edits and material comments.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
 	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
@@ -603,26 +617,16 @@ _dispatch_negative_cache_reason() {
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
 	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated)
-		# GH#33538: the exact updatedAt match above is the invalidation signal.
+		# GH#33538: material issue revisions invalidate maintainer-gate hints.
 		ttl="$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS"
 		;;
 	*) return 1 ;;
 	esac
 	now=$(date +%s)
 	((now >= stamp && now - stamp < ttl)) || return 1
-	if [[ "$refresh" == 1 ]]; then
-		comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
-			gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
-		_dispatch_negative_cache_ops_only "$comments" || return 1
-		# Refresh the revision, never the TTL or reason-specific evidence. An old
-		# record or a failed refresh simply runs the ceremony again next cycle.
-		tmp=$(mktemp "${file}.XXXXXX") || return 1
-		chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
-		if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp" ||
-			! mv -f "$tmp" "$file"; then
-			rm -f "$tmp"
-			return 1
-		fi
+	# Live-owner holds remain keyed to owner generation, not claim-comment bumps.
+	if [[ "$cached" != "$updated" && "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		_dispatch_negative_cache_refresh_revision "$candidate" "$checkpoint_mode" "$record" "$file" || return 1
 	fi
 	printf '%s\n' "$reason"
 	return 0
