@@ -13,6 +13,8 @@ Each candidate gets one decision (``reclaim.decision.classify``): ``remove``,
 ``archive`` (finished work with local state to preserve, queued and skipped until
 the archive stage exists) or ``refuse``. Dry runs write nothing; applied removals
 are journaled as ``reclaim-authorized`` then ``reclaim-removed`` (GH#38348).
+Applied passes also persist a scan cursor and defer trees whose own state stays
+unreadable (``reclaim.progress``, GH#38376); dry runs honour both but update neither.
 """
 
 from __future__ import annotations
@@ -31,8 +33,12 @@ from .decision import (
 )
 from .evidence import evidence, prefetch, references, repository
 from .host import common_directory, free_bytes, nothing_to_lose, remove, run
+from ..cleanup_quarantine import CleanupQuarantine
 from ..storage import LifecycleRegistry
 from .owners import RESIDUAL_RISK, OwnerCheck, default_state_dir, open_owners
+from .progress import (
+    QUARANTINE_THRESHOLD, open_quarantine, ordered, read_cursor, unreadable, write_cursor,
+)
 from .review import verify_idle_review
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
@@ -49,6 +55,7 @@ class Pass:
     deadline: float
     limit: int = 0
     finished: dict = field(default_factory=dict)
+    quarantine: CleanupQuarantine | None = None
 
     def remaining(self) -> int:
         """Report whole seconds left, so no child outlives the pass budget."""
@@ -76,7 +83,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
     return {"schema": SCHEMA, "base_dir": str(base_dir), "dry_run": dry_run,
             "scanned": 0, "authorized": 0, "archive_queued": 0, "removed": 0,
-            "failed": 0, "refused": 0,
+            "failed": 0, "refused": 0, "quarantine_deferred": 0,
+            "cursor_start": "", "resume_after": "",
             "reclaimed_bytes": 0, "budget_exhausted": False,
             "residual_risk": RESIDUAL_RISK, "results": []}
 
@@ -108,10 +116,22 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     """Judge one worktree and, when removable and applying, remove it.
 
     Removal is journaled before and after (``decision.record``) and refused when
-    the evidence fingerprint changed since judgement. Returns the repository
-    needing a worktree prune, or None.
+    the evidence fingerprint changed since judgement. An applied pass also feeds
+    the outcome to the unreadable backoff (``reclaim.progress``). Returns the
+    repository needing a worktree prune, or None.
     """
     verdict = judge(path, current, receipt)
+    common = _act(path, verdict, current, receipt)
+    if current.apply_removal and current.quarantine is not None:
+        # Any readable outcome clears the entry; only consecutive unreadable
+        # refusals of this same tree defer it.
+        current.quarantine.record(str(path), verdict, retry_later=unreadable(verdict),
+                                  threshold=QUARANTINE_THRESHOLD)
+    return common
+
+
+def _act(path: Path, verdict: dict, current: Pass, receipt: dict) -> Path | None:
+    """Remove one judged worktree when its decision and the pass allow it."""
     # A remove decision implies owners were observed; the check narrows the type.
     if (verdict["decision"] != REMOVE or not current.apply_removal
             or current.owner is None):
@@ -146,18 +166,36 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     return common
 
 
-def candidates(base_dir: Path, current: Pass, receipt: dict) -> Iterator[Path]:
-    """Yield each worktree directory until the budget or limit stops the pass."""
-    for path in sorted(base_dir.iterdir()):
-        if not path.is_dir():
-            continue
+def listing(base_dir: Path) -> list[Path]:
+    """Every directory directly under the base, the pass's candidate universe."""
+    return [path for path in base_dir.iterdir() if path.is_dir()]
+
+
+def _deferred(path: Path, current: Pass) -> bool:
+    return current.quarantine is not None and current.quarantine.deferred(str(path))
+
+
+def candidates(paths: list[Path], current: Pass, receipt: dict) -> Iterator[Path]:
+    """Yield worktrees in cursor order until the budget or limit stops the pass.
+
+    Deferred trees are skipped before the limit applies, so they cannot occupy
+    it. ``resume_after`` names where the next pass starts: the last tree reached
+    when the pass stopped early, or "" once the whole listing was covered.
+    """
+    receipt["resume_after"] = receipt.get("cursor_start", "")
+    for path in paths:
         if current.remaining() == 0:
             receipt["budget_exhausted"] = True
             return
         if current.limit and receipt["scanned"] >= current.limit:
             return
+        if _deferred(path, current):
+            receipt["quarantine_deferred"] += 1
+            continue
         receipt["scanned"] += 1
+        receipt["resume_after"] = path.name
         yield path
+    receipt["resume_after"] = ""
 
 
 def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
@@ -167,20 +205,21 @@ def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
     return max(after - before, 0)
 
 
-def prefetch_references(base_dir: Path, current: Pass) -> None:
+def prefetch_references(paths: list[Path], current: Pass) -> None:
     """Resolve the references this pass will judge, in batches, before judging any.
 
-    The limit the candidate generator applies is applied here too, so a limited run
-    does not spend its budget resolving trees it will never reach. A failed batch
-    leaves the cache untouched, so judgement falls back to per-reference queries.
+    The order, deferral and limit the candidate generator applies are applied
+    here too, so a limited run does not spend its budget resolving trees it will
+    never reach. A failed batch leaves the cache untouched, so judgement falls
+    back to per-reference queries.
     """
     wanted: dict[str, list[tuple[str, int]]] = {}
     examined = 0
-    for path in sorted(base_dir.iterdir()):
-        if not path.is_dir():
-            continue
+    for path in paths:
         if current.remaining() == 0 or (current.limit and examined >= current.limit):
             break
+        if _deferred(path, current):
+            continue
         examined += 1
         found = references(path.name)
         if path.is_symlink() or not found:
@@ -201,12 +240,15 @@ def main() -> int:
     owner = open_owners(arguments.state_dir)
     current = Pass(owner=owner, apply_removal=arguments.apply,
                    deadline=time.monotonic() + max(arguments.budget_seconds, 1),
-                   limit=arguments.limit)
+                   limit=arguments.limit, quarantine=open_quarantine(arguments.state_dir))
     receipt["owner_observation"] = "registry" if owner else "unavailable"
+    receipt["cursor_start"] = read_cursor(arguments.state_dir)
+    universe = listing(arguments.base_dir)
+    paths = ordered(universe, receipt["cursor_start"])
     repositories: set[Path] = set()
     free_before = free_bytes(arguments.base_dir)
-    prefetch_references(arguments.base_dir, current)
-    for path in candidates(arguments.base_dir, current, receipt):
+    prefetch_references(paths, current)
+    for path in candidates(paths, current, receipt):
         common = reclaim_one(path, current, receipt)
         if common is not None:
             repositories.add(common)
@@ -214,8 +256,28 @@ def main() -> int:
         run(["git", "--git-dir", str(common), "worktree", "prune"])
     receipt["reclaimed_bytes"] = reclaimed_bytes(
         free_before, free_bytes(arguments.base_dir), receipt["removed"])
+    if arguments.apply:
+        save_progress(arguments.state_dir, universe, current, receipt)
     print(json.dumps(receipt))
     return 0
+
+
+def save_progress(state_dir: Path, universe: list[Path], current: Pass,
+                  receipt: dict) -> None:
+    """Persist the cursor and backoff of an applied pass; dry runs write nothing.
+
+    A failed write is reported, never fatal: the next pass then rescans from the
+    previous cursor, which costs time but skips nothing.
+    """
+    if not state_dir.is_dir():
+        receipt["cursor_unavailable"] = True
+        return
+    if receipt["resume_after"] != receipt["cursor_start"] and not write_cursor(
+            state_dir, receipt["resume_after"]):
+        receipt["cursor_unavailable"] = True
+    if current.quarantine is not None:
+        current.quarantine.retain({str(path) for path in universe if path.exists()})
+        current.quarantine.save(receipt)
 
 
 if __name__ == "__main__":
