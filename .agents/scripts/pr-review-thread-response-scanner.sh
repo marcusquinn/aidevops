@@ -79,6 +79,8 @@ PRRTS_RC_NO_MATCH=11
 PRRTS_RC_MAINTAINER_ATTENTION=12
 PRRTS_RC_RETRYABLE_FAILURE=13
 PRRTS_RC_GRAPHQL_EXHAUSTED=75
+# Targeted single-PR dispatch mode (cmd_scan_pr / _prrts_dispatch_guarded).
+PRRTS_MODE_DISPATCH_PR="dispatch-pr"
 PRRTS_BLOCKED_BY_CODE="code"
 PRRTS_BLOCKED_BY_INFRASTRUCTURE="infrastructure"
 PRRTS_RETRY_CLASS_INFRASTRUCTURE="retryable_infrastructure"
@@ -680,9 +682,21 @@ _prrts_review_thread_summary() {
 	return 0
 }
 
+# GH#38291: an origin:interactive PR belongs to its session until pulse
+# confirms an idle-session handover (origin:worker-takeover). GH#36647 applies
+# this to the repo-wide scan; the targeted dispatch-pr path needs it too.
+_prrts_interactive_pr_owned_by_session() {
+	local labels=",${1:-},"
+	if [[ "$labels" == *,origin:interactive,* && "$labels" != *,origin:worker-takeover,* ]]; then
+		return 0
+	fi
+	return 1
+}
+
 cmd_scan_pr() {
 	local repo_slug="$1"
 	local pr_number="$2"
+	local scan_mode="${3:-scan-pr}"
 	local title head_ref head_oid author metadata summary rc
 	local thread_count fingerprint preview
 	local labels=""
@@ -713,6 +727,10 @@ cmd_scan_pr() {
 	if protected_release_pr "$head_ref" "${labels:-}"; then
 		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — protected release PR"
 		return 0
+	fi
+	if [[ "$scan_mode" == "$PRRTS_MODE_DISPATCH_PR" ]] && _prrts_interactive_pr_owned_by_session "${labels:-}"; then
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — interactive PR owned by its session (no worker-takeover)"
+		return "$PRRTS_RC_DISPATCH_DEFERRED"
 	fi
 	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
@@ -1329,6 +1347,23 @@ CONTEXT_EOF
 	return 0
 }
 
+# GH#38291: a takeover dispatch runs on a worker-owned local branch because the
+# PR branch stays checked out in the idle interactive owner's worktree.
+_prrts_append_takeover_worktree_note() {
+	local prompt_file="$1"
+	[[ -n "${PRRTS_WORKTREE_TAKEOVER_BRANCH:-}" ]] || return 0
+	# Literal $VAR below is prompt text for the worker, not an expansion.
+	# shellcheck disable=SC2016
+	printf '%s\n' '' '## Takeover worktree' \
+		'- This PR was handed over from an idle interactive session. Its branch is' \
+		'  checked out in that session'"'"'s worktree, so the dispatcher gave you a' \
+		'  worker-owned local branch at the exact PR head instead.' \
+		'- Push only with `git push origin "HEAD:$AIDEVOPS_PR_REPAIR_HEAD_REF"`. Never' \
+		'  push the local branch name, never force-push, and never read, write or' \
+		'  switch any other worktree.' >>"$prompt_file"
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -1418,6 +1453,7 @@ $(_prrts_prompt_upstream_rule "$scanner_path" "$repo_slug" "$pr_number")
 
 $(_prrts_prompt_verification_context "$scanner_path" "$repo_slug")
 PROMPT_EOF
+	_prrts_append_takeover_worktree_note "$prompt_file"
 	_prrts_append_reviewer_comments "$prompt_file" "$repo_slug" "$pr_number"
 	printf '%s\n' "$prompt_file"
 	return 0
@@ -1463,6 +1499,12 @@ _prrts_prepare_dispatch_target() {
 		return 1
 	fi
 	_prrts_prepare_worker_worktree "$repo_slug" "$repo_path" "$pr_number" "$head_ref" "$head_oid" "$path_var" || return 1
+	# Never launch a worker without a resolved linked worktree directory.
+	if [[ -z "${!path_var:-}" || ! -d "${!path_var}" ]]; then
+		PRRTS_WORKTREE_FAILURE_REASON="review_worktree_path_unresolved"
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — prepared worker worktree path is unresolved"
+		return 1
+	fi
 	PRRTS_WORKTREE_FAILURE_REASON="pr_target_eligibility_changed_before_launch"
 	# GH#38103: the fence may reclassify a GitHub write failure (for example the
 	# checkpoint ownership transfer) as infrastructure; code is the default.
@@ -1675,7 +1717,7 @@ _prrts_dispatch_guarded() {
 	fi
 	if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
 		printf 'DRY-RUN would dispatch %s#%s (%s unresolved thread(s))\n' "$repo_slug" "$pr_number" "$thread_count"
-		if [[ "$dispatch_mode" == "dispatch-pr" ]]; then
+		if [[ "$dispatch_mode" == "$PRRTS_MODE_DISPATCH_PR" ]]; then
 			_prrts_log "dry-run: would dispatch targeted ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN})"
 		else
 			_prrts_log "dry-run: would dispatch ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), head=${head_ref}, author=${author})"
@@ -1812,7 +1854,10 @@ _prrts_dispatch_pr() {
 		return "$PRRTS_RC_RETRYABLE_FAILURE"
 	fi
 	repo_path="${repo_path/#\~/$HOME}"
-	candidate="$(cmd_scan_pr "$repo_slug" "$pr_number")" || scan_rc=$?
+	candidate="$(cmd_scan_pr "$repo_slug" "$pr_number" "$PRRTS_MODE_DISPATCH_PR")" || scan_rc=$?
+	if [[ "$scan_rc" -eq "$PRRTS_RC_DISPATCH_DEFERRED" ]]; then
+		return "$PRRTS_RC_DISPATCH_DEFERRED"
+	fi
 	if [[ "$scan_rc" -ne 0 ]]; then
 		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} retryable review-thread scan failure (scan_rc=${scan_rc})"
 		return "$PRRTS_RC_RETRYABLE_FAILURE"
@@ -1824,7 +1869,7 @@ _prrts_dispatch_pr() {
 	now_epoch="$(date +%s)"
 	IFS="$PRRTS_TSV_FIELD_SEPARATOR" read -r pr_number thread_count fingerprint title head_ref head_oid author preview \
 		<<<"${candidate//$'\t'/$PRRTS_TSV_FIELD_SEPARATOR}"
-	_prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$head_oid" "$author" || dispatch_rc=$?
+	_prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "$PRRTS_MODE_DISPATCH_PR" "$head_ref" "$head_oid" "$author" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		return "$dispatch_rc"
 	fi
