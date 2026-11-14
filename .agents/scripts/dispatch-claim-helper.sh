@@ -807,7 +807,10 @@ _guard_no_active_assignment_read_only() {
 
 	local guard_output=""
 	local guard_rc=0
-	guard_output=$(_dch_timed final_assignment_guard "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	# The cost gate already passed in assignment_guard seconds ago in this claim,
+	# and the only comments added since are this claim's own (which change
+	# updatedAt, so a key-based cache cannot serve this call). Skip it here only.
+	guard_output=$(_dch_timed final_assignment_guard env AIDEVOPS_DDH_SKIP_COST_BUDGET=1 "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
