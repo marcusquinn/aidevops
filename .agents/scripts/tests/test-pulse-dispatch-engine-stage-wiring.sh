@@ -1308,8 +1308,12 @@ assert_order \
 	'AIDEVOPS_PULSE_BUSY_ROUTINES:-1\}" == "1" \]\] \|\| return 0' \
 	"$WRAPPER"
 assert_grep \
-	"11f: degraded prefetch skips only the STATE_FILE-reading LLM supervisor" \
-	'_PULSE_PREFETCH_DEGRADED:-0\}" == "1"' \
+	"11f: degraded prefetch routes the LLM supervisor through the escape or queue-trigger path (GH#38162)" \
+	'_PULSE_PREFETCH_DEGRADED:-0\}" != "1"' \
+	"$WRAPPER"
+assert_grep \
+	"11f2: GH#38162 degraded prefetch runs the supervisor in queue-triggers-only mode" \
+	'_PULSE_SUPERVISOR_QUEUE_TRIGGERS_ONLY=1 _pulse_run_optional_stage "\$_stage" _pulse_maybe_run_llm_supervisor' \
 	"$WRAPPER"
 assert_prefetch_degraded_contract
 assert_order \
