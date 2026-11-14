@@ -1028,6 +1028,30 @@ _pmp_process_merge_repo_for_pass() {
 	return 0
 }
 
+# Initialise pass-level deadlines and per-repo slice state. Args: $1=pass start
+_pmp_init_merge_pass_deadlines() {
+	local pass_start="$1"
+
+	_PMP_MERGE_PASS_START_EPOCH="$pass_start"
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$pass_start")
+	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+	_PMP_REPO_SLICE_PAUSED=0
+	return 0
+}
+
+# Create the same-pass outcome directory. Stdout: path (empty when unavailable)
+_pmp_create_merge_outcome_dir() {
+	local logfile="$1"
+	local outcome_dir=""
+
+	outcome_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-merge-outcomes.XXXXXX" 2>/dev/null) || outcome_dir=""
+	if [[ -z "$outcome_dir" ]]; then
+		echo "[pulse-wrapper] Same-pass merge outcome cache unavailable; zero-progress aggregate will fail closed" >>"$logfile"
+	fi
+	printf '%s' "$outcome_dir"
+	return 0
+}
+
 merge_ready_prs_all_repos() {
 	# Initialise required env vars with ${VAR:-default} guards so this
 	# function can be called standalone from pulse-merge-routine.sh (t2862)
@@ -1041,10 +1065,7 @@ merge_ready_prs_all_repos() {
 	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
 	local _mr_pass_start
 	_mr_pass_start=$(_pmp_now_epoch)
-	_PMP_MERGE_PASS_START_EPOCH="$_mr_pass_start"
-	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$_mr_pass_start")
-	_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
-	_PMP_REPO_SLICE_PAUSED=0
+	_pmp_init_merge_pass_deadlines "$_mr_pass_start"
 
 	if [[ -f "$_mr_stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$_mr_logfile"
@@ -1061,19 +1082,11 @@ merge_ready_prs_all_repos() {
 	local total_eligible_unmerged=0
 	local AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=""
 	local _mr_repo_rows=""
-	local _mr_checkpoint=""
-	local _mr_resume_pending=0
-	local _mr_resumed_from_checkpoint=0
-	local _mr_completed_all=1
-	local _mr_outcomes_complete=1
-	local _mr_diagnostics_complete=1
+	local _mr_checkpoint="" _mr_resume_pending=0 _mr_resumed_from_checkpoint=0
+	local _mr_completed_all=1 _mr_outcomes_complete=1 _mr_diagnostics_complete=1
 	local _mr_primary_timing_rows="" _mr_diagnostic_timing_rows=""
-	local repo_slug=""
-	local repo_path=""
-	AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-merge-outcomes.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=""
-	if [[ -z "$AIDEVOPS_PULSE_MERGE_OUTCOME_DIR" ]]; then
-		echo "[pulse-wrapper] Same-pass merge outcome cache unavailable; zero-progress aggregate will fail closed" >>"$_mr_logfile"
-	fi
+	local repo_slug="" repo_path=""
+	AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=$(_pmp_create_merge_outcome_dir "$_mr_logfile")
 
 	_mr_repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null) || _mr_repo_rows=""
 	_pmp_prepare_merge_checkpoint_resume "$_mr_repo_rows" "$_mr_checkpoint_file" "$_mr_logfile" \
