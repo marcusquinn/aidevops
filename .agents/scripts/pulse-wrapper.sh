@@ -1418,7 +1418,7 @@ _pulse_cycle_entry_gates() {
 			: >"$assigned_cache_file"
 		); then
 		export AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE="$assigned_cache_file"
-		export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-${RANDOM}"
+		export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID:-$$}-${RANDOM}"
 	fi
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" ]]; then
 		_pulse_cycle_state_start

@@ -653,7 +653,7 @@ _test_cycle_assignment_cache() (
 	local calls="${TEST_ROOT}/assignment-calls" repo_slug="owner/repo" runner="runner"
 	local guard_status=0 guard_output="ASSIGNED: synthetic live owner"
 	export AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE="${TEST_ROOT}/assignment-cache"
-	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-123"
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID:-$$}-123"
 	: >"$calls"
 	: >"$AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE"
 	is_assigned() {
@@ -677,14 +677,14 @@ _test_cycle_assignment_cache() (
 	[[ "$(wc -l <"$calls")" -eq 4 ]] || return 1
 	: >"$AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE"
 	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
-	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-456"
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID:-$}-456"
 	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
 	[[ "$(wc -l <"$calls")" -eq 6 ]] || return 1
 	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="2147483647-456"
 	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
 	_ddh_is_assigned_for_cycle 1 "$repo_slug" "$runner" >/dev/null || return 1
 	[[ "$(wc -l <"$calls")" -eq 8 ]] || return 1
-	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID}-456"
+	export AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE="${BASHPID:-$}-456"
 	guard_status=1
 	guard_output="STALE_RECOVERED"
 	if _ddh_is_assigned_for_cycle 3 "$repo_slug" "$runner" >/dev/null; then return 1; fi

@@ -50,10 +50,11 @@ class ProcessBirthTests(unittest.TestCase):
         ps = shutil.which("ps")
         self.assertIsNotNone(ps, "legacy identity comparison requires native ps")
         output = subprocess.check_output(  # nosec B603 -- resolved native ps, fixed options and this process's numeric PID; no shell
-            [ps, "-p", str(pid), "-o", "lstart="], timeout=2,
+            [ps, "-p", str(pid), "-o", "lstart="], timeout=2, env={**os.environ, "LC_ALL": "C"},
         )
         legacy = hashlib.sha256(output.strip()).hexdigest()
-        with patch("gh_process_birth.subprocess.check_output", side_effect=AssertionError("fork")):
+        with patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch("gh_process_birth.subprocess.check_output", side_effect=AssertionError("fork")):
             self.assertEqual(process_birth(pid), legacy)
             self.assertEqual(process_birth(-1), "")
             self.assertEqual(process_birth(2147483647), "")
@@ -61,6 +62,7 @@ class ProcessBirthTests(unittest.TestCase):
     def test_linux_parses_binary_comm_after_final_parenthesis(self):
         stat = b"123 (odd ) \xff name) " + b" ".join([b"S"] + [b"0"] * 18 + [b"12345"])
         with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C.UTF-8"}), \
                 patch.object(Path, "read_bytes", return_value=stat), \
                 patch("gh_process_birth._linux_boot_time", return_value=1000), \
                 patch("gh_process_birth.os.sysconf", return_value=100):
@@ -68,11 +70,24 @@ class ProcessBirthTests(unittest.TestCase):
 
     def test_linux_malformed_or_unreadable_procfs_is_unknown(self):
         with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
                 patch.object(Path, "read_bytes", return_value=b"malformed"):
             self.assertEqual(process_birth(123), "")
         with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
                 patch.object(Path, "read_bytes", side_effect=PermissionError):
             self.assertEqual(process_birth(123), "")
+
+    def test_linux_non_english_time_locale_keeps_legacy_ps_identity(self):
+        # procps localizes lstart via LC_TIME; English-only ctime would diverge.
+        for environment in ({"LC_ALL": "fr_FR.UTF-8"}, {"LC_ALL": "", "LC_TIME": "de_DE.UTF-8"}):
+            with self.subTest(environment=environment), \
+                    patch("gh_process_birth.sys.platform", "linux"), \
+                    patch.dict(os.environ, environment), \
+                    patch.object(Path, "read_bytes", side_effect=AssertionError("procfs")), \
+                    patch("gh_process_birth.subprocess.check_output", return_value=b"sam. 14 nov.\n") as ps:
+                self.assertEqual(process_birth(123), hashlib.sha256(b"sam. 14 nov.").hexdigest())
+                self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
 
     def test_darwin_retains_ps_identity(self):
         with patch("gh_process_birth.sys.platform", "darwin"), \
