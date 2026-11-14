@@ -64,8 +64,8 @@ function oauthHeaders(auth) {
 
 const MAX_ROUTER_CANDIDATES = 3;
 
-export const NO_COMPATIBLE_IMAGE_ROUTER_MESSAGE =
-  "No compatible image-capable Codex model was found among the attempted candidates: the backend did not expose the image_generation tool on the probed route(s). Other models may support images. Use auth=\"openrouter\" or auth=\"api\" (explicit billing routes) instead.";
+export const NO_COMPATIBLE_IMAGE_MODEL_MESSAGE =
+  "No compatible image-capable Codex model was found among the attempted candidates; this bounded probe does not establish account-wide image entitlement. Use auth=\"openrouter\" or auth=\"api\" (explicit billing routes) instead.";
 
 function isImageToolStripped(error) {
   return /Tool choice 'image_generation' not found/i.test(String(error?.message || ""));
@@ -123,7 +123,7 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
     let result = await attemptOAuthRouter(auth, args, images, CODEX_FALLBACK_MODEL, ctx);
     const rejected = result.error?.code === "model_not_found";
     if (!rejected) {
-      if (isImageToolStripped(result.error)) result.error = compatibleRouterError(result.error);
+      if (isImageToolStripped(result.error)) result.error = compatibilityError(result.error);
       return result;
     }
     // The hardcoded router slug is not available to this account: try the
@@ -142,14 +142,14 @@ export async function requestOAuthImage(auth, args, images, fetchImpl) {
       if (next.error?.code === "model_not_found") continue;
       return next;
     }
-    if (stripped) result.error = compatibleRouterError(result.error);
+    if (stripped) result.error = compatibilityError(result.error);
     return result;
   });
 }
 
-function compatibleRouterError(cause) {
-  const error = new Error(NO_COMPATIBLE_IMAGE_ROUTER_MESSAGE);
-  error.code = "no_compatible_image_router";
+function compatibilityError(cause) {
+  const error = new Error(NO_COMPATIBLE_IMAGE_MODEL_MESSAGE);
+  error.code = "no_compatible_image_model";
   error.status = cause?.status || 400;
   return error;
 }

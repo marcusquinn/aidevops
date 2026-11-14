@@ -110,7 +110,7 @@ describe("GPT image OpenCode tool", () => {
     });
     await assert.rejects(
       tool.execute({ prompt: "draw a test", out: "generated/test.png" }),
-      { code: "no_compatible_image_router" },
+      { code: "no_compatible_image_model" },
     );
     assert.equal(successes, 0);
     await assert.rejects(access(join(root, "generated/test.png")), { code: "ENOENT" });
