@@ -189,6 +189,45 @@ fi
                 self.assertEqual(read_log.read_text().splitlines(), ["read"])
                 self.assertIsNone(self.queue.row("owner/repo", 42))
 
+    def test_human_gated_result_acknowledges_hint_on_both_paths(self):
+        # GH#38248: on the webhook path the child borrows process_pr's lease,
+        # so the human-gated acknowledgement must reach the owning finish.
+        source = (SCRIPTS / "pulse-merge.sh").read_text()
+        definitions = "\n".join(
+            re.search(r"(?ms)^" + name + r"\(\) \{.*?^\}", source)[0]
+            for name in ("_process_single_ready_pr", "process_pr")
+        )
+        common = r'''
+set -eu
+source "$1"
+eval "$2"
+LOGFILE="$3/merge.log"
+_pulse_merge_ready_pr_json_fields() { printf 'number,state,headRefOid'; return 0; }
+_pmp_normalize_pr_lifecycle_state_into() { local name="$1" value="$2"; printf -v "$name" '%s' "$value"; return 0; }
+gh_pr_view() { printf '{"number":42,"state":"OPEN","isDraft":true,"headRefOid":"fresh"}\n'; return 0; }
+_pmp_stage_parse_and_validate() { _PMP_HUMAN_GATED=1; return 1; }
+rc=0
+if [[ "$4" == event ]]; then
+    process_pr owner/repo 42 || rc=$?
+else
+    _process_single_ready_pr owner/repo '{"number":42,"state":"OPEN","isDraft":true,"headRefOid":"fresh"}' "" 1 || rc=$?
+fi
+printf '%s' "$rc"
+'''
+        for mode in ("poll", "event"):
+            with self.subTest(mode=mode):
+                self.queue.enqueue("owner/repo", 42, 1000)
+                environment = {**os.environ, "AIDEVOPS_PULSE_MERGE_DIRTY_QUEUE_ENABLED": "1",
+                               "AIDEVOPS_PULSE_MERGE_DIRTY_QUEUE_DIR": str(self.directory), "DRY_RUN": "0"}
+                result = subprocess.run(
+                    ["/bin/bash", "-c", common, "_", str(SCRIPTS / "pulse-merge-dirty-queue.sh"),
+                     definitions, str(self.directory), mode],
+                    env=environment, text=True, capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "1", "the evaluator status is preserved")
+                self.assertIsNone(self.queue.row("owner/repo", 42))
+
 
 if __name__ == "__main__":
     unittest.main()
