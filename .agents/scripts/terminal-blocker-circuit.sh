@@ -1068,6 +1068,16 @@ _terminal_blocker_recovery() {
 	printf 'Terminal blocker: reason=%s owner=%s task=%s attempt=%s.\nProjected state: %s.\nNext action: %s\nRaw evidence remains in protected worker telemetry.\n' \
 		"$reason" "$owner" "$issue" "$attempt" "$projected_state" "$action"
 	[[ -z "$question" ]] || printf 'Input requested: %s\n' "$question"
+	# GH#38360: a blocked projection names its needs-* companion and what
+	# unblocks it, so the label set explains the hold on its own.
+	if [[ "$projected_state" == "status:blocked" ]] && declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
+		local companion=""
+		companion=$(blocked_needs_label_for_reason "$reason")
+		[[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] &&
+			companion=$(blocked_needs_label_for_reason missing_secret)
+		# shellcheck disable=SC2016 # literal Markdown backticks
+		printf 'Unblock label: `%s`. %s\n' "$companion" "$(blocked_companion_guidance "$companion")"
+	fi
 	if [[ "$reason" == "unknown" && "${AIDEVOPS_TERMINAL_BLOCKER_TRIAGE:-}" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]]; then
 		printf 'CHECKPOINT_UNKNOWN_TRIAGE %s\n' "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE"
 	fi

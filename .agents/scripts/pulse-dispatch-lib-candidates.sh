@@ -70,7 +70,13 @@ _dispatch_secret_starvation_notice() {
 			--field body="$(printf '%s\n%s' "$marker" "Dispatch has waited for a runner with these required secret names: ${missing}. No secret values were accessed.")" >/dev/null || return 1
 	fi
 	if ! printf '%s' "$issue_json" | jq -e '.labels[]? | (if type == "object" then .name else . end) == "status:blocked"' >/dev/null; then
-		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
+		# GH#38360: a starved secret needs credentials provisioned on a runner.
+		local companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}"
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked \
+			--add-label "$companion" >/dev/null ||
+			gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
 	fi
 	return 0
 }

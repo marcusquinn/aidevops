@@ -59,6 +59,11 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 #      trackers. Remove only `persistent` when publication and lifecycle
 #      evidence coexist, while preserving explicit dashboard/routine identities.
 #
+#   4. GH#38360: `status:blocked` carries a `needs-*` companion. A bare hold
+#      gets `needs-ai-recovery`; blocked-owned companions (`needs-ai-recovery`,
+#      `needs-dependency`, `needs-maintainer-input`) on a non-blocked issue
+#      are removed. Both repairs re-read live labels before writing.
+#
 # Also counts (but does not auto-fix) triage-missing issues — those with
 # `origin:interactive` label AND no `tier:*` AND no `auto-dispatch` AND no
 # `status:*` AND created >30min ago. These need human tier assignment and
@@ -197,6 +202,44 @@ _enforce_persistent_task_invariant_one_issue() {
 	return 1
 }
 
+# GH#38360: status:blocked always carries a needs-* companion that names what
+# unblocks it, and blocked-owned companions leave with status:blocked. The
+# listing row is a hint; both repairs re-read live labels first so a racing
+# lifecycle write is never undone. Returns 0 when a repair was applied.
+#
+# A bare status:blocked routes to needs-ai-recovery: the recovery supervisor
+# solves or releases it, or names the one human input with a specific label.
+_enforce_blocked_companion_one_issue() {
+	local issue_num="$1" slug="$2" mode="$3"
+	local live="" label=""
+	local -a edit_flags=()
+	live=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq 'select(.state == "open") | [.labels[]?.name] | join(",")' 2>/dev/null) || return 1
+	[[ -n "$live" ]] || return 1
+	live=",${live},"
+	case "$mode" in
+	bare)
+		[[ "$live" == *",status:blocked,"* && "$live" != *",needs-"* ]] || return 1
+		label="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
+		if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+			ensure_blocked_companion_label "$slug" "$label" || true
+		fi
+		edit_flags=(--add-label "$label")
+		;;
+	orphan)
+		[[ "$live" != *",status:blocked,"* ]] || return 1
+		for label in needs-ai-recovery needs-dependency needs-maintainer-input; do
+			[[ "$live" == *",${label},"* ]] && edit_flags+=(--remove-label "$label")
+		done
+		;;
+	*) return 1 ;;
+	esac
+	[[ "${#edit_flags[@]}" -gt 0 ]] || return 1
+	gh issue edit "$issue_num" --repo "$slug" "${edit_flags[@]}" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: #${issue_num} in ${slug} blocked companion repair (${mode}): ${edit_flags[*]}" >>"$LOGFILE"
+	return 0
+}
+
 # Helper: fetch issues for a repo and emit '|'-delimited rows per issue.
 # See delimiter note in _normalize_label_invariants_for_repo.
 _fetch_label_invariant_rows() {
@@ -238,7 +281,9 @@ _fetch_label_invariant_rows() {
 			(([$labels[].name | select(startswith("status:"))] | length) | tostring),
 			(any($labels[].name; . == $persistent) | tostring),
 			(any($labels[].name; . == "publication:pending") | tostring),
-			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring)
+			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring),
+			(any($labels[].name; startswith("needs-")) | tostring),
+			([$labels[].name | select(. == ("needs-ai-recovery", "needs-dependency", "needs-maintainer-input"))] | join(" "))
 		] | join("|")
 	' 2>/dev/null
 	return 0
@@ -265,9 +310,9 @@ _normalize_label_invariants_for_repo() {
 	[[ -n "$rows" ]] || return 0
 
 	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
-	local has_persistent="" has_publication_pending="" has_tracker_identity=""
+	local has_persistent="" has_publication_pending="" has_tracker_identity="" has_needs="" owned_companions=""
 	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count \
-		has_persistent has_publication_pending has_tracker_identity; do
+		has_persistent has_publication_pending has_tracker_identity has_needs owned_companions; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -277,6 +322,21 @@ _normalize_label_invariants_for_repo() {
 		if [[ "$core_count" -gt 1 ]] &&
 			_enforce_status_invariant_one_issue "$issue_num" "$slug" "${_LI_FILTERED_STATUS[@]}"; then
 			_LI_STATUS_FIXED=$((_LI_STATUS_FIXED + 1))
+		fi
+
+		# GH#38360: single-status rows only; a multi-status row was just
+		# repaired by set_issue_status, which owns its companions.
+		local companion_mode=""
+		if [[ "$core_count" -eq 1 && "${_LI_FILTERED_STATUS[0]}" == "blocked" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
+			companion_mode="bare"
+		elif [[ "$core_count" -eq 1 && " ${status_list} " != *" blocked "* && -n "$owned_companions" ]]; then
+			# Only an issue with another live lifecycle status left blocked; a
+			# status-less issue may carry the label as a deliberate human hold.
+			companion_mode="orphan"
+		fi
+		if [[ -n "$companion_mode" ]] &&
+			_enforce_blocked_companion_one_issue "$issue_num" "$slug" "$companion_mode"; then
+			_LI_BLOCKED_COMPANION_FIXED=$((_LI_BLOCKED_COMPANION_FIXED + 1))
 		fi
 
 		local -a tier_arr=()
@@ -342,9 +402,10 @@ _write_label_invariants_counter_file() {
 	local counters_file="${counters_dir}/pulse-label-invariants.${hostname_short}.json"
 	mkdir -p "$counters_dir" 2>/dev/null || true
 	{
-		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "persistent_fixed": %d, "triage_missing": %d}\n' \
+		printf '{"timestamp": "%s", "checked": %d, "status_fixed": %d, "tier_fixed": %d, "persistent_fixed": %d, "triage_missing": %d, "blocked_companion_fixed": %d}\n' \
 			"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_PERSISTENT_FIXED" "$_LI_TRIAGE_MISSING"
+			"$_LI_CHECKED" "$_LI_STATUS_FIXED" "$_LI_TIER_FIXED" "$_LI_PERSISTENT_FIXED" "$_LI_TRIAGE_MISSING" \
+			"${_LI_BLOCKED_COMPANION_FIXED:-0}"
 	} >"$counters_file" 2>/dev/null || true
 	return 0
 }
@@ -373,6 +434,7 @@ _normalize_label_invariants() {
 	_LI_TIER_FIXED=0
 	_LI_PERSISTENT_FIXED=0
 	_LI_TRIAGE_MISSING=0
+	_LI_BLOCKED_COMPANION_FIXED=0
 
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -393,7 +455,7 @@ _normalize_label_invariants() {
 		_normalize_label_invariants_for_repo "$slug" "$triage_cutoff"
 	done <<<"$li_slugs"
 
-	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING}" >>"$LOGFILE"
+	echo "[pulse-wrapper] label_invariants: checked=${_LI_CHECKED} status_fixed=${_LI_STATUS_FIXED} tier_fixed=${_LI_TIER_FIXED} persistent_fixed=${_LI_PERSISTENT_FIXED} triage_missing=${_LI_TRIAGE_MISSING} blocked_companion_fixed=${_LI_BLOCKED_COMPANION_FIXED}" >>"$LOGFILE"
 
 	_write_label_invariants_counter_file
 	return 0

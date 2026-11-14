@@ -301,7 +301,8 @@ gh() {
 }
 export -f gh
 _refresh_ensure_unresolved_is_blocked "owner/repo" "20"
-assert_eq "available issue normalized blocked" "issue edit 20 --repo owner/repo --remove-label status:available --add-label status:blocked" "$status_write"
+# GH#38360: the dependency hold names its unblocker with needs-dependency.
+assert_eq "available issue normalized blocked" "issue edit 20 --repo owner/repo --remove-label status:available --add-label status:blocked --add-label needs-dependency" "$status_write"
 
 status_write=""
 current_status="status:available,status:queued"

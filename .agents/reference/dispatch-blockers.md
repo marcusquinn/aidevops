@@ -28,7 +28,31 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 | `contributor` | `pulse-issue-reconcile.sh` | Contributor health dashboard — pulse-managed, not a dispatch target. |
 | `quality-review` | `pulse-issue-reconcile.sh` | Daily quality review tracker — pulse-managed. |
 | `routine-tracking` | `pulse-issue-reconcile.sh` | Routine execution tracking — pulse skips these unconditionally. |
-| `status:blocked` | `dispatch-dedup-helper.sh`, dependency and circuit-breaker recovery | Machine-recoverable structural block or stopped partial draft. Its structured evidence must state the minimal reason and next action. Restore `status:available` only after the blocker is verified resolved. |
+| `status:blocked` | `dispatch-dedup-helper.sh`, dependency and circuit-breaker recovery | Machine-recoverable structural block or stopped partial draft. It is never bare: it always travels with a `needs-*` companion (below) naming what unblocks it. Its structured evidence must state the minimal reason and next action. Restore `status:available` only after the blocker is verified resolved. |
+
+### Blocked Companion Labels (GH#38360)
+
+A bare `status:blocked` says nothing about who acts, so it is a false block.
+`set_issue_status ... blocked` adds the caller's `needs-*` label, keeps a live
+one, or falls back to `needs-ai-recovery` with a warning. Callers name the reason
+with `blocked_needs_label_for_reason <class>` (`shared-gh-wrappers-status.sh`).
+The label-invariant pass (`pulse-issue-reconcile-normalize.sh`) routes any
+remaining bare hold to `needs-ai-recovery`, and removes blocked-owned companions
+from issues that are no longer blocked.
+
+| Companion | Owner | Typical classes | Cleared by |
+|-----------|-------|-----------------|------------|
+| `needs-ai-recovery` | Recovery supervisor (no human) | `unknown`, `runner_capability_unmet`, policy timeouts, `missing_files_scope`, `files_scope_excluded`, `target_code_blocker`, cost breaker, infrastructure failures, any unrecognised reason | Leaving `status:blocked` (blocked-owned) |
+| `needs-dependency` | Whoever solves the linked issue | `blocked-by` edges, circuit-breaker meta issues, `external_trigger_pending` | Dependency release (blocked-owned) |
+| `needs-maintainer-input` | Maintainer | `input_required`, `permission_required` without a scoped request, `ACTION REQUIRED` | Leaving `status:blocked` (blocked-owned) |
+| `needs-credentials` | Maintainer | Missing or starved runner secrets, `source_access_blocked`, token scopes | Terminal re-arm; otherwise its own maintainer lifecycle |
+| `needs-maintainer-permissions` | Maintainer | Scoped grant requests only (`worker-permission-helper.sh`) | Signed permission decision |
+
+Blocked-owned companions are removed by `set_issue_status` on every exit from
+`status:blocked`. AI-resolvable classes never route to a human label: the
+supervisor solves or releases the hold, or names the one human input with a
+specific label and comment. Unclassified intake (`terminal-blocker-recovery-helper.sh`)
+skips holds whose companion already names a human or dependency owner.
 
 Permission grants are limited to exact-pattern `bash` and `external_directory` requests, bound to the issue, request digest, worker session, branch, and worktree hash, and expire after four hours. Action-only permissions and credential-bearing or unbounded paths remain non-grantable.
 

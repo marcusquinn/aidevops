@@ -104,7 +104,8 @@ _der_todo_blocker_tokens_valid() {
 _der_labels_have_hold() {
 	local labels="$1"
 	local expected=""
-	for expected in needs-maintainer-review needs-maintainer-permissions hold-for-review no-auto-dispatch; do
+	# GH#38360: a human-owned blocked companion outlives a closed dependency.
+	for expected in needs-maintainer-review needs-maintainer-permissions needs-maintainer-input needs-credentials hold-for-review no-auto-dispatch; do
 		_der_labels_has "$labels" "$expected" && return 0
 	done
 	return 1
@@ -514,7 +515,10 @@ _der_try_unblock() {
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
-	gh issue edit "$issue_number" --repo "$repo" --remove-label status:blocked --add-label status:available >/dev/null 2>&1 || return 1
+	# GH#38360: the dependency companion leaves together with status:blocked.
+	local -a unblock_args=(--remove-label status:blocked --add-label status:available)
+	_der_labels_has "$labels" needs-dependency && unblock_args+=(--remove-label needs-dependency)
+	gh issue edit "$issue_number" --repo "$repo" "${unblock_args[@]}" >/dev/null 2>&1 || return 1
 	_DER_RESULT=unblocked
 	return 0
 }
