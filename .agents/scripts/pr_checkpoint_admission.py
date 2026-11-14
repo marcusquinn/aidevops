@@ -11,6 +11,7 @@ renewals; it does not reconcile or remove historical coordination records.
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 
 from pr_checkpoint_events import EVENTS, author_trusted, fields, normalized_attempt, timestamp, trusted
@@ -66,10 +67,10 @@ def has_line(comment, prefix):
     return any(line.startswith(prefix) for line in comment["body"].splitlines())
 
 
-def consumption_fields(line):
-    """Reject duplicate keys even when the shared parser drops empty values."""
-    keys = [token.split("=", 1)[0] for token in line.split() if "=" in token]
-    return fields(line) if len(keys) == len(set(keys)) else {}
+def duplicate_keys(line):
+    """True when any key repeats, including empty-valued ones fields() drops."""
+    keys = re.findall(r"(?:^|\s)([a-z_]+)=", line)
+    return len(keys) != len(set(keys))
 
 
 def approval_consumed(comments, approval, logins):
@@ -83,7 +84,9 @@ def approval_consumed(comments, approval, logins):
         if claim["id"] <= approval["id"] or not authorizes(claim, logins):
             continue
         for claim_line in (line for line in claim["body"].splitlines() if line.startswith("DISPATCH_CLAIM ")):
-            claim_fields = consumption_fields(claim_line)
+            if duplicate_keys(claim_line):
+                continue
+            claim_fields = fields(claim_line)
             if claim_fields.get("checkpoint_approval") != str(approval["id"]):
                 continue
             nonce = claim_fields.get("nonce", "")
@@ -91,7 +94,9 @@ def approval_consumed(comments, approval, logins):
                 if release["id"] <= claim["id"] or not authorizes(release, logins):
                     continue
                 for line in (ln for ln in release["body"].splitlines() if ln.startswith("CLAIM_RELEASED ")):
-                    event = consumption_fields(line)
+                    if duplicate_keys(line):
+                        continue
+                    event = fields(line)
                     rel_claim, rel_nonce = event.get("claim_id", ""), event.get("nonce", "")
                     if event.get("reason") and (rel_claim or (nonce and rel_nonce)) \
                             and (not rel_claim or rel_claim == str(claim["id"])) \
