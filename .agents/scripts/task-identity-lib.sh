@@ -226,6 +226,16 @@ task_identity_escape_ere() {
 # canonical ID. Callers use this to distinguish invalid input from no marker.
 task_identity_has_malformed_candidate() {
 	local text="${1:-}"
+	task_identity_first_malformed_candidate "$text" >/dev/null
+	return $?
+}
+
+# Print the first task-like candidate in text that is not a valid canonical ID
+# and return success; return 1 when there is none. Diagnostics name this token
+# so authors fix the placeholder (for example tNNN in a body), not a valid
+# subject (GH#38221).
+task_identity_first_malformed_candidate() {
+	local text="${1:-}"
 	# Spell out the uppercase set: locale collation can make A-Z match lowercase
 	# letters, falsely classifying ordinary words such as "throughput" as IDs.
 	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
@@ -240,7 +250,10 @@ task_identity_has_malformed_candidate() {
 	while [[ "$remaining" =~ $brief_path_ere ]]; do
 		matched="${BASH_REMATCH[0]}"
 		candidate="${BASH_REMATCH[2]}"
-		task_identity_validate "$candidate" || return 0
+		if ! task_identity_validate "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
 		remaining="${remaining/"$matched"/ }"
 	done
 
@@ -254,6 +267,7 @@ task_identity_has_malformed_candidate() {
 			candidate="${candidate%.}"
 		fi
 		if ! task_identity_validate "$candidate"; then
+			printf '%s\n' "$candidate"
 			return 0
 		fi
 		remaining="${remaining#*"$matched"}"
