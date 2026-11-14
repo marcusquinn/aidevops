@@ -395,7 +395,10 @@ _dispatch_enumerate_repo_bounded() {
 	local monitor_was_enabled=false pid="" process_group="" remaining=0 rc=0
 	[[ $- != *m* ]] || monitor_was_enabled=true
 	set -m
-	pulse_campaign_shadow_candidates_json "$@" &
+	(
+		set +m
+		pulse_campaign_shadow_candidates_json "$@"
+	) &
 	pid=$!
 	process_group="-${pid}"
 	$monitor_was_enabled && set -m || set +m
@@ -455,9 +458,7 @@ build_ranked_dispatch_candidates_json() {
 	else
 		cursor_file="${HOME}/.aidevops/cache/pulse-census-cursor"
 	fi
-	if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
-		IFS= read -r cursor <"$cursor_file" || cursor=""
-	fi
+	cursor=$(_dispatch_read_census_cursor "$cursor_file")
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
 		rm -f "$tmp_candidates"
@@ -516,9 +517,7 @@ build_ranked_dispatch_candidates_json() {
 
 		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
 			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-		# GH#33647: the first wave needs launchable work, not a global census;
-		# the loop-top check (GH#34331) leaves later repositories for the normal
-		# refill. Never claim complete product discovery from a partial snapshot.
+		# GH#33647/GH#34331: partial waves never imply complete product discovery.
 		[[ -z "$first_wave_bounds" ]] || product_complete=false
 	done < <(_dispatch_repository_rows "$cursor")
 
@@ -529,15 +528,7 @@ build_ranked_dispatch_candidates_json() {
 		return $?
 	fi
 
-	jq -cs --argjson product_complete "$product_complete" 'map(. + {product_discovery_complete:$product_complete}) | sort_by([
-		-(.priority_rank // 0),
-		-.score,
-		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
-		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
-		(.repo_slug // ""),
-		(.number // 0)
-	])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
-	rm -f "$tmp_candidates" "$completeness_file"
+	_dispatch_finish_ranked_census "$tmp_candidates" "$completeness_file" "$product_complete"
 	return 0
 }
 

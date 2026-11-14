@@ -10,6 +10,33 @@ _DISPATCH_UNCLASSIFIED_SIGNAL="unclassified_signal"
 # bundle writes the same candidate snapshot format.
 _DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA="aidevops.pulse-dispatch-candidates/v1"
 
+# Read either census cursor without following an untrusted symlink.
+_dispatch_read_census_cursor() {
+	local file="$1" cursor=""
+	if [[ -f "$file" && ! -L "$file" ]]; then
+		IFS= read -r cursor <"$file" || cursor=""
+	fi
+	printf '%s\n' "$cursor"
+	return 0
+}
+
+# Finish a collected census using the existing cross-repository rank order.
+_dispatch_finish_ranked_census() {
+	local candidates="$1" completeness="$2" product_complete="$3"
+	jq -cs --argjson product_complete "$product_complete" '
+		def rank_date: select(. != "") // "9999-12-31T23:59:59Z";
+		map(. + {product_discovery_complete:$product_complete}) | sort_by([
+		-(.priority_rank // 0),
+		-.score,
+		(.createdAt | rank_date),
+		(.updatedAt | rank_date),
+		(.repo_slug // ""),
+		(.number // 0)
+	])' "$candidates" 2>/dev/null || printf '[]\n'
+	rm -f "$candidates" "$completeness"
+	return 0
+}
+
 _dispatch_cycle_cache_path() {
 	local kind="$1"
 	local suffix="${2:-}"
