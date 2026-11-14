@@ -945,8 +945,14 @@ install_hook() {
 	# Configure Claude Code settings.json
 	configure_claude_settings || return 1
 
-	# Run self-test
-	test_hook || return 1
+	# Run self-test. Repository git hooks do not depend on the Claude PreToolUse
+	# guard, so a failed self-test still installs them and then reports failure
+	# instead of silently leaving repositories without them (GH#38323).
+	if ! test_hook; then
+		print_error "Hook self-test failed; installing repository git hooks anyway"
+		_install_repository_git_hooks
+		return 1
+	fi
 
 	echo ""
 	print_success "Safety hooks installed successfully"
@@ -959,16 +965,21 @@ install_hook() {
 	echo ""
 	print_warning "Restart Claude Code for the hook to take effect"
 
-	# Also install the gh-wrapper-guard pre-push hook (t2113)
+	_install_repository_git_hooks
+	return 0
+}
+
+_install_repository_git_hooks() {
+	# gh-wrapper-guard pre-push hook (t2113)
 	install_gh_wrapper_guard_hook
 
-	# Also install the pre-commit quality-validation hook (t2191)
+	# pre-commit quality-validation hook (t2191)
 	install_pre_commit_hook
 
-	# Also install the pre-push quality-validation hook (t2207)
+	# pre-push quality-validation hook (t2207)
 	install_pre_push_quality_hook
 
-	# Also install the markdoc-validate pre-commit hook (t2968, opt-in)
+	# markdoc-validate pre-commit hook (t2968, opt-in)
 	install_markdoc_validate_hook
 
 	return 0
@@ -1738,7 +1749,9 @@ _test_hook_run() {
 	local cmd="$3"
 	local result
 	local policy_guard="${SCRIPT_DIR}/canonical-git-command-guard.py"
-	local hook_input="{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
+	# Real runtimes always send a session id; lifecycle admission rejects an
+	# empty one for linked-worktree targets (invalid-session-identity, GH#38323).
+	local hook_input="{\"session_id\": \"aidevops-hook-self-test\", \"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
 	result=$(cd "$cwd" && AIDEVOPS_CANONICAL_GIT_GUARD="$policy_guard" python3 "$test_script" 2>/dev/null <<<"$hook_input")
 	printf '%s\n' "$result"
 	return 0
@@ -1876,6 +1889,11 @@ test_hook() {
 	export AIDEVOPS_REPOS_FILE
 	python3 -c 'import json, sys; print(json.dumps({"initialized_repos": [{"path": sys.argv[1]}]}))' \
 		"$test_root" >"$AIDEVOPS_REPOS_FILE" || return 1
+	# Admit the linked-worktree probes into a throwaway lifecycle store, never the
+	# operator's registry. Leave the directory for the store to create: admission
+	# fails closed on a pre-created empty state directory (GH#38323).
+	local AIDEVOPS_LIFECYCLE_STATE_DIR="${test_root}/hook-test-lifecycle-state"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR
 
 	local linked_worktree="${test_root}/linked-wt"
 	local real_git="${AIDEVOPS_REAL_GIT_BIN:-aidevops-native-git-not-found}"
