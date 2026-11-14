@@ -103,9 +103,12 @@ if [[ -z "${COMPLEXITY_GUARD_TIP:-}" ]]; then
 			continue
 			;;
 		esac
-		case " ${_tips[*]:-} " in
-		*" $_lsha "*) ;;
+		# Dedupe by SHA and ref: upstreams belong to branches, so equal SHAs
+		# on different branches may resolve different baselines.
+		case "|${_seen:-}|" in
+		*"|$_lsha $_lref|"*) ;;
 		*)
+			_seen="${_seen:-}|$_lsha $_lref"
 			_tips+=("$_lsha")
 			_trefs+=("${_lref:-}")
 			;;
@@ -161,8 +164,10 @@ _compute_baseline() {
 			"$GUARD_NAME" >&2
 		# Use the pushed branch's upstream, not the checked-out branch's.
 		local pushed_branch="${COMPLEXITY_GUARD_REF:-}"
-		pushed_branch="${pushed_branch#refs/heads/}"
-		[[ -z "$pushed_branch" || "$pushed_branch" == refs/* ]] && pushed_branch="HEAD"
+		case "$pushed_branch" in
+		refs/heads/?*) pushed_branch="${pushed_branch#refs/heads/}" ;;
+		*) pushed_branch="HEAD" ;;
+		esac
 		git merge-base "${TIP_SHA:-HEAD}" "${pushed_branch}@{u}" 2>/dev/null
 		return
 	fi
