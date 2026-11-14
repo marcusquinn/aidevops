@@ -193,6 +193,30 @@ describe("GPT image OpenCode tool", () => {
     await assert.rejects(access(join(root, "api.png")), /ENOENT/);
   });
 
+  test("writes a PNG through the explicit OpenRouter route and rejects references", async () => {
+    const root = await projectRoot();
+    let captured;
+    const tool = createTool({
+      projectRoot: root,
+      readSecret: (name) => {
+        assert.equal(name, "OPENROUTER_API_KEY");
+        return "unit-test-credential-value";
+      },
+      fetchImpl: async (url, init) => {
+        captured = { url, auth: init.headers.Authorization };
+        return Response.json({ data: [{ b64_json: PNG_BASE64 }] });
+      },
+    });
+    const output = await tool.execute({ prompt: "draw", out: "or.png", auth: "openrouter" });
+    assert.match(output, /Billing route: OpenRouter API/);
+    assert.equal(captured.url, "https://openrouter.ai/api/v1/images");
+    assert.deepEqual(await readFile(join(root, "or.png")), Buffer.from(PNG_BASE64, "base64"));
+    await assert.rejects(
+      tool.execute({ prompt: "draw", out: "or2.png", auth: "openrouter", images: ["or.png"] }),
+      /does not support reference images/,
+    );
+  });
+
   test("still rejects invalid native OAuth raster data with best-effort sizing", async () => {
     const root = await projectRoot();
     const tool = createTool({

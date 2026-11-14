@@ -4,7 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseImageSse, requestApiImage, requestOAuthImage } from "../gpt-image-request.mjs";
+import { parseImageSse, requestApiImage, requestOAuthImage, requestOpenRouterImage } from "../gpt-image-request.mjs";
 
 const IMAGE_RESULT = "aW1hZ2UtcmVzdWx0";
 
@@ -216,6 +216,57 @@ describe("GPT image provider requests", () => {
     assert.deepEqual(models, ["gpt-6-sol"]);
     assert.equal(result.error.code, "model_not_found");
     assert.equal(result.base64, "");
+  });
+
+  test("reports a clear entitlement error when live models strip image_generation", async () => {
+    const models = [];
+    const result = await requestOAuthImage(
+      { accessToken: "oauth-test-token" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: [{ slug: "gpt-reserve" }, { slug: "gpt-6-luna" }] });
+        models.push(JSON.parse(init.body).model);
+        if (models.length === 1) return Response.json({ error: { code: "model_not_found", message: "no" } }, { status: 400 });
+        return Response.json({ error: { message: "Tool choice 'image_generation' not found in 'tools' parameter" } }, { status: 400 });
+      },
+    );
+    assert.deepEqual(models, ["gpt-6-sol", "gpt-reserve", "gpt-6-luna"]);
+    assert.equal(result.error.code, "no_image_entitlement");
+    assert.match(result.error.message, /no image-capable Codex model/);
+  });
+
+  test("retries a rejected router with an image-capable live model", async () => {
+    const event = `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "image_generation_call", result: IMAGE_RESULT } })}\n\n`;
+    const result = await requestOAuthImage(
+      { accessToken: "oauth-test-token" },
+      { prompt: "draw a test", quality: "auto", size: "auto", format: "png" },
+      [],
+      async (_url, init) => {
+        if (init.method === "GET") return Response.json({ models: [{ slug: "gpt-reserve" }] });
+        if (JSON.parse(init.body).model === "gpt-6-sol") {
+          return Response.json({ error: { code: "model_not_found", message: "no" } }, { status: 400 });
+        }
+        return new Response(event, { status: 200 });
+      },
+    );
+    assert.equal(result.routerModel, "gpt-reserve");
+    assert.equal(result.base64, IMAGE_RESULT);
+  });
+
+  test("sends OpenRouter image requests and reads data[0].b64_json", async () => {
+    let captured;
+    const result = await requestOpenRouterImage(
+      { accessToken: "or-test-token" },
+      { prompt: "draw a test", quality: "high", size: "1536x1024", format: "png" },
+      async (url, init) => {
+        captured = { url, body: JSON.parse(init.body) };
+        return Response.json({ data: [{ b64_json: "QUJD" }] });
+      },
+    );
+    assert.equal(captured.url, "https://openrouter.ai/api/v1/images");
+    assert.equal(captured.body.model, "openai/gpt-image-2.6-sunburst");
+    assert.equal(result.base64, "QUJD");
   });
 
   test("does not retry non-model OAuth errors", async () => {
