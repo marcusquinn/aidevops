@@ -788,6 +788,18 @@ _der_stale_candidates() {
 	return 0
 }
 
+# Write the budget-priority hint: ready candidates not suppressed by the memo.
+_der_stale_write_ready_hint() {
+	local hint_file="$1" candidates="$2" memo="$3" ttl="$4" fallback="$5" actionable=""
+	actionable=$(printf '%s\n' "$candidates" | jq -s --argjson memo "$memo" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
+		[.[] | select(.sweep_ready)
+			| select((($memo[.number | tostring] // null) as $m
+				| ($m != null and $m.updated_at == .updated_at and $m.epoch <= $now and $now - $m.epoch < $ttl)) | not)]
+		| length') || actionable="$fallback"
+	mkdir -p "${hint_file%/*}" 2>/dev/null && printf '%s\n' "$actionable" >"$hint_file" || true
+	return 0
+}
+
 _der_stale_skip_memo() {
 	[[ "$memo_enabled" == true ]] && _der_stale_memo_matches "$memo" "$candidate" "$ttl" || return 1
 	skipped=$((skipped + 1))
@@ -818,7 +830,7 @@ reconcile_stale_blocked_issues() {
 	local ready_cursor=0 ready_file="" ready=0 ready_visited=0 skipped=0 is_ready=false
 	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
-	local retry_status=0 actionable=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
+	local retry_status=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
 	[[ "$ready_max" =~ ^[1-9][0-9]*$ ]] || ready_max=10
@@ -837,12 +849,7 @@ reconcile_stale_blocked_issues() {
 	pending=$(printf '%s\n' "$candidates" | jq -s length) || return 1
 	ready=$(printf '%s\n' "$candidates" | jq -s '[.[] | select(.sweep_ready)] | length') || return 1
 	# Hint counts only actionable ready work: exclude unchanged memo-skipped issues.
-	actionable=$(printf '%s\n' "$candidates" | jq -s --argjson memo "$memo" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
-		[.[] | select(.sweep_ready)
-			| select((($memo[.number | tostring] // null) as $m
-				| ($m != null and $m.updated_at == .updated_at and $m.epoch <= $now and $now - $m.epoch < $ttl)) | not)]
-		| length') || actionable="$ready"
-	mkdir -p "${ready_hint%/*}" 2>/dev/null && printf '%s\n' "$actionable" >"$ready_hint" || true
+	_der_stale_write_ready_hint "$ready_hint" "$candidates" "$memo" "$ttl" "$ready"
 	[[ "$retry_status" -eq 0 ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
