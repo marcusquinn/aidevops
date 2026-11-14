@@ -954,6 +954,12 @@ dispatch_routine_comment_responses() {
 	local dispatched=0
 	local attempted=0
 
+	# Resolve the runner login once per cycle; children validate it and fall back to a live read.
+	local self_login="${_DISPATCH_SELF_LOGIN:-}"
+	if [[ -z "$self_login" ]]; then
+		self_login=$(_foss_current_gh_login)
+	fi
+
 	# Iterate pulse-enabled repos
 	local slug repo_path
 	while IFS='|' read -r slug repo_path; do
@@ -962,7 +968,7 @@ dispatch_routine_comment_responses() {
 
 		# Scan for unanswered comments
 		local scan_output
-		scan_output=$(bash "$responder" scan "$slug" "$repo_path" 2>/dev/null) || continue
+		scan_output=$(ROUTINE_COMMENT_SELF_LOGIN="$self_login" bash "$responder" scan "$slug" "$repo_path" 2>/dev/null) || continue
 		[[ -n "$scan_output" ]] || continue
 
 		while IFS='|' read -r issue_number comment_id author body_preview; do
@@ -970,7 +976,7 @@ dispatch_routine_comment_responses() {
 			[[ "$attempted" -lt "$max_dispatches" ]] || break
 
 			attempted=$((attempted + 1))
-			if bash "$responder" dispatch "$slug" "$repo_path" "$issue_number" "$comment_id" 2>>"$LOGFILE"; then
+			if ROUTINE_COMMENT_SELF_LOGIN="$self_login" bash "$responder" dispatch "$slug" "$repo_path" "$issue_number" "$comment_id" 2>>"$LOGFILE"; then
 				dispatched=$((dispatched + 1))
 			fi
 		done <<<"$scan_output"
