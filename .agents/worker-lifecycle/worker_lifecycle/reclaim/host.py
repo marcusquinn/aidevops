@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Host observation and removal mechanics for the finished-worktree reclaim pass.
 
-Every reader here reports unavailability rather than an optimistic default: an
-unreadable process census is not an absence of writers.
+Every reader here reports unavailability rather than an optimistic default.
+Ownership is observed through the lifecycle registry (``reclaim.owners``); this
+module scans no host processes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -24,30 +24,13 @@ GIT_REDIRECTS = (
 )
 
 
-@dataclass(frozen=True)
-class Census:
-    """One process observation: working directories, arguments, and its own gaps.
-
-    ``unplaceable`` counts live same-user processes whose working directory could
-    not be read. Those processes are still matched by argument, but they remain a
-    reported gap rather than an assumed absence.
-    """
-
-    directories: frozenset[Path]
-    arguments: tuple[str, ...]
-    unplaceable: int = 0
-
-    def holds(self, path: Path) -> bool:
-        """Report whether any observed process works in, or names, this worktree."""
-        if any(directory == path or path in directory.parents
-               for directory in self.directories):
-            return True
-        return any(str(path) in argument for argument in self.arguments)
-
-
 def _environment() -> dict[str, str]:
-    return {name: value for name, value in os.environ.items()
-            if name not in GIT_REDIRECTS}
+    # No optional locks: a status refresh would rewrite the index, resetting the
+    # idle clock that review worktrees are judged by and racing a live writer.
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in GIT_REDIRECTS}
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    return environment
 
 
 def run(command: list[str], timeout: int = 60) -> tuple[int, str]:
@@ -66,42 +49,33 @@ def git(path: Path, *arguments: str, timeout: int = 60) -> tuple[int, str]:
     return run(["git", "-C", str(path), *arguments], timeout=timeout)
 
 
-def _arguments(entry: Path) -> list[str]:
-    try:
-        return (entry / "cmdline").read_bytes().decode("utf-8", "replace").split("\0")
-    except OSError:
-        return []
+# Marker written by full-loop-helper-merge-cleanup.sh to defer cleanup to a
+# supervisor; framework state, not work. Porcelain status of it when untracked.
+DEFERRED_MARKER = ".agents/.full-loop-cleanup-deferred"
+DEFERRED_MARKER_STATUS = f"?? {DEFERRED_MARKER}"
 
 
-def _live_same_user(entry: Path, uid: int) -> bool:
-    try:
-        return entry.stat().st_uid == uid
-    except OSError:
-        return False
+def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
+    """Confirm no uncommitted, untracked, or unpushed work exists in the worktree.
 
-
-def process_census() -> Census | None:
-    """Observe every readable process, or None when the census cannot be trusted."""
-    procfs = Path("/proc")
-    if not procfs.is_dir():
-        return None
-    uid = os.getuid()
-    directories: set[Path] = set()
-    arguments: list[str] = []
-    unplaceable = 0
-    for entry in procfs.iterdir():
-        if not entry.name.isdigit():
-            continue
-        arguments.extend(argument for argument in _arguments(entry) if argument)
-        try:
-            directories.add(Path(os.readlink(entry / "cwd")))
-        except OSError:
-            # Exited processes are harmless; a live same-user process we cannot
-            # place stays a reported gap, matched only by its arguments.
-            unplaceable += 1 if _live_same_user(entry, uid) else 0
-    if Path.cwd() not in directories:
-        return None
-    return Census(frozenset(directories), tuple(arguments), unplaceable)
+    Untracked and submodule reporting are requested explicitly: repository or
+    global configuration can otherwise suppress exactly the files that removal
+    would discard. Ignored build artifacts stay excluded and expected.
+    """
+    status, dirty = git(path, "status", "--porcelain", "-z", "--untracked-files=all",
+                        "--ignore-submodules=none", timeout=timeout)
+    if status != 0:
+        return False, "status-unreadable"
+    # Only the untracked deferral marker is framework state; a tracked change to
+    # that path reports a different status code and still refuses.
+    if any(entry and entry != DEFERRED_MARKER_STATUS for entry in dirty.split("\0")):
+        return False, "uncommitted-changes"
+    status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes",
+                           timeout=timeout)
+    if status != 0 or not unpushed.isdigit():
+        return False, "unpushed-state-unreadable"
+    return (unpushed == "0"), ("nothing-to-lose" if unpushed == "0"
+                               else f"unpushed-commits-{unpushed}")
 
 
 def _registered_worktree(metadata: Path, marker: Path) -> bool:
@@ -153,32 +127,34 @@ def locked(path: Path) -> bool:
     return metadata is not None and (metadata / "locked").exists()
 
 
-def _removal_blocked(path: Path, verify: Callable[[Path], tuple[bool, str]]) -> str | None:
-    """Re-check liveness and state at the last moment, naming the first blocker."""
-    census = process_census()
-    if census is None:
-        return "process-inventory-unavailable"
-    # Identity first: repository state means nothing until the path is known to be
-    # a removable linked worktree.
-    identity = ((census.holds(path), "writers-appeared"),
-                (metadata_directory(path) is None, "not-a-linked-worktree"),
+def _removal_blocked(path: Path, verify: Callable[[Path], tuple[bool, str]],
+                     owner: Callable[[Path], str | None]) -> str | None:
+    """Re-check ownership and state at the last moment, naming the first blocker."""
+    # Identity first: ownership and repository state mean nothing until the path
+    # is known to be a removable linked worktree.
+    identity = ((metadata_directory(path) is None, "not-a-linked-worktree"),
                 (locked(path), "worktree-locked"))
     blocked = next((reason for failed, reason in identity if failed), None)
     if blocked is not None:
         return blocked
+    reason = owner(path)
+    if reason is not None:
+        return "owners-appeared" if reason == "owner-alive" else reason
     clean, detail = verify(path)
     return None if clean else f"changed-{detail}"
 
 
-def remove(path: Path, verify: Callable[[Path], tuple[bool, str]]) -> tuple[bool, str]:
-    """Remove one worktree, re-verifying liveness and state immediately first.
+def remove(path: Path, verify: Callable[[Path], tuple[bool, str]],
+           owner: Callable[[Path], str | None]) -> tuple[bool, str]:
+    """Remove one worktree, re-verifying ownership and state immediately first.
 
-    ``verify`` re-runs the caller's state checks, so an edit landing between
-    judgement and deletion still refuses. Forced removal is retained because
-    ignored build artifacts are expected and Git refuses them otherwise; it is
-    reached only after a fresh clean verdict.
+    ``verify`` re-runs the caller's state checks and ``owner`` re-reads the
+    registry, so a run admitted or an edit landing between judgement and
+    deletion still refuses. Forced removal is retained because ignored build
+    artifacts are expected and Git refuses them otherwise; it is reached only
+    after a fresh clean verdict.
     """
-    blocked = _removal_blocked(path, verify)
+    blocked = _removal_blocked(path, verify, owner)
     if blocked is not None:
         return False, blocked
     status, _ = git(path, "worktree", "remove", "--force", str(path))

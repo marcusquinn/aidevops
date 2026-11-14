@@ -16,7 +16,11 @@ import json
 from pathlib import Path
 import re
 
-from .host import Census, git, locked, metadata_directory, run
+from .host import git, locked, metadata_directory, nothing_to_lose, run
+from .owners import OwnerCheck
+from .review import own_pull_request, still_idle
+
+__all__ = ["evidence", "prefetch", "references", "repository"]
 
 # Non-consuming boundaries: adjacent references such as repo-gh42-pr9001 must both
 # be found, because one closed reference must never authorize removal while the
@@ -77,11 +81,6 @@ def reference_finished(kind: str, number: int, query: Query) -> tuple[bool, str]
 
 
 BATCH_SIZE = 20
-
-# Marker written by full-loop-helper-merge-cleanup.sh to defer cleanup to a
-# supervisor; framework state, not work. Porcelain status of it when untracked.
-DEFERRED_MARKER = ".agents/.full-loop-cleanup-deferred"
-DEFERRED_MARKER_STATUS = f"?? {DEFERRED_MARKER}"
 
 
 def _batch_query(items: list[tuple[str, int]]) -> str:
@@ -146,33 +145,10 @@ def prefetch(wanted: dict[str, list[tuple[str, int]]], cache: dict,
             _fill_batch(slug, pending[start:start + BATCH_SIZE], cache, budget)
 
 
-def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
-    """Confirm no uncommitted, untracked, or unpushed work exists in the worktree.
-
-    Untracked and submodule reporting are requested explicitly: repository or
-    global configuration can otherwise suppress exactly the files that removal
-    would discard. Ignored build artifacts stay excluded and expected.
-    """
-    status, dirty = git(path, "status", "--porcelain", "-z", "--untracked-files=all",
-                        "--ignore-submodules=none", timeout=timeout)
-    if status != 0:
-        return False, "status-unreadable"
-    # Only the untracked deferral marker is framework state; a tracked change to
-    # that path reports a different status code and still refuses.
-    if any(entry and entry != DEFERRED_MARKER_STATUS for entry in dirty.split("\0")):
-        return False, "uncommitted-changes"
-    status, unpushed = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes",
-                           timeout=timeout)
-    if status != 0 or not unpushed.isdigit():
-        return False, "unpushed-state-unreadable"
-    return (unpushed == "0"), ("nothing-to-lose" if unpushed == "0"
-                               else f"unpushed-commits-{unpushed}")
-
-
-def _preconditions(path: Path, census: Census | None) -> str | None:
+def _preconditions(path: Path, owner: OwnerCheck | None) -> str | None:
     """Name the first missing precondition for judging this path at all."""
     failures = (
-        (census is None, "process-inventory-unavailable"),
+        (owner is None, "owner-observation-unavailable"),
         (path.is_symlink(), "symlinked-path"),
         (metadata_directory(path) is None, "not-a-linked-worktree"),
         (locked(path), "worktree-locked"),
@@ -191,35 +167,51 @@ def _identity(path: Path, found: list[tuple[str, int]], verdict: dict,
     return None if found else "reference-unknown"
 
 
-def _unfinished(found: list[tuple[str, int]], query: Query) -> str | None:
-    """Name the first reference whose work has not finished."""
-    for kind, number in found:
+def _unfinished(path: Path, found: list[tuple[str, int]],
+                query: Query) -> tuple[str | None, str]:
+    """Name the first unfinished reference, or how the work counts as finished.
+
+    A review worktree is judged by its own pull request alone, and an idle one
+    whose PR is confirmed open is the one exception (``reclaim.review``); every
+    later check still applies to it.
+    """
+    own = own_pull_request(path.name, query.slug)
+    for kind, number in found if own is None else [("pr", own)]:
         finished, detail = reference_finished(kind, number, query)
-        if not finished:
-            return detail
-    return None
+        if finished:
+            continue
+        if own is not None and detail == f"pr-{own}-open" and still_idle(path):
+            return None, "review-idle"
+        return detail, ""
+    return None, "work-finished"
 
 
-def _unsafe_to_remove(path: Path, census: Census, timeout: int) -> str | None:
-    """Name what removal would disturb or discard, or nothing when it is safe."""
-    if census.holds(path):
-        return "writers-present"
+def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
+    """Name what removal would disturb or discard, or nothing when it is safe.
+
+    Runs only for finished candidates, so the registry is read after GitHub.
+    """
+    reason = owner(path)
+    if reason is not None:
+        return reason
     clean, detail = nothing_to_lose(path, timeout=timeout)
     return None if clean else detail
 
 
-def evidence(path: Path, census: Census | None, cache: dict,
+def evidence(path: Path, owner: OwnerCheck | None, cache: dict,
              *, timeout: int = 60) -> dict:
     """Decide one worktree, reporting the first missing proof as the reason."""
     verdict: dict = {"path": str(path), "authorized": False, "reason": "unevaluated"}
     found = references(path.name)
-    reason = _preconditions(path, census)
+    finished = "work-finished"
+    reason = _preconditions(path, owner)
     if reason is None:
         reason = _identity(path, found, verdict, timeout)
     if reason is None:
-        reason = _unfinished(found, Query(verdict["repository"], cache, timeout))
-    if reason is None and census is not None:
-        reason = _unsafe_to_remove(path, census, timeout)
+        reason, finished = _unfinished(path, found,
+                                       Query(verdict["repository"], cache, timeout))
+    if reason is None and owner is not None:
+        reason = _unsafe_to_remove(path, owner, timeout)
     verdict["authorized"] = reason is None
-    verdict["reason"] = reason or "work-finished"
+    verdict["reason"] = reason or finished
     return verdict

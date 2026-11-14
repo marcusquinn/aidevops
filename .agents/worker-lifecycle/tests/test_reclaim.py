@@ -3,12 +3,14 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Fixture-only reclaim evidence tests: every incomplete signal must refuse removal."""
 
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 -- fixed offline Git fixtures only.
 import sys
 import tempfile
+import time
 import unittest
 
 LIFECYCLE = Path(__file__).resolve().parents[1]
@@ -19,6 +21,7 @@ if not GIT:
 
 from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
 from worker_lifecycle.reclaim import host  # noqa: E402
+from worker_lifecycle.reclaim import review  # noqa: E402
 from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
 
 SLUG = "fixture/repo"
@@ -30,8 +33,12 @@ def git(path, *arguments):
                    capture_output=True, text=True)
 
 
-def census_of(*directories):
-    return host.Census(frozenset(Path(directory) for directory in directories), ())
+def no_owner(path):
+    return None
+
+
+def owner_reporting(reason):
+    return lambda path: reason
 
 
 class ReferenceTests(unittest.TestCase):
@@ -82,7 +89,6 @@ class EvidenceTests(unittest.TestCase):
         # like GitHub, while the fixture itself must stay a local path to clone from.
         git(self.canonical, "config", "remote.origin.url", ORIGIN)
         self.worktree = self.add_worktree("repo-gh4242")
-        self.census = census_of(Path.cwd())
         self.finished = {("gh", 4242, SLUG): (True, "issue-4242-closed")}
 
     def add_worktree(self, name):
@@ -90,9 +96,8 @@ class EvidenceTests(unittest.TestCase):
         git(self.canonical, "worktree", "add", "-q", "--detach", str(path), "HEAD")
         return path
 
-    def decide(self, path=None, census="default", cache=None):
-        return collector.evidence(path or self.worktree,
-                                  self.census if census == "default" else census,
+    def decide(self, path=None, owner=no_owner, cache=None):
+        return collector.evidence(path or self.worktree, owner,
                                   self.finished if cache is None else cache)
 
     def test_authorizes_finished_clean_and_pushed_worktree(self):
@@ -100,10 +105,10 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(verdict["authorized"], verdict)
         self.assertEqual(verdict["reason"], "work-finished")
 
-    def test_refuses_without_a_process_inventory(self):
-        verdict = self.decide(census=None)
+    def test_refuses_without_owner_observation(self):
+        verdict = self.decide(owner=None)
         self.assertFalse(verdict["authorized"])
-        self.assertEqual(verdict["reason"], "process-inventory-unavailable")
+        self.assertEqual(verdict["reason"], "owner-observation-unavailable")
 
     def test_refuses_a_path_that_is_not_a_worktree(self):
         plain = self.root / "plain-gh4242"
@@ -143,13 +148,69 @@ class EvidenceTests(unittest.TestCase):
         cache[("pr", 9001, SLUG)] = (False, "pr-9001-closed")
         self.assertEqual(self.decide(path=both, cache=cache)["reason"], "pr-9001-closed")
 
-    def test_refuses_when_a_live_process_works_inside_the_worktree(self):
-        self.assertEqual(self.decide(census=census_of(self.worktree / "nested"))["reason"],
-                         "writers-present")
+    def test_refuses_while_a_registered_owner_is_alive(self):
+        self.assertEqual(self.decide(owner=owner_reporting("owner-alive"))["reason"],
+                         "owner-alive")
 
-    def test_refuses_when_a_live_process_names_the_worktree(self):
-        census = host.Census(frozenset({Path.cwd()}), (f"--repo-path={self.worktree}",))
-        self.assertEqual(self.decide(census=census)["reason"], "writers-present")
+    def test_refuses_when_ownership_is_unreadable(self):
+        for reason in ("owner-unobservable", "owner-not-enrolled",
+                       "owner-registry-unreadable"):
+            self.assertEqual(self.decide(owner=owner_reporting(reason))["reason"], reason)
+
+    def test_reads_owners_only_for_finished_work(self):
+        asked = []
+        cache = {("gh", 4242, SLUG): (False, "issue-4242-open")}
+        self.decide(owner=asked.append, cache=cache)
+        self.assertEqual(asked, [])
+
+    def worktree_idle(self, name, idle=review.IDLE_SECONDS + 60):
+        """Add a worktree whose Git HEAD and index were last touched ``idle`` ago."""
+        tree = self.add_worktree(name)
+        metadata = host.metadata_directory(tree)
+        self.assertIsNotNone(metadata)
+        moment = time.time() - idle
+        for entry in ("HEAD", "index"):
+            if (metadata / entry).exists():
+                os.utime(metadata / entry, (moment, moment))
+        return tree
+
+    OPEN_REVIEW = {("pr", 9001, SLUG): (False, "pr-9001-open")}
+
+    def test_authorizes_an_idle_review_tree_of_an_open_pull_request(self):
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW)
+        self.assertTrue(verdict["authorized"], verdict)
+        self.assertEqual(verdict["reason"], "review-idle")
+
+    def test_refuses_a_recently_active_review_tree(self):
+        tree = self.worktree_idle("repo-pr9001-review-fixture", idle=60)
+        self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
+                         "pr-9001-open")
+
+    def test_refuses_an_idle_review_tree_with_a_live_owner(self):
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW,
+                              owner=owner_reporting("owner-alive"))
+        self.assertEqual(verdict["reason"], "owner-alive")
+
+    def test_refuses_an_idle_review_tree_with_unknown_pull_request_state(self):
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        verdict = self.decide(path=tree, cache={("pr", 9001, SLUG): (False, "pr-9001-none")})
+        self.assertEqual(verdict["reason"], "pr-9001-none")
+
+    def test_open_pull_request_still_refuses_outside_review_trees(self):
+        tree = self.worktree_idle("repo-pr9001-ci-repair-fixture")
+        self.assertEqual(self.decide(path=tree, cache=self.OPEN_REVIEW)["reason"],
+                         "pr-9001-open")
+
+    def test_review_exception_follows_the_trees_own_pull_request_only(self):
+        # An open issue earlier in the name must not stand in for PR 9001's state.
+        tree = self.worktree_idle("repo-gh4242-pr9001-review-fixture")
+        cache = {("gh", 4242, SLUG): (False, "issue-4242-open"),
+                 ("pr", 9001, SLUG): (False, "pr-9001-none")}
+        self.assertEqual(self.decide(path=tree, cache=cache)["reason"], "issue-4242-open")
+        own = self.worktree_idle("repo-pr9001-review-gh4242-fixture")
+        self.assertEqual(self.decide(path=own, cache=cache)["reason"], "pr-9001-none")
 
     def test_refuses_uncommitted_changes(self):
         (self.worktree / "README.md").write_text("edited\n", encoding="utf-8")
@@ -208,7 +269,7 @@ class EvidenceTests(unittest.TestCase):
                         str(self.root / "separate.git"), str(separate)],
                        check=True, capture_output=True)
         self.assertEqual(self.decide(path=separate)["reason"], "not-a-linked-worktree")
-        removed, detail = host.remove(separate, collector.nothing_to_lose)
+        removed, detail = host.remove(separate, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "not-a-linked-worktree")
         self.assertTrue(separate.exists())
@@ -232,29 +293,41 @@ class EvidenceTests(unittest.TestCase):
 
     def test_removal_refuses_a_locked_worktree(self):
         git(self.canonical, "worktree", "lock", str(self.worktree))
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "worktree-locked")
         self.assertTrue(self.worktree.exists())
 
     def test_removes_an_authorized_worktree(self):
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertTrue(removed, detail)
         self.assertFalse(self.worktree.exists())
 
+    def test_refuses_removal_when_an_owner_appeared_after_judgement(self):
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose,
+                                      owner_reporting("owner-alive"))
+        self.assertFalse(removed)
+        self.assertEqual(detail, "owners-appeared")
+        self.assertTrue(self.worktree.exists())
+
     def test_refuses_removal_when_state_changed_after_judgement(self):
         (self.worktree / "notes.md").write_text("late\n", encoding="utf-8")
-        removed, detail = host.remove(self.worktree, collector.nothing_to_lose)
+        removed, detail = host.remove(self.worktree, host.nothing_to_lose, no_owner)
         self.assertFalse(removed)
         self.assertEqual(detail, "changed-uncommitted-changes")
         self.assertTrue(self.worktree.exists())
 
-    def test_reports_without_removing_when_apply_is_absent(self):
+    def test_unreadable_registry_refuses_every_candidate(self):
         result = subprocess.run(  # nosec B603
             [sys.executable, "-E", "-s", "-B", str(LIFECYCLE / "worktree-reclaim.py"),
-             "--base-dir", str(self.root), "--budget-seconds", "30"],
+             "--base-dir", str(self.root), "--state-dir", str(self.root / "no-registry"),
+             "--apply", "--budget-seconds", "30"],
             check=True, capture_output=True, text=True)
-        self.assertIn('"dry_run": true', result.stdout)
+        # An unreadable registry refuses every candidate, even with --apply.
+        receipt = json.loads(result.stdout)
+        self.assertEqual(receipt["owner_observation"], "unavailable")
+        self.assertEqual(receipt["residual_risk"], "unregistered-processes-unobserved")
+        self.assertEqual(receipt["removed"], 0)
         self.assertTrue(self.worktree.exists())
 
 
