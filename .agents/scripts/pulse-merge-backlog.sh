@@ -770,12 +770,13 @@ _pmp_resume_cursor_with_priority_lane() {
 # item and its original predecessor, so a pause, crash, or removed resume item
 # cannot rewind the walk past already-processed PRs.
 # Args: $1=repo slug, $2=next index, $3=index output var, $4=next-PR output var,
-#       $5=evaluated PR object, $6=last-PR in/out var (optional)
+#       $5=evaluated PR object, $6=last-PR output var (optional),
+#       $7=number of the PR just evaluated (the default last PR)
 # Uses the caller's dynamically scoped pr_json, _PMP_RESUME_LANE_END and
 # _PMP_RESUME_LANE_LAST_PR.
 _pmp_lane_clamped_cursor() {
 	local repo_slug="$1" next_index="$2" index_var="$3" next_pr_var="$4" evaluated_obj="${5:-}" last_pr_var="${6:-}"
-	local lane_end="${_PMP_RESUME_LANE_END:-0}" next_pr=""
+	local write_last="${7:-}" lane_end="${_PMP_RESUME_LANE_END:-0}" next_pr=""
 	[[ "$index_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$next_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ -z "$last_pr_var" || "$last_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ "$next_index" =~ ^[0-9]+$ ]] || next_index=0
@@ -784,8 +785,9 @@ _pmp_lane_clamped_cursor() {
 	if [[ "$lane_end" -gt 0 && "$next_index" -le "$lane_end" ]]; then
 		# The PR just evaluated was a lane item.
 		next_index="$lane_end"
-		[[ -z "$last_pr_var" ]] || printf -v "$last_pr_var" '%s' "${_PMP_RESUME_LANE_LAST_PR:-}"
+		write_last="${_PMP_RESUME_LANE_LAST_PR:-}"
 	fi
+	[[ -z "$last_pr_var" ]] || printf -v "$last_pr_var" '%s' "$write_last"
 	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$next_index") || next_pr=""
 	printf -v "$index_var" '%s' "$next_index"
 	printf -v "$next_pr_var" '%s' "$next_pr"

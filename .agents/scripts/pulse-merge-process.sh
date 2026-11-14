@@ -465,8 +465,7 @@ _merge_ready_prs_for_repo() {
 			return $?
 		fi
 		i=$((i + 1))
-		_cursor_write_last="$_cursor_last_pr"
-		_pmp_lane_clamped_cursor "$repo_slug" "$i" _cursor_write_index _cursor_next_pr "$pr_obj" _cursor_write_last || { _cursor_write_index="$i"; _cursor_next_pr=""; }
+		_pmp_lane_clamped_cursor "$repo_slug" "$i" _cursor_write_index _cursor_next_pr "$pr_obj" _cursor_write_last "$_cursor_last_pr" || { _cursor_write_index="$i"; _cursor_next_pr=""; _cursor_write_last="$_cursor_last_pr"; }
 		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr"
 		_pmp_record_processed_pr_result "$repo_slug" "$_cursor_last_pr" "$_pr_head_sha" "$_pr_rc" merged closed failed || outcomes_complete=0
 		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$_cursor_write_index" "$_cursor_write_last" "$_cursor_next_pr"
