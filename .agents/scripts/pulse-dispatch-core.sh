@@ -437,7 +437,7 @@ _dispatch_dedup_scope_gates() {
 	# `gh issue view --json labels` call (label CSV derived from JSON instead).
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
-	local _consolidation_defer=""
+	local _consolidation_defer="" _consolidation_signal=""
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
@@ -447,16 +447,21 @@ _dispatch_dedup_scope_gates() {
 			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
 		else
 			_consolidation_defer="issue needs comment consolidation"
+			_consolidation_signal="consolidation_needed"
 		fi
 	elif [[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 1 ]]; then
 		# An in-flight consolidation child will supersede this parent. Without
 		# this, only the cycle that created the child deferred; the next cycle
 		# launched an implementation worker on the parent in parallel (#35605).
 		_consolidation_defer="consolidation child in flight"
+		_consolidation_signal="consolidation_child_in_flight"
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 	if [[ -n "$_consolidation_defer" ]]; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: ${_consolidation_defer}" >>"$LOGFILE"
+		# GH#38181: structured reason so the deferral counts as the benign
+		# `consolidated` block instead of an unclassified candidate failure.
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=consolidated signal=${_consolidation_signal} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		return 1
 	fi
 
