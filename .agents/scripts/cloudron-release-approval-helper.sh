@@ -578,10 +578,52 @@ Merged exact head ${head} under ${authority}. Publication verification resumes n
 	return 0
 }
 
+# Cache only wait states, never authority. An unavailable or ambiguous policy
+# list disables caching; the normal resolver remains responsible for the verdict.
+release_pending_fingerprint() {
+	local repo="$1" before="$2" head="$3" policy='' rc=0 updated=''
+	updated=$(jq -er '.updated_at | strings | select(length > 0)' <<<"$before") || return 1
+	policy=$(release_policy_issue "$repo") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		policy=none
+	elif [[ "$rc" -eq 0 ]]; then
+		policy=$(jq -er 'select((.number | numbers) and (.updated_at | strings | length > 0)) | [.number, .updated_at] | @json' <<<"$policy") || return 1
+	else
+		return 1
+	fi
+	jq -cn --arg updated "$updated" --arg head "$head" --arg policy "$policy" '{updated:$updated,head:$head,policy:$policy}' || return 1
+	return 0
+}
+
+release_pending_cache_hit() {
+	local repo="$1" issue="$2" pr="$3" head="$4" fingerprint="$5" seconds="$6"
+	local file="${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" now='' snapshot=''
+	[[ "$seconds" =~ ^[0-9]{1,8}$ && $((10#$seconds)) -gt 0 && -f "$file" ]] || return 1
+	now=$(date +%s) || return 1
+	jq -e --argjson fingerprint "$fingerprint" --argjson now "$now" --argjson seconds "$((10#$seconds))" \
+		'.fingerprint == $fingerprint and (.epoch | numbers) and .epoch <= $now and ($now - .epoch) < $seconds' "$file" >/dev/null 2>&1 || return 1
+	# A PR may merge or move without changing the request issue. Never suppress
+	# publication resume or moved-head handling on the strength of this cache.
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
+	jq -e --arg head "$head" --arg state open '.state == $state and .merged == false and .head.sha == $head' <<<"$snapshot" >/dev/null || return 1
+	return 0
+}
+
+release_pending_cache_write() {
+	local repo="$1" issue="$2" fingerprint="$3" dir="${HOME}/.aidevops/cache/cloudron-release-approval"
+	local file="${dir}/${repo//\//--}-${issue}" temporary='' now=''
+	(umask 077; mkdir -p "$dir") || return 1
+	temporary=$(mktemp "${dir}/.pending.XXXXXXXX") || return 1
+	now=$(date +%s) || { rm -f "$temporary"; return 1; }
+	jq -cn --argjson fingerprint "$fingerprint" --argjson epoch "$now" '{fingerprint:$fingerprint,epoch:$epoch}' >"$temporary" &&
+		mv -f "$temporary" "$file" || { rm -f "$temporary"; return 1; }
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
 	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
-	local metadata=""
+	local metadata="" fingerprint="" recheck="${AIDEVOPS_CLOUDRON_APPROVAL_RECHECK_SECONDS:-21600}"
 	local verdict="" run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
@@ -590,9 +632,21 @@ release_process_issue() {
 	pr=$(jq -r '.pr' <<<"$metadata")
 	head=$(jq -r '.head' <<<"$metadata")
 	version=$(jq -r '.version' <<<"$metadata")
+	if [[ "$apply" == true && "$recheck" =~ ^[0-9]{1,8}$ && $((10#$recheck)) -gt 0 ]]; then
+		fingerprint=$(release_pending_fingerprint "$repo" "$before" "$head") || fingerprint=''
+		if [[ -n "$fingerprint" ]] && release_pending_cache_hit "$repo" "$issue" "$pr" "$head" "$fingerprint" "$recheck"; then
+			printf '%s issue %s: unchanged pending approval; recheck deferred\n' "$repo" "$issue"
+			return 0
+		fi
+	fi
+	# A failed or changed evaluation must not revive an older wait record.
+	rm -f "${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" || true
 	local authority=''
 	release_resolve_authority "$repo" "$issue" "$before" "$pr" "$head" "$apply" || rc=$?
-	[[ "$rc" -ne 3 ]] || return 0
+	if [[ "$rc" -eq 3 ]]; then
+		[[ -z "$fingerprint" ]] || release_pending_cache_write "$repo" "$issue" "$fingerprint" || true
+		return 0
+	fi
 	[[ "$rc" -eq 0 ]] || return 1
 	authority="$RELEASE_RESOLVED_AUTHORITY"
 	after=$(gh api "repos/${repo}/issues/${issue}") || return 1
