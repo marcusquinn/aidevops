@@ -1161,13 +1161,25 @@ cmd_inventory() (
 		if listing=$(gopass ls --flat 2>/dev/null); then
 			gopass_status="available"
 			local secret_path=""
+			local inventory_name=""
+			local skipped_nested=0
 			while IFS= read -r secret_path; do
 				[[ -z "$secret_path" ]] && continue
 				case "$secret_path" in
-				"${GOPASS_PREFIX}/"*) inventory_add_name "${secret_path#"${GOPASS_PREFIX}/"}" "$names_file" || return 1 ;;
+				"${GOPASS_PREFIX}/"*)
+					inventory_name="${secret_path#"${GOPASS_PREFIX}/"}"
+					if [[ "$inventory_name" == */* ]]; then
+						skipped_nested=$((skipped_nested + 1))
+						continue
+					fi
+					inventory_add_name "$inventory_name" "$names_file" || return 1
+					;;
 				*) continue ;;
 				esac
 			done <<<"$listing"
+			if [[ "$skipped_nested" -gt 0 ]]; then
+				printf 'Skipped %s nested gopass inventory entries\n' "$skipped_nested" >&2
+			fi
 		fi
 	fi
 
