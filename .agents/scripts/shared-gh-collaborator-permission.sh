@@ -307,6 +307,59 @@ _gh_collaborator_permission_lookup() {
 	local repo_slug="$1"
 	local user="$2"
 	local out_var="${3:-}"
+	local _gcp_route="${4:-}"
+	local _gcp_retry="${5:-0}"
+	local _gcp_key="" _gcp_entry="" _gcp_cached="" _gcp_fresh="" _gcp_rc=0
+
+	# Only the top-level default-_gcp_route call is memoized (GH#38242).
+	if [[ -z "$repo_slug" || -z "$user" || -n "$_gcp_route" || "$_gcp_retry" != "0" ]]; then
+		_gh_collaborator_permission_lookup_uncached "$@"
+		return $?
+	fi
+
+	_gcp_key=$(printf '%s|%s' "$repo_slug" "$user" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r _gcp_entry; do
+		if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+			_gcp_cached="${_gcp_entry#*=}"
+		fi
+	done <<<"$_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO"
+	if [[ -n "$_gcp_cached" ]]; then
+		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+		export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_cached"
+		else
+			printf '%s\n' "$_gcp_cached"
+		fi
+		return 0
+	fi
+
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" _gcp_fresh || _gcp_rc=$?
+	if [[ "$_gcp_rc" -eq 0 ]]; then
+		case "$_gcp_fresh" in
+		admin | maintain | write | triage | read | none)
+			_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO="${_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO}${_gcp_key}=${_gcp_fresh}"$'\n'
+			;;
+		esac
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_fresh"
+		else
+			printf '%s\n' "$_gcp_fresh"
+		fi
+	fi
+	return "$_gcp_rc"
+}
+
+# Per-process memo of successful lookups: newline-delimited "repo|login=perm",
+# lowercase keys. Never persisted, so the next process observes revocation.
+# Failures, deferrals and fallback/retry routes are never memoized.
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+
+_gh_collaborator_permission_lookup_uncached() {
+	local repo_slug="$1"
+	local user="$2"
+	local out_var="${3:-}"
 	local perm_url="/repos/${repo_slug}/collaborators/${user}/permission"
 	local api_response="" rc=0 http_status="" line="" body="" in_body=0
 	local auth_route="${4:-$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE}"

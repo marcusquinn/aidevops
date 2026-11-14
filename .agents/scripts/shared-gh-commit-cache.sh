@@ -38,3 +38,21 @@ gh_commit_by_sha_cached() {
 	command cat -- "$file"
 	return $?
 }
+
+# Per-process memo of the authenticated login (`gh api user`). Call without a
+# command substitution (it would discard the memo): the result is written to
+# the variable named by $1. Failed or empty lookups are never memoized.
+_AIDEVOPS_GH_AUTH_LOGIN_MEMO=""
+gh_authenticated_login_cached() {
+	local out_var="$1"
+	# Distinct local name: bash dynamic scope would shadow a caller variable
+	# named like a local when printf -v writes back.
+	local _ghalc_value="${_AIDEVOPS_GH_AUTH_LOGIN_MEMO:-}"
+	if [[ -z "$_ghalc_value" ]]; then
+		_ghalc_value=$(gh api user --jq '.login // ""' 2>/dev/null) || _ghalc_value=""
+		[[ -n "$_ghalc_value" ]] || return 1
+		_AIDEVOPS_GH_AUTH_LOGIN_MEMO="$_ghalc_value"
+	fi
+	printf -v "$out_var" '%s' "$_ghalc_value"
+	return 0
+}

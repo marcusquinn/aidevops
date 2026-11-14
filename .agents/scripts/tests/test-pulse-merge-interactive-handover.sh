@@ -27,6 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 # shellcheck source=../gh-closing-reference-lib.sh
 source "${SCRIPT_DIR}/../gh-closing-reference-lib.sh"
+# shellcheck source=../shared-gh-commit-cache.sh
+source "${SCRIPT_DIR}/../shared-gh-commit-cache.sh"
 CONFLICT_SCRIPT="${SCRIPT_DIR}/../pulse-merge-conflict.sh"
 
 readonly TEST_RED='\033[0;31m'
