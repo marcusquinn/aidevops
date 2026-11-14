@@ -452,7 +452,7 @@ _dispatch_negative_cache_record() {
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp"; then
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" "$updated" >"$tmp"; then
 		if mv -f "$tmp" "$file"; then
 			if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 				_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=1
@@ -521,9 +521,9 @@ _dispatch_negative_cache_material_matches() {
 
 _dispatch_negative_cache_refresh_revision() {
 	local candidate="$1" checkpoint_mode="$2" record="$3" file="$4"
-	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material=''
+	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material='' revision_anchor=''
 	local current='' comments='' updated='' repo='' issue='' tmp=''
-	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* && "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	current=$(_dispatch_negative_cache_material "$candidate") || return 1
 	[[ "$current" == "$material" ]] || return 1
@@ -531,10 +531,11 @@ _dispatch_negative_cache_refresh_revision() {
 	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
 		gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
 	_dispatch_negative_cache_ops_only "$comments" || return 1
-	# Refresh the revision, never the TTL or reason-specific evidence.
+	# Refresh the revision, never the TTL or reason-specific evidence. Preserve
+	# the original revision anchor used for write-time quiet-TTL eligibility.
 	tmp=$(mktemp "${file}.XXXXXX") || return 1
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
-	if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" >"$tmp" ||
+	if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" "${revision_anchor:-$cached}" >"$tmp" ||
 		! mv -f "$tmp" "$file"; then
 		rm -f "$tmp"
 		return 1
@@ -544,7 +545,7 @@ _dispatch_negative_cache_refresh_revision() {
 
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
-	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material=""
+	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material="" revision_anchor=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
@@ -554,7 +555,7 @@ _dispatch_negative_cache_reason() {
 	[[ -f "$file" && ! -L "$file" ]] || return 1
 	IFS= read -r record <"$file" || return 1
 	# Non-whitespace separators preserve empty optional fields in old/new records.
-	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material <<<"${record//$'\t'/$'\034'}" || return 1
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] ||
@@ -568,7 +569,7 @@ _dispatch_negative_cache_reason() {
 	fi
 	case "$reason" in
 	worker_draft_checkpoint_cooldown)
-		ttl=$(_dispatch_checkpoint_cooldown_ttl "$candidate" "$stamp") || return 1
+		ttl=$(_dispatch_checkpoint_cooldown_ttl "$(jq --arg updated "${revision_anchor:-$cached}" '.updatedAt=$updated' <<<"$candidate")" "$stamp") || return 1
 		[[ -n "$fingerprint" ]] || return 1
 		# Quiet hints must obey the same owner/re-arm limits as draft blocks.
 		# Legacy records without boundary evidence run the ceremony once.
