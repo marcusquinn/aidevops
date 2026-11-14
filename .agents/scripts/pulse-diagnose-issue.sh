@@ -399,8 +399,15 @@ _cmd_issue_parse_args() {
 				return 1
 				;;
 			*)
+				# GH#38274: a positional owner/repo was silently dropped and the
+				# cwd origin substituted, diagnosing an unrelated same-number item.
 				if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
 					_CMD_ISSUE_NUMBER="${1}"
+				elif [[ -z "$_CMD_ISSUE_REPO_SLUG" && "${1}" == */* ]]; then
+					_CMD_ISSUE_REPO_SLUG="${1}"
+				else
+					print_error "unexpected argument: ${1} (use --repo <owner/repo>)"
+					return 1
 				fi
 				shift
 				;;
@@ -408,7 +415,7 @@ _cmd_issue_parse_args() {
 	done
 
 	if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
-		print_error "usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]"
+		print_error "usage: pulse-diagnose-helper.sh issue <N> [<owner/repo> | --repo <slug>] [--verbose] [--json]"
 		return 1
 	fi
 

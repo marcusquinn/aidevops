@@ -385,6 +385,79 @@ _dispatch_repository_rows() {
 	return 0
 }
 
+# GH#38274: per-repository adaptive enumeration budget. The fixed GH#38226
+# bound (15s) killed every census of large repositories (700+ open issues,
+# 500+ auto-dispatch locks), so they contributed zero candidates while
+# workers sat idle. A timeout yields nothing, so it raises that repository's
+# budget straight to the cap; a completed scan decays it to 1.5x its observed
+# cost, never below the base. The census deadline still clamps every scan.
+_dispatch_repo_enumeration_budget_file() {
+	local repo_slug="$1"
+	printf '%s/pulse-repo-enumeration-budget/%s\n' "${HOME}/.aidevops/cache" "${repo_slug//\//--}"
+	return 0
+}
+
+# Args: base budget seconds. Stdout: cap (PULSE_REPO_ENUMERATION_BUDGET_MAX_S).
+_dispatch_repo_enumeration_budget_cap() {
+	local base="$1" cap="${PULSE_REPO_ENUMERATION_BUDGET_MAX_S:-60}"
+	[[ "$cap" =~ ^[1-9][0-9]{0,2}$ ]] || cap=60
+	cap=$((10#$cap))
+	((cap >= base)) || cap="$base"
+	printf '%s\n' "$cap"
+	return 0
+}
+
+# Args: repo slug, base budget seconds. Stdout: this repository's budget.
+_dispatch_repo_enumeration_budget() {
+	local repo_slug="$1" base="$2" stored="" cap=0 file=""
+	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
+	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
+	if [[ -f "$file" && ! -L "$file" ]]; then
+		read -r stored <"$file" 2>/dev/null || stored=""
+	fi
+	if [[ "$stored" =~ ^[1-9][0-9]{0,2}$ ]] && ((10#$stored > base)); then
+		stored=$((10#$stored))
+		((stored <= cap)) || stored="$cap"
+		printf '%s\n' "$stored"
+		return 0
+	fi
+	printf '%s\n' "$base"
+	return 0
+}
+
+# Args: repo slug, base budget, budget used, scan rc, elapsed seconds.
+# Other failures (source unavailable, auth) leave the stored budget unchanged.
+_dispatch_record_repo_enumeration_outcome() {
+	local repo_slug="$1" base="$2" used="$3" rc="$4" elapsed="$5"
+	local file="" cap=0 next=0 temporary=""
+	[[ "$base" =~ ^[0-9]+$ && "$used" =~ ^[0-9]+$ && "$rc" =~ ^[0-9]+$ && "$elapsed" =~ ^-?[0-9]+$ ]] || return 0
+	((elapsed >= 0)) || elapsed=0
+	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
+	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
+	if ((rc == 124)); then
+		next="$cap"
+		((next > used)) &&
+			echo "[pulse-wrapper] Candidate repository enumeration budget raised: repo=${repo_slug} from=${used}s to=${next}s reason=timeout (GH#38274)" >>"$LOGFILE"
+	elif ((rc == 0)); then
+		next=$(((elapsed * 3 + 1) / 2))
+		((next >= base)) || next="$base"
+		((next <= cap)) || next="$cap"
+		((elapsed <= base)) ||
+			echo "[pulse-wrapper] Candidate repository enumeration slow: repo=${repo_slug} elapsed=${elapsed}s budget=${used}s next=${next}s (GH#38274)" >>"$LOGFILE"
+	else
+		return 0
+	fi
+	if ((next <= base)); then
+		rm -f "$file" 2>/dev/null || true
+		return 0
+	fi
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	printf '%s\n' "$next" >"$temporary"
+	mv -f "$temporary" "$file" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
 # GH#38226: cap a repository's whole enumeration tree, not just individual
 # API calls. Follow _gh_run_bounded_function's portable process-group cleanup
 # pattern so a timed-out child cannot retain the command-substitution pipe.
@@ -451,7 +524,9 @@ build_ranked_dispatch_candidates_json() {
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
 	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 repo_rc=0
+	local repo_scan_budget=0 repo_scan_started=0
 	[[ "$repo_budget" =~ ^[1-9][0-9]{0,2}$ ]] || repo_budget=15
+	repo_budget=$((10#$repo_budget))
 	deadline=$(_dispatch_census_deadline)
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
 		first_wave_bounds=$(_dispatch_first_wave_bounds)
@@ -493,11 +568,16 @@ build_ranked_dispatch_candidates_json() {
 		[[ -n "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug" pulse-census-cursor
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
-		((remaining >= repo_budget)) || repo_budget="$remaining"
+		# GH#38274: clamp per repository so one escalated budget never leaks.
+		repo_scan_budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$repo_budget")
+		((remaining >= repo_scan_budget)) || repo_scan_budget="$remaining"
 		repo_rc=0
-		repo_candidates_json=$(_dispatch_enumerate_repo_bounded "$repo_budget" "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
+		repo_scan_started=$(_dispatch_first_wave_now_s)
+		repo_candidates_json=$(_dispatch_enumerate_repo_bounded "$repo_scan_budget" "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
+		_dispatch_record_repo_enumeration_outcome "$repo_slug" "$repo_budget" "$repo_scan_budget" "$repo_rc" \
+			"$(($(_dispatch_first_wave_now_s) - repo_scan_started))"
 		if ((repo_rc != 0)); then
-			echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${repo_rc} budget=${repo_budget}s (GH#38226)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${repo_rc} budget=${repo_scan_budget}s (GH#38226)" >>"$LOGFILE"
 			repo_candidates_json='[]'
 			scan_failed=1
 			[[ "$repo_priority" != product ]] || product_complete=false
