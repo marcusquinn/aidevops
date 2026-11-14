@@ -952,19 +952,22 @@ _prrts_upstream_repo_registered() {
 	[[ "$matches" =~ ^[0-9]+$ && "$matches" -gt 0 ]]
 }
 
-# Return the comment URL only for a thread in the persisted assigned batch.
+_prrts_batch_file() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	printf '%s/%s-%s.assigned-batch\n' "$STATE_DIR" "$(_prrts_safe_slug "$repo_slug")" "$pr_number"
+	return 0
+}
+
+# Print the comment URL recorded for an assigned thread (empty if unknown).
 _prrts_assigned_thread_url() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local thread_id="$3"
-	local state_file="" line="" entry="" remaining=""
-	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
-	[[ -f "$state_file" ]] || return 1
-	while IFS= read -r line; do
-		case "$line" in
-		assigned_fingerprint=*) remaining="${line#assigned_fingerprint=}" ;;
-		esac
-	done <"$state_file"
+	local batch_file="" remaining="" entry=""
+	batch_file="$(_prrts_batch_file "$repo_slug" "$pr_number")"
+	[[ -f "$batch_file" ]] || return 0
+	remaining="$(<"$batch_file")"
 	while [[ -n "$remaining" ]]; do
 		case "$remaining" in
 		*,*)
@@ -976,10 +979,35 @@ _prrts_assigned_thread_url() {
 			remaining=""
 			;;
 		esac
-		if [[ "${entry%%:*}" == "$thread_id" ]]; then
+		if [[ "${entry%%:*}" == "$thread_id" && "$entry" == *:* ]]; then
 			printf '%s\n' "${entry#*:}"
 			return 0
 		fi
+	done
+	return 0
+}
+
+# Thread IDs assigned to this PR's worker batch (persisted at dispatch).
+_prrts_thread_is_assigned() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local thread_id="$3"
+	local batch_file="" remaining="" entry=""
+	batch_file="$(_prrts_batch_file "$repo_slug" "$pr_number")"
+	[[ -f "$batch_file" ]] || return 1
+	remaining="$(<"$batch_file")"
+	while [[ -n "$remaining" ]]; do
+		case "$remaining" in
+		*,*)
+			entry="${remaining%%,*}"
+			remaining="${remaining#*,}"
+			;;
+		*)
+			entry="$remaining"
+			remaining=""
+			;;
+		esac
+		[[ "${entry%%:*}" == "$thread_id" ]] && return 0
 	done
 	return 1
 }
@@ -1020,7 +1048,7 @@ cmd_route_upstream() {
 	local thread_id="$3"
 	local owner_repo="$4"
 	local details_file="$5"
-	local marker="" cache_file="" url="" finding_text="" body_file="" issue_number="" create_out="" thread_url="" lower_owner=""
+	local marker="" cache_file="" url="" finding_text="" body_file="" issue_number="" create_out="" thread_url=""
 	local helper="${PRRTS_UPSTREAM_ISSUE_HELPER:-${SCRIPT_DIR}/gh-write-helper.sh}"
 	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ || -z "$thread_id" || -z "$owner_repo" || -z "$details_file" ]]; then
 		_prrts_usage >&2
@@ -1031,7 +1059,7 @@ cmd_route_upstream() {
 		_prrts_log "route-upstream: ${repo_slug}#${pr_number} refused unregistered or same-repo target"
 		return 2
 	fi
-	if ! thread_url="$(_prrts_assigned_thread_url "$repo_slug" "$pr_number" "$thread_id")"; then
+	if ! _prrts_thread_is_assigned "$repo_slug" "$pr_number" "$thread_id"; then
 		printf 'route-upstream refused: thread is not assigned to this PR dispatch. Use an assigned thread ID.\n' >&2
 		_prrts_log "route-upstream: ${repo_slug}#${pr_number} refused unassigned thread"
 		return 2
@@ -1042,15 +1070,17 @@ cmd_route_upstream() {
 	}
 	_prrts_ensure_dirs
 	marker="<!-- aidevops:upstream-route:${repo_slug}#${pr_number}:${thread_id} -->"
-	lower_owner="$(printf '%s' "$owner_repo" | tr '[:upper:]' '[:lower:]')"
-	cache_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}-$(_prrts_safe_slug "$thread_id")-$(_prrts_safe_slug "$lower_owner").upstream-route"
+	cache_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}-$(_prrts_safe_slug "$thread_id")-$(_prrts_safe_slug "$(printf '%s' "$owner_repo" | tr '[:upper:]' '[:lower:]')").upstream-route"
 	[[ -f "$cache_file" ]] && url="$(<"$cache_file")"
 	if [[ -z "$url" ]]; then
-		url="$(_prrts_upstream_find_issue "$owner_repo" "$marker")" || {
-			printf 'route-upstream failed: issue lookup in %s failed; no issue created.\n' "$owner_repo" >&2
+		if ! url="$(_prrts_upstream_find_issue "$owner_repo" "$marker")"; then
+			printf 'route-upstream failed: issue lookup in %s failed; not creating a possible duplicate. Retry or use mark-blocked infrastructure.\n' "$owner_repo" >&2
+			_prrts_log "route-upstream: ${repo_slug}#${pr_number} issue lookup failed"
 			return 1
-		}
+		fi
 	fi
+	thread_url="$(_prrts_assigned_thread_url "$repo_slug" "$pr_number" "$thread_id")"
+	[[ "$thread_url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+#discussion_r[0-9]+$ ]] || thread_url="https://github.com/${repo_slug}/pull/${pr_number}"
 	if [[ -z "$url" ]]; then
 		body_file=$(mktemp "${STATE_DIR}/upstream-route-body.XXXXXX") || return 1
 		cat >"$body_file" <<BODY_EOF
@@ -1556,7 +1586,8 @@ _prrts_dispatch_worker() {
 	_prrts_final_dispatch_fence "$repo_slug" "$pr_number" "$head_ref" "$head_oid" "$repair_linked_issue" || return $?
 	# Persist the generation immediately before the detached worker becomes
 	# runnable, so immediate terminal callbacks cannot be overwritten.
-	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count" "$batch_fingerprint"
+	printf '%s\n' "$batch_fingerprint" >"$(_prrts_batch_file "$repo_slug" "$pr_number")" || return 1
+	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch" "$attempt_count" "$maintainer_attention" "$head_oid" "$outcome_id" "$infrastructure_failure_count"
 	PRRTS_WORKTREE_FAILURE_REASON="detached_worker_launch_failed"
 	_prrts_launch_reserved_worker "$repo_slug" "$pr_number" "$worker_worktree_path" "$session_key" \
 		"$outcome_id" "$reservation_file" "${worker_cmd[@]}" || return 1

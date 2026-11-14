@@ -430,7 +430,6 @@ _prrts_write_state() {
 	local head_sha="${8:-}"
 	local outcome_id="${9:-}"
 	local infrastructure_failure_count="${10:-0}"
-	local assigned_fingerprint="${11:-}"
 	local state_file=""
 	_prrts_ensure_dirs
 	[[ "$attempt_count" =~ ^[0-9]+$ ]] || attempt_count=1
@@ -438,7 +437,6 @@ _prrts_write_state() {
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	{
 		printf 'fingerprint=%s\n' "$fingerprint"
-		printf 'assigned_fingerprint=%s\n' "$assigned_fingerprint"
 		printf 'dispatched_at=%s\n' "$now_epoch"
 		printf 'thread_count=%s\n' "$thread_count"
 		printf 'attempt_count=%s\n' "$attempt_count"
@@ -473,14 +471,13 @@ _prrts_write_analysis_state() {
 	local now_epoch=""
 	local details=""
 	local fingerprint="" dispatched_at="0" thread_count="0" attempt_count="0" last_head_sha="" worker_contract_version="" outcome_id=""
-	local infrastructure_failure_count="0" assigned_fingerprint=""
+	local infrastructure_failure_count="0"
 	_prrts_ensure_dirs
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	if [[ -f "$state_file" ]]; then
 		while IFS='=' read -r key value; do
 			case "$key" in
 			fingerprint) fingerprint="$value" ;;
-			assigned_fingerprint) assigned_fingerprint="$value" ;;
 			dispatched_at) dispatched_at="$value" ;;
 			thread_count) thread_count="$value" ;;
 			attempt_count) attempt_count="$value" ;;
@@ -506,7 +503,6 @@ _prrts_write_analysis_state() {
 	tmp_file="${state_file}.tmp.$$"
 	{
 		printf 'fingerprint=%s\n' "$fingerprint"
-		printf 'assigned_fingerprint=%s\n' "$assigned_fingerprint"
 		printf 'dispatched_at=%s\n' "$dispatched_at"
 		printf 'thread_count=%s\n' "$thread_count"
 		printf 'attempt_count=%s\n' "$attempt_count"

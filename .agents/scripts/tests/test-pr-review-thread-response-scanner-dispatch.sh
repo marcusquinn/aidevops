@@ -1337,13 +1337,14 @@ test_route_upstream_creates_once_and_reuses() {
 	write_upstream_route_fixtures
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
+	printf 'THREAD1:https://github.com/owner/repo/pull/1#discussion_r123\n' >"${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.assigned-batch"
 	local details="${TEST_ROOT}/up-details.txt" first="" second=""
 	first="$($SCANNER route-upstream owner/repo 1 THREAD1 Org/Starter "$details" 2>/dev/null)" || first=""
 	second="$($SCANNER route-upstream owner/repo 1 THREAD1 org/starter "$details" 2>/dev/null)" || second=""
 	if [[ "$first" == "https://github.com/org/starter/issues/77" && "$second" == "$first" ]] &&
 		[[ "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]] &&
 		grep -Fq -- '--label auto-dispatch,tier:standard,bug' "$UPSTREAM_ISSUE_LOG" &&
-		grep -Fq -- 'Back-link: https://example.invalid/thread (owner/repo#1, review thread THREAD1)' "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq -- 'Back-link: https://github.com/owner/repo/pull/1#discussion_r123 (owner/repo#1, review thread THREAD1)' "${UPSTREAM_ISSUE_LOG}.body" &&
 		grep -Fq 'route-upstream: owner/repo#1 thread=THREAD1 -> Org/Starter#77' "$LOGFILE"; then
 		print_result "route-upstream creates one issue and reuses it on repeat" 0
 	else
