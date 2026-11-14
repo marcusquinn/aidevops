@@ -324,6 +324,9 @@ _gh_collaborator_permission_lookup() {
 		fi
 	done <<<"$_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO"
 	if [[ -n "$_gcp_cached" ]]; then
+		if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" && ! -L "$AIDEVOPS_GH_COLLAB_STATS_FILE" && -O "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+			printf 'hit\n' >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+		fi
 		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
 		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
 		export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP AIDEVOPS_GH_COLLAB_PERMISSION_REASON
@@ -335,6 +338,9 @@ _gh_collaborator_permission_lookup() {
 		return 0
 	fi
 
+	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" && ! -L "$AIDEVOPS_GH_COLLAB_STATS_FILE" && -O "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+		printf 'miss %s\n' "$_gcp_key" >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+	fi
 	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" _gcp_fresh || _gcp_rc=$?
 	if [[ "$_gcp_rc" -eq 0 ]]; then
 		case "$_gcp_fresh" in

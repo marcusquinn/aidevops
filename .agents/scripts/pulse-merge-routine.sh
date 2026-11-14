@@ -338,6 +338,17 @@ _pmr_require_gh_auth() {
 # reclaim the lock if the previous instance crashed.
 
 _pmr_release_lock() {
+	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+		local hits=0 misses=0 line=""
+		while IFS= read -r line; do
+			case "$line" in
+			hit) hits=$((hits + 1)) ;;
+			miss\ *) misses=$((misses + 1)) ;;
+			esac
+		done <"$AIDEVOPS_GH_COLLAB_STATS_FILE"
+		_pmr_log INFO "collab_memo hits=${hits} misses=${misses}"
+		rm -f "$AIDEVOPS_GH_COLLAB_STATS_FILE"
+	fi
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	return 0
 }
@@ -493,6 +504,8 @@ cmd_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	AIDEVOPS_GH_COLLAB_STATS_FILE=$(mktemp "${LOCK_DIR}/collab-stats.XXXXXXXX")
+	export AIDEVOPS_GH_COLLAB_STATS_FILE
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi
@@ -570,6 +583,8 @@ cmd_dry_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	AIDEVOPS_GH_COLLAB_STATS_FILE=$(mktemp "${LOCK_DIR}/collab-stats.XXXXXXXX")
+	export AIDEVOPS_GH_COLLAB_STATS_FILE
 	if ! _pmr_require_gh_auth; then
 		return 1
 	fi
