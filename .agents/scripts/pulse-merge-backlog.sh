@@ -587,6 +587,8 @@ _pmp_evaluate_pr_with_deadline() {
 	local result=0 remaining=0
 	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
 	_pmp_apply_merge_api_deadline
+	# GH#38259: start each PR with an empty stage record, skipped PRs included.
+	declare -F _pmp_stage_timing_reset >/dev/null 2>&1 && _pmp_stage_timing_reset "$timing_prefix"
 	_pmu_should_skip_pr "$repo_slug" "$pr_obj" && return 4
 	if [[ "${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}" -gt 0 ]] && declare -F _gh_run_bounded_function >/dev/null 2>&1; then
 		remaining=$((AIDEVOPS_GH_DEADLINE_EPOCH - $(_pmp_now_epoch)))
