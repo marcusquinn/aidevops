@@ -231,8 +231,39 @@ test_reservation_failure_keeps_interval_open() {
 	! grep -q 'issue close' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} closed"; }
 	[[ ! -f "$DEDUP_CLEANUP_LAST_RUN" ]] || { failed=1; detail="${detail} last-run"; }
 	[[ "$(sed -n '1p' "$cursor_file" 2>/dev/null)" == "o/a" ]] || { failed=1; detail="${detail} cursor"; }
+	[[ "$(sed -n '1p' "${cursor_file}.retry" 2>/dev/null)" == "o/a" ]] || { failed=1; detail="${detail} retry-mark"; }
 	rm -rf "${cursor_file}.closed"
-	print_result "a reservation failure stops the traversal without recording the interval" "$failed" "$detail"
+
+	# Storage recovers: the next run retries o/a (no close was attempted
+	# there) instead of resuming after it, then completes the traversal.
+	: >"$CALLS_LOG"
+	printf '7000\n' >"$CLOCK_FILE"
+	PULSE_STAGE_DEADLINE_EPOCH=7100 run_simplification_dedup_cleanup
+	[[ "$(calls)" == "o/a o/b o/c o/d " ]] || { failed=1; detail="${detail} retry=$(calls)"; }
+	grep -q 'issue close 11 --repo o/a' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} no-retry-close"; }
+	[[ "$(cat "$DEDUP_CLEANUP_LAST_RUN" 2>/dev/null)" == "7000" ]] || { failed=1; detail="${detail} retry-last-run"; }
+	[[ ! -e "${cursor_file}.retry" && ! -f "$cursor_file" ]] || { failed=1; detail="${detail} retry-left"; }
+	print_result "a reservation failure keeps the interval open and retries the failed repo" "$failed" "$detail"
+	return 0
+}
+
+test_failed_reservation_keeps_prior_count() {
+	local failed=0 detail="" out="" rc=0 count_file="${TEST_ROOT}/atomic.closed"
+	printf '7\n' >"$count_file"
+	: >"${TEST_ROOT}/gh.log"
+	# A plain `>` truncates before writing, so a failed write emptied the
+	# count and the carried budget restarted at 0. Fail the replace step
+	# after the new count has been written and check the prior count stands.
+	out=$(
+		mv() { return 1; }
+		DEDUP_TEST_SATURATE_C=1 _dedup_cleanup_close_repo_dupes o/c 5 "$count_file" 7
+	) || rc=$?
+	[[ "$rc" -eq 1 ]] || { failed=1; detail="rc=${rc}"; }
+	[[ "$out" == "0" ]] || { failed=1; detail="${detail} out=${out}"; }
+	[[ "$(sed -n '1p' "$count_file" 2>/dev/null)" == "7" ]] || { failed=1; detail="${detail} count=$(sed -n '1p' "$count_file" 2>/dev/null)"; }
+	! grep -q 'issue close' "${TEST_ROOT}/gh.log" || { failed=1; detail="${detail} closed"; }
+	[[ -z "$(find "$TEST_ROOT" -maxdepth 1 -name 'atomic.closed.tmp.*' -print)" ]] || { failed=1; detail="${detail} tmp-left"; }
+	print_result "a failed reservation write keeps the prior nonzero count" "$failed" "$detail"
 	return 0
 }
 
@@ -258,6 +289,7 @@ test_kill_mid_repo_keeps_spent_budget
 test_failed_close_is_charged
 test_reservation_failure_skips_close
 test_reservation_failure_keeps_interval_open
+test_failed_reservation_keeps_prior_count
 
 printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

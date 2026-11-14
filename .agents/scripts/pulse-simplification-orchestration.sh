@@ -98,7 +98,7 @@ _dedup_cleanup_close_repo_dupes() {
 		# that errored or was interrupted may still have been applied. An
 		# unpersisted reservation would let a resumed slice overspend, so a
 		# failed write stops the batch before closing anything else.
-		if [[ -n "$count_file" ]] && ! printf '%s\n' "$((count_base + spent + 1))" 2>/dev/null >"$count_file"; then
+		if [[ -n "$count_file" ]] && ! _dedup_cleanup_persist_count "$count_file" "$((count_base + spent + 1))"; then
 			echo "[pulse-wrapper] Dedup cleanup: budget reservation write failed (${count_file}); no close attempted in ${slug} (GH#38171)" >>"${LOGFILE:-/dev/null}"
 			reserve_failed=1
 			break
@@ -111,6 +111,28 @@ _dedup_cleanup_close_repo_dupes() {
 	printf '%s\n' "$spent"
 	[[ "$reserve_failed" -eq 0 ]] || return 1
 	return 0
+}
+
+#######################################
+# GH#38171: replace the interval close count atomically. A plain `>` truncates
+# the file before writing, so a failed write would leave it empty and the
+# carried budget would restart at 0. The new count is written to a sibling
+# temp file and renamed only after the write succeeds, so any failure keeps
+# the previous count.
+# Args: $1 - count file, $2 - new count
+# Returns: 0 when persisted, 1 otherwise (previous count untouched)
+#######################################
+_dedup_cleanup_persist_count() {
+	local count_file="$1"
+	local value="$2"
+	local tmp_file="${count_file}.tmp.$$"
+	# mv onto a directory would move the temp file inside it and report success.
+	[[ -d "$count_file" ]] && return 1
+	if printf '%s\n' "$value" 2>/dev/null >"$tmp_file" && mv -f "$tmp_file" "$count_file" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp_file" 2>/dev/null || true
+	return 1
 }
 
 #######################################
@@ -127,7 +149,9 @@ _dedup_cleanup_close_repo_dupes() {
 # repo cursor records the last started repo. A yield or watchdog kill resumes
 # after it, and last-run is written only when a traversal completes or the
 # close batch is exhausted; batch exhaustion keeps the cursor so the next
-# interval serves the remaining repos first.
+# interval serves the remaining repos first. A budget reservation failure
+# closes nothing past the failed reservation, so it marks its repo for retry
+# and the next run starts at that repo rather than after it.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
@@ -160,11 +184,17 @@ run_simplification_dedup_cleanup() {
 	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
 	local resume_after="" yielded=0 batch_exhausted=0 stage_reserve="" reserve_failed=0
 	local closed_file="${cursor_file}.closed"
+	# A reservation failure leaves its repo's slug here, so the next run
+	# retries that repo instead of resuming after it.
+	local retry_file="${cursor_file}.retry" retry_cursor=0
 	if [[ -f "$cursor_file" ]]; then
 		resume_after=$(sed -n '1p' "$cursor_file" 2>/dev/null || true)
 		if [[ -n "$resume_after" ]] && ! _pulse_slug_list_contains "$resume_after" "$repo_slugs"; then
 			resume_after=""
 		fi
+	fi
+	if [[ -n "$resume_after" && "$(sed -n '1p' "$retry_file" 2>/dev/null || true)" == "$resume_after" ]]; then
+		retry_cursor=1
 	fi
 	total_closed=$(_dedup_cleanup_carried_closed "$closed_file" "$resume_after")
 	stage_reserve=$(_pulse_scanner_effective_reserve "${AIDEVOPS_DEDUP_CLEANUP_STAGE_RESERVE_SECONDS:-5}" "$now_epoch")
@@ -172,8 +202,10 @@ run_simplification_dedup_cleanup() {
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 		if [[ -n "$resume_after" ]]; then
-			[[ "$slug" == "$resume_after" ]] && resume_after=""
-			continue
+			[[ "$slug" == "$resume_after" ]] || continue
+			resume_after=""
+			# Normally resume after the cursor repo; a retry revisits it.
+			[[ "$retry_cursor" -eq 1 ]] || continue
 		fi
 		if [[ "$total_closed" -ge "$batch_limit" ]]; then
 			batch_exhausted=1
@@ -189,6 +221,7 @@ run_simplification_dedup_cleanup() {
 			break
 		fi
 		_pulse_scanner_mark_started "$cursor_file" "$slug"
+		rm -f "$retry_file" 2>/dev/null || true
 		local repo_closed=0 close_rc=0
 		# The helper reserves the interval budget before every close, so a
 		# yield or a watchdog kill mid-repo carries the spent budget forward.
@@ -197,6 +230,9 @@ run_simplification_dedup_cleanup() {
 		total_closed=$((total_closed + repo_closed))
 		if [[ "$close_rc" -ne 0 ]]; then
 			reserve_failed=1
+			# No close ran past the failed reservation; retry this repo next.
+			printf '%s\n' "$slug" 2>/dev/null >"$retry_file" ||
+				echo "[pulse-wrapper] Dedup cleanup: retry marker write failed (${retry_file}); next run resumes after ${slug}" >>"$LOGFILE"
 			break
 		fi
 	done <<<"$repo_slugs"
@@ -223,7 +259,7 @@ run_simplification_dedup_cleanup() {
 		rm -f "$cursor_file" 2>/dev/null || true
 	fi
 	# The interval ends here, so the next one starts with a fresh close budget.
-	rm -f "$closed_file" 2>/dev/null || true
+	rm -f "$closed_file" "$retry_file" 2>/dev/null || true
 	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
 	return 0
 }
