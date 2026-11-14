@@ -650,6 +650,22 @@ ${worker_footer}"
 	return 0
 }
 
+terminal_release_fixture() (
+	local reason="$1" question="${2:-}" triage="${3:-}"
+	local fingerprint=""
+	# shellcheck source=../terminal-blocker-circuit.sh
+	source "${SCRIPT_DIR}/../terminal-blocker-circuit.sh"
+	if [[ "$reason" == input_required ]]; then
+		fingerprint=$(_terminal_blocker_hash "v2:${reason}:maintainer")
+	else
+		fingerprint=$(_terminal_blocker_hash "v2:${reason}")
+	fi
+	WORKER_ISSUE_NUMBER=41 AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
+		AIDEVOPS_TERMINAL_BLOCKER_TRIAGE="$triage" \
+		terminal_blocker_observation_fragment aaaaaaaaaaaaaaaaaaaaaaaa "$fingerprint" normal status:blocked
+	return 0
+)
+
 test_dispatch_audit_comments_fail_closed() {
 	local worker_footer="<!-- aidevops:origin:worker -->
 <!-- aidevops:sig -->
@@ -659,17 +675,14 @@ test_dispatch_audit_comments_fail_closed() {
 DISPATCH_CLAIM nonce=abc123 runner=runner-a ts=2026-01-01T00:06:00Z max_age_s=600 version=3.32.275 opencode_version=1.0.0 lease_token=abc123 device=device-a session=issue-41 phase=prelaunch expires_at=1760000000
 <!-- ops:end -->
 ${worker_footer}"
-	local terminal_blocker_release="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41
-<!-- aidevops:terminal-blocker-observation revision=aaaaaaaaaaaaaaaaaaaaaaaa blocker=bbbbbbbbbbbbbbbbbbbbbbbb -->
-
-Terminal blocker: reason=missing_files_scope owner=brief-author task=41 attempt=cccccccccccccccccccc.
-Projected state: status:blocked.
-Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body.
-Raw evidence remains in protected worker telemetry.
+	local terminal_blocker_release="" fragment="" reason="" triage="" invalid="" release_prefix=""
+	local dispatch_comments="" input_release=""
+	fragment=$(terminal_release_fixture missing_files_scope)
+	release_prefix="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41"
+	terminal_blocker_release="${release_prefix}${fragment}
 <!-- ops:end -->
 ${worker_footer}"
-	local dispatch_comments=""
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "$dispatch_claim_audit" '.[0] += [{id:4315,node_id:"IC_4315",user:{id:105,node_id:"U_105",login:"external-author",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
@@ -680,13 +693,44 @@ ${worker_footer}"
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "trusted canonical terminal-blocker release preserves approval" issue 41 VERIFIED 0
 
-	# GH#33332: input_required releases are canonical writer output too.
-	local input_release="${terminal_blocker_release/reason=missing_files_scope owner=brief-author/reason=input_required owner=maintainer}"
-	input_release="${input_release/Next action: Add a canonical ### Files Scope (or legacy ## Files Scope) section listing the permitted paths in the issue body./Next action: Supply the specific input named in the protected dossier in the issue brief; a brief or dependency change re-arms dispatch. The recovery supervisor first decides anything AI can resolve within delegated authority.}"
+	for reason in missing_files_scope files_scope_excluded target_code_blocker external_trigger_pending permission_required source_access_blocked push_policy_timeout network_policy_timeout runner_capability_unmet input_required unknown; do
+		fragment=$(terminal_release_fixture "$reason")
+		input_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "writer release $reason preserves approval" issue 41 VERIFIED 0
+	done
+	fragment=$(terminal_release_fixture input_required 'Which region should be used?')
+	input_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
-	assert_verify "trusted canonical input_required release preserves approval" issue 41 VERIFIED 0
+	assert_verify "writer input question preserves approval" issue 41 VERIFIED 0
+
+	triage="pending_work brief=$(printf '%064d' 0) head=$(printf '%040d' 0)"
+	fragment=$(terminal_release_fixture unknown '' "$triage")
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "writer unknown triage preserves approval" issue 41 VERIFIED 0
+
+	for invalid in '<' '@' $'\n'; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "${input_release/Which region should be used?/Which${invalid}region}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "unsafe input question remains content-bound" issue 41 STALE_APPROVAL 4
+	done
+	reset_and_sign issue 41
+	dispatch_comments=$(jq -c --arg body "$input_release" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:105,node_id:"U_105",login:"external",type:"User"},author_association:"CONTRIBUTOR",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "external terminal release remains content-bound" issue 41 STALE_APPROVAL 4
 
 	reset_and_sign issue 41
 	dispatch_comments=$(jq -c --arg body "${input_release/owner=maintainer/owner=human}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
