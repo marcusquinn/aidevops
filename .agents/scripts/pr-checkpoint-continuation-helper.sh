@@ -67,11 +67,14 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # decision, so an unchanged head is a runtime stall under the same retry bounds.
 # GH#36979: a model capability limit also leaves unfinished work, not a
 # completed draft. Continue its exact head under the same ownership/retry guards.
+# GH#38358: `worker_not_launched` means the runtime never started, so the head
+# is unchanged and no worker decided anything. It is a runtime stall, not a
+# reason to wait for the brief owner.
 # Other non-blocked
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_not_launched|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#38131: count non-progress releases toward the original per-PR fuse.
 # A separate total-release ceiling bounds even steadily advancing drafts.
 _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
@@ -1350,13 +1353,32 @@ _PCC_JQ_LAUNCH_DEFS='
 	def claim_event: split(" ")[0] == "DISPATCH_CLAIM";
 	def in_session: field("session") == $session;
 	def launch_lines: [body_lines | select(coordination_line)];
-	def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines;
-		startswith("Dispatching worker") or (ready_event and in_session)));
+	def launch_event: startswith("Dispatching worker") or (ready_event and in_session);
+	def launched_after($c): . as $cm | any($c[]; .id >= $cm.id and any(body_lines; launch_event));
+	# GH#38358: the runtime closes a failed launch with its own
+	# `CLAIM_RELEASED reason=worker_not_launched` in the same session. That
+	# release is transparent only when its whole episode, from the claim it
+	# closes, never reached a launch event.
+	def not_launched_release: is_release and test("(^| )reason=worker_not_launched( |$)");
+	def release_episode_unlaunched($c): . as $cm | episode_start($c; $cm.id) as $start
+		| $start >= 0 and any($c[]; .id == $start and any(body_lines; claim_event and in_session)) and
+		(any($c[]; .id > $start and .id < $cm.id and any(body_lines; launch_event)) | not);
 	def unlaunched_episode($c):
 		$session != "" and (launch_lines | length) > 0 and
-		all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ")) and
+		all(launch_lines[]; (claim_event or startswith("DISPATCH_LEASE ") or not_launched_release) and
 			in_session and (ready_event | not)) and
-		(launched_after($c) | not);
+		(launched_after($c) | not) and
+		((any(launch_lines[]; not_launched_release) | not) or release_episode_unlaunched($c));
+'
+# Stall classification for _pcc_stall_release_evidence; requires both defs
+# above and the $pattern/$capability arguments.
+# shellcheck disable=SC2016 # jq program text, not shell expansion.
+_PCC_JQ_STALL_DEFS='
+	def capability_release: blocked_release and any(body_lines; startswith($capability));
+	def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
+	# GH#38358: a release inside a transparent never-launched episode is
+	# counted once, by $failed_launches, not again as a stall.
+	def counted_stall($c): stall_release and (unlaunched_episode($c) | not);
 '
 
 #######################################
@@ -1423,11 +1445,10 @@ _pcc_stall_release_evidence() {
 	jq -er --arg head_date "$head_date" --arg key "$key" --arg pattern "$_PCC_STALL_RELEASE_PATTERN" \
 		--arg pr_created "$pr_created" --arg alt_key "$alt_key" --arg fuse_key "$fuse_key" \
 		--arg extended "${8:+true}" --argjson commits "$commits" --arg session "$session" \
-		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" "${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}"'
-		def capability_release: blocked_release and any(body_lines; startswith($capability));
-		def stall_release: (release_reason | (length > 0 and test($pattern))) or capability_release;
+		--argjson trusted_logins "$trusted_logins" --arg capability "$_PCC_CAPABILITY_RELEASE_LINE" \
+		"${_PCC_JQ_RELEASE_DEFS}${_PCC_JQ_LAUNCH_DEFS}${_PCC_JQ_STALL_DEFS}"'
 		def count_since($c; $since):
-			[$c[] | select(stall_release and ((.created_at // "") | (try epoch catch 0)) > $since)] as $stalls
+			[$c[] | select(counted_stall($c) and ((.created_at // "") | (try epoch catch 0)) > $since)] as $stalls
 			| ([$stalls[] | select(capability_release | not)] | length) +
 				(if any($stalls[]; capability_release) then 1 else 0 end);
 		def head_attention: (.body // "") | contains($key) or ($alt_key != "" and contains($alt_key));
@@ -1449,7 +1470,7 @@ _pcc_stall_release_evidence() {
 		| (if $pr_created == "" then null else ($pr_created | try epoch catch null) end) as $pr_epoch
 		| [flatten[] | select(trusted_event)]
 		| sort_by(.id) as $c
-		| [$c[] | select(unedited and stall_release and $pr_epoch != null and
+		| [$c[] | select(unedited and counted_stall($c) and $pr_epoch != null and
 			((.created_at // "") | (try epoch catch 0)) > $pr_epoch)] as $releases
 		| ([$releases[] | select(capability_release | not) | . as $r |
 			# Never cross a release/ownership boundary. Renewals of the same

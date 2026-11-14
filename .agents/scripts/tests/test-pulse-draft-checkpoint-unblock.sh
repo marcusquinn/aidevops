@@ -618,6 +618,9 @@ test_status_and_comment_failures() {
 test_release_pattern_tracks_continuation_helper() {
 	local pcc_pattern=""
 	pcc_pattern=$(awk -F "'" '/^_PCC_STALL_RELEASE_PATTERN=/{print $2}' "${SCRIPT_DIR_TEST}/../pr-checkpoint-continuation-helper.sh")
+	# GH#38236: orphaned_terminal_lease is synthesized by the continuation
+	# helper from comment history; no CLAIM_RELEASED ever carries it.
+	pcc_pattern="${pcc_pattern/orphaned_terminal_lease|/}"
 	pcc_pattern="${pcc_pattern/worker_ownership_lost|/}"
 	pcc_pattern="${pcc_pattern/capability_limit|/}"
 	if [[ -n "$pcc_pattern" && "$pcc_pattern" == "$_PDCU_RELEASE_REASON_PATTERN" ]]; then
