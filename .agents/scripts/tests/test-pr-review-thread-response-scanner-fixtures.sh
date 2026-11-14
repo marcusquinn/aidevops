@@ -36,6 +36,11 @@ if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
 	exit 0
 fi
 if [[ "$1" == "api" && "${2:-}" == "user" ]]; then printf '%s\n' "${STUB_GH_LOGIN:-worker-login}"; exit 0; fi
+if [[ "$1" == "issue" && "${2:-}" == "list" ]]; then
+	[[ "${STUB_UPSTREAM_LOOKUP_FAIL:-0}" == "1" ]] && exit 1
+	printf '%s\n' '[]'
+	exit 0
+fi
 if [[ "$1" == "api" && "${2:-}" =~ ^repos/owner/repo/pulls/[0-9]+/reviews\?per_page=100$ ]]; then
 	printf '%s\n' "${STUB_REVIEWS_RESPONSE:-[[]]}"
 	exit 0

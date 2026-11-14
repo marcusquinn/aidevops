@@ -510,7 +510,8 @@ test_dispatch_prompt_requires_contract_v11_remediation_role_and_praise_only_reso
 	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
 	wait_for_headless_log || true
-	if grep -q '^worker_contract_version=11$' "$state_file" 2>/dev/null &&
+	if grep -q '^worker_contract_version=12$' "$state_file" 2>/dev/null &&
+		grep -Fq 'route-upstream owner/repo 1 <thread_id> <owner_repo> <details_file>' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
 		grep -Fq 'For each assigned review thread, classify it as actionable or praise-only' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
 		grep -Fq 'Praise-only means positive feedback or an observation with no requested' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
 		grep -Fq 'Perform one bounded remediation pass' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null &&
@@ -982,9 +983,9 @@ test_dispatch_retries_escalated_previous_worker_contract() {
 	wait_for_headless_log || true
 	if [[ -s "$HEADLESS_LOG" ]] &&
 		grep -q '^attempt_count=1$' "$state_file" 2>/dev/null &&
-		grep -q '^worker_contract_version=11$' "$state_file" 2>/dev/null &&
+		grep -q '^worker_contract_version=12$' "$state_file" 2>/dev/null &&
 		! grep -q '^maintainer_attention=true$' "$state_file" 2>/dev/null &&
-		grep -q 'retrying stale same-fingerprint escalation under worker contract 11 (stored=2)' "$LOGFILE" 2>/dev/null; then
+		grep -q 'retrying stale same-fingerprint escalation under worker contract 12 (stored=2)' "$LOGFILE" 2>/dev/null; then
 		print_result "dispatch retries escalation created under previous worker contract" 0
 	else
 		print_result "dispatch retries escalation created under previous worker contract" 1 \
@@ -1274,6 +1275,114 @@ test_mark_blocked_sanitizes_reason_and_details() {
 		print_result "mark-blocked sanitizes reason and details" 0
 	else
 		print_result "mark-blocked sanitizes reason and details" 1 "state=$(tr '\n' ';' <"$state_file" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+write_upstream_route_fixtures() {
+	mkdir -p "${HOME}/.config/aidevops"
+	cat >"${HOME}/.config/aidevops/repos.json" <<'REPOS_EOF'
+{"initialized_repos":[
+{"slug":"Owner/Repo","pulse":true},
+{"slug":"Org/Starter","pulse":true},
+{"slug":"org/other","pulse":true},
+{"slug":"org/local","pulse":true,"local_only":true},
+{"slug":"org/nopulse","pulse":false}]}
+REPOS_EOF
+	cat >"${TEST_ROOT}/issue-helper.sh" <<'HELPER_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${UPSTREAM_ISSUE_LOG}"
+while [[ "$#" -gt 0 ]]; do
+	case "$1" in
+	--repo) repo="$2"; shift ;;
+	--body-file) cp "$2" "${UPSTREAM_ISSUE_LOG}.body" ;;
+	esac
+	shift
+done
+printf 'https://github.com/%s/issues/77\n' "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
+HELPER_EOF
+	chmod +x "${TEST_ROOT}/issue-helper.sh"
+	export UPSTREAM_ISSUE_LOG="${TEST_ROOT}/upstream-issue.log"
+	export PRRTS_UPSTREAM_ISSUE_HELPER="${TEST_ROOT}/issue-helper.sh"
+	: >"$UPSTREAM_ISSUE_LOG"
+	printf 'Files: core/x.php\nDefect: y\nVerify: z\n' >"${TEST_ROOT}/up-details.txt"
+	return 0
+}
+
+test_route_upstream_refuses_untrusted_targets() {
+	setup_test_env
+	write_upstream_route_fixtures
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	local details="${TEST_ROOT}/up-details.txt" bad=0 target=""
+	for target in unknown/repo owner/repo OWNER/REPO org/local org/nopulse; do
+		if $SCANNER route-upstream owner/repo 1 THREAD1 "$target" "$details" >/dev/null 2>&1; then bad=1; fi
+	done
+	if $SCANNER route-upstream owner/repo 1 NOTASSIGNED org/starter "$details" >/dev/null 2>&1; then bad=1; fi
+	# A thread present only in the full fingerprint must not become routable.
+	printf 'fingerprint=THREAD9:https://example.invalid/thread9\n' >>"${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	if $SCANNER route-upstream owner/repo 1 THREAD9 org/starter "$details" >/dev/null 2>&1; then bad=1; fi
+	if [[ "$bad" -eq 0 && ! -s "$UPSTREAM_ISSUE_LOG" ]]; then
+		print_result "route-upstream refuses unregistered, local, non-pulse, same-repo and unassigned targets" 0
+	else
+		print_result "route-upstream refuses unregistered, local, non-pulse, same-repo and unassigned targets" 1 "bad=${bad}, log=$(<"$UPSTREAM_ISSUE_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_route_upstream_creates_once_and_reuses() {
+	setup_test_env
+	write_upstream_route_fixtures
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	printf 'THREAD1:https://github.com/owner/repo/pull/1#discussion_r123\n' >"${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.assigned-batch"
+	local details="${TEST_ROOT}/up-details.txt" first="" second=""
+	first="$($SCANNER route-upstream owner/repo 1 THREAD1 Org/Starter "$details" 2>/dev/null)" || first=""
+	second="$($SCANNER route-upstream owner/repo 1 THREAD1 org/starter "$details" 2>/dev/null)" || second=""
+	if [[ "$first" == "https://github.com/org/starter/issues/77" && "$second" == "$first" ]] &&
+		[[ "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]] &&
+		grep -Fq -- '--label auto-dispatch,tier:standard,bug' "$UPSTREAM_ISSUE_LOG" &&
+		grep -Fq -- 'Back-link: https://github.com/owner/repo/pull/1#discussion_r123 (owner/repo#1, review thread THREAD1)' "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq 'route-upstream: owner/repo#1 thread=THREAD1 -> Org/Starter#77' "$LOGFILE"; then
+		print_result "route-upstream creates one issue and reuses it on repeat" 0
+	else
+		print_result "route-upstream creates one issue and reuses it on repeat" 1 "first=${first}, second=${second}, log=$(<"$UPSTREAM_ISSUE_LOG"), scanner=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	local other=""
+	other="$($SCANNER route-upstream owner/repo 1 THREAD1 org/other "$details" 2>/dev/null)" || other=""
+	if [[ "$other" == "https://github.com/org/other/issues/77" && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "2" ]]; then
+		print_result "route cache distinguishes owning repositories" 0
+	else
+		print_result "route cache distinguishes owning repositories" 1 "other=${other}"
+	fi
+	export STUB_UPSTREAM_LOOKUP_FAIL=1
+	rm -f "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1-THREAD1-org-other.upstream-route"
+	local rc=0
+	$SCANNER route-upstream owner/repo 1 THREAD1 org/other "$details" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -ne 0 && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "2" ]]; then
+		print_result "route-upstream stops on issue lookup failure without creating a duplicate" 0
+	else
+		print_result "route-upstream stops on issue lookup failure without creating a duplicate" 1 "rc=${rc}"
+	fi
+	unset STUB_UPSTREAM_LOOKUP_FAIL
+	teardown_test_env
+	return 0
+}
+
+test_mark_blocked_refuses_upstream_reasons() {
+	setup_test_env
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state" err="" rc=0
+	err="$($SCANNER mark-blocked owner/repo 1 decision core_file_upstream_fix 2>&1)" || rc=$?
+	if [[ "$rc" -eq 2 && "$err" == *route-upstream* ]] &&
+		! grep -q '^analysis_complete=true$' "$state_file" 2>/dev/null &&
+		$SCANNER mark-blocked owner/repo 1 decision plain_decision >/dev/null 2>&1; then
+		print_result "mark-blocked refuses upstream-ownership reasons with route guidance" 0
+	else
+		print_result "mark-blocked refuses upstream-ownership reasons with route guidance" 1 "rc=${rc}, err=${err}"
 	fi
 	teardown_test_env
 	return 0
