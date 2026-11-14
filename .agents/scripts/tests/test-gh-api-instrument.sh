@@ -808,6 +808,16 @@ assert_eq "field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comment
 	"$(label_row api -H 'Accept: x' 'repos/o/r/issues/9/comments' -f body=private-payload)"
 assert_eq "explicit method wins over fields" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
 	"$(label_row api -X PATCH repos/o/r/issues/3 -F state=closed)"
+assert_eq "shorthand cluster consumes the method operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iX PATCH repos/o/r/issues/42)"
+assert_eq "attached cluster operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iXPATCH repos/o/r/issues/42)"
+assert_eq "cluster field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comments" \
+	"$(label_row api repos/o/r/issues/9/comments -if body=x)"
+assert_eq "missing method operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 --method)"
+assert_eq "missing header operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 -H)"
 assert_eq "root classes" "GET|rate-limit|rate-limit" "$(label_row api rate_limit)"
 assert_eq "user family" "GET|users|user" "$(label_row api user)"
 assert_eq "permission family" "GET|repos-other|repos/:o/:r/collaborators/:u/permission" \

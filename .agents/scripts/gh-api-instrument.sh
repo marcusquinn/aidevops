@@ -891,6 +891,75 @@ gh_run_transport_attempt() {
 	return "$rc"
 }
 
+# --- _gh_static_request_argv api [api-args...] ----------------------------
+# Parse `gh api` argv into the raw method operand, the endpoint and whether
+# fields imply POST (_GH_REQ_ARGV_METHOD/_TARGET/_POST). Returns 1 for shapes
+# the native flag parser rejects (a value flag missing its operand) or that
+# this parser cannot prove, so callers keep the labels unknown.
+_gh_static_request_argv() {
+	_GH_REQ_ARGV_METHOD=""
+	_GH_REQ_ARGV_TARGET=""
+	_GH_REQ_ARGV_POST=0
+	local -a argv=("$@")
+	local arg="" method="" target="" implied_post=0 index=1 count="${#argv[@]}" flag="" operand=""
+	while [[ "$index" -lt "$count" ]]; do
+		arg="${argv[$index]}"
+		index=$((index + 1))
+		case "$arg" in
+		-X | --method)
+			# A value flag without its operand is rejected natively: stay unknown.
+			[[ "$index" -lt "$count" ]] || return 1
+			method="${argv[$index]}"
+			index=$((index + 1))
+			;;
+		--method=*) method="${arg#--method=}" ;;
+		-X?*) method="${arg#-X}" ;;
+		-f | -F | --field | --raw-field | --input)
+			[[ "$index" -lt "$count" ]] || return 1
+			implied_post=1
+			index=$((index + 1))
+			;;
+		--field=* | --raw-field=* | --input=* | -f?* | -F?*) implied_post=1 ;;
+		-H | --header | -q | --jq | -t | --template | --cache | --hostname | -p | --preview)
+			[[ "$index" -lt "$count" ]] || return 1
+			index=$((index + 1))
+			;;
+		-i?*)
+			# Shorthand cluster (e.g. -iX PATCH): boolean -i flags, then at most
+			# one value flag whose operand is the cluster rest or the next arg.
+			flag="${arg#-}"
+			while [[ "$flag" == i* ]]; do flag="${flag#i}"; done
+			[[ -n "$flag" ]] || continue
+			operand="${flag:1}"
+			flag="${flag:0:1}"
+			case "$flag" in
+			X | f | F | H | q | t | p) ;;
+			*) return 1 ;;
+			esac
+			if [[ -z "$operand" ]]; then
+				[[ "$index" -lt "$count" ]] || return 1
+				operand="${argv[$index]}"
+				index=$((index + 1))
+			fi
+			case "$flag" in
+			X) method="$operand" ;;
+			f | F) implied_post=1 ;;
+			esac
+			;;
+		--)
+			[[ -n "$target" ]] || target="${argv[$index]:-}"
+			break
+			;;
+		-*) ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
+	done
+	_GH_REQ_ARGV_METHOD="$method"
+	_GH_REQ_ARGV_TARGET="$target"
+	_GH_REQ_ARGV_POST="$implied_post"
+	return 0
+}
+
 # --- _gh_static_request_labels [gh-args...] -------------------------------
 # Derive the allowlisted method/class/family of one native `gh api` request
 # from its argv, mirroring gh_quota_debug_request.py, without forking. Sets
@@ -903,34 +972,8 @@ _gh_static_request_labels() {
 	_GH_REQ_FAMILY=unknown
 	local subcommand="${1:-}"
 	[[ "$subcommand" == api ]] || return 0
-	local -a argv=("$@")
-	local arg="" method="" target="" implied_post=0 index=1 count="${#argv[@]}"
-	while [[ "$index" -lt "$count" ]]; do
-		arg="${argv[$index]}"
-		index=$((index + 1))
-		case "$arg" in
-		-X | --method)
-			method="${argv[$index]:-}"
-			index=$((index + 1))
-			;;
-		--method=*) method="${arg#--method=}" ;;
-		-X?*) method="${arg#-X}" ;;
-		-f | -F | --field | --raw-field | --input)
-			implied_post=1
-			index=$((index + 1))
-			;;
-		--field=* | --raw-field=* | --input=* | -f?* | -F?*) implied_post=1 ;;
-		-H | --header | -q | --jq | -t | --template | --cache | --hostname | -p | --preview)
-			index=$((index + 1))
-			;;
-		--)
-			[[ -n "$target" ]] || target="${argv[$index]:-}"
-			break
-			;;
-		-*) ;;
-		*) [[ -n "$target" ]] || target="$arg" ;;
-		esac
-	done
+	_gh_static_request_argv "$@" || return 0
+	local method="$_GH_REQ_ARGV_METHOD" target="$_GH_REQ_ARGV_TARGET" implied_post="$_GH_REQ_ARGV_POST"
 	[[ -n "$target" && "$target" != *://* ]] || return 0
 	case "$method" in
 	"")
