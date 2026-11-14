@@ -13,7 +13,7 @@ import hashlib
 import json
 import sys
 
-from pr_checkpoint_events import EVENTS, fields, normalized_attempt, timestamp, trusted
+from pr_checkpoint_events import EVENTS, TRUSTED, fields, normalized_attempt, timestamp, trusted
 
 
 def require(condition):
@@ -62,6 +62,54 @@ def approval_unexpired(comment, now):
         return True
 
 
+def has_line(comment, prefix):
+    return any(line.startswith(prefix) for line in comment["body"].splitlines())
+
+
+def approval_consumed(comments, approval, logins):
+    """Mirror pctl_approval_owns_scheduling in pr-checkpoint-target-lib.sh.
+
+    A claim naming the approval and a later release of that claim, both
+    trusted and positively unedited, consume it. Duplicate fields parse to {}
+    and never match, so ambiguous evidence keeps the approval fencing.
+    """
+    for claim in comments:
+        if claim["id"] <= approval["id"] or not authorizes(claim, logins):
+            continue
+        for claim_line in (line for line in claim["body"].splitlines() if line.startswith("DISPATCH_CLAIM ")):
+            claim_fields = fields(claim_line)
+            if claim_fields.get("checkpoint_approval") != str(approval["id"]):
+                continue
+            nonce = claim_fields.get("nonce", "")
+            for release in comments:
+                if release["id"] <= claim["id"] or not authorizes(release, logins):
+                    continue
+                for line in (ln for ln in release["body"].splitlines() if ln.startswith("CLAIM_RELEASED ")):
+                    event = fields(line)
+                    rel_claim, rel_nonce = event.get("claim_id", ""), event.get("nonce", "")
+                    if event.get("reason") and (rel_claim or (nonce and rel_nonce)) \
+                            and (not rel_claim or rel_claim == str(claim["id"])) \
+                            and (not rel_nonce or (nonce and rel_nonce == nonce)):
+                        return True
+    return False
+
+
+def blocking_approvals(comments, logins, now):
+    """Unexpired approvals that still own scheduling (consumed ones do not)."""
+    approvals = [c for c in comments if has_line(c, "CHECKPOINT_CONTINUATION_APPROVED ")
+                 and approval_unexpired(c, now)]
+    trusted_ids = [c["id"] for c in comments if has_line(c, "CHECKPOINT_CONTINUATION_APPROVED ")
+                   and c.get("author_association") in TRUSTED]
+    latest = max(trusted_ids, default=None)
+    if latest is not None:
+        newest = next(c for c in comments if c["id"] == latest)
+        if approval_unexpired(newest, now) and approval_consumed(comments, newest, logins):
+            # Older trusted approvals are superseded; untrusted ones still fence.
+            return [c for c in approvals if c["id"] != latest
+                    and c.get("author_association") not in TRUSTED]
+    return approvals
+
+
 def own_events(data, comments, claim, claim_fields):
     lease, session = data["lease"], data["session"]
     expiry = int(claim_fields["expires_at"])
@@ -102,8 +150,7 @@ def admission(data):
     # once it is past the 24-hour revision expiry it no longer owns scheduling,
     # so the legacy automatic route may admit again.
     now = data.get("now", dt.datetime.now(dt.timezone.utc).timestamp())
-    require(not any(line.startswith("CHECKPOINT_CONTINUATION_APPROVED ") and approval_unexpired(comment, now)
-                    for comment in comments for line in comment["body"].splitlines()))
+    require(not blocking_approvals(comments, logins, now))
     # Never erase edited or foreign coordination while constructing the view.
     require(all(authorizes(comment, logins) for comment in comments if coordination(comment)))
     owners = [actor["login"] for actor in data["issue"].get("assignees", [])]

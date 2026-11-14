@@ -382,7 +382,14 @@ _PCTL_COORDINATION_JQ_DEFS='
 		($created == null or (now - $created) <= $ttl);
 	def pctl_field($key):
 		[split(" ")[] | select(startswith($key + "=")) | ltrimstr($key + "=")] | if length == 1 then .[0] else "" end;
-	def pctl_unedited: ([.created_at | strings] | length) == 1 and (.updated_at // .created_at) == .created_at;
+	# Duplicated identity fields are ambiguous evidence, never consumption.
+	def pctl_unambiguous:
+		[split(" ")[] | select(contains("=")) | split("=")[0]] | group_by(.) | all(length == 1);
+	# An explicit _release_body_unedited=false (collector saw a possible
+	# same-second body edit) is edited evidence; absent means raw REST input.
+	def pctl_unedited:
+		([.created_at | strings] | length) == 1 and (.updated_at // .created_at) == .created_at and
+		(._release_body_unedited != false);
 	def pctl_approval_owns_scheduling($ttl):
 		(pctl_trusted_comments | sort_by(.created_at, .id)) as $comments |
 		([$comments[] | select((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))] | last) as $approval |
@@ -390,11 +397,11 @@ _PCTL_COORDINATION_JQ_DEFS='
 		elif ($approval | pctl_approval_unexpired($ttl) | not) then false
 		else
 			([ $comments[] | select(.id > $approval.id and pctl_unedited) as $claim |
-			  ($claim.body // "" | split("\n")[] | select(startswith("DISPATCH_CLAIM "))) as $line |
+			  ($claim.body // "" | split("\n")[] | select(startswith("DISPATCH_CLAIM ") and pctl_unambiguous)) as $line |
 			  select(($line | pctl_field("checkpoint_approval")) == ($approval.id | tostring)) |
 			  ($line | pctl_field("nonce")) as $nonce |
 			  $comments[] | select(.id > $claim.id and pctl_unedited) |
-			  (.body // "" | split("\n")[] | select(startswith("CLAIM_RELEASED "))) as $release |
+			  (.body // "" | split("\n")[] | select(startswith("CLAIM_RELEASED ") and pctl_unambiguous)) as $release |
 			  ($release | pctl_field("claim_id")) as $release_claim |
 			  ($release | pctl_field("nonce")) as $release_nonce |
 			  select(($release | pctl_field("reason")) != "" and
