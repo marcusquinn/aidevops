@@ -53,6 +53,9 @@ def git(path: Path, *arguments: str, timeout: int = 60) -> tuple[int, str]:
 # supervisor; framework state, not work. Porcelain status of it when untracked.
 DEFERRED_MARKER = ".agents/.full-loop-cleanup-deferred"
 DEFERRED_MARKER_STATUS = f"?? {DEFERRED_MARKER}"
+# Removal-time compare-and-swap refusal: the evidence fingerprint recorded at
+# judgement no longer matches the tree (GH#38348). Reported unprefixed.
+EVIDENCE_CHANGED = "evidence-changed"
 
 
 def nothing_to_lose(path: Path, *, timeout: int = 60) -> tuple[bool, str]:
@@ -141,7 +144,9 @@ def _removal_blocked(path: Path, verify: Callable[[Path], tuple[bool, str]],
     if reason is not None:
         return "owners-appeared" if reason == "owner-alive" else reason
     clean, detail = verify(path)
-    return None if clean else f"changed-{detail}"
+    if clean:
+        return None
+    return detail if detail == EVIDENCE_CHANGED else f"changed-{detail}"
 
 
 def remove(path: Path, verify: Callable[[Path], tuple[bool, str]],

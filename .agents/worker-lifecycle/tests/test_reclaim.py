@@ -19,10 +19,12 @@ GIT = shutil.which("git")
 if not GIT:
     raise RuntimeError("Git is required for fixture verification")
 
+from worker_lifecycle.reclaim import decision  # noqa: E402
 from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
 from worker_lifecycle.reclaim import host  # noqa: E402
 from worker_lifecycle.reclaim import review  # noqa: E402
 from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
+from worker_lifecycle.storage import LifecycleRegistry  # noqa: E402
 
 SLUG = "fixture/repo"
 ORIGIN = f"git@github.com:{SLUG}.git"
@@ -68,7 +70,9 @@ class RepositoryTests(unittest.TestCase):
         self.assertIsNone(collector.REMOTE_SLUG.search(f"git@gitlab.example:{SLUG}.git"))
 
 
-class EvidenceTests(unittest.TestCase):
+class GitFixture(unittest.TestCase):
+    """A bare origin, a canonical clone and one finished linked worktree."""
+
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="reclaim-fixture-")).resolve()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -100,6 +104,8 @@ class EvidenceTests(unittest.TestCase):
         return collector.evidence(path or self.worktree, owner,
                                   self.finished if cache is None else cache)
 
+
+class EvidenceTests(GitFixture):
     def test_authorizes_finished_clean_and_pushed_worktree(self):
         verdict = self.decide()
         self.assertTrue(verdict["authorized"], verdict)
@@ -181,6 +187,14 @@ class EvidenceTests(unittest.TestCase):
         verdict = self.decide(path=tree, cache=self.OPEN_REVIEW)
         self.assertTrue(verdict["authorized"], verdict)
         self.assertEqual(verdict["reason"], "review-idle")
+
+    def test_dirty_idle_review_tree_is_refused_not_archived(self):
+        # Its PR is still open, so local state is not finished work to preserve.
+        tree = self.worktree_idle("repo-pr9001-review-fixture")
+        (tree / "notes.md").write_text("local\n", encoding="utf-8")
+        verdict = self.decide(path=tree, cache=self.OPEN_REVIEW)
+        self.assertFalse(verdict["finished"], verdict)
+        self.assertEqual(decision.classify(verdict), (decision.REFUSE, "uncommitted-changes"))
 
     def test_refuses_a_recently_active_review_tree(self):
         tree = self.worktree_idle("repo-pr9001-review-fixture", idle=60)
@@ -329,6 +343,164 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(receipt["residual_risk"], "unregistered-processes-unobserved")
         self.assertEqual(receipt["removed"], 0)
         self.assertTrue(self.worktree.exists())
+
+
+class StoreOwner:
+    """A registered-owner check with no live owner, backed by a real registry."""
+
+    def __init__(self, store):
+        self.store = store
+
+    def __call__(self, path):
+        return None
+
+
+class DecisionTests(GitFixture):
+    """Three-way decision, fingerprint CAS and journaled authorization (GH#38348)."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = LifecycleRegistry.initialize(self.root / "state")
+
+    def a_pass(self, *, apply_removal=True, owner=None):
+        return reclaim.Pass(owner=owner if owner is not None else StoreOwner(self.store),
+                            apply_removal=apply_removal,
+                            deadline=time.monotonic() + 120, finished=dict(self.finished))
+
+    def reclaim_events(self):
+        with self.store.connection() as connection:
+            return [row[0] for row in connection.execute(
+                "SELECT json_extract(payload,'$.type') FROM events WHERE "
+                "json_extract(payload,'$.type') LIKE 'reclaim-%' ORDER BY sequence")]
+
+    def test_classifies_remove_archive_and_refuse(self):
+        self.assertEqual(decision.classify(self.decide())[0], decision.REMOVE)
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        self.assertEqual(decision.classify(self.decide()),
+                         (decision.ARCHIVE, "uncommitted-changes"))
+        live = self.decide(owner=owner_reporting("owner-alive"))
+        self.assertEqual(decision.classify(live), (decision.REFUSE, "owner-alive"))
+        open_issue = self.decide(cache={("gh", 4242, SLUG): (False, "issue-4242-open")})
+        self.assertEqual(decision.classify(open_issue)[0], decision.REFUSE)
+
+    def test_unpushed_finished_work_is_archived(self):
+        (self.worktree / "README.md").write_text("changed\n", encoding="utf-8")
+        git(self.worktree, "add", "README.md")
+        git(self.worktree, "commit", "-qm", "fixture: unpushed")
+        self.assertEqual(decision.classify(self.decide()),
+                         (decision.ARCHIVE, "unpushed-commits-1"))
+
+    def test_unreadable_state_is_never_archived(self):
+        for reason in ("status-unreadable", "unpushed-state-unreadable",
+                       "unpushed-commits-0", "unpushed-commits-x"):
+            verdict = {"authorized": False, "finished": True, "reason": reason}
+            self.assertEqual(decision.classify(verdict)[0], decision.REFUSE, reason)
+
+    def test_fingerprint_tracks_head_and_status(self):
+        first = decision.fingerprint(self.worktree)
+        self.assertIsNotNone(first)
+        self.assertEqual(decision.fingerprint(self.worktree), first)
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        self.assertNotEqual(decision.fingerprint(self.worktree), first)
+        self.assertIsNone(decision.fingerprint(self.root / "absent"))
+
+    def move_to_other_pushed_work(self):
+        """Move the worktree's HEAD to different work that is clean and pushed."""
+        (self.canonical / "OTHER.md").write_text("other\n", encoding="utf-8")
+        git(self.canonical, "add", "OTHER.md")
+        git(self.canonical, "commit", "-qm", "fixture: other")
+        # The origin URL is a GitHub-shaped placeholder, so mark the commit as
+        # pushed through the remote-tracking ref rather than a real push.
+        git(self.canonical, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.worktree, "checkout", "-q", "--detach", "origin/main")
+        self.assertEqual(host.nothing_to_lose(self.worktree), (True, "nothing-to-lose"))
+
+    def test_removal_refuses_when_head_moved_to_other_clean_pushed_work(self):
+        digest = decision.fingerprint(self.worktree)
+        self.move_to_other_pushed_work()
+        removed, detail = host.remove(
+            self.worktree, decision.cas_verify(digest, host.nothing_to_lose), no_owner)
+        self.assertFalse(removed)
+        self.assertEqual(detail, "evidence-changed")
+        self.assertTrue(self.worktree.exists())
+
+    def test_head_moved_during_judgement_refuses_removal(self):
+        original = reclaim.evidence
+
+        def moving(*arguments, **options):
+            self.move_to_other_pushed_work()
+            return original(*arguments, **options)
+
+        reclaim.evidence = moving
+        try:
+            receipt = reclaim.new_receipt(self.root, dry_run=False)
+            reclaim.reclaim_one(self.worktree, self.a_pass(), receipt)
+        finally:
+            reclaim.evidence = original
+        self.assertEqual(receipt["results"][0]["removal"], "evidence-changed")
+        self.assertTrue(self.worktree.exists())
+
+    def test_fingerprint_distinguishes_a_recreated_tree(self):
+        digest = decision.fingerprint(self.worktree)
+        aside = self.root / "aside"
+        os.rename(self.worktree, aside)
+        # Copy while the original still exists, so the new directory has its own inode.
+        shutil.copytree(aside, self.worktree, symlinks=True)
+        try:
+            self.assertIsNotNone(decision.fingerprint(self.worktree))
+            self.assertNotEqual(decision.fingerprint(self.worktree), digest)
+        finally:
+            shutil.rmtree(aside)
+
+    def test_fingerprint_stops_when_the_budget_is_spent(self):
+        self.assertIsNone(decision.fingerprint(self.worktree, remaining=lambda: 0))
+
+    def test_dry_run_reports_decisions_and_writes_nothing(self):
+        receipt = reclaim.new_receipt(self.root, dry_run=True)
+        self.assertIsNone(reclaim.reclaim_one(self.worktree, self.a_pass(apply_removal=False),
+                                              receipt))
+        self.assertEqual(receipt["results"][0]["decision"], decision.REMOVE)
+        self.assertEqual(self.reclaim_events(), [])
+        self.assertTrue(self.worktree.exists())
+
+    def test_applied_removal_journals_once_and_replays_idempotently(self):
+        receipt = reclaim.new_receipt(self.root, dry_run=False)
+        reclaim.reclaim_one(self.worktree, self.a_pass(), receipt)
+        verdict = receipt["results"][0]
+        self.assertEqual(verdict["removal"], "removed", verdict)
+        self.assertNotIn("journal", verdict)
+        self.assertFalse(self.worktree.exists())
+        self.assertEqual(self.reclaim_events(), [decision.AUTHORIZED, decision.REMOVED])
+        for kind in (decision.AUTHORIZED, decision.REMOVED):
+            self.assertIsNone(decision.record(self.store, kind, verdict, verdict["fingerprint"]))
+        self.assertEqual(self.reclaim_events(), [decision.AUTHORIZED, decision.REMOVED])
+
+    def test_archive_candidates_are_queued_not_removed_or_journaled(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        receipt = reclaim.new_receipt(self.root, dry_run=False)
+        reclaim.reclaim_one(self.worktree, self.a_pass(), receipt)
+        self.assertEqual((receipt["archive_queued"], receipt["refused"], receipt["removed"]),
+                         (1, 0, 0))
+        self.assertEqual(self.reclaim_events(), [])
+        self.assertTrue(self.worktree.exists())
+
+    def test_removal_refuses_without_a_journal(self):
+        receipt = reclaim.new_receipt(self.root, dry_run=False)
+        reclaim.reclaim_one(self.worktree, self.a_pass(owner=no_owner), receipt)
+        self.assertEqual(receipt["results"][0]["removal"], "journal-unavailable")
+        self.assertEqual(receipt["failed"], 1)
+        self.assertTrue(self.worktree.exists())
+
+    def test_reclaim_events_are_archived_after_retention(self):
+        receipt = reclaim.new_receipt(self.root, dry_run=False)
+        reclaim.reclaim_one(self.worktree, self.a_pass(), receipt)
+        result = self.store.compact(age=0, apply=True)
+        self.assertGreaterEqual(result["archived_events"], 2)
+        self.assertEqual(self.reclaim_events(), [])
+        verdict = receipt["results"][0]
+        # Archived event IDs keep replay idempotent through the digest tombstone.
+        self.assertIsNone(decision.record(self.store, decision.REMOVED, verdict,
+                                          verdict["fingerprint"]))
 
 
 class BatchTests(unittest.TestCase):
