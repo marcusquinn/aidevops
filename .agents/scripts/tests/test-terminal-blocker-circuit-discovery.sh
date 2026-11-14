@@ -542,6 +542,7 @@ test_unclassified_hold_intake() {
 		_tbr_run_stage() { shift; "$@"; return $?; }
 		tbr_seed() { return 0; }
 		tbr_discover() { return 0; }
+		tbr_discover_holds() { return 0; }
 		# Regression guard: no issue write from the stage or the queue pass.
 		set_issue_status() { writes=$((writes + 1)); return 0; }
 		_tbr_post_rearm_receipt() { writes=$((writes + 1)); return 0; }
@@ -629,5 +630,139 @@ _unclassified_lifecycle_checks() {
 	rc=0
 	tbr_discover_unclassified 2>/dev/null || rc=$?
 	[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/unclassified/owner--repo.epoch" ]] || return 1
+	return 0
+}
+
+# GH#38311 fixtures. Listing from "number|updatedAt|labels" specs; events and
+# comments are REST-paginated pages; a comment spec is "id|login|assoc|at|body".
+_holds_listing() {
+	printf '%s\n' "$@" | jq -Rn '[inputs | split("|") |
+		{number: (.[0] | tonumber), updatedAt: .[1],
+		 labels: {nodes: (.[2] | split(",") | map({name: .})), pageInfo: {hasNextPage: false}}}] |
+		[{data: {repository: {issues: {nodes: ., pageInfo: {hasNextPage: false, endCursor: null}}}}}]' \
+		>"${TB_HOLDS_FIXTURE}/listing.json"
+	return 0
+}
+
+_holds_issue() {
+	local issue="$1" labeler="$2" labels="$3"
+	shift 3
+	jq -nc --arg labels "$labels" '{state:"open", title:"Held decision", body:"", updated_at:"2026-02-01T00:00:00Z",
+		labels:($labels | split(",") | map({name: .}))}' >"${TB_HOLDS_FIXTURE}/issue-${issue}.json"
+	jq -nc --arg actor "$labeler" '[[{event:"labeled", label:{name:"hold-for-review"}, actor:{login:$actor},
+		created_at:"2026-01-10T00:00:00Z"}]]' >"${TB_HOLDS_FIXTURE}/events-${issue}.json"
+	printf '%s\n' "$@" | jq -Rn '[[inputs | select(length > 0) | split("|") |
+		{id: (.[0] | tonumber), user: {login: .[1]}, author_association: .[2], created_at: .[3],
+		 body: (.[4] | gsub("\\\\n"; "\n"))}]]' >"${TB_HOLDS_FIXTURE}/comments-${issue}.json"
+	return 0
+}
+
+_holds_gh() {
+	local args="$*" path="${2:-}" issue=""
+	printf '%s\n' "$args" >>"${TB_HOLDS_FIXTURE}/requests"
+	[[ "$path" =~ /issues/([0-9]+) ]] && issue="${BASH_REMATCH[1]}"
+	case "$args" in
+	"api graphql --paginate --slurp -f owner=owner -f name=repo -f label=hold-for-review "*)
+		[[ ! -f "${TB_HOLDS_FIXTURE}/listing.fail" ]] || return 1
+		jq -c . "${TB_HOLDS_FIXTURE}/listing.json"
+		;;
+	"api repos/owner/repo/issues/"*"/events?per_page=100 --paginate --slurp") jq -c . "${TB_HOLDS_FIXTURE}/events-${issue}.json" ;;
+	"api repos/owner/repo/issues/"*"/comments?per_page=100 --paginate --slurp") jq -c . "${TB_HOLDS_FIXTURE}/comments-${issue}.json" ;;
+	"api repos/owner/repo/issues/"*) jq -c . "${TB_HOLDS_FIXTURE}/issue-${issue}.json" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+test_hold_for_review_intake() {
+	local status=0
+	if ! (
+		# shellcheck source=../terminal-blocker-recovery-helper.sh
+		source "${SCRIPT_DIR}/terminal-blocker-recovery-helper.sh"
+		TBR_ROOT="${TEST_ROOT}/holds"
+		TBR_REPOS_JSON="${TEST_ROOT}/holds-repos.json"
+		export TB_HOLDS_FIXTURE="${TEST_ROOT}/holds-fixture" TERMINAL_BLOCKER_SELF_LOGIN=maint
+		mkdir -p "$TB_HOLDS_FIXTURE" || exit 1
+		_tbr_start_budget || exit 1
+		_tbr_init_dirs || exit 1
+		jq -nc '{initialized_repos:[{slug:"owner/repo",pulse:true}]}' >"$TBR_REPOS_JSON"
+		local hold=hold-for-review at="2026-02-01T00:00:00Z" out="" rc=0 issue=""
+		# 70 answered; 71 signed note; 72 claimed (listing drops it); 73 own
+		# unexplained hold; 74 another login's; 75 receipted; 76 note before hold.
+		_holds_listing "70|${at}|${hold}" "71|${at}|${hold}" "72|${at}|${hold},status:claimed" \
+			"73|${at}|${hold}" "74|${at}|${hold}" "75|${at}|${hold}" "76|${at}|${hold}"
+		_holds_issue 70 bot "$hold" "701|maint|OWNER|2026-01-11T00:00:00Z|Go with B."
+		_holds_issue 71 bot "$hold" "711|maint|OWNER|2026-01-11T00:00:00Z|Note\\n<!-- aidevops:sig -->"
+		_holds_issue 72 bot "$hold,status:claimed" "721|maint|OWNER|2026-01-11T00:00:00Z|Go."
+		_holds_issue 73 maint "$hold"
+		_holds_issue 74 other "$hold"
+		_holds_issue 75 bot "$hold" "751|maint|OWNER|2026-01-11T00:00:00Z|Use C." \
+			"752|maint|OWNER|2026-01-12T00:00:00Z|<!-- aidevops:hold-reply:751 -->"
+		_holds_issue 76 bot "$hold" "761|maint|OWNER|2026-01-09T00:00:00Z|Before the hold."
+		gh() { _holds_gh "$@"; return $?; }
+		_tbr_run_stage() { shift; "$@"; return $?; }
+		tbr_discover() { return 0; }
+		# Intake: two entries, the listing filter skips 72 without a read.
+		tbr_discover_holds 2>/dev/null || exit 1
+		[[ "$(jq -r '.intake + " " + (.reply_comment_id | tostring)' "${TBR_ROOT}/queue/owner--repo--70.json")" == "answered_hold 701" ]] || exit 1
+		[[ "$(jq -r .intake "${TBR_ROOT}/queue/owner--repo--73.json")" == unexplained_hold ]] || exit 1
+		[[ "$(find "${TBR_ROOT}/queue" -name '*.json' | wc -l | tr -d ' ')" == 2 ]] || exit 1
+		! rg -q 'issues/72' "${TB_HOLDS_FIXTURE}/requests" || exit 1
+		# A stamped repo is not listed again inside the interval; rearm never
+		# reads or reports hold intakes.
+		: >"${TB_HOLDS_FIXTURE}/requests"
+		tbr_discover_holds 2>/dev/null || exit 1
+		out=$(tbr_main rearm 2>/dev/null) || exit 1
+		[[ -z "$out" && ! -s "${TB_HOLDS_FIXTURE}/requests" ]] || exit 1
+		# The supervisor pass reports both with public evidence only.
+		out=$(_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--70.json" 2>/dev/null) || exit 1
+		jq -e '.intake == "answered_hold" and .reply_comment_id == 701 and .local_excerpts == []' <<<"$out" >/dev/null || exit 1
+		out=$(_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--73.json" 2>/dev/null) || exit 1
+		jq -e '.intake == "unexplained_hold" and (has("reply_comment_id") | not)' <<<"$out" >/dev/null || exit 1
+		_holds_lifecycle_checks || exit 1
+		! rg -q -e '--method' -e '-X (POST|PATCH|DELETE)' -e 'issue (edit|comment)' "${TB_HOLDS_FIXTURE}/requests" || exit 1
+		exit 0
+	); then status=1; fi
+	print_result "hold-for-review replies and unexplained holds are queued for the replying or labelling runner, retired once decided, wake recorded decisions, and never written" "$status"
+	return 0
+}
+
+# Lifecycle for test_hold_for_review_intake; runs inside its subshell.
+_holds_lifecycle_checks() {
+	local hold=hold-for-review rc=0 now="" trusted=""
+	# A decision recorded after queueing retires the entry; the same reply is
+	# not queued again even when the issue changes, a newer reply is.
+	printf '{"wake":"human_decision","recorded_epoch":%s}\n' "$(date +%s)" >"${TBR_ROOT}/decisions/owner--repo--70.json"
+	_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--70.json" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 1 && ! -f "${TBR_ROOT}/queue/owner--repo--70.json" ]] || return 1
+	rm -f "${TBR_ROOT}/holds/owner--repo.epoch"
+	_holds_listing "70|2026-03-01T00:00:00Z|${hold}"
+	tbr_discover_holds 2>/dev/null || return 1
+	[[ ! -f "${TBR_ROOT}/queue/owner--repo--70.json" ]] || return 1
+	rm -f "${TBR_ROOT}/holds/owner--repo.epoch"
+	_holds_listing "70|2026-03-02T00:00:00Z|${hold}"
+	_holds_issue 70 bot "$hold" "701|maint|OWNER|2026-01-11T00:00:00Z|Go with B." "702|maint|OWNER|2026-03-02T00:00:00Z|Actually C."
+	tbr_discover_holds 2>/dev/null || return 1
+	[[ "$(jq -r .reply_comment_id "${TBR_ROOT}/queue/owner--repo--70.json")" == 702 ]] || return 1
+	# Losing the hold label, or gaining a trust-gate label, retires the entry.
+	_holds_issue 73 maint status:available
+	rc=0
+	_tbr_check_entry "${TBR_ROOT}/queue/owner--repo--73.json" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 1 && ! -f "${TBR_ROOT}/queue/owner--repo--73.json" ]] || return 1
+	# A maintainer reply newer than a human_decision ends its suppression;
+	# a signed or older comment does not.
+	now=$(date +%s)
+	printf '{"wake":"human_decision","recorded_epoch":%s}\n' "$((now - 60))" >"${TBR_ROOT}/decisions/owner--repo--99.json"
+	trusted=$(jq -nc --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[{id:1,author:"maint",author_association:"OWNER",created_at:$at,body:"Use B."}]')
+	_tbr_decision_active owner--repo--99 "$trusted" && return 1
+	trusted=$(jq -c '.[0].body = "Done\n<!-- aidevops:sig -->"' <<<"$trusted")
+	_tbr_decision_active owner--repo--99 "$trusted" || return 1
+	_tbr_decision_active owner--repo--99 || return 1
+	# A failed listing is incomplete and leaves the repo unstamped.
+	rm -f "${TBR_ROOT}/holds/owner--repo.epoch"
+	: >"${TB_HOLDS_FIXTURE}/listing.fail"
+	rc=0
+	tbr_discover_holds 2>/dev/null || rc=$?
+	[[ "$rc" -eq 2 && ! -f "${TBR_ROOT}/holds/owner--repo.epoch" ]] || return 1
 	return 0
 }
