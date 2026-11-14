@@ -180,21 +180,24 @@ def _unfinished(path: Path, found: list[tuple[str, int]],
     match = idle_shape(path.name, query.slug)
     shape, own = match if match else (None, None)
     if shape is not None and shape.kind is None:
-        if not found and still_idle(path, shape.seconds):
-            return None, shape.reason
-        return "reference-unknown", ""
-    judged = found if shape is None or shape.kind is None or own is None \
-        else [(shape.kind, own)]
+        quiet = not found and still_idle(path, shape.seconds)
+        return (None, shape.reason) if quiet else ("reference-unknown", "")
+    judged = [(shape.kind, own)] if shape is not None and own is not None else found
     for kind, number in judged:
         finished, detail = reference_finished(kind, number, query)
-        if finished:
-            continue
-        noun = "issue" if kind == "gh" else "pr"
-        if shape is not None and detail == f"{noun}-{own}-open" \
-                and still_idle(path, shape.seconds):
-            return None, shape.reason
-        return detail, ""
+        if not finished:
+            return _open_reference(path, shape, (kind, number), detail)
     return None, "work-finished"
+
+
+def _open_reference(path: Path, shape, ref: tuple[str, int],
+                    detail: str) -> tuple[str | None, str]:
+    """An open reference blocks, unless its idle shape has been quiet long enough."""
+    noun = "issue" if ref[0] == "gh" else "pr"
+    if shape is not None and detail == f"{noun}-{ref[1]}-open" \
+            and still_idle(path, shape.seconds):
+        return None, shape.reason
+    return detail, ""
 
 
 def _unsafe_to_remove(path: Path, owner: OwnerCheck, timeout: int) -> str | None:
