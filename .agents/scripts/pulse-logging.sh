@@ -791,11 +791,21 @@ _pulse_cycle_index_wall_seconds() {
 # events of the pulse_dispatch_cycle_budget_skipped stats counter stamped at
 # or after PULSE_START_EPOCH. 0 when the stats file or start epoch is unknown.
 _pulse_cycle_index_budget_skips() {
+	_pulse_cycle_counter_events "$PULSE_CYCLE_INDEX_BUDGET_SKIP_COUNTER"
+	return 0
+}
+
+# Events of one pulse-stats counter stamped at or after PULSE_START_EPOCH.
+# Dispatch runs in command substitutions, so per-cycle dispatch telemetry is
+# read back from the stats file. 0 when the stats file or start is unknown.
+# Args: $1=counter name
+_pulse_cycle_counter_events() {
+	local counter_name="$1"
 	local start_epoch="${PULSE_START_EPOCH:-}"
 	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
 	local count=0
 	if [[ "$start_epoch" =~ ^[0-9]+$ && "$start_epoch" -gt 0 && -n "$stats_file" && -f "$stats_file" ]]; then
-		count=$(jq -r --arg name "$PULSE_CYCLE_INDEX_BUDGET_SKIP_COUNTER" --argjson since "$start_epoch" \
+		count=$(jq -r --arg name "$counter_name" --argjson since "$start_epoch" \
 			'[(.counters[$name] // [])[] | numbers | select(. >= $since)] | length' \
 			"$stats_file" 2>/dev/null) || count=0
 	fi
@@ -1132,6 +1142,7 @@ write_pulse_health_file() {
   "prefetch_conditional_misses": ${_PULSE_HEALTH_CONDITIONAL_MISSES:-0},
   "prefetch_throttled": ${_PULSE_HEALTH_PREFETCH_THROTTLED:-0},
   "idle_cycle_skipped": ${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0},
+  "first_wave_new_arrival_lead": $(_pulse_cycle_counter_events "first_wave_new_arrival_lead"),
   ${auth_error_alert_json}
   "cycle_state": ${cycle_state_json}
 }

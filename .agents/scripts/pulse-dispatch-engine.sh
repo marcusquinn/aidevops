@@ -249,10 +249,28 @@ _append_ranked_repo_candidates() {
 #######################################
 _dispatch_first_wave_advance_cursor() {
 	local slug="$1" cursor_dir="${HOME}/.aidevops/cache" temporary=""
+	local name="${2:-pulse-first-wave-cursor}"
 	mkdir -p "$cursor_dir" 2>/dev/null || return 0
-	temporary=$(mktemp "${cursor_dir}/pulse-first-wave-cursor.XXXXXX") || return 0
+	temporary=$(mktemp "${cursor_dir}/${name}.XXXXXX") || return 0
 	printf '%s\n' "$slug" >"$temporary"
-	mv -f "$temporary" "${cursor_dir}/pulse-first-wave-cursor" 2>/dev/null || rm -f "$temporary"
+	mv -f "$temporary" "${cursor_dir}/${name}" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
+# GH#33647/GH#34331: rotate the first-wave cursor past every polled
+# repository, even if its candidates later fail live dispatch gates, so one
+# repository's backlog cannot monopolize every first wave. Lead repositories
+# (GH#38022/GH#38200) were polled out of rotation order; they leave the
+# cursor where the plain rotation reached. Args: slug, lead field.
+_dispatch_first_wave_note_polled() {
+	local slug="$1" lead="${2:-}"
+	case "$lead" in
+	"") _dispatch_first_wave_advance_cursor "$slug" ;;
+	arrival:*)
+		echo "[pulse-wrapper] First-wave new-arrival lead: repo=${slug} launchable=${lead#arrival:} (GH#38200)" >>"$LOGFILE"
+		_dispatch_stats_increment "first_wave_new_arrival_lead"
+		;;
+	esac
 	return 0
 }
 
@@ -316,12 +334,18 @@ _dispatch_first_wave_enumeration_done() {
 }
 
 # Emit managed repository rows, optionally rotated after a first-wave cursor.
+# A first wave leads with repositories holding prefetch-visible new arrivals
+# (GH#38200), then those with unattempted snapshot backlog (GH#38022); the
+# eighth field names the lead ("arrival:<count>", "backlog" or empty).
 _dispatch_repository_rows() {
-	local cursor="$1" backlog=""
+	local cursor="$1" backlog="" arrivals=""
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
 		backlog=$(_dispatch_first_wave_backlog_repos)
+		if declare -F _dispatch_first_wave_arrival_repos >/dev/null 2>&1; then
+			arrivals=$(_dispatch_first_wave_arrival_repos)
+		fi
 	fi
-	jq -r --arg cursor "$cursor" --arg backlog "$backlog" '
+	jq -r --arg cursor "$cursor" --arg backlog "$backlog" --arg arrivals "$arrivals" '
 		def pulse_hour_start:
 			if (.pulse_hours | type) == "array" then .pulse_hours[0]
 			else .pulse_hours.start
@@ -335,9 +359,18 @@ _dispatch_repository_rows() {
 		($repos | map(.slug) | index($cursor)) as $index |
 		(if $index == null then $repos else $repos[$index + 1:] + $repos[:$index + 1] end) as $rotated |
 		($backlog | split("\n")) as $known |
-		# Stable partition preserves cursor fairness for unknown/attempted work.
-		(($rotated | map(select(.slug as $s | $known | index($s)))) +
-		 ($rotated | map(select(.slug as $s | $known | index($s) | not))))[] |
+		($arrivals | split("\n") | map(select(length > 0) | split("\t") |
+			{key: .[0], value: ("arrival:" + (.[1] // "0"))}) | from_entries) as $arrived |
+		($rotated | map(.slug as $s | {repo: ., lead: ($arrived[$s] //
+			(if ($known | index($s)) != null then "backlog" else "" end))})) as $marked |
+		# Stable partitions preserve cursor fairness for repositories without
+		# known or newly arrived launchable work (GH#33647). Arrivals come
+		# first: a short remainder that triggered their re-census is merged
+		# back without rescanning its repositories (GH#38200).
+		(($marked | map(select(.lead | startswith("arrival:")))) +
+		 ($marked | map(select(.lead == "backlog"))) +
+		 ($marked | map(select(.lead == ""))))[] |
+		.lead as $lead | .repo |
 		[
 			.slug,
 			.path,
@@ -345,9 +378,56 @@ _dispatch_repository_rows() {
 			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
 			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
 			(.pulse_expires // ""),
-			(.pulse_interval // "")
+			(.pulse_interval // ""),
+			$lead
 		] | join("|")
 	' "$REPOS_JSON" 2>/dev/null || return 1
+	return 0
+}
+
+# GH#38226: cap a repository's whole enumeration tree, not just individual
+# API calls. Follow _gh_run_bounded_function's portable process-group cleanup
+# pattern so a timed-out child cannot retain the command-substitution pipe.
+# Args: budget seconds, then the candidate adapter's arguments.
+_dispatch_enumerate_repo_bounded() {
+	local seconds="$1"
+	shift
+	local monitor_was_enabled=false pid="" process_group="" remaining=0 rc=0
+	[[ $- != *m* ]] || monitor_was_enabled=true
+	set -m
+	(
+		set +m
+		pulse_campaign_shadow_candidates_json "$@"
+	) &
+	pid=$!
+	process_group="-${pid}"
+	$monitor_was_enabled && set -m || set +m
+	remaining=$((seconds * 2))
+	# A completed adapter may leave a descendant holding stdout open.
+	while kill -0 -- "$process_group" 2>/dev/null; do
+		if ((remaining <= 0)); then
+			kill -TERM -- "$process_group" 2>/dev/null || true
+			sleep 0.2
+			kill -KILL -- "$process_group" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 0.5
+		remaining=$((remaining - 1))
+	done
+	wait "$pid" 2>/dev/null || rc=$?
+	return "$rc"
+}
+
+# Total budget applies even to an empty census. Full rounds rotate separately
+# from first waves, preventing a slow registry prefix from starving its tail.
+_dispatch_census_deadline() {
+	local budget="${PULSE_CENSUS_ENUMERATION_BUDGET_S:-180}" first="${PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S:-180}"
+	[[ "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || budget=180
+	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$first" =~ ^[0-9]{1,5}$ ]] && ((10#$first > 0 && 10#$first < budget)); then
+		budget=$((10#$first))
+	fi
+	printf '%s\n' "$(($(_dispatch_first_wave_now_s) + budget))"
 	return 0
 }
 
@@ -370,12 +450,15 @@ build_ranked_dispatch_candidates_json() {
 
 	local tmp_candidates completeness_file product_complete=true scan_failed=0
 	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
+	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 repo_rc=0
+	[[ "$repo_budget" =~ ^[1-9][0-9]{0,2}$ ]] || repo_budget=15
+	deadline=$(_dispatch_census_deadline)
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
 		first_wave_bounds=$(_dispatch_first_wave_bounds)
-		if [[ -f "$cursor_file" && ! -L "$cursor_file" ]]; then
-			IFS= read -r cursor <"$cursor_file" || cursor=""
-		fi
+	else
+		cursor_file="${HOME}/.aidevops/cache/pulse-census-cursor"
 	fi
+	cursor=$(_dispatch_read_census_cursor "$cursor_file")
 	tmp_candidates=$(mktemp) || return 1
 	completeness_file=$(mktemp) || {
 		rm -f "$tmp_candidates"
@@ -383,8 +466,14 @@ build_ranked_dispatch_candidates_json() {
 	}
 	: >"$tmp_candidates"
 
-	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do
+	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval repo_lead; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		remaining=$((deadline - $(_dispatch_first_wave_now_s)))
+		if ((remaining <= 0)); then
+			echo "[pulse-wrapper] Candidate census deadline reached; retaining partial candidates and rotation cursor (GH#38226)" >>"$LOGFILE"
+			product_complete=false
+			break
+		fi
 		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
 		if [[ -n "$first_wave_bounds" && -s "$tmp_candidates" ]] &&
 			_dispatch_first_wave_enumeration_done "$tmp_candidates" "$first_wave_bounds"; then
@@ -400,17 +489,19 @@ build_ranked_dispatch_candidates_json() {
 		fi
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
-		# GH#33647/GH#34331: rotate the first-wave cursor past every polled
-		# repository, even if its candidates later fail live dispatch gates,
-		# so one repository's backlog cannot monopolize every first wave.
-		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug"
+		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_note_polled "$repo_slug" "$repo_lead"
+		[[ -n "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug" pulse-census-cursor
 		local repo_candidates_json
 		printf '0\n' >"$completeness_file"
-		repo_candidates_json=$(pulse_campaign_shadow_candidates_json "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || {
+		((remaining >= repo_budget)) || repo_budget="$remaining"
+		repo_rc=0
+		repo_candidates_json=$(_dispatch_enumerate_repo_bounded "$repo_budget" "$repo_slug" "$repo_path" "$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
+		if ((repo_rc != 0)); then
+			echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${repo_rc} budget=${repo_budget}s (GH#38226)" >>"$LOGFILE"
 			repo_candidates_json='[]'
 			scan_failed=1
 			[[ "$repo_priority" != product ]] || product_complete=false
-		}
+		fi
 		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
 			product_complete=false
 		fi
@@ -426,9 +517,7 @@ build_ranked_dispatch_candidates_json() {
 
 		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
 			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-		# GH#33647: the first wave needs launchable work, not a global census;
-		# the loop-top check (GH#34331) leaves later repositories for the normal
-		# refill. Never claim complete product discovery from a partial snapshot.
+		# GH#33647/GH#34331: partial waves never imply complete product discovery.
 		[[ -z "$first_wave_bounds" ]] || product_complete=false
 	done < <(_dispatch_repository_rows "$cursor")
 
@@ -439,15 +528,7 @@ build_ranked_dispatch_candidates_json() {
 		return $?
 	fi
 
-	jq -cs --argjson product_complete "$product_complete" 'map(. + {product_discovery_complete:$product_complete}) | sort_by([
-		-(.priority_rank // 0),
-		-.score,
-		(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
-		(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
-		(.repo_slug // ""),
-		(.number // 0)
-	])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
-	rm -f "$tmp_candidates" "$completeness_file"
+	_dispatch_finish_ranked_census "$tmp_candidates" "$completeness_file" "$product_complete"
 	return 0
 }
 

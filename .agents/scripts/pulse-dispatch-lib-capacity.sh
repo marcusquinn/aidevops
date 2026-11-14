@@ -10,6 +10,33 @@ _DISPATCH_UNCLASSIFIED_SIGNAL="unclassified_signal"
 # bundle writes the same candidate snapshot format.
 _DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA="aidevops.pulse-dispatch-candidates/v1"
 
+# Read either census cursor without following an untrusted symlink.
+_dispatch_read_census_cursor() {
+	local file="$1" cursor=""
+	if [[ -f "$file" && ! -L "$file" ]]; then
+		IFS= read -r cursor <"$file" || cursor=""
+	fi
+	printf '%s\n' "$cursor"
+	return 0
+}
+
+# Finish a collected census using the existing cross-repository rank order.
+_dispatch_finish_ranked_census() {
+	local candidates="$1" completeness="$2" product_complete="$3"
+	jq -cs --argjson product_complete "$product_complete" '
+		def rank_date: select(. != "") // "9999-12-31T23:59:59Z";
+		map(. + {product_discovery_complete:$product_complete}) | sort_by([
+		-(.priority_rank // 0),
+		-.score,
+		(.createdAt | rank_date),
+		(.updatedAt | rank_date),
+		(.repo_slug // ""),
+		(.number // 0)
+	])' "$candidates" 2>/dev/null || printf '[]\n'
+	rm -f "$candidates" "$completeness"
+	return 0
+}
+
 _dispatch_cycle_cache_path() {
 	local kind="$1"
 	local suffix="${2:-}"
@@ -304,6 +331,140 @@ _dispatch_snapshot_runnable_count() {
 	return 0
 }
 
+# GH#38200: every [repo_slug, number] key fresh first-wave snapshots hold, as
+# candidates or in their attempt ledgers, as one JSON array (fails open: []).
+_dispatch_first_wave_snapshot_keys() {
+	local _PULSE_FIRST_DISPATCH_WAVE=1
+	local mode=""
+	local snapshot=""
+	local now_epoch="" snapshot_ttl=300
+	now_epoch=$(date +%s) || { printf '[]\n'; return 0; }
+	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		snapshot_ttl=$(_dispatch_enumeration_expected_seconds)
+	fi
+	for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
+		snapshot=$(_dispatch_candidate_snapshot_path "${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}" "$mode") || continue
+		_dispatch_candidate_snapshot_is_fresh "$snapshot" "$now_epoch" "$snapshot_ttl" || continue
+		jq -c '.candidates[]? | [.repo_slug, .number]' "$snapshot" 2>/dev/null || true
+		if [[ -f "${snapshot}.consumed" && ! -L "${snapshot}.consumed" ]]; then
+			jq -c 'arrays' "${snapshot}.consumed" 2>/dev/null || true
+		fi
+	done | jq -sc 'map(select(type == "array" and length == 2)) | unique' 2>/dev/null || printf '[]\n'
+	return 0
+}
+
+# GH#38200: zero-API lead hint for work that arrived after the census last
+# polled a repository, e.g. new issues or phases unblocked by a closed core.
+# Reads only state this runner already holds: the issue prefetch cache
+# (_prefetch_repo_issues -> PULSE_PREFETCH_CACHE_FILE), the census poll stamps
+# (update_repo_pulse_timestamp) and the attempt-recency stamps. Emits
+# "<slug>\t<count>" per repository whose prefetch entry is younger than
+# PULSE_FIRST_WAVE_ARRIVAL_HINT_MAX_AGE_S (default 1800; 0 disables), newer
+# than its last census poll, and lists open, unassigned auto-dispatch +
+# status:available issues with no recency stamp that the first-wave snapshot
+# and its attempt ledger do not already hold. Ordering hint only: schedules,
+# intervals and every live dispatch gate remain binding.
+_dispatch_first_wave_arrival_repos() {
+	local cache_file="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}"
+	local polled_file="${PULSE_LAST_PER_REPO_FILE:-${HOME}/.aidevops/logs/pulse-last-per-repo.json}"
+	local max_age="${PULSE_FIRST_WAVE_ARRIVAL_HINT_MAX_AGE_S:-1800}" now="" stamps="" polled="{}" known="[]"
+	[[ "$max_age" =~ ^[0-9]{1,6}$ ]] || max_age=1800
+	max_age=$((10#$max_age))
+	((max_age > 0)) || return 0
+	[[ -f "$cache_file" && ! -L "$cache_file" ]] || return 0
+	now=$(date +%s) || return 0
+	if declare -F _dispatch_attempt_recency_stamps >/dev/null 2>&1 &&
+		((${_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS:-0} > 0)); then
+		stamps=$(_dispatch_attempt_recency_stamps "$(_dispatch_attempt_recency_dir)" "$now")
+	fi
+	if [[ -f "$polled_file" && ! -L "$polled_file" ]]; then
+		polled=$(jq -c '(.last_pulsed // {}) | objects' "$polled_file" 2>/dev/null) || polled="{}"
+		[[ -n "$polled" ]] || polled="{}"
+	fi
+	known=$(_dispatch_first_wave_snapshot_keys)
+	[[ -n "$known" ]] || known="[]"
+	jq -r --argjson now "$now" --argjson max_age "$max_age" --arg stamps "$stamps" \
+		--argjson polled "$polled" --argjson known "$known" '
+		($stamps | split("\n") | map(select(length > 0) | {key: split("\t")[0], value: true}) | from_entries) as $attempted |
+		($known | map({key: "\(.[0])#\(.[1])", value: true}) | from_entries) as $held |
+		objects | to_entries[] | .key as $slug | (.value | objects) as $entry |
+		(($entry.last_prefetch // null) | if type == "string" then (try fromdateiso8601 catch null) else null end) as $at |
+		select($at != null and $at <= $now and ($now - $at) < $max_age) |
+		select((($polled[$slug] // 0) | [numbers][0] // 0) < $at) |
+		[($entry.issues // [])[]? | objects |
+			select(((.state // "open") | ascii_downcase) == "open") |
+			select(((.assignees // []) | length) == 0) |
+			select([(.labels // [])[]? | ((objects | .name) // .)] |
+				index("auto-dispatch") != null and index("status:available") != null) |
+			select($attempted["\($slug | sub("/"; "--"))--\(.number)"] == null) |
+			select($held["\($slug)#\(.number)"] == null)
+		] | length | select(. > 0) | "\($slug)\t\(.)"
+	' "$cache_file" 2>/dev/null || true
+	return 0
+}
+
+# GH#38200: count hinted arrival repositories a census may poll right now.
+# A schedule-off or interval-throttled repository is never polled, so its hint
+# would otherwise force a re-census on every round without clearing.
+# Args: $1=arrival hint lines ("<slug>\t<count>")
+_dispatch_first_wave_pollable_arrivals() {
+	local arrivals="$1" slugs="" eligible=0 slug="" path="" priority="" start="" end="" expires="" interval="" lead=""
+	local _PULSE_FIRST_DISPATCH_WAVE=0
+	slugs=$'\n'$(printf '%s\n' "$arrivals" | cut -f1)$'\n'
+	while IFS='|' read -r slug path priority start end expires interval lead; do
+		[[ -n "$slug" && "$slugs" == *$'\n'"$slug"$'\n'* ]] || continue
+		if declare -F check_repo_pulse_schedule >/dev/null 2>&1; then
+			check_repo_pulse_schedule "$slug" "$start" "$end" "$expires" "$REPOS_JSON" || continue
+		fi
+		if declare -F check_repo_pulse_interval >/dev/null 2>&1; then
+			check_repo_pulse_interval "$slug" "$interval" || continue
+		fi
+		eligible=$((eligible + 1))
+	done < <(_dispatch_repository_rows "")
+	printf '%s\n' "$eligible"
+	return 0
+}
+
+# GH#38200: return 0 when a fresh first-wave remainder cannot fill the free
+# slots while the arrival hint names pollable repositories with launchable
+# issues the snapshot does not hold, so the wave re-enumerates them first.
+# Each re-census polls those repositories, which clears their hint until the
+# next prefetch, so the refresh cannot repeat without new evidence.
+# Args: $1=unconsumed remainder JSON array
+_dispatch_first_wave_remainder_short() {
+	local remainder="$1" target="${_PULSE_FIRST_WAVE_CANDIDATE_TARGET:-1}" count=0 arrivals="" pollable=0
+	[[ "$target" =~ ^[1-9][0-9]{0,3}$ ]] || target=1
+	count=$(jq 'length' <<<"$remainder" 2>/dev/null) || return 1
+	[[ "$count" =~ ^[0-9]+$ ]] && ((count < target)) || return 1
+	[[ -f "${REPOS_JSON:-}" ]] || return 1
+	arrivals=$(_dispatch_first_wave_arrival_repos)
+	[[ -n "$arrivals" ]] || return 1
+	pollable=$(_dispatch_first_wave_pollable_arrivals "$arrivals")
+	[[ "$pollable" =~ ^[0-9]+$ ]] && ((pollable > 0)) || return 1
+	echo "[pulse-wrapper] First-wave snapshot remainder=${count} below target=${target} while new arrivals wait in ${pollable} repositories; re-enumerating them first (GH#38200)" >>"$LOGFILE"
+	_dispatch_stats_increment "first_wave_new_arrival_refresh"
+	return 0
+}
+
+# GH#38200: keep a short first-wave remainder durable across the re-census it
+# triggered: append its candidates the new census did not return, then rank.
+# Args: $1=new census JSON array $2=remainder JSON array
+_dispatch_merge_first_wave_remainder() {
+	local candidates="$1" remainder="$2"
+	jq -c --argjson remainder "$remainder" '
+		(map("\(.repo_slug)#\(.number)")) as $seen |
+		(. + ($remainder | map(select(("\(.repo_slug)#\(.number)") as $key | $seen | index($key) | not)))) |
+		sort_by([
+			-(.priority_rank // 0),
+			-(.score // 0),
+			(if (.createdAt // "") == "" then "9999-12-31T23:59:59Z" else .createdAt end),
+			(if (.updatedAt // "") == "" then "9999-12-31T23:59:59Z" else .updatedAt end),
+			(.repo_slug // ""),
+			(.number // 0)
+		])' <<<"$candidates"
+	return $?
+}
+
 _dispatch_filter_consumed_ranked_candidates() {
 	local snapshot="$1" candidates="$2" consumed="[]"
 	if [[ -f "${snapshot}.consumed" && ! -L "${snapshot}.consumed" ]]; then
@@ -317,11 +478,11 @@ _dispatch_filter_consumed_ranked_candidates() {
 # and schedules before reuse. Interval throttling applies to API polling, not
 # to attempting already-enumerated work. No network census is needed here.
 _dispatch_filter_partial_snapshot_candidates() {
-	local candidates="$1" allowed="" slug="" path="" priority="" start="" end="" expires="" interval=""
+	local candidates="$1" allowed="" slug="" path="" priority="" start="" end="" expires="" interval="" lead=""
 	local _PULSE_FIRST_DISPATCH_WAVE=0
 	[[ -f "${REPOS_JSON:-}" ]] || { printf '[]\n'; return 0; }
 	allowed=$(
-		while IFS='|' read -r slug path priority start end expires interval; do
+		while IFS='|' read -r slug path priority start end expires interval lead; do
 			check_repo_pulse_schedule "$slug" "$start" "$end" "$expires" "$REPOS_JSON" || continue
 			jq -nc --arg slug "$slug" --arg path "$path" '{repo_slug:$slug,repo_path:$path}'
 		done < <(_dispatch_repository_rows "")
@@ -336,6 +497,7 @@ _dispatch_ranked_candidates_json() {
 	local dependency_normalization_mode="${2:-normalize}"
 	local snapshot_file="" snapshot_tmp="" candidates_json="[]"
 	local now_epoch="" snapshot_ttl=300 started_epoch=0 snapshot_fresh=0
+	local first_wave_remainder="" enumerated_epoch=0
 	now_epoch=$(date +%s) || return 1
 	started_epoch="$now_epoch"
 	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
@@ -363,7 +525,12 @@ _dispatch_ranked_candidates_json() {
 		if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]]; then
 			candidates_json=$(_dispatch_filter_partial_snapshot_candidates "$candidates_json") || return 1
 		fi
-		if [[ "$candidates_json" != '[]' ]]; then
+		# GH#38200: a first-wave remainder that cannot fill the free slots is
+		# stale while launchable arrivals wait outside it; re-enumerate.
+		if [[ "$candidates_json" != '[]' && "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 ]] &&
+			_dispatch_first_wave_remainder_short "$candidates_json"; then
+			first_wave_remainder="$candidates_json"
+		elif [[ "$candidates_json" != '[]' ]]; then
 			printf '%s\n' "$candidates_json"
 			_dispatch_stats_increment "dispatch_candidate_snapshot_hit"
 			return 0
@@ -375,9 +542,19 @@ _dispatch_ranked_candidates_json() {
 			return $?
 		}
 	fi
-	candidates_json=$(build_ranked_dispatch_candidates_json "$per_repo_limit" "$dependency_normalization_mode") || return 1
+	if ! candidates_json=$(build_ranked_dispatch_candidates_json "$per_repo_limit" "$dependency_normalization_mode"); then
+		# An unavailable arrival census must not suppress fresh known work.
+		[[ -n "$first_wave_remainder" ]] || return 1
+		now_epoch=$(date +%s) || return 1
+		_dispatch_candidate_snapshot_is_fresh "$snapshot_file" "$now_epoch" "$snapshot_ttl" || return 1
+		printf '%s\n' "$first_wave_remainder"
+		return 0
+	fi
 	if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$candidates_json"; then
 		return 1
+	fi
+	if [[ -n "$first_wave_remainder" ]]; then
+		candidates_json=$(_dispatch_merge_first_wave_remainder "$candidates_json" "$first_wave_remainder") || return 1
 	fi
 	# TTL starts at completion, not at the beginning of an expensive census.
 	# Keep same-census attempts across exhaustion/refills, but let expired
@@ -386,9 +563,11 @@ _dispatch_ranked_candidates_json() {
 		rm -f "${snapshot_file}.consumed" 2>/dev/null || return 1
 	fi
 	now_epoch=$(date +%s) || return 1
+	enumerated_epoch="$now_epoch"
 	((now_epoch - started_epoch <= snapshot_ttl)) || snapshot_ttl=$((now_epoch - started_epoch))
 	# Exhaustion must not perpetually renew the durable attempt ledger's TTL,
 	# nor end an adopted handoff's window early (GH#38210).
+	# enumerated_at dates the real scan independently of that retained window.
 	local carried="{}"
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 1 ]]; then
 		now_epoch=$(jq -r '.captured_at' "$snapshot_file") || return 1
@@ -396,8 +575,8 @@ _dispatch_ranked_candidates_json() {
 	fi
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured_at "$now_epoch" \
-		--argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" --argjson carried "$carried" \
-		'{schema:$schema,captured_at:$captured_at,census_seconds:$census_seconds,candidates:$candidates} + $carried' >"$snapshot_tmp") 2>/dev/null; then
+		--argjson enumerated_at "$enumerated_epoch" --argjson census_seconds "$snapshot_ttl" --argjson candidates "$candidates_json" --argjson carried "$carried" \
+		'{schema:$schema,captured_at:$captured_at,enumerated_at:$enumerated_at,census_seconds:$census_seconds,candidates:$candidates} + $carried' >"$snapshot_tmp") 2>/dev/null; then
 		mv "$snapshot_tmp" "$snapshot_file" 2>/dev/null || rm -f "$snapshot_tmp" 2>/dev/null || true
 	elif [[ -n "$snapshot_tmp" ]]; then
 		rm -f "$snapshot_tmp" 2>/dev/null || true
