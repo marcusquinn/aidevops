@@ -11,10 +11,10 @@ renewals; it does not reconcile or remove historical coordination records.
 import datetime as dt
 import hashlib
 import json
-import re
 import sys
 
-from pr_checkpoint_events import EVENTS, author_trusted, fields, normalized_attempt, timestamp, trusted
+from pr_checkpoint_consumption import approval_consumed, authorizes
+from pr_checkpoint_events import EVENTS, author_trusted, fields, normalized_attempt, timestamp
 
 
 def require(condition):
@@ -46,12 +46,6 @@ def seal(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def authorizes(comment, logins):
-    # Positive edit metadata is supplied by the shared GraphQL collector. REST
-    # second-resolution timestamps alone cannot exclude a same-second edit.
-    return trusted(comment, logins) and comment.get("_release_body_unedited") is True
-
-
 APPROVAL_TTL_SECONDS = 86400  # pr-checkpoint-revision.py approval_matches
 
 
@@ -65,44 +59,6 @@ def approval_unexpired(comment, now):
 
 def has_line(comment, prefix):
     return any(line.startswith(prefix) for line in comment["body"].splitlines())
-
-
-def duplicate_keys(line):
-    """True when any key repeats, including empty-valued ones fields() drops."""
-    keys = re.findall(r"(?:^|\s)([a-z_]+)=", line)
-    return len(keys) != len(set(keys))
-
-
-def approval_consumed(comments, approval, logins):
-    """Mirror pctl_approval_owns_scheduling in pr-checkpoint-target-lib.sh.
-
-    A claim naming the approval and a later release of that claim, both
-    trusted and positively unedited, consume it. Duplicate fields parse to {}
-    and never match, so ambiguous evidence keeps the approval fencing.
-    """
-    for claim in comments:
-        if claim["id"] <= approval["id"] or not authorizes(claim, logins):
-            continue
-        for claim_line in (line for line in claim["body"].splitlines() if line.startswith("DISPATCH_CLAIM ")):
-            if duplicate_keys(claim_line):
-                continue
-            claim_fields = fields(claim_line)
-            if claim_fields.get("checkpoint_approval") != str(approval["id"]):
-                continue
-            nonce = claim_fields.get("nonce", "")
-            for release in comments:
-                if release["id"] <= claim["id"] or not authorizes(release, logins):
-                    continue
-                for line in (ln for ln in release["body"].splitlines() if ln.startswith("CLAIM_RELEASED ")):
-                    if duplicate_keys(line):
-                        continue
-                    event = fields(line)
-                    rel_claim, rel_nonce = event.get("claim_id", ""), event.get("nonce", "")
-                    if event.get("reason") and (rel_claim or (nonce and rel_nonce)) \
-                            and (not rel_claim or rel_claim == str(claim["id"])) \
-                            and (not rel_nonce or (nonce and rel_nonce == nonce)):
-                        return True
-    return False
 
 
 def blocking_approvals(comments, logins, now):
