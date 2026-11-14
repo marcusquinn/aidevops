@@ -15,7 +15,7 @@ Observed on 2026-11-14, PR #38218. The commit body and later the PR body contain
 - `.agents/scripts/task-identity-lib.sh`: add `task_identity_first_malformed_candidate <text>`. It prints the first candidate that `task_identity_has_malformed_candidate` would reject, using the same brief-path exclusion and trailing-dot rule. Factor the shared loop so the two cannot drift. Keep the `has_` return contract unchanged; `pulse-dep-graph.sh` and its tests consume it.
 - `.agents/hooks/task-id-collision-guard.sh`:
   - Keep the `__malformed__` sentinel in `_extract_tids`. Do not change its grammar; pulse-dep-graph uses the same sentinel.
-  - Where `_check_tid` handles the sentinel, look up the offending token with the new function. Report `  malformed task identity token '<token>' (in <source>); write <task-id> for placeholders`.
+  - Where `_check_tid` handles the sentinel, look up the offending token with the new function. Report an indented line reading `malformed task identity token '<token>' (in <source>); write <task-id> for placeholders`.
   - In check-pr mode, say whether the token is in the PR title or PR body. `_check_pr_title_body` (around `pr_combined=`) already has both. For commits, say subject or body.
   - Reword the `_report_violations` header so it does not say "Commit subject" when the scanned text was a body or PR text.
 
