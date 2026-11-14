@@ -1565,6 +1565,17 @@ _merge_handle_already_merged_provenance() {
 	return 0
 }
 
+# Return 2 when the release was reconciled, so the caller skips merge writes.
+_merge_gate_or_reconcile() {
+	local pr_number="$1" repo="$2" rc=0
+	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" && return 0
+	_merge_handle_already_merged_provenance "$pr_number" "$repo" || rc=$?
+	[[ "$rc" -eq 0 ]] && return 2
+	[[ "$rc" -eq 1 ]] && return 1
+	_merge_report_pre_merge_gate_failure
+	return 1
+}
+
 # Verify release-lane PR identity and guard; sets _release_lane_head_ref in the
 # caller (dynamic scope) for the provenance merge-method check.
 _merge_release_lane_check() {
@@ -1809,17 +1820,10 @@ cmd_merge() {
 	_merge_worker_briefed_gate_pinned "$pr_number" "$repo" "$has_admin" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
-	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
-		# Native auto-merge may have landed a protected release after the first
-		# probe. Reuse the same identity and merge-SHA checks before reconciling.
-		_already_merged_rc=0
-		_merge_handle_already_merged_provenance "$pr_number" "$repo" || _already_merged_rc=$?
-		if [[ "$_already_merged_rc" -ne 2 ]]; then
-			return "$_already_merged_rc"
-		fi
-		_merge_report_pre_merge_gate_failure
-		return 1
-	}
+	local _gate_rc=0
+	_merge_gate_or_reconcile "$pr_number" "$repo" || _gate_rc=$?
+	[[ "$_gate_rc" -eq 2 ]] && return 0
+	[[ "$_gate_rc" -eq 0 ]] || return 1
 	local _release_lane_head_ref=""
 	_merge_release_lane_check "$pr_number" "$repo" || return 1
 	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1
