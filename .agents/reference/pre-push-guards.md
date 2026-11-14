@@ -15,6 +15,13 @@ Blocks pushes to public GitHub repos that contain private repo slugs in `TODO.md
 
 Private slugs are enumerated from `initialized_repos[]` entries with `mirror_upstream` or `local_only: true`, plus optional extras in `~/.aidevops/configs/privacy-guard-extra-slugs.txt`.
 
+For entity matches, a literal term already present in the verified public default
+branch tree is not treated as a new disclosure. A repo basename is checked
+separately from its full slug. Public writes use this exception only when the
+local origin matches the target and its default-branch ref is available; without
+a verified public tree, entity checks remain strict. Secret and local-path checks
+always apply, even to text already present in the public tree.
+
 - Bypass: `PRIVACY_GUARD_DISABLE=1 git push ...`
 - Fail-open on offline/unauthenticated `gh`
 - Test harness: `.agents/scripts/test-privacy-guard.sh`
