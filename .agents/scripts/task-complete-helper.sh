@@ -417,7 +417,7 @@ _complete_task_guard_indented_subtasks() {
 	local task_line=""
 	local id_re
 	id_re=$(_tc_escape_ere "$task_id")
-	task_line=$(grep -E "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
+	task_line=$(grep -m1 -E "^[[:space:]]*- \[[ >]\] ${id_re}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file")
 	local task_indent=""
 	task_indent=$(printf '%s\n' "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
@@ -587,7 +587,7 @@ _complete_task_verify_update() {
 		return 1
 	fi
 
-	if ! grep -E "^[[:space:]]*- \[x\] ${id_re} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
+	if ! grep -qE "^[[:space:]]*- \[x\] ${id_re} .*(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})" "$todo_file"; then
 		log_error "Failed to add proof-log to $task_id"
 		return 1
 	fi
