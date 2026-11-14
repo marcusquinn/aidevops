@@ -349,6 +349,63 @@ _refresh_ensure_unresolved_is_blocked "owner/repo" "20" || true
 assert_true "post-read removes blocked after concurrent queue transition" \
 	grep -Fq -- "--remove-label status:blocked" <<<"$status_write"
 
+# Successful writes must survive later read/repair failures in either direction.
+_test_partial_mutation_accounting() (
+	local initial_fail="$fail"
+	local scenario="" view_count=0 edit_count=0 expected=0
+	local DEP_GRAPH_REFRESH_CURSOR_DIR="${TMP_ROOT}/mutation-cursors"
+	local repo_data='{"blocked_by":{"20":{"issue_nums":["10"]}}}'
+	_refresh_dependency_is_resolved() {
+		[[ "$scenario" != block-* ]] || return 1
+		return 0
+	}
+	_should_defer_auto_unblock() {
+		return 1
+	}
+	gh() {
+		local command="$1" target="${2:-}"
+		if [[ "$command" == api ]]; then
+			_test_dep_identity_api "$target"
+			return $?
+		elif [[ "$command $target" == "issue view" ]]; then
+			view_count=$(<"$view_counter_file")
+			view_count=$((view_count + 1))
+			printf '%s\n' "$view_count" >"$view_counter_file"
+			case "$scenario:$view_count" in
+			cleanup-read-failure:1) printf 'status:blocked,blocked-by:#10\n' ;;
+			cleanup-read-failure:*) return 1 ;;
+			block-*:1) printf 'status:available\n' ;;
+			block-*:*) printf 'status:queued,status:blocked\n' ;;
+			unblock-*:1 | unblock-*:2 | failed-edit:*) printf 'status:blocked\n' ;;
+			unblock-*:*) printf 'status:queued,status:available\n' ;;
+			esac
+		elif [[ "$command $target" == "issue edit" ]]; then
+			edit_count=$((edit_count + 1))
+			[[ "$scenario" != failed-edit ]] || return 1
+			if [[ "$scenario" == *repair-failure && "$edit_count" -eq 2 ]]; then
+				return 1
+			fi
+		fi
+		return 0
+	}
+	for scenario in cleanup-read-failure block-repair-success block-repair-failure \
+		unblock-repair-success unblock-repair-failure failed-edit; do
+		printf '0\n' >"$view_counter_file"
+		edit_count=0
+		DEP_GRAPH_REFRESH_CHANGED_COUNT=0
+		case "$scenario" in
+		*-repair-success) expected=2 ;;
+		failed-edit) expected=0 ;;
+		*) expected=1 ;;
+		esac
+		_refresh_graph_repo owner/repo "$repo_data" 10 30 || return 1
+		assert_eq "successful mutations counted for $scenario" "$expected" "$DEP_GRAPH_REFRESH_CHANGED_COUNT"
+	done
+	[[ "$fail" -eq "$initial_fail" ]] || return 1
+	return 0
+)
+assert_true "partial mutation accounting through repository refresh" _test_partial_mutation_accounting
+
 log_verbose() {
 	return 0
 }
