@@ -917,8 +917,8 @@ if [[ "$calls_after" -gt "$calls_before" ]]; then assertion_rc=0; fi
 print_result "changed updatedAt recomputes spend" "$assertion_rc" "(before=$calls_before after=$calls_after)"
 
 # Entries older than the TTL recompute.
-calls_before=$(count_comment_calls 18201)
 AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS=1 run_cached_check 18201 "${CACHE_META/10:00:00Z/10:05:00Z}"
+calls_before=$(count_comment_calls 18201)
 sleep 2
 AIDEVOPS_DISPATCH_COST_CACHE_TTL_SECONDS=1 run_cached_check 18201 "${CACHE_META/10:00:00Z/10:05:00Z}"
 calls_after=$(count_comment_calls 18201)
