@@ -945,6 +945,15 @@ _pulse_sweep_checkpoint_ledger() {
 	return 0
 }
 
+_pulse_stale_claim_deadline() {
+	local now_epoch="$1" sweep_deadline="$2" ready_min="${PULSE_STALE_BLOCKED_READY_MIN_SECONDS:-15}"
+	local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2))
+	[[ "$ready_min" =~ ^[0-9]+$ ]] || ready_min=15
+	[[ "$claim_deadline" -le $((sweep_deadline - ready_min)) ]] || claim_deadline=$((sweep_deadline - ready_min))
+	printf '%s\n' "$claim_deadline"
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
@@ -963,10 +972,8 @@ _pulse_reconcile_stale_blocked_if_due() {
 		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
 		sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
 		now_epoch=$(date +%s) || return 0
-		local claim_deadline=$((now_epoch + (sweep_deadline - now_epoch) / 2)) # half the stage
-		local ready_min="${PULSE_STALE_BLOCKED_READY_MIN_SECONDS:-15}"
-		[[ "$ready_min" =~ ^[0-9]+$ ]] || ready_min=15
-		[[ "$claim_deadline" -le $((sweep_deadline - ready_min)) ]] || claim_deadline=$((sweep_deadline - ready_min))
+		local claim_deadline=""
+		claim_deadline=$(_pulse_stale_claim_deadline "$now_epoch" "$sweep_deadline")
 		while IFS= read -r repo_slug; do
 			[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
 		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)

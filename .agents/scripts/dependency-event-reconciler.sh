@@ -761,6 +761,17 @@ _der_stale_candidates() {
 	return 0
 }
 
+_der_stale_skip_memo() {
+	[[ "$memo_enabled" == true ]] && _der_stale_memo_matches "$memo" "$candidate" "$ttl" || return 1
+	skipped=$((skipped + 1))
+	if [[ "$is_ready" == true ]]; then
+		_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
+	else
+		_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+	fi
+	return 0
+}
+
 # Periodically recover status:blocked issues whose close event was missed.
 # GraphQL pagination is consumed in full, then bounded before any mutation.
 # Candidates are visited in ascending issue order after the persisted cursor;
@@ -820,16 +831,7 @@ reconcile_stale_blocked_issues() {
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
 			continue
 		fi
-		if [[ "$memo_enabled" == true ]] &&
-			_der_stale_memo_matches "$memo" "$candidate" "$ttl"; then
-			skipped=$((skipped + 1))
-			if [[ "$is_ready" == true ]]; then
-				_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
-			else
-				_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
-			fi
-			continue
-		fi
+		_der_stale_skip_memo && continue
 		if [[ "$is_ready" == false && "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; then
 			complete=false ordinary_complete=false
 			break
