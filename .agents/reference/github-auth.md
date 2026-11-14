@@ -28,6 +28,36 @@ This is not a claim that every request from a Pulse process uses the App.
 - Prefer a separate private key of the same App for each trusted host so keys
   can be rotated independently. Each key still has App-wide authority.
 
+## Fast path
+
+```bash
+aidevops github auth app create --owner OWNER [--install-on OTHER_OWNER ...]
+aidevops github auth app bind --profile NAME [--owner OWNER] [--dry-run] [--replace]
+```
+
+`app create` runs GitHub's App Manifest flow. It serves a one-time page on
+`127.0.0.1` that posts a read-only manifest: the permissions in
+`DEFAULT_PULSE_READ_PERMISSIONS`, no webhook and no events. The owner clicks
+**Create GitHub App** and then **Install**. The CLI exchanges the one-time code
+and writes the key to `~/.config/aidevops/keys/<slug>.pem` with mode 0600. It
+never prints the key and never overwrites an existing file. It creates the
+profile named after the App slug, waits for the installations, then runs
+`app bind`. A personal-account App can only be created by that account.
+`--install-on` makes the App public so it can be installed on other accounts you
+control. Each installation keeps its own primary rate limit.
+
+`app bind` lists the App's installations with a JWT. For selected-repository
+installations it also lists the covered repositories. In one locked registry
+write it sets `read` to the App for each covered pulse repository and preserves
+`write`. Each repository it skips reports a reason: `no-installation`,
+`not-in-selected-installation`, `installation-suspended`, `local-only`,
+`legacy-binding-run-migrate`, `bound-to-other-app` (rebind with `--replace`) or
+`already-bound`. Skipped repositories keep inherited auth. A `read_check` then
+runs for one bound repository per owner.
+
+The manual steps below remain the reference for organizations whose policy
+forbids the manifest flow.
+
 ## Create and install the App
 
 1. In the intended GitHub account/organization settings, open **Developer

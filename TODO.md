@@ -2083,6 +2083,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19003 perf(pulse): fresh-first dispatch lane — attempt unclaimed candidates before claimed ones (For #38332 phase 1) #feat ref:GH#38333
 
+- [ ] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
