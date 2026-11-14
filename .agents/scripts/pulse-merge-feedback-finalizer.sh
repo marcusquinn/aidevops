@@ -895,7 +895,7 @@ _feedback_route_guard_closed_issue() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" kind="$4"
 	local expected_head="${5:-}"
 	local metadata="" state="" reason="" snapshot="" pr_state="" head="" labels=""
-	local marker_core="" identity="" self_id="" actor="" body="" fuse_path="" receipt_rc=0
+	local marker_core="" identity="" self_id="" actor="" body="" fuse_path="" receipt_rc=0 pr_body=""
 
 	# Review evidence routing retains its existing lifecycle policy.
 	[[ "$kind" == "conflict" || "$kind" == "ci" ]] || return 0
@@ -903,6 +903,10 @@ _feedback_route_guard_closed_issue() {
 	state=$(printf '%s' "$metadata" | jq -r '.state // empty') || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	[[ "$state" != "open" ]] || return 0
 	[[ "$state" == "closed" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	if _pm_pr_body_is_todo_projection "$pr_body"; then
+		return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
+	fi
 	[[ "${DRY_RUN:-0}" != "1" ]] || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	snapshot=$(_feedback_route_pr_snapshot "$pr_number" "$repo_slug") || return "$PULSE_FEEDBACK_ROUTE_DEFERRED_RC"
 	IFS=$'\t' read -r pr_state head labels <<<"$snapshot"

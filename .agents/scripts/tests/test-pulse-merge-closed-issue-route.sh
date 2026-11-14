@@ -5,6 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../pulse-merge-feedback-finalizer.sh"
+source "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh"
 source "${SCRIPT_DIR}/../pulse-merge-process.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -22,6 +23,12 @@ HEAD="abc123repairsha"
 WRITES=0 COMMENTS=0 DISPATCHES=0 FINISHED=0 FAIL_HOLD=0 COMMENT_NOOP=0
 COMMENT_JSON='[]'
 AFTER_COMMENT_HEAD="" AFTER_COMMENT_LABELS="" AFTER_HOLD_HEAD=""
+PR_BODY=""
+
+gh_pr_view() {
+	printf '%s\n' "$PR_BODY"
+	return 0
+}
 
 gh() {
 	local command="$1" endpoint="$2"
@@ -118,6 +125,14 @@ route ci
 [[ "$COMMENTS" == "1" && "$WRITES" == "2" && "$DISPATCHES" == "0" && "$FINISHED" == "3" ]]
 [[ ! -e "${TEST_ROOT}/deferred" ]]
 printf 'PASS: completed closed issue held once across conflict/CI retries\n'
+
+PR_BODY='<!-- aidevops:pulse-todo-handoff id=example -->'
+WRITES=0 COMMENTS=0
+rc=0
+_feedback_route_guard_closed_issue 100 owner/repo 42 ci || rc=$?
+[[ "$rc" == "75" && "$WRITES" == "0" && "$COMMENTS" == "0" ]]
+PR_BODY=""
+printf 'PASS: TODO projection defers without writing a hold\n'
 
 PR_LABELS="origin:worker"
 COMMENT_JSON='[]'
