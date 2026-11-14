@@ -126,16 +126,15 @@ _pmu_record_pr_evaluation() {
 # evaluation is in progress and must resume instead of being skipped).
 _pmu_cursor_targets_repo() {
 	local repo_slug="$1"
-	local enrichment_cursor="" cursor_file="" cursor_repo="" cursor_rest=""
+	local enrichment_cursor="" cursor_file="" cursor_line=""
 	if declare -F _pmp_merge_enrichment_cursor_file >/dev/null 2>&1; then
-		enrichment_cursor=$(_pmp_merge_enrichment_cursor_file) || enrichment_cursor=""
+		enrichment_cursor=$(_pmp_merge_enrichment_cursor_file "$repo_slug") || enrichment_cursor=""
 	fi
 	for cursor_file in "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$enrichment_cursor"; do
 		[[ -n "$cursor_file" && -f "$cursor_file" ]] || continue
-		cursor_repo=""
-		IFS='|' read -r cursor_repo cursor_rest <"$cursor_file" || true
-		: "$cursor_rest"
-		[[ "$cursor_repo" == "$repo_slug" ]] && return 0
+		# Cursor files hold one line per repo (GH#38213).
+		cursor_line=$(_pmp_merge_pr_cursor_line_for_repo "$cursor_file" "$repo_slug")
+		[[ -n "$cursor_line" ]] && return 0
 	done
 	return 1
 }
