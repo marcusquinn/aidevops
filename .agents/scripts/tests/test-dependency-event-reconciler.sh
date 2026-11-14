@@ -539,7 +539,11 @@ _run_stale_cursor_pass() (
 	local visited_log="$1"
 	shift
 	gh() {
-		[[ "$1 $2" == "api graphql" ]] || { printf '%s\n' '{"body":""}'; return 0; }
+		if [[ "$1 $2" != "api graphql" ]]; then
+			[[ "${CURSOR_BODY_FETCH_FAIL:-false}" == false ]] || return 1
+			printf '%s\n' '{"body":""}'
+			return 0
+		fi
 		jq -cn '[{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[9,3,7,5] | map({number:.,updatedAt:"v1",labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},blockedBy:{totalCount:0,nodes:[]}})}}}}]'
 		return 0
 	}
@@ -562,6 +566,11 @@ assert_eq "3 5" "$(paste -sd' ' "$visited_log")" "stale sweep visits blocked iss
 assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "stale sweep reports a batch-limited pass as partial"
 assert_eq 5 "$(cat "$cursor_file")" "stale sweep persists the last visited issue"
 : >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=true || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "failed body fetch reports an incomplete traversal"
+assert_eq 5 "$(_der_stale_cursor_read "$cursor_file")" "failed body fetch preserves the nonzero ordinary cursor"
+assert_eq "" "$(paste -sd' ' "$visited_log")" "failed body fetch does not visit the candidate"
 pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass_rc=$?
 assert_eq "7 9" "$(paste -sd' ' "$visited_log")" "next stale sweep resumes after the cursor"

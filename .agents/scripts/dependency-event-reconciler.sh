@@ -762,7 +762,7 @@ reconcile_stale_blocked_issues() {
 		}
 		body=$(gh api "repos/${repo}/issues/${issue_number}" 2>/dev/null) || {
 			failed=$((failed + 1))
-			complete=false
+			complete=false ordinary_complete=false
 			break
 		}
 		candidate=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // "")}') || return 1
