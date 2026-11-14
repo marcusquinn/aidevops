@@ -69,6 +69,40 @@ class RevisionEnvelopeCases:
 
 
 class AutomaticBindingCases:
+    def test_consumption_rejects_empty_duplicate_fields(self):
+        approval = self.comment(10, "CHECKPOINT_CONTINUATION_APPROVED fixture", "maintainer", "OWNER")
+        claim = self.comment(11, "DISPATCH_CLAIM checkpoint_approval=10 nonce=n", "worker")
+        release = self.comment(12, "CLAIM_RELEASED reason=worker_complete claim_id=11 nonce=n", "worker")
+        for comment in (claim, release):
+            comment["_release_body_unedited"] = True
+        self.assertTrue(self.admission.approval_consumed([claim, release], approval, ()))
+        for target, key in ((claim, "checkpoint_approval"), (claim, "nonce"),
+                            (release, "claim_id"), (release, "nonce"), (release, "reason")):
+            for position in ("before", "after"):
+                changed = copy.deepcopy([claim, release])
+                index = 0 if target is claim else 1
+                body = changed[index]["body"]
+                changed[index]["body"] = (body.replace(" ", f" {key}= ", 1)
+                                          if position == "before" else body + f" {key}=")
+                with self.subTest(key=key, target=index, position=position):
+                    self.assertFalse(self.admission.approval_consumed(changed, approval, ()))
+
+    def test_consumed_approvals_use_trusted_logins(self):
+        now = dt.datetime.fromisoformat("2026-09-05T12:00:00+00:00").timestamp()
+        for association in ("CONTRIBUTOR", "NONE"):
+            old = self.comment(9, "CHECKPOINT_CONTINUATION_APPROVED old", "maintainer", association)
+            approval = self.comment(10, "CHECKPOINT_CONTINUATION_APPROVED new", "maintainer", association)
+            claim = self.comment(11, "DISPATCH_CLAIM checkpoint_approval=10 nonce=n", "maintainer", association)
+            release = self.comment(12, "CLAIM_RELEASED reason=worker_complete claim_id=11 nonce=n", "maintainer", association)
+            for comment in (claim, release):
+                comment["_release_body_unedited"] = True
+            comments = [old, approval, claim, release]
+            with self.subTest(association=association):
+                self.assertEqual(self.admission.blocking_approvals(comments, ["maintainer"], now), [])
+                self.assertEqual(self.admission.blocking_approvals(comments, (), now), [old, approval])
+                foreign = self.comment(8, "CHECKPOINT_CONTINUATION_APPROVED foreign", "outsider", "NONE")
+                self.assertEqual(self.admission.blocking_approvals([foreign] + comments, ["maintainer"], now), [foreign])
+
     def test_optional_claim_arguments_keep_nonce_position(self):
         command = r'''
 set -euo pipefail
