@@ -62,7 +62,7 @@ Several hot paths each carry a safety invariant; the worker must decide which ev
 - `EDIT: .agents/scripts/pulse-dispatch-dedup-layers.sh:693-730` — layer 6: export its verdict and fingerprint for the claim step.
 - `EDIT: .agents/scripts/pulse-dispatch-lib.sh:459-515` — `_dispatch_negative_cache_record`: log silent record skips once per issue with their reason.
 - `EDIT: .agents/scripts/worktree-helper-add.sh` — bound `verify.reconcile` / `reconcile_scan` for a freshly created worker worktree.
-- `EDIT: .agents/scripts/pulse-dispatch-worker-launch.sh` — attribute `worker_launch_total` beyond precreate if the targets are not met.
+- `EDIT: .agents/scripts/pulse-dispatch-worker-launch.sh:1937-2036` — `_dispatch_launch_worker`: attribute `worker_launch_total` beyond precreate (the `_ds_record` stage calls) if the targets are not met. Precreate itself is `_dlw_precreate_worktree` at `pulse-dispatch-worker-launch.sh:885-986`.
 
 ### Complete Write Surface
 

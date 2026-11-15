@@ -11,16 +11,18 @@ decision_fixture() {
 	mkdir -p "$root"
 	export DECISION_ROOT="$root"
 	export DECISION_MUTATION=''
+	DECISION_STAMP=$(date -u -d "1 hour ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-1H "+%Y-%m-%dT%H:%M:%SZ") || return 1
+	export DECISION_STAMP
 	SCRIPT_DIR="$root"
 	AIDEVOPS_REPOS_JSON="${root}/repos.json"
 	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","checkpoint_policy":{"auto_resolve_decisions":true,"configured_by":"maintainer"}}]}' >"$AIDEVOPS_REPOS_JSON"
 	valid_issue_json '[{"name":"auto-dispatch"},{"name":"status:blocked"}]' |
-		jq '.assignees=[] | .user={login:"issue-author"} | .updated_at="2026-11-13T00:00:00Z" | .body="Original brief\n\n"' >"${root}/issue.json"
-	jq -nc --arg head "$head" '
+		jq --arg stamp "$DECISION_STAMP" '.assignees=[] | .user={login:"issue-author"} | .updated_at=$stamp | .body="Original brief\n\n"' >"${root}/issue.json"
+	jq -nc --arg head "$head" --arg stamp "$DECISION_STAMP" '
 		[{id:19,user:{login:"worker-bot"},body:"DISPATCH_LEASE phase=ready lease_token=fixture session=issue-123 attempt_id=attempt:old"},
 		 {id:20,user:{login:"worker-bot"},body:"CLAIM_RELEASED reason=blocked runner=worker-bot lease_token=fixture"},
 		 {id:21,user:{login:"finding-author"},body:("CONTINUATION_BLOCKER_FINDING pr=42 head="+$head+" blocked_by=decision\n- Details: helper.sh choose a reversible default")}] |
-		map(. + {author_association:"MEMBER",created_at:"2026-11-13T00:00:00Z"})' >"${root}/comments.json"
+		map(. + {author_association:"MEMBER",created_at:$stamp})' >"${root}/comments.json"
 	printf '%s\n' '{"action":"decide","confidence":"high","decision_record":"Choose the existing reversible default; preserve all scope and security boundaries."}' >"${root}/result.json"
 	cat >"${root}/ai-research-helper.sh" <<'DECISION_MODEL'
 #!/usr/bin/env bash
@@ -85,7 +87,7 @@ test_decision_policy_decide() (
 	local denied_actor='outsider'
 	decision_fixture "$root" || return 1
 	comments=$(_pcc_issue_comments)
-	comments=$(jq --arg head "$head" '. + [{id:22,user:{login:"outsider"},created_at:"2026-11-13T00:00:00Z",body:("<!-- aidevops:decision-resolution pr=42 head="+$head+" finding=21 -->\nDECISION_ESCALATION head="+$head+" class=authority")}]' <<<"$comments")
+	comments=$(jq --arg head "$head" --arg stamp "$DECISION_STAMP" '. + [{id:22,user:{login:"outsider"},created_at:$stamp,body:("<!-- aidevops:decision-resolution pr=42 head="+$head+" finding=21 -->\nDECISION_ESCALATION head="+$head+" class=authority")}]' <<<"$comments")
 	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
 	jq -e '.body | startswith("Original brief\n\n\n\n### Decision record (AI brief owner, ")' "${root}/issue.json" >/dev/null || return 1
 	[[ "$(wc -l <"${root}/writes")" == 2 && "$(wc -l <"${root}/inferences")" == 1 ]] || return 1
