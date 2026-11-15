@@ -1292,6 +1292,22 @@ test_has_open_pr_ignores_dependency_bump_superseded_references() {
 	return 0
 }
 
+test_has_open_pr_ignores_app_login_dependency_bump_references() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26261,"title":"chore(ci): bump actions/download-artifact from 4.3.0 to 8.0.1","body":"Upstream changes include #26241.","author":{"login":"app/renovate"}},{"number":26262,"title":"chore(deps): bump the production-dependencies group with 4 updates","body":"Dependabot release notes mention #26241.","author":{"login":"app/dependabot"}}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr ignores app/ login dependency-bump references" 1 \
+			"Expected app/renovate and app/dependabot bump references to allow dispatch"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr ignores app/ login dependency-bump references" 0
+	return 0
+}
+
 test_has_open_pr_preserves_non_bot_bump_implementation() {
 	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26263,"title":"chore(deps): bump parser from 1.0.0 to 2.0.0","body":"Implements the parser migration for #26241.","author":{"login":"maintainer"}}]'
 	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
@@ -1494,6 +1510,7 @@ main() {
 	test_has_open_pr_blocks_complete_multi_component_coverage
 	test_has_open_pr_ignores_planning_only_superseded_reference
 	test_has_open_pr_ignores_dependency_bump_superseded_references
+	test_has_open_pr_ignores_app_login_dependency_bump_references
 	test_has_open_pr_preserves_non_bot_bump_implementation
 	test_has_open_pr_preserves_bump_wording_in_implementation_body
 	test_has_open_pr_ignores_consolidation_task_historical_reference
