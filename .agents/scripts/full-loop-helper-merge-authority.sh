@@ -213,8 +213,10 @@ _merge_is_trusted_issue_sync_pr() {
 _merge_author_has_write_authority() {
 	local author="$1"
 	local repo="$2"
-	local permission=""
-	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	local permission="" merge_read_timeout=""
+	# GH#38535: resolve before the local shadows the sourced generic default.
+	merge_read_timeout=$(_flm_merge_read_timeout)
+	local AIDEVOPS_GH_READ_TIMEOUT="$merge_read_timeout"
 	export AIDEVOPS_GH_READ_TIMEOUT
 	local permission_rc=0
 

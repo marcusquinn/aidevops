@@ -967,18 +967,22 @@ test_local_admission_gate_failure_reports_retry_deadline() {
 test_post_verification_read_admission_window() {
 	local scripts_dir="" result=0
 	scripts_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-	bash -c '
+	# GH#38535: keep the production source state. shared-gh-wrappers.sh assigns
+	# the generic 15s read default while sourcing, which shadowed the merge 60s
+	# fallback; unsetting it here previously hid that production failure.
+	(
+		unset AIDEVOPS_GH_READ_TIMEOUT AIDEVOPS_MERGE_GH_READ_TIMEOUT
+		bash -c '
 		source "$1/shared-constants.sh"
 		source "$1/full-loop-helper-merge.sh"
-		unset AIDEVOPS_GH_READ_TIMEOUT
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 3
 		_gh_with_timeout() {
-			# Temporary-file setup consumes part of the shared wall-clock budget.
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" -gt 0 && "$AIDEVOPS_GH_READ_TIMEOUT" -le 60 && "$1" == read ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 && "$1" == read ]] || return 1
 			printf "base\tbase-sha\thead-sha\ttestorg/testrepo\tclone-url\n"
 			return 0
 		}
 		_merge_fetch_pr_refs_rest 42 testorg/testrepo >/dev/null || exit 1
-		[[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || exit 1
+		[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 15 ]] || exit 4
 		_gh_collaborator_permission_lookup() {
 			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 60 ]] || return 2
 			printf -v "$3" "%s" write
@@ -986,12 +990,18 @@ test_post_verification_read_admission_window() {
 		}
 		_merge_author_has_write_authority owner testorg/testrepo || exit 1
 		_gh_with_timeout() {
-			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == 7 ]] || return 1
+			[[ "$AIDEVOPS_GH_READ_TIMEOUT" == "$expected_timeout" ]] || return 1
 			return 0
 		}
-		AIDEVOPS_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo
-	' _ "$scripts_dir" || result=$?
-	print_result "post-verification reads: bounded admission window and caller override" "$result"
+		expected_timeout=7
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=7 _flm_gh_read gh api repos/testorg/testrepo || exit 5
+		expected_timeout=90
+		AIDEVOPS_GH_READ_TIMEOUT=90 _flm_gh_read gh api repos/testorg/testrepo || exit 6
+		expected_timeout=60
+		AIDEVOPS_MERGE_GH_READ_TIMEOUT=08 _flm_gh_read gh api repos/testorg/testrepo || exit 7
+	' _ "$scripts_dir"
+	) || result=$?
+	print_result "post-verification reads: 60s merge budget over sourced 15s default, overrides" "$result"
 	return 0
 }
 
