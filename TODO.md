@@ -2053,7 +2053,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18989 perf(pulse): routine comment responder resolves runner login once per cycle and skips repos without routine-tracking issues #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38281 pr:#38285 completed:2026-11-15
 
-- [ ] t18990 perf(pulse-merge): verify GH#38242 permission memo survives merge-routine subshells; share it per run #auto-dispatch #feat #fix-the-fixer #priority:medium ref:GH#38282
+- [x] t18990 perf(pulse-merge): verify GH#38242 permission memo survives merge-routine subshells; share it per run #auto-dispatch #feat #fix-the-fixer #priority:medium ref:GH#38282 pr:#38284 completed:2026-11-15
 
 - [x] t18985 fix(checkpoints): escalate the model tier when a draft head stalls twice, instead of pausing it 12-96h at the same tier #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38215 pr:#38245 completed:2026-11-14
 
@@ -2085,7 +2085,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md] pr:#38339 completed:2026-11-15
 
-- [ ] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 logged:2026-11-14 -> [todo/tasks/t19006-brief.md]
+- [ ] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 pr:#38398 logged:2026-11-14 -> [todo/tasks/t19006-brief.md]
 
 - [ ] t19007 fix(terminal-blocker): publish the external trigger and revisit external_trigger_pending holds #bug #auto-dispatch tier:thinking blocked-by:t19008 ref:GH#38353 logged:2026-11-14 -> [todo/tasks/t19007-brief.md]
 
@@ -2093,7 +2093,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19009 fix(checkpoints): a failed continuation launch must not turn a stalled draft into a permanent maintainer hold #bug #interactive tier:standard ref:GH#38358 assignee:marcusquinn logged:2026-11-14 started:2026-11-14 -> [todo/tasks/t19009-brief.md] pr:#38367 completed:2026-11-14
 
-- [ ] t19010 fix(tests): test_decision_policy_decide/escalate/races fail on main #auto-dispatch #bug tier:standard ref:GH#38365 logged:2026-11-14 -> [todo/tasks/t19010-brief.md]
+- [x] t19010 fix(tests): test_decision_policy_decide/escalate/races fail on main #auto-dispatch #bug tier:standard ref:GH#38365 pr:#38378 logged:2026-11-14 -> [todo/tasks/t19010-brief.md] completed:2026-11-15
 
 - [x] t19011 perf(worker): wait once, bounded, for the PR's required checks and merge in-session instead of handing every pending PR to pulse #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38388 logged:2026-11-14 started:2026-11-14 pr:#38390 completed:2026-11-15 -> [todo/tasks/t19011-brief.md]
 
@@ -2107,15 +2107,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19016 perf(profile): project OpenCode usage rows per table instead of materializing the full message history #interactive #bug tier:standard assignee:marcusquinn ref:GH#38425 logged:2026-11-15 started:2026-11-15 pr:#38427 completed:2026-11-15 -> [todo/tasks/t19016-brief.md]
 
-- [ ] t19017 fix(opencode-db-archive): an archive-DB event-expiry deferral must not skip the live-DB session move #auto-dispatch #bug tier:standard ref:GH#38429 logged:2026-11-15 -> [todo/tasks/t19017-brief.md]
+- [x] t19017 fix(opencode-db-archive): an archive-DB event-expiry deferral must not skip the live-DB session move #auto-dispatch #bug tier:standard ref:GH#38429 pr:#38442 logged:2026-11-15 -> [todo/tasks/t19017-brief.md] completed:2026-11-15
 
-- [ ] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 logged:2026-11-15 -> [todo/tasks/t19018-brief.md]
+- [x] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 pr:#38435 logged:2026-11-15 -> [todo/tasks/t19018-brief.md] completed:2026-11-15
 
-- [ ] t19019 perf(opencode-db): restore archived interactive sessions on resume so the live DB can keep 30 days instead of 90 #auto-dispatch #feat tier:thinking ref:GH#38431 logged:2026-11-15 -> [todo/tasks/t19019-brief.md]
+- [x] t19019 perf(opencode-db): restore archived interactive sessions on resume so the live DB can keep 30 days instead of 90 #auto-dispatch #feat tier:thinking ref:GH#38431 pr:#38437 logged:2026-11-15 -> [todo/tasks/t19019-brief.md] completed:2026-11-15
 
-- [ ] t19020 feat(greeting): session-greeting advisories ask only for real human action (canonical noise, duplicate families, stale daemon advisory, App-read remedy) #interactive #feat tier:standard assignee:marcusquinn ref:GH#38439 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19020-brief.md]
+- [x] t19020 feat(greeting): session-greeting advisories ask only for real human action (canonical noise, duplicate families, stale daemon advisory, App-read remedy) #interactive #feat tier:standard assignee:marcusquinn ref:GH#38439 pr:#38441 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19020-brief.md] completed:2026-11-15
 
-- [ ] t19021 fix(gh): stop shim temp-file leaks that bloat agent tmp and slow dispatch #interactive #bug tier:standard assignee:marcusquinn ref:GH#38443 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19021-brief.md]
+- [x] t19021 fix(gh): stop shim temp-file leaks that bloat agent tmp and slow dispatch #interactive #bug tier:standard assignee:marcusquinn ref:GH#38443 pr:#38444 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19021-brief.md] completed:2026-11-15
 
 ## In Progress
 
