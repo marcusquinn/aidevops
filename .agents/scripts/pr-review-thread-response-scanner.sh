@@ -15,6 +15,7 @@
 #   pr-review-thread-response-scanner.sh mark-blocked <repo_slug> <pr_number> <blocked_by> <reason> [details_file]
 #   pr-review-thread-response-scanner.sh mark-progress <repo_slug> <pr_number> [reason] [details_file]
 #   pr-review-thread-response-scanner.sh route-upstream <repo_slug> <pr_number> <thread_id> <owner_repo> <details_file>
+#   pr-review-thread-response-scanner.sh route-prerequisite <repo_slug> <pr_number> <code|infrastructure> <short_reason> <details_file>
 #
 # This helper is intentionally conservative: it never resolves review threads
 # itself. It only detects unresolved bot review threads on open non-draft PRs by
@@ -35,6 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/worker-attempt-observability.sh" ]] && source "${SCRIPT_DIR}/worker-attempt-observability.sh"
 # shellcheck source=pr-review-thread-response-rereview.sh
 [[ -f "${SCRIPT_DIR}/pr-review-thread-response-rereview.sh" ]] && source "${SCRIPT_DIR}/pr-review-thread-response-rereview.sh"
+# shellcheck source=pr-review-thread-response-prerequisite.sh
+source "${SCRIPT_DIR}/pr-review-thread-response-prerequisite.sh"
 # shellcheck source=scratch-worktree-helper.sh
 source "${SCRIPT_DIR}/scratch-worktree-helper.sh"
 
@@ -129,7 +132,7 @@ _prrts_log() {
 }
 
 _prrts_usage() {
-	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked|mark-progress|route-upstream} <repo_slug> ...\n' "$(basename "$0")"
+	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked|mark-progress|route-upstream|route-prerequisite} <repo_slug> ...\n' "$(basename "$0")"
 	return 0
 }
 
@@ -1239,7 +1242,7 @@ _prrts_publish_continuation_blocker() {
 	local details_file="${5:-}"
 	local issue="${AIDEVOPS_PR_REPAIR_LINKED_ISSUE:-}"
 	local head="${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}"
-	local marker="" details="" body="" pending_file="" tmp_file=""
+	local marker="" details="" body="" pending_file="" tmp_file="" prerequisite="" next_action=""
 	[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 0
 	_prrts_ensure_dirs
 	pending_file="${STATE_DIR}/$(_prrts_safe_slug "$repo_slug")-${pr_number}.blocker-pending.json"
@@ -1257,6 +1260,12 @@ _prrts_publish_continuation_blocker() {
 		details="$(_prrts_state_value_line "$(<"$details_file")" "${_PRRTS_FINDING_DETAILS_MAX:-2000}")"
 	fi
 	marker="aidevops:continuation-blocker pr=${pr_number} head=${head}"
+	next_action="Next action for the brief owner: resolve the stated need (see \`reference/checkpoint-revision-recovery.md\`), or close draft PR #${pr_number} to discard the checkpoint."
+	# t19039: a routed prerequisite already owns the next action.
+	prerequisite="$(_prrts_prerequisite_for "$repo_slug" "$pr_number" "$issue")"
+	if [[ "$prerequisite" =~ ^[0-9]+$ ]]; then
+		next_action="Next action: none for the brief owner. Prerequisite #${prerequisite} is queued for a worker; Pulse holds this issue (\`blocked-by:#${prerequisite}\`) and continues draft PR #${pr_number} after it closes."
+	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${marker} -->
 CONTINUATION_BLOCKER_FINDING pr=${pr_number} head=${head} blocked_by=${blocked_by}
@@ -1267,7 +1276,7 @@ The checkpoint continuation worker inspected draft PR #${pr_number} and could no
 - Reason: ${reason}
 - Details: ${details:-none recorded}
 
-Next action for the brief owner: resolve the stated need (see \`reference/checkpoint-revision-recovery.md\`), or close draft PR #${pr_number} to discard the checkpoint.
+${next_action}
 <!-- ops:end -->"
 	tmp_file=$(mktemp "${pending_file}.XXXXXX") || return 1
 	if ! jq -n --arg issue "$issue" --arg marker "$marker" --arg body "$body" \
@@ -1936,6 +1945,9 @@ main() {
 		;;
 	route-upstream)
 		cmd_route_upstream "$repo_slug" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+		;;
+	route-prerequisite)
+		cmd_route_prerequisite "$repo_slug" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
 		;;
 	-h | --help | help)
 		_prrts_usage

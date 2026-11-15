@@ -148,6 +148,33 @@ Signals: `terminal_action=<ready_for_merge|closed>`, `terminal_deferred=<reason>
 `dispatch` re-verifies a `STALE_PR_CONTINUATION` whose issue was already released unassigned
 through `dispatch-stalled`.
 
+### Prerequisite routing for code and tooling blockers (t19039)
+
+A continuation worker that stops on a concrete, reproducible defect in the
+repository's own code or tooling, outside the draft's scope, runs
+`pr-review-thread-response-scanner.sh route-prerequisite <repo> <pr> <code|infrastructure> <reason> <details_file>`
+before `mark-blocked`. Before t19039, such a finding waited for a person to
+read it and file the fix, and same-head continuations kept rediscovering it.
+
+- The scanner files one worker-ready `auto-dispatch,tier:standard,bug` issue
+  in the same repository through `gh-write-helper.sh`. It deduplicates on the
+  body marker `aidevops:checkpoint-prerequisite:<repo>#<issue>:<reason>` and
+  reuses an open match.
+- It labels the linked issue `blocked-by:#N`. The dispatch dependency gate
+  runs before the dedup layers that host `dispatch-stalled`,
+  `dispatch-approved` and `blocked-attention`, so the draft is not relaunched
+  while the prerequisite is open. `pulse-dep-graph.sh` removes the label when
+  it closes, and the re-arm windows above then apply.
+- The `CONTINUATION_BLOCKER_FINDING` then names the prerequisite and states
+  that the brief owner need not act.
+- The command refuses ordinary review-thread workers, `decision` and
+  `maintainer` blockers, capacity reasons, and upstream-ownership reasons.
+  It also refuses when a matching prerequisite is already closed. A closed
+  match means the fix did not clear the blocker, so the worker records the
+  plain finding instead of opening a loop.
+- Runner-local or transient blockers (quota, rate limit, a missing secret or
+  login) keep the plain `mark-blocked` path.
+
 ### Drafts blocked by pre-v3.39.89 release projections (GH#36028)
 
 Runners before v3.39.89 projected `status:blocked` after a continuable release, which the dispatch
