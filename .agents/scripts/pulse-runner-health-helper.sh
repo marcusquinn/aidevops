@@ -13,7 +13,9 @@
 # single advisory.
 #
 # A "zero-attempt" outcome means a dispatched worker never produced real
-# work — the five signals are listed in the help text and recorded by callers.
+# work — the six signals are listed in the help text and recorded by callers.
+# Deterministic launch faults (worker_signing_unavailable, worker_runtime_missing)
+# use lower per-signal thresholds; see _rh_failure_threshold_for_signal.
 # Workers that produce a commit, open a PR, or burn >5K tokens are real
 # attempts and reset the counter — even if the work failed, the failure is
 # brief/tier/codebase, not version skew.
@@ -287,7 +289,7 @@ _rh_state_apply() {
 _rh_is_zero_attempt_signal() {
 	local signal="$1"
 	case "$signal" in
-	no_worker_process | no_branch_created | low_token_usage | watchdog_killed_no_commit | worker_signing_unavailable)
+	no_worker_process | no_branch_created | low_token_usage | watchdog_killed_no_commit | worker_signing_unavailable | worker_runtime_missing)
 		return 0
 		;;
 	*)
@@ -299,7 +301,9 @@ _rh_is_zero_attempt_signal() {
 #######################################
 # Resolve the trip threshold for a zero-attempt signal. Deterministic signing
 # preflight failure in an issue worker proves this runner cannot launch it, so one outcome
-# must pause it immediately while healthy peers remain eligible.
+# must pause it immediately while healthy peers remain eligible. A missing
+# runtime binary (exit 127, GH#38481) also affects every launch here; 3 rather
+# than 1 tolerates one transient ENOENT during an in-flight package upgrade.
 # Args: $1 = outcome signal
 # Outputs: positive integer threshold
 #######################################
@@ -308,6 +312,9 @@ _rh_failure_threshold_for_signal() {
 	case "$signal" in
 	worker_signing_unavailable)
 		printf '1\n'
+		;;
+	worker_runtime_missing)
+		printf '3\n'
 		;;
 	*)
 		printf '%s\n' "$RUNNER_HEALTH_FAILURE_THRESHOLD"
@@ -1037,6 +1044,8 @@ ZERO-ATTEMPT SIGNALS (reset counter when not one of these):
   no_branch_created          — worker dispatched but no git branch in target repo.
   low_token_usage            — worker exited with <ZERO_ATTEMPT_TOKEN_FLOOR tokens.
   watchdog_killed_no_commit  — watchdog killed worker before any commit.
+  worker_signing_unavailable — signing preflight failed (trips at 1).
+  worker_runtime_missing     — runtime binary missing: exit 127, no activity (trips at 3).
 
 ENVIRONMENT:
   RUNNER_HEALTH_FAILURE_THRESHOLD          (default 10)

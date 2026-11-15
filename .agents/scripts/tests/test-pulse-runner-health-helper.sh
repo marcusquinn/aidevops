@@ -16,10 +16,11 @@
 #   9. Advisory regenerates on resume→trip cycle (state change).
 #  10. Status --json emits valid JSON.
 #  11. RUNNER_HEALTH_DISABLED=1 short-circuits all subcommands.
-#  12. Recognised zero-attempt signals (5 listed in the helper).
+#  12. Recognised zero-attempt signals (6 listed in the helper).
 #  13. Unrecognised signal acts as real-attempt (resets counter).
 #  14. Deterministic signing failure trips immediately without changing the
 #      ordinary zero-attempt threshold.
+#  15. Missing runtime binary trips at its dedicated threshold of 3 (GH#38481).
 #
 # All tests run inside an isolated sandbox HOME; no system state is touched.
 
@@ -266,18 +267,18 @@ else
 fi
 _teardown_sandbox
 
-# --- Test 11: all 5 documented zero-attempt signals are recognised ---
+# --- Test 11: all 6 documented zero-attempt signals are recognised ---
 _setup_sandbox
 local_total=0
-for sig in no_worker_process no_branch_created low_token_usage watchdog_killed_no_commit worker_signing_unavailable; do
+for sig in no_worker_process no_branch_created low_token_usage watchdog_killed_no_commit worker_signing_unavailable worker_runtime_missing; do
 	_h record-outcome "$sig" "owner/repo#$local_total" >/dev/null 2>&1
 	local_total=$((local_total + 1))
 done
 counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo "x")
-if [[ "$counter" == "5" ]]; then
-	print_result "all 5 zero-attempt signals increment counter" "PASS"
+if [[ "$counter" == "6" ]]; then
+	print_result "all 6 zero-attempt signals increment counter" "PASS"
 else
-	print_result "all 5 zero-attempt signals increment counter" "FAIL" "got: $counter"
+	print_result "all 6 zero-attempt signals increment counter" "FAIL" "got: $counter"
 fi
 _teardown_sandbox
 
@@ -354,6 +355,45 @@ if [[ "$continuation_rc" -eq 1 && "$counter" -eq 1 && "$entries" -eq 1 ]]; then
 else
 	print_result "post-activity continuation signing failure is audited without tripping" "FAIL" \
 		"paused_rc=$continuation_rc counter=$counter ledger_entries=$entries"
+fi
+_teardown_sandbox
+
+# --- Test 14c: missing runtime binary trips at its dedicated threshold of 3 (GH#38481) ---
+# The default threshold is raised to 10 so only the per-signal threshold can trip.
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10
+_h record-outcome worker_runtime_missing owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#2 >/dev/null 2>&1
+second_rc=0
+_h is-paused || second_rc=$?
+_h record-outcome worker_runtime_missing owner/repo#3 >/dev/null 2>&1
+third_rc=0
+_h is-paused || third_rc=$?
+reason=$(jq -r '.circuit_breaker.reason' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo "x")
+entries=$(jq '[.last_outcomes[] | select(.signal == "worker_runtime_missing" and .zero_attempt)] | length' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$second_rc" -eq 1 && "$third_rc" -eq 0 && "$entries" -eq 3 &&
+	"$reason" == *"signal=worker_runtime_missing consecutive_zero_attempts=3"* ]]; then
+	print_result "two runtime-missing outcomes stay closed; the third trips the breaker" "PASS"
+else
+	print_result "two runtime-missing outcomes stay closed; the third trips the breaker" "FAIL" \
+		"second_rc=$second_rc third_rc=$third_rc entries=$entries reason=$reason"
+fi
+_teardown_sandbox
+
+_setup_sandbox
+export RUNNER_HEALTH_FAILURE_THRESHOLD=10
+_h record-outcome worker_runtime_missing owner/repo#1 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#2 >/dev/null 2>&1
+_h record-outcome real_attempt_with_commit owner/repo#3 >/dev/null 2>&1
+_h record-outcome worker_runtime_missing owner/repo#4 >/dev/null 2>&1
+reset_rc=0
+_h is-paused || reset_rc=$?
+counter=$(jq -r '.consecutive_zero_attempts' "$RUNNER_HEALTH_STATE_FILE")
+if [[ "$reset_rc" -eq 1 && "$counter" -eq 1 ]]; then
+	print_result "a real attempt between runtime-missing outcomes resets the streak" "PASS"
+else
+	print_result "a real attempt between runtime-missing outcomes resets the streak" "FAIL" \
+		"paused_rc=$reset_rc counter=$counter"
 fi
 _teardown_sandbox
 

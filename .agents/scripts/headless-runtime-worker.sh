@@ -1776,6 +1776,10 @@ _hrw_finish_not_launched() {
 	local session_key="$1"
 	_hrff_log_prelaunch_abort "$session_key" "${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_runtime_not_invoked}"
 	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; exact-head revision approval remains reusable"
+	# GH#38481: records only an evidenced missing runtime binary (exit 127).
+	if declare -F _hrff_record_runner_health_failure >/dev/null 2>&1; then
+		_hrff_record_runner_health_failure "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
+	fi
 	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
 	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
 	_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"
