@@ -794,35 +794,82 @@ Draft checkpoint PR #${pr_number} was closed without merging, so it no longer ho
 	return 0
 }
 
-# Scan recently closed, unmerged worker-branch PRs once per partial-continuation
-# traversal and offer each linked issue to the restore above. One list read;
-# per-PR reads happen only for recent closed worker branches.
+# Parse one page of the closed-PR listing (GH#38396).
+# Output: first line "<page length> <oldest updated_at epoch>"; then one
+# "<pr> <issue>" row per unmerged worker-branch PR closed at or after the floor.
+# Args: $1=repo slug, $2=floor epoch, $3=page JSON
+# Returns: 0 on success, 1 on an unreadable page
+_pmpc_closed_checkpoint_rows() {
+	local repo_slug="$1" floor="$2" page_json="$3"
+	printf '%s' "$page_json" | jq -r --arg slug "$repo_slug" --argjson floor "$floor" '
+		if type != "array" then error("unreadable PR list") else . end
+		| "\(length) \(map(.updated_at // .closed_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
+		(.[]
+		| select(.merged_at == null and (.closed_at | type) == "string" and (.number | type) == "number")
+		| select(.head.repo.full_name? == $slug)
+		| select((.closed_at | fromdateiso8601) >= $floor)
+		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)$").issue) as $issue
+		| "\(.number) \($issue)")
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Scan every unmerged worker-branch PR closed since the previous complete scan
+# (within the lookback) once per partial-continuation traversal and offer each
+# linked issue to the restore above (GH#38396). Pages are read newest-updated
+# first and the scan stops when a page's oldest updated_at is below the floor
+# (updated_at >= closed_at), the page is short, the deadline passes, or the page
+# cap is reached. The stamp (start epoch) advances only after the floor was
+# reached, so a deadline, page-cap or unreadable-page stop rescans the gap.
 # Args: $1=repo slug, $2=deadline epoch, $3=traversal cursor "<phase>:<page>:<pending>";
 #       only a fresh traversal ("review:1:") scans, so resumed pages do not repeat it
 # Returns: 0 when scanned or not due, 1 on an unreadable listing
 _pmpc_reconcile_closed_checkpoints() {
-	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" prs_json="" rows="" pr="" issue=""
-	local now_epoch=""
+	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" page_json="" rows="" pr="" issue=""
+	local now_epoch start_epoch floor stamp stamp_file first oldest count
+	local page=1 reached=0
 	[[ "$traversal" == "review:1:" ]] || return 0
 	local lookback="${PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS:-604800}"
 	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
-	prs_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30" 2>/dev/null) || return 1
-	now_epoch=$(date +%s) || return 1
-	rows=$(printf '%s' "$prs_json" | jq -r --arg slug "$repo_slug" --argjson now "$now_epoch" \
-		--argjson lookback "$lookback" '
-		if type != "array" then error("unreadable PR list") else .[] end
-		| select(.merged_at == null and (.closed_at | type) == "string" and (.number | type) == "number")
-		| select(.head.repo.full_name? == $slug)
-		| select((.closed_at | fromdateiso8601) >= ($now - $lookback))
-		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)$").issue) as $issue
-		| "\(.number) \($issue)"
-	' 2>/dev/null) || return 1
-	while read -r pr issue; do
-		[[ "$pr" =~ ^[0-9]+$ && "$issue" =~ ^[0-9]+$ ]] || continue
-		now_epoch=$(date +%s) || return 1
-		[[ "$now_epoch" -lt "$deadline" ]] || return 0
-		_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || true
-	done <<<"$rows"
+	local per_page="${PULSE_CLOSED_CHECKPOINT_PAGE_SIZE:-100}"
+	[[ "$per_page" =~ ^[1-9][0-9]*$ && "$per_page" -le 100 ]] || per_page=100
+	local max_pages="${PULSE_CLOSED_CHECKPOINT_MAX_PAGES:-10}"
+	[[ "$max_pages" =~ ^[1-9][0-9]{0,2}$ ]] || max_pages=10
+	local stamp_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	stamp_file="${stamp_dir}/${repo_slug//\//__}.closed-scan"
+	start_epoch=$(date +%s) || return 1
+	floor=$((start_epoch - lookback))
+	if [[ -r "$stamp_file" ]]; then
+		read -r stamp <"$stamp_file" || stamp=""
+		# A stamp can only narrow the window to the last complete scan minus a margin.
+		if [[ "$stamp" =~ ^[0-9]{1,10}$ && $((stamp - 3600)) -gt "$floor" ]]; then
+			floor=$((stamp - 3600))
+		fi
+	fi
+	while [[ "$page" -le "$max_pages" ]]; do
+		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=${per_page}&page=${page}" 2>/dev/null) || return 1
+		rows=$(_pmpc_closed_checkpoint_rows "$repo_slug" "$floor" "$page_json") || return 1
+		first="${rows%%$'\n'*}"
+		read -r count oldest <<<"$first"
+		[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+		while read -r pr issue; do
+			[[ "$pr" =~ ^[0-9]+$ && "$issue" =~ ^[0-9]+$ ]] || continue
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 0
+			_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || true
+		done <<<"$rows"
+		if [[ "$count" -lt "$per_page" || "$oldest" -lt "$floor" ]]; then
+			reached=1
+			break
+		fi
+		page=$((page + 1))
+	done
+	if [[ "$reached" -eq 1 ]]; then
+		mkdir -p "$stamp_dir" 2>/dev/null || return 0
+		printf '%s\n' "$start_epoch" >"${stamp_file}.$$" 2>/dev/null &&
+			mv -f "${stamp_file}.$$" "$stamp_file" 2>/dev/null || rm -f "${stamp_file}.$$" 2>/dev/null
+	fi
 	return 0
 }
 
