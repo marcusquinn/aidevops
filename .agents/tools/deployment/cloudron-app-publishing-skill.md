@@ -55,6 +55,14 @@ head and green checks. It removes only its release hold and uses the normal
 full-loop merge gates. A changed head requires an updated issue and new signed
 approval. API/verification failures never authorize a merge.
 
+**Merge-time release gate (GH#37955).** Pulse and full-loop merges run
+`cloudron_release_merge_guard` (`cloudron-release-merge-guard-lib.sh`) for
+registered maintained packages. A PR whose `CloudronManifest.json` `version`
+differs from its base branch tip is a release even without a request: it merges
+only with exact-head authority (signed approval or the standing policy).
+Otherwise the guard adds `release-approval-required` + `hold-for-review` so `r924`
+requests approval or applies the policy. Unknown evidence blocks the merge.
+
 **Standing release policy (GH#37697, optional).** To stop routine upstream
 bumps queuing behind per-release signatures, a maintainer may sign one policy
 per repository: run `cloudron-release-approval-helper.sh policy-request <repo>`,
@@ -77,8 +85,15 @@ re-proved immediately before merge, and the closing comment records
 `authority: standing policy #N`. Anything else, and any stale or unverifiable
 per-release signature, keeps the per-release path. Under an active policy, an
 unsigned request whose head moved is closed so a fresh exact-head request
-follows. Close the policy issue to revoke it; any edit or comment makes its
-signature stale.
+follows. Any edit or comment makes its signature stale.
+
+The policy issue is a long-lived non-task record (GH#37993): `policy-request`
+creates it with `persistent` + `no-auto-dispatch`, and issue creation adds no
+`status:*` label or assignee to `persistent`, dashboard, `release-approval-required`
+or `release-standing-policy` issues. Adding `persistent` to an already-signed
+policy keeps its signature valid; removing it does not. To revoke, remove
+`persistent` and close the issue. Closing alone also revokes: the persistent
+reopen guard reopens the issue with a comment, which stales the signature.
 
 For an interactive continuation authorized for one release, use
 `cloudron-release-approval-helper.sh process --repo <slug> --issue <N> --apply`.
@@ -386,7 +401,12 @@ assets (`README.md`, `docs/`, `metrics/`, `.github/metrics/`,
 `.github/star-history/`, or root `star-history.svg`/`star-history-dark.svg`).
 Package inputs, catalog changes, rewritten ancestry, conflicts, or a second race
 fail closed. Catalog bytes remain unchanged, and the commit records the original
-validated SHA for both catalog and image attestation verification. Caller concurrency
+validated SHA for both catalog and image attestation verification. The publish
+commit is created through the Git Database API so GitHub signs it, then rebuilt
+locally and pushed atomically with the tag; if signing is unavailable, the
+workflow warns and pushes the unsigned commit. Check with `gh api
+repos/OWNER/REPO/commits/vX.Y.Z --jq .commit.verification` (`verified: true` for
+signed releases; tags published earlier stay unsigned). Caller concurrency
 serializes main runs and never cancels an in-flight publication. Existing
 catalogs without this workflow's attestations require an owner-reviewed
 provenance adoption before release reconciliation; it never fabricates evidence.

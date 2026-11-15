@@ -41,7 +41,8 @@ mode **0600**. It must be a regular file, not a symlink. Supported keys:
 | `ignore` | Exclude a hostname/apex and its descendants from discovery |
 | `expected_issuers` | Object mapping apex to issuer organization strings; supplements 180-day history when no CAA applies |
 | `issuer_caa_map` | Object mapping CAA issuer domains to arrays of issuer-name substrings; extends the bundled common CA mapping |
-| `fallback_repo` | Optional private `owner/repo` for findings without a safe primary route |
+| `shared_parent_domains` | Extra registrable domains where unrelated customers host sites (built-in default: `hostingersite.com`). A hostname under one is its own apex: CT watches that exact host, and no `caa-missing` is raised because the customer cannot set CAA on the provider zone |
+| `fallback_repo` | Optional private `owner/repo` for findings without a safe primary route; when set, also receives the single `caa-missing` owner-decision digest |
 | `public_suffix_file` | Optional path to a locally maintained PSL, including wildcard and exception rules |
 
 Example configuration:
@@ -52,6 +53,7 @@ Example configuration:
   "ignore": ["retired.example.com"],
   "expected_issuers": {"example.com": ["Let's Encrypt"]},
   "issuer_caa_map": {},
+  "shared_parent_domains": [],
   "fallback_repo": "OWNER/PRIVATE_SECURITY_REPO",
   "public_suffix_file": null
 }
@@ -85,7 +87,7 @@ lock. Corrupt/insecure state fails closed rather than resetting the baseline.
 |------|----------|---------|
 | `ct-unexpected-issuer` | high | Newly seen certificate issuer is outside applicable CAA, or outside 180-day issuance history plus configured issuers when no CAA exists |
 | `ct-distrusted-issuer` | critical | New certificate matches a substring in `cert-watch-distrusted-issuers.conf` |
-| `ct-unknown-hostname` | medium | New SAN under our apex matches no known hostname/alias or previously held unexpired wildcard |
+| `ct-unknown-hostname` | medium | New SAN under our apex matches no known hostname/alias or previously held unexpired wildcard. Exception: `www.<inventoried-host>` (or the reverse) on a certificate from an already expected, non-distrusted issuer is auto-known, with the certificate ID recorded in state `auto_known_sans`; any other SAN or issuer still files |
 | `caa-missing` | low | No CAA found from a hostname through its apex; one stable finding per apex |
 | `caa-blocks-active-issuer` | high | Effective CAA prevents an issuer of a currently valid certificate; renewal may fail |
 | `ct-unknown` / `caa-unknown` | unknown | Incomplete observation; printed only, never filed as a security finding |
@@ -145,8 +147,21 @@ their priority label. Bodies carry:
 ```
 
 All open issues are paginated for exact-marker dedup. A failed dedup read stops
-filing. A persistent missing-CAA finding stays on its one open issue. Once an
-operator closes it, a still-present CAA problem can be reported again.
+filing. Once an operator closes an issue, a still-present problem can be
+reported again.
+
+### `caa-missing` digest
+
+With a private `fallback_repo` configured, `caa-missing` is not filed per repo.
+One digest issue (marker `digest=caa-missing`) lists every apex missing CAA, the
+proposed records and the CAs seen in the last 180 days, and asks for one owner
+decision: approve all, approve a subset, or decline. Each apex section keeps its
+per-apex marker, so reruns edit that issue only when its content changes (no
+duplicates). A full run replaces the list; `--domain` runs merge into it. After
+filing, open legacy per-repo `caa-missing` issues whose marker is in the digest
+are closed with a link to it, through the same private-visibility recheck.
+Without `fallback_repo`, behaviour is per-repo as before. Applying records stays
+a separate owner-authorized step via `dns-helper.sh`.
 
 ## Triage an unexpected certificate
 

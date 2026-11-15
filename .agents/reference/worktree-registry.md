@@ -177,6 +177,98 @@ Do not introduce a second independent lease database. Reuse the registry's
 identity contract and keep process containment separate from SQLite queries.
 Cooperative locks cannot prove that arbitrary external shells are absent.
 
+## Reclaim of finished worktrees (interim, always on)
+
+`cleanup_policy.py` requires six proofs that no production collector supplies, so
+`decide_cleanup` always holds and nothing is ever retired. On a busy host that is
+unbounded growth, not slow cleanup: 101 of 143 worktrees were finished but
+retained, and free space fell 24 GB in 50 minutes.
+
+`.agents/worker-lifecycle/worktree-reclaim.py` (logic in `worker_lifecycle/reclaim/`) is the interim answer, and it has two entry points.
+Run directly it reports only, unless `--apply`. The pulse cleanup stage always runs
+it as a third pass sharing the budget in thirds (stage minimum budget 3), and that
+pass always applies: unattended, archive-free deletion with no opt-out flag.
+
+To fit the budget, references are resolved up front with one batched GraphQL query
+per repository (20 per query), with the owner and name bound as variables so a slug
+can never be parsed as query syntax. A failed or partial batch is parsed regardless
+of exit status and leaves absent references to the per-reference fallback. Per-tree
+size walks are gone: `reclaimed_bytes` is the free-space delta on the base
+directory across the pass, and is 0 when nothing was removed.
+
+Those two changes are what make an always-on pass affordable. Measured on a busy
+host: `gh issue view` costs 1.05s per reference against 1.14s for a 20-reference
+batch, and a per-tree size walk cost 4.3s on a 5 GB worktree. A full 98-candidate
+scan fell from 442s to 45s, well inside a third of the 900s pressure budget. The
+local state checks were never the cost: `git status --untracked-files=all` takes
+0.2-0.3s even on those trees, because the large directories are gitignored and Git
+never walks them. Because GitHub is asked before local state, those checks run only
+for candidates whose work has finished.
+
+It removes a worktree only when every one of these holds, and names the first
+failure as its refusal reason:
+
+- The path is a linked worktree, not a symlink and not a main checkout, and Git
+  holds no lock on it.
+- Every issue and pull request number encoded in the directory name is finished:
+  an issue `CLOSED`, a pull request `MERGED`. A pull request closed without
+  merging is not finished work. Adjacent references sharing one separator are all
+  read, so one closed reference cannot authorize removal while another is open.
+  One exception: a review worktree (`<repo>-pr<N>-review-<slug>`, `<repo>` being
+  the origin's repository name) is judged by PR N alone, since the head-branch
+  references later in its name describe the same work. If PR N is confirmed
+  `OPEN`, it qualifies once Git has not moved its `HEAD` or index for 2 hours
+  (`review-idle`), re-checked just before removal (`changed-review-active`).
+  Unknown PR state still refuses, and every other check below still applies.
+  Two more idle rules share that mechanism and re-check at removal
+  (`changed-worker-active`, `changed-unreferenced-active`): a worker tree
+  (`<repo>-feature-auto-<timestamp>-gh<N>`) whose issue N is confirmed `OPEN`
+  qualifies after 6 hours idle (`worker-idle`; a redispatch creates a fresh
+  tree), and a `<repo>-feature-auto-<timestamp>-<pid>` tree with no reference
+  qualifies after 72 hours idle (`unreferenced-idle`), its repository still
+  resolving to a GitHub origin. Other shapes, such as `ci-repair-pr<N>`, refuse.
+  Reclaim runs Git with `GIT_OPTIONAL_LOCKS=0`, so its own status reads never
+  rewrite the index and reset that clock.
+- The origin is a GitHub remote. A hostless slug would query an unrelated
+  repository of the same name.
+- No registered owner can still be working there. Ownership comes from the
+  lifecycle registry, never a host process scan: the worktree's generation
+  (`GenerationEnrollment.inspect_retirement`) lists its admitted runs, and the
+  platform `ProcessAdapter` observes each run not recorded as ended. Refusals:
+  `owner-alive`, `owner-unobservable`, `owner-not-enrolled`,
+  `owner-registry-unreadable`. The registry is opened and the adapter's
+  readiness checked once per pass; if either fails, every candidate refuses with
+  `owner-observation-unavailable`. Owners are read only for candidates whose work
+  has finished, after GitHub.
+- No uncommitted changes, no untracked files (requested explicitly, since
+  configuration can suppress them) and no commits absent from every remote.
+
+Ownership and repository state are both re-verified immediately before deletion:
+a run that became live refuses with `owners-appeared`, and an edit landing after
+judgement refuses with `changed-*`. Forced removal is
+retained because ignored build artifacts are expected and Git refuses them
+otherwise; it runs only after a fresh clean verdict. Git subprocesses run without
+inherited `GIT_DIR`-style redirects, which would otherwise answer every question
+from another checkout.
+
+Removal is archive-free by explicit operator decision, so those checks are the
+only protection and each fails closed. Reclaimed removals are counted as removed
+but never as archived.
+
+This pass deliberately claims less than it deletes on: it supplies none of the six
+`CleanupEvidence` proofs, reports no `cleanup_authorized`, and does not meet the
+prerequisites in the section above. One residual gap is known and reported rather
+than assumed away: processes that never registered a run (an ad-hoc shell, an
+interactive session, an orphan outliving its launcher) are not observed. Every
+receipt states this as `"residual_risk": "unregistered-processes-unobserved"`, and
+`owner_observation` reports `registry` or `unavailable`. Registered runs are
+covered wherever their working directory is, which a working-directory scan
+cannot do. Measured on 2026-11-13 across 89 worktrees: the registry found 10 live
+owners in 13.8s; the former `/proc` scan saw 2 of the 6 live owners it was
+compared against and none the registry missed. The pass exists so the real
+collector can be designed deliberately rather than under disk pressure; running
+it accepts that risk on every host.
+
 ## Process-first activity observation
 
 `worktree-lifecycle-helper.sh activity [--summary]` reads the existing lifecycle

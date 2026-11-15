@@ -38,8 +38,8 @@ for qualifying additional environments.
 From the repository root:
 
 ```bash
-uvx --from ruff==0.11.13 ruff check --no-cache .agents/worker-lifecycle
-uvx --from mypy==1.15.0 mypy --config-file .agents/worker-lifecycle/mypy.ini
+uvx --from ruff==0.11.13 ruff check --no-cache
+uvx --from mypy==1.15.0 mypy --config-file mypy.ini
 ```
 
 Alternatively install `ruff==0.11.13` in a development virtual environment and run

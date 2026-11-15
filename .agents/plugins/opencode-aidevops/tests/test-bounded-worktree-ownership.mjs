@@ -11,6 +11,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runtimeOwner } from "../runtime-owner.mjs";
 import { processStartIdentity } from "../process-start-identity.mjs";
+import { admitWithContentionWait, contentionWaitMs } from "../bounded-operation-supervisor.mjs";
 
 const scripts = fileURLToPath(new URL("../../../scripts/", import.meta.url));
 const registry = join(scripts, "../worker-lifecycle/worker-registry.py");
@@ -117,6 +118,79 @@ test("undeclared creation remains a coverage gap instead of adopting the produce
   assert.equal(result.status, "coverage-gap");
   assert.equal(result.creation_verified, false);
   assert.equal(result.admission, "open");
+});
+
+const LOCKED = "BLOCKED: lifecycle owner admission is unavailable (database-locked); no write authorized";
+
+function contentionClock() {
+  const clock = { now: 0, sleeps: [] };
+  clock.options = (waitSeconds) => ({
+    waitSeconds, now: () => clock.now,
+    sleep: async (ms) => { clock.sleeps.push(ms); clock.now += ms; },
+  });
+  return clock;
+}
+
+test("bounded admission waits out writer contention within the admission wait (GH#38158)", async () => {
+  const clock = contentionClock();
+  let attempts = 0;
+  const admitted = await admitWithContentionWait(() => {
+    attempts += 1;
+    if (attempts < 4) throw new Error(LOCKED);
+    return "admitted";
+  }, clock.options("30"));
+  assert.equal(admitted, "admitted");
+  assert.equal(attempts, 4);
+  assert.deepEqual(clock.sleeps, [500, 1000, 2000]);
+});
+
+test("bounded admission refuses contention past the deadline with the original error", async () => {
+  const clock = contentionClock();
+  let attempts = 0;
+  const original = new Error(LOCKED);
+  const saved = process.env.AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS;
+  delete process.env.AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS;
+  try {
+    await assert.rejects(admitWithContentionWait(() => { attempts += 1; throw original; },
+      clock.options(undefined)), (error) => error === original);
+  } finally {
+    if (saved !== undefined) process.env.AIDEVOPS_LIFECYCLE_ADMISSION_WAIT_SECONDS = saved;
+  }
+  // Default 30 s: 0.5 doubling to a 4 s cap, the last pause trimmed to the deadline.
+  assert.equal(clock.now, 30000);
+  assert.equal(Math.max(...clock.sleeps), 4000);
+  assert.equal(attempts, clock.sleeps.length + 1);
+  const zero = contentionClock();
+  await assert.rejects(admitWithContentionWait(() => { throw original; }, zero.options("0")),
+    (error) => error === original);
+  assert.deepEqual(zero.sleeps, []);
+  // The deadline runs from the first attempt: slow helper attempts count against it.
+  const slow = contentionClock();
+  let slowAttempts = 0;
+  await assert.rejects(admitWithContentionWait(() => {
+    slowAttempts += 1;
+    slow.now += 7000;
+    throw original;
+  }, slow.options("2")), (error) => error === original);
+  assert.equal(slowAttempts, 1);
+  assert.deepEqual(slow.sleeps, []);
+});
+
+test("bounded admission never retries non-contention refusals and denies invalid waits", async () => {
+  const clock = contentionClock();
+  let attempts = 0;
+  const other = new Error("BLOCKED: lifecycle owner admission is unavailable (helper-timeout); no write authorized");
+  await assert.rejects(admitWithContentionWait(() => { attempts += 1; throw other; },
+    clock.options("30")), (error) => error === other);
+  assert.equal(attempts, 1);
+  for (const invalid of ["-1", "301", "NaN", "soon", ""]) {
+    assert.equal(contentionWaitMs(invalid), null);
+    await assert.rejects(admitWithContentionWait(() => { throw new Error(LOCKED); },
+      contentionClock().options(invalid)), /invalid-admission-wait/);
+  }
+  assert.equal(contentionWaitMs("0"), 0);
+  assert.equal(contentionWaitMs("300"), 300000);
+  assert.deepEqual(clock.sleeps, []);
 });
 
 test("runtime owner requires matching session and original native generation proof", async () => {

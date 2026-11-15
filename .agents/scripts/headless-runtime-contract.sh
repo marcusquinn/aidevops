@@ -109,7 +109,7 @@ _worker_headless_contract_execution_text() {
 Commit and PR shortcut:
 After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
   PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue $WORKER_ISSUE_NUMBER --message "feat: description" --summary "what was done" --testing "how verified")
-Then make one merge attempt: full-loop-helper.sh merge "$PR_NUMBER"
+Then wait for the required checks and merge: full-loop-helper.sh merge "$PR_NUMBER" (bounded wait rules in Mandatory behavior 8).
 Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
   "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
 This verifies the code that will ship instead of the deployed helper copy from PATH.
@@ -124,7 +124,7 @@ Mandatory behavior:
    Already-satisfied exception (GH#37510): when the issue's premise is falsified or its work is already on the live remote default branch (check the remote, not a possibly stale local checkout), follow reference/worker-discipline.md Outcome A. Before closing, confirm a clean worktree with no commits ahead of the live default, no pushed branch and no PR; if any exist (for example a WIP commit), leave the issue open, preserve the work and take the normal PR path. Then post exactly one receipt comment whose first line is `<!-- aidevops:already-satisfied-completion:v1 -->` and whose second line is one JSON object with `schema` (1), `repository`, `issue` (number), `attempt_id` and `attempt_started_at` (exactly $AIDEVOPS_ATTEMPT_ID and $AIDEVOPS_ATTEMPT_STARTED_AT), `disposition` (`already_satisfied` or `premise_falsified`), `rationale` (at least 20 characters), `path` (a repo-relative file named in the issue body), `blob` (its 40-hex blob on the live default) and `evidence_pr` (a merged PR touching `path`; required for `already_satisfied`), as in reference/worker-discipline.md "PR-less already-satisfied completion". A bare marker or prose comment is not credited. Then close the issue: when citing a PR, pre-close gate 7 applies, and a merged prerequisite PR (`For`/`Ref` parent) uses `verify-issue-close-helper.sh check-no-code` instead of `check`. Emit FULL_LOOP_COMPLETE instead of creating a PR. Generated "Unactioned Review Feedback" issues instead require the review-triage receipt ("PR-less review-triage completion"). Difficulty is never a falsified premise; every other task keeps the commit/PR path.
 7. A draft PR is only a durable checkpoint, never completion. Continue until the implementation and required local verification are complete, every intended commit is pushed, the PR is non-draft, the PR head matches local HEAD, and the required MERGE_SUMMARY exists.
    If execution must stop with a pushed draft and only authorized in-scope work remains, preserve the checkpoint and report the unfinished work without `BLOCKED:`; the runtime handles the draft as `worker_draft_checkpoint` for continuation. Do not call ordinary remaining work a capability limit or external trigger. This is not completion and does not authorize skipping verification.
-8. Attempt the merge path once. If it merges, finish the required closing comments. If the exact-head non-draft PR has no terminal check failure and only asynchronous CI, review-bot, human approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally. Pulse/webhook automation owns subsequent monitoring. Do not sleep, wait, or poll for those gates, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates. Never disable or redirect commit signing (`-c commit.gpgsign=false`, `--no-gpg-sign`, signing-key overrides); if signing fails, stop with the permission blocker so the operator runs `aidevops signing headless-setup`.
+8. Own your PR through merge, like an interactive full-loop session (t19011: worker PRs handed off while CI was pending waited one or more Pulse cycles and collected conflicts from concurrent merges). Attempt the merge path. If required checks are still pending, wait for them only with `full-loop-helper.sh wait-checks "$PR_NUMBER" --repo "$WORKER_REPO_SLUG" --timeout 200`, at most 8 times (about 27 minutes), printing one status line such as `Waiting for CI checks on PR #<N> (call <k>/8)` before each call. Exit 0: attempt the merge again. Exit 1: if the failed check is caused by this PR, fix it, push, then wait again; otherwise hand off. Exit 9: run `gh pr ready "$PR_NUMBER"` and wait again. If it merges, finish the required closing comments. If the bound is used up, the wait returns exit 2, or only review-bot, human review or approval, or native auto-merge remains, emit POST_PR_HANDOFF on its own line and exit normally; Pulse owns subsequent monitoring. Never wait or poll for human review or approval (GH#27658), never use `sleep` loops, and never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates. Never disable or redirect commit signing (`-c commit.gpgsign=false`, `--no-gpg-sign`, signing-key overrides); if signing fails, stop with the permission blocker so the operator runs `aidevops signing headless-setup`.
 9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. If the only remaining blocker is the current model's inability to reason through the task safely, emit `BLOCKED: capability limit - <evidence>`; runtime routing will retry at the next configured capability tier. Never use that marker for permission, authentication, provider, rate-limit, secret, policy, trust-boundary, or locality failures. Review-policy metadata and nominal GitHub states are NOT valid blockers. Genuine blockers require evidence: a failing check that cannot be repaired, missing permission, unresolved conflict, or explicit policy gate.
 EOF
 	return 0
@@ -160,7 +160,8 @@ When the trusted brief explicitly requires waiting for a named external event
 (for example a model ID publication) and current evidence confirms it has not
 occurred, use:
 TERMINAL_BLOCKER_REASON=external_trigger_pending
-Name the exact trigger and checked evidence in the protected dossier. This class
+Name the exact trigger and checked evidence in the protected dossier. Also add one
+public TERMINAL_BLOCKER_TRIGGER=<event, owner or date, one line, no URLs/secrets>. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.
@@ -242,8 +243,9 @@ Activity watchdog constraint -- CRITICAL:
 A continuous watchdog monitors your output. If you produce no tool calls or text
 output for 300 seconds, you will be killed. Therefore:
   - NEVER use sleep/wait/poll longer than 240 seconds.
-  - Do not use worker-driven polling to wait for post-PR CI or reviews. Perform one
-    immediate state check, act on terminal failures, or hand off pending gates.
+  - The only post-PR wait is Mandatory behavior 8: `full-loop-helper.sh wait-checks`
+    with `--timeout 200`, at most 8 calls, for required checks. Never poll for
+    reviews or approval; act on terminal failures or hand off pending gates.
   - Before PR handoff, any required bounded wait must have an actionable result
     within this invocation and include status output before each wait.
 EOF
@@ -275,8 +277,9 @@ Before ending your session, verify ALL of these:
     required local verification has passed. A draft or unpushed local commit is
     an incomplete checkpoint, not a successful handoff.
   - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' returns 1. If 0, post it now -- the merge pass uses it for closing comments.
-  - Check remote state once. Terminal failures are worker-actionable and must not
-    be reported as a successful handoff; pending CI/review alone is handed off.
+  - Check remote state after the bounded wait. Terminal failures are worker-actionable
+    and must not be reported as a successful handoff; only CI still pending after the
+    bound, review, approval, or native auto-merge is handed off.
   - If any readiness check fails, you are NOT done -- continue working.
   - Valid exit states are FULL_LOOP_COMPLETE, POST_PR_HANDOFF, or
     BLOCKED with evidence. Runtime classification independently validates PR state.

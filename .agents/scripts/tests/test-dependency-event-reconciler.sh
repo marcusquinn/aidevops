@@ -40,6 +40,8 @@ SUCCESSOR_REASON=""
 BLOCKER_RECONCILE_FAIL=false
 BLOCKER_RECONCILE_LOG=$(mktemp)
 DER_STALE_BLOCKED_CURSOR_DIR=$(mktemp -d)
+DER_RETRY_DIR="${DER_STALE_BLOCKED_CURSOR_DIR}/retries"
+HOME="${DER_STALE_BLOCKED_CURSOR_DIR}/home"
 trap 'rm -f "$BLOCKER_RECONCILE_LOG"; rm -rf "$DER_STALE_BLOCKED_CURSOR_DIR"' EXIT
 
 pass() {
@@ -221,6 +223,13 @@ gh() {
 		return 0
 		;;
 	"api graphql")
+		if [[ "$*" == *'issues(states:OPEN'* ]]; then
+			jq -cn --arg dep "$STALE_DEP_LABEL" --arg hold "$STALE_HOLD_LABEL" '
+				[{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[{number:20,updatedAt:"v1",
+				labels:{pageInfo:{hasNextPage:false},nodes:([{name:"status:blocked"}] + (if $dep == "" then [] else [{name:$dep}] end) + (if $hold == "" then [] else [{name:$hold}] end))},
+				blockedBy:{totalCount:0,nodes:[]}}]}}}}]'
+			return 0
+		fi
 		if [[ "$*" == *issueOrPullRequest* ]]; then
 			supersession_fixture "$@"
 			return 0
@@ -252,6 +261,10 @@ gh() {
 		else
 			printf '%s\n' "$COMMENTS"
 		fi
+		return 0
+		;;
+	"api repos/owner/repo/issues/20")
+		jq -cn --arg body "$BODY20" '{body:$body}'
 		return 0
 		;;
 	esac
@@ -435,6 +448,9 @@ _der_completion_blockers_closed "owner/repo" 20 "- [ ] t20 delivered blocked-by:
 assert_eq 1 "$completion_status" "completion fails closed on null native blocker nodes"
 NATIVE_NULL_NODE=false
 
+# These independent scenarios change the mocked body and labels between passes.
+rm -rf "$DER_RETRY_DIR"
+DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10" COMMENTS='[[]]'
 reconcile_stale_blocked_issues owner/repo >/dev/null 2>&1 || true
 assert_eq 1 "$EDIT_COUNT" "periodic stale sweep releases issue after missed close event"
@@ -516,6 +532,7 @@ assert_eq 0 "$(run_reconcile)" "declared superseded blocker with an open success
 LIVE_REASON="COMPLETED"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "declared completed blocker still releases the dependant"
+unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
 NATIVE_EMPTY=false LIVE_REASON="" NATIVE_REASON=""
 
 # GH#33957: bounded passes resume from a per-repo cursor in ascending issue
@@ -525,8 +542,12 @@ _run_stale_cursor_pass() (
 	local visited_log="$1"
 	shift
 	gh() {
-		[[ "$1 $2" == "api --paginate" ]] || return 1
-		jq -cn '[[{number:9},{number:3},{number:7},{number:5}] | map(. + {state:"open",title:"t",body:"",labels:[{name:"status:blocked"}]})]'
+		if [[ "$1 $2" != "api graphql" ]]; then
+			[[ "${CURSOR_BODY_FETCH_FAIL:-false}" == false ]] || return 1
+			printf '%s\n' '{"body":""}'
+			return 0
+		fi
+		jq -cn '[{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[9,3,7,5] | map({number:.,updatedAt:"v1",labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},blockedBy:{totalCount:0,nodes:[]}})}}}}]'
 		return 0
 	}
 	_der_try_unblock() {
@@ -548,6 +569,11 @@ assert_eq "3 5" "$(paste -sd' ' "$visited_log")" "stale sweep visits blocked iss
 assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "stale sweep reports a batch-limited pass as partial"
 assert_eq 5 "$(cat "$cursor_file")" "stale sweep persists the last visited issue"
 : >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=true || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "failed body fetch reports an incomplete traversal"
+assert_eq 5 "$(_der_stale_cursor_read "$cursor_file")" "failed body fetch preserves the nonzero ordinary cursor"
+assert_eq "" "$(paste -sd' ' "$visited_log")" "failed body fetch does not visit the candidate"
 pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass_rc=$?
 assert_eq "7 9" "$(paste -sd' ' "$visited_log")" "next stale sweep resumes after the cursor"
@@ -574,6 +600,128 @@ _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 \
 	"DER_STALE_BLOCKED_CURSOR_DIR=${cursor_file}/unwritable" || pass_rc=$?
 assert_eq 1 "$pass_rc" "unpersistable cursor reports failure instead of partial progress"
 rm -f "$visited_log"
+
+# GH#37965: exercise the production unblock path with thirty non-native held
+# candidates followed by three native-ready candidates. Log every per-issue API
+# call so a memo skip cannot accidentally hide a comments or labels request.
+SCHEDULE_LOG="${DER_STALE_BLOCKED_CURSOR_DIR}/schedule.calls"
+SCHEDULE_SUMMARY="${DER_STALE_BLOCKED_CURSOR_DIR}/schedule.summary"
+_run_ready_pass() (
+	local assignment="" rc=0
+	for assignment in "$@"; do export "${assignment?}"; done
+	dsr_repoint_if_superseded() { return 0; }
+	gh() {
+		local command="$1" arg="" number="" path=""
+		shift
+		if [[ "$command $1" == "api graphql" && "$*" == *'issues(states:OPEN'* ]]; then
+			[[ "${SCHEDULE_LISTING:-ok}" != fail ]] || return 1
+			jq -cn --arg mode "${SCHEDULE_LISTING:-ok}" --argjson ready "${SCHEDULE_READY:-true}" --arg updated "${SCHEDULE_UPDATED:-v1}" '
+				[{data:{repository:{issues:{pageInfo:{hasNextPage:($mode == "truncated"),endCursor:"next"},nodes:[range(1;34) | {number:.,updatedAt:(if . == 1 then $updated else "v1" end),labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},blockedBy:{
+					totalCount:(if $mode == "partial" then 2 elif . > 30 and $ready then 1 else 0 end),
+					nodes:(if . > 30 and $ready then [{number:99,state:"CLOSED"}] else [] end)}}]}}}}]'
+			return 0
+		fi
+		if [[ "$command $1" == "api --paginate" && "$*" == *'issues?state=open'* ]]; then
+			jq -cn --arg updated "${SCHEDULE_UPDATED:-v1}" --arg gate "${SCHEDULE_GATE:-}" '
+				[[range(1;34) | {number:.,state:"open",title:"fixture",
+					body:(if . == 1 then $gate else "" end),
+					updated_at:(if . == 1 then $updated else "v1" end),labels:[{name:"status:blocked"}]}]]'
+			return 0
+		fi
+		for arg in "$@"; do
+			[[ "$arg" == repos/* ]] && path="$arg"
+			[[ "$arg" == n=* ]] && number="${arg#n=}"
+		done
+		printf '%s %s\n' "$command" "$*" >>"$SCHEDULE_LOG"
+		case "$command $1" in
+		'api repos/owner/schedule/issues/'*)
+			jq -cn --arg gate "${SCHEDULE_GATE:-}" --arg path "$path" '{body:(if ($path | endswith("/1")) then $gate else "" end)}'
+			;;
+		'api --paginate')
+			printf 'visit %s\n' "${path%/comments*}" >>"$SCHEDULE_LOG"
+			if [[ -n "${SCHEDULE_HOLD:-}" && "$path" == *"/${SCHEDULE_HOLD}/comments"* ]]; then
+				printf '%s\n' '[[{"author_association":"OWNER","body":"Hold for review"}]]'
+			else
+				printf '[[]]\n'
+			fi
+			;;
+		'api graphql')
+			jq -cn --argjson n "$number" --argjson ready "${SCHEDULE_READY:-true}" '
+				{data:{repository:{issue:{blockedBy:{pageInfo:{hasNextPage:false},nodes:
+					(if $n > 30 and $ready then [{number:99,state:"CLOSED",stateReason:"COMPLETED",
+						repository:{nameWithOwner:"owner/schedule"}}] else [] end)}}}}}'
+			;;
+		'issue view') printf 'status:blocked\n' ;;
+		'issue edit') printf 'release %s\n' "$2" >>"$SCHEDULE_LOG" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	reconcile_stale_blocked_issues owner/schedule 2>"$SCHEDULE_SUMMARY" || rc=$?
+	return "$rc"
+)
+_reset_ready_pass() {
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor" 0
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.ready" 0
+	_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.skip.json" '{}'
+	: >"$SCHEDULE_LOG"
+	return 0
+}
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || true
+assert_eq '31 32 33' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG" | paste -sd' ')" "ready issues release before thirty ordinary candidates despite expired share"
+assert_eq 3 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "ready allowance does not spend expired share on ordinary candidates"
+assert_eq 1 "$(grep -c 'ready=3 ready_visited=3 skipped_unchanged=0' "$SCHEDULE_SUMMARY")" "summary preserves ready counters"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_HOLD=31 || true
+assert_eq 0 "$(grep -c '^release ' "$SCHEDULE_LOG")" "recognized hold in ready queue never releases"
+: >"$SCHEDULE_LOG"
+_run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_HOLD=31 || true
+assert_eq '32' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG")" "ready cursor moves past a held ready candidate"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_STOP_EPOCH=1 || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "expired stop still permits one ready visit"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false || true
+assert_eq 33 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "first held pass visits every candidate"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false || true
+assert_eq 0 "$(wc -c <"$SCHEDULE_LOG" | tr -d ' ')" "unchanged held candidates make no per-issue API calls"
+assert_eq 1 "$(grep -c 'skipped_unchanged=33' "$SCHEDULE_SUMMARY")" "summary counts memo skips"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_UPDATED=v2 || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "updated timestamp invalidates only the changed memo entry"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_SKIP_TTL_SECONDS=0 || true
+assert_eq 33 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "expired TTL visits held issues again"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_LISTING=fail || true
+assert_eq 0 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "failed listing fails closed"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_LISTING=partial DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || true
+assert_eq 'visit repos/owner/schedule/issues/1' "$(grep '^visit ' "$SCHEDULE_LOG")" "incomplete native connection never asserts readiness"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false 'SCHEDULE_GATE=<!-- aidevops:upstream-release-gate repo=owner/upstream commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->' || true
+assert_eq false "$(jq 'has("1")' "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor.skip.json")" "upstream release gate is never memoized"
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false 'SCHEDULE_GATE=<!-- aidevops:upstream-release-gate repo=owner/upstream commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->' || true
+assert_eq 1 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "upstream gate remains live while unchanged held neighbors skip"
+_reset_ready_pass
+_run_ready_pass DER_STALE_BLOCKED_READY_MAX=1 || true
+assert_eq 0 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "ordinary traversal wraps even with ready overflow"
+: >"$SCHEDULE_LOG"
+_run_ready_pass DER_STALE_BLOCKED_READY_MAX=1 SCHEDULE_UPDATED=v2 || true
+assert_eq 1 "$(grep -c '^visit repos/owner/schedule/issues/1$' "$SCHEDULE_LOG")" "ready overflow cannot starve changed ordinary candidates"
+_reset_ready_pass
+_run_ready_pass SCHEDULE_READY=false || true
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_STOP_EPOCH=1 || true
+assert_eq 0 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "hard stop prevents memo-skip cursor advancement"
+_run_ready_pass SCHEDULE_READY=false DER_STALE_BLOCKED_MAX_CANDIDATES=2 || true
+assert_eq 2 "$(_der_stale_cursor_read "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor")" "candidate limit bounds memo-skip traversal work"
+_der_stale_cursor_write "${DER_STALE_BLOCKED_CURSOR_DIR}/owner__schedule.cursor" 0
+: >"$SCHEDULE_LOG"
+_run_ready_pass SCHEDULE_READY=false SCHEDULE_LISTING=truncated || true
+assert_eq 0 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "truncated listing fails closed"
 
 # GH#35130: dependants of a superseded original are repointed at the successor.
 # Stub world: #10 closed NOT_PLANNED "Superseded by #12" (open). #30 is blocked

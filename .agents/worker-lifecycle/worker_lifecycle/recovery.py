@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid5
 
 from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .reclaim.unowned import unowned_authorized
 from .enrollment import GenerationEnrollment, _directory_inode, _git_directory
 from .storage import LifecycleRegistry, StoreConflict
 
@@ -21,13 +22,20 @@ def recovery_evidence(
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
-    if not rows and enrolled_only_authorized(store, generation):
+    # Reclaim's evidence-backed event (GH#38405) is preferred and named as such;
+    # the legacy operator-confirmed event is removed with the legacy path.
+    proof: dict[str, object] | None = None
+    if not rows and unowned_authorized(store, generation):
+        proof = {"authorization": "reclaim"}
+    elif not rows and enrolled_only_authorized(store, generation):
+        proof = {"operator_confirmed": True}
+    if proof is not None:
         admin = _git_directory(path)
         return {
             "type": "worktree-recovery-authorized", "generation_id": generation,
             "path": str(path), "directory_identity": _directory_inode(path),
             "git_directory": str(admin), "git_identity": _directory_inode(admin),
-            "admitted_runs": [], "operator_confirmed": True,
+            "admitted_runs": [], **proof,
         }
     if (admission is None or admission["state"] != "closed" or not rows
             or not all(row["admitted"] and row["state"] == "ended" for row in rows)):
@@ -62,7 +70,25 @@ def prepare_retirement(
     prepared = prepare_cleanup(store, path)
     if prepared["status"] == "registered-runs-ended" and creation is None:
         evidence = recovery_evidence(store, path, generation)
+        event_id = str(uuid5(UUID(generation), "retirement-recovered"))
         with store.connection(write=True) as connection:
-            store._event(connection, str(uuid5(UUID(generation),
-                         "retirement-recovered")), evidence)
+            stored = connection.execute(
+                "SELECT payload FROM events WHERE event_id=?", (event_id,),
+            ).fetchone()
+            # The stored evidence already authorized this exact tree; a later
+            # proof kind (legacy confirmation, then Reclaim) is not a conflict.
+            if stored is None or not _same_tree(json.loads(stored["payload"]), evidence):
+                store._event(connection, event_id, evidence)
     return prepared
+
+
+# Which never-owned authorization was current; the rest identifies the tree.
+_PROOF_KEYS = frozenset({"authorization", "operator_confirmed"})
+
+
+def _same_tree(stored: object, evidence: dict) -> bool:
+    """True when two recovery records differ at most in their proof kind (GH#38417)."""
+    if not isinstance(stored, dict):
+        return False
+    return ({key: value for key, value in stored.items() if key not in _PROOF_KEYS}
+            == {key: value for key, value in evidence.items() if key not in _PROOF_KEYS})

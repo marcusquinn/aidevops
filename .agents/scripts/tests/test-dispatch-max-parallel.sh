@@ -965,6 +965,176 @@ test_serial_loop_allows_unset_stop_flag() {
 	return 0
 }
 
+# GH#37907: a deploy drain request that appears while candidate 1 runs stops
+# the serial loop before candidate 2, and skips the next dispatch_max census.
+# A marker naming another owner is ignored.
+test_serial_loop_cooperative_drain() {
+	local LOCKDIR="${TEST_ROOT}/drain-lock"
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 710 711 712; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "1 2" && "$capacity_rc" -ne 0 ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 0
+	else
+		print_result "serial_loop: cooperative drain stops within one candidate and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	printf 'owner=1\nbundle=bundle-next\n' >"${LOCKDIR}/drain_requested"
+	_dispatch_process_candidate() {
+		return 0
+	}
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "3 3" ]]; then
+		print_result "serial_loop: drain marker for another lock owner is ignored" 0
+	else
+		print_result "serial_loop: drain marker for another lock owner is ignored" 1 "got=${result}"
+	fi
+	rm -rf "$LOCKDIR" "$candidate_file"
+	return 0
+}
+
+# GH#38033: a serial round caused only by the REST-core reserve resumes the
+# bounded parallel loop once the reserve clears; throttle-file and persistent
+# reserve rounds stay serial. Arguments: scenario (recover|throttle|persistent)
+test_serial_loop_rest_reserve_recovery() {
+	local scenario="$1"
+	local ACTIVE_DIR="${TEST_ROOT}/rest-recovery-active-${scenario}"
+	local PROCESSED_FILE="${TEST_ROOT}/rest-recovery-processed-${scenario}"
+	local MAX_FILE="${TEST_ROOT}/rest-recovery-max-${scenario}"
+	local candidate_file="" result="" rc=0 max_seen=0 i=0
+	rm -rf "$ACTIVE_DIR"
+	mkdir -p "$ACTIVE_DIR"
+	: >"$PROCESSED_FILE"
+	printf '0\n' >"$MAX_FILE"
+	candidate_file=$(mktemp)
+	for i in 800 801 802 803 804 805 806 807; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	# shellcheck disable=SC2317 # called via name resolution from the loops
+	_dispatch_process_candidate() {
+		local issue="" active=0 seen=0
+		issue=$(jq -r '.number' <<<"$1")
+		: >"${ACTIVE_DIR}/${issue}"
+		active=$(find "$ACTIVE_DIR" -type f | wc -l | tr -d ' ')
+		seen=$(<"$MAX_FILE")
+		[[ "$seen" =~ ^[0-9]+$ ]] || seen=0
+		((active > seen)) && printf '%s\n' "$active" >"$MAX_FILE"
+		sleep 0.2
+		printf '%s\n' "$issue" >>"$PROCESSED_FILE"
+		rm -f "${ACTIVE_DIR}/${issue}"
+		return 0
+	}
+	# Reserve-adjacent until two candidates have run (recover); always
+	# reserve-adjacent (persistent). The throttle case is healthy throughout.
+	# shellcheck disable=SC2317 # called via _dispatch_rest_core_requires_serial
+	pulse_rest_core_priority_snapshot() {
+		local done_count=0
+		done_count=$(wc -l <"$PROCESSED_FILE" | tr -d ' ')
+		if [[ "$scenario" == persistent ]] || { [[ "$scenario" == recover ]] && ((done_count < 2)); }; then
+			printf 'reserve 300 5000 200 500 100 9999999999\n'
+		else
+			printf 'normal 4790 5000 200 500 100 9999999999\n'
+		fi
+		return 0
+	}
+	export DISPATCH_MAX_PARALLEL=4 DISPATCH_REST_SERIAL_RECHECK_ITERATIONS=3 DISPATCH_REST_SERIAL_RECHECK_SECONDS=0
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	rm -f "$_DISPATCH_THROTTLE_FILE" "$STOP_FLAG"
+	[[ "$scenario" == throttle ]] && : >"$_DISPATCH_THROTTLE_FILE"
+	_DISPATCH_THROTTLE_CLEARED=0
+	: >"$LOGFILE"
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	max_seen=$(<"$MAX_FILE")
+	[[ "$result" == "8 8" ]] || rc=1
+	case "$scenario" in
+	recover)
+		# Entry check plus iterations 1-3 run serially; the recheck before
+		# iteration 4 sees the healthy budget and hands off candidates 4-8.
+		grep -q 'REST-core recovered; resuming parallel launch ceremony at iter=4 ' "$LOGFILE" || rc=1
+		[[ "$(grep -c 'Dispatch_max: loop iter=.*_dispatch_process_candidate rc=0' "$LOGFILE")" == 3 ]] || rc=1
+		[[ "$(grep -c 'Dispatch_max: parallel iter=.*entering body' "$LOGFILE")" == 5 ]] || rc=1
+		((max_seen > 1)) || rc=1
+		;;
+	throttle | persistent)
+		grep -q 'resuming parallel launch ceremony' "$LOGFILE" && rc=1
+		((max_seen == 1)) || rc=1
+		;;
+	esac
+	rm -f "$candidate_file" "$PROCESSED_FILE" "$MAX_FILE" "$_DISPATCH_THROTTLE_FILE"
+	rm -rf "$ACTIVE_DIR"
+	unset DISPATCH_MAX_PARALLEL DISPATCH_REST_SERIAL_RECHECK_ITERATIONS DISPATCH_REST_SERIAL_RECHECK_SECONDS
+	pulse_rest_core_priority_snapshot() {
+		printf 'disabled ? ? 0 0 0 ?\n'
+		return 0
+	}
+	print_result "serial_loop: REST-reserve serial round recovery (${scenario})" "$rc" \
+		"result=${result} max_concurrent=${max_seen}"
+	return 0
+}
+
+# GH#38033: a priority round that started serial on the REST reserve runs a
+# later phase in parallel once the reserve has cleared before that phase.
+test_priority_phase_rest_reserve_recovery() {
+	local candidate_file="" outcomes="" result="" rc=0 i=0
+	candidate_file=$(mktemp)
+	outcomes=$(mktemp)
+	for i in 1 2 3 4; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_priority":"tooling","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	# shellcheck disable=SC2317 # called via name resolution from the loops
+	_dispatch_process_candidate() {
+		_DISPATCH_CANDIDATE_ELIGIBILITY=eligible
+		return 0
+	}
+	# shellcheck disable=SC2317 # called via _dispatch_rest_core_requires_serial
+	pulse_rest_core_priority_snapshot() {
+		printf 'normal 4790 5000 200 500 100 9999999999\n'
+		return 0
+	}
+	export DISPATCH_MAX_PARALLEL=4
+	rm -f "$_DISPATCH_THROTTLE_FILE" "$STOP_FLAG"
+	: >"$LOGFILE"
+	(
+		local _DISPATCH_REST_SERIAL_ROUND=1
+		_dispatch_run_priority_phase "$candidate_file" 4 test_user 1 "$outcomes"
+	) >"${TEST_ROOT}/priority-rest-phase.result"
+	result=$(<"${TEST_ROOT}/priority-rest-phase.result")
+	[[ "$result" == "4 4" ]] || rc=1
+	grep -q 'resuming parallel launch ceremony at phase start (max_parallel=4' "$LOGFILE" || rc=1
+	grep -q 'Dispatch_max: parallel iter=1' "$LOGFILE" || rc=1
+	# Without the round marker (ordinary serial caller), the phase stays serial.
+	: >"$LOGFILE"
+	: >"$outcomes"
+	result=$(_dispatch_run_priority_phase "$candidate_file" 4 test_user 1 "$outcomes")
+	[[ "$result" == "4 4" ]] || rc=1
+	grep -q 'resuming parallel launch ceremony' "$LOGFILE" && rc=1
+	rm -f "$candidate_file" "$outcomes" "${TEST_ROOT}/priority-rest-phase.result"
+	unset DISPATCH_MAX_PARALLEL
+	pulse_rest_core_priority_snapshot() {
+		printf 'disabled ? ? 0 0 0 ?\n'
+		return 0
+	}
+	print_result "priority_phase: REST-reserve serial round resumes parallel at phase start" "$rc" "result=${result}"
+	return 0
+}
+
 # Exercise reservation admission through the real serial and parallel loops.
 test_priority_reservations() {
 	local mode="$1" parallel="$2" expected_product="$3" expected_total="$4"
@@ -1445,6 +1615,11 @@ test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
+test_serial_loop_cooperative_drain
+test_serial_loop_rest_reserve_recovery recover
+test_serial_loop_rest_reserve_recovery throttle
+test_serial_loop_rest_reserve_recovery persistent
+test_priority_phase_rest_reserve_recovery
 test_priority_reservations normal 1 2 4
 test_priority_reservations normal 3 2 4
 test_priority_reservations concurrent 3 2 4

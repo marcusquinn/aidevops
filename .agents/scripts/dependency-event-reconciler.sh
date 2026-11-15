@@ -104,7 +104,8 @@ _der_todo_blocker_tokens_valid() {
 _der_labels_have_hold() {
 	local labels="$1"
 	local expected=""
-	for expected in needs-maintainer-review needs-maintainer-permissions hold-for-review no-auto-dispatch; do
+	# GH#38360: a human-owned blocked companion outlives a closed dependency.
+	for expected in needs-maintainer-review needs-maintainer-permissions needs-maintainer-input needs-credentials hold-for-review no-auto-dispatch; do
 		_der_labels_has "$labels" "$expected" && return 0
 	done
 	return 1
@@ -484,6 +485,7 @@ _der_try_unblock() {
 	local issue_number="$2"
 	local candidate_json="$3"
 	local labels="" body="" comments_json="" comments="" upstream_gated=false
+	_DER_RESULT=not_ready
 	labels=$(printf '%s' "$candidate_json" | jq -r '[.labels.nodes[].name] | join(",")') || return 1
 	body=$(printf '%s' "$candidate_json" | jq -r '.body // ""') || return 1
 	_der_labels_has "$labels" status:blocked || return 0
@@ -492,7 +494,10 @@ _der_try_unblock() {
 	_der_json_pages_valid "$comments_json" || return 1
 	# aidevops:trust-boundary — external comments cannot assert a hold.
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
-	_der_has_hold "$body" "$comments" "$labels" "$comments_json" && return 0
+	if _der_has_hold "$body" "$comments" "$labels" "$comments_json"; then
+		_DER_RESULT=held
+		return 0
+	fi
 	upstream_release_gate_declared "$body" && upstream_gated=true
 	_der_native_blockers_closed "$repo" "$issue_number" readiness || return $?
 	if [[ "$upstream_gated" == true ]]; then
@@ -510,22 +515,49 @@ _der_try_unblock() {
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
-	gh issue edit "$issue_number" --repo "$repo" --remove-label status:blocked --add-label status:available >/dev/null 2>&1 || return 1
+	# A human hold added after the initial check keeps the issue blocked.
+	if _der_labels_have_hold "$labels"; then
+		_DER_RESULT=held
+		return 0
+	fi
+	# GH#38360: the dependency companion leaves together with status:blocked.
+	local -a unblock_args=(--remove-label status:blocked --add-label status:available)
+	_der_labels_has "$labels" needs-dependency && unblock_args+=(--remove-label needs-dependency)
+	gh issue edit "$issue_number" --repo "$repo" "${unblock_args[@]}" >/dev/null 2>&1 || return 1
+	_DER_RESULT=unblocked
 	return 0
+}
+
+# Append-only retry records avoid losing concurrently recorded failures. A stale
+# sweep consumes a snapshot; duplicate entries are harmless guarded retries.
+_der_retry_append() {
+	local repo="$1" kind="$2" number="$3"
+	local dir="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}"
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$number" =~ ^[0-9]+$ ]] || return 1
+	mkdir -p "$dir" || return 1
+	printf '%s %s\n' "$kind" "$number" >>"${dir}/${repo//\//__}.txt" || return 1
+	return 0
+}
+
+_der_closure_failure() {
+	local repo="$1" number="$2" reason="$3"
+	printf '[dependency-reconciler] closure repo=%s closed=#%s reason=%s dependants=0 unblocked=0 not_ready=0 held=0 failed=1\n' "$repo" "$number" "$reason" >&2
+	_der_retry_append "$repo" closure "$number" || printf '[dependency-reconciler] retry ledger write failed repo=%s closed=#%s\n' "$repo" "$number" >&2
+	return 1
 }
 
 # Reconcile only direct dependants after the named issue is positively closed.
 reconcile_dependants_after_verified_closure() {
 	local repo="$1"
 	local closed_number="$2"
+	local deadline="${3:-}"
 	local owner="${repo%%/*}"
 	local name="${repo#*/}"
 	local context="" closed_task_id="" candidates="" issue_number="" candidate_repo="" try_status=0
-	local candidate
-	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ ]] || return 1
-	[[ -n "$owner" && -n "$name" ]] || return 1
-	_der_live_issue_closed "$repo" "$closed_number" || return 1
-	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || return 1
+	local candidate count=0 unblocked=0 not_ready=0 held=0 failed=0 deferred=0
+	[[ "$repo" == */* && "$closed_number" =~ ^[0-9]+$ && -n "$owner" && -n "$name" ]] || { _der_closure_failure "$repo" "$closed_number" invalid_input; return 1; }
+	_der_live_issue_closed "$repo" "$closed_number" || { _der_closure_failure "$repo" "$closed_number" live_closed_check; return 1; }
+	context=$(_der_fetch_closed_context "$owner" "$name" "$closed_number") || { _der_closure_failure "$repo" "$closed_number" context_fetch; return 1; }
 	printf '%s' "$context" | jq -e --arg repo "$repo" --arg closed "$DER_STATE_CLOSED" '
       .data.repository.nameWithOwner == $repo
       and .data.repository.issue.state == $closed
@@ -533,21 +565,51 @@ reconcile_dependants_after_verified_closure() {
       and all(.data.repository.issue.blocking.nodes[];
           (.repository.nameWithOwner | type == "string")
           and (.repository.nameWithOwner | test("^[^/[:space:]]+/[^/[:space:]]+$"))
-          and .labels.pageInfo.hasNextPage == false)' >/dev/null 2>&1 || return 1
+          and .labels.pageInfo.hasNextPage == false)' >/dev/null 2>&1 || { _der_closure_failure "$repo" "$closed_number" invalid_context; return 1; }
 	_der_reconcile_terminal_worker_blockers "$repo" "$closed_number" || true
 	closed_task_id=$(task_identity_parse_title_prefix "$(printf '%s' "$context" | jq -r '.data.repository.issue.title')" || true)
-	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || return 1
+	candidates=$(_der_collect_candidates "$repo" "$closed_number" "$closed_task_id" "$context") || { _der_closure_failure "$repo" "$closed_number" candidate_collection; return 1; }
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
-		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
-		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || return 1
-		[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
-		[[ "$candidate_repo" == */* ]] || return 1
+		count=$((count + 1))
+		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || issue_number=""
+		candidate_repo=$(printf '%s' "$candidate" | jq -r '.repository.nameWithOwner // ""') || candidate_repo=""
+		if [[ ! "$issue_number" =~ ^[0-9]+$ || "$candidate_repo" != */* ]]; then
+			failed=$((failed + 1))
+			_der_retry_append "$repo" closure "$closed_number" || true
+			printf '[dependency-reconciler] invalid candidate repo=%s closed=#%s\n' "$repo" "$closed_number" >&2
+			continue
+		fi
+		# Transfer unvisited dependants to individual retries instead of replaying
+		# held predecessors on every bounded closure pass. Only acknowledge the
+		# closure when every deferred candidate has been durably queued.
+		if [[ -n "$deadline" ]] && _der_stale_epoch_reached "$deadline"; then
+			if _der_retry_append "$candidate_repo" issue "$issue_number"; then
+				deferred=$((deferred + 1))
+			else
+				failed=$((failed + 1))
+				_der_closure_failure "$repo" "$closed_number" deferred_retry_write || true
+			fi
+			continue
+		fi
 		try_status=0
 		_der_try_unblock "$candidate_repo" "$issue_number" "$candidate" || try_status=$?
-		# A dependant still waiting on another blocker must not stop the rest.
-		[[ "$try_status" -eq 0 || "$try_status" -eq "$DER_NOT_READY" ]] || return 1
+		if [[ "$try_status" -ne 0 && "$try_status" -ne "$DER_NOT_READY" ]]; then
+			failed=$((failed + 1))
+			printf '[dependency-reconciler] dependant failed repo=%s issue=#%s status=%s\n' "$candidate_repo" "$issue_number" "$try_status" >&2
+			_der_retry_append "$candidate_repo" issue "$issue_number" || printf '[dependency-reconciler] retry ledger write failed repo=%s issue=#%s\n' "$candidate_repo" "$issue_number" >&2
+		elif [[ "$try_status" -eq "$DER_NOT_READY" ]]; then
+			not_ready=$((not_ready + 1))
+		else
+			case "${_DER_RESULT:-not_ready}" in
+			unblocked) unblocked=$((unblocked + 1)) ;;
+			held) held=$((held + 1)) ;;
+			*) not_ready=$((not_ready + 1)) ;;
+			esac
+		fi
 	done <<<"$candidates"
+	printf '[dependency-reconciler] closure repo=%s closed=#%s dependants=%s unblocked=%s not_ready=%s held=%s failed=%s deferred=%s\n' "$repo" "$closed_number" "$count" "$unblocked" "$not_ready" "$held" "$failed" "$deferred" >&2
+	[[ "$failed" -eq 0 ]] || return 3
 	return 0
 }
 
@@ -594,37 +656,188 @@ _der_stale_epoch_reached() {
 	return $?
 }
 
-# Print open status:blocked issue numbers that still have an OPEN native
-# blocker, from one paginated GraphQL listing. _der_try_unblock would return
-# DER_NOT_READY for each of them after a comments read and a per-issue
-# blockedBy query, so the sweep can skip them without per-issue API calls.
-# Best effort: any read or shape failure prints nothing, so every candidate
-# keeps the full per-issue visit. Never used to unblock anything.
-_der_open_native_blocked_numbers() {
+_der_retry_drain() {
+	local repo="$1" deadline="$2" kind="" retry_number="" candidate="" status=0 complete=true
+	local file="${DER_RETRY_DIR:-${HOME}/.aidevops/cache/dep-unblock-retry}/${repo//\//__}.txt"
+	local pending="${file}.pending" incoming="${file}.incoming.$$" remaining="${file}.remaining.$$"
+	local stopped=false
+	# Merge newly appended records into the pending snapshot so one failing
+	# retry cannot hide later independent records.
+	if [[ -s "$file" ]]; then
+		mv "$file" "$incoming" || return 1
+		cat "$incoming" >>"$pending" || return 1
+		rm -f "$incoming"
+	fi
+	[[ -s "$pending" ]] || return 0
+	# A failed closure can be present in both the retained snapshot and the
+	# append-only ledger. Attempt each record only once in this pass.
+	awk '!seen[$0]++' "$pending" >"$incoming" && mv -f "$incoming" "$pending" || return 1
+	: >"$remaining" || return 1
+	while read -r kind retry_number <&3; do
+		[[ "$retry_number" =~ ^[0-9]+$ ]] || continue
+		if [[ "$stopped" == true ]] || _der_stale_epoch_reached "$deadline"; then
+			# Deadline reached: keep this and every unvisited entry.
+			stopped=true
+			complete=false
+			printf '%s %s\n' "$kind" "$retry_number" >>"$remaining"
+			continue
+		fi
+		status=0
+		if [[ "$kind" == closure ]]; then
+			reconcile_dependants_after_verified_closure "$repo" "$retry_number" "$deadline" || status=$?
+		elif [[ "$kind" == issue ]]; then
+			status=1
+			if candidate=$(gh issue view "$retry_number" --repo "$repo" --json number,title,body,labels,updatedAt 2>/dev/null) &&
+				candidate=$(printf '%s' "$candidate" | jq -ce --arg repo "$repo" 'select((.number | type) == "number" and (.labels | type) == "array") | . + {updated_at:.updatedAt,repository:{nameWithOwner:$repo},labels:{nodes:.labels,pageInfo:{hasNextPage:false}}}'); then
+				status=0
+				_der_try_unblock "$repo" "$retry_number" "$candidate" || status=$?
+			fi
+		else
+			continue
+		fi
+		if [[ "$status" -ne 0 && "$status" -ne "$DER_NOT_READY" ]]; then
+			# Failed (or partial) entries stay queued; completed ones are dropped.
+			complete=false
+			printf '%s %s\n' "$kind" "$retry_number" >>"$remaining"
+		fi
+	done 3<"$pending"
+	if [[ -s "$remaining" ]]; then
+		awk '!seen[$0]++' "$remaining" >"${remaining}.dedup" && mv -f "${remaining}.dedup" "$pending" || { rm -f "$remaining" "${remaining}.dedup"; return 1; }
+	else
+		rm -f "$pending" || return 1
+	fi
+	rm -f "$remaining"
+	[[ "$complete" == true ]] || return "$DER_SWEEP_PARTIAL"
+	return 0
+}
+
+# Print candidates from one paginated listing. An incomplete blockedBy
+# connection can prove an open blocker, but cannot prove readiness. Any read or
+# shape failure prints nothing (including no memo eligibility). Never a verdict
+# authorizing release: _der_try_unblock still checks every ready candidate.
+_der_stale_listing() {
 	local repo="$1"
 	local owner="${repo%%/*}" name="${repo#*/}" pages=""
-	[[ "${DER_STALE_BLOCKED_PREFILTER:-1}" == "1" ]] || return 0
-	[[ "$repo" == */* && -n "$owner" && -n "$name" ]] || return 0
+	[[ "$repo" == */* && -n "$owner" && -n "$name" ]] || return 1
 	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
 	pages=$(gh api graphql --paginate --slurp -F owner="$owner" -F name="$name" \
-		-f query='query($owner:String!,$name:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(states:OPEN,labels:["status:blocked"],first:100,after:$endCursor){nodes{number blockedBy(first:20){nodes{state}}} pageInfo{hasNextPage endCursor}}}}' \
-		2>/dev/null) || return 0
-	printf '%s' "$pages" | jq -r '
-		if type != "array" then empty else
-		.[] | .data.repository.issues.nodes // empty | .[]
-		| select((.number | type) == "number")
-		| select(any((.blockedBy.nodes // [])[]; .state == "OPEN"))
-		| .number end' 2>/dev/null || true
+		-f query='query($owner:String!,$name:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(states:OPEN,labels:["status:blocked"],first:100,after:$endCursor){nodes{number updatedAt labels(first:100){nodes{name} pageInfo{hasNextPage}} blockedBy(first:20){totalCount nodes{number state}}} pageInfo{hasNextPage endCursor}}}}' \
+		2>/dev/null) || return 1
+	printf '%s' "$pages" | jq -ce --arg closed "$DER_STATE_CLOSED" '
+		select(type == "array" and length > 0)
+		| select(all(.[]; (.errors // [] | length) == 0
+			and (.data.repository.issues.nodes | type) == "array"
+			and (.data.repository.issues.pageInfo.hasNextPage | type) == "boolean"
+			and (if .data.repository.issues.pageInfo.hasNextPage then
+				(.data.repository.issues.pageInfo.endCursor | type) == ("" | type)
+				and (.data.repository.issues.pageInfo.endCursor | length) > 0 else true end)))
+		| select(.[-1].data.repository.issues.pageInfo.hasNextPage == false)
+		| [.[] | .data.repository.issues.nodes[]]
+		| select(all(.[]; (.number | type) == "number"
+			and (.blockedBy.nodes | type) == "array"
+			and (.updatedAt | type) == ("" | type)
+			and (.labels.nodes | type) == "array" and .labels.pageInfo.hasNextPage == false
+			and all(.labels.nodes[]; (.name | type) == ("" | type))
+			and (.blockedBy.totalCount | type) == "number"
+			and .blockedBy.totalCount >= (.blockedBy.nodes | length)
+			and all(.blockedBy.nodes[]; .state == "OPEN" or .state == $closed)))
+		| map(. + {updated_at:.updatedAt, sweep_ready:(.blockedBy.totalCount == (.blockedBy.nodes | length)
+			and (.blockedBy.nodes | length) > 0 and all(.blockedBy.nodes[]; .state == $closed)),
+			sweep_open:any(.blockedBy.nodes[]; .state == "OPEN")})' 2>/dev/null || return 1
+	return 0
+}
+
+_der_stale_memo_load() {
+	local file="$1" ttl="$2" memo='{}' now=""
+	now=$(date +%s) || return 1
+	# Invalid/unreadable state fails open. Probe atomic persistence before
+	# trusting a memo, so a read-only cache cannot suppress any visit.
+	memo=$(jq -ce 'select(type == ({} | type))' "$file" 2>/dev/null) || memo='{}'
+	memo=$(printf '%s' "$memo" | jq -c --argjson now "$now" --argjson ttl "$ttl" '
+		with_entries(select((.value | type) == ({} | type))
+			| select((.value.epoch | type) == "number" and (.value.updated_at | type) == ("" | type))
+			| select(.value.epoch <= $now and $now - .value.epoch < $ttl))') || memo='{}'
+	_der_stale_cursor_write "$file" "$memo" || return 1
+	printf '%s\n' "$memo"
+	return 0
+}
+
+_der_stale_memo_matches() {
+	local memo="$1" candidate="$2" ttl="$3" now=""
+	now=$(date +%s) || return 1
+	printf '%s' "$memo" | jq -e --argjson candidate "$candidate" --argjson now "$now" --argjson ttl "$ttl" '
+		.[$candidate.number | tostring] | .updated_at != null and .updated_at != ""
+		and .updated_at == $candidate.updated_at and .epoch <= $now and $now - .epoch < $ttl' >/dev/null || return 1
+	return 0
+}
+
+_der_stale_memo_record() {
+	local repo="$1" candidate="$2" status="$3" file="$4" memo="$5"
+	local number="" updated="" labels="status:blocked"
+	local body=""
+	number=$(printf '%s' "$candidate" | jq -r '.number') || return 1
+	updated=$(printf '%s' "$candidate" | jq -r '.updated_at // ""') || return 1
+	body=$(printf '%s' "$candidate" | jq -r '.body // ""') || return 1
+	if [[ -n "$updated" ]] && [[ "$status" -eq 0 || "$status" -eq "$DER_NOT_READY" ]] &&
+		! upstream_release_gate_declared "$body"; then
+		# Success also means "held" in _der_try_unblock. Only memoize a
+		# confirmed still-blocked issue, not a release or an ambiguous read.
+		if [[ "$status" -eq 0 ]]; then
+			labels=$(gh issue view "$number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
+		fi
+		if _der_labels_has "$labels" status:blocked; then
+			memo=$(printf '%s' "$memo" | jq -c --arg n "$number" --arg updated "$updated" \
+				--argjson epoch "$(date +%s)" '.[$n] = {updated_at:$updated,epoch:$epoch}') || return 1
+			_der_stale_cursor_write "$file" "$memo" || return 1
+		fi
+	fi
+	printf '%s\n' "$memo"
+	return 0
+}
+
+_der_stale_candidates() {
+	local pages="$1" repo="$2" cursor="$3" ready_cursor="$4"
+	# The ready queue rotates independently of the ordinary cursor. In
+	# particular, a high ordinary cursor must not hide a newly-ready low issue.
+	printf '%s' "$pages" | jq -c --arg repo "$repo" \
+		--argjson cursor "$cursor" --argjson ready_cursor "$ready_cursor" '
+		[.[]]
+		| ([.[] | select(.sweep_ready)] | sort_by([(.number <= $ready_cursor), .number]))
+			+ ([.[] | select(.sweep_ready == false and .number > $cursor)] | sort_by(.number))
+		| .[] | . + {repository:{nameWithOwner:$repo}}' || return 1
+	return 0
+}
+
+# Write the budget-priority hint: ready candidates not suppressed by the memo.
+_der_stale_write_ready_hint() {
+	local hint_file="$1" candidates="$2" memo="$3" ttl="$4" fallback="$5" actionable=""
+	actionable=$(printf '%s\n' "$candidates" | jq -s --argjson memo "$memo" --argjson now "$(date +%s)" --argjson ttl "$ttl" '
+		[.[] | select(.sweep_ready)
+			| select((($memo[.number | tostring] // null) as $m
+				| ($m != null and $m.updated_at == .updated_at and $m.epoch <= $now and $now - $m.epoch < $ttl)) | not)]
+		| length') || actionable="$fallback"
+	mkdir -p "${hint_file%/*}" 2>/dev/null && printf '%s\n' "$actionable" >"$hint_file" || true
+	return 0
+}
+
+_der_stale_skip_memo() {
+	[[ "$memo_enabled" == true ]] && _der_stale_memo_matches "$memo" "$candidate" "$ttl" || return 1
+	skipped=$((skipped + 1))
+	if [[ "$is_ready" == true ]]; then
+		_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
+	else
+		_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+	fi
 	return 0
 }
 
 # Periodically recover status:blocked issues whose close event was missed.
-# REST pagination is consumed in full, then bounded before any mutation.
+# GraphQL pagination is consumed in full, then bounded before any mutation.
 # Candidates are visited in ascending issue order after the persisted cursor;
 # the cursor advances after every visit so a killed stage keeps its progress.
 # Optional DER_STALE_BLOCKED_DEADLINE_EPOCH (this repo's fair share) stops
 # cleanly after at least one visit; optional DER_STALE_BLOCKED_STOP_EPOCH (the
-# whole sweep's hard stop) stops before any further visit. Returns
+# whole sweep's stop margin) permits one ready visit even when expired. Returns
 # DER_SWEEP_PARTIAL when candidates remain for a later pass, or 1 when the
 # cursor cannot be persisted; unblock decisions are unchanged (_der_try_unblock).
 reconcile_stale_blocked_issues() {
@@ -632,59 +845,94 @@ reconcile_stale_blocked_issues() {
 	local max_candidates="${DER_STALE_BLOCKED_MAX_CANDIDATES:-500}"
 	local share_deadline="${DER_STALE_BLOCKED_DEADLINE_EPOCH:-0}"
 	local stop_deadline="${DER_STALE_BLOCKED_STOP_EPOCH:-0}"
-	local pages candidates candidate issue_number cursor_file="" cursor=0 open_blocked="" prefiltered=0
+	local ready_max="${DER_STALE_BLOCKED_READY_MAX:-10}" ttl="${DER_STALE_BLOCKED_SKIP_TTL_SECONDS:-21600}"
+	local pages candidates candidate issue_number cursor_file="" cursor=0 prefiltered=0 body=""
+	local ready_cursor=0 ready_file="" ready=0 ready_visited=0 skipped=0 is_ready=false
+	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
+	local retry_status=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
+	[[ "$ready_max" =~ ^[1-9][0-9]*$ ]] || ready_max=10
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=21600
 	cursor_file=$(_der_stale_cursor_file "$repo") || return 1
 	cursor=$(_der_stale_cursor_read "$cursor_file")
-	pages=$(gh api --paginate --slurp "repos/${repo}/issues?state=open&labels=status%3Ablocked&per_page=100" 2>/dev/null) || return 1
-	_der_json_pages_valid "$pages" || return 1
-	total=$(printf '%s' "$pages" | jq '[.[][] | select(.pull_request == null)] | length') || return 1
-	pending=$(printf '%s' "$pages" | jq --argjson cursor "$cursor" '[.[][] | select(.pull_request == null and .number > $cursor)] | length') || return 1
-	[[ "$pending" -eq 0 ]] || open_blocked=$(_der_open_native_blocked_numbers "$repo")
-	candidates=$(printf '%s' "$pages" | jq -c --arg repo "$repo" --argjson cursor "$cursor" --argjson limit "$max_candidates" '[.[][] | select(.pull_request == null and .number > $cursor)] | sort_by(.number) | .[: $limit][] | {number,state,title,body,repository:{nameWithOwner:$repo},labels:{nodes:[.labels[] | {name:.name}],pageInfo:{hasNextPage:false}}}') || return 1
-	[[ "$pending" -le "$max_candidates" ]] || complete=false
+	ready_file="${cursor_file}.ready"
+	ready_cursor=$(_der_stale_cursor_read "$ready_file")
+	memo_file="${cursor_file}.skip.json"
+	# Drain queued retries first: they do not depend on the listing.
+	_der_retry_drain "$repo" "$stop_deadline" || retry_status=$?
+	pages=$(_der_stale_listing "$repo") || return 1
+	total=$(printf '%s' "$pages" | jq 'length') || return 1
+	memo=$(_der_stale_memo_load "$memo_file" "$ttl") && memo_enabled=true
+	candidates=$(_der_stale_candidates "$pages" "$repo" "$cursor" "$ready_cursor") || return 1
+	pending=$(printf '%s\n' "$candidates" | jq -s length) || return 1
+	ready=$(printf '%s\n' "$candidates" | jq -s '[.[] | select(.sweep_ready)] | length') || return 1
+	# Hint counts only actionable ready work: exclude unchanged memo-skipped issues.
+	_der_stale_write_ready_hint "$ready_hint" "$candidates" "$memo" "$ttl" "$ready"
+	[[ "$retry_status" -eq 0 ]] || complete=false
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number' 2>/dev/null) || issue_number=""
+		is_ready=$(printf '%s' "$candidate" | jq -r '.sweep_ready') || return 1
+		if { _der_stale_epoch_reached "$stop_deadline" && [[ "$is_ready" != true || "$ready_visited" -gt 0 ]]; } ||
+			{ [[ "$is_ready" == false && "$examined" -ge "$max_candidates" ]]; }; then
+			complete=false ordinary_complete=false
+			break
+		fi
+		if [[ "$is_ready" == true && "$ready_visited" -ge "$ready_max" ]]; then
+			complete=false
+			continue
+		fi
+		[[ "$is_ready" == true ]] || examined=$((examined + 1))
 		# A still-open native blocker is a verdict without API calls; advance
 		# the cursor so the share is spent on candidates that may be ready.
-		if [[ "$issue_number" =~ ^[0-9]+$ && -n "$open_blocked" ]] &&
-			printf '%s\n' "$open_blocked" | grep -qx "$issue_number"; then
+		if [[ "${DER_STALE_BLOCKED_PREFILTER:-1}" == 1 ]] && printf '%s' "$candidate" | jq -e '.sweep_open' >/dev/null; then
 			prefiltered=$((prefiltered + 1))
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
 			continue
 		fi
-		if _der_stale_epoch_reached "$stop_deadline" ||
-			{ [[ "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; }; then
-			complete=false
+		_der_stale_skip_memo && continue
+		if [[ "$is_ready" == false && "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; then
+			complete=false ordinary_complete=false
 			break
 		fi
 		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || {
 			failed=$((failed + 1))
 			continue
 		}
+		body=$(gh api "repos/${repo}/issues/${issue_number}" 2>/dev/null) || {
+			failed=$((failed + 1))
+			complete=false ordinary_complete=false
+			break
+		}
+		candidate=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // "")}') || return 1
 		# GH#35130: make the graph truthful when every native blocker is a closed,
 		# superseded original with an open successor. Best effort; never gates unblock.
 		dsr_repoint_if_superseded "$repo" "$issue_number" || true
-		if _der_try_unblock "$repo" "$issue_number" "$candidate"; then
-			reconciled=$((reconciled + 1))
-		elif [[ "$?" -eq "$DER_NOT_READY" ]]; then
+		try_status=0
+		_der_try_unblock "$repo" "$issue_number" "$candidate" || try_status=$?
+		if [[ "$try_status" -eq 0 || "$try_status" -eq "$DER_NOT_READY" ]]; then
 			reconciled=$((reconciled + 1))
 		else
 			failed=$((failed + 1))
 		fi
 		visited=$((visited + 1))
-		if [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		if [[ "$is_ready" == true ]]; then
+			ready_visited=$((ready_visited + 1))
+			_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
+		else
 			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+		fi
+		if [[ "$memo_enabled" == true ]]; then
+			memo=$(_der_stale_memo_record "$repo" "$candidate" "$try_status" "$memo_file" "$memo") || memo_enabled=false
 		fi
 	done <<<"$candidates"
 	# A finished traversal restarts from the lowest issue on the next pass.
-	if [[ "$complete" == true ]]; then
+	if [[ "$ordinary_complete" == true ]]; then
 		_der_stale_cursor_write "$cursor_file" 0 || cursor_failed=true
 	fi
-	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" >&2
+	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s ready=%s ready_visited=%s skipped_unchanged=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" "$ready" "$ready_visited" "$skipped" >&2
 	# Without a durable cursor, later passes cannot resume; report a failure
 	# (not partial progress) so the operator sees it in the cycle summary.
 	[[ "$cursor_failed" == false ]] || return 1

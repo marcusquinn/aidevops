@@ -73,8 +73,14 @@ _DISPATCH_NEGATIVE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_CACHE_TTL_SEC
 _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS="${AIDEVOPS_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS:-10}"
 [[ "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=10
 ((_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS <= 30)) || _DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS=30
-# A terminal-blocker circuit is keyed to the issue revision: an edit, a retry
-# directive or any new comment bumps updatedAt and invalidates the hint at once.
+# GH#38261: one bounded issue read per candidate revision supplies the body
+# that ranking candidates omit (GH#35038); memoised by repo#issue@updatedAt.
+_DISPATCH_NEGATIVE_CACHE_SOURCE=""
+_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON=""
+_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ='[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv'
+# A terminal-blocker circuit is keyed to material issue revisions: an edit, a
+# retry directive or a non-ops comment invalidates the hint at once.
 # Only target-code revisions can re-arm it silently, so bound that delay. Each
 # re-check costs a full 40-110s dispatch ceremony per runner per cycle.
 _DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS:-7200}"
@@ -88,7 +94,7 @@ _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKO
 # GH#33538: maintainer-gated blocks (unverified/expired permission grant,
 # pending permission request, cost circuit breaker, comment consolidation) only
 # clear through an issue change: a signed grant comment, label edit or body
-# rewrite bumps updatedAt and invalidates the hint at once. Out-of-band changes
+# rewrite invalidates the hint at once (verified ops-only bumps do not). Out-of-band changes
 # (budget config, signing keys) re-arm within this bounded TTL.
 _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS:-7200}"
 [[ "$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=7200
@@ -170,18 +176,27 @@ _dispatch_negative_pr_fingerprint() {
 	return $?
 }
 
+# One bounded REST read of the exact PR, shared by every fingerprint path.
+# Invalid slug/number, a missing timeout helper or any API error returns 1 so
+# callers fall back to the full ceremony. The pulse puts the gh shim first on
+# PATH, and its plain REST read path records this call, so it is not recorded
+# here as well.
+_dispatch_exact_pr_rest_json() {
+	local repo="$1" pr="$2"
+	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
+	declare -F timeout_sec >/dev/null 2>&1 || return 1
+	timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/pulls/${pr}" 2>/dev/null
+	return $?
+}
+
 # GH#34402: one bounded REST read of the exact PR, mapped like the prefetch
 # REST snapshot (updated_at -> updatedAt, head.sha -> headRefOid) so either
 # source yields the same fingerprint. Only an open draft can be a worker
 # checkpoint; any error or other state returns 1 and the full ceremony runs.
-# The pulse puts the gh shim first on PATH, and its plain REST read path
-# records this call, so it is not recorded here as well.
 _dispatch_negative_pr_rest_fingerprint() {
 	local repo="$1" pr="$2" pr_json=""
-	[[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr" =~ ^[1-9][0-9]*$ ]] || return 1
-	declare -F timeout_sec >/dev/null 2>&1 || return 1
-	pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
-		gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+	pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
 	jq -er '
 		select(.state == "open" and .draft == true) |
 		select((.updated_at | type) == "string" and (.head.sha | type) == "string") |
@@ -189,6 +204,40 @@ _dispatch_negative_pr_rest_fingerprint() {
 		[.updated_at, .head.sha] | join("_")
 	' <<<"$pr_json" 2>/dev/null
 	return $?
+}
+
+# GH#38142: fingerprint the exact PR behind a layer-4 PR-evidence block with
+# one bounded REST read. Close, merge, draft toggle, title/body/label edits and
+# pushes all change at least one field (GitHub bumps updated_at for each), so
+# any change that can lift the block invalidates the hint. Open (draft or
+# ready) and merged states are accepted because each one blocks; a closed,
+# unmerged PR no longer blocks, so it and any read error return 1 and the full
+# ceremony runs.
+_dispatch_pr_evidence_fingerprint() {
+	local repo="$1" pr="$2" pr_json=""
+	pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
+	jq -er '
+		select((.state | type) == "string" and (.updated_at | type) == "string" and (.head.sha | type) == "string") |
+		select(.state != "closed" or ((.merged_at | type) == "string" and (.merged_at | length) > 0)) |
+		select((.updated_at | length) > 0 and (.head.sha | length) > 0) |
+		[.state, (.merged_at // "unmerged"), ((.draft // false) | tostring), .updated_at, .head.sha] |
+		map(gsub("[^A-Za-z0-9_.:-]"; "-")) | join("_")
+	' <<<"$pr_json" 2>/dev/null
+	return $?
+}
+
+# GH#38142: PR evidence blocks whoever owns the issue, so neither the owner-label
+# gate nor the GH#37780 empty-pool recheck applies. The caller's unchanged
+# updatedAt check covers issue edits, comments and reopen; this expires the
+# record before the REST read, then requires the exact PR to be unchanged.
+_dispatch_pr_evidence_hint_valid() {
+	local repo="$1" pr="$2" fingerprint="$3" stamp="$4" ttl="$5" now="" current=""
+	[[ "$pr" =~ ^[1-9][0-9]*$ && -n "$fingerprint" && "$stamp" =~ ^[0-9]+$ ]] || return 1
+	now=$(date +%s)
+	((now >= stamp && now - stamp < ttl)) || return 1
+	current=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 1
+	[[ "$current" == "$fingerprint" ]] || return 1
+	return 0
 }
 
 _DISPATCH_LIVE_OWNER_HOLD_REASON="worktree_live_owner_refused"
@@ -270,11 +319,9 @@ _dispatch_checkpoint_pr_head() {
 	if ! jq -e 'select(.complete == true) |
 		select((now - (.timestamp | fromdateiso8601)) >= 0 and
 			(now - (.timestamp | fromdateiso8601)) < 900)' <<<"$snapshot" >/dev/null 2>&1; then
-		[[ "$mode" == allow_rest && "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
-		declare -F timeout_sec >/dev/null 2>&1 || return 1
+		[[ "$mode" == allow_rest ]] || return 1
 		local pr_json=""
-		pr_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
-			gh api "repos/${repo}/pulls/${pr}" 2>/dev/null) || return 1
+		pr_json=$(_dispatch_exact_pr_rest_json "$repo" "$pr") || return 1
 		jq -er 'select(.state == "open" and .draft == true) |
 			select((.head.sha | type) == "string" and (.head.sha | length) > 0) |
 			.head.sha + "_" + ([.labels[]? | (.name? // .) | select(type == "string") | gsub("[\\t\\n\\r]"; " ")] | sort | join(","))
@@ -317,30 +364,142 @@ _dispatch_checkpoint_decimal() {
 # release and doubles up to _PCC_ATTENTION_REARM_MAX_DOUBLINGS (6) times, so
 # every such anchor contributes each doubled deadline.
 # Assigned issues must retain the live/stale-owner checks on every cycle.
+# GH#38353: an external_trigger_pending hold also wakes at its first revisit
+# deadline and at the next revisit recorded by terminal-blocker-trigger-revisit.sh.
 _dispatch_draft_hint_boundary() {
-	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed=""
+	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed="" revisit="" due=""
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
 	jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
 	rearm=$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)
+	revisit=$(_dispatch_checkpoint_decimal "${AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S:-86400}" 86400)
+	[[ ! -x "$helper" ]] || due=$("$helper" next-due "$repo" "$issue" 2>/dev/null) || due=""
+	due=$(_dispatch_checkpoint_decimal "$due" 0)
 	# A deadline crossed during the bounded read must still invalidate the hint.
 	observed=$(date +%s)
 	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
 		gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-	jq -er --argjson rearm "$rearm" --argjson observed "$observed" '
+	jq -er --argjson rearm "$rearm" --argjson observed "$observed" --argjson revisit "$revisit" --argjson due "$due" '
 		if type != "array" then error("invalid comments") else flatten end |
 		[.[] | (.body // "") as $body |
 			($body | scan("expires_at=([0-9]+)") | .[0] | tonumber),
 			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))) |
-				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor)] |
+				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor),
+			(select($revisit > 0 and ($body | test("(^|\n)Terminal blocker: reason=external_trigger_pending "))) |
+				(.created_at | fromdateiso8601) + $revisit | floor)] + [$due] |
 		map(select(. >= $observed)) | (min // 0) | tostring + ":" + ($rearm | tostring)
 	' <<<"$comments" 2>/dev/null
 	return $?
 }
 
+# GH#38237: use the existing hasher over canonical material inputs, not updatedAt.
+# A missing body can still be recorded, but cannot prove a later bump is noise.
+_dispatch_negative_cache_material() {
+	local candidate="$1" material="" fingerprint="" body_state="metadata"
+	material=$(jq -cS '{labels: ([.labels[]? | .name? // .] | sort),
+		assignees: ([.assignees[]? | .login? // .] | sort), body: (.body // null)}' <<<"$candidate" 2>/dev/null) || return 1
+	if jq -e '.body | type == "string"' <<<"$candidate" >/dev/null 2>&1; then
+		body_state="body"
+	fi
+	fingerprint=$(_dispatch_capability_fingerprint "" "$material" "") || return 1
+	printf '%s:%s\n' "$body_state" "$fingerprint"
+	return 0
+}
+
+# GH#38261: ranking candidates carry no body, so their material can never
+# prove a bump is noise. Set _DISPATCH_NEGATIVE_CACHE_SOURCE to body-bearing
+# material: the candidate itself, else one bounded issue read. `exact` also
+# requires the read to show the candidate's own revision, so a record never
+# vouches for an edit its ceremony did not evaluate. Failure is a cache miss.
+_dispatch_negative_cache_load_source() {
+	local candidate="$1" checkpoint_mode="$2" revision="${3:-}"
+	local fields issue repo updated key issue_json
+	_DISPATCH_NEGATIVE_CACHE_SOURCE=""
+	if jq -e '.body | type == "string"' <<<"$candidate" >/dev/null 2>&1; then
+		_DISPATCH_NEGATIVE_CACHE_SOURCE="$candidate"
+		return 0
+	fi
+	[[ "$checkpoint_mode" != snapshot_only ]] || return 1
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate" 2>/dev/null) || return 1
+	IFS=$'\t' read -r issue repo updated <<<"$fields"
+	_dispatch_negative_cache_path "$issue" "$repo" >/dev/null || return 1
+	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	key="${repo}#${issue}@${updated}"
+	if [[ "$_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY" != "$key" ]]; then
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
+		issue_json=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+			gh api "repos/${repo}/issues/${issue}" 2>/dev/null) || return 1
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON=$(jq -ce 'select(type == "object") | {labels: (.labels // []),
+			assignees: (.assignees // []), body: (.body // ""), updatedAt: (.updated_at // "")}' <<<"$issue_json" 2>/dev/null) || return 1
+		_DISPATCH_NEGATIVE_CACHE_SOURCE_KEY="$key"
+	fi
+	if [[ "$revision" == exact ]]; then
+		jq -e --arg updated "$updated" '.updatedAt == $updated' <<<"$_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON" >/dev/null 2>&1 || return 1
+	fi
+	_DISPATCH_NEGATIVE_CACHE_SOURCE="$_DISPATCH_NEGATIVE_CACHE_SOURCE_JSON"
+	return 0
+}
+
+# Reuse the gh shim's audit classifier; only the legacy first-token events need
+# the dispatch-specific fallback. Keep the shim's globals isolated from pulse.
+_dispatch_negative_cache_ops_only() (
+	local comments="$1" body=""
+	source "${_PULSE_DISPATCH_LIB_DIR}/gh-api-guards-lib.sh"
+	jq -e 'type == "array" and length < 100 and all(.[]; (.body | type) == "string")' <<<"$comments" >/dev/null 2>&1 || return 1
+	while IFS= read -r body; do
+		body=$(jq -r '.' <<<"$body") || return 1
+		# The footer classifier also accepts unmarked routine descriptions and
+		# embedded dispatch text; only its explicit ops markers are noise here.
+		# Actionable directives (e.g. a standalone retry line) are never noise.
+		if [[ "$body" =~ (^|$'\n')[[:space:]]*terminal-blocker-circuit:retry ]]; then
+			return 1
+		fi
+		if [[ "$body" == *'<!-- ops:start'* ]] && _shim_body_is_ops_audit "$body"; then
+			continue
+		fi
+		case "$body" in
+		DISPATCH_CLAIM[[:space:]]* | DISPATCH_LEASE[[:space:]]* | CLAIM_RELEASED[[:space:]]* | CHECKPOINT_CONTINUATION_APPROVED[[:space:]]* | 'Dispatching worker'[[:space:]]*) ;;
+		*) return 1 ;;
+		esac
+	done < <(jq -c '.[].body' <<<"$comments")
+	return 0
+)
+
+#######################################
+# GH#38352: log one draft-checkpoint record skip per issue, revision, cache
+# reason and skip reason. The marker is a sibling of the per-issue record
+# (readers open only the exact record path), so every pulse process and
+# parallel dispatch child shares the once-per-issue suppression. detail=assigned
+# is by design: assigned issues keep live/stale-owner checks every cycle.
+# Args: candidate JSON, candidate revision, cache reason, skip reason
+# Returns: 0 always (diagnostic only; never changes the dispatch decision)
+#######################################
+_dispatch_negative_cache_skip_log() {
+	local candidate="$1" updated="$2" cache_reason="$3" skip_reason="$4"
+	local fields issue repo file marker previous detail=unavailable
+	previous=""
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate" 2>/dev/null) || return 0
+	IFS=$'\t' read -r issue repo _ <<<"$fields"
+	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
+	if [[ "$skip_reason" == boundary ]] && jq -e '(.assignees // [] | length) > 0' <<<"$candidate" >/dev/null 2>&1; then
+		detail=assigned
+	fi
+	marker="${skip_reason}:${detail}:${cache_reason}:${updated}"
+	if [[ -f "${file}.skip" && ! -L "${file}.skip" ]]; then
+		IFS= read -r previous <"${file}.skip" || previous=""
+	fi
+	[[ "$previous" != "$marker" ]] || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	[[ ! -L "${file}.skip" ]] || return 0
+	(umask 077 && printf '%s\n' "$marker" >"${file}.skip") 2>/dev/null || true
+	echo "[pulse-wrapper] negative_cache_record_skipped reason=${skip_reason} detail=${detail} cache_reason=${cache_reason} issue=#${issue} repo=${repo}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
-	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary=""
+	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary="" material=""
 	if ! _dispatch_maintainer_gate_reason "$reason"; then
-		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
+		case "$reason" in dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch | dedup_pr_evidence | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | "$_DISPATCH_LIVE_OWNER_HOLD_REASON") ;; *) return 0 ;; esac
 	fi
 	if [[ "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$fingerprint" =~ ^[A-Za-z0-9_.:-]+$ && -n "$owner_path" ]] || return 0
@@ -349,7 +508,7 @@ _dispatch_negative_cache_record() {
 		owner_path=""
 		fingerprint=""
 	fi
-	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 0
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate") || return 0
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 0
 	# Unassigned/available claim hints cannot pass the reader's owner gate.
@@ -358,21 +517,37 @@ _dispatch_negative_cache_record() {
 		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
 		return 0
 	fi
+	# GH#38352: a draft-checkpoint hint that cannot be recorded names its
+	# reason once per issue revision instead of silently re-running the ceremony.
 	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
-		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
-		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
+		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
+		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" boundary; return 0; }
+	fi
+	if [[ "$reason" == dedup_pr_evidence ]]; then
+		fingerprint=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 0
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
-		checkpoint_boundary=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
-		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) || return 0
-		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
+		checkpoint_boundary=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" boundary; return 0; }
+		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" pr_head; return 0; }
+		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
 	fi
+	# Live-owner holds never consult material; skip the issue read for them.
+	if [[ "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
+		_dispatch_negative_cache_load_source "$candidate" allow_rest exact; then
+		material=$(_dispatch_negative_cache_material "$_DISPATCH_NEGATIVE_CACHE_SOURCE") || material=""
+	fi
+	[[ -n "$material" ]] || material=$(_dispatch_negative_cache_material "$candidate") || return 0
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	tmp=$(mktemp "${file}.XXXXXX") || return 0
 	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" >"$tmp"; then
+	if printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" "$updated" >"$tmp"; then
 		if mv -f "$tmp" "$file"; then
 			if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 				_DISPATCH_CHECKPOINT_COOLDOWN_RECORDED=1
@@ -417,28 +592,81 @@ _dispatch_claim_owned_elsewhere() {
 	return 0
 }
 
+# Reasons whose hint carries its own validity evidence (exact PR fingerprint,
+# owner generation, maintainer gate or a self-expiring window) instead of the
+# claimed-owner snapshot check that active-claim hints require.
+_dispatch_negative_cache_self_validating_reason() {
+	local reason="$1"
+	case "$reason" in
+	terminal_blocker_circuit | terminal_blocker_backoff | terminal_blocker_fleet_hold | zero_attempt_backoff | worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown | dedup_pr_evidence | "$_DISPATCH_LIVE_OWNER_HOLD_REASON")
+		return 0
+		;;
+	esac
+	_dispatch_maintainer_gate_reason "$reason"
+	return $?
+}
+
+_dispatch_negative_cache_material_matches() {
+	local candidate="$1" checkpoint_mode="$2" material="$3" current=''
+	[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* ]] || return 1
+	_dispatch_negative_cache_load_source "$candidate" "$checkpoint_mode" || return 1
+	current=$(_dispatch_negative_cache_material "$_DISPATCH_NEGATIVE_CACHE_SOURCE") || return 1
+	[[ "$current" == "$material" ]] || return 1
+	return 0
+}
+
+_dispatch_negative_cache_refresh_revision() {
+	local candidate="$1" checkpoint_mode="$2" record="$3" file="$4"
+	local stamp='' cached='' reason='' pr='' fingerprint='' owner_path='' checkpoint_boundary='' material='' revision_anchor=''
+	local comments='' updated='' repo='' issue='' tmp=''
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
+	[[ "$cached" =~ ^[0-9TZ:.-]+$ ]] || return 1
+	_dispatch_negative_cache_material_matches "$candidate" "$checkpoint_mode" "$material" || return 1
+	IFS=$'\t' read -r issue repo updated < <(jq -r '[.number, .repo_slug, .updatedAt] | @tsv' <<<"$candidate") || return 1
+	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
+		gh api "repos/${repo}/issues/${issue}/comments?since=${cached}&per_page=100" 2>/dev/null) || return 1
+	_dispatch_negative_cache_ops_only "$comments" || return 1
+	# Checkpoint hints embed boundary evidence (expiries, re-arm deadlines);
+	# new comments that introduce such events must force a recompute.
+	case "$reason" in
+	worker_draft_checkpoint_blocked | stale_draft_checkpoint | worker_draft_checkpoint_cooldown)
+		if jq -e 'any(.[]; (.body // "") | test("expires_at=[0-9]|aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED |(^|\n)CHECKPOINT_CONTINUATION_APPROVED "))' <<<"$comments" >/dev/null 2>&1; then
+			return 1
+		fi
+		;;
+	esac
+	# Refresh the revision, never the TTL or reason-specific evidence. Preserve
+	# the original revision anchor used for write-time quiet-TTL eligibility.
+	tmp=$(mktemp "${file}.XXXXXX") || return 1
+	chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	if ! printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$stamp" "$updated" "$reason" "$pr" "$fingerprint" "$owner_path" "$checkpoint_boundary" "$material" "${revision_anchor:-$cached}" >"$tmp" ||
+		! mv -f "$tmp" "$file"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	return 0
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
-	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary=""
+	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material="" revision_anchor=""
 	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
-	fields=$(jq -r '[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv' <<<"$candidate") || return 1
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
 	[[ "$updated" =~ ^[0-9TZ:.-]+$ ]] || return 1
 	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 1
 	[[ -f "$file" && ! -L "$file" ]] || return 1
-	IFS=$'\t' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary <"$file" || return 1
+	IFS= read -r record <"$file" || return 1
+	# Non-whitespace separators preserve empty optional fields in old/new records.
+	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
-	# The refused attempt's own claim comment bumps updatedAt, so a live-owner
-	# hold is keyed to the owner generation rather than the issue revision.
-	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] || return 1
-	if [[ "$reason" != terminal_blocker_circuit && "$reason" != terminal_blocker_backoff &&
-		"$reason" != terminal_blocker_fleet_hold && "$reason" != zero_attempt_backoff &&
-		"$reason" != worker_draft_checkpoint_blocked && "$reason" != stale_draft_checkpoint &&
-		"$reason" != worker_draft_checkpoint_cooldown &&
-		"$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
-		! _dispatch_maintainer_gate_reason "$reason"; then
+	# GH#38261: only the cheap gate here. The material and comment reads run in
+	# the refresh below, after the TTL checks, so expired hints cost no API call.
+	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] ||
+		[[ "$checkpoint_mode" != snapshot_only && "$material" == body:* ]] || return 1
+	if ! _dispatch_negative_cache_self_validating_reason "$reason"; then
 		# Ownership hints: the snapshot must independently still show a claimed
 		# owner. The worker-draft exception uses the exact PR fingerprint from a
 		# fresh complete snapshot or one bounded REST read; neither permits a launch.
@@ -447,7 +675,7 @@ _dispatch_negative_cache_reason() {
 	fi
 	case "$reason" in
 	worker_draft_checkpoint_cooldown)
-		ttl=$(_dispatch_checkpoint_cooldown_ttl "$candidate" "$stamp") || return 1
+		ttl=$(_dispatch_checkpoint_cooldown_ttl "$(jq --arg updated "${revision_anchor:-$cached}" '.updatedAt=$updated' <<<"$candidate")" "$stamp") || return 1
 		[[ -n "$fingerprint" ]] || return 1
 		# Quiet hints must obey the same owner/re-arm limits as draft blocks.
 		# Legacy records without boundary evidence run the ceremony once.
@@ -465,8 +693,6 @@ _dispatch_negative_cache_reason() {
 		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
 		;;
 	terminal_blocker_circuit)
-		# The circuit hold applies to unowned available issues by design. An
-		# unchanged updatedAt proves no edit, retry directive or new comment.
 		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
 		;;
 	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
@@ -501,17 +727,24 @@ _dispatch_negative_cache_reason() {
 		current=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 1
 		[[ "$current" == "$fingerprint" ]] || return 1
 		;;
+	dedup_pr_evidence)
+		_dispatch_pr_evidence_hint_valid "$repo" "$pr" "$fingerprint" "$stamp" "$ttl" || return 1
+		;;
 	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
 	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated)
-		# GH#33538: the exact updatedAt match above is the invalidation signal.
+		# GH#33538: material issue revisions invalidate maintainer-gate hints.
 		ttl="$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS"
 		;;
 	*) return 1 ;;
 	esac
 	now=$(date +%s)
 	((now >= stamp && now - stamp < ttl)) || return 1
+	# Live-owner holds remain keyed to owner generation, not claim-comment bumps.
+	if [[ "$cached" != "$updated" && "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]]; then
+		_dispatch_negative_cache_refresh_revision "$candidate" "$checkpoint_mode" "$record" "$file" || return 1
+	fi
 	printf '%s\n' "$reason"
 	return 0
 }
@@ -558,6 +791,17 @@ _dispatch_cache_confirmed_block() {
 		_dispatch_negative_cache_record "$candidate" "$reason" "$pr"
 		return 0
 	fi
+	# GH#38142: open, draft or merged PR evidence naming exactly one PR. Evidence
+	# without a PR number (task-id matches) or naming several PRs (superseded
+	# coverage) is not cached: a change to an unrecorded PR could lift the block.
+	local evidence_pattern='DISPATCH_BLOCK_REASON reason=dedup_pr_evidence signal=pr_evidence_block: [^#]*PR #([1-9][0-9]*) ([^'$'\n'']*)'
+	local second_pr_pattern='PR #[0-9]'
+	if [[ "$lines" =~ $evidence_pattern ]]; then
+		pr="${BASH_REMATCH[1]}"
+		[[ "${BASH_REMATCH[2]}" =~ $second_pr_pattern ]] ||
+			_dispatch_negative_cache_record "$candidate" dedup_pr_evidence "$pr"
+		return 0
+	fi
 	# GH#33026: a live worktree owner refused this issue's claim. Hold until that
 	# exact owner generation exits or hands over; never touch the owner row.
 	local refusal="" owner_pid="" owner_start="" owner_path=""
@@ -601,11 +845,75 @@ _dispatch_record_and_cache_block() {
 	return 1
 }
 
+#######################################
+# GH#37907: deploy reconciliation (pulse-lifecycle-helper.sh
+# _pulse_request_cycle_drain) asks a deferred earlier-bundle lock owner to stop
+# at its next candidate boundary via LOCKDIR/drain_requested. Only the named
+# owner honours it ($$ is the wrapper PID in dispatch subshells too); releasing
+# the lock removes it. In-flight candidates finish; no new census starts. A
+# census already running completes: the drained cycle launches nothing from it
+# and hands it to the activated bundle before releasing the lock (GH#38048,
+# _dispatch_cleanup_cycle_cache).
+# Stdout: the activated bundle id the scheduler starts next
+# Returns: 0 when this cycle should drain, 1 otherwise
+#######################################
+_pulse_drain_requested_bundle() {
+	local marker="${LOCKDIR:-}/drain_requested" line="" owner="" bundle=""
+	[[ -n "${LOCKDIR:-}" && -f "$marker" ]] || return 1
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+		owner=*) owner="${line#owner=}" ;;
+		bundle=*) bundle="${line#bundle=}" ;;
+		esac
+	done 2>/dev/null <"$marker"
+	[[ "$owner" =~ ^[0-9]+$ && "$owner" == "$$" ]] || return 1
+	[[ "$bundle" =~ ^[A-Za-z0-9._-]+$ ]] || bundle="unrecorded"
+	printf '%s\n' "$bundle"
+	return 0
+}
+
+#######################################
+# t19015 (GH#38413): GH#37907 asks a drained earlier-bundle cycle to exit so
+# the scheduler starts the activated bundle. Dispatch stops under the drain,
+# but the cycle still ran every remaining preflight and pipeline stage (p50
+# 849s from activation to exit; 22% of runner time alive with dispatch
+# suppressed). Callers check at stage boundaries, so in-flight stages finish.
+# The supervisor phase keeps its drain, census-handoff (GH#38048) and
+# starvation-escape (GH#38162, GH#38210) handling; the cycle is still recorded.
+# PULSE_DRAIN_FAST_EXIT=0 restores the full drained cycle.
+# Args: $1 - stage or phase about to start (log label)
+# Returns: 0 when the caller must skip its remaining stages, 1 otherwise
+#######################################
+_pulse_cycle_drain_exit() {
+	local phase="${1:-unknown}"
+	local bundle=""
+	[[ "${PULSE_DRAIN_FAST_EXIT:-1}" != "0" ]] || return 1
+	bundle=$(_pulse_drain_requested_bundle) || return 1
+	# Main dispatch cannot run again in this cycle; release its reserve.
+	_PULSE_MAIN_DISPATCH_RESERVE_S=0
+	# A skipped prefetch leaves STATE_FILE from an earlier cycle; a drain
+	# escape supervisor (GH#38162) must treat it as incomplete (GH#34000).
+	[[ "${_PULSE_PREFETCH_RAN:-0}" == "1" ]] || _PULSE_PREFETCH_DEGRADED=1
+	if [[ "${_PULSE_DRAIN_FAST_EXIT_LOGGED:-0}" != "1" ]]; then
+		_PULSE_DRAIN_FAST_EXIT_LOGGED=1
+		echo "[pulse-wrapper] Cooperative drain: skipping remaining cycle stages from ${phase}; activated bundle ${bundle} starts next cycle (t19015, GH#37907)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_drain_fast_exit" 2>/dev/null || true
+		fi
+	fi
+	return 0
+}
+
 _dispatch_compute_capacity() {
 	_dispatch_refresh_owner_lease
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
+		return 1
+	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max skipped: cooperative drain requested; activated bundle ${drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_capacity"; then
@@ -885,6 +1193,30 @@ _dispatch_maybe_engage_throttle() {
 #######################################
 _dispatch_max_compute_parallel() {
 	local effective_slots="$1"
+	local max_parallel=""
+	max_parallel=$(_dispatch_max_compute_base_parallel "$effective_slots")
+	if _dispatch_rest_core_requires_serial; then
+		max_parallel=1
+		echo "[pulse-wrapper] Dispatch_max: REST-core reserve-adjacent mode forces serial launch ceremony (GH#29742)" >>"$LOGFILE"
+	fi
+	[[ "$max_parallel" =~ ^[1-9][0-9]*$ ]] || max_parallel=1
+	printf '%d\n' "$max_parallel"
+	return 0
+}
+
+#######################################
+# GH#38033: parallelism from the round-start constraints that cannot change
+# mid-round (ceremony cap, slot cap, throttle file), excluding the REST-core
+# reserve. When this exceeds 1 while the round is serial, the REST reserve is
+# the only serial cause and _dispatch_floor_loop may revisit it.
+#
+# Arguments:
+#   $1 - effective_slots
+# Stdout: integer parallelism level (>= 1)
+#######################################
+_dispatch_max_compute_base_parallel() {
+	local effective_slots="$1"
+	[[ "$effective_slots" =~ ^[0-9]+$ ]] || effective_slots=1
 	# t3015 back-compat: honour deprecated DISPATCH_FILL_FLOOR_PARALLEL name.
 	# Operators who set the old name in their environment / launchd plist
 	# before upgrading should not silently lose their override. Bridge the
@@ -909,12 +1241,8 @@ _dispatch_max_compute_parallel() {
 	# are soft signals; keep parallelism eligible until the floor is reached.
 	# Defensive: also short-circuit on direct file presence in case caller
 	# passes a non-throttled effective_slots while throttle is active.
-	if [[ -f "$_DISPATCH_THROTTLE_FILE" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; then
+	if [[ -f "${_DISPATCH_THROTTLE_FILE:-}" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; then
 		max_parallel=1
-	fi
-	if _dispatch_rest_core_requires_serial; then
-		max_parallel=1
-		echo "[pulse-wrapper] Dispatch_max: REST-core reserve-adjacent mode forces serial launch ceremony (GH#29742)" >>"$LOGFILE"
 	fi
 	((max_parallel < 1)) && max_parallel=1
 	printf '%d\n' "$max_parallel"
@@ -934,7 +1262,14 @@ _dispatch_max_compute_parallel() {
 #   $2 - effective_slots (slot budget at loop start, may be throttled to 1)
 #   $3 - available_slots (unthrottled slot budget — restored if throttle clears)
 #   $4 - self_login (GitHub login for dedup)
+#   $5 - optional outcomes file (priority phases)
 # Stdout: "<dispatched_count> <processed_count>"
+#
+# GH#38033: when the REST-core reserve is the only reason this round is serial,
+# the reserve is re-evaluated every DISPATCH_REST_SERIAL_RECHECK_ITERATIONS
+# candidates or DISPATCH_REST_SERIAL_RECHECK_SECONDS. Once it clears, the
+# remaining candidates move to _dispatch_max_loop with the remaining slot budget.
+# Throttle-file and slot-budget serial rounds never qualify.
 #######################################
 _dispatch_floor_loop() {
 	local candidate_file="$1"
@@ -944,7 +1279,13 @@ _dispatch_floor_loop() {
 	local outcomes_file="${5:-}"
 
 	local dispatched_count=0 processed_count=0 candidate_json
+	local line_no=0 resume_line=0 rest_recovery=0 iters_since_check=0 last_check_epoch=0
+	if _dispatch_floor_rest_recovery_eligible "$effective_slots"; then
+		rest_recovery=1
+		last_check_epoch=$(date +%s)
+	fi
 	while IFS= read -r candidate_json; do
+		line_no=$((line_no + 1))
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
 		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — entering body" >>"$LOGFILE"
@@ -954,6 +1295,11 @@ _dispatch_floor_loop() {
 		fi
 		if [[ -f "${STOP_FLAG:-}" ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
+			break
+		fi
+		local drain_bundle=""
+		if drain_bundle=$(_pulse_drain_requested_bundle); then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during serial loop (GH#37907)" >>"$LOGFILE"
 			break
 		fi
 		local budget_rc=0
@@ -968,6 +1314,21 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: REST-core launch headroom unavailable during serial loop" >>"$LOGFILE"
 			break
 		fi
+		if ((rest_recovery == 1)) && _dispatch_floor_rest_recheck_due "$iters_since_check" "$last_check_epoch"; then
+			iters_since_check=0
+			last_check_epoch=$(date +%s)
+			local remaining_parallel=""
+			remaining_parallel=$(_dispatch_max_compute_base_parallel "$((effective_slots - dispatched_count))")
+			if ((remaining_parallel <= 1)); then
+				# One slot left: parallel ceremony cannot help this round.
+				rest_recovery=0
+			elif ! _dispatch_rest_core_requires_serial; then
+				resume_line="$line_no"
+				processed_count=$((processed_count - 1))
+				break
+			fi
+		fi
+		iters_since_check=$((iters_since_check + 1))
 		local _dispatch_proc_rc=0
 		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _dispatch_proc_rc=$?
 		if [[ -n "$outcomes_file" ]]; then
@@ -983,7 +1344,114 @@ _dispatch_floor_loop() {
 			fi
 		fi
 	done <"$candidate_file"
+	if ((resume_line > 0)); then
+		local parallel_result="" parallel_dispatched=0 parallel_processed=0
+		parallel_result=$(_dispatch_floor_resume_parallel "$candidate_file" "$resume_line" \
+			"$((effective_slots - dispatched_count))" "$available_slots" "$self_login" \
+			"$outcomes_file" "$((processed_count + 1))") || return 1
+		read -r parallel_dispatched parallel_processed <<<"$parallel_result"
+		[[ "$parallel_dispatched" =~ ^[0-9]+$ ]] || parallel_dispatched=0
+		[[ "$parallel_processed" =~ ^[0-9]+$ ]] || parallel_processed=0
+		dispatched_count=$((dispatched_count + parallel_dispatched))
+		processed_count=$((processed_count + parallel_processed))
+	fi
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# GH#38033: return 0 when this serial loop starts serial only because of the
+# REST-core reserve, so the reserve may be revisited mid-round. Concurrent
+# priority pools disable this via _DISPATCH_REST_SERIAL_RECOVERY_ALLOWED=0 so
+# a recovered pool cannot exceed its share of the shared ceremony cap.
+#
+# Arguments:
+#   $1 - effective_slots at loop start
+#######################################
+_dispatch_floor_rest_recovery_eligible() {
+	local effective_slots="$1"
+	local base_parallel=""
+	[[ "${_DISPATCH_REST_SERIAL_RECOVERY_ALLOWED:-1}" == "1" ]] || return 1
+	base_parallel=$(_dispatch_max_compute_base_parallel "$effective_slots")
+	((base_parallel > 1)) || return 1
+	_dispatch_rest_core_requires_serial || return 1
+	echo "[pulse-wrapper] Dispatch_max: serial round caused by REST-core reserve; rechecking for parallel recovery (GH#38033)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#38033: return 0 when the REST-core reserve should be re-evaluated.
+#
+# Arguments:
+#   $1 - candidates processed since the last check
+#   $2 - epoch of the last check
+#######################################
+_dispatch_floor_rest_recheck_due() {
+	local iters_since_check="$1"
+	local last_check_epoch="$2"
+	local interval="${DISPATCH_REST_SERIAL_RECHECK_ITERATIONS:-3}"
+	local max_seconds="${DISPATCH_REST_SERIAL_RECHECK_SECONDS:-60}"
+	[[ "$interval" =~ ^[1-9][0-9]*$ ]] || interval=3
+	[[ "$max_seconds" =~ ^[0-9]+$ ]] || max_seconds=60
+	((iters_since_check > 0)) || return 1
+	((iters_since_check >= interval)) && return 0
+	((max_seconds > 0)) || return 1
+	local now=""
+	now=$(date +%s)
+	[[ "$now" =~ ^[0-9]+$ && "$last_check_epoch" =~ ^[0-9]+$ ]] || return 1
+	((now - last_check_epoch >= max_seconds)) && return 0
+	return 1
+}
+
+#######################################
+# GH#38033: hand the unprocessed candidates of a REST-recovered serial round
+# to the bounded parallel loop. The parallel loop keeps every per-iteration
+# fence (stop flag, drain, GraphQL breaker, REST progress, slot budget).
+#
+# Arguments:
+#   $1 - candidate_file
+#   $2 - first unprocessed line number (1-based)
+#   $3 - remaining slot budget
+#   $4 - available_slots
+#   $5 - self_login
+#   $6 - caller outcomes file (empty for the non-priority path)
+#   $7 - iteration number at which parallel processing resumes
+# Stdout: "<dispatched_count> <processed_count>" for the parallel part
+#######################################
+_dispatch_floor_resume_parallel() {
+	local candidate_file="$1"
+	local from_line="$2"
+	local remaining_slots="$3"
+	local available_slots="$4"
+	local self_login="$5"
+	local outcomes_file="$6"
+	local resume_iter="$7"
+	local parallel="" remaining_file="" parallel_outcomes="" result=""
+
+	parallel=$(_dispatch_max_compute_base_parallel "$remaining_slots")
+	remaining_file=$(mktemp) || return 1
+	parallel_outcomes=$(mktemp) || {
+		rm -f "$remaining_file"
+		return 1
+	}
+	tail -n "+${from_line}" "$candidate_file" >"$remaining_file"
+	echo "[pulse-wrapper] Dispatch_max: REST-core recovered; resuming parallel launch ceremony at iter=${resume_iter} (max_parallel=${parallel}, remaining_slots=${remaining_slots})" >>"$LOGFILE"
+	result=$(_dispatch_max_loop "$remaining_file" "$remaining_slots" "$available_slots" "$self_login" "$parallel" "$parallel_outcomes")
+	if [[ -n "$outcomes_file" ]]; then
+		# Priority phases aggregate their own outcomes file after the round.
+		cat "$parallel_outcomes" >>"$outcomes_file" || {
+			rm -f "$remaining_file" "$parallel_outcomes"
+			return 1
+		}
+	else
+		local prior_dispatched="${_DISPATCH_ROUND_DISPATCHED:-0}"
+		local prior_no_worker="${_DISPATCH_ROUND_NO_WORKER_FAILURES:-0}"
+		_dispatch_max_aggregate_outcomes "$parallel_outcomes"
+		_DISPATCH_ROUND_DISPATCHED=$((prior_dispatched + _DISPATCH_ROUND_DISPATCHED))
+		_DISPATCH_ROUND_NO_WORKER_FAILURES=$((prior_no_worker + _DISPATCH_ROUND_NO_WORKER_FAILURES))
+	fi
+	rm -f "$remaining_file" "$parallel_outcomes"
+	printf '%s\n' "$result"
 	return 0
 }
 
@@ -1192,6 +1660,11 @@ _dispatch_max_should_stop() {
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 		return 0
 	fi
+	local drain_bundle=""
+	if drain_bundle=$(_pulse_drain_requested_bundle); then
+		echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during parallel loop (GH#37907)" >>"$LOGFILE"
+		return 0
+	fi
 	local budget_rc=0
 	_dispatch_graphql_budget_allows_next || budget_rc=$?
 	if [[ "$budget_rc" -ne 0 ]]; then
@@ -1293,6 +1766,16 @@ _dispatch_run_priority_phase() {
 		return 0
 	fi
 	((parallel <= budget)) || parallel="$budget"
+	if ((parallel <= 1)) && [[ "${_DISPATCH_REST_SERIAL_ROUND:-0}" == "1" &&
+		"${_DISPATCH_REST_SERIAL_RECOVERY_ALLOWED:-1}" == "1" ]] &&
+		! _dispatch_rest_core_requires_serial; then
+		local recovered_parallel=""
+		recovered_parallel=$(_dispatch_max_compute_base_parallel "$budget")
+		if ((recovered_parallel > 1)); then
+			echo "[pulse-wrapper] Dispatch_max: REST-core recovered; resuming parallel launch ceremony at phase start (max_parallel=${recovered_parallel}, remaining_slots=${budget}) (GH#38033)" >>"$LOGFILE"
+			parallel="$recovered_parallel"
+		fi
+	fi
 	if ((parallel <= 1)); then
 		_dispatch_floor_loop "$candidates" "$budget" "$budget" "$login" "$outcomes"
 	else
@@ -1406,6 +1889,9 @@ _dispatch_priority_reserved_pools() {
 	: >"$phase_dir/ordinary.outcomes"
 	if ((parallel > 1 && reserved > 0 && ordinary > 0)) &&
 		[[ -s "$phase_dir/product.candidates" && -s "$phase_dir/ordinary.candidates" ]]; then
+		# GH#38033: concurrent pools split one ceremony cap; a serial pool
+		# must not widen to the full cap if the REST reserve recovers.
+		local _DISPATCH_REST_SERIAL_RECOVERY_ALLOWED=0
 		product_parallel=$(((parallel * reserved + budget - 1) / budget))
 		((product_parallel < parallel)) || product_parallel=$((parallel - 1))
 		ordinary_parallel=$((parallel - product_parallel))
@@ -1438,6 +1924,12 @@ _dispatch_priority_reserved_pools() {
 _dispatch_priority_loop() {
 	local candidates="$1" budget="$2" login="$3" parallel="$4" outcomes="$5"
 	local reserved="$6" complete="$7"
+	# GH#38033: phases started after a REST-reserve serial round recovers run
+	# with the recovered parallelism (see _dispatch_run_priority_phase).
+	local _DISPATCH_REST_SERIAL_ROUND=0
+	if ((parallel <= 1)) && _dispatch_floor_rest_recovery_eligible "$budget"; then
+		_DISPATCH_REST_SERIAL_ROUND=1
+	fi
 	local phase_dir="" phase="" phase_budget=0 launched=0 processed=0 result=""
 	local phase_launched=0 phase_processed=0 product_launched=0 product_unknown=0 held=0
 	phase_dir=$(mktemp -d) || return 1

@@ -625,6 +625,25 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(len(report["discovery_errors"]), 1)
         self.assertEqual(report["results"][0]["reason"], "process-alive")
 
+    def test_budget_includes_discovery(self):
+        """GH#38158: discovery that exhausts the budget starts no item."""
+        from types import SimpleNamespace
+        from worker_lifecycle import legacy_runner
+        clock = [1000.0]
+        native = legacy_runner.discover
+
+        def slow(*arguments):
+            clock[0] += 5
+            return native(*arguments)
+
+        with patch.object(legacy_runner, "time", SimpleNamespace(monotonic=lambda: clock[0])), \
+                patch.object(legacy_runner, "discover", side_effect=slow):
+            report = self.cleanup(budget=1)
+        self.assertEqual((report["examined"], report["paths"]), (0, 1), report)
+        self.assertTrue(report["incomplete"])
+        self.assertTrue(report["budget_exhausted"])
+        self.assertTrue((self.target / "work.txt").exists())
+
     def test_git_filesystem_and_registry_discovery_are_deduplicated(self):
         self.git("worktree", "move", str(self.target), str(self.scan_root / "registered"))
         moved = self.scan_root / "registered"
@@ -790,25 +809,28 @@ class LegacyCleanupContract(unittest.TestCase):
         self.assertEqual(result["retired"], 0, result)
         self.assertEqual((self.target / "new-work").read_text(), "keep")
 
-    def test_native_move_and_removal_hold_registration_writer_lock(self):
-        """Destructive native operations continue to exclude other registry writers."""
+    def test_native_move_holds_and_journaled_removal_releases_writer_lock(self):
+        """Move excludes registry writers; the journaled removal does not (GH#38158)."""
         self.stop_owner()
         git = legacy._git
-        guarded = []
+        observed = []
 
         def checked(*arguments):
-            """Probe writer exclusion immediately before native move and removal."""
+            """Probe writer availability immediately before native move and removal."""
             if len(arguments) > 3 and arguments[2] == "worktree" and arguments[3] in ("move", "remove"):
                 with closing(sqlite3.connect(self.store.path, timeout=0.01)) as other:
-                    with self.assertRaises(sqlite3.OperationalError):
+                    try:
                         other.execute("BEGIN IMMEDIATE")
-                guarded.append(arguments[3])
+                        other.rollback()
+                        observed.append((arguments[3], "available"))
+                    except sqlite3.OperationalError:
+                        observed.append((arguments[3], "held"))
             return git(*arguments)
 
         with patch.object(legacy, "_git", side_effect=checked):
             result = self.cleanup()
         self.assertEqual(result["retired"], 1, result)
-        self.assertEqual(guarded, ["move", "remove"])
+        self.assertEqual(observed, [("move", "held"), ("remove", "available")])
 
     def test_unknown_process_is_retained(self):
         adapter = adapter_for(self.store.installation_id())

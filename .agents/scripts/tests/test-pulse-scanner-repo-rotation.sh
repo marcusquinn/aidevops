@@ -73,6 +73,9 @@ setup() {
 	export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_CURSOR_DIR="${TEST_ROOT}/prr"
 	export AIDEVOPS_AUTO_DECOMPOSER_CURSOR_DIR="${TEST_ROOT}/ad"
 	export AUTO_DECOMPOSER_INTERVAL=604800
+	# A Pulse-launched run may inherit an expired stage deadline; only the
+	# explicit deadline cases below should control cooperative yields.
+	unset PULSE_STAGE_DEADLINE_EPOCH
 	SCRIPT_DIR="${TEST_ROOT}/scripts"
 	write_stub_scanner "${SCRIPT_DIR}/pr-review-thread-response-scanner.sh" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_CURSOR_DIR}/repo.cursor"
 	write_stub_scanner "${SCRIPT_DIR}/auto-decomposer-scanner.sh" "${AIDEVOPS_AUTO_DECOMPOSER_CURSOR_DIR}/repo.cursor"
@@ -132,10 +135,34 @@ run_scanner_case() {
 	return 0
 }
 
+# GH#38171: a deadline inside the reserve yields cooperatively (rc 0, no
+# scan started, cursor unchanged) instead of waiting for the watchdog kill.
+run_deadline_yield_case() {
+	local scanner_fn="$1"
+	local label="$2"
+	local cursor_dir_var="$3"
+	setup
+	local failed=0 rc=0 cursor_file="${!cursor_dir_var}/repo.cursor"
+	_pulse_scanner_mark_started "$cursor_file" "o/a"
+	PULSE_STAGE_DEADLINE_EPOCH="$(date +%s)" "$scanner_fn" || rc=$?
+	[[ "$rc" -eq 0 ]] || failed=1
+	[[ ! -s "${TEST_ROOT}/calls.log" ]] || failed=1
+	[[ "$(sed -n '1p' "$cursor_file")" == "o/a" ]] || failed=1
+	grep -q 'yielding before o/c' "$LOGFILE" || failed=1
+	# A comfortable deadline scans every maintainer repo in rotation order.
+	PULSE_STAGE_DEADLINE_EPOCH="$(($(date +%s) + 600))" "$scanner_fn" || failed=1
+	[[ "$(calls_slugs)" == "o/c o/d o/a " ]] || failed=1
+	print_result "${label}: deadline inside reserve yields before the next repo" "$failed"
+	teardown
+	return 0
+}
+
 main() {
 	test_rotation_helper
 	run_scanner_case _run_pr_review_thread_response_scanner "pr-review-thread-response"
 	run_scanner_case _run_auto_decomposer_scanner "auto-decomposer"
+	run_deadline_yield_case _run_pr_review_thread_response_scanner "pr-review-thread-response" AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_CURSOR_DIR
+	run_deadline_yield_case _run_auto_decomposer_scanner "auto-decomposer" AIDEVOPS_AUTO_DECOMPOSER_CURSOR_DIR
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
 	return 0

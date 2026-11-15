@@ -180,7 +180,14 @@ class LifecycleRegistry:
     def _compact(self, connection: sqlite3.Connection, age: int, *, apply: bool) -> dict:
         from .journal import compact
 
-        return compact(self, connection, age, apply=apply)
+        result = compact(self, connection, age, apply=apply)
+        if apply:
+            from .retirement_locks import sweep_retirement_locks
+
+            locks = sweep_retirement_locks(self, connection)
+            result.update(retirement_locks_removed=locks["removed"],
+                          retirement_locks_refused=locks["refused"])
+        return result
 
     def compact(self, *, age: int | None = None, apply: bool = False) -> dict:
         """Preview by default; archive before deleting any eligible journal rows."""
@@ -243,6 +250,11 @@ class LifecycleRegistry:
         identifier(generation_id)
         if not isinstance(path, str) or len(path) > 4096 or not Path(path).is_absolute() or "\0" in path:
             raise ValueError("absolute-generation-path-required")
+        if os.path.normpath(path) != path:  # Same spelling is required for fence equality.
+            raise ValueError("canonical-generation-path-required")
+        from .retirement_fence import require_unfenced
+
+        require_unfenced(connection, generation_id, path)  # GH#37828 retirement reservation
         payload = {"type": "bind", "run_id": run_id, "generation_id": generation_id, "path": path}
         _, duplicate = self._event(connection, event_id, payload)
         if duplicate:

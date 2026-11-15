@@ -213,7 +213,10 @@ fi
 auth_test_home=$(mktemp -d)
 auth_output=""
 auth_exit=0
-auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" \
+# GH#38271: isolate the gh-auth refusal from the macOS keychain gate (6c-2 covers it)
+# and from any host gh config that GH_CONFIG_DIR/XDG_CONFIG_HOME would select.
+auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" AIDEVOPS_KEYCHAIN_FORCE_STATE=unlocked \
+	GH_CONFIG_DIR="$auth_test_home/.config/gh" XDG_CONFIG_HOME="$auth_test_home/.config" \
 	LC_ALL=C timeout 30 "$ROUTINE_FILE" --repo example/repo 2>&1) || auth_exit=$?
 rm -rf "$auth_test_home"
 
@@ -350,23 +353,26 @@ fi
 
 if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 	if awk '
-		BEGIN { in_func=0; has_background=0; has_low_io=0; has_nice=0; has_keepalive_false=0; saw_keepalive=0 }
+		BEGIN { in_func=0; has_interactive=0; has_other_type=0; saw_type=0; has_low_io=0; has_nice=0; has_keepalive_false=0; saw_keepalive=0 }
 		/^_install_pulse_merge_routine_launchd\(\)/ { in_func=1; next }
 		in_func && /^\}/ { in_func=0 }
-		in_func && index($0, "<key>ProcessType</key>") { has_background=1 }
+		# GH#38455: Interactive is required (unset means throttled light limits);
+		# Background stayed stuck in xpcproxy (t3381), so any other value fails.
+		in_func && index($0, "<key>ProcessType</key>") { saw_type=1; next }
+		in_func && saw_type { if (index($0, "<string>Interactive</string>")) has_interactive=1; else has_other_type=1; saw_type=0 }
 		in_func && index($0, "<key>LowPriorityBackgroundIO</key>") { has_low_io=1 }
 		in_func && index($0, "<key>Nice</key>") { has_nice=1 }
 		in_func && index($0, "<key>KeepAlive</key>") { saw_keepalive=1; next }
 		in_func && saw_keepalive { if (index($0, "<false/>")) has_keepalive_false=1; saw_keepalive=0 }
-		END { exit (!has_background && !has_low_io && !has_nice && has_keepalive_false) ? 0 : 1 }
+		END { exit (has_interactive && !has_other_type && !has_low_io && !has_nice && has_keepalive_false) ? 0 : 1 }
 	' "$SCHEDULERS_PLATFORM_FILE"; then
-		pass "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false"
+		pass "10: merge LaunchAgent uses Interactive spawn priority with explicit KeepAlive=false"
 	else
-		fail "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
-			"pulse merge LaunchAgent must not set ProcessType/LowPriorityBackgroundIO/Nice and must set KeepAlive=false"
+		fail "10: merge LaunchAgent uses Interactive spawn priority with explicit KeepAlive=false" \
+			"pulse merge LaunchAgent must set ProcessType=Interactive, must not set LowPriorityBackgroundIO/Nice and must set KeepAlive=false"
 	fi
 else
-	skip "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
+	skip "10: merge LaunchAgent uses Interactive spawn priority with explicit KeepAlive=false" \
 		".agents/scripts/setup/modules/schedulers-platform.sh not found"
 fi
 
@@ -867,6 +873,164 @@ else
 	fail "28: wrapper busy-skip paths run routines and the in-cycle backstop shares the lock" \
 		"busy hooks found=${busy_hooks}/4"
 fi
+
+# =============================================================================
+# Tests 29-32: cycle-owned routines ticker (GH#37914)
+# =============================================================================
+# launchd and systemd timers start no second invocation while the cycle runs,
+# so the busy pass above never fired during long cycles. The cycle now owns a
+# child that runs the routines-only pass every tick until the cycle exits.
+printf '\n=== Cycle-owned routines ticker (GH#37914) ===\n'
+
+TICK_HARNESS="${BUSY_ROOT}/tick-harness.sh"
+cat >"$TICK_HARNESS" <<'TICK_HARNESS_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+root="${BUSY_ROOT:?}/tick"
+mkdir -p "$root"
+LOGFILE="${root}/pulse.log"
+STOP_FLAG="${root}/stop"
+ticks="${root}/ticks.log"
+: >"$ticks"
+# shellcheck disable=SC1091
+source "${ROUTINE_TEST_SCRIPTS_DIR:?}/pulse-routines-tick.sh"
+_pulse_run_routines_while_busy() {
+	printf '%s clamp=%s lock=%s\n' "$1" "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" "${_LOCK_OWNED:-}" >>"$ticks"
+	return 0
+}
+count_ticks() { wc -l <"$ticks" | tr -d ' '; return 0; }
+wait_ticks() {
+	local want="$1" attempt=0
+	while [[ "$attempt" -lt 60 ]]; do
+		[[ "$(count_ticks)" -ge "$want" ]] && return 0
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+wait_gone() {
+	local pid="$1" attempt=0
+	while [[ "$attempt" -lt 40 ]]; do
+		kill -0 "$pid" 2>/dev/null || return 0
+		sleep 0.1
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+_LOCK_OWNED=true
+export AIDEVOPS_PULSE_ROUTINES_TICK_SECONDS=1
+
+_pulse_start_routines_ticker
+ticker="$_PULSE_ROUTINES_TICKER_PID"
+_pulse_start_routines_ticker
+[[ "$_PULSE_ROUTINES_TICKER_PID" == "$ticker" ]] && printf 'idempotent\n'
+wait_ticks 2 && printf 'ticked\n'
+grep -q '^cycle-tick clamp=0 lock=false$' "$ticks" && printf 'unclamped-unowned\n'
+# An inherited subshell copy must never stop the owner's ticker.
+(_pulse_stop_routines_ticker)
+kill -0 "$ticker" 2>/dev/null && printf 'subshell-ignored\n'
+_pulse_stop_routines_ticker
+wait_gone "$ticker" && printf 'stopped\n'
+before=$(count_ticks)
+sleep 1.5
+[[ "$(count_ticks)" == "$before" ]] && printf 'no-tick-after-stop\n'
+
+# A ticker whose owning cycle died exits at its next tick.
+orphan_pid=$(
+	_pulse_start_routines_ticker
+	printf '%s\n' "$_PULSE_ROUTINES_TICKER_PID"
+)
+wait_gone "$orphan_pid" && printf 'owner-exit\n'
+
+# The disable switch starts nothing.
+AIDEVOPS_PULSE_ROUTINES_TICK=0 _pulse_start_routines_ticker
+[[ -z "$_PULSE_ROUTINES_TICKER_PID" ]] && printf 'disabled\n'
+exit 0
+TICK_HARNESS_EOF
+
+tick_output=$(BUSY_ROOT="$BUSY_ROOT" ROUTINE_TEST_SCRIPTS_DIR="$SCRIPTS_DIR" \
+	timeout 60 bash "$TICK_HARNESS" 2>&1)
+tick_rc=$?
+
+if [[ "$tick_rc" -eq 0 && "$tick_output" == *"idempotent"* && "$tick_output" == *"ticked"* && "$tick_output" == *"unclamped-unowned"* ]]; then
+	pass "29: ticker runs the routines-only pass every tick, unclamped and without lock ownership"
+else
+	fail "29: ticker runs the routines-only pass every tick, unclamped and without lock ownership" \
+		"harness rc=${tick_rc}, output=${tick_output}"
+fi
+
+if [[ "$tick_output" == *"subshell-ignored"* && "$tick_output" == *"stopped"* && "$tick_output" == *"no-tick-after-stop"* ]]; then
+	pass "30: only the owning cycle stops the ticker, and no pass runs after stop"
+else
+	fail "30: only the owning cycle stops the ticker, and no pass runs after stop" "output=${tick_output}"
+fi
+
+if [[ "$tick_output" == *"owner-exit"* && "$tick_output" == *"disabled"* ]]; then
+	pass "31: ticker exits with its owning cycle and honours AIDEVOPS_PULSE_ROUTINES_TICK=0"
+else
+	fail "31: ticker exits with its owning cycle and honours AIDEVOPS_PULSE_ROUTINES_TICK=0" "output=${tick_output}"
+fi
+
+LOCK_FILE="${SCRIPTS_DIR}/pulse-instance-lock.sh"
+if grep -qF '_pulse_start_routines_ticker || true' "$WRAPPER_FILE" &&
+	grep -qF '_pulse_stop_routines_ticker || true' "$WRAPPER_FILE" &&
+	grep -qF '_pulse_stop_routines_ticker || true' "$LOCK_FILE" &&
+	grep -qF 'pulse-routines-tick.sh' "$WRAPPER_FILE"; then
+	pass "32: the cycle starts the ticker and stops it on exit and before re-exec"
+else
+	fail "32: the cycle starts the ticker and stops it on exit and before re-exec"
+fi
+
+# GH#38282: exercise real run/dry-run lifecycle functions with only the remote
+# merge scope and admission probes replaced. EXIT owns the scratch cleanup.
+for memo_mode in run dry; do
+	memo_test_root=$(mktemp -d)
+	memo_output=$(ROUTINE_FILE="$ROUTINE_FILE" SCRIPTS_DIR="$SCRIPTS_DIR" \
+		AIDEVOPS_TEMP_DIR="$memo_test_root" MODE="$memo_mode" bash -c '
+set -euo pipefail
+source "$SCRIPTS_DIR/shared-gh-collaborator-permission.sh"
+source <(awk '\''
+/^(_pmr_init_collab_memo|_pmr_release_lock|_pmr_acquire_lock|cmd_run|cmd_dry_run)\(\) \{/ { emit=1 }
+emit { print }
+emit && /^\}/ { emit=0 }
+'\'' "$ROUTINE_FILE")
+LOCK_DIR="$AIDEVOPS_TEMP_DIR/lock"
+PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=30
+PULSE_MERGE_ROUTINE_LAST_RUN="$AIDEVOPS_TEMP_DIR/last-run"
+_pmr_log() { printf "%s\n" "$*"; return 0; }
+_pmr_require_gh_auth() { return 0; }
+_pmr_graphql_budget_allows_run() { return 0; }
+_pmr_rest_core_progress_allows_run() { return 0; }
+_pmr_run_with_timeout() { shift; ( "$@" ); return $?; }
+_gh_collaborator_permission_request() {
+	printf x >>"$AIDEVOPS_TEMP_DIR/requests"
+	printf '\''HTTP/2 200\n\n{"permission":"write"}\n'\''
+	return 0
+}
+_pmr_run_merge_scope() {
+	local permission=""
+	permission=$(_gh_collaborator_permission_lookup o/r alice)
+	_gh_collaborator_permission_lookup o/r alice permission
+	[[ "$permission" == write ]] || return 1
+	printf "%s\n" "$AIDEVOPS_GH_COLLAB_MEMO_FILE" >"$AIDEVOPS_TEMP_DIR/path"
+	return 2
+}
+rc=0
+if [[ "$MODE" == dry ]]; then cmd_dry_run || rc=$?; else cmd_run || rc=$?; fi
+[[ "$rc" == 2 ]]
+[[ "$(wc -c <"$AIDEVOPS_TEMP_DIR/requests" | tr -d " ")" == 1 ]]
+printf "one-request\n"
+')
+	memo_rc=$?
+	memo_path=""
+	[[ ! -f "$memo_test_root/path" ]] || memo_path=$(<"$memo_test_root/path")
+	if [[ "$memo_rc" == 0 && "$memo_output" == *"one-request"* && "$memo_output" == *"collab_memo hits=1 misses=1"* && ! -e "$memo_path" && ! -d "$memo_test_root/lock" ]]; then
+		pass "33: $memo_mode shares subshell verdict, summarizes and cleans up on failure exit"
+	else
+		fail "33: $memo_mode per-run memo lifecycle" "rc=$memo_rc, output=$memo_output"
+	fi
+	rm -rf "$memo_test_root"
+done
 
 # =============================================================================
 # Summary

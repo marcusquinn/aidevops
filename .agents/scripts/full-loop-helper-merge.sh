@@ -67,6 +67,11 @@ source "${SCRIPT_DIR}/release-lane-helper.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/manual-release-hold-helper.sh"
 
+# GH#37955: Cloudron manifest version bumps require release authority.
+# shellcheck source=./cloudron-release-merge-guard-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/cloudron-release-merge-guard-lib.sh"
+
 if [[ -f "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh" ]]; then
 	# shellcheck source=./full-loop-cleanup-receipt.sh
 	source "${SCRIPT_DIR}/full-loop-cleanup-receipt.sh"
@@ -1560,6 +1565,17 @@ _merge_handle_already_merged_provenance() {
 	return 0
 }
 
+# Return 2 when the release was reconciled, so the caller skips merge writes.
+_merge_gate_or_reconcile() {
+	local pr_number="$1" repo="$2" rc=0
+	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" && return 0
+	_merge_handle_already_merged_provenance "$pr_number" "$repo" || rc=$?
+	[[ "$rc" -eq 0 ]] && return 2
+	[[ "$rc" -eq 1 ]] && return 1
+	_merge_report_pre_merge_gate_failure
+	return 1
+}
+
 # Verify release-lane PR identity and guard; sets _release_lane_head_ref in the
 # caller (dynamic scope) for the provenance merge-method check.
 _merge_release_lane_check() {
@@ -1804,10 +1820,10 @@ cmd_merge() {
 	_merge_worker_briefed_gate_pinned "$pr_number" "$repo" "$has_admin" || return 1
 
 	# Gate: enforce review-bot-gate before merge.
-	_merge_pre_merge_gate_with_admission_retry "$pr_number" "$repo" || {
-		_merge_report_pre_merge_gate_failure
-		return 1
-	}
+	local _gate_rc=0
+	_merge_gate_or_reconcile "$pr_number" "$repo" || _gate_rc=$?
+	[[ "$_gate_rc" -eq 2 ]] && return 0
+	[[ "$_gate_rc" -eq 0 ]] || return 1
 	local _release_lane_head_ref=""
 	_merge_release_lane_check "$pr_number" "$repo" || return 1
 	merge_method=$(_merge_release_provenance_method "$pr_number" "$repo" "$merge_method" "$_release_lane_head_ref") || return 1

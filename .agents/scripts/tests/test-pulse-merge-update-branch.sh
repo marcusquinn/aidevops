@@ -127,6 +127,8 @@ define_helper_under_test() {
 	local helper_src
 	# shellcheck source=/dev/null
 	source "$REST_STATE_SCRIPT"
+	# shellcheck source=/dev/null
+	source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 	helper_src=$(awk '
 		/^_pmp_update_branch_conflict_cooldown_file\(\) \{/,/^}$/ { print }
 		/^_pmp_update_branch_conflict_cooldown_active\(\) \{/,/^}$/ { print }

@@ -82,6 +82,7 @@ api.partner.com
 api.perplexity.ai
 api-beta.quickfile.co.uk
 api.quickfile.co.uk
+api.render.com
 api.replicate.com
 api.runpod.ai
 api.sandbox.namecheap.com

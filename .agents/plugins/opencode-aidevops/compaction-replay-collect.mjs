@@ -36,12 +36,14 @@ export function findCompactionAnchor(messages) {
   const compactionPart = anchorIndex < 0
     ? undefined
     : (messages[anchorIndex].parts || []).find((part) => part?.type === "compaction");
-  if (!compactionPart) return null;
+  // GH#37997: a summary misanchored to a typed user message has no compaction
+  // part; compaction-history-repair.mjs trims history so that message leads.
+  if (!compactionPart && anchorIndex !== 0) return null;
   return {
     anchorIndex,
     anchorID: messages[anchorIndex].info.id,
     summaryID: summary.info.id,
-    overflow: compactionPart.overflow === true,
+    overflow: compactionPart?.overflow === true,
   };
 }
 

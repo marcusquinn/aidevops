@@ -9,12 +9,22 @@ stdin/stdout, so its decision is reproducible from the recorded document.
 
 stdin JSON:
   policy            signed standing-policy object (schema 1)
-  finding_upstream  X.Y.Z from the PR's trusted upstream monitor finding
+  finding_upstream  X.Y.Z or full SHA from the trusted upstream monitor finding
+  upstream_proof    resolved base/head SHAs, repository, status and merge base
+                    from the caller's upstream commit/compare API reads
+  release_proof     semver policies with release_identity only: upstream repository,
+                    peeled old/new release commits, compare status and the new
+                    release's published image digests (images asset)
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
                     every changed pinned or check file (merge-base and exact head)
 
 Prints ROUTINE_BUMP and exits 0, or prints NOT_ROUTINE: <reason> and exits 1.
+
+Tag-monitored packages (including Buzz) must pin strict X.Y.Z, not a main-build
+suffix: a tag finding cannot prove which main build was packaged. Migrating an
+existing X.Y.Z-main.<sha> pin to a tag requires one per-release signature; later
+strict-tag bumps use the unchanged semver policy and its major/0.x boundaries.
 """
 
 import argparse
@@ -24,6 +34,11 @@ import difflib
 import json
 import re
 import sys
+
+from cloudron_release_identity import (
+    COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
+    release_identity, require, split_digests, substitute_versions,
+)
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
@@ -40,15 +55,6 @@ REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 CHECK_FILE_HIDDEN = re.compile("[\x00\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 # An inserted line after one of these would join the previous command.
 CONTINUATION = ("\\", "&&", "||", "|")
-
-
-class NotRoutine(Exception):
-    """The change is outside the standing policy; a per-release signature is required."""
-
-
-def require(condition, reason):
-    if not condition:
-        raise NotRoutine(reason)
 
 
 def unique_object(pairs):
@@ -96,14 +102,73 @@ def file_text(contents, path, side):
         raise NotRoutine(path + ": undecodable " + side + " content") from error
 
 
-def substitute_versions(text, mapping):
-    """Replace each whole old version token with its new value in one pass.
+def check_upstream(doc, policy, old_up, new_up):
+    mode = policy.get("upstream_mode", "semver")
+    require(mode in ("semver", "commits"), "unsupported upstream mode")
+    finding = doc.get("finding_upstream")
+    if mode == "commits":
+        upstream = policy.get("upstream_repository")
+        require(isinstance(upstream, str) and UPSTREAM_REPO.fullmatch(upstream) is not None,
+                "commit policy needs an upstream repository")
+        for value in (old_up, new_up):
+            require(isinstance(value, str) and COMMIT_VERSION.fullmatch(value) is not None,
+                    "commit upstreamVersion must be a SHA prefix of 7 to 40 characters")
+        require(isinstance(finding, str) and FULL_COMMIT.fullmatch(finding) is not None,
+                "commit finding must be a full SHA")
+        require(finding.startswith(new_up.lower()), "upstreamVersion must equal the monitor finding")
+        proof = doc.get("upstream_proof")
+        require(isinstance(proof, dict) and proof.get("repository") == upstream,
+                "upstream proof repository mismatch")
+        base = proof.get("base")
+        require(isinstance(base, str) and FULL_COMMIT.fullmatch(base) is not None
+                and base.startswith(old_up.lower()) and proof.get("head") == finding,
+                "upstream proof commit mismatch")
+        # aidevops:trust-boundary — commits have no major-version boundary;
+        # only strict ancestry, never timestamps or lexical SHA order, proves progress.
+        require(base != finding and proof.get("status") == "ahead"
+                and proof.get("merge_base") == base, "upstream commits must be strictly ahead")
+        return
+    new_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
+    old_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
+    require(new_tuple > old_tuple, "upstreamVersion must increase")
+    require(new_tuple[0] == old_tuple[0], "a major upstream bump needs a per-release signature")
+    require(old_tuple[0] > 0 or new_tuple[1] == old_tuple[1],
+            "a 0.x minor upstream bump needs a per-release signature")
+    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
+    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
-    Boundaries stop 0.20.3 matching inside 10.20.3 or 3.39.8 inside 3.39.87.
-    """
-    olds = sorted(mapping, key=len, reverse=True)
-    pattern = re.compile(r"(?<![0-9.])(?:" + "|".join(re.escape(old) for old in olds) + r")(?![0-9]|\.[0-9])")
-    return pattern.sub(lambda match: mapping[match.group(0)], text)
+
+def pinned_changes_ok(base_text, head_text, mappings, identity):
+    if head_text == base_text:
+        return False
+    if identity is None:
+        return any(substitute_versions(base_text, candidate) == head_text for candidate in mappings)
+    base_body, base_digests = split_digests(base_text)
+    head_body, head_digests = split_digests(head_text)
+    # aidevops:trust-boundary — a FROM digest may change only to a digest the
+    # signed upstream release itself published; any other change fails closed.
+    if len(base_digests) != len(head_digests) or any(
+            old != new and new not in identity["digests"] for old, new in zip(base_digests, head_digests)):
+        return False
+    new_commit = next(iter(identity["commits"].values()))
+    arg_line = r"(?m)^ARG[ \t]+" + re.escape(identity["arg"]) + "=" + new_commit + r"[ \t]*$"
+    if re.search(arg_line, head_body) is None:
+        return False
+    return any(substitute_versions(base_body, candidate) == head_body for candidate in mappings)
+
+
+def license_changes_ok(base_manifest, head_manifest, identity):
+    """upstreamLicense may differ only by the proven release-commit substitution."""
+    base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
+    if not isinstance(base, dict) or not isinstance(head, dict):
+        return canonical(base) == canonical(head)
+    url_base, url_head = base.get("url"), head.get("url")
+    if not isinstance(url_base, str) or not isinstance(url_head, str):
+        return False
+    rest_base = {key: value for key, value in base.items() if key != "url"}
+    rest_head = {key: value for key, value in head.items() if key != "url"}
+    return canonical(rest_base) == canonical(rest_head) \
+        and substitute_versions(url_base, identity["commits"]) == url_head
 
 
 def insertion_pattern(policy):
@@ -180,24 +245,29 @@ def check(doc, repository):
     old_tuple = version_tuple(old_version, PACKAGE_VERSION, "base package version")
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
-    new_up_tuple = version_tuple(new_up, UPSTREAM_VERSION, "head upstreamVersion")
-    old_up_tuple = version_tuple(old_up, UPSTREAM_VERSION, "base upstreamVersion")
-    require(new_up_tuple > old_up_tuple, "upstreamVersion must increase")
-    require(new_up_tuple[0] == old_up_tuple[0], "a major upstream bump needs a per-release signature")
-    # Under 0.x a minor bump is breaking by semver convention.
-    require(old_up_tuple[0] > 0 or new_up_tuple[1] == old_up_tuple[1],
-            "a 0.x minor upstream bump needs a per-release signature")
-    finding = doc.get("finding_upstream")
-    version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
-    require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
+    check_upstream(doc, policy, old_up, new_up)
+    identity = release_identity(doc, policy)
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
+    # Without a signed release identity the policy permits no manifest field
+    # change beyond the version keys; with one, upstreamLicense may also change
+    # by the proven release-commit substitution (checked separately).
+    exempt = VERSION_KEYS + (("upstreamLicense",) if identity else ())
+    unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
+    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt})
+            and (identity is None or license_changes_ok(base_manifest, head_manifest, identity)),
             "manifest changes beyond version and upstreamVersion")
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
-    pinned_mapping = {old_up: new_up}
+    # Candidate mappings: the manifest version substitution, plus the proven
+    # full-SHA substitution. When their source keys coincide both stay valid.
+    pinned_mappings = [{old_up: new_up}]
+    if policy.get("upstream_mode", "semver") == "commits":
+        proof = doc["upstream_proof"]
+        pinned_mappings = [{**{old_up: new_up}, **{proof["base"]: proof["head"]}},
+                           {**{proof["base"]: proof["head"]}, **{old_up: new_up}}]
+    if identity:
+        pinned_mappings = [{**{old_up: new_up}, **identity["commits"]}, {**identity["commits"], **{old_up: new_up}}]
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
@@ -211,7 +281,7 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(head_text != base_text and substitute_versions(base_text, pinned_mapping) == head_text,
+            require(pinned_changes_ok(base_text, head_text, pinned_mappings, identity),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),

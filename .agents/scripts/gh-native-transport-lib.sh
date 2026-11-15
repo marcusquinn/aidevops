@@ -226,12 +226,24 @@ _shim_parent_framework_caller() {
 	local line=""
 	local next_pid=""
 	local parent_command=""
+	local word=""
 	local -a parent_words=()
 	# Bounded walk: the direct parent plus at most two wrapper or auth-hop levels.
 	while [[ "$depth" -lt 3 ]]; do
 		[[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
-		line=$(ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
-		read -r next_pid parent_command <<<"$line"
+		if [[ "$OSTYPE" == linux* ]]; then
+			IFS= read -r line <"/proc/$pid/stat" || return 1
+			# comm can contain spaces and parentheses; fields start after its last ')'.
+			line="${line##*) }"
+			read -r _ next_pid _ <<<"$line"
+			parent_command=""
+			while IFS= read -r -d '' word; do
+				parent_command+="${parent_command:+ }${word}"
+			done <"/proc/$pid/cmdline" || return 1
+		else
+			line=$(command ps -p "$pid" -o ppid=,command= 2>/dev/null) || return 1
+			read -r next_pid parent_command <<<"$line"
+		fi
 		[[ -n "$parent_command" ]] || return 1
 		read -r -a parent_words <<<"$parent_command"
 		[[ ${#parent_words[@]} -gt 0 ]] || return 1

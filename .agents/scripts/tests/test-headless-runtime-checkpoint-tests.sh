@@ -1142,7 +1142,7 @@ test_draft_release_after_partial_merge_restores_dispatch() {
 		# shellcheck source=../pulse-merge-partial-continuation.sh
 		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
 		local open_prs='[[]]'
-		local dispatch_count=0
+		local dispatch_count=0 unlock_count=0
 		_pmpc_gh_read() {
 			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
 			if [[ "$*" == *'/comments?'* ]]; then
@@ -1155,7 +1155,7 @@ test_draft_release_after_partial_merge_restores_dispatch() {
 			return 0
 		}
 		clear_active_status_on_release() { printf 'projection=%s\n' "$*"; return 0; }
-		_unlock_issue_after_dispatch_release() { return 0; }
+		_unlock_issue_after_dispatch_release() { unlock_count=$((unlock_count + 1)); return 0; }
 		set_issue_status() {
 			[[ "$*" == '99999 owner/repo available --add-label auto-dispatch' ]] || return 1
 			dispatch_count=$((dispatch_count + 1))
@@ -1164,13 +1164,14 @@ test_draft_release_after_partial_merge_restores_dispatch() {
 		gh_issue_comment() { return 0; }
 		print_info() { return 0; }
 		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
-		printf 'dispatch=%s\n' "$dispatch_count"
+		# GH#30180: a release that restores the label keeps the conversation locked.
+		printf 'dispatch=%s unlock=%s\n' "$dispatch_count" "$unlock_count"
 		# An actual open draft must retain exact-head continuation, not redispatch.
 		open_prs='[[{"number":123,"body":"For #99999","draft":true}]]'
 		_hrff_project_post_release_state 99999 owner/repo runner1 worker_draft_checkpoint
-		printf 'open-draft=%s\n' "$dispatch_count"
+		printf 'open-draft=%s unlock=%s\n' "$dispatch_count" "$unlock_count"
 	)
-	if [[ "$result" == *dispatch=1* && "$result" == *open-draft=1* ]]; then
+	if [[ "$result" == *'dispatch=1 unlock=0'* && "$result" == *'open-draft=1 unlock=1'* ]]; then
 		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 0
 	else
 		print_result "late draft release restores available dispatch after partial merge but preserves open draft" 1 "$result"
@@ -1178,8 +1179,85 @@ test_draft_release_after_partial_merge_restores_dispatch() {
 	return 0
 }
 
+# GH#38021: the checkpoint escalation and its release projection run in one
+# process, so a canonical consolidated spec gets back the auto-dispatch label
+# that this run removed while its draft stays open. A spec that did not carry
+# the label before the checkpoint is left without it.
+# GH#30180: the restored spec is dispatchable again, so its conversation lock
+# is kept; the spec left without the label is unlocked as before.
+# Args: $1=1 when the spec carries auto-dispatch before the checkpoint, else 0
+test_draft_checkpoint_restores_consolidated_spec_dispatch() {
+	local carried="$1"
+	local status_log="${TEST_ROOT}/spec-dispatch-status-${carried}.log"
+	local unlock_log="${TEST_ROOT}/spec-dispatch-unlock-${carried}.log"
+	local expected="99999 test-owner/test-repo in-review --remove-label auto-dispatch --add-assignee worker-bot"
+	local expected_unlocks="99999 test-owner/test-repo"
+	local name="draft checkpoint leaves a consolidated spec without auto-dispatch as it found it"
+	local result="" transitions="" unlocks=""
+	if [[ "$carried" -eq 1 ]]; then
+		expected+=$'\n''99999 test-owner/test-repo available --add-label auto-dispatch'
+		expected_unlocks=""
+		name="draft checkpoint restores the auto-dispatch it removed from a consolidated spec and keeps it locked"
+	fi
+	: >"$status_log"
+	: >"$unlock_log"
+	result=$(
+		# shellcheck source=../pulse-merge-partial-continuation.sh
+		source "${SCRIPT_DIR}/pulse-merge-partial-continuation.sh"
+		_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+		local spec_body='_Supersedes #88 — this issue is the consolidated spec._'
+		local released=0
+		_pmpc_gh_read() {
+			# Avoid case terminators inside $(): Bash 3.2 misparses them here.
+			if [[ "$*" == *'/comments?'* ]]; then
+				printf '%s' '[[{"author_association":"MEMBER","created_at":"2026-11-07T00:00:00Z","body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=worker-bot"}]]'
+			elif [[ "$*" == *'/pulls?'* ]]; then
+				printf '%s' '[[{"number":123,"body":"For #99999","draft":true}]]'
+			elif [[ "$released" -eq 1 ]]; then
+				jq -cn --arg body "$spec_body" '{state: "open", body: $body, assignees: [],
+					labels: [{name: "status:available"}, {name: "consolidated"}]}'
+			else
+				jq -cn --arg body "$spec_body" --arg carried "$carried" '{state: "open", body: $body,
+					assignees: [{login: "worker-bot"}],
+					labels: ([{name: "status:in-progress"}, {name: "consolidated"}]
+						+ (if $carried == "1" then [{name: "auto-dispatch"}] else [] end))}'
+			fi
+			return 0
+		}
+		gh() {
+			printf '%s\n' '{"state":"OPEN","labels":[{"name":"status:in-review"},{"name":"consolidated"}],"assignees":[{"login":"worker-bot"}]}'
+			return 0
+		}
+		_hrff_resolve_release_runner_login() { printf 'worker-bot'; return 0; }
+		clear_active_status_on_release() { released=1; return 0; }
+		_unlock_issue_after_dispatch_release() { printf '%s\n' "$*" >>"$unlock_log"; return 0; }
+		set_issue_status() { printf '%s\n' "$*" >>"$status_log"; return 0; }
+		gh_issue_comment() { printf 'unexpected-comment\n'; return 0; }
+		print_info() { return 0; }
+		print_warning() { return 0; }
+		_release_dispatch_claim() {
+			local release_reason="$2"
+			_hrff_project_post_release_state 99999 test-owner/test-repo worker-bot "$release_reason"
+			return 0
+		}
+		_escalate_worker_pr_checkpoint issue-99999 test-owner/test-repo draft_checkpoint
+		printf 'classification=%s\n' "${_HRW_RECOVERY_CLASSIFICATION:-}"
+	)
+	transitions=$(<"$status_log")
+	unlocks=$(<"$unlock_log")
+	if [[ "$transitions" == "$expected" && "$unlocks" == "$expected_unlocks" &&
+		"$result" == *"classification=worker_draft_checkpoint"* && "$result" != *unexpected-comment* ]]; then
+		print_result "$name" 0
+	else
+		print_result "$name" 1 "result=${result} transitions=${transitions} unlocks=${unlocks}"
+	fi
+	return 0
+}
+
 test_pr_checkpoint_lifecycle_cases() {
 	test_draft_release_after_partial_merge_restores_dispatch
+	test_draft_checkpoint_restores_consolidated_spec_dispatch 1
+	test_draft_checkpoint_restores_consolidated_spec_dispatch 0
 	test_post_pr_handoff_detects_open_pending_pr
 	test_post_pr_handoff_detects_open_pending_pr manual-cli-99999-1700000000
 	test_post_pr_handoff_validates_dispatch_identity

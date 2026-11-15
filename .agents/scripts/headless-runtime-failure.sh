@@ -378,6 +378,7 @@ _hrff_build_claim_released_line() {
 	local opencode_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
 	local release_ts=""
 	local machine_readable_part=""
+	local checkpoint_variant=""
 
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -389,6 +390,23 @@ _hrff_build_claim_released_line() {
 
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	# GH#38215: publish the effective runtime tier, not the dispatcher's initial
+	# guess. The attempt loop updates it after model rotation/escalation. Only
+	# checkpoint workers carry this head binding; legacy releases stay unknown.
+	# Pinned models can leave the runtime's default tier unchanged: verify the
+	# actual model and reasoning variant against that tier before publishing it.
+	if [[ "${AIDEVOPS_DISPATCH_TIER:-}" =~ ^(simple|standard|thinking)$ &&
+		"${AIDEVOPS_PR_REPAIR_HEAD_SHA:-}" =~ ^[a-f0-9]{40,64}$ &&
+		"${AIDEVOPS_ROUTING_MODEL:-}" =~ ^[A-Za-z0-9._:/-]+$ &&
+		"${AIDEVOPS_ROUTING_VARIANT:-}" =~ ^[A-Za-z0-9_-]*$ ]] &&
+		declare -F model_tier_candidate_index >/dev/null &&
+		model_tier_candidate_index "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" >/dev/null 2>&1 &&
+		checkpoint_variant=$(model_tier_variant "$AIDEVOPS_DISPATCH_TIER" "$AIDEVOPS_ROUTING_MODEL" 2>/dev/null); then
+		if [[ "$checkpoint_variant" == "${AIDEVOPS_ROUTING_VARIANT:-}" ]]; then
+			machine_readable_part+=" checkpoint_tier=${AIDEVOPS_DISPATCH_TIER} checkpoint_head=${AIDEVOPS_PR_REPAIR_HEAD_SHA}"
+			machine_readable_part+=" checkpoint_model=${AIDEVOPS_ROUTING_MODEL} checkpoint_variant=${AIDEVOPS_ROUTING_VARIANT:-default}"
+		fi
+	fi
 	if [[ -n "$exit_code_arg" ]]; then
 		machine_readable_part+=" exit=${exit_code_arg}"
 	fi
@@ -640,6 +658,10 @@ _hrff_hold_terminal_blocker_circuit() {
 		return 0
 	fi
 	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	# GH#38360: name the companion so set_issue_status need not guess it.
+	local companion=""
+	companion=$(_hrff_blocked_companion_label)
+	[[ -z "$companion" ]] || hold_args+=(--add-label "$companion")
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$issue_number" "$repo_slug" blocked \
 			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
@@ -956,6 +978,57 @@ _hrff_emit_release_terminal_lease() {
 }
 
 #######################################
+# Project a released draft checkpoint as available for exact-head continuation.
+# Always non-fatal.
+#
+# Args: $1 = issue_number, $2 = repo_slug, $3 = runner_name
+#######################################
+_hrff_project_draft_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name="$3"
+	local spec_restore_rc=0 dispatch_restored=0
+
+	# GH#36019: the draft is preserved work awaiting exact-head continuation
+	# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
+	# draft projected as status:blocked was rejected by that target fence and
+	# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
+			|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
+	fi
+	# A draft may have merged between checkpoint classification and release.
+	# Reconcile only after projection/unassignment; the shared guard requires
+	# available state and proves that NO open PR still owns the issue.
+	# shellcheck source=pulse-merge-partial-continuation.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
+	if _pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1; then
+		dispatch_restored=1
+	fi
+	# GH#38021: the escalation removed auto-dispatch, and a canonical
+	# consolidated spec is filtered out of dispatch without it. Put back
+	# only what this run removed; the draft still routes the exact head.
+	_pmpc_restore_checkpoint_spec_dispatch "$repo_slug" "$issue_number" || spec_restore_rc=$?
+	if [[ "$spec_restore_rc" -eq 0 ]]; then
+		dispatch_restored=1
+		print_info "Restored auto-dispatch on consolidated spec #${issue_number} removed by this run's draft checkpoint"
+	elif [[ "$spec_restore_rc" -eq 2 ]]; then
+		print_warning "[lifecycle] checkpoint_spec_dispatch_not_restored issue=${issue_number} — this run's draft checkpoint removed auto-dispatch; the issue was unreadable, held, owned or not available afterwards"
+	fi
+	# aidevops:trust-boundary — the lock decision follows the label state left
+	# by the restores above (GH#30180). A restore returns the issue to the
+	# dispatch queue, so this release must not reopen its conversation; the
+	# unlock helper re-reads the labels in every other case.
+	if [[ "$dispatch_restored" -eq 1 ]]; then
+		print_info "Retaining conversation lock for #${issue_number} in ${repo_slug}: this release restored auto-dispatch"
+	else
+		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	fi
+	print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+	return 0
+}
+
+#######################################
 # Project issue lifecycle state after a persisted CLAIM_RELEASED comment.
 # Reason-specific paths preserve state that authoritative handoffs already
 # projected; the default path clears active status so re-dispatch is not
@@ -991,22 +1064,7 @@ _hrff_project_post_release_state() {
 		return 0
 	fi
 	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]]; then
-		# GH#36019: the draft is preserved work awaiting exact-head continuation
-		# (pr-checkpoint-continuation-helper.sh dispatch-stalled). A closing-linked
-		# draft projected as status:blocked was rejected by that target fence and
-		# held silently; WORKER_DRAFT_CHECKPOINT dedup still blocks redispatch.
-		if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-			clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" available \
-				|| print_warning "Failed to project draft checkpoint state on #${issue_number} (non-fatal)"
-		fi
-		_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
-		# A draft may have merged between checkpoint classification and release.
-		# Reconcile only after projection/unassignment; the shared guard requires
-		# available state and proves that NO open PR still owns the issue.
-		# shellcheck source=pulse-merge-partial-continuation.sh
-		source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh"
-		_pmpc_restore_available_dispatch "$repo_slug" "$issue_number" 1 || true
-		print_info "Projected draft checkpoint #${issue_number} for exact-head continuation"
+		_hrff_project_draft_checkpoint "$issue_number" "$repo_slug" "$runner_name"
 		return 0
 	fi
 	# GH#33545: same projection as a draft checkpoint (clear active status,
@@ -1090,9 +1148,29 @@ _hrff_blocked_release_persisted() {
 	return 0
 }
 
+#######################################
+# GH#38360: print the needs-* companion that explains this blocked exit.
+# Missing runner secrets need credentials; otherwise the classified blocker
+# reason picks the owner (unknown or unclassified routes to AI recovery).
+# Prints nothing when the shared companion mapping is unavailable.
+#######################################
+_hrff_blocked_companion_label() {
+	declare -F blocked_needs_label_for_reason >/dev/null 2>&1 || return 0
+	if [[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+		blocked_needs_label_for_reason missing_secret
+		return 0
+	fi
+	local reason=""
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" 2>/dev/null) || reason=""
+	fi
+	blocked_needs_label_for_reason "${reason:-unknown}"
+	return 0
+}
+
 _hrff_project_blocked_exit() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
-	local issue_json="" status="" issue_endpoint=""
+	local issue_json="" status="" issue_endpoint="" companion=""
 	local -a edit_args=()
 	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
@@ -1108,6 +1186,13 @@ _hrff_project_blocked_exit() {
 		[[ -z "$status" ]] || edit_args+=(--remove-label "$status")
 	done < <(jq -r '.labels[]?.name | select(startswith("status:") and . != "status:blocked")' <<<"$issue_json")
 	[[ -z "$runner_name" ]] || edit_args+=(--remove-assignee "$runner_name")
+	# GH#38360: the hold names what unblocks it.
+	companion=$(_hrff_blocked_companion_label)
+	if [[ -n "$companion" ]]; then
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		edit_args+=(--add-label "$companion")
+	fi
 	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label status:blocked \
 		${edit_args[@]+"${edit_args[@]}"} || return 1
 	return 0
@@ -1432,10 +1517,34 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
+# GH#38481: positive evidence that the last runtime spawn failed because the
+# runtime binary is missing on this runner (stale shim, deleted nvm version,
+# package upgrade in flight). All must hold: the spawn was attempted, the
+# same-shell classification is runtime_command_missing, the attempt exited
+# 127, and neither this attempt nor an earlier one in the process had
+# activity. Bare worker_not_launched also covers benign admission cases (lock
+# contention, revision continuation), so it never counts without this proof.
+# Globals read: _WORKER_RUNTIME_LAUNCH_STARTED, _run_runtime_error_type,
+#   _run_exit_code, _run_activity_detected, _HRW_PRIOR_ATTEMPT_ACTIVITY
+# Returns: 0 when the evidence is complete, 1 otherwise
+#######################################
+_hrff_runtime_missing_evidenced() {
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || return 1
+	[[ "${_run_runtime_error_type:-}" == "runtime_command_missing" ]] || return 1
+	[[ "${_run_exit_code:-}" == "127" ]] || return 1
+	[[ "${_run_activity_detected:-}" == "0" ]] || return 1
+	[[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" != "1" ]] || return 1
+	return 0
+}
+
+#######################################
 # Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
-# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop)
+# Callers: the EXIT trap and _hrw_finish_not_launched (which disarms the trap
+# through _hrw_finish_cleanup, so one launch is recorded once).
+# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop), plus the
+#   per-attempt runtime evidence read by _hrff_runtime_missing_evidenced
 # Args: $1=session key, $2=terminal reason
 #######################################
 _hrff_record_runner_health_failure() {
@@ -1451,6 +1560,10 @@ _hrff_record_runner_health_failure() {
 		fi
 		;;
 	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	"${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" | "${_HRFF_PRELAUNCH_NOT_INVOKED:-worker_runtime_not_invoked}")
+		_hrff_runtime_missing_evidenced || return 0
+		reason="worker_runtime_missing"
+		;;
 	*) return 0 ;;
 	esac
 

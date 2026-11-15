@@ -240,6 +240,27 @@ test("registers only the explicit MCP activation profiles", () => {
   assert.equal(config.tools["backblaze-b2_*"], false);
 });
 
+test("registers NetBird as a disconnected read-only on-demand MCP", () => {
+  const config = { agent: { build: { tools: {} } }, mcp: {}, tools: {} };
+  registerMcpServers(config);
+  registerOnDemandMcpAgents(config, AGENTS_DIR);
+
+  assert.deepEqual(config.mcp.netbird, {
+    type: "local",
+    command: [join(homedir(), ".aidevops", "agents", "scripts", "netbird-mcp-launcher.sh")],
+    enabled: false,
+  });
+  assert.equal(config.tools["netbird_*"], false);
+  const agent = config.agent.netbird;
+  assert.equal(agent.tools.aidevops_mcp, true);
+  assert.equal(agent.permission["netbird_*"], "deny");
+  assert.equal(agent.permission.netbird_list_peers, "allow");
+  assert.equal(agent.permission.netbird_update_group, undefined);
+  assert.equal(config.agent.build.tools["netbird_*"], undefined);
+  assert.match(agent.prompt, /connect.*netbird/);
+  assert.match(agent.prompt, /# NetBird/);
+});
+
 test("keeps custom Backblaze B2 commands disconnected", () => {
   const config = {
     mcp: { "backblaze-b2": { type: "local", command: ["custom-b2-mcp"], enabled: true } },

@@ -145,7 +145,7 @@ _launch_background() {
 		EXECUTOR_PID=""
 		NEXT_ACTION="attach-executor-or-resume"
 		PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
-		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
 		_full_loop_append_event "executor.initialized" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		print_warning "Background loop initialized, but no executor was launched."
 		printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -179,7 +179,10 @@ _launch_background() {
 		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		NEXT_ACTION="monitor"
 		PHASE_STATUS="$_FULL_LOOP_PHASE_RUNNING"
-		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		if ! save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"; then
+			kill "$EXECUTOR_PID" 2>/dev/null || true
+			return 1
+		fi
 		_full_loop_append_event "executor.started" "$_FULL_LOOP_PHASE_RUNNING"
 		print_success "Background executor started (PID: ${EXECUTOR_PID}). Use 'status' or 'logs' to monitor."
 		printf 'FULL_LOOP_START_RESULT=running\n'
@@ -190,7 +193,7 @@ _launch_background() {
 	EXECUTOR_PID=""
 	NEXT_ACTION="attach-executor-or-resume"
 	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
-	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
 	_full_loop_append_event "executor.start_failed" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	print_warning "Background executor exited before liveness could be verified."
 	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -319,7 +322,10 @@ _cmd_start_locked() {
 	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	NEXT_ACTION="complete-task-development"
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
-	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt"
+	if ! save_state "$_FULL_LOOP_PHASE_TASK" "$prompt"; then
+		print_error "Failed to save full-loop checkpoint; start aborted."
+		return 1
+	fi
 	SAVED_PROMPT="$prompt"
 	_full_loop_append_event "phase.started" "$_FULL_LOOP_PHASE_WAITING"
 
@@ -654,8 +660,23 @@ _full_loop_reconcile_detached_publication_receipt() {
 	return 0
 }
 
+_full_loop_hint_finalize_receipt() {
+	local receipt_path=""
+	local receipt_pr=""
+	local receipt_repo=""
+	declare -F full_loop_cleanup_receipt_for_worktree >/dev/null 2>&1 || return 1
+	receipt_path=$(full_loop_cleanup_receipt_for_worktree "$PWD" 2>/dev/null) || return 1
+	[[ -f "$receipt_path" ]] || return 1
+	receipt_pr=$(jq -r '.pr_number // empty' "$receipt_path" 2>/dev/null || true)
+	receipt_repo=$(jq -r '.repository // empty' "$receipt_path" 2>/dev/null || true)
+	[[ "$receipt_pr" =~ ^[0-9]+$ && -n "$receipt_repo" ]] || return 1
+	print_error "No lifecycle state, but a cleanup receipt exists for this worktree. Finalize it with: full-loop-helper.sh finalize-receipt ${receipt_pr} ${receipt_repo}"
+	return 0
+}
+
 cmd_complete() {
 	load_state 2>/dev/null || {
+		_full_loop_hint_finalize_receipt && return 1
 		print_error "Cannot complete full loop without persisted lifecycle state"
 		return 1
 	}
@@ -783,6 +804,66 @@ _full_loop_verify_merged_pr() {
 	return $?
 }
 
+# Outputs of _full_loop_gh_read_evidence: response body and last failure stderr
+# (diagnostic only). Globals, because command substitution would discard them.
+_FULL_LOOP_GH_READ_OUT=""
+_FULL_LOOP_GH_READ_ERROR=""
+
+# Read one GitHub evidence endpoint with bounded backoff (default 2/5/10 s between
+# attempts; override with AIDEVOPS_GH_READ_BACKOFF, space-separated seconds).
+# Stores the response in _FULL_LOOP_GH_READ_OUT. Returns 0 on success, 1 when the resource is
+# absent (HTTP 404, never retried), 2 when the read failed after all retries
+# (transport, 5xx, secondary limit); stderr is kept in _FULL_LOOP_GH_READ_ERROR.
+_full_loop_gh_read_evidence() {
+	local endpoint="$1"
+	local -a delays=()
+	local delay=""
+	local out=""
+	local err_file=""
+	local rc=0
+
+	read -r -a delays <<<"${AIDEVOPS_GH_READ_BACKOFF:-2 5 10}"
+	_FULL_LOOP_GH_READ_ERROR=""
+	err_file=$(mktemp "${TMPDIR:-/tmp}/full-loop-gh-read.XXXXXX") || return 2
+	while :; do
+		rc=0
+		out=$(gh api "$endpoint" 2>"$err_file") || rc=$?
+		if [[ "$rc" -eq 0 ]]; then
+			rm -f "$err_file"
+			_FULL_LOOP_GH_READ_OUT="$out"
+			return 0
+		fi
+		_FULL_LOOP_GH_READ_ERROR=$(tr '\n' ' ' <"$err_file")
+		if [[ "$_FULL_LOOP_GH_READ_ERROR" == *"HTTP 404"* ]]; then
+			rm -f "$err_file"
+			return 1
+		fi
+		if [[ "${#delays[@]}" -eq 0 ]]; then
+			break
+		fi
+		delay="${delays[0]}"
+		delays=("${delays[@]:1}")
+		[[ "$delay" =~ ^[0-9]+$ ]] || delay=0
+		sleep "$delay"
+	done
+	rm -f "$err_file"
+	return 2
+}
+
+# Report an unreadable (not absent) tag; absence (status 1) is reported by callers.
+_full_loop_report_tag_read_failure() {
+	local repo="$1"
+	local tag_name="$2"
+	local status="$3"
+
+	if [[ "$status" -eq 2 ]]; then
+		print_error "Could not read tag ${tag_name} in ${repo} after retries (GitHub read failure, not proof the tag is absent): ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
+	fi
+	return 0
+}
+
+# Resolve a remote release tag to its commit SHA. Returns 0 on success, 1 when the
+# tag is absent or does not resolve to a commit, 2 when evidence could not be read.
 _full_loop_resolve_remote_release_tag_commit() {
 	local repo="$1"
 	local tag_name="$2"
@@ -790,15 +871,26 @@ _full_loop_resolve_remote_release_tag_commit() {
 	local object_type=""
 	local object_sha=""
 	local tag_json=""
+	local rc=0
 
 	[[ "$repo" == */* && "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX ]] || return 1
-	ref_json=$(gh api "repos/${repo}/git/ref/tags/${tag_name}" 2>/dev/null) || return 1
+	_full_loop_gh_read_evidence "repos/${repo}/git/ref/tags/${tag_name}" || {
+		rc=$?
+		_full_loop_report_tag_read_failure "$repo" "$tag_name" "$rc"
+		return "$rc"
+	}
+	ref_json="$_FULL_LOOP_GH_READ_OUT"
 	object_type=$(jq -er 'select(.ref == ("refs/tags/" + $tag_name) and (.object.type == "commit" or .object.type == "tag")) | .object.type' \
 		--arg tag_name "$tag_name" <<<"$ref_json") || return 1
 	object_sha=$(jq -er '.object.sha' <<<"$ref_json") || return 1
 	[[ "$object_sha" =~ $_FULL_LOOP_SHA40_REGEX ]] || return 1
 	if [[ "$object_type" == "tag" ]]; then
-		tag_json=$(gh api "repos/${repo}/git/tags/${object_sha}" 2>/dev/null) || return 1
+		_full_loop_gh_read_evidence "repos/${repo}/git/tags/${object_sha}" || {
+			rc=$?
+			_full_loop_report_tag_read_failure "$repo" "$tag_name" "$rc"
+			return "$rc"
+		}
+		tag_json="$_FULL_LOOP_GH_READ_OUT"
 		object_sha=$(jq -er 'select((.object | type) == "object") | select(.object.type == "commit") | .object.sha' \
 			<<<"$tag_json") || return 1
 	fi
@@ -865,7 +957,8 @@ _full_loop_verify_published_release() {
 		workflow_runs_endpoint="repos/${repo}/actions/runs?event=release&status=success&per_page=100"
 	fi
 	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || {
-		print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
+		local tag_rc=$?
+		[[ "$tag_rc" -eq 2 ]] || print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
 		return 1
 	}
 	if [[ "$tag_commit" != "$merge_commit" ]]; then
@@ -884,18 +977,25 @@ _full_loop_verify_published_release() {
 			return 1
 		}
 	fi
-	release_json=$(gh api "repos/${repo}/releases/tags/${tag_name}" 2>/dev/null) || {
-		print_error "No GitHub release found for tag ${tag_name} in ${repo}"
+	_full_loop_gh_read_evidence "repos/${repo}/releases/tags/${tag_name}" || {
+		local release_rc=$?
+		if [[ "$release_rc" -eq 2 ]]; then
+			print_error "Could not read GitHub release for tag ${tag_name} in ${repo} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
+		else
+			print_error "No GitHub release found for tag ${tag_name} in ${repo}"
+		fi
 		return 1
 	}
+	release_json="$_FULL_LOOP_GH_READ_OUT"
 	jq -e --arg tag_name "$tag_name" '.tag_name == $tag_name and .draft == false' <<<"$release_json" >/dev/null || {
 		print_error "Release for tag ${tag_name} is a draft or does not match the tag"
 		return 1
 	}
-	workflow_runs_json=$(gh api "$workflow_runs_endpoint" 2>/dev/null) || {
-		print_error "Cannot read workflow runs from ${workflow_runs_endpoint}"
+	_full_loop_gh_read_evidence "$workflow_runs_endpoint" || {
+		print_error "Cannot read workflow runs from ${workflow_runs_endpoint} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
 		return 1
 	}
+	workflow_runs_json="$_FULL_LOOP_GH_READ_OUT"
 	jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
 		--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
 		[.workflow_runs[]? | select(
@@ -1193,7 +1293,8 @@ cmd_record_included_release() {
 		return 1
 	}
 	tag_commit=$(_full_loop_resolve_remote_release_tag_commit "$repo" "$tag_name") || {
-		print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
+		local tag_rc=$?
+		[[ "$tag_rc" -eq 2 ]] || print_error "Tag ${tag_name} not found in ${repo} or does not resolve to a commit"
 		return 1
 	}
 	# aidevops:trust-boundary — a differing tag commit is acceptable only on the

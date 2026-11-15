@@ -725,6 +725,38 @@ export function getMcpRegistry() {
       description: "Official Backblaze B2 cloud storage MCP with application-key-only launcher",
     },
     {
+      // Self-hosted management `/api/mcp` bridged by pinned mcp-remote; the
+      // token is injected by `aidevops secret`. The exact allowlist mirrors the
+      // read-only NB_MCP_TOOLS set, so write tools stay denied client-side even
+      // when a server exposes them.
+      name: "netbird",
+      type: "local",
+      command: [join(homedir(), ".aidevops", "agents", "scripts", "netbird-mcp-launcher.sh")],
+      eager: false,
+      toolPattern: "netbird_*",
+      globallyEnabled: false,
+      activationAgent: "netbird",
+      agentSource: ["services", "networking", "netbird.md"],
+      allowedTools: [
+        "get_account", "list_users", "get_current_user", "list_peers", "get_peer",
+        "list_accessible_peers", "list_setup_keys", "get_setup_key", "list_groups",
+        "get_group", "list_policies", "get_policy", "list_posture_checks",
+        "get_posture_check", "list_countries", "list_country_cities", "list_networks",
+        "get_network", "list_network_resources", "get_network_resource",
+        "list_network_routers", "get_network_router", "list_all_network_routers",
+        "list_routes", "get_route", "list_nameserver_groups", "get_nameserver_group",
+        "get_dns_settings", "list_dns_zones", "get_dns_zone", "list_dns_records",
+        "get_dns_record", "list_audit_events",
+      ].map((tool) => `netbird_${tool}`),
+      activationGuidance: [
+        "Read-only profile: create_, update_, delete_, approve_ and reject_ tools are denied here; make changes in the dashboard or with an explicitly approved API call, never by widening this allowlist mid-task.",
+        "Confirm the connected server and account before reporting; peer, user and audit data are sensitive, so summarise rather than paste raw records.",
+        "Disconnect when the NetBird task is complete.",
+      ],
+      modelTier: "standard",
+      description: "Self-hosted NetBird management MCP (read-only allowlist, token from aidevops secrets)",
+    },
+    {
       // Setup installs the binary and may add an env block; existing entries are preserved.
       name: "localwp",
       type: "local",

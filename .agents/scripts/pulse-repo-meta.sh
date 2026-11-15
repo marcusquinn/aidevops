@@ -402,7 +402,15 @@ _pulse_normalize_candidate_issue_snapshot_json() {
 		printf '%s\n' "$issue_json"
 		return 0
 	fi
+	DEP_NORMALIZE_LAST_STATUS="" DEP_GRAPH_REFRESH_CHANGED_COUNT=""
 	normalize_repo_dependency_readiness_if_due "$repo_slug" >/dev/null 2>&1 || true
+	# GH#38275: refetch only when normalization ran and changed labels. Unknown
+	# or failed status keeps the conservative refetch.
+	if [[ "${DEP_NORMALIZE_LAST_STATUS:-}" == "fresh" ]] ||
+		[[ "${DEP_NORMALIZE_LAST_STATUS:-}" == "ran" && "${DEP_GRAPH_REFRESH_CHANGED_COUNT:-}" == "0" ]]; then
+		printf '%s\n' "$issue_json"
+		return 0
+	fi
 	_pulse_fetch_candidate_issue_snapshot_json "$repo_slug" "$limit" "$error_file" "$source_file"
 	return $?
 }

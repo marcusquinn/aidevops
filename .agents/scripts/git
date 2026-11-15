@@ -31,9 +31,8 @@ if [[ ! -f "$GUARD" ]] || ! command -v python3 >/dev/null 2>&1; then
 	printf 'BLOCKED: canonical Git policy engine is unavailable\n' >&2
 	exit 126
 fi
-ARGV_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@") || exit 1
 export AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE=1
-python3 "$GUARD" --cwd "$PWD" --argv-json "$ARGV_JSON" --real-git "$REAL_GIT" || exit $?
+python3 "$GUARD" --cwd "$PWD" --real-git "$REAL_GIT" -- "$@" || exit $?
 unset AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE
 
 exec "$REAL_GIT" "$@"

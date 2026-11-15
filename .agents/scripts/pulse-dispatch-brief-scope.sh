@@ -27,6 +27,7 @@
 #   - _dispatch_brief_scope_self_heal
 #   - _brief_scope_hold_is_latest_blocker
 #   - _release_repaired_brief_hold
+#   - _brief_scope_deadline_reached / _brief_scope_stage_reserve
 #   - _release_repaired_brief_holds_repo
 #   - release_repaired_brief_holds
 
@@ -246,8 +247,33 @@ _release_repaired_brief_hold() {
 	return 0
 }
 
+# GH#38178: cooperative deadline check (helpers from pulse-simplification-review.sh,
+# GH#38171). Without the helpers or a stage deadline the stage never yields.
+_brief_scope_deadline_reached() {
+	local reserve="$1"
+	declare -F _pulse_scanner_deadline_reached >/dev/null 2>&1 || return 1
+	_pulse_scanner_deadline_reached "$reserve"
+	return $?
+}
+
+# Reserve sized to the real watchdog window (a quarter of it, capped).
+_brief_scope_stage_reserve() {
+	local configured="${AIDEVOPS_BRIEF_HOLD_RELEASE_STAGE_RESERVE_SECONDS:-5}"
+	[[ "$configured" =~ ^[0-9]+$ ]] || configured=5
+	if declare -F _pulse_scanner_effective_reserve >/dev/null 2>&1; then
+		_pulse_scanner_effective_reserve "$configured" "$(date +%s)"
+		return 0
+	fi
+	printf '%s\n' "$configured"
+	return 0
+}
+
+# Args: $1 repo slug, $2 optional deadline reserve seconds (GH#38178).
+# Stdout: number of holds released. Stops before the next candidate once the
+# stage deadline is near; the caller then yields before the next repo.
 _release_repaired_brief_holds_repo() {
 	local repo_slug="$1"
+	local reserve="${2:-}"
 	local limit="${PULSE_BRIEF_HOLD_RELEASE_LIMIT:-30}"
 	local issues_json="" count=0 idx=0 released=0 row="" number="" body="" author=""
 	declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 || return 0
@@ -265,6 +291,9 @@ _release_repaired_brief_holds_repo() {
 	count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	while [[ "$idx" -lt "$count" ]]; do
+		if [[ -n "$reserve" ]] && _brief_scope_deadline_reached "$reserve"; then
+			break
+		fi
 		row=$(printf '%s' "$issues_json" | jq -c --argjson i "$idx" '.[$i]') || break
 		idx=$((idx + 1))
 		number=$(printf '%s' "$row" | jq -r '.number // empty')
@@ -280,18 +309,37 @@ _release_repaired_brief_holds_repo() {
 }
 
 # Pulse stage: iterate the dependency-graph repo set built earlier in the cycle.
+# GH#38178: the stage runs in a 12 s housekeeping slice, so it rotates repos
+# from a cursor and yields (rc 0) before the watchdog deadline; every repo is
+# visited across successive runs instead of the first sorted repo forever.
 release_repaired_brief_holds() {
 	local cache_file="${DEP_GRAPH_CACHE_FILE:-}"
-	local slugs="" slug="" released="" total=0
+	local cursor_file="${AIDEVOPS_BRIEF_HOLD_RELEASE_CURSOR_DIR:-${HOME:-}/.aidevops/logs/brief-hold-release-scanner}/repo.cursor"
+	local slugs="" slug="" released="" total=0 visited=0 yielded=0 reserve=""
 	[[ -n "$cache_file" && -f "$cache_file" ]] || return 0
 	slugs=$(jq -r '.repos | keys[]' "$cache_file" 2>/dev/null) || return 0
+	if declare -F _pulse_scanner_rotated_slugs >/dev/null 2>&1; then
+		slugs=$(_pulse_scanner_rotated_slugs "$cursor_file" "$slugs")
+	fi
+	reserve=$(_brief_scope_stage_reserve)
 	while IFS= read -r slug; do
 		[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
-		released=$(_release_repaired_brief_holds_repo "$slug") || released=0
+		if _brief_scope_deadline_reached "$reserve"; then
+			yielded=1
+			break
+		fi
+		if declare -F _pulse_scanner_mark_started >/dev/null 2>&1; then
+			_pulse_scanner_mark_started "$cursor_file" "$slug"
+		fi
+		visited=$((visited + 1))
+		released=$(_release_repaired_brief_holds_repo "$slug" "$reserve") || released=0
 		[[ "$released" =~ ^[0-9]+$ ]] && total=$((total + released))
 	done <<<"$slugs"
 	if [[ "$total" -gt 0 ]]; then
 		echo "[pulse-wrapper] brief-hold-release: released ${total} repaired brief hold(s) (GH#32689)" >>"${LOGFILE:-/dev/null}"
+	fi
+	if [[ "$yielded" -eq 1 ]]; then
+		echo "[pulse-wrapper] brief-hold-release: yielded after ${visited} repo(s) (deadline reserve ${reserve}s); rotation cursor kept (GH#38178)" >>"${LOGFILE:-/dev/null}"
 	fi
 	return 0
 }

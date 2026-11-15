@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import { isDirectEntrypoint } from "../../scripts/entrypoint-guard.mjs";
 import { createProcessTreeTracker, signalEach } from "./bounded-operation-process-tree.mjs";
+import { admitWithContentionWait } from "./admission-wait.mjs";
 import { admitToolOwner } from "./lifecycle-admission.mjs";
+
+export { admitWithContentionWait, contentionWaitMs } from "./admission-wait.mjs";
 
 function boundedInteger(value, fallback, minimum, maximum) {
   value = Number(value);
@@ -133,27 +136,42 @@ function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand
   return false;
 }
 
+async function admitSupervisor(command, operationID) {
+  // This existing supervisor owns the operation until its normal drain completes.
+  // Register its native identity before spawning, independently of the UI owner.
+  const supervised = process.connected === true;
+  // Admission can wait for writer contention, and the main handler is registered
+  // only afterwards: record a terminate request now and honour it before spawning.
+  let preAdmissionCancel = null;
+  const recordPreAdmissionCancel = (message) => {
+    if (message?.action === "terminate") preAdmissionCancel ||= message.cause || "cancel";
+  };
+  process.on("message", recordPreAdmissionCancel);
+  try {
+    await admitWithContentionWait(() => admitToolOwner({
+      scriptsDir: fileURLToPath(new URL("../../scripts/", import.meta.url)),
+      input: { tool: "aidevops_bounded_operation", sessionID: operationID },
+      output: { args: { action: "start", cwd: process.cwd(), command } },
+      bounded: true,
+    }));
+  } catch (error) {
+    // The admission error carries only a safe protocol reason, never host paths.
+    const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
+    process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
+    return false;
+  } finally {
+    process.off("message", recordPreAdmissionCancel);
+  }
+  // A manager that went away during a contention wait can no longer supervise.
+  return !(supervised && !process.connected) && !preAdmissionCancel;
+}
+
 export async function runSupervisor() {
   const config = await readPrivateConfig();
   if (!validCommand(config?.command)) return 125;
   const { command } = config;
   const operationID = String(config.operationID || "");
-
-  // This existing supervisor owns the operation until its normal drain completes.
-  // Register its native identity before spawning, independently of the UI owner.
-  try {
-    admitToolOwner({
-      scriptsDir: fileURLToPath(new URL("../../scripts/", import.meta.url)),
-      input: { tool: "aidevops_bounded_operation", sessionID: operationID },
-      output: { args: { action: "start", cwd: process.cwd(), command } },
-      bounded: true,
-    });
-  } catch (error) {
-    // The admission error carries only a safe protocol reason, never host paths.
-    const detail = String(error?.message || "").replace(/^BLOCKED:\s*/, "");
-    process.stderr.write(`BLOCKED: bounded-operation lifecycle admission unavailable${detail ? `: ${detail}` : ""}\n`);
-    return 75;
-  }
+  if (!await admitSupervisor(command, operationID)) return 75;
 
   const budgetMs = boundedInteger(config.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000);
   const killGraceMs = boundedInteger(config.killGraceMs, 500, 10, 300 * 1000);

@@ -315,6 +315,74 @@ SHIM_EOF
 }
 
 # ---------------------------------------------------------------------------
+# Test 10b (GH#38493): `ls-remote --exit-code` rc=2 is a definitive "absent"
+# answer. It must be returned without an SSH retry, whose failure (rc=128 with
+# no SSH key) would otherwise replace it. Other rc values and other
+# subcommands returning 2 still take the SSH fallback path.
+# ---------------------------------------------------------------------------
+test_ls_remote_absent_skips_ssh_fallback() {
+	local name="_run_git_with_ssh_fallback: ls-remote --exit-code rc=2 returns 2 without SSH retry"
+	local tmpdir
+	tmpdir=$(mktemp -d 2>/dev/null) || {
+		fail "$name" "could not create tmpdir"
+		return 0
+	}
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir' 2>/dev/null || true" RETURN
+
+	# HTTPS attempt exits TEST_GIT_HTTPS_RC; the SSH-rewritten retry fails as
+	# it does without an SSH key.
+	cat >"${tmpdir}/git" <<'SHIM_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${TEST_GIT_CALL_LOG}"
+if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" ]]; then
+	printf '%s\n' "https://github.com/owner/repo.git"
+	exit 0
+fi
+if [[ "${1:-}" == "-c" ]]; then
+	exit 128
+fi
+exit "${TEST_GIT_HTTPS_RC}"
+SHIM_EOF
+	chmod +x "${tmpdir}/git"
+
+	local case_spec="" https_rc="" want_rc="" want_ssh="" rc=0
+	local -a git_args=()
+	for case_spec in \
+		"2|2|no|ls-remote --exit-code --heads origin refs/heads/task-id-counter" \
+		"128|128|yes|ls-remote --exit-code --heads origin refs/heads/task-id-counter" \
+		"2|128|yes|ls-remote --heads origin refs/heads/task-id-counter" \
+		"2|128|yes|fetch -q origin task-id-counter"; do
+		IFS='|' read -r https_rc want_rc want_ssh _ <<<"$case_spec"
+		read -r -a git_args <<<"${case_spec##*|}"
+		rc=0
+		(
+			export TEST_GIT_CALL_LOG="${tmpdir}/calls.log"
+			: >"$TEST_GIT_CALL_LOG"
+			export TEST_GIT_HTTPS_RC="$https_rc"
+			export PATH="${tmpdir}:$PATH"
+			export CAS_SSH_FALLBACK_ENABLED=1
+			REMOTE_NAME="origin"
+			_run_git_with_ssh_fallback 5 "${git_args[@]}" >/dev/null 2>&1
+		) || rc=$?
+		if [[ "$rc" != "$want_rc" ]]; then
+			fail "$name" "case '${case_spec}': expected rc=${want_rc}, got rc=${rc}"
+			return 0
+		fi
+		if [[ "$want_ssh" == "no" ]] && grep -q -- '^-c url\.' "${tmpdir}/calls.log"; then
+			fail "$name" "case '${case_spec}': SSH retry attempted after a definitive answer"
+			return 0
+		fi
+		if [[ "$want_ssh" == "yes" ]] && ! grep -q -- '^-c url\.' "${tmpdir}/calls.log"; then
+			fail "$name" "case '${case_spec}': expected SSH fallback retry"
+			return 0
+		fi
+	done
+	pass "$name"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 11: HTTPS timeout — fallback retries via SSH and succeeds
 # Mocks `git` so the first remote operation hangs past the timeout, remote URL
 # lookup returns a GitHub HTTPS URL, and the SSH-rewritten retry succeeds.
@@ -389,7 +457,7 @@ if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" ]]; then
 	printf '%s\n' 'https://github.com/owner/repo.git'
 	exit 0
 fi
-if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-path" ]]; then
+if [[ "${1:-}" == "rev-parse" && " $* " == *" --git-path "* ]]; then
 	printf '%s\n' "$TEST_HOOK_PATH"
 	exit 0
 fi
@@ -450,7 +518,7 @@ if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" ]]; then
 	printf '%s\n' 'https://github.com/owner/repo.git'
 	exit 0
 fi
-if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-path" ]]; then
+if [[ "${1:-}" == "rev-parse" && " $* " == *" --git-path "* ]]; then
 	printf '%s\n' "$TEST_HOOK_PATH"
 	exit 0
 fi
@@ -467,7 +535,7 @@ HOOK_EOF
 		export TEST_HOOK_PATH="${tmpdir}/pre-push"
 		CAS_HOOK_TIMEOUT_S=1 _cas_run_pre_push_hook "local-sha" "remote-sha" 2>&1
 	) || rc=$?
-	if [[ $rc -ne 1 ]] || ! printf '%s\n' "$output" | grep -q 'Pre-push hook timed out.*remote push was not attempted'; then
+	if [[ $rc -ne 1 ]] || ! printf '%s\n' "$output" | grep -q 'Pre-push hook .*timed out.*remote push was not attempted'; then
 		fail "$name" "timeout was not blocking/diagnosed: rc=${rc}: ${output}"
 		return 0
 	fi
@@ -483,7 +551,7 @@ HOOK_EOF
 		export TEST_HOOK_PATH="${tmpdir}/pre-push"
 		CAS_HOOK_TIMEOUT_S=3 _cas_run_pre_push_hook "local-sha" "remote-sha" 2>&1
 	) || rc=$?
-	if [[ $rc -ne 1 ]] || ! printf '%s\n' "$output" | grep -q 'Pre-push hook failed.*rc=7.*remote push was not attempted'; then
+	if [[ $rc -ne 1 ]] || ! printf '%s\n' "$output" | grep -q 'Pre-push hook .*failed.*rc=7.*remote push was not attempted'; then
 		fail "$name" "hook failure was not blocking/diagnosed: rc=${rc}: ${output}"
 		return 0
 	fi
@@ -685,6 +753,7 @@ main() {
 	test_run_git_passthrough_no_timeout
 	test_fallback_disabled_short_circuits
 	test_non_timeout_failure_falls_back_to_ssh
+	test_ls_remote_absent_skips_ssh_fallback
 	test_timeout_falls_back_to_ssh
 	test_pre_push_hook_uses_independent_budget
 	test_pre_push_hook_failures_are_blocking

@@ -243,6 +243,7 @@ define_helpers_under_test() {
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_external_pr_current_head_crypto_approved\(\) \{/,/^}$/ { print }
+		/^_pulse_merge_admin_meta_fields\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_safety_check\(\) \{/,/^}$/ { print }
 	' "$GATES_SCRIPT")
 	final_src=$(awk '

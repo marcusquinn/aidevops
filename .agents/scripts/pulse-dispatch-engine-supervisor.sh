@@ -44,26 +44,50 @@ _pulse_llm_failure_cooldown_active() {
 }
 
 #######################################
-# GH#34000 follow-up: an incomplete prefetch defers the LLM supervisor because
-# its prompt points at STATE_FILE. A runner whose prefetch degrades on every
-# cycle would then never run the supervisor, starving the daily sweep and
-# terminal-blocker recovery indefinitely. Admit a degraded-prefetch supervisor
-# decision once the latest attempt/success is older than
-# PULSE_LLM_DEGRADED_ESCAPE_SECONDS (default 6h; 0 disables). The normal
-# _should_run_llm_supervisor gates and failure cooldown still apply, and the
-# prompt marks the state file incomplete.
-# Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
+# GH#38162: age in seconds of the latest LLM supervisor attempt or success
+# (whichever is later). A runner that has never recorded either reports the
+# full epoch age, so every starvation threshold treats it as starved.
+# Output: age in seconds on stdout
 #######################################
-_pulse_degraded_prefetch_supervisor_escape_due() {
-	local escape_seconds="${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}"
+_pulse_supervisor_last_attempt_age() {
 	local now_epoch="" last_success="" last_attempt="" latest=0
-	[[ "$escape_seconds" =~ ^[0-9]+$ && "$escape_seconds" -gt 0 ]] || return 1
 	now_epoch=$(date +%s)
 	last_success=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
 	last_attempt=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
 	latest="$last_success"
 	[[ "$last_attempt" -gt "$latest" ]] && latest="$last_attempt"
-	[[ $((now_epoch - latest)) -ge "$escape_seconds" ]] || return 1
+	printf '%s\n' "$((now_epoch - latest))"
+	return 0
+}
+
+#######################################
+# GH#38162: shared starvation test for supervisor-phase escapes.
+# Args: $1=threshold seconds (0 or non-numeric disables the escape)
+# Returns: 0 when no supervisor attempt/success happened within the threshold
+#######################################
+_pulse_supervisor_starved_for() {
+	local threshold="$1"
+	local age=0
+	[[ "$threshold" =~ ^[0-9]+$ && "$threshold" -gt 0 ]] || return 1
+	age=$(_pulse_supervisor_last_attempt_age)
+	[[ "$age" =~ ^-?[0-9]+$ ]] || return 1
+	[[ "$age" -ge "$threshold" ]] || return 1
+	return 0
+}
+
+#######################################
+# GH#34000 follow-up: an incomplete prefetch defers the snapshot-driven LLM
+# supervisor triggers because its prompt points at STATE_FILE. A runner whose
+# prefetch degrades on every cycle would then never run the daily sweep or
+# stall supervisor. Admit a full degraded-prefetch supervisor decision once the
+# latest attempt/success is older than PULSE_LLM_DEGRADED_ESCAPE_SECONDS
+# (default 6h; 0 disables). The normal _should_run_llm_supervisor gates and
+# failure cooldown still apply, and the prompt marks the state file incomplete.
+# Queue-driven blocker recovery has its own escape (GH#38162).
+# Returns: 0 when a degraded-prefetch supervisor run is admitted, 1 otherwise
+#######################################
+_pulse_degraded_prefetch_supervisor_escape_due() {
+	_pulse_supervisor_starved_for "${PULSE_LLM_DEGRADED_ESCAPE_SECONDS:-21600}" || return 1
 	return 0
 }
 
@@ -131,6 +155,42 @@ _pulse_blocker_recovery_due() {
 	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
 	return 0
+}
+
+#######################################
+# Latest successful LLM supervisor epoch, falling back to the legacy
+# last_llm_run_epoch success timestamp written by older installs.
+# Output: epoch on stdout (0 when unknown)
+#######################################
+_pulse_read_llm_success_epoch() {
+	local epoch=0
+	epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
+	if [[ "$epoch" -eq 0 ]]; then
+		epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
+	fi
+	printf '%s\n' "$epoch"
+	return 0
+}
+
+#######################################
+# GH#38162: supervisor decision for an incomplete prefetch. The blocker-
+# recovery queue comes from the helper and live reads, not STATE_FILE, so it
+# must not wait for a complete snapshot; the snapshot-driven daily-sweep and
+# stall triggers are not admitted. Calls _pulse_blocker_recovery_due exactly
+# once: it writes its interval stamp before counting, so a second call in the
+# same decision would see a fresh stamp and drop the trigger.
+# Args: now_epoch last_success_epoch last_attempt_epoch
+# Returns: 0 when a queue-driven run should start (trigger mode written)
+#######################################
+_pulse_queue_triggers_only_decision() {
+	local now_epoch="$1"
+	local last_success_epoch="$2"
+	local last_attempt_epoch="$3"
+	if _pulse_blocker_recovery_due "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+		return 0
+	fi
+	echo "[pulse-wrapper] Skipping LLM supervisor: prefetch state incomplete and no queue-driven trigger due (GH#38162, last_attempt_age_s=$(_pulse_supervisor_last_attempt_age))" >>"$LOGFILE"
+	return 1
 }
 
 _update_backlog_snapshot() {

@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$SCRIPT_DIR" <<'PY'
 import json
+import hashlib
 import os
 import re
 import socket
@@ -30,6 +31,7 @@ fi
 [[ "$1 $2" == 'secret check' ]] || exit 99
 [[ -z "${CHECK_CALLS:-}" ]] || printf '%s\\n' "$3" >>"$CHECK_CALLS"
 [[ "$3" != SLOW ]] || exec sleep 10
+[[ "$3" != TIMEDOUT ]] || exit 5
 [[ "$3" != LOCKED ]] || exit 3
 printf 'PRIVATE_VALUE\n'
 printf 'PRIVATE_ERROR\n' >&2
@@ -141,6 +143,8 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     print('PASS partial record privacy and tool-output rejection boundary')
     check('locked secret timeout defers', issue, {'publish': {'secrets': ['SLOW']}}, False,
           'check_timeout name=SLOW')
+    check('inner secret timeout defers', {'body': 'requires-secrets: TIMEDOUT'}, success=False,
+          reason='check_timeout name=TIMEDOUT')
     check('unreadable secret defers', {'body': 'requires-secrets: LOCKED'}, success=False,
           reason='secret_unreadable name=LOCKED store=gopass fallback=disabled')
     check('brief requirement defers', {'body': 'requires-secrets: MISSING'}, success=False,
@@ -247,6 +251,7 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     config.write_text(json.dumps({'dispatch_class_requirements': {'publish': {'secrets': ['MISSING']}}}))
     stub = '''
 _ds_now_ns() { printf 0; return 0; }
+_dlw_sealed_hold_active() { return 1; }
 _dispatch_load_and_validate_metadata() { issue_meta_json="$META"; return 0; }
 _dispatch_preclaim_brief_scope() { printf REACHED_NEXT_GATE; return 1; }
 gh() {
@@ -408,6 +413,25 @@ exit 0
     print('PASS cycle cache skips remaining checks, permits ungated candidates and resets next cycle')
     passed += 1
 
+    # Expiry retries once under the lock; timeouts do not retain stale metadata.
+    cycle_file = root / 'workspace-temp/runner-capability' / (hashlib.sha256(b'first').hexdigest() + '.json')
+    state = json.loads(cycle_file.read_text())
+    state['at'] = 0
+    cycle_file.write_text(json.dumps(state))
+    calls.write_text('')
+    def direct_cycle(name):
+        return subprocess.run(['bash', '-c', 'source "$1/runner-capability-helper.sh"; '
+                               '_PULSE_CYCLE_ID=first; runner_capability_check "$2" "$3" fresh',
+                               'fixture', str(scripts), str(repo),
+                               json.dumps({'body': 'requires-secrets: ' + name})],
+                              env=cycle_env, capture_output=True, text=True)
+    result = direct_cycle('TIMEDOUT')
+    assert result.returncode == 1 and 'check_timeout name=TIMEDOUT' in result.stdout, result
+    assert not cycle_file.read_text(), cycle_file.read_text()
+    assert direct_cycle('GOOD').returncode == 0
+    assert calls.read_text().splitlines() == ['TIMEDOUT', 'GOOD']
+    print('PASS expired cache rechecks and timeout does not cache')
+
     # The real status-only command suppresses values/errors and decrypts once.
     source = (scripts / 'secret-helper.sh').read_text()
     function = re.search(r'(?ms)^cmd_check\(\) \{.*?^}', source).group()
@@ -428,8 +452,10 @@ ls)
 show)
     printf 'decrypt\\n' >>"$CHECK_CALLS"
     [[ "$FIXTURE_STATUS" != hang ]] || exec sleep 10
+    [[ "$FIXTURE_STATUS" != slow ]] || sleep 5
     printf '%s' "$FIXTURE_VALUE"
     printf PRIVATE_ERROR >&2
+    [[ "$FIXTURE_STATUS" != slow ]] || exit 0
     exit "$FIXTURE_STATUS" ;;
 esac
 exit 1
@@ -442,13 +468,15 @@ exit 1
     credentials.chmod(0o600)
     for status, value, name, expected in ((0, 'PRIVATE_VALUE', 'GOOD', 0),
                                           (1, '', 'GOOD', 3), (0, '', 'GOOD', 3),
-                                          ('hang', '', 'GOOD', 3), (0, '', 'MISSING', 1),
+                                          ('hang', '', 'GOOD', 5), ('slow', 'PRIVATE_VALUE', 'GOOD', 0),
+                                          (0, '', 'MISSING', 1),
                                           (0, '', 'PLAINTEXT', 0)):
         calls.write_text('')
         result = subprocess.run(['bash', str(scripts / 'secret-helper.sh'), 'check', name],
                                 env=dict(env, HOME=str(home), CHECK_CALLS=str(calls),
-                                         FIXTURE_VALUE=value, FIXTURE_STATUS=str(status)),
-                                capture_output=True, timeout=7)
+                                         FIXTURE_VALUE=value, FIXTURE_STATUS=str(status),
+                                         AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS='6' if status == 'slow' else '1'),
+                                capture_output=True, timeout=9)
         assert result.returncode == expected and not result.stdout and not result.stderr, result
         assert calls.read_text().splitlines() == (['decrypt'] if name == 'GOOD' else []), calls.read_text()
     print('PASS gopass readable/unreadable/empty statuses decrypt once without plaintext fallback')

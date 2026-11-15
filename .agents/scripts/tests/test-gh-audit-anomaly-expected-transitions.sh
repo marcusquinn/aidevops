@@ -74,12 +74,17 @@ cat >"$LOG_FILE" <<'EOF'
 {"ts":"2026-07-31T00:25:00Z","op":"issue_edit","repo":"example/repo","number":26,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:status:in-review"]}
 {"ts":"2026-07-31T00:26:00Z","op":"issue_edit","repo":"example/repo","number":27,"caller_script":"/runtime/agents/scripts/pulse-merge-feedback.sh","caller_function":"main","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["origin:worker","source:ci-feedback","status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["status:available","source:ci-feedback"]},"suspicious":["protected_label_removed:status:in-review"]}
 {"ts":"2026-07-31T00:27:00Z","op":"issue_edit","repo":"example/repo","number":28,"caller_script":"/runtime/agents/scripts/worker-permission-helper.sh","caller_function":"permission_apply_block","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:in-review"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["status:in-review"],"labels_added":["needs-maintainer-permissions","status:blocked"]},"suspicious":["protected_label_removed:status:in-review"]}
+{"ts":"2026-07-31T00:28:00Z","op":"issue_edit","repo":"example/repo","number":29,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:available","auto-dispatch"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available","auto-dispatch"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:29:00Z","op":"issue_edit","repo":"example/repo","number":30,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:30:00Z","op":"issue_edit","repo":"example/repo","number":31,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","priority:high"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","priority:high"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 EOF
 
 output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state.json" \
 	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
 
-[[ "$output" == *"**Anomalies found:** 15"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"**Anomalies found:** 17"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"| #30 |"* ]] || fail "unverified permission grant was hidden"
+[[ "$output" == *"| #31 |"* ]] || fail "permission grant with an extra label removal was hidden"
 [[ "$output" == *"| #3 |"* ]] || fail "unexpected lifecycle transition was hidden"
 [[ "$output" == *"| #4 |"* ]] || fail "approval transition with an additional signal was hidden"
 [[ "$output" == *"| #5 |"* ]] || fail "malformed provenance was dropped instead of retained"
@@ -103,9 +108,14 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 [[ "$output" != *"| #1 |"* && "$output" != *"| #2 |"* && "$output" != *"| #7 |"* && "$output" != *"| #9 |"* &&
 	"$output" != *"| #12 |"* && "$output" != *"| #14 |"* && "$output" != *"| #17 |"* &&
 	"$output" != *"| #18 |"* && "$output" != *"| #20 |"* && "$output" != *"| #22 |"* &&
-	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* && "$output" != *"| #28 |"* ]] ||
+	"$output" != *"| #24 |"* && "$output" != *"| #26 |"* && "$output" != *"| #28 |"* &&
+	"$output" != *"| #29 |"* ]] ||
 	fail "an exact expected transition remained actionable"
 
+# GH#38229: a torn append (interrupted write, missing newline) used to abort the
+# scan and hold the checkpoint, so one corrupt line ended anomaly detection for
+# every later entry. Malformed lines are now counted and reported while the rest
+# of the window is still scanned and the checkpoint still advances.
 MALFORMED_LOG="${TEST_ROOT}/malformed-audit.log"
 cat >"$MALFORMED_LOG" <<'EOF'
 {"suspicious":[]}
@@ -113,10 +123,40 @@ not-json
 {"ts":"2026-07-31T00:13:00Z","op":"issue_edit","repo":"example/repo","number":14,"caller_function":"main","suspicious":["body_delta_pct=-100"]}
 EOF
 malformed_rc=0
-GH_AUDIT_LOG_FILE="$MALFORMED_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/malformed-state.json" \
-	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run >/dev/null 2>&1 || malformed_rc=$?
-[[ "$malformed_rc" -ne 0 ]] || fail "malformed NDJSON did not fail the scan closed"
-[[ ! -e "${TEST_ROOT}/malformed-state.json" ]] || fail "malformed NDJSON advanced the scan checkpoint"
+malformed_output=$(GH_AUDIT_LOG_FILE="$MALFORMED_LOG" \
+	GH_ANOMALY_STATE_FILE="${TEST_ROOT}/malformed-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run 2>/dev/null) || malformed_rc=$?
+[[ "$malformed_rc" -eq 0 ]] || fail "malformed NDJSON aborted the scan instead of reporting it"
+[[ "$malformed_output" == *"**Malformed lines:** 1"* ]] ||
+	fail "malformed NDJSON was not reported as a log-integrity finding"
+[[ "$malformed_output" == *"| #14 |"* ]] ||
+	fail "a real anomaly after a malformed line was not scanned"
+[[ "$malformed_output" == *"## Log Integrity"* ]] ||
+	fail "log-integrity guidance missing from the anomaly report"
+
+# Only a torn line: the corruption itself is the alert, and the checkpoint moves on.
+TORN_LOG="${TEST_ROOT}/torn-audit.log"
+cat >"$TORN_LOG" <<'EOF'
+{"ts":"2026-07-31T01:00:00Z","op":"issue_edit","repo":"example/repo","number":40,"caller_function":"main","suspicious":[]}
+{"ts":"2026-07-31T01{"ts":"2026-07-31T01:01:00Z","op":"issue_edit","repo":"example/repo","number":41,"caller_function":"main","suspicious":[]}
+EOF
+torn_rc=0
+torn_output=$(GH_AUDIT_LOG_FILE="$TORN_LOG" \
+	GH_ANOMALY_STATE_FILE="${TEST_ROOT}/torn-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run 2>/dev/null) || torn_rc=$?
+[[ "$torn_rc" -eq 0 ]] || fail "a torn audit line aborted the scan"
+[[ "$torn_output" == *"**Anomalies found:** 0"* ]] ||
+	fail "a torn audit line was mistaken for a suspicious operation"
+[[ "$torn_output" == *"**Malformed lines:** 1"* ]] ||
+	fail "a torn audit line was silently dropped"
+
+checkpoint_rc=0
+GH_AUDIT_LOG_FILE="$TORN_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/torn-advance.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all >/dev/null 2>&1 || checkpoint_rc=$?
+[[ -e "${TEST_ROOT}/torn-advance.json" ]] ||
+	fail "a torn audit line held the scan checkpoint (rc=${checkpoint_rc})"
+[[ "$(jq -r '.last_line' "${TEST_ROOT}/torn-advance.json")" == "2" ]] ||
+	fail "the checkpoint did not advance past a torn audit line"
 
 # shellcheck source=../shared-gh-wrappers-safe-edit.sh
 source "$SAFE_EDIT_HELPER"
@@ -170,6 +210,34 @@ _gh_audit_record_op \
 	"_approval_apply_pr_lifecycle_updates" "1"
 jq -e -s 'map(select(.number == 22))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "failed approval verification produced trusted audit proof"
+
+# GH#37906: signed permission grants earn proof only from live re-verification.
+cmd_verify_permissions() {
+	local target_type="${1:-}"
+	local target_number="${2:-}"
+	# 42 verifies too: its foreign caller path alone must deny the proof.
+	if [[ "$target_type" == "issue" && ("$target_number" == "40" || "$target_number" == "42") ]]; then
+		printf 'VERIFIED\n'
+		return 0
+	fi
+	printf 'NO_APPROVAL\n'
+	return 1
+}
+for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"41|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"42|/tmp/approval-helper-permissions-copy.sh"; do
+	_gh_audit_record_op \
+		"issue_edit" "example/repo" "${permission_case%%|*}" \
+		'{"title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]}' \
+		'{"title_len":1,"body_len":1,"labels":[]}' \
+		"${permission_case#*|}" \
+		"_apply_permission_approval_state" "1"
+done
+jq -e -s 'map(select(.number == 40))[0].flags.permission_approval_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "verified permission grant did not produce audit proof"
+jq -e -s 'map(select(.number == 41 or .number == 42) | .flags == {}) | length == 2 and all' "$PROOF_LOG" >/dev/null ||
+	fail "unverified or foreign permission grant produced trusted audit proof"
+unset -f cmd_verify_permissions
 
 CURRENT_ACTOR="trusted-runner"
 gh() {
@@ -257,6 +325,189 @@ _gh_audit_record_op \
 	"_nmr_edit_issue_labels" "1"
 jq -e -s 'map(select(.number == 27))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "read-only current actor produced trusted-author audit proof"
+
+# GH#38135: real CLI capture -> proof recorder -> dry-run scanner. Transport
+# fixtures exercise live ownership and the production lease parser, not a mocked
+# verification function. A shared login with another session must fail closed.
+(
+	CLI_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+	# shellcheck source=../gh-write-helper.sh
+	source "${CLI_SCRIPT_DIR}/gh-write-helper.sh" help >/dev/null
+	export GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-audit.log"
+	LIFECYCLE_STAGE="status:in-review"
+	LIFECYCLE_CASE="valid"
+	LIFECYCLE_PERMISSION="write"
+	LIFECYCLE_OWNER="runner"
+	LIFECYCLE_BODY="Preserved body"
+	LIFECYCLE_CLOSED="false"
+	# Deliberately public fixture identifiers, never real lease credentials.
+	export AIDEVOPS_DISPATCH_LEASE_TOKEN="fixture-lease"
+	export AIDEVOPS_PR_CHECKPOINT_SESSION="fixture-session"
+	lifecycle_issue_json() {
+		jq -n --arg status "$LIFECYCLE_STAGE" --arg owner "$LIFECYCLE_OWNER" \
+			--arg body "$LIFECYCLE_BODY" --argjson closed "$LIFECYCLE_CLOSED" '
+			{state: (if $closed then "closed" else "open" end), title:"Owned issue",
+			 body:$body, labels:[{name:$status}], assignees:[{login:$owner}]}'
+		return 0
+	}
+	gh_issue_view() {
+		lifecycle_issue_json
+		return 0
+	}
+	_gh_guard_public_write_args() { return 0; }
+	set_issue_status() {
+		local number="$1" repo="$2" status="$3"
+		[[ "$number" == 700 && "$repo" == example/repo ]] || return 1
+		LIFECYCLE_STAGE="status:${status}"
+		return 0
+	}
+	gh() {
+		local command="$1" resource="${2:-}"
+		[[ "$command" != api || "$LIFECYCLE_CASE" != unavailable ]] || return 1
+		case "${command}:${resource}" in
+		api:user) printf '%s\n' runner ;;
+		api:repos/example/repo/collaborators/runner/permission) printf '%s\n' "$LIFECYCLE_PERMISSION" ;;
+		api:repos/example/repo/issues/700) lifecycle_issue_json ;;
+		api:repos/example/repo/issues/700/comments?per_page=100)
+			jq -nc --arg scenario "$LIFECYCLE_CASE" '
+				now | floor as $now | [[
+				{id:1, created_at:(($now-30)|todateiso8601), user:{login:"runner"}, author_association:"MEMBER",
+				 body:("DISPATCH_CLAIM nonce=fixture-lease runner=runner ts=" + (($now-30)|todateiso8601)
+				 + " lease_token=fixture-lease device=fixture-device session=fixture-session expires_at=" + (($now+600)|tostring))},
+				{id:2, created_at:(($now-20)|todateiso8601), user:{login:"runner"}, author_association:"MEMBER",
+				 body:("DISPATCH_LEASE phase=" + (if $scenario == "released" then "terminal" else "ready" end)
+				 + " lease_token=fixture-lease device=fixture-device session=fixture-session expires_at=" + (($now+600)|tostring))}
+				]]'
+			;;
+		issue:edit) LIFECYCLE_STAGE="status:available" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	main issue status 700 --repo example/repo available || fail "status CLI mutation failed"
+	jq -e '.caller_function == "_issue_status" and
+		.flags.lifecycle_transition_verified == "v1-owned-current-state"' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+		fail "status CLI did not record verified lifecycle proof"
+	LIFECYCLE_STAGE="status:in-progress"
+	main issue edit 700 --repo example/repo --remove-label status:in-progress --add-label status:available ||
+		fail "generic CLI lifecycle mutation failed"
+	jq -se '.[-1].flags.lifecycle_transition_verified == "v1-owned-current-state"' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+		fail "owned active lease did not earn lifecycle proof"
+	# Repeat the exact mutation with failed independent evidence.
+	for LIFECYCLE_CASE in other-session released unavailable read-only unowned; do
+		LIFECYCLE_STAGE="status:in-progress"
+		AIDEVOPS_PR_CHECKPOINT_SESSION="fixture-session"
+		LIFECYCLE_PERMISSION="write"
+		LIFECYCLE_OWNER="runner"
+		case "$LIFECYCLE_CASE" in
+		other-session) AIDEVOPS_PR_CHECKPOINT_SESSION="other-session" ;;
+		read-only) LIFECYCLE_PERMISSION="read" ;;
+		unowned) LIFECYCLE_OWNER="other-runner" ;;
+		esac
+		main issue edit 700 --repo example/repo --remove-label status:in-progress --add-label status:available ||
+			fail "negative fixture mutation failed"
+		jq -se '.[-1].flags == {}' "$GH_AUDIT_LOG_FILE" >/dev/null ||
+			fail "unverified lifecycle acquired proof: $LIFECYCLE_CASE"
+	done
+	LIFECYCLE_CASE="valid"
+	LIFECYCLE_PERMISSION="write"
+	LIFECYCLE_OWNER="runner"
+	LIFECYCLE_STAGE="status:available"
+	for gate in needs-maintainer-review needs-maintainer-permissions no-auto-dispatch origin:interactive; do
+		_gh_audit_record_op issue_edit example/repo 700 \
+			"{\"capture_status\":\"ok\",\"title_len\":11,\"body_len\":14,\"labels\":[\"$gate\"],\"assignees\":[\"runner\"]}" \
+			'{"capture_status":"ok","title_len":11,"body_len":14,"labels":["status:available"],"assignees":["runner"]}' \
+			"${CLI_SCRIPT_DIR}/gh-write-helper.sh" _issue_edit_signed 1
+		jq -se '.[-1].flags == {}' "$GH_AUDIT_LOG_FILE" >/dev/null || fail "trust-gate removal earned lifecycle proof"
+	done
+	# Filter negatives, even if a flag is copied onto a malformed/mixed event.
+	jq -sc '.[0] as $valid | [
+		$valid,
+		($valid | del(.flags)),
+		($valid | .caller_script="/workspace/issue-edit.sh"),
+		($valid | .delta.body_delta_pct=-100 | .suspicious += ["body_delta_pct=-100"]),
+		($valid | .delta.labels_removed += ["no-auto-dispatch"]),
+		($valid | .after.labels += ["status:blocked"])
+	] | .[]' "$GH_AUDIT_LOG_FILE" >"${TEST_ROOT}/lifecycle-filter.log"
+	filter_output=$(GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-filter.log" \
+		GH_ANOMALY_STATE_FILE="${TEST_ROOT}/lifecycle-filter-state.json" GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+	[[ "$filter_output" == *"**Anomalies found:** 5"* ]] || fail "lifecycle filter failed closed cases"
+	# Representative new backlog: the two independently verified CLI events are
+	# replayed 50 times each, alongside four real unverified trust-gate fixtures.
+	jq -sc '.[0:2][] as $verified | range(0;50) | $verified' "$GH_AUDIT_LOG_FILE" >"${TEST_ROOT}/lifecycle-backlog.log"
+	jq -sc '.[-4:][]' "$GH_AUDIT_LOG_FILE" >>"${TEST_ROOT}/lifecycle-backlog.log"
+	backlog_output=$(GH_AUDIT_LOG_FILE="${TEST_ROOT}/lifecycle-backlog.log" \
+		GH_ANOMALY_STATE_FILE="${TEST_ROOT}/lifecycle-backlog-state.json" GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
+	[[ "$backlog_output" == *"**Anomalies found:** 4"* ]] || fail "representative lifecycle backlog count mismatch"
+	printf 'PASS: verified lifecycle backlog 104 -> 4 alerts (96%%); five filter negatives retained\n'
+)
+
+# GH#38134: exercise the real call stack through protected-label-guard.sh.
+# The audit record must name the logical caller, not the guard's internal frame.
+STACK_DIR="${TEST_ROOT}/stack/agents/scripts"
+mkdir -p "$STACK_DIR"
+cat >"${STACK_DIR}/pulse-nmr-approval.sh" <<'EOF'
+_nmr_edit_issue_labels() {
+	protected_label_edit "$@"
+	return $?
+}
+EOF
+cat >"${STACK_DIR}/other-script.sh" <<'EOF'
+_nmr_edit_issue_labels() {
+	_protected_label_raw_edit "$@"
+	return $?
+}
+_protected_label_raw_edit() {
+	gh_issue_edit_safe "$@"
+	return $?
+}
+EOF
+_STACK_PHASE="before"
+_gh_audit_fetch_issue_state_json() {
+	if [[ "$_STACK_PHASE" == "before" ]]; then
+		_STACK_PHASE="after"
+		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review","needs-maintainer-review"]}'
+	else
+		_STACK_PHASE="before"
+		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review"]}'
+	fi
+	return 0
+}
+_gh_wrapper_enter_cleanup_scope() { return 0; }
+gh_record_call() { return 0; }
+_gh_guard_public_write_args() { return 0; }
+gh() {
+	local command="$1"
+	local resource="${2:-}"
+	[[ "$command" == "issue" ]] && return 0
+	[[ "$command" == "api" ]] || return 1
+	case "$resource" in
+	repos/example/repo/issues/25 | repos/example/repo/issues/26)
+		printf '%s\n' '{"user":{"login":"trusted-author","type":"User"},"author_association":"COLLABORATOR","labels":[{"name":"hold-for-review"}]}'
+		;;
+	user) printf '%s\n' "$CURRENT_ACTOR" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+CURRENT_ACTOR="trusted-runner"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/../protected-label-guard.sh"
+# shellcheck source=/dev/null
+source "${STACK_DIR}/pulse-nmr-approval.sh"
+_nmr_edit_issue_labels 25 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 25 and .caller_function == "_nmr_edit_issue_labels"))
+	| length == 1 and (.[0].caller_script | endswith("/pulse-nmr-approval.sh"))
+	and .[0].flags.trusted_author_nmr_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "real-stack NMR edit did not record the logical caller with verified proof"
+# Negative: same function name from a non-framework script, with a guard-named
+# function defined outside the guard file, must not acquire the flag.
+# shellcheck source=/dev/null
+source "${STACK_DIR}/other-script.sh"
+_nmr_edit_issue_labels 26 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 26))[-1]
+	| (.caller_script | endswith("/other-script.sh")) and .flags == {}' "$PROOF_LOG" >/dev/null ||
+	fail "non-framework script acquired trusted NMR proof through a lookalike guard function"
 unset CURRENT_ACTOR
 unset GH_AUDIT_LOG_FILE
 
@@ -298,7 +549,10 @@ CLI_HANDOFF_LOG="${TEST_ROOT}/cli-handoff-audit.log"
 			 labels: [{name: $status}]}'
 		return 0
 	}
-	gh_issue_view() { handoff_issue_json; return 0; }
+	gh_issue_view() {
+		handoff_issue_json
+		return 0
+	}
 	_gh_guard_public_write_args() { return 0; }
 	gh() {
 		local command="$1" resource="${2:-}"

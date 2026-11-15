@@ -18,6 +18,9 @@ def run(store, config, root, **arguments):
     repositories = _repositories(config)
     adapter = adapter_for(store.installation_id())
     require_ready(adapter)
+    # The budget bounds the whole pass, discovery included (GH#38158): items
+    # start only before the deadline, so a pass ends within it plus one item.
+    deadline = time.monotonic() + options.budget
     with store.connection() as connection:
         items = inventory(connection)
     items, discovery_errors = discover(items, repositories)
@@ -36,7 +39,6 @@ def run(store, config, root, **arguments):
         "discovery_errors": discovery_errors,
         "operator_confirmed_paths": list(options.confirmed_paths),
     }
-    deadline = time.monotonic() + options.budget
     for item in items:
         if (time.monotonic() >= deadline
                 or (options.apply and report["attempted"] >= options.limit)):
@@ -53,6 +55,7 @@ def run(store, config, root, **arguments):
         report["retired"] += outcome["status"] == "retired"
         report["results"].append(outcome)
     report["examined"] = len(report["results"])
+    report["budget_exhausted"] = time.monotonic() >= deadline
     report["incomplete"] = bool(discovery_errors) or report["examined"] < len(items)
     report["archive_failed"] = sum(
         bool(result.get("archive_failure", False)) for result in report["results"]

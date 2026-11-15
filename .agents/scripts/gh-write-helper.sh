@@ -86,7 +86,15 @@ _issue_status() {
 		printf 'emit `BLOCKED: <reason>`; the runtime projects lifecycle state\n' >&2
 		return 2
 	fi
-	set_issue_status "$number" "$repo" "$status" || return $?
+	# set_issue_status uses REST deltas directly, not gh_issue_edit_safe.
+	# Audit the whole CLI operation, including partial writes on failure.
+	local before_json="" after_json="" status_rc=0
+	before_json=$(_gh_audit_fetch_issue_state_json "$number" "$repo")
+	set_issue_status "$number" "$repo" "$status" || status_rc=$?
+	after_json=$(_gh_audit_fetch_issue_state_json "$number" "$repo")
+	_gh_audit_record_op "issue_edit" "$repo" "$number" "$before_json" "$after_json" \
+		"${BASH_SOURCE[0]}" "_issue_status" "$LINENO"
+	[[ "$status_rc" -eq 0 ]] || return "$status_rc"
 	return 0
 }
 

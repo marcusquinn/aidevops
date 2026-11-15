@@ -415,6 +415,9 @@ _action_reconcile_external_issue_gate() {
 				return 1
 			fi
 		else
+			# Count blocked rows, not just the aggregated per-repository warning.
+			# #aidevops:trust-boundary — missing metadata still fails closed.
+			_PIR_MISSING_AUTHOR_METADATA_BLOCKED=$((${_PIR_MISSING_AUTHOR_METADATA_BLOCKED:-0} + 1))
 			_pir_log_external_issue_author_metadata_miss "$slug" "${_PIR_EXTERNAL_FALLBACK_REASON:-unavailable}"
 			return 0
 		fi

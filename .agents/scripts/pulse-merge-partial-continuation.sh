@@ -86,23 +86,110 @@ _pmpc_merged_pr_author() {
 	return 1
 }
 
-# GH#37204: merged worker partial PRs created without an origin label stranded
-# their target in status:in-review. Accept missing labels only with
-# independently verified worker provenance: merged, worker branch name, body
-# marker AND an author with current write access. Never infer trust from the
-# body marker or branch name alone.
-_pmpc_unlabeled_worker_provenance() {
-	local repo_slug="$1" pr_number="$2" pr_json="" author="" permission=""
-	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
-	author=$(printf '%s' "$pr_json" | jq -er '
-		select(.merged == true and (.body | type == "string")
-			and (.body | contains("<!-- aidevops:origin:worker -->"))
-			and (.head.ref | type == "string" and test("^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$"))
-			and (.user.login | type == "string" and test("^[A-Za-z0-9-]+$"))) | .user.login
-	' 2>/dev/null) || return 1
+# Maximum distance between a DISPATCH_CLAIM ts= and the UTC branch timestamp.
+_PMPC_CLAIM_BRANCH_WINDOW_S=600
+
+#######################################
+# GH#38042: prove that the PR author's own dispatch claim created this worker
+# branch. Branches are feature/auto-<YYYYMMDD>-<HHMMSS>-gh<N> (UTC). The target
+# issue must carry a DISPATCH_CLAIM comment written by the author with
+# runner=<author>, session=issue-<N> and a ts= within the window.
+# Args: $1=repo slug, $2=head ref, $3=author login
+# Returns: 0 when a matching claim exists, 1 otherwise or when unreadable
+#######################################
+_pmpc_branch_claim_matches() {
+	local repo_slug="$1" head_ref="$2" author="$3"
+	local claims_json
+	local stamp="" issue_num="" branch_iso=""
+	[[ "$head_ref" =~ ^feature/auto-([0-9]{8})-([0-9]{6})-gh([0-9]+)$ ]] || return 1
+	stamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+	issue_num="${BASH_REMATCH[3]}"
+	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+	branch_iso="${stamp:0:4}-${stamp:4:2}-${stamp:6:2}T${stamp:8:2}:${stamp:10:2}:${stamp:12:2}Z"
+	claims_json=$(_pmpc_gh_read api "$(_pm_issue_api "$repo_slug" "$issue_num")/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	printf '%s' "$claims_json" | jq -e --arg author "$author" --arg issue "$issue_num" \
+		--arg branch "$branch_iso" --argjson window "$_PMPC_CLAIM_BRANCH_WINDOW_S" "${_PMPC_COMMENTS_JQ_DEFS}"'
+		($branch | fromdateiso8601) as $branch_epoch
+		| any(comments[] | select((.user.login // "") == $author)
+			| (.body // "") | split("\n")[] | sub("\r$"; "")
+			| select(test("^DISPATCH_CLAIM nonce=[^ ]+ "))
+			| select(test(" runner=" + $author + "( |$)"))
+			| select(test(" session=issue-" + $issue + "( |$)"))
+			| (capture(" ts=(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)( |$)").ts
+				| fromdateiso8601 - $branch_epoch);
+			(if . < 0 then -. else . end) <= $window)
+	' >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# Prove worker provenance for a PR that lacks an origin:* label.
+# Requires a worker branch name, an author with current write access, and
+# either the aidevops worker body marker (GH#37204) or a claim matching the
+# branch (GH#38042). Never infer trust from the marker or branch name alone.
+# Args: $1=repo slug, $2=head ref, $3=author login, $4=PR body
+# Returns: 0 when proven, 1 otherwise
+#######################################
+_pmpc_worker_branch_provenance() {
+	local pr_body="$4"
+	local repo_slug="$1" head_ref="$2" author="$3" permission=""
+	[[ "$head_ref" =~ ^feature/auto-[0-9]{8}-[0-9]{6}-gh[0-9]+$ ]] || return 1
+	[[ "$author" =~ ^[A-Za-z0-9-]+$ ]] || return 1
 	# aidevops:trust-boundary: require current repository write access.
 	permission=$(_pmpc_gh_read api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null) || return 1
-	case "$permission" in admin | maintain | write) return 0 ;; esac
+	case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac
+	[[ "$pr_body" == *"<!-- aidevops:origin:worker -->"* ]] && return 0
+	_pmpc_branch_claim_matches "$repo_slug" "$head_ref" "$author"
+	return $?
+}
+
+# GH#37204/GH#38042: merged worker partial PRs created without an origin label
+# stranded their target in status:in-review. Accept a missing label only for a
+# merged PR with independently verified worker provenance.
+_pmpc_unlabeled_worker_provenance() {
+	local pr_body
+	local repo_slug="$1" pr_number="$2" pr_json="" fields="" author="" head_ref=""
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	fields=$(printf '%s' "$pr_json" | jq -er '
+		select(.merged == true and (.head.ref | type == "string")
+			and (.user.login | type == "string")) | [.user.login, .head.ref] | @tsv
+	' 2>/dev/null) || return 1
+	IFS=$'\t' read -r author head_ref <<<"$fields"
+	pr_body=$(printf '%s' "$pr_json" | jq -r '.body // ""' 2>/dev/null) || return 1
+	_pmpc_worker_branch_provenance "$repo_slug" "$head_ref" "$author" "$pr_body"
+	return $?
+}
+
+#######################################
+# GH#38042: never merge a worker-branch PR whose origin is unproven. A
+# feature/auto-* PR without any origin:* label is reconciled to origin:worker
+# only on marker or claim-matched provenance, then re-evaluated next pass under
+# the worker gates. Unprovable provenance blocks the merge.
+# Args: $1=PR number, $2=repo slug, $3=PR author, $4=labels CSV,
+#       $5=PR JSON (headRefName, body)
+# Returns: 0 to continue gating, 1 to skip this merge
+#######################################
+_pm_gate_unlabeled_worker_branch() {
+	local pr_number="$1" repo_slug="$2" pr_author="$3" labels_str="$4" info_json="$5"
+	local head_ref="" pr_body=""
+	[[ ",${labels_str}," != *",origin:"* ]] || return 0
+	head_ref=$(printf '%s' "$info_json" | jq -r '.headRefName // ""' 2>/dev/null) || head_ref=""
+	[[ "$head_ref" == feature/auto-* ]] || return 0
+	pr_body=$(printf '%s' "$info_json" | jq -r '.body // ""' 2>/dev/null) || pr_body=""
+	# #aidevops:trust-boundary — fail closed when worker origin cannot be proven.
+	if ! _pmpc_worker_branch_provenance "$repo_slug" "$head_ref" "$pr_author" "$pr_body"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — worker branch ${head_ref} has no origin label and no provable worker provenance (GH#38042)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — would restore origin:worker from verified provenance (GH#38042)" >>"$LOGFILE"
+	elif declare -F set_origin_label >/dev/null 2>&1 &&
+		set_origin_label "$pr_number" "$repo_slug" worker --pr >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — restored origin:worker from verified provenance; re-evaluating under worker gates next pass (GH#38042)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:worker reconciliation failed (GH#38042)" >>"$LOGFILE"
+	fi
 	return 1
 }
 
@@ -581,19 +668,387 @@ Restored auto-dispatch on this unassigned available worker issue after verifying
 	return 0
 }
 
-# GH#34432: revisit one bounded page of open issues on the existing
-# per-repo stale-blocked cadence. Persist the next page and pending issue IDs
-# before processing so a killed/slow issue cannot starve the page suffix.
-# Full pages stay due next cycle;
-# the final page resets the cursor and starts the normal cadence interval.
+# GH#38355: a worker draft checkpoint removes auto-dispatch only so that no
+# second branch opens beside the open draft. When that draft is closed without
+# merging, nothing continues it (dispatch-stalled acts on open drafts only) and
+# the issue stayed undispatchable for any origin. Any closer counts: workers
+# often share the maintainer's login, and the removal's only reason is gone.
+_PMPC_CLOSED_CHECKPOINT_KIND="closed-checkpoint-dispatch-recovery"
+
+# Classify the issue for the closed-checkpoint restore.
+# Args: $1=issue JSON (REST)
+# Stdout: "unassigned" (status:available) or "review <login>" (status:in-review,
+#         one assignee); nothing when closed, held, already dispatchable or other
+_pmpc_closed_checkpoint_issue_mode() {
+	local issue_json="$1"
+	printf '%s' "$issue_json" | jq -r '
+		[.labels[].name] as $labels
+		| ([$labels[] | select(test("^status:"))] | join(",")) as $status
+		| if (.state != "open" or .pull_request != null
+			or ($labels | any(test("^((no-)?auto-dispatch|parent-task|hold-for-review|lockdown|persistent|needs-.*)$")))) then empty
+		elif (($status | test("^status:available$")) and .assignees == []) then "unassigned"
+		elif (($status | test("^status:in-review$")) and (.assignees | length) == 1) then "review " + .assignees[0].login
+		else empty end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# The newest trusted ownership event must be this checkpoint's release, with no
+# recovery-circuit hold and no restore already recorded for the PR.
+# Args: $1=comments JSON (pages), $2=PR number
+# Stdout: "<release epoch> <runner login>"; nothing when ineligible
+_pmpc_closed_checkpoint_release() {
+	local comments_json="$1" pr_number="$2"
+	printf '%s' "$comments_json" | jq -r --arg pattern "$_PMPC_EVENT_PATTERN" \
+		--arg marker "kind=${_PMPC_CLOSED_CHECKPOINT_KIND} pr=${pr_number} " "${_PMPC_COMMENTS_JQ_DEFS}"'
+		[comments[] | select(trusted) | .body //= ""] | sort_by(.created_at, .id) as $trusted
+		| ([$trusted[] | select(.body | test($pattern))] | last) as $owner
+		| if any($trusted[]; .body | contains($marker)) then empty
+		elif any($trusted[]; .body | test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop|stale-recovery-tick:escalated")) then empty
+		elif $owner == null then empty
+		else $owner.body | capture("(?m)^CLAIM_RELEASED reason=worker_draft_checkpoint runner=(?<runner>[^ \\r\\n]+)")
+			| "\($owner.created_at | fromdateiso8601) \(.runner)" end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Prove the PR is this issue's checkpoint draft and was closed unmerged after
+# the release: same-repo worker branch for the issue, opened before the release.
+# Args: $1=repo slug, $2=PR number, $3=issue number, $4=release epoch
+# Returns: 0 when proven, 1 when ineligible, 2 when unreadable (transient)
+_pmpc_closed_checkpoint_pr_void() {
+	local repo_slug="$1" pr_number="$2" issue_num="$3" release_epoch="$4" pr_json=""
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number:?}" 2>/dev/null) || return 2
+	printf '%s' "$pr_json" | jq -e --arg slug "$repo_slug" --arg issue "$issue_num" \
+		--argjson release "$release_epoch" '
+		.state == "closed" and .merged == false and .merged_at == null
+		and .head.repo.full_name == $slug
+		and (.head.ref | type) == "string"
+		and (.head.ref | test("(^|[/_-])gh-?" + $issue + "$"))
+		and ((.created_at | fromdateiso8601) <= $release)
+		and ((.closed_at | fromdateiso8601) >= $release)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# GH#37600: re-add only the label that the checkpoint removed. The newest
+# auto-dispatch label event must be a removal in the checkpoint's own window:
+# the escalation removes it moments before posting the release, so a removal
+# more than an hour earlier was a person's (during the run) and is respected,
+# as is a removal after the release or an issue that never had the label.
+# Args: $1=repo slug, $2=issue number, $3=release epoch
+# Returns: 0 when the checkpoint made the last removal, 1 otherwise, 2 when unreadable
+_pmpc_checkpoint_removed_dispatch() {
+	local repo_slug="$1" issue_num="$2" release_epoch="$3" events_json=""
+	events_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/events?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 2
+	printf '%s' "$events_json" | jq -e --argjson release "$release_epoch" '
+		if type != "array" then error("unreadable events")
+		elif (.[0]? | type) == "array" then [.[][]] else . end
+		| [.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name? == "auto-dispatch")]
+		| last
+		| . != null and .event == "unlabeled"
+			and ((.created_at | fromdateiso8601) as $removed | $removed <= $release and $removed >= $release - 3600)
+	' >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#aidevops:trust-boundary -- trusted release comments, the live PR and the label
+# timeline prove the restore; any unreadable or held state means no write.
+# Args: $1=repo slug, $2=issue number, $3=closed checkpoint PR number
+# Returns: 0 when auto-dispatch was restored, 1 when ineligible, 2 on a transient
+#          read or write failure (the checkpoint stays eligible for a later scan)
+_pmpc_restore_closed_checkpoint_dispatch() {
+	local repo_slug="$1" issue_num="$2" pr_number="$3"
+	local issue_json="" mode="" assignee=""
+	local comments_json="" release="" release_epoch="" runner="" body=""
+	local -a transition_args=(--add-label auto-dispatch)
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ &&
+		"$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num:?}" 2>/dev/null) || return 2
+	mode=$(_pmpc_closed_checkpoint_issue_mode "$issue_json") || return 2
+	[[ -n "$mode" ]] || return 1
+	comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 2
+	release=$(_pmpc_closed_checkpoint_release "$comments_json" "$pr_number") || return 2
+	read -r release_epoch runner <<<"$release"
+	[[ "$release_epoch" =~ ^[0-9]+$ && "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
+	if [[ "$mode" == review\ * ]]; then
+		# A runner left assigned in review is released only when it is the checkpoint's runner.
+		assignee="${mode#review }"
+		[[ "$assignee" == "$runner" ]] || return 1
+		transition_args+=(--remove-assignee "$runner")
+	fi
+	local void_rc=0
+	_pmpc_closed_checkpoint_pr_void "$repo_slug" "$pr_number" "$issue_num" "$release_epoch" || void_rc=$?
+	[[ "$void_rc" -eq 0 ]] || return "$void_rc"
+	_pmpc_checkpoint_removed_dispatch "$repo_slug" "$issue_num" "$release_epoch" || void_rc=$?
+	[[ "$void_rc" -eq 0 ]] || return "$void_rc"
+	_pmpc_other_open_pr_owns_issue "$repo_slug" "$issue_num" 0 && return 1
+	set_issue_status "$issue_num" "$repo_slug" available "${transition_args[@]}" >/dev/null 2>&1 || return 2
+	body="<!-- ops:start -->
+<!-- aidevops:ops kind=${_PMPC_CLOSED_CHECKPOINT_KIND} pr=${pr_number} -->
+Draft checkpoint PR #${pr_number} was closed without merging, so it no longer holds this issue. Restored the auto-dispatch label that the checkpoint removed, after verifying no open linked PR, hold or newer owner. The next worker starts from the default branch; it does not resume the closed PR's head.
+<!-- ops:end -->"
+	gh_issue_comment "$issue_num" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
+		printf '[pulse-wrapper] Closed checkpoint recovery: #%s restored after PR #%s but audit write failed\n' "$issue_num" "$pr_number" >>"$LOGFILE"
+		return 0
+	}
+	printf '[pulse-wrapper] Closed checkpoint recovery: #%s regained auto-dispatch after draft PR #%s closed unmerged (GH#38355)\n' "$issue_num" "$pr_number" >>"$LOGFILE"
+	return 0
+}
+
+# Parse one page of the closed-PR listing (GH#38396).
+# Output: first line "<page length> <oldest updated_at epoch>"; then one
+# "<pr> <issue>" row per unmerged worker-branch PR closed at or after the floor.
+# Args: $1=repo slug, $2=floor epoch, $3=page JSON
+# Returns: 0 on success, 1 on an unreadable page
+_pmpc_closed_checkpoint_rows() {
+	local repo_slug="$1" floor="$2" page_json="$3"
+	printf '%s' "$page_json" | jq -r --arg slug "$repo_slug" --argjson floor "$floor" '
+		if type != "array" then error("unreadable PR list") else . end
+		| "\(length) \(map(.updated_at // .closed_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
+		(.[]
+		| select(.merged_at == null and (.closed_at | type) == "string" and (.number | type) == "number")
+		| select(.head.repo.full_name? == $slug)
+		| select((.closed_at | fromdateiso8601) >= $floor)
+		| (.head.ref // "" | capture("^feature/auto-[0-9]{8}-[0-9]{6}-gh(?<issue>[0-9]+)$").issue) as $issue
+		| "\(.number) \($issue)")
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Scan every unmerged worker-branch PR closed since the previous complete scan
+# (within the lookback) once per partial-continuation traversal and offer each
+# linked issue to the restore above (GH#38396). Pages are read newest-updated
+# first and the scan stops when a page's oldest updated_at is below the floor
+# (updated_at >= closed_at), the page is short, the deadline passes, or the page
+# cap is reached. The stamp (start epoch) advances only after the floor was
+# reached, so a deadline, page-cap or unreadable-page stop rescans the gap.
+# Args: $1=repo slug, $2=deadline epoch, $3=traversal cursor "<phase>:<page>:<pending>";
+#       only a fresh traversal ("review:1:") scans, so resumed pages do not repeat it
+# Returns: 0 when scanned or not due, 1 on an unreadable listing
+_pmpc_reconcile_closed_checkpoints() {
+	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" page_json="" rows="" pr="" issue=""
+	local now_epoch="" start_epoch="" floor="" stamp="" stamp_file="" first="" oldest=""
+	local count=""
+	local page=1 reached=0 transient=0 restore_rc=0
+	[[ "$traversal" == "review:1:" ]] || return 0
+	local lookback="${PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS:-604800}"
+	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
+	local per_page="${PULSE_CLOSED_CHECKPOINT_PAGE_SIZE:-100}"
+	[[ "$per_page" =~ ^[1-9][0-9]*$ && "$per_page" -le 100 ]] || per_page=100
+	local max_pages="${PULSE_CLOSED_CHECKPOINT_MAX_PAGES:-10}"
+	[[ "$max_pages" =~ ^[1-9][0-9]{0,2}$ ]] || max_pages=10
+	local stamp_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	stamp_file="${stamp_dir}/${repo_slug//\//__}.closed-scan"
+	start_epoch=$(date +%s) || return 1
+	floor=$((start_epoch - lookback))
+	if [[ -r "$stamp_file" ]]; then
+		read -r stamp <"$stamp_file" || stamp=""
+		# A stamp can only narrow the window to the last complete scan minus a margin.
+		if [[ "$stamp" =~ ^[0-9]{1,10}$ && $((stamp - 3600)) -gt "$floor" ]]; then
+			floor=$((stamp - 3600))
+		fi
+	fi
+	while [[ "$page" -le "$max_pages" ]]; do
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 0
+		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=${per_page}&page=${page}" 2>/dev/null) || return 1
+		rows=$(_pmpc_closed_checkpoint_rows "$repo_slug" "$floor" "$page_json") || return 1
+		first="${rows%%$'\n'*}"
+		read -r count oldest <<<"$first"
+		[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+		while read -r pr issue; do
+			[[ "$pr" =~ ^[0-9]+$ && "$issue" =~ ^[0-9]+$ ]] || continue
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 0
+			restore_rc=0
+			_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || restore_rc=$?
+			# A transient failure keeps the stamp unchanged so the gap is rescanned.
+			[[ "$restore_rc" -ne 2 ]] || transient=1
+		done <<<"$rows"
+		if [[ "$count" -lt "$per_page" || "$oldest" -lt "$floor" ]]; then
+			reached=1
+			break
+		fi
+		page=$((page + 1))
+	done
+	if [[ "$reached" -eq 1 && "$transient" -eq 0 ]]; then
+		mkdir -p "$stamp_dir" 2>/dev/null || return 0
+		printf '%s\n' "$start_epoch" >"${stamp_file}.$$" 2>/dev/null &&
+			mv -f "${stamp_file}.$$" "$stamp_file" 2>/dev/null || rm -f "${stamp_file}.$$" 2>/dev/null
+	fi
+	return 0
+}
+
+# GH#38021: a worker draft checkpoint removes auto-dispatch so that no second
+# branch opens beside the draft. A canonical consolidated spec is a dispatch
+# candidate only while it carries that label (_has_consolidated_label), and the
+# restore above refuses while a PR is open, so the exact-head continuation
+# never started until a person re-added the label.
+# The pair below restores only the removal made by the same worker run. The
+# receipt comes from that run's read taken before the escalation, so a label a
+# person removed earlier is never re-added (GH#37600).
+# Keep the marker pattern in step with _has_consolidated_label.
+_PMPC_SPEC_MARKER_PATTERN='(^|\n)_Supersedes #[0-9]+ (—|-) this issue is the consolidated spec\._(\n|$)'
+_PMPC_SPEC_HOLD_LABELS='no-auto-dispatch parent-task hold-for-review lockdown persistent'
+_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+
+# Classify one issue for the pair below from a single uncached read.
+# Args: $1=repo slug, $2=issue number
+# Stdout: "carries" when an open canonical spec has auto-dispatch; "restorable"
+#         when it has neither the label, an assignee, a hold nor any status
+#         other than status:available; nothing for every other issue.
+# Returns: 0 when the issue was read, 1 when it could not be read
+_pmpc_checkpoint_spec_state() {
+	local repo_slug="$1" issue_num="$2" issue_json=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || return 1
+	printf '%s' "$issue_json" | jq -r --arg pattern "$_PMPC_SPEC_MARKER_PATTERN" \
+		--arg holds "$_PMPC_SPEC_HOLD_LABELS" --arg dispatch auto-dispatch \
+		--arg open open --arg status status: --arg available status:available '
+		[.labels[].name] as $labels
+		| ($holds | split(" ")) as $hold_list
+		| if (.state != $open or .pull_request != null
+			or ($labels | index("consolidated")) == null
+			or ((.body // "") | test($pattern) | not)) then empty
+		elif ($labels | index($dispatch)) != null then "carries"
+		elif (.assignees == []
+			and [$labels[] | select(startswith($status))] == [$available]
+			and ($labels - $hold_list) == $labels
+			and ($labels | any(startswith("needs-")) | not)) then "restorable"
+		else empty end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Call before the checkpoint escalation removes the label.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when the receipt names this issue, 1 otherwise (unreadable included)
+_pmpc_record_checkpoint_spec_dispatch() {
+	local repo_slug="$1" issue_num="$2" state=""
+	local receipt_key="${repo_slug}#${issue_num}"
+	# A repeated escalation in this run reads the label after the first removal;
+	# the earlier proof still stands.
+	[[ "$_PMPC_CHECKPOINT_SPEC_RECEIPT" != "$receipt_key" ]] || return 0
+	_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+	state=$(_pmpc_checkpoint_spec_state "$repo_slug" "$issue_num") || return 1
+	[[ "$state" == carries ]] || return 1
+	_PMPC_CHECKPOINT_SPEC_RECEIPT="$receipt_key"
+	return 0
+}
+
+# A release that cannot be published is replayed later by another process
+# (headless-runtime-release-retry.sh). Its private row carries the receipt
+# across: the recording run reports it with the first function and the replay
+# adopts it with the second. Nothing else may adopt a receipt.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when this process holds the receipt for the issue, 1 otherwise
+_pmpc_holds_checkpoint_spec_receipt() {
+	local repo_slug="$1" issue_num="$2"
+	[[ -n "$_PMPC_CHECKPOINT_SPEC_RECEIPT" &&
+		"$_PMPC_CHECKPOINT_SPEC_RECEIPT" == "${repo_slug}#${issue_num}" ]] || return 1
+	return 0
+}
+
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when the receipt was adopted, 1 for a malformed issue reference
+_pmpc_adopt_checkpoint_spec_receipt() {
+	local repo_slug="$1" issue_num="$2"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ ]] || return 1
+	_PMPC_CHECKPOINT_SPEC_RECEIPT="${repo_slug}#${issue_num}"
+	return 0
+}
+
+#aidevops:trust-boundary -- relabels only on the pre-removal receipt of the run
+# that removed the label; timeline or comment text is never evidence. The
+# receipt is consumed on use.
+# Call after the release projection. Holds added during the run stay in force.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when auto-dispatch was restored; 1 when there was nothing to
+#          restore (no receipt, or the label is already back); 2 when the
+#          receipt was held but the issue was unreadable, held, owned, not
+#          available, or the write failed.
+_pmpc_restore_checkpoint_spec_dispatch() {
+	local repo_slug="$1" issue_num="$2" state=""
+	_pmpc_holds_checkpoint_spec_receipt "$repo_slug" "$issue_num" || {
+		_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+		return 1
+	}
+	_PMPC_CHECKPOINT_SPEC_RECEIPT=""
+	state=$(_pmpc_checkpoint_spec_state "$repo_slug" "$issue_num") || return 2
+	[[ "$state" != carries ]] || return 1
+	[[ "$state" == restorable ]] || return 2
+	set_issue_status "$issue_num" "$repo_slug" available --add-label auto-dispatch >/dev/null 2>&1 || return 2
+	return 0
+}
+
+# GH#38039: list one page of label-filtered revisit candidates.
+# Args: $1=repo slug, $2=phase (review|available), $3=page, $4=page size
+# Stdout: the raw page length on line 1, then one candidate issue number per line
+# Returns: 0 on success, 1 on an unreadable listing
+_pmpc_list_candidates() {
+	local repo_slug="$1" phase="$2" page="$3" cap="$4" labels="status:in-review" page_json="" numbers="" count=""
+	[[ "$phase" != available ]] || labels="status:available,origin:worker"
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&labels=${labels}&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
+	numbers=$(printf '%s' "$page_json" | jq -r --arg phase "$phase" '
+		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
+		else .[] | select(.pull_request == null)
+			| select($phase != "available" or ([(.labels // [])[] | (.name? // .)] | index("auto-dispatch") | not))
+			| .number end
+	' 2>/dev/null) || return 1
+	count=$(printf '%s' "$page_json" | jq 'length') || return 1
+	printf '%s\n' "$count"
+	[[ -z "$numbers" ]] || printf '%s\n' "$numbers"
+	return 0
+}
+
+# Revisit one in-review issue: find its newest merged cross-referenced PR and
+# let the merge-time guard decide. Timeline cross-references carry merged_at;
+# select the newest merged PR, not an older eligible partial hidden by a later
+# closing delivery.
+# Args: $1=repo slug, $2=issue number
+# Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
+_pmpc_revisit_in_review_issue() {
+	local repo_slug="$1" issue_num="$2" timeline="" pr_number=""
+	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
+	pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+		if type != "array" then error("unreadable timeline")
+		elif (.[0]? | type) == "array" then [.[][]] else . end
+		| [ .[] | select(.event == "cross-referenced") | .source.issue
+			| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
+		| sort_by(.pull_request.merged_at, .number) | last
+		| if . == null then empty elif (.number | type) == "number" then .number
+			else error("unreadable PR number") end
+	' 2>/dev/null) || return 1
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	# All current issue/PR/comment metadata is re-read by the merge-time
+	# guard, including open PR ownership, held issues and marker idempotency.
+	_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+	return 0
+}
+
+# GH#34432: revisit one bounded page of candidate issues on the existing
+# per-repo stale-blocked cadence. GH#38039: only label-filtered candidates are
+# listed (status:in-review for the restore path, then status:available
+# origin:worker issues without auto-dispatch for _pmpc_restore_available_dispatch),
+# never every open issue. Persist the next page, pending issue IDs and their
+# phase before processing so a killed/slow issue cannot starve the page suffix.
+# Full pages stay due next cycle; the final available page resets the cursor and
+# starts the normal cadence interval.
+# Cursor: line 1 = next page ("N" in-review, "aN" available), optional
+# "phase=review|available" for the pending issues, then pending issue numbers.
 # Args: $1=repo slug, $2=deadline epoch
 # Returns: 0 at traversal end, 3 when more pages/time are needed, 1 on read failure
 _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
-	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1
+	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" issue_num="" timeline="" pr_number="" now_epoch="" count=0
-	local line="" loaded=0 remaining=""
+	local cursor="" issues_json="" issues="" issue_num="" now_epoch="" count=0
+	local line="" loaded=0 remaining="" phase="review" pending_phase="review" last_page=0 resumed=0
+	local avail_phase="available"
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cap" =~ ^[1-9][0-9]*$ && "$cap" -le 100 ]] || cap=10
 	cursor="${cursor_dir}/${repo_slug//\//__}"
@@ -601,59 +1056,89 @@ _pm_reconcile_partial_continuations() {
 	if [[ -r "$cursor" ]]; then
 		while IFS= read -r line; do
 			if [[ "$loaded" -eq 0 ]]; then
-				page="$line"
+				token="$line"
 				loaded=1
+			elif [[ "$line" =~ ^phase=(review|available)$ ]]; then
+				pending_phase="${line#phase=}"
 			elif [[ "$line" =~ ^[0-9]+$ ]]; then
 				issues="${issues}${issues:+$'\n'}${line}"
 			fi
 		done <"$cursor"
 	fi
+	if [[ "$token" == a* ]]; then
+		phase="$avail_phase"
+		page="${token#a}"
+	else
+		page="$token"
+	fi
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
-	if [[ -z "$issues" ]]; then
-		issues_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues?state=open&sort=created&direction=asc&per_page=${cap}&page=${page}" 2>/dev/null) || return 1
-		issues=$(printf '%s' "$issues_json" | jq -r '
-		if type != "array" or any(.[]; (.number | type) != "number") then error("unreadable issues")
-		else .[] | select(.pull_request == null) | .number end
-		' 2>/dev/null) || return 1
-		count=$(printf '%s' "$issues_json" | jq 'length') || return 1
-		[[ "$count" -lt "$cap" ]] || next_page=$((page + 1))
-	else
-		next_page="$page"
-	fi
-	remaining="$issues"
-	printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
-	while IFS= read -r issue_num; do
-		[[ -n "$issue_num" ]] || continue
-		now_epoch=$(date +%s) || return 1
-		[[ "$now_epoch" -lt "$deadline" ]] || return 3
-		# Advance past only the current issue before its potentially slow API
-		# reads. A deadline between issues retains every unstarted issue.
-		if [[ "$remaining" == *$'\n'* ]]; then
-			remaining="${remaining#*$'\n'}"
+	_pmpc_reconcile_closed_checkpoints "$repo_slug" "$deadline" "${phase}:${page}:${issues:+pending}" || true
+	while true; do
+		if [[ -z "$issues" ]]; then
+			issues_json=$(_pmpc_list_candidates "$repo_slug" "$phase" "$page" "$cap") || return 1
+			count="${issues_json%%$'\n'*}"
+			issues="${issues_json#*$'\n'}"
+			[[ "$issues" != "$issues_json" ]] || issues=""
+			[[ "$count" =~ ^[0-9]+$ ]] || return 1
+			last_page=1
+			next_page="$page"
+			if [[ "$count" -ge "$cap" ]]; then
+				next_page=$((page + 1))
+				last_page=0
+			fi
+			pending_phase="$phase"
 		else
-			remaining=""
+			# Resume the pending suffix; the token already names the next page.
+			next_page="$page"
+			last_page=0
+			phase="$pending_phase"
+			resumed=1
 		fi
-		printf '%s\n%s\n' "$next_page" "$remaining" >"$cursor" || return 1
-		_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
-		# Timeline cross-references carry merged_at. Select the newest merged
-		# PR, not an older eligible partial hidden by a later closing delivery.
-		timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-		pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
-			if type != "array" then error("unreadable timeline")
-			elif (.[0]? | type) == "array" then [.[][]] else . end
-			| [ .[] | select(.event == "cross-referenced") | .source.issue
-				| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
-			| sort_by(.pull_request.merged_at, .number) | last
-			| if . == null then empty elif (.number | type) == "number" then .number
-				else error("unreadable PR number") end
-		' 2>/dev/null) || return 1
-		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-		# All current issue/PR/comment metadata is re-read by the merge-time
-		# guard, including open PR ownership, held issues and marker idempotency.
-		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
-	done <<<"$issues"
-	[[ "$next_page" -eq 1 ]] || return 3
+		# Persist the next page, the available-phase start or a reset; a resumed suffix keeps its token.
+		if [[ "$resumed" -eq 1 ]]; then
+			resumed=0
+		elif [[ "$last_page" -eq 1 && "$phase" == review ]]; then
+			token="a1"
+		elif [[ "$last_page" -eq 1 ]]; then
+			token="1"
+		elif [[ "$phase" == available ]]; then
+			token="a${next_page}"
+		else
+			token="${next_page}"
+		fi
+		remaining="$issues"
+		printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+		while IFS= read -r issue_num; do
+			[[ -n "$issue_num" ]] || continue
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			# Advance past only the current issue before its potentially slow API
+			# reads. A deadline between issues retains every unstarted issue.
+			if [[ "$remaining" == *$'\n'* ]]; then
+				remaining="${remaining#*$'\n'}"
+			else
+				remaining=""
+			fi
+			printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+			if [[ "$pending_phase" == available ]]; then
+				_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
+				continue
+			fi
+			_pmpc_revisit_in_review_issue "$repo_slug" "$issue_num" || return 1
+		done <<<"$issues"
+		issues=""
+		if [[ "$token" == a1 && "$phase" == review ]]; then
+			phase="$avail_phase"
+			pending_phase="$avail_phase"
+			page=1
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			continue
+		fi
+		break
+	done
+	[[ "$token" == "1" ]] || return 3
 	return 0
 }

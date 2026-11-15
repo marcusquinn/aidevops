@@ -48,6 +48,7 @@ import {
 } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { createCompactionAutoContinueGuard } from "./compaction-lifecycle.mjs";
+import { createCompactionLoopGuard } from "./compaction-loop-guard.mjs";
 import { createCompactionInputReplay } from "./compaction-pinned-input.mjs";
 import { applyCompactionEffort } from "./compaction-effort.mjs";
 import { createCompactionResidencyWarning } from "./compaction-routing.mjs";
@@ -92,7 +93,7 @@ import {
   isRemoteInteractiveConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
-import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { assertLocalOnlyEgress, formatLocalOnlyBinding, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
@@ -276,7 +277,7 @@ function createConversationHooks({client, conversation, directory, localOnlyPoli
     "tool.definition": adaptToolDefinition,
     "chat.message": async () => 0,
     "chat.params": async (input, output) => {
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       return applyConversationRootVariant(
         input,
         output,
@@ -358,6 +359,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // GH#34125 #aidevops:trust-boundary: bind local-only policy from the launch
   // environment before any hook can run; later env mutation cannot change it.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
+  // GH#38424: content-free binding state, so operators can confirm this process is bound.
+  console.error(formatLocalOnlyBinding(localOnlyPolicy));
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -546,6 +549,10 @@ export async function AidevopsPlugin({ directory, client }) {
   const permissionBroker = createPermissionBroker({ client, isHeadless });
   const playwriterSelectionGuard = createPlaywriterSelectionGuard({ client, isHeadless, log: qualityLog });
   const compactionContinuation = createCompactionAutoContinueGuard(client, { qualityLog });
+  // GH#37997: stop and rerun compaction summaries that loop on repeated text;
+  // a rerun continues under the same autocontinue policy as OpenCode's own.
+  // Its hooks are fail-open internally.
+  const compactionLoopGuard = createCompactionLoopGuard({ client, isHeadless, qualityLog, continuation: compactionContinuation });
   // GH#35186: replay verbatim user input and images hidden by compaction.
   const compactionInputReplay = createCompactionInputReplay(client, { qualityLog });
   // GH#35893: flag a local session compacted on a non-local provider.
@@ -626,6 +633,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // so corrections are applied to the final message list. Fail-open — errors
   // in any step must not block the message.
   const messagesTransformHook = async (input, output) => {
+    // GH#37997: first, so replay and later hooks see the repaired history.
+    compactionLoopGuard.transformMessages(input, output);
     await compactionInputReplay.inject(input, output);
     await annotateTurnTimesSafely(input, output, { client, isHeadless }, qualityLog);
     // GH#35529: attach receipts to interrupted Task results (fail-open).
@@ -641,8 +650,10 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // Observe completed text for TTSR violations and continuation steering.
   // GH#34123: neither hook modifies the user-visible text; model corrections
-  // travel through messagesTransformHook as synthetic messages.
+  // travel through messagesTransformHook as synthetic messages. The only
+  // rewrite is GH#37997: repeated runs in a compaction summary are collapsed.
   const completionTextHook = async (input, output) => {
+    compactionLoopGuard.completeText(input, output);
     await textCompleteHook(input, output);
     continuationGuard.completeText(input, output);
   };
@@ -747,11 +758,13 @@ export async function AidevopsPlugin({ directory, client }) {
     "chat.params": async (input, output) => {
       // GH#34125: first, so a bound session never reaches the provider stream
       // (parent turns, subagents, compaction and resumed sessions alike).
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       // Before remember(): compare against the parent's model, not this request's.
       compactionResidencyWarning(input, sessionModels.resolve(sessionId));
+      // GH#37997: remember the compaction's parent agent/model/variant for a rerun.
+      compactionLoopGuard.chatParams(input);
       sessionModels.remember(sessionId, modelId);
       await subagentEffortHooks.chatParams(input, output);
       const applied = await applyConversationRootVariant(
@@ -821,6 +834,7 @@ export async function AidevopsPlugin({ directory, client }) {
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),
         Promise.resolve(subagentEffortHooks.handleEvent(input)),
         compactionContinuation.handleEvent(input),
+        Promise.resolve(compactionLoopGuard.handleEvent(input)),
         Promise.resolve(cancellationReceipt.handleEvent(input)),
         Promise.resolve(nativeFocusGuard.handleEvent(input)),
         Promise.resolve(boundedOperationManager.handleEvent(input)),

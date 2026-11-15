@@ -21,6 +21,14 @@
 # Holds carrying only another runner's observation are queued with intake
 # remote_observation: public evidence only, because local excerpts are named
 # by issue number alone and may belong to another repository.
+# GH#37978: pending also queues open issues whose only hold is a bare
+# status:blocked with no open dependency and no terminal-blocker record
+# (intake unclassified_hold), so the supervisor records a reason, releases
+# the issue or names the one human input. The helper itself only queues.
+# GH#38311: pending also queues hold-for-review issues this runner's login
+# answered with a plain reply (intake answered_hold) or held with no stated
+# reason (intake unexplained_hold); a maintainer reply newer than a recorded
+# human_decision ends its suppression. See terminal-blocker-recovery-holds.sh.
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -29,11 +37,13 @@
 # "Terminal-blocker recovery".
 #
 # Usage:
-#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote|remote_observation]
+#   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote|remote_observation|unclassified_hold]
 #   terminal-blocker-recovery-helper.sh seed [--force]
 #   terminal-blocker-recovery-helper.sh pending [--count]
-#   terminal-blocker-recovery-helper.sh rearm   # discovery + queued holds; no LLM work or seed
+#   terminal-blocker-recovery-helper.sh rearm   # discovery + queued holds; no LLM work, seed, unclassified or holds stage
 #   terminal-blocker-recovery-helper.sh discover   # discovery stage only
+#   terminal-blocker-recovery-helper.sh unclassified   # unclassified-hold stage only
+#   terminal-blocker-recovery-helper.sh holds   # hold-for-review reply/reason stage only
 #   terminal-blocker-recovery-helper.sh record <owner/repo> <issue>   # JSON on stdin
 #
 # Env:
@@ -47,6 +57,16 @@
 #                                 the budget so the queue pass keeps its share)
 #   BLOCKER_RECOVERY_DISCOVERY_OVERLAP seconds re-searched before the last
 #                                 complete discovery, for search-index lag (default 900)
+#   BLOCKER_RECOVERY_UNCLASSIFIED_INTERVAL seconds between complete
+#                                 unclassified-hold listings per repo (default 21600)
+#   BLOCKER_RECOVERY_UNCLASSIFIED_MIN_AGE seconds an issue must be unchanged
+#                                 before it is queued as unclassified (default 86400)
+#   BLOCKER_RECOVERY_UNCLASSIFIED_MAX new unclassified entries per pass (default 10);
+#                                 the stage shares the discovery cap
+#   BLOCKER_RECOVERY_HOLD_INTERVAL seconds between complete hold listings per repo (default 3600)
+#   BLOCKER_RECOVERY_HOLD_EXPLAIN_AGE seconds a hold may go unexplained before
+#                                 it is queued as unexplained_hold (default 86400)
+#   BLOCKER_RECOVERY_HOLD_MAX     held issues read per pass (default 10)
 # Incomplete observations return 2 and a diagnostic on stderr; stdout remains
 # JSONL (or a partial count). Retry resumes after the last attempted entry.
 # =============================================================================
@@ -68,8 +88,27 @@ TBR_BUDGET_SECONDS="${BLOCKER_RECOVERY_BUDGET_SECONDS:-45}"
 TBR_STAGE_SECONDS="${BLOCKER_RECOVERY_STAGE_SECONDS:-8}"
 TBR_DISCOVERY_SECONDS="${BLOCKER_RECOVERY_DISCOVERY_SECONDS:-15}"
 TBR_DISCOVERY_OVERLAP="${BLOCKER_RECOVERY_DISCOVERY_OVERLAP:-900}"
+TBR_UNCLASSIFIED_INTERVAL="${BLOCKER_RECOVERY_UNCLASSIFIED_INTERVAL:-21600}"
+TBR_UNCLASSIFIED_MIN_AGE="${BLOCKER_RECOVERY_UNCLASSIFIED_MIN_AGE:-86400}"
+TBR_UNCLASSIFIED_MAX="${BLOCKER_RECOVERY_UNCLASSIFIED_MAX:-10}"
+# Labels that stop dispatch by themselves: their reason belongs to the label,
+# so neither re-arm projection nor unclassified intake touches such an issue.
+# Input: array of label names. #aidevops:trust-boundary
+# shellcheck disable=SC2016 # jq variables are bound by callers.
+_TBR_OTHER_HOLDS_JQ='def other_holds($blocked): [.[] | select(. == "needs-maintainer-permissions" or
+	. == "hold-for-review" or . == "no-auto-dispatch" or . == "parent-task" or
+	. == "needs-maintainer-review" or
+	(startswith("status:") and . != $blocked and . != "status:available"))];'
+# GH#38360: a companion that already names a human or dependency owner makes a
+# hold classified; only bare or needs-ai-recovery holds enter unclassified intake.
+_TBR_CLASSIFIED_COMPANION_JQ='def classified_companion: any(.[]; . == "needs-maintainer-input" or
+	. == "needs-credentials" or . == "needs-dependency");'
+# Shape predicates for listing/comment validation.
+_TBR_SHAPE_JQ='def arr: type == ([] | type); def bool: type == (true | type);'
 # Evaluated-issue memory older than this is pruned after a complete pass.
 TBR_DISCOVERY_RETENTION_DAYS=30
+# shellcheck source=terminal-blocker-recovery-holds.sh
+source "${_TBR_SCRIPT_DIR}/terminal-blocker-recovery-holds.sh"
 
 _tbr_start_budget() {
 	[[ "$TBR_BUDGET_SECONDS" =~ ^[1-9][0-9]*$ && "$TBR_STAGE_SECONDS" =~ ^[1-9][0-9]*$ ]] || return 2
@@ -86,8 +125,13 @@ _tbr_run_stage() {
 	local stage="$1" action="$2"
 	shift 2
 	local remaining=$((TBR_DEADLINE - SECONDS)) rc=0
-	if [[ "$stage" != seed && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
+	# Seed, holds and unclassified stages run after the queue pass, in its reserve.
+	if [[ "$stage" != seed && "$stage" != unclassified && "$stage" != holds && -n "${TBR_QUEUE_DEADLINE:-}" ]]; then
 		remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
+	fi
+	# GH#38232: the seed stops early enough to leave unclassified its share.
+	if [[ "$stage" == seed && -n "${TBR_SEED_DEADLINE:-}" ]]; then
+		remaining=$((TBR_SEED_DEADLINE - SECONDS))
 	fi
 	[[ "$remaining" -gt 0 ]] || {
 		printf 'blocker-recovery: incomplete stage=%s reason=budget_exhausted\n' "$stage" >&2
@@ -98,9 +142,10 @@ _tbr_run_stage() {
 	# Keep the overall deadline and saved cursor, but let an entry finish within
 	# the queue's share; discovery still has its separate reserved stage cap.
 	local cap="$TBR_STAGE_SECONDS"
-	if [[ "$stage" == discovery ]]; then
+	if [[ "$stage" == discovery || "$stage" == unclassified || "$stage" == holds ]]; then
 		# GH#36114: never more than half the budget, so the queue pass can
-		# apply what discovery finds in the same run.
+		# apply what discovery finds in the same run. GH#37978: the
+		# unclassified listing shares this cap and resumes from a saved list.
 		cap="$TBR_DISCOVERY_SECONDS"
 		[[ "$cap" -le $((TBR_BUDGET_SECONDS / 2)) ]] || cap=$((TBR_BUDGET_SECONDS / 2))
 		[[ "$cap" -ge 1 ]] || cap=1
@@ -114,6 +159,11 @@ _tbr_run_stage() {
 		export AIDEVOPS_WORKER_FAILURE_EXCERPT_DIR="$TBR_EXCERPT_DIR"
 		export BLOCKER_RECOVERY_SEED_INTERVAL="$TBR_SEED_INTERVAL" BLOCKER_RECOVERY_DECISION_TTL="$TBR_DECISION_TTL"
 		export BLOCKER_RECOVERY_DISCOVERY_OVERLAP="$TBR_DISCOVERY_OVERLAP"
+		export BLOCKER_RECOVERY_UNCLASSIFIED_INTERVAL="$TBR_UNCLASSIFIED_INTERVAL"
+		export BLOCKER_RECOVERY_UNCLASSIFIED_MIN_AGE="$TBR_UNCLASSIFIED_MIN_AGE"
+		export BLOCKER_RECOVERY_UNCLASSIFIED_MAX="$TBR_UNCLASSIFIED_MAX"
+		export BLOCKER_RECOVERY_HOLD_INTERVAL="$TBR_HOLD_INTERVAL" BLOCKER_RECOVERY_HOLD_EXPLAIN_AGE="$TBR_HOLD_EXPLAIN_AGE"
+		export BLOCKER_RECOVERY_HOLD_MAX="$TBR_HOLD_MAX"
 		timeout_sec "$remaining" bash "${_TBR_SCRIPT_DIR}/terminal-blocker-recovery-helper.sh" _stage "$action" "$@"
 	) || rc=$?
 	case "$rc" in
@@ -135,6 +185,18 @@ _tbr_rotate() {
 	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
 		[inputs | select(length > 0)] | unique |
 		(map(select(. > $cursor)) + map(select(. <= $cursor)))[]' || return 1
+	return 0
+}
+
+# GH#38232: resume AT the cursor. The seed repo cursor names the repo that was
+# interrupted; exclusive rotation sends it to the back, where faster repos use
+# the stage cap first and it never completes. Per-item cursors (seed issues,
+# discovery) keep _tbr_rotate so one stalled item cannot block the rest.
+_tbr_rotate_inclusive() {
+	local lines="$1" cursor="$2"
+	printf '%s\n' "$lines" | jq -Rnr --arg cursor "$cursor" '
+		[inputs | select(length > 0)] | unique |
+		(map(select(. >= $cursor)) + map(select(. < $cursor)))[]' || return 1
 	return 0
 }
 
@@ -222,18 +284,29 @@ tbr_enqueue() {
 	# only under repo-delegated recovery policy; its evidence is public-only.
 	# GH#36114: `remote_observation` marks another runner's held observation;
 	# also public-only, but not tied to repo policy.
+	# GH#37978: `unclassified_hold` marks a bare status:blocked hold with no
+	# recorded reason; public evidence only, never released by this helper.
 	local intake="${4:-local}"
+	# GH#38311: optional extra fields; only reply_comment_id is kept.
+	local extra="${5:-}"
+	[[ -n "$extra" ]] || extra='{}'
 	_tbr_valid_ref "$repo" "$issue" || return 1
 	_tbr_registered_repo "$repo" || return $?
 	[[ "$reason" =~ ^[a-z_]+$ ]] || reason="unknown"
-	[[ "$intake" == policy_remote || "$intake" == remote_observation ]] || intake="local"
+	# GH#38311: answered_hold / unexplained_hold mark hold-for-review issues;
+	# public evidence only, and this helper never removes the hold.
+	case "$intake" in
+	policy_remote | remote_observation | unclassified_hold | answered_hold | unexplained_hold) ;;
+	*) intake="local" ;;
+	esac
 	_tbr_init_dirs || return 1
 	local file="" tmp=""
 	file="${TBR_ROOT}/queue/$(_tbr_key "$repo" "$issue").json"
 	tmp="${file}.tmp.$$"
 	jq -nc --arg repo "$repo" --argjson issue "$issue" --arg reason "$reason" \
-		--arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg intake "$intake" \
-		'{repo:$repo, issue:$issue, reason:$reason, opened_at:$opened_at, intake:$intake}' >"$tmp" || {
+		--arg opened_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg intake "$intake" --argjson extra "$extra" \
+		'{repo:$repo, issue:$issue, reason:$reason, opened_at:$opened_at, intake:$intake}
+		+ ($extra | if type == "object" then {reply_comment_id} | with_entries(select(.value | type == "number")) else {} end)' >"$tmp" || {
 		rm -f "$tmp"
 		return 1
 	}
@@ -258,10 +331,20 @@ tbr_seed() {
 		return 0
 	fi
 	local self="" slug="" issue="" policy_enabled="" candidates="" incomplete=0 policy_rc=0
-	local repos="" repo_cursor="" issue_cursor="" cursor_name=""
+	local repos="" repo_cursor="" issue_cursor="" cursor_name="" retried="" first=1
 	repos=$(_tbr_pulse_repos) || return 2
 	[[ ! -f "${TBR_ROOT}/seed_repo_cursor" ]] || read -r repo_cursor <"${TBR_ROOT}/seed_repo_cursor" || true
-	repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	[[ ! -f "${TBR_ROOT}/seed_repo_retry" ]] || read -r retried <"${TBR_ROOT}/seed_repo_retry" || true
+	# GH#38232: start at the interrupted repo so it gets the stage cap first.
+	# If it already started first last run and was interrupted again, let
+	# the other repos run before it this time; per-repo issue cursors keep
+	# its progress either way.
+	if [[ -n "$repo_cursor" && "$retried" == "$repo_cursor" ]]; then
+		rm -f "${TBR_ROOT}/seed_repo_retry"
+		repos=$(_tbr_rotate "$repos" "$repo_cursor") || return 2
+	else
+		repos=$(_tbr_rotate_inclusive "$repos" "$repo_cursor") || return 2
+	fi
 	printf 'blocker-recovery: checking stage=seed_identity\n' >&2
 	self=$(_tbr_self_login) || return 1
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -272,6 +355,10 @@ tbr_seed() {
 			incomplete=1
 			continue
 		}
+		if [[ "$first" -eq 1 && -n "$repo_cursor" && "$slug" == "$repo_cursor" ]]; then
+			_tbr_save_cursor seed_repo_retry "$slug" || return 2
+		fi
+		first=0
 		_tbr_save_cursor seed_repo_cursor "$slug" || return 2
 		printf 'blocker-recovery: checking stage=seed_policy repo=%s\n' "$slug" >&2
 		policy_enabled=false
@@ -296,7 +383,7 @@ tbr_seed() {
 		rm -f "${TBR_ROOT}/${cursor_name}"
 	done <<<"$repos"
 	[[ "$incomplete" -eq 0 ]] || return 2
-	rm -f "${TBR_ROOT}/seed_repo_cursor"
+	rm -f "${TBR_ROOT}/seed_repo_cursor" "${TBR_ROOT}/seed_repo_retry"
 	printf '%s\n' "$now" >"$stamp"
 	return 0
 }
@@ -459,6 +546,192 @@ tbr_discover() {
 	return 0
 }
 
+#######################################
+# GH#37978: queue open issues whose only dispatch stop is a bare
+# status:blocked: no other hold label, no open dependency, no terminal-blocker
+# record and no change for TBR_UNCLASSIFIED_MIN_AGE. Neither the dependency
+# sweep nor the phrase discovery above can see them. Each pulse repo is listed
+# once per TBR_UNCLASSIFIED_INTERVAL with one paginated GraphQL query; the
+# listing is saved, so a timed-out or capped pass resumes after its cursor
+# without listing again. At most TBR_UNCLASSIFIED_MAX new entries per pass.
+# A failed read is never absence: that repo stays unstamped. Each evaluated
+# issue is remembered with its updated_at (separate from discovered/), so a
+# retired entry is not queued again until the issue changes.
+# #aidevops:trust-boundary — this stage only queues evidence. It never
+# releases, labels or comments: missing evidence is not a reason to release
+# (GH#35540, GH#35569); the supervisor decides after reading the issue.
+#######################################
+_TBR_UNCLASSIFIED_QUEUED=0
+tbr_discover_unclassified() {
+	_tbr_init_dirs || return 1
+	local dir="${TBR_ROOT}/unclassified" memo="${TBR_ROOT}/unclassified-evaluated"
+	mkdir -p "$dir" "$memo" || return 1
+	[[ "$TBR_UNCLASSIFIED_INTERVAL" =~ ^[0-9]+$ && "$TBR_UNCLASSIFIED_MIN_AGE" =~ ^[0-9]+$ ]] || return 2
+	[[ "$TBR_UNCLASSIFIED_MAX" =~ ^[1-9][0-9]*$ ]] || return 2
+	local repos="" slug="" rkey="" last=0 now="" incomplete=0 rc=0
+	now=$(date +%s)
+	repos=$(_tbr_pulse_repos) || return 2
+	_TBR_UNCLASSIFIED_QUEUED=0
+	# shellcheck source=terminal-blocker-circuit.sh
+	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		_tbr_valid_ref "$slug" 1 || {
+			incomplete=1
+			continue
+		}
+		rkey="${slug//\//--}"
+		last=0
+		[[ ! -f "${dir}/${rkey}.epoch" ]] || read -r last <"${dir}/${rkey}.epoch" || true
+		[[ "$last" =~ ^[0-9]+$ ]] || last=0
+		[[ $((now - last)) -ge "$TBR_UNCLASSIFIED_INTERVAL" ]] || continue
+		rc=0
+		_tbr_unclassified_repo "$slug" "$dir" "$memo" "$now" || rc=$?
+		# Per-pass cap reached: stop; the next pass resumes this repo.
+		[[ "$rc" -ne 3 ]] || return 0
+		[[ "$rc" -eq 0 ]] || incomplete=1
+	done <<<"$repos"
+	[[ "$incomplete" -eq 0 ]] || return 2
+	find "$memo" -type f -mtime +"$TBR_DISCOVERY_RETENTION_DAYS" -delete 2>/dev/null || true
+	return 0
+}
+
+# One repo of the unclassified stage. Returns 0 when complete (stamped),
+# 2 incomplete, 3 when the per-pass cap stopped it (list and cursor kept).
+_tbr_unclassified_repo() {
+	local slug="$1" dir="$2" memo="$3" now="$4"
+	local cursor=0 rkey="${slug//\//--}" list="" listing="" number="" listed_at="" incomplete=0 rc=0
+	list="${dir}/${rkey}.list"
+	if [[ ! -f "$list" ]]; then
+		printf 'blocker-recovery: checking stage=unclassified_list repo=%s\n' "$slug" >&2
+		listing=$(_tbr_unclassified_listing "$slug" "$((now - TBR_UNCLASSIFIED_MIN_AGE))") || return 2
+		rm -f "${dir}/${rkey}.cursor"
+		_tbr_save_cursor "unclassified/${rkey}.list" "$listing" || return 2
+	fi
+	[[ ! -f "${dir}/${rkey}.cursor" ]] || read -r cursor <"${dir}/${rkey}.cursor" || true
+	[[ "$cursor" =~ ^[0-9]+$ ]] || cursor=0
+	while IFS=$'\t' read -r number listed_at; do
+		[[ "$number" =~ ^[1-9][0-9]*$ && "$number" -gt "$cursor" ]] || continue
+		[[ "$_TBR_UNCLASSIFIED_QUEUED" -lt "$TBR_UNCLASSIFIED_MAX" ]] || return 3
+		_tbr_save_cursor "unclassified/${rkey}.cursor" "$number" || return 2
+		rc=0
+		_tbr_unclassified_intake "$slug" "$number" "$listed_at" "$memo" "$now" || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
+	done <"$list"
+	rm -f "$list" "${dir}/${rkey}.cursor"
+	[[ "$incomplete" -eq 0 ]] || return 2
+	_tbr_save_cursor "unclassified/${rkey}.epoch" "$now" || return 2
+	return 0
+}
+
+# Paginated listing of open status:blocked issues that pass every listing
+# filter: complete labels with no other hold, a complete native blockedBy set
+# with no open blocker, and updatedAt at or before the cutoff epoch. Prints
+# "number<TAB>updatedAt" sorted by number. Any read or shape failure fails
+# (return 2) and prints nothing: an unreadable listing is never absence.
+_tbr_unclassified_listing() {
+	local repo="$1" cutoff="$2"
+	local owner="${repo%%/*}" name="${repo#*/}" pages="" blocked=status:blocked
+	[[ "$cutoff" =~ ^-?[0-9]+$ ]] || return 2
+	# One label in the filter: a GraphQL labels list matches any entry.
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by GitHub.
+	pages=$(gh api graphql --paginate --slurp -f owner="$owner" -f name="$name" -f label="$blocked" \
+		-f query='query($owner:String!,$name:String!,$label:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(states:OPEN,labels:[$label],first:100,after:$endCursor){nodes{number updatedAt labels(first:50){nodes{name} pageInfo{hasNextPage}} blockedBy(first:20){nodes{state} pageInfo{hasNextPage}}} pageInfo{hasNextPage endCursor}}}}' \
+		2>/dev/null) || return 2
+	# shellcheck disable=SC2016 # jq variables are supplied via --arg/--argjson
+	printf '%s' "$pages" | jq -r --argjson cutoff "$cutoff" --arg blocked "$blocked" "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}${_TBR_CLASSIFIED_COMPANION_JQ}"'
+		if arr and length > 0
+			and all(.[]; (.errors // [] | length) == 0
+				and (.data.repository.issues.nodes | arr)
+				and (.data.repository.issues.pageInfo.hasNextPage | bool))
+			and .[-1].data.repository.issues.pageInfo.hasNextPage == false
+		then [.[] | .data.repository.issues.nodes[]] else error("invalid listing") end
+		| if all(.[]; (.number | type) == "number" and (.updatedAt | type) == "string"
+			and (.labels.nodes | arr) and (.labels.pageInfo.hasNextPage | bool)
+			and (.blockedBy.nodes | arr) and (.blockedBy.pageInfo.hasNextPage | bool))
+		then . else error("invalid node") end
+		| sort_by(.number)[]
+		| select(.labels.pageInfo.hasNextPage == false)
+		| select(.labels.nodes | map(.name) | (index($blocked) != null) and (other_holds($blocked) | length == 0)
+			and (classified_companion | not))
+		| select(.blockedBy.pageInfo.hasNextPage == false and all(.blockedBy.nodes[]; .state == "CLOSED"))
+		| select((.updatedAt | fromdateiso8601) <= $cutoff)
+		| "\(.number)\t\(.updatedAt)"
+	' 2>/dev/null || return 2
+	return 0
+}
+
+# 0 when status:blocked is the issue's only dispatch stop, 1 otherwise,
+# 2 when the labels are unreadable. #aidevops:trust-boundary
+_tbr_unclassified_labels_ok() {
+	local issue_json="$1" rc=0
+	# shellcheck disable=SC2016 # jq variables are supplied via --arg
+	jq -e --arg blocked status:blocked "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}${_TBR_CLASSIFIED_COMPANION_JQ}"'
+		(.labels | if arr then map(.name) else error("labels") end)
+		| (index($blocked) != null) and (other_holds($blocked) | length == 0)
+			and (classified_companion | not)
+	' <<<"$issue_json" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -le 1 ]] || return 2
+	return "$rc"
+}
+
+# 0 when any comment, from any author, carries a terminal-blocker observation,
+# circuit, legacy blocked release or "Terminal blocker" line: normal intake
+# owns that issue. 1 when none, 2 when the comments are unreadable.
+_tbr_has_blocker_record() {
+	local comments="$1" rc=0
+	printf '%s' "$comments" | jq -e "${_TBR_SHAPE_JQ}"'
+		if arr | not then error("comments") else
+		any(flatten[]; (.body // "") | test("aidevops:terminal-blocker-(observation|circuit)|TERMINAL_BLOCKER_CIRCUIT|CLAIM_RELEASED reason=blocked|Terminal blocker: reason=")) end
+	' >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -le 1 ]] || return 2
+	return "$rc"
+}
+
+# Evaluate one listed issue with fresh reads and queue it when still eligible.
+# Returns 0 when queued or ineligible, 2 when evidence could not be read or the
+# entry not written (the issue is evaluated again on a later pass).
+_tbr_unclassified_intake() {
+	local slug="$1" issue="$2" listed_at="$3" memo="$4" now="$5"
+	local key="" seen="" issue_json="" updated="" updated_epoch="" comments="" rc=0 memo_name=""
+	key=$(_tbr_key "$slug" "$issue")
+	memo_name="${memo##*/}/${key}"
+	# Already queued: the queue pass owns it.
+	[[ ! -f "${TBR_ROOT}/queue/${key}.json" ]] || return 0
+	# Evaluated at this listing's updatedAt: skip without any read.
+	[[ ! -f "${memo}/${key}" ]] || read -r seen <"${memo}/${key}" || true
+	[[ -z "$seen" || "$seen" != "$listed_at" ]] || return 0
+	printf 'blocker-recovery: checking stage=unclassified_issue repo=%s issue=%s\n' "$slug" "$issue" >&2
+	issue_json=$(terminal_blocker_fetch_issue "$slug" "$issue") || return 2
+	[[ "$(jq -r '.state // ""' <<<"$issue_json")" == open ]] || return 0
+	updated=$(jq -r '.updated_at // ""' <<<"$issue_json")
+	updated_epoch=$(jq -nr --arg t "$updated" '$t | fromdateiso8601' 2>/dev/null) || return 2
+	[[ -z "$seen" || "$seen" != "$updated" ]] || return 0
+	# Changed since the listing: not unchanged for the minimum age yet.
+	[[ "$updated_epoch" -le $((now - TBR_UNCLASSIFIED_MIN_AGE)) ]] || return 0
+	_tbr_unclassified_labels_ok "$issue_json" || rc=$?
+	[[ "$rc" -lt 2 ]] || return 2
+	# Another hold label owns it, or a terminal-blocker record hands it to
+	# normal intake: remember it until the issue changes.
+	if [[ "$rc" -eq 0 ]]; then
+		comments=$(terminal_blocker_fetch_comments "$slug" "$issue") || return 2
+		_tbr_has_blocker_record "$comments" || rc=$?
+		[[ "$rc" -ne 2 ]] || return 2
+		rc=$((1 - rc))
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		_tbr_save_cursor "$memo_name" "$updated" || return 2
+		return 0
+	fi
+	# An open or unknown text dependency holds it; no memo, so it is evaluated
+	# again once the dependency closes (that need not touch this issue).
+	_tbr_dependency_unresolved "$slug" "$issue" "$issue_json" unclassified unclassified && return 0
+	tbr_enqueue "$slug" "$issue" unknown unclassified_hold || return 2
+	_tbr_save_cursor "$memo_name" "$updated" || return 2
+	_TBR_UNCLASSIFIED_QUEUED=$((_TBR_UNCLASSIFIED_QUEUED + 1))
+	return 0
+}
+
 # Print the queue reason when this runner owns recovery for the issue: a
 # circuit it opened, or (GH#34846) its newest observation of a class that
 # re-arms on a revision (or, GH#35095, target_code_blocker). Circuits seed only
@@ -555,15 +828,22 @@ _tbr_policy_enabled() {
 	return 0
 }
 
+# Optional $2: comments already read for this entry. GH#38311: a maintainer
+# reply newer than a recorded human_decision ends its suppression, so the
+# supervisor re-assesses on its next pass instead of after the TTL.
 _tbr_decision_active() {
-	local key="$1"
+	local key="$1" comments="${2:-}"
 	local file="${TBR_ROOT}/decisions/${key}.json"
 	[[ -f "$file" ]] || return 1
-	local ts="" now=""
+	local ts="" now="" wake=""
 	ts=$(jq -r '.recorded_epoch // 0' "$file" 2>/dev/null) || ts=0
 	[[ "$ts" =~ ^[0-9]+$ ]] || ts=0
 	now=$(date +%s)
 	[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
+	wake=$(jq -r '.wake // ""' "$file" 2>/dev/null) || wake=""
+	if [[ "$wake" == human_decision && -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
+		return 1
+	fi
 	return 0
 }
 
@@ -651,7 +931,8 @@ _tbr_release_legacy_hold() {
 	fi
 	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" legacy legacy && return 3
 	printf 'rearm_decision issue=%s observed_rev=legacy current_rev=legacy reason=trusted_retry\n' "$issue" >&2
-	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" legacy legacy
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" legacy legacy \
+		"$(_tbr_rearm_reason_line trusted_retry legacy legacy)"
 	return $?
 }
 
@@ -801,11 +1082,9 @@ _tbr_release_circuit_hold() {
 	local labels=""
 	local blocked_status="status:blocked"
 	labels=$(printf '%s' "$issue_json" | jq -ce '.labels | select(type == "array") | map(.name)' 2>/dev/null) || return 2
-	printf '%s' "$labels" | jq -e --arg blocked "$blocked_status" '
+	printf '%s' "$labels" | jq -e --arg blocked "$blocked_status" "${_TBR_OTHER_HOLDS_JQ}"'
 		((index($blocked) != null) or (index("status:available") != null)) and
-		([.[] | select(. == "needs-maintainer-permissions" or . == "hold-for-review" or
-			. == "no-auto-dispatch" or . == "parent-task" or . == "needs-maintainer-review" or
-			startswith("status:") and . != $blocked and . != "status:available")] | length == 0)
+		(other_holds($blocked) | length == 0)
 	' >/dev/null 2>&1 || return 0
 	# GH#35540: absence of an applicable hold is NOT positive re-arm evidence.
 	# In particular, intake can see a foreign COLLABORATOR observation which
@@ -910,12 +1189,26 @@ _tbr_release_decided_hold() {
 		 + (if $decision == "unevidenced_permission_window" then {window: ($window | tonumber), brief: $brief} else {} end)') || return 2
 	receipt_key=$(_terminal_blocker_hash "$receipt_key") || return 2
 	receipt="<!-- aidevops:terminal-blocker-rearmed key=${receipt_key} -->"
-	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev" "$brief_line"
+	_tbr_project_rearm "$repo" "$issue" "$issue_json" "$comments" "$receipt" "$observed_rev" "$current_rev" \
+		"$(_tbr_rearm_reason_line "$decision" "$observed_rev" "$current_rev" "$brief_line")"
 	return $?
 }
 
+# GH#37970: tell the re-armed worker why it was woken, so a brief revision is
+# not mistaken for an unchanged body. Informational only: replay suppression
+# still matches the keyed marker line, never this line.
+# Args: decision observed_rev current_rev [extra_line]. Prints the receipt lines.
+_tbr_rearm_reason_line() {
+	local decision="$1" observed_rev="$2" current_rev="$3" extra="${4:-}"
+	printf '<!-- aidevops:terminal-blocker-rearm-reason reason=%s observed_rev=%s current_rev=%s -->' \
+		"$decision" "$observed_rev" "$current_rev"
+	[[ -z "$extra" ]] || printf '\n%s' "$extra"
+	return 0
+}
+
 # Shared idempotent projection for structured and legacy re-arm decisions.
-# Optional $8: one extra receipt line (GH#36342 window brief record).
+# Optional $8: extra receipt lines (GH#37970 re-arm reason, GH#36342 window
+# brief record).
 _tbr_project_rearm() {
 	local repo="$1" issue="$2" issue_json="$3" comments="$4" receipt="$5"
 	local observed_rev="$6" current_rev="$7" extra="${8:-}"
@@ -937,7 +1230,13 @@ _tbr_project_rearm() {
 	# Reconcile a failed receipt write after a successful projection without
 	# projecting availability twice on the next pass.
 	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
-		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
+		# GH#38360: the re-arm is the trusted retry or revision that the
+		# needs-credentials companion asked for, so it leaves with the hold.
+		# set_issue_status removes the blocked-owned companions itself.
+		local -a release_args=()
+		printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "needs-credentials")' >/dev/null &&
+			release_args+=(--remove-label needs-credentials)
+		set_issue_status "$issue" "$repo" available ${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2
 	return 0
@@ -981,6 +1280,78 @@ _tbr_skip_unchanged_entry() {
 }
 
 #######################################
+# GH#37978: re-check an open unclassified_hold entry (supervisor pass only).
+# No circuit, observation or lifecycle release applies: there is no recorded
+# evidence. Retires the entry and its decision once status:blocked is gone,
+# another hold label owns the issue, or a terminal-blocker record exists
+# (normal intake then owns it). Kept silently while a dependency is open.
+# Otherwise prints the usual JSON line with public evidence only. Makes no
+# GitHub write. Returns 0 when printed, 1 otherwise, 2 on unreadable evidence.
+#######################################
+_tbr_check_unclassified_entry() {
+	local file="$1" repo="$2" issue="$3" key="$4" issue_json="$5" reason="$6" opened_at="$7"
+	local comments="" rc=0
+	_tbr_unclassified_labels_ok "$issue_json" || rc=$?
+	[[ "$rc" -lt 2 ]] || return 2
+	if [[ "$rc" -eq 1 ]]; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
+	printf 'blocker-recovery: checking stage=entry_comments repo=%s issue=%s\n' "$repo" "$issue" >&2
+	comments=$(terminal_blocker_fetch_comments "$repo" "$issue") || return 2
+	rc=0
+	_tbr_has_blocker_record "$comments" || rc=$?
+	[[ "$rc" -lt 2 ]] || return 2
+	if [[ "$rc" -eq 0 ]]; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
+	_tbr_dependency_unresolved "$repo" "$issue" "$issue_json" unclassified unclassified && return 1
+	_tbr_decision_active "$key" "$comments" && return 1
+	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" unclassified_hold "$issue_json"
+	return $?
+}
+
+# Print one supervisor JSON line. Only local intake carries excerpts: another
+# runner's circuit or observation (policy_remote, remote_observation), an
+# unclassified hold and a hold-for-review intake use public issue/PR evidence
+# only, because same-number excerpts on this runner belong to a different
+# attempt or repository. Optional $7: extra JSON fields (GH#38311 reply id).
+_tbr_print_entry() {
+	local repo="$1" issue="$2" reason="$3" opened_at="$4" intake="$5" issue_json="$6" extra="${7:-}"
+	local excerpts="[]"
+	[[ -n "$extra" ]] || extra='{}'
+	if [[ "$intake" == local ]]; then
+		excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
+			jq -R . | jq -sc .) || excerpts="[]"
+	fi
+	jq -nc --arg repo "$repo" --argjson issue "$issue" --arg reason "$reason" \
+		--arg opened_at "$opened_at" --arg title "$(printf '%s' "$issue_json" | jq -r '.title // ""')" \
+		--argjson excerpts "${excerpts:-[]}" --arg intake "$intake" --argjson extra "$extra" \
+		'{repo:$repo, issue:$issue, title:$title, reason:$reason, opened_at:$opened_at, intake:$intake, local_excerpts:$excerpts} + $extra'
+	return 0
+}
+
+#######################################
+# GH#35129: cross-runner intake exists only while repo policy enables it.
+# Returns 0 to continue, 1 after retiring a disabled entry, 2 when the
+# policy is unreadable (keep the entry for the next pass).
+# Args: file repo issue key
+#######################################
+_tbr_check_entry_policy() {
+	local file="$1" repo="$2" issue="$3" key="$4"
+	local policy_rc=0
+	printf 'blocker-recovery: checking stage=entry_policy repo=%s issue=%s\n' "$repo" "$issue" >&2
+	_tbr_policy_enabled "$repo" || policy_rc=$?
+	[[ "$policy_rc" -lt 2 ]] || return 2
+	if [[ "$policy_rc" -eq 1 ]]; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Re-verify one entry against GitHub. Prints a JSON line when the circuit is
 # still active and unowned; retires the entry when resolved. Returns 0 when
 # printed, 1 otherwise.
@@ -1000,16 +1371,14 @@ _tbr_check_entry() {
 	opened_at=$(jq -r '.opened_at // ""' "$file")
 	intake=$(jq -r '.intake // "local"' "$file")
 	key=$(_tbr_key "$repo" "$issue")
-	# GH#35129: cross-runner intake exists only while repo policy enables it.
+	# GH#37978/GH#38311: the mechanical rearm pass never reads, reports or
+	# releases an unclassified or hold-for-review intake; only the supervisor
+	# pass re-checks them.
+	case "$intake" in
+	unclassified_hold | answered_hold | unexplained_hold) [[ "$mode" != rearm ]] || return 1 ;;
+	esac
 	if [[ "$intake" == policy_remote ]]; then
-		local policy_rc=0
-		printf 'blocker-recovery: checking stage=entry_policy repo=%s issue=%s\n' "$repo" "$issue" >&2
-		_tbr_policy_enabled "$repo" || policy_rc=$?
-		[[ "$policy_rc" -lt 2 ]] || return 2
-		if [[ "$policy_rc" -eq 1 ]]; then
-			rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
-			return 1
-		fi
+		_tbr_check_entry_policy "$file" "$repo" "$issue" "$key" || return $?
 	fi
 	local issue_json="" state=""
 	printf 'blocker-recovery: checking stage=entry_issue repo=%s issue=%s\n' "$repo" "$issue" >&2
@@ -1019,6 +1388,14 @@ _tbr_check_entry() {
 	if [[ "$state" != "open" ]]; then
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
+	fi
+	if [[ "$intake" == unclassified_hold ]]; then
+		_tbr_check_unclassified_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at"
+		return $?
+	fi
+	if [[ "$intake" == answered_hold || "$intake" == unexplained_hold ]]; then
+		_tbr_check_hold_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$opened_at" "$intake"
+		return $?
 	fi
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
@@ -1070,20 +1447,9 @@ _tbr_check_entry() {
 		_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" || return 2
 		return 1
 	fi
-	_tbr_decision_active "$key" && return 1
-	local excerpts="[]"
-	# Another runner's circuit or observation (policy_remote,
-	# remote_observation): public issue/PR evidence only. Same-number excerpts
-	# on this runner belong to a different attempt or repository.
-	if [[ "$intake" == local ]]; then
-		excerpts=$(find "$TBR_EXCERPT_DIR" -maxdepth 1 -type f -name "*-${issue}-*.log" 2>/dev/null | sort | tail -3 |
-			jq -R . | jq -sc .) || excerpts="[]"
-	fi
-	jq -nc --arg repo "$repo" --argjson issue "$issue" --arg reason "$reason" \
-		--arg opened_at "$opened_at" --arg title "$(printf '%s' "$issue_json" | jq -r '.title // ""')" \
-		--argjson excerpts "${excerpts:-[]}" --arg intake "$intake" \
-		'{repo:$repo, issue:$issue, title:$title, reason:$reason, opened_at:$opened_at, intake:$intake, local_excerpts:$excerpts}'
-	return 0
+	_tbr_decision_active "$key" "$comments" && return 1
+	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" "$intake" "$issue_json"
+	return $?
 }
 
 tbr_pending() {
@@ -1094,7 +1460,7 @@ tbr_pending() {
 		entry_mode=rearm
 	fi
 	_tbr_init_dirs || return 1
-	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 observed=";"
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
 	_tbr_start_budget || return 2
 	# Retire stale fixtures before any identity/API call, including entries past
 	# the remote scan budget. Never retire evidence on an unreadable registry.
@@ -1104,9 +1470,13 @@ tbr_pending() {
 		_tbr_entry_registered "$file" || rc=$?
 		[[ "$rc" -lt 2 ]] || return 2
 	done
+	# GH#38232: reserve one stage cap each for seed and unclassified (still at
+	# most half the budget), so a slow seed cannot starve unclassified intake.
 	reserve=$((TBR_BUDGET_SECONDS / 2))
-	[[ "$reserve" -le "$TBR_STAGE_SECONDS" ]] || reserve="$TBR_STAGE_SECONDS"
+	[[ "$reserve" -le $((TBR_STAGE_SECONDS * 2)) ]] || reserve=$((TBR_STAGE_SECONDS * 2))
+	unclassified_reserve=$((reserve / 2))
 	TBR_QUEUE_DEADLINE=$((TBR_DEADLINE - reserve))
+	TBR_SEED_DEADLINE=$((TBR_DEADLINE - unclassified_reserve))
 	[[ "$mode" != --rearm-only ]] || TBR_QUEUE_DEADLINE="$TBR_DEADLINE"
 	# GH#36114: discover unqueued holds first, so a trusted retry on a hold this
 	# runner never queued is applied by the queue pass below in the same run.
@@ -1160,6 +1530,16 @@ tbr_pending() {
 		rc=0
 		_tbr_run_stage seed tbr_seed || rc=$?
 		[[ "$rc" -eq 0 ]] || incomplete=1
+		# GH#38311: maintainer replies and unexplained hold-for-review holds,
+		# before the six-hourly unclassified stage: a reply wants a fast answer.
+		rc=0
+		_tbr_run_stage holds tbr_discover_holds || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
+		# GH#37978: bare status:blocked holds with no recorded reason. Never
+		# from the mechanical rearm pass.
+		rc=0
+		_tbr_run_stage unclassified tbr_discover_unclassified || rc=$?
+		[[ "$rc" -eq 0 ]] || incomplete=1
 	fi
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
@@ -1206,7 +1586,7 @@ tbr_main() {
 		local stage_action="${1:-}"
 		shift || return 2
 		case "$stage_action" in
-		_tbr_self_login | _tbr_check_entry | tbr_seed | tbr_discover) "$stage_action" "$@" ;;
+		_tbr_self_login | _tbr_check_entry | tbr_seed | tbr_discover | tbr_discover_unclassified | tbr_discover_holds) "$stage_action" "$@" ;;
 		*) return 2 ;;
 		esac
 		;;
@@ -1219,12 +1599,20 @@ tbr_main() {
 		_tbr_start_budget || return 2
 		_tbr_run_stage discovery tbr_discover
 		;;
+	unclassified)
+		_tbr_start_budget || return 2
+		_tbr_run_stage unclassified tbr_discover_unclassified
+		;;
+	holds)
+		_tbr_start_budget || return 2
+		_tbr_run_stage holds tbr_discover_holds
+		;;
 	pending) tbr_pending "$@" ;;
 	rearm) tbr_pending --rearm-only ;;
 	record) tbr_record "$@" ;;
 	help | --help | -h)
 		# Print the whole header block, opening rule through closing rule.
-		sed -n '4,52p' "${BASH_SOURCE[0]}"
+		sed -n '4,72p' "${BASH_SOURCE[0]}"
 		;;
 	*) return 2 ;;
 	esac

@@ -8,13 +8,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-ROOT=$(mktemp -d)
+# The lifecycle registry requires a canonical state parent; macOS mktemp
+# returns a path under the /var symlink.
+ROOT=$(cd "$(mktemp -d)" && pwd -P) || exit 1
 trap 'rm -rf "$ROOT"' EXIT
+# The invoking session must not redirect the fixture to its own lifecycle
+# state or enroll fixture worktrees under its identity.
+unset AIDEVOPS_WORKSPACE_DIR AIDEVOPS_LIFECYCLE_STATE_DIR
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 HOME="${ROOT}/home"
 AIDEVOPS_CLEANUP_LOG="${ROOT}/cleanup.log"
 export HOME AIDEVOPS_CLEANUP_LOG
 export WORKTREE_REGISTRY_DIR="${ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/owners.db"
+# Generation enrollment initialises its registry under an existing parent only.
+mkdir -p "${HOME}/.aidevops/.agent-workspace"
 REPO="${ROOT}/repo"
 BASE="${ROOT}/worktrees"
 FAILURES=0
@@ -151,6 +159,41 @@ scratch_worktree_reap_stale "$REPO"
 	pass "dead managed owner without completion proof stays locked" || fail "managed scratch lost protection"
 kill "$live_pid" 2>/dev/null || true
 wait "$live_pid" 2>/dev/null || true
+
+# 6. An inherited GIT_DIR must not redirect any helper Git call (GH#38046).
+OTHER="${ROOT}/other"
+REMOTE="${ROOT}/remote.git"
+git init -q -b main "$OTHER"
+git init -q --bare "$REMOTE"
+git -C "$REPO" push -q "$REMOTE" HEAD:refs/heads/extra
+git -C "$REPO" remote add origin "$REMOTE"
+other_refs_before=$(git -C "$OTHER" for-each-ref)
+export GIT_DIR="${OTHER}/.git"
+fetch_ok=0
+scratch_worktree_fetch "$REPO" "$BASE" fetch test origin --no-write-fetch-head \
+	"+refs/heads/extra:refs/remotes/origin/extra" && fetch_ok=1
+unset GIT_DIR
+if [[ "$fetch_ok" -eq 1 ]] && git -C "$REPO" rev-parse -q --verify refs/remotes/origin/extra >/dev/null &&
+	[[ "$(git -C "$OTHER" for-each-ref)" == "$other_refs_before" ]]; then
+	pass "fetch ignores inherited GIT_DIR"
+else
+	fail "fetch honoured inherited GIT_DIR"
+fi
+export GIT_DIR="${OTHER}/.git"
+add_ok=0
+rm_ok=0
+scratch_worktree_add "$REPO" "$BASE" fetch HEAD && add_ok=1
+env_after_add="${GIT_DIR:-}"
+gd_path="$SCRATCH_WORKTREE_PATH"
+scratch_worktree_remove "$gd_path" test && rm_ok=1
+env_after_rm="${GIT_DIR:-}"
+unset GIT_DIR
+if [[ "$add_ok" -eq 1 && "$rm_ok" -eq 1 && ! -e "$gd_path" &&
+	"$env_after_add" == "${OTHER}/.git" && "$env_after_rm" == "${OTHER}/.git" ]]; then
+	pass "add and remove ignore inherited GIT_DIR and preserve it"
+else
+	fail "add/remove with inherited GIT_DIR"
+fi
 
 if [[ "$FAILURES" -ne 0 ]]; then
 	printf '%s failure(s)\n' "$FAILURES"

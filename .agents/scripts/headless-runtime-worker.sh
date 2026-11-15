@@ -69,6 +69,10 @@ _HRW_WORKTREE_RECLAIM_TRANSFERRED="transferred"
 _HRW_WORKTREE_RECLAIM_VACATED="vacated"
 _HRW_WORKTREE_RECLAIM_OUTCOME=""
 _HRW_REASON_OWNERSHIP_LOST="worker_ownership_lost"
+# GH#37984: a watchdog hard-kill records no worker decision, so its release
+# must stay stall-class (watchdog_kill:*) for checkpoint approval/stall routes.
+_HRW_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
+_HRW_REASON_WATCHDOG_HARD_KILL_STALL="watchdog_kill:hard_kill_stall"
 _HRW_REASON_SENSITIVE_TEMP_PREFLIGHT="worker_sensitive_temp_preflight_failed"
 _HRW_EVENT_FAILED="worker.failed"
 _HRW_EVENT_DEFERRED="worker.deferred"
@@ -1217,6 +1221,25 @@ _hrw_run_finish_crash_type() {
 	return 0
 }
 
+# GH#37984: choose the unrecovered-failure release reason from the run
+# classification. A watchdog hard-kill (exit 79, watchdog_stall_killed) is a
+# stall, not a worker decision: release it as watchdog_kill:hard_kill_stall so
+# pr_checkpoint_events.py STALL_RELEASE_PATTERN and
+# pr-checkpoint-continuation-helper.sh _PCC_STALL_RELEASE_PATTERN accept it.
+# Every other unrecovered failure keeps the generic worker_failed bucket.
+_hrw_failed_run_release_reason() {
+	local failure_reason="${_run_failure_reason:-}"
+	local result_label="${_run_result_label:-}"
+
+	if [[ "$failure_reason" == "$_HRW_RESULT_WATCHDOG_STALL_KILLED" ||
+		(-z "$failure_reason" && "$result_label" == "$_HRW_RESULT_WATCHDOG_STALL_KILLED") ]]; then
+		printf '%s\n' "$_HRW_REASON_WATCHDOG_HARD_KILL_STALL"
+		return 0
+	fi
+	printf '%s\n' "worker_failed"
+	return 0
+}
+
 _hrw_finish_failed_run() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -1234,7 +1257,7 @@ _hrw_finish_failed_run() {
 	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
 		failure_recovered=1
 	else
-		_hrw_release_dispatch_claim "$session_key" "worker_failed"
+		_hrw_release_dispatch_claim "$session_key" "$(_hrw_failed_run_release_reason)"
 	fi
 	if [[ "$failure_recovered" -eq 1 && "${_HRW_RECOVERY_CLASSIFICATION:-$_HRW_REASON_WORKER_COMPLETE}" == "$_HRW_REASON_WORKER_COMPLETE" ]]; then
 		_HRW_TERMINAL_OUTCOME="$_HRW_TELEMETRY_SUCCESS"
@@ -1753,6 +1776,10 @@ _hrw_finish_not_launched() {
 	local session_key="$1"
 	_hrff_log_prelaunch_abort "$session_key" "${_WORKER_PRELAUNCH_FAILURE_REASON:-worker_runtime_not_invoked}"
 	print_warning "[lifecycle] worker_not_launched session=${session_key} attempt_id=${AIDEVOPS_ATTEMPT_ID:-unknown} stage=${_WORKER_PRELAUNCH_LAST_STAGE:-unknown} cause=${_WORKER_PRELAUNCH_FAILURE_REASON:-unknown}; exact-head revision approval remains reusable"
+	# GH#38481: records only an evidenced missing runtime binary (exit 127).
+	if declare -F _hrff_record_runner_health_failure >/dev/null 2>&1; then
+		_hrff_record_runner_health_failure "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
+	fi
 	_hrw_release_dispatch_claim "$session_key" "$_HRW_REASON_NOT_LAUNCHED"
 	_report_failure_to_fast_fail "$session_key" "worker_runtime_not_invoked" ""
 	_hrw_mark_failed_terminal_state "$_HRW_STATUS_FAILED" "$_HRW_REASON_NOT_LAUNCHED"

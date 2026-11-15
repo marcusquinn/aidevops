@@ -1365,6 +1365,12 @@ classify_dispatch_blocker_reason() {
 	local signal="$1"
 	local lower_signal
 	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+	# GH#38142: layer-4 PR evidence text can name a consolidated or closed
+	# issue; its exact prefix must win before the structural keyword chain.
+	if [[ "$lower_signal" == pr_evidence_block:* ]]; then
+		printf 'dedup_pr_evidence\n'
+		return 0
+	fi
 	if _classify_structural_dispatch_blocker_reason "$lower_signal" ||
 		_classify_runtime_dispatch_blocker_reason "$lower_signal" ||
 		_classify_intake_dispatch_blocker_reason "$lower_signal" ||
@@ -1378,6 +1384,29 @@ classify_dispatch_blocker_reason() {
 	fi
 	printf 'unclassified_signal\n'
 	return 0
+}
+
+#######################################
+# GH#38180: is-assigned for the pulse layer-6 caller. Output and exit status
+# match is_assigned; on a block, the reason classify-blocker would print for
+# that output is also written to AIDEVOPS_DDH_BLOCKER_REASON_FILE, so the
+# caller need not start a second helper process. The file must be an existing
+# private regular file owned by this user (the caller creates it with mktemp);
+# otherwise nothing is written and the caller falls back to classify-blocker.
+# Args: issue number, repo slug, self login (optional)
+# Returns: is_assigned exit status
+#######################################
+_ddh_is_assigned_with_reason() {
+	local issue_number="$1" repo_slug="$2" self_login="${3:-}"
+	local reason_file="${AIDEVOPS_DDH_BLOCKER_REASON_FILE:-}"
+	local assigned_output="" assigned_rc=0 assigned_reason=""
+	assigned_output=$(_ddh_is_assigned_for_cycle "$issue_number" "$repo_slug" "$self_login") || assigned_rc=$?
+	[[ -z "$assigned_output" ]] || printf '%s\n' "$assigned_output"
+	if [[ "$assigned_rc" -eq 0 && -f "$reason_file" && ! -L "$reason_file" && -O "$reason_file" && -w "$reason_file" ]]; then
+		assigned_reason=$(classify_dispatch_blocker_reason "$assigned_output" 2>/dev/null) || assigned_reason=""
+		[[ -z "$assigned_reason" ]] || printf '%s\n' "$assigned_reason" >"$reason_file" 2>/dev/null || true
+	fi
+	return "$assigned_rc"
 }
 
 #######################################
@@ -1523,6 +1552,41 @@ _ddh_main_simple_command() {
 	esac
 }
 
+# A cycle may inspect the same assigned candidate during normalization and
+# dispatch. Reuse only plain blocking assignment results: never memoise a safe
+# dispatch decision or replay stale-recovery writes/signals. Outside pulse the
+# cache is unset, preserving standalone behavior and inspection-only semantics.
+_ddh_is_assigned_for_cycle() {
+	local issue_number="$1" repo_slug="$2" self_login="${3:-}"
+	local cache_file="${AIDEVOPS_PULSE_ASSIGNED_CACHE_FILE:-}"
+	local cycle="${AIDEVOPS_PULSE_ASSIGNED_CACHE_CYCLE:-}"
+	# Workers can inherit pulse's environment. An exited cycle or a different
+	# cycle's file must never provide cached answers to those descendants.
+	if [[ -z "$cache_file" || ! -f "$cache_file" || -L "$cache_file" ||
+		! "$cycle" =~ ^[1-9][0-9]*-[0-9]+$ ]] || ! kill -0 "${cycle%%-*}" 2>/dev/null; then
+		is_assigned "$issue_number" "$repo_slug" "$self_login"
+		return $?
+	fi
+	local key="${cycle}|${repo_slug}|${issue_number}|${self_login}" cached_key="" cached_output=""
+	local output="" result=0
+	if [[ -n "$cache_file" && -f "$cache_file" && ! -L "$cache_file" ]]; then
+		while IFS=$'\t' read -r cached_key cached_output; do
+			if [[ "$cached_key" == "$key" && "$cached_output" == ASSIGNED:* ]]; then
+				printf '%s\n' "$cached_output"
+				return 0
+			fi
+		done <"$cache_file"
+	fi
+	output=$(is_assigned "$issue_number" "$repo_slug" "$self_login") || result=$?
+	if [[ "$result" -eq 0 && "$output" == ASSIGNED:* && "$output" != *$'\n'* &&
+		"$key" != *$'\n'* && "$key" != *$'\t'* && -n "$cache_file" &&
+		-f "$cache_file" && ! -L "$cache_file" ]]; then
+		printf '%s\t%s\n' "$key" "$output" >>"$cache_file" || true
+	fi
+	[[ -z "$output" ]] || printf '%s\n' "$output"
+	return "$result"
+}
+
 _ddh_main_issue_command() {
 	local command_name="$1"
 	local assignment_usage="<issue-number> <repo-slug> [self-login]"
@@ -1531,7 +1595,11 @@ _ddh_main_issue_command() {
 	is-assigned)
 		_require_args is-assigned 2 "$#" "$assignment_usage" || return 1
 		local assigned_issue="$1" assigned_repo="$2" assigned_runner="${3:-}"
-		is_assigned "$assigned_issue" "$assigned_repo" "$assigned_runner"
+		if [[ -n "${AIDEVOPS_DDH_BLOCKER_REASON_FILE:-}" ]]; then
+			_ddh_is_assigned_with_reason "$assigned_issue" "$assigned_repo" "$assigned_runner"
+			return $?
+		fi
+		_ddh_is_assigned_for_cycle "$assigned_issue" "$assigned_repo" "$assigned_runner"
 		return $?
 		;;
 	is-assigned-read-only)

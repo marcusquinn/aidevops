@@ -32,6 +32,10 @@ trap 'rm -rf "$TMPDIR"' EXIT
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
 export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
+# gh_trim_log sweeps orphaned shim scratch in the agent temp root (t19021);
+# never let a test run reach the host's root.
+export AIDEVOPS_TEMP_DIR="$TMPDIR/agent-tmp"
+mkdir -p "$AIDEVOPS_TEMP_DIR"
 unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
@@ -801,6 +805,53 @@ gh_aggregate_calls
 assert_eq "successful inferred and explicit costs reconcile" "4" "$(jq -r '._meta.known_quota_cost' "$AIDEVOPS_GH_API_REPORT")"
 assert_eq "failed inferred cost remains unknown" "1" "$(jq -r '._meta.unknown_quota_cost_attempts' "$AIDEVOPS_GH_API_REPORT")"
 
+# --- Test 11b2: normal-mode gh api rows carry static request labels (GH#38327)
+label_bin="$TMPDIR/label-bin"
+mkdir -p "$label_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$label_bin/gh"
+chmod +x "$label_bin/gh"
+label_row() {
+	gh_clear_log
+	gh_run_transport_attempt rest label-caller logical-label 1 0 -- "$label_bin/gh" "$@"
+	awk -F '\t' '$9 == "attempt" { row = $23 "|" $24 "|" $25 } END { print row }' "$AIDEVOPS_GH_API_LOG"
+	return 0
+}
+assert_eq "issue read is labelled GET/repos-issues" "GET|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api 'repos/private-owner/private-repo/issues/42' --jq '.title')"
+assert_eq "explicit method and review family" "POST|repos-pulls|repos/:o/:r/pulls/:id/reviews" \
+	"$(label_row api --method post '/repos/{owner}/{repo}/pulls/7/reviews?per_page=1')"
+assert_eq "field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comments" \
+	"$(label_row api -H 'Accept: x' 'repos/o/r/issues/9/comments' -f body=private-payload)"
+assert_eq "explicit method wins over fields" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -X PATCH repos/o/r/issues/3 -F state=closed)"
+assert_eq "shorthand cluster consumes the method operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iX PATCH repos/o/r/issues/42)"
+assert_eq "attached cluster operand" "PATCH|repos-issues|repos/:o/:r/issues/:id" \
+	"$(label_row api -iXPATCH repos/o/r/issues/42)"
+assert_eq "cluster field implies POST" "POST|repos-issues|repos/:o/:r/issues/:id/comments" \
+	"$(label_row api repos/o/r/issues/9/comments -if body=x)"
+assert_eq "missing method operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 --method)"
+assert_eq "missing header operand stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api repos/o/r/issues/42 -H)"
+assert_eq "root classes" "GET|rate-limit|rate-limit" "$(label_row api rate_limit)"
+assert_eq "user family" "GET|users|user" "$(label_row api user)"
+assert_eq "permission family" "GET|repos-other|repos/:o/:r/collaborators/:u/permission" \
+	"$(label_row api repos/o/r/collaborators/someone/permission)"
+assert_eq "check runs keep the static family" "GET|repos-checks|repos/:o/:r/check-runs/:id" \
+	"$(label_row api repos/o/r/check-runs/11)"
+assert_eq "non-api command stays unknown" "unknown|unknown|unknown" "$(label_row pr view 5)"
+assert_eq "full URL stays unknown" "unknown|unknown|unknown" \
+	"$(label_row api 'https://api.github.com/repos/o/r/issues/1')"
+label_row api 'repos/private-owner/private-repo/issues/42' -f body=private-payload >/dev/null
+if grep -Eq 'private-owner|private-repo|private-payload' "$AIDEVOPS_GH_API_LOG"; then
+	echo "  FAIL: request labels exposed request text"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: request labels exclude request text"
+	PASS=$((PASS + 1))
+fi
+
 # --- Test 11c: exact-frame capture honours success-only quota costs ----------
 exact_success_result="$TMPDIR/exact-success.result"
 exact_failure_result="$TMPDIR/exact-failure.result"
@@ -1388,6 +1439,13 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" NATIVE_AUTH_TOKEN_STATUS=23 \
 auth_token_failure_status=$?
 set -e
 assert_eq "local auth token preserves native failure status" "23" "$auth_token_failure_status"
+# t19021: the auth exec must not strand per-invocation attempt state.
+auth_attempt_temp="$TMPDIR/auth-attempt-temp"
+mkdir -p "$auth_attempt_temp"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_TEMP_DIR="$auth_attempt_temp" \
+	"$SHIM_FIXTURE/gh" auth token >/dev/null 2>/dev/null
+assert_eq "local auth token leaves no request-attempt scratch" "0" \
+	"$(find "$auth_attempt_temp" -name 'gh-request-attempts.*' | wc -l | tr -d ' ')"
 
 # Credential-mutating auth commands must bypass transport framing too. This
 # keeps device-flow prompts and Keychain writes under native gh control.

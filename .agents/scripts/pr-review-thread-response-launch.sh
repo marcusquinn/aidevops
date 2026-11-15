@@ -17,7 +17,11 @@ _prrts_launch_detached_worker() {
 	shift 4
 	local launched_pid="" launched_mode="" launch_result=""
 	local attempt_log=""
-	attempt_log=$(_hrw_create_detached_log "pr-review-${repo_slug}-${pr_number}") || {
+	# Bounded PR workflows reusing this launcher (for example GH#38169
+	# conflict repair) name their logs and scopes so attempts stay attributable.
+	local launch_label="${PRRTS_WORKER_LAUNCH_LABEL:-pr-review}"
+	local launch_description="${PRRTS_WORKER_LAUNCH_DESCRIPTION:-review response}"
+	attempt_log=$(_hrw_create_detached_log "${launch_label}-${repo_slug}-${pr_number}") || {
 		PRRTS_WORKTREE_FAILURE_REASON="detached_log_creation_failed"
 		return 1
 	}
@@ -26,8 +30,8 @@ _prrts_launch_detached_worker() {
 	set -- env "AIDEVOPS_WORKER_ATTEMPT_LOG=$attempt_log" "$@"
 	if systemd_scope_available; then
 		launch_result=$(systemd_scope_launch \
-			"aidevops-pr-review-${pr_number}-$$-${RANDOM}" \
-			"aidevops review response ${repo_slug}#${pr_number}" "$attempt_log" "$@") || {
+			"aidevops-${launch_label}-${pr_number}-$$-${RANDOM}" \
+			"aidevops ${launch_description} ${repo_slug}#${pr_number}" "$attempt_log" "$@") || {
 			PRRTS_WORKTREE_FAILURE_REASON="worker_scope_launch_failed"
 			return 1
 		}

@@ -66,6 +66,10 @@ gh_pr_view() {
 write_gh_mock() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" && -n "${TEST_GRAPHQL_RESPONSE:-}" ]]; then
+	printf '%s' "$TEST_GRAPHQL_RESPONSE"
+	exit 0
+fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/pulls/123/reviews?per_page=100&page=1" ]]; then
 	cat <<'JSON'
 [
@@ -199,6 +203,52 @@ test_review_fetch_respects_page_bound() {
 	return 0
 }
 
+assert_graphql_refresh() {
+	local test_name="$1"
+	local expected_decision="$2"
+	local decision=""
+	_pmp_refresh_unknown_review_decision_into decision "128" "owner/repo" "UNKNOWN"
+	if [[ "$decision" == "$expected_decision" ]]; then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "expected ${expected_decision}, got ${decision}"
+	fi
+	return 0
+}
+
+test_graphql_review_history() {
+	local count=""
+	export TEST_GRAPHQL_RESPONSE
+	TEST_GRAPHQL_RESPONSE=$(jq -nc '{data:{repository:{pullRequest:{reviews:{
+		pageInfo:{hasNextPage:false}, nodes:[
+			{databaseId:1,author:{login:"reviewer"},state:"CHANGES_REQUESTED",submittedAt:"2026-07-01T10:00:00Z"},
+			{databaseId:2,author:{login:"reviewer"},state:"COMMENTED",submittedAt:"2026-07-01T11:00:00Z"},
+			{databaseId:3,author:{login:"other"},state:"APPROVED",submittedAt:"2026-07-01T12:00:00Z"}
+		]
+	}}}}}')
+	assert_graphql_refresh "GraphQL comment cannot hide earlier blocker despite another approval" "CHANGES_REQUESTED"
+	TEST_GRAPHQL_RESPONSE=$(printf '%s' "$TEST_GRAPHQL_RESPONSE" | jq '.data.repository.pullRequest.reviews.nodes |= .[:2]')
+	assert_graphql_refresh "GraphQL comment cannot turn earlier blocker into NONE" "CHANGES_REQUESTED"
+	TEST_GRAPHQL_RESPONSE=$(printf '%s' "$TEST_GRAPHQL_RESPONSE" | jq '.data.repository.pullRequest.reviews.nodes[1].state = "DISMISSED"')
+	assert_graphql_refresh "GraphQL dismissal clears the prior blocker" "NONE"
+	for count in 10 100; do
+		TEST_GRAPHQL_RESPONSE=$(jq -nc --argjson count "$count" '{data:{repository:{pullRequest:{reviews:{
+			pageInfo:{hasNextPage:false}, nodes:[range($count) | {
+				databaseId:.,author:{login:("reviewer-" + tostring)},state:"APPROVED",submittedAt:"2026-07-01T10:00:00Z"
+			}]
+		}}}}}')
+		assert_graphql_refresh "GraphQL complete ${count}-review history is conclusive" "OBSERVED_APPROVED"
+	done
+	TEST_GRAPHQL_RESPONSE=$(printf '%s' "$TEST_GRAPHQL_RESPONSE" | jq '.data.repository.pullRequest.reviews.pageInfo.hasNextPage = true')
+	assert_graphql_refresh "GraphQL truncated history remains UNKNOWN" "UNKNOWN"
+	TEST_GRAPHQL_RESPONSE='{"data":{"repository":null}}'
+	assert_graphql_refresh "GraphQL missing history remains UNKNOWN" "UNKNOWN"
+	TEST_GRAPHQL_RESPONSE='{"errors":[{"message":"unavailable"}]}'
+	assert_graphql_refresh "GraphQL errors remain UNKNOWN" "UNKNOWN"
+	unset TEST_GRAPHQL_RESPONSE
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap cleanup_test_env EXIT
@@ -209,6 +259,7 @@ main() {
 	test_malformed_state_changing_review_fails_closed
 	test_review_fetch_respects_page_bound
 	test_timeout_failure_preserves_unknown_decision
+	test_graphql_review_history
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

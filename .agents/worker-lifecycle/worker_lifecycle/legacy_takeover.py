@@ -6,9 +6,26 @@ evidence and, for a detached HEAD, a verified creation receipt.
 """
 
 import json
+from pathlib import Path
+import sqlite3
 from uuid import UUID, uuid5
 
-from .cleanup_plan import _runs, enrolled_only_authorized
+from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
+from .process import ObservationUnavailable
+
+
+def close_quiescent_admission(store, item):
+    """Close a stranded admission once every bound run has ended (GH#37101 cause 2).
+
+    Uses the admission pass's own primitive, which re-samples bound runs and
+    closes only when every run is admitted and ended. Unenrolled, changed, empty
+    or unfinished generations stay open, so the authority check that follows
+    still reports `managed-admission-not-closed`. Never called in preview.
+    """
+    try:
+        prepare_cleanup(store, Path(item["path"]))
+    except (ValueError, OSError, sqlite3.Error, ObservationUnavailable):
+        return
 
 
 def _require_closed_admission(connection, generation):
@@ -22,9 +39,9 @@ def _require_closed_admission(connection, generation):
 
 
 def _require_owner_evidence(store, generation):
-    """Raise unless owner runs have ended or the operator authorized takeover."""
+    """Raise unless owner runs have ended or a never-owned authorization exists."""
     rows = _runs(store, generation)
-    if not rows and not enrolled_only_authorized(store, generation):
+    if not rows and not never_owned_authorized(store, generation):
         raise ValueError("managed-operator-authorization-required")
     if not all(row["admitted"] and row["state"] == "ended" for row in rows):
         raise ValueError("managed-owner-evidence-incomplete")

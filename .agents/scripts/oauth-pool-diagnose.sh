@@ -77,6 +77,8 @@ Commands:
   assign-pending <provider> [email]               Assign a stranded pending token to an account
   remove <provider> <email>                       Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
+  remote-sync <install|sync|status|enable|disable> --host H [--remote-user U] --provider P --email E
+                                                  Keep one account in sync both ways with another host/user's pool
 
 Quickstart (if you see "Key Missing", "invalid request data", or auth errors):
   aidevops model-accounts-pool diagnose          # 0. Full pipeline check (start here)

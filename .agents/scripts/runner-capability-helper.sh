@@ -119,10 +119,19 @@ def check_rejections(names):
 
 def run_check(argv, target, secret=False, cwd=None, timeout=5):
     # Bound descendants too: a locked pinentry or probe child must not survive.
+    env = os.environ.copy()
+    if secret:
+        # The inner supervisor must time out first so it can kill its gopass
+        # group before this watchdog SIGKILLs the supervisor.
+        try:
+            inner = int(env.get('AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS', '12'))
+        except ValueError:
+            inner = 12
+        env['AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS'] = str(max(1, min(inner, timeout - 1)))
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   start_new_session=True)
+                                   start_new_session=True, env=env)
     except OSError:
         return f'check_failed {target}' if secret else f'probe_failed {target}'
     try:
@@ -134,6 +143,8 @@ def run_check(argv, target, secret=False, cwd=None, timeout=5):
     if not status:
         return ''
     if secret:
+        if status == 5:
+            return f'check_timeout {target}'
         if status == 3:
             return f'secret_unreadable {target} store=gopass fallback=disabled'
         return f'{"secret_missing" if status == 1 else "check_failed"} {target}'
@@ -181,7 +192,8 @@ def unreadable(name, handle, state, cached=False):
     count = state.get('deferred', 0) + 1
     if handle is not None:
         handle.seek(0)
-        json.dump({'name': name, 'deferred': count}, handle)
+        json.dump({'name': name, 'deferred': count,
+                   'at': state.get('at', time.time()) if cached else time.time()}, handle)
         handle.truncate()
         handle.flush()
     if sys.argv[3] == 'fresh' and not cached:
@@ -192,6 +204,20 @@ def unreadable(name, handle, state, cached=False):
         print(f'runner_capability_health secret_gated_deferred={count}', file=sys.stderr)
     unmet(f'secret_unreadable name={name} store=gopass fallback=disabled' +
           (' source=cycle_cache' if cached else ''))
+
+def check_cached_unreadable(handle, state):
+    name = state.get('name', '')
+    try:
+        ttl = max(0, int(os.environ.get('AIDEVOPS_RUNNER_CAPABILITY_UNREADABLE_TTL_SECONDS', '120')))
+    except ValueError:
+        ttl = 120
+    if (re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', name) and
+            time.time() - float(state.get('at', 0)) < ttl):
+        unreadable(name, handle, state, cached=True)
+    if handle is not None and name:
+        handle.seek(0)
+        handle.truncate()
+        handle.flush()
 
 PY
 	return 0
@@ -419,9 +445,7 @@ try:
         check_rejections(secrets)
         cycle = sys.argv[4] if sys.argv[3] == 'fresh' else ''
         with cycle_state(cycle) as (handle, state):
-            cached_name = state.get('name', '')
-            if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', cached_name):
-                unreadable(cached_name, handle, state, cached=True)
+            check_cached_unreadable(handle, state)
             for name in sorted(secrets):
                 reason = run_check(['aidevops', 'secret', 'check', name], f'name={name}', timeout=secret_timeout, secret=True)
                 if reason.startswith('secret_unreadable '):

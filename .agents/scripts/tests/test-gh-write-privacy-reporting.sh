@@ -19,7 +19,9 @@ export AIDEVOPS_SIG_CLI="OpenCode" AIDEVOPS_SIG_CLI_VERSION="test"
 export AIDEVOPS_SIG_MODEL="test" AIDEVOPS_SIG_TOKENS="1"
 mkdir -p "${TEST_ROOT}/bin" "${HOME}/.config/aidevops" "${HOME}/.aidevops/configs"
 printf '%s\n' '{"initialized_repos":[]}' >"$PRIVACY_REPOS_CONFIG"
-# The tagged wrapper matches the full slug; the shim also matches its basename.
+# The tagged wrapper blocks the full slug and, since GH#37664, its basename. The
+# stub stands in for the shim and also blocks `synthetic-shim-only`, a finding
+# the wrapper does not check, so shim-reported denials stay covered (GH#34400).
 printf '%s\n' 'synthetic-owner/synthetic-basename' >"${HOME}/.aidevops/configs/privacy-guard-extra-slugs.txt"
 cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -37,6 +39,10 @@ case "$1 $2" in
         if [[ "$1" == "--body-file" ]]; then body_file="$2"; break; fi
         shift
     done
+    if [[ "$(<"$body_file")" == *synthetic-shim-only* ]]; then
+        printf '[aidevops][privacy-scan][BLOCK] synthetic shim-only finding\n' >&2
+        exit 1
+    fi
     # shellcheck source=/dev/null
     source "$TEST_PRIVACY_HELPER"
     slugs=$(mktemp)
@@ -99,7 +105,8 @@ check_cli() {
 	fi
 	if [[ "$marker" == *BLOCK* ]]; then
 		grep -Fq 'operation.block' "$AUDIT_LOG_FILE"
-		if grep -Fq 'synthetic-basename' "$AUDIT_LOG_FILE" || grep -q 'api .*comments' "$GH_CALLS_FILE"; then
+		if grep -Fq 'synthetic-basename' "$AUDIT_LOG_FILE" || grep -Fq -- "$body" "$AUDIT_LOG_FILE" ||
+			grep -q 'api .*comments' "$GH_CALLS_FILE"; then
 			return 1
 		fi
 	fi
@@ -107,8 +114,10 @@ check_cli() {
 	return 0
 }
 
-check_cli issue 'synthetic-basename' 1 '[privacy-scan][BLOCK]'
-check_cli pr 'synthetic-basename' 1 '[privacy-scan][BLOCK]'
+check_cli issue 'synthetic-shim-only' 1 '[privacy-scan][BLOCK]'
+check_cli pr 'synthetic-shim-only' 1 '[privacy-scan][BLOCK]'
+check_cli issue 'synthetic-basename' 1 '[privacy-guard][BLOCK]'
+check_cli pr 'synthetic-basename' 1 '[privacy-guard][BLOCK]'
 check_cli issue 'synthetic-owner/synthetic-basename' 1 '[privacy-guard][BLOCK]'
 check_cli issue 'synthetic-transport-error' 7 'synthetic transport error'
 check_cli issue 'ordinary content' 0 ''

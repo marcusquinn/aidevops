@@ -36,11 +36,30 @@ _hrrr_path() {
 
 # Digest immutable claim and observation fields, excluding retry bookkeeping.
 # The private sidecar detects row replacement, not a hostile same-user writer.
+# spec_dispatch joins the digest only when set, so rows written before GH#38021
+# keep their binding.
 _hrrr_binding() {
 	local path="$1" value=""
 	value=$(jq -cer '[.repo, .issue, .session_key, .reason, .exit, .session_count,
-		.lease_token, .lease_device, .lease_session, .attempt_id, .blocker]' "$path") || return 1
+		.lease_token, .lease_device, .lease_session, .attempt_id, .blocker]
+		+ (if .spec_dispatch == true then ["spec_dispatch"] else [] end)' "$path") || return 1
 	_terminal_blocker_hash "$value" || return 1
+	return 0
+}
+
+# GH#38021: a draft checkpoint on a canonical consolidated spec removes
+# auto-dispatch, and only the run that removed it holds the proof. Report that
+# proof so the row can carry it to the replay.
+# Args: $1 reason, $2 repo_slug, $3 issue_number. Prints true or false.
+_hrrr_spec_dispatch_receipt() {
+	local reason="$1" repo_slug="$2" issue_number="$3"
+	if [[ "$reason" == "${_HRW_REASON_DRAFT_CHECKPOINT:-worker_draft_checkpoint}" ]] &&
+		declare -F _pmpc_holds_checkpoint_spec_receipt >/dev/null 2>&1 &&
+		_pmpc_holds_checkpoint_spec_receipt "$repo_slug" "$issue_number"; then
+		printf 'true\n'
+		return 0
+	fi
+	printf 'false\n'
 	return 0
 }
 
@@ -55,7 +74,7 @@ _hrrr_record() {
 	local blocker_path="${AIDEVOPS_TERMINAL_BLOCKER_REPO_PATH:-}"
 	local blocker_fingerprint="${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}"
 	local missing_secrets="${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}"
-	local dir="" path="" tmp="" now=""
+	local dir="" path="" tmp="" now="" spec_dispatch=""
 
 	[[ "${_HRRR_REPLAY:-0}" != 1 ]] || return 0
 	# Without a bound claim there is nothing a later pass could safely release.
@@ -67,6 +86,7 @@ _hrrr_record() {
 	if [[ -f "$path" ]]; then
 		return 0
 	fi
+	spec_dispatch=$(_hrrr_spec_dispatch_receipt "$reason" "$repo_slug" "$issue_number")
 	(
 		umask 077
 		mkdir -p "$dir" && chmod 700 "$dir" 2>/dev/null || true
@@ -77,11 +97,13 @@ _hrrr_record() {
 			--arg token "$token" --arg device "$device" --arg lease_session "$lease_session" \
 			--arg blocker_path "$blocker_path" --arg fingerprint "$blocker_fingerprint" --arg missing_secrets "$missing_secrets" \
 			--arg attempt "${AIDEVOPS_ATTEMPT_ID:-}" --argjson pid "$$" --argjson now "$now" \
+			--arg spec_dispatch "$spec_dispatch" \
 			'{schema: 1, repo: $repo, issue: $issue, session_key: $session_key, reason: $reason,
 			  exit: $exit_code, session_count: $session_count, lease_token: $token,
 			  lease_device: $device, lease_session: $lease_session, attempt_id: $attempt,
 			  blocker: {path: $blocker_path, fingerprint: $fingerprint, missing_secrets: $missing_secrets},
-			  pid: $pid, created: $now, next_after: ($now + 60), attempts: 0}' >"$tmp" &&
+			  pid: $pid, created: $now, next_after: ($now + 60), attempts: 0}
+			 + (if $spec_dispatch == "true" then {spec_dispatch: true} else {} end)' >"$tmp" &&
 			_hrrr_binding "$tmp" >"${path}.binding" && chmod 600 "${path}.binding" &&
 			mv -f "$tmp" "$path"; then
 			exit 0
@@ -125,6 +147,20 @@ _hrrr_read_blocker() {
 			[[ "$fingerprint" == "$(_terminal_blocker_hash 'v2:unknown')" ]] || return 1
 		fi
 	fi
+	return 0
+}
+
+# GH#38021: hand the recording run's receipt to this replay. Call only after
+# _hrrr_read_blocker verified the row's binding. A row without the field, or a
+# module that cannot load, leaves the replay without a receipt: nothing is
+# restored, which is the behaviour before GH#38021.
+# Args: $1 row path, $2 repo_slug, $3 issue_number. Always returns 0.
+_hrrr_adopt_spec_dispatch() {
+	local path="$1" repo_slug="$2" issue_number="$3"
+	jq -e '.spec_dispatch == true' "$path" >/dev/null 2>&1 || return 0
+	# shellcheck source=pulse-merge-partial-continuation.sh
+	source "${BASH_SOURCE[0]%/*}/pulse-merge-partial-continuation.sh" 2>/dev/null || return 0
+	_pmpc_adopt_checkpoint_spec_receipt "$repo_slug" "$issue_number" || return 0
 	return 0
 }
 
@@ -180,6 +216,8 @@ _hrrr_process_row() {
 		export AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS="$missing_secrets" AIDEVOPS_TERMINAL_BLOCKER_REJECTED_SECRETS=""
 		# Bounded and budget-aware: one post attempt, no authority sleeps.
 		export AIDEVOPS_RELEASE_AUTHORITY_RETRY_DELAYS="" AIDEVOPS_CLAIM_RELEASE_POST_ATTEMPTS=1
+		# Inside this subshell, so one row's receipt never reaches the next row.
+		_hrrr_adopt_spec_dispatch "$path" "$repo" "$issue"
 		_hrff_release_dispatch_claim_attempt "$session_key" "$reason" "$exit_code" "$session_count"
 	) || rc=$?
 	if [[ "$rc" -eq 0 ]]; then

@@ -180,9 +180,11 @@ assert_grep_fixed \
 
 # --- _compute_parent_nudge_age_hours (actions module) ---
 
+# The first-match selector is `sed -n '1p'` (equivalent to head -n1 but
+# without SIGPIPE on early exit; GH#38185 refreshed this stale assertion).
 assert_grep_fixed \
-	"5: nudge-age helper uses streaming + head -n1" \
-	'| head -n1) || nudge_created_at=""' \
+	"5: nudge-age helper uses streaming + first-line select" \
+	"| sed -n '1p') || nudge_created_at=\"\"" \
 	"$RECONCILE_ACTIONS"
 
 assert_grep_fixed \

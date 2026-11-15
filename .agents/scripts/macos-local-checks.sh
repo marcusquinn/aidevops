@@ -33,24 +33,36 @@ macos_checks_host() {
 	return 0
 }
 
+macos_checks_suite() {
+	local suite="$1"
+	shift
+	printf 'macOS suite: %s\n' "$suite" >&2
+	"$@" || {
+		printf 'macOS suite failed: %s\n' "$suite" >&2
+		return 1
+	}
+	return 0
+}
+
 macos_checks_run() {
 	local root="" test_script=""
 	root=$(git rev-parse --show-toplevel) || return 1
 	# Run from the repository root, just like the former macOS Actions leg.
 	(
 		cd "$root" || exit 1
-		bash -c 'source .agents/scripts/platform-detect.sh; [[ "$AIDEVOPS_PLATFORM" == macos && "$AIDEVOPS_SCHEDULER" == launchd ]]' || exit 1
-		node .agents/scripts/tests/test-model-replay-benchmark.mjs || exit 1
+		# shellcheck disable=SC2016 # Variables belong to the child Bash assertion.
+		macos_checks_suite platform-detect bash -c 'source .agents/scripts/platform-detect.sh; [[ "$AIDEVOPS_PLATFORM" == macos && "$AIDEVOPS_SCHEDULER" == launchd ]]' || exit 1
+		macos_checks_suite test-model-replay-benchmark.mjs node .agents/scripts/tests/test-model-replay-benchmark.mjs || exit 1
 		for test_script in \
 			test-runtime-env.sh test-launchd-sanitized-path.sh test-pulse-path-precedence.sh \
 			test-canonical-git-command-guard.sh test-command-policy-helper.sh \
 			test-tool-install-opencode.sh test-setup-source-access-broker.sh test-portable-shebangs.sh; do
-			env -u GITHUB_ACTIONS bash ".agents/scripts/tests/$test_script" || exit 1
+			macos_checks_suite "$test_script" env -u GITHUB_ACTIONS bash ".agents/scripts/tests/$test_script" || exit 1
 		done
 		for test_script in test-source-access-helper.py test_opencode_service.py test-release-lane-owner.py; do
-			python3 ".agents/scripts/tests/$test_script" || exit 1
+			macos_checks_suite "$test_script" python3 ".agents/scripts/tests/$test_script" || exit 1
 		done
-		node --test \
+		macos_checks_suite opencode-native-tests node --test \
 			.agents/plugins/opencode-aidevops/tests/test-git-safety-gate.mjs \
 			.agents/plugins/opencode-aidevops/tests/test-shell-env-origin.mjs \
 			.agents/plugins/opencode-aidevops/tests/test-source-access-guidance.mjs \
@@ -112,7 +124,11 @@ macos_checks_verify_pr() {
 	base=$(jq -r .baseRefOid <<<"$metadata")
 	base=$(git merge-base "$base" HEAD) || return 1
 	evidence=$(macos_checks_evidence "$base") || return 1
-	[[ -n "$evidence" ]] || return 0
+	# A sensitive diff may disappear on a later push while the handoff label
+	# remains. Reconcile it with explicit no-op evidence, not a claimed native run.
+	if [[ -z "$evidence" ]]; then
+		evidence="macOS: no remaining macOS-sensitive changes at $head; native suites not needed."
+	fi
 	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid,body) || return 1
 	[[ "$(jq -r .headRefOid <<<"$metadata")" == "$head" && -z "$(git status --porcelain)" ]] || return 1
 	body_file=$(mktemp) || return 1
@@ -131,8 +147,12 @@ macos_checks_verify_pr() {
 	gh pr edit "$pr" --repo "$repo" --remove-label needs-macos-verification || return 1
 	# A push between the check above and label removal would leave the new head
 	# without a handoff (the refresh workflow's addLabels no-ops while labelled).
-	metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) || return 1
-	current_head=$(jq -r .headRefOid <<<"$metadata") || return 1
+	if ! metadata=$(gh pr view "$pr" --repo "$repo" --json headRefOid) ||
+		! current_head=$(jq -er .headRefOid <<<"$metadata"); then
+		gh pr edit "$pr" --repo "$repo" --add-label needs-macos-verification || true
+		printf 'macOS verification failed: unable to confirm head after label removal; requested label restoration.\n' >&2
+		return 1
+	fi
 	if [[ "$current_head" != "$head" ]]; then
 		gh pr edit "$pr" --repo "$repo" --add-label needs-macos-verification || true
 		printf 'macOS verification failed: PR head changed from %s to %s during label removal; restored needs-macos-verification.\n' "$head" "$current_head" >&2

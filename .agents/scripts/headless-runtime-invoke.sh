@@ -206,6 +206,29 @@ _invoke_opencode_prepare_isolation() {
 	return 0
 }
 
+# GH#38491: OpenCode snapshot tracking stores full before/after file contents in
+# each message's summary.diffs and re-emits them on every message.updated
+# event. After a base merge one worker wrote 68 x 152 MiB events (10 GiB) to the
+# shared DB. Workers never use undo/revert, so merge snapshot=false into the
+# child's inline config (the private profile already sets it). Runs inside the
+# launch subshell, so only the worker child sees it.
+# Opt out with AIDEVOPS_WORKER_OPENCODE_SNAPSHOT=1.
+_invoke_opencode_disable_snapshots() {
+	local merged=""
+	[[ "$private_workload" -ne 1 ]] || return 0
+	[[ "${AIDEVOPS_WORKER_OPENCODE_SNAPSHOT:-0}" != "1" ]] || return 0
+	if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
+		export OPENCODE_CONFIG_CONTENT='{"snapshot":false}'
+		return 0
+	fi
+	if merged=$(jq -c '. + {snapshot: false}' <<<"$OPENCODE_CONFIG_CONTENT" 2>/dev/null) && [[ -n "$merged" ]]; then
+		export OPENCODE_CONFIG_CONTENT="$merged"
+		return 0
+	fi
+	print_warning "[lifecycle] snapshot_disable_skipped reason=unparseable_inline_config pid=$$"
+	return 0
+}
+
 # Build the child command and public-triage egress policy inside the subprocess.
 _invoke_opencode_prepare_child_command() {
 	if [[ "$public_triage" -eq 1 ]]; then
@@ -233,6 +256,7 @@ _invoke_opencode_prepare_child_command() {
 		egress_policy_profile="provider:${_invoke_provider}"
 		sandbox_home_args=(--home-dir "$isolated_home_dir")
 	fi
+	_invoke_opencode_disable_snapshots
 	_oc_cmd=("${cmd[@]}")
 	if [[ "${HEADLESS:-}" == "1" && "$private_workload" -ne 1 ]]; then
 		local -a new_cmd=()

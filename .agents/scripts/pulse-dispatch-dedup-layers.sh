@@ -15,6 +15,8 @@
 #   - _dedup_layer1_ledger_check
 #   - _dedup_layer2_process_match
 #   - _dedup_layer3_title_match
+#   - _dedup_layer4_timing_enabled
+#   - _dedup_layer4_step
 #   - _dedup_layer4_pr_evidence
 #   - _dedup_layer5_dispatch_comment
 #   - _dispatch_blocked_checkpoint_attention
@@ -286,6 +288,35 @@ _dedup_layer3_title_match() {
 }
 
 #######################################
+# GH#38101: layer-4 steps are timed only when the dispatcher loaded both the
+# stage recorder and _dedup_layer_timed; other callers run them unchanged.
+# Returns: 0 when timing is available
+#######################################
+_dedup_layer4_timing_enabled() {
+	declare -F _dedup_layer_timed >/dev/null 2>&1 || return 1
+	declare -F _ds_record >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# Run one layer-4 step as a dedup.layer4.<name> sub-stage when timing is
+# enabled. Runs in the current shell, so output, exit status and globals set
+# by the step pass through unchanged. Locals use a _dl4_ prefix.
+# Args: issue number, repo slug, step name, command and arguments
+#######################################
+_dedup_layer4_step() {
+	local _dl4_issue="$1" _dl4_repo="$2" _dl4_name="$3"
+	shift 3
+	local _dl4_rc=0
+	if _dedup_layer4_timing_enabled; then
+		_dedup_layer_timed "$_dl4_issue" "$_dl4_repo" "dedup.layer4.${_dl4_name}" "$@" || _dl4_rc=$?
+		return "$_dl4_rc"
+	fi
+	"$@" || _dl4_rc=$?
+	return "$_dl4_rc"
+}
+
+#######################################
 # Layer 4: open or merged PR evidence for this issue/task.
 # If a worker already produced a PR (open or merged), do not dispatch another.
 # Previously only checked --state merged, missing open PRs entirely.
@@ -300,7 +331,30 @@ _dedup_layer4_pr_evidence() {
 	local dedup_helper_output=""
 	local dedup_helper_rc=0
 	if [[ -x "$dedup_helper" ]]; then
-		dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE") || dedup_helper_rc=$?
+		# GH#38163: read through the canonical snapshot interface, retaining its
+		# auth/projection/invalidation checks. Pass a private file, not large JSON
+		# on argv; the helper only uses fresh complete evidence for all three
+		# open-PR checks together. Missing/partial snapshots stay on the live path.
+		local layer4_snapshot="" layer4_snapshot_reader="${SCRIPT_DIR}/pulse-batch-prefetch-helper.sh"
+		if [[ -x "$layer4_snapshot_reader" ]]; then
+			layer4_snapshot=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/layer4-prs.XXXXXX") || layer4_snapshot=""
+			if [[ -n "$layer4_snapshot" ]] &&
+				! "$layer4_snapshot_reader" read-snapshot --kind prs --slug "$repo_slug" >"$layer4_snapshot" 2>/dev/null; then
+				rm -f "$layer4_snapshot"
+				layer4_snapshot=""
+			fi
+		fi
+		# GH#38101: under a dispatcher, hand the helper the stage context so its
+		# parallel checks record dedup.layer4.<check> sub-stages.
+		local -a layer4_cmd=("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title")
+		if _dedup_layer4_timing_enabled; then
+			layer4_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
+				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer4_cmd[@]}")
+		fi
+		dedup_helper_output=$(AIDEVOPS_DDPR_OPEN_SNAPSHOT_FILE="$layer4_snapshot" \
+			_dedup_layer4_step "$issue_number" "$repo_slug" has_open_pr \
+			"${layer4_cmd[@]}" 2>>"$LOGFILE") || dedup_helper_rc=$?
+		[[ -z "$layer4_snapshot" ]] || rm -f "$layer4_snapshot"
 		if [[ "$dedup_helper_output" == *"PR_LOOKUP_RESULT=uncertain"* ]]; then
 			echo "[pulse-wrapper] Dedup: ${dedup_helper_output} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 			printf 'pr_lookup_uncertain\n'
@@ -309,7 +363,8 @@ _dedup_layer4_pr_evidence() {
 		if [[ "$dedup_helper_rc" -eq 0 ]]; then
 			# Recover an exact approved draft before treating existing PR evidence
 			# as terminal. Failure still blocks replacement implementation workers.
-			if _dispatch_revised_checkpoint "$issue_number" "$repo_slug" "${self_login:-}"; then
+			if _dedup_layer4_step "$issue_number" "$repo_slug" revised_checkpoint \
+				_dispatch_revised_checkpoint "$issue_number" "$repo_slug" "${self_login:-}"; then
 				return 0
 			fi
 			if [[ -n "$dedup_helper_output" ]]; then
@@ -318,7 +373,8 @@ _dedup_layer4_pr_evidence() {
 				echo "[pulse-wrapper] Dedup: PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
 			if [[ "$dedup_helper_output" == WORKER_DRAFT_CHECKPOINT:* ]]; then
-				if _dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
+				if _dedup_layer4_step "$issue_number" "$repo_slug" stalled_checkpoint \
+					_dispatch_stalled_checkpoint_continuation "$issue_number" "$repo_slug" \
 					"$dedup_helper_output" "${self_login:-}"; then
 					# The continuation helper verifies released/expired ownership;
 					# preserve that distinction through the outer dedup classifier.
@@ -331,6 +387,9 @@ _dedup_layer4_pr_evidence() {
 				_dispatch_blocked_checkpoint_attention "$issue_number" "$repo_slug" "$dedup_helper_output"
 				return 2
 			fi
+			# GH#38142: name PR evidence as its own block, not an active claim, so
+			# the pulse can cache it while the issue and exact PR are unchanged.
+			printf 'pr_evidence_block: %s\n' "${dedup_helper_output%%$'\n'*}"
 			return 0
 		fi
 		if [[ "$dedup_helper_rc" -ne 1 ]]; then
@@ -624,6 +683,101 @@ _dispatch_interactive_hold_gate() {
 }
 
 #######################################
+# Log and emit a layer-6 assignment block. The helper classifies its own block
+# into a private reason file (GH#38180); fall back to classify-blocker.
+# Arguments: issue_number, repo_slug, helper output, reason file (may be empty)
+#######################################
+_dedup_layer6_report_block() {
+	local issue_number="$1" repo_slug="$2" assigned_output="$3" reason_file="$4"
+	local assigned_reason=""
+	if [[ -n "$reason_file" && -s "$reason_file" ]]; then
+		IFS= read -r assigned_reason <"$reason_file" || true
+	fi
+	[[ "$assigned_reason" =~ ^[a-z0-9_]+$ ]] || assigned_reason=""
+	if [[ -z "$assigned_reason" ]]; then
+		assigned_reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
+	fi
+	[[ -z "$reason_file" ]] || rm -f "$reason_file"
+	echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
+	printf '%s\n' "$assigned_output"
+	return 0
+}
+
+#######################################
+# GH#38352: path of the private layer-6 free-verdict hint for this pulse
+# process ($$ is stable across the dispatch subshells), repository and issue.
+# Layer 7 hands it to dispatch-claim-helper.sh, which validates the directory.
+# t19022: hints live in their own private directory. In the shared temp root
+# every free verdict's age prune stat-ed every root entry; with ~100k entries
+# that took 100-450s of layer 6 per candidate.
+# Arguments: issue_number, repo_slug
+# Output: hint path; returns 1 for malformed input
+#######################################
+_dedup_assignment_verdict_path() {
+	local issue_number="$1" repo_slug="$2"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/dispatch-assignment-verdicts/%s.%s--%s.%s\n' \
+		"${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" "$$" \
+		"${repo_slug%%/*}" "${repo_slug##*/}" "$issue_number"
+	return 0
+}
+
+#######################################
+# t19022: the hint directory must be a real, user-owned directory with no
+# group or other write bits before a hint in it is removed, written or
+# trusted. A find error prints nothing, so the check fails closed.
+# Arguments: hint directory
+# Returns: 0 when private, 1 otherwise
+#######################################
+_dedup_assignment_verdict_dir_private() {
+	local dir="$1"
+	[[ -n "$dir" && -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 1
+	[[ "$(find "$dir" -maxdepth 0 ! -perm -020 ! -perm -002 -print 2>/dev/null)" == "$dir" ]] || return 1
+	return 0
+}
+
+#######################################
+# GH#38352: record a plain layer-6 "not assigned" verdict so the pre-claim
+# assignment guard can skip a repeated is-assigned call. Only the metadata the
+# verdict evaluated (the ISSUE_META_JSON bundle) may vouch for it; without
+# that bundle nothing is written. The claim helper reuses the hint only when a
+# fresh issue read shows the same state/assignees/labels and its comment
+# snapshot shows no comment created or edited since layer 6 started. The
+# post-consensus final assignment guard always performs its own fresh read.
+# Arguments: issue_number, repo_slug, self_login, layer-6 start epoch
+# Returns: 0 always (a failed write only loses the hint)
+#######################################
+_dedup_assignment_verdict_record() {
+	local issue_number="$1" repo_slug="$2" self_login="$3" started="$4"
+	local path="" dir="" meta="" tmp=""
+	path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || return 0
+	dir="${path%/*}"
+	# A non-private directory is never written to; the reader rejects it too.
+	if _dedup_assignment_verdict_dir_private "$dir"; then
+		rm -f "$path" 2>/dev/null || true
+	fi
+	[[ "$started" =~ ^[0-9]+$ && "$self_login" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$ ]] || return 0
+	meta=$(jq -cSe --arg list array 'select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
+		{state: (.state | ascii_upcase),
+		assignees: ([.assignees[] | (.login? // .) | strings | ascii_downcase] | sort),
+		labels: ([.labels[] | (.name? // .) | strings] | sort)}' <<<"${ISSUE_META_JSON:-}" 2>/dev/null) || return 0
+	[[ "$meta" != *$'\t'* && "$meta" != *$'\n'* ]] || return 0
+	[[ -d "$dir" ]] || (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+	_dedup_assignment_verdict_dir_private "$dir" || return 0
+	# Hints from launches that stopped before the claim are inert (keyed by
+	# pulse PID and age-bounded by the reader); prune them here. The directory
+	# holds only hints, so this scan stays small (t19022).
+	find "$dir" -maxdepth 1 -type f -mmin +30 -delete 2>/dev/null || true
+	tmp=$(umask 077; mktemp "${path}.XXXXXX" 2>/dev/null) || return 0
+	if printf 'v1\t%s\t%s\t%s\t%s\t%s\n' "$started" "$issue_number" "$repo_slug" "$self_login" "$meta" >"$tmp" &&
+		mv -f "$tmp" "$path"; then
+		return 0
+	fi
+	rm -f "$tmp"
+	return 0
+}
+
+#######################################
 # Layer 6 (GH#6891): cross-machine assignee guard + stale recovery.
 # Prevents runners from dispatching workers for issues already assigned to
 # another login. On STALE_RECOVERED with worker evidence, records fast-fail
@@ -637,13 +791,36 @@ _dedup_layer6_assignee_and_stale() {
 	local self_login="$3"
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		local assigned_output=""
-		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
-			local assigned_reason="unknown"
-			assigned_reason=$("$dedup_helper" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
-			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
-			printf '%s\n' "$assigned_output"
+		local assigned_output="" assigned_rc=0
+		# GH#38180: the helper classifies its own block into a private file, so
+		# a block no longer starts a second helper process for classify-blocker.
+		local layer6_reason_file=""
+		layer6_reason_file=$(umask 077; mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/layer6-reason.XXXXXX" 2>/dev/null) || layer6_reason_file=""
+		# Under a dispatcher, hand the helper the stage context so it records
+		# dedup.layer6.<sub_gate> rows (same pattern as layer 4, GH#38101).
+		local -a layer6_cmd=("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login")
+		if _dedup_layer4_timing_enabled; then
+			layer6_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
+				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer6_cmd[@]}")
+		fi
+		local verdict_started="" verdict_path=""
+		# GH#38352: only this run's plain free verdict may reach layer 7.
+		if verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") &&
+			_dedup_assignment_verdict_dir_private "${verdict_path%/*}"; then
+			rm -f "$verdict_path" 2>/dev/null || true
+		fi
+		verdict_started=$(date +%s)
+		assigned_output=$(AIDEVOPS_DDH_BLOCKER_REASON_FILE="$layer6_reason_file" \
+			"${layer6_cmd[@]}" 2>>"$LOGFILE") || assigned_rc=$?
+		if [[ "$assigned_rc" -eq 0 ]]; then
+			_dedup_layer6_report_block "$issue_number" "$repo_slug" "$assigned_output" "$layer6_reason_file"
 			return 0
+		fi
+		[[ -z "$layer6_reason_file" ]] || rm -f "$layer6_reason_file"
+		if [[ "$assigned_rc" -eq 1 && -z "$assigned_output" ]]; then
+			# GH#38352: a plain free verdict is a hint for the pre-claim guard.
+			_dedup_assignment_verdict_record "$issue_number" "$repo_slug" "$self_login" "$verdict_started"
+			return 1
 		fi
 		if [[ "$assigned_output" == *STALE_PR_CONTINUATION* ]]; then
 			_dispatch_stale_pr_checkpoint_continuation "$issue_number" "$repo_slug" "$assigned_output" "$self_login" || true
@@ -750,9 +927,23 @@ _dedup_layer7_claim_lock() {
 		# runs the same recovery-enabled guard before publishing the claim.
 		# One process retains the precheck snapshot and sources libraries once.
 		local claim_exit=0 claim_output=""
+		# GH#38352: offer this launch's layer-6 free verdict to the pre-claim
+		# guard; the helper validates it and the final guard stays fresh.
+		local assignment_verdict=""
+		assignment_verdict=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || assignment_verdict=""
+		if [[ -z "$assignment_verdict" || ! -f "$assignment_verdict" || -L "$assignment_verdict" ]] ||
+			! _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			assignment_verdict=""
+		fi
 		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
-		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" \
+			DISPATCH_ASSIGNMENT_VERDICT_FILE="$assignment_verdict" \
+			"$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
+		# Re-validate after the claim: the directory must still be private.
+		if [[ -n "$assignment_verdict" ]] && _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			rm -f "$assignment_verdict"
+		fi
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then

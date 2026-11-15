@@ -23,6 +23,7 @@ mode: subagent
 - Spotlight: check `mdutil` status and create `.metadata_never_index` only in writable generated/cache directories.
 - Time Machine: recommend `tmutil addexclusion`; verify with `tmutil isexcluded` when permissions allow.
 - Backblaze: detect editable XML locations, recommend generic `bzexcluderules_editable.xml` rules, and avoid printing sensitive fields.
+- Backblaze health (read-only): `optimise-indexing-backups-helper.sh macos health` reports `ok`, `stale:<hours>` (no upload for 48 h, override `AIDEVOPS_BACKBLAZE_STALE_HOURS`), `safety_frozen:<hint>`, `unknown` or `not-installed`; a non-ok result surfaces via `reminder` as a one-line user action (resolving a freeze needs the user's private encryption key, never AI).
 - High-churn paths: user caches, package caches, simulator caches, aidevops runtime cache/log/lock directories, and generated project directories such as `<repo-root>/**/node_modules/`, `<repo-root>/**/.turbo/`, `<repo-root>/**/dist/`, and `<repo-root>/**/coverage/`.
 
 ## Verification

@@ -410,6 +410,10 @@ _pulse_exit_cleanup() {
 	done
 	_PULSE_EXIT_PR_LIST_CACHE_DIR=""
 	_PULSE_EXIT_PR_LIST_PROVIDER_CACHE_DIR=""
+	# GH#37914: the cycle-owned routines ticker ends with its cycle.
+	if declare -F _pulse_stop_routines_ticker >/dev/null 2>&1; then
+		_pulse_stop_routines_ticker || true
+	fi
 	_dispatch_cleanup_benign_blocks_cycle || true
 	_dispatch_cleanup_cycle_cache || true
 	_pulse_release_llm_lock || true

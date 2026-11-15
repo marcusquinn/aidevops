@@ -43,6 +43,7 @@ setup_test_env() {
 	COMMENT_LOG="${TEST_ROOT}/comments.log"
 	COMMENT_ATTEMPTS="${TEST_ROOT}/comment-attempts.log"
 	API_LOG="${TEST_ROOT}/api.log"
+	UNFILTERED_LOG="${TEST_ROOT}/unfiltered.log"
 	return 0
 }
 
@@ -57,6 +58,8 @@ reset_case() {
 	: >"$COMMENT_LOG"
 	: >"$COMMENT_ATTEMPTS"
 	: >"$API_LOG"
+	: >"$UNFILTERED_LOG"
+	TEST_AVAILABLE_ISSUES='[]'
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
@@ -88,6 +91,29 @@ reset_case() {
 	TEST_ISSUE_JSON=$(issue_json "status:in-review,origin:worker,tier:standard" "runner1")
 	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "Dispatching worker (deterministic).")" \
 		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_ready_missing_linkage runner=runner1 ts=2026-10-10T10:20:00Z")")
+	# GH#38355 closed checkpoint fixtures: release at 10:02, draft opened at
+	# 10:00:30 and closed the next day; the checkpoint removed auto-dispatch at 10:01:30.
+	TEST_CLOSED_PRS='[]'
+	TEST_CLOSED_PRS_P2='[]'
+	TEST_CLOSED_P2_RC=0
+	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
+	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
+	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
+	TEST_EVENTS='[[{"event":"labeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T09:00:00Z"},{"event":"unlabeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T10:01:30Z"}]]'
+	PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS=999999999
+	return 0
+}
+
+# REST pulls/905 JSON for a closed worker checkpoint draft.
+# Args: $1=merged (true|false), $2=closed_at, $3=head ref
+closed_pr_json() {
+	local merged="$1" closed_at="$2" ref="$3"
+	jq -cn --argjson merged "$merged" --arg closed "$closed_at" --arg ref "$ref" '{
+		number: 905, state: "closed", merged: $merged, draft: true,
+		merged_at: (if $merged then $closed else null end),
+		created_at: "2026-10-10T10:00:30Z", closed_at: $closed,
+		head: {ref: $ref, sha: "abc", repo: {full_name: "owner/repo"}}
+	}'
 	return 0
 }
 
@@ -103,15 +129,16 @@ pr_json() {
 	return 0
 }
 
-# Args: $1=labels CSV, $2=assignees CSV
+# Args: $1=labels CSV, $2=assignees CSV, $3=body (optional; omitted when empty)
 issue_json() {
 	local labels="$1"
 	local assignees="$2"
-	jq -cn --arg labels "$labels" --arg assignees "$assignees" '{
+	local body="${3:-}"
+	jq -cn --arg labels "$labels" --arg assignees "$assignees" --arg body "$body" '{
 		number: 501, state: "open",
 		labels: ($labels | split(",") | map(select(length > 0) | {name: .})),
 		assignees: ($assignees | split(",") | map(select(length > 0) | {login: .}))
-	}'
+	} + (if $body == "" then {} else {body: $body} end)'
 	return 0
 }
 
@@ -191,7 +218,13 @@ gh_pr_view() {
 gh() {
 	printf '%s\n' "$*" >>"$API_LOG"
 	if [[ "${2:-}" == "repos/${SLUG}/issues?state=open"* ]]; then
-		if [[ "${2:-}" == *"&page=2" ]]; then
+		# GH#38039: only label-filtered candidates are listed.
+		if [[ "${2:-}" != *"labels="* ]]; then
+			printf 'unfiltered issue listing\n' >>"$UNFILTERED_LOG"
+			printf '[]'
+		elif [[ "${2:-}" == *"labels=status:available"* ]]; then
+			printf '%s' "$TEST_AVAILABLE_ISSUES"
+		elif [[ "${2:-}" == *"&page=2" ]]; then
 			printf '%s' "$TEST_REVIEW_PAGE2"
 		else
 			printf '%s' "$TEST_REVIEW_ISSUES"
@@ -208,6 +241,26 @@ gh() {
 	fi
 	if [[ "${2:-}" == "repos/${SLUG}/pulls/902" ]]; then
 		pr_json true runner1
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/pulls?state=closed"* ]]; then
+		# GH#38396: page=2 serves TEST_CLOSED_PRS_P2 (or fails); other pages TEST_CLOSED_PRS.
+		if [[ "${2:-}" == *"&page=2" ]]; then
+			[[ "$TEST_CLOSED_P2_RC" -eq 0 ]] || return "$TEST_CLOSED_P2_RC"
+			printf '%s' "$TEST_CLOSED_PRS_P2"
+		elif [[ "${2:-}" == *"&page=3" ]]; then
+			printf '[]'
+		else
+			printf '%s' "$TEST_CLOSED_PRS"
+		fi
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/pulls/905" ]]; then
+		printf '%s' "$TEST_CLOSED_PR_JSON"
+		return 0
+	fi
+	if [[ "${2:-}" == "repos/${SLUG}/issues/501/events"* ]]; then
+		printf '%s' "$TEST_EVENTS"
 		return 0
 	fi
 	if [[ "${2:-}" == "repos/${SLUG}/issues/502/comments"* ]]; then
@@ -358,6 +411,80 @@ test_unlabeled_worker_provenance() {
 	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq '.head.ref = "feature/other"')
 	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
 	assert_no_write "worker marker without worker branch cannot release issue"
+	return 0
+}
+
+# GH#38042: marker-less worker PR proven by the author's own matching claim.
+# Args: $1=claim author login, $2=claim line, $3=head ref (optional)
+claim_case() {
+	local claim_author="$1"
+	local claim_line="$2"
+	local branch="${3:-feature/auto-20261108-155943-gh501}"
+	reset_case
+	TEST_PR_LABELS="tier:standard"
+	TEST_PR_JSON=$(printf '%s' "$TEST_PR_JSON" | jq --arg ref "$branch" '. + {body: "Partial work.\n\nFor #501", head: {ref: $ref}}')
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER "$claim_author" "$claim_line")" \
+		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_ready_missing_linkage runner=runner1 ts=2026-10-10T10:20:00Z")")
+	return 0
+}
+
+test_claim_matched_worker_provenance() {
+	local good="DISPATCH_CLAIM nonce=n1 runner=runner1 ts=2026-11-08T15:59:30Z max_age_s=600 session=issue-501 phase=prelaunch"
+	claim_case runner1 "$good"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" "claim-matched marker-less worker returns to queue"
+	claim_case runner2 "${good//runner1/runner2}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim from a different login is refused"
+	claim_case runner1 "${good//session=issue-501/session=issue-777}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim for a different session is refused"
+	claim_case runner1 "$good" "feature/auto-20261108-155943-gh777"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim on a different issue than the branch is refused"
+	claim_case runner1 "${good//15:59:30Z/15:48:30Z}"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim more than 10 minutes from the branch is refused"
+	claim_case runner1 "$good"
+	TEST_PERMISSION="read"
+	_pm_restore_partial_continuation 900 "$SLUG" "" "" 501
+	assert_no_write "claim-matched author without write access is refused"
+	return 0
+}
+
+set_origin_label() {
+	printf 'origin %s\n' "$*" >>"$STATUS_LOG"
+	return 0
+}
+
+test_unlabeled_worker_branch_merge_gate() {
+	local good="DISPATCH_CLAIM nonce=n1 runner=runner1 ts=2026-11-08T15:59:30Z session=issue-501 phase=prelaunch"
+	local info="" rc=0
+	claim_case runner1 "${good//runner1/runner2}"
+	info='{"headRefName":"feature/auto-20261108-155943-gh501","body":"For #501"}'
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info" || rc=$?
+	if [[ "$rc" -eq 1 && ! -s "$STATUS_LOG" ]]; then
+		assert_log_contains "no provable worker provenance" "unprovable worker branch is not merged"
+	else
+		fail "unprovable worker branch is not merged" "rc=${rc} writes=$(tr '\n' ' ' <"$STATUS_LOG")"
+	fi
+	claim_case runner1 "$good"
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" "$info" || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		assert_status_call "origin 900 ${SLUG} worker --pr" "proven worker branch is relabelled and deferred"
+	else
+		fail "proven worker branch is relabelled and deferred" "rc=${rc}"
+	fi
+	reset_case
+	rc=0
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "origin:worker" "$info" || rc=$?
+	_pm_gate_unlabeled_worker_branch 900 "$SLUG" runner1 "tier:standard" '{"headRefName":"bugfix/x","body":""}' || rc=$?
+	if [[ "$rc" -eq 0 && ! -s "$STATUS_LOG" ]]; then
+		pass "labelled or non-worker branches pass through unchanged"
+	else
+		fail "labelled or non-worker branches pass through unchanged" "rc=${rc}"
+	fi
 	return 0
 }
 
@@ -951,10 +1078,23 @@ test_available_dispatch_recovery() {
 	local label="" marker=""
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:available,origin:worker' '')
-	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_ISSUES='[]'
+	TEST_AVAILABLE_ISSUES='[{"number":501,"labels":[{"name":"status:available"},{"name":"origin:worker"}]},{"number":503,"labels":[{"name":"auto-dispatch"}]}]'
 	TEST_TIMELINE='[[]]'
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "sweep-restored available issue regains dispatch without merged timeline"
+	# GH#38039: candidates only. No unfiltered listing, no timeline read, and an
+	# available issue already carrying auto-dispatch is never read at all.
+	if [[ ! -s "$UNFILTERED_LOG" ]] && ! grep -Fq '/timeline' "$API_LOG" && ! grep -Fq 'issues/503' "$API_LOG"; then
+		pass "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	else
+		fail "revisit reads only label-filtered candidates (no timeline or comment read for non-candidates)"
+	fi
+	if grep -Fq 'labels=status:in-review' "$API_LOG" && grep -Fq 'labels=status:available,origin:worker' "$API_LOG"; then
+		pass "revisit lists in-review then available worker candidates"
+	else
+		fail "revisit lists in-review then available worker candidates"
+	fi
 	if grep -q 'kind=available-dispatch-recovery' "$COMMENT_LOG"; then
 		pass "available dispatch recovery records audit"
 	else
@@ -1009,6 +1149,290 @@ test_available_dispatch_recovery() {
 	return 0
 }
 
+# GH#38355: a closed, unmerged checkpoint draft no longer holds its issue.
+closed_checkpoint_case() {
+	local labels="${1:-status:available,origin:interactive}" assignees="${2:-}"
+	reset_case
+	TEST_REVIEW_ISSUES='[]'
+	TEST_ISSUE_JSON=$(issue_json "$labels" "$assignees")
+	TEST_COMMENTS_JSON=$(pages "$(comment 1 MEMBER runner1 "Dispatching worker (deterministic).")" \
+		"$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1 ts=2026-10-10T10:02:00Z")")
+	TEST_CLOSED_PRS='[{"number":904,"merged_at":"2026-10-11T00:00:00Z","closed_at":"2026-10-11T00:00:00Z","head":{"ref":"feature/auto-20261010-095000-gh501","repo":{"full_name":"owner/repo"}}},{"number":905,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","head":{"ref":"feature/auto-20261010-095500-gh501","repo":{"full_name":"owner/repo"}}},{"number":906,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","head":{"ref":"bugfix/manual-gh501","repo":{"full_name":"owner/repo"}}}]'
+	return 0
+}
+
+test_closed_checkpoint_dispatch_recovery() {
+	local label=""
+	closed_checkpoint_case
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" \
+		"closed checkpoint draft restores auto-dispatch for any origin"
+	assert_comment_contains "kind=closed-checkpoint-dispatch-recovery pr=905 " "closed checkpoint restore records audit"
+	if grep -Fq 'pulls/904' "$API_LOG" || grep -Fq 'pulls/906' "$API_LOG"; then
+		fail "closed checkpoint scan reads only unmerged worker branches"
+	else
+		pass "closed checkpoint scan reads only unmerged worker branches"
+	fi
+
+	closed_checkpoint_case 'status:in-review,origin:interactive' runner1
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch --remove-assignee runner1" \
+		"stranded in-review checkpoint releases its runner"
+	closed_checkpoint_case 'status:in-review,origin:interactive' runner2
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "closed checkpoint keeps a different assignee"
+	closed_checkpoint_case 'status:available,origin:interactive' runner1
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "closed checkpoint keeps an assigned available issue"
+
+	for label in auto-dispatch no-auto-dispatch parent-task hold-for-review lockdown persistent needs-maintainer-review status:blocked; do
+		closed_checkpoint_case "status:available,${label}"
+		_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+		assert_no_write "closed checkpoint preserves ${label}"
+	done
+
+	closed_checkpoint_case
+	TEST_OPEN_PRS='[{"number":907,"body":"Resolves #501"}]'
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "worker or seed replacement PR still owns the issue"
+	closed_checkpoint_case
+	TEST_CLOSED_PR_JSON=$(closed_pr_json true 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "merged checkpoint is left to the partial-continuation path"
+	closed_checkpoint_case
+	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-10T10:01:00Z feature/auto-20261010-095500-gh501)
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "PR closed before the checkpoint release is not its checkpoint"
+	closed_checkpoint_case
+	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh777)
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "PR for another issue is not this checkpoint"
+	closed_checkpoint_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1 ts=x")" \
+		"$(comment 3 MEMBER runner1 "DISPATCH_CLAIM runner=runner1")")
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "newer owner after the checkpoint release is preserved"
+	closed_checkpoint_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_failed runner=runner1 ts=x")")
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "other release reasons are not checkpoints"
+	closed_checkpoint_case
+	TEST_COMMENTS_JSON=$(pages "$(comment 2 MEMBER runner1 "CLAIM_RELEASED reason=worker_draft_checkpoint runner=runner1 ts=x")" \
+		"$(comment 3 MEMBER pulse "<!-- aidevops:ops kind=closed-checkpoint-dispatch-recovery pr=905 -->")")
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "recorded restore is not repeated"
+	closed_checkpoint_case
+	TEST_EVENTS='[[{"event":"unlabeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T10:01:30Z"},{"event":"labeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T11:00:00Z"},{"event":"unlabeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T12:00:00Z"}]]'
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "a person's later removal of auto-dispatch is respected"
+	closed_checkpoint_case
+	TEST_EVENTS='[[{"event":"labeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T07:00:00Z"},{"event":"unlabeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T08:30:00Z"}]]'
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "a person's removal during the run is respected"
+	closed_checkpoint_case
+	TEST_EVENTS='[[]]'
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "an issue that never had auto-dispatch does not gain it"
+	closed_checkpoint_case
+	TEST_EVENTS='not-json'
+	_pmpc_restore_closed_checkpoint_dispatch "$SLUG" 501 905 || true
+	assert_no_write "unreadable label timeline fails closed"
+	return 0
+}
+
+# GH#38396: the closed-checkpoint scan pages until the floor and keeps a stamp.
+test_closed_checkpoint_scan_pagination() {
+	local stamp_file="${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.closed-scan"
+	local manual='{"number":%s,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","updated_at":"2026-10-12T00:00:00Z","head":{"ref":"bugfix/manual","repo":{"full_name":"owner/repo"}}}'
+	local p1="" p2=""
+	p1="[$(printf "$manual" 910),$(printf "$manual" 911)]"
+	p2='[{"number":905,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","updated_at":"2026-10-11T00:00:00Z","head":{"ref":"feature/auto-20261010-095500-gh501","repo":{"full_name":"owner/repo"}}}]'
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" \
+		"checkpoint PR only on page 2 restores auto-dispatch"
+	if [[ -r "$stamp_file" && "$(<"$stamp_file")" == "2000000000" ]]; then
+		pass "complete scan writes the stamp"
+	else
+		fail "complete scan writes the stamp"
+	fi
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS=100
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	if grep -Fq '&page=2' "$API_LOG"; then
+		fail "scan stops at the first page older than the floor"
+	else
+		pass "scan stops at the first page older than the floor"
+	fi
+	[[ -r "$stamp_file" ]] && pass "floor stop advances the stamp" || fail "floor stop advances the stamp"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	TEST_CLOSED_P2_RC=1
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060 || true
+	[[ ! -e "$stamp_file" ]] && pass "unreadable page leaves the stamp unchanged" || fail "unreadable page leaves the stamp unchanged"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000000
+	[[ ! -e "$stamp_file" ]] && pass "deadline stop leaves the stamp unchanged" || fail "deadline stop leaves the stamp unchanged"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	PULSE_CLOSED_CHECKPOINT_MAX_PAGES=1
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	[[ ! -e "$stamp_file" ]] && pass "page-cap stop leaves the stamp unchanged" || fail "page-cap stop leaves the stamp unchanged"
+	return 0
+}
+
+# GH#38021: a draft checkpoint on a canonical consolidated spec gets back the
+# auto-dispatch label that the same worker run removed, and nothing else does.
+test_checkpoint_spec_dispatch_restore() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	TEST_OPEN_PRS='[{"number":901,"body":"For #501","draft":true}]'
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec regains dispatch beside its open draft"
+	if [[ ! -s "$COMMENT_LOG" ]]; then
+		pass "checkpoint spec restore posts no comment"
+	else
+		fail "checkpoint spec restore posts no comment"
+	fi
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "checkpoint spec receipt is consumed on use"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "label removed before the checkpoint stays removed"
+
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "restore without a receipt writes nothing"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 'Hand-written body.')
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' '' 'Hand-written body.')
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "consolidated issue without the canonical marker is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON=$(issue_json 'status:in-progress,auto-dispatch' runner1 "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available' '' "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "ordinary issue is not relabelled"
+
+	reset_case
+	TEST_ISSUE_JSON='unreadable'
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "unreadable pre-checkpoint state records no receipt"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 502 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "receipt for another issue is discarded without a write"
+
+	for label in auto-dispatch no-auto-dispatch parent-task hold-for-review lockdown persistent needs-maintainer-review needs-simplification status:blocked; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated,${label}" '' "$spec")
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+		assert_no_write "checkpoint spec restore preserves ${label}"
+	done
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:available,consolidated' runner2 "$spec")
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_no_write "checkpoint spec restore preserves an assigned issue"
+
+	reset_case
+	TEST_ISSUE_JSON="$before"
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON=$(issue_json 'status:in-review,consolidated' '' "$spec")
+	_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+	TEST_ISSUE_JSON="$after"
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "repeated escalation keeps the first receipt"
+	return 0
+}
+
+# GH#38021: the restore reports its outcome, and a deferred release replay in
+# another process adopts the recording run's receipt.
+test_checkpoint_spec_receipt_outcomes() {
+	local label="" spec=$'_Supersedes #400 — this issue is the consolidated spec._\n\n## What\nFix it.'
+	local before="" after="" rc=0 outcomes=""
+	before=$(issue_json 'status:in-progress,consolidated,auto-dispatch' runner1 "$spec")
+	after=$(issue_json 'status:available,consolidated' '' "$spec")
+
+	# 0 restored, 1 nothing to restore (label already back, then no receipt),
+	# 2 receipt held but the issue is on hold.
+	for label in '' auto-dispatch hold-for-review; do
+		reset_case
+		TEST_ISSUE_JSON="$before"
+		_pmpc_record_checkpoint_spec_dispatch "$SLUG" 501 || true
+		TEST_ISSUE_JSON=$(issue_json "status:available,consolidated${label:+,${label}}" '' "$spec")
+		rc=0
+		_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+		outcomes+="${rc} "
+	done
+	rc=0
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || rc=$?
+	outcomes+="$rc"
+	if [[ "$outcomes" == "0 1 2 1" ]]; then
+		pass "checkpoint spec restore reports restored, nothing to restore and refused"
+	else
+		fail "checkpoint spec restore reports restored, nothing to restore and refused (got ${outcomes})"
+	fi
+
+	# A deferred release replay adopts the recording run's receipt.
+	reset_case
+	TEST_ISSUE_JSON="$after"
+	_pmpc_adopt_checkpoint_spec_receipt 'not a slug' 501 || true
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 0 || true
+	if _pmpc_holds_checkpoint_spec_receipt "$SLUG" 501; then
+		fail "malformed issue reference adopts no receipt"
+	else
+		pass "malformed issue reference adopts no receipt"
+	fi
+	_pmpc_adopt_checkpoint_spec_receipt "$SLUG" 501 || true
+	_pmpc_restore_checkpoint_spec_dispatch "$SLUG" 501 || true
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" "adopted receipt restores dispatch"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -1016,6 +1440,8 @@ main() {
 	source "$MODULE_FILE"
 
 	test_unlabeled_worker_provenance
+	test_claim_matched_worker_provenance
+	test_unlabeled_worker_branch_merge_gate
 	test_eligible_leaf_returns_to_queue
 	test_parent_tracker_skips_auto_dispatch
 	test_terminal_lease_proves_finished_run
@@ -1056,6 +1482,10 @@ main() {
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_available_dispatch_recovery
+	test_closed_checkpoint_dispatch_recovery
+	test_closed_checkpoint_scan_pagination
+	test_checkpoint_spec_dispatch_restore
+	test_checkpoint_spec_receipt_outcomes
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

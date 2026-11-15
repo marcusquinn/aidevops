@@ -21,9 +21,15 @@
 #   git -C "$SCRATCH_WORKTREE_PATH" fetch ...
 #   scratch_worktree_remove "$SCRATCH_WORKTREE_PATH" "my-script.sh" || true
 #
+# A caller that only needs one fetch for a canonical checkout uses
+# scratch_worktree_fetch, which borrows a linked worktree when one is usable and
+# creates (then removes) a scratch worktree only when none is.
+#
 # Environment:
 #   AIDEVOPS_SCRATCH_WORKTREE_STALE_MINUTES — idle minutes before a dead owner's
 #     scratch worktree is reclaimable (default 30).
+#   AIDEVOPS_SCRATCH_WORKTREE_FETCH_TIMEOUT_SECONDS — wall-clock bound for one
+#     scratch_worktree_fetch when timeout_sec is loaded (default 120).
 #
 # Compatibility: bash 3.2+.
 
@@ -35,8 +41,37 @@ _SCRATCH_WT_REASON_PREFIX="aidevops-scratch/v1"
 _SCRATCH_WT_CALLER="scratch-worktree-helper.sh"
 _SCRATCH_WT_MODE="scratch"
 _SCRATCH_WT_UNKNOWN="unknown"
+_SCRATCH_WT_FETCH_STAGE_CONTEXT="context"
+_SCRATCH_WT_FETCH_STAGE_FETCH="fetch"
 SCRATCH_WORKTREE_PATH=""
 SCRATCH_WORKTREE_REASON=""
+SCRATCH_WORKTREE_FETCH_FAILURE=""
+
+# Inherited repository selectors take precedence over `git -C`. This sourced
+# library must not unset them in the caller's shell, so each Git call clears
+# them per call. Keep identical to worktree-rescue-helper.sh.
+_SCRATCH_WT_GIT_ENV_UNSET=(
+	-u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR
+	-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+	-u GIT_NAMESPACE -u GIT_PREFIX
+)
+
+# Run git without inherited repository-location variables.
+_scratch_wt_git() {
+	env "${_SCRATCH_WT_GIT_ENV_UNSET[@]}" git "$@"
+	return $?
+}
+
+# Create a registered worktree in a subshell so the selectors are cleared for
+# its Git calls without touching the caller's environment.
+_scratch_wt_create() {
+	(
+		unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+			GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX
+		worktree_create_registered "$@"
+	)
+	return $?
+}
 
 # Audit one event; loads the canonical audit logger lazily (fail-open).
 _scratch_wt_log() {
@@ -115,7 +150,7 @@ _scratch_wt_current_reason() {
 	local wt_path="$1"
 	local git_dir=""
 	local reason=""
-	git_dir=$(git -C "$wt_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	git_dir=$(_scratch_wt_git -C "$wt_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
 	[[ -f "${git_dir}/locked" ]] || return 1
 	IFS= read -r reason <"${git_dir}/locked" || [[ -n "$reason" ]] || return 1
 	printf '%s\n' "$reason"
@@ -129,15 +164,15 @@ _scratch_wt_unlock_and_remove() {
 	local reason="$2"
 	local caller="$3"
 	local context="$4"
-	git -C "$wt_path" worktree unlock "$wt_path" >/dev/null 2>&1 || {
+	_scratch_wt_git -C "$wt_path" worktree unlock "$wt_path" >/dev/null 2>&1 || {
 		_scratch_wt_log "${_WTAR_SKIPPED:-skipped}" "$caller" "$wt_path" "scratch-unlock-failed" "$context"
 		return 1
 	}
-	if git -C "$wt_path" worktree remove "$wt_path" >/dev/null 2>&1 && [[ ! -e "$wt_path" ]]; then
+	if _scratch_wt_git -C "$wt_path" worktree remove "$wt_path" >/dev/null 2>&1 && [[ ! -e "$wt_path" ]]; then
 		_scratch_wt_log "${_WTAR_REMOVED:-removed}" "$caller" "$wt_path" "scratch-owned" "$context"
 		return 0
 	fi
-	git -C "$wt_path" worktree lock --reason "$reason" "$wt_path" >/dev/null 2>&1 || true
+	_scratch_wt_git -C "$wt_path" worktree lock --reason "$reason" "$wt_path" >/dev/null 2>&1 || true
 	_scratch_wt_log "${_WTAR_SKIPPED:-skipped}" "$caller" "$wt_path" "scratch-dirty-or-busy" "$context"
 	return 1
 }
@@ -169,13 +204,13 @@ scratch_worktree_add() {
 	source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || return 1
 	local AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$"
 	local AIDEVOPS_WORKTREE_CREATE_SESSION="$reason"
-	if ! worktree_create_registered "$repo_path" "$scratch_path" "$commitish" \
+	if ! _scratch_wt_create "$repo_path" "$scratch_path" "$commitish" \
 		-q --detach --lock --reason "$reason" >/dev/null 2>&1; then
 		# Git < 2.36 lacks `add --reason`: create, then lock before any use.
 		[[ ! -e "$scratch_path" ]] || return 1
-		worktree_create_registered "$repo_path" "$scratch_path" "$commitish" -q --detach >/dev/null 2>&1 || return 1
-		if ! git -C "$scratch_path" worktree lock --reason "$reason" "$scratch_path" >/dev/null 2>&1; then
-			git -C "$scratch_path" worktree remove "$scratch_path" >/dev/null 2>&1 || true
+		_scratch_wt_create "$repo_path" "$scratch_path" "$commitish" -q --detach >/dev/null 2>&1 || return 1
+		if ! _scratch_wt_git -C "$scratch_path" worktree lock --reason "$reason" "$scratch_path" >/dev/null 2>&1; then
+			_scratch_wt_git -C "$scratch_path" worktree remove "$scratch_path" >/dev/null 2>&1 || true
 			return 1
 		fi
 	fi
@@ -213,6 +248,100 @@ scratch_worktree_remove() {
 	return 0
 }
 
+# Return 0 when a path is a linked worktree whose Git state is readable.
+# `rev-parse` does not read the index, and a truncated sibling index fails a
+# fetch, so the probe is a lock-free status.
+_scratch_wt_context_is_usable() {
+	local wt_path="$1"
+	local git_dir="" common_dir=""
+	[[ -n "$wt_path" && -d "$wt_path" && ! -L "$wt_path" ]] || return 1
+	git_dir=$(_scratch_wt_git -C "$wt_path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+	common_dir=$(_scratch_wt_git -C "$wt_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]] || return 1
+	GIT_OPTIONAL_LOCKS=0 _scratch_wt_git -C "$wt_path" status --porcelain --untracked-files=no >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Print the first linked worktree that can be borrowed as a fetch context.
+# Locked entries are skipped: a lock marks a worktree still being created, a
+# scratch worktree its owner may remove mid-fetch, or a deliberate hold.
+_scratch_wt_borrowable_context() {
+	local repo_path="$1"
+	local line="" candidate="" held=0
+	if _scratch_wt_context_is_usable "$repo_path"; then
+		printf '%s\n' "$repo_path"
+		return 0
+	fi
+	# The trailing blank line closes the last porcelain record.
+	while IFS= read -r line; do
+		case "$line" in
+		"worktree "*)
+			candidate="${line#worktree }"
+			held=0
+			;;
+		locked | "locked "* | prunable | "prunable "* | bare) held=1 ;;
+		"")
+			if [[ -n "$candidate" && "$held" -eq 0 ]] && _scratch_wt_context_is_usable "$candidate"; then
+				printf '%s\n' "$candidate"
+				return 0
+			fi
+			candidate=""
+			;;
+		esac
+	done < <(
+		_scratch_wt_git -C "$repo_path" worktree list --porcelain 2>/dev/null
+		printf '\n'
+	)
+	return 1
+}
+
+#######################################
+# Run one `git fetch` for a repository from a linked-worktree Git context.
+# The canonical Git guard denies `git fetch` in a canonical checkout, so a
+# caller that holds only the canonical path fetches through a borrowed linked
+# worktree, or through an owned scratch worktree when none is usable. Objects
+# and remote-tracking refs are shared by every worktree of the repository.
+# Pass --no-write-fetch-head so a borrowed worktree's FETCH_HEAD is untouched.
+# Arguments: $1 repo path, $2 scratch base dir, $3 scratch label,
+#   $4 audit caller, $5.. arguments for `git fetch`
+# Sets: SCRATCH_WORKTREE_FETCH_FAILURE — empty on success, "context" when no
+#   linked context was available, "fetch" when `git fetch` failed
+# Returns: 0 when the fetch succeeded, 1 otherwise
+#######################################
+scratch_worktree_fetch() {
+	local repo_path="${1:-}"
+	local base_dir="${2:-}"
+	local label="${3:-}"
+	local caller="${4:-$_SCRATCH_WT_CALLER}"
+	local fetch_seconds="${AIDEVOPS_SCRATCH_WORKTREE_FETCH_TIMEOUT_SECONDS:-120}"
+	local fetch_cwd="" bootstrap_path=""
+	local fetch_rc=0
+	SCRATCH_WORKTREE_FETCH_FAILURE="$_SCRATCH_WT_FETCH_STAGE_CONTEXT"
+	[[ $# -ge 5 && -n "$repo_path" && -n "$base_dir" && -n "$label" ]] || return 1
+	shift 4
+	[[ "$fetch_seconds" =~ ^[1-9][0-9]*$ ]] || fetch_seconds=120
+	fetch_cwd=$(_scratch_wt_borrowable_context "$repo_path") || fetch_cwd=""
+	if [[ -z "$fetch_cwd" ]]; then
+		scratch_worktree_add "$repo_path" "$base_dir" "$label" HEAD || return 1
+		bootstrap_path="$SCRATCH_WORKTREE_PATH"
+		fetch_cwd="$bootstrap_path"
+	fi
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		GIT_TERMINAL_PROMPT=0 timeout_sec "$fetch_seconds" env "${_SCRATCH_WT_GIT_ENV_UNSET[@]}" git -C "$fetch_cwd" fetch "$@" || fetch_rc=$?
+	else
+		GIT_TERMINAL_PROMPT=0 _scratch_wt_git -C "$fetch_cwd" fetch "$@" || fetch_rc=$?
+	fi
+	if [[ -n "$bootstrap_path" ]]; then
+		scratch_worktree_remove "$bootstrap_path" "$caller" || true
+	fi
+	if [[ "$fetch_rc" -ne 0 ]]; then
+		SCRATCH_WORKTREE_FETCH_FAILURE="$_SCRATCH_WT_FETCH_STAGE_FETCH"
+		return 1
+	fi
+	SCRATCH_WORKTREE_FETCH_FAILURE=""
+	return 0
+}
+
 #######################################
 # Reclaim scratch worktrees left by interrupted owners (for example SIGKILL).
 # Only entries locked with this helper's token, whose owner is provably gone,
@@ -242,7 +371,7 @@ scratch_worktree_reap_stale() {
 			scratch_reasons+=("${line#locked }")
 			;;
 		esac
-	done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+	done < <(_scratch_wt_git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 	while [[ "$index" -lt "${#scratch_paths[@]}" ]]; do
 		wt_path="${scratch_paths[$index]}"
 		reason="${scratch_reasons[$index]}"

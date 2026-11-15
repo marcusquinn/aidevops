@@ -57,6 +57,12 @@ configuration schemas. Aidevops keeps those differences in
 `.agents/configs/opencode-runtime-profiles.json`; shared plugin behavior remains
 runtime-neutral.
 
+When `AIDEVOPS_OPENCODE_PROFILE` is unset, setup uses the global `opencode`
+binary's major version for its plugin registration: version 2 or newer uses
+the V2 contract, while version 1, a missing binary, or an unreadable version
+uses V1. An explicit profile overrides detection; the isolated `opencode2`
+preview remains separate.
+
 | Profile | CLI package | Binary | Plugin implementation | Config loader | Config keys |
 |---------|-------------|--------|-----------------------|---------------|-------------|
 | `v1` (production default) | `opencode-ai` | `opencode` | `index.mjs` | `index.mjs` | `agent`, `plugin`, `permission`, `provider` |

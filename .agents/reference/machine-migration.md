@@ -108,9 +108,15 @@ the export, and the export refuses if they changed.
 5. Ignored files (for example `.env`, local config, `node_modules/`) are listed in
    `<BUNDLE>/ignored.txt` but not copied, because they can hold secrets or be very
    large. Copy any you need by hand, or reinstall dependencies.
-6. Commit and push from the fresh worktree as normal.
+6. Commit and push from the fresh worktree as normal. If you retire the copies
+   with the guarded path below, retire them first: a commit changes the
+   destination HEAD, and guarded retirement refuses a destination that no
+   longer matches the rescued HEAD.
 
-`worktree-rescue-helper.sh verify <BUNDLE>` repeats the check at any time.
+`worktree-rescue-helper.sh verify <BUNDLE>` repeats the check at any time. A
+successful `verify` (including the one `import` runs) writes
+`<BUNDLE>/receipt.txt`, which restates the manifest hashes and pins the manifest
+bytes. It is evidence for retirement, never an authorization.
 
 ## Interrupted recovery
 
@@ -128,10 +134,51 @@ repeated:
 
 ## After the rescue
 
-Keep the copied worktrees and bundles until the rescued work is committed and
-pushed, and checked. Normal cleanup refuses the copies. Guarded retirement after
-a verified rescue is tracked in GH#37828. Until it ships, leaving the copies in
-place costs only disk space.
+Keep the copied worktrees and bundles until the rescued work is checked. Normal
+cleanup refuses the copies. The guarded receipt path below requires the verified
+destination to remain unchanged at the rescued HEAD until retirement completes.
+
+## Retiring the copies
+
+Do not use `git worktree remove` on a copy: it discards the work without
+preservation evidence. Retire it with the guarded path, run from outside the copy:
+
+```bash
+python3 ~/.aidevops/agents/worker-lifecycle/worker-registry.py --state-dir <STATE_DIR> \
+  retire-foreign-worktree --path <COPY> --repo <owner/repo> --base-branch main \
+  --output-root <ARCHIVE_ROOT> --rescue-bundle <BUNDLE>
+```
+
+Omit `--rescue-bundle` only for a clean copy whose HEAD is contained in a
+remote-tracking ref that `git ls-remote` confirms still points at the same commit
+(nothing to rescue; run `git fetch` first if it reports a stale ref). The command:
+
+- re-derives the patch and untracked-file hashes from the copy and refuses unless
+  they equal the bundle's, so a copy changed after the rescue is kept; it also
+  requires the receipt's rescue destination to still exist at the rescued HEAD;
+- repeats this proof immediately before relocation, so a resumed run never relies
+  on stale evidence;
+- refuses an in-progress merge, rebase, cherry-pick, revert or bisect;
+- refuses staged changes, ignored files, and assume-unchanged or skip-worktree
+  index flags because Git's normal diff and archive can omit their state. Preserve
+  ignored files separately and resolve index state before retrying; verify the
+  rescue again afterward;
+- archives the copy through the normal WIP archive, verifies it, then has Git
+  relocate and remove it with the shared journaled removal; the branch is kept;
+- leaves the foreign marker untouched (it is removed only with the whole Git
+  administration directory), never opens admission and registers no generation;
+- refuses a marker of this installation (use normal cleanup), a generation or path
+  already registered here, and a tree that Git does not register at that exact
+  path (a copy at a new path shares administration with the original, so it
+  cannot be retired this way).
+
+If interrupted after relocation, repeat the command with `--generation-id <ID>`
+(the marker's `generation_id`, also printed in an earlier result).
+
+Retirement permanently fences both the foreign generation ID and its original
+path in this local registry, including after successful removal. Create fresh
+worktrees at a different path: reusing the old directory name cannot distinguish
+a new caller from a delayed registration validated before retirement.
 
 For canonical (non-linked) checkouts with unexpected state, use
 `reference/dirty-worktree-preservation.md` instead.

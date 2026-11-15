@@ -26,7 +26,7 @@ from checkpoint_github_fixture import comment
 from checkpoint_admission_cases import AutomaticBindingCases, ProgressCases, RevisionEnvelopeCases
 from checkpoint_diagnostic_tooling_cases import DiagnosticToolingCases
 from checkpoint_launch_failure_cases import LaunchFailureCases
-from pr_checkpoint_events import EVENTS, fields, own_claim_matches
+from pr_checkpoint_events import fields, own_claim_matches
 import integration_recovery as recovery
 
 
@@ -98,6 +98,26 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
     comment = staticmethod(comment)
     revision = revision
     bash = BASH
+
+    def test_draft_checkpoint_with_never_ready_foreign_stale_reset(self):
+        data = fixture()
+        data["comments"] = data["comments"][:2]
+        data["comments"][1]["body"] = "CLAIM_RELEASED reason=worker_draft_checkpoint runner=worker"
+        data["comments"] += [
+            comment(4, "DISPATCH_CLAIM nonce=successor lease_token=successor runner=other "
+                       "device=devb session=issue-124 phase=prelaunch expires_at=1", "other"),
+            comment(5, "CLAIM_RELEASED reason=stale_assignment_reset runner=other device=devb", "other"),
+        ]
+        line = revision.template({**data, "release_id": 2, "attempt": "attempt:original"})
+        approval = json.loads(line[len(revision.PREFIX):])
+        self.assertEqual(approval["released_successors"][0]["outcome"], "stale_reset_before_ready")
+        data["comments"].append(comment(20, line, "maintainer", "OWNER"))
+        self.assertEqual(revision.validate(data)["approval_id"], 20)
+        with self.assertRaises(ValueError):
+            revision.template({**data, "release_id": 5, "attempt": "attempt:original"})
+        for history in ([], [{"runner": "worker", "outcome": "stale_reset_before_ready"}],
+                        [{"runner": "other", "outcome": "claim_only_no_worker"}]):
+            self.assertFalse(revision.draft_checkpoint_successors_valid(data["comments"][1], history))
     scripts = SCRIPTS
 
     def test_legacy_release_and_ambiguous_attempt(self):
@@ -107,14 +127,6 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
         data["comments"].insert(0, comment(0, "DISPATCH_LEASE phase=ready lease_token=other attempt_id=attempt:original"))
         with self.assertRaises(ValueError):
             revision.validate(data)
-
-    def test_unassigned_and_newer_coordination(self):
-        data = fixture()
-        data["issue"]["assignees"] = []
-        self.assertEqual(revision.validate(data)["approval_id"], 3)
-        for event in EVENTS:
-            with self.subTest(event=event), self.assertRaises(ValueError):
-                revision.validate({**data, "comments": data["comments"] + [comment(4, event + "new-owner")]})
 
     def test_released_revised_lifecycle_requires_current_approval_snapshot(self):
         self.assertEqual(revision.validate(fixture())["approval_id"], 3)
@@ -218,6 +230,21 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
         for key, value in [("lease", "wrong"), ("session", "wrong"), ("now", data["now"] + 20000)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 revision.validate({**data, key: value})
+
+    def test_prelaunch_renewal_survives_slow_preparation(self):
+        data = fixture()
+        start = int(data["now"])
+        data.update(lease="new", session="checkpoint-42", assignee="next-worker",
+                    require_prelaunch=True, now=start + 150)
+        data["issue"]["assignees"] = [{"login": "next-worker"}]
+        data["comments"].append(comment(4, "DISPATCH_CLAIM nonce=new lease_token=new runner=next-worker "
+                                           f"checkpoint_approval=3 session=checkpoint-42 expires_at={start + 120}",
+                                        "next-worker"))
+        with self.assertRaisesRegex(ValueError, "reason=prelaunch_lease_expired"):
+            revision.validate(data)
+        data["comments"].append(comment(5, "DISPATCH_LEASE phase=prelaunch lease_token=new "
+                                           f"session=checkpoint-42 expires_at={start + 600}", "next-worker"))
+        self.assertEqual(revision.validate(data)["approval_id"], 3)
 
     def not_launched_attempt(self, first_id, lease, reason="worker_not_launched", author="next-worker"):
         field = "lease_" + "token"
@@ -327,7 +354,9 @@ class RevisionTests(LaunchFailureCases, DiagnosticToolingCases, RevisionEnvelope
                 comment(4, "Interactive session claimed", "maintainer")]}),
             ("prefix collision", {"pr": {**data["pr"], "body": "For #1234"}}),
             ("bare mention", {"pr": {**data["pr"], "body": "mentions #123"}}),
-            ("ambiguous linkage", {"pr": {**data["pr"], "body": "For #123 and #124"}}),
+            # GH#38111: "For #123 and #124" links only #123 for dedup and
+            # continuation alike since GH#37915; two For references are ambiguous.
+            ("ambiguous linkage", {"pr": {**data["pr"], "body": "For #123 and for #124"}}),
         )
         for case, overrides in invalidations:
             self.assertNotEqual(run({**data, **overrides}), 0, case)

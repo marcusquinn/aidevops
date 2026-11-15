@@ -113,6 +113,10 @@ guard_child_processes() {
 			# Primary pulse process — runtime governed by PULSE_STALE_THRESHOLD,
 			# not CHILD_RUNTIME_LIMIT. Skip runtime check but keep RSS check.
 			:
+		elif [[ -n "${_PULSE_ROUTINES_TICKER_PID:-}" && "$pid" == "$_PULSE_ROUTINES_TICKER_PID" ]]; then
+			# Cycle-owned routines ticker (GH#37914) lives as long as the
+			# cycle. Skip runtime check but keep RSS check.
+			:
 		elif [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violation="runtime ${age_seconds}s > ${runtime_limit}s limit"
 		fi

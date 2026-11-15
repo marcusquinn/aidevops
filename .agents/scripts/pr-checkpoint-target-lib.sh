@@ -74,8 +74,9 @@ _pr_checkpoint_trusted_logins() {
 # shared rule links such a draft to issue N for continuation and stale
 # recovery: no closing identity at all, an exact `For #N` line, an open
 # same-repository draft labelled origin:worker-takeover, and no
-# origin:worker or protective label. Bare mentions, ready PRs and conflicting
-# closing links never match.
+# origin:worker or protective label. Bare `#N` mentions without a For/Ref
+# keyword, ready PRs and conflicting closing links never match. The worker
+# rule below also accepts inline For/Ref references (GH#37915).
 #
 # Ordinary worker checkpoint drafts link the same way: full-loop deliberately
 # keeps `For #N`/`Ref #N` on incomplete work (GH#33374), and has-open-pr already
@@ -84,10 +85,19 @@ _pr_checkpoint_trusted_logins() {
 # continuation, stale-recovery or approval path, so the issue stalled
 # permanently. worker_checkpoint_draft_links accepts an open same-repository
 # origin:worker/origin:worker-takeover draft with no closing identity and no
-# protective label whose line-start `For #N` lines name exactly issue N or,
-# without any `For` line, whose line-start `Ref #N`/`Refs #N` lines do. Several
-# targets are ambiguous and never match. Continuation turns that line into a
-# closing link only once the issue criteria are met (_prrts_write_prompt_file).
+# protective label whose explicit `For #N` references (anywhere in the body,
+# word-bounded, case-insensitive, matching dispatch-dedup-pr.sh) name exactly
+# issue N or, without any `For` reference, whose `Ref(s) #N` references do.
+# `For` keeps precedence (GH#38111) so a `For #N ... Ref #M` checkpoint still
+# links N, as it did before GH#37915. Several targets are ambiguous and match
+# only through dispatch identity (GH#38124): the same-repository head branch
+# the dispatcher created (`...-gh<N>` or `...-gh<N>-r<k>`, numeric boundary)
+# must name exactly one of them. Without headRefName or a proven identity the
+# draft never matches. Continuation turns that reference into a closing link
+# only once the issue criteria are met (_prrts_write_prompt_file).
+#aidevops:trust-boundary — GH#38124: identity reuses the same-repository,
+# worker-origin and no-protective-label gates above; a head ref on a
+# same-repository PR requires push access, so it adds no new writer.
 # shellcheck disable=SC2016 # jq program text, not shell expansion.
 _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 	def checkpoint_label_names: [.labels[]? | (.name? // .) | strings];
@@ -108,16 +118,23 @@ _PR_CHECKPOINT_FOR_LINK_JQ_DEFS='
 		(checkpoint_protected | not) and
 		for_issue_line($issue);
 	def checkpoint_line_issues($keyword):
-		[(.body // "") | scan("(?m)^" + $keyword + " #([1-9][0-9]*)(?:[.](?:[ \\t]|$)|[ \\t]*$)") | .[0] | tonumber] | unique;
+		[(.body // "") | scan("(?i)(?:^|[^a-z0-9_])" + $keyword + "[ \\t]+#([1-9][0-9]*)(?![a-z0-9_])") | .[0] | tonumber] | unique;
 	def checkpoint_reference_issues:
 		checkpoint_line_issues("For") as $for |
 		if ($for | length) > 0 then $for else checkpoint_line_issues("Refs?") end;
+	def checkpoint_dispatch_identity:
+		[(.headRefName // "") | strings |
+			capture("(?:^|[/-])gh(?<n>[1-9][0-9]*)(?:-r[0-9]+)?$") | .n | tonumber] | first;
+	def checkpoint_reference_links($issue):
+		checkpoint_reference_issues as $refs |
+		($refs == [$issue]) or
+		(($refs | length) > 1 and any($refs[]; . == $issue) and checkpoint_dispatch_identity == $issue);
 	def worker_checkpoint_draft_links($issue):
 		(.closingIssuesReferences == []) and
 		(.isDraft == true) and (.isCrossRepository == false) and
 		(checkpoint_has_label(worker_origin_label) or checkpoint_has_label(takeover_origin_label)) and
 		(checkpoint_protected | not) and
-		(checkpoint_reference_issues == [$issue]);
+		checkpoint_reference_links($issue);
 	def checkpoint_draft_links($issue):
 		recovery_draft_links($issue) or worker_checkpoint_draft_links($issue);
 '
@@ -363,6 +380,35 @@ _PCTL_COORDINATION_JQ_DEFS='
 	def pctl_approval_unexpired($ttl):
 		((.created_at // "") | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $created |
 		($created == null or (now - $created) <= $ttl);
+	def pctl_field($key):
+		[split(" ")[] | select(startswith($key + "=")) | ltrimstr($key + "=")] | if length == 1 then .[0] else "" end;
+	# Duplicated identity fields are ambiguous evidence, never consumption.
+	def pctl_unambiguous:
+		[split(" ")[] | select(contains("=")) | split("=")[0]] | group_by(.) | all(length == 1);
+	# An explicit _release_body_unedited=false (collector saw a possible
+	# same-second body edit) is edited evidence; absent means raw REST input.
+	def pctl_unedited:
+		([.created_at | strings] | length) == 1 and (.updated_at // .created_at) == .created_at and
+		(._release_body_unedited != false);
+	def pctl_approval_owns_scheduling($ttl):
+		(pctl_trusted_comments | sort_by(.created_at, .id)) as $comments |
+		([$comments[] | select((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED "))] | last) as $approval |
+		if $approval == null then false
+		elif ($approval | pctl_approval_unexpired($ttl) | not) then false
+		else
+			([ $comments[] | select(.id > $approval.id and pctl_unedited) as $claim |
+			  ($claim.body // "" | split("\n")[] | select(startswith("DISPATCH_CLAIM ") and pctl_unambiguous)) as $line |
+			  select(($line | pctl_field("checkpoint_approval")) == ($approval.id | tostring)) |
+			  ($line | pctl_field("nonce")) as $nonce |
+			  $comments[] | select(.id > $claim.id and pctl_unedited) |
+			  (.body // "" | split("\n")[] | select(startswith("CLAIM_RELEASED ") and pctl_unambiguous)) as $release |
+			  ($release | pctl_field("claim_id")) as $release_claim |
+			  ($release | pctl_field("nonce")) as $release_nonce |
+			  select(($release | pctl_field("reason")) != "" and
+			         ($release_claim != "" or ($nonce != "" and $release_nonce != "")) and
+			         ($release_claim == "" or $release_claim == ($claim.id | tostring)) and
+			         ($release_nonce == "" or ($nonce != "" and $release_nonce == $nonce))) ] | length == 0)
+		end;
 '
 # Revision approvals expire after this many seconds (pr-checkpoint-revision.py).
 _PCTL_APPROVAL_TTL_SECONDS=86400
@@ -431,8 +477,7 @@ _pr_checkpoint_issue_metadata_is_eligible() {
 	# expiry the revision route can no longer launch, so the legacy route and
 	# its re-arm windows apply again; a newer approval re-fences it.
 	if jq -e --argjson ttl "$_PCTL_APPROVAL_TTL_SECONDS" "${_PCTL_COORDINATION_JQ_DEFS}"'
-		(pctl_trusted_comments | any(((.body // "") | test("(^|\\n)CHECKPOINT_CONTINUATION_APPROVED ")) and
-			pctl_approval_unexpired($ttl))) or
+		pctl_approval_owns_scheduling($ttl) or
 		(pctl_newest_coordination_body |
 			test("(^|\\n)CLAIM_RELEASED reason=blocked ") and
 			(test("(^|\\n)Terminal blocker: reason=runner_capability_unmet ") | not))

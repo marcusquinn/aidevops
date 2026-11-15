@@ -69,8 +69,18 @@ _dispatch_secret_starvation_notice() {
 		gh api "$comments_endpoint" --method POST \
 			--field body="$(printf '%s\n%s' "$marker" "Dispatch has waited for a runner with these required secret names: ${missing}. No secret values were accessed.")" >/dev/null || return 1
 	fi
-	if ! printf '%s' "$issue_json" | jq -e '.labels[]? | (if type == "object" then .name else . end) == "status:blocked"' >/dev/null; then
-		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
+	# GH#38360: a starved secret needs credentials provisioned on a runner.
+	# Status and companion membership are checked independently.
+	local companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}"
+	local -a edit_args=()
+	local has_label="any(.labels[]?; (if type == \"object\" then .name else . end) == \$l)" wanted=""
+	for wanted in status:blocked "$companion"; do
+		printf '%s' "$issue_json" | jq -e --arg l "$wanted" "$has_label" >/dev/null || edit_args+=(--add-label "$wanted")
+	done
+	if [[ ${#edit_args[@]} -gt 0 ]]; then
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" "${edit_args[@]}" >/dev/null || return 1
 	fi
 	return 0
 }
@@ -939,7 +949,10 @@ _dispatch_cycle_budget_admits_round() {
 
 # GH#37623: a full-census call that served a candidate snapshot captured before
 # it started measured a cache read, not a scan. Recording it would decay the
-# full-census estimate the cold-cache minimum protects (GH#33560).
+# full-census estimate the cold-cache minimum protects (GH#33560). A durable
+# first wave that re-enumerates an exhausted or short remainder keeps its
+# original captured_at (attempt-ledger expiry), so the scan time is read from
+# enumerated_at; that re-scan was real work, not a snapshot read (GH#38200).
 # Args: $1=scan limit $2=normalization mode $3=started_ms
 _dispatch_enumeration_served_snapshot() {
 	local scan_limit="$1" normalization_mode="$2" started_ms="$3" snapshot_file="" captured=""
@@ -948,7 +961,7 @@ _dispatch_enumeration_served_snapshot() {
 	[[ "$started_ms" =~ ^[0-9]{1,16}$ ]] || return 1
 	snapshot_file=$(_dispatch_candidate_snapshot_path "$scan_limit" "$normalization_mode" 2>/dev/null) || return 1
 	[[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] || return 1
-	captured=$(jq -r '.captured_at // empty' "$snapshot_file" 2>/dev/null) || return 1
+	captured=$(jq -r '.enumerated_at // .captured_at // empty' "$snapshot_file" 2>/dev/null) || return 1
 	[[ "$captured" =~ ^[0-9]{1,12}$ ]] || return 1
 	((captured < started_ms / 1000)) && return 0
 	return 1
@@ -987,7 +1000,7 @@ _dispatch_finish_enumeration_timing() {
 # Args: $1=scan limit $2=normalization mode $3=budget seconds
 _dispatch_bounded_ranked_candidates_json() {
 	local scan_limit="$1" normalization_mode="$2"
-	local _PULSE_FIRST_DISPATCH_WAVE=1 PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED=0 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S="$3"
+	local _PULSE_FIRST_DISPATCH_WAVE=1 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S="$3"
 	_dispatch_ranked_candidates_json "$scan_limit" "$normalization_mode" || return 1
 	return 0
 }
@@ -1544,7 +1557,7 @@ _dispatch_consolidated_attention_fresh() {
 _dispatch_consolidated_checkpoint_attention() {
 	local repo="$1" issue="$2"
 	local stamp_file='' prs='' draft='' pr='' head='' key=''
-	local comments='' body='' ref_pattern=''
+	local comments='' body='' ref_pattern='' seen_rc=0
 	stamp_file=$(_dispatch_consolidated_attention_stamp_path "$repo" "$issue") || return 0
 	prs=$(gh pr list --repo "$repo" --state open --search "#${issue} draft:true" \
 		--json number,title,body,isDraft,headRefOid --limit 20 2>/dev/null) || return 0
@@ -1560,10 +1573,19 @@ _dispatch_consolidated_checkpoint_attention() {
 		[[ "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-fA-F]{40,64}$ ]] || return 0
 		key="${_DISPATCH_CONSOLIDATED_ATTENTION_MARKER} pr=${pr} head=${head}"
 		comments=$(gh api --paginate "repos/${repo}/issues/${issue}/comments?per_page=100" 2>/dev/null) || return 0
-		if jq -se --arg key "$key" 'flatten | any(.[];
-			((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") and
-			((.body // "") | contains($key)))' <<<"$comments" >/dev/null 2>&1; then
+		# GH#38021: App installation reads report a private organization member
+		# as CONTRIBUTOR, so resolve the author's write permission when possible.
+		if declare -F _gh_keyed_comment_has_write_author >/dev/null 2>&1; then
+			_gh_keyed_comment_has_write_author "$repo" "$comments" "$key" || seen_rc=$?
+		else
+			jq -se --arg key "$key" 'flatten | any(.[];
+				((.author_association // "") as $a | $a == "OWNER" or $a == "MEMBER" or $a == "COLLABORATOR") and
+				((.body // "") | contains($key)))' <<<"$comments" >/dev/null 2>&1 || seen_rc=1
+		fi
+		if [[ "$seen_rc" -eq 0 ]]; then
 			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_EXISTS #${issue} (${repo}) draft PR #${pr} head=${head}" >>"$LOGFILE"
+		elif [[ "$seen_rc" -ne 1 ]]; then
+			echo "[pulse-wrapper] Dispatch enumeration: CONSOLIDATED_CHECKPOINT_ATTENTION_UNVERIFIED #${issue} (${repo}) draft PR #${pr} head=${head} — author write access unconfirmed; not posting this TTL" >>"$LOGFILE"
 		else
 			body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- ${key} -->

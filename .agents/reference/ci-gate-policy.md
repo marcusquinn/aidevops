@@ -168,6 +168,16 @@ run those directly too, without `-k` (they do not provide unittest filtering).
     minutes return monthly, so keep the app installed (it is not a reason to
     remove Qlty) and never make "qlty check" a required check on a limited
     repository. Setup guidance: `tools/code-review/qlty.md`.
+15. Codacy's PR aggregation can stay `ACTION_REQUIRED` after a later commit
+    removed the flagged code. `gh-checks-wait-helper.sh` runs
+    `codacy-stale-check-helper.sh classify` on a failing Codacy check: when the
+    head commit's `deltaIssues` is empty and every PR-level issue's `lineText`
+    is absent from the head file, it reports `STALE (codacy PR aggregation)`
+    with that evidence and treats the check like a skipped one (a recorded
+    note, not a pass). Any missing `CODACY_API_TOKEN`, API error, present line
+    or head-commit finding keeps the failure terminal. If the classifier cannot
+    run, recover with a clean single-commit replacement PR; never bypass the
+    gate, and `reanalyzeCommit` needs a token with write access (403 otherwise).
 
 ## Hosted CI demand and required contexts
 

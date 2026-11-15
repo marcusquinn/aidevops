@@ -29,6 +29,7 @@ readonly POLICY_EVENT="pull_request_target"
 readonly POLICY_API_VERSION="2026-03-10"
 readonly POLICY_RULE_TYPE="restrict_action_events"
 _T="true"
+_PUBLIC="public"
 readonly WORKFLOW_DIR=".github/workflows"
 readonly REPOS_JSON_DEFAULT="${HOME}/.config/aidevops/repos.json"
 
@@ -114,6 +115,13 @@ _policy_fetch_file() {
 	local slug="$1"
 	local path="$2"
 	local ref="$3"
+	local sha="${4:-}"
+	# Fetch the exact listed blob so content always matches the cache key.
+	if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+		gh api --method GET -H "Accept: application/vnd.github.raw" \
+			"repos/${slug}/git/blobs/${sha}"
+		return $?
+	fi
 	gh api --method GET -H "Accept: application/vnd.github.raw" \
 		"repos/${slug}/contents/${path}?ref=${ref}"
 	return $?
@@ -145,11 +153,92 @@ _policy_list_workflows() {
 	return 1
 }
 
-# Scan the default branch. Sets _POLICY_SCAN_JSON.
+# Workflow analysis cache: a blob SHA is immutable, but the derived result also
+# depends on this analyzer. Keys combine both, so editing this helper (for
+# example a parser fix) re-analyses every file instead of trusting results from
+# older code. Only the derived JSON {include, events, parsed} is stored. An empty
+# analyzer ID disables the cache.
+_POLICY_ANALYZER_ID=""
+read -r _POLICY_ANALYZER_ID _ < <(cksum <"${BASH_SOURCE[0]}" 2>/dev/null) || _POLICY_ANALYZER_ID=""
+
+_policy_cache_dir() {
+	printf '%s\n' "${AIDEVOPS_ACTIONS_EVENT_POLICY_CACHE_DIR:-${HOME}/.aidevops/.agent-workspace/cache/actions-event-policy}"
+	return 0
+}
+
+# Print cached derived JSON for a blob SHA. Exit 1 on miss or invalid entry.
+_policy_cache_read() {
+	local sha="$1"
+	local file="" data=""
+	[[ -n "$_POLICY_ANALYZER_ID" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+	file="$(_policy_cache_dir)/${_POLICY_ANALYZER_ID}-${sha}"
+	[[ -f "$file" ]] || return 1
+	data=$(cat "$file" 2>/dev/null) || return 1
+	# parsed:false is a cache miss so a recovered parser re-analyses the blob.
+	jq -ce 'select((.include | booleans) != null and .parsed == true and (.events | arrays) != null)' \
+		<<<"$data" 2>/dev/null || return 1
+	return 0
+}
+
+# Best-effort cache write; failures never affect the scan.
+_policy_cache_write() {
+	local sha="$1"
+	local json="$2"
+	local dir="" tmp=""
+	[[ -n "$_POLICY_ANALYZER_ID" && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+	dir="$(_policy_cache_dir)"
+	(umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+	tmp=$(umask 077 && mktemp "${dir}/.tmp.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\n' "$json" >"$tmp" 2>/dev/null && chmod 600 "$tmp" 2>/dev/null &&
+		mv -f "$tmp" "${dir}/${_POLICY_ANALYZER_ID}-${sha}" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp" 2>/dev/null || true
+	return 0
+}
+
+_policy_cache_prune() {
+	local dir=""
+	dir="$(_policy_cache_dir)"
+	[[ -d "$dir" ]] || return 0
+	find "$dir" -maxdepth 1 -type f -mtime +30 -delete 2>/dev/null || true
+	return 0
+}
+
+# Print derived JSON {include, events, parsed} for workflow content.
+_policy_analyze_content() {
+	local content="$1"
+	local events="" parsed="" include="$_T"
+	# Only files that mention the event matter; others are never targeted.
+	if ! grep -q "$POLICY_EVENT" <<<"$content"; then
+		jq -cn '{include:false, events:[], parsed:true}'
+		return 0
+	fi
+	if events=$(_policy_parse_events "$content"); then
+		parsed="$_T"
+		if [[ "$(_policy_calls_local_reusable "$content")" == "$_T" ]]; then
+			events=$(jq -c '. + ["workflow_call"] | unique' <<<"$events")
+		fi
+	else
+		parsed="false"
+		events="[]"
+	fi
+	# A mention in a comment or string is not a declaration.
+	if [[ "$parsed" == "$_T" ]] && ! jq -e --arg e "$POLICY_EVENT" 'index($e) != null' <<<"$events" >/dev/null; then
+		include="false"
+	fi
+	jq -cn --argjson i "$include" --argjson e "$events" --argjson ok "$parsed" \
+		'{include:$i, events:$e, parsed:$ok}'
+	return 0
+}
+
+# Scan the default branch. Sets _POLICY_SCAN_JSON. With a second argument of
+# "skip-nonpublic", a non-public repository returns before any listing or fetch.
 _policy_scan() {
 	local slug="$1"
-	local repo_json="" default_branch="" visibility="" listing="" path="" content=""
-	local events="" parsed="" reusable="" entries="[]"
+	local mode="${2:-}"
+	local repo_json="" default_branch="" visibility="" listing="" path="" sha="" content=""
+	local analysis="" entries="[]"
 	repo_json=$(_policy_api_read "repos/${slug}") || {
 		_policy_error "cannot read repository ${slug}"
 		return 1
@@ -160,40 +249,35 @@ _policy_scan() {
 		_policy_error "cannot determine default branch for ${slug}"
 		return 1
 	fi
+	if [[ "$mode" == "skip-nonpublic" && "$visibility" != "$_PUBLIC" ]]; then
+		_POLICY_SCAN_JSON=$(jq -cn --arg b "$default_branch" --arg v "$visibility" \
+			'{default_branch:$b, visibility:$v, public:false, workflows:[]}')
+		return 0
+	fi
 	_policy_list_workflows "$slug" "$default_branch" || return 1
 	listing="$_POLICY_LISTING"
-	while IFS= read -r path; do
+	while IFS=$'\t' read -r path sha; do
 		[[ -n "$path" ]] || continue
 		case "$path" in
 		"${WORKFLOW_DIR}"/*.yml | "${WORKFLOW_DIR}"/*.yaml) ;;
 		*) continue ;;
 		esac
-		content=$(_policy_fetch_file "$slug" "$path" "$default_branch") || {
-			_policy_error "cannot read ${path} in ${slug}"
-			return 1
-		}
-		# Only files that mention the event matter; others are never targeted.
-		if ! grep -q "$POLICY_EVENT" <<<"$content"; then
-			continue
+		# The sha comes from this run's live listing; a miss or bad entry refetches.
+		if ! analysis=$(_policy_cache_read "$sha"); then
+			content=$(_policy_fetch_file "$slug" "$path" "$default_branch" "$sha") || {
+				_policy_error "cannot read ${path} in ${slug}"
+				return 1
+			}
+			analysis=$(_policy_analyze_content "$content")
+			_policy_cache_write "$sha" "$analysis"
 		fi
-		if events=$(_policy_parse_events "$content"); then
-			parsed="$_T"
-			if [[ "$(_policy_calls_local_reusable "$content")" == "$_T" ]]; then
-				events=$(jq -c '. + ["workflow_call"] | unique' <<<"$events")
-			fi
-		else
-			parsed="false"
-			events="[]"
-		fi
-		# A mention in a comment or string is not a declaration.
-		if [[ "$parsed" == "$_T" ]] && ! jq -e --arg e "$POLICY_EVENT" 'index($e) != null' <<<"$events" >/dev/null; then
-			continue
-		fi
-		entries=$(jq -c --arg p "$path" --argjson e "$events" --argjson ok "$parsed" \
-			'. + [{path:$p, events:$e, parsed:$ok}]' <<<"$entries")
-	done < <(jq -r '.[]? | select(.type == "file") | .path' <<<"$listing" | LC_ALL=C sort)
-	_POLICY_SCAN_JSON=$(jq -cn --arg b "$default_branch" --arg v "$visibility" --argjson w "$entries" \
-		'{default_branch:$b, visibility:$v, public:($v == "public"), workflows:$w}')
+		[[ "$(jq -r '.include' <<<"$analysis")" == "$_T" ]] || continue
+		entries=$(jq -c --arg p "$path" --argjson a "$analysis" \
+			'. + [{path:$p, events:$a.events, parsed:$a.parsed}]' <<<"$entries")
+	done < <(jq -r '.[]? | select(.type == "file") | [.path, (.sha // "")] | @tsv' <<<"$listing" | LC_ALL=C sort)
+	_policy_cache_prune
+	_POLICY_SCAN_JSON=$(jq -cn --arg b "$default_branch" --arg v "$visibility" --arg pub "$_PUBLIC" --argjson w "$entries" \
+		'{default_branch:$b, visibility:$v, public:($v == $pub), workflows:$w}')
 	return 0
 }
 
@@ -250,7 +334,7 @@ _policy_read_policies() {
 _policy_cmd_status() {
 	local slug="$1"
 	local policies="" uncovered="" count=""
-	_policy_scan "$slug" || return 2
+	_policy_scan "$slug" skip-nonpublic || return 2
 	if [[ "$(jq -r '.public' <<<"$_POLICY_SCAN_JSON")" != "$_T" ]]; then
 		printf 'OK %s: not applicable (non-public repository)\n' "$slug"
 		return 0

@@ -84,6 +84,9 @@ write_runtime_bundle() {
 	mkdir -p "$bundle_root/agents/scripts/setup/modules"
 	cp "$REPO_ROOT/.agents/scripts/pulse-lifecycle-helper.sh" \
 		"$bundle_root/agents/scripts/pulse-lifecycle-helper.sh"
+	# The helper sources portable-stat.sh to date the async housekeeping marker.
+	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" \
+		"$bundle_root/agents/scripts/portable-stat.sh"
 	cp "$REPO_ROOT/.agents/scripts/setup/modules/agent-runtime.sh" \
 		"$bundle_root/agents/scripts/setup/modules/agent-runtime.sh"
 	# PULSE_FIXTURE_MERGE_PID_FILE makes the cycle spawn an in-cycle merge
@@ -451,10 +454,79 @@ test_launchd_reconcile_replaces_cycle_past_drain_ceiling() {
 	fi
 	wait "$STALE_PULSE_PID" 2>/dev/null || true
 	[[ "$output" == *"drain ceiling 0s"* ]] || fail "immediate replacement did not report the drain ceiling"
+	[[ "$output" == *"without a fresh owner heartbeat lease"* ]] ||
+		fail "immediate replacement did not report the missing owner lease"
 	assert_only_active_bundle_runs \
 		"$active_root/agents/scripts/pulse-wrapper.sh" \
 		"$stale_root/agents/scripts/pulse-wrapper.sh"
-	pass "cycle at or past the drain ceiling is replaced immediately"
+	pass "cycle at or past the drain ceiling without an owner lease is replaced immediately"
+	return 0
+}
+
+# GH#37907: an elastic cycle past the drain ceiling that owns the instance lock
+# with a fresh heartbeat lease keeps draining and is asked to stop at its next
+# candidate boundary. A stale heartbeat still means immediate replacement.
+test_launchd_reconcile_defers_cycle_with_fresh_owner_lease() {
+	local stale_root="$1"
+	local active_root="$2"
+	local active_link="$3"
+	local fake_bin="$TEST_ROOT/fake-bin"
+	local launchctl_log="$TEST_ROOT/launchctl.log"
+	local output_file="$TEST_ROOT/launchd-drain-lease.out"
+	local lockdir="$HOME/.aidevops/logs/pulse-wrapper.lockdir"
+	local marker=""
+	local output=""
+	write_enabled_launchctl_fake "$fake_bin"
+	stop_test_pulses
+	start_stale_pulse "$stale_root"
+	rm -rf "$lockdir"
+	mkdir -p "$lockdir"
+	printf '%s\n' "$STALE_PULSE_PID" >"$lockdir/pid"
+	date +%s >"$lockdir/supervisor_heartbeat_epoch"
+	: >"$launchctl_log"
+	(
+		export PATH="$fake_bin:$PATH"
+		export AIDEVOPS_PULSE_OS_NAME=Darwin
+		export LAUNCHCTL_LOG="$launchctl_log"
+		export AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=0
+		_restart_pulse_if_running "$active_root/agents" true "$active_link" >"$output_file"
+	)
+	output=$(<"$output_file")
+	pulse_script_pid_alive "$STALE_PULSE_PID" "$stale_root/agents/scripts/pulse-wrapper.sh" ||
+		fail "reconciliation killed a cycle whose owner heartbeat lease is fresh"
+	if [[ -s "$launchctl_log" ]]; then
+		fail "reconciliation kickstarted launchd while a fresh-lease cycle drains"
+	fi
+	[[ "$output" == *"deferring: elastic owner lease fresh (age "*"s, heartbeat "*"s)"* ]] ||
+		fail "lease deferral did not log the elastic owner lease reason"
+	[[ "$output" == *"Requested cooperative drain: lock owner PID ${STALE_PULSE_PID} "* ]] ||
+		fail "lease deferral did not request a cooperative drain"
+	[[ "$output" != *"$TEST_ROOT"* ]] || fail "lease deferral diagnostics expose a private local path"
+	marker=$(<"$lockdir/drain_requested")
+	[[ "$marker" == *"owner=${STALE_PULSE_PID}"* && "$marker" == *"bundle=bundle-b"* ]] ||
+		fail "drain marker does not name the lock owner and activated bundle (marker=${marker})"
+	pass "fresh elastic owner lease defers past the drain ceiling and requests a drain"
+
+	printf '%s\n' "$(($(date +%s) - 86400))" >"$lockdir/supervisor_heartbeat_epoch"
+	: >"$launchctl_log"
+	(
+		export PATH="$fake_bin:$PATH"
+		export AIDEVOPS_PULSE_OS_NAME=Darwin
+		export LAUNCHCTL_LOG="$launchctl_log"
+		export AIDEVOPS_PULSE_RECONCILE_DRAIN_MAX_AGE_S=0
+		_restart_pulse_if_running "$active_root/agents" true "$active_link" >"$output_file"
+	)
+	output=$(<"$output_file")
+	grep -q '^kickstart -k gui/' "$launchctl_log" ||
+		fail "cycle with a stale owner heartbeat was not replaced through launchd"
+	if pulse_script_pid_alive "$STALE_PULSE_PID" "$stale_root/agents/scripts/pulse-wrapper.sh"; then
+		fail "cycle with a stale owner heartbeat kept running"
+	fi
+	wait "$STALE_PULSE_PID" 2>/dev/null || true
+	[[ "$output" == *"without a fresh owner heartbeat lease"* ]] ||
+		fail "stale-lease replacement did not report the stale owner lease"
+	pass "stale owner heartbeat past the drain ceiling is replaced immediately"
+	rm -rf "$lockdir"
 	return 0
 }
 
@@ -525,7 +597,7 @@ test_launchd_reconcile_ignores_async_housekeeping_age() {
 	if [[ -s "$launchctl_log" ]]; then
 		fail "reconciliation kickstarted launchd while a young async housekeeping run finishes"
 	fi
-	[[ "$output" == *"Deferring Pulse start to the launchd interval"* ]] ||
+	[[ "$output" == *"Deferring Pulse start to the scheduler interval"* ]] ||
 		fail "reconciliation did not report the async housekeeping deferral"
 	[[ "$output" != *"$TEST_ROOT"* ]] || fail "housekeeping deferral diagnostics expose a private local path"
 	pass "young async housekeeping with no cycle running finishes on its own bundle"
@@ -718,6 +790,7 @@ main() {
 	test_launchd_enabled_service_owns_restart "$active_root" "$active_link"
 	test_launchd_reconcile_lets_inflight_cycle_finish "$stale_root" "$active_root" "$active_link"
 	test_launchd_reconcile_replaces_cycle_past_drain_ceiling "$stale_root" "$active_root" "$active_link"
+	test_launchd_reconcile_defers_cycle_with_fresh_owner_lease "$stale_root" "$active_root" "$active_link"
 	test_launchd_reconcile_ignores_async_housekeeping_age "$stale_root" "$active_link"
 	test_protected_release_merge_freshness
 	test_runtime_freshness_diagnostics

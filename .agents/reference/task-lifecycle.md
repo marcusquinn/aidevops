@@ -41,7 +41,8 @@ sync it into GitHub's native issue relationship field. The native `blockedBy`
 relationship is the primary dispatch gate; body/TODO markers are fallback intent
 and repair signals. Worker-ready ordered leaves retain `#auto-dispatch`: the
 first ready leaf is `status:available`, while every unresolved dependent is
-`status:blocked` after its native edge is verified. If an edge cannot be created
+`status:blocked` + `needs-dependency` after its native edge is verified; the
+release removes both. If an edge cannot be created
 or verified, fail closed by retaining `status:blocked` and never exposing the
 dependent to the available queue. `issue-sync-relationships.sh` performs the
 normal TODO-to-GitHub relationship backfill and status normalization; Pulse
@@ -155,6 +156,13 @@ meet auto-dispatch readiness, repair it autonomously when possible; otherwise
 record the concrete blocker and missing irreplaceable input without converting
 routine uncertainty into `#no-auto-dispatch`.
 
+**Release-bound sessions:** when an interactive session holds release intent for a
+repository, or is working that repository's backlog, a fixable same-repo finding
+is still filed as above, but filing is its durable record, not a hand-off. Claim it
+at filing when eligible and solve it before the release through
+`reference/release-scope-sweep.md`; only ineligible issues wait for pulse.
+Headless workers keep the normal auto-dispatch hand-off.
+
 ## Auto-Dispatch and Completion
 
 - **Auto-dispatch default**: Worker-ready implementation issues/tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; issue creation is the implementation decision, so no second dispatch confirmation is allowed. Readiness is the gate, not an opt-in. Add the tag only when the brief/body has:
@@ -171,7 +179,9 @@ routine uncertainty into `#no-auto-dispatch`.
   compares names against `aidevops secret list` locally before claim and again
   at the claim boundary. Missing names yield without a worker attempt; after
   `AIDEVOPS_SECRET_STARVATION_SECONDS` (default 86400), a single marked notice
-  names the missing credentials and applies `status:blocked`. Never declare
+  names the missing credentials and applies `status:blocked` with
+  `needs-credentials` (every blocked hold carries a `needs-*` companion:
+  `reference/dispatch-blockers.md` "Blocked Companion Labels"). Never declare
   values or assume the body marker hides names in a public issue.
 
   If readiness is missing, improve the brief when practical, but do not suppress useful issue publication or ask the user to perform routine triage. Publish without `#auto-dispatch`, state the missing information, and leave the issue recorded for autonomous enrichment; use `#parent`/blocked only when those semantics are true. Do not add `#no-auto-dispatch` merely because readiness is incomplete—that label is reserved for explicit durable manual intent with its reason recorded on the issue. See `workflows/plans.md` "Auto-Dispatch Tagging".
@@ -213,7 +223,7 @@ routine uncertainty into `#no-auto-dispatch`.
 |---|---|---|
 | Interactive owner working | `status:claimed` | Preserve the claim; do not dispatch. |
 | Worker actively running | `status:in-progress` | Preserve the claim; do not dispatch. |
-| Exact draft checkpoint stopped on evidence | `status:blocked` | Read the structured blocker reason and next action. |
+| Exact draft checkpoint stopped on evidence | `status:blocked` + `needs-*` | The `needs-*` companion names the owner; read the structured blocker reason and next action. |
 | Trusted correction validated for the exact checkpoint | `status:available` | Dispatch the existing exact-head continuation. |
 | Open, non-draft linked PR | `status:in-review` | Review or merge the PR. |
 | Linked PR merged | `status:done` | No implementation action. |

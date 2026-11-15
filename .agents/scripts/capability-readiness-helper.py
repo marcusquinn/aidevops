@@ -15,6 +15,7 @@ from typing import Any
 from capability_browser_probe import playwright_live_evidence
 from capability_readiness_probes import AssessmentContext, assess
 from capability_registry_validation import validate
+from capability_render_probe import render_live_evidence, validate_scope as validate_render_scope
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SCRIPT_DIR.parent
@@ -115,6 +116,8 @@ def probe_selected_capability(
     """Execute only the explicitly selected provider or browser transport."""
     if not selected:
         return None, None
+    if selected["name"] == "render-service-readiness":
+        return render_live_evidence(args.target, args.operation, runtime, args.fixture is not None)
     if selected["name"] == "github-operations" and args.target:
         return github_live_evidence(args.target, args.operation)
     if args.transport == "playwright" and runtime in selected["runtimes"]:
@@ -128,6 +131,12 @@ def query_or_route(registry: dict[str, Any], args: argparse.Namespace) -> int:
         print(json.dumps({"error": "unknown_capability", "requested": args.capability}))
         return 2
     runtime = args.runtime or os.environ.get("AIDEVOPS_RUNTIME", "unknown").casefold()
+    if selected and selected["name"] == "render-service-readiness":
+        try:
+            validate_render_scope(args.target, args.operation, runtime, args.fixture is not None)
+        except ValueError as error:
+            print(json.dumps({"error": str(error)}))
+            return 2
     fixture = load_json(args.fixture) if args.fixture else None
     try:
         if args.transport:
@@ -143,7 +152,9 @@ def query_or_route(registry: dict[str, Any], args: argparse.Namespace) -> int:
         return 2
     capabilities = [selected] if selected else registry["capabilities"]
     context = AssessmentContext(AGENTS_DIR, fixture, live_evidence)
-    results = [assess(item, registry["dimensions"], runtime, context) for item in capabilities]
+    results = [assess(item, registry["dimensions"], runtime,
+                      AssessmentContext(AGENTS_DIR, None, live_evidence) if item["name"] == "render-service-readiness" else context)
+               for item in capabilities]
     payload, status = route_output(results[0], evidence_scope) if args.command == "route" else ({"schema_version": registry["schema_version"], "runtime": runtime, "capabilities": results}, 0)
     print(json.dumps(payload, indent=2))
     return status

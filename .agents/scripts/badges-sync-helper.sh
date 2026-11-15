@@ -478,6 +478,23 @@ _open_pr() {
 	return 0
 }
 
+# _sanitize_failure_reason <result> — prints the detail of the last tab-separated
+# row, flattened to one line, token-like strings and URL credentials redacted,
+# capped at 200 chars. Preserves the specific cause of a failed apply (GH#37911).
+_sanitize_failure_reason() {
+	local _result="$1"
+	local _last _detail
+	_last=$(printf '%s\n' "$_result" | awk 'NF{l=$0} END{print l}')
+	[[ -n "$_last" ]] || return 0
+	_detail=$(printf '%s' "$_last" | awk -F'\t' '{print $NF}')
+	_detail=$(printf '%s' "$_detail" | tr '\r\n\t' '   ' | sed -E \
+		-e 's#(https?://)[^/@[:space:]]+@#\1***@#g' \
+		-e 's#(gh[pousr]_|github_pat_)[A-Za-z0-9_]+#***#g' \
+		-e 's#([Tt]oken|[Aa]uthorization|[Pp]assword|[Ss]ecret)[=: ]+[^[:space:]]+#\1=***#g')
+	printf '%s' "${_detail:0:200}"
+	return 0
+}
+
 # ─── Iteration ──────────────────────────────────────────────────────────────
 
 _repo_is_contributor() {
@@ -769,7 +786,13 @@ _process_rows() {
 				# Keep actionable BLOCKED-* rows; they count as failures so
 				# routine state and advisories keep surfacing them (GH#36491).
 				if [[ "$_apply_result" != "${_slug}"$'\tBLOCKED-'* ]]; then
-					_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
+					local _fail_reason
+					_fail_reason=$(_sanitize_failure_reason "$_apply_result")
+					if [[ -n "$_fail_reason" ]]; then
+						_apply_result="${_slug}	${_STATUS_FAILED}	sync failed (${_fail_reason}); any created worktree retained for recovery"
+					else
+						_apply_result="${_slug}	${_STATUS_FAILED}	sync failed; any created worktree retained for recovery"
+					fi
 				fi
 				_any_failed=1
 				_COUNT_FAILED=$((_COUNT_FAILED + 1))

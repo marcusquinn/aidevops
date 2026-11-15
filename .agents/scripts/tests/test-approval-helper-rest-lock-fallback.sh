@@ -140,6 +140,7 @@ run_case "status transition failure blocks approval handoff" '
 	# shellcheck disable=SC1090
 	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
 	set_issue_status() { printf "simulated status failure" >&2; return 1; }
+	gh_issue_view() { printf "bug"; return 0; }
 	gh_issue_edit_safe() { printf "UNEXPECTED EDIT"; return 0; }
 	gh() {
 		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then printf "marcusquinn"; return 0; fi
@@ -164,6 +165,7 @@ run_case "partial lifecycle edit failure restores NMR" '
 		printf "simulated partial mutation" >&2
 		return 1
 	}
+	gh_issue_view() { printf "bug"; return 0; }
 	restore_trace=$(mktemp)
 	gh() {
 		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then printf "marcusquinn"; return 0; fi
@@ -192,6 +194,7 @@ run_case "failed NMR restoration remains explicit" '
 		printf "simulated partial mutation" >&2
 		return 1
 	}
+	gh_issue_view() { printf "bug"; return 0; }
 	gh() {
 		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then printf "marcusquinn"; return 0; fi
 		return 1

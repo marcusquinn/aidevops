@@ -82,6 +82,10 @@
 #   AIDEVOPS_GH_API_LEGACY_SCRATCH_MIN_AGE_SECONDS — minimum age before exact
 #                                   legacy .source/.tmp/.trim files are reaped
 #                                   (default 3600)
+#   AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES — age before orphaned per-invocation
+#                                   shim scratch is reaped (default 1440)
+#   AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS — minimum gap between sweeps run
+#                                   from trim() (default 3600)
 #   AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1 — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -877,11 +881,153 @@ gh_run_transport_attempt() {
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
 		elapsed_ms=$((end_ms - start_ms))
 	fi
+	# GH#38327: label normal-mode rows from argv; exact capture uses wire frames.
+	if [[ "${executable##*/}" == gh ]]; then
+		_gh_static_request_labels "${@:2}"
+	else
+		_gh_static_request_labels
+	fi
 	gh_record_attempt "$path" "$caller" "$logical_id" "" "$page" "$retry" "$outcome" \
 		"${AIDEVOPS_GH_HTTP_STATUS:-${_GH_TRANSPORT_ERROR_HTTP_STATUS:-}}" "$elapsed_ms" "$quota_cost" \
 		"${AIDEVOPS_GH_AUTH_MODE:-}" "${AIDEVOPS_GH_API_POOL:-}" "${AIDEVOPS_GH_ROUTE_DECISION:-}" \
-		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint"
+		"${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}" "$auth_fingerprint" \
+		"" "" "" "$_GH_REQ_METHOD" "$_GH_REQ_CLASS" "$_GH_REQ_FAMILY"
 	return "$rc"
+}
+
+# --- _gh_static_request_argv api [api-args...] ----------------------------
+# Parse `gh api` argv into the raw method operand, the endpoint and whether
+# fields imply POST (_GH_REQ_ARGV_METHOD/_TARGET/_POST). Returns 1 for shapes
+# the native flag parser rejects (a value flag missing its operand) or that
+# this parser cannot prove, so callers keep the labels unknown.
+_gh_static_request_argv() {
+	_GH_REQ_ARGV_METHOD=""
+	_GH_REQ_ARGV_TARGET=""
+	_GH_REQ_ARGV_POST=0
+	local -a argv=("$@")
+	local arg="" method="" target="" implied_post=0 index=1 count="${#argv[@]}" flag="" operand=""
+	while [[ "$index" -lt "$count" ]]; do
+		arg="${argv[$index]}"
+		index=$((index + 1))
+		case "$arg" in
+		-X | --method)
+			# A value flag without its operand is rejected natively: stay unknown.
+			[[ "$index" -lt "$count" ]] || return 1
+			method="${argv[$index]}"
+			index=$((index + 1))
+			;;
+		--method=*) method="${arg#--method=}" ;;
+		-X?*) method="${arg#-X}" ;;
+		-f | -F | --field | --raw-field | --input)
+			[[ "$index" -lt "$count" ]] || return 1
+			implied_post=1
+			index=$((index + 1))
+			;;
+		--field=* | --raw-field=* | --input=* | -f?* | -F?*) implied_post=1 ;;
+		-H | --header | -q | --jq | -t | --template | --cache | --hostname | -p | --preview)
+			[[ "$index" -lt "$count" ]] || return 1
+			index=$((index + 1))
+			;;
+		-i?*)
+			# Shorthand cluster (e.g. -iX PATCH): boolean -i flags, then at most
+			# one value flag whose operand is the cluster rest or the next arg.
+			flag="${arg#-}"
+			while [[ "$flag" == i* ]]; do flag="${flag#i}"; done
+			[[ -n "$flag" ]] || continue
+			operand="${flag:1}"
+			flag="${flag:0:1}"
+			case "$flag" in
+			X | f | F | H | q | t | p) ;;
+			*) return 1 ;;
+			esac
+			if [[ -z "$operand" ]]; then
+				[[ "$index" -lt "$count" ]] || return 1
+				operand="${argv[$index]}"
+				index=$((index + 1))
+			fi
+			case "$flag" in
+			X) method="$operand" ;;
+			f | F) implied_post=1 ;;
+			esac
+			;;
+		--)
+			[[ -n "$target" ]] || target="${argv[$index]:-}"
+			break
+			;;
+		-*) ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
+	done
+	_GH_REQ_ARGV_METHOD="$method"
+	_GH_REQ_ARGV_TARGET="$target"
+	_GH_REQ_ARGV_POST="$implied_post"
+	return 0
+}
+
+# --- _gh_static_request_labels [gh-args...] -------------------------------
+# Derive the allowlisted method/class/family of one native `gh api` request
+# from its argv, mirroring gh_quota_debug_request.py, without forking. Sets
+# _GH_REQ_METHOD/_GH_REQ_CLASS/_GH_REQ_FAMILY; only static labels are kept and
+# the writer re-validates them. Non-api commands and unparseable shapes (for
+# example full URLs) remain unknown rather than guessed.
+_gh_static_request_labels() {
+	_GH_REQ_METHOD=unknown
+	_GH_REQ_CLASS=unknown
+	_GH_REQ_FAMILY=unknown
+	local subcommand="${1:-}"
+	[[ "$subcommand" == api ]] || return 0
+	_gh_static_request_argv "$@" || return 0
+	local method="$_GH_REQ_ARGV_METHOD" target="$_GH_REQ_ARGV_TARGET" implied_post="$_GH_REQ_ARGV_POST"
+	[[ -n "$target" && "$target" != *://* ]] || return 0
+	case "$method" in
+	"")
+		method=GET
+		if [[ "$implied_post" -ne 0 ]]; then method=POST; fi
+		;;
+	[Gg][Ee][Tt]) method=GET ;;
+	[Hh][Ee][Aa][Dd]) method=HEAD ;;
+	[Pp][Oo][Ss][Tt]) method=POST ;;
+	[Pp][Uu][Tt]) method=PUT ;;
+	[Pp][Aa][Tt][Cc][Hh]) method=PATCH ;;
+	[Dd][Ee][Ll][Ee][Tt][Ee]) method=DELETE ;;
+	[Oo][Pp][Tt][Ii][Oo][Nn][Ss]) method=OPTIONS ;;
+	*) method=unknown ;;
+	esac
+	target="${target%%\?*}"
+	target="${target%%#*}"
+	while [[ "$target" == /* ]]; do target="${target#/}"; done
+	while [[ "$target" == */ ]]; do target="${target%/}"; done
+	local class="" family="" repo_classes="issues|pulls|actions|commits|git|contents|releases|check-runs|check-suites|statuses"
+	if [[ "$target" != repos && "$target" != repos/* ]]; then
+		case "${target%%/*}" in
+		rate_limit) class=rate-limit ;;
+		graphql | search | users | orgs | notifications | installation) class="${target%%/*}" ;;
+		user) class=users ;;
+		*) class=other ;;
+		esac
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/([^/]+) ]]; then
+		case "${BASH_REMATCH[1]}" in
+		issues | pulls | actions | commits | git | contents | releases | statuses) class="repos-${BASH_REMATCH[1]}" ;;
+		check-runs | check-suites) class=repos-checks ;;
+		*) class=repos-other ;;
+		esac
+	else
+		class=repos-other
+	fi
+	family="$class"
+	if [[ "$target" == user ]]; then
+		family=user
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
+		family="repos/:o/:r/collaborators/:u/permission"
+	elif [[ "$target" =~ ^repos/[^/]+/[^/]+/(${repo_classes})($|(/[^/]+)(/(reviews|comments|commits|files|checks|runs)(/|$))?) ]]; then
+		family="repos/:o/:r/${BASH_REMATCH[1]}"
+		[[ -z "${BASH_REMATCH[3]}" ]] || family="${family}/:id"
+		[[ -z "${BASH_REMATCH[5]}" ]] || family="${family}/${BASH_REMATCH[5]}"
+	fi
+	_GH_REQ_METHOD="$method"
+	_GH_REQ_CLASS="$class"
+	_GH_REQ_FAMILY="$family"
+	return 0
 }
 
 # Generate a digest-bound sidecar for the production aggregate. Evidence build
@@ -999,6 +1145,51 @@ gh_aggregate_calls() {
 	return 0
 }
 
+# --- gh_sweep_orphan_temps ------------------------------------------------
+# Producer-owned reaper for per-invocation shim scratch (t19021). The shim
+# removes these on exit; only SIGKILL or a crash leaves them behind. Scope:
+# exact mktemp names, top level of the agent temp root, owned by this user,
+# older than the age floor (well past any live gh invocation). One find per
+# kind, never a per-file stat loop: the leaked backlog reached ~93k entries
+# and every glob over the shared root paid for it (dispatch setup_worker_log).
+# Pass --force to skip the interval throttle. Sets _GH_TEMP_SWEEP_REMOVED.
+_GH_TEMP_SWEEP_REMOVED=0
+gh_sweep_orphan_temps() {
+	local force="${1:-}"
+	local temp_dir="" stamp="" now="" last="" uid="" files="" dirs=""
+	local min_age="${AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES:-1440}"
+	local interval="${AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS:-3600}"
+	_GH_TEMP_SWEEP_REMOVED=0
+	[[ "$min_age" =~ ^[1-9][0-9]*$ ]] || min_age=1440
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=3600
+	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 0
+	uid=$(id -u 2>/dev/null) || return 0
+	[[ "$uid" =~ ^[0-9]+$ ]] || return 0
+	now=$(_gh_now_seconds) || return 0
+	stamp="${GH_API_LOG}.temp-sweep"
+	[[ -d "${stamp%/*}" && ! -L "$stamp" ]] || return 0
+	if [[ "$force" != "--force" && -f "$stamp" ]]; then
+		read -r last <"$stamp" 2>/dev/null || last=""
+		if [[ "$last" =~ ^[0-9]+$ && "$now" -ge "$last" && $((now - last)) -lt "$interval" ]]; then
+			return 0
+		fi
+	fi
+	# Stamp first so concurrent cycle ends do not repeat the same scan.
+	printf '%s\n' "$now" >"$stamp" 2>/dev/null || return 0
+	files=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 \
+		\( -name 'gh-request-attempts.??????' -o -name 'gh-transport-error.??????' \
+		-o -name 'gh-transport-meta.??????' \) \
+		-type f -uid "$uid" -mmin "+${min_age}" -print -delete 2>/dev/null || true; } | wc -l)
+	dirs=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 -name 'gh-identity.??????' \
+		-type d -uid "$uid" -mmin "+${min_age}" -print -exec rm -rf -- {} + 2>/dev/null || true; } | wc -l)
+	files="${files//[[:space:]]/}"
+	dirs="${dirs//[[:space:]]/}"
+	[[ "$files" =~ ^[0-9]+$ ]] || files=0
+	[[ "$dirs" =~ ^[0-9]+$ ]] || dirs=0
+	_GH_TEMP_SWEEP_REMOVED=$((files + dirs))
+	return 0
+}
+
 # --- gh_trim_log ----------------------------------------------------------
 # Atomically retain only valid records within the configured age, line, and byte
 # bounds. Appenders share the same short-lived lock so replacement cannot lose
@@ -1009,6 +1200,7 @@ gh_trim_log() {
 	local tmp=""
 	local owner_pid="${BASHPID:-$$}"
 	_gh_cleanup_legacy_scratch || true
+	gh_sweep_orphan_temps || true
 	[[ -f "$GH_API_LOG" ]] || return 0
 	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || return 0
 	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES="$_GH_API_DEFAULT_LOG_MAX_LINES"
@@ -1085,6 +1277,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	trim)
 		gh_trim_log
 		;;
+	sweep-temp)
+		gh_sweep_orphan_temps --force
+		printf 'removed=%s\n' "$_GH_TEMP_SWEEP_REMOVED"
+		;;
 	clear)
 		gh_clear_log
 		;;
@@ -1100,6 +1296,7 @@ Subcommands:
                           Aggregate a fixed-cutoff JSON window
                           (default ${GH_API_REPORT##*/}, 24h, current time)
   trim                     Atomically apply age, line, and byte retention bounds
+  sweep-temp               Reap orphaned shim scratch now (age floor still applies)
   clear                    Remove log + report
 
 Path values:

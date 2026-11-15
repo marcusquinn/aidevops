@@ -13,6 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 MERGE_PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
+# GH#38259: extracted merge stages run through the timing wrapper.
+# shellcheck source=../pulse-merge-timing.sh
+source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -253,6 +256,7 @@ _pr_required_checks_pass() { return 0; }
 _check_required_checks_passing() { return 0; }
 approve_collaborator_pr() { return 0; }
 manual_release_hold_check() { return 0; }
+cloudron_release_merge_guard() { return 0; }
 # These fixtures are not Issue Sync PRs; the extracted approval helper must
 # take its non-trusted, no-write path.
 _pulse_is_trusted_issue_sync_pr() { return 1; }

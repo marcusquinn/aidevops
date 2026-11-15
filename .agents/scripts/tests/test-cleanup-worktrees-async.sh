@@ -133,6 +133,10 @@ aidevops_worktree_capacity_check() {
 	[[ "${MOCK_PRESSURE:-0}" == 1 ]] && return 1
 	return 0
 }
+aidevops_worktree_cleanup_headroom_low() {
+	[[ "${MOCK_HEADROOM_LOW:-0}" == 1 ]] && return 0
+	return 1
+}
 STUB
 
 	# Stub pulse-cleanup.sh — defines mock cleanup_worktrees.
@@ -849,6 +853,33 @@ test_cleanup_budget_scales_under_pressure() {
 	return 0
 }
 
+test_headroom_bypasses_cadence() {
+	local logs="${TEST_DIR}/.aidevops/logs"
+	mkdir -p "$logs"
+	date +%s >"${logs}/cleanup_worktrees.last-run"
+	MOCK_HEADROOM_LOW=1 run_helper_in_isolation >/dev/null
+	if [[ "$(<"${TEST_DIR}/cleanup-budget")" == 900 ]] &&
+		grep -q 'cleanup budget=900 reason=disk-headroom' "${logs}/cleanup_worktrees.log"; then
+		print_result "headroom: pressure bypasses cadence with distinct reason" 0
+	else
+		print_result "headroom: pressure bypasses cadence with distinct reason" 1
+	fi
+	return 0
+}
+
+test_headroom_real_snapshot() {
+	# Exercise the real probe without running retirement on this host.
+	source "${SCRIPT_DIR}/../disk-capacity-lib.sh"
+	if aidevops_disk_capacity_snapshot "$TEST_DIR" &&
+		AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=100 aidevops_worktree_cleanup_headroom_low &&
+		! AIDEVOPS_WORKTREE_CLEANUP_FREE_KB=0 AIDEVOPS_WORKTREE_CLEANUP_FREE_PERCENT=0 aidevops_worktree_cleanup_headroom_low; then
+		print_result "headroom: real snapshot honors percentage overrides" 0
+	else
+		print_result "headroom: real snapshot honors percentage overrides" 1
+	fi
+	return 0
+}
+
 test_capacity_mode_is_scoped_and_locked() {
 	local logs="${TEST_DIR}/.aidevops/logs" rc=0
 	git init -q "${TEST_DIR}/repo"
@@ -875,6 +906,42 @@ test_capacity_mode_is_scoped_and_locked() {
 	return 0
 }
 
+test_turbo_cache_prune() {
+	local repo="${TEST_DIR}/turbo-repo"
+	local helper="${SCRIPT_DIR}/../worktree-artefact-reclaim.sh"
+	mkdir -p "$repo/.turbo/cache"
+	"$TEST_NATIVE_GIT" -C "$repo" init -q
+	printf '.turbo/\n' >"$repo/.gitignore"
+	printf '{}\n' >"$repo/turbo.json"
+	printf 'old' >"$repo/.turbo/cache/old"
+	printf 'new' >"$repo/.turbo/cache/new"
+	touch -t 202001010000 "$repo/.turbo/cache/old"
+	ln -s "$repo/turbo.json" "$repo/.turbo/cache/link"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=20G bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/old" && -f "$repo/.turbo/cache/new" && -L "$repo/.turbo/cache/link" ]] &&
+		grep -q 'removed_files=1' "$TEST_DIR/turbo-log"; then
+		print_result 'turbo: age pruning preserves new files and symlinks' 0
+	else
+		print_result 'turbo: age pruning preserves new files and symlinks' 1
+	fi
+	printf 'another' >"$repo/.turbo/cache/another"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo" >"$TEST_DIR/turbo-log"
+	if [[ ! -e "$repo/.turbo/cache/new" && ! -e "$repo/.turbo/cache/another" && -L "$repo/.turbo/cache/link" ]]; then
+		print_result 'turbo: size cap removes oldest regular entries' 0
+	else
+		print_result 'turbo: size cap removes oldest regular entries' 1
+	fi
+	printf 'preserve' >"$repo/.turbo/cache/keep"
+	printf '' >"$repo/.gitignore"
+	AIDEVOPS_TURBO_CACHE_MAX_SIZE=1 bash "$helper" --turbo-cache "$repo"
+	if [[ -f "$repo/.turbo/cache/keep" ]]; then
+		print_result 'turbo: nonignored cache is untouched' 0
+	else
+		print_result 'turbo: nonignored cache is untouched' 1
+	fi
+	return 0
+}
+
 main() {
 	echo "Running cleanup-worktrees-async-helper.sh tests"
 	echo "================================================"
@@ -886,6 +953,9 @@ main() {
 
 	setup
 
+	test_turbo_cache_prune
+	teardown
+	setup
 	test_cold_start
 	teardown
 	setup
@@ -957,7 +1027,7 @@ main() {
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
 		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked \
-		test_cleanup_budget_scales_under_pressure; do
+		test_cleanup_budget_scales_under_pressure test_headroom_bypasses_cadence test_headroom_real_snapshot; do
 		teardown
 		setup
 		"$test_case"

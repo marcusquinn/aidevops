@@ -918,7 +918,8 @@ _dlw_precreate_worktree() {
 	local _branch _wt_output="" _managed_create="" _pc_t0=""
 	_dlw_managed_creation_env || return 1
 	_managed_create="$_DLW_MANAGED_CREATE_MODE"
-	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
+	# UTC, matching DISPATCH_CLAIM ts= for provenance proofs (GH#38042).
+	_branch="feature/auto-$(date -u +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Enrollment is only permitted for this creation, never an existing branch.
 	if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$_branch"; then
 		return 1
@@ -932,6 +933,7 @@ _dlw_precreate_worktree() {
 	local _helper_session="${_precreate_session}-$$-${RANDOM}"
 	_wt_output=$(cd "$repo_path" && export "${_DLW_MANAGED_CREATE_ENV[@]}" && \
 		AIDEVOPS_SESSION_ORIGIN=worker \
+		AIDEVOPS_WORKTREE_PULSE_CREATE=1 \
 		AIDEVOPS_SKIP_AUTO_CLAIM=1 \
 		OPENCODE_PID="$$" OPENCODE_SESSION_ID="$_helper_session" \
 		WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 \
@@ -1024,8 +1026,9 @@ _dlw_precreate_helper_reason() {
 	local output="$1"
 	local reason="" pattern=""
 	# GH#36142: an enrollment refusal names its own cause, so it outranks the
-	# generic "Worktree retained" disposition that follows it.
-	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
+	# generic "Worktree retained" disposition that follows it. GH#38095: so does
+	# a cleanup-receipt refusal, which precedes RECONCILIATION_FAILED.
+	for pattern in 'managed-worktree:' 'Generation enrollment refused:' 'Cleanup-receipt reconciliation refused:' 'AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=|Error:'; do
 		reason=$(printf '%s\n' "$output" | grep -E "$pattern" | tail -n 1 | tr -d "'\r" | cut -c1-200) || reason=""
 		[[ -z "$reason" ]] || break
 	done

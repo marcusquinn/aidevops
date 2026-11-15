@@ -163,6 +163,44 @@ Do not treat null snapshot fields as proof that content or labels were removed.
 
 **Investigation:** Compare `before.labels` vs `after.labels`. Check `caller_script` and `caller_function` to identify the code path. Was this a legitimate state transition?
 
+### Verified lifecycle policy (GH#38135)
+
+Keep lifecycle labels protected alongside trust gates; do not demote unverified
+removals to a digest. New managed CLI edits (`issue edit` and `issue status`)
+can carry `flags.lifecycle_transition_verified: v1-owned-current-state` only
+after independent verification:
+
+- Comparable snapshots show exactly one core status replaced by one other core
+  status, no other label delta, unchanged title/body lengths and the same single
+  assignee. Issue snapshots capture assignee logins; missing ownership fails closed.
+- The authenticated actor has current write/maintain/admin permission, is that
+  assignee, and the live issue still matches the recorded labels and lengths.
+  `status:done` requires a closed issue; other targets require an open issue.
+- Removing `status:claimed` or `status:in-progress` additionally requires exactly
+  one live, trusted, unexpired ready dispatch lease matching the caller's lease
+  token and session. The existing dispatch lease parser checks authorship,
+  releases and renewals. A shared GitHub login alone cannot exempt claim theft.
+  Lease identifiers are verification inputs, never audit flags.
+
+The filter also checks the caller, exact version, pure status delta and absence
+of any other suspicious signal. Trust-gate removals (including
+`needs-maintainer-permissions`), content wipes, unknown statuses, missing proof,
+failed reads and different-runner claim removals remain alert-grade. Existing
+narrow approval/handoff exemptions are unchanged. Generic CLI edits are not
+redirected: only edits that independently meet the same proof contract qualify.
+
+`issue status` previously called `set_issue_status` through direct REST deltas
+without an audit record. The CLI now captures and records the entire operation,
+including partial writes on failure. Direct library callers of `set_issue_status`
+are not newly exempted by this policy.
+
+Historical records are immutable and must not gain flags retroactively. Therefore
+the old backlog's alert count cannot decrease from this new exemption alone.
+Measure the 70% noise-reduction target on newly verified representative records,
+and report historical scan counts separately; do not present a synthetic replay
+as proof of historical provenance. Reverting the filter restores alerting for
+the new records without changing the log.
+
 ## Forensics Workflow
 
 Use this workflow when a user reports "my issue was wiped" or when the anomaly scanner files an alert.
@@ -311,7 +349,11 @@ The daily routine `r-gh-audit-scan` runs `gh-audit-anomaly-helper.sh scan`:
 ```
 
 The scanner:
-1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`)
+1. Reads entries since the last scan (tracked in `~/.aidevops/logs/gh-audit-scanner.state`).
+   After a rotation it first reads the rotated file that held the checkpoint
+   (from the saved line onward) and any later rotated files, then the whole live
+   log; a live log shorter than the checkpoint with no rotated file is rescanned
+   from line 1 (GH#37904)
 2. Filters entries with `suspicious[] | length > 0`, excluding only exact,
    fully comparable expected transitions: verified issue/PR approval removal of
    `needs-maintainer-review`, independently revalidated trusted-author NMR
@@ -320,12 +362,43 @@ The scanner:
    runtime-owned blocked exits replacing only `status:in-progress` with
    `status:blocked` with `worker_blocked_exit_verified: v1-release-persisted`
    (live blocked state and a trusted blocked release newer than the last claim),
+   signed worker-permission grants that remove `needs-maintainer-permissions`
+   (optionally with `status:blocked`, adding only `status:available` or
+   `auto-dispatch`) with `permission_approval_verified: v1-current-state`
+   (the signed grant re-verified against the latest live request, GH#37906),
    and worker permission blocking that replaces active lifecycle
    labels with `needs-maintainer-permissions` (the original audit entry remains
    unchanged)
 3. Redacts source repository names unless GitHub confirms they are public (or
    they match the destination repository), failing closed on lookup errors
-4. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when anomalies are found
+4. Counts lines that are not parsable NDJSON objects, reports them under
+   **Malformed lines** and a `## Log Integrity` section, and keeps scanning the
+   rest of the window (GH#38229)
+5. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when
+   anomalies or malformed lines are found
+
+### Malformed lines
+
+An interrupted append leaves the log without a trailing newline, so the next
+event concatenates onto the partial one and both records become unparsable.
+`gh-audit-log-helper.sh` now writes a separating newline when the last byte is
+not one and serialises appends with `flock`, so this cannot recur silently.
+
+Earlier the scanner aborted on any unparsable line and held its checkpoint,
+which turned one torn line into indefinite loss of detection for every later
+entry. Unparsable lines are therefore reported rather than treated as a reason
+to stop: they are excluded from signal matching, counted in the report, and the
+checkpoint still advances. The log is append-only — never edit it to "repair" a
+torn line. Locate reported lines with:
+
+```bash
+jq -nR '[inputs | input_line_number as $n | [fromjson?] | if length == 0 then $n else empty end]' \
+  ~/.aidevops/logs/gh-audit.log
+```
+
+A truncated prefix followed by a complete later event is a write fault. Edited or
+reordered content on such a line is a tampering finding: follow the Forensics
+Workflow above.
 
 The explicit handoff command is `gh-write-helper.sh issue review-handoff <issue>
 --repo <owner/repo> --pr <pr>`. Its `_issue_review_handoff` provenance requires
@@ -366,7 +439,7 @@ To run the scanner manually:
 # Normal run (incremental, files issue)
 gh-audit-anomaly-helper.sh scan
 
-# Scan all entries without filing an issue (dry run)
+# Scan the whole live log (not rotated logs) without filing an issue (dry run)
 gh-audit-anomaly-helper.sh scan --all --dry-run
 
 # Check scanner state

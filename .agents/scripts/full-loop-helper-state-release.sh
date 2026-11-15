@@ -46,7 +46,7 @@ _full_loop_release_evidence_path() {
 	local pr_number="$2"
 	local evidence_type="$3"
 	local receipt_path=""
-	case "$evidence_type" in aggregate | authorization-gap | failure | receipt-conflict | successor) ;; *) return 1 ;; esac
+	case "$evidence_type" in adoption | adoption-authorization | aggregate | authorization-gap | failure | receipt-conflict | successor) ;; *) return 1 ;; esac
 	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
 	printf '%s.%s.json\n' "${receipt_path%.status}" "$evidence_type"
 	return 0
@@ -487,15 +487,35 @@ _full_loop_persist_release_success() {
 }
 
 _full_loop_write_release_receipt() {
+	local repo="$1" pr_number="$2" status="$3"
+	local receipt="" rc=0
+	receipt=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
+	mkdir -p "${receipt%/*}" || return 1
+	mkdir "${receipt}.lock" || { printf 'Release receipt is locked; retry after the current writer finishes\n' >&2; return 1; }
+	_full_loop_write_release_receipt_locked "$repo" "$pr_number" "$status" || rc=$?
+	rmdir "${receipt}.lock" || return 1
+	return "$rc"
+}
+
+# Internal writer: caller must hold the shared per-receipt lock.
+_full_loop_write_release_receipt_locked() {
 	local repo="$1"
 	local pr_number="$2"
 	local status="$3"
+	local adoption_type="${4:-}"
 	[[ -n "$repo" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	[[ "$status" == "$_FULL_LOOP_RELEASE_NOT_REQUESTED" || "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" || "$status" == "$_FULL_LOOP_RELEASE_SUPERSEDED" || "$status" == "$_FULL_LOOP_PHASE_FAILED" ]] || return 1
 	local receipt_path=""
 	local current_status=""
 	receipt_path=$(_full_loop_release_receipt_path "$repo" "$pr_number") || return 1
 	mkdir -p "${receipt_path%/*}" || return 1
+	if [[ -n "$adoption_type" ]]; then
+		[[ "$adoption_type" == cross-host-adoption/v1 && "$status" == "$_FULL_LOOP_RELEASE_PUBLISHED" ]] || return 1
+		# Keep the evidence type in the receipt itself: removing the detached
+		# evidence must not turn an adoption into a legacy publisher receipt.
+		(set -o noclobber; printf '%s\n%s\n' "$status" "$adoption_type" >"$receipt_path") || return 1
+		return 0
+	fi
 	current_status=$(_full_loop_read_release_receipt_status "$receipt_path") || return 1
 	# Typed deployment evidence is part of the terminal receipt, not disposable
 	# metadata. A repeated status write must verify and retain the whole file.

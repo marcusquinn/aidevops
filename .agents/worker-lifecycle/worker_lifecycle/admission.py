@@ -8,15 +8,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import time
 from typing import TypeVar
 from uuid import UUID, uuid5
 
 from .process import ProcessIdentity
 from .refusal import failure_category
+from .retirement_fence import require_not_removing, require_unfenced
 from .storage import LifecycleRegistry, SCHEMA, StoreConflict, encode, identifier
 
 # Bounded wait for a transiently busy registry writer (GH#36921). Each attempt
@@ -75,6 +78,23 @@ def within_contention_deadline(attempt: Callable[[], _Result],
         wait.sleep(pause)
 
 
+def _log_contention_retry(attempt: int, error: Exception) -> None:
+    # Fixed codes and a counter only, never paths or SQL (matches launch.py).
+    print(f"[worker-lifecycle] contention-retry reason={type(error).__name__} "
+          f"category={failure_category(error)} attempt={attempt}", file=sys.stderr)
+
+
+def wait_out_contention(attempt: Callable[[], _Result]) -> _Result:
+    """Retry an idempotent enrollment or admission across writer contention.
+
+    GH#38086: Pulse worktree pre-creation enrolls through the registry CLI, which
+    previously made one attempt while cleanup held the writer for seconds. Uses
+    the same operator-tunable bound as launch admission; 0 restores one attempt.
+    """
+    return within_contention_deadline(
+        attempt, ContentionWait(contention_deadline(), _log_contention_retry))
+
+
 class AdmissionClosed(StoreConflict):
     """The generation is absent or no longer admits new runs."""
 
@@ -120,6 +140,10 @@ class AdmissionRegistry:
             return
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
+            require_unfenced(connection, generation_id, value)  # GH#37828 reservation
+            require_not_removing(connection, value)  # GH#38158 removal in progress
+            if not path.is_dir():
+                raise ValueError("canonical-directory-required")
             _, duplicate = self.store._event(connection, event_id, payload)
             if duplicate:
                 return  # Replaying an old open must never reopen a closed gate.
@@ -168,11 +192,27 @@ class AdmissionRegistry:
     def authorize_enrolled_only(self, event_id: str, generation_id: str) -> None:
         """Operator-confirmed: close admission for a generation with no owner ever.
 
+        Legacy authorization, replaced by Reclaim's evidence-backed event
+        (``reclaim.unowned``, GH#38405) and removed with the legacy path.
+        """
+        self.close_unowned(event_id, generation_id, {
+            "type": "enrolled-only-retirement-authorized",
+            "generation_id": generation_id, "operator_confirmed": True,
+        })
+
+    def close_unowned(self, event_id: str, generation_id: str, payload: dict) -> bool:
+        """Journal ``payload`` and close admission for a generation never owned.
+
         The no-run predicate, the evidence event and the closure share one writer
         transaction, so a racing `admit` either committed first (this refuses) or
         finds the generation closed. Any bound run, live or ended, is ineligible.
+        An event already stored under ``event_id`` with the same type for this
+        generation is a replay: nothing is written and False is returned, so an
+        authorization recorded at one time is never rewritten by a later check.
         """
         identifier(generation_id)
+        if payload.get("generation_id") != generation_id:
+            raise ValueError("authorization-generation-mismatch")
         creation = str(uuid5(UUID(generation_id), "created-worktree"))
         with self.store.connection(write=True) as connection:
             self._require_schema(connection)
@@ -187,14 +227,21 @@ class AdmissionRegistry:
                     "SELECT 1 FROM events WHERE event_id=?", (creation,),
                 ).fetchone()):
                 raise StoreConflict("generation-has-admitted-owner")
-            self.store._event(connection, event_id, {
-                "type": "enrolled-only-retirement-authorized",
-                "generation_id": generation_id, "operator_confirmed": True,
-            })
+            stored = connection.execute(
+                "SELECT payload FROM events WHERE event_id=?", (event_id,),
+            ).fetchone()
+            if stored is not None:
+                previous = json.loads(stored["payload"])
+                if (previous.get("type"), previous.get("generation_id")) != (
+                        payload.get("type"), generation_id):
+                    raise StoreConflict("event-id-payload-conflict")
+            else:
+                self.store._event(connection, event_id, payload)
             connection.execute(
                 "UPDATE generation_admissions SET state='closed' WHERE generation_id=?",
                 (generation_id,),
             )
+            return stored is None
 
     def close_generation(
         self, event_id: str, generation_id: str, *,

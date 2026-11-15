@@ -340,6 +340,23 @@ _derive_ssh_url_from_https() {
 	return 1
 }
 
+# Detect `ls-remote ... --exit-code ...`, whose rc=2 is a definitive remote
+# answer ("no matching refs"), not a transport failure (GH#38493).
+# Args: git subcommand and arguments, as passed to _run_git_with_ssh_fallback.
+# Returns: 0 when the subcommand is ls-remote with --exit-code before any `--`,
+#          1 otherwise.
+_git_args_is_ls_remote_exit_code() {
+	local subcommand="${1:-}"
+	local arg=""
+	[[ "$subcommand" == "ls-remote" ]] || return 1
+	shift
+	for arg in "$@"; do
+		[[ "$arg" == "--" ]] && return 1
+		[[ "$arg" == "--exit-code" ]] && return 0
+	done
+	return 1
+}
+
 # Run a git command with a wall-clock timeout and HTTPS→SSH fallback.
 # Args: $1 — timeout in seconds, $2..$N — git subcommand and its arguments
 #       (do NOT include the leading `git`; this helper adds it).
@@ -350,6 +367,8 @@ _derive_ssh_url_from_https() {
 #
 # Behaviour matrix:
 #   HTTPS succeeds within timeout              → return 0
+#   ls-remote --exit-code returns 2 (remote
+#     answered: no matching refs)              → return 2 (no fallback, GH#38493)
 #   HTTPS fails non-timeout + fallback succeeds → return 0
 #   HTTPS fails non-timeout + fallback fails    → return fallback rc
 #   HTTPS times out, remote NOT https-github    → return 124 (no fallback)
@@ -369,6 +388,12 @@ _run_git_with_ssh_fallback() {
 		timeout_sec "$timeout_s" git "$@" || rc=$?
 	fi
 	if [[ $rc -eq 0 ]]; then
+		return $rc
+	fi
+	# The remote answered over HTTPS. Retrying over SSH can only replace that
+	# answer with an unrelated transport/auth failure (e.g. rc=128 where no SSH
+	# key is available), misreporting an absent branch as a discovery error.
+	if [[ $rc -eq 2 ]] && _git_args_is_ls_remote_exit_code "$@"; then
 		return $rc
 	fi
 
@@ -1794,6 +1819,26 @@ allocate_counter_cas() {
 	return 0
 }
 
+# Refresh the caller repository's remote-tracking ref for the counter branch
+# after a successful CAS. The CAS runs in an isolated Git context, so its push
+# leaves the caller's refs/remotes/<remote>/<counter-branch> stale and the
+# task-id commit-msg guard then misses the fresh claim. Best-effort and bounded:
+# failure never changes the claim result.
+# Args: $1 — caller repo_path
+_cas_refresh_caller_tracking_ref() {
+	local repo_path="$1"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
+	local refspec="+refs/heads/${COUNTER_BRANCH}:refs/remotes/${REMOTE_NAME}/${COUNTER_BRANCH}"
+	if timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" git -C "$repo_path" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="${CAS_GIT_CMD_TIMEOUT_S:-10}" \
+		fetch --quiet "$REMOTE_NAME" "$refspec" >/dev/null 2>&1; then
+		log_info "Refreshed ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo"
+	else
+		log_info "Could not refresh ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo (non-fatal)"
+	fi
+	return 0
+}
+
 # Online allocation with CAS retry loop.
 # GH#20137: enforces a wall-clock timeout (CAS_WALL_TIMEOUT_S, default 30s)
 # in addition to the retry count.  Under concurrent-worker contention, each
@@ -1857,6 +1902,7 @@ allocate_online() {
 		0)
 			# go for it — CAS succeeded on this attempt
 			log_success "Claimed $(_format_legacy_task_id "$first_id") (attempt ${attempt}, ${elapsed}s)"
+			_cas_refresh_caller_tracking_ref "$repo_path"
 			# Phase 3 (t2569 / GH#20001): structured audit log.
 			_append_claim_audit_log "$first_id" "$attempt" "$elapsed"
 			_task_coordinator_shadow_legacy "$first_id" "$count"

@@ -67,6 +67,18 @@ else
 	print_result "Layer 4 allows dispatch after a subsequent valid empty lookup" 1
 fi
 
+# GH#38142: non-worker PR evidence is a named, cacheable block signal.
+export STUB_OPEN_PR_OUTPUT='open PR #241 is approved or mergeable for issue #123'
+export STUB_OPEN_PR_RC=0
+LAYER4_OUTPUT=""
+LAYER4_RC=0
+LAYER4_OUTPUT=$(_dedup_layer4_pr_evidence "123" "owner/repo" "Fixture") || LAYER4_RC=$?
+if [[ "$LAYER4_RC" -eq 0 && "$LAYER4_OUTPUT" == "pr_evidence_block: open PR #241 is approved or mergeable for issue #123" ]]; then
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 0
+else
+	print_result "Layer 4 names non-worker PR evidence as pr_evidence_block" 1
+fi
+
 # Exercise the production router's event parsing/argument fence before replacing
 # it with a counter stub for the Layer 6 return-semantics tests below.
 ROUTE_ARGS_FILE="${TEST_ROOT}/route-args"
@@ -251,6 +263,11 @@ gh() {
 	if [[ "$*" == *'/comments?per_page=100'* ]]; then
 		printf '[[]]\n'
 		return 0
+	fi
+	# GH#38261: record-time issue material reads are not exact-PR reads. Fail
+	# them so records keep metadata material, as before that change.
+	if [[ "$*" =~ ^api\ repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		return 1
 	fi
 	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
 	[[ -n "$STUB_PR_REST_JSON" ]] || return 1

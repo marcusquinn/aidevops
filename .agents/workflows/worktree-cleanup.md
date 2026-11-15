@@ -145,6 +145,15 @@ override it. A refusal prints the registry `detail`/`status` and the next step
 - `worktree-locked`: inspect the lock reason with `git worktree list --porcelain`.
   Only when the lock is no longer needed, run `git worktree unlock PATH` on the
   listed path and retry retirement.
+- `generation-directory-mismatch`: the tree was copied from another host or
+  restored from backup. Rescue its work first, then retire it with
+  `worker-registry.py retire-foreign-worktree` (GH#37828); see
+  `reference/machine-migration.md` "Retiring the copies". It needs a verified
+  rescue receipt that still matches the tree, or a clean tree whose HEAD is
+  reachable from a verified pushed ref (a live remote query, not a local
+  remote-tracking ref alone). It archives before removing, leaves the marker untouched,
+  never reopens admission, and refuses a marker of this installation, a registered
+  generation or path, or a tree Git does not register at that exact path.
 
 Script routines declare a lifecycle runtime only when their lifecycle prerequisite
 checks pass and the workload is not private. With lifecycle disabled, missing

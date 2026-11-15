@@ -574,6 +574,34 @@ else
 		"status_count=$status_n line: $last"
 fi
 
+# B'7a (GH#37993): long-lived non-task records get no derived status and no
+# creator self-assignment, in separate-flag and comma-joined label forms.
+_gh_wrapper_auto_assignee() { printf 'maintainer'; return 0; }
+for non_task_labels in "persistent" "release-standing-policy" "release-approval-required,no-auto-dispatch"; do
+	reset_recorder
+	SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+		gh_create_issue --repo o/r --title "non-task record" --body "body" \
+		--label "$non_task_labels" >/dev/null 2>&1
+	status_n=$(count_status_labels_in_log)
+	if [[ "$status_n" == "0" ]] && ! grep -q -- "--add-assignee" "$GH_RECORD_FILE"; then
+		print_result "B'7a: gh_create_issue leaves non-task ${non_task_labels} without status or assignee" 0
+	else
+		print_result "B'7a: gh_create_issue leaves non-task ${non_task_labels} without status or assignee" 1 \
+			"status_count=$status_n log: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+	fi
+done
+# Control: an ordinary task still receives the creator assignment.
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "task" --body "body" >/dev/null 2>&1
+if grep -q -- "--add-assignee maintainer" "$GH_RECORD_FILE"; then
+	print_result "B'7a: gh_create_issue still self-assigns ordinary tasks" 0
+else
+	print_result "B'7a: gh_create_issue still self-assigns ordinary tasks" 1 \
+		"log: $(tr '\n' ' ' <"$GH_RECORD_FILE")"
+fi
+_gh_wrapper_auto_assignee() { return 0; }
+
 # B'8: caller status wins — wrapper must not concatenate an extra status label.
 reset_recorder
 SESSION_ORIGIN_OVERRIDE="origin:interactive" \

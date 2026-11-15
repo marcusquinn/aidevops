@@ -124,6 +124,42 @@ _dlw_restore_worktree_deps "$2" "$3"
             provision.snapshot(self.modules, 10, 20000, stage)
         self.assertLessEqual(sum(p.stat().st_size for p in stage.rglob("*") if p.is_file()), 10)
 
+    def test_stale_pnpm_staging_directory_is_skipped(self):
+        self.make_pnpm()
+        (self.modules / "example_tmp_123").mkdir()
+        self.run_restore()
+        self.assertTrue((self.wt / "node_modules" / "example" / "index.js").exists())
+        self.assertFalse((self.wt / "node_modules" / "example_tmp_123").exists())
+
+    def test_dangling_bin_link_is_copied_as_is(self):
+        bin_dir = self.modules / "example" / "node_modules" / ".bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "parser").symlink_to("../@babel/parser/bin/babel-parser.js")
+        stage = self.wt / "stage"
+        stage.mkdir(mode=0o700)
+        provision.snapshot(self.modules, 67108864, 20000, stage)
+        self.assertTrue((stage / "example" / "node_modules" / ".bin" / "parser").is_symlink())
+
+    def test_dangling_bin_link_escaping_root_is_rejected(self):
+        bin_dir = self.modules / ".bin"
+        bin_dir.mkdir()
+        (bin_dir / "parser").symlink_to("../../outside")
+        with self.assertRaises(provision.Rejected):
+            provision.snapshot(self.modules, 67108864, 20000)
+
+    def test_dangling_link_outside_bin_reports_specific_reason(self):
+        (self.modules / "example" / "gone").symlink_to("missing-target")
+        with self.assertRaises(provision.Rejected) as caught:
+            provision.snapshot(self.modules, 67108864, 20000)
+        self.assertEqual(str(caught.exception), "dangling-dependency-link")
+
+    def test_source_far_over_budget_is_refused_without_walk(self):
+        (self.modules / "example" / "big.bin").write_bytes(b"x" * 8192)
+        result = subprocess.run(  # nosec B603 -- resolved Bash, fixed fixture program and fixture-only argv.
+            [BASH, "-c", 'source "$1/worktree-helper-add.sh"; _provision_source_clearly_over_budget "$2" 1024',
+             "fixture", str(SCRIPTS), str(self.modules)], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0)
+
     def test_entry_budget(self):
         with self.assertRaises(provision.Rejected):
             provision.snapshot(self.modules, 67108864, 1)

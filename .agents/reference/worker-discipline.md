@@ -31,7 +31,7 @@ When dispatched against an auto-generated issue body (review-followup, quality-d
 
 - **A. Premise falsified → close the issue** with a `> Premise falsified. <claim>. <code reality>. Not acting.` rationale comment. No PR. The closing comment trains the next session and the noise filter. Work already satisfied on the default branch (for example a duplicate rollout issue) is also Outcome A. Headless workers first confirm a clean worktree with no commits ahead, nothing pushed and no PR (otherwise keep the issue open, preserve the work and take the PR path), then post the receipt in "PR-less already-satisfied completion" below, close and end with `<promise>TASK_COMPLETE</promise>` (`workflows/full-loop.md` criterion 5); a bare marker or prose comment without that receipt is not credited (GH#37515), and an interactive `What next` block is not a completion signal (GH#37510). Exception: generated `## Unactioned Review Feedback` issues close only with the receipt in "PR-less review-triage completion" below; the runtime rejects the bare marker for that shape.
 - **B. Premise correct + obvious fix → implement and PR** with normal lifecycle gate (`Resolves #<this-issue>`).
-- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then exit `BLOCKED` as `input_required` with `TERMINAL_BLOCKER_INPUT_OWNER=maintainer` (see "Terminal-blocker recovery") and stop: supplying the answer in the brief re-arms dispatch automatically. Never label your own issue or draft PR `hold-for-review`; nothing lifts that label when the answer arrives, so the checkpoint stalls (GH#36138). The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
+- **C. Premise correct but genuinely ambiguous** (architecture / policy / breaking change the worker cannot resolve autonomously) → post a decision comment containing: **Premise check** (one line), **Analysis** (2-4 bullets on trade-offs), **Recommended path** (what you would do if the call were yours, with rationale), **Specific question** (yes/no or pick-one — not open-ended). Link every file, line, PR, run or comment cited (GitHub permalinks from `gh browse --no-browser --commit=<sha> <path>:<line>`, URLs from `gh ... --json url`) so the reviewer can decide without searching. Then exit `BLOCKED` as `input_required` with `TERMINAL_BLOCKER_INPUT_OWNER=maintainer` (see "Terminal-blocker recovery") and stop: supplying the answer in the brief re-arms dispatch automatically. Never label your own issue or draft PR `hold-for-review`; that label waits for a maintainer's reply instead of re-arming when the brief is answered, so the checkpoint stalls (GH#36138, GH#38311). The human wakes up to a decision-ready recommendation, not a blank task. `needs-maintainer-review` is reserved for missing external-author authority.
 
 Outcome A against a merged prerequisite PR (`For`/`Ref` the parent) is not an implementation close: `verify-issue-close-helper.sh check` correctly rejects it for zero file overlap, and fake scope paths must never be added. Verify with `verify-issue-close-helper.sh check-no-code <issue> <pr> <slug> <parent>` (trusted issue author, merged PR, parent linked by For/Ref, no closing keyword), resolve only the triage issue as no-code, and leave the parent open.
 
@@ -214,7 +214,9 @@ already-authorized outcome, the assigned AI executor owns brief correction:
 
 Lifecycle integration must retain the canonical projection: `status:claimed` or
 `status:in-progress` means active implementation, `status:blocked` needs a
-structured reason/action, `status:available` is an executable continuation, and
+structured reason/action and a `needs-*` companion naming its owner
+(`reference/dispatch-blockers.md` "Blocked Companion Labels"; the runtime picks it
+from `TERMINAL_BLOCKER_REASON`), `status:available` is an executable continuation, and
 `status:in-review` requires a current open non-draft PR. Never use this scope
 recovery to weaken trust, hold, exact-head, or assignment-plus-active-state gates.
 On blocked exits, emit `BLOCKED: <reason>` instead of editing lifecycle labels: the runtime persists the release before projecting state. Declare missing runner secret/config **names** only as `TERMINAL_BLOCKER_MISSING_SECRETS=NAME1,NAME2`; never include values.
@@ -384,7 +386,75 @@ AI brief owner:
    record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
    `dependency_change` or `human_decision`). A decision suppresses
-   re-assessment for 24h; unchanged blockers are not retried blindly.
+   re-assessment for 24h; unchanged blockers are not retried blindly. A plain
+   OWNER/MEMBER reply newer than a `human_decision` (no signature footer or
+   automation marker) ends that suppression on the next supervisor pass, so
+   a maintainer answers on the issue, not in a session (GH#38311).
+
+Unclassified holds (GH#37978): a blocked label is not an instruction. Entries
+with `intake: unclassified_hold` are open issues whose only dispatch stop is
+`status:blocked`, unchanged for a day (`BLOCKER_RECOVERY_UNCLASSIFIED_MIN_AGE`),
+with no open dependency and no terminal-blocker record. The helper only queues
+them; missing evidence is never its reason to release. Read the body, the
+`status:blocked` label timeline and trusted OWNER/MEMBER comments, then take
+exactly one outcome and record it with `record`:
+
+- **A reason exists and still holds**: record the decision. If no public
+  comment states it, post one naming the reason, who or what must act, and the
+  wake condition.
+- **The reason no longer holds, or none exists and nothing blocks the work**:
+  re-read the labels and continue only when `status:blocked` is present and
+  `status:in-progress` is absent. Then run
+  `gh-write-helper.sh issue status <N> --repo <owner/repo> available` and
+  post one receipt naming the evidence read. Never release when a trusted
+  OWNER/MEMBER comment made after the label states a hold that still applies.
+- **Only a person can resolve it**: name the smallest input and its owner on
+  the issue once, with `wake: human_decision`.
+
+Unclassified-hold handling never removes `hold-for-review`, `needs-maintainer-review`,
+`needs-maintainer-permissions`, `no-auto-dispatch` or `parent-task`; issues
+carrying them are never queued as `unclassified_hold`. Public comments carry no local paths,
+excerpts or secret names. A wrong release costs one worker run, whose blocker
+exit then records the reason. The entry retires once the issue closes, loses
+`status:blocked`, gains another hold label or gains a terminal-blocker record.
+
+Maintainer replies on held issues (GH#38311): a `hold-for-review` issue waits
+for a maintainer decision, and a reply on the issue is that decision. The
+helper queues two intakes on the supervisor pass only, never `rearm`, and
+skips issues that also carry `needs-maintainer-review`,
+`needs-maintainer-permissions`, `status:in-progress` or `status:claimed`:
+
+- **`answered_hold`**: this runner's own OWNER/MEMBER login posted a comment
+  after the latest hold label with no signature footer and no automation
+  marker; `reply_comment_id` names it. That login is the maintainer this runner
+  serves, so carry out exactly what the reply decides and nothing broader.
+  Read the hold reason (body and trusted comments before the label), then
+  take one outcome:
+  - **Revise or resume**: persist the revision in the brief, remove
+    `hold-for-review`, and set `status:available` when nothing else blocks.
+  - **Retire**: close as not planned, citing the reply.
+  - **Keep holding**: record it; post nothing new.
+  - **Question or ambiguous**: answer from the evidence, or name the one
+    missing input, once.
+  - **Not a decision** (a script's notice posted with the maintainer's
+    token): record it and post nothing.
+
+  Every public outcome posts one receipt containing
+  `<!-- aidevops:hold-reply:<reply_comment_id> -->`, so the reply is never
+  queued again. Record the decision with `record` (resume: `brief_revision`;
+  keep or ask: `human_decision`).
+- **`unexplained_hold`**: this runner's login applied the hold more than a
+  day ago (`BLOCKER_RECOVERY_HOLD_EXPLAIN_AGE`) and no trusted comment from an
+  hour before the label onward states why. Post one decision packet: reason,
+  owner, smallest input, **Recommended path:** and wake condition, or point to
+  the issue that holds the decision ("The decision and evidence are on #N").
+  Never remove the hold for this intake. Record `wake: human_decision`.
+
+Never act on another login's comment, an untrusted comment, or a reply
+older than the label. A reply never grants permissions, credentials, spend or
+publication beyond what the maintainer could approve on that issue. The
+entries retire when the hold or its intake no longer matches, or once a
+decision is recorded after queueing. Public comments carry no local paths.
 
 Repo-delegated queue policy (GH#35129): before terminal-blocker or
 integration-recovery assessment, run `recovery-policy-helper.sh <repo>`. Exit 0
@@ -398,7 +468,8 @@ partial PR, and specifically pre-authorized brief repairs. Record holds with
 repairs with `wake=brief_revision`. Entries with `intake: policy_remote` are
 OWNER/MEMBER circuits opened by another runner, and entries with
 `intake: remote_observation` are holds only another runner observed (GH#36114);
-use only public issue/PR evidence for both.
+`intake: unclassified_hold` entries (above) have no observation at all. Use only
+public issue/PR evidence for all three.
 
 #### Recoverable policy denials (GH#33969)
 

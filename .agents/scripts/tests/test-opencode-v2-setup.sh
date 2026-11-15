@@ -30,19 +30,18 @@ setup_track_configured() { :; }
 source "$REPO_ROOT/.agents/scripts/setup/modules/mcp-setup.sh"
 
 config="$SANDBOX/opencode.json"
-cat >"$config" <<'JSON'
-{"plugin":["file:///custom/plugin.mjs","file:///old/plugins/opencode-aidevops/index.mjs"]}
-JSON
+jq -n --arg old "file://$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs" \
+	'{plugin:["file:///custom/plugin.mjs", "file:///old/plugins/opencode-aidevops/custom.mjs", $old]}' >"$config"
 # setup.sh's print_* helpers write to stdout; the captured status must stay clean.
 print_success() { printf '[SUCCESS] %s\n' "$1"; }
 registered_status=$(_setup_opencode_plugins_register_file_url "$config" \
-	"$REPO_ROOT/.agents/plugins/opencode-aidevops/v2-plugin" plugins 2>/dev/null)
+	"$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin" plugins 2>/dev/null)
 print_success() { :; }
 [[ "$registered_status" == "true" ]]
 jq -e '
   (has("plugin") | not)
   and ((.plugins | index("file:///custom/plugin.mjs")) != null)
-  and ([.plugins[] | select(contains("/plugins/opencode-aidevops/"))] | length == 1)
+  and ((.plugins | index("file:///old/plugins/opencode-aidevops/custom.mjs")) != null)
   and ([.plugins[] | select(endswith("/v2-plugin"))] | length == 1)
 ' "$config" >/dev/null
 

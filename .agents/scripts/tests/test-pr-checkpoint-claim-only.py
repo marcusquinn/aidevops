@@ -15,14 +15,15 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from checkpoint_github_fixture import comment
+from pr_checkpoint_events import fields
+
 TESTS = pathlib.Path(__file__).resolve().parent
 SCRIPTS = TESTS.parent
 BASH = shutil.which("bash")
 if not BASH or not pathlib.Path(BASH).is_absolute():
     raise RuntimeError("An absolute path to the installed Bash runtime is required")
-sys.path.insert(0, str(SCRIPTS))
-from checkpoint_github_fixture import comment
-from pr_checkpoint_events import fields
 
 
 def load(name, path):
@@ -454,6 +455,17 @@ class ExpiredReadyLeaseHistoryTests(unittest.TestCase):
 
     def test_release_without_terminal_lease_stays_open(self):
         data = expired_ready_fixture(comment(5, EXPIRED_READY_RELEASE, "worker"))
+        assert_rejection(self, data, 5, "open_at_end")
+
+    def test_executorless_release_without_terminal_is_accepted(self):
+        # GH#38103: an expired, released, executor-less episode needs no owner terminal.
+        data = expired_ready_fixture(comment(5, EXPIRED_READY_RELEASE, "worker"))
+        data["executorless_release_ids"] = [5]
+        result = revision.validate(approved(data))
+        self.assertEqual(result["released_successors"], [{
+            "runner": "worker", "attempt": "attempt:a", "claim_id": 4, "ready_id": 4.6,
+            "release_id": 5, "outcome": fields(EXPIRED_READY_RELEASE)["reason"]}])
+        data["executorless_release_ids"] = [99]
         assert_rejection(self, data, 5, "open_at_end")
 
 

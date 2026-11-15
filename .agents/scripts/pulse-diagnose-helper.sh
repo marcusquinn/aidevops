@@ -86,6 +86,7 @@ _build_rule_inventory() {
 	cat <<'INVENTORY'
 stale_draft_checkpoint|pulse-dispatch-dedup-layers.sh|319-330|DISPATCH_BLOCK_REASON reason=stale_draft_checkpoint |Released or expired worker draft checkpoint routed to bounded exact-head continuation or attention; duplicate dispatch remains blocked
 worker_draft_checkpoint_blocked|pulse-dispatch-dedup-layers.sh|319-330|DISPATCH_BLOCK_REASON reason=worker_draft_checkpoint_blocked |Worker draft checkpoint preserved; continuation requires verified release/ownership evidence or blocker recovery, not an active-claim assumption
+dedup_pr_evidence|pulse-dispatch-dedup-layers.sh|326-390|DISPATCH_BLOCK_REASON reason=dedup_pr_evidence |Open, draft or merged PR evidence holds the issue; cached across cycles while the issue and exact PR are unchanged (GH#38142)
 pm-auto-merge-interactive|pulse-merge.sh|1389|auto-merged origin:interactive PR #|Auto-merged origin:interactive PR (maintainer-authored, all checks pass)
 pm-auto-merge-worker-briefed|pulse-merge.sh|1393|auto-merged origin:worker \(worker-briefed\) PR #|Auto-merged origin:worker PR (maintainer-briefed issue, all gates pass)
 pm-retarget-stacked|pulse-merge.sh|1220|retargeting stacked PR #|Retargeted stacked child PR to default branch before parent branch deletion

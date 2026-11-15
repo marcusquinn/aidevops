@@ -607,84 +607,9 @@ _normalize_log_timing() {
 	return 0
 }
 
-# Normalization passes in canonical order. Each pass lists open issues per
-# pulse repo, so a full sweep exceeds the remaining ownership budget on large
-# fleets: with a fixed order the stage watchdog killed every cycle inside
-# Pass 1 and Passes 2/2b/3 never ran (stale assignments and stampless
-# interactive claims stayed dispatch-blocked for days).
-_NORMALIZE_PASSES="reassign_self unassign_stale unassign_stampless_interactive label_invariants"
-
-#######################################
-# Print normalization passes least-recently-started first so a stage timeout
-# never starves a pass. Missing, unreadable or future-dated start stamps sort
-# first; ties keep the canonical order.
-# Args: $1 state_dir, $2 now_epoch
-# Stdout: one pass name per line
-# Returns: 0 always
-#######################################
-_normalize_pass_order() {
-	local state_dir="$1" now_epoch="$2" pass="" started=0 index=0
-	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
-	for pass in $_NORMALIZE_PASSES; do
-		started=0
-		if [[ -f "${state_dir}/${pass}" ]]; then
-			read -r started <"${state_dir}/${pass}" 2>/dev/null || started=0
-		fi
-		[[ "$started" =~ ^[0-9]+$ && "$started" -le "$now_epoch" ]] || started=0
-		printf '%s %s %s\n' "$started" "$index" "$pass"
-		index=$((index + 1))
-	done | sort -n -k1,1 -k2,2 | awk '{ print $3 }'
-	return 0
-}
-
-# Best effort: an unwritable stamp only makes the pass sort first again.
-_normalize_mark_pass_started() {
-	local state_dir="$1" pass="$2" now_epoch=""
-	now_epoch=$(date +%s 2>/dev/null) || return 0
-	mkdir -p "$state_dir" 2>/dev/null || return 0
-	printf '%s\n' "$now_epoch" >"${state_dir}/${pass}" 2>/dev/null || true
-	return 0
-}
-
-# GH#37568: per-pass repo cursor. Pass rotation alone gives each pass a turn,
-# but a pass slower than the remaining stage budget restarted at the first
-# repo every turn, so late repos.json entries were rarely normalized. Set only
-# by normalize_active_issue_assignments; direct calls keep canonical order.
-_NORMALIZE_REPO_CURSOR_DIR=""
-
-#######################################
-# Print a pass's repo slugs starting after the repo it last started (wrapping).
-# A missing, unreadable or unknown cursor keeps the canonical order.
-# Args: $1 pass name, $2 newline-separated slugs
-# Stdout: one slug per line
-# Returns: 0 always
-#######################################
-_normalize_rotated_slugs() {
-	local pass="$1" slugs="$2" last=""
-	local cursor="${_NORMALIZE_REPO_CURSOR_DIR}/${pass}"
-	if [[ -n "$_NORMALIZE_REPO_CURSOR_DIR" && -f "$cursor" ]]; then
-		read -r last <"$cursor" 2>/dev/null || last=""
-	fi
-	if [[ -z "$last" ]]; then
-		printf '%s\n' "$slugs"
-		return 0
-	fi
-	printf '%s\n' "$slugs" | awk -v last="$last" '
-		NF { slug[n++] = $0; if ($0 == last) start = n }
-		END { for (i = 0; i < n; i++) print slug[(start + i) % n] }'
-	return 0
-}
-
-# Record the repo before scanning it, so a repo slower than the remaining
-# budget cannot pin the rotation. Best effort: a failed write only restarts
-# the pass at its first repo.
-_normalize_mark_repo_started() {
-	local pass="$1" slug="$2"
-	[[ -n "$_NORMALIZE_REPO_CURSOR_DIR" ]] || return 0
-	mkdir -p "$_NORMALIZE_REPO_CURSOR_DIR" 2>/dev/null || return 0
-	printf '%s\n' "$slug" >"${_NORMALIZE_REPO_CURSOR_DIR}/${pass}" 2>/dev/null || true
-	return 0
-}
+# shellcheck source=./pulse-issue-reconcile-rotation.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-rotation.sh"
 
 #######################################
 # Resolve the runner's GitHub login once per process, with a small file cache
@@ -1688,6 +1613,34 @@ _pir_backfill_pr_origin() {
 	return 0
 }
 
+# REST includes trust metadata unavailable in `gh issue list --json`. Fetch
+# one paginated list, stopping at the issue scan limit (PRs do not count).
+# Emit nothing on failure so a partial list cannot masquerade as a full scan.
+_pir_list_open_issues_with_trust() {
+	local slug="$1"
+	local limit="${PULSE_QUEUED_SCAN_LIMIT:-100}"
+	[[ "$limit" =~ ^[1-9][0-9]*$ ]] || return 1
+	local max_pages="${PULSE_QUEUED_MAX_PAGES:-20}"
+	[[ "$max_pages" =~ ^[1-9][0-9]*$ ]] || max_pages=20
+	local page=1 page_rows="" page_count=0 issues="[]" issue_count=0
+	while [[ "$issue_count" -lt "$limit" ]]; do
+		[[ "$page" -le "$max_pages" ]] || return 1
+		page_rows=$(gh api "repos/${slug}/issues?state=open&per_page=100&page=${page}" 2>/dev/null) || return 1
+		page_count=$(printf '%s' "$page_rows" | jq -er --arg array_type "$_PIR_JSON_TYPE_ARRAY" \
+			'select(type == $array_type) | length') || return 1
+		issues=$(printf '%s\n%s\n' "$issues" "$page_rows" | jq -sc --argjson limit "$limit" '
+			add | map(select(.pull_request == null)) | .[:$limit]
+		') || return 1
+		issue_count=$(printf '%s' "$issues" | jq 'length') || return 1
+		[[ "$page_count" -lt 100 ]] && break
+		page=$((page + 1))
+	done
+	printf '%s' "$issues" | jq -c 'map({number, title, labels, body: (.body // ""),
+		updatedAt: .updated_at, assignees,
+		authorAssociation: .author_association, author: .user})' || return 1
+	return 0
+}
+
 # Repo-owned caps and cached fields stay live while issue-stage helpers run.
 _pir_reconcile_slug() {
 	local slug="$1" _slug_start="$2"
@@ -1701,14 +1654,12 @@ _pir_reconcile_slug() {
 	# The cache (written each cycle by pulse-prefetch.sh) covers:
 	#   number, title, labels, updatedAt, assignees, body plus
 	#   authorAssociation/author trust metadata from canonical snapshots.
-	#   Legacy/fallback rows without trust metadata block lifecycle actions.
+	#   Legacy rows without trust metadata block lifecycle actions.
 	local issues_json="" _cache_issues_sp=""
 	if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 		issues_json="$_cache_issues_sp"
 	else
-		issues_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,title,labels,body \
-			--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json="[]"
+		issues_json=$(_pir_list_open_issues_with_trust "$slug") || issues_json="[]"
 	fi
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || return 0
 
@@ -1942,6 +1893,8 @@ _pir_finish_reconcile_cycle() {
 	elif [[ "$_total_actions" -gt 0 ]]; then
 		echo "[pulse-wrapper] reconcile_issues_single_pass: persistent_repaired=${persistent_repaired} external_gated=${external_gated} ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} cpt_reopened=${cpt_total_reopened} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	fi
+	# Always emit this diagnostic, including otherwise silent no-op passes.
+	echo "[pulse-wrapper] reconcile_issues_single_pass: missing_author_metadata_blocked=${_PIR_MISSING_AUTHOR_METADATA_BLOCKED:-0}" >>"$LOGFILE"
 	return 0
 }
 
@@ -1949,6 +1902,18 @@ _pir_finish_reconcile_cycle() {
 # within the 600s ownership-stage timeout. Budget=0 disables it. Each call
 # owns fresh timestamps, caps and counters; helpers mutate these locals through
 # Bash 3.2 dynamic scope, never a command substitution or pipeline subshell.
+_pir_reconcile_cycle_repairs() {
+	_repair_pending_planning_publications "$repos_json"
+
+	# Closed-parent cursor repair, with separate scan caps.
+	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
+		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
+			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
+		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
+	fi
+	return 0
+}
+
 reconcile_issues_single_pass() {
 	local repos_json="$REPOS_JSON"
 	[[ -f "$repos_json" ]] || return 0
@@ -1973,6 +1938,7 @@ reconcile_issues_single_pass() {
 	local cbb_total_run=0 cbb_max_per_cycle=10
 	_pir_initialize_backfill_gates
 	local persistent_repaired=0 external_gated=0 ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+	local _PIR_MISSING_AUTHOR_METADATA_BLOCKED=0
 	local stranded_checked=0 stranded_max="${AIDEVOPS_RECONCILE_STRANDED_CONSOLIDATED_MAX:-5}"
 	[[ "$stranded_max" =~ ^[0-9]+$ ]] || stranded_max=5
 	local _b64d_flag="-d"
@@ -1980,17 +1946,15 @@ reconcile_issues_single_pass() {
 	local _t2984_start_ts=$SECONDS _t2984_budget=0 _t2984_aborted=0
 	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
 	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
-	_repair_pending_planning_publications "$repos_json"
-
-	# Closed-parent cursor repair precedes open issues, with separate scan caps.
-	if declare -F _repair_recently_closed_parents_cycle >/dev/null 2>&1; then
-		_repair_recently_closed_parents_cycle "$repos_json" "$cpt_max_reopens" \
-			"$cpt_max_repair_repo_scans" "$cpt_max_repair_candidates"
-		cpt_total_reopened="$_PIR_RECENT_PARENT_CYCLE_REOPENED"
-	fi
 	# GH#34299: resume where the previous aborted or killed pass stopped.
 	local _sp_cursor_file="" _sp_cursor_slug="" _sp_cursor_issue="" _sp_cursor_attempts=0
 	_pir_sp_cursor_load
+	# GH#37949: with a budget, alternate priority so repairs cannot starve issues.
+	local _sp_repairs_done=0
+	if [[ "$_t2984_budget" -le 0 ]] || ! _pir_sp_issues_first; then
+		_sp_repairs_done=1
+		_pir_reconcile_cycle_repairs
+	fi
 	local _sp_slugs=""
 	_sp_slugs=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 	local slug=""
@@ -2000,7 +1964,8 @@ reconcile_issues_single_pass() {
 		if [[ "$_t2984_budget" -gt 0 ]]; then
 			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
-				_pir_sp_cursor_write "$slug" "" 0
+				# Keep the saved issue position when yielding at the resume slug.
+				[[ "$slug" == "${_sp_cursor_slug:-}" ]] || _pir_sp_cursor_write "$slug" "" 0
 				break
 			fi
 		fi
@@ -2010,6 +1975,9 @@ reconcile_issues_single_pass() {
 		[[ "$_t2984_aborted" -eq 1 ]] && break
 	done < <(_pir_sp_rotate_slugs "$_sp_slugs")
 	[[ "$_t2984_aborted" -eq 1 ]] || _pir_sp_cursor_clear
+	if [[ "$_sp_repairs_done" -eq 0 && "$_t2984_aborted" -eq 0 ]]; then
+		_pir_reconcile_cycle_repairs
+	fi
 	_pir_finish_reconcile_cycle
 	return 0
 }

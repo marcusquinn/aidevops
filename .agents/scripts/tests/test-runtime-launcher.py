@@ -116,6 +116,30 @@ class RuntimeLauncherTest(unittest.TestCase):
         data = self.record("opencode", "seo", "--shared-db")
         self.assertEqual(data["argv"], ["--auto", "--agent", "SEO"])
 
+    def test_opencode_agent_flag_depends_on_major_version(self):
+        agents = {"seo": Path("seo.md")}
+        for major, expected in ((1, ["--agent", "SEO"]), (None, ["--agent", "SEO"]), (2, []), (3, [])):
+            with self.subTest(major=major), patch.object(LAUNCHER, "opencode_major", return_value=major):
+                self.assertEqual(LAUNCHER.agent_args("opencode", "seo", agents["seo"], "p", True), expected)
+
+    def test_opencode_version_parsing_and_failure(self):
+        def fake(out):
+            return subprocess.CompletedProcess([], 0, stdout=out, stderr="")
+        for out, major in (("2.2.6\n", 2), ("1.19.5\n", 1), ("garbage", None)):
+            with patch.object(LAUNCHER.subprocess, "run", return_value=fake(out)):
+                self.assertEqual(LAUNCHER.opencode_major(), major)
+        with patch.object(LAUNCHER.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertIsNone(LAUNCHER.opencode_major())
+        with patch.object(LAUNCHER.subprocess, "run", side_effect=subprocess.TimeoutExpired("opencode", 5)):
+            self.assertIsNone(LAUNCHER.opencode_major())
+
+    def test_non_opencode_runtimes_do_not_probe_opencode(self):
+        with patch.object(LAUNCHER, "opencode_major") as probe:
+            for runtime in LAUNCHER.RUNTIMES:
+                if runtime not in {"opencode", "windsurf"}:
+                    LAUNCHER.agent_args(runtime, "seo", Path("seo.md"), "p", True)
+            probe.assert_not_called()
+
     def test_registry_coverage(self):
         script = 'source "$1"; printf "%s\\n" "${_RT_IDS[@]}"'
         result = subprocess.run(  # nosec B603 -- constant shell program, repository-owned registry.

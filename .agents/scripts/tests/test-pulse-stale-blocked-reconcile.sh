@@ -351,7 +351,7 @@ unset -f _pm_reconcile_partial_continuations
 	reconcile_stale_blocked_issues() {
 		local repo="$1"
 		if [[ "$repo" == owner/large ]]; then
-			printf '[dependency-reconciler] stale sweep repo=%s pending=420 visited=2 prefiltered_open_blocker=8 complete=false\n' "$repo" >&2
+			printf '[dependency-reconciler] stale sweep repo=%s pending=420 visited=2 prefiltered_open_blocker=8 complete=false ready=2 ready_visited=2 skipped_unchanged=12\n' "$repo" >&2
 			return 3
 		fi
 		return 0
@@ -439,7 +439,12 @@ unset -f _pm_reconcile_partial_continuations
 	reconcile_stale_blocked_issues() {
 		STALE_DL="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
 		FAKE_NOW="$DER_STALE_BLOCKED_DEADLINE_EPOCH"
-		[[ "$STALE_END" == share ]] || FAKE_NOW="$DER_STALE_BLOCKED_STOP_EPOCH"
+		STALE_STOP="$DER_STALE_BLOCKED_STOP_EPOCH"
+		case "$STALE_END" in
+		share) ;;
+		past) FAKE_NOW=1045 ;;
+		*) FAKE_NOW="$DER_STALE_BLOCKED_STOP_EPOCH" ;;
+		esac
 		return 3
 	}
 	_pm_reconcile_draft_checkpoint_blocks() {
@@ -496,8 +501,21 @@ unset -f _pm_reconcile_partial_continuations
 		printf '0\n'
 		return 0
 	}
-	# An exhausted sweep defers later passes with no call (no listing reads).
+	# GH#38039: a stale pass that overruns to its hard stop still leaves the
+	# later passes' reserve (sweep 1045 less 2 x 5s = 1035), so the optional
+	# passes run with a non-expired deadline instead of deferring every sweep.
 	STALE_END="stop"
+	run_sweep_repo 1005 1045
+	[[ "$STALE_STOP" == 1035 && "$PASSES" == "dc:5 pc:5 " && ! -f "$STAMP_DIR/owner__one" ]] || {
+		printf 'FAIL: overrunning stale pass consumed the later passes reserve: stop=%s passes=%s\n' "$STALE_STOP" "$PASSES"
+		exit 1
+	}
+	grep -q 'partial-continuation pass due for owner/one: complete_stamp_age_s=never' "$LOGFILE" || {
+		printf 'FAIL: pass stamp age was not logged\n'
+		exit 1
+	}
+	# An exhausted sweep defers later passes with no call (no listing reads).
+	STALE_END="past"
 	: >"$LOGFILE"
 	run_sweep_repo 1005 1045
 	[[ -z "$PASSES" && "$SWEEP_RC" == 3 && ! -d "$DC_STAMP_DIR" && ! -d "$PC_STAMP_DIR" ]] || {
@@ -516,5 +534,27 @@ unset -f _pm_reconcile_partial_continuations
 		printf 'FAIL: pass deadline is not max(repo share, minimum) capped at the sweep deadline less later reserves\n'
 		exit 1
 	}
+) || exit 1
+
+# GH#38112: the legacy claim sweep leaves at least fifteen seconds for ready work.
+# The checkpoint ledger has its own independent stage on current main.
+(
+	rm -rf "$SENTINEL" "$STAMP_DIR"
+	FAKE_NOW=1000
+	date() { printf '%s\n' "$FAKE_NOW"; return 0; }
+	_pulse_stale_blocked_sweep_deadline() { printf '1020\n'; return 0; }
+	_pdcu_cursor_write() { return 0; }
+	_pdcu_sweep_expired_claims() {
+		local repo="$1" deadline="$2"
+		[[ "$repo" == owner/* && "$deadline" -le 1005 ]] || exit 1
+		FAKE_NOW="$deadline"
+		return 0
+	}
+	_pulse_stale_blocked_sweep_repo() {
+		[[ "$FAKE_NOW" -le 1005 ]] || exit 1
+		return 0
+	}
+	_file_mtime_epoch() { printf '0\n'; return 0; }
+	_pulse_reconcile_stale_blocked_if_due
 ) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'

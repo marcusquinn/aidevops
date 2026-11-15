@@ -596,12 +596,11 @@ _build_run_cmd() {
 	if [[ -n "$variant_override" && "$opencode_profile" != "v2" ]]; then
 		printf '%s\0' --variant "$variant_override"
 	fi
-	# GH#17829: Attach persistent runs to an existing opencode server if one is
-	# detected. Ephemeral roles must retain their isolated runtime boundary.
-	# Without this, `opencode run` tries to start an embedded server that
-	# conflicts with the user's `opencode serve`, causing "Session not found".
+	# GH#17829: Preserve ambient-server compatibility only when auth isolation
+	# is disabled. Isolated runs must use their own database and provider auth;
+	# ephemeral roles and v2 always retain their standalone runtime boundary.
 	local _server_info=""
-	if [[ "$opencode_profile" != "v2" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
+	if [[ "$opencode_profile" != "v2" && "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" != "1" ]] && ! _headless_run_is_ephemeral "${role:-}" && _server_info=$(_detect_opencode_server); then
 		local _server_url _server_pass
 		_server_url=$(echo "$_server_info" | head -1)
 		_server_pass=$(echo "$_server_info" | tail -1)
@@ -683,7 +682,9 @@ _build_claude_cmd() {
 # Quoted instructions such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`"
 # are prose mentions, not a terminal state.
 # shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
-_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])'
+_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])(?![ \t]*(?:[:-][ \t]*)?(?i:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?]+(?:[ \t"]|$)|"))'
+# The trailing negative lookahead excludes negated statuses ("BLOCKED: none") at a
+# standalone boundary, so "no.json" and "none available" still count as blockers.
 
 # output_has_completion_signal: check if a worker run produced a meaningful
 # completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored

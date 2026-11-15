@@ -223,6 +223,17 @@ _dispatch_cleanup_disk_pressure() {
 	local before_percent="$6"
 	_dispatch_launch_pressure_cleanup || true
 	echo "[dispatch_with_dedup] Async disk cleanup requested for #${issue_number} in ${repo_slug} (${target_path}): reason=${before_reason}, available=${before_kb}KB/${before_percent}%; dispatch remains fail-closed" >>"$LOGFILE"
+	# GH#38026: name space held outside aidevops ownership (Time Machine local
+	# snapshots) once per pulse process; read-only, never deletes backups.
+	# Only a free-space reason consumes the once-per-process probe, so an
+	# earlier quota/unknown failure cannot suppress a later applicable hint.
+	if [[ -z "${_DISPATCH_DISK_RECLAIM_HINT_EMITTED:-}" &&
+		("$before_reason" == below-minimum-kb || "$before_reason" == below-minimum-percent) ]]; then
+		_DISPATCH_DISK_RECLAIM_HINT_EMITTED=1
+		local hint=""
+		hint=$(aidevops_disk_capacity_reclaim_hint) || hint=""
+		[[ -z "$hint" ]] || echo "[dispatch_with_dedup] ${hint}" >>"$LOGFILE"
+	fi
 	return 1
 }
 
@@ -252,8 +263,9 @@ _dispatch_dedup_capacity_gates() {
 	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 
 	# GH#18987/GH#28543: refuse dispatch when the worktree filesystem has less
-	# than 5 GiB or 5% available. The same fail-closed policy runs at the actual
-	# worktree creation boundary, covering interactive and non-Pulse callers.
+	# than 5 GiB or 5% available (GH#38026: the 5% floor is capped at 50 GiB on
+	# large volumes). The same fail-closed policy runs at the actual worktree
+	# creation boundary, covering interactive and non-Pulse callers.
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "disk_space" "$_dss_t0" _ds_stage_attempt_id
 	local _capacity_rc=0
@@ -263,7 +275,7 @@ _dispatch_dedup_capacity_gates() {
 		_dispatch_cleanup_disk_pressure "$issue_number" "$repo_slug" "$_capacity_path" \
 			"${AIDEVOPS_DISK_CAPACITY_REASON}" "${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}" \
 			"${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}" || true
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}%)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: disk space critical (reason=${AIDEVOPS_DISK_CAPACITY_REASON}, available=${AIDEVOPS_DISK_CAPACITY_AVAILABLE_KB}KB/${AIDEVOPS_DISK_CAPACITY_AVAILABLE_PERCENT}%, require at least ${AIDEVOPS_MIN_WORKTREE_FREE_KB:-5242880}KB and ${AIDEVOPS_MIN_WORKTREE_FREE_PERCENT:-5}% = ${AIDEVOPS_DISK_PERCENT_FLOOR_KB}KB after the large-volume ceiling)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.disk_space" "$_dss_t0"
 		return 1
 	fi
@@ -425,7 +437,7 @@ _dispatch_dedup_scope_gates() {
 	# `gh issue view --json labels` call (label CSV derived from JSON instead).
 	_dss_t0=$(_ds_now_ns)
 	_ds_stage_start "$issue_number" "$repo_slug" "consolidation" "$_dss_t0" _ds_stage_attempt_id
-	local _consolidation_defer=""
+	local _consolidation_defer="" _consolidation_signal=""
 	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_CONSOLIDATION_DISPATCH_OUTCOME=""
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
@@ -435,16 +447,21 @@ _dispatch_dedup_scope_gates() {
 			echo "[dispatch_with_dedup] Consolidation pre-flight skipped for #${issue_number} in ${repo_slug}; continuing dispatch gates (GH#33306)" >>"$LOGFILE"
 		else
 			_consolidation_defer="issue needs comment consolidation"
+			_consolidation_signal="consolidation_needed"
 		fi
 	elif [[ "${_CONSOLIDATION_CHILD_PENDING:-0}" == 1 ]]; then
 		# An in-flight consolidation child will supersede this parent. Without
 		# this, only the cycle that created the child deferred; the next cycle
 		# launched an implementation worker on the parent in parallel (#35605).
 		_consolidation_defer="consolidation child in flight"
+		_consolidation_signal="consolidation_child_in_flight"
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.consolidation" "$_dss_t0"
 	if [[ -n "$_consolidation_defer" ]]; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: ${_consolidation_defer}" >>"$LOGFILE"
+		# GH#38181: structured reason so the deferral counts as the benign
+		# `consolidated` block instead of an unclassified candidate failure.
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=consolidated signal=${_consolidation_signal} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -917,6 +934,7 @@ _dispatch_load_and_validate_metadata() {
 	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
 	if [[ "$issue_state" == "CLOSED" ]]; then
 		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=issue_closed signal=state-closed issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
 		return 1
 	fi
@@ -1063,6 +1081,8 @@ _dispatch_preclaim_brief_scope_verdict() {
 		return 0
 	fi
 	_brief_scope_block="hold_marker_unavailable"
+	# GH#38360: a missing Files Scope is brief-owned and AI-resolvable.
+	local -a brief_hold_companion=(--add-label "${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}")
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
 	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
 	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
@@ -1071,7 +1091,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	[[ "$recorded_rc" -eq 2 ]] && return 1
 	if [[ "$recorded_rc" -eq 0 ]]; then
 		_brief_scope_block="hold_recorded"
-		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
+		set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null || true
 		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
@@ -1080,7 +1100,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
 	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
-	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
+	if ! set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null; then
 		rm -f "$comment_file"
 		return 1
 	fi
@@ -1663,10 +1683,23 @@ _apply_terminal_blocker() {
 		already_blocked=1
 	fi
 
+	# GH#38360: every pattern here needs a human on the runner or account.
+	# Token and authentication failures need credentials; the rest (gh
+	# upgrade, ACTION REQUIRED) need one maintainer action named in the comment.
+	local companion="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+	case "$blocker_reason" in
+	*[Tt]oken* | *[Aa]uthentication*) companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}" ;;
+	esac
+
 	# Add label if not already present (t2033: use set_issue_status to atomically
 	# clear all sibling status:* labels, not just available/queued)
 	if [[ "$already_blocked" -eq 0 ]]; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" || true
+		set_issue_status "$issue_number" "$repo_slug" "blocked" --add-label "$companion" || true
+	elif [[ ",${existing_labels}," != *",${companion},"* ]]; then
+		# Already blocked but the classified companion is missing: add it only.
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "$companion" >/dev/null 2>&1 || true
 	fi
 
 	# Post comment if not already posted (idempotent — safe against concurrent pulses)
@@ -1677,7 +1710,7 @@ _apply_terminal_blocker() {
 **Action required:** ${user_action}
 
 ---
-*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*"
+*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` and \`${companion}\` labels to re-enable dispatch.*"
 
 	_gh_idempotent_comment "$issue_number" "$repo_slug" \
 		"Terminal blocker detected" "$blocker_body"
