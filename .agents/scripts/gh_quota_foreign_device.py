@@ -54,17 +54,21 @@ def hint(claims_file, self_login, device_file=""):
     """Return the hint token; unreadable or absent evidence is `unknown`."""
     if not claims_file or not self_login:
         return "unknown"
-    device = local_device(device_file or os.path.expanduser("~/.aidevops/state/device-id"))
+    device = local_device(
+        device_file
+        or os.environ.get("AIDEVOPS_DEVICE_ID_FILE")
+        or os.path.expanduser("~/.aidevops/state/device-id")
+    )
     limit = 4 * 1024 * 1024
     try:
-        with open(claims_file, encoding="utf-8", errors="replace") as handle:
+        with open(claims_file, "rb") as handle:
             text = handle.read(limit + 1)
     except OSError:
         return "unknown"
     # Do not classify incomplete evidence or a device value split at the limit.
     if len(text) > limit:
         return "unknown"
-    return classify(text, self_login, device)
+    return classify(text.decode("utf-8", errors="replace"), self_login, device)
 
 
 def main(argv):
