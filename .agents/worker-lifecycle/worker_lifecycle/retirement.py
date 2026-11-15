@@ -16,7 +16,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
 from uuid import UUID
 
@@ -36,7 +35,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
-from .retirement_locks import event_id as _event_id
+from .retirement_locks import event_id as _event_id, lock_is_named
 from .storage import LifecycleRegistry, StoreConflict
 
 
@@ -46,11 +45,6 @@ class ArchiveTarget:
     base_branch: str
     root: Path
     recover: bool = False
-
-
-def _id(path: Path) -> list[int]:
-    info = path.lstat()
-    return [info.st_dev, info.st_ino]
 
 
 def _event(store: LifecycleRegistry, key: str) -> dict | None:
@@ -77,15 +71,12 @@ def _lock(store: LifecycleRegistry, generation: str) -> Iterator[None]:
     )
     try:
         _private(path)
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0 or _id(path) != [info.st_dev, info.st_ino]):
+        if not lock_is_named(descriptor, path):
             raise StoreConflict("invalid-retirement-lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # A terminal-lock sweep may unlink the file between open and flock; the
         # holder must own the file that is still named, or it would not exclude.
-        info = os.fstat(descriptor)
-        if info.st_nlink != 1 or _id(path) != [info.st_dev, info.st_ino]:
+        if not lock_is_named(descriptor, path):
             raise StoreConflict("invalid-retirement-lock")
         # Close our descriptor, never explicitly unlock the shared description:
         # an already-started helper may still own it after controller death.

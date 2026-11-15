@@ -5,7 +5,9 @@ from __future__ import annotations
 import fcntl
 import os
 from pathlib import Path
+import sqlite3
 import stat
+from typing import Any
 from uuid import UUID, uuid5
 
 LOCK_SWEEP_LIMIT = 500
@@ -18,6 +20,17 @@ def event_id(generation: str, phase: str) -> str:
 def _identity(path: Path) -> list[int]:
     info = path.lstat()
     return [info.st_dev, info.st_ino]
+
+
+def lock_is_named(descriptor: int, path: Path) -> bool:
+    """True if the open descriptor is an empty private regular file still at path."""
+    info = os.fstat(descriptor)
+    try:
+        named = _identity(path) == [info.st_dev, info.st_ino]
+    except OSError:
+        return False
+    return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+            and info.st_size == 0 and named)
 
 
 def terminal_lock_generation(name: str) -> str | None:
@@ -38,12 +51,10 @@ def unlink_free_lock(path: Path) -> bool:
     except OSError:
         return False
     try:
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0):
+        if not lock_is_named(descriptor, path):
             return False
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if _identity(path) != [info.st_dev, info.st_ino]:
+        if not lock_is_named(descriptor, path):
             return False
         path.unlink()
         return True
@@ -53,7 +64,7 @@ def unlink_free_lock(path: Path) -> bool:
         os.close(descriptor)
 
 
-def _is_retired(connection, generation: str) -> bool:
+def _is_retired(connection: sqlite3.Connection, generation: str) -> bool:
     try:
         row = connection.execute(
             "SELECT 1 FROM events WHERE event_id=?",
@@ -65,7 +76,7 @@ def _is_retired(connection, generation: str) -> bool:
 
 
 def sweep_retirement_locks(
-    store, connection, *, limit: int = LOCK_SWEEP_LIMIT,
+    store: Any, connection: sqlite3.Connection, *, limit: int = LOCK_SWEEP_LIMIT,
 ) -> dict[str, int]:
     """Remove locks of terminally retired generations; refuse on any doubt.
 
