@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import tempfile
 import types
@@ -86,24 +87,24 @@ class ReferenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.report()
         self.directory_check.side_effect = None
-        original = inspector.holds_candidate
+        original = inspector.names_candidate
 
         def change_identity(reference, candidate):
             self.write_identity(self.process, ticks=200)
             return original(reference, candidate)
 
-        with mock.patch.object(inspector, "holds_candidate", side_effect=change_identity):
+        with mock.patch.object(inspector, "names_candidate", side_effect=change_identity):
             with self.assertRaises(ValueError):
                 self.report()
 
     def test_new_thread_during_inspection_fails_closed(self):
-        original = inspector.holds_candidate
+        original = inspector.names_candidate
 
         def add_thread(reference, candidate):
             self.write_identity(self.process / "task" / "125")
             return original(reference, candidate)
 
-        with mock.patch.object(inspector, "holds_candidate", side_effect=add_thread):
+        with mock.patch.object(inspector, "names_candidate", side_effect=add_thread):
             with self.assertRaises(ValueError):
                 self.report()
 
@@ -128,6 +129,64 @@ class ReferenceTests(unittest.TestCase):
                     reference.unlink()
                     if reference.name == "cwd":
                         reference.symlink_to(self.root)
+
+    def census(self, *, include_self=True):
+        """Model the whole-UID census (GH#38428): the inspector must see itself."""
+        for task in (self.process / "task").iterdir():
+            (task / "environ").write_bytes(b"PWD=/\0AIDEVOPS_WORKTREE=/\0")
+        if include_self:
+            own = self.proc / str(os.getpid())
+            self.write_identity(own / "task" / str(os.getpid()), uid=0)
+        return inspector.census_report(str(self.candidate), 1002)
+
+    def test_census_counts_only_and_contains_no_paths(self):
+        result = self.census()
+        self.assertEqual(result, {"version": 1, "mode": "census", "directory": list(self.directory),
+                                  "references": 0, "uncertain": 0})
+        self.assertNotIn(str(self.root), json.dumps(result))
+
+    def test_census_finds_cwd_descriptor_and_environment_references(self):
+        task = self.process / "task" / "124"
+        self.census()
+        for kind in ("cwd", "fd", "environ"):
+            with self.subTest(kind=kind):
+                if kind == "cwd":
+                    (task / "cwd").unlink()
+                    (task / "cwd").symlink_to(self.candidate)
+                elif kind == "fd":
+                    (task / "fd" / "3").symlink_to(str(self.candidate / "file") + " (deleted)")
+                else:
+                    (task / "environ").write_bytes(b"AIDEVOPS_WORKTREE=" + bytes(self.candidate / "sub") + b"\0")
+                self.assertEqual(inspector.census_report(str(self.candidate), 1002)["references"], 1)
+                if kind == "cwd":
+                    (task / "cwd").unlink()
+                    (task / "cwd").symlink_to(self.root)
+                elif kind == "fd":
+                    (task / "fd" / "3").unlink()
+                else:
+                    (task / "environ").write_bytes(b"PWD=/\0")
+
+    def test_census_ignores_foreign_holders_and_keeps_unreadable_tasks_uncertain(self):
+        task = self.process / "task" / "124"
+        self.census()
+        (task / "cwd").unlink()
+        (task / "cwd").symlink_to(self.candidate)
+        self.write_identity(task, uid=1003)
+        self.assertEqual(inspector.census_report(str(self.candidate), 1002)["references"], 0)
+        self.write_identity(task)
+        (task / "environ").unlink()
+        (task / "cwd").unlink()
+        (task / "cwd").symlink_to(self.root)
+        self.assertEqual(inspector.census_report(str(self.candidate), 1002)["uncertain"], 1)
+
+    def test_census_without_its_own_process_or_with_changed_candidate_fails_closed(self):
+        with self.assertRaises(ValueError):
+            self.census(include_self=False)
+        self.directory_check.side_effect = [self.directory, (0, 0)]
+        with self.assertRaises(ValueError):
+            self.census()
+        with self.assertRaises(ValueError):
+            inspector.census_report("/unsafe\npath", 1002)
 
 
 class InspectCwdTests(unittest.TestCase):
@@ -218,6 +277,27 @@ class InspectCwdTests(unittest.TestCase):
                 self.assertEqual(alarm.call_args_list, [mock.call(2), mock.call(0)])
                 self.assertEqual(result, 1 if error else 0)
                 self.assertEqual(output.getvalue(), "" if error else '{"status": "clear"}\n')
+
+    def test_census_mode_is_self_bounded_and_rejects_extra_arguments(self):
+        for argv, expected in ((["inspector", "--census", "/candidate"], 0),
+                               (["inspector", "--census", "/candidate", "extra"], 1)):
+            with self.subTest(argv=argv):
+                output = io.StringIO()
+                with (mock.patch.object(inspector.os, "geteuid", return_value=0),
+                      mock.patch.dict(inspector.os.environ, {"SUDO_UID": "1002"}),
+                      mock.patch.object(inspector.sys, "argv", argv),
+                      mock.patch.object(inspector, "census_report", return_value={"references": 0}) as report,
+                      mock.patch.object(inspector.signal, "signal"),
+                      mock.patch.object(inspector.signal, "alarm") as alarm,
+                      contextlib.redirect_stdout(output)):
+                    result = inspector.main()
+                self.assertEqual(result, expected)
+                if expected == 0:
+                    report.assert_called_once_with("/candidate", 1002)
+                    self.assertEqual(alarm.call_args_list, [mock.call(5), mock.call(0)])
+                    self.assertEqual(output.getvalue(), '{"references": 0}\n')
+                else:
+                    report.assert_not_called()
 
 
 if __name__ == "__main__":

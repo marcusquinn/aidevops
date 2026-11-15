@@ -25,6 +25,7 @@ def quiescence(launch, worktree_identity=None, census_cache=None):
                       os.path.isabs(worktree_identity.get("path", "")) and
                       bool(worktree_identity.get("source_inode")),
                       "same-boot parent requires worktree generation identity")
+        from worktree_census_resolution import describe_census
         from worktree_process_snapshot import path_census
         # This cache belongs to one seal/authorization call, never the registry.
         key = (worktree_identity["path"], worktree_identity["source_inode"], os.getuid(), before)
@@ -36,7 +37,9 @@ def quiescence(launch, worktree_identity=None, census_cache=None):
                     time.sleep(CENSUS_INTERVAL)
                 sample = path_census(worktree_identity["path"],
                                      source_inode=worktree_identity["source_inode"])
-                owner.require(empty_census(sample, before), "same-boot process census active or unavailable")
+                # Name the refusal class (counts only) instead of a bare refusal.
+                owner.require(empty_census(sample, before),
+                              f"same-boot process census active or unavailable: {describe_census(sample)}")
                 samples.append(sample)
             if census_cache is not None:
                 census_cache[key] = samples

@@ -16,6 +16,7 @@ import subprocess
 INSPECTOR = Path("/usr/local/libexec/aidevops-worktree-cwd-inspect")
 SUDO = Path("/usr/bin/sudo")
 OPT_IN = "AIDEVOPS_PROTECTED_PROC_INSPECTION"
+CENSUS_TIMEOUT_SECONDS = 5  # The inspector arms the same deadline on itself.
 
 
 class ProcessCensusUnavailable(ValueError):
@@ -59,6 +60,54 @@ def _matches_report_identity(report: object, expected: dict[str, object]) -> boo
            for key, value in expected.items()):
         return False
     return all(type(value) is int for value in report["directory"])
+
+
+def _valid_census_report(report: object, expected: dict[str, object]) -> bool:
+    """Exact schema bound to the directory; counts are non-negative integers, not booleans."""
+    if not isinstance(report, dict) or set(report) != {*expected, "references", "uncertain"}:
+        return False
+    if any(report[key] != value for key, value in expected.items()):
+        return False
+    counts = [report[key] for key in ("references", "uncertain")]
+    integers = [report["version"], *report["directory"], *counts]
+    return all(type(value) is int for value in integers) and min(counts) >= 0
+
+
+def privileged_path_census(path: Path) -> dict[str, int]:
+    """Return one bound root census of the invoking UID's references to a tree.
+
+    One sudo call covers every task of the invoker, including non-dumpable ones
+    that an unprivileged census can only count as uncertain (GH#38428). The
+    report holds counts bound to the directory identity, never names or paths.
+    """
+    unavailable = ProcessCensusUnavailable(0, 0, "census", "inspector-unavailable")
+    try:
+        if not _allowed():
+            unavailable.observation["cause"] = "inspection-not-enabled"
+            raise unavailable
+        sudo = SUDO.resolve(strict=True)
+        if not _trusted_executable(INSPECTOR) or not _trusted_executable(sudo):
+            raise unavailable
+        directory = path.lstat()
+        result = subprocess.run(  # nosec B603 # validated root-owned executables, fixed flags, path as argv only
+            [str(sudo), "-n", "--", str(INSPECTOR), "--census", str(path)],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=CENSUS_TIMEOUT_SECONDS + 1,
+            check=False, env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+        )
+        if result.returncode or result.stderr or len(result.stdout) > 4096:
+            raise unavailable
+        report = json.loads(result.stdout)
+        current = path.lstat()
+        expected = {"version": 1, "mode": "census", "directory": [directory.st_dev, directory.st_ino]}
+        if not _valid_census_report(report, expected):
+            raise unavailable
+        if (directory.st_dev, directory.st_ino) != (current.st_dev, current.st_ino):
+            raise unavailable
+    except ProcessCensusUnavailable:
+        raise
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError) as error:
+        raise unavailable from error
+    return {"references": report["references"], "uncertain": report["uncertain"]}
 
 
 def require_protected_references(path: Path, task: Path, proc: Path) -> None:
