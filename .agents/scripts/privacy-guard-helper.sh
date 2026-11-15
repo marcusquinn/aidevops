@@ -38,6 +38,8 @@ set -u
 PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-${HOME:-}/.config/aidevops/repos.json}"
 PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-${HOME:-}/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
+# GitHub's private=false response is the only affirmative public visibility.
+PRIVACY_PUBLIC_VISIBILITY="false"
 # Private-slug enumeration needs last-known visibility, not push-time
 # freshness: nothing on the enumeration path refreshes the cache, so a short
 # TTL turns every known-public repo "private" minutes after its last probe.
@@ -113,7 +115,7 @@ privacy_is_target_public() {
 		if [[ -n "$cached_ts" && "$cached_private" != "null" ]]; then
 			local age=$((now - cached_ts))
 			if [[ "$age" -lt "$PRIVACY_CACHE_TTL" ]]; then
-				if [[ "$cached_private" == "false" ]]; then
+				if [[ "$cached_private" == "$PRIVACY_PUBLIC_VISIBILITY" ]]; then
 					return 0
 				else
 					return 1
@@ -155,7 +157,7 @@ privacy_is_target_public() {
 		return 1
 		;;
 	false)
-		_privacy_cache_write "$slug" "false"
+		_privacy_cache_write "$slug" "$PRIVACY_PUBLIC_VISIBILITY"
 		return 0
 		;;
 	*)
@@ -425,11 +427,16 @@ privacy_resolve_public_tree() {
 	local repo="$1"
 	local path="." remote_url commit top cache registered=""
 	local gh_bin="${PRIVACY_GH_BIN:-gh}"
+	local live_private=""
 	[[ "$repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
 	# The commits endpoint defaults to the repository's current default branch,
 	# including after a rename. Failure must not fall back to stale local refs.
 	commit=$("$gh_bin" api "repos/${repo}/commits?per_page=1" --jq '.[0].sha' 2>/dev/null) || return 1
 	[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+	# Authenticated commit reads can succeed after a public-to-private change.
+	# Do not exempt content based on the visibility probe's potentially stale cache.
+	live_private=$("$gh_bin" api "repos/${repo}" --jq '.private | tostring' 2>/dev/null) || return 1
+	[[ "$live_private" == "$PRIVACY_PUBLIC_VISIBILITY" ]] || return 1
 	if [[ -f "$PRIVACY_REPOS_CONFIG" ]]; then
 		registered=$(jq -r --arg slug "$repo" 'first(.initialized_repos[]? | select(.slug == $slug) | .path) // empty' "$PRIVACY_REPOS_CONFIG" 2>/dev/null) || registered=""
 	fi

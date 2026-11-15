@@ -250,6 +250,7 @@ API_RECORD_FILE="${TMP}/gh-api-invocation.log"
 REST_RATE_LIMIT_FILE="${TMP}/rest-rate-limited"
 REQUIRE_RAW_FIELDS_FILE="${TMP}/require-raw-graphql-fields"
 PUBLIC_COMMIT_FILE="${TMP}/public-commit"
+LIVE_VISIBILITY_FILE="${TMP}/live-visibility"
 cat >"$REAL_GH_DIR/gh" <<STUB
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "pr" && "\${2:-}" == "view" ]]; then
@@ -270,6 +271,12 @@ if [[ "\${1:-}" == "api" && "\${2:-}" == repos/* ]]; then
 	printf '%s\n' "REST" >> '$API_RECORD_FILE'
 	if [[ -f '$REST_RATE_LIMIT_FILE' ]]; then
 		exit 1
+	fi
+	if [[ -f '$LIVE_VISIBILITY_FILE' ]]; then
+		read -r visibility < '$LIVE_VISIBILITY_FILE'
+		[[ "\$visibility" != error ]] || exit 1
+		printf '%s\n' "\$visibility"
+		exit 0
 	fi
 	printf '%s\n' false
 	exit 0
@@ -507,6 +514,36 @@ if [[ $? -eq 1 && "$hits" == boundaryprivate ]]; then
 else
 	fail "public substring incorrectly exempted standalone basename"
 fi
+
+# The outer visibility probe still sees its warm public cache, but the live
+# repository has become private. Neither local nor cached objects may exempt it.
+printf '%s\n' true >"$LIVE_VISIBILITY_FILE"
+if PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+	privacy_is_target_public https://github.com/marcusquinn/aidevops.git; then
+	pass "visibility transition fixture retains a warm public cache"
+else
+	fail "visibility transition fixture lost its public cache"
+fi
+rm -f "$RECORD_FILE"
+out=$(SHIM_CWD="$TREE_REPO/nested" run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title test --body 'See ordinaryprivate docs' 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RECORD_FILE" && "$out" == *privacy-scan*BLOCK* ]]; then
+	pass "live private visibility blocks exemption from a matching local clone"
+else
+	fail "stale public visibility exempted local private content: $out"
+fi
+for visibility in true null malformed error; do
+	printf '%s\n' "$visibility" >"$LIVE_VISIBILITY_FILE"
+	hits=$(PRIVACY_GH_BIN="$REAL_GH_DIR/gh" PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+		privacy_filter_slug_hits_by_public_tree ordinaryprivate marcusquinn/aidevops)
+	rc=$?
+	if [[ "$rc" -eq 1 && "$hits" == ordinaryprivate ]]; then
+		pass "non-public or failed live visibility retains cached-tree hit: $visibility"
+	else
+		fail "live visibility '$visibility' incorrectly exempted private content"
+	fi
+done
+rm -f "$LIVE_VISIBILITY_FILE"
 rm -f "$PUBLIC_COMMIT_FILE"
 hits=$(PRIVACY_GH_BIN="$REAL_GH_DIR/gh" PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
 	privacy_filter_slug_hits_by_public_tree ordinaryprivate marcusquinn/aidevops)
