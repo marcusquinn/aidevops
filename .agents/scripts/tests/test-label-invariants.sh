@@ -649,13 +649,13 @@ if [[ -f "$COUNTER_FILE" ]]; then
 fi
 
 # GH#38360: blocked companion invariant.
-edit18=$(grep "^issue edit 18 " "$GH_CALLS" | head -1)
+edit18=$(grep "^issue edit 18 " "$GH_CALLS" | sed -n "1p")
 if [[ "$edit18" == *"--add-label needs-ai-recovery"* ]]; then
 	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 0
 else
 	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 1 "(line: '$edit18')"
 fi
-edit19=$(grep "^issue edit 19 " "$GH_CALLS" | head -1)
+edit19=$(grep "^issue edit 19 " "$GH_CALLS" | sed -n "1p")
 if [[ "$edit19" == *"--remove-label needs-dependency"* && "$edit19" != *"status:"* ]]; then
 	print_result "reconciler removes a blocked-owned companion left after unblock" 0
 else
