@@ -5,7 +5,7 @@
 # IP Reputation Merge & Formatting -- result aggregation and output rendering
 # =============================================================================
 # Merges per-provider JSON results into a unified risk assessment, computes
-# weighted scores with listing-flag boosts, and renders output in table,
+# mean scores with listing-flag boosts, and renders output in table,
 # markdown, compact, or raw JSON formats.
 #
 # Usage: source "${SCRIPT_DIR}/ip-reputation-helper-merge.sh"
@@ -220,7 +220,7 @@ _merge_build_json() {
 }
 
 # Merge per-provider results into unified risk assessment
-# Strategy: weighted average of scores, with listing flags as hard signals
+# Strategy: mean of scores, with listing flags as hard signals
 merge_results() {
 	local ip="$1"
 	shift
