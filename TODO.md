@@ -2142,6 +2142,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t19039 fix(checkpoints): continuation workers route concrete code/infra blockers to a prerequisite issue instead of parking for a human #interactive #feat tier:standard assignee:marcusquinn ref:GH#38507 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19039-brief.md]
 
 - [ ] t19041 fix(pulse): bound prefetch fan-out so concurrent dormancy reads stop timing out and waking repos #interactive #bug tier:standard assignee:marcusquinn ref:GH#38515 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19041-brief.md]
+- [ ] t19044 fix(ci-wait): keep a cancel-only failure pending while other checks are still pending #interactive #bug tier:standard assignee:marcusquinn ref:GH#38537 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19044-brief.md]
 
 - [ ] t19042 feat(repos): aidevops repos checkpoint-policy command so operators can enable AI decision/pending-work resolution without hand-editing repos.json #auto-dispatch #feat tier:standard ref:GH#38520 logged:2026-11-15 -> [todo/tasks/t19042-brief.md]
 

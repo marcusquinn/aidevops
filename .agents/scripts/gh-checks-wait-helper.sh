@@ -558,6 +558,15 @@ apply_cancel_grace() {
 	local cancelled_set=""
 	_GCW_GRACED_CLASSIFICATION="$classification"
 	if [[ "$classification" == "failure" ]] && only_cancelled_failures "$checks"; then
+		# GH#38537: while other checks are pending (often queued behind runner
+		# capacity), the superseding run may not be visible yet. Hold the
+		# cancellation and start its grace window only once nothing else is pending.
+		if printf '%s' "$checks" | jq -e --arg pending "$_GCW_BUCKET_PENDING" 'any(.[]; .bucket == $pending)' >/dev/null; then
+			_GCW_CANCEL_FIRST_EPOCH=""
+			_GCW_CANCEL_SET=""
+			_GCW_GRACED_CLASSIFICATION="$_GCW_BUCKET_PENDING"
+			return 0
+		fi
 		# Include run links and timestamps so a different cancelled attempt of the same check
 		# gets its own window; sort to ignore API ordering changes. Use raw attempt
 		# metadata without changing the canonical transition/heartbeat comparison.
