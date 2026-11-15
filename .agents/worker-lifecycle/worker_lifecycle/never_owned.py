@@ -23,7 +23,7 @@ from .enrollment import GenerationEnrollment, _git_directory
 from .legacy_proc import require_idle_processes
 from .protected_proc import ProcessCensusUnavailable
 from .reclaim.evidence import references
-from .reclaim.unowned import authorize as authorize_unowned
+from .reclaim.unowned import authorize as authorize_unowned, unowned_authorized
 from .retirement import _event, _git
 from .storage import LifecycleRegistry
 
@@ -97,10 +97,9 @@ def reclaim_unowned(
 
     Reclaim checks no process uses the tree and it has nothing to lose, and
     journals the facts with admission closure, then retires. Any refused fact
-    leaves admission open and the tree kept, reported as ``reclaim-refused``
-    with the reason. A never-owned tree has no recorded runs, so the process
-    census runs before authorization, not only inside retirement; retirement
-    repeats it at the removal location.
+    keeps the tree, reported as ``reclaim-refused`` with the reason. A never-owned
+    tree has no recorded runs, so the process census runs before authorization,
+    not only inside retirement; retirement repeats it at the removal location.
     """
     generation, repositories, result = _never_owned(store, config, root, path)
     if "status" in result:
@@ -109,11 +108,29 @@ def reclaim_unowned(
     try:
         require_idle_processes(path)
     except ProcessCensusUnavailable:
-        raise  # Structured with its observation by cli_errors; admission stays open.
+        raise  # Structured with its observation by cli_errors; admission unchanged.
     except ValueError as error:
-        return dict(result, status="reclaim-refused", reason=str(error))
+        return _refused(store, generation, result, str(error))
     found = [f"{kind}{number}" for kind, number in references(path.name)]
     refusal = authorize_unowned(store, path, generation, found)
     if refusal is not None:
-        return dict(result, status="reclaim-refused", reason=refusal)
+        return _refused(store, generation, result, refusal)
     return _candidate(store, repositories, root, generation, path)
+
+
+def _refused(
+    store: LifecycleRegistry, generation: str, result: dict[str, object], reason: str,
+) -> dict[str, object]:
+    """Report a refusal, naming an authorization an earlier check left standing.
+
+    A first check leaves admission open on refusal. A replay refusing after an
+    earlier check authorized and closed admission (for example a crash before
+    the retirement plan, then an edit) cannot undo it: admission never reopens,
+    and the first event is never rewritten. That generation stays authorized,
+    so a cleanup pass still retires it archive-first, preserving the edit; the
+    flag says so instead of implying the tree is kept (GH#38417).
+    """
+    refused = dict(result, status="reclaim-refused", reason=reason)
+    if unowned_authorized(store, generation):
+        refused["standing_authorization"] = True
+    return refused
