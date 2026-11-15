@@ -45,6 +45,10 @@ class ReferenceTests(unittest.TestCase):
         directory = mock.patch.object(inspector, "directory_identity", return_value=self.directory)
         self.directory_check = directory.start()
         self.addCleanup(directory.stop)
+        self.real_proc_view = inspector.require_full_proc_view
+        view = mock.patch.object(inspector, "require_full_proc_view", return_value=None)
+        self.proc_view = view.start()
+        self.addCleanup(view.stop)
 
     def write_identity(self, path, uid=1002, ticks=100):
         path.mkdir(parents=True, exist_ok=True)
@@ -178,6 +182,29 @@ class ReferenceTests(unittest.TestCase):
         (task / "cwd").unlink()
         (task / "cwd").symlink_to(self.root)
         self.assertEqual(inspector.census_report(str(self.candidate), 1002)["uncertain"], 1)
+
+    def test_census_requires_an_unfiltered_proc_view(self):
+        self.proc_view.side_effect = ValueError("filtered proc mount")
+        with self.assertRaises(ValueError):
+            self.census()
+
+    def test_nested_pid_namespace_or_filtered_proc_mount_is_rejected(self):
+        status, mountinfo = self.root / "status", self.root / "mountinfo"
+        files = {"/proc/self/status": status, "/proc/self/mountinfo": mountinfo}
+        mount = "22 1 0:21 / /proc rw,nosuid shared:12 - proc proc rw{options}\n"
+        own = f"NSpid:\t{os.getpid()}\n"
+        cases = {"full view": (own, "", None), "nested namespace": (f"NSpid:\t9\t{os.getpid()}\n", "", ValueError),
+                 "hidepid": (own, ",hidepid=invisible", ValueError), "subset": (own, ",subset=pid", ValueError)}
+        with mock.patch.object(inspector, "Path", side_effect=lambda value: files.get(value, pathlib.Path(value))):
+            for label, (nspid, options, error) in cases.items():
+                with self.subTest(case=label):
+                    status.write_text(nspid)
+                    mountinfo.write_text(mount.format(options=options))
+                    if error:
+                        with self.assertRaises(error):
+                            self.real_proc_view()
+                    else:
+                        self.assertIsNone(self.real_proc_view())
 
     def test_census_without_its_own_process_or_with_changed_candidate_fails_closed(self):
         with self.assertRaises(ValueError):

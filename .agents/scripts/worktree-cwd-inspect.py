@@ -164,10 +164,28 @@ def process_outcomes(process: Path, candidate: Path, sudo_uid: int) -> list:
         for outcome in guarded(task, functools.partial(task_outcome, task, candidate, sudo_uid))])
 
 
+PROC_MOUNT = re.compile(r"\S+ \S+ \S+ \S+ /proc (\S+) .*?- (\S+) \S+ (\S+)")
+FILTERED_PROC_OPTION = re.compile(r"hidepid=(?!(?:0|off)$).*|subset=.*")
+
+
+def require_full_proc_view() -> None:
+    """A nested PID namespace or filtered proc mount hides tasks; never count them as clear."""
+    namespace_pids = re.findall(r"^NSpid:\s+(.+)$",
+                                Path("/proc/self/status").read_text(encoding="ascii"), re.M)
+    mounts = [match.groups() for match in map(
+        PROC_MOUNT.fullmatch, Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines())
+        if match]
+    options = ",".join(mount[0] + "," + mount[2] for mount in mounts).split(",")
+    if (namespace_pids != [str(os.getpid())] or [mount[1] for mount in mounts] != ["proc"]
+            or any(map(FILTERED_PROC_OPTION.fullmatch, options))):
+        raise ValueError("partial proc view")
+
+
 def census_report(candidate_text: str, sudo_uid: int) -> dict:
     """Count the invoker's task references to one tree; emit counts only (GH#38428)."""
     if not safe_text(candidate_text):
         raise ValueError("invalid census request")
+    require_full_proc_view()
     candidate = Path(candidate_text)
     directory = directory_identity(candidate, sudo_uid)
     processes = [process for process in Path("/proc").iterdir() if process.name.isdecimal()]

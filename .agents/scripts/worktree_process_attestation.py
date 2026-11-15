@@ -9,19 +9,64 @@ fact the unprivileged user cannot forge. Mutable task names never attest a task.
 
 import os
 from pathlib import Path
+import subprocess  # nosec B404 - fixed root-owned systemctl, empty environment
 
 import worktree_lifetime_owner as owner
 
 # Root-owned session daemons whose direct, never-exec'd, unprivileged child is
 # the OpenSSH privilege-separated session process. The child inherits the
 # daemon's "/" CWD; shells, scp and internal-sftp run in its descendants, which
-# stay fully inspected. Only root can set a root-owned task's name.
+# stay fully inspected. A root-owned name is weaker evidence than it looks:
+# exec'ing a setuid-root binary through a symlink also sets it.
 PRIVSEP_SESSION_PARENTS = frozenset({"sshd", "sshd-session"})
 PF_FORKNOEXEC = 0x40  # include/linux/sched.h: forked but never exec'd
 # systemd forks "(sd-pam)" before the user manager execs; later children
 # (units, adopted orphans) are attached after it and start after the manager.
 PAM_KEEPER_START_WINDOW_SECONDS = 5
 PROC = Path("/proc")  # Attestation root; tests substitute modelled kernel facts.
+INITIAL_UID_MAP = ["0", "0", "4294967295"]
+SYSTEMCTL_PATHS = ("/usr/bin/systemctl", "/bin/systemctl")
+SYSTEMCTL_TIMEOUT_SECONDS = 5
+
+
+def _root_owned_file(path):
+    """True when path and its directory are root-owned and not group/other-writable."""
+    for candidate in (path, os.path.dirname(path)):
+        info = os.stat(candidate)
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            return False
+    return True
+
+
+def user_manager_main_pid(uid):
+    """PID 1's own record of the user manager's PID, or None when unavailable.
+
+    Names, cgroups (delegated to the user) and executables (any root-owned
+    binary) are all user-influenced; only the system manager knows which
+    process it started for user@UID.service.
+    """
+    for path in SYSTEMCTL_PATHS:
+        try:
+            if not _root_owned_file(path):
+                return None
+        except FileNotFoundError:
+            continue
+        try:
+            result = subprocess.run(  # nosec B603 - absolute root-owned binary, no shell
+                [path, "show", "--property=MainPID", "--value", f"user@{uid}.service"],
+                env={}, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                timeout=SYSTEMCTL_TIMEOUT_SECONDS, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        value = result.stdout.strip()
+        return value if result.returncode == 0 and value.isdecimal() and value != "0" else None
+    return None
+
+
+def _initial_user_namespace(*processes):
+    """Root and UID facts only mean what they say in the initial user namespace."""
+    return all((process / "uid_map").read_text().split() == INITIAL_UID_MAP
+               for process in (PROC / "self", *processes))
 
 
 def _stat_fields(directory):
@@ -41,28 +86,15 @@ def _uids(status):
 
 
 def _is_user_manager(process, status, fields):
-    """Same-UID systemd user manager that PID 1 exec'd from a root-owned binary.
+    """Same-UID, exec'd child of PID 1 that PID 1 records as user@UID.service.
 
-    A dumpable manager exposes its executable. A non-dumpable one (systemd 254+
-    grants it ambient capabilities) must hold capabilities in the census's own
-    user namespace, which only a privileged launcher can grant; a process in a
-    user-created child namespace has a different uid_map.
+    Callers re-read the task's start time after this returns, so the PID that
+    PID 1 named is the same process before and after the query.
     """
     uid = str(os.getuid())
-    if (fields[1] != "1" or status.get("Name", "").strip() != "systemd"
-            or int(fields[6]) & PF_FORKNOEXEC or _uids(status) != [uid] * 4):
+    if (fields[1] != "1" or int(fields[6]) & PF_FORKNOEXEC or _uids(status) != [uid] * 4):
         return False
-    service = f"/user.slice/user-{uid}.slice/user@{uid}.service"
-    if not any(line.endswith((service, service + "/init.scope"))
-               for line in (process / "cgroup").read_text().splitlines()):
-        return False
-    try:
-        # stat() follows the magic link to the running inode, even after an upgrade.
-        executable = os.stat(process / "exe")
-    except PermissionError:
-        return (int(status["CapEff"], 16) != 0 and
-                (process / "uid_map").read_text() == (PROC / "self" / "uid_map").read_text())
-    return executable.st_uid == 0 and not executable.st_mode & 0o022
+    return user_manager_main_pid(uid) == process.name
 
 
 def _attested_child_class(pid, ppid, start):
@@ -96,7 +128,8 @@ def attested_session_class(task):
     process = task.parent.parent
     fields, status = _stat_fields(task), _status_fields(task)
     ppid, start = fields[1], int(fields[19])
-    if _uids(status) != [uid] * 4 or not ppid.isdecimal():
+    if (_uids(status) != [uid] * 4 or not ppid.isdecimal()
+            or not _initial_user_namespace(process, *([PROC / ppid] if int(ppid) > 0 else []))):
         return None
     parent_start = None
     if _is_user_manager(process, status, fields):

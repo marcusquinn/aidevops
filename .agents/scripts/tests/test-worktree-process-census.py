@@ -212,6 +212,10 @@ class SessionAttestationTests(unittest.TestCase):
             patcher = patch.object(attestation.os, name, **kwargs)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # PID 1's record of user@UID.service; tests change it to model absence.
+        self.main_pid = patch.object(attestation, "user_manager_main_pid", return_value="91")
+        self.main_pid.start()
+        self.addCleanup(self.main_pid.stop)
         self.build()
 
     def build(self):
@@ -267,15 +271,19 @@ class SessionAttestationTests(unittest.TestCase):
         ticks = attestation.PAM_KEEPER_START_WINDOW_SECONDS * os.sysconf("SC_CLK_TCK")
         cases = {
             # User-renamed processes: comm and parentage alone prove nothing.
-            "manager without capabilities": dict(pid=91, name="systemd", ppid=1, flags=0x400100,
-                                                 start=1000, cgroup=self.MANAGER_CGROUP),
+            # A user can move an orphan into its delegated init.scope cgroup and
+            # exec any root-owned binary under the name "systemd" (GH#38428 review).
+            "manager lookalike PID 1 did not start": dict(pid=95, name="systemd", ppid=1,
+                                                          flags=0x400100, start=1000,
+                                                          caps="800000000",
+                                                          cgroup=self.MANAGER_CGROUP),
             "manager in child user namespace": dict(pid=91, name="systemd", ppid=1, flags=0x400100,
                                                     start=1000, caps="800000000",
                                                     cgroup=self.MANAGER_CGROUP, uid_map="0 1000 1\n"),
-            "manager outside its service cgroup": dict(pid=91, name="systemd", ppid=1, flags=0x400100,
-                                                       start=1000, caps="800000000"),
             "manager that never exec'd": dict(pid=91, name="systemd", ppid=1, flags=0x400140,
                                               start=1000, caps="800000000", cgroup=self.MANAGER_CGROUP),
+            "first child of a lookalike manager": dict(pid=96, name="(sd-pam)", ppid=95,
+                                                       flags=0x400140, start=1001),
             "keeper that is not the first child": dict(pid=140, name="(sd-pam)", ppid=91,
                                                        flags=0x400140, start=1001),
             "keeper outside the start window": dict(pid=93, name="(sd-pam)", ppid=91, flags=0x400140,
@@ -297,7 +305,25 @@ class SessionAttestationTests(unittest.TestCase):
                 self.task(pid, **case)
                 if pid == 93:
                     (self.proc / "91" / "task" / "91" / "children").write_text("93 92")
+                if pid == 96:
+                    self.task(95, name="systemd", ppid=1, flags=0x400100, start=1000,
+                              caps="800000000", cgroup=self.MANAGER_CGROUP, children="96")
                 self.assertIsNone(self.attest(pid))
+
+    def test_unknown_system_manager_record_or_namespace_leaves_tasks_uncertain(self):
+        self.main_pid.stop()
+        with patch.object(attestation, "user_manager_main_pid", return_value=None):
+            self.assertIsNone(self.attest(91))
+            self.assertIsNone(self.attest(92))
+        self.main_pid.start()
+        # Inside a user namespace, root-owned and UID facts are the namespace's own.
+        (self.proc / "self" / "uid_map").write_text("0 4242 1\n")
+        for pid in (91, 92, 128):
+            with self.subTest(pid=pid):
+                self.assertIsNone(self.attest(pid))
+        (self.proc / "self" / "uid_map").write_text("0 0 4294967295\n")
+        (self.proc / "117" / "uid_map").write_text("0 100000 65536\n")
+        self.assertIsNone(self.attest(128))
 
     def test_attested_and_uncertain_tasks_are_counted_by_class(self):
         self.task(138, name="ssh-agent", ppid=1, flags=0x400140, start=2000)

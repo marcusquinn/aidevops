@@ -197,13 +197,16 @@ _clean_deferred_parent_alive() {
 	return 2
 }
 
-# Last line of a refusal, printable and bounded, for the operator skip line.
+# The census refusal from a seal's stderr, printable and bounded, for the skip
+# line. Only the census summary (counts and classes) passes; other stderr, such
+# as a traceback naming a path, yields nothing so the caller's fixed text is used.
 _clean_lease_refusal_text() {
 	local text="$1"
+	local marker="same-boot process census active or unavailable: "
 	local line=""
 	local last=""
 	while IFS= read -r line; do
-		[[ -n "$line" ]] && last="$line"
+		[[ "$line" == *"$marker"* ]] && last="${marker}${line##*"$marker"}"
 	done <<<"$text"
 	# The skip line uses echo -e, so drop backslashes along with controls.
 	printf '%s' "$last" | LC_ALL=C tr -cd '[:print:]' | tr -d "\\\\" | cut -c1-400

@@ -305,11 +305,13 @@ Skipped <branch> - cleanup lease was not acquired: same-boot process census acti
 
 `worktree_process_census.py` excludes an unreadable task only when
 `worktree_process_attestation.py` proves, from facts the user cannot forge, that it
-runs root-installed session code. A census running as root never attests a task:
+runs root-installed session code. A census running as root, or in a non-initial
+user namespace, never attests a task:
 
-- `user-manager`: the user's `systemd` that PID 1 started inside `user@UID.service`,
-  either from a root-owned executable or with capabilities in the census's own user
-  namespace.
+- `user-manager`: the exec'd child of PID 1 that PID 1 itself records as the
+  `MainPID` of `user@UID.service` (read with a root-owned `systemctl` and an empty
+  environment), unchanged across that query. Names, the user-delegated cgroup and
+  root-owned executables are not evidence; without `systemctl` the task stays uncertain.
 - `pam-session-keeper`: the first child of that manager, forked within five seconds
   of the manager starting and never exec'd.
 - `privsep-session`: an unprivileged, never-exec'd child of a root `sshd` or
@@ -323,7 +325,8 @@ With the reviewed inspector installed as above and
 `AIDEVOPS_PROTECTED_PROC_INSPECTION=1` set, any remaining uncertainty triggers one
 `--census CANDIDATE` call. The root inspector checks every task of the invoking UID
 (CWD, descriptors, `PWD`/`AIDEVOPS_WORKTREE`) and returns only counts bound to the
-directory device and inode, within its own five-second deadline. `privileged_census=clear`
+directory device and inode, within its own five-second deadline. It refuses a nested
+PID namespace or a `hidepid`/`subset` proc mount rather than count a partial view. `privileged_census=clear`
 resolves the uncertainty; `held` keeps the tree; any other value
 (`inspection-not-enabled`, `inspector-unavailable`) leaves the original uncertainty
 in place. An installed copy older than this mode refuses `--census` and keeps the tree,
