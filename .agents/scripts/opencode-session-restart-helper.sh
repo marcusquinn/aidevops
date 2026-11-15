@@ -663,6 +663,25 @@ _tabby_launcher_pid() {
 	return 0
 }
 
+# _tabby_launcher_holds <launcher-pid> — success when the launcher script
+# waits on maintenance holds. Launchers from before GH#38495 ignore holds and
+# exec a login shell under the same PID once their TUI exits.
+_tabby_launcher_holds() {
+	local launcher="$1"
+	local word script=""
+	local -a words=()
+	read -r -a words <<<"$(_pid_args "$launcher")"
+	for word in "${words[@]}"; do
+		if [[ "$word" == */opencode-launcher-helper.sh ]]; then
+			script="$word"
+			break
+		fi
+	done
+	[[ -f "$script" ]] || return 1
+	grep -q 'tabby_maintenance_hold_file' "$script" || return 1
+	return 0
+}
+
 _tabby_hold_file() {
 	local launcher="$1"
 	printf '%s/%s' "$RESTART_TABBY_HOLD_DIR" "$launcher"
@@ -698,11 +717,13 @@ _stop_one() {
 	fi
 	# A Tabby tab's launcher waits for the hold release and reopens the session
 	# in the same tab, keeping its profile name and colour (bare TTYs cannot).
+	# A launcher without hold support (or a failed hold write) leaves a shell
+	# in the tab, so resume reopens the session in a new profile tab instead.
 	if [[ "$kind" == tty && "$sid" =~ ^ses_ ]] && launcher=$(_tabby_launcher_pid "$pid"); then
-		if _tabby_write_hold "$launcher" "$sid" hold; then
-			kind=tabby
-			target="$launcher"
-		else
+		kind=tabby
+		target="$launcher"
+		if ! { _tabby_launcher_holds "$launcher" && _tabby_write_hold "$launcher" "$sid" hold; }; then
+			target=""
 			launcher=""
 		fi
 	fi
