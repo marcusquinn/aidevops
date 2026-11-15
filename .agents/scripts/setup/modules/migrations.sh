@@ -555,7 +555,7 @@ cleanup_retired_beads() {
 	for tool in beads-ui bdui; do
 		_retire_global_npm_package "$tool" || true
 	done
-	for tool in bd bv; do
+	for tool in bd bv beads beads_viewer; do
 		_retire_brew_formula "$tool" || true
 	done
 	return 0
@@ -599,7 +599,7 @@ _retire_global_npm_package() {
 		[[ -n "$dir" && -d "$dir/$pkg" ]] || continue
 		found=0
 		if [[ "$dir" == "$HOME/.bun/install/global/node_modules" ]]; then
-			if [[ -w "$dir" ]] && command -v bun >/dev/null 2>&1; then
+			if [[ -O "$dir/$pkg" && -w "$dir" ]] && command -v bun >/dev/null 2>&1; then
 				if out=$(bun remove -g "$pkg" 2>&1); then
 					print_info "Removed retired package $pkg from bun global ($dir)"
 				else
@@ -611,14 +611,16 @@ _retire_global_npm_package() {
 			continue
 		fi
 		prefix="${dir%/lib/node_modules}"
-		if [[ -w "$dir" && -w "$dir/$pkg" ]] && command -v npm >/dev/null 2>&1; then
+		if [[ -O "$dir/$pkg" && -w "$dir" ]] && command -v npm >/dev/null 2>&1; then
 			if out=$(npm uninstall -g --prefix "$prefix" "$pkg" 2>&1); then
 				print_info "Removed retired package $pkg from $dir"
 			else
 				print_warning "Could not remove $pkg from $dir: ${out##*$'\n'}"
 			fi
 		else
-			print_warning "Retired package $pkg is root-owned in $dir; run: sudo npm uninstall -g --prefix $prefix $pkg"
+			local sudo_cmd=""
+			printf -v sudo_cmd 'sudo npm uninstall -g --prefix %q %q' "$prefix" "$pkg"
+			print_warning "Retired package $pkg is not user-removable in $dir; run: $sudo_cmd"
 		fi
 	done < <(_retire_global_node_module_dirs)
 	return "$found"
