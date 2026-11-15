@@ -142,6 +142,8 @@ main_rereview() {
 	test_mark_blocked_never_requests_rereview
 	test_mark_blocked_rejects_capacity_and_mark_progress_records
 	test_mark_blocked_publishes_continuation_finding
+	test_route_prerequisite_refuses_out_of_scope
+	test_route_prerequisite_creates_holds_and_reuses
 	test_mark_blocked_publishes_review_thread_finding
 	return 0
 }

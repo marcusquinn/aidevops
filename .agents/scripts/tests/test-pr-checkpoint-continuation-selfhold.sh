@@ -81,6 +81,12 @@ if [[ -f "$prompt_file" ]] && \
 else
 	print_result "continuation prompt preserves exact-target ownership contract" 1
 fi
+if grep -Fq "route-prerequisite \"\$WORKER_REPO_SLUG\" \"\$AIDEVOPS_PR_REPAIR_NUMBER\" <code|infrastructure>" "$prompt_file" && \
+	grep -Fq "the one permitted issue path is \`route-prerequisite\`" "$prompt_file"; then
+	print_result "continuation prompt offers the prerequisite route as its only issue path (t19039)" 0
+else
+	print_result "continuation prompt offers the prerequisite route as its only issue path (t19039)" 1
+fi
 if ! grep -q 'non-closing checkpoint linked to issue' "$prompt_file"; then
 	print_result "closing-linked continuation prompt has no For-line rewrite step" 0
 else

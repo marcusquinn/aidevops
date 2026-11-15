@@ -461,7 +461,8 @@ PR title: ${safe_title}
 - Do NOT call pre-edit-check.sh, the aidevops_pre_edit_check tool,
   worktree-helper.sh, or session-rename tools.
 - Work only in the supplied linked worktree. Do not create another branch,
-  worktree, issue, or PR. Do not merge the PR, rebase, or force-push. You may
+  worktree, issue, or PR; the one permitted issue path is \`route-prerequisite\`
+  in step 7. Do not merge the PR, rebase, or force-push. You may
   integrate the PR base branch locally when the work or repository documentation
   needs a current base. First refresh the remote-tracking ref with
   \`git fetch origin refs/heads/<base>:refs/remotes/origin/<base>\`, then run
@@ -554,6 +555,16 @@ ${durability_cleanup}
    values, inaccessible context, unknown secrets or an irreversible commitment,
    or contradicts the brief's explicit text; the details file then lists every
    option with your recommendation. Never close the draft.
+   Prerequisite route (t19039): before \`mark-blocked code\` or
+   \`infrastructure\` for a concrete, reproducible defect in this repository's
+   code or tooling outside this draft's scope, run
+   \`"${scanner_path}" route-prerequisite "${repo_slug_ref}" "${repair_number_ref}" <code|infrastructure> <short_reason> <details_file>\`
+   once, with a details file naming the files, reproduction, guards to keep
+   and verification. It files or reuses one worker-ready prerequisite issue and
+   holds #${PCC_LINKED_ISSUE} until that issue closes; it is not a terminal
+   state, so then run \`mark-blocked\` with the same details. Skip it for
+   runner-local or transient blockers (quota, rate limit, a secret or login
+   missing on this runner), and fall back to plain \`mark-blocked\` when it refuses.
 ${progress_step}
 Do not invoke more than one terminal-state command. A prose report or successful process
 exit is not a terminal state: exiting without one leaves the draft for human

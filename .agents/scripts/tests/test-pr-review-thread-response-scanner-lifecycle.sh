@@ -238,6 +238,122 @@ GH_STUB
 	return 0
 }
 
+# t19039: logs every gh call; issue list and issue edit are switchable.
+write_prerequisite_gh_stub() {
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${PREREQ_GH_LOG}"
+if [[ "$1" == "issue" && "${2:-}" == "list" ]]; then
+	[[ "${PREREQ_LOOKUP_FAIL:-0}" == "1" ]] && exit 1
+	printf '%s\n' "${PREREQ_ISSUE_LIST:-[]}"
+	exit 0
+fi
+if [[ "$1" == "issue" && "${2:-}" == "edit" && "${PREREQ_EDIT_FAIL:-0}" == "1" ]]; then
+	exit 1
+fi
+exit 0
+GH_STUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+	export PREREQ_GH_LOG="${TEST_ROOT}/prereq-gh.log"
+	: >"$PREREQ_GH_LOG"
+	return 0
+}
+
+test_route_prerequisite_refuses_out_of_scope() {
+	setup_test_env
+	write_upstream_route_fixtures
+	write_prerequisite_gh_stub
+	local details="${TEST_ROOT}/up-details.txt" bad=0 rc=0 kind="" reason=""
+	# Ordinary review-thread workers carry no linked issue.
+	$SCANNER route-prerequisite owner/repo 1 code missing_guard "$details" >/dev/null 2>&1 || rc=$?
+	[[ "$rc" -eq 2 ]] || bad=1
+	while IFS=' ' read -r kind reason; do
+		rc=0
+		AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 "$kind" "$reason" "$details" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 ]] || bad=1
+	done <<'CASES'
+decision missing_guard
+maintainer missing_guard
+code Capacity_exhausted
+infrastructure starter_template_fix
+code ---
+CASES
+	if [[ "$bad" -eq 0 && ! -s "$UPSTREAM_ISSUE_LOG" ]] && ! grep -q '^issue edit' "$PREREQ_GH_LOG"; then
+		print_result "route-prerequisite refuses non-continuation, decision, capacity and upstream cases" 0
+	else
+		print_result "route-prerequisite refuses non-continuation, decision, capacity and upstream cases" 1 \
+			"bad=${bad}, created=$(<"$UPSTREAM_ISSUE_LOG"), gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_route_prerequisite_creates_holds_and_reuses() {
+	setup_test_env
+	write_upstream_route_fixtures
+	write_prerequisite_gh_stub
+	local details="${TEST_ROOT}/up-details.txt" first="" second="" rc=0
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.prerequisite"
+	local marker="aidevops:checkpoint-prerequisite:owner/repo#42:missing_builder_guard"
+	first="$(AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code "Missing builder guard" "$details" 2>/dev/null)" || first=""
+	if [[ "$first" == "https://github.com/owner/repo/issues/77" ]] &&
+		[[ "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]] &&
+		grep -Fq -- '--repo owner/repo' "$UPSTREAM_ISSUE_LOG" &&
+		grep -Fq -- '--label auto-dispatch,tier:standard,bug' "$UPSTREAM_ISSUE_LOG" &&
+		grep -Fq -- "$marker" "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq 'draft PR #1 (linked issue #42)' "${UPSTREAM_ISSUE_LOG}.body" &&
+		grep -Fq 'issue edit 42 --repo owner/repo --add-label blocked-by:#77' "$PREREQ_GH_LOG" &&
+		[[ -s "$state_file" ]]; then
+		print_result "route-prerequisite creates one issue and holds the linked issue blocked-by:#N" 0
+	else
+		print_result "route-prerequisite creates one issue and holds the linked issue blocked-by:#N" 1 \
+			"first=${first}, created=$(<"$UPSTREAM_ISSUE_LOG"), gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	# The finding names the routed prerequisite once, then the record is consumed.
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 AIDEVOPS_PR_REPAIR_HEAD_SHA="$TEST_HEAD_OID_1" \
+		$SCANNER mark-blocked owner/repo 1 code missing_builder_guard "$details" >/dev/null 2>&1 || true
+	if grep -Fq 'Prerequisite #77 is queued for a worker' "$PREREQ_GH_LOG" &&
+		! grep -Fq 'Next action for the brief owner' "$PREREQ_GH_LOG" && [[ ! -f "$state_file" ]]; then
+		print_result "continuation finding names the prerequisite and consumes the record" 0
+	else
+		print_result "continuation finding names the prerequisite and consumes the record" 1 "gh=$(tr '\n' ';' <"$PREREQ_GH_LOG")"
+	fi
+	export PREREQ_ISSUE_LIST="[{\"number\":77,\"state\":\"OPEN\",\"body\":\"<!-- ${marker} -->\"}]"
+	second="$(AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code missing_builder_guard "$details" 2>/dev/null)" || second=""
+	if [[ "$second" == "$first" && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]]; then
+		print_result "route-prerequisite reuses an open prerequisite" 0
+	else
+		print_result "route-prerequisite reuses an open prerequisite" 1 "second=${second}"
+	fi
+	export PREREQ_ISSUE_LIST="[{\"number\":77,\"state\":\"CLOSED\",\"body\":\"<!-- ${marker} -->\"}]"
+	rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code missing_builder_guard "$details" >/dev/null 2>&1 || rc=$?
+	if [[ "$rc" -eq 3 && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "1" ]]; then
+		print_result "route-prerequisite refuses a closed prerequisite instead of looping" 0
+	else
+		print_result "route-prerequisite refuses a closed prerequisite instead of looping" 1 "rc=${rc}"
+	fi
+	unset PREREQ_ISSUE_LIST
+	# The reuse above rewrote the record; failure paths must not write one.
+	rm -f "$state_file"
+	export PREREQ_LOOKUP_FAIL=1
+	rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code other_guard "$details" >/dev/null 2>&1 || rc=$?
+	unset PREREQ_LOOKUP_FAIL
+	export PREREQ_EDIT_FAIL=1
+	local edit_rc=0
+	AIDEVOPS_PR_REPAIR_LINKED_ISSUE=42 $SCANNER route-prerequisite owner/repo 1 code other_guard "$details" >/dev/null 2>&1 || edit_rc=$?
+	unset PREREQ_EDIT_FAIL
+	if [[ "$rc" -eq 1 && "$edit_rc" -eq 1 && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "2" && ! -f "$state_file" ]]; then
+		print_result "route-prerequisite fails closed on lookup failure and records no hold when labelling fails" 0
+	else
+		print_result "route-prerequisite fails closed on lookup failure and records no hold when labelling fails" 1 \
+			"lookup_rc=${rc}, edit_rc=${edit_rc}, created=$(wc -l <"$UPSTREAM_ISSUE_LOG")"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_mark_blocked_publishes_review_thread_finding() {
 	setup_test_env
 	local gh_log="${TEST_ROOT}/review-gh.log"
