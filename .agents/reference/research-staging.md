@@ -37,5 +37,13 @@ rules, with OpenCode's last-match permission semantics. The default remains
 If an existing staging root resolves outside the managed temp root, no exception
 is granted. A pre-tool guard also resolves staged read targets and recursively
 checks grep/glob scopes, rejecting symlinks, path escapes, credential-shaped
-entries, and unbounded trees. Write, edit, patch, Bash, nested-task, and
-permission-escalation capabilities remain unavailable.
+entries, and unbounded trees. Recursive-scope refusals name the blocking entry
+relative to the staging root (never its contents), so the primary can remove or
+re-stage it. Write, edit, patch, Bash, nested-task, and permission-escalation
+capabilities remain unavailable.
+
+## Independent code review
+
+Linked worktrees are outside staging. For a closeout review, write the review
+bundle or `git diff origin/main...HEAD` into a fresh task child here and give the
+reviewer that path; `reference/review-core.md` "Review efficiency" applies.

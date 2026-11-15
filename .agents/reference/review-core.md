@@ -143,6 +143,10 @@ crash, or concrete security exposure are the only automatic critical exceptions.
   default.
 - Medium-risk changes: advisory closeout review when it reduces uncertainty.
 - High/critical changes: independent review in addition to required tests.
+  In OpenCode a sandboxed reviewer cannot read a linked worktree: write the
+  bundle or `git diff origin/main...HEAD` into a task child of research staging
+  and pass that exact path (`reference/research-staging.md`). A refusal names
+  the blocking staged entry; remove or re-stage it rather than dropping review.
 - One reviewer is the default. Panels are explicit or risk-justified.
 - Run formatting before bundling. Tests and review may run in parallel, but any
   subsequent edit invalidates both affected evidence sets.
