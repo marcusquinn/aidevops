@@ -1474,6 +1474,13 @@ _sync_supersede_prs() {
 	local _slug="$1" _branch="$2" _workflow="$3" _replacement="$4" _base="$5"
 	local _rows _number _url _sha _body_file _rc=0
 	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow" "$_base") || return 1
+	# A maintainer may close or change the replacement after discovery. Do not
+	# retire anything unless it still passes the same fresh eligibility checks.
+	local _replacement_found=0
+	while IFS=$'\t' read -r _number _url _sha; do
+		[[ "$_url" != "$_replacement" ]] || _replacement_found=1
+	done <<<"$_rows"
+	[[ "$_replacement_found" -eq 1 ]] || return 1
 	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$_temp_root" || return 1
 	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-superseded.XXXXXX") || return 1
@@ -1508,6 +1515,17 @@ _sync_report_identical_pr() {
 	return 2
 }
 
+# Branch names alone also match fork heads. Require the actual head repository
+# to match, case-insensitively, before accepting an exact-branch replacement.
+_sync_find_exact_pr() {
+	local _slug="$1" _branch="$2" _base="$3" _prs
+	_prs=$(gh pr list --repo "$_slug" --head "$_branch" --base "$_base" --state open \
+		--json url,headRepository) || return 1
+	printf '%s\n' "$_prs" | jq -r --arg slug "$_slug" \
+		'[.[] | select((.headRepository.nameWithOwner // "" | ascii_downcase) == ($slug | ascii_downcase))] | .[0].url // empty'
+	return $?
+}
+
 # _sync_open_pr <slug> <path> <status> <branch> <default_branch>
 #   <effective_ref> <workflow-relpath> <sync-contributing>
 # Workflow-only updates reuse identical PRs before publication; differing content
@@ -1529,8 +1547,10 @@ _sync_open_pr() {
 		return 1
 	fi
 	local _existing_pr
-	_existing_pr=$(gh pr list --repo "$_slug" --head "$_branch_name" --base "$_default_branch" --state open \
-		--json url --jq '.[0].url // empty' 2>/dev/null || true)
+	if ! _existing_pr=$(_sync_find_exact_pr "$_slug" "$_branch_name" "$_default_branch"); then
+		printf '%s\t%s\t%s\tunable to inspect exact-branch sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
 	if [[ -n "$_existing_pr" ]]; then
 		if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_existing_pr" "$_default_branch"; then
 			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"

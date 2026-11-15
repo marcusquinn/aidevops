@@ -118,9 +118,28 @@ if [[ "${1:-}" == api && "${2:-}" == repos/* && "$*" == *'.private | tostring'* 
 	printf 'false\n'
 elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls\?state=open* ]]; then
 	[[ "${GH_SYNC_LIST_FAIL:-0}" == 0 ]] || exit 1
-	printf '%s\n' "${GH_SYNC_PRS_JSON:-[]}"
+	prs="${GH_SYNC_PRS_JSON:-[]}"
+	if [[ -n "${GH_SYNC_REFRESH_PRS_JSON:-}" ]] &&
+		[[ "$(grep -c '^api repos/.*/pulls?state=open' "$GH_CALL_LOG")" -gt 1 ]]; then
+		prs="$GH_SYNC_REFRESH_PRS_JSON"
+	fi
+	if [[ -s "$GH_CALL_LOG.new-pr" ]]; then
+		jq -cn --argjson prs "$prs" --slurpfile created "$GH_CALL_LOG.new-pr" '$prs + $created'
+	else
+		printf '%s\n' "$prs"
+	fi
 elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
-	printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
+	number="${2%/files*}"
+	number="${number##*/}"
+	if [[ -s "$GH_CALL_LOG.new-pr" ]] &&
+		[[ "$number" == "$(jq -r .number "$GH_CALL_LOG.new-pr")" ]]; then
+		printf '%s\n' '[{"filename":".github/workflows/issue-sync.yml","status":"modified","sha":"created"}]'
+		rm -f "$GH_CALL_LOG.new-pr"
+	else
+		printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
+	fi
+elif [[ "${1:-} ${2:-}" == "pr list" ]]; then
+	printf '%s\n' "${GH_EXACT_PRS_JSON:-[]}"
 elif [[ "${1:-} ${2:-}" == "pr close" ]]; then
 	[[ "${GH_SYNC_CLOSE_FAIL:-0}" == 0 ]] || exit 1
 elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
@@ -132,15 +151,21 @@ elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
 		shift
 	done
 elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
-	repo=""
+	repo="" branch="" base=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo) repo="$2"; shift ;;
+		--head) branch="$2"; shift ;;
+		--base) base="$2"; shift ;;
 		origin:*) printf '%s\n' "$1" >"$GH_CALL_LOG.origin" ;;
 		esac
 		shift
 	done
 	[[ -n "$repo" && -s "$GH_CALL_LOG.origin" ]] || exit 1
+	# The newly created PR appears in the next refreshed eligibility inspection.
+	jq -cn --arg repo "$repo" --arg branch "$branch" --arg base "$base" \
+		--argjson number "${GH_NEW_PR_NUMBER:-1}" \
+		'{number:$number,html_url:("https://github.com/" + $repo + "/pull/" + ($number|tostring)),base:{ref:$base},head:{ref:$branch,repo:{full_name:$repo}}}' >"$GH_CALL_LOG.new-pr"
 	printf 'https://github.com/%s/pull/%s\n' "$repo" "${GH_NEW_PR_NUMBER:-1}"
 elif [[ "${1:-}" == api && "${2:-}" == /repos/*/issues/* ]]; then
 	cat "$GH_CALL_LOG.origin"
@@ -398,6 +423,29 @@ OUT_10_RETRY=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDI
 	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
 _assert_exit "review: canonical exact-branch retry reconciles" 0 "$?"
 _assert_contains "review: canonical exact-branch retry reports canonical PR" "$OUT_10_RETRY" "PR: https://github.com/owner/repo-develop/pull/1"
+
+# A selected replacement disappearing between inspections must not retire the
+# remaining eligible PR or report the vanished replacement as applied.
+REMAINING_PRS_10=$(printf '%s\n' "$RETRY_PRS_10" | jq '[.[1]]')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_VANISHED=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_REFRESH_PRS_JSON="$REMAINING_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990108 2>&1)
+_assert_exit "review: vanished replacement fails closed" 1 "$?"
+_assert_contains "review: vanished replacement reports failure" "$OUT_10_VANISHED" "unable to supersede older sync PRs"
+_assert_exit "review: vanished replacement retires no candidates" 0 "$(grep -cE '^pr (close|comment) ' "$TMPDIR_10/gh-calls.log")"
+
+# Exact branch names may belong to a fork: ignore that result and publish the
+# pushed same-repository branch instead of treating the fork as a replacement.
+FORK_EXACT_10='[{"url":"https://github.com/owner/repo-develop/pull/99","headRepository":{"nameWithOwner":"fork/repo-develop"}}]'
+STALE_FILES_10=$(printf '%s\n' "$SYNC_FILES_10" | jq '.[0].sha = "stale"')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_FORK=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$STALE_FILES_10" GH_EXACT_PRS_JSON="$FORK_EXACT_10" GH_NEW_PR_NUMBER=5 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990109 2>&1)
+_assert_exit "review: exact-branch fork does not prevent publication" 0 "$?"
+_assert_contains "review: exact-branch fork is not the applied replacement" "$OUT_10_FORK" "PR: https://github.com/owner/repo-develop/pull/5"
+_assert_exit "review: exact-branch fork triggers same-repository PR creation" 1 "$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")"
 
 # Different date suffixes share the installation-scoped lock; a held lock must
 # prevent inspection/publication, and all preceding failure paths released it.
