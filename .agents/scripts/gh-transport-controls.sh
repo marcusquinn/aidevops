@@ -210,6 +210,22 @@ _gh_transport_emit_local_deferral() {
 	return 0
 }
 
+# Create a REST read's tracked metadata/error pair in globals, not $(...), so
+# the registry lives in the shim process that owns the EXIT trap.
+_gh_transport_rest_temps() {
+	local temp_dir="$1"
+	_GHGT_REST_META="" _GHGT_REST_ERROR=""
+	mkdir -p "$temp_dir" || return 1
+	_GHGT_REST_META=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 1
+	_gh_transport_track_temp "$_GHGT_REST_META"
+	_GHGT_REST_ERROR=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
+		_gh_transport_remove_temps "$_GHGT_REST_META"
+		return 1
+	}
+	_gh_transport_track_temp "$_GHGT_REST_ERROR"
+	return 0
+}
+
 # _GHGT_HANDLED distinguishes unsupported-before-execution from native exit125.
 # Supported REST records metadata here, not a second attempt in the ordinary
 # recorder. Exact capture retains its existing multi-response-frame owner.
@@ -225,14 +241,8 @@ _gh_transport_run_rest() {
 	local status="" resource="" remaining="" reset="" retry_after="" cost="" attempted="" deferred_by="" pool="" response="" outcome=success
 	local used="" fingerprint="" sampled_at=""
 	local request_method="" endpoint_class="" endpoint_family=""
-	mkdir -p "$temp_dir" || return 75
-	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
-	_gh_transport_track_temp "$metadata"
-	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
-		_gh_transport_remove_temps "$metadata"
-		return 75
-	}
-	_gh_transport_track_temp "$error_file"
+	_gh_transport_rest_temps "$temp_dir" || return 75
+	metadata="$_GHGT_REST_META" error_file="$_GHGT_REST_ERROR"
 	_shim_timing rest_tempfiles
 	start_ms=$(_gh_now_ms)
 	_shim_timing rest_clock
