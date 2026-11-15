@@ -12,6 +12,7 @@
 # Usage:
 #   opencode-db-archive.sh archive [--worker-retention-days N] [--interactive-retention-days N]
 #                                  [--retention-days N] [--keep-sessions N] [--dry-run] [--max-duration-seconds N]
+#                                  [--worker-event-expiry-minutes N] [--worker-events-only]
 #   opencode-db-archive.sh restore --session ID [--dry-run]
 #   opencode-db-archive.sh prune --older-than-days N [--dry-run|--apply] [--max-duration-seconds N]
 #   opencode-db-archive.sh prune-all --older-than-days N [--dry-run|--apply]
@@ -1159,6 +1160,8 @@ cmd_archive() {
 	local max_duration="$DEFAULT_MAX_DURATION"
 	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-$DEFAULT_WORKER_RETENTION_DAYS}"
 	local events_only=0
+	local worker_event_minutes="${OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES:-$DEFAULT_WORKER_EVENT_EXPIRY_MINUTES}"
+	local worker_events_only=0
 
 	# Phase helpers share only these command-local settings/results via Bash's
 	# dynamic scope. Batch SQL and counters have their own narrower owner below.
@@ -1169,6 +1172,10 @@ cmd_archive() {
 	_archive_validate_options || return 1
 	if [[ "${OPENCODE_ARCHIVE_BUDGET_CHILD:-0}" != 1 ]]; then
 		_archive_with_deadline "$max_duration" "${original_args[@]}"
+		return $?
+	fi
+	if ((worker_events_only)); then
+		_archive_worker_event_phase "$max_duration"
 		return $?
 	fi
 	local expiry_budget="$max_duration"
@@ -1198,6 +1205,9 @@ _archive_move_phase() {
 	if [[ "$preflight_rc" -ne 0 ]]; then
 		return "$preflight_rc"
 	fi
+	# GH#38491: drop dead-worker events before the move so their pages are
+	# reused at once instead of after the 7-day worker retention.
+	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$((max_duration / 4))" || return $?
 	_archive_prepare_candidates || return $?
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
@@ -1215,6 +1225,19 @@ _archive_move_phase() {
 	return $?
 }
 
+# Light hourly pass (--worker-events-only): expire terminated worker events
+# without moving sessions; shares cmd_archive's dynamic-scope settings.
+_archive_worker_event_phase() {
+	local budget="$1"
+	local preflight_rc=0
+	_archive_mutation_preflight || preflight_rc=$?
+	if [[ "$preflight_rc" -ne 0 ]]; then
+		return "$preflight_rc"
+	fi
+	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$budget"
+	return $?
+}
+
 # Updates settings owned by cmd_archive, not process-global configuration.
 _archive_parse_options() {
 	# Parse arguments
@@ -1222,7 +1245,7 @@ _archive_parse_options() {
 		local option="$1"
 		local option_value="${2:-}"
 		case "$option" in
-		--retention-days | --interactive-retention-days | --worker-retention-days | --keep-sessions | --archive-event-retention-days | --max-duration-seconds)
+		--retention-days | --interactive-retention-days | --worker-retention-days | --keep-sessions | --archive-event-retention-days | --worker-event-expiry-minutes | --max-duration-seconds)
 			if [[ $# -lt 2 ]]; then
 				print_error "Option requires a value: $option"
 				return 1
@@ -1267,6 +1290,14 @@ _archive_parse_options() {
 			events_only=1
 			shift
 			;;
+		--worker-events-only)
+			worker_events_only=1
+			shift
+			;;
+		--worker-event-expiry-minutes)
+			worker_event_minutes="$option_value"
+			shift 2 || return 1
+			;;
 		--archive-event-retention-days)
 			event_retention_days="$option_value"
 			[[ $# -ge 2 ]] || return 1
@@ -1294,6 +1325,7 @@ _archive_validate_options() {
 	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
 	_validate_nonnegative_integer "$max_duration" "--max-duration-seconds" || return 1
 	_validate_nonnegative_integer "$event_retention_days" "--archive-event-retention-days" || return 1
+	_validate_nonnegative_integer "$worker_event_minutes" "--worker-event-expiry-minutes" || return 1
 	_validate_nonnegative_integer "$ARCHIVE_BATCH_SIZE" "OPENCODE_DB_ARCHIVE_BATCH_SIZE" || return 1
 	if [[ "$ARCHIVE_BATCH_SIZE" -eq 0 ]]; then
 		print_error "OPENCODE_DB_ARCHIVE_BATCH_SIZE must be greater than zero."
@@ -1755,6 +1787,9 @@ _archive_finish() {
 # shellcheck source=./opencode-db-archive-retention.sh
 # shellcheck disable=SC1091 # sibling module resolved via the entry point directory
 source "${_oda_dir}/opencode-db-archive-retention.sh"
+# shellcheck source=./opencode-db-archive-worker-events.sh
+# shellcheck disable=SC1091 # sibling module resolved via the entry point directory
+source "${_oda_dir}/opencode-db-archive-worker-events.sh"
 
 cmd_prune_all() {
 	local db rc=0 result=0
@@ -1887,6 +1922,11 @@ ARCHIVE OPTIONS (split retention by session origin):
                             (default 7; 0 disables). Keeps session/message/part/todo.
                             Runs before moving sessions; freed pages are reused.
   --events-only             Expire archive events without moving active sessions
+  --worker-event-expiry-minutes N  Expire active-DB event rows of terminated headless
+                            worker sessions (ledger worker_sessions) inactive N minutes
+                            (default 60; 0 disables). Keeps message/part/todo, so
+                            transcripts stay resumable; interactive sessions untouched.
+  --worker-events-only      Run only the active-DB worker event expiry (hourly pass)
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 RESTORE OPTIONS:
@@ -1913,6 +1953,9 @@ ENVIRONMENT:
   OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (30)
   OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
   OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Archived event expiry, default 7; 0 disables
+  OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES  Default for --worker-event-expiry-minutes (60)
+  OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_SIZE   Max events per worker-expiry transaction (500)
+  OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_BYTES  Max event payload bytes per transaction (64 MiB)
                             archive-all always uses an archive beside each active DB;
                             max-duration-seconds applies per DB, not to the inventory.
 

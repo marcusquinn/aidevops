@@ -596,7 +596,9 @@ sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "CREATE TABLE worker_sessions (session_id
 INSERT INTO worker_sessions (session_id) VALUES ('worker_old'), ('worker_recent');"
 
 set +e
-out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --max-duration-seconds 30 2>&1)
+# Keep worker events so the restore round-trip below can verify event moves.
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES=0 \
+	"$HELPER" archive --max-duration-seconds 30 2>&1)
 rc=$?
 set -e
 
@@ -636,6 +638,41 @@ if [[ "$rc" -eq 4 ]]; then
 	_pass "restore reports exit 4 for sessions absent from the archive"
 else
 	_fail "restore of missing session returned rc=${rc}, expected 4"
+fi
+
+# GH#38491: terminated worker sessions lose only their active-DB events after
+# the inactivity window; recent workers and interactive sessions keep theirs.
+_reset_dbs
+now_seconds=$(date +%s)
+dead_ms=$(((now_seconds - 2 * 3600) * 1000))
+live_ms=$(((now_seconds - 5 * 60) * 1000))
+_make_active_db_with_sessions "worker_dead,${dead_ms}
+worker_dead_child,${dead_ms}
+worker_live,${live_ms}
+interactive_old,${dead_ms}"
+sqlite3 "$ACTIVE_DB" "INSERT INTO event VALUES ('evt-worker_dead-2', 'worker_dead', 2, 'message.updated.1', '{}');"
+sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "INSERT OR IGNORE INTO worker_sessions (session_id) VALUES ('worker_dead'), ('worker_dead_child'), ('worker_live');"
+transcript_before=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	"$HELPER" archive --worker-events-only --dry-run 2>&1) || true
+if [[ "$out" == *"would expire 3 active-DB events of 2 terminated worker session(s)"* &&
+	"$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM event;')" == 5 ]]; then
+	_pass "worker event expiry dry run reports terminated worker events without deleting"
+else
+	_fail "worker event expiry dry run mismatch: $out"
+fi
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_BYTES=1 "$HELPER" archive --worker-events-only 2>&1)
+rc=$?
+set -e
+remaining_events=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
+transcript_after=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
+if [[ "$rc" -eq 0 && "$out" == *"expired 3 active-DB events"* && "$remaining_events" == "interactive_old,worker_live" &&
+	"$transcript_before" == "$transcript_after" && ! -e "$ARCHIVE_DB" ]]; then
+	_pass "worker event expiry keeps transcripts, live workers and interactive sessions"
+else
+	_fail "worker event expiry mismatch: rc=$rc events=$remaining_events transcript=$transcript_before->$transcript_after output=$out"
 fi
 rm -f "$OPENCODE_DB_HEADLESS_LEDGER"
 
@@ -1172,18 +1209,20 @@ else
 	_fail "async deferred terminal status mismatch: rc=$rc log=$async_log"
 fi
 
-# A complete pass today makes later hourly invocations no-ops (GH#35517).
+# A complete pass today limits later hourly invocations to the worker event
+# expiry (GH#35517, GH#38491); that pass never counts as a full-pass deferral.
 date +%s >"$async_home/.aidevops/logs/opencode-db-archive.last-run"
 set +e
 HOME="$async_home" OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_INTERACTIVE_ROOT="$SANDBOX/no-projects" \
-	bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
+	OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 bash "$SCRIPT_DIR/../opencode-db-archive-async-helper.sh"
 rc=$?
 set -e
 async_log=$(<"$async_home/.aidevops/logs/opencode-db-archive.log")
-if [[ "$rc" -eq 0 && "$async_log" == *"Full pass already completed today"* ]]; then
-	_pass "async runner skips after a complete pass today"
+if [[ "$rc" -eq 0 && "$async_log" == *"running worker event expiry only"* && "$async_log" == *"Worker event expiry finished rc="* &&
+	"$(<"$async_home/.aidevops/logs/opencode-db-archive.deferrals")" == 1 ]]; then
+	_pass "async runner only expires worker events after a complete pass today"
 else
-	_fail "async completed-today skip mismatch: rc=$rc"
+	_fail "async completed-today worker pass mismatch: rc=$rc log=$async_log"
 fi
 
 # --- GH#35517 idle gate: archive DBs held only by idle OpenCode processes ---

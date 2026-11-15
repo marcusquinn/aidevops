@@ -282,6 +282,21 @@ _record_deferral() {
 	return 0
 }
 
+# GH#38491: after today's full pass, the hourly timer still expires event rows
+# of terminated worker sessions (one 10 GiB worker took under a day), so dead
+# worker events never wait for the next day or the 7-day worker retention.
+# Deferrals here are expected and do not count toward the full-pass escalation.
+_run_worker_event_pass() {
+	local rc=0
+	echo "[opencode-db-archive-async] Full pass already completed today — running worker event expiry only (OPENCODE_DB_ARCHIVE_FORCE=1 forces a full pass)" >>"$LOGFILE"
+	"$ARCHIVE_HELPER" archive-all --worker-events-only --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 &
+	_ARCHIVE_CHILD_PID=$!
+	wait "$_ARCHIVE_CHILD_PID" || rc=$?
+	_ARCHIVE_CHILD_PID=""
+	echo "[opencode-db-archive-async] Worker event expiry finished rc=${rc} (0=complete, 2=deferred)" >>"$LOGFILE"
+	return 0
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -295,13 +310,16 @@ main() {
 		return 0
 	fi
 
-	if _completed_today; then
-		echo "[opencode-db-archive-async] Full pass already completed today — skipping (OPENCODE_DB_ARCHIVE_FORCE=1 overrides)" >>"$LOGFILE"
-		return 0
-	fi
+	local completed=0
+	_completed_today && completed=1
 
 	if ! _lock_acquire; then
 		echo "[opencode-db-archive-async] ${_LOCK_SKIP_REASON:-Lock unavailable} — skipping this invocation" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ "$completed" -eq 1 ]]; then
+		_run_worker_event_pass
 		return 0
 	fi
 
