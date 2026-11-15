@@ -14,7 +14,10 @@
 #   4. stops idle TUIs gracefully (SIGTERM) and records a restart manifest;
 #   5. after maintenance, restores the session from opencode-archive.db when it
 #      was archived (GH#38431), then relaunches `opencode -s <id>` in the
-#      original tmux/screen pane, or leaves a resume command for bare-TTY sessions.
+#      original tmux/screen pane, reopens it in the same Tabby tab (the
+#      `--tabby-shell` launcher waits on a hold file), or in a new tab of the
+#      project's Tabby profile when that tab is gone, else leaves a resume
+#      command for bare-TTY sessions.
 #
 # Authority: stopping is opt-in. A terminal operator confirms (or passes
 # --yes). Without a terminal (scheduler, headless agent) the helper only
@@ -25,6 +28,7 @@
 #   stop [options]                   Checkpoint request → wait idle → SIGTERM idle TUIs → manifest
 #   resume                           Relaunch stopped sessions from the manifest
 #   open <session-id> [--dir PATH]   Restore an archived session, then run opencode -s
+#   tabby-open <session-id> [--dir PATH]  Reopen a stopped session in its Tabby profile tab
 #   run [options] -- <command…>      stop, run the command, then always resume
 #   notify [--reason <text>]         Session-bus note to holders (throttled, never stops)
 #   notice                           One session-start line for sessions awaiting manual resume
@@ -52,6 +56,10 @@ fi
 readonly RESTART_STATE_DIR="${OPENCODE_RESTART_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/work/opencode-session-restart}"
 readonly RESTART_MANIFEST="${RESTART_STATE_DIR}/manifest.json"
 readonly RESTART_NOTIFIED_DIR="${RESTART_STATE_DIR}/notified"
+# Hold files named after the opencode-launcher-helper.sh PID of a Tabby tab;
+# the launcher reopens the session in place when the hold is released.
+readonly RESTART_TABBY_HOLD_DIR="${RESTART_STATE_DIR}/tabby-holds"
+readonly RESTART_TABBY_RECOVERY_DIR="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}/opencode-tabby-recovery"
 readonly RESTART_PRESENCE_DIR="${AIDEVOPS_SESSION_BUS_DIR:-${HOME}/.aidevops/.agent-workspace/state/session-bus}/presence"
 readonly RESTART_DB="${OPENCODE_DB_PATH:-${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db}"
 readonly RESTART_HOST_CONF="${OPENCODE_RESTART_HOST_CONF:-${XDG_CONFIG_HOME:-${HOME}/.config}/aidevops/opencode-session-restart.conf}"
@@ -75,6 +83,8 @@ readonly SEP=$'\x1f'
 : "${OPENCODE_RESTART_SESSION_BUS_HELPER:=${SCRIPT_DIR}/session-bus-helper.sh}"
 : "${OPENCODE_RESTART_PS:=ps}"
 : "${OPENCODE_RESTART_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
+: "${OPENCODE_RESTART_TABBY_BIN:=}"         # Tabby CLI; default: macOS app binary, else `tabby` on PATH
+: "${OPENCODE_RESTART_RELAUNCH_TIMEOUT:=30}" # seconds to wait for a relaunched Tabby session
 
 # -----------------------------------------------------------------------------
 # Process facts
@@ -639,11 +649,46 @@ _adopt_continue_session() {
 	return 0
 }
 
+# _tabby_launcher_pid <pid> — print the parent PID when the TUI runs as a
+# child of opencode-launcher-helper.sh, which only happens in Tabby
+# (--tabby-shell) mode; every other launch path execs OpenCode directly.
+_tabby_launcher_pid() {
+	local pid="$1"
+	local ppid=""
+	ppid=$("$OPENCODE_RESTART_PS" -o ppid= -p "$pid" 2>/dev/null || true)
+	ppid="${ppid//[[:space:]]/}"
+	[[ "$ppid" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$(_pid_args "$ppid")" == *opencode-launcher-helper.sh* ]] || return 1
+	printf '%s' "$ppid"
+	return 0
+}
+
+_tabby_hold_file() {
+	local launcher="$1"
+	printf '%s/%s' "$RESTART_TABBY_HOLD_DIR" "$launcher"
+	return 0
+}
+
+# _tabby_write_hold <launcher-pid> <sid> <state> — key=value lines read by
+# opencode-launcher-helper.sh (read_tabby_hold_field).
+_tabby_write_hold() {
+	local launcher="$1"
+	local sid="$2"
+	local state="$3"
+	local file tmp
+	file=$(_tabby_hold_file "$launcher")
+	(umask 077 && mkdir -p "$RESTART_TABBY_HOLD_DIR") || return 1
+	tmp="${file}.tmp.$$"
+	(umask 077 && printf 'session_id=%s\nstate=%s\ncreated=%s\n' "$sid" "$state" "$(date +%s)" >"$tmp") || return 1
+	mv -f "$tmp" "$file"
+	return $?
+}
+
 # _stop_one <row> <reason> — record the manifest entry, signal, confirm exit.
 _stop_one() {
 	local row="$1"
 	local reason="$2"
-	local pid sid status cwd last token source age kind target socket entry msid
+	local pid sid status cwd last token source age kind target socket entry msid launcher=""
 	IFS="$SEP" read -r pid sid status cwd last token source age kind target socket <<<"$row"
 	msid="$sid"
 	[[ "$sid" != unknown ]] || msid="unknown-${pid}"
@@ -651,12 +696,26 @@ _stop_one() {
 		print_warning "Session ${sid}: PID ${pid} changed before stop; skipped"
 		return 1
 	fi
+	# A Tabby tab's launcher waits for the hold release and reopens the session
+	# in the same tab, keeping its profile name and colour (bare TTYs cannot).
+	if [[ "$kind" == tty && "$sid" =~ ^ses_ ]] && launcher=$(_tabby_launcher_pid "$pid"); then
+		if _tabby_write_hold "$launcher" "$sid" hold; then
+			kind=tabby
+			target="$launcher"
+		else
+			launcher=""
+		fi
+	fi
 	entry=$(jq -nc --arg sid "$msid" --argjson pid "$pid" --arg cwd "$cwd" --arg kind "$kind" --arg pane "$target" \
 		--arg socket "$socket" --arg argv "$(_pid_args "$pid")" --arg resume "$(_resume_command "$cwd" "$sid")" \
 		--arg reason "$reason" --argjson now "$(date +%s)" --argjson age "$(_uint_or "$age" 0)" \
 		'{session_id: $sid, pid: $pid, cwd: $cwd, pane_kind: $kind, pane: $pane, pane_socket: $socket, argv: $argv,
 		  resume_command: $resume, reason: $reason, age_seconds: $age, stopped_epoch: $now, updated_epoch: $now, status: "stopping"}')
-	_manifest_put "$entry" || { print_error "Cannot write restart manifest; not stopping ${sid}"; return 1; }
+	if ! _manifest_put "$entry"; then
+		[[ -z "$launcher" ]] || rm -f "$(_tabby_hold_file "$launcher")"
+		print_error "Cannot write restart manifest; not stopping ${sid}"
+		return 1
+	fi
 	local before=0
 	if [[ "$sid" == unknown && "$kind" == tmux && "$target" =~ ^%[0-9]+$ ]]; then
 		before=$(_continue_matches "$target" "$socket" | awk 'NF' | wc -l | tr -d ' ')
@@ -674,6 +733,8 @@ _stop_one() {
 		print_success "Stopped idle session ${sid} (PID ${pid}, ${kind}${target:+ ${target}})"
 		return 0
 	fi
+	# A TUI that outlives the signal must not later park its tab on a hold.
+	[[ -z "$launcher" ]] || rm -f "$(_tabby_hold_file "$launcher")"
 	_manifest_set_status "$msid" stop_failed
 	print_warning "Session ${sid} (PID ${pid}) still running ${OPENCODE_RESTART_EXIT_TIMEOUT}s after SIG${OPENCODE_RESTART_SIGNAL}; left running"
 	return 1
@@ -831,6 +892,101 @@ _tmux() {
 	return $?
 }
 
+# _session_running <sid> — presence record or an interactive `--session <sid>` TUI.
+_session_running() {
+	local sid="$1"
+	_session_live "$sid" && return 0
+	"$OPENCODE_RESTART_PS" -axo args= 2>/dev/null |
+		awk -v want="$sid" '
+			{ n = split($0, a, " "); b = a[1]; sub(/.*\//, "", b) }
+			b != "opencode" && b != ".opencode" { next }
+			{ for (i = 2; i < n; i++) if ((a[i] == "--session" || a[i] == "-s") && a[i + 1] == want) { found = 1; exit } }
+			END { exit found ? 0 : 1 }'
+	return $?
+}
+
+_wait_session_running() {
+	local sid="$1"
+	local waited=0
+	while [[ "$waited" -lt "$OPENCODE_RESTART_RELAUNCH_TIMEOUT" ]]; do
+		_session_running "$sid" && return 0
+		sleep 1
+		waited=$((waited + 1))
+	done
+	_session_running "$sid"
+	return $?
+}
+
+_tabby_bin() {
+	local candidate="$OPENCODE_RESTART_TABBY_BIN"
+	if [[ -z "$candidate" ]]; then
+		candidate="/Applications/Tabby.app/Contents/MacOS/Tabby"
+		[[ -x "$candidate" ]] || candidate=$(command -v tabby 2>/dev/null || true)
+	fi
+	[[ -n "$candidate" && -x "$candidate" ]] || return 1
+	printf '%s' "$candidate"
+	return 0
+}
+
+# _tabby_open_session <sid> <cwd> — open the session in a new tab of the
+# project's Tabby profile, so it keeps the profile's name and colours. Tabby's
+# CLI cannot pass a directory or command to a profile, so a short-lived claim
+# tells the profile's `aidevops opencode --tabby-shell` launch which recovery
+# marker to resume (opencode-launcher-helper.sh consume_tabby_launch_claim).
+_tabby_open_session() {
+	local sid="$1"
+	local cwd="$2"
+	local tabby py lookup name profile_dir claims claim
+	[[ "$sid" =~ ^ses_[A-Za-z0-9]{1,120}$ ]] || return 1
+	[[ -f "${RESTART_TABBY_RECOVERY_DIR}/${sid}/recovery.json" ]] || return 1
+	tabby=$(_tabby_bin) || return 1
+	# shellcheck source=tabby-python-lib.sh
+	source "${SCRIPT_DIR}/tabby-python-lib.sh" || return 1
+	py=$(tabby_python) || return 1
+	lookup=$("$py" "${SCRIPT_DIR}/tabby_session_resume.py" profile-for --dir "$cwd" 2>/dev/null) || return 1
+	IFS=$'\t' read -r name profile_dir <<<"$lookup"
+	[[ -n "$name" && "$profile_dir" == /* ]] || return 1
+	claims="${RESTART_TABBY_RECOVERY_DIR}/launch-claims"
+	(umask 077 && mkdir -p "$claims") || return 1
+	claim="${claims}/$(date +%s)-${sid}.claim"
+	(umask 077 && printf 'session_id=%s\ndirectory=%s\ncreated=%s\n' "$sid" "$profile_dir" "$(date +%s)" >"${claim}.tmp") || return 1
+	mv -f "${claim}.tmp" "$claim" || return 1
+	if "$tabby" profile "$name" >/dev/null 2>&1 && _wait_session_running "$sid"; then
+		rm -f "$claim"
+		return 0
+	fi
+	rm -f "$claim"
+	return 1
+}
+
+# _tabby_resume <sid> <launcher-pid> <cwd> — print the new status: release the
+# hold for a launcher still waiting in its tab, else reopen in a profile tab.
+_tabby_resume() {
+	local sid="$1"
+	local launcher="$2"
+	local cwd="$3"
+	local hold=""
+	[[ "$launcher" =~ ^[1-9][0-9]*$ ]] && hold=$(_tabby_hold_file "$launcher")
+	if [[ -n "$hold" && -f "$hold" ]] && _pid_alive "$launcher" &&
+		[[ "$(_pid_args "$launcher")" == *opencode-launcher-helper.sh* ]]; then
+		if _tabby_write_hold "$launcher" "$sid" release && _wait_session_running "$sid"; then
+			printf 'resumed'
+		else
+			printf 'pending_manual'
+		fi
+		return 0
+	fi
+	[[ -z "$hold" ]] || rm -f "$hold"
+	# The tab is gone. A live launcher without a hold means the user chose a
+	# shell in that tab (Ctrl-C); do not open a second tab behind their back.
+	if ! { [[ -n "$launcher" ]] && _pid_alive "$launcher"; } && _tabby_open_session "$sid" "$cwd"; then
+		printf 'resumed'
+		return 0
+	fi
+	printf 'pending_manual'
+	return 0
+}
+
 # _relaunch_entry <entry-json> — print the new status for one manifest entry.
 _relaunch_entry() {
 	local entry="$1"
@@ -845,6 +1001,10 @@ _relaunch_entry() {
 		return 0
 	fi
 	case "$kind" in
+	tabby)
+		_tabby_resume "$sid" "$pane" "$(jq -r '.cwd // ""' <<<"$entry")"
+		return 0
+		;;
 	tmux)
 		# Only type into a pane that is back at a shell prompt.
 		pane_cmd=$(_tmux "$socket" display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || true)
@@ -937,6 +1097,43 @@ cmd_open() {
 	return 1
 }
 
+# cmd_tabby_open <session-id> [--dir PATH] — reopen a stopped session in a new
+# tab of its project's Tabby profile (name and colours kept). The directory
+# defaults to the session's recovery marker; the session must not be running.
+cmd_tabby_open() {
+	local sid="" dir=""
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--dir) dir="${2:-}"; [[ -n "$dir" ]] || { print_error "--dir requires a path"; return 1; }; shift 2 ;;
+		-*) print_error "Unknown tabby-open option: $arg"; return 1 ;;
+		*) [[ -z "$sid" ]] || { print_error "tabby-open takes one session id"; return 1; }; sid="$arg"; shift ;;
+		esac
+	done
+	if [[ ! "$sid" =~ ^ses_[A-Za-z0-9]{1,120}$ ]]; then
+		print_error "tabby-open requires an OpenCode session id (ses_...)"
+		return 1
+	fi
+	if _session_running "$sid"; then
+		print_error "Session ${sid} is already running; close its tab first"
+		return 1
+	fi
+	if [[ -z "$dir" ]]; then
+		dir=$(jq -r '.directory // empty' "${RESTART_TABBY_RECOVERY_DIR}/${sid}/recovery.json" 2>/dev/null || true)
+	fi
+	[[ "$dir" == /* ]] || { print_error "No Tabby recovery marker for ${sid}; pass --dir"; return 1; }
+	_restore_archived_session "$sid"
+	if ! _tabby_open_session "$sid" "$dir"; then
+		print_error "Could not reopen ${sid} in a Tabby profile tab (needs Tabby, a unique aidevops OpenCode profile for ${dir}, and the session's recovery marker)"
+		return 1
+	fi
+	if [[ -f "$RESTART_MANIFEST" ]] && jq -e --arg s "$sid" '.entries[]? | select(.session_id == $s)' "$RESTART_MANIFEST" >/dev/null 2>&1; then
+		_manifest_set_status "$sid" resumed || true
+	fi
+	print_success "Session ${sid}: reopened in its Tabby profile tab"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # run / notify / notice
 # -----------------------------------------------------------------------------
@@ -1018,7 +1215,7 @@ cmd_notice() {
 }
 
 cmd_help() {
-	sed -n '5,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '5,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	cat <<EOF
 
 Options (stop/run): --yes  --all (every live TUI, not only active-DB holders)
@@ -1030,6 +1227,8 @@ Environment:
   OPENCODE_RESTART_EXIT_TIMEOUT  exit wait after the signal (default 30)
   OPENCODE_RESTART_SIGNAL        stop signal (default TERM; never escalates)
   OPENCODE_RESTART_STATE_DIR     manifest directory
+  OPENCODE_RESTART_TABBY_BIN     Tabby CLI used to reopen a closed tab's profile
+  OPENCODE_RESTART_RELAUNCH_TIMEOUT  wait for a Tabby relaunch (default 30)
   OPENCODE_RESTART_ALLOW_UNATTENDED=1 or allow_unattended=true in
   ${RESTART_HOST_CONF}
                                  lets non-terminal runs with --yes stop sessions
@@ -1051,6 +1250,7 @@ main() {
 	stop) cmd_stop "$@" ;;
 	resume) cmd_resume "$@" ;;
 	open) cmd_open "$@" ;;
+	tabby-open) cmd_tabby_open "$@" ;;
 	run) cmd_run "$@" ;;
 	notify) cmd_notify "$@" ;;
 	notice) cmd_notice "$@" ;;

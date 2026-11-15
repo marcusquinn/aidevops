@@ -110,6 +110,26 @@ Command-string shells (`-c`), including managed profiles, skip the guard so
 they can still restore the session. Set `AIDEVOPS_TABBY_MARKER_GUARD=0` to opt
 out.
 
+### Maintenance restarts
+
+`aidevops opencode-db maintenance-window --restart-interactive`
+(`opencode-session-restart-helper.sh`) stops idle TUIs. Under `--tabby-shell`
+the TUI is a child of the launcher, so the helper writes a hold file named
+after the launcher PID (`opencode-session-restart/tabby-holds/<pid>`) before
+the stop. The launcher waits in the same tab and, once `resume` releases the
+hold, reopens `opencode --session <id>`, keeping the tab's profile name,
+colour and position. Ctrl-C while waiting leaves a shell instead.
+
+When the tab is gone, `resume` (or `opencode-session-restart-helper.sh
+tabby-open <ses_id>`) opens a new tab with `Tabby profile <name>`. Tabby's CLI
+cannot pass a directory or command, and it does not reload an externally
+edited `config.yaml`, so the helper finds the unique aidevops OpenCode profile
+for the session's directory (`tabby_session_resume.py`) and writes a
+short-lived claim under `opencode-tabby-recovery/launch-claims/`. The first
+`--tabby-shell` launch in that profile directory takes the claim and resumes
+the claimed marker with the normal validation. `Tabby run` would also resume
+the session, but in an anonymous tab without the profile name or colours.
+
 ## OpenCode V2 (`opencode2`)
 
 V2 server plugins run in the tty-less background service, so the V2 TUI plugin
