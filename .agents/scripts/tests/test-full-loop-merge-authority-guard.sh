@@ -87,6 +87,7 @@ load_functions() {
 	extract_function _merge_linked_cross_repo_references
 	extract_function _merge_issue_requires_maintainer_review
 	extract_function _merge_author_has_write_authority
+	extract_function _flm_merge_read_timeout
 	extract_function _merge_is_trusted_issue_sync_pr
 	extract_function _merge_collect_linked_issue_authority_gaps
 	extract_function _merge_report_author_lookup_failure
@@ -1204,12 +1205,15 @@ test_slow_gate_admission_reads() {
 		result=0
 		(
 			extract_function _flm_gh_read
+			extract_function _flm_merge_read_timeout
 			extract_function _flm_gh_read_once
 			extract_function _merge_with_admission_retry
 			# shellcheck source=/dev/null
 			source "$EXTRACTED"
 			local calls=0 reads=0 waits=0 elapsed=0 rc=0
-			unset AIDEVOPS_GH_READ_TIMEOUT
+			# GH#38535: the sourced generic default stays present in production.
+			AIDEVOPS_GH_READ_TIMEOUT=15
+			unset AIDEVOPS_MERGE_GH_READ_TIMEOUT
 			AIDEVOPS_MERGE_ADMISSION_BUDGET_SECONDS=60
 			date() {
 				printf '%s\n' "$((1000 + elapsed))"

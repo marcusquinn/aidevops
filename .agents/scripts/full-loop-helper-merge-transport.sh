@@ -39,9 +39,31 @@ _flm_gh_read() {
 	return $?
 }
 
+# GH#38535: print the merge read transport timeout. shared-gh-wrappers.sh
+# assigns the generic 15s default when sourced, so a `${AIDEVOPS_GH_READ_TIMEOUT:-60}`
+# fallback never fired in production and transport pacing (up to 10s inside
+# the read timeout) left paced merge reads ~5s for HTTP. An explicit
+# AIDEVOPS_MERGE_GH_READ_TIMEOUT wins; otherwise use 60s or a larger generic value.
+_flm_merge_read_timeout() {
+	local merge_timeout="${AIDEVOPS_MERGE_GH_READ_TIMEOUT:-}"
+	local generic_timeout="${AIDEVOPS_GH_READ_TIMEOUT:-}"
+	if [[ "$merge_timeout" =~ ^[1-9][0-9]{0,3}$ ]]; then
+		printf '%s\n' "$merge_timeout"
+		return 0
+	fi
+	merge_timeout=60
+	if [[ "$generic_timeout" =~ ^[1-9][0-9]{0,3}$ && "$generic_timeout" -gt "$merge_timeout" ]]; then
+		merge_timeout="$generic_timeout"
+	fi
+	printf '%s\n' "$merge_timeout"
+	return 0
+}
+
 _flm_gh_read_once() {
-	local rc=0
-	local AIDEVOPS_GH_READ_TIMEOUT="${AIDEVOPS_GH_READ_TIMEOUT:-60}"
+	local rc=0 merge_read_timeout=""
+	# Resolve before the local declaration shadows the generic value.
+	merge_read_timeout=$(_flm_merge_read_timeout)
+	local AIDEVOPS_GH_READ_TIMEOUT="$merge_read_timeout"
 	# A fresh read keeps its transport timeout, even after a slow healthy gate.
 	# The admission deadline bounds recovery waiting, not transport attempts.
 	export AIDEVOPS_GH_READ_TIMEOUT
