@@ -70,7 +70,25 @@ def prepare_retirement(
     prepared = prepare_cleanup(store, path)
     if prepared["status"] == "registered-runs-ended" and creation is None:
         evidence = recovery_evidence(store, path, generation)
+        event_id = str(uuid5(UUID(generation), "retirement-recovered"))
         with store.connection(write=True) as connection:
-            store._event(connection, str(uuid5(UUID(generation),
-                         "retirement-recovered")), evidence)
+            stored = connection.execute(
+                "SELECT payload FROM events WHERE event_id=?", (event_id,),
+            ).fetchone()
+            # The stored evidence already authorized this exact tree; a later
+            # proof kind (legacy confirmation, then Reclaim) is not a conflict.
+            if stored is None or not _same_tree(json.loads(stored["payload"]), evidence):
+                store._event(connection, event_id, evidence)
     return prepared
+
+
+# Which never-owned authorization was current; the rest identifies the tree.
+_PROOF_KEYS = frozenset({"authorization", "operator_confirmed"})
+
+
+def _same_tree(stored: object, evidence: dict) -> bool:
+    """True when two recovery records differ at most in their proof kind (GH#38417)."""
+    if not isinstance(stored, dict):
+        return False
+    return ({key: value for key, value in stored.items() if key not in _PROOF_KEYS}
+            == {key: value for key, value in evidence.items() if key not in _PROOF_KEYS})

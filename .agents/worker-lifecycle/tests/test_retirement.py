@@ -29,7 +29,7 @@ from worker_lifecycle.reclaim import unowned
 from worker_lifecycle.reclaim.unowned import (
     UNOWNED_AUTHORIZED, authorize as authorize_unowned, unowned_authorized, unowned_event_id,
 )
-from worker_lifecycle.recovery import recovery_evidence
+from worker_lifecycle.recovery import prepare_retirement, recovery_evidence
 from worker_lifecycle.refusal import refusal_code
 from worker_lifecycle.retirement_proof import verify_retirement
 from worker_lifecycle.runtime import adapter_for
@@ -1019,6 +1019,43 @@ class RetirementContract(unittest.TestCase):
                                (json.dumps(dict(event, fingerprint="")),
                                 unowned_event_id(generation)))
         self.assertFalse(unowned_authorized(self.store, generation))
+
+    def test_reclaim_unowned_refused_replay_names_standing_authorization(self):
+        """A crash after authorization, then an edit: the refusal must not imply the tree is kept."""
+        generation = self.unowned_fixture()
+        self.assertIsNone(authorize_unowned(self.store, self.target, generation, []))
+        (self.target / "after-crash.txt").write_text("edit")
+        result = self.reclaim()
+        self.assertEqual((result["status"], result["reason"], result.get("standing_authorization")),
+                         ("reclaim-refused", "uncommitted-changes", True), result)
+        self.assertEqual(self.admission_state(generation), "closed")
+        self.assertTrue(self.target.exists())
+        # A first refusal has no standing authorization to report.
+        self.target = self.root / "fresh tree"
+        fresh = self.unowned_fixture()
+        (self.target / "untracked.txt").write_text("keep")
+        self.assertNotIn("standing_authorization", self.reclaim())
+        self.assertEqual(self.admission_state(fresh), "open")
+
+    def test_legacy_recovery_evidence_does_not_block_reclaim(self):
+        """A legacy recovery record for the same tree is reused, not a conflict."""
+        generation = self.unowned_fixture()
+        self.assertIsNone(authorize_unowned(self.store, self.target, generation, []))
+        evidence = recovery_evidence(self.store, self.target, generation)
+        legacy = {key: value for key, value in evidence.items() if key != "authorization"}
+        legacy["operator_confirmed"] = True
+        recovered = retirement._event_id(generation, "recovered")
+        with self.store.connection(write=True) as connection:
+            self.store._event(connection, recovered, legacy)
+        prepared = prepare_retirement(self.store, self.target, generation, True)
+        self.assertEqual(prepared["status"], "registered-runs-ended")
+        self.assertEqual(retirement._event(self.store, recovered), legacy)
+        # A record for a different tree still conflicts.
+        with self.store.connection(write=True) as connection:
+            connection.execute("UPDATE events SET payload=? WHERE event_id=?",
+                               (json.dumps(dict(legacy, directory_identity=[0, 0])), recovered))
+        with self.assertRaises(StoreConflict):
+            prepare_retirement(self.store, self.target, generation, True)
 
     def test_reclaim_unowned_refuses_any_admitted_run(self):
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
