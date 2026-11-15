@@ -786,6 +786,11 @@ wait_for_checks() {
 		if [[ -n "$draft_since" && "$interval" -gt $((draft_window - (now_epoch - draft_since))) ]]; then
 			interval=$((draft_window - (now_epoch - draft_since)))
 		fi
+		# t19011: --timeout is a wall-clock bound for callers under a quiet-output
+		# watchdog; never sleep past it (an uncapped sleep overshot 220s to 248s).
+		if [[ "$interval" -gt $((timeout - elapsed)) ]]; then
+			interval=$((timeout - elapsed))
+		fi
 		poll_sleep "$interval"
 	done
 }

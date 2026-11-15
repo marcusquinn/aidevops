@@ -241,7 +241,9 @@ test_post_pr_handoff_is_bounded_and_safe() {
 
 	if [[ "$output" == *"PR is non-draft"* ]] && \
 		[[ "$output" == *"equals the PR headRefOid"* ]] && \
-		[[ "$output" == *"immediate state check"* ]] && \
+		[[ "$output" == *"wait-checks \"\$PR_NUMBER\" --repo \"\$WORKER_REPO_SLUG\" --timeout 200\`, at most 8 times"* ]] && \
+		[[ "$output" == *"Never wait or poll for human review or approval"* ]] && \
+		[[ "$output" == *"never use \`sleep\` loops"* ]] && \
 		[[ "$output" == *"never bypass, disable, or weaken branch protection, approval, review-bot, CI, or security gates"* ]] && \
 		[[ "$output" != *"Continue through review polling"* ]] && \
 		[[ "$output" != *"Prefer short poll intervals"* ]]; then

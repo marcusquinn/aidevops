@@ -61,7 +61,7 @@ _cleanup_reclaim_finished_worktrees() {
 	local state_dir="$1"
 	local python="$2"
 	local budget="$3"
-	local result="" removed="" refused="" failed="" reclaimed=""
+	local result="" removed="" refused="" failed="" reclaimed="" deferred="" resume=""
 	# Owners come from the lifecycle registry, never a host process scan.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
 		--state-dir "$state_dir" --apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
@@ -72,9 +72,12 @@ _cleanup_reclaim_finished_worktrees() {
 	refused=$(jq -er '.refused | numbers' <<<"$result") || return 0
 	failed=$(jq -er '.failed | numbers' <<<"$result") || return 0
 	reclaimed=$(jq -er '(.reclaimed_bytes / 1048576 | floor) | numbers' <<<"$result") || return 0
+	# Trees deferred for repeat unreadable state, and where a stopped pass resumes (GH#38376).
+	deferred=$(jq -r '.quarantine_deferred // 0' <<<"$result") || deferred=0
+	resume=$(jq -r '.resume_after // ""' <<<"$result") || resume=""
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + removed))
-	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s refused=%s failed=%s reclaimed_mib=%s\n' \
-		"$removed" "$refused" "$failed" "$reclaimed" >>"$LOGFILE"
+	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s refused=%s failed=%s deferred=%s resume_after=%s reclaimed_mib=%s\n' \
+		"$removed" "$refused" "$failed" "$deferred" "${resume:-none}" "$reclaimed" >>"$LOGFILE"
 	return 0
 }
 

@@ -22,6 +22,7 @@ if not GIT:
 from worker_lifecycle.reclaim import decision  # noqa: E402
 from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
 from worker_lifecycle.reclaim import host  # noqa: E402
+from worker_lifecycle.reclaim import progress  # noqa: E402
 from worker_lifecycle.reclaim import review  # noqa: E402
 from worker_lifecycle.reclaim import sweep as reclaim  # noqa: E402
 from worker_lifecycle.storage import LifecycleRegistry  # noqa: E402
@@ -501,6 +502,128 @@ class DecisionTests(GitFixture):
         # Archived event IDs keep replay idempotent through the digest tombstone.
         self.assertIsNone(decision.record(self.store, decision.REMOVED, verdict,
                                           verdict["fingerprint"]))
+
+
+class ProgressTests(GitFixture):
+    """Scan cursor and repeat-unreadable backoff across passes (GH#38376)."""
+
+    def setUp(self):
+        super().setUp()
+        self.state = Path(tempfile.mkdtemp(prefix="reclaim-state-")).resolve()
+        self.addCleanup(shutil.rmtree, self.state, ignore_errors=True)
+        self.quarantine = progress.open_quarantine(self.state)
+
+    def a_pass(self, owner, *, apply_removal=True, limit=0):
+        return reclaim.Pass(owner=owner, apply_removal=apply_removal, limit=limit,
+                            deadline=time.monotonic() + 120, finished=dict(self.finished),
+                            quarantine=self.quarantine)
+
+    def judge_once(self, owner, **options):
+        receipt = reclaim.new_receipt(self.root, dry_run=not options.get("apply_removal", True))
+        reclaim.reclaim_one(self.worktree, self.a_pass(owner, **options), receipt)
+        return receipt["results"][0]
+
+    def test_rotation_resumes_after_the_cursor_and_wraps(self):
+        paths = [Path(name) for name in ("c", "a", "d", "b")]
+        self.assertEqual([p.name for p in progress.ordered(paths, "")], ["a", "b", "c", "d"])
+        self.assertEqual([p.name for p in progress.ordered(paths, "b")], ["c", "d", "a", "b"])
+        self.assertEqual([p.name for p in progress.ordered(paths, "z")], ["a", "b", "c", "d"])
+
+    def test_cursor_round_trips_and_rejects_anything_but_a_name(self):
+        self.assertEqual(progress.read_cursor(self.state), "")
+        self.assertTrue(progress.write_cursor(self.state, "repo-gh4242"))
+        self.assertEqual(progress.read_cursor(self.state), "repo-gh4242")
+        for hostile in ("../escape", "..", 7, ""):
+            (self.state / progress.CURSOR_NAME).write_text(json.dumps({"after": hostile}),
+                                                          encoding="utf-8")
+            self.assertEqual(progress.read_cursor(self.state), "", hostile)
+        (self.state / progress.CURSOR_NAME).write_text("not json", encoding="utf-8")
+        self.assertEqual(progress.read_cursor(self.state), "")
+        self.assertTrue(progress.write_cursor(self.state, "kept"))
+        os.chmod(self.state / progress.CURSOR_NAME, 0o644)
+        # A cursor anyone could have written is ignored, never followed.
+        self.assertEqual(progress.read_cursor(self.state), "")
+
+    def test_repeat_unreadable_refusal_is_deferred_and_readable_state_clears_it(self):
+        unreadable = owner_reporting("owner-registry-unreadable")
+        first = self.judge_once(unreadable)
+        self.assertNotIn("quarantined", first)
+        self.assertFalse(self.quarantine.deferred(str(self.worktree)))
+        second = self.judge_once(unreadable)
+        self.assertTrue(second["quarantined"])
+        self.assertTrue(self.quarantine.deferred(str(self.worktree)))
+        receipt = reclaim.new_receipt(self.root, dry_run=False)
+        seen = list(reclaim.candidates([self.worktree], self.a_pass(unreadable, limit=1),
+                                       receipt))
+        self.assertEqual((seen, receipt["quarantine_deferred"], receipt["scanned"]), ([], 1, 0))
+        # Once readable again, the tree is judged normally and its entry is dropped.
+        self.quarantine.entries[str(self.worktree)]["until"] = 0
+        self.judge_once(owner_reporting("owner-alive"))
+        self.assertNotIn(str(self.worktree), self.quarantine.entries)
+
+    def test_pass_wide_and_network_refusals_are_never_deferred(self):
+        for _ in range(3):
+            self.judge_once(None)  # owner-observation-unavailable
+            self.finished = {("gh", 4242, SLUG): (False, "issue-4242-none")}
+            self.judge_once(no_owner)
+        self.assertEqual(self.quarantine.entries, {})
+
+    def test_dry_run_records_no_backoff(self):
+        for _ in range(3):
+            self.judge_once(owner_reporting("owner-unobservable"), apply_removal=False)
+        self.assertEqual(self.quarantine.entries, {})
+
+    def test_stopped_pass_names_its_resume_point_and_full_pass_clears_it(self):
+        paths = [self.worktree, self.add_worktree("repo-gh4243")]
+        receipt = reclaim.new_receipt(self.root, dry_run=True)
+        self.assertEqual(list(reclaim.candidates(paths, self.a_pass(None, limit=1), receipt)),
+                         paths[:1])
+        self.assertEqual(receipt["resume_after"], "repo-gh4242")
+        receipt = reclaim.new_receipt(self.root, dry_run=True)
+        self.assertEqual(list(reclaim.candidates(paths, self.a_pass(None), receipt)), paths)
+        self.assertEqual(receipt["resume_after"], "")
+
+    def test_stalled_prefetch_leaves_budget_for_judgement(self):
+        current = reclaim.Pass(owner=None, apply_removal=False,
+                               deadline=time.monotonic() + 100)
+        granted = []
+        original = reclaim.prefetch
+
+        def stalled(wanted, cache, *, remaining):
+            granted.append(remaining())
+            # Stall for as long as the prefetch share allows.
+            time.sleep(min(remaining(), 1.5))
+
+        reclaim.prefetch = stalled
+        try:
+            reclaim.prefetch_references([self.worktree], current)
+        finally:
+            reclaim.prefetch = original
+        self.assertLessEqual(granted[0], 100 * reclaim.PREFETCH_SHARE)
+        self.assertGreater(current.remaining(), 40)
+        receipt = reclaim.new_receipt(self.root, dry_run=True)
+        self.assertEqual(list(reclaim.candidates([self.worktree], current, receipt)),
+                         [self.worktree])
+
+    def run_cli(self, *extra):
+        result = subprocess.run(  # nosec B603
+            [sys.executable, "-E", "-s", "-B", str(LIFECYCLE / "worktree-reclaim.py"),
+             "--base-dir", str(self.root), "--state-dir", str(self.state),
+             "--budget-seconds", "60", "--limit", "1", *extra],
+            check=True, capture_output=True, text=True)
+        return json.loads(result.stdout)
+
+    def test_limited_applied_passes_advance_through_the_listing(self):
+        names = sorted(path.name for path in self.root.iterdir() if path.is_dir())
+        first = self.run_cli("--apply")
+        second = self.run_cli("--apply")
+        self.assertEqual((first["cursor_start"], first["resume_after"]), ("", names[0]))
+        self.assertEqual((second["cursor_start"], second["resume_after"]),
+                         (names[0], names[1]))
+        dry = self.run_cli()
+        # A dry run reads the cursor but never moves it.
+        self.assertEqual(dry["cursor_start"], names[1])
+        self.assertEqual(progress.read_cursor(self.state), names[1])
 
 
 class BatchTests(unittest.TestCase):
