@@ -168,11 +168,10 @@ class ApexResolver:
 
     def resolve(self, name):
         """Registrable domain, or the exact host under a shared hosting parent."""
-        apex = self.registrable(name)
-        return name if apex in self.shared else apex
+        return name if self.is_shared(name) else self.registrable(name)
 
     def is_shared(self, name):
-        return self.registrable(name) in self.shared
+        return any(name == parent or name.endswith('.' + parent) for parent in self.shared)
 
     def registrable(self, name):
         for apex in self.anchors:
@@ -571,15 +570,19 @@ def private_write(args, text):
         os.unlink(path)
 
 
-def file_digest(slug, entries, partial, repos, fleet, config):
+def file_digest(slug, entries, scanned_apexes, repos, fleet, config):
     """File or update ONE owner-decision issue for every apex missing CAA."""
     issues = open_issues(slug)
     existing = next((i for i in issues if DIGEST_MARKER in (i.get('body') or '')), None)
     sections = {}
-    if existing and partial:  # a --domain run must not erase other apexes
-        sections.update({m.group(1): m.group(0) for m in SECTION_RE.finditer(existing.get('body') or '')})
+    if existing and scanned_apexes is not None:  # retain only unscanned apexes on a --domain run
+        sections.update({m.group(1): m.group(0) for m in SECTION_RE.finditer(existing.get('body') or '')
+                         if m.group(1) not in scanned_apexes})
     sections.update({f['apex']: digest_section(f) for _, f in entries})
     if not sections:
+        if existing:
+            command(['bash', str(SCRIPT), '__close_issue', slug, str(existing['number']),
+                     'No missing CAA findings remain after successful DNS reconciliation.'], timeout=180)
         return
     body = digest_body(sections)
     title = 'Cert watch: caa-missing digest — owner decision'
@@ -686,7 +689,8 @@ def main():
         name = hostname(args.domain)
         rows = [r for r in rows if r['apex'] == name or name in r['hostnames']]
         if not rows:
-            rows = [{'apex': name, 'hostnames': [name], 'knowledge_repos': {}}]
+            rows = [{'apex': name, 'hostnames': [name], 'knowledge_repos': {},
+                     'shared_parent': ApexResolver(config).is_shared(name)}]
     if args.command == 'domains':
         output = rows
     else:
@@ -699,6 +703,7 @@ def main():
         last_fetch = [0]
         digest_slug = None
         digest_entries = []
+        digest_complete = True
         if args.apply and config.get('fallback_repo') and private_repo(config['fallback_repo']):
             digest_slug = config['fallback_repo']  # one consolidated caa-missing issue
         with open(directory / '.lock', 'a') as lock:
@@ -728,8 +733,11 @@ def main():
                         private_save(path, state)
                     if digest_slug:
                         digest_entries += [(row, f) for f in found if f['kind'] == 'caa-missing']
-            if digest_slug and args.command in ('caa', 'run') and digest_entries:
-                file_digest(digest_slug, digest_entries, bool(args.domain), repos, fleet, config)
+                        if any(f['kind'] == 'caa-unknown' for f in found):
+                            digest_complete = False  # DNS failure is not proof a finding disappeared
+            if digest_slug and args.command in ('caa', 'run') and digest_complete:
+                scanned_apexes = {row['apex'] for row in rows} if args.domain else None
+                file_digest(digest_slug, digest_entries, scanned_apexes, repos, fleet, config)
     if args.format == 'json':
         print(json.dumps(output, indent=2))
     else:
