@@ -1711,6 +1711,16 @@ _sync_one_repo() {
 	[[ "$_identical_rc" -eq 2 ]] && return 0
 	[[ "$_identical_rc" -eq 0 ]] || return 1
 
+	_sync_publish_rendered "$_slug" "$_path" "$_status" "$_branch_name" "$_remote" \
+		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath" "$_sync_contributing"
+	return $?
+}
+
+# Publish a rendered target, treating a no-op as success.
+_sync_publish_rendered() {
+	local _slug="$1" _path="$2" _status="$3" _branch_name="$4" _remote="$5"
+	local _default_branch="$6" _effective_ref="$7" _target_content="$8"
+	local _workflow_relpath="$9" _sync_contributing="${10}"
 	local _write_output _write_rc
 	_write_output=$(_sync_write_commit_push \
 		"$_slug" "$_path" "$_status" "$_branch_name" \
