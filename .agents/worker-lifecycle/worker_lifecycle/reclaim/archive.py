@@ -88,14 +88,22 @@ def _failure(error: BaseException, default: str) -> str:
     return default
 
 
-def capture(path: Path, verdict: dict, root: Path, remaining: Budget) -> tuple[Path | None, str]:
-    """Create and locally verify one archive; return it, or None and the reason."""
+def _archive_base(path: Path, remaining: Budget) -> tuple[str | None, str]:
+    """The archive's base branch, or None and why no archive may start."""
     branch = _base_branch(path, _timeout(remaining))
     if branch is None:
         return None, "archive-base-unknown"
     # The base lookup spends budget too; recheck before starting the archive.
     if remaining() < MIN_SECONDS:
         return None, BUDGET_EXHAUSTED
+    return branch, ""
+
+
+def capture(path: Path, verdict: dict, root: Path, remaining: Budget) -> tuple[Path | None, str]:
+    """Create and locally verify one archive; return it, or None and the reason."""
+    branch, refused = _archive_base(path, remaining)
+    if branch is None:
+        return None, refused
     try:
         create_archive_root(root)
         root = root.resolve(strict=True)
