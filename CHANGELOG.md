@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.199] - 2026-11-14
+
+### Fixed
+
+- closed worker checkpoint draft no longer strands its issue or resumes rejected work
+- GH#38358 fix(checkpoints): a failed continuation launch no longer holds a stalled draft for a maintainer
+
 ## [3.39.198] - 2026-11-14
 
 ### Changed
