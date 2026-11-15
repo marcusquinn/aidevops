@@ -167,7 +167,8 @@ detect_project_languages() {
 _install_python_cli_tool() {
 	local pkg="$1"
 	if command -v uv &>/dev/null; then
-		uv tool install --upgrade "$pkg" &>/dev/null
+		# --force replaces executables left by earlier pip installs (migration)
+		uv tool install --upgrade --force "$pkg" &>/dev/null
 		return $?
 	fi
 	if command -v pipx &>/dev/null; then
