@@ -79,7 +79,16 @@ aidevops_service_path() {
 	local input_path="${1:-${PATH:-}}"
 	local stable_path=""
 	if [[ -n "${HOME:-}" ]]; then
-		stable_path="${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+		# npm global bin goes ahead of ~/.bun/bin so a stale Bun-global copy
+		# never shadows the npm copy the updater installs. Resolved once.
+		if [[ -z "${_AIDEVOPS_NPM_GLOBAL_BIN+x}" ]]; then
+			_AIDEVOPS_NPM_GLOBAL_BIN=""
+			if command -v npm >/dev/null 2>&1; then
+				_AIDEVOPS_NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null || true)"
+				[[ -z "$_AIDEVOPS_NPM_GLOBAL_BIN" ]] || _AIDEVOPS_NPM_GLOBAL_BIN="${_AIDEVOPS_NPM_GLOBAL_BIN}/bin"
+			fi
+		fi
+		stable_path="${_AIDEVOPS_NPM_GLOBAL_BIN:+${_AIDEVOPS_NPM_GLOBAL_BIN}:}${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
 	fi
 	stable_path=$(AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$stable_path")
 	input_path=$(aidevops_compose_path "$input_path" "$AIDEVOPS_DAEMON_PATH_FALLBACK")

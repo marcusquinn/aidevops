@@ -390,6 +390,18 @@ get_npm_pkg_version() {
 	return 1
 }
 
+# Report (never delete) a Bun-global copy that duplicates an npm-managed package.
+_warn_bun_global_duplicate() {
+	local pkg="$1"
+	local bun_dir="${HOME:-}/.bun/install/global/node_modules/${pkg}"
+	[[ -n "${HOME:-}" && -d "$bun_dir" ]] || return 0
+	local npm_root
+	npm_root="$(npm root -g 2>/dev/null)" || return 0
+	[[ -f "${npm_root}/${pkg}/package.json" ]] || return 0
+	printf '  ⚠ %s is installed by both npm and Bun; reading the npm copy. Remove the Bun copy: bun remove -g %s\n' "$pkg" "$pkg" >&2
+	return 0
+}
+
 # Get installed version
 get_installed_version() {
 	local cmd="$1"
@@ -636,6 +648,15 @@ _tool_installed_version() {
 		# never report it as the Cloudflare npm package or offer to replace it.
 		if [[ "$pkg" == cf ]] && _cf_binary_is_cloud_foundry; then
 			echo "not installed"
+			return 0
+		fi
+		# Read the npm copy that `npm install -g` updates, not whichever binary
+		# is first on PATH (a stale Bun-global copy can shadow it).
+		local npm_version=""
+		_warn_bun_global_duplicate "$pkg"
+		npm_version=$(get_npm_pkg_version "$pkg" 2>/dev/null || true)
+		if [[ -n "$npm_version" ]]; then
+			echo "$npm_version"
 			return 0
 		fi
 		get_installed_version "$cmd" "$ver_flag" "$pkg"
