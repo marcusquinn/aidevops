@@ -570,6 +570,11 @@ test_claude_worker_sandbox_normalizes_signing_git_config() {
 		export GIT_CONFIG_KEY_3="commit.gpgsign" GIT_CONFIG_VALUE_3="true"
 		export AIDEVOPS_WORKER_EGRESS_MODE=off
 		unset AIDEVOPS_HEADLESS_SANDBOX_DISABLED AIDEVOPS_GIT_AUTH_TOKEN_FILE _HEADLESS_CLAUDE_STDIN_FILE 2>/dev/null || true
+		# GH#38392: an ambient pre-reserved lifecycle generation/run makes
+		# admission fail closed (exit 75) for this unreserved fixture worktree;
+		# an ambient state dir would record fixture runs in the host registry.
+		unset AIDEVOPS_LIFECYCLE_GENERATION_ID AIDEVOPS_LIFECYCLE_RUN_ID \
+			AIDEVOPS_LIFECYCLE_STATE_DIR AIDEVOPS_LIFECYCLE_DISABLED 2>/dev/null || true
 		_invoke_role="worker"
 		_invoke_provider="anthropic"
 		_invoke_claude "$output_file" "$exit_code_file" "$TEST_ROOT" \
