@@ -307,6 +307,10 @@ printf 'PASS empty censuses rotate at the total deadline and repository timeout 
 	# Other failures leave the stored budget unchanged.
 	_dispatch_record_repo_enumeration_outcome owner/big 15 60 1 2
 	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 60 ]]
+	# GH#38483: a timeout clamped below the base is no evidence of slowness.
+	_dispatch_record_repo_enumeration_outcome owner/clamped 15 3 124 3
+	[[ ! -e "$(_dispatch_repo_enumeration_budget_file owner/clamped)" ]]
+	if grep -q 'budget raised: repo=owner/clamped' "$LOGFILE"; then exit 1; fi
 	_dispatch_record_repo_enumeration_outcome owner/big 15 60 0 32
 	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 48 ]]
 	PULSE_REPO_ENUMERATION_BUDGET_MAX_S=40

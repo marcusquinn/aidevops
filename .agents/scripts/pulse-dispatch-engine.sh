@@ -435,6 +435,10 @@ _dispatch_record_repo_enumeration_outcome() {
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
 	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
 	if ((rc == 124)); then
+		# GH#38483: a scan clamped below the base by the census remainder
+		# proves nothing (live: from=1s to=60s); escalating it would make
+		# later censuses defer a fast repository.
+		((used >= base)) || return 0
 		next="$cap"
 		((next > used)) &&
 			echo "[pulse-wrapper] Candidate repository enumeration budget raised: repo=${repo_slug} from=${used}s to=${next}s reason=timeout (GH#38274)" >>"$LOGFILE"
