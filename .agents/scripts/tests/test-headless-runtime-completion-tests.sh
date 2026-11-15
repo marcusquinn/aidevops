@@ -110,6 +110,10 @@ test_negated_blocked_signals() {
 	result=0
 	output_has_blocked_signal "$file" && result=1
 	print_result "Negated blocker ending a JSON result is not blocked" "$result"
+	printf '%s\n' '{"type":"result","result":"FULL_LOOP_COMPLETE\nBLOCKED: none."}' >"$file"
+	result=0
+	output_has_blocked_signal "$file" && result=1
+	print_result "Negated blocker with period ending a JSON result is not blocked" "$result"
 	printf '%s\n' $'BLOCKED: none\nunfinished work' >"$file"
 	result=0
 	output_has_completion_signal "$file" && result=1
