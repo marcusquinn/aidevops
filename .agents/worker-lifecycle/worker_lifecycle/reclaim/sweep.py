@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -42,6 +42,8 @@ from .progress import (
 from .review import verify_idle_review
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
+# Largest fraction of the remaining pass budget reference prefetch may spend.
+PREFETCH_SHARE = 0.5
 # Re-exported for callers and tests that treat this script as the entry point.
 __all__ = ["SCHEMA", "evidence", "main", "references"]
 
@@ -200,11 +202,16 @@ def prefetch_references(paths: list[Path], current: Pass) -> None:
     here too, so a limited run does not spend its budget resolving trees it will
     never reach. A failed batch leaves the cache untouched, so judgement falls
     back to per-reference queries.
+
+    Prefetch gets at most ``PREFETCH_SHARE`` of the remaining budget: a stalled
+    batch must not leave judgement no time to yield a tree, or the cursor would
+    never advance and the tail would starve again (GH#38376).
     """
+    share = replace(current, deadline=time.monotonic() + current.remaining() * PREFETCH_SHARE)
     wanted: dict[str, list[tuple[str, int]]] = {}
     examined = 0
     for path in paths:
-        if current.remaining() == 0 or (current.limit and examined >= current.limit):
+        if share.remaining() == 0 or (current.limit and examined >= current.limit):
             break
         if deferred(current.quarantine, path):
             continue
@@ -212,10 +219,10 @@ def prefetch_references(paths: list[Path], current: Pass) -> None:
         found = references(path.name)
         if path.is_symlink() or not found:
             continue
-        slug = repository(path, timeout=min(current.remaining(), 60))
+        slug = repository(path, timeout=min(share.remaining(), 60))
         if slug:
             wanted.setdefault(slug, []).extend(found)
-    prefetch(wanted, current.finished, remaining=current.remaining)
+    prefetch(wanted, current.finished, remaining=share.remaining)
 
 
 def main() -> int:

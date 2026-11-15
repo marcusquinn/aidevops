@@ -583,6 +583,28 @@ class ProgressTests(GitFixture):
         self.assertEqual(list(reclaim.candidates(paths, self.a_pass(None), receipt)), paths)
         self.assertEqual(receipt["resume_after"], "")
 
+    def test_stalled_prefetch_leaves_budget_for_judgement(self):
+        current = reclaim.Pass(owner=None, apply_removal=False,
+                               deadline=time.monotonic() + 100)
+        granted = []
+        original = reclaim.prefetch
+
+        def stalled(wanted, cache, *, remaining):
+            granted.append(remaining())
+            # Stall for as long as the prefetch share allows.
+            time.sleep(min(remaining(), 1.5))
+
+        reclaim.prefetch = stalled
+        try:
+            reclaim.prefetch_references([self.worktree], current)
+        finally:
+            reclaim.prefetch = original
+        self.assertLessEqual(granted[0], 100 * reclaim.PREFETCH_SHARE)
+        self.assertGreater(current.remaining(), 40)
+        receipt = reclaim.new_receipt(self.root, dry_run=True)
+        self.assertEqual(list(reclaim.candidates([self.worktree], current, receipt)),
+                         [self.worktree])
+
     def run_cli(self, *extra):
         result = subprocess.run(  # nosec B603
             [sys.executable, "-E", "-s", "-B", str(LIFECYCLE / "worktree-reclaim.py"),
