@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # ip-rep-proxycheck.sh — ProxyCheck.io provider for ip-reputation-helper.sh
 # Interface: check <ip> [--api-key <key>] → JSON result on stdout
-# Free tier: 1000 req/day without key, 100/day with free key (more with paid)
+# Free tier: 100 req/day without key, 1,000/day with free key (more with paid)
 # API docs: https://proxycheck.io/api/
 #
 # Returned JSON fields:
@@ -260,7 +260,7 @@ cmd_info() {
             display: $display,
             requires_key: false,
             key_env: "PROXYCHECK_API_KEY",
-            free_tier: "1000 req/day (no key), more with free key",
+            free_tier: "100 req/day without key, 1,000/day with free key",
             url: "https://proxycheck.io/",
             api_docs: "https://proxycheck.io/api/"
         }'
