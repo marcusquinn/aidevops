@@ -1449,6 +1449,20 @@ _sync_find_identical_pr() {
 	return 0
 }
 
+# Emit an applied result for an identical workflow-only PR; return 2 if found.
+_sync_report_identical_pr() {
+	local _slug="$1" _status="$2" _branch="$3" _workflow="$4" _content="$5" _contributing="$6"
+	[[ "$_contributing" -eq 0 ]] || return 0
+	local _identical_pr
+	if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch" "$_workflow" "$_content"); then
+		printf '%s\t%s\t%s\tunable to inspect open sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	[[ -n "$_identical_pr" ]] || return 0
+	printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_identical_pr"
+	return 2
+}
+
 # _sync_open_pr <slug> <path> <status> <branch> <default_branch>
 #   <effective_ref> <workflow-relpath> <sync-contributing>
 _sync_open_pr() {
@@ -1692,18 +1706,10 @@ _sync_one_repo() {
 		_target_content=$(_rewrite_content_branch_filter "$_target_content" "$_default_branch")
 	fi
 
-	# CONTRIBUTING updates require separate comparison and are not workflow-only.
-	if [[ "$_sync_contributing" -eq 0 ]]; then
-		local _identical_pr
-		if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch_name" "$_workflow_relpath" "$_target_content"); then
-			printf '%s\t%s\t%s\tunable to inspect open sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
-			return 1
-		fi
-		if [[ -n "$_identical_pr" ]]; then
-			printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_identical_pr"
-			return 0
-		fi
-	fi
+	local _identical_rc=0
+	_sync_report_identical_pr "$_slug" "$_status" "$_branch_name" "$_workflow_relpath" "$_target_content" "$_sync_contributing" || _identical_rc=$?
+	[[ "$_identical_rc" -eq 2 ]] && return 0
+	[[ "$_identical_rc" -eq 0 ]] || return 1
 
 	local _write_output _write_rc
 	_write_output=$(_sync_write_commit_push \
