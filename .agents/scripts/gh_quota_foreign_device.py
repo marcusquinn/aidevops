@@ -29,7 +29,7 @@ def local_device(path):
     try:
         with open(path, encoding="utf-8") as handle:
             return handle.read().strip()
-    except OSError:
+    except (OSError, UnicodeError):
         return ""
 
 
@@ -55,10 +55,14 @@ def hint(claims_file, self_login, device_file=""):
     if not claims_file or not self_login:
         return "unknown"
     device = local_device(device_file or os.path.expanduser("~/.aidevops/state/device-id"))
+    limit = 4 * 1024 * 1024
     try:
         with open(claims_file, encoding="utf-8", errors="replace") as handle:
-            text = handle.read(4 * 1024 * 1024)
+            text = handle.read(limit + 1)
     except OSError:
+        return "unknown"
+    # Do not classify incomplete evidence or a device value split at the limit.
+    if len(text) > limit:
         return "unknown"
     return classify(text, self_login, device)
 
