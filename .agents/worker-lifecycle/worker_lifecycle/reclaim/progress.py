@@ -93,3 +93,42 @@ def ordered(paths: list[Path], after: str) -> list[Path]:
         return names
     return ([path for path in names if path.name > after]
             + [path for path in names if path.name <= after])
+
+
+def listing(base_dir: Path) -> list[Path]:
+    """Every directory directly under the base, the pass's candidate universe."""
+    return [path for path in base_dir.iterdir() if path.is_dir()]
+
+
+def deferred(quarantine: CleanupQuarantine | None, path: Path) -> bool:
+    """Report whether this tree is inside its unreadable-state backoff window."""
+    return quarantine is not None and quarantine.deferred(str(path))
+
+
+def remember(quarantine: CleanupQuarantine | None, path: Path, verdict: dict) -> None:
+    """Feed one applied judgement to the backoff.
+
+    Any readable outcome clears the entry; only consecutive unreadable refusals
+    of this same tree defer it.
+    """
+    if quarantine is not None:
+        quarantine.record(str(path), verdict, retry_later=unreadable(verdict),
+                          threshold=QUARANTINE_THRESHOLD)
+
+
+def save_progress(state_dir: Path, universe: list[Path],
+                  quarantine: CleanupQuarantine | None, receipt: dict) -> None:
+    """Persist the cursor and backoff of an applied pass; dry runs never call this.
+
+    A failed write is reported, never fatal: the next pass then rescans from the
+    previous cursor, which costs time but skips nothing.
+    """
+    if not state_dir.is_dir():
+        receipt["cursor_unavailable"] = True
+        return
+    if receipt["resume_after"] != receipt["cursor_start"] and not write_cursor(
+            state_dir, receipt["resume_after"]):
+        receipt["cursor_unavailable"] = True
+    if quarantine is not None:
+        quarantine.retain({str(path) for path in universe if path.exists()})
+        quarantine.save(receipt)
