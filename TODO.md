@@ -2134,6 +2134,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t19027 fix(test): test-pulse-defense-restart.sh fails 10 revival assertions on current main #interactive #bug tier:standard assignee:marcusquinn ref:GH#38457 pr:#38461 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
 - [ ] t19040 fix(tests): decision-policy tests fail on macOS from BSD wc -l padding #interactive #bug tier:simple assignee:marcusquinn ref:GH#38513 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19040-brief.md]
+- [ ] t19045 fix(ci-wait): default wait-checks to the 200s worker chunk in headless sessions #interactive #bug tier:standard assignee:marcusquinn ref:GH#38541 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19045-brief.md]
 
 - [ ] t19036 fix(pulse): trigger revisit never completes — 12s slice and one search per repository #bug ref:GH#38489
 
