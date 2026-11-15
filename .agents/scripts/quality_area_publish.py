@@ -43,28 +43,6 @@ def write(*args):
     return run(["bash", str(SCRIPTS / "gh-write-helper.sh"), *args], env=env)
 
 
-COMPANION_DESCRIPTIONS = {
-    AI_RECOVERY: "Blocked: AI recovery pending; the recovery supervisor solves or releases it, no human action needed",
-    DEPENDENCY: "Blocked: waits on a linked open issue; solve that first, unblocks when it closes",
-}
-_COMPANIONS_ENSURED = set()
-
-
-def ensure_companion_labels(repo):
-    """Best-effort: create catalogued companion labels so label edits succeed."""
-    if repo in _COMPANIONS_ENSURED:
-        return
-    for name, description in COMPANION_DESCRIPTIONS.items():
-        try:
-            gh("api", f"repos/{repo}/labels/{name}")
-        except ValueError:
-            try:
-                gh("label", "create", name, "--repo", repo, "--color", "E4007C", "--description", description)
-            except ValueError:
-                pass  # a concurrent create or sync owns it; the edit reports real failures
-    _COMPANIONS_ENSURED.add(repo)
-
-
 def open_issues(repo):
     pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/issues?state=open&per_page=100"))
     return [issue for page in pages for issue in page if "pull_request" not in issue]
@@ -146,7 +124,6 @@ def validate_contracts(plans):
 def prepare_item(item):
     repo = item["repo"]
     issue = item["existing"]
-    ensure_companion_labels(repo)
     if issue:
         number = issue["number"]
         print(f"existing_issue={repo}#{number}", flush=True)
