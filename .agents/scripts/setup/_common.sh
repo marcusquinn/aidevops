@@ -689,17 +689,36 @@ check_python_version() {
 	fi
 }
 
+# Decide whether a global npm install needs sudo (Linux only).
+# npm creates missing prefix directories itself, so test the nearest existing
+# ancestor of <prefix>/lib instead of requiring lib/ to exist already: a fresh
+# user prefix (e.g. ~/.npm-global) must not fall back to root (GH#38399).
+# An unknown or relative prefix keeps the historic sudo behaviour.
+# Returns: 0 when sudo is needed, 1 otherwise
+_npm_global_prefix_needs_sudo() {
+	[[ "$(uname)" == "Darwin" ]] && return 1
+	local prefix=""
+	prefix=$(npm config get prefix 2>/dev/null) || prefix=""
+	[[ "$prefix" == /* ]] || return 0
+	local dir="${prefix%/}/lib"
+	while [[ ! -e "$dir" ]]; do
+		dir="${dir%/*}"
+		[[ -n "$dir" ]] || dir="/"
+	done
+	[[ -d "$dir" && -w "$dir" ]] && return 1
+	return 0
+}
+
 # Install a package globally via npm or bun, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
 # OpenCode uses npm first when available so stale bun installs are not recreated.
 # Other packages keep the historic bun-first policy, then fall back to npm.
-# On Linux with apt-installed npm, automatically prepends sudo.
+# On Linux, prepends sudo only when the npm prefix is not user-writable.
 # Returns: 0 on success, 1 on failure
 _npm_global_install_via_npm() {
 	local pkg="$1"
 
-	# npm global installs need sudo on Linux when prefix dir isn't writable
-	if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
+	if _npm_global_prefix_needs_sudo; then
 		sudo npm install -g "$pkg"
 	else
 		npm install -g "$pkg"

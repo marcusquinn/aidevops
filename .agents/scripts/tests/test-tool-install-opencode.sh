@@ -106,10 +106,12 @@ extract_functions
 
 extract_common_npm_global_install() {
 	awk '
+		/^_npm_global_prefix_needs_sudo\(\)/, /^}$/ { print; next }
 		/^_npm_global_install_via_npm\(\)/, /^}$/ { print; next }
 		/^npm_global_install\(\)/, /^}$/ { print; next }
 	' "$SETUP_COMMON" >"$SANDBOX/common-extract.sh"
-	if ! grep -q "^_npm_global_install_via_npm()" "$SANDBOX/common-extract.sh" || \
+	if ! grep -q "^_npm_global_prefix_needs_sudo()" "$SANDBOX/common-extract.sh" || \
+		! grep -q "^_npm_global_install_via_npm()" "$SANDBOX/common-extract.sh" || \
 		! grep -q "^npm_global_install()" "$SANDBOX/common-extract.sh"; then
 		echo "FAIL: extraction did not capture npm_global_install" >&2
 		exit 1
@@ -792,7 +794,9 @@ assert_eq "homebrew remediation has no sudo npm hint" "0" "$sudo_hint9"
 
 # --- Test 11: shared installer policy uses npm first for OpenCode -----------
 echo "Test 10: npm_global_install prefers npm for opencode-ai when bun also exists"
-mkdir -p "$SANDBOX/install-policy/bin" "$SANDBOX/install-policy/prefix/lib"
+# The user prefix deliberately has no lib/ yet: npm creates it, so a writable
+# prefix must not fall back to sudo (GH#38399).
+mkdir -p "$SANDBOX/install-policy/bin" "$SANDBOX/install-policy/prefix"
 cat >"$SANDBOX/install-policy/bin/npm" <<EOF
 #!/usr/bin/env bash
 if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "prefix" ]]; then
