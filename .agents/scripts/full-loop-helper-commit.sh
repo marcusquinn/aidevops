@@ -1056,6 +1056,9 @@ _build_pr_body() {
 
 	runtime_risk=$(_derive_runtime_risk "$requested_risk" "$files_changed" "$summary_what" "$base_ref") || return 1
 	testing_level=$(_resolve_runtime_testing_level "$runtime_risk" "$requested_testing_level" "$summary_testing") || return 1
+	# GH#38509: risk derivation above needs every path; the body shows a
+	# bounded list so large diffs stay under GitHub's body limit.
+	files_changed=$(_format_files_changed_for_body "$files_changed") || return 1
 
 	printf '%s\n' "## Summary
 
@@ -1086,6 +1089,56 @@ ${related:+## Related
 ${related}
 }
 ${sig_footer}"
+	return 0
+}
+
+# GH#38509: GitHub rejects PR bodies and comments over 65,536 characters, and
+# Linux limits one argv string to 128 KiB. Print a short changed-file list
+# unchanged; summarise a long one by top-level directory within a fixed budget.
+# Arguments: files_changed (comma-separated paths, as built by commit-and-pr)
+_format_files_changed_for_body() {
+	local files_changed="${1:-}"
+	local max_files="${FULL_LOOP_BODY_MAX_FILES:-100}"
+	local max_chars="${FULL_LOOP_BODY_MAX_FILE_CHARS:-20000}"
+	local file_count=0
+	[[ "$max_files" =~ ^[0-9]+$ ]] || max_files=100
+	[[ "$max_chars" =~ ^[0-9]+$ && "$max_chars" -ge 200 ]] || max_chars=20000
+	if [[ -n "$files_changed" ]]; then
+		file_count=$(printf '%s\n' "$files_changed" | tr ',' '\n' |
+			awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } NF { n++ } END { print n + 0 }') || return 1
+	fi
+	if [[ "$file_count" -le "$max_files" && "${#files_changed}" -le "$max_chars" ]]; then
+		printf '%s' "$files_changed"
+		return 0
+	fi
+	printf '%s\n' "$files_changed" | tr ',' '\n' | awk -v total="$file_count" -v budget="$max_chars" '
+		{
+			gsub(/^[ \t]+|[ \t]+$/, "")
+			if ($0 == "") next
+			key = $0
+			slash = index(key, "/")
+			if (slash > 0) key = substr(key, 1, slash)
+			if (!(key in count)) order[++groups] = key
+			count[key]++
+		}
+		END {
+			for (i = 2; i <= groups; i++) {
+				item = order[i]
+				for (j = i - 1; j >= 1 && count[order[j]] < count[item]; j--) order[j + 1] = order[j]
+				order[j + 1] = item
+			}
+			out = total " files changed across " groups " top-level paths (full list in the PR diff):"
+			for (i = 1; i <= groups; i++) {
+				entry = " `" order[i] "` " count[order[i]]
+				if (i < groups) entry = entry ","
+				if (length(out) + length(entry) > budget - 40) {
+					out = out " and " (groups - i + 1) " more"
+					break
+				}
+				out = out entry
+			}
+			printf "%s", out
+		}' || return 1
 	return 0
 }
 
@@ -1402,15 +1455,32 @@ _create_pr() {
 	# worktrees backed by a bare common directory).
 	local head_branch="${FULL_LOOP_PUSHED_BRANCH:-}"
 	[[ -n "$head_branch" ]] || head_branch=$(git branch --show-current 2>/dev/null || echo "")
-	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body")
+	# GH#38509: pass the body through a file; an inline --body is one argv
+	# string and fails with "Argument list too long" for large generated bodies.
+	local temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local body_file=""
+	if ! mkdir -p "$temp_root" || ! body_file=$(mktemp "${temp_root}/aidevops-pr-create-body.XXXXXX"); then
+		print_error "Could not create PR body file in ${temp_root}"
+		return 1
+	fi
+	if ! printf '%s' "$pr_body" >"$body_file"; then
+		rm -f "$body_file"
+		print_error "Could not write PR body file"
+		return 1
+	fi
+	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body-file "$body_file")
 	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
 	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_cmd+=(--base "$FULL_LOOP_STACK_BASE")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
 
-	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || return 1
+	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || {
+		rm -f "$body_file"
+		return 1
+	}
 	pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
 		# t2767: Partial-success recovery.
@@ -1798,6 +1868,7 @@ _reconcile_existing_merge_summary() {
 _post_merge_summary() {
 	local pr_number="$1" repo="$2" issue_number="$3" summary_what="$4"
 	local files_changed="$5" summary_testing="$6" summary_decisions="$7"
+	files_changed=$(_format_files_changed_for_body "$files_changed") || return 1
 	local merge_summary_marker="<!-- MERGE_SUMMARY -->"
 	local comments_endpoint="repos/${repo}/issues/${pr_number}/comments"
 	local summary_count_jq="[.[] | select(.body | test(\"${merge_summary_marker}\"))] | length"
