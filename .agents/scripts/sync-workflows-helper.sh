@@ -1447,7 +1447,7 @@ _sync_workflow_prs() {
 		_files=$(gh api "repos/$_slug/pulls/$_number/files?per_page=100" --paginate) || return 1
 		[[ -n "$_files" ]] || return 1
 		_sha=$(printf '%s\n' "$_files" | jq -sr --arg path "$_workflow" \
-			'[.[][]] | select(length == 1) | .[0] | select(.filename == $path and (.status == "added" or .status == "modified")) | .sha // empty') || return 1
+			'[.[][]] | select(length == 1) | .[0] | select(.filename == $path and (.status == "added" or .status == "modified") and (.previous_filename // "") == "") | .sha // empty') || return 1
 		[[ -z "$_sha" ]] || printf '%s\t%s\t%s\n' "$_number" "$_url" "$_sha"
 	done <<<"$_rows"
 	return 0
