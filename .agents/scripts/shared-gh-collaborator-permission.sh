@@ -495,12 +495,102 @@ _gh_collaborator_permission_lookup() {
 # Failures, deferrals and fallback/retry routes are never memoized.
 _AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 
+# Split a `gh api -i` response into status, JSON body and ETag header.
+# Args: $1=response, $2=status var, $3=body var, $4=etag var
+# Returns: 0 always.
+_gh_collaborator_permission_parse_response() {
+	local _pr_response="$1"
+	local _pr_status_var="$2"
+	local _pr_body_var="$3"
+	local _pr_etag_var="$4"
+	local _pr_line="" _pr_status="" _pr_body="" _pr_etag="" _pr_in_body=0
+
+	while IFS= read -r _pr_line; do
+		_pr_line="${_pr_line%$'\r'}"
+		case "$_pr_line" in
+		HTTP/*)
+			_pr_status="${_pr_line#* }"
+			_pr_status="${_pr_status%% *}"
+			;;
+		[Ee][Tt]ag:*)
+			if [[ "$_pr_in_body" -eq 0 ]]; then
+				_pr_etag="${_pr_line#*:}"
+				_pr_etag="${_pr_etag#"${_pr_etag%%[![:space:]]*}"}"
+			fi
+			;;
+		"")
+			_pr_in_body=1
+			;;
+		\{* | \[*)
+			_pr_in_body=1
+			_pr_body="${_pr_body}${_pr_line}"$'\n'
+			;;
+		*)
+			if [[ "$_pr_in_body" -eq 1 ]]; then
+				_pr_body="${_pr_body}${_pr_line}"$'\n'
+			fi
+			;;
+		esac
+	done <<<"$_pr_response"
+	printf -v "$_pr_status_var" '%s' "$_pr_status"
+	printf -v "$_pr_body_var" '%s' "$_pr_body"
+	printf -v "$_pr_etag_var" '%s' "$_pr_etag"
+	return 0
+}
+
+# Resolve an HTTP 304: return the stored verdict, or fail closed without one.
+# Args: $1=route, $2=repo, $3=user, $4=out var, $5=stored permission,
+#       $6=etag key, $7=same-route retry used
+# Returns: 0=stored verdict emitted, else resolve_failure status.
+_gh_collaborator_permission_resolve_not_modified() {
+	local route="$1"
+	local repo="$2"
+	local login="$3"
+	local out_var="$4"
+	local perm="$5"
+	local key="$6"
+	local retry_used="$7"
+
+	AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="304"
+	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
+	case "$perm" in
+	admin | maintain | write | triage | read | none)
+		_gh_collaborator_permission_emit_ok "$route" "$out_var" "$perm"
+		return 0
+		;;
+	esac
+	_gh_collaborator_etag_forget "$key"
+	_gh_collaborator_permission_resolve_failure "$route" "$repo" "$login" "$out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$retry_used"
+	return $?
+}
+
+# Emit a confirmed permission verdict and its success reason.
+# Args: $1=route, $2=optional output variable, $3=permission
+_gh_collaborator_permission_emit_ok() {
+	local route="$1"
+	local out_var="${2:-}"
+	local perm="$3"
+
+	if [[ "$route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
+	else
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+	fi
+	export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+	if [[ -n "$out_var" ]]; then
+		printf -v "$out_var" '%s' "$perm"
+	else
+		printf '%s\n' "$perm"
+	fi
+	return 0
+}
+
 _gh_collaborator_permission_lookup_uncached() {
 	local repo_slug="$1"
 	local user="$2"
 	local out_var="${3:-}"
 	local perm_url="/repos/${repo_slug}/collaborators/${user}/permission"
-	local api_response="" rc=0 http_status="" line="" body="" in_body=0
+	local api_response="" rc=0 http_status="" body=""
 	local auth_route="${4:-$_AIDEVOPS_GH_COLLAB_APP_PREFERRED_ROUTE}"
 	local same_route_retry_used="${5:-0}"
 	# Keep the internal value distinct from caller-selected output names. Bash
@@ -519,15 +609,13 @@ _gh_collaborator_permission_lookup_uncached() {
 		return 2
 	fi
 
-	# Conditional lookup: reuse the ETag from the last successful lookup for the
-	# same repo|user|route. A 304 is GitHub confirming that exact verdict now.
+	# Conditional lookup keyed by repo|user|route; a 304 is GitHub confirming the
+	# stored verdict now. No private stderr capture => go unconditional.
 	etag_key=$(printf '%s|%s|%s' "$repo_slug" "$user" "$auth_route" | tr '[:upper:]' '[:lower:]')
 	if _gh_collaborator_etag_dir_ready; then
-		stored_perm=""
 		_gh_collaborator_etag_load "$etag_key" stored_etag stored_perm || stored_etag=""
 		err_file=$(umask 077 && mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-collab-err.XXXXXX" 2>/dev/null) || err_file=""
 	fi
-	# Without a private stderr capture a 304 cannot be recognised; go unconditional.
 	[[ -n "$err_file" ]] || stored_etag=""
 
 	# stdout only: stderr diagnostics (e.g. "[gh-cooldown] ...") start with "["
@@ -535,39 +623,11 @@ _gh_collaborator_permission_lookup_uncached() {
 	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" "$stored_etag" 2>"${err_file:-/dev/null}")
 	rc=$?
 	if [[ -n "$err_file" ]]; then
-		if [[ "$rc" -ne 0 && -z "$api_response" && -n "$stored_etag" ]] &&
-			grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file" 2>/dev/null; then
-			not_modified=1
-		fi
+		[[ "$rc" -ne 0 && -z "$api_response" && -n "$stored_etag" ]] &&
+			grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file" 2>/dev/null && not_modified=1
 		rm -f "$err_file" 2>/dev/null || true
 	fi
-	while IFS= read -r line; do
-		line="${line%$'\r'}"
-		case "$line" in
-		HTTP/*)
-			http_status="${line#* }"
-			http_status="${http_status%% *}"
-			;;
-		[Ee][Tt]ag:*)
-			if [[ "$in_body" -eq 0 ]]; then
-				response_etag="${line#*:}"
-				response_etag="${response_etag#"${response_etag%%[![:space:]]*}"}"
-			fi
-			;;
-		"")
-			in_body=1
-			;;
-		\{* | \[*)
-			in_body=1
-			body="${body}${line}"$'\n'
-			;;
-		*)
-			if [[ "$in_body" -eq 1 ]]; then
-				body="${body}${line}"$'\n'
-			fi
-			;;
-		esac
-	done <<<"$api_response"
+	_gh_collaborator_permission_parse_response "$api_response" http_status body response_etag
 
 	[[ -n "$http_status" ]] && AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$http_status"
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
@@ -586,31 +646,10 @@ _gh_collaborator_permission_lookup_uncached() {
 		return 75
 	fi
 
-	# 304: GitHub just confirmed the stored verdict for this ETag. A 304 is only
-	# honoured when a valid stored permission was loaded for this exact key; it
-	# is never a grant by itself (fails closed as unexpected-http otherwise).
-	#aidevops:trust-boundary -- 304 reuses only a stored GitHub-confirmed verdict.
+	# 304 reuses only a stored verdict; without one it fails closed.
+	#aidevops:trust-boundary -- 304 is never a grant by itself.
 	if [[ "$not_modified" -eq 1 ]]; then
-		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="304"
-		export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
-		case "$stored_perm" in
-		admin | maintain | write | triage | read | none)
-			if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
-				AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
-			else
-				AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
-			fi
-			export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
-			if [[ -n "$out_var" ]]; then
-				printf -v "$out_var" '%s' "$stored_perm"
-			else
-				printf '%s\n' "$stored_perm"
-			fi
-			return 0
-			;;
-		esac
-		_gh_collaborator_etag_forget "$etag_key"
-		_gh_collaborator_permission_resolve_failure "$auth_route" "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$same_route_retry_used"
+		_gh_collaborator_permission_resolve_not_modified "$auth_route" "$repo_slug" "$user" "$out_var" "$stored_perm" "$etag_key" "$same_route_retry_used"
 		return $?
 	fi
 
@@ -630,22 +669,12 @@ _gh_collaborator_permission_lookup_uncached() {
 	fi
 	case "$resolved_permission" in
 	admin | maintain | write | triage | read | none)
-		if [[ "$auth_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
-			AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
-		else
-			AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
-		fi
-		export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
 		if [[ -n "$response_etag" ]]; then
 			_gh_collaborator_etag_store "$etag_key" "$response_etag" "$resolved_permission"
 		else
 			_gh_collaborator_etag_forget "$etag_key"
 		fi
-		if [[ -n "$out_var" ]]; then
-			printf -v "$out_var" '%s' "$resolved_permission"
-		else
-			printf '%s\n' "$resolved_permission"
-		fi
+		_gh_collaborator_permission_emit_ok "$auth_route" "$out_var" "$resolved_permission"
 		return 0
 		;;
 	*)
