@@ -508,8 +508,8 @@ _skill_scan_resolve_scanner() {
 	echo ""
 	echo "Install with:"
 	echo "  uv tool install cisco-ai-skill-scanner"
-	echo "  # or via pip"
-	echo "  pip3 install --user cisco-ai-skill-scanner"
+	echo "  # or via pipx"
+	echo "  pipx install cisco-ai-skill-scanner"
 	echo "  # or run setup.sh to auto-install"
 	echo "  aidevops update"
 	echo ""
@@ -1059,10 +1059,10 @@ cmd_install() {
 		fi
 		if check_command uv; then
 			uv tool install cisco-ai-skill-scanner
-		elif check_command pip3; then
-			pip3 install --user cisco-ai-skill-scanner
+		elif check_command pipx; then
+			pipx install cisco-ai-skill-scanner
 		else
-			echo -e "${RED}Please install uv or pip3 first${NC}"
+			echo -e "${RED}Please install uv (curl -LsSf https://astral.sh/uv/install.sh | sh) or pipx first${NC}"
 			return 1
 		fi
 		;;
@@ -1094,8 +1094,11 @@ cmd_install() {
 				echo -e "${CYAN}Installing Cisco Skill Scanner...${NC}"
 				if check_command uv; then
 					uv tool install cisco-ai-skill-scanner || true
-				elif check_command pip3; then
-					pip3 install --user cisco-ai-skill-scanner || true
+				elif check_command pipx; then
+					pipx install cisco-ai-skill-scanner || true
+				else
+					echo -e "${RED}Install uv or pipx first to install Cisco Skill Scanner in isolation.${NC}"
+					return 1
 				fi
 			else
 				echo -e "${YELLOW}Skipping Cisco Skill Scanner (Python >= 3.10 required)${NC}"

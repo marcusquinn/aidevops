@@ -105,6 +105,42 @@ check_dependencies() {
 	return 0
 }
 
+# Ensure analyzer Python deps exist in an isolated venv (never user/system scope).
+# Sets EEAT_PYTHON to the interpreter to run the analyzer with.
+ensure_eeat_python() {
+	local venv_dir="${EEAT_VENV_DIR:-$HOME/.aidevops/eeat-venv}"
+	local venv_py="${venv_dir}/bin/python"
+
+	if python3 -c "import aiohttp, bs4" 2>/dev/null; then
+		EEAT_PYTHON="python3"
+		return 0
+	fi
+	if [[ -x "$venv_py" ]] && "$venv_py" -c "import aiohttp, bs4, openpyxl" 2>/dev/null; then
+		EEAT_PYTHON="$venv_py"
+		return 0
+	fi
+
+	print_warning "Installing Python dependencies into ${venv_dir}..."
+	if [[ ! -x "$venv_py" ]]; then
+		if command -v uv &>/dev/null; then
+			uv venv --quiet "$venv_dir" || true
+		else
+			python3 -m venv "$venv_dir" || true
+		fi
+	fi
+	if [[ ! -x "$venv_py" ]]; then
+		print_error "Cannot create venv. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+		return 1
+	fi
+	if command -v uv &>/dev/null; then
+		uv pip install --quiet --python "$venv_py" aiohttp beautifulsoup4 openpyxl || return 1
+	else
+		"$venv_py" -m pip install --quiet aiohttp beautifulsoup4 openpyxl || return 1
+	fi
+	EEAT_PYTHON="$venv_py"
+	return 0
+}
+
 # Check API key
 check_api_key() {
 	if [[ "$LLM_PROVIDER" == "openai" ]]; then
@@ -864,10 +900,7 @@ do_analyze() {
 	print_info "Output: $output_dir"
 
 	# Check Python dependencies
-	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-		print_warning "Installing Python dependencies..."
-		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-	fi
+	ensure_eeat_python || return 1
 
 	# Limit to reasonable number for API costs
 	local max_urls=50
@@ -879,7 +912,7 @@ do_analyze() {
 	local analyzer_script="/tmp/eeat_analyzer_$$.py"
 	generate_analyzer_script >"$analyzer_script"
 
-	python3 "$analyzer_script" "${urls[@]}" \
+	"$EEAT_PYTHON" "$analyzer_script" "${urls[@]}" \
 		--output "$output_dir" \
 		--provider "$provider" \
 		--model "$model" \
@@ -927,15 +960,12 @@ do_score() {
 	print_info "URL: $url"
 
 	# Check Python dependencies
-	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-		print_warning "Installing Python dependencies..."
-		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-	fi
+	ensure_eeat_python || return 1
 
 	local analyzer_script="/tmp/eeat_analyzer_$$.py"
 	generate_analyzer_script >"$analyzer_script"
 
-	python3 "$analyzer_script" "$url" \
+	"$EEAT_PYTHON" "$analyzer_script" "$url" \
 		--output "$output_dir" \
 		--provider "$LLM_PROVIDER" \
 		--model "$LLM_MODEL" \
@@ -999,15 +1029,12 @@ do_batch() {
 	print_info "Output: $output_dir"
 
 	# Check Python dependencies
-	if ! python3 -c "import aiohttp, bs4" 2>/dev/null; then
-		print_warning "Installing Python dependencies..."
-		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
-	fi
+	ensure_eeat_python || return 1
 
 	local analyzer_script="/tmp/eeat_analyzer_$$.py"
 	generate_analyzer_script >"$analyzer_script"
 
-	python3 "$analyzer_script" "${urls[@]}" \
+	"$EEAT_PYTHON" "$analyzer_script" "${urls[@]}" \
 		--output "$output_dir" \
 		--provider "$LLM_PROVIDER" \
 		--model "$LLM_MODEL" \

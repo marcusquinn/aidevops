@@ -884,7 +884,7 @@ convert_email() {
 	# Check for required Python packages
 	if ! python3 -c "import html2text" 2>/dev/null; then
 		log_info "Installing html2text..."
-		pip install --quiet html2text
+		"${VENV_DIR}/bin/python" -m pip install --quiet html2text
 	fi
 
 	# Check if input is .msg and install extract-msg if needed
@@ -893,7 +893,7 @@ convert_email() {
 	if [[ "${ext}" == "msg" ]]; then
 		if ! python3 -c "import extract_msg" 2>/dev/null; then
 			log_info "Installing extract-msg for .msg file support..."
-			pip install --quiet extract-msg
+			"${VENV_DIR}/bin/python" -m pip install --quiet extract-msg
 		fi
 	fi
 
