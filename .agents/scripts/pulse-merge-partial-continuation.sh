@@ -826,7 +826,8 @@ _pmpc_closed_checkpoint_rows() {
 # Returns: 0 when scanned or not due, 1 on an unreadable listing
 _pmpc_reconcile_closed_checkpoints() {
 	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" page_json="" rows="" pr="" issue=""
-	local now_epoch start_epoch floor stamp stamp_file first oldest count
+	local now_epoch="" start_epoch="" floor="" stamp="" stamp_file="" first="" oldest=""
+	local count=""
 	local page=1 reached=0
 	[[ "$traversal" == "review:1:" ]] || return 0
 	local lookback="${PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS:-604800}"
