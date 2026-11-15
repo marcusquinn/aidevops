@@ -723,6 +723,20 @@ _dedup_assignment_verdict_path() {
 }
 
 #######################################
+# t19022: the hint directory must be a real, user-owned directory with no
+# group or other write bits before a hint in it is removed, written or
+# trusted. A find error prints nothing, so the check fails closed.
+# Arguments: hint directory
+# Returns: 0 when private, 1 otherwise
+#######################################
+_dedup_assignment_verdict_dir_private() {
+	local dir="$1"
+	[[ -n "$dir" && -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 1
+	[[ "$(find "$dir" -maxdepth 0 ! -perm -020 ! -perm -002 -print 2>/dev/null)" == "$dir" ]] || return 1
+	return 0
+}
+
+#######################################
 # GH#38352: record a plain layer-6 "not assigned" verdict so the pre-claim
 # assignment guard can skip a repeated is-assigned call. Only the metadata the
 # verdict evaluated (the ISSUE_META_JSON bundle) may vouch for it; without
@@ -738,7 +752,10 @@ _dedup_assignment_verdict_record() {
 	local path="" dir="" meta="" tmp=""
 	path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || return 0
 	dir="${path%/*}"
-	rm -f "$path" 2>/dev/null || true
+	# A non-private directory is never written to; the reader rejects it too.
+	if _dedup_assignment_verdict_dir_private "$dir"; then
+		rm -f "$path" 2>/dev/null || true
+	fi
 	[[ "$started" =~ ^[0-9]+$ && "$self_login" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$ ]] || return 0
 	meta=$(jq -cSe --arg list array 'select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
 		{state: (.state | ascii_upcase),
@@ -746,7 +763,7 @@ _dedup_assignment_verdict_record() {
 		labels: ([.labels[] | (.name? // .) | strings] | sort)}' <<<"${ISSUE_META_JSON:-}" 2>/dev/null) || return 0
 	[[ "$meta" != *$'\t'* && "$meta" != *$'\n'* ]] || return 0
 	[[ -d "$dir" ]] || (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
-	[[ -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 0
+	_dedup_assignment_verdict_dir_private "$dir" || return 0
 	# Hints from launches that stopped before the claim are inert (keyed by
 	# pulse PID and age-bounded by the reader); prune them here. The directory
 	# holds only hints, so this scan stays small (t19022).
@@ -788,7 +805,10 @@ _dedup_layer6_assignee_and_stale() {
 		fi
 		local verdict_started="" verdict_path=""
 		# GH#38352: only this run's plain free verdict may reach layer 7.
-		verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") && rm -f "$verdict_path" 2>/dev/null
+		if verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") &&
+			_dedup_assignment_verdict_dir_private "${verdict_path%/*}"; then
+			rm -f "$verdict_path" 2>/dev/null || true
+		fi
 		verdict_started=$(date +%s)
 		assigned_output=$(AIDEVOPS_DDH_BLOCKER_REASON_FILE="$layer6_reason_file" \
 			"${layer6_cmd[@]}" 2>>"$LOGFILE") || assigned_rc=$?

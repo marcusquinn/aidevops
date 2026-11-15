@@ -80,6 +80,9 @@ _dch_assignment_verdict_file_valid() {
 	local dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-assignment-verdicts"
 	[[ -n "$path" && "$path" == "${dir}/"* && "${path#"${dir}/"}" != */* ]] || return 1
 	[[ -d "$dir" && ! -L "$dir" && -O "$dir" && -f "$path" && ! -L "$path" && -O "$path" ]] || return 1
+	# The directory must also carry no group/other write bits; a find error
+	# prints nothing, so this fails closed.
+	[[ "$(find "$dir" -maxdepth 0 ! -perm -020 ! -perm -002 -print 2>/dev/null)" == "$dir" ]] || return 1
 	return 0
 }
 
