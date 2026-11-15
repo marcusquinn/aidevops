@@ -24,6 +24,20 @@ test_claude_bare_paths_use_resolved_sandbox_timeout() {
 	local stdin_file="${TEST_ROOT}/claude-bare.stdin"
 	local AIDEVOPS_HEADLESS_SANDBOX_DISABLED="1"
 	local AIDEVOPS_WORKER_EGRESS_MODE="off"
+	# GH#38392: keep the fixture independent of the caller's lifecycle context.
+	# An ambient pre-reserved generation/run makes admission fail closed (exit
+	# 75) for this unreserved fixture worktree, and an ambient state dir would
+	# record fixture runs in the host registry.
+	local AIDEVOPS_LIFECYCLE_GENERATION_ID="" AIDEVOPS_LIFECYCLE_RUN_ID=""
+	local AIDEVOPS_LIFECYCLE_STATE_DIR="" AIDEVOPS_LIFECYCLE_DISABLED="0"
+	# The helper resolves AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT once at source time
+	# (headless-runtime-helper.sh:61-69). Assert the resolved value, and the
+	# 10800 default whenever the caller did not override it.
+	local expected_timeout="$HEADLESS_SANDBOX_TIMEOUT_DEFAULT"
+	local default_ok=1
+	if [[ -n "${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-}" || "$expected_timeout" == "10800" ]]; then
+		default_ok=0
+	fi
 
 	timeout() {
 		local timeout_seconds="$1"
@@ -55,7 +69,7 @@ test_claude_bare_paths_use_resolved_sandbox_timeout() {
 	unset -f timeout
 	unset _HEADLESS_CLAUDE_STDIN_FILE
 
-	if [[ "$timeout_values" == $'10800\n10800' &&
+	if [[ "$default_ok" -eq 0 && "$timeout_values" == "${expected_timeout}"$'\n'"${expected_timeout}" &&
 		"$direct_status" == "0" && "$stdin_status" == "0" &&
 		"$direct_value" == "direct-output" && "$stdin_value" == "stdin-output" ]]; then
 		print_result "Claude bare execution paths use the resolved headless timeout" 0
@@ -63,7 +77,7 @@ test_claude_bare_paths_use_resolved_sandbox_timeout() {
 	fi
 
 	print_result "Claude bare execution paths use the resolved headless timeout" 1 \
-		"timeouts=${timeout_values//$'\n'/,} direct_status=$direct_status stdin_status=$stdin_status direct=$direct_value stdin=$stdin_value"
+		"expected=${expected_timeout} timeouts=${timeout_values//$'\n'/,} direct_status=$direct_status stdin_status=$stdin_status direct=$direct_value stdin=$stdin_value"
 	return 0
 }
 
