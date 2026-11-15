@@ -32,6 +32,10 @@ trap 'rm -rf "$TMPDIR"' EXIT
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
 export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
+# gh_trim_log sweeps orphaned shim scratch in the agent temp root (t19021);
+# never let a test run reach the host's root.
+export AIDEVOPS_TEMP_DIR="$TMPDIR/agent-tmp"
+mkdir -p "$AIDEVOPS_TEMP_DIR"
 unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
@@ -1423,6 +1427,13 @@ PATH="$NATIVE_FIXTURE:/usr/bin:/bin" NATIVE_AUTH_TOKEN_STATUS=23 \
 auth_token_failure_status=$?
 set -e
 assert_eq "local auth token preserves native failure status" "23" "$auth_token_failure_status"
+# t19021: the auth exec must not strand per-invocation attempt state.
+auth_attempt_temp="$TMPDIR/auth-attempt-temp"
+mkdir -p "$auth_attempt_temp"
+PATH="$NATIVE_FIXTURE:/usr/bin:/bin" AIDEVOPS_TEMP_DIR="$auth_attempt_temp" \
+	"$SHIM_FIXTURE/gh" auth token >/dev/null 2>/dev/null
+assert_eq "local auth token leaves no request-attempt scratch" "0" \
+	"$(find "$auth_attempt_temp" -name 'gh-request-attempts.*' | wc -l | tr -d ' ')"
 
 # Credential-mutating auth commands must bypass transport framing too. This
 # keeps device-flow prompts and Keychain writes under native gh control.

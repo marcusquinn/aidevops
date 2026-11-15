@@ -82,6 +82,10 @@
 #   AIDEVOPS_GH_API_LEGACY_SCRATCH_MIN_AGE_SECONDS — minimum age before exact
 #                                   legacy .source/.tmp/.trim files are reaped
 #                                   (default 3600)
+#   AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES — age before orphaned per-invocation
+#                                   shim scratch is reaped (default 1440)
+#   AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS — minimum gap between sweeps run
+#                                   from trim() (default 3600)
 #   AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1 — make all calls no-ops
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -1137,6 +1141,51 @@ gh_aggregate_calls() {
 	return 0
 }
 
+# --- gh_sweep_orphan_temps ------------------------------------------------
+# Producer-owned reaper for per-invocation shim scratch (t19021). The shim
+# removes these on exit; only SIGKILL or a crash leaves them behind. Scope:
+# exact mktemp names, top level of the agent temp root, owned by this user,
+# older than the age floor (well past any live gh invocation). One find per
+# kind, never a per-file stat loop: the leaked backlog reached ~93k entries
+# and every glob over the shared root paid for it (dispatch setup_worker_log).
+# Pass --force to skip the interval throttle. Sets _GH_TEMP_SWEEP_REMOVED.
+_GH_TEMP_SWEEP_REMOVED=0
+gh_sweep_orphan_temps() {
+	local force="${1:-}"
+	local temp_dir="" stamp="" now="" last="" uid="" files="" dirs=""
+	local min_age="${AIDEVOPS_GH_TEMP_SWEEP_MIN_AGE_MINUTES:-1440}"
+	local interval="${AIDEVOPS_GH_TEMP_SWEEP_INTERVAL_SECONDS:-3600}"
+	_GH_TEMP_SWEEP_REMOVED=0
+	[[ "$min_age" =~ ^[1-9][0-9]*$ ]] || min_age=1440
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=3600
+	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 0
+	uid=$(id -u 2>/dev/null) || return 0
+	[[ "$uid" =~ ^[0-9]+$ ]] || return 0
+	now=$(_gh_now_seconds) || return 0
+	stamp="${GH_API_LOG}.temp-sweep"
+	[[ -d "${stamp%/*}" && ! -L "$stamp" ]] || return 0
+	if [[ "$force" != "--force" && -f "$stamp" ]]; then
+		read -r last <"$stamp" 2>/dev/null || last=""
+		if [[ "$last" =~ ^[0-9]+$ && "$now" -ge "$last" && $((now - last)) -lt "$interval" ]]; then
+			return 0
+		fi
+	fi
+	# Stamp first so concurrent cycle ends do not repeat the same scan.
+	printf '%s\n' "$now" >"$stamp" 2>/dev/null || return 0
+	files=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 \
+		\( -name 'gh-request-attempts.??????' -o -name 'gh-transport-error.??????' \
+		-o -name 'gh-transport-meta.??????' \) \
+		-type f -uid "$uid" -mmin "+${min_age}" -print -delete 2>/dev/null || true; } | wc -l)
+	dirs=$({ find "$temp_dir" -mindepth 1 -maxdepth 1 -name 'gh-identity.??????' \
+		-type d -uid "$uid" -mmin "+${min_age}" -print -exec rm -rf -- {} + 2>/dev/null || true; } | wc -l)
+	files="${files//[[:space:]]/}"
+	dirs="${dirs//[[:space:]]/}"
+	[[ "$files" =~ ^[0-9]+$ ]] || files=0
+	[[ "$dirs" =~ ^[0-9]+$ ]] || dirs=0
+	_GH_TEMP_SWEEP_REMOVED=$((files + dirs))
+	return 0
+}
+
 # --- gh_trim_log ----------------------------------------------------------
 # Atomically retain only valid records within the configured age, line, and byte
 # bounds. Appenders share the same short-lived lock so replacement cannot lose
@@ -1147,6 +1196,7 @@ gh_trim_log() {
 	local tmp=""
 	local owner_pid="${BASHPID:-$$}"
 	_gh_cleanup_legacy_scratch || true
+	gh_sweep_orphan_temps || true
 	[[ -f "$GH_API_LOG" ]] || return 0
 	[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || return 0
 	[[ "$GH_API_LOG_MAX_LINES" =~ ^[0-9]+$ && "$GH_API_LOG_MAX_LINES" -gt 0 ]] || GH_API_LOG_MAX_LINES="$_GH_API_DEFAULT_LOG_MAX_LINES"
@@ -1223,6 +1273,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	trim)
 		gh_trim_log
 		;;
+	sweep-temp)
+		gh_sweep_orphan_temps --force
+		printf 'removed=%s\n' "$_GH_TEMP_SWEEP_REMOVED"
+		;;
 	clear)
 		gh_clear_log
 		;;
@@ -1238,6 +1292,7 @@ Subcommands:
                           Aggregate a fixed-cutoff JSON window
                           (default ${GH_API_REPORT##*/}, 24h, current time)
   trim                     Atomically apply age, line, and byte retention bounds
+  sweep-temp               Reap orphaned shim scratch now (age floor still applies)
   clear                    Remove log + report
 
 Path values:
