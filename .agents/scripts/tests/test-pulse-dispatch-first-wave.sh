@@ -333,6 +333,55 @@ printf 'PASS empty censuses rotate at the total deadline and repository timeout 
 )
 printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 
+# GH#38543: a repository whose scans sit at the cap escalates above it after a
+# timeout at the cap, keeps that budget through clamped timeouts and near-cap
+# completions, and decays back under the cap once its scans are faster.
+(
+	budget_file=$(_dispatch_repo_enumeration_budget_file owner/slow)
+	mkdir -p "${budget_file%/*}"
+	printf '60\n' >"$budget_file"
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 60 124 60
+	[[ "$(_dispatch_repo_enumeration_budget owner/slow 15)" == 120 && "$(<"$budget_file")" == '120 escalated' ]]
+	grep -q 'budget raised: repo=owner/slow from=60s to=120s reason=timeout_at_cap' "$LOGFILE"
+	# A timeout clamped by the census remainder never lowers it.
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 50 124 50
+	[[ "$(_dispatch_repo_enumeration_budget owner/slow 15)" == 120 ]]
+	# A completion under the escalated budget keeps 1.5x its cost above the cap.
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 120 0 75
+	[[ "$(<"$budget_file")" == '113 escalated' ]]
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 113 0 30
+	[[ "$(<"$budget_file")" == 45 && "$(_dispatch_repo_enumeration_budget owner/slow 15)" == 45 ]]
+	# A completion within 5s of the cap escalates; an ordinary one stays capped.
+	printf '60\n' >"$budget_file"
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 60 0 58
+	[[ "$(_dispatch_repo_enumeration_budget owner/slow 15)" == 87 ]]
+	printf '60\n' >"$budget_file"
+	_dispatch_record_repo_enumeration_outcome owner/slow 15 60 0 45
+	[[ "$(<"$budget_file")" == 60 ]]
+	# A ceiling at or below the cap disables escalation.
+	PULSE_REPO_ENUMERATION_BUDGET_ESCALATED_MAX_S=60 _dispatch_record_repo_enumeration_outcome owner/slow 15 60 124 60
+	[[ "$(<"$budget_file")" == 60 ]]
+	# Real process tree: an adapter that outlives the cap is killed once, then
+	# completes under the escalated budget; the census remainder still clamps.
+	pulse_campaign_shadow_candidates_json() {
+		sleep 2
+		printf '[{"number":9,"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]\n'
+		return 0
+	}
+	export PULSE_REPO_ENUMERATION_BUDGET_MAX_S=1 PULSE_REPO_ENUMERATION_BUDGET_ESCALATED_MAX_S=4
+	sleepy_file=$(_dispatch_repo_enumeration_budget_file owner/sleepy)
+	rc=0
+	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || rc=$?
+	[[ "$rc" == 124 && "$(<"$sleepy_file")" == '4 escalated' ]]
+	rc=0
+	clamped=$(_dispatch_census_enumerate_repo owner/sleepy /fixture 1 1 50 skip "") || rc=$?
+	[[ "$rc" == 124 && "$clamped" == '[]' && "$(<"$sleepy_file")" == '4 escalated' ]]
+	grep -q 'enumeration unavailable: repo=owner/sleepy rc=124 budget=1s' "$LOGFILE"
+	recovered=$(_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "")
+	jq -e 'length == 1 and .[0].number == 9' <<<"$recovered" >/dev/null
+)
+printf 'PASS repositories at the enumeration cap escalate and then complete (GH#38543)\n'
+
 # GH#38483: a known-slow repository the census cannot afford is deferred, not
 # scanned with a clamped budget; it leads the next census with its full budget.
 # The first repository of a census is never deferred. A timed-out scan reuses

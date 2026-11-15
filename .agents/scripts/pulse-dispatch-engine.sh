@@ -391,6 +391,7 @@ _dispatch_repository_rows() {
 # workers sat idle. A timeout yields nothing, so it raises that repository's
 # budget straight to the cap; a completed scan decays it to 1.5x its observed
 # cost, never below the base. The census deadline still clamps every scan.
+# GH#38543: a repository that times out at the cap escalates above it.
 _dispatch_repo_enumeration_budget_file() {
 	local repo_slug="$1"
 	printf '%s/pulse-repo-enumeration-budget/%s\n' "${HOME}/.aidevops/cache" "${repo_slug//\//--}"
@@ -407,17 +408,47 @@ _dispatch_repo_enumeration_budget_cap() {
 	return 0
 }
 
+# GH#38543: a repository whose scans need slightly more than the cap was killed
+# at the cap on about half its passes and, once its last-good list expired,
+# contributed zero candidates. Such a repository may earn up to this ceiling
+# (PULSE_REPO_ENUMERATION_BUDGET_ESCALATED_MAX_S, default 120; a value at or
+# below the cap disables escalation). The census remainder still clamps it.
+# Args: base budget seconds. Stdout: escalated ceiling (>= cap).
+_dispatch_repo_enumeration_budget_escalated_cap() {
+	local base="$1" cap=0 ceiling="${PULSE_REPO_ENUMERATION_BUDGET_ESCALATED_MAX_S:-120}"
+	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
+	[[ "$ceiling" =~ ^[1-9][0-9]{0,2}$ ]] || ceiling=120
+	ceiling=$((10#$ceiling))
+	((ceiling >= cap)) || ceiling="$cap"
+	printf '%s\n' "$ceiling"
+	return 0
+}
+
+# Stdout: "<stored seconds> <mode>" from the budget file ("0 " when absent).
+# Mode "escalated" marks a budget earned above the cap (GH#38543).
+_dispatch_repo_enumeration_budget_stored() {
+	local file="$1" stored="" mode=""
+	if [[ -f "$file" && ! -L "$file" ]]; then
+		read -r stored mode <"$file" 2>/dev/null || true
+	fi
+	[[ "$stored" =~ ^[1-9][0-9]{0,2}$ ]] || stored=0
+	[[ "$mode" == escalated ]] || mode=""
+	printf '%s %s\n' "$((10#$stored))" "$mode"
+	return 0
+}
+
 # Args: repo slug, base budget seconds. Stdout: this repository's budget.
 _dispatch_repo_enumeration_budget() {
-	local repo_slug="$1" base="$2" stored="" cap=0 file=""
+	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file=""
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
-	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
-	if [[ -f "$file" && ! -L "$file" ]]; then
-		read -r stored <"$file" 2>/dev/null || stored=""
-	fi
-	if [[ "$stored" =~ ^[1-9][0-9]{0,2}$ ]] && ((10#$stored > base)); then
-		stored=$((10#$stored))
-		((stored <= cap)) || stored="$cap"
+	read -r stored mode <<<"$(_dispatch_repo_enumeration_budget_stored "$file")"
+	if ((stored > base)); then
+		if [[ "$mode" == escalated ]]; then
+			ceiling=$(_dispatch_repo_enumeration_budget_escalated_cap "$base")
+		else
+			ceiling=$(_dispatch_repo_enumeration_budget_cap "$base")
+		fi
+		((stored <= ceiling)) || stored="$ceiling"
 		printf '%s\n' "$stored"
 		return 0
 	fi
@@ -427,25 +458,47 @@ _dispatch_repo_enumeration_budget() {
 
 # Args: repo slug, base budget, budget used, scan rc, elapsed seconds.
 # Other failures (source unavailable, auth) leave the stored budget unchanged.
+# GH#38543: a timeout after the full cap escalates to the escalated ceiling
+# (reason=timeout_at_cap). A completed scan that ended within 5s of the cap,
+# or ran under an escalated budget, may keep a 1.5x budget up to that ceiling.
 _dispatch_record_repo_enumeration_outcome() {
 	local repo_slug="$1" base="$2" used="$3" rc="$4" elapsed="$5"
-	local file="" cap=0 next=0 temporary=""
+	local file="" cap=0 ceiling=0 next=0 temporary="" stored=0 mode="" next_mode="" reason=timeout limit=0
 	[[ "$base" =~ ^[0-9]+$ && "$used" =~ ^[0-9]+$ && "$rc" =~ ^[0-9]+$ && "$elapsed" =~ ^-?[0-9]+$ ]] || return 0
 	((elapsed >= 0)) || elapsed=0
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
 	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
+	ceiling=$(_dispatch_repo_enumeration_budget_escalated_cap "$base")
+	read -r stored mode <<<"$(_dispatch_repo_enumeration_budget_stored "$file")"
 	if ((rc == 124)); then
 		# GH#38483: a scan clamped below the base by the census remainder
 		# proves nothing (live: from=1s to=60s); escalating it would make
 		# later censuses defer a fast repository.
 		((used >= base)) || return 0
 		next="$cap"
-		((next > used)) &&
-			echo "[pulse-wrapper] Candidate repository enumeration budget raised: repo=${repo_slug} from=${used}s to=${next}s reason=timeout (GH#38274)" >>"$LOGFILE"
+		if ((used >= cap && ceiling > cap)); then
+			next="$ceiling"
+			next_mode=escalated
+			reason=timeout_at_cap
+		fi
+		# A timeout clamped by the census remainder never lowers an
+		# escalated budget.
+		if [[ "$mode" == escalated ]] && ((stored > next)); then
+			next="$stored"
+			((next <= ceiling)) || next="$ceiling"
+			next_mode=escalated
+		fi
+		((next > used && next != stored)) &&
+			echo "[pulse-wrapper] Candidate repository enumeration budget raised: repo=${repo_slug} from=${used}s to=${next}s reason=${reason} (GH#38274)" >>"$LOGFILE"
 	elif ((rc == 0)); then
 		next=$(((elapsed * 3 + 1) / 2))
 		((next >= base)) || next="$base"
-		((next <= cap)) || next="$cap"
+		limit="$cap"
+		if [[ "$mode" == escalated ]] || ((used >= cap && elapsed + 5 >= cap)); then
+			limit="$ceiling"
+		fi
+		((next <= limit)) || next="$limit"
+		((next <= cap)) || next_mode=escalated
 		((elapsed <= base)) ||
 			echo "[pulse-wrapper] Candidate repository enumeration slow: repo=${repo_slug} elapsed=${elapsed}s budget=${used}s next=${next}s (GH#38274)" >>"$LOGFILE"
 	else
@@ -457,7 +510,7 @@ _dispatch_record_repo_enumeration_outcome() {
 	fi
 	mkdir -p "${file%/*}" 2>/dev/null || return 0
 	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
-	printf '%s\n' "$next" >"$temporary"
+	printf '%s%s\n' "$next" "${next_mode:+ $next_mode}" >"$temporary"
 	mv -f "$temporary" "$file" 2>/dev/null || rm -f "$temporary"
 	return 0
 }
