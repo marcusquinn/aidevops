@@ -750,7 +750,7 @@ except Exception as e:
 # Never installs to user or system Python scope (PEP 668).
 install_ytdlp_isolated() {
 	# Preserve pipx ownership even when uv is also installed.
-	if command -v pipx &>/dev/null && pipx list --short | grep -q '^yt-dlp '; then
+	if command -v pipx &>/dev/null && pipx list --short | grep '^yt-dlp ' >/dev/null; then
 		pipx upgrade yt-dlp || return 1
 	elif command -v uv &>/dev/null; then
 		uv tool install --upgrade yt-dlp || return 1

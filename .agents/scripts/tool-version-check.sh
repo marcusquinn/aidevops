@@ -154,7 +154,7 @@ _brew_upgrade_cmd() {
 # shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 _pip_upgrade_cmd() {
 	local pkg="$1"
-	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; elif command -v uv >/dev/null 2>&1; then uv tool install --upgrade '"${pkg}"'; else echo "Neither pipx nor uv found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; fi'
+	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -i '"^${pkg}"' >/dev/null; then pipx upgrade '"${pkg}"'; elif command -v uv >/dev/null 2>&1; then uv tool install --upgrade '"${pkg}"'; else echo "Neither pipx nor uv found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; fi'
 }
 
 # GH#35515: the reviewed Playwriter pin has one source of truth, the MCP
