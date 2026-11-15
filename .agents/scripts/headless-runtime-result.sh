@@ -38,6 +38,9 @@ _initialize_run_result() {
 	if [[ ! "${exit_code:-}" =~ ^[0-9]+$ ]]; then
 		exit_code=1
 	fi
+	# GH#38481: the attempt's exit code is a caller local; keep it with the
+	# per-attempt runtime classification for the runner-health recorder.
+	_run_exit_code="$exit_code"
 	discovered_session=$(extract_session_id_from_output "$output_file")
 	activity_detected=$(output_has_activity "$output_file")
 	_run_activity_detected="$activity_detected"

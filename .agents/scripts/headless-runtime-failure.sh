@@ -1517,10 +1517,34 @@ _worker_secure_branch_commits() {
 }
 
 #######################################
+# GH#38481: positive evidence that the last runtime spawn failed because the
+# runtime binary is missing on this runner (stale shim, deleted nvm version,
+# package upgrade in flight). All must hold: the spawn was attempted, the
+# same-shell classification is runtime_command_missing, the attempt exited
+# 127, and neither this attempt nor an earlier one in the process had
+# activity. Bare worker_not_launched also covers benign admission cases (lock
+# contention, revision continuation), so it never counts without this proof.
+# Globals read: _WORKER_RUNTIME_LAUNCH_STARTED, _run_runtime_error_type,
+#   _run_exit_code, _run_activity_detected, _HRW_PRIOR_ATTEMPT_ACTIVITY
+# Returns: 0 when the evidence is complete, 1 otherwise
+#######################################
+_hrff_runtime_missing_evidenced() {
+	[[ "${_WORKER_RUNTIME_LAUNCH_STARTED:-0}" == "1" ]] || return 1
+	[[ "${_run_runtime_error_type:-}" == "runtime_command_missing" ]] || return 1
+	[[ "${_run_exit_code:-}" == "127" ]] || return 1
+	[[ "${_run_activity_detected:-}" == "0" ]] || return 1
+	[[ "${_HRW_PRIOR_ATTEMPT_ACTIVITY:-0}" != "1" ]] || return 1
+	return 0
+}
+
+#######################################
 # Record evidenced startup and deterministic launch failures in the local runner-health
 # breaker before releasing the shared issue claim. This path is fail-open:
 # missing or broken health tooling must never strand the issue claim.
-# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop)
+# Callers: the EXIT trap and _hrw_finish_not_launched (which disarms the trap
+# through _hrw_finish_cleanup, so one launch is recorded once).
+# Globals read: _HRW_PRIOR_ATTEMPT_ACTIVITY (set by the attempt loop), plus the
+#   per-attempt runtime evidence read by _hrff_runtime_missing_evidenced
 # Args: $1=session key, $2=terminal reason
 #######################################
 _hrff_record_runner_health_failure() {
@@ -1536,6 +1560,10 @@ _hrff_record_runner_health_failure() {
 		fi
 		;;
 	crash_during_startup | worker_noop_zero_output) reason="no_worker_process" ;;
+	"${_HRW_REASON_NOT_LAUNCHED:-worker_not_launched}" | "${_HRFF_PRELAUNCH_NOT_INVOKED:-worker_runtime_not_invoked}")
+		_hrff_runtime_missing_evidenced || return 0
+		reason="worker_runtime_missing"
+		;;
 	*) return 0 ;;
 	esac
 
