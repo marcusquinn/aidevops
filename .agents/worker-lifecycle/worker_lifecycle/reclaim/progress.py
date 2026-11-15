@@ -34,12 +34,17 @@ UNREADABLE = frozenset({
     "repository-unknown", "status-unreadable", "unpushed-state-unreadable",
     "owner-registry-unreadable", "owner-unobservable", "fingerprint-unavailable",
 })
+# Stage-2 failures of this tree's own archive (GH#38394). A timed-out archive
+# repeats for the same tree and can spend the whole pass budget, so it backs off.
+# Capacity is host-wide and fails fast, so it stays out: one capacity failure
+# must not defer every tree.
+ARCHIVE_FAILURES = frozenset({"archive-failed", "archive-verify-failed", "archive-timeout"})
 
 
 def unreadable(verdict: dict) -> bool:
     """Report whether a judged worktree refused, or failed, on its own unreadable state."""
     return (verdict.get("reason") in UNREADABLE
-            or verdict.get("removal") in UNREADABLE)
+            or verdict.get("removal") in UNREADABLE | ARCHIVE_FAILURES)
 
 
 def open_quarantine(state_dir: Path) -> CleanupQuarantine | None:
