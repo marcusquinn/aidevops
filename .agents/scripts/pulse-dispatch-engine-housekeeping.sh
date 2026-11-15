@@ -383,6 +383,13 @@ _run_terminal_blocker_trigger_revisit() {
 		maintained+="${slug}"$'\n'
 	done <<<"$slugs"
 	[[ -n "$maintained" ]] || return 0
+	# The role loop above can be slow; the watchdog's absolute stage deadline
+	# bounds the helper from when it actually starts.
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		local remaining=$((PULSE_STAGE_DEADLINE_EPOCH - $(date +%s) - 10))
+		((remaining >= 1)) || return 0
+		((budget <= remaining)) || budget="$remaining"
+	fi
 	printf '%s' "$maintained" | AIDEVOPS_TRIGGER_REVISIT_BUDGET_S="$budget" "$helper" pulse >>"$LOGFILE" 2>&1 || true
 	return 0
 }
