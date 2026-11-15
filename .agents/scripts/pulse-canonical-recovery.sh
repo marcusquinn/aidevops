@@ -165,7 +165,9 @@ _pcr_jq_required() {
 # plugin dependencies under .opencode/ (its generated .gitignore misses npm's
 # lockfile). These alone must not ask a human to review a canonical checkout;
 # every tracked edit and any other untracked path still counts.
-# Args: $1 - one `git status --porcelain` row. Returns 0 when it is noise.
+# Args: $1 - one `git status --porcelain -z --untracked-files=all` record
+# (NUL-delimited, so paths are raw rather than C-quoted, and untracked
+# directories are expanded to files). Returns 0 when it is noise.
 _pcr_is_metadata_noise() {
 	local row="$1"
 	local path=""
@@ -175,33 +177,39 @@ _pcr_is_metadata_noise() {
 	.DS_Store | Thumbs.db | desktop.ini) return 0 ;;
 	esac
 	case "$path" in
-	.opencode/package-lock.json | .opencode/bun.lock | .opencode/package.json | .opencode/node_modules/) return 0 ;;
+	.opencode/package-lock.json | .opencode/bun.lock | .opencode/package.json | .opencode/node_modules/*) return 0 ;;
 	esac
 	return 1
 }
 
 # Detect repo state. Echoes one of:
 #   "clean" | "unmerged" | "uncommitted" | "not-a-repo"
+# Unmerged wins over uncommitted, so the scan stops early only on a conflict.
 _pcr_detect_state() {
 	local repo_path="$1"
-	local porcelain="" row=""
+	local row="" state="clean" skip_next=0
 	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		printf 'not-a-repo'
 		return 0
 	fi
-	porcelain=$(git -C "$repo_path" status --porcelain 2>/dev/null) || porcelain=""
-	# Unmerged file status codes: UU AA DD AU UA DU UD.
-	if grep -E '^(UU|AA|DD|AU|UA|DU|UD)' >/dev/null <<<"$porcelain"; then
-		printf 'unmerged'
-		return 0
-	fi
-	while IFS= read -r row; do
+	while IFS= read -r -d '' row; do
+		# A rename/copy record is followed by its source path as a bare record.
+		if [[ "$skip_next" -eq 1 ]]; then
+			skip_next=0
+			continue
+		fi
 		[[ -n "$row" ]] || continue
+		case "${row:0:2}" in
+		UU | AA | DD | AU | UA | DU | UD)
+			state="unmerged"
+			break
+			;;
+		R? | C? | ?R | ?C) skip_next=1 ;;
+		esac
 		_pcr_is_metadata_noise "$row" && continue
-		printf 'uncommitted'
-		return 0
-	done <<<"$porcelain"
-	printf 'clean'
+		state="uncommitted"
+	done < <(git -C "$repo_path" status --porcelain -z --untracked-files=all 2>/dev/null)
+	printf '%s' "$state"
 	return 0
 }
 

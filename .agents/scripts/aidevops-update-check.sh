@@ -420,7 +420,7 @@ _advisory_top3() {
 	while IFS=$'\t' read -r key label; do
 		[[ -n "$label" ]] || continue
 		shown="${shown:+$shown, }${label}"
-	done < <(printf '%s\n' "$rows" | grep . | sort -t $'\t' -k1,1nr -k2,2 | head -3)
+	done < <(printf '%s\n' "$rows" | grep . | sort -t $'\t' -k1,1nr -k2,2 | awk 'NR<=3')
 	if [[ "$total" -gt 3 ]]; then
 		shown="${shown} (+$((total - 3)) more)"
 	fi
@@ -441,7 +441,7 @@ _advisory_lines() {
 	local dismissed_file="$2"
 	local debt_covered="$3"
 	local advisory_file="" adv_id="" summary="" top=""
-	local underfill_rows="" underfill_single="" underfill_count=0
+	local underfill_rows="" underfill_single="" underfill_ids="" underfill_count=0
 	local canonical_rows="" canonical_single="" canonical_count=0
 	local drift_single="" drift_latest="" drift_count=0
 	for advisory_file in "$advisories_dir"/*.advisory; do
@@ -462,6 +462,7 @@ _advisory_lines() {
 			top="${adv_id#underfill-}"
 			[[ "$summary" == *' top='* ]] && top="${summary##* top=}"
 			underfill_rows+="${top##*:}"$'\t'"${top}"$'\n'
+			underfill_ids+="${adv_id#underfill-}, "
 			underfill_count=$((underfill_count + 1))
 			underfill_single=$(_advisory_entry "$adv_id" "$summary")
 			;;
@@ -494,8 +495,8 @@ _advisory_lines() {
 	if [[ "$underfill_count" -eq 1 ]]; then
 		printf '%s\n' "$underfill_single"
 	elif [[ "$underfill_count" -gt 1 ]]; then
-		printf 'Pulse underfill across %d launch gates: %s. AI-diagnosable with pulse-current-state-helper.sh --window 1h --json; clears when the worker pool recovers.\n' \
-			"$underfill_count" "$(_advisory_top3 "$underfill_rows")"
+		printf "Pulse underfill across %d launch gates: %s. AI-diagnosable with pulse-current-state-helper.sh --window 1h --json; clears when the worker pool recovers. Dismiss: \`aidevops security dismiss underfill-<gate>\` (%s)\n" \
+			"$underfill_count" "$(_advisory_top3 "$underfill_rows")" "${underfill_ids%, }"
 	fi
 	return 0
 }
