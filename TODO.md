@@ -2085,9 +2085,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md] pr:#38339 completed:2026-11-15
 
-- [ ] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 pr:#38398 logged:2026-11-14 -> [todo/tasks/t19006-brief.md]
+- [x] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 pr:#38398 logged:2026-11-14 -> [todo/tasks/t19006-brief.md] completed:2026-11-15
 
-- [ ] t19007 fix(terminal-blocker): publish the external trigger and revisit external_trigger_pending holds #bug #auto-dispatch tier:thinking blocked-by:t19008 ref:GH#38353 logged:2026-11-14 -> [todo/tasks/t19007-brief.md]
+- [x] t19007 fix(terminal-blocker): publish the external trigger and revisit external_trigger_pending holds #bug #auto-dispatch tier:thinking blocked-by:t19008 ref:GH#38353 pr:#38449 logged:2026-11-14 -> [todo/tasks/t19007-brief.md] completed:2026-11-15
 
 - [x] t19008 fix(approval): accept every canonical terminal-blocker release the writer emits #auto-dispatch #bug tier:standard ref:GH#38351 pr:#38357 logged:2026-11-14 -> [todo/tasks/t19008-brief.md] completed:2026-11-15
 
@@ -2109,11 +2109,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19017 fix(opencode-db-archive): an archive-DB event-expiry deferral must not skip the live-DB session move #auto-dispatch #bug tier:standard ref:GH#38429 pr:#38442 logged:2026-11-15 -> [todo/tasks/t19017-brief.md] completed:2026-11-15
 
-- [ ] t19025 fix(ci): stop the main-push shell portability scan failing with Argument list too long #interactive #bug tier:simple assignee:marcusquinn ref:GH#38452 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19025-brief.md]
+- [x] t19025 fix(ci): stop the main-push shell portability scan failing with Argument list too long #interactive #bug tier:simple assignee:marcusquinn ref:GH#38452 pr:#38453 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19025-brief.md] completed:2026-11-15
 
-- [ ] t19028 perf(full-loop): drain the cleanup-receipt archive backlog in one run so worktree admission scans a small hot set #interactive #feat tier:standard assignee:marcusquinn ref:GH#38458 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19028-brief.md]
+- [x] t19028 perf(full-loop): drain the cleanup-receipt archive backlog in one run so worktree admission scans a small hot set #interactive #feat tier:standard assignee:marcusquinn ref:GH#38458 pr:#38460 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19028-brief.md] completed:2026-11-15
 
-- [ ] t19029 perf(gh-permission): make collaborator permission lookups conditional so an unchanged verdict costs no REST quota #interactive #feat tier:standard assignee:marcusquinn ref:GH#38466 logged:2026-11-15 started:2026-11-15
+- [x] t19029 perf(gh-permission): make collaborator permission lookups conditional so an unchanged verdict costs no REST quota #interactive #feat tier:standard assignee:marcusquinn ref:GH#38466 pr:#38468 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
 - [x] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 pr:#38435 logged:2026-11-15 -> [todo/tasks/t19018-brief.md] completed:2026-11-15
 
@@ -2123,11 +2123,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19021 fix(gh): stop shim temp-file leaks that bloat agent tmp and slow dispatch #interactive #bug tier:standard assignee:marcusquinn ref:GH#38443 pr:#38444 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19021-brief.md] completed:2026-11-15
 
-- [ ] t19024 perf(session-time): project message role and completion time in SQL instead of sorting raw message JSON #interactive #performance tier:standard assignee:marcusquinn ref:GH#38451 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19024-brief.md]
+- [x] t19024 perf(session-time): project message role and completion time in SQL instead of sorting raw message JSON #interactive #performance tier:standard assignee:marcusquinn ref:GH#38451 pr:#38454 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19024-brief.md] completed:2026-11-15
 
-- [ ] t19026 fix(pulse): run Pulse launchd jobs and workers at normal priority instead of launchd's throttled default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38455 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19026-brief.md]
+- [x] t19026 fix(pulse): run Pulse launchd jobs and workers at normal priority instead of launchd's throttled default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38455 pr:#38456 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19026-brief.md] completed:2026-11-15
 
-- [ ] t19027 fix(test): test-pulse-defense-restart.sh fails 10 revival assertions on current main #interactive #bug tier:standard assignee:marcusquinn ref:GH#38457 logged:2026-11-15 started:2026-11-15
+- [x] t19027 fix(test): test-pulse-defense-restart.sh fails 10 revival assertions on current main #interactive #bug tier:standard assignee:marcusquinn ref:GH#38457 pr:#38461 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
 ## In Progress
 
