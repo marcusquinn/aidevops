@@ -9,6 +9,19 @@ _FULL_LOOP_STATE_PERSISTENCE_LOADED=1
 
 # --- State Management ---
 
+_full_loop_exclude_runtime_path() {
+	local worktree="$1" pattern="$2" exclude_file=""
+	# State can also be used outside a Git repository.
+	git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1 || return 0
+	exclude_file=$(git -C "$worktree" rev-parse --git-path info/exclude) || return 1
+	[[ "$exclude_file" == /* ]] || exclude_file="${worktree}/${exclude_file}"
+	mkdir -p "${exclude_file%/*}" || return 1
+	if ! grep -Fxq -- "$pattern" "$exclude_file" 2>/dev/null; then
+		printf '\n%s\n' "$pattern" >>"$exclude_file" || return 1
+	fi
+	return 0
+}
+
 save_state() {
 	local phase="$1" prompt="$2" pr_number="${3:-}" started_at="${4:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 	local now
@@ -16,6 +29,9 @@ save_state() {
 	local tmp_file="${STATE_FILE}.tmp.$$"
 	RUN_ID="${RUN_ID:-run-$(date -u '+%Y%m%dT%H%M%SZ')-$$}"
 	STATE_REVISION=$((${STATE_REVISION:-0} + 1))
+	local state_prefix
+	state_prefix=$(git rev-parse --show-prefix 2>/dev/null) || state_prefix=""
+	_full_loop_exclude_runtime_path "$PWD" "/${state_prefix}${STATE_DIR}/" || return 1
 	mkdir -p "$STATE_DIR"
 	cat >"$tmp_file" <<EOF
 ---
