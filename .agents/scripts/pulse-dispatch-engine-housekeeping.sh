@@ -360,11 +360,20 @@ _pulse_housekeeping_on_signal() {
 #######################################
 # GH#38353: revisit due external_trigger_pending holds on maintainer repos.
 # The helper owns its knobs (interval, per-cycle AI budget, wall-clock budget).
+# GH#38489: its wall-clock budget ends before the stage kill, so a long pass
+# exits cleanly with its per-issue records written; a smaller explicit budget
+# still wins.
+# Args: $1 - stage timeout seconds (optional; unbounded when absent)
 # Returns 0 always; a failed pass is retried by the next cycle.
 #######################################
 _run_terminal_blocker_trigger_revisit() {
+	local stage_timeout="${1:-}"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
-	local slugs="" slug="" maintained=""
+	local slugs="" slug="" maintained="" budget="${AIDEVOPS_TRIGGER_REVISIT_BUDGET_S:-240}"
+	[[ "$budget" =~ ^[1-9][0-9]*$ ]] || budget=240
+	if [[ "$stage_timeout" =~ ^[1-9][0-9]*$ ]] && ((budget > stage_timeout - 10)); then
+		budget=$((stage_timeout > 11 ? stage_timeout - 10 : 1))
+	fi
 	[[ -x "$helper" && -f "${REPOS_JSON:-}" ]] || return 0
 	declare -F _pulse_enabled_repo_slugs >/dev/null 2>&1 || return 0
 	declare -F get_repo_role_by_slug >/dev/null 2>&1 || return 0
@@ -374,7 +383,14 @@ _run_terminal_blocker_trigger_revisit() {
 		maintained+="${slug}"$'\n'
 	done <<<"$slugs"
 	[[ -n "$maintained" ]] || return 0
-	printf '%s' "$maintained" | "$helper" pulse >>"$LOGFILE" 2>&1 || true
+	# The role loop above can be slow; the watchdog's absolute stage deadline
+	# bounds the helper from when it actually starts.
+	if [[ "${PULSE_STAGE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		local remaining=$((PULSE_STAGE_DEADLINE_EPOCH - $(date +%s) - 10))
+		((remaining >= 1)) || return 0
+		((budget <= remaining)) || budget="$remaining"
+	fi
+	printf '%s' "$maintained" | AIDEVOPS_TRIGGER_REVISIT_BUDGET_S="$budget" "$helper" pulse >>"$LOGFILE" 2>&1 || true
 	return 0
 }
 
@@ -430,8 +446,11 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
 			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
 	fi
+	# GH#38489: owner-scoped searches plus bounded AI decisions outlive the
+	# cheap slice, which killed every pass before its first record write.
 	_pulse_run_resumable_housekeeping_stage "trigger_revisit" "$state_file" \
-		_pulse_run_optional_stage_with_timeout "trigger_revisit" "$stage_timeout" _run_terminal_blocker_trigger_revisit || incomplete=1
+		_pulse_run_optional_stage_with_timeout "trigger_revisit" "$heavy_timeout" \
+		_run_terminal_blocker_trigger_revisit "$heavy_timeout" || incomplete=1
 	# GH#38204: per-repo setup (gate probe, merged-PR list, issue index) takes
 	# 6-28s before the first cursor write, so the cheap slice killed every run.
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \

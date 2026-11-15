@@ -809,6 +809,8 @@ test_housekeeping_weighted_timeouts() {
 		grep -q '^optional:auto_decomposer_scanner:72$' "$STAGE_LOG" || exit 1
 		# GH#38204: post-merge per-repo setup outlives the cheap slice.
 		grep -q '^optional:post_merge_scanner:72$' "$STAGE_LOG" || exit 1
+		# GH#38489: trigger revisit searches and decides; the slice killed it.
+		grep -q '^optional:trigger_revisit:72$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:pr_review_thread_response:12$' "$STAGE_LOG" || exit 1
 		# Explicit caller and cache-prime ceilings must still win.
 		PULSE_CACHE_PRIME_TIMEOUT=3
@@ -818,6 +820,7 @@ test_housekeeping_weighted_timeouts() {
 		grep -q '^budget:refresh_blocked_status_from_graph:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:auto_decomposer_scanner:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:post_merge_scanner:7$' "$STAGE_LOG" || exit 1
+		grep -q '^optional:trigger_revisit:7$' "$STAGE_LOG" || exit 1
 		grep -q '^optional:cache_prime:3$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:preflight_ownership_reconcile:7$' "$STAGE_LOG" || exit 1
 		grep -q '^stage:post_dispatch_housekeeping:307$' "$STAGE_LOG" || exit 1
@@ -880,6 +883,37 @@ test_service_owned_lane_timeout_resumes() {
 	return 0
 }
 
+# GH#38489: the trigger-revisit helper's own deadline lands before the stage
+# kill, so a long pass exits cleanly; a smaller explicit budget still wins.
+test_trigger_revisit_budget_below_stage_timeout() {
+	setup_test_env
+	local failures=0
+	if ! (
+		SCRIPT_DIR="${TEST_ROOT}/bin"
+		REPOS_JSON="${TEST_ROOT}/repos.json"
+		mkdir -p "$SCRIPT_DIR"
+		printf '{}\n' >"$REPOS_JSON"
+		export BUDGET_LOG="${TEST_ROOT}/budget.log"
+		cat >"${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "$1" "${AIDEVOPS_TRIGGER_REVISIT_BUDGET_S:-}" >>"$BUDGET_LOG"
+EOF
+		chmod +x "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+		_pulse_enabled_repo_slugs() { printf 'owner/a\nowner/b\n'; return 0; }
+		get_repo_role_by_slug() { printf 'maintainer\n'; return 0; }
+		_run_terminal_blocker_trigger_revisit 72
+		_run_terminal_blocker_trigger_revisit 7
+		AIDEVOPS_TRIGGER_REVISIT_BUDGET_S=30 _run_terminal_blocker_trigger_revisit 72
+		_run_terminal_blocker_trigger_revisit
+		[[ "$(tr '\n' ';' <"$BUDGET_LOG")" == 'pulse 62;pulse 1;pulse 30;pulse 240;' ]] || exit 1
+	); then
+		failures=1
+	fi
+	print_result "trigger revisit budget ends before its stage timeout" "$failures"
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_sync_housekeeping_runs_all_stages
 	test_async_housekeeping_returns_before_slow_stage
@@ -897,6 +931,7 @@ main() {
 	test_pre_dispatch_blocker_refresh_cycle_reserve
 	test_housekeeping_weighted_timeouts
 	test_service_owned_lane_timeout_resumes
+	test_trigger_revisit_budget_below_stage_timeout
 	test_async_housekeeping_logs_termination
 
 	printf '\n============================================\n'

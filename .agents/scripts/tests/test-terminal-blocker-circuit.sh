@@ -727,10 +727,50 @@ ${trigger_line}"
 	return 0
 )
 
+# GH#38489: a pass searches once per owner, keeps only requested slugs, and
+# withholds AI when its deadline is near. GitHub is stubbed.
+_trigger_revisit_pass_cases() (
+	local log="${TEST_ROOT}/trigger-revisit-pass.log" out=""
+	local HOME="$TEST_ROOT" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	_TBTR_RECORD_DIR="${TEST_ROOT}/trigger-revisit-pass"
+	: >"$log"
+	gh() { printf 'runner-a\n'; return 0; }
+	terminal_blocker_search_issue_refs() {
+		printf 'search %s\n' "${1%% *}" >>"$log"
+		case "$1" in
+		user:alpha\ *) printf 'Alpha/One\t11\tu\nalpha/three\t13\tu\nalpha/foreign\t99\tu\n' ;;
+		user:beta\ *) printf 'beta/two\t21\tu\n' ;;
+		esac
+		return 0
+	}
+	_tbtr_repo() { printf 'repo %s %s\n' "$1" "$(cut -f2 <<<"$4" | tr '\n' ',')" >>"$log"; printf '0\n'; return 0; }
+	tbtr_run alpha/one beta/two alpha/three beta/none || return 1
+	[[ "$(rg -c '^search ' "$log")" == 2 ]] || return 1
+	rg -q '^search user:alpha$' "$log" && rg -q '^search user:beta$' "$log" || return 1
+	out=$(rg '^repo ' "$log" | tr '\n' ';')
+	[[ "$out" == 'repo alpha/one 11,;repo alpha/three 13,;repo beta/two 21,;' ]] || return 1
+	# Near the deadline every issue is still scheduled, but without AI.
+	unset -f _tbtr_repo
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_tbtr_authority() { printf 'true true\n'; return 0; }
+	_tbtr_issue() { printf 'issue %s ai=%s\n' "$2" "$7" >>"$log"; return 3; }
+	_TBTR_DEADLINE=$((SECONDS + 60))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t11\tu' >/dev/null || return 1
+	_TBTR_DEADLINE=$((SECONDS + _TBTR_MIN_AI_S - 1))
+	_tbtr_repo alpha/one 5 runner-a $'alpha/one\t12\tu' >/dev/null || return 1
+	rg -q '^issue 11 ai=true$' "$log" && rg -q '^issue 12 ai=false$' "$log" || return 1
+	return 0
+)
+
 test_external_trigger_revisit() {
 	local status=0
 	_trigger_revisit_cases || status=1
-	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited" "$status"
+	_trigger_revisit_pass_cases || status=1
+	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited; passes search once per owner and withhold late AI" "$status"
 	return 0
 }
 
