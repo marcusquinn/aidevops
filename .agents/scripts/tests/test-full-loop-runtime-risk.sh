@@ -533,6 +533,13 @@ session_origin_label() {
 _issue_has_parent_task_label() {
 	return 1
 }
+# GH#38518: the metadata path also calls these; keep the fixture offline.
+macos_checks_evidence() {
+	return 0
+}
+_gh_with_timeout() {
+	return 0
+}
 print_info() {
 	local message="$1"
 	printf '%s\n' "$message" >&2
@@ -545,6 +552,7 @@ prepare_fixture_metadata() {
 	local issue_number=34465 files_changed="" pr_body="" runtime_risk="" testing_level=""
 	local pr_title="Fixture" commit_message="fix: fixture" origin_label="" repo="example/fixture"
 	local allow_parent_close=0 planning_only=0 replacement_pr="" replacement_reason=""
+	local keep_issue_open=0 replacement_pr_head_sha="" summary_decisions=""
 	_commit_and_pr_prepare_metadata || return 1
 	printf '%s\n' "$pr_body"
 	return 0
