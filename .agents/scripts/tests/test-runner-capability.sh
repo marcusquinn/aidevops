@@ -244,6 +244,41 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
           success=False, reason='invalid_requirements')
     server.shutdown()
 
+    # requires-device: only the runner holding the matching device id proceeds.
+    device_file = root / 'device-id'
+    device_file.write_text('device-1783820013-77368-17015\n')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(device_file)
+    check('matching device id proceeds', {'body': 'requires-device: device-1783820013-77368-17015'})
+    check('matching id in list proceeds',
+          {'body': 'requires-device: device-1-2-3, device-1783820013-77368-17015'})
+    check('non-matching device id defers', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_mismatch')
+    check('device check precedes secret reads',
+          {'body': 'requires-device: device-1-2-3\nrequires-secrets: MISSING'},
+          success=False, reason='device_mismatch')
+    for bad in ('not-a-device', 'device-1-2', 'device-1-2-3;x', ''):
+        check(f'malformed device id {bad!r} is rejected', {'body': f'requires-device: {bad}'},
+              success=False, reason='invalid_requirements')
+    check('more than four device ids is rejected',
+          {'body': 'requires-device: ' + ' '.join(f'device-1-2-{n}' for n in range(5))},
+          success=False, reason='invalid_requirements')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(root / 'missing-device-id')
+    check('missing device file is unknown', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_unknown')
+    check('issue without device line is unaffected', {'body': ''})
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(device_file)
+    deferral = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; '
+        '_runner_capability_log_deferral 42 owner/repo "runner_capability_unmet reason=$2" "" 3>&1',
+        'fixture', str(scripts), 'device_mismatch'], env=env, capture_output=True, text=True)
+    assert 'signal=device_mismatch cooldown=eligible' in deferral.stdout, deferral
+    unknown = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; '
+        '_runner_capability_log_deferral 42 owner/repo "runner_capability_unmet reason=$2" "" 3>&1',
+        'fixture', str(scripts), 'device_unknown'], env=env, capture_output=True, text=True)
+    assert 'signal=device_unknown cooldown=none' in unknown.stdout, unknown
+    print('PASS device_mismatch deferral is cooldown=eligible')
+
     # Exercise the actual dispatch entry function, stopping at the next gate.
     # A capability failure must never reach a scope write, dedup or claim.
     core = (scripts / 'pulse-dispatch-core.sh').read_text()
