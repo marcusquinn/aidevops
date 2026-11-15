@@ -13,6 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 MERGE_PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
+# GH#38259: extracted merge stages run through the timing wrapper.
+# shellcheck source=../pulse-merge-timing.sh
+source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

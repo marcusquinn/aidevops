@@ -71,12 +71,16 @@ cat >"${STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 
+printf '%s\n' "$*" >>"${STUB_CALL_LOG:-/dev/null}"
+
 if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
 	printf '%s\n' 'maintainer'
 	exit 0
 fi
 
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+	[[ "${STUB_LIST_FAIL:-0}" == "1" ]] && exit 1
+	[[ "${STUB_LIST_EMPTY:-0}" == "1" ]] && exit 0
 	printf '%s\n' '42'
 	exit 0
 fi
@@ -124,6 +128,27 @@ if ROUTINE_COMMENT_LOGFILE="$ROUTINE_COMMENT_LOGFILE" ROUTINE_COMMENT_STATE_DIR=
 else
 	assert_equals "multiline helper does not match later marker" "non-ops" "non-ops"
 fi
+
+# Identity pass-through and empty-repo TTL skip
+export STUB_CALL_LOG="${TMPDIR_TEST}/calls.log"
+: >"$STUB_CALL_LOG"
+ROUTINE_COMMENT_SELF_LOGIN=maintainer bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/repo" "$TMPDIR_TEST" >/dev/null
+assert_not_contains "valid env login skips api user" "api user" "$(cat "$STUB_CALL_LOG")"
+: >"$STUB_CALL_LOG"
+ROUTINE_COMMENT_SELF_LOGIN='bad login;' bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/repo" "$TMPDIR_TEST" >/dev/null
+assert_contains "invalid env login falls back to api user" "api user" "$(cat "$STUB_CALL_LOG")"
+
+STUB_LIST_FAIL=1 bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/empty" "$TMPDIR_TEST" >/dev/null
+if [[ -e "${ROUTINE_COMMENT_STATE_DIR}/owner_empty_empty.stamp" ]]; then
+	assert_equals "failed list writes no stamp" "absent" "present"
+else
+	assert_equals "failed list writes no stamp" "absent" "absent"
+fi
+STUB_LIST_EMPTY=1 bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/empty" "$TMPDIR_TEST" >/dev/null
+: >"$STUB_CALL_LOG"
+STUB_LIST_EMPTY=1 bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/empty" "$TMPDIR_TEST" >/dev/null
+assert_not_contains "second scan within TTL skips issue list" "issue list" "$(cat "$STUB_CALL_LOG")"
+unset STUB_CALL_LOG
 
 if bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999; then
 	assert_equals "missing comment cannot dispatch" "blocked" "dispatched"

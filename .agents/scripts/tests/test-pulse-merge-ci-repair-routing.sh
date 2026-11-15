@@ -32,6 +32,9 @@ source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-mocks.sh"
 # shellcheck source=./test-pulse-merge-ci-repair-routing-cases.sh
 # shellcheck disable=SC1091 # Sibling module resolved at runtime via SCRIPT_DIR.
 source "${SCRIPT_DIR}/test-pulse-merge-ci-repair-routing-cases.sh"
+# GH#38259: extracted merge stages run through the timing wrapper.
+# shellcheck source=../pulse-merge-timing.sh
+source "${SCRIPT_DIR}/../pulse-merge-timing.sh"
 
 main() {
 	test_red_pr_passes_gates_before_repair_route

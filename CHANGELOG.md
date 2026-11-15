@@ -10,6 +10,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.200] - 2026-11-15
+
+### Added
+
+- auto-sweep stale research-staging children (GH#38366) (#38375)
+
+### Changed
+
+- Maintenance: complete t19009 (pr:#38367)
+
+### Fixed
+
+- quiet false-alarm setup warnings on fresh installs
+- accept proven release-commit and image-digest pins in semver policy (#38384)
+- supersede unsigned same-version cloudron release request bound to another PR (GH#38369) (#38373)
+- derive decision-policy fixture timestamps from current time (GH#38365) (#38378)
+- accept proven commit pins (#38363)
+- preserve approvals for canonical blocker releases (#38357)
+
+## [3.39.199] - 2026-11-14
+
+### Fixed
+
+- closed worker checkpoint draft no longer strands its issue or resumes rejected work
+- GH#38358 fix(checkpoints): a failed continuation launch no longer holds a stalled draft for a maintainer
+
+## [3.39.198] - 2026-11-14
+
+### Changed
+
+- Maintenance: add t19006 dispatch ceremony latency, t19007 external-trigger revisit, t19008 approval release reader drift (#38354)
+
+### Fixed
+
+- provision allow-auto-merge label before planning PR fallback
+- resolve OAuth image router from live Codex models; add OpenRouter image route (#38346)
+- Pulse files the next phase of an idle parent instead of holding it
+
+## [3.39.197] - 2026-11-14
+
+### Added
+
+- one-command GitHub App setup (manifest create + bulk bind)
+
+## [3.39.196] - 2026-11-14
+
+### Fixed
+
+- copy transitive shared-constants deps in test fixtures (GH#38342)
+- fix hook self-test admission and keep git hooks installed on self-test failure
+- file one Dependabot remediation issue per package
+
+## [3.39.195] - 2026-11-14
+
+### Added
+
+- add on-demand NetBird MCP server (read-only allowlist, token from aidevops secrets)
+
+### Changed
+
+- Refactor: split full-loop-helper-commit.sh below 2000 lines
+
+### Fixed
+
+- treat ESRCH from exited /proc tasks as vanished in worker-lifecycle census
+- reconcile release provenance readiness race (#38321)
+- label normal-mode native REST attempts with method/class/family
+- signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker
+- skip nested gopass entries in secret inventory (#38324)
+- give the priority health dashboard a recovery-sized refresh budget
+- task-complete-helper completes indented subtasks in place (GH#37919) (#38294)
+- resume blocker-recovery seed at the interrupted repo
+
+## [3.39.194] - 2026-11-14
+
+### Added
+
+- maintainer replies on held issues wake the AI supervisor; unexplained holds get a stated why
+
+### Changed
+
+- Tests: supply GH#37708 launch evidence in finish-path fixtures (#38308)
+- Tests: update scratch worktree git fixture (#38300)
+
+### Fixed
+
+- print CHANNEL_PENDING and RELEASE_WAIT when reconcile waits on channels (#38310)
+- judge pushed refs, skip task-id-counter pushes (#38304)
+- route signal-less exits after own PR handoff through the post-PR handoff gate
+
+## [3.39.193] - 2026-11-14
+
+### Added
+
+- route-upstream for findings owned by another managed repo (#38293)
+- surface App-read routing opportunity when PAT REST quota is the pulse ceiling
+
+### Changed
+
+- Maintenance: add t18993 t18994 scanner harness drift and complexity-guard counter-push scoping
+- Tests: isolate standalone 6c from the macOS keychain gate
+- Maintenance: sync GitHub issue refs to TODO.md (#38269)
+
+### Fixed
+
+- write-access probe and accurate admin wording
+- do not quote WorkingDirectory in Linux unit
+- finish interactive PRs left idle by a still-running session
+- framework provenance labels no longer stale signed issue approvals
+- reclaim stale empty receipt-lock owner and publish owner atomically
+
+## [3.39.192] - 2026-11-14
+
+### Changed
+
+- Tests: cover cleanup receipt holder diagnostics (#38252)
+- Maintenance: sync GitHub issue refs to TODO.md (#37768)
+- Refactor: split checkpoint approval helpers (#38230)
+
+### Fixed
+
+- make negative-cache reuse work for body-less candidates
+- stop human-gated retry hints starving merge-ready PRs
+- torn audit line no longer blocks gh-audit anomaly scanning
+- defer closed issue holds for TODO projections (#38254)
+- exempt previously public privacy entities (#38231)
+- recover orphaned checkpoint terminal leases (#38238)
+- treat check runs with conclusion+completed_at as terminal
+- stop spent approvals blocking checkpoint rearm (#38196)
+
 ## [3.39.191] - 2026-11-14
 
 ### Fixed

@@ -702,6 +702,7 @@ _refresh_ensure_unresolved_is_blocked() {
 		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" >/dev/null 2>&1; then
 		return 1
 	fi
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 	# Preserve a lifecycle transition that raced the first label read. The direct
 	# edit above intentionally leaves active labels intact so this repair can
 	# remove only the dependency block instead of clobbering queued/in-progress.
@@ -709,7 +710,9 @@ _refresh_ensure_unresolved_is_blocked() {
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dep_labels_has "$current_labels" "status:blocked" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1 || true
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1; then
+			DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
+		fi
 		return 1
 	fi
 	printf '[pulse-wrapper] dep-graph-cache: normalized #%s in %s available -> blocked DISPATCH_BLOCK_APPLIED reason=%s source=dependency_normalization native_rc=%s\n' \
@@ -747,6 +750,7 @@ _refresh_cleanup_resolved_blocker_labels() {
 			[[ ",${current_labels}," == *",${stale_label},"* ]] || continue
 			if gh issue edit "$issue_num" --repo "$slug" --remove-label "$stale_label" >/dev/null 2>&1; then
 				removed_count=$((removed_count + 1))
+				DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 				echo "[pulse-wrapper] dep-graph-cache: removed stale ${stale_label} from #${issue_num} in ${slug} — blocker resolved (GH#25922)" >>"$LOGFILE"
 			fi
 		done
@@ -820,11 +824,14 @@ _refresh_try_unblock_issue() {
 	# dependency statuses, then remove available if an active status appeared.
 	gh issue edit "$issue_num" --repo "$slug" \
 		--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dep_labels_has "$current_labels" "$DEP_AVAILABLE_STATUS" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		gh issue edit "$issue_num" --repo "$slug" --remove-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || true
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1; then
+			DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
+		fi
 		return 1
 	fi
 	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
@@ -950,6 +957,9 @@ _refresh_graph_repo() {
 #######################################
 refresh_blocked_status_from_graph() {
 	local cache_file="$DEP_GRAPH_CACHE_FILE"
+	# GH#38275: count successful writes at mutation sites, independently of later
+	# reads/repairs or helper return status (census refetch gate).
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 
 	if [[ ! -f "$cache_file" ]]; then
 		echo "[pulse-wrapper] dep-graph-cache: no cache file, skipping blocked-status refresh" >>"$LOGFILE"
@@ -1040,8 +1050,14 @@ normalize_repo_dependency_readiness() {
 	return 0
 }
 
+# Sets DEP_NORMALIZE_LAST_STATUS (GH#38275): fresh = skipped within TTL,
+# ran = normalization completed, failed = unavailable. When "ran",
+# DEP_GRAPH_REFRESH_CHANGED_COUNT is the number of labels changed.
+# The return contract is unchanged.
 normalize_repo_dependency_readiness_if_due() {
 	local slug="$1"
+	DEP_NORMALIZE_LAST_STATUS="failed"
+	DEP_GRAPH_REFRESH_CHANGED_COUNT=0
 	local ttl_secs="${PULSE_DEP_NORMALIZE_TTL_SECS:-60}"
 	local marker_dir="${HOME:+$HOME/.aidevops/cache/dependency-normalization}"
 	local marker_file=""
@@ -1053,11 +1069,15 @@ normalize_repo_dependency_readiness_if_due() {
 
 	if [[ -f "$marker_file" ]]; then
 		marker_age=$(($(date +%s) - $(date -r "$marker_file" +%s 2>/dev/null || echo 0)))
-		[[ "$marker_age" -lt "$ttl_secs" ]] && return 0
+		if [[ "$marker_age" -lt "$ttl_secs" ]]; then
+			DEP_NORMALIZE_LAST_STATUS="fresh"
+			return 0
+		fi
 	fi
 	mkdir -p "$marker_dir" 2>/dev/null || return 1
 	if normalize_repo_dependency_readiness "$slug"; then
 		: >"$marker_file"
+		DEP_NORMALIZE_LAST_STATUS="ran"
 		return 0
 	fi
 	return 1

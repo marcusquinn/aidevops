@@ -25,6 +25,7 @@ _RUN_RESULT_ROLE_MODEL_REPLAY="${HEADLESS_ROLE_MODEL_REPLAY:-model-replay}"
 _RUN_RESULT_RATE_LIMIT="rate_limit"
 _RUN_RESULT_BLOCKED="blocked"
 _RUN_RESULT_MODEL_BLOCKED_SIGNAL="model_blocked_signal"
+_RUN_RESULT_POST_PR_HANDOFF="post_pr_handoff"
 
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_result_lib_path="${BASH_SOURCE[0]%/*}"
@@ -133,10 +134,59 @@ _run_result_reconcile_unknown_blocker() {
 	declare -F gh_pr_checks_observed_json >/dev/null 2>&1 || return 1
 	gh_pr_checks_observed_json "${DISPATCH_REPO_SLUG:-}" "${handoff#*|}" all "$head" >/dev/null 2>&1 || checks_rc=$?
 	[[ "$checks_rc" -eq 0 || "$checks_rc" -eq 8 ]] || return 1
-	_run_result_label="post_pr_handoff"
+	_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
 	_run_failure_reason=""
 	_run_classification_source="verified_pr_handoff"
 	_run_classification_pattern="unknown_blocker_ready_pr"
+	rm -f "$output_file"
+	return 0
+}
+
+# GH#38303: true when the live issue is in the runner's own handed-off state,
+# which `dispatch-claim-helper.sh verify-worker-ownership` refuses.
+_run_result_issue_handed_off_by_runner() {
+	local repo_slug="$1" issue_number="$2" runner="$3" live_issue=""
+	live_issue=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	jq -e --arg runner "$runner" '.pull_request == null
+		and ([.assignees[]?.login] == [$runner])
+		and (.state == "closed" or ([.labels[]?.name] | index("status:in-review") != null))
+	' <<<"$live_issue" >/dev/null 2>&1
+	return $?
+}
+
+# GH#38303: a no-signal exit after the worker's own exact-head non-draft PR
+# cannot continue: that handoff left the issue in a state the runtime ownership
+# fence refuses. Route it through the post-PR handoff gate, which owns exact-head
+# verification and summary/linkage preservation. Draft PRs, repair/checkpoint
+# contracts, dirty worktrees, merged PRs lacking evidence and unreadable state
+# keep the premature_exit continuation path. GH#38329: cleanliness uses the
+# shared task-worktree status, so the post-merge cleanup-deferred marker that
+# `full-loop-helper.sh merge` writes does not hide a merged own-PR handoff.
+_run_result_reconcile_signal_less_handoff() {
+	[[ -z "${AIDEVOPS_PR_REPAIR_NUMBER:-}" ]] || return 1
+	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	declare -F _hrw_task_worktree_status >/dev/null 2>&1 || return 1
+	local issue_number="${WORKER_ISSUE_NUMBER:-${session_key#issue-}}" repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local runner="${WORKER_GITHUB_LOGIN:-${AIDEVOPS_WORKER_GITHUB_LOGIN:-}}"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && -n "$repo_slug" && -n "$runner" && -d "${work_dir:-}" ]] || return 1
+	local dirty="" branch="" head="" handoff=""
+	dirty=$(_hrw_task_worktree_status "$work_dir") || return 1
+	[[ -z "$dirty" ]] || return 1
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || return 1
+	head=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || return 1
+	[[ -n "$branch" && -n "$head" ]] || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$branch" "$issue_number" \
+		"$repo_slug" head-only "$head" 1) || return 1
+	case "${handoff%%|*}" in
+	ready | ready_missing_summary | ready_missing_linkage | merged) ;;
+	*) return 1 ;;
+	esac
+	_run_result_issue_handed_off_by_runner "$repo_slug" "$issue_number" "$runner" || return 1
+	_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
+	_run_failure_reason=""
+	_run_classification_source="worker_pr_handoff_without_signal"
+	_run_classification_pattern="${handoff%%|*}"
+	print_info "[lifecycle] signal-less exit after own PR handoff session=${session_key} pr=#${handoff#*|} state=${handoff%%|*} — routing through post-PR handoff gate (continuation would be ownership-fenced)"
 	rm -f "$output_file"
 	return 0
 }
@@ -242,6 +292,17 @@ _run_result_flag_unchanged_continuation() {
 	return 0
 }
 
+# Issue worker exited without confirmed completion. Returns 0 for a verified
+# own-PR handoff (GH#38303), otherwise 77 so the attempt loop continues it.
+_run_result_classify_incomplete_issue_exit() {
+	_run_result_reconcile_signal_less_handoff && return 0
+	_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
+	_run_result_label="premature_exit"
+	rm -f "$output_file"
+	print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
+	return 77
+}
+
 _handle_run_result_success_output() {
 	if _run_result_requires_task_complete && ! _private_output_has_task_complete "$output_file"; then
 		local incomplete_label="private_incomplete"
@@ -269,7 +330,7 @@ _handle_run_result_success_output() {
 			return 83
 		fi
 		if output_has_post_pr_handoff_signal "$output_file"; then
-			_run_result_label="post_pr_handoff"
+			_run_result_label="$_RUN_RESULT_POST_PR_HANDOFF"
 			rm -f "$output_file"
 			return 0
 		fi
@@ -328,11 +389,8 @@ _handle_run_result_success_output() {
 			return 83
 		fi
 		if ! _run_result_terminal_completion_confirmed; then
-			_log_empty_result_gaps "$output_file" "$selected_model" "$session_key"
-			_run_result_label="premature_exit"
-			rm -f "$output_file"
-			print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
-			return 77
+			_run_result_classify_incomplete_issue_exit
+			return $?
 		fi
 	fi
 	if ! _run_result_is_issue_worker && _run_result_continuation_exited_unchanged; then

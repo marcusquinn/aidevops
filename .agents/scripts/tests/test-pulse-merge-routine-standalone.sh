@@ -213,7 +213,10 @@ fi
 auth_test_home=$(mktemp -d)
 auth_output=""
 auth_exit=0
-auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" \
+# GH#38271: isolate the gh-auth refusal from the macOS keychain gate (6c-2 covers it)
+# and from any host gh config that GH_CONFIG_DIR/XDG_CONFIG_HOME would select.
+auth_output=$(HOME="$auth_test_home" GH_TOKEN="" GITHUB_TOKEN="" AIDEVOPS_KEYCHAIN_FORCE_STATE=unlocked \
+	GH_CONFIG_DIR="$auth_test_home/.config/gh" XDG_CONFIG_HOME="$auth_test_home/.config" \
 	LC_ALL=C timeout 30 "$ROUTINE_FILE" --repo example/repo 2>&1) || auth_exit=$?
 rm -rf "$auth_test_home"
 
@@ -974,6 +977,57 @@ if grep -qF '_pulse_start_routines_ticker || true' "$WRAPPER_FILE" &&
 else
 	fail "32: the cycle starts the ticker and stops it on exit and before re-exec"
 fi
+
+# GH#38282: exercise real run/dry-run lifecycle functions with only the remote
+# merge scope and admission probes replaced. EXIT owns the scratch cleanup.
+for memo_mode in run dry; do
+	memo_test_root=$(mktemp -d)
+	memo_output=$(ROUTINE_FILE="$ROUTINE_FILE" SCRIPTS_DIR="$SCRIPTS_DIR" \
+		AIDEVOPS_TEMP_DIR="$memo_test_root" MODE="$memo_mode" bash -c '
+set -euo pipefail
+source "$SCRIPTS_DIR/shared-gh-collaborator-permission.sh"
+source <(awk '\''
+/^(_pmr_init_collab_memo|_pmr_release_lock|_pmr_acquire_lock|cmd_run|cmd_dry_run)\(\) \{/ { emit=1 }
+emit { print }
+emit && /^\}/ { emit=0 }
+'\'' "$ROUTINE_FILE")
+LOCK_DIR="$AIDEVOPS_TEMP_DIR/lock"
+PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=30
+PULSE_MERGE_ROUTINE_LAST_RUN="$AIDEVOPS_TEMP_DIR/last-run"
+_pmr_log() { printf "%s\n" "$*"; return 0; }
+_pmr_require_gh_auth() { return 0; }
+_pmr_graphql_budget_allows_run() { return 0; }
+_pmr_rest_core_progress_allows_run() { return 0; }
+_pmr_run_with_timeout() { shift; ( "$@" ); return $?; }
+_gh_collaborator_permission_request() {
+	printf x >>"$AIDEVOPS_TEMP_DIR/requests"
+	printf '\''HTTP/2 200\n\n{"permission":"write"}\n'\''
+	return 0
+}
+_pmr_run_merge_scope() {
+	local permission=""
+	permission=$(_gh_collaborator_permission_lookup o/r alice)
+	_gh_collaborator_permission_lookup o/r alice permission
+	[[ "$permission" == write ]] || return 1
+	printf "%s\n" "$AIDEVOPS_GH_COLLAB_MEMO_FILE" >"$AIDEVOPS_TEMP_DIR/path"
+	return 2
+}
+rc=0
+if [[ "$MODE" == dry ]]; then cmd_dry_run || rc=$?; else cmd_run || rc=$?; fi
+[[ "$rc" == 2 ]]
+[[ "$(wc -c <"$AIDEVOPS_TEMP_DIR/requests" | tr -d " ")" == 1 ]]
+printf "one-request\n"
+')
+	memo_rc=$?
+	memo_path=""
+	[[ ! -f "$memo_test_root/path" ]] || memo_path=$(<"$memo_test_root/path")
+	if [[ "$memo_rc" == 0 && "$memo_output" == *"one-request"* && "$memo_output" == *"collab_memo hits=1 misses=1"* && ! -e "$memo_path" && ! -d "$memo_test_root/lock" ]]; then
+		pass "33: $memo_mode shares subshell verdict, summarizes and cleans up on failure exit"
+	else
+		fail "33: $memo_mode per-run memo lifecycle" "rc=$memo_rc, output=$memo_output"
+	fi
+	rm -rf "$memo_test_root"
+done
 
 # =============================================================================
 # Summary

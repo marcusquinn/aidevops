@@ -10,6 +10,8 @@ tools:
   grep: true
   webfetch: true
   task: true
+mcp:
+  - netbird
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -269,6 +271,35 @@ curl -s .../api/peers -H "Authorization: Token <TOKEN>" | jq '.[] | {name,ip,con
 # Create group: POST /api/groups  {"name":"ai-workers"}
 # Create policy: POST /api/policies  {"name":"...","enabled":true,"rules":[{"sources":["<group-id>"],"destinations":["<group-id>"],"bidirectional":true,"protocol":"all","action":"accept"}]}
 ```
+
+### MCP Server (aidevops `netbird`)
+
+NetBird's management server (0.83.0+) embeds an MCP endpoint at
+`https://<management>/api/mcp`, off by default (`NB_MCP_ENABLED=true`; limit tools
+with `NB_MCP_TOOLS`). Upstream: https://docs.netbird.io/manage/mcp-server.
+Cloudron operators: follow the package's `docs/MCP-SERVER.md`.
+
+aidevops registers it on demand as `netbird` (disabled until this agent connects
+it). `netbird-mcp-launcher.sh` bridges the endpoint to stdio with pinned
+`mcp-remote` and injects the token with `aidevops secret`, so the value never
+reaches config files, argv or context. The profile allows only the read-only tool
+set; write tools stay denied even when the server exposes them.
+
+```bash
+# 1. Prefer a dedicated service user with role Auditor (cannot change anything);
+#    create its token in the dashboard. Never use the embedded owner day to day.
+aidevops secret set NETBIRD_<NAME>_MCP_PAT
+# 2. Name the server once (account name = hostname) and make it the default.
+aidevops secret account add netbird-<name> --provider netbird --name netbird.example.com
+aidevops secret record NETBIRD_<NAME>_MCP_PAT --provider netbird --account netbird-<name> --expires YYYY-MM-DD
+aidevops secret default netbird NETBIRD_<NAME>_MCP_PAT
+# 3. Validate without connecting.
+NETBIRD_MCP_LAUNCHER_DRY_RUN=1 ~/.aidevops/agents/scripts/netbird-mcp-launcher.sh
+```
+
+Overrides: `NETBIRD_MCP_SECRET` (another secret name) and `NETBIRD_MCP_URL`
+(`https://<host>/api/mcp`). A token has its user's full rights; the Auditor role,
+not the tool list, is what stops REST writes. Rotate before expiry.
 
 ### Terraform
 

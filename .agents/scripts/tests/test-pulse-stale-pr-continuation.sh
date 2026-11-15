@@ -264,6 +264,11 @@ gh() {
 		printf '[[]]\n'
 		return 0
 	fi
+	# GH#38261: record-time issue material reads are not exact-PR reads. Fail
+	# them so records keep metadata material, as before that change.
+	if [[ "$*" =~ ^api\ repos/[^/]+/[^/]+/issues/[0-9]+$ ]]; then
+		return 1
+	fi
 	printf '%s\n' "$*" >>"$GH_CALLS_FILE"
 	[[ -n "$STUB_PR_REST_JSON" ]] || return 1
 	printf '%s\n' "$STUB_PR_REST_JSON"

@@ -741,6 +741,23 @@ _delete_losing_claim_comment() {
 }
 
 #######################################
+# GH#38352: pre-claim assignment check with is-assigned's exit contract
+# (0 = blocked, 1 = free, other = error). A validated layer-6 free verdict for
+# this launch answers "free" without a second is-assigned run; any mismatch
+# runs the full recovery-enabled check. Only this pre-consensus guard may
+# reuse evidence: _guard_no_active_assignment_read_only stays a fresh read.
+# Args: dedup helper path, issue number, repo slug, runner login
+#######################################
+_dch_pre_claim_assignment_check() {
+	local dedup_helper="$1" issue_number="$2" repo_slug="$3" runner="$4"
+	if _dch_assignment_verdict_reusable "$issue_number" "$repo_slug" "$runner"; then
+		return 1
+	fi
+	"$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner"
+	return $?
+}
+
+#######################################
 # Fail-closed guard before posting a DISPATCH_CLAIM.
 # Args:
 #   $1 = issue number
@@ -770,7 +787,7 @@ _guard_no_active_assignment_before_claim() {
 	fi
 
 	local guard_output="" guard_rc=0
-	guard_output=$(_dch_timed assignment_guard "$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	guard_output=$(_dch_timed assignment_guard _dch_pre_claim_assignment_check "$dedup_helper" "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
@@ -792,6 +809,7 @@ _guard_no_active_assignment_read_only() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local runner="$3"
+	local skip_cost_budget="${4:-0}"
 	if declare -F _interactive_claim_fence_blocks_dispatch >/dev/null 2>&1 &&
 		_interactive_claim_fence_blocks_dispatch "$issue_number" "$repo_slug"; then
 		printf 'CLAIM_BLOCKED: live_interactive_owner issue=#%s repo=%s\n' \
@@ -807,7 +825,9 @@ _guard_no_active_assignment_read_only() {
 
 	local guard_output=""
 	local guard_rc=0
-	guard_output=$(_dch_timed final_assignment_guard "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	# Only the post-consensus claim call may skip its already-passed cost gate;
+	# launch-time ownership checks keep the budget guard enabled by default.
+	guard_output=$(_dch_timed final_assignment_guard env AIDEVOPS_DDH_SKIP_COST_BUDGET="$skip_cost_budget" "$dedup_helper" is-assigned-read-only "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
@@ -1006,7 +1026,7 @@ cmd_claim() {
 	# pre-claim assignment guard. Revalidate the live assignment before handing
 	# the winning lease back to the dispatcher, and delete the lease on loss.
 	if [[ "${AIDEVOPS_TEST_MODE:-}" != "1" || -n "${AIDEVOPS_FORCE_CLAIM_ASSIGNMENT_GUARD:-}" ]]; then
-		if ! _guard_no_active_assignment_read_only "$issue_number" "$repo_slug" "$runner"; then
+		if ! _guard_no_active_assignment_read_only "$issue_number" "$repo_slug" "$runner" 1; then
 			_delete_losing_claim_comment "$repo_slug" "$comment_id"
 			printf 'CLAIM_REVOKED: interactive_or_active_assignment_after_consensus issue=#%s repo=%s runner=%s comment_id=%s\n' \
 				"$issue_number" "$repo_slug" "$runner" "$comment_id"

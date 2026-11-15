@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.39.191
+# Version: 3.39.200
 
 set -euo pipefail
 
@@ -1022,7 +1022,7 @@ _repos_actions() {
 cmd_github() {
 	local action="${1:-}"
 	if [[ "$action" != "auth" ]]; then
-		print_error "Usage: aidevops github auth <set|status|check|clear|profile|usage|migrate>"
+		print_error "Usage: aidevops github auth <app|set|status|check|clear|profile|usage|advise|migrate>"
 		return 1
 	fi
 	shift

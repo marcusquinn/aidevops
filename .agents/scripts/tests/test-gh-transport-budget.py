@@ -2,16 +2,19 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Focused admission invariants; no network or production state access."""
 
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import select
+import shutil
 import signal
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -23,6 +26,7 @@ from gh_transport_budget import (
     Budget,
     Deferred,
     admission_status,
+    process_birth,
     quota_owner,
     reconcile_scope,
     scope_key,
@@ -37,6 +41,59 @@ SPEC.loader.exec_module(governor)
 def headers(remaining=102, reset=2000, resource="core"):
     return {"x-ratelimit-remaining": str(remaining), "x-ratelimit-reset": str(reset),
             "x-ratelimit-resource": resource, "x-ratelimit-limit": "5000" if resource == "core" else "30"}
+
+
+class ProcessBirthTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux procfs")
+    def test_linux_preserves_legacy_identity_without_subprocess(self):
+        pid = os.getpid()
+        ps = shutil.which("ps")
+        self.assertIsNotNone(ps, "legacy identity comparison requires native ps")
+        output = subprocess.check_output(  # nosec B603 -- resolved native ps, fixed options and this process's numeric PID; no shell
+            [ps, "-p", str(pid), "-o", "lstart="], timeout=2, env={**os.environ, "LC_ALL": "C"},
+        )
+        legacy = hashlib.sha256(output.strip()).hexdigest()
+        with patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch("gh_process_birth.subprocess.check_output", side_effect=AssertionError("fork")):
+            self.assertEqual(process_birth(pid), legacy)
+            self.assertEqual(process_birth(-1), "")
+            self.assertEqual(process_birth(2147483647), "")
+
+    def test_linux_parses_binary_comm_after_final_parenthesis(self):
+        stat = b"123 (odd ) \xff name) " + b" ".join([b"S"] + [b"0"] * 18 + [b"12345"])
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C.UTF-8"}), \
+                patch.object(Path, "read_bytes", return_value=stat), \
+                patch("gh_process_birth._linux_boot_time", return_value=1000), \
+                patch("gh_process_birth.os.sysconf", return_value=100):
+            self.assertEqual(process_birth(123), hashlib.sha256(time.ctime(1123).encode()).hexdigest())
+
+    def test_linux_malformed_or_unreadable_procfs_is_unknown(self):
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch.object(Path, "read_bytes", return_value=b"malformed"):
+            self.assertEqual(process_birth(123), "")
+        with patch("gh_process_birth.sys.platform", "linux"), \
+                patch.dict(os.environ, {"LC_ALL": "C"}), \
+                patch.object(Path, "read_bytes", side_effect=PermissionError):
+            self.assertEqual(process_birth(123), "")
+
+    def test_linux_non_english_time_locale_keeps_legacy_ps_identity(self):
+        # procps localizes lstart via LC_TIME; English-only ctime would diverge.
+        for environment in ({"LC_ALL": "fr_FR.UTF-8"}, {"LC_ALL": "", "LC_TIME": "de_DE.UTF-8"}):
+            with self.subTest(environment=environment), \
+                    patch("gh_process_birth.sys.platform", "linux"), \
+                    patch.dict(os.environ, environment), \
+                    patch.object(Path, "read_bytes", side_effect=AssertionError("procfs")), \
+                    patch("gh_process_birth.subprocess.check_output", return_value=b"sam. 14 nov.\n") as ps:
+                self.assertEqual(process_birth(123), hashlib.sha256(b"sam. 14 nov.").hexdigest())
+                self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
+
+    def test_darwin_retains_ps_identity(self):
+        with patch("gh_process_birth.sys.platform", "darwin"), \
+                patch("gh_process_birth.subprocess.check_output", return_value=b"  legacy\n") as ps:
+            self.assertEqual(process_birth(123), hashlib.sha256(b"legacy").hexdigest())
+            self.assertEqual(ps.call_args.args[0], ["ps", "-p", "123", "-o", "lstart="])
 
 
 class AdmissionTests(unittest.TestCase):

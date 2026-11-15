@@ -371,7 +371,34 @@ The scanner:
    unchanged)
 3. Redacts source repository names unless GitHub confirms they are public (or
    they match the destination repository), failing closed on lookup errors
-4. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when anomalies are found
+4. Counts lines that are not parsable NDJSON objects, reports them under
+   **Malformed lines** and a `## Log Integrity` section, and keeps scanning the
+   rest of the window (GH#38229)
+5. Files a GitHub issue on `marcusquinn/aidevops` with a summary table when
+   anomalies or malformed lines are found
+
+### Malformed lines
+
+An interrupted append leaves the log without a trailing newline, so the next
+event concatenates onto the partial one and both records become unparsable.
+`gh-audit-log-helper.sh` now writes a separating newline when the last byte is
+not one and serialises appends with `flock`, so this cannot recur silently.
+
+Earlier the scanner aborted on any unparsable line and held its checkpoint,
+which turned one torn line into indefinite loss of detection for every later
+entry. Unparsable lines are therefore reported rather than treated as a reason
+to stop: they are excluded from signal matching, counted in the report, and the
+checkpoint still advances. The log is append-only — never edit it to "repair" a
+torn line. Locate reported lines with:
+
+```bash
+jq -nR '[inputs | input_line_number as $n | [fromjson?] | if length == 0 then $n else empty end]' \
+  ~/.aidevops/logs/gh-audit.log
+```
+
+A truncated prefix followed by a complete later event is a write fault. Edited or
+reordered content on such a line is a tampering finding: follow the Forensics
+Workflow above.
 
 The explicit handoff command is `gh-write-helper.sh issue review-handoff <issue>
 --repo <owner/repo> --pr <pr>`. Its `_issue_review_handoff` provenance requires

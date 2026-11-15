@@ -127,6 +127,8 @@ _preflight_launch_async_cleanup() {
 }
 # GH#36026 preflight stage: keep hermetic (no PULSE_DIR stamp, no live rearm helper).
 _pulse_rearm_blocker_holds() { return 0; }
+# GH#38098 native macOS verification is Darwin-only; keep event order host-independent.
+_preflight_start_macos_verification() { return 0; }
 calculate_max_workers() { printf 'host-capacity\n' >>"$EVENTS"; return 0; }
 calculate_priority_allocations() { printf 'allocation\n' >>"$EVENTS"; advance_clock 900; return 0; }
 check_session_count() { printf '0\n'; return 0; }
@@ -293,6 +295,39 @@ printf 'PASS first-wave target is isolated from normal census bounds\n'
 	[[ "$rc" == 124 ]]
 )
 printf 'PASS empty censuses rotate at the total deadline and repository timeout drains descendants\n'
+
+# GH#38274: a timed-out repository escalates to the cap for the next census;
+# a completed scan decays to 1.5x its cost and the base clears the override.
+(
+	budget_file=$(_dispatch_repo_enumeration_budget_file owner/big)
+	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 15 ]]
+	_dispatch_record_repo_enumeration_outcome owner/big 15 15 124 15
+	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 60 ]]
+	grep -q 'enumeration budget raised: repo=owner/big from=15s to=60s' "$LOGFILE"
+	# Other failures leave the stored budget unchanged.
+	_dispatch_record_repo_enumeration_outcome owner/big 15 60 1 2
+	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 60 ]]
+	_dispatch_record_repo_enumeration_outcome owner/big 15 60 0 32
+	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 48 ]]
+	PULSE_REPO_ENUMERATION_BUDGET_MAX_S=40
+	[[ "$(_dispatch_repo_enumeration_budget owner/big 15)" == 40 ]]
+	unset PULSE_REPO_ENUMERATION_BUDGET_MAX_S
+	_dispatch_record_repo_enumeration_outcome owner/big 15 48 0 6
+	[[ ! -e "$budget_file" && "$(_dispatch_repo_enumeration_budget owner/big 15)" == 15 ]]
+	# The census grants the escalated budget to that repository only.
+	printf '60\n' >"$budget_file"
+	_dispatch_enumerate_repo_bounded() {
+		printf 'budget:%s:%s\n' "$2" "$1" >>"$EVENTS"
+		printf '[]\n'
+		return 0
+	}
+	jq -n '{initialized_repos:[{slug:"owner/big",path:"/fixture",pulse:true},{slug:"owner/small",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	rm -f "${HOME}/.aidevops/cache/pulse-census-cursor"
+	: >"$EVENTS"
+	PULSE_CENSUS_ENUMERATION_BUDGET_S=300 build_ranked_dispatch_candidates_json 50 skip >/dev/null || true
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'budget:owner/big:60;budget:owner/small:15;' ]]
+)
+printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"
@@ -626,3 +661,18 @@ jq -e '.[0].number == 1 and .[1].number == 100' <<<"$ordered" >/dev/null
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 [[ "$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=1 _dispatch_order_round_candidates "$backlog" 6)" == "$backlog" ]]
 printf 'PASS ordinary retries, launch clearing, disabled rotation and expired stamps preserve recency semantics\n'
+
+# GH#38333: claimed candidates (assignee or in-progress/in-review/claimed)
+# follow unclaimed work in a stable partition; nothing is dropped.
+claims=$(jq -nc '[
+	{number:1, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"], assignees:[]},
+	{number:2, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"], assignees:["runner"]},
+	{number:3, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch","status:in-review"], assignees:[]},
+	{number:4, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch"]},
+	{number:5, repo_slug:"owner/a", priority_rank:0, labels:[{name:"status:claimed"}]},
+	{number:6, repo_slug:"owner/a", priority_rank:0, labels:["auto-dispatch","status:available"]}]')
+ordered=$(_DISPATCH_ATTEMPT_RECENCY_WINDOW_SECONDS=0 _dispatch_order_round_candidates "$claims" 20)
+jq -e '[.[].number] == [1,4,6,2,3,5]' <<<"$ordered" >/dev/null
+[[ "$(_dispatch_order_claim_state_candidates "$backlog")" == "$backlog" ]]
+[[ "$(_dispatch_order_claim_state_candidates 'not-json')" == 'not-json' ]]
+printf 'PASS fresh-first lane orders claimed candidates after unclaimed work, no-op otherwise\n'

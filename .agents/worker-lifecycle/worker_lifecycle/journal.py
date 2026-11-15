@@ -120,6 +120,14 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "OR g.generation_id IN (SELECT value FROM json_each(e.payload,'$.generations')))))) "
         "ORDER BY e.sequence LIMIT 1000", (encode(reservations), f"-{age} seconds", f"-{age} seconds"),
     ).fetchall()
+    # Finished-worktree reclaim evidence (GH#38348) describes trees already gone
+    # or refused; once past retention it is archived like any other history.
+    rows += connection.execute(
+        "SELECT * FROM events WHERE julianday(recorded_at)<=julianday('now',?) "
+        "AND json_extract(payload,'$.type') IN "
+        "('reclaim-authorized','reclaim-archived','reclaim-removed') "
+        "ORDER BY sequence LIMIT 1000", (f"-{age} seconds",),
+    ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,
                                  "archive": None, "dry_run": not apply, "cleanup_authorized": False}
     if not apply or not rows:

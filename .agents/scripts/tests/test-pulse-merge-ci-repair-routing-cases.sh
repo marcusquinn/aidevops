@@ -166,6 +166,8 @@ extract_merge_gate_functions() {
 		_pm_gate_origin_authority _pm_gate_review_bot _check_pr_merge_gates; do
 		extract_function "$fn_name" "$source_file"
 	done
+	# GH#38042: _check_pr_merge_gates fails closed without the provenance gate.
+	extract_function _pm_gate_unlabeled_worker_branch "${source_file%/*}/pulse-merge-partial-continuation.sh"
 	return 0
 }
 
@@ -229,6 +231,7 @@ define_process_helper() {
 	PULSE_MERGE_BOOL_TRUE="true"
 	PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
 	PULSE_REVIEW_REMEDIATION_REPEAT_EXHAUSTED="repeat_exhausted"
+	PULSE_REVIEW_REMEDIATION_DEFERRED="deferred"
 	PULSE_UNKNOWN_STATE="UNKNOWN"
 	PULSE_MERGE_CLOSE_CONFLICTING=false
 	DRY_RUN=0

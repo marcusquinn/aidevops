@@ -174,6 +174,13 @@ _dlw_select_issue_worktree() {
 			sealed=$((sealed + 1))
 			continue
 		fi
+		# GH#38355: never resume commits that a closed, unmerged PR rejected.
+		# Skip (preserve) the candidate so a fresh branch starts from the default.
+		if declare -F _dlw_reuse_head_rejected >/dev/null 2>&1 &&
+			_dlw_reuse_head_rejected "$wt_path" "$wt_branch" "$repo_slug"; then
+			echo "[dispatch_worker_launch] WORKTREE_REUSE_REJECTED_HEAD issue=#${issue_number} pr=#${_DLW_REJECTED_HEAD_PR} class=${class%% *} action=fresh_branch_from_default" >>"${LOGFILE:-/dev/null}"
+			continue
+		fi
 		count=$((count + 1))
 		_DLW_REUSE_PATH="$wt_path"
 		_DLW_REUSE_BRANCH="$wt_branch"

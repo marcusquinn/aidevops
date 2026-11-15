@@ -178,9 +178,19 @@ release_request() {
 	if [[ -n "$existing" ]]; then
 		metadata=$(release_metadata "$(jq -r '.body' <<<"$existing")" "$repo") || return 1
 		if ! jq -e --arg sha "$sha" --argjson pr "$pr" '.head == $sha and .pr == $pr' <<<"$metadata" >/dev/null; then
-			release_error 'Existing version request has a different PR/head: refresh its signed body and obtain re-approval.'
-			return 1
+			# A same-version request bound to another PR/head is superseded only
+			# when unsigned. Signed or unverifiable requests fail closed, unedited.
+			issue=$(jq -r '.number' <<<"$existing") || return 1
+			[[ "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
+			rc=0
+			verdict=$(release_verify "$repo" "$issue") || rc=$?
+			[[ "$rc" -ne 0 && "$verdict" == NO_APPROVAL ]] || release_error 'Existing version request has a different PR/head and is signed or unverifiable: refresh its signed body and obtain re-approval.' || return 1
+			release_comment "$repo" "$issue" "Superseded by a new request for PR #${pr} (head ${sha}) at version ${version}. No release was authorized by this unsigned request." || return 1
+			gh issue close "$issue" --repo "$repo" --reason 'not planned' || return 1
+			existing=""
 		fi
+	fi
+	if [[ -n "$existing" ]]; then
 		url=$(jq -r '.html_url' <<<"$existing") || return 1
 		issue="${url##*/}"
 		[[ "$url" == https://* && "$issue" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -263,6 +273,17 @@ release_policy_body() {
 		# shellcheck disable=SC2016 # Markdown backticks are literal.
 		printf 'Commit policy: upstream `%s`; SHA prefixes of 7–40 hex characters must resolve to the exact open trusted finding commit in this upstream. GitHub compare must prove strict forward ancestry (ahead); commits have no major boundary. All other routine-bump rules below still apply; the same-major version clause is replaced by this ancestry rule. A new signature is required for this mode.\n\n' "$upstream"
 		;;
+	release-identity)
+		# upstream is "owner/repo:COMMIT_ARG:images-asset"; the signature covers all three.
+		local identity_repo='' identity_arg='' identity_asset=''
+		IFS=: read -r identity_repo identity_arg identity_asset <<<"$upstream"
+		[[ "$identity_repo" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "$identity_arg" =~ ^[A-Za-z_][A-Za-z0-9_]*$ \
+			&& "$identity_asset" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
+		policy=$(jq -c --arg upstream "$identity_repo" --arg arg "$identity_arg" --arg asset "$identity_asset" \
+			'. + {upstream_repository:$upstream,release_identity:{commit_arg:$arg,images_json_asset:$asset}}' <<<"$policy") || return 1
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf 'Release identity policy: upstream `%s`; semver rules below still apply, and additionally the pinned release commit (`ARG %s`, and the commit in `upstreamLicense.url`) may change only to the peeled commit of the new upstream release tag, strictly ahead of the old tag commit, and `FROM` image digests may change only to digests published in the new release asset `%s`. Any other manifest or pinned-file change is not routine. A new signature is required for this mode.\n\n' "$identity_repo" "$identity_arg" "$identity_asset"
+		;;
 	*) return 1 ;;
 	esac
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
@@ -332,12 +353,19 @@ release_raw_contents() {
 	return 0
 }
 
+# Print "<base upstreamVersion>\t<head upstreamVersion>" when both match $2.
+release_manifest_versions() {
+	local contents="$1" pattern="$2"
+	jq -er --arg pattern "$pattern" '."CloudronManifest.json" | [.base, .head] | map(@base64d | fromjson | .upstreamVersion | strings | select(test($pattern))) | select(length == 2) | @tsv' <<<"$contents" || return 1
+	return 0
+}
+
 # Fetch proof from the signed upstream, not a PR-controlled URL or repository.
 release_commit_proof() {
 	local repo="$1" policy="$2" finding="$3" contents="$4" issue="$5"
 	local upstream='' old='' new='' base='' head='' comparison='' snapshot='' versions=''
 	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
-	versions=$(jq -er '."CloudronManifest.json" | [.base, .head] | map(@base64d | fromjson | .upstreamVersion | strings | select(test("^[a-fA-F0-9]{7,40}$"))) | select(length == 2) | @tsv' <<<"$contents") || return 1
+	versions=$(release_manifest_versions "$contents" '^[a-fA-F0-9]{7,40}$') || return 1
 	IFS=$'\t' read -r old new <<<"$versions"
 	# aidevops:trust-boundary — bind the trusted monitor's structured summary
 	# to the signed upstream and full finding SHA, not merely a copied fingerprint.
@@ -357,13 +385,39 @@ release_commit_proof() {
 	return 0
 }
 
+# Proof for a semver policy with a signed release_identity: peeled old/new
+# release commits, their ancestry, and the new release's published image
+# digests, all read from the signed upstream (never a PR-controlled source).
+release_identity_proof() {
+	local policy="$1" contents="$2" upstream='' asset='' old='' new='' versions='' tag_old='' tag_new=''
+	local base='' head='' comparison='' release='' asset_id='' digests=''
+	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
+	asset=$(jq -er '.release_identity.images_json_asset | strings | select(test("^[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
+	versions=$(release_manifest_versions "$contents" '^v?[0-9]+\.[0-9]+\.[0-9]+$') || return 1
+	IFS=$'\t' read -r old new <<<"$versions"
+	tag_old="v${old#v}"
+	tag_new="v${new#v}"
+	# The commits endpoint peels a tag (including annotated tags) to its commit.
+	base=$(gh api "repos/${upstream}/commits/${tag_old}" --jq '.sha') || return 1
+	head=$(gh api "repos/${upstream}/commits/${tag_new}" --jq '.sha') || return 1
+	[[ "$base" =~ $RELEASE_SHA_PATTERN && "$head" =~ $RELEASE_SHA_PATTERN ]] || return 1
+	comparison=$(gh api "repos/${upstream}/compare/${base}...${head}") || return 1
+	release=$(gh api "repos/${upstream}/releases/tags/${tag_new}") || return 1
+	asset_id=$(jq -er --arg name "$asset" '[.assets[] | select(.name == $name) | .id] | select(length == 1) | .[0]' <<<"$release") || return 1
+	[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	digests=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | grep -Eo 'sha256:[a-f0-9]{64}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
+	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" --argjson comparison "$comparison" \
+		'{repository:$repo,asset:$asset,old_commit:$base,new_commit:$head,status:$comparison.status,merge_base:$comparison.merge_base_commit.sha,digests:$digests}' || return 1
+	return 0
+}
+
 # Print the policy issue number when the signed standing policy authorizes the
 # open PR $2 at exact head $3 as a routine upstream bump. Any error fails closed.
 release_policy_authorizes() {
 	local repo="$1" pr="$2" head="$3"
 	local active='' number='' policy='' snapshot='' view='' finding='' fingerprint='' compare='' merge_base=''
 	local files='' contents='{}' path='' base_content='' head_content='' document='' verdict='' rc=0
-	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version=''
+	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null'
 	active=$(release_policy_active "$repo") || return 1
 	IFS=$'\t' read -r number policy <<<"$active"
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
@@ -384,7 +438,10 @@ release_policy_authorizes() {
 	case "${mode}:${fingerprint}" in
 	semver:upstream-v*) finding_version="${fingerprint#upstream-v}" ;;
 	commits:upstream-commit-*) finding_version="${fingerprint#upstream-commit-}" ;;
-	*) return 1 ;;
+	*)
+		printf '%s PR #%s: standing policy #%s does not apply (policy mode %s vs finding %s)\n' "$repo" "$pr" "$number" "$mode" "$fingerprint" >&2
+		return 1
+		;;
 	esac
 	# Squash merge applies the merge-base diff; main moving does not change it.
 	# Resolve the branch to a SHA so a same-named tag cannot shift the base.
@@ -404,8 +461,11 @@ release_policy_authorizes() {
 	if [[ "$mode" == commits ]]; then
 		upstream_proof=$(release_commit_proof "$repo" "$policy" "$finding_version" "$contents" "$finding_number") || return 1
 	fi
-	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" \
-		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, files: $files, contents: $contents}') || return 1
+	if [[ "$mode" == semver ]] && jq -e 'has("release_identity")' <<<"$policy" >/dev/null; then
+		release_proof=$(release_identity_proof "$policy" "$contents") || return 1
+	fi
+	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" \
+		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, files: $files, contents: $contents}') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2
@@ -578,10 +638,52 @@ Merged exact head ${head} under ${authority}. Publication verification resumes n
 	return 0
 }
 
+# Cache only wait states, never authority. An unavailable or ambiguous policy
+# list disables caching; the normal resolver remains responsible for the verdict.
+release_pending_fingerprint() {
+	local repo="$1" before="$2" head="$3" policy='' rc=0 updated=''
+	updated=$(jq -er '.updated_at | strings | select(length > 0)' <<<"$before") || return 1
+	policy=$(release_policy_issue "$repo") || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		policy=none
+	elif [[ "$rc" -eq 0 ]]; then
+		policy=$(jq -er 'select((.number | numbers) and (.updated_at | strings | length > 0)) | [.number, .updated_at] | @json' <<<"$policy") || return 1
+	else
+		return 1
+	fi
+	jq -cn --arg updated "$updated" --arg head "$head" --arg policy "$policy" '{updated:$updated,head:$head,policy:$policy}' || return 1
+	return 0
+}
+
+release_pending_cache_hit() {
+	local repo="$1" issue="$2" pr="$3" head="$4" fingerprint="$5" seconds="$6"
+	local file="${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" now='' snapshot=''
+	[[ "$seconds" =~ ^[0-9]{1,8}$ && $((10#$seconds)) -gt 0 && -f "$file" ]] || return 1
+	now=$(date +%s) || return 1
+	jq -e --argjson fingerprint "$fingerprint" --argjson now "$now" --argjson seconds "$((10#$seconds))" \
+		'.fingerprint == $fingerprint and (.epoch | numbers) and .epoch <= $now and ($now - .epoch) < $seconds' "$file" >/dev/null 2>&1 || return 1
+	# A PR may merge or move without changing the request issue. Never suppress
+	# publication resume or moved-head handling on the strength of this cache.
+	snapshot=$(release_pr_raw "$repo" "$pr") || return 1
+	jq -e --arg head "$head" --arg state open '.state == $state and .merged == false and .head.sha == $head' <<<"$snapshot" >/dev/null || return 1
+	return 0
+}
+
+release_pending_cache_write() {
+	local repo="$1" issue="$2" fingerprint="$3" dir="${HOME}/.aidevops/cache/cloudron-release-approval"
+	local file="${dir}/${repo//\//--}-${issue}" temporary='' now=''
+	(umask 077; mkdir -p "$dir") || return 1
+	temporary=$(mktemp "${dir}/.pending.XXXXXXXX") || return 1
+	now=$(date +%s) || { rm -f "$temporary"; return 1; }
+	jq -cn --argjson fingerprint "$fingerprint" --argjson epoch "$now" '{fingerprint:$fingerprint,epoch:$epoch}' >"$temporary" &&
+		mv -f "$temporary" "$file" || { rm -f "$temporary"; return 1; }
+	return 0
+}
+
 release_process_issue() {
 	local repo="$1" issue="$2" apply="$3"
 	local before="" after="" body="" pr="" head="" version="" snapshot="" checks="" release_url="" runs="" run_id="" rc=0
-	local metadata=""
+	local metadata="" fingerprint="" recheck="${AIDEVOPS_CLOUDRON_APPROVAL_RECHECK_SECONDS:-21600}"
 	local verdict="" run_status="" run_conclusion=""
 	before=$(gh api "repos/${repo}/issues/${issue}") || return 1
 	jq -e --arg label "$RELEASE_APPROVAL_LABEL" '.state == "open" and any(.labels[]; .name == $label)' <<<"$before" >/dev/null || return 1
@@ -590,9 +692,21 @@ release_process_issue() {
 	pr=$(jq -r '.pr' <<<"$metadata")
 	head=$(jq -r '.head' <<<"$metadata")
 	version=$(jq -r '.version' <<<"$metadata")
+	if [[ "$apply" == true && "$recheck" =~ ^[0-9]{1,8}$ && $((10#$recheck)) -gt 0 ]]; then
+		fingerprint=$(release_pending_fingerprint "$repo" "$before" "$head") || fingerprint=''
+		if [[ -n "$fingerprint" ]] && release_pending_cache_hit "$repo" "$issue" "$pr" "$head" "$fingerprint" "$recheck"; then
+			printf '%s issue %s: unchanged pending approval; recheck deferred\n' "$repo" "$issue"
+			return 0
+		fi
+	fi
+	# A failed or changed evaluation must not revive an older wait record.
+	rm -f "${HOME}/.aidevops/cache/cloudron-release-approval/${repo//\//--}-${issue}" || true
 	local authority=''
 	release_resolve_authority "$repo" "$issue" "$before" "$pr" "$head" "$apply" || rc=$?
-	[[ "$rc" -ne 3 ]] || return 0
+	if [[ "$rc" -eq 3 ]]; then
+		[[ -z "$fingerprint" ]] || release_pending_cache_write "$repo" "$issue" "$fingerprint" || true
+		return 0
+	fi
 	[[ "$rc" -eq 0 ]] || return 1
 	authority="$RELEASE_RESOLVED_AUTHORITY"
 	after=$(gh api "repos/${repo}/issues/${issue}") || return 1
@@ -1110,7 +1224,7 @@ main() {
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 || ( $# -eq 4 && "$arg3" == commits ) ]] || return 1
+		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == release-identity ) ) ]] || return 1
 		release_policy_request "$arg2" "${arg3:-semver}" "$arg4" || return 1
 		;;
 	process)
@@ -1141,7 +1255,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

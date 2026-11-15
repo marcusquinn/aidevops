@@ -46,6 +46,8 @@ _PULSE_MERGE_GATES_LOADED=1
 # shellcheck source=./trusted-dependabot-lib.sh
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/trusted-dependabot-lib.sh"
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-gh-commit-cache.sh"
 
 # --- Functions ---
 
@@ -927,7 +929,7 @@ approve_collaborator_pr() {
 	# No trusted approval exists, so resolve and validate the pulse identity before
 	# creating one.
 	local current_user
-	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	gh_authenticated_login_cached current_user || current_user=""
 
 	if [[ -n "$current_user" ]]; then
 		# Skip self-approval — GitHub rejects it and the failed review state

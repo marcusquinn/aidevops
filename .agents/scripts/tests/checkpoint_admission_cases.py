@@ -16,6 +16,14 @@ from pr_checkpoint_events import EVENTS
 
 
 class RevisionEnvelopeCases:
+    def test_unassigned_and_newer_coordination(self):
+        data = self.fixture()
+        data["issue"]["assignees"] = []
+        self.assertEqual(self.revision.validate(data)["approval_id"], 3)
+        for event in EVENTS:
+            with self.subTest(event=event), self.assertRaises(ValueError):
+                self.revision.validate({**data, "comments": data["comments"] + [self.comment(4, event + "new-owner")]})
+
     def test_wrong_envelopes(self):
         for key, value in [("repo", "other/repo"), ("issue", 124), ("pr", 43),
                            ("head", "2" * 40), ("ref", "other"), ("runner", "other"),

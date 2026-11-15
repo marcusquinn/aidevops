@@ -614,32 +614,57 @@ _auto_dispatch_lock_required() {
 # Reconcile conversation locks for every visible auto-dispatch issue,
 # including blocked and queued work that cannot reach the launch path yet.
 # Only markers owned by this mechanism may trigger an unlock.
+#
+# GH#38274: one jq pass classifies every issue (policy as in
+# _auto_dispatch_lock_required). A per-issue jq/marker subshell cost 3.4s for
+# 505 auto-dispatch issues and pushed large repositories past their census
+# budget. Issues already locked with a recorded marker need no work, so they
+# no longer rewrite the marker or log a line every cycle.
+# Row policy column: 1 = lock required, x = no-auto-dispatch (never unlock),
+# 0 = neither (unlock only a marker this mechanism owns).
 #######################################
 reconcile_auto_dispatch_issue_locks() {
 	local slug="$1"
 	local issue_json="$2"
-	local issue_num="" marker="" labels="" labels_csv="" lock_snapshot="" lock_states="" locked_state=""
+	local issue_num="" marker="" marker_prefix="" policy="" lock_snapshot="" lock_states="" locked_state="" rows=""
 	[[ -n "$slug" && -n "$issue_json" ]] || return 1
 	lock_snapshot=$(_read_issue_conversation_locks_batch "$slug" "$issue_json") || return 1
 	lock_states=$(printf '%s' "$lock_snapshot" | jq -ce '
 		map({key: (.number | tostring), value: .locked}) | from_entries
 	' 2>/dev/null) || return 1
+	rows=$(printf '%s' "$issue_json" | jq -r --argjson states "$lock_states" \
+		--arg auto_dispatch_label "$_PULSE_DISPATCH_AUTO_LABEL" '
+		.[] | ([.labels[]? | .name? // .]) as $labels | (.number | tostring) as $issue |
+		(($labels | index("no-auto-dispatch")) != null) as $opted_out |
+		[$issue,
+			(if (($labels | index($auto_dispatch_label)) != null and ($opted_out | not)) then "1"
+			elif $opted_out then "x" else "0" end),
+			(if ($states | has($issue)) then ($states[$issue] | tostring) else "unknown" end)
+		] | @tsv
+	' 2>/dev/null) || return 1
+	marker_prefix=$(_auto_dispatch_lock_marker "" "$slug") || return 1
 
-	while IFS=$'\t' read -r issue_num labels; do
+	while IFS=$'\t' read -r issue_num policy locked_state; do
 		[[ "$issue_num" =~ $_PULSE_DISPATCH_UNSIGNED_INTEGER_PATTERN ]] || continue
-		marker=$(_auto_dispatch_lock_marker "$issue_num" "$slug") || continue
-		labels_csv=",${labels},"
-		if _auto_dispatch_lock_required "$labels"; then
-			locked_state=$(printf '%s' "$lock_states" | jq -r --arg issue_num "$issue_num" \
-				'if has($issue_num) then .[$issue_num] | tostring else "unknown" end' 2>/dev/null) || return 1
-			[[ "$locked_state" == "true" || "$locked_state" == "$_PULSE_DISPATCH_FALSE" ]] || return 1
+		marker="${marker_prefix}${issue_num}"
+		case "$policy" in
+		1)
+			case "$locked_state" in
+			true) [[ ! -f "$marker" ]] || continue ;;
+			"$_PULSE_DISPATCH_FALSE") ;;
+			*) return 1 ;;
+			esac
 			_apply_issue_conversation_lock_state "$issue_num" "$slug" resolved "$locked_state" || return 1
-		elif [[ -f "$marker" && "$labels_csv" != *,no-auto-dispatch,* ]]; then
+			;;
+		0)
+			[[ -f "$marker" ]] || continue
 			gh issue unlock "$issue_num" --repo "$slug" >/dev/null 2>&1 || return 1
 			rm -f "$marker" 2>/dev/null || return 1
 			echo "[pulse-wrapper] Unlocked #${issue_num} in ${slug} after auto-dispatch removal (GH#30180)" >>"$LOGFILE"
-		fi
-	done < <(printf '%s' "$issue_json" | jq -r '.[] | [(.number | tostring), ([.labels[]? | .name? // .] | join(","))] | @tsv' 2>/dev/null)
+			;;
+		*) ;;
+		esac
+	done <<<"$rows"
 
 	return 0
 }

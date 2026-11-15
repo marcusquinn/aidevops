@@ -162,7 +162,8 @@ normal_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL
 if [[ "$normal_prompt" == *"FULL EMBEDDED BRIEF"* ]] \
 	&& [[ "$normal_prompt" == *"First-pass completion contract"* ]] \
 	&& [[ "$normal_prompt" == *"do not hand off while it is draft or has unpushed changes"* ]] \
-	&& [[ "$normal_prompt" == *"Never poll those gates or bypass approval, review, CI, branch-protection, or security controls"* ]] \
+	&& [[ "$normal_prompt" == *"own it through merge: wait for required checks only with the bounded"* ]] \
+	&& [[ "$normal_prompt" == *"Never poll review or approval gates or bypass approval, review, CI, branch-protection, or security controls"* ]] \
 	&& [[ "$normal_prompt" == *'routine tool discovery'* ]] \
 	&& [[ "$normal_prompt" == *'command -v TOOL'* ]] \
 	&& [[ "$normal_prompt" == *'Do not use file-reading tools to inspect `~/.bun/bin`, `~/.qlty/bin`, or `~/.local/bin`'* ]] \

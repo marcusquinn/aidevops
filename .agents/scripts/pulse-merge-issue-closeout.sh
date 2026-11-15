@@ -46,6 +46,14 @@ _pm_resolve_superseded_original_issue() {
 	return 0
 }
 
+_pm_pr_body_is_todo_projection() {
+	local body="$1"
+	case "$body" in
+	*"<!-- aidevops:planning-publication:v1 "* | *"<!-- aidevops:issue-sync-todo-pr -->"* | *"<!-- aidevops:pulse-todo-handoff id="*) return 0 ;;
+	esac
+	return 1
+}
+
 #######################################
 # Extract a non-closing parent/umbrella reference from a PR body.
 #
@@ -66,11 +74,7 @@ _pm_extract_partial_parent_reference() {
 	local pr_body="" parent_issue="" refs=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
-	case "$pr_body" in
-	*"<!-- aidevops:planning-publication:v1 "* | *"<!-- aidevops:issue-sync-todo-pr -->"* | *"<!-- aidevops:pulse-todo-handoff id="*)
-		return 0
-		;;
-	esac
+	_pm_pr_body_is_todo_projection "$pr_body" && return 0
 	# Capture, then take the first line without an early-exit reader (GH#36235).
 	refs=$(grep -ioE -- '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' <<<"$pr_body") || refs=""
 	parent_issue="${refs%%$'\n'*}"

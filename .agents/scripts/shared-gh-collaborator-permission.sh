@@ -303,7 +303,98 @@ _gh_collaborator_permission_not_collaborator() {
 # Returns: 0=lookup succeeded (404 maps to none), 2=lookup/API/parse failure,
 #          75=transport admission deferred (no permission verdict).
 #######################################
+# Only use caller-provided scratch files inside the framework temp root. Resolve
+# parent directories physically so a symlinked directory cannot escape it.
+_gh_collaborator_scratch_file_safe() {
+	local file="$1"
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local parent=""
+	[[ -n "$file" && -f "$file" && ! -L "$file" && -O "$file" ]] || return 1
+	root=$(cd "$root" && pwd -P) || return 1
+	parent=$(cd "$(dirname "$file")" && pwd -P) || return 1
+	case "$parent/" in
+	"$root/"*) return 0 ;;
+	esac
+	return 1
+}
+
 _gh_collaborator_permission_lookup() {
+	local repo_slug="$1"
+	local user="$2"
+	local out_var="${3:-}"
+	local _gcp_route="${4:-}"
+	local _gcp_retry="${5:-0}"
+	local _gcp_key="" _gcp_entry="" _gcp_cached="" _gcp_fresh="" _gcp_rc=0
+
+	# Only the top-level default-_gcp_route call is memoized (GH#38242).
+	if [[ -z "$repo_slug" || -z "$user" || -n "$_gcp_route" || "$_gcp_retry" != "0" ]]; then
+		_gh_collaborator_permission_lookup_uncached "$@"
+		return $?
+	fi
+
+	_gcp_key=$(printf '%s|%s' "$repo_slug" "$user" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r _gcp_entry; do
+		if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+			_gcp_cached="${_gcp_entry#*=}"
+		fi
+	done <<<"$_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO"
+	local _gcp_file="${AIDEVOPS_GH_COLLAB_MEMO_FILE:-}"
+	if ! _gh_collaborator_scratch_file_safe "$_gcp_file"; then
+		_gcp_file=""
+	fi
+	if [[ -z "$_gcp_cached" && -n "$_gcp_file" ]]; then
+		while IFS= read -r _gcp_entry; do
+			if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+				case "${_gcp_entry#*=}" in
+				admin | maintain | write | triage | read | none) _gcp_cached="${_gcp_entry#*=}" ;;
+				esac
+			fi
+		done <"$_gcp_file"
+	fi
+	if [[ -n "$_gcp_cached" ]]; then
+		if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
+			printf 'hit\n' >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+		fi
+		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
+		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
+		export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP AIDEVOPS_GH_COLLAB_PERMISSION_REASON
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_cached"
+		else
+			printf '%s\n' "$_gcp_cached"
+		fi
+		return 0
+	fi
+
+	if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
+		printf 'miss %s\n' "$_gcp_key" >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
+	fi
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" _gcp_fresh || _gcp_rc=$?
+	if [[ "$_gcp_rc" -eq 0 ]]; then
+		case "$_gcp_fresh" in
+		admin | maintain | write | triage | read | none)
+			_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO="${_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO}${_gcp_key}=${_gcp_fresh}"$'\n'
+			if [[ -n "$_gcp_file" ]]; then
+				printf '%s=%s\n' "$_gcp_key" "$_gcp_fresh" >>"$_gcp_file" || true
+			fi
+			;;
+		esac
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$_gcp_fresh"
+		else
+			printf '%s\n' "$_gcp_fresh"
+		fi
+	fi
+	return "$_gcp_rc"
+}
+
+# Per-process memo of successful lookups: newline-delimited "repo|login=perm",
+# lowercase keys. Optional per-run scratch sharing survives command substitution;
+# the routine deletes it on exit, so the next run observes revocation.
+# Failures, deferrals and fallback/retry routes are never memoized.
+_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
+
+_gh_collaborator_permission_lookup_uncached() {
 	local repo_slug="$1"
 	local user="$2"
 	local out_var="${3:-}"
@@ -421,7 +512,7 @@ _gh_collaborator_permission_retry_with_gh() {
 		return 3
 	fi
 
-	_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
+	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" || retry_rc=$?
 	if [[ "$retry_rc" -eq 0 ]]; then
 		return 0
 	fi
@@ -456,7 +547,7 @@ _gh_collaborator_permission_resolve_failure() {
 		if [[ "$retry_rc" -eq 3 && ( "$failure_reason" == "$_AIDEVOPS_GH_COLLAB_API_FAILURE_REASON" || "$failure_reason" == "unexpected-http" ) ]]; then
 			#aidevops:trust-boundary -- retry uncertainty only, never a parsed verdict.
 			sleep 1
-			_gh_collaborator_permission_lookup "$repo_slug" "$user" "$out_var" "$auth_route" 1
+			_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" "$out_var" "$auth_route" 1
 			return $?
 		fi
 	fi

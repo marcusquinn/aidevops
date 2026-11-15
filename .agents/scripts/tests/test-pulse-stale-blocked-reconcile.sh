@@ -535,4 +535,26 @@ unset -f _pm_reconcile_partial_continuations
 		exit 1
 	}
 ) || exit 1
+
+# GH#38112: the legacy claim sweep leaves at least fifteen seconds for ready work.
+# The checkpoint ledger has its own independent stage on current main.
+(
+	rm -rf "$SENTINEL" "$STAMP_DIR"
+	FAKE_NOW=1000
+	date() { printf '%s\n' "$FAKE_NOW"; return 0; }
+	_pulse_stale_blocked_sweep_deadline() { printf '1020\n'; return 0; }
+	_pdcu_cursor_write() { return 0; }
+	_pdcu_sweep_expired_claims() {
+		local repo="$1" deadline="$2"
+		[[ "$repo" == owner/* && "$deadline" -le 1005 ]] || exit 1
+		FAKE_NOW="$deadline"
+		return 0
+	}
+	_pulse_stale_blocked_sweep_repo() {
+		[[ "$FAKE_NOW" -le 1005 ]] || exit 1
+		return 0
+	}
+	_file_mtime_epoch() { printf '0\n'; return 0; }
+	_pulse_reconcile_stale_blocked_if_due
+) || exit 1
 printf 'PASS: stale blocked reconciliation is cadence bounded and startup-timeout protected\n'

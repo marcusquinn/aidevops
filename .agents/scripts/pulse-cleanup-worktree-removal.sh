@@ -56,12 +56,13 @@ _cleanup_log_diagnostics() {
 # cleanup_policy.decide_cleanup still lacks a production evidence collector. It
 # supplies none of that policy's six proofs and claims no cleanup authorization;
 # it answers only whether the work finished and whether removal would lose it.
-# Removal here is archive-free by explicit operator decision.
+# Stage 1 removal is archive-free by explicit operator decision; stage 2 archives
+# finished trees with local state (commits bundled) before removing them (GH#38394).
 _cleanup_reclaim_finished_worktrees() {
 	local state_dir="$1"
 	local python="$2"
 	local budget="$3"
-	local result="" removed="" refused="" failed="" reclaimed=""
+	local result="" removed="" refused="" failed="" reclaimed="" deferred="" resume="" archived=0
 	# Owners come from the lifecycle registry, never a host process scan.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
 		--state-dir "$state_dir" --apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
@@ -72,9 +73,14 @@ _cleanup_reclaim_finished_worktrees() {
 	refused=$(jq -er '.refused | numbers' <<<"$result") || return 0
 	failed=$(jq -er '.failed | numbers' <<<"$result") || return 0
 	reclaimed=$(jq -er '(.reclaimed_bytes / 1048576 | floor) | numbers' <<<"$result") || return 0
+	# Trees deferred for repeat unreadable state, and where a stopped pass resumes (GH#38376).
+	deferred=$(jq -r '.quarantine_deferred // 0' <<<"$result") || deferred=0
+	resume=$(jq -r '.resume_after // ""' <<<"$result") || resume=""
+	archived=$(jq -er '(.archived // 0) | numbers' <<<"$result") || archived=0
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + removed))
-	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s refused=%s failed=%s reclaimed_mib=%s\n' \
-		"$removed" "$refused" "$failed" "$reclaimed" >>"$LOGFILE"
+	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + archived))
+	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s archived=%s refused=%s failed=%s deferred=%s resume_after=%s reclaimed_mib=%s\n' \
+		"$removed" "$archived" "$refused" "$failed" "$deferred" "${resume:-none}" "$reclaimed" >>"$LOGFILE"
 	return 0
 }
 
@@ -143,7 +149,7 @@ cleanup_worktrees() {
 	archive_failed=$(jq -er '.archive_failed | numbers' <<<"$result") || return 0
 	quarantined=$(jq -er '(.quarantined // 0) | numbers' <<<"$result") || quarantined=0
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + retired))
-	# Count only what the archiving passes retired: reclaim removes without archiving.
+	# Lifecycle retirement archives everything it retires; reclaim counts only stage 2.
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + retired))
 	CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT=$((CLEANUP_WORKTREES_ARCHIVE_FAILED_COUNT + archive_failed))
 	_cleanup_log_diagnostics "$result" || return 0

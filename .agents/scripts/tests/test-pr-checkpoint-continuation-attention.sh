@@ -258,6 +258,91 @@ else
 	print_result "edited episode of an unknown session still fences the stall release" 1
 fi
 
+# GH#38358: the runtime closes a failed continuation launch with its own
+# `CLAIM_RELEASED reason=worker_not_launched` in the same session (claim,
+# prelaunch lease, release; no ready lease). That episode is transparent too,
+# and counted once toward the per-head fuse.
+not_launched_comments() {
+	local episodes="$1" session="${2:-pr-checkpoint-continuation-o-r-9}" id=40 n=0 out=""
+	out='{"id":30,"created_at":"2026-09-30T01:00:00Z","author_association":"COLLABORATOR","user":{"login":"worker-bot"},"body":"DISPATCH_LEASE phase=ready lease_token=stall-lease session=s1"},{"id":31,"created_at":"2026-09-30T01:30:00Z","author_association":"OWNER","user":{"login":"pulse-runner"},"body":"CLAIM_RELEASED reason=worker_draft_checkpoint runner=pulse-runner ts=2026-09-30T01:30:00Z"}'
+	while [[ "$n" -lt "$episodes" ]]; do
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:00Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_CLAIM nonce=n${n} runner=pulse-runner lease_token=n${n} session=${session} phase=prelaunch\"}"
+		id=$((id + 1))
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:10Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"DISPATCH_LEASE phase=prelaunch lease_token=n${n} session=${session} attempt_id=unknown\"}"
+		id=$((id + 1))
+		out="${out},{\"id\":${id},\"created_at\":\"2026-09-30T02:0${n}:20Z\",\"author_association\":\"OWNER\",\"user\":{\"login\":\"pulse-runner\"},\"body\":\"CLAIM_RELEASED reason=worker_not_launched runner=pulse-runner claim_id=$((id - 2)) nonce=n${n} lease_token=n${n} session=${session}\"}"
+		id=$((id + 1))
+		n=$((n + 1))
+	done
+	printf '[[%s]]\n' "$out"
+	return 0
+}
+for failed_episodes in 1 2; do
+	if output=$(_pcc_stall_release_evidence "$(not_launched_comments "$failed_episodes")" "2026-09-30T00:30:00Z" key "[]" \
+		"2026-09-30T00:00:00Z" "" "" "" "$failed_session") &&
+		[[ "$output" == "31"$'\t'"worker_draft_checkpoint"$'\t'"${failed_episodes}"$'\t'"false"$'\t'"1"$'\t'* ]]; then
+		print_result "worker_not_launched episodes (${failed_episodes}) keep the stall release current and count once" 0
+	else
+		print_result "worker_not_launched episodes (${failed_episodes}) keep the stall release current and count once" 1 "output=${output:-missing}"
+	fi
+done
+if output=$(_pcc_stall_release_evidence "$(not_launched_comments 1 issue-9)" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
+	[[ "$output" == "$((40 + 2))"$'\t'"worker_not_launched"$'\t'"2"$'\t'* ]]; then
+	print_result "worker_not_launched from another session is a counted stall release" 0
+else
+	print_result "worker_not_launched from another session is a counted stall release" 1 "output=${output:-missing}"
+fi
+# A release after a ready lease (runtime never confirmed) is its own stall.
+ready_not_launched=$(jq -c '[flatten[] | if .id == 41 then .body = "DISPATCH_LEASE phase=ready lease_token=n0 session=pr-checkpoint-continuation-o-r-9 attempt_id=attempt:a1" else . end]' <<<"$(not_launched_comments 1)")
+if output=$(_pcc_stall_release_evidence "$ready_not_launched" "2026-09-30T00:30:00Z" key "[]" "" "" "" "" "$failed_session") &&
+	[[ "$output" == "42"$'\t'"worker_not_launched"$'\t'"2"$'\t'* ]]; then
+	print_result "worker_not_launched after a ready lease is a counted stall release" 0
+else
+	print_result "worker_not_launched after a ready lease is a counted stall release" 1 "output=${output:-missing}"
+fi
+if ! _pcc_completed_release_evidence "$(not_launched_comments 1 issue-9)" key >/dev/null 2>&1; then
+	print_result "worker_not_launched never routes to blocked-checkpoint attention" 0
+else
+	print_result "worker_not_launched never routes to blocked-checkpoint attention" 1
+fi
+
+# The orphan rewrite must not erase the session on an unedited prelaunch
+# cleanup, including a terminal-only cleanup with no recorded claim.
+for cleanup_shape in claim terminal_only; do
+	cleanup_comments="$(failed_launch_comments 1 | jq -c --arg shape "$cleanup_shape" '
+		map(map(select($shape != "terminal_only" or .id != 40) |
+			if .id == 41 then del(.updated_at) else . end))')"
+	if output=$(_pcc_stall_release_evidence "$cleanup_comments" "2026-09-30T00:30:00Z" key "[]" \
+		"2026-09-30T00:00:00Z" "" "" "" "$failed_session") &&
+		[[ "$output" == $'31\tworker_draft_checkpoint\t1\tfalse\t1\t'* ]]; then
+		print_result "unedited ${cleanup_shape} cleanup stays transparent before orphan synthesis" 0
+	else
+		print_result "unedited ${cleanup_shape} cleanup stays transparent before orphan synthesis" 1 "output=${output:-missing}"
+	fi
+done
+
+# Duplicate terminal posts are one release, while a later ready lease starts
+# another episode. A normal explicit release still prevents synthesis.
+for orphan_episodes in 1 2; do
+	orphan_comments="$(stall_comments stall-lease | jq -c --argjson episodes "$orphan_episodes" '
+		flatten | map(select(.id != 31)) | . + [(last | .id = 33)] |
+		if $episodes == 2 then . + [
+			(.[0] | .id = 40), (.[1] | .id = 41), (.[1] | .id = 42)] else . end')"
+	if output=$(_pcc_stall_release_evidence "$orphan_comments" "2026-09-30T00:30:00Z" key "[]" \
+		"2026-09-30T00:00:00Z") &&
+		[[ "$output" == *$'\torphaned_terminal_lease\t'"${orphan_episodes}"$'\tfalse\t'"${orphan_episodes}"$'\t'* ]]; then
+		print_result "duplicate terminals count once per orphan episode (${orphan_episodes})" 0
+	else
+		print_result "duplicate terminals count once per orphan episode (${orphan_episodes})" 1 "output=${output:-missing}"
+	fi
+done
+if output=$(_pcc_stall_release_evidence "$(stall_comments stall-lease)" "2026-09-30T00:30:00Z" key "[]" \
+	"2026-09-30T00:00:00Z") && [[ "$output" == $'31\tno_activity\t1\tfalse\t1\t'* ]]; then
+	print_result "explicit release suppresses orphan synthesis with PR fuse enabled" 0
+else
+	print_result "explicit release suppresses orphan synthesis with PR fuse enabled" 1 "output=${output:-missing}"
+fi
+
 # GH#34008: a killed attempt runs no release path; the proactive sweep already
 # reset its issue. Its own expired claim, older than the recovery draft head,
 # is the only stall evidence accepted, and only for For #N recovery drafts.

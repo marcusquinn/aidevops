@@ -5,7 +5,8 @@
 # label-sync-helper.sh — Canonical GitHub label color definitions and cross-repo sync.
 #
 # Defines the authoritative color palette for all aidevops-managed labels.
-# Syncs labels across all repos in repos.json (non-local, admin-accessible).
+# Syncs labels across all repos in repos.json that are not local-only or
+# contributed; creating and editing labels needs write access (not admin).
 #
 # Usage:
 #   label-sync-helper.sh sync [--dry-run] [--existing-only] [--repo owner/repo]
@@ -134,6 +135,7 @@ SYSTEM_LABELS=(
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
 	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
 	"do-not-close|EDEDED|Opt-out: never auto-close this PR in pulse sweeps"
+	"allow-auto-merge|0E8A16|Allow approved automation to merge after required checks pass"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"
@@ -412,8 +414,9 @@ _apply_label_set() {
 	return 0
 }
 
-# Get list of all non-local, non-contributed repos from repos.json
-_get_admin_repos() {
+# Get list of all non-local, non-contributed repos from repos.json.
+# Selection only; it does not check permissions (see _repo_write_denied).
+_get_managed_repos() {
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 	[[ -f "$repos_json" ]] || {
 		print_error "repos.json not found at $repos_json"
@@ -427,6 +430,18 @@ _get_admin_repos() {
 		| select(.slug | test("^ssh://") | not)
 		| .slug' "$repos_json" 2>/dev/null || true
 	return 0
+}
+
+# Return 0 only when GitHub explicitly reports no push (write) permission.
+# Label create/edit/delete needs write, not admin. Tokens whose repo response
+# omits .permissions (for example app installation tokens) or a failed lookup
+# return 1, so sync proceeds and reports per-label failures instead.
+_repo_write_denied() {
+	local repo="$1"
+	local push
+	push=$(gh api "repos/${repo}" --jq '.permissions.push' 2>/dev/null || true)
+	[[ "$push" == "false" ]] && return 0
+	return 1
 }
 
 # Fix existing labels that have drifted from canonical colors.
@@ -454,9 +469,12 @@ _fix_existing_tag_labels() {
 			if [[ "$dry_run" == "--dry-run" ]]; then
 				echo "  [DRIFT] $name: #$color → #$canonical_color"
 			else
-				gh label create "$name" --repo "$repo" \
-					--color "$canonical_color" --description "Auto-created from TODO.md tag" --force 2>/dev/null || true
-				echo "  [FIXED] $name: #$color → #$canonical_color"
+				if gh label create "$name" --repo "$repo" \
+					--color "$canonical_color" --description "Auto-created from TODO.md tag" --force 2>/dev/null; then
+					echo "  [FIXED] $name: #$color → #$canonical_color"
+				else
+					echo "  [FAILED] $name: #$color → #$canonical_color"
+				fi
 			fi
 		fi
 	done
@@ -490,9 +508,12 @@ _fix_drifted_system_labels() {
 				if [[ "$dry_run" == "--dry-run" ]]; then
 					echo "  [DRIFT] $name: #$current_color → #$color"
 				else
-					gh label create "$name" --repo "$repo" \
-						--color "$color" --description "$desc" --force 2>/dev/null || true
-					echo "  [FIXED] $name: #$current_color → #$color"
+					if gh label create "$name" --repo "$repo" \
+						--color "$color" --description "$desc" --force 2>/dev/null; then
+						echo "  [FIXED] $name: #$current_color → #$color"
+					else
+						echo "  [FAILED] $name: #$current_color → #$color"
+					fi
 				fi
 			fi
 		fi
@@ -527,8 +548,11 @@ _fix_attention_prefix_labels() {
 		if [[ "$dry_run" == "--dry-run" ]]; then
 			echo "  [DRIFT] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
 		else
-			gh label edit "$name" --repo "$repo" --color "$LABEL_COLOR_ATTENTION" 2>/dev/null || true
-			echo "  [FIXED] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
+			if gh label edit "$name" --repo "$repo" --color "$LABEL_COLOR_ATTENTION" 2>/dev/null; then
+				echo "  [FIXED] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
+			else
+				echo "  [FAILED] $name: #$current_color → #$LABEL_COLOR_ATTENTION"
+			fi
 		fi
 	done < <(printf '%s' "$existing" | jq -r '.[] | select(.name | test("^(status:)?needs-")) | "\(.name)\t\(.color)"' 2>/dev/null || true)
 	return 0
@@ -567,7 +591,7 @@ cmd_sync() {
 	else
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] && repos+=("$slug")
-		done < <(_get_admin_repos)
+		done < <(_get_managed_repos)
 	fi
 
 	if [[ ${#repos[@]} -eq 0 ]]; then
@@ -580,9 +604,13 @@ cmd_sync() {
 		echo ""
 		print_info "=== Syncing labels for $repo ==="
 
-		# Check if we have admin access (can create labels)
+		# Skip a repo we cannot read; creating labels below needs write access.
 		if ! gh label list --repo "$repo" --limit 1 >/dev/null 2>&1; then
 			print_warning "Cannot access $repo — skipping"
+			continue
+		fi
+		if [[ "$dry_run" != "--dry-run" ]] && _repo_write_denied "$repo"; then
+			print_warning "No write access to $repo (labels need write) — skipping"
 			continue
 		fi
 
@@ -651,7 +679,7 @@ cmd_audit() {
 	else
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] && repos+=("$slug")
-		done < <(_get_admin_repos)
+		done < <(_get_managed_repos)
 	fi
 
 	local total_drift=0

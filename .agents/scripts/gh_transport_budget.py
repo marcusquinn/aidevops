@@ -18,6 +18,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from gh_process_birth import process_birth
 from gh_transport_capacity import capacity_wait
 from gh_transport_identity import credentials_share_proven_owner, quota_owner
 from gh_transport_observation import (
@@ -83,17 +84,6 @@ def credential_identity(executable: str, host: str) -> tuple[str, bool, dict[str
     # hash and execute with exactly the same token.
     environment["GH_TOKEN"] = token
     return hashlib.sha256(f"{host}\0{token}".encode()).hexdigest(), authenticated, environment
-
-
-def process_birth(pid: int) -> str:
-    try:
-        value = subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "lstart="],
-            stderr=subprocess.DEVNULL, timeout=2,
-        ).strip()
-        return hashlib.sha256(value).hexdigest() if value else ""
-    except (OSError, subprocess.SubprocessError):
-        return ""
 
 
 class Budget:

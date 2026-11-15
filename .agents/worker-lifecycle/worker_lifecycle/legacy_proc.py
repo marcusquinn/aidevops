@@ -19,6 +19,9 @@ NON_HOLDER_DAEMONS = frozenset({
     "sshd", "sshd-session", "ssh-agent", "gpg-agent", "(sd-pam)", "systemd", "dbus-daemon",
 })
 _observations: ContextVar[Counter | None] = ContextVar("legacy_proc_observations", default=None)
+# A task exiting mid-scan surfaces as ENOENT or, for open /proc entries, ESRCH.
+# Callers still re-check existence so a present task keeps failing closed.
+_VANISHED = (FileNotFoundError, ProcessLookupError)
 
 
 @contextmanager
@@ -62,7 +65,7 @@ def require_idle_proc(path, proc=Path("/proc")):
                 continue
             try:
                 threads = list((process / "task").iterdir())
-            except FileNotFoundError:
+            except _VANISHED:
                 if process.exists():
                     raise ValueError("proc-observation-unavailable") from None
                 continue
@@ -122,7 +125,7 @@ def inspect_proc_task(path, task, proc=Path("/proc")):
         if not live_owned_proc_task(task):
             return
         inspect_proc_references(path, task, proc)
-    except FileNotFoundError:
+    except _VANISHED:
         if task.exists():
             raise ValueError("proc-observation-unavailable") from None
 
@@ -135,7 +138,7 @@ def inspect_proc_references(path, task, proc):
         for fd in (task / "fd").iterdir():
             try:
                 require_idle_reference(path, fd)
-            except FileNotFoundError:
+            except _VANISHED:
                 continue  # An independently closed descriptor grants no authority.
     except PermissionError:
         try:

@@ -112,6 +112,10 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 	"$output" != *"| #29 |"* ]] ||
 	fail "an exact expected transition remained actionable"
 
+# GH#38229: a torn append (interrupted write, missing newline) used to abort the
+# scan and hold the checkpoint, so one corrupt line ended anomaly detection for
+# every later entry. Malformed lines are now counted and reported while the rest
+# of the window is still scanned and the checkpoint still advances.
 MALFORMED_LOG="${TEST_ROOT}/malformed-audit.log"
 cat >"$MALFORMED_LOG" <<'EOF'
 {"suspicious":[]}
@@ -119,10 +123,40 @@ not-json
 {"ts":"2026-07-31T00:13:00Z","op":"issue_edit","repo":"example/repo","number":14,"caller_function":"main","suspicious":["body_delta_pct=-100"]}
 EOF
 malformed_rc=0
-GH_AUDIT_LOG_FILE="$MALFORMED_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/malformed-state.json" \
-	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run >/dev/null 2>&1 || malformed_rc=$?
-[[ "$malformed_rc" -ne 0 ]] || fail "malformed NDJSON did not fail the scan closed"
-[[ ! -e "${TEST_ROOT}/malformed-state.json" ]] || fail "malformed NDJSON advanced the scan checkpoint"
+malformed_output=$(GH_AUDIT_LOG_FILE="$MALFORMED_LOG" \
+	GH_ANOMALY_STATE_FILE="${TEST_ROOT}/malformed-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run 2>/dev/null) || malformed_rc=$?
+[[ "$malformed_rc" -eq 0 ]] || fail "malformed NDJSON aborted the scan instead of reporting it"
+[[ "$malformed_output" == *"**Malformed lines:** 1"* ]] ||
+	fail "malformed NDJSON was not reported as a log-integrity finding"
+[[ "$malformed_output" == *"| #14 |"* ]] ||
+	fail "a real anomaly after a malformed line was not scanned"
+[[ "$malformed_output" == *"## Log Integrity"* ]] ||
+	fail "log-integrity guidance missing from the anomaly report"
+
+# Only a torn line: the corruption itself is the alert, and the checkpoint moves on.
+TORN_LOG="${TEST_ROOT}/torn-audit.log"
+cat >"$TORN_LOG" <<'EOF'
+{"ts":"2026-07-31T01:00:00Z","op":"issue_edit","repo":"example/repo","number":40,"caller_function":"main","suspicious":[]}
+{"ts":"2026-07-31T01{"ts":"2026-07-31T01:01:00Z","op":"issue_edit","repo":"example/repo","number":41,"caller_function":"main","suspicious":[]}
+EOF
+torn_rc=0
+torn_output=$(GH_AUDIT_LOG_FILE="$TORN_LOG" \
+	GH_ANOMALY_STATE_FILE="${TEST_ROOT}/torn-state.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run 2>/dev/null) || torn_rc=$?
+[[ "$torn_rc" -eq 0 ]] || fail "a torn audit line aborted the scan"
+[[ "$torn_output" == *"**Anomalies found:** 0"* ]] ||
+	fail "a torn audit line was mistaken for a suspicious operation"
+[[ "$torn_output" == *"**Malformed lines:** 1"* ]] ||
+	fail "a torn audit line was silently dropped"
+
+checkpoint_rc=0
+GH_AUDIT_LOG_FILE="$TORN_LOG" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/torn-advance.json" \
+	GH_AUDIT_QUIET=true "$HELPER" scan --all >/dev/null 2>&1 || checkpoint_rc=$?
+[[ -e "${TEST_ROOT}/torn-advance.json" ]] ||
+	fail "a torn audit line held the scan checkpoint (rc=${checkpoint_rc})"
+[[ "$(jq -r '.last_line' "${TEST_ROOT}/torn-advance.json")" == "2" ]] ||
+	fail "the checkpoint did not advance past a torn audit line"
 
 # shellcheck source=../shared-gh-wrappers-safe-edit.sh
 source "$SAFE_EDIT_HELPER"
@@ -316,7 +350,10 @@ jq -e -s 'map(select(.number == 27))[0].flags == {}' "$PROOF_LOG" >/dev/null ||
 			 body:$body, labels:[{name:$status}], assignees:[{login:$owner}]}'
 		return 0
 	}
-	gh_issue_view() { lifecycle_issue_json; return 0; }
+	gh_issue_view() {
+		lifecycle_issue_json
+		return 0
+	}
 	_gh_guard_public_write_args() { return 0; }
 	set_issue_status() {
 		local number="$1" repo="$2" status="$3"
@@ -512,7 +549,10 @@ CLI_HANDOFF_LOG="${TEST_ROOT}/cli-handoff-audit.log"
 			 labels: [{name: $status}]}'
 		return 0
 	}
-	gh_issue_view() { handoff_issue_json; return 0; }
+	gh_issue_view() {
+		handoff_issue_json
+		return 0
+	}
 	_gh_guard_public_write_args() { return 0; }
 	gh() {
 		local command="$1" resource="${2:-}"

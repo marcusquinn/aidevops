@@ -9,6 +9,8 @@ _PULSE_MERGE_REST_STATE_LOADED=1
 
 # shellcheck source=./shared-gh-collaborator-permission.sh
 source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
+# shellcheck source=./shared-gh-commit-cache.sh
+source "${BASH_SOURCE[0]%/*}/shared-gh-commit-cache.sh"
 
 _pmrs_gh_call() {
 	local operation="$1"
@@ -533,8 +535,7 @@ _pmrs_head_commit_age_seconds() {
 	local committed_at="" committed_epoch="" now_epoch=""
 
 	committed_at=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-head-age-rest" \
-		_pmrs_gh_call read gh api "repos/${repo_slug}/commits/${head_sha}" \
-		--jq '.commit.committer.date // empty' 2>/dev/null) || return 1
+		gh_commit_by_sha_cached "$repo_slug" "$head_sha" 2>/dev/null | jq -r '.commit.committer.date // empty') || return 1
 	[[ -n "$committed_at" ]] || return 1
 	committed_epoch=$(date -u -d "$committed_at" +%s 2>/dev/null \
 		|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$committed_at" +%s 2>/dev/null) || return 1

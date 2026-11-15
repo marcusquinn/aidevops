@@ -103,7 +103,7 @@ def intervening_events_valid(between, runner, token, attempt, trusted_logins=())
                for comment, line, f in between)
 
 
-CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete"}
+CHECKPOINT_RELEASE_REASONS = {"blocked", "clean", "worker_complete", "worker_draft_checkpoint"}
 # GH#37514: stall-class releases (pr-checkpoint-continuation-helper.sh
 # _PCC_STALL_RELEASE_PATTERN, minus worker decisions and the push/network policy
 # terminal-blocker classes) also leave the preserved draft without a recorded

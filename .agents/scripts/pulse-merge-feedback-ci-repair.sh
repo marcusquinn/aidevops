@@ -19,6 +19,8 @@ _pmrc_lib_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_pmrc_lib_dir" == "${BASH_SOURCE[0]}" ]] && _pmrc_lib_dir="."
 # shellcheck source=ci-infra-signature-lib.sh
 source "${_pmrc_lib_dir}/ci-infra-signature-lib.sh" 2>/dev/null || true
+# shellcheck source=shared-gh-commit-cache.sh
+source "${_pmrc_lib_dir}/shared-gh-commit-cache.sh"
 unset _pmrc_lib_dir
 
 _build_ci_feedback_section() {
@@ -1346,7 +1348,7 @@ _ci_repair_resolve_runner_login() {
 
 	# #aidevops:trust-boundary — bind worker ownership to authenticated GitHub
 	# identity rather than a mutable environment variable.
-	runner_login=$(gh api user --jq '.login // ""' 2>/dev/null || true)
+	gh_authenticated_login_cached runner_login || runner_login=""
 	if [[ "$runner_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
 		printf '%s\n' "$runner_login"
 		return 0
@@ -1396,6 +1398,9 @@ _ci_repair_launch_worker() {
 	outcome_file=$(_ci_repair_outcome_file "$lease_dir" "$attempt")
 	outcome_id=$(_ci_repair_outcome_id "$session_key" "$attempt") || return 1
 	rm -f "$outcome_file" 2>/dev/null || true
+	# Warm the per-process login memo in this shell: the resolver below runs in
+	# a command substitution, whose own writes would be discarded (GH#38242).
+	gh_authenticated_login_cached runner_login || true
 	runner_login=$(_ci_repair_resolve_runner_login) || {
 		printf '%s\n' "[pulse-wrapper] _ci_repair_launch_worker: authenticated GitHub runner identity unavailable for ${repo_slug} PR #${pr_number}; launch blocked" >>"$LOGFILE"
 		return 1

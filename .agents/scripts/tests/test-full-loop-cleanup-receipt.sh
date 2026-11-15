@@ -87,6 +87,45 @@ _full_loop_receipt_lock_acquire
 _full_loop_receipt_lock_release
 printf 'PASS failed owner write leaves no permanent empty-owner lock\n'
 
+# GH#38267: a holder killed mid-publication left a 0-byte owner file that no
+# reclaim path accepted, wedging every receipt mutation until manual deletion.
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+if _full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5; then
+	printf 'FAIL fresh empty receipt lock owner was reclaimed\n'
+	exit 1
+fi
+[[ -f "${receipt_lock_dir}/owner" ]]
+printf 'PASS fresh empty receipt lock owner remains protected\n'
+
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale empty receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+printf '%s\n' 'not-a-pid garbage' >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_reclaim_stale_ownerless_lock "$receipt_lock_dir" 5
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS stale unparseable receipt lock owner is reclaimed\n'
+
+mkdir -p "$receipt_lock_dir"
+: >"${receipt_lock_dir}/owner"
+touch -t 202001010000 "${receipt_lock_dir}/owner"
+_full_loop_receipt_lock_acquire
+IFS=' ' read -r published_pid _ <"${receipt_lock_dir}/owner"
+[[ "$published_pid" =~ ^[0-9]+$ ]]
+for leaked_owner_tmp in "${AIDEVOPS_FULL_LOOP_CLEANUP_DIR}"/.mutation.lock.owner.*; do
+	[[ ! -e "$leaked_owner_tmp" ]] || {
+		printf 'FAIL owner publication leaked temp file: %s\n' "$leaked_owner_tmp"
+		exit 1
+	}
+done
+_full_loop_receipt_lock_release
+[[ ! -e "$receipt_lock_dir" ]]
+printf 'PASS acquire reclaims stale empty owner and publishes atomically\n'
+
 # GH#34808: a lock taken inside $(...) and abandoned by a SIGKILLed subshell
 # must be reclaimable while the parent shell is still alive.
 subshell_pidfile="${TEST_ROOT}/subshell-holder.pid"
@@ -125,6 +164,36 @@ holder_reason=$(
 rm -f "${receipt_lock_dir}/owner"
 rmdir "$receipt_lock_dir"
 printf 'PASS timeout names holder\n'
+
+# Exercise the real timeout and both callers with a deterministic ps response:
+# arguments and local paths must not reach either operator-facing failure.
+(
+	ps() {
+		printf '%s\n' '/private/bin/bash /private/jobs/worker.sh --token=example-secret /private/data'
+		return 0
+	}
+	sleep() { return 0; }
+	_full_loop_recreated_worktree_identity_matches() { return 0; }
+	mkdir -p "$receipt_lock_dir"
+	printf '%s\n' "$OWNER_PID" >"${receipt_lock_dir}/owner"
+	[[ "$(_full_loop_receipt_holder_command "$OWNER_PID")" == 'bash worker.sh' ]]
+	if full_loop_write_cleanup_deferred example/repo 101 "${TEST_ROOT}/worktree-one" feature/one "$OWNER_PID" session-one; then
+		printf 'FAIL cleanup receipt unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" == *'holder-cmd=bash worker.sh' ]]
+	[[ "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *example-secret* && "$_FULL_LOOP_CLEANUP_FAILURE_REASON" != *'/private/'* ]]
+	if refusal=$(full_loop_supersede_cleaned_receipts_for_recreated_worktree "${TEST_ROOT}/worktree-one" feature/one \
+		0123456789012345678901234567890123456789 "$OWNER_PID" session-one 2>&1); then
+		printf 'FAIL reconciliation unexpectedly acquired held lock\n'
+		exit 1
+	fi
+	[[ "$refusal" == *'Cleanup-receipt reconciliation refused: could not acquire the receipt lock:'*'holder-cmd=bash worker.sh'* ]]
+	[[ "$refusal" != *example-secret* && "$refusal" != *'/private/'* ]]
+	rm -f "${receipt_lock_dir}/owner"
+	rmdir "$receipt_lock_dir"
+)
+printf 'PASS holder diagnostic is sanitized and propagated to both failures\n'
 
 mkdir -p "$receipt_lock_dir"
 touch -t 202001010000 "$receipt_lock_dir"
