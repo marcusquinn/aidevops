@@ -32,6 +32,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# Make isolated uv tools visible for installation and subsequent invocations.
+if command -v uv &>/dev/null; then
+	if UV_BIN_DIR="$(uv tool dir --bin)" && [[ -n "$UV_BIN_DIR" ]]; then
+		export PATH="${UV_BIN_DIR}:$PATH"
+	fi
+fi
+
 # Constants
 readonly DEFAULT_DOWNLOAD_DIR="$HOME/Downloads"
 readonly CONFIG_DIR="$HOME/.config/yt-dlp"
@@ -742,16 +749,22 @@ except Exception as e:
 # Install or upgrade yt-dlp in an isolated environment (uv tool, then pipx).
 # Never installs to user or system Python scope (PEP 668).
 install_ytdlp_isolated() {
-	if command -v uv &>/dev/null; then
-		uv tool install --upgrade yt-dlp
-		return $?
+	# Preserve pipx ownership even when uv is also installed.
+	if command -v pipx &>/dev/null && pipx list --short | grep -q '^yt-dlp '; then
+		pipx upgrade yt-dlp || return 1
+	elif command -v uv &>/dev/null; then
+		uv tool install --upgrade yt-dlp || return 1
+	elif command -v pipx &>/dev/null; then
+		pipx install yt-dlp || return 1
+	else
+		print_error "Neither uv nor pipx found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+		return 1
 	fi
-	if command -v pipx &>/dev/null; then
-		pipx install yt-dlp || pipx upgrade yt-dlp
-		return $?
+	if ! command -v yt-dlp &>/dev/null; then
+		print_error "yt-dlp is not on PATH. Add the uv tool dir --bin or pipx executable directory to PATH."
+		return 1
 	fi
-	print_error "Neither uv nor pipx found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
-	return 1
+	return 0
 }
 
 # Install yt-dlp and ffmpeg

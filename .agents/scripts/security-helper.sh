@@ -1096,6 +1096,9 @@ cmd_install() {
 					uv tool install cisco-ai-skill-scanner || true
 				elif check_command pipx; then
 					pipx install cisco-ai-skill-scanner || true
+				else
+					echo -e "${RED}Install uv or pipx first to install Cisco Skill Scanner in isolation.${NC}"
+					return 1
 				fi
 			else
 				echo -e "${YELLOW}Skipping Cisco Skill Scanner (Python >= 3.10 required)${NC}"

@@ -27,6 +27,13 @@ fi
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
 LOG_PREFIX="comfy-cli"
 
+# Resolve uv's executable directory on every invocation, not only installation.
+if command -v uv >/dev/null 2>&1; then
+	if UV_BIN_DIR="$(uv tool dir --bin)" && [[ -n "$UV_BIN_DIR" ]]; then
+		export PATH="${UV_BIN_DIR}:$PATH"
+	fi
+fi
+
 check_comfy_cli() {
 	if ! command -v comfy >/dev/null 2>&1; then
 		log_error "comfy-cli is not installed."

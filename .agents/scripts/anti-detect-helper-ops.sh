@@ -81,6 +81,8 @@ setup_camoufox() {
 	# Venv-scoped only: never fall back to system scope (--break-system-packages).
 	"$VENV_DIR/bin/python" -m pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
 		echo -e "${YELLOW}Warning: pip install into $VENV_DIR failed; no system-scope fallback is used.${NC}" >&2
+		deactivate 2>/dev/null || true
+		return 1
 	}
 
 	# Fetch browser binary

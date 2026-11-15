@@ -34,9 +34,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 # Isolated Python environment for embeddings dependencies (never user/system scope).
-# When it exists, put it first on PATH so every `python3` call below resolves to it.
+# Select only environments whose dependency installation completed successfully.
 MEMORY_EMBEDDINGS_VENV_DIR="${MEMORY_EMBEDDINGS_VENV_DIR:-$HOME/.aidevops/memory-embeddings-venv}"
-if [[ -x "${MEMORY_EMBEDDINGS_VENV_DIR}/bin/python3" ]]; then
+if [[ -f "${MEMORY_EMBEDDINGS_VENV_DIR}/.ready" && -x "${MEMORY_EMBEDDINGS_VENV_DIR}/bin/python3" ]]; then
 	PATH="${MEMORY_EMBEDDINGS_VENV_DIR}/bin:${PATH}"
 	export PATH
 fi
@@ -66,6 +66,7 @@ _embeddings_pip_install() {
 	else
 		"${venv_dir}/bin/python3" -m pip install --quiet "$@" || return 1
 	fi
+	touch "${venv_dir}/.ready" || return 1
 	PATH="${venv_dir}/bin:${PATH}"
 	export PATH
 	return 0

@@ -44,6 +44,11 @@ readonly DOCKER_PORT="11235"
 readonly MCP_PORT="3009"
 readonly CRAWL4AI_STARTUP_WAIT="${CRAWL4AI_STARTUP_WAIT:-5}" # seconds to wait for container readiness
 readonly HELP_SHOW_MESSAGE="Show this help message"
+readonly CRAWL4AI_VENV_DIR="${CRAWL4AI_VENV_DIR:-$HOME/.aidevops/crawl4ai-venv}"
+readonly CRAWL4AI_PYTHON="${CRAWL4AI_VENV_DIR}/bin/python"
+if [[ -x "$CRAWL4AI_PYTHON" ]]; then
+	export PATH="${CRAWL4AI_VENV_DIR}/bin:$PATH"
+fi
 
 # Print functions
 print_header() {
@@ -95,21 +100,18 @@ install_crawl4ai() {
 		return 1
 	fi
 
-	# Isolated install only: never user- or system-scope pip (PEP 668).
-	local venv_dir="${CRAWL4AI_VENV_DIR:-$HOME/.aidevops/crawl4ai-venv}"
+	# A dedicated venv supports Python consumers and avoids taking over legacy
+	# executables in the shared uv/pipx bin directory.
+	local venv_dir="$CRAWL4AI_VENV_DIR"
 	if command -v uv &>/dev/null; then
-		print_info "Installing Crawl4AI with uv tool..."
-		if ! uv tool install --upgrade crawl4ai; then
-			print_error "Failed to install Crawl4AI"
-			return 1
+		if [[ ! -x "$CRAWL4AI_PYTHON" ]]; then
+			uv venv "$venv_dir" || return 1
 		fi
-		local uv_bin_dir
-		uv_bin_dir="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
-		export PATH="${uv_bin_dir}:$PATH"
+		uv pip install --python "$CRAWL4AI_PYTHON" --upgrade crawl4ai capsolver || return 1
 	elif python3 -m venv --help &>/dev/null; then
 		print_info "Installing Crawl4AI into venv ${venv_dir}..."
 		if { [[ -x "${venv_dir}/bin/python" ]] || python3 -m venv "$venv_dir"; } &&
-			"${venv_dir}/bin/python" -m pip install --quiet --upgrade crawl4ai; then
+			"${venv_dir}/bin/python" -m pip install --quiet --upgrade crawl4ai capsolver; then
 			export PATH="${venv_dir}/bin:$PATH"
 		else
 			print_error "Failed to install Crawl4AI"
@@ -119,6 +121,7 @@ install_crawl4ai() {
 		print_error "Neither uv nor python3 venv is available. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
 		return 1
 	fi
+	export PATH="${venv_dir}/bin:$PATH"
 	print_success "Crawl4AI installed successfully"
 
 	print_info "Running post-installation setup..."
@@ -645,9 +648,9 @@ _capsolver_print_instructions() {
 	print_info ""
 	print_info "📋 Next Steps:"
 	print_info "1. Get API key: https://dashboard.capsolver.com/dashboard/overview"
-	print_info "2. Install Python SDK: pip install capsolver"
+	print_info "2. Install dependencies: crawl4ai-helper.sh install"
 	print_info "3. Set API key in example script: $example_script"
-	print_info "4. Run example: python3 $example_script"
+	print_info "4. Run example: $CRAWL4AI_PYTHON $example_script"
 	print_info ""
 	print_info "📚 Supported CAPTCHA Types:"
 	print_info "• reCAPTCHA v2/v3 (including Enterprise)"
@@ -668,6 +671,9 @@ capsolver_setup() {
 	local capsolver_config="$CONFIG_DIR/capsolver-config.json"
 	local example_script="$CONFIG_DIR/capsolver-example.py"
 
+	if [[ ! -x "$CRAWL4AI_PYTHON" ]] || ! "$CRAWL4AI_PYTHON" -c 'import crawl4ai, capsolver' &>/dev/null; then
+		install_crawl4ai || return 1
+	fi
 	_capsolver_write_config "$capsolver_config"
 	_capsolver_write_example "$example_script"
 	_capsolver_print_instructions "$example_script"
@@ -998,11 +1004,16 @@ _captcha_run_script() {
 		return 1
 	fi
 
+	if [[ ! -x "$CRAWL4AI_PYTHON" ]] || ! "$CRAWL4AI_PYTHON" -c 'import crawl4ai, capsolver' &>/dev/null; then
+		print_error "Crawl4AI dependencies missing. Run crawl4ai-helper.sh install first."
+		rm -f "$temp_script"
+		return 1
+	fi
 	print_info "Running CAPTCHA-enabled crawl..."
-	if python3 "$temp_script"; then
+	if "$CRAWL4AI_PYTHON" "$temp_script"; then
 		print_success "CAPTCHA crawl completed successfully"
 		if [[ -n "$output_file" ]]; then
-			python3 "$temp_script" >"$output_file" 2>&1
+			"$CRAWL4AI_PYTHON" "$temp_script" >"$output_file" 2>&1
 			print_info "Results saved to: $output_file"
 		fi
 	else
