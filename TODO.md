@@ -2085,7 +2085,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md] pr:#38339 completed:2026-11-15
 
-- [x] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 pr:#38398 logged:2026-11-14 -> [todo/tasks/t19006-brief.md] completed:2026-11-15
+- [ ] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 pr:#38398 logged:2026-11-14 -> [todo/tasks/t19006-brief.md]
 
 - [ ] t19007 fix(terminal-blocker): publish the external trigger and revisit external_trigger_pending holds #bug #auto-dispatch tier:thinking blocked-by:t19008 ref:GH#38353 logged:2026-11-14 -> [todo/tasks/t19007-brief.md]
 
