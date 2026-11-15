@@ -416,7 +416,7 @@ quarantine. The lookup is one paginated call per slug per pass. A failed REST ca
 page, the whole fork chain, the same validation (GH#37385); failure there holds.
 Checkouts without a remote have no pushed branch to protect and skip the lookup.
 Planned retirements always resume; operator-targeted `cleanup-worktree`,
-`retire-worktree` and `retire-enrolled-only` keep their explicit-intent semantics.
+`retire-worktree`, `retire-enrolled-only` and `reclaim-unowned` keep their explicit-intent semantics.
 
 Repository configuration defines scope only. Entries with `maintenance: false`
 or `local_only: true` are excluded. Missing or detached canonical checkouts do not
@@ -426,10 +426,16 @@ not a guessed default or a commit ID passed as a branch name.
 Controlled-creation receipts use normal retirement. A missing creation receipt can
 use the explicit recovery-evidence path described above when all bound owners are
 admitted and ended. Enrollment alone remains a coverage gap; live or uncertain owners hold
-the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire only via
-`retire-enrolled-only --path P --repos-config C --output-root R` (GH#36516): it previews;
-`--confirm` closes admission with `operator_confirmed` evidence in one registry transaction
-(a racing `admit-session` wins and refuses it, or finds admission closed), then archives and removes; the branch is kept. Retries use the recorded plan, including its archive root,
+the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire via
+`reclaim-unowned --path P --repos-config C --output-root R` (GH#38405): Reclaim checks the
+tree has nothing to lose (clean, HEAD contained in a remote), re-takes its evidence
+fingerprint, and journals `reclaim-unowned-authorized` (owner check, git state, references,
+fingerprint, time) with admission closure in one registry transaction (a racing
+`admit-session` wins and refuses it, or finds admission closed). Any refused fact keeps the
+tree and leaves admission open; the command exits 0 and reports `status: reclaim-refused`
+with the reason. It then archives and removes; the branch is kept. The legacy
+`retire-enrolled-only` preview/`--confirm` path (GH#36516, `operator_confirmed` evidence)
+remains readable until its removal with the legacy cleanup path. Retries use the recorded plan, including its archive root,
 and do not redirect an interrupted operation to a replacement at the public path.
 A private cursor rotates candidates across bounded passes; it is not deletion
 authority. A pass lock prevents overlapping collectors.

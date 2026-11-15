@@ -11,6 +11,7 @@ from uuid import UUID, uuid4, uuid5
 from .admission import AdmissionRegistry
 from .enrollment import MARKER, GenerationEnrollment, _git_directory, _read_marker
 from .process import ObservationUnavailable, ProcessAdapter, ProcessIdentity
+from .reclaim.unowned import unowned_authorized
 from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry, StoreConflict
 
@@ -70,6 +71,16 @@ def enrolled_only_authorized(store: LifecycleRegistry, generation: str) -> bool:
     if json.loads(event["payload"]) != expected or admission["state"] != "closed":
         return False
     return not _runs(store, generation)
+
+
+def never_owned_authorized(store: LifecycleRegistry, generation: str) -> bool:
+    """True when a closed, never-owned generation is authorized for retirement.
+
+    Accepts Reclaim's evidence-backed event (GH#38405) or the legacy
+    operator-confirmed one, which is removed with the legacy cleanup path.
+    """
+    return (unowned_authorized(store, generation)
+            or enrolled_only_authorized(store, generation))
 
 
 def marker_digest(marker: Path) -> str:
@@ -272,7 +283,7 @@ def prepare_cleanup(store: LifecycleRegistry, path: Path) -> dict[str, object]:
         }
         for row in rows
     )
-    if not rows and enrolled_only_authorized(store, generation):
+    if not rows and never_owned_authorized(store, generation):
         return dict(result, status="registered-runs-ended", admission="closed",
                     enrolled_only=True)
     if not rows or not all(row["admitted"] for row in rows):

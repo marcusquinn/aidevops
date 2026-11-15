@@ -17,7 +17,7 @@ from .filesystem import FilesystemValidationError
 
 CREATION_OPERATIONS = frozenset({"create-worktree", "admit-session", "enroll"})
 RETIREMENT_OPERATIONS = frozenset({
-    "cleanup-worktree", "retire-enrolled-only", "retire-foreign-worktree",
+    "cleanup-worktree", "retire-enrolled-only", "reclaim-unowned", "retire-foreign-worktree",
 })
 _REFUSAL_CODE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 _SQLITE_CODES = (

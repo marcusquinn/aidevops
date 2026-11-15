@@ -321,14 +321,18 @@ _profile_publication_helper_remove() {
 	return $?
 }
 
-# GH#37591: retire an earlier tree enrolled without any registered run through
-# the registry's confirmed enrolled-only path. Callers must already have proved
-# the tree published, clean and unowned; the registry still archives first,
-# verifies and refuses a tree that has bound runs or a creation receipt.
-_profile_retire_enrolled_only_worktree() {
+# GH#37591/GH#38405: retire an earlier tree enrolled without any registered run
+# through Reclaim's evidence-backed never-owned path. Callers must already have
+# proved the tree published, clean and unowned; Reclaim re-checks that it has
+# nothing to lose and journals the facts, and the registry still archives
+# first, verifies and refuses a tree that has bound runs or a creation receipt.
+# The registry exits 0 for every structured outcome, so only a reported
+# "retired" status counts; a refusal falls through to the archive fallback.
+_profile_reclaim_unowned_worktree() {
 	local worktree_path="$1"
 	local state_dir=""
 	local python=""
+	local result=""
 	local entry="${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py"
 	local archive_root="${AIDEVOPS_WORKTREE_ARCHIVE_ROOT:-${HOME}/.aidevops/recovery/archives}"
 
@@ -340,10 +344,11 @@ _profile_retire_enrolled_only_worktree() {
 		worker_lifecycle_state_dir 2>/dev/null
 	) ) || return 1
 	[[ -n "$state_dir" && -d "$state_dir" ]] || return 1
-	"$python" -E -s -B "$entry" --state-dir "$state_dir" retire-enrolled-only \
+	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" reclaim-unowned \
 		--repos-config "${HOME}/.config/aidevops/repos.json" \
-		--output-root "$archive_root" --path "$worktree_path" --confirm >/dev/null 2>&1
-	return $?
+		--output-root "$archive_root" --path "$worktree_path" 2>/dev/null) || return 1
+	jq -e '.status == "retired"' <<<"$result" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 # Bounded retry for read-only git probes that can transiently time out under
@@ -609,7 +614,7 @@ _profile_retire_prior_publication_worktree() {
 		:
 	elif [[ -d "$worktree_path" ]] &&
 		_profile_publication_prior_worktree_is_safe "$worktree_path" "$canonical_repo" "$worktree_base" &&
-		_profile_retire_enrolled_only_worktree "$worktree_path"; then
+		_profile_reclaim_unowned_worktree "$worktree_path"; then
 		:
 	elif ! _archive_and_remove_profile_publication_worktree "$worktree_path" \
 		_profile_publication_prior_worktree_is_safe "$canonical_repo" "$worktree_base"; then

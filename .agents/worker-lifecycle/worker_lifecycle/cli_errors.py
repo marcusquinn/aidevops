@@ -33,11 +33,11 @@ def error_details(error: Exception, operation: str) -> dict:
     reason = str(error) if isinstance(error, (ObservationUnavailable, StoreCapacity)) else type(error).__name__
     if operation in {
         "retire-worktree", "cleanup", "cleanup-worktree", "upgrade", "retire-enrolled-only",
-        "relinquish-session", "retire-foreign-worktree",
+        "reclaim-unowned", "relinquish-session", "retire-foreign-worktree",
     } and isinstance(error, StoreConflict):
         reason = str(error)
     retirement = ("retire-worktree", "cleanup", "cleanup-worktree", "retire-enrolled-only",
-                  "retire-foreign-worktree")
+                  "reclaim-unowned", "retire-foreign-worktree")
     mode = "retirement" if operation in retirement else "observe-only"
     detail = {"mode": mode, "status": "unavailable", "reason": reason,
               "cleanup_authorized": False}
