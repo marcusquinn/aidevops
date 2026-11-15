@@ -143,6 +143,18 @@ Interactive sessions (GH#34125) are bound at launch with
 non-loopback endpoints fail closed before sending. Launch rules, enforcement
 surfaces and trust gaps: `reference/vault-local-only-binding.md`.
 
+Diagnosing the gate (GH#38424): the plugin writes two content-free lines to
+`~/.aidevops/logs/opencode-plugin.log` (never the endpoint, message content or
+credentials):
+
+- At init: `[aidevops] local-only: bound reason=<declared|unrecognised-policy-fails-closed> localProvidersSource=<shared|operator|operator-invalid> providers=<count>` (`unbound` when not bound).
+- Before each egress denial: `[aidevops] local-only: denied surface=<chat|context|http> agent=<name|unknown> provider=<id|unknown> session=<id|none> reason=<non-local-provider|non-loopback-endpoint>`.
+
+Background requests such as title generation (`agent=title`) do not surface as
+session errors, so this line is the only record of their denial. No
+`local-only: bound` line means this process is not bound; attached TUIs inherit
+the server's environment, not the client's.
+
 ## 4. Threat Environments
 
 ### 4.1 Third-party VPS cloned disks, snapshots, and backups

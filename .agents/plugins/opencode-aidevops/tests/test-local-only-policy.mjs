@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -271,22 +271,33 @@ function runPluginRequest(providerID, runtimePolicy, apiUrl = LOCAL_URL, agent =
       { cwd: REPO_ROOT, encoding: "utf8", env, timeout: 60000 },
     );
     assert.equal(result.status, 0, result.stderr);
-    return JSON.parse(result.stdout);
+    const evidence = JSON.parse(result.stdout);
+    let log = "";
+    try { log = readFileSync(join(home, ".aidevops", "logs", "opencode-plugin.log"), "utf8"); } catch { /* no log written */ }
+    return { ...evidence, log: log.split("\n").filter((line) => line.includes("local-only:")) };
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 }
 
 test("sentinel: bound session blocks a remote provider before send, even after env is cleared", () => {
-  const evidence = runPluginRequest("anthropic", "local-only");
+  const evidence = runPluginRequest("anthropic", "local-only", LOCAL_URL, "title");
   assert.match(evidence.denial, /^VAULT_POLICY_DENIED: /);
   assert.ok(!evidence.denial.includes(SENTINEL), "denial must be content-free");
   assert.deepEqual(evidence.sent, []);
+  const logged = evidence.log.join("\n");
+  assert.match(logged, /local-only: bound reason=declared localProvidersSource=\w+ providers=\d+/);
+  assert.match(logged, /local-only: denied surface=chat agent=title provider=anthropic session=ses_t reason=non-local-provider/);
+  assert.ok(!logged.includes(SENTINEL) && !logged.includes(LOCAL_URL), "log must be content-free");
 });
 
 test("sentinel: bound session allows a local provider; unbound session is unchanged", () => {
-  assert.deepEqual(runPluginRequest("ollama", "local-only"), { denial: "", sent: [SENTINEL] });
-  assert.deepEqual(runPluginRequest("anthropic", "", "https://api.anthropic.com/v1"), { denial: "", sent: [SENTINEL] });
+  const local = runPluginRequest("ollama", "local-only");
+  assert.deepEqual({ denial: local.denial, sent: local.sent }, { denial: "", sent: [SENTINEL] });
+  assert.ok(!local.log.some((line) => line.includes("denied")), "allowed request logs no denial");
+  const unbound = runPluginRequest("anthropic", "", "https://api.anthropic.com/v1");
+  assert.deepEqual({ denial: unbound.denial, sent: unbound.sent }, { denial: "", sent: [SENTINEL] });
+  assert.ok(!unbound.log.some((line) => line.includes("local-only: bound")), "unbound process logs no bound line");
 });
 
 test("sentinel: real plugin honours a 0600 operator override and denies everything for a 0644 copy", () => {
@@ -297,8 +308,8 @@ test("sentinel: real plugin honours a 0600 operator override and denies everythi
     chmodSync(file, mode);
   };
   const customUrl = "http://127.0.0.1:8765/v1";
-  assert.deepEqual(runPluginRequest("custom-local", "local-only", customUrl, "build", writeOverride(0o600)),
-    { denial: "", sent: [SENTINEL] });
+  const custom = runPluginRequest("custom-local", "local-only", customUrl, "build", writeOverride(0o600));
+  assert.deepEqual({ denial: custom.denial, sent: custom.sent }, { denial: "", sent: [SENTINEL] });
   const replaced = runPluginRequest("ollama", "local-only", LOCAL_URL, "build", writeOverride(0o600));
   assert.match(replaced.denial, /provider "ollama"/);
   assert.deepEqual(replaced.sent, []);
@@ -312,6 +323,9 @@ test("sentinel: bound session blocks a remote endpoint configured under a local 
   assert.match(evidence.denial, /non-loopback or unknown endpoint/);
   assert.ok(!evidence.denial.includes("api.example.com"), "denial must not echo the endpoint");
   assert.deepEqual(evidence.sent, []);
+  const logged = evidence.log.join("\n");
+  assert.match(logged, /denied surface=chat agent=build provider=ollama session=ses_t reason=non-loopback-endpoint/);
+  assert.ok(!logged.includes("api.example.com"), "log must not echo the endpoint");
 });
 
 test("delegated specialist with an explicit remote model is denied at the real chat.params hook", () => {
