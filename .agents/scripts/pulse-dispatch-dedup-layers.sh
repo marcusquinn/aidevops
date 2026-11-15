@@ -683,6 +683,77 @@ _dispatch_interactive_hold_gate() {
 }
 
 #######################################
+# Log and emit a layer-6 assignment block. The helper classifies its own block
+# into a private reason file (GH#38180); fall back to classify-blocker.
+# Arguments: issue_number, repo_slug, helper output, reason file (may be empty)
+#######################################
+_dedup_layer6_report_block() {
+	local issue_number="$1" repo_slug="$2" assigned_output="$3" reason_file="$4"
+	local assigned_reason=""
+	if [[ -n "$reason_file" && -s "$reason_file" ]]; then
+		IFS= read -r assigned_reason <"$reason_file" || true
+	fi
+	[[ "$assigned_reason" =~ ^[a-z0-9_]+$ ]] || assigned_reason=""
+	if [[ -z "$assigned_reason" ]]; then
+		assigned_reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
+	fi
+	[[ -z "$reason_file" ]] || rm -f "$reason_file"
+	echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
+	printf '%s\n' "$assigned_output"
+	return 0
+}
+
+#######################################
+# GH#38352: path of the private layer-6 free-verdict hint for this pulse
+# process ($$ is stable across the dispatch subshells), repository and issue.
+# Layer 7 hands it to dispatch-claim-helper.sh, which validates the same prefix.
+# Arguments: issue_number, repo_slug
+# Output: hint path; returns 1 for malformed input
+#######################################
+_dedup_assignment_verdict_path() {
+	local issue_number="$1" repo_slug="$2"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	printf '%s/dispatch-assignment-verdict.%s.%s--%s.%s\n' \
+		"${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" "$$" \
+		"${repo_slug%%/*}" "${repo_slug##*/}" "$issue_number"
+	return 0
+}
+
+#######################################
+# GH#38352: record a plain layer-6 "not assigned" verdict so the pre-claim
+# assignment guard can skip a repeated is-assigned call. Only the metadata the
+# verdict evaluated (the ISSUE_META_JSON bundle) may vouch for it; without
+# that bundle nothing is written. The claim helper reuses the hint only when a
+# fresh issue read shows the same state/assignees/labels and its comment
+# snapshot shows no comment created or edited since layer 6 started. The
+# post-consensus final assignment guard always performs its own fresh read.
+# Arguments: issue_number, repo_slug, self_login, layer-6 start epoch
+# Returns: 0 always (a failed write only loses the hint)
+#######################################
+_dedup_assignment_verdict_record() {
+	local issue_number="$1" repo_slug="$2" self_login="$3" started="$4"
+	local path="" meta="" tmp=""
+	path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || return 0
+	rm -f "$path" 2>/dev/null || true
+	[[ "$started" =~ ^[0-9]+$ && "$self_login" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$ ]] || return 0
+	meta=$(jq -cSe --arg list array 'select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
+		{state: (.state | ascii_upcase),
+		assignees: ([.assignees[] | (.login? // .) | strings | ascii_downcase] | sort),
+		labels: ([.labels[] | (.name? // .) | strings] | sort)}' <<<"${ISSUE_META_JSON:-}" 2>/dev/null) || return 0
+	[[ "$meta" != *$'\t'* && "$meta" != *$'\n'* ]] || return 0
+	# Hints from launches that stopped before the claim are inert (keyed by
+	# pulse PID and age-bounded by the reader); prune them here.
+	find "${path%/*}" -maxdepth 1 -type f -name 'dispatch-assignment-verdict.*' -mmin +30 -delete 2>/dev/null || true
+	tmp=$(umask 077; mktemp "${path}.XXXXXX" 2>/dev/null) || return 0
+	if printf 'v1\t%s\t%s\t%s\t%s\t%s\n' "$started" "$issue_number" "$repo_slug" "$self_login" "$meta" >"$tmp" &&
+		mv -f "$tmp" "$path"; then
+		return 0
+	fi
+	rm -f "$tmp"
+	return 0
+}
+
+#######################################
 # Layer 6 (GH#6891): cross-machine assignee guard + stale recovery.
 # Prevents runners from dispatching workers for issues already assigned to
 # another login. On STALE_RECOVERED with worker evidence, records fast-fail
@@ -708,23 +779,22 @@ _dedup_layer6_assignee_and_stale() {
 			layer6_cmd=(env AIDEVOPS_DISPATCH_STAGE_ISSUE="$issue_number"
 				AIDEVOPS_DISPATCH_STAGE_REPO="$repo_slug" "${layer6_cmd[@]}")
 		fi
+		local verdict_started="" verdict_path=""
+		# GH#38352: only this run's plain free verdict may reach layer 7.
+		verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") && rm -f "$verdict_path" 2>/dev/null
+		verdict_started=$(date +%s)
 		assigned_output=$(AIDEVOPS_DDH_BLOCKER_REASON_FILE="$layer6_reason_file" \
 			"${layer6_cmd[@]}" 2>>"$LOGFILE") || assigned_rc=$?
 		if [[ "$assigned_rc" -eq 0 ]]; then
-			local assigned_reason=""
-			if [[ -n "$layer6_reason_file" && -s "$layer6_reason_file" ]]; then
-				IFS= read -r assigned_reason <"$layer6_reason_file" || true
-			fi
-			[[ "$assigned_reason" =~ ^[a-z0-9_]+$ ]] || assigned_reason=""
-			if [[ -z "$assigned_reason" ]]; then
-				assigned_reason=$("$dedup_helper" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
-			fi
-			[[ -z "$layer6_reason_file" ]] || rm -f "$layer6_reason_file"
-			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
-			printf '%s\n' "$assigned_output"
+			_dedup_layer6_report_block "$issue_number" "$repo_slug" "$assigned_output" "$layer6_reason_file"
 			return 0
 		fi
 		[[ -z "$layer6_reason_file" ]] || rm -f "$layer6_reason_file"
+		if [[ "$assigned_rc" -eq 1 && -z "$assigned_output" ]]; then
+			# GH#38352: a plain free verdict is a hint for the pre-claim guard.
+			_dedup_assignment_verdict_record "$issue_number" "$repo_slug" "$self_login" "$verdict_started"
+			return 1
+		fi
 		if [[ "$assigned_output" == *STALE_PR_CONTINUATION* ]]; then
 			_dispatch_stale_pr_checkpoint_continuation "$issue_number" "$repo_slug" "$assigned_output" "$self_login" || true
 			return 0
@@ -830,9 +900,17 @@ _dedup_layer7_claim_lock() {
 		# runs the same recovery-enabled guard before publishing the claim.
 		# One process retains the precheck snapshot and sources libraries once.
 		local claim_exit=0 claim_output=""
+		# GH#38352: offer this launch's layer-6 free verdict to the pre-claim
+		# guard; the helper validates it and the final guard stays fresh.
+		local assignment_verdict=""
+		assignment_verdict=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || assignment_verdict=""
+		[[ -n "$assignment_verdict" && -f "$assignment_verdict" && ! -L "$assignment_verdict" ]] || assignment_verdict=""
 		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
-		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" "$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" \
+			DISPATCH_ASSIGNMENT_VERDICT_FILE="$assignment_verdict" \
+			"$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
+		[[ -z "$assignment_verdict" ]] || rm -f "$assignment_verdict"
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then

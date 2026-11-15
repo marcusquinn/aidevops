@@ -741,6 +741,23 @@ _delete_losing_claim_comment() {
 }
 
 #######################################
+# GH#38352: pre-claim assignment check with is-assigned's exit contract
+# (0 = blocked, 1 = free, other = error). A validated layer-6 free verdict for
+# this launch answers "free" without a second is-assigned run; any mismatch
+# runs the full recovery-enabled check. Only this pre-consensus guard may
+# reuse evidence: _guard_no_active_assignment_read_only stays a fresh read.
+# Args: dedup helper path, issue number, repo slug, runner login
+#######################################
+_dch_pre_claim_assignment_check() {
+	local dedup_helper="$1" issue_number="$2" repo_slug="$3" runner="$4"
+	if _dch_assignment_verdict_reusable "$issue_number" "$repo_slug" "$runner"; then
+		return 1
+	fi
+	"$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner"
+	return $?
+}
+
+#######################################
 # Fail-closed guard before posting a DISPATCH_CLAIM.
 # Args:
 #   $1 = issue number
@@ -770,7 +787,7 @@ _guard_no_active_assignment_before_claim() {
 	fi
 
 	local guard_output="" guard_rc=0
-	guard_output=$(_dch_timed assignment_guard "$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
+	guard_output=$(_dch_timed assignment_guard _dch_pre_claim_assignment_check "$dedup_helper" "$issue_number" "$repo_slug" "$runner" 2>&1) || guard_rc=$?
 	case "$guard_rc" in
 	0)
 		printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \

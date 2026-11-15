@@ -71,6 +71,81 @@ _dch_snapshot_valid() {
 	[[ -n "$path" && "$path" == "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-claim."* && -f "$path" && ! -L "$path" && -O "$path" ]]
 }
 
+# GH#38352: the layer-6 free-verdict hint written by pulse-dispatch-dedup-layers.sh
+# (_dedup_assignment_verdict_record) must be a private regular file under the
+# same temp root as the claim snapshot.
+_dch_assignment_verdict_file_valid() {
+	local path="${DISPATCH_ASSIGNMENT_VERDICT_FILE:-}"
+	[[ -n "$path" && "$path" == "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-assignment-verdict."* && -f "$path" && ! -L "$path" && -O "$path" ]]
+}
+
+# Record the reuse decision in the pulse call log only; standalone callers and
+# captured guard output never see it.
+_dch_assignment_verdict_log() {
+	local result="$1" detail="$2" _dcvl_context=""
+	[[ -n "${AIDEVOPS_DISPATCH_CLAIM_CALL_LOG:-}" ]] || return 0
+	_dch_stage_context _dcvl_context "${issue_number:-}" "${repo_slug:-}"
+	printf '[dispatch-claim] assignment_guard_reuse=%s detail=%s%s\n' \
+		"$result" "$detail" "$_dcvl_context" >>"$AIDEVOPS_DISPATCH_CLAIM_CALL_LOG"
+	return 0
+}
+
+#######################################
+# GH#38352: decide whether the pre-claim assignment guard may reuse the layer-6
+# "not assigned" verdict of this launch instead of re-running is-assigned.
+# Every input must match, otherwise the full guard runs as before:
+#   - the hint names this issue, repo and runner and is at most
+#     DISPATCH_ASSIGNMENT_VERDICT_MAX_AGE (default 600, max 1800) seconds old;
+#   - the validated claim-precheck comment snapshot has no comment created or
+#     edited since 30s before layer 6 started (clock-skew margin);
+#   - one fresh issue read shows the same state, assignees and labels that
+#     layer 6 evaluated.
+# Deleted comments can only relax a block. The post-consensus final guard and
+# the claim race read the live issue regardless of this decision.
+# Args: issue number, repo slug, runner login
+# Returns: 0 when the verdict is reusable, 1 otherwise
+#######################################
+_dch_assignment_verdict_reusable() {
+	local issue_number="$1" repo_slug="$2" runner="$3"
+	local record="" version="" started="" v_issue="" v_repo="" v_runner="" v_meta="" now="" live_meta=""
+	local max_age="${DISPATCH_ASSIGNMENT_VERDICT_MAX_AGE:-600}"
+	_dch_assignment_verdict_file_valid || return 1
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=600
+	((max_age <= 1800)) || max_age=1800
+	IFS= read -r record <"$DISPATCH_ASSIGNMENT_VERDICT_FILE" || record=""
+	IFS=$'\t' read -r version started v_issue v_repo v_runner v_meta <<<"$record"
+	if [[ "$version" != v1 || ! "$started" =~ ^[0-9]+$ || "$v_issue" != "$issue_number" ||
+		"$v_repo" != "$repo_slug" || "$v_runner" != "$runner" || -z "$v_meta" ]]; then
+		_dch_assignment_verdict_log miss identity
+		return 1
+	fi
+	now=$(_now_epoch)
+	if ! [[ "$now" =~ ^[0-9]+$ ]] || ((now < started || now - started > max_age)); then
+		_dch_assignment_verdict_log miss age
+		return 1
+	fi
+	if ! _dch_snapshot_valid || [[ ! -s "$DISPATCH_CLAIM_SNAPSHOT_FILE" ]] ||
+		! jq -e --argjson since "$((started - 30))" --arg list array '
+			[(if (type == $list and ((.[0]? | type) == $list)) then .[] else . end)[] |
+				(.created_at, .updated_at)] |
+			all(.[]; type == "string" and (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) < $since)
+		' "$DISPATCH_CLAIM_SNAPSHOT_FILE" >/dev/null 2>&1; then
+		_dch_assignment_verdict_log miss comments
+		return 1
+	fi
+	live_meta=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null | jq -cSe --arg list array '
+		select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
+		{state: (.state | ascii_upcase),
+		assignees: ([.assignees[] | (.login? // .) | strings | ascii_downcase] | sort),
+		labels: ([.labels[] | (.name? // .) | strings] | sort)}' 2>/dev/null) || live_meta=""
+	if [[ -z "$live_meta" || "$live_meta" != "$v_meta" ]]; then
+		_dch_assignment_verdict_log miss metadata
+		return 1
+	fi
+	_dch_assignment_verdict_log hit layer6
+	return 0
+}
+
 _resolve_device_id() {
 	local device_id="${AIDEVOPS_DEVICE_ID:-}"
 	if [[ -n "$device_id" && ! "$device_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$ ]]; then
