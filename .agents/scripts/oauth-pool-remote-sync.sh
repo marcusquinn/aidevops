@@ -172,7 +172,7 @@ _rs_status() {
 }
 
 _rs_slug() {
-	printf '%s' "${_RS_HOST}-${_RS_PROVIDER}-${_RS_EMAIL}" | tr -c 'A-Za-z0-9.-\n' '-'
+	printf '%s' "${_RS_HOST}-${_RS_USER:-self}-${_RS_PROVIDER}-${_RS_EMAIL}" | tr -c 'A-Za-z0-9.-\n' '-'
 	return 0
 }
 
@@ -183,6 +183,7 @@ _rs_sync_command_line() {
 	if [[ -n "$_RS_USER" ]]; then
 		printf ' --remote-user %q' "$_RS_USER"
 	fi
+	printf ' --remote-helper %q' "$_RS_REMOTE_HELPER"
 	return 0
 }
 

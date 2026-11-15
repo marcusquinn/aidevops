@@ -39,12 +39,23 @@ def _find(pool: dict, provider: str, email: str) -> dict | None:
 
 
 def _load(pool_path: str) -> dict:
+    """Load the pool; only a missing file is an empty pool (never clobber others)."""
     try:
         with open(pool_path, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        print(f"pool-unreadable: {exc.__class__.__name__}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("pool-unreadable: root is not an object", file=sys.stderr)
+        sys.exit(1)
+    return data
+
+
+def _num(value: object) -> float:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
 def _expires(account: dict | None) -> int:
@@ -85,7 +96,10 @@ def _apply_incoming(pool: dict, provider: str, incoming: dict) -> str:
     if _expires(incoming) <= _expires(existing):
         return "unchanged"
     # Adopt the newer entry; keep local-only fields (e.g. priority) it lacks.
+    carried_cooldown = max(_num(existing.get("cooldownUntil")), _num(incoming.get("cooldownUntil")))
     existing.update(incoming)
+    if carried_cooldown:
+        existing["cooldownUntil"] = carried_cooldown
     _clear_failure_state(existing)
     return "updated"
 

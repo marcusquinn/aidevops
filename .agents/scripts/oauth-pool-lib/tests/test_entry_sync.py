@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-import subprocess
+import subprocess  # nosec B404 - test runs a fixed local script
 import sys
 import tempfile
 import unittest
@@ -20,7 +20,7 @@ EMAIL = "a@example.com"
 
 def run(op: str, pool: Path, stdin: str = "") -> tuple[str, str]:
     env = dict(os.environ, POOL_FILE_PATH=str(pool), PROVIDER="anthropic", EMAIL=EMAIL)
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603 - fixed argv, no shell, test-controlled input
         [sys.executable, str(POOL_OPS_PY), f"entry-{op}"],
         input=stdin, capture_output=True, text=True, env=env, check=True,
     )
