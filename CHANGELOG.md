@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.206] - 2026-11-15
+
+### Fixed
+
+- treat superseded coordinator checkpoint as cleanup no-op
+- keep definitive ls-remote absence answer instead of SSH fallback rc
+- exclude permanently trust-blocked worker PRs from the PR backlog guardrail
+- disable worker snapshots and expire terminated worker events in the active DB
+- correct IP reputation documentation (#38486)
+- trip the zero-attempt breaker on deterministic runtime-binary-missing launches (#38482)
+- shared-parent apexes, auto-known www SANs, caa-missing digest (#38480)
+- ignore negated worker blocker signals (GH#38469)
+
 ## [3.39.205] - 2026-11-15
 
 ### Changed
