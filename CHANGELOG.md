@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.207] - 2026-11-15
+
+### Added
+
+- continuation workers route concrete code/infra blockers to a prerequisite issue
+
+### Changed
+
+- Refactor: split help and launch-worker out of aidevops.sh (GH#20287) (#38532)
+- Refactor: split vault RFC phase 2/2.5 detail into chapter file (GH#38499) (#38500)
+
+### Fixed
+
+- restore metadata fixture in test-full-loop-runtime-risk.sh
+- provisioning over-budget precheck works on macOS BSD du
+- pass PR body via --body-file and bound the Files Changed list
+- bound prefetch fan-out so concurrent dormancy reads stop timing out
+- decision-policy tests fail on macOS from BSD wc -l padding
+- drain guardrail-counted worker PRs ahead of the merge cursor (GH#38508) (#38510)
+- trigger revisit completes — heavy slice, per-owner search, deadline-bounded AI
+
 ## [3.39.206] - 2026-11-15
 
 ### Fixed
