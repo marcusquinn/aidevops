@@ -5,14 +5,17 @@
 This is an always-on interim pass of the pulse cleanup stage, not the cleanup
 evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
-policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
-by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
-the only protection and each fails closed.
+policy's six proofs and reports no ``cleanup_authorized``. Stage-1 removal is
+archive-free by explicit operator decision, so the checks in
+``worker_lifecycle.reclaim.evidence`` are the only protection and each fails closed.
 
 Each candidate gets one decision (``reclaim.decision.classify``): ``remove``,
-``archive`` (finished work with local state to preserve, queued and skipped until
-the archive stage exists) or ``refuse``. Dry runs write nothing; applied removals
-are journaled as ``reclaim-authorized`` then ``reclaim-removed`` (GH#38348).
+``archive`` (finished work with local state to preserve) or ``refuse``. Stage 1
+removes ``remove`` trees as it judges them; ``archive`` trees are queued for
+stage 2 (``reclaim.archive``, GH#38394), which runs after every candidate was
+judged: archive with commits bundled, verify, journal, then remove. Dry runs
+write nothing; applied removals are journaled as ``reclaim-authorized`` (or
+``reclaim-archived``) then ``reclaim-removed`` (GH#38348).
 Applied passes also persist a scan cursor and defer trees whose own state stays
 unreadable (``reclaim.progress``, GH#38376); dry runs honour both but update neither.
 """
@@ -31,6 +34,7 @@ import time
 from .decision import (
     ARCHIVE, AUTHORIZED, REFUSE, REMOVE, REMOVED, cas_verify, classify, fingerprint, record,
 )
+from .archive import stage_two
 from .evidence import evidence, prefetch, references, repository
 from .host import common_directory, free_bytes, nothing_to_lose, remove, run
 from ..cleanup_quarantine import CleanupQuarantine
@@ -58,6 +62,8 @@ class Pass:
     limit: int = 0
     finished: dict = field(default_factory=dict)
     quarantine: CleanupQuarantine | None = None
+    # ``archive`` trees judged in stage 1, in order, for stage 2.
+    queued: list = field(default_factory=list)
 
     def remaining(self) -> int:
         """Report whole seconds left, so no child outlives the pass budget."""
@@ -84,7 +90,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
     return {"schema": SCHEMA, "base_dir": str(base_dir), "dry_run": dry_run,
-            "scanned": 0, "authorized": 0, "archive_queued": 0, "removed": 0,
+            "scanned": 0, "authorized": 0, "archive_queued": 0, "archived": 0, "removed": 0,
             "failed": 0, "refused": 0, "quarantine_deferred": 0,
             "cursor_start": "", "resume_after": "",
             "reclaimed_bytes": 0, "budget_exhausted": False,
@@ -105,7 +111,7 @@ def judge(path: Path, current: Pass, receipt: dict) -> dict:
     if verdict["decision"] == REFUSE:
         receipt["refused"] += 1
     elif verdict["decision"] == ARCHIVE:
-        # Queued for the preserving archive stage, which is not yet enabled.
+        # Archived and removed by stage 2 once every candidate was judged.
         receipt["archive_queued"] += 1
     else:
         receipt["authorized"] += 1
@@ -123,6 +129,10 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     repository needing a worktree prune, or None.
     """
     verdict = judge(path, current, receipt)
+    if verdict["decision"] == ARCHIVE:
+        # Stage 2 acts on it and feeds its own outcome to the backoff.
+        current.queued.append((path, verdict))
+        return None
     common = _act(path, verdict, current, receipt)
     if current.apply_removal:
         remember(current.quarantine, path, verdict)
@@ -247,6 +257,7 @@ def main() -> int:
         common = reclaim_one(path, current, receipt)
         if common is not None:
             repositories.add(common)
+    repositories |= stage_two(current.queued, current, receipt)
     for common in repositories:
         run(["git", "--git-dir", str(common), "worktree", "prune"])
     receipt["reclaimed_bytes"] = reclaimed_bytes(

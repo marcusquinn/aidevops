@@ -19,6 +19,7 @@ GIT = shutil.which("git")
 if not GIT:
     raise RuntimeError("Git is required for fixture verification")
 
+from worker_lifecycle.reclaim import archive as archive_stage  # noqa: E402
 from worker_lifecycle.reclaim import decision  # noqa: E402
 from worker_lifecycle.reclaim import evidence as collector  # noqa: E402
 from worker_lifecycle.reclaim import host  # noqa: E402
@@ -502,6 +503,132 @@ class DecisionTests(GitFixture):
         # Archived event IDs keep replay idempotent through the digest tombstone.
         self.assertIsNone(decision.record(self.store, decision.REMOVED, verdict,
                                           verdict["fingerprint"]))
+
+
+class ArchiveStageTests(GitFixture):
+    """Stage 2: archive with commits bundled, verify, journal, then remove (GH#38394)."""
+
+    a_pass = DecisionTests.a_pass
+    reclaim_events = DecisionTests.reclaim_events
+
+    def setUp(self):
+        super().setUp()
+        self.store = LifecycleRegistry.initialize(self.root / "state")
+        self.archives = self.root / "archives"
+        previous = os.environ.get("AIDEVOPS_WORKTREE_ARCHIVE_ROOT")
+        os.environ["AIDEVOPS_WORKTREE_ARCHIVE_ROOT"] = str(self.archives)
+        self.addCleanup(self.restore_environment, previous)
+        git(self.canonical, "remote", "set-head", "origin", "main")
+
+    @staticmethod
+    def restore_environment(previous):
+        if previous is None:
+            os.environ.pop("AIDEVOPS_WORKTREE_ARCHIVE_ROOT", None)
+        else:
+            os.environ["AIDEVOPS_WORKTREE_ARCHIVE_ROOT"] = previous
+
+    def publish_commit_and_dirty(self):
+        """Commit work whose branch is on origin, then leave an uncommitted file."""
+        (self.worktree / "README.md").write_text("published\n", encoding="utf-8")
+        git(self.worktree, "commit", "-qam", "fixture: published")
+        # Refs are shared with the canonical clone: this marks the commit as pushed.
+        git(self.worktree, "update-ref", "refs/remotes/origin/feature", "HEAD")
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+
+    def run_pass(self, current):
+        receipt = reclaim.new_receipt(self.root, dry_run=not current.apply_removal)
+        reclaim.reclaim_one(self.worktree, current, receipt)
+        return receipt, archive_stage.stage_two(current.queued, current, receipt)
+
+    def manifests(self):
+        return [json.loads(path.read_text(encoding="utf-8"))
+                for path in self.archives.rglob("manifest.json")]
+
+    def test_finished_tree_with_local_state_is_archived_then_removed(self):
+        self.publish_commit_and_dirty()
+        receipt, repositories = self.run_pass(self.a_pass())
+        verdict = receipt["results"][0]
+        self.assertEqual(verdict["removal"], "removed", verdict)
+        self.assertEqual((receipt["archived"], receipt["removed"], receipt["failed"]), (1, 1, 0))
+        self.assertFalse(self.worktree.exists())
+        self.assertEqual(len(repositories), 1)
+        self.assertEqual(self.reclaim_events(), [decision.ARCHIVED, decision.REMOVED])
+        # The branch is on origin, yet the archive carries its commits (#38056).
+        archive = Path(verdict["archive"]["path"])
+        self.assertTrue((archive / "commits.bundle").is_file())
+        self.assertEqual([m["remote_branch_state"] for m in self.manifests()], ["bundled"])
+
+    def archive_then_write(self, name, content):
+        """Run one pass that writes ``name`` right after the archive is captured."""
+        original = archive_stage.capture
+
+        def late_write(*arguments, **options):
+            result = original(*arguments, **options)
+            (self.worktree / name).write_text(content, encoding="utf-8")
+            return result
+
+        archive_stage.capture = late_write
+        try:
+            receipt, _ = self.run_pass(self.a_pass())
+        finally:
+            archive_stage.capture = original
+        self.assertEqual((receipt["removed"], receipt["failed"]), (0, 1))
+        self.assertTrue(self.worktree.exists())
+        self.assertEqual(len(self.manifests()), 1)
+        self.assertEqual(self.reclaim_events(), [decision.ARCHIVED])
+        return receipt["results"][0]["removal"]
+
+    def test_new_file_after_archive_keeps_tree_and_archive(self):
+        self.publish_commit_and_dirty()
+        self.assertEqual(self.archive_then_write("late.md", "late\n"), "evidence-changed")
+
+    def test_content_change_status_cannot_see_is_caught_by_source_matches(self):
+        # Rewriting an already-untracked file leaves porcelain status unchanged,
+        # so only the archive comparison can refuse this removal.
+        self.publish_commit_and_dirty()
+        self.assertEqual(self.archive_then_write("notes.md", "rewritten\n"),
+                         "changed-" + archive_stage.SOURCE_CHANGED)
+
+    def test_archive_failure_keeps_tree_and_is_deferrable(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        original = archive_stage.run_helper
+
+        def failing(*arguments, **options):
+            raise subprocess.CalledProcessError(1, ["worktree-archive-helper.sh"], b"", b"boom")
+
+        archive_stage.run_helper = failing
+        try:
+            receipt, _ = self.run_pass(self.a_pass())
+        finally:
+            archive_stage.run_helper = original
+        verdict = receipt["results"][0]
+        self.assertEqual(verdict["removal"], "archive-failed")
+        self.assertEqual(receipt["failed"], 1)
+        self.assertTrue(self.worktree.exists())
+        self.assertEqual(self.reclaim_events(), [])
+        self.assertTrue(progress.unreadable(verdict))
+        self.assertFalse(progress.unreadable({"removal": "archive-capacity"}))
+        self.assertFalse(progress.unreadable({"removal": "archive-timeout"}))
+
+    def test_dry_run_queues_but_never_archives(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        receipt, repositories = self.run_pass(self.a_pass(apply_removal=False))
+        self.assertEqual((receipt["archive_queued"], receipt["archived"]), (1, 0))
+        self.assertEqual(repositories, set())
+        self.assertFalse(self.archives.exists())
+        self.assertEqual(self.reclaim_events(), [])
+        self.assertTrue(self.worktree.exists())
+
+    def test_low_budget_never_starts_an_archive(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        current = reclaim.Pass(owner=StoreOwner(self.store), apply_removal=True,
+                               deadline=time.monotonic() + archive_stage.MIN_SECONDS - 5,
+                               finished=dict(self.finished))
+        receipt, _ = self.run_pass(current)
+        self.assertEqual(receipt["results"][0]["removal"], "archive-budget-exhausted")
+        self.assertTrue(receipt["budget_exhausted"])
+        self.assertFalse(self.archives.exists())
+        self.assertTrue(self.worktree.exists())
 
 
 class ProgressTests(GitFixture):

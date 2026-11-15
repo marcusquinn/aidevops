@@ -124,7 +124,8 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
     # or refused; once past retention it is archived like any other history.
     rows += connection.execute(
         "SELECT * FROM events WHERE julianday(recorded_at)<=julianday('now',?) "
-        "AND json_extract(payload,'$.type') IN ('reclaim-authorized','reclaim-removed') "
+        "AND json_extract(payload,'$.type') IN "
+        "('reclaim-authorized','reclaim-archived','reclaim-removed') "
         "ORDER BY sequence LIMIT 1000", (f"-{age} seconds",),
     ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,

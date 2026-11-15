@@ -28,15 +28,17 @@ from ..journal import append_event
 from ..storage import LifecycleRegistry, StoreCapacity, StoreConflict, encode
 from .host import EVIDENCE_CHANGED, git
 
-__all__ = ["ARCHIVE", "AUTHORIZED", "REFUSE", "REMOVE", "REMOVED", "cas_verify",
+__all__ = ["ARCHIVE", "ARCHIVED", "AUTHORIZED", "REFUSE", "REMOVE", "REMOVED", "cas_verify",
            "classify", "event_id", "fingerprint", "record"]
 
 REMOVE = "remove"
 ARCHIVE = "archive"
 REFUSE = "refuse"
 AUTHORIZED = "reclaim-authorized"
+# Stage 2 (GH#38394): a verified archive of an ``archive`` tree, before removal.
+ARCHIVED = "reclaim-archived"
 REMOVED = "reclaim-removed"
-EVENT_TYPES = (AUTHORIZED, REMOVED)
+EVENT_TYPES = (AUTHORIZED, ARCHIVED, REMOVED)
 _UNPUSHED = "unpushed-commits-"
 
 
@@ -117,15 +119,19 @@ def event_id(installation_id: str, payload: dict) -> str:
     return str(uuid5(UUID(installation_id), encode(payload)))
 
 
-def record(store: LifecycleRegistry, kind: str, verdict: dict, digest: str) -> str | None:
+def record(store: LifecycleRegistry, kind: str, verdict: dict, digest: str,
+           archive: dict | None = None) -> str | None:
     """Journal one reclaim event; return None on success or the failure reason.
 
     The payload carries no clock value: an identical replay must match the stored
-    payload exactly, which is what makes a repeated pass idempotent.
+    payload exactly, which is what makes a repeated pass idempotent. A stage-2
+    event also carries the archive id (``archive``: path and manifest sha256).
     """
     payload = {"type": kind, "schema": 1, "path": verdict["path"], "fingerprint": digest,
                "reason": verdict.get("reason"), "repository": verdict.get("repository"),
                "references": verdict.get("references", [])}
+    if archive is not None:
+        payload["archive"] = archive
     try:
         with store.connection(write=True) as connection:
             installation = connection.execute(
