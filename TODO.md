@@ -2133,6 +2133,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19027 fix(test): test-pulse-defense-restart.sh fails 10 revival assertions on current main #interactive #bug tier:standard assignee:marcusquinn ref:GH#38457 pr:#38461 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
+- [ ] t19037 Resume maintenance-stopped Tabby sessions in their profile tabs #bug ref:GH#38495
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
