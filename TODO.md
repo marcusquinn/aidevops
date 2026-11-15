@@ -2101,7 +2101,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19014 perf(ci-wait): resolve required check contexts once per wait, not every poll #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38404 logged:2026-11-15 started:2026-11-15 pr:#38407 completed:2026-11-15 -> [todo/tasks/t19014-brief.md]
 
-- [ ] t19015 perf(pulse): a drained cycle exits at the next stage boundary instead of running its full maintenance tail #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38413 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19015-brief.md]
+- [x] t19015 perf(pulse): a drained cycle exits at the next stage boundary instead of running its full maintenance tail #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38413 logged:2026-11-15 started:2026-11-15 pr:#38414 completed:2026-11-15 -> [todo/tasks/t19015-brief.md]
+
+- [ ] t19016 perf(profile): project OpenCode usage rows per table instead of materializing the full message history #interactive #bug tier:standard assignee:marcusquinn ref:GH#38425 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19016-brief.md]
 
 ## In Progress
 
