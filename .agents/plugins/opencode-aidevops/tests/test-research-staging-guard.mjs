@@ -44,7 +44,7 @@ test("blocks direct and recursive symlink escapes", () => {
     );
     assert.throws(
       () => checkResearchStagingAccess("grep", { path: data.stagingRoot }, data.env),
-      /symlinks are denied/,
+      /symlinks are denied: task-1\/escape$/,
     );
   } finally {
     rmSync(data.tempRoot, { recursive: true, force: true });
@@ -64,7 +64,7 @@ test("blocks credential-like files from read and recursive search", () => {
     );
     assert.throws(
       () => checkResearchStagingAccess("grep", { path: data.stagingRoot }, data.env),
-      /credential-like path/,
+      /credential-like path: task-1\/\.npmrc$/,
     );
   } finally {
     rmSync(data.tempRoot, { recursive: true, force: true });

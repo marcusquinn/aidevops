@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.202] - 2026-11-15
+
+### Added
+
+- bidirectional remote-sync of a pool account to another host/user (#38374)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#38387)
+
+### Fixed
+
+- repair 7 failing local-only suite cases on main (#38416)
+- paginate closed-checkpoint scan (GH#38396) (#38400)
+- Reclaim never-owned refusal names a standing authorization; legacy recovery evidence no longer blocks Reclaim
+
 ## [3.39.201] - 2026-11-15
 
 ### Fixed
