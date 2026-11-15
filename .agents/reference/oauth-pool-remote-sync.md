@@ -36,4 +36,4 @@ override with `--remote-helper`).
 - `status` prints only sha256 fingerprints (12 hex chars) of the refresh and
   access tokens plus `expires`, never token bytes.
 
-Tests: `python3 -m unittest discover -s .agents/scripts/oauth-pool-lib/tests -p test_entry_sync.py`.
+Tests: `python3 -m unittest discover -s .agents/scripts/tests -p test_entry_sync.py`.

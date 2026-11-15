@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-POOL_OPS_PY = Path(__file__).resolve().parents[1] / "pool_ops.py"
+POOL_OPS_PY = Path(__file__).resolve().parents[1] / "oauth-pool-lib" / "pool_ops.py"
 EMAIL = "a@example.com"
 
 
