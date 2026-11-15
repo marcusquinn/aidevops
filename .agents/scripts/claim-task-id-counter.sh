@@ -340,6 +340,23 @@ _derive_ssh_url_from_https() {
 	return 1
 }
 
+# Detect `ls-remote ... --exit-code ...`, whose rc=2 is a definitive remote
+# answer ("no matching refs"), not a transport failure (GH#38493).
+# Args: git subcommand and arguments, as passed to _run_git_with_ssh_fallback.
+# Returns: 0 when the subcommand is ls-remote with --exit-code before any `--`,
+#          1 otherwise.
+_git_args_is_ls_remote_exit_code() {
+	local subcommand="${1:-}"
+	local arg=""
+	[[ "$subcommand" == "ls-remote" ]] || return 1
+	shift
+	for arg in "$@"; do
+		[[ "$arg" == "--" ]] && return 1
+		[[ "$arg" == "--exit-code" ]] && return 0
+	done
+	return 1
+}
+
 # Run a git command with a wall-clock timeout and HTTPS→SSH fallback.
 # Args: $1 — timeout in seconds, $2..$N — git subcommand and its arguments
 #       (do NOT include the leading `git`; this helper adds it).
@@ -350,6 +367,8 @@ _derive_ssh_url_from_https() {
 #
 # Behaviour matrix:
 #   HTTPS succeeds within timeout              → return 0
+#   ls-remote --exit-code returns 2 (remote
+#     answered: no matching refs)              → return 2 (no fallback, GH#38493)
 #   HTTPS fails non-timeout + fallback succeeds → return 0
 #   HTTPS fails non-timeout + fallback fails    → return fallback rc
 #   HTTPS times out, remote NOT https-github    → return 124 (no fallback)
@@ -369,6 +388,12 @@ _run_git_with_ssh_fallback() {
 		timeout_sec "$timeout_s" git "$@" || rc=$?
 	fi
 	if [[ $rc -eq 0 ]]; then
+		return $rc
+	fi
+	# The remote answered over HTTPS. Retrying over SSH can only replace that
+	# answer with an unrelated transport/auth failure (e.g. rc=128 where no SSH
+	# key is available), misreporting an absent branch as a discovery error.
+	if [[ $rc -eq 2 ]] && _git_args_is_ls_remote_exit_code "$@"; then
 		return $rc
 	fi
 
