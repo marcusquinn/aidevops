@@ -34,9 +34,11 @@ UNREADABLE = frozenset({
     "repository-unknown", "status-unreadable", "unpushed-state-unreadable",
     "owner-registry-unreadable", "owner-unobservable", "fingerprint-unavailable",
 })
-# Stage-2 failures of this tree's own archive (GH#38394). Capacity and timeouts
-# are host-wide or transient, so ``reclaim.archive`` never reports them as these.
-ARCHIVE_FAILURES = frozenset({"archive-failed", "archive-verify-failed"})
+# Stage-2 failures of this tree's own archive (GH#38394). A timed-out archive
+# repeats for the same tree and can spend the whole pass budget, so it backs off.
+# Capacity is host-wide and fails fast, so it stays out: one capacity failure
+# must not defer every tree.
+ARCHIVE_FAILURES = frozenset({"archive-failed", "archive-verify-failed", "archive-timeout"})
 
 
 def unreadable(verdict: dict) -> bool:

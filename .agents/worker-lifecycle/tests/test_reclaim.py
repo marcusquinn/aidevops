@@ -608,7 +608,48 @@ class ArchiveStageTests(GitFixture):
         self.assertEqual(self.reclaim_events(), [])
         self.assertTrue(progress.unreadable(verdict))
         self.assertFalse(progress.unreadable({"removal": "archive-capacity"}))
-        self.assertFalse(progress.unreadable({"removal": "archive-timeout"}))
+        # A repeatedly timed-out archive backs off instead of blocking the queue.
+        self.assertTrue(progress.unreadable({"removal": "archive-timeout"}))
+
+    def test_unreadable_manifest_fails_one_tree_without_stopping_the_pass(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        original = archive_stage.archive_id
+
+        def unreadable_manifest(archive):
+            raise PermissionError("manifest.json")
+
+        archive_stage.archive_id = unreadable_manifest
+        try:
+            receipt, _ = self.run_pass(self.a_pass())
+        finally:
+            archive_stage.archive_id = original
+        verdict = receipt["results"][0]
+        self.assertEqual((verdict["removal"], receipt["failed"]),
+                         ("archive-verify-failed", 1))
+        self.assertTrue(self.worktree.exists())
+        self.assertEqual(self.reclaim_events(), [])
+
+    def test_budget_spent_by_base_lookup_never_starts_an_archive(self):
+        (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")
+        current = self.a_pass()
+        original = archive_stage._base_branch
+
+        def slow_lookup(path, timeout):
+            # The lookup consumes the budget the stage-two admission saw.
+            object.__setattr__(current, "deadline",
+                               time.monotonic() + archive_stage.MIN_SECONDS - 5)
+            return original(path, timeout)
+
+        archive_stage._base_branch = slow_lookup
+        try:
+            receipt, _ = self.run_pass(current)
+        finally:
+            archive_stage._base_branch = original
+        self.assertEqual(receipt["results"][0]["removal"], "archive-budget-exhausted")
+        self.assertTrue(receipt["budget_exhausted"])
+        self.assertEqual(receipt["failed"], 0)
+        self.assertFalse(self.archives.exists())
+        self.assertTrue(self.worktree.exists())
 
     def test_dry_run_queues_but_never_archives(self):
         (self.worktree / "notes.md").write_text("local\n", encoding="utf-8")

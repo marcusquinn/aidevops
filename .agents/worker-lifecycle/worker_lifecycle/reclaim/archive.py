@@ -43,6 +43,7 @@ MIN_SECONDS = 30
 # Upper bound for one helper call; the pass budget usually binds first.
 HELPER_TIMEOUT = 300
 SOURCE_CHANGED = "source-changed-since-archive"
+BUDGET_EXHAUSTED = "archive-budget-exhausted"
 
 Budget = Callable[[], int]
 
@@ -92,6 +93,9 @@ def capture(path: Path, verdict: dict, root: Path, remaining: Budget) -> tuple[P
     branch = _base_branch(path, _timeout(remaining))
     if branch is None:
         return None, "archive-base-unknown"
+    # The base lookup spends budget too; recheck before starting the archive.
+    if remaining() < MIN_SECONDS:
+        return None, BUDGET_EXHAUSTED
     try:
         create_archive_root(root)
         root = root.resolve(strict=True)
@@ -138,7 +142,13 @@ def _preserve(path: Path, verdict: dict, digest: str, remaining: Budget,
     archive, detail = capture(path, verdict, archive_root(), remaining)
     blocked = detail if archive is None else None
     if archive is not None:
-        verdict["archive"] = archive_id(archive)
+        try:
+            verdict["archive"] = archive_id(archive)
+        except OSError:
+            # A verified archive whose manifest cannot be read fails this tree
+            # only; the sweep goes on to the rest of the queue.
+            verdict["removal"] = "archive-verify-failed"
+            return None
         blocked = record(store, ARCHIVED, verdict, digest, archive=verdict["archive"])
     if blocked is not None or archive is None:
         verdict["removal"] = blocked
@@ -186,9 +196,12 @@ def stage_two(queued: list[tuple[Path, dict]], current: Pass, receipt: dict) -> 
     for path, verdict in queued:
         if current.remaining() < MIN_SECONDS:
             receipt["budget_exhausted"] = True
-            verdict["removal"] = "archive-budget-exhausted"
+            verdict["removal"] = BUDGET_EXHAUSTED
             continue
         common = _archive_and_remove(path, verdict, current, receipt, store)
+        if verdict.get("removal") == BUDGET_EXHAUSTED:
+            receipt["budget_exhausted"] = True
+            continue
         if common is None:
             receipt["failed"] += 1
         else:
