@@ -69,14 +69,18 @@ _dispatch_secret_starvation_notice() {
 		gh api "$comments_endpoint" --method POST \
 			--field body="$(printf '%s\n%s' "$marker" "Dispatch has waited for a runner with these required secret names: ${missing}. No secret values were accessed.")" >/dev/null || return 1
 	fi
-	if ! printf '%s' "$issue_json" | jq -e '.labels[]? | (if type == "object" then .name else . end) == "status:blocked"' >/dev/null; then
-		# GH#38360: a starved secret needs credentials provisioned on a runner.
-		local companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}"
+	# GH#38360: a starved secret needs credentials provisioned on a runner.
+	# Status and companion membership are checked independently.
+	local companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}"
+	local -a edit_args=()
+	local has_label='any(.labels[]?; (if type == "object" then .name else . end) == $l)' wanted=""
+	for wanted in status:blocked "$companion"; do
+		printf '%s' "$issue_json" | jq -e --arg l "$wanted" "$has_label" >/dev/null || edit_args+=(--add-label "$wanted")
+	done
+	if [[ ${#edit_args[@]} -gt 0 ]]; then
 		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
 			ensure_blocked_companion_label "$repo_slug" "$companion"
-		gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked \
-			--add-label "$companion" >/dev/null ||
-			gh issue edit "$issue_number" --repo "$repo_slug" --add-label status:blocked >/dev/null || return 1
+		gh issue edit "$issue_number" --repo "$repo_slug" "${edit_args[@]}" >/dev/null || return 1
 	fi
 	return 0
 }

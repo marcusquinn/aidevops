@@ -419,7 +419,7 @@ prefetch_hygiene_anomalies() {
 		return 0
 	fi
 
-	local status_fixed tier_fixed triage_missing ts checked companion_fixed
+	local status_fixed=0 tier_fixed=0 triage_missing=0 ts="" checked=0 companion_fixed=0
 	status_fixed=$(jq -r '.status_fixed // 0' "$counters_file" 2>/dev/null) || status_fixed=0
 	tier_fixed=$(jq -r '.tier_fixed // 0' "$counters_file" 2>/dev/null) || tier_fixed=0
 	triage_missing=$(jq -r '.triage_missing // 0' "$counters_file" 2>/dev/null) || triage_missing=0

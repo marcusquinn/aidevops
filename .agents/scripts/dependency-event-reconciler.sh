@@ -515,6 +515,11 @@ _der_try_unblock() {
 	labels=$(gh issue view "$issue_number" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	_der_labels_has "$labels" status:blocked || return 0
 	_der_has_active_status "$labels" && return 0
+	# A human hold added after the initial check keeps the issue blocked.
+	if _der_labels_have_hold "$labels"; then
+		_DER_RESULT=held
+		return 0
+	fi
 	# GH#38360: the dependency companion leaves together with status:blocked.
 	local -a unblock_args=(--remove-label status:blocked --add-label status:available)
 	_der_labels_has "$labels" needs-dependency && unblock_args+=(--remove-label needs-dependency)

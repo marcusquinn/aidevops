@@ -783,12 +783,47 @@ _blocked_status_companion_label() {
 	fi
 	AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-snapshot-rest" \
 		issue_json=$(_rest_api_call read gh api "/repos/${repo_slug}/issues/${issue_num}" 2>/dev/null) || issue_json=""
+	# Companions the same call removes do not count as remaining.
+	local arg="" removed="" expect_value=0
+	for arg in "$@"; do
+		if [[ "$expect_value" -eq 1 ]]; then
+			removed+=",${arg}"
+			expect_value=0
+		elif [[ "$arg" == "--remove-label" ]]; then
+			expect_value=1
+		elif [[ "$arg" == --remove-label=* ]]; then
+			removed+=",${arg#--remove-label=}"
+		fi
+	done
 	if [[ -n "$issue_json" ]] && printf '%s' "$issue_json" |
-		jq -e 'any(.labels[]?; (.name // "") | startswith("needs-"))' >/dev/null 2>&1; then
+		jq -e --arg removed "$removed" '($removed | split(",")) as $rm
+			| any(.labels[]?; (.name // "") as $n | ($n | startswith("needs-")) and (($rm | index($n)) == null))' >/dev/null 2>&1; then
 		return 0
 	fi
 	print_warning "gh-wrapper: status:blocked on #${issue_num} in ${repo_slug} named no needs-* reason; routing to ${BLOCKED_NEEDS_AI_RECOVERY} (GH#38360)"
 	printf '%s\n' "$BLOCKED_NEEDS_AI_RECOVERY"
+	return 0
+}
+
+#######################################
+# Print blocked-owned companion labels present on the live issue, one per
+# line, for native fallbacks. Prints nothing for a blocked target or when the
+# snapshot is unavailable, so an absent label is never named.
+# Args: $1 = target status, $2 = issue number, $3 = repo slug
+#######################################
+_blocked_companions_present_live() {
+	local new_status="$1"
+	local issue_num="$2"
+	local repo_slug="$3"
+	local issue_json="" label="" issue_path="/repos/${repo_slug}/issues"
+	[[ "$new_status" != blocked ]] || return 0
+	AIDEVOPS_GH_ROUTE_DECISION="blocked-companion-removal-snapshot-rest" \
+		issue_json=$(_rest_api_call read gh api "${issue_path}/${issue_num}" 2>/dev/null) || return 0
+	for label in "${BLOCKED_OWNED_COMPANION_LABELS[@]}"; do
+		if printf '%s' "$issue_json" | jq -e --arg l "$label" 'any(.labels[]?; .name == $l)' >/dev/null 2>&1; then
+			printf '%s\n' "$label"
+		fi
+	done
 	return 0
 }
 
@@ -1081,6 +1116,7 @@ set_issue_status() {
 	# existing status remains unchanged rather than becoming a dual-label state.
 	local -a _extra_flags=("$@")
 	local _rc=0
+	local _native_flags=() _present=""
 	if [[ ${#_extra_flags[@]} -gt 0 ]]; then
 		AIDEVOPS_GH_ROUTE_DECISION="status-extra-edit-rest-deltas" \
 			_rest_issue_edit_preserving_deltas "$issue_num" --repo "$repo_slug" "${_extra_flags[@]}"
@@ -1089,9 +1125,13 @@ set_issue_status() {
 			if [[ "${_REST_ISSUE_DELTA_FAILURE_STAGE:-}" != "mutation" ]]; then
 				print_info "[INFO] gh-wrapper: REST status preflight unavailable, using combined native edit"
 				gh_record_call graphql set_issue_status_combined_native_fallback 2>/dev/null || true
+				_native_flags=("${_status_flags[@]}")
+				while IFS= read -r _present; do
+					[[ -n "$_present" ]] && _native_flags+=(--remove-label "$_present")
+				done < <(_blocked_companions_present_live "$new_status" "$issue_num" "$repo_slug")
 				AIDEVOPS_GH_ROUTE_DECISION="status-combined-native-fallback" \
 					_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" \
-					"${_status_flags[@]}" "${_extra_flags[@]}" 2>/dev/null
+					"${_native_flags[@]}" "${_extra_flags[@]}" 2>/dev/null
 				_rc=$?
 				[[ $_rc -eq 0 ]] || return $_rc
 				_verify_issue_status_convergence "$issue_num" "$repo_slug" "$new_status"
@@ -1113,8 +1153,12 @@ set_issue_status() {
 	if [[ $_rc -ne 0 ]]; then
 		print_info "[INFO] gh-wrapper: REST status delta edit failed, falling back to native gh issue edit"
 		gh_record_call graphql set_issue_status_native_fallback 2>/dev/null || true
+		_native_flags=("${_status_flags[@]}")
+		while IFS= read -r _present; do
+			[[ -n "$_present" ]] && _native_flags+=(--remove-label "$_present")
+		done < <(_blocked_companions_present_live "$new_status" "$issue_num" "$repo_slug")
 		AIDEVOPS_GH_ROUTE_DECISION="status-issue-edit-native-fallback" \
-			_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_status_flags[@]}" 2>/dev/null
+			_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_native_flags[@]}" 2>/dev/null
 		_rc=$?
 	fi
 	[[ $_rc -eq 0 ]] || return $_rc

@@ -221,13 +221,22 @@ _enforce_blocked_companion_one_issue() {
 	bare)
 		[[ "$live" == *",status:blocked,"* && "$live" != *",needs-"* ]] || return 1
 		label="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
+		# An open native blocker (rc 0) is a dependency hold, not recovery work;
+		# rc 1/2/3 (none, clear, unavailable) keep the recovery fallback.
+		local native_rc=1
+		if declare -F _blocked_by_check_native_relationships >/dev/null 2>&1; then
+			_blocked_by_check_native_relationships "$slug" "$issue_num" >/dev/null 2>&1 && native_rc=0 || native_rc=$?
+		fi
+		[[ "$native_rc" -ne 0 ]] || label="${BLOCKED_NEEDS_DEPENDENCY:-needs-dependency}"
 		if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
 			ensure_blocked_companion_label "$slug" "$label" || true
 		fi
 		edit_flags=(--add-label "$label")
 		;;
 	orphan)
-		[[ "$live" != *",status:blocked,"* ]] || return 1
+		# Require a live core status other than blocked; a statusless hold keeps
+		# its human companion.
+		[[ "$live" != *",status:blocked,"* && "$live" == *",status:"* ]] || return 1
 		for label in needs-ai-recovery needs-dependency needs-maintainer-input; do
 			[[ "$live" == *",${label},"* ]] && edit_flags+=(--remove-label "$label")
 		done

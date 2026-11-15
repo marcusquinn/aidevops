@@ -831,9 +831,7 @@ _fast_fail_age_out_locked() {
 					--add-label "$companion" >>"$LOGFILE" 2>&1 || true
 			else
 				gh issue edit "$issue_number" --repo "$repo_slug" --add-label "status:blocked" \
-					--add-label "$companion" >>"$LOGFILE" 2>&1 ||
-					gh issue edit "$issue_number" --repo "$repo_slug" \
-						--add-label "status:blocked" >>"$LOGFILE" 2>&1 || true
+					--add-label "$companion" >>"$LOGFILE" 2>&1 || true
 			fi
 			return 2
 			;;

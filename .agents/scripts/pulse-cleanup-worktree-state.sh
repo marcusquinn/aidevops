@@ -1256,9 +1256,7 @@ _record_orphan_crash_classification() {
 				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		else
 			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" --add-label "status:blocked" \
-				--add-label "$_infra_companion" >/dev/null 2>&1 ||
-				gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" \
-					--add-label "status:blocked" >/dev/null 2>&1 || true
+				--add-label "$_infra_companion" >/dev/null 2>&1 || true
 		fi
 		# Post the worker-mentoring advisory comment carrying the marker.
 		local _advisory_body

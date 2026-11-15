@@ -1695,6 +1695,11 @@ _apply_terminal_blocker() {
 	# clear all sibling status:* labels, not just available/queued)
 	if [[ "$already_blocked" -eq 0 ]]; then
 		set_issue_status "$issue_number" "$repo_slug" "blocked" --add-label "$companion" || true
+	elif [[ ",${existing_labels}," != *",${companion},"* ]]; then
+		# Already blocked but the classified companion is missing: add it only.
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "$companion" >/dev/null 2>&1 || true
 	fi
 
 	# Post comment if not already posted (idempotent — safe against concurrent pulses)
