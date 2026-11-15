@@ -864,6 +864,38 @@ _pulse_drain_requested_bundle() {
 	return 0
 }
 
+#######################################
+# t19015 (GH#38413): GH#37907 asks a drained earlier-bundle cycle to exit so
+# the scheduler starts the activated bundle. Dispatch stops under the drain,
+# but the cycle still ran every remaining preflight and pipeline stage (p50
+# 849s from activation to exit; 22% of runner time alive with dispatch
+# suppressed). Callers check at stage boundaries, so in-flight stages finish.
+# The supervisor phase keeps its drain, census-handoff (GH#38048) and
+# starvation-escape (GH#38162, GH#38210) handling; the cycle is still recorded.
+# PULSE_DRAIN_FAST_EXIT=0 restores the full drained cycle.
+# Args: $1 - stage or phase about to start (log label)
+# Returns: 0 when the caller must skip its remaining stages, 1 otherwise
+#######################################
+_pulse_cycle_drain_exit() {
+	local phase="${1:-unknown}"
+	local bundle=""
+	[[ "${PULSE_DRAIN_FAST_EXIT:-1}" != "0" ]] || return 1
+	bundle=$(_pulse_drain_requested_bundle) || return 1
+	# Main dispatch cannot run again in this cycle; release its reserve.
+	_PULSE_MAIN_DISPATCH_RESERVE_S=0
+	# A skipped prefetch leaves STATE_FILE from an earlier cycle; a drain
+	# escape supervisor (GH#38162) must treat it as incomplete (GH#34000).
+	[[ "${_PULSE_PREFETCH_RAN:-0}" == "1" ]] || _PULSE_PREFETCH_DEGRADED=1
+	if [[ "${_PULSE_DRAIN_FAST_EXIT_LOGGED:-0}" != "1" ]]; then
+		_PULSE_DRAIN_FAST_EXIT_LOGGED=1
+		echo "[pulse-wrapper] Cooperative drain: skipping remaining cycle stages from ${phase}; activated bundle ${bundle} starts next cycle (t19015, GH#37907)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_drain_fast_exit" 2>/dev/null || true
+		fi
+	fi
+	return 0
+}
+
 _dispatch_compute_capacity() {
 	_dispatch_refresh_owner_lease
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0

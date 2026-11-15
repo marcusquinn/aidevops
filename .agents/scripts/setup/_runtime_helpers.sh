@@ -376,21 +376,26 @@ fi
 # Install a package globally via npm, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
 # On Linux, prepends sudo only when the npm prefix is not user-writable.
+# Canonical definition (npm-first for OpenCode with a bun fallback, bun-first
+# otherwise) lives in .agents/scripts/setup/_common.sh. This npm-only fallback
+# covers bootstrap and must not shadow it once _common.sh is sourced (GH#38409).
 # Returns: 0 on success, 1 on failure
-npm_global_install() {
-	local pkg="$1"
+if ! type npm_global_install &>/dev/null; then
+	npm_global_install() {
+		local pkg="$1"
 
-	if command -v npm >/dev/null 2>&1; then
-		if _npm_global_prefix_needs_sudo; then
-			sudo npm install -g "$pkg"
+		if command -v npm >/dev/null 2>&1; then
+			if _npm_global_prefix_needs_sudo; then
+				sudo npm install -g "$pkg"
+			else
+				npm install -g "$pkg"
+			fi
+			return $?
 		else
-			npm install -g "$pkg"
+			return 1
 		fi
-		return $?
-	else
-		return 1
-	fi
-}
+	}
+fi
 
 # Prompt the user for input, with non-interactive fallback.
 # Canonical definition in .agents/scripts/setup/_common.sh; this fallback

@@ -10,7 +10,7 @@ from pathlib import Path
 import sqlite3
 from uuid import UUID, uuid5
 
-from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
 from .process import ObservationUnavailable
 
 
@@ -39,9 +39,9 @@ def _require_closed_admission(connection, generation):
 
 
 def _require_owner_evidence(store, generation):
-    """Raise unless owner runs have ended or the operator authorized takeover."""
+    """Raise unless owner runs have ended or a never-owned authorization exists."""
     rows = _runs(store, generation)
-    if not rows and not enrolled_only_authorized(store, generation):
+    if not rows and not never_owned_authorized(store, generation):
         raise ValueError("managed-operator-authorization-required")
     if not all(row["admitted"] and row["state"] == "ended" for row in rows):
         raise ValueError("managed-owner-evidence-incomplete")
