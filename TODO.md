@@ -2121,6 +2121,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19024 perf(session-time): project message role and completion time in SQL instead of sorting raw message JSON #interactive #performance tier:standard assignee:marcusquinn ref:GH#38451 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19024-brief.md]
 
+- [ ] t19026 fix(pulse): run Pulse launchd jobs and workers at normal priority instead of launchd's throttled default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38455 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19026-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

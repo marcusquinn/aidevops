@@ -841,6 +841,13 @@ _log_plist_env_overrides() {
 # tune the pulse cadence via settings (Linux/cron path always honoured
 # the setting). The hardcoding is now removed; the macOS path matches
 # the Linux path's behaviour.
+#
+# ProcessType=Interactive (GH#38455): launchd throttles CPU and I/O for a job
+# with no ProcessType ("light resource limits", man launchd.plist). Pulse and
+# every worker it spawns inherit that: base priority 20 versus 31 for a
+# terminal session, measured 1.78x slower on a loaded host. Interactive gives
+# terminal-shell priority, not foreground-app priority. Never use Background:
+# it starved launchd agents in xpcproxy (t3381).
 _generate_pulse_plist_content() {
 	local pulse_label="$1"
 	local wrapper_script="$2"
@@ -915,6 +922,8 @@ ${_env_overrides_xml}	</dict>
 		<key>NumberOfFiles</key>
 		<integer>4096</integer>
 	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -1025,6 +1034,9 @@ _install_pulse_launchd() {
 # (auto-restart on crash) and StartInterval (scheduled cadence). Catches the
 # "clean exit + lost launchd schedule" failure mode that no other layer covers.
 # (t2939)
+# ProcessType=Interactive matches the pulse plist: a Pulse the watchdog
+# revives through the unmanaged nohup path inherits the watchdog's spawn
+# type (GH#38455).
 _generate_pulse_watchdog_plist_content() {
 	local watchdog_label="$1"
 	local tick_script="$2"
@@ -1062,6 +1074,8 @@ _generate_pulse_watchdog_plist_content() {
 		<key>HOME</key>
 		<string>${_xml_home}</string>
 	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
