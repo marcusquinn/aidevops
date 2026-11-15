@@ -2051,7 +2051,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18987 fix(task-id-guard): name the malformed token and its source in block diagnostics #auto-dispatch #bug #fix-the-fixer #priority:medium ref:GH#38221 pr:#38224 completed:2026-11-14
 
-- [ ] t18989 perf(pulse): routine comment responder resolves runner login once per cycle and skips repos without routine-tracking issues #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38281
+- [x] t18989 perf(pulse): routine comment responder resolves runner login once per cycle and skips repos without routine-tracking issues #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38281 pr:#38285 completed:2026-11-15
 
 - [ ] t18990 perf(pulse-merge): verify GH#38242 permission memo survives merge-routine subshells; share it per run #auto-dispatch #feat #fix-the-fixer #priority:medium ref:GH#38282
 
@@ -2059,37 +2059,37 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18986 fix(dispatch): planning-publication PRs must not count as open-PR dedup evidence #bug #fix-the-fixer #priority:high ref:GH#38217 pr:#38218 completed:2026-11-14
 
-- [ ] t18988 fix(approval): framework provenance labels from feedback redispatch no longer stale signed issue approvals #bug #priority:high ref:GH#38279
+- [x] t18988 fix(approval): framework provenance labels from feedback redispatch no longer stale signed issue approvals #bug #priority:high ref:GH#38279 pr:#38280 completed:2026-11-15
 
-- [ ] t18991 perf(review-threads): route valid findings owned by another managed repo upstream instead of parking PRs for maintainer attention #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38290
+- [x] t18991 perf(review-threads): route valid findings owned by another managed repo upstream instead of parking PRs for maintainer attention #auto-dispatch #feat #fix-the-fixer #priority:high ref:GH#38290 pr:#38293 completed:2026-11-15
 
-- [ ] t18992 fix(pulse-merge): finish interactive PRs left idle by a still-running session — targeted review-thread guard, session-bus idle handover, takeover worktree #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38291
+- [x] t18992 fix(pulse-merge): finish interactive PRs left idle by a still-running session — targeted review-thread guard, session-bus idle handover, takeover worktree #auto-dispatch #bug #fix-the-fixer #priority:high ref:GH#38291 pr:#38299 completed:2026-11-15
 
-- [ ] t18993 test(review-thread-scanner): fake git stub predates registered scratch-worktree creation; 2 fetch-context tests fail #auto-dispatch #bug ref:GH#38296
+- [x] t18993 test(review-thread-scanner): fake git stub predates registered scratch-worktree creation; 2 fetch-context tests fail #auto-dispatch #bug ref:GH#38296 pr:#38300 completed:2026-11-15
 
-- [ ] t18994 fix(complexity-guard): pre-push hook judges HEAD instead of pushed refs and blocks task-id-counter CAS pushes #auto-dispatch #bug ref:GH#38297
+- [x] t18994 fix(complexity-guard): pre-push hook judges HEAD instead of pushed refs and blocks task-id-counter CAS pushes #auto-dispatch #bug ref:GH#38297 pr:#38304 completed:2026-11-15
 
-- [ ] t18995 fix(headless-runtime): route signal-less exits after own PR hand-off through the post-PR handoff gate #bug ref:GH#38303
+- [x] t18995 fix(headless-runtime): route signal-less exits after own PR hand-off through the post-PR handoff gate #bug ref:GH#38303 pr:#38307 completed:2026-11-15
 
-- [ ] t18996 test(headless-runtime): repair 53 suite failures from finish-path fixtures predating GH#37708 launch evidence #auto-dispatch #bug ref:GH#38306
+- [x] t18996 test(headless-runtime): repair 53 suite failures from finish-path fixtures predating GH#37708 launch evidence #auto-dispatch #bug ref:GH#38306 pr:#38308 completed:2026-11-15
 
-- [ ] t18997 feat(recovery): maintainer replies on held issues wake the AI supervisor; unexplained holds get a stated why #feat ref:GH#38311
+- [x] t18997 feat(recovery): maintainer replies on held issues wake the AI supervisor; unexplained holds get a stated why #feat ref:GH#38311 pr:#38312 completed:2026-11-15
 
-- [ ] t18999 fix(full-loop): merge helper should reconcile a release-provenance PR that native auto-merge lands mid-run #auto-dispatch #bug ref:GH#38318
+- [x] t18999 fix(full-loop): merge helper should reconcile a release-provenance PR that native auto-merge lands mid-run #auto-dispatch #bug ref:GH#38318 pr:#38321 completed:2026-11-15
 
-- [ ] t19001 fix(headless-runtime): signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker #bug ref:GH#38329
+- [x] t19001 fix(headless-runtime): signal-less merged own-PR handoff ignores the post-merge cleanup-deferred marker #bug ref:GH#38329 pr:#38331 completed:2026-11-15
 
 - [ ] t19002 plan(pulse): simplify dispatch to an interactive-equivalent lane — workers run 0.6/20 slots while 121 ready issues wait #feat #parent-task ref:GH#38332
 
-- [ ] t19003 perf(pulse): fresh-first dispatch lane — attempt unclaimed candidates before claimed ones (For #38332 phase 1) #feat ref:GH#38333
+- [x] t19003 perf(pulse): fresh-first dispatch lane — attempt unclaimed candidates before claimed ones (For #38332 phase 1) #feat ref:GH#38333 pr:#38334 completed:2026-11-15
 
-- [ ] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md]
+- [x] t19004 feat(github-auth): one-command GitHub App setup (manifest create + bulk bind) so Pulse reads stop exhausting the shared PAT #feat ref:GH#38337 -> [todo/tasks/t19004-brief.md] pr:#38339 completed:2026-11-15
 
 - [ ] t19006 perf(dispatch): halve launch ceremony and dedup verdict time (For #38332 phase 3) #feat #auto-dispatch tier:thinking parent:t19002 ref:GH#38352 logged:2026-11-14 -> [todo/tasks/t19006-brief.md]
 
 - [ ] t19007 fix(terminal-blocker): publish the external trigger and revisit external_trigger_pending holds #bug #auto-dispatch tier:thinking blocked-by:t19008 ref:GH#38353 logged:2026-11-14 -> [todo/tasks/t19007-brief.md]
 
-- [ ] t19008 fix(approval): accept every canonical terminal-blocker release the writer emits #auto-dispatch #bug tier:standard ref:GH#38351 logged:2026-11-14 -> [todo/tasks/t19008-brief.md]
+- [x] t19008 fix(approval): accept every canonical terminal-blocker release the writer emits #auto-dispatch #bug tier:standard ref:GH#38351 pr:#38357 logged:2026-11-14 -> [todo/tasks/t19008-brief.md] completed:2026-11-15
 
 - [x] t19009 fix(checkpoints): a failed continuation launch must not turn a stalled draft into a permanent maintainer hold #bug #interactive tier:standard ref:GH#38358 assignee:marcusquinn logged:2026-11-14 started:2026-11-14 -> [todo/tasks/t19009-brief.md] pr:#38367 completed:2026-11-14
 
@@ -5715,8 +5715,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18942 pulse-merge-routine: cut fork overhead in the merge pass (~0.45-0.5 core per user) #auto-dispatch #bug ref:GH#37538 pr:#37543 completed:2026-11-14
 
-- [ ] t18941 pulse-wrapper: cut per-call fork overhead (~0.7-1.2 core per user) #auto-dispatch #bug ref:GH#37537
+- [x] t18941 pulse-wrapper: cut per-call fork overhead (~0.7-1.2 core per user) #auto-dispatch #bug ref:GH#37537 pr:#38325 completed:2026-11-15
 
 - [x] t18967 secret-helper: systemd-creds backend for unattended worker secrets (encrypted at rest, no passphrase) #auto-dispatch #enhancement ref:GH#37725 pr:#37734 completed:2026-11-14
 
-- [ ] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313
+- [x] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 pr:#38315 completed:2026-11-15
