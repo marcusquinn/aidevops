@@ -265,9 +265,7 @@ def emit(value):
     if (value != 'runner_capability_unmet' or len(rejected_names) > 32
             or not all(re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', n) for n in rejected_names)):
         rejected_names = []
-    # Only an explicitly public question (GH#36760) or awaited trigger
-    # (GH#38353) from the final assistant report is eligible. Never promote the
-    # BLOCKED dossier or tool text to public prose.
+    # Only an explicit public question (GH#36760)/trigger (GH#38353) line; never dossier or tool text.
     def public_line(name, eligible):
         found = re.findall(r'^TERMINAL_BLOCKER_' + name + r'=(.*)$', candidate, re.M)
         line = found[0] if eligible and len(found) == 1 else ''
@@ -275,9 +273,8 @@ def emit(value):
     print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
                      'question': public_line('QUESTION', value.startswith('input_required:')),
                      'trigger': public_line('TRIGGER', value == 'external_trigger_pending'),
-                     'missing_secrets': sorted(set(names)),
-                      'rejected_secrets': sorted(set(rejected_names)), 'detail': candidate[:16000],
-                      'detail_truncated': len(candidate) > 16000}))
+                     'missing_secrets': sorted(set(names)), 'rejected_secrets': sorted(set(rejected_names)),
+                      'detail': candidate[:16000], 'detail_truncated': len(candidate) > 16000}))
 
 if reason == 'verification_environment_missing_prerequisites':
     # GH#35037: exact legacy spelling, not a prose/substring classifier.

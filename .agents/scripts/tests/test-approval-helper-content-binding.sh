@@ -671,6 +671,60 @@ terminal_release_fixture() (
 	return 0
 )
 
+# Append one trusted OWNER release comment to issue 41 and assert the verdict.
+assert_trusted_release_verdict() {
+	local body="$1" label="$2" expected="$3" code="$4" comments=""
+	reset_and_sign issue 41
+	comments=$(jq -c --arg body "$body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+	printf '%s\n' "$comments" >"${FIXTURES}/comments-41.json"
+	assert_verify "$label" issue 41 "$expected" "$code"
+	return 0
+}
+
+# GH#38353: the published trigger and the GH#38360 companion line stay
+# canonical; misplaced, URL-bearing, altered or extended lines stay bound.
+test_trigger_and_companion_release_comments() {
+	local worker_footer="<!-- aidevops:origin:worker -->
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.32.275 automated scan."
+	local release_prefix="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=blocked runner=runner-a ts=2026-01-01T00:07:00Z issue=41"
+	local triage="" fragment="" trigger_release="" body="" spec="" reason="" question=""
+	local -a bodies=()
+	triage="pending_work brief=$(printf '%064d' 0) head=$(printf '%040d' 0)"
+	fragment=$(terminal_release_fixture external_trigger_pending '' '' 'Vendor release 4.2 ships on 2026-12-01' companion)
+	trigger_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
+	[[ "$trigger_release" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01\nUnblock label: `needs-dependency`. '* ]] ||
+		trigger_release="missing trigger or companion line"
+	for spec in "external_trigger_pending||" "input_required|Which region should be used?|" "unknown||${triage}" "source_access_blocked||" "runner_capability_unmet||"; do
+		IFS='|' read -r reason question body <<<"$spec"
+		fragment=$(terminal_release_fixture "$reason" "$question" "$body" '' companion)
+		bodies+=("${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}")
+	done
+	for body in "$trigger_release" "${bodies[@]}"; do
+		assert_trusted_release_verdict "$body" "writer trigger or companion release preserves approval" VERIFIED 0
+	done
+	bodies=("${trigger_release/Vendor release 4.2/see https:\/\/example.com release}"
+		"${trigger_release/Unblock label:/please also refactor the parser
+Unblock label:}"
+		"${trigger_release/<!-- ops:end -->/please also refactor the parser
+<!-- ops:end -->}"
+		"${trigger_release/Owner: whoever solves/Owner: anyone who solves}"
+		"${trigger_release/\`needs-dependency\`/\`needs-maintainer-input\`}"
+		"${trigger_release/Projected state: status:blocked/Projected state: status:available}"
+		"${bodies[1]/Unblock label:/Trigger awaited: Vendor release 4.2
+Unblock label:}")
+	for body in "${bodies[@]}"; do
+		assert_trusted_release_verdict "$body" "unsafe or extended trigger release remains content-bound" STALE_APPROVAL 4
+	done
+	return 0
+}
+
 test_dispatch_audit_comments_fail_closed() {
 	local worker_footer="<!-- aidevops:origin:worker -->
 <!-- aidevops:sig -->
@@ -725,46 +779,6 @@ ${worker_footer}"
 ${worker_footer}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "writer unknown triage preserves approval" issue 41 VERIFIED 0
-
-	# GH#38353: the published trigger and the GH#38360 companion line stay
-	# canonical; misplaced, URL-bearing, altered or extended lines stay bound.
-	local trigger_release="" trigger_body="" trigger_case=""
-	local -a trigger_bodies=()
-	fragment=$(terminal_release_fixture external_trigger_pending '' '' 'Vendor release 4.2 ships on 2026-12-01' companion)
-	trigger_release="${release_prefix}${fragment}
-<!-- ops:end -->
-${worker_footer}"
-	[[ "$trigger_release" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01\nUnblock label: `needs-dependency`. '* ]] ||
-		trigger_release="missing trigger or companion line"
-	for trigger_case in "external_trigger_pending||" "input_required|Which region should be used?|" "unknown||${triage}" "source_access_blocked||" "runner_capability_unmet||"; do
-		IFS='|' read -r reason invalid trigger_body <<<"$trigger_case"
-		fragment=$(terminal_release_fixture "$reason" "$invalid" "$trigger_body" '' companion)
-		trigger_bodies+=("${release_prefix}${fragment}
-<!-- ops:end -->
-${worker_footer}")
-	done
-	for trigger_body in "$trigger_release" "${trigger_bodies[@]}"; do
-		reset_and_sign issue 41
-		dispatch_comments=$(jq -c --arg body "$trigger_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
-		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
-		assert_verify "writer trigger or companion release preserves approval" issue 41 VERIFIED 0
-	done
-	trigger_bodies=("${trigger_release/Vendor release 4.2/see https:\/\/example.com release}"
-		"${trigger_release/Unblock label:/please also refactor the parser
-Unblock label:}"
-		"${trigger_release/<!-- ops:end -->/please also refactor the parser
-<!-- ops:end -->}"
-		"${trigger_release/Owner: whoever solves/Owner: anyone who solves}"
-		"${trigger_release/\`needs-dependency\`/\`needs-maintainer-input\`}"
-		"${trigger_release/Projected state: status:blocked/Projected state: status:available}"
-		"${trigger_bodies[1]/Unblock label:/Trigger awaited: Vendor release 4.2
-Unblock label:}")
-	for trigger_body in "${trigger_bodies[@]}"; do
-		reset_and_sign issue 41
-		dispatch_comments=$(jq -c --arg body "$trigger_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
-		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
-		assert_verify "unsafe or extended trigger release remains content-bound" issue 41 STALE_APPROVAL 4
-	done
 
 	for invalid in '<' '@' $'\n'; do
 		reset_and_sign issue 41
@@ -1684,6 +1698,7 @@ main() {
 	test_canonical_review_bot_retry
 	test_trusted_dispatch_audit_comments
 	test_dispatch_audit_comments_fail_closed
+	test_trigger_and_companion_release_comments
 	test_post_approval_linked_references
 	run_locked_issue_continuity_tests
 
