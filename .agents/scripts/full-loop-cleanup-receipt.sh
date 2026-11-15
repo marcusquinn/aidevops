@@ -1923,16 +1923,50 @@ full_loop_mark_cleanup_cleaned_for_worktree() {
 	return $?
 }
 
+# Move one destination month's batch of archive candidates with a single mv.
+# Caller holds the receipt lock. Every path is checked before anything moves:
+# a symlinked source, archive root or destination, or a name collision,
+# fails closed without moving anything from the batch.
+# Args: $1=receipt directory, $2=month (YYYY-MM), $3...=receipt paths
+# Returns: 0 moved (or empty batch), 1 unsafe/colliding batch or mv failure
+_full_loop_archive_receipt_batch() {
+	local receipt_dir="$1"
+	local month="$2"
+	local destination="${receipt_dir}/archive/${month}"
+	local receipt_path=""
+
+	shift 2
+	[[ "$#" -gt 0 ]] || return 0
+	[[ ! -L "${receipt_dir}/archive" && ! -L "$destination" ]] || return 1
+	mkdir -p "$destination" || return 1
+	for receipt_path in "$@"; do
+		[[ ! -L "$receipt_path" ]] || return 1
+		[[ ! -e "${destination}/${receipt_path##*/}" && ! -L "${destination}/${receipt_path##*/}" ]] || return 1
+	done
+	mv -- "$@" "${destination}/" || return 1
+	return 0
+}
+
 # Archive only after validating the complete hot set. This housekeeping runs
 # from cleanup, never from worktree admission, and shares the mutation lock.
+# GH#38458: drains up to AIDEVOPS_CLEANUP_RECEIPT_ARCHIVE_BATCH (default 1024,
+# 1-4096) per run with one mv per destination month. The previous 128-per-run
+# cap left a multi-day backlog, and every worktree admission re-parses that
+# backlog under the global receipt lock.
 _full_loop_archive_cleanup_receipts() {
 	local receipt_dir="$1"
 	local days="${AIDEVOPS_CLEANUP_RECEIPT_ARCHIVE_DAYS:-7}"
-	local now="" last="" candidates="" receipt_path="" month="" destination=""
-	local count=0 file_count=""
+	local batch_limit="${AIDEVOPS_CLEANUP_RECEIPT_ARCHIVE_BATCH:-1024}"
+	local now="" last="" candidates="" receipt_path="" month="" batch_month=""
+	local file_count=""
+	local -a batch=()
 
 	[[ "$days" =~ ^[0-9]+$ && ${#days} -le 4 ]] || return 1
 	(( 10#$days != 0 )) || return 0
+	if [[ ! "$batch_limit" =~ ^[0-9]{1,4}$ ]] || (( 10#$batch_limit < 1 || 10#$batch_limit > 4096 )); then
+		batch_limit=1024
+	fi
+	batch_limit=$((10#$batch_limit))
 	now=$(date +%s) || return 1
 	_full_loop_receipt_lock_acquire || return 1
 	if [[ -L "$receipt_dir/.archive-housekeeping" ]]; then
@@ -1962,7 +1996,8 @@ _full_loop_archive_cleanup_receipts() {
 		_full_loop_receipt_lock_release
 		return 0
 	fi
-	candidates=$(jq -nr --argjson cutoff "$((now - 10#$days * 86400))" --arg string_type "$_FULL_LOOP_RECEIPT_JSON_STRING_TYPE" '
+	candidates=$(jq -nr --argjson cutoff "$((now - 10#$days * 86400))" --argjson limit "$batch_limit" \
+		--arg string_type "$_FULL_LOOP_RECEIPT_JSON_STRING_TYPE" '
 		def epoch: if type == $string_type and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$")
 			then try (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null else null end;
 		reduce inputs as $r ({seen: {}, candidates: []};
@@ -1976,23 +2011,31 @@ _full_loop_archive_cleanup_receipts() {
 				| if ($times | length) > 0 and all($times[]; . != null) and ($times | max) < $cutoff
 					then .candidates += [[$path, ($times | max | strftime("%Y-%m"))]] else . end
 			  else . end)
-		| .candidates[:128][] | @tsv
+		| .candidates | sort_by(.[1]) | .[:$limit][] | @tsv
 	' "$receipt_dir"/*.json 2>/dev/null) || {
 		_full_loop_receipt_lock_release
 		return 1
 	}
+	# Candidates arrive sorted by month; flush one batch per month (Bash 3.2:
+	# indexed arrays only).
 	while IFS=$'\t' read -r receipt_path month; do
 		[[ -n "$receipt_path" && "$month" =~ ^[0-9]{4}-[0-9]{2}$ ]] || continue
-		destination="$receipt_dir/archive/$month"
-		if [[ -L "$receipt_path" || -L "$receipt_dir/archive" || -L "$destination" ]] ||
-			! mkdir -p "$destination" || [[ -e "$destination/${receipt_path##*/}" || -L "$destination/${receipt_path##*/}" ]] ||
-			! mv "$receipt_path" "$destination/"; then
+		if [[ -n "$batch_month" && "$month" != "$batch_month" ]]; then
+			_full_loop_archive_receipt_batch "$receipt_dir" "$batch_month" "${batch[@]}" || {
+				_full_loop_receipt_lock_release
+				return 1
+			}
+			batch=()
+		fi
+		batch_month="$month"
+		batch+=("$receipt_path")
+	done <<<"$candidates"
+	if [[ "${#batch[@]}" -gt 0 ]]; then
+		_full_loop_archive_receipt_batch "$receipt_dir" "$batch_month" "${batch[@]}" || {
 			_full_loop_receipt_lock_release
 			return 1
-		fi
-		count=$((count + 1))
-		[[ "$count" -lt 128 ]] || break
-	done <<<"$candidates"
+		}
+	fi
 	_full_loop_receipt_lock_release
 	return 0
 }
