@@ -364,6 +364,36 @@ test_published_archive_has_no_bundle() {
 	return 0
 }
 
+# GH#38394: reclaim archives must survive the merge flow deleting the branch, so
+# --bundle-commits keeps the bundle for a published head and depends on the base.
+test_bundle_commits_survives_branch_deletion() {
+	local paths canonical worktree root archive target head_sha state rc=0
+	paths=$(setup_repo bundled) || return 1
+	IFS=$'\t' read -r canonical worktree <<<"$paths"
+	root="$TEST_ROOT/bundled-archives"
+	printf 'bundled\n' >>"$worktree/file.txt"
+	git -C "$worktree" commit -qam bundled || return 1
+	git -C "$worktree" push -q -u origin feature/archive || return 1
+	printf 'dirty\n' >"$worktree/note.txt"
+	head_sha=$(git -C "$worktree" rev-parse HEAD) || return 1
+	archive=$(AIDEVOPS_WORKTREE_RECOVERY_POLICY=git-only bash "$HELPER" archive "$worktree" \
+		--repo owner/repo --issue 43 --reason post-pr-cleanup --base-branch main \
+		--output-root "$root" --bundle-commits) || return 1
+	[[ -s "$archive/commits.bundle" ]] || rc=1
+	state=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["remote_branch_state"], m["head_sha"])' "$archive/manifest.json") || rc=1
+	[[ "$state" == "bundled $head_sha" ]] || rc=1
+	git -C "$canonical" update-ref -d refs/remotes/origin/feature/archive || return 1
+	git -C "$canonical" push -q origin --delete feature/archive || return 1
+	AIDEVOPS_WORKTREE_RECOVERY_POLICY=git-only bash "$HELPER" verify-local "$archive" >/dev/null || rc=1
+	bash "$HELPER" source-matches "$archive" "$worktree" >/dev/null || rc=1
+	target="$TEST_ROOT/bundled-restored"
+	bash "$HELPER" restore "$archive" --target "$target" >/dev/null || rc=1
+	[[ "$(git -C "$target" rev-parse HEAD 2>/dev/null)" == "$head_sha" ]] || rc=1
+	grep -q '^bundled$' "$target/file.txt" 2>/dev/null || rc=1
+	result "--bundle-commits archives verify and restore after the branch is deleted" "$rc"
+	return 0
+}
+
 test_invalid_arguments() {
 	local paths canonical worktree rc=0
 	paths=$(setup_repo invalid) || return 1
@@ -387,6 +417,7 @@ test_prune_modes
 test_failed_capture_leaves_no_archive || result "failed-capture fixture setup" 1
 test_tracked_patch_capacity || result "tracked-patch capacity fixture setup" 1
 test_published_archive_has_no_bundle || result "published-archive fixture setup" 1
+test_bundle_commits_survives_branch_deletion || result "bundle-commits fixture setup" 1
 test_invalid_arguments
 
 printf '%s tests, %s failures\n' "$TESTS_RUN" "$TESTS_FAILED"

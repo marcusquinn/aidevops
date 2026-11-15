@@ -2781,12 +2781,17 @@ cleanup_legacy_dashboard_launchagent() {
 			has_systemd=1
 		fi
 		local removed=0
-		local unit
+		local unit unit_kind
 		for unit in "$systemd_unit" "$legacy_systemd_unit"; do
 			[[ -z "$unit" ]] && continue
 			if [[ "$has_systemd" -eq 1 ]]; then
-				systemctl --user disable --now "${unit}.service" || true
-				systemctl --user disable --now "${unit}.timer" || true
+				# Only disable units systemd knows about; disabling absent units
+				# prints "Unit ... does not exist" on fresh hosts (GH#38389).
+				# Errors for units that do exist stay visible.
+				for unit_kind in service timer; do
+					systemctl --user cat "${unit}.${unit_kind}" >/dev/null 2>&1 || continue
+					systemctl --user disable --now "${unit}.${unit_kind}" || true
+				done
 			fi
 			if [[ -e "${user_systemd_dir}/${unit}.service" ]]; then
 				mv "${user_systemd_dir}/${unit}.service" "${user_systemd_dir}/${unit}.service.disabled-$(date -u +%Y%m%d%H%M%S)" || rm -f "${user_systemd_dir}/${unit}.service"

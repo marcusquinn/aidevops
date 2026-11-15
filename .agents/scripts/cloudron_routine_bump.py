@@ -12,6 +12,9 @@ stdin JSON:
   finding_upstream  X.Y.Z or full SHA from the trusted upstream monitor finding
   upstream_proof    resolved base/head SHAs, repository, status and merge base
                     from the caller's upstream commit/compare API reads
+  release_proof     semver policies with release_identity only: upstream repository,
+                    peeled old/new release commits, compare status and the new
+                    release's published image digests (images asset)
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
                     every changed pinned or check file (merge-base and exact head)
@@ -32,6 +35,11 @@ import json
 import re
 import sys
 
+from cloudron_release_identity import (
+    COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
+    release_identity, require, split_digests, substitute_versions,
+)
+
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
 POLICY_FILE_CLASSES = ("changelog_files", "pinned_files", "check_files")
@@ -41,24 +49,12 @@ MAX_PATTERN = 500
 # Patterns are applied with fullmatch, so a trailing newline never qualifies.
 PACKAGE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 UPSTREAM_VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-COMMIT_VERSION = re.compile(r"[a-fA-F0-9]{7,40}")
-FULL_COMMIT = re.compile(r"[a-f0-9]{40}")
-UPSTREAM_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*")
 REPO_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 # Characters Python treats as line breaks (or that hide content) but a shell
 # reads as ordinary bytes; a check file containing any of them is not routine.
 CHECK_FILE_HIDDEN = re.compile("[\x00\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 # An inserted line after one of these would join the previous command.
 CONTINUATION = ("\\", "&&", "||", "|")
-
-
-class NotRoutine(Exception):
-    """The change is outside the standing policy; a per-release signature is required."""
-
-
-def require(condition, reason):
-    if not condition:
-        raise NotRoutine(reason)
 
 
 def unique_object(pairs):
@@ -106,22 +102,6 @@ def file_text(contents, path, side):
         raise NotRoutine(path + ": undecodable " + side + " content") from error
 
 
-def substitute_versions(text, mapping):
-    """Replace each whole old version token with its new value in one pass.
-
-    Boundaries stop 0.20.3 matching inside 10.20.3 or 3.39.8 inside 3.39.87.
-    """
-    olds = sorted(mapping, key=len, reverse=True)
-    alternatives = []
-    for old in olds:
-        if COMMIT_VERSION.fullmatch(old):
-            alternatives.append(r"(?<![A-Za-z0-9_])" + re.escape(old) + r"(?![A-Za-z0-9_])")
-        else:
-            alternatives.append(r"(?<![0-9.])" + re.escape(old) + r"(?![0-9]|\.[0-9])")
-    pattern = re.compile("|".join(alternatives))
-    return pattern.sub(lambda match: mapping[match.group(0)], text)
-
-
 def check_upstream(doc, policy, old_up, new_up):
     mode = policy.get("upstream_mode", "semver")
     require(mode in ("semver", "commits"), "unsupported upstream mode")
@@ -156,6 +136,39 @@ def check_upstream(doc, policy, old_up, new_up):
             "a 0.x minor upstream bump needs a per-release signature")
     version_tuple(finding, PACKAGE_VERSION, "finding upstream version")
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
+
+
+def pinned_changes_ok(base_text, head_text, mappings, identity):
+    if head_text == base_text:
+        return False
+    if identity is None:
+        return any(substitute_versions(base_text, candidate) == head_text for candidate in mappings)
+    base_body, base_digests = split_digests(base_text)
+    head_body, head_digests = split_digests(head_text)
+    # aidevops:trust-boundary — a FROM digest may change only to a digest the
+    # signed upstream release itself published; any other change fails closed.
+    if len(base_digests) != len(head_digests) or any(
+            old != new and new not in identity["digests"] for old, new in zip(base_digests, head_digests)):
+        return False
+    new_commit = next(iter(identity["commits"].values()))
+    arg_line = r"(?m)^ARG[ \t]+" + re.escape(identity["arg"]) + "=" + new_commit + r"[ \t]*$"
+    if re.search(arg_line, head_body) is None:
+        return False
+    return any(substitute_versions(base_body, candidate) == head_body for candidate in mappings)
+
+
+def license_changes_ok(base_manifest, head_manifest, identity):
+    """upstreamLicense may differ only by the proven release-commit substitution."""
+    base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
+    if not isinstance(base, dict) or not isinstance(head, dict):
+        return canonical(base) == canonical(head)
+    url_base, url_head = base.get("url"), head.get("url")
+    if not isinstance(url_base, str) or not isinstance(url_head, str):
+        return False
+    rest_base = {key: value for key, value in base.items() if key != "url"}
+    rest_head = {key: value for key, value in head.items() if key != "url"}
+    return canonical(rest_base) == canonical(rest_head) \
+        and substitute_versions(url_base, identity["commits"]) == url_head
 
 
 def insertion_pattern(policy):
@@ -233,11 +246,15 @@ def check(doc, repository):
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
     check_upstream(doc, policy, old_up, new_up)
+    identity = release_identity(doc, policy)
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    unchanged = {key: value for key, value in base_manifest.items() if key not in VERSION_KEYS}
-    # The signed policy permits no manifest field change beyond the version
-    # keys, so upstreamLicense stays subject to canonical equality.
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in VERSION_KEYS}),
+    # Without a signed release identity the policy permits no manifest field
+    # change beyond the version keys; with one, upstreamLicense may also change
+    # by the proven release-commit substitution (checked separately).
+    exempt = VERSION_KEYS + (("upstreamLicense",) if identity else ())
+    unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
+    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt})
+            and (identity is None or license_changes_ok(base_manifest, head_manifest, identity)),
             "manifest changes beyond version and upstreamVersion")
 
     # Shipped build inputs may change only the upstream version; an equal
@@ -249,6 +266,8 @@ def check(doc, repository):
         proof = doc["upstream_proof"]
         pinned_mappings = [{**{old_up: new_up}, **{proof["base"]: proof["head"]}},
                            {**{proof["base"]: proof["head"]}, **{old_up: new_up}}]
+    if identity:
+        pinned_mappings = [{**{old_up: new_up}, **identity["commits"]}, {**identity["commits"], **{old_up: new_up}}]
     mapping = {old_up: new_up, old_version: new_version}
     changelog_changed = False
     for entry in files:
@@ -262,8 +281,7 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(head_text != base_text
-                    and any(substitute_versions(base_text, candidate) == head_text for candidate in pinned_mappings),
+            require(pinned_changes_ok(base_text, head_text, pinned_mappings, identity),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),

@@ -13,6 +13,8 @@ MAX_UNTRACKED_FILES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_FILES:-10000}"
 MAX_UNTRACKED_BYTES="${AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES:-1073741824}"
 ARCHIVE_SCHEMA="aidevops-worktree-archive-v1"
 FINGERPRINT_UNAVAILABLE="worktree fingerprint unavailable"
+# GH#36607 head already on origin: no bundle unless --bundle-commits (GH#38394).
+REMOTE_STATE_PUBLISHED="published"
 
 usage() {
 	cat <<'USAGE'
@@ -22,6 +24,8 @@ Commands:
   archive WORKTREE --repo OWNER/REPO (--issue N|--unattributed)
 	  --reason failed-worker|post-pr-cleanup|unattributed-worktree --base-branch BRANCH
       [--base-sha SHA] [--output-root DIR] [--failure-log FILE]
+      [--bundle-commits]                Always bundle commits since the base, even
+                                        when already on origin (records "bundled")
   restore ARCHIVE_DIR --target NEW_WORKTREE_PATH
   list [--repo OWNER/REPO] [--issue N] [--output-root DIR]
   verify ARCHIVE_DIR
@@ -460,7 +464,7 @@ capture_archive_payload() {
 		python3 "${SCRIPT_DIR}/worktree_archive_deletions.py" capture "$worktree" "$archive_dir" || return 1
 		commit_count=$(git -C "$worktree" rev-list --count "${base_sha}..${head_sha}") || return 1
 		# A published head is already reachable from origin: no bundle.
-		if [[ "$commit_count" -gt 0 && "$remote_state" != "published" ]]; then
+		if [[ "$commit_count" -gt 0 && "$remote_state" != "$REMOTE_STATE_PUBLISHED" ]]; then
 			git -C "$worktree" bundle create "$archive_dir/commits.bundle" HEAD "^${base_sha}" || return 1
 		fi
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" auto-merge-capture "$worktree" "$archive_dir" "$base_sha" || return 1
@@ -490,7 +494,7 @@ archive_capacity_check() {
 	local worktree="$1" output_root="$2" head_sha="$3" base_sha="$4" remote_state="${5:-unknown}"
 	local reserve="${AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES:-536870912}"
 	local estimate=""
-	if [[ "$remote_state" == "published" ]]; then
+	if [[ "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
 		estimate=0 # GH#36607: published commits are not bundled.
 	else
 		estimate=$(git -C "$worktree" rev-list --objects --disk-usage "$head_sha" "^${base_sha}" 2>/dev/null) || estimate=0
@@ -549,7 +553,7 @@ archive_worktree() {
 	shift || true
 	local repo="" issue="" unattributed="false" reason="" base_branch="" base_sha="" output_root="$ARCHIVE_ROOT" failure_log=""
 	local created_at timestamp repo_path archive_dir branch head_sha default_branch remote_state dirty_state git_common_dir
-	local fingerprint_before="" fingerprint_after=""
+	local fingerprint_before="" fingerprint_after="" bundle_commits=0
 	local -x GIT_OPTIONAL_LOCKS=0
 	[[ -n "$worktree" ]] || { usage >&2; return 1; }
 	while [[ $# -gt 0 ]]; do
@@ -562,6 +566,7 @@ archive_worktree() {
 		--base-sha) require_value "$1" "${2:-}" || return 1; base_sha="$2"; shift 2 ;;
 		--output-root) require_value "$1" "${2:-}" || return 1; output_root="$2"; shift 2 ;;
 		--failure-log) require_value "$1" "${2:-}" || return 1; failure_log="$2"; shift 2 ;;
+		--bundle-commits) bundle_commits=1; shift ;;
 		--git-only) shift ;; # Compatibility alias; all new archives use the same path.
 		*) die "unknown archive option: $1"; return 1 ;;
 		esac
@@ -586,6 +591,11 @@ archive_worktree() {
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
 	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha") || return 1
+	# GH#38394: a published head's remote branch is deleted by the merge flow, so
+	# --bundle-commits carries the commits and depends only on the base.
+	if [[ "$bundle_commits" -eq 1 && "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
+		remote_state="bundled"
+	fi
 	dirty_state="clean"
 	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
