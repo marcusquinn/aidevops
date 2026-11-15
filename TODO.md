@@ -2113,6 +2113,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19019 perf(opencode-db): restore archived interactive sessions on resume so the live DB can keep 30 days instead of 90 #auto-dispatch #feat tier:thinking ref:GH#38431 logged:2026-11-15 -> [todo/tasks/t19019-brief.md]
 
+- [ ] t19020 feat(greeting): session-greeting advisories ask only for real human action (canonical noise, duplicate families, stale daemon advisory, App-read remedy) #interactive #feat tier:standard assignee:marcusquinn ref:GH#38439 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19020-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
