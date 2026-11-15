@@ -2115,7 +2115,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19020 feat(greeting): session-greeting advisories ask only for real human action (canonical noise, duplicate families, stale daemon advisory, App-read remedy) #interactive #feat tier:standard assignee:marcusquinn ref:GH#38439 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19020-brief.md]
 
-- [ ] t19021 fix(gh): stop shim temp-file leaks that bloat agent tmp and slow dispatch #interactive #bug tier:standard assignee:marcusquinn logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19021-brief.md]
+- [ ] t19021 fix(gh): stop shim temp-file leaks that bloat agent tmp and slow dispatch #interactive #bug tier:standard assignee:marcusquinn ref:GH#38443 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19021-brief.md]
 
 ## In Progress
 
