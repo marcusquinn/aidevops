@@ -877,8 +877,10 @@ _shim_privacy_scan() {
 	rm -f "$_slugs_file"
 
 	if [[ $_scan_rc -eq 1 ]]; then
-		local _target_slug="${target_url#https://github.com/}"
-		_target_slug="${_target_slug%.git}"
+		local _target_slug=""
+		if [[ "$target_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+			_target_slug="${BASH_REMATCH[1]%.git}"
+		fi
 		if [[ "$_target_slug" =~ ^[^/]+/[^/]+$ ]] &&
 			_hits=$(privacy_filter_slug_hits_by_public_tree "$_hits" "$_target_slug"); then
 			_scan_rc=0

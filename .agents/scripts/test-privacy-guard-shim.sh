@@ -249,8 +249,19 @@ AUTH_RECORD_FILE="${TMP}/gh-auth-invocation.log"
 API_RECORD_FILE="${TMP}/gh-api-invocation.log"
 REST_RATE_LIMIT_FILE="${TMP}/rest-rate-limited"
 REQUIRE_RAW_FIELDS_FILE="${TMP}/require-raw-graphql-fields"
+PUBLIC_COMMIT_FILE="${TMP}/public-commit"
 cat >"$REAL_GH_DIR/gh" <<STUB
 #!/usr/bin/env bash
+if [[ "\${1:-}" == "pr" && "\${2:-}" == "view" ]]; then
+	printf '%s\n' '["origin:interactive"]'
+	exit 0
+fi
+if [[ "\${1:-}" == "api" && "\${2:-}" == repos/*/commits\?per_page=1 ]]; then
+	[[ -f '$PUBLIC_COMMIT_FILE' ]] || exit 1
+	read -r sha < '$PUBLIC_COMMIT_FILE'
+	printf '%s\n' "\$sha"
+	exit 0
+fi
 if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then
 	printf '%s\n' "REAL_GH_AUTH_INVOKED" > '$AUTH_RECORD_FILE'
 	exit 1
@@ -326,6 +337,7 @@ run_shim() {
 		PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
 		HEADLESS='' FULL_LOOP_HEADLESS='' AIDEVOPS_HEADLESS='' OPENCODE_HEADLESS='' \
 		GITHUB_ACTIONS='' AIDEVOPS_SESSION_ORIGIN='' \
+		AIDEVOPS_PULSE_AUTH=0 AIDEVOPS_GITHUB_AUTH_CONSUMER='' \
 		PATH="$_path_dir:$REAL_GH_DIR:$PATH" \
 		"$_path_dir/gh" "$@" || _rc=$?
 	if [[ "$_rc" -ne 0 ]]; then
@@ -418,6 +430,7 @@ mkdir -p "$TREE_REPO"
 		git update-ref refs/remotes/origin/main HEAD &&
 		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 ) >/dev/null 2>&1 || fail "could not seed tracked-tree fixture"
+git -C "$TREE_REPO" rev-parse HEAD >"$PUBLIC_COMMIT_FILE"
 rm -f "$RECORD_FILE"
 out=$(SHIM_CWD="$TREE_REPO" run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "See longprivate docs" 2>&1)
 rc=$?
@@ -434,6 +447,75 @@ if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
 else
 	fail "expected untracked basename to block. rc=$rc out='$out'"
 fi
+
+# GH#38434 review regressions: SSH origins, subdirectory execution, stale refs,
+# no matching clone, API failure, and bare-token boundary preservation.
+mkdir -p "$TREE_REPO/nested"
+for remote in 'git@github.com:marcusquinn/aidevops.git' \
+	'ssh://git@github.com/marcusquinn/aidevops.git' \
+	'https://github.com/marcusquinn/aidevops.git'; do
+	git -C "$TREE_REPO" remote set-url origin "$remote"
+	out=$(SHIM_CWD="$TREE_REPO/nested" run_shim "$PATH_DIR" issue create --title test --body 'See longprivate docs' 2>&1)
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "subdirectory/root content exemption with inferred origin: $remote"
+	else
+		fail "expected inferred-origin exemption. rc=$rc out='$out'"
+	fi
+done
+
+# A new default-branch commit is available but origin/HEAD still points at seed.
+printf '%s\n' 'ordinaryprivate' 'superboundaryprivateworld' >"$TREE_REPO/new.txt"
+git -C "$TREE_REPO" add new.txt
+git -C "$TREE_REPO" commit -qm 'new public entity'
+git -C "$TREE_REPO" rev-parse HEAD >"$PUBLIC_COMMIT_FILE"
+out=$(SHIM_CWD="$TREE_REPO/nested" run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title test --body 'See ordinaryprivate docs' 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	pass "API current commit supersedes stale origin/HEAD"
+else
+	fail "stale remote refs hid current public content: $out"
+fi
+
+# Redirect the exact fetch URL to the fixture: no test performs network access.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="url.file://${TREE_REPO}.insteadOf"
+export GIT_CONFIG_VALUE_0='https://github.com/marcusquinn/aidevops.git'
+out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title test --body 'See ordinaryprivate docs' 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	pass "API fallback fetch supplies searchable content without a matching clone"
+else
+	fail "expected no-clone fallback to pass: $out"
+fi
+
+entities="$TMP/public-entities"
+printf 'repo\tacme/ordinaryprivate\n' >"$entities"
+result=$(HOME="$PRIV_HOME" PRIVACY_GH_BIN="$REAL_GH_DIR/gh" PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+	privacy_resolve_public_tree marcusquinn/aidevops)
+IFS=$'\t' read -r resolved_repo resolved_commit <<<"$result"
+hits=$(privacy_scan_public_text ordinaryprivate "$entities" '' marcusquinn/aidevops "$resolved_commit" "$resolved_repo")
+if [[ $? -eq 0 && -z "$hits" && -n "$resolved_commit" ]]; then
+	pass "public-write entity scan searches API-fallback objects"
+else
+	fail "public-write scan could not search API-fallback objects"
+fi
+hits=$(PRIVACY_GH_BIN="$REAL_GH_DIR/gh" PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+	privacy_filter_slug_hits_by_public_tree boundaryprivate marcusquinn/aidevops)
+if [[ $? -eq 1 && "$hits" == boundaryprivate ]]; then
+	pass "standalone inventory basename is not exempted by a public substring"
+else
+	fail "public substring incorrectly exempted standalone basename"
+fi
+rm -f "$PUBLIC_COMMIT_FILE"
+hits=$(PRIVACY_GH_BIN="$REAL_GH_DIR/gh" PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
+	privacy_filter_slug_hits_by_public_tree ordinaryprivate marcusquinn/aidevops)
+if [[ $? -eq 1 && "$hits" == ordinaryprivate ]]; then
+	pass "API failure retains hits even with cached public objects"
+else
+	fail "API failure incorrectly trusted cached objects"
+fi
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
 # -- Test 2.3: public target + clean body → ALLOWED
 rm -f "$RECORD_FILE"

@@ -417,12 +417,19 @@ privacy_scan_public_text() {
 }
 
 #######################################
-# Resolve only a matching origin's remote default branch; never the worktree.
+# Resolve the API-verified current default commit; never trust local branch refs.
+# Reuse matching clone objects or fetch into a separate bare object cache.
 # Output is a tab-separated repository path and commit, or nothing on failure.
 #######################################
 privacy_resolve_public_tree() {
 	local repo="$1"
-	local path="." remote_url remote_head commit registered=""
+	local path="." remote_url commit top cache registered=""
+	local gh_bin="${PRIVACY_GH_BIN:-gh}"
+	[[ "$repo" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
+	# The commits endpoint defaults to the repository's current default branch,
+	# including after a rename. Failure must not fall back to stale local refs.
+	commit=$("$gh_bin" api "repos/${repo}/commits?per_page=1" --jq '.[0].sha' 2>/dev/null) || return 1
+	[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 1
 	if [[ -f "$PRIVACY_REPOS_CONFIG" ]]; then
 		registered=$(jq -r --arg slug "$repo" 'first(.initialized_repos[]? | select(.slug == $slug) | .path) // empty' "$PRIVACY_REPOS_CONFIG" 2>/dev/null) || registered=""
 	fi
@@ -431,13 +438,24 @@ privacy_resolve_public_tree() {
 		[[ "$path" == \~/* ]] && path="$HOME/${path#\~/}"
 		remote_url=$(git -C "$path" remote get-url origin 2>/dev/null) || continue
 		if [[ "$remote_url" =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[2]%.git}" == "$repo" ]]; then
-			remote_head=$(git -C "$path" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || continue
-			commit=$(git -C "$path" rev-parse --verify "${remote_head}^{commit}" 2>/dev/null) || continue
-			printf '%s\t%s\n' "$path" "$commit"
+			git -C "$path" cat-file -e "${commit}^{commit}" 2>/dev/null || continue
+			top=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) || continue
+			printf '%s\t%s\n' "$top" "$commit"
 			return 0
 		fi
 	done
-	return 1
+	# No usable clone is required. Keep network-fetched objects out of user
+	# worktrees and fetch the exact verified SHA, not a possibly renamed branch.
+	cache="$(dirname "$PRIVACY_CACHE_FILE")/public-trees/${repo}.git"
+	mkdir -p "$cache" 2>/dev/null || return 1
+	git init --bare -q "$cache" 2>/dev/null || return 1
+	if ! git -C "$cache" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+		GIT_TERMINAL_PROMPT=0 git -C "$cache" -c credential.helper= fetch --quiet --depth=1 \
+			"https://github.com/${repo}.git" "$commit" 2>/dev/null || return 1
+	fi
+	git -C "$cache" cat-file -e "${commit}^{commit}" 2>/dev/null || return 1
+	printf '%s\t%s\n' "$cache" "$commit"
+	return 0
 }
 
 #######################################
@@ -456,7 +474,7 @@ privacy_filter_slug_hits_by_public_tree() {
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		[[ -z "$line" ]] && continue
 		if [[ -n "$public_tree" && "$line" != \[* ]]; then
-			if [[ "$line" == *" (basename of "* ]]; then
+			if [[ "$line" == *" (basename of "* || "$line" != */* ]]; then
 				token="${line%% (basename of *}"
 				escaped=$(printf '%s' "$token" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
 				boundary_re="(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|\$)"
