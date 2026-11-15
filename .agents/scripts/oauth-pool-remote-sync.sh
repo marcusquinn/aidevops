@@ -172,8 +172,11 @@ _rs_status() {
 }
 
 _rs_slug() {
-	printf '%s' "${_RS_HOST}-${_RS_USER:-self}-${_RS_PROVIDER}-${_RS_EMAIL}" | tr -c 'A-Za-z0-9.-\n' '-'
-	return 0
+	# Hash separate fields to retain punctuation/boundaries without exceeding
+	# scheduler filename limits. Empty user (SSH login) is not sudo user "self".
+	python3 -c 'import hashlib, json, sys; print(hashlib.sha256(json.dumps(sys.argv[1:]).encode()).hexdigest())' \
+		"$_RS_HOST" "$_RS_USER" "$_RS_PROVIDER" "$_RS_EMAIL"
+	return $?
 }
 
 _rs_sync_command_line() {
