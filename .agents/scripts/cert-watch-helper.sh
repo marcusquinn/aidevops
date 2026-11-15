@@ -171,7 +171,9 @@ class ApexResolver:
         return name if self.is_shared(name) else self.registrable(name)
 
     def is_shared(self, name):
-        return any(name == parent or name.endswith('.' + parent) for parent in self.shared)
+        # Independent of explicit anchors: a tenant host stays a tenant host.
+        return name in self.shared or any(name.endswith('.' + x) for x in self.shared) \
+            or self.registrable(name) in self.shared
 
     def registrable(self, name):
         for apex in self.anchors:
@@ -689,8 +691,12 @@ def main():
         name = hostname(args.domain)
         rows = [r for r in rows if r['apex'] == name or name in r['hostnames']]
         if not rows:
-            rows = [{'apex': name, 'hostnames': [name], 'knowledge_repos': {},
-                     'shared_parent': ApexResolver(config).is_shared(name)}]
+            rows = [{'apex': name, 'hostnames': [name], 'knowledge_repos': {}}]
+            try:
+                if ApexResolver(config).is_shared(name):
+                    rows[0]['shared_parent'] = True
+            except ValueError:
+                pass  # no PSL: ad hoc names keep their own apex, as before
     if args.command == 'domains':
         output = rows
     else:
