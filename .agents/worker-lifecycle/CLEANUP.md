@@ -385,27 +385,25 @@ The executor must:
   the retained common base, without a full checkout or common-repository `fsck`.
   Full restoration remains a format/recovery test; repository-wide integrity
   auditing is a separate operation, not a per-worktree cleanup prerequisite.
-- Revalidate generation and content before removal. Content changes, path reuse,
-  lost exclusion or incomplete evidence invalidate the plan.
-- Keep the original on archive, verification, I/O or disk-full failure. Never
-  delete the original to make room for its own unverified archive.
+- Revalidate generation and content before removal; content changes, path reuse, lost
+  exclusion or incomplete evidence invalidate the plan. Keep the original on archive,
+  verification, I/O or disk-full failure; never delete it to make room for its own unverified archive.
 - Resume idempotently after crashes: an interrupted archive is not a verified
   receipt; a verified archive with an existing source must be revalidated before
   removal; partial removal must be reconciled without touching a replacement
   generation. An archive must not depend on objects deleted with the source.
-- Record retirement only after verified removal. Archive retention and later
-  archive deletion are separate policies, not implicit consequences of `ended`.
+- Record retirement only after verified removal. Archive retention and deletion are
+  separate policies, not implicit consequences of `ended`.
 
 Keep slow filesystem/Git work outside SQLite write transactions; persistent exclusion
 and revalidation provide safety, not one long transaction. This is local-host, not distributed SQLite.
 
 ## Registry-driven cleanup pass
 
-`worker-registry.py cleanup` selects registered generations from the lifecycle
-database, not filesystem age or legacy ownership records. Required
-arguments are `--repos-config` and `--output-root`; `--budget-seconds` and `--limit`
-bound the pass. The time budget stops admission of further candidates, not an
-already-running filesystem operation; the caller retains its hard watchdog.
+`worker-registry.py cleanup` selects registered generations from the lifecycle database, not
+filesystem age or legacy ownership records. It requires `--repos-config` and `--output-root`;
+`--budget-seconds` and `--limit` bound the pass. The budget stops admitting candidates, not a
+running filesystem operation; the caller keeps its hard watchdog.
 
 Before a new retirement plan, the pass applies one fail-closed PR hold (GH#36851):
 a tree whose branch name or HEAD commit matches an open PR in the configured slug
@@ -415,30 +413,27 @@ quarantine. The lookup is one paginated call per slug per pass. A failed REST ca
 (including `gh` deferral, exit 75) falls back to complete GraphQL evidence: every
 page, the whole fork chain, the same validation (GH#37385); failure there holds.
 Checkouts without a remote have no pushed branch to protect and skip the lookup.
-Planned retirements always resume; operator-targeted `cleanup-worktree`,
-`retire-worktree`, `retire-enrolled-only` and `reclaim-unowned` keep their explicit-intent semantics.
+Planned retirements always resume; operator-targeted `cleanup-worktree`, `retire-worktree`,
+`retire-enrolled-only` and `reclaim-unowned` keep their explicit-intent semantics.
 
-Repository configuration defines scope only. Entries with `maintenance: false`
-or `local_only: true` are excluded. Missing or detached canonical checkouts do not
-establish scope. The archive receives the canonical checkout's actual branch name,
-not a guessed default or a commit ID passed as a branch name.
+Repository configuration defines scope only: `maintenance: false` or `local_only: true`
+entries are excluded, and missing or detached canonical checkouts establish no scope. The
+archive receives the canonical checkout's actual branch name, never a guess or commit ID.
 
 Controlled-creation receipts use normal retirement. A missing creation receipt can
-use the explicit recovery-evidence path described above when all bound owners are
-admitted and ended. Enrollment alone remains a coverage gap; live or uncertain owners hold
-the source. Never-owned enrolled trees (no bound run or `created-worktree`) retire via
-`reclaim-unowned --path P --repos-config C --output-root R` (GH#38405): Reclaim checks the
-tree has nothing to lose (clean, HEAD contained in a remote), re-takes its evidence
-fingerprint, and journals `reclaim-unowned-authorized` (owner check, git state, references,
-fingerprint, time) with admission closure in one registry transaction (a racing
-`admit-session` wins and refuses it, or finds admission closed). Any refused fact keeps the
-tree and leaves admission open; the command exits 0 and reports `status: reclaim-refused`
-with the reason. It then archives and removes; the branch is kept. The legacy
-`retire-enrolled-only` preview/`--confirm` path (GH#36516, `operator_confirmed` evidence)
-remains readable until its removal with the legacy cleanup path. Retries use the recorded plan, including its archive root,
-and do not redirect an interrupted operation to a replacement at the public path.
-A private cursor rotates candidates across bounded passes; it is not deletion
-authority. A pass lock prevents overlapping collectors.
+use the explicit recovery-evidence path above when all bound owners are admitted and
+ended. Enrollment alone remains a coverage gap; live or uncertain owners hold the source.
+Never-owned enrolled trees (no bound run or `created-worktree`) retire via `reclaim-unowned
+--path P --repos-config C --output-root R` (GH#38405). Reclaim requires an idle process
+census, nothing to lose (clean, HEAD in a remote) and an unchanged evidence fingerprint, then
+journals `reclaim-unowned-authorized` (owner check, git state, references, fingerprint,
+time) and closes admission in one registry transaction; a racing `admit-session` wins or
+finds admission closed. A refused fact keeps the tree with admission open (exit 0, `status:
+reclaim-refused` plus reason); otherwise it archives and removes, keeping the branch. The
+legacy `retire-enrolled-only --confirm` path (GH#36516) stays until the legacy cleanup path
+is removed. Retries use the recorded plan, including its archive root, and never redirect an
+interrupted operation to a replacement at the public path. A private cursor rotates
+candidates across bounded passes (not deletion authority); a pass lock prevents overlap.
 
 Pulse's `cleanup_worktrees` calls this operation without initializing/migrating the
 registry. Missing state/configuration or invocation failure never falls back to old
