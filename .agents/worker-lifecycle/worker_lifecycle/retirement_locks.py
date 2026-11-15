@@ -33,6 +33,18 @@ def lock_is_named(descriptor: int, path: Path) -> bool:
             and info.st_size == 0 and named)
 
 
+def lock_exclusive_named(descriptor: int, path: Path) -> bool:
+    """Take the exclusive lock only on a still-named lock file; False if invalid.
+
+    A terminal-lock sweep may unlink the file between open and flock; the holder
+    must own the file that is still named, or it would not exclude.
+    """
+    if not lock_is_named(descriptor, path):
+        return False
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return lock_is_named(descriptor, path)
+
+
 def terminal_lock_generation(name: str) -> str | None:
     """Return the canonical generation of a `retirement-<uuid>.lock` name."""
     if not (name.startswith("retirement-") and name.endswith(".lock")):

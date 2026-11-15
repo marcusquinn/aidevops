@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import importlib.util
 import json
@@ -35,7 +34,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
-from .retirement_locks import event_id as _event_id, lock_is_named
+from .retirement_locks import event_id as _event_id, lock_exclusive_named
 from .storage import LifecycleRegistry, StoreConflict
 
 
@@ -71,12 +70,7 @@ def _lock(store: LifecycleRegistry, generation: str) -> Iterator[None]:
     )
     try:
         _private(path)
-        if not lock_is_named(descriptor, path):
-            raise StoreConflict("invalid-retirement-lock")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # A terminal-lock sweep may unlink the file between open and flock; the
-        # holder must own the file that is still named, or it would not exclude.
-        if not lock_is_named(descriptor, path):
+        if not lock_exclusive_named(descriptor, path):
             raise StoreConflict("invalid-retirement-lock")
         # Close our descriptor, never explicitly unlock the shared description:
         # an already-started helper may still own it after controller death.
