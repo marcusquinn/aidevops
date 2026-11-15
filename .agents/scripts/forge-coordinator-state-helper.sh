@@ -341,6 +341,50 @@ fetch_cleanup_page() {
 	return 1
 }
 
+# GH#38492: the protected ID is this run's own upload, so its absence from the
+# newest inventory page is normally benign. A newer run's cleanup keeps only its
+# own checkpoint plus the newest fallback, so it can prune an older run's upload
+# before that run's cleanup starts; the listing can also lag a fresh upload.
+# Neither leaves work for this run. Every other absence remains an integrity
+# failure, so a wrong or garbage ID cannot silently disable pruning.
+# Args: $1 repository, $2 exact artifact name, $3 protected ID, $4 page-1 file.
+# Stdout: "superseded" (pruned; newer live checkpoints exist) or "not_listed"
+#         (live exact-name artifact missing from the listing).
+# Returns: 0 when cleanup should be a no-op, 1 for an integrity failure.
+classify_missing_protected_checkpoint() {
+	local repository="$1" artifact_name="$2" protected_id="$3" first_page_file="$4"
+	local lookup="" lookup_rc=0 lookup_error="" lookup_error_file=""
+	local live_summary="" live_count="" newest_id=""
+
+	lookup_error_file=$(mktemp) || return 1
+	lookup=$(gh api "repos/${repository}/actions/artifacts/${protected_id}" 2>"$lookup_error_file") || lookup_rc=$?
+	lookup_error=$(<"$lookup_error_file")
+	rm -f "$lookup_error_file"
+	if ((lookup_rc == 0)); then
+		if jq -e --argjson protected "$protected_id" --arg name "$artifact_name" \
+			'.id == $protected and .name == $name and ((.expired // false) == false)' <<<"$lookup" >/dev/null 2>&1; then
+			printf 'not_listed\n'
+			return 0
+		fi
+		return 1
+	fi
+	grep -qiE 'HTTP 404|Not Found' <<<"$lookup_error" || return 1
+
+	# Cleanup never deletes the newest two checkpoints, so a pruned protected
+	# upload implies at least two live checkpoints, one newer than it.
+	live_summary=$(jq -r --arg name "$artifact_name" \
+		'[.artifacts[] | select(.name == $name and ((.expired // false) == false)) | .id] | "\(length) \(max // 0)"' \
+		"$first_page_file") || return 1
+	live_count="${live_summary%% *}"
+	newest_id="${live_summary##* }"
+	[[ "$live_count" =~ ^[0-9]+$ && "$newest_id" =~ ^[0-9]+$ ]] || return 1
+	if ((live_count >= 2 && protected_id < newest_id)); then
+		printf 'superseded\n'
+		return 0
+	fi
+	return 1
+}
+
 # Handle one cleanup candidate. Updates the caller's counters (dynamic scope)
 # and sets cleanup_stop when the run must end. Isolated failures never stop it.
 cleanup_one_artifact() {
@@ -443,7 +487,7 @@ cleanup_state() {
 	local cleanup_failed=0 consecutive_failures=0 pages_failed=0 cleanup_stop=""
 	local cleanup_max_deletes="${AIDEVOPS_COORDINATOR_CLEANUP_MAX_DELETES:-400}"
 	local cleanup_max_seconds="${AIDEVOPS_COORDINATOR_CLEANUP_MAX_SECONDS:-420}"
-	local cleanup_started=""
+	local cleanup_started="" missing_state=""
 	cleanup_started=$(date +%s)
 
 	validate_cleanup_args "$mode" "$repository" "$repository_id" "$protected_artifact_id" "$cleanup_max_deletes" "$cleanup_max_seconds" || return 1
@@ -461,6 +505,18 @@ cleanup_state() {
 	fi
 	if ! jq -e --argjson protected "$protected_artifact_id" --arg name "$artifact_name" \
 		'any(.artifacts[]; .id == $protected and .name == $name and ((.expired // false) == false))' "$first_page_file" >/dev/null; then
+		# No deletion happens on either no-op path (GH#38492).
+		if missing_state=$(classify_missing_protected_checkpoint "$repository" "$artifact_name" "$protected_artifact_id" "$first_page_file"); then
+			if [[ "$missing_state" == "superseded" ]]; then
+				printf '::notice title=Coordinator cleanup superseded::Checkpoint %s was already pruned by a newer Issue Sync run; nothing to do.\n' "$protected_artifact_id" >&2
+			else
+				printf '::notice title=Coordinator cleanup deferred::Checkpoint %s is live but not yet listed; the next run prunes.\n' "$protected_artifact_id" >&2
+			fi
+			printf 'Coordinator artifact cleanup %s: repository=%s protected=%s deleted=0 stop=protected_%s\n' \
+				"$mode" "$repository" "$protected_artifact_id" "$missing_state"
+			rm -f "$first_page_file" "$page_file"
+			return 0
+		fi
 		printf 'Protected coordinator artifact %s is not a live exact-name checkpoint for %s.\n' \
 			"$protected_artifact_id" "$repository" >&2
 		rm -f "$first_page_file" "$page_file"
