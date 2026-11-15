@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.204] - 2026-11-15
+
+### Fixed
+
+- expect systemctl start --no-block in pulse defense revival assertions (t19027)
+- run Pulse launchd jobs and workers at normal priority instead of launchd's throttled default
+- stop the main-push shell portability scan failing with Argument list too long
+
 ## [3.39.203] - 2026-11-15
 
 ### Added
