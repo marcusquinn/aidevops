@@ -84,7 +84,7 @@ test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait() {
 		print_result "activity watchdog detects CI-wait marker" 1
 	fi
 
-	printf 'full-loop-helper.sh wait-checks 42 --repo owner/repo --timeout 220\n' >"$output_file"
+	printf 'full-loop-helper.sh wait-checks 42 --repo owner/repo --timeout 200\n' >"$output_file"
 	if _activity_output_has_ci_wait "$output_file"; then
 		print_result "activity watchdog detects bounded wait-checks marker" 0
 	else

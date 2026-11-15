@@ -19,7 +19,7 @@
 
 ## What
 
-After `commit-and-pr`, a headless worker waits for its own PR's required checks through the existing bounded helper (`full-loop-helper.sh wait-checks <PR> --timeout 220`, at most 8 chunks, about 30 minutes), then merges through `full-loop-helper.sh merge`, the same path interactive full-loop uses. A check that fails because of this PR is fixed in the same session with full context. Only work that is still pending after the bound, or that needs a human, review approval or native auto-merge, is handed to Pulse with `POST_PR_HANDOFF`.
+After `commit-and-pr`, a headless worker waits for its own PR's required checks through the existing bounded helper (`full-loop-helper.sh wait-checks <PR> --timeout 200`, at most 8 chunks, about 27 minutes), then merges through `full-loop-helper.sh merge`, the same path interactive full-loop uses. A check that fails because of this PR is fixed in the same session with full context. Only work that is still pending after the bound, or that needs a human, review approval or native auto-merge, is handed to Pulse with `POST_PR_HANDOFF`.
 
 ## Why
 
@@ -53,6 +53,7 @@ GH#27658 removed unbounded model polling for human reviews (16 `sleep 120` loops
 - `EDIT: .agents/scripts/tests/test-zero-output-url-fallback.sh:165` — the embedded-prompt assertion quoted the old item 5 text.
 - `EDIT: .agents/scripts/headless-runtime-lib.sh:969` — `_activity_output_has_ci_wait` did not recognise `wait-checks`, so a quiet bounded wait could be killed as a stall; add the marker (hard-kill backstop unchanged).
 - `EDIT: .agents/scripts/tests/test-headless-runtime-provider-tests.sh:80-92` — classifier case for the `wait-checks` marker.
+- `EDIT: .agents/scripts/gh-checks-wait-helper.sh:786-794` — cap the last poll sleep at the remaining `--timeout` budget so the option is a real wall-clock bound.
 
 ### Complete Write Surface
 
@@ -66,7 +67,7 @@ GH#27658 removed unbounded model polling for human reviews (16 `sleep 120` loops
 
 ### Implementation Steps
 
-1. Rewrite item 8 with the bounded wait: run `full-loop-helper.sh wait-checks "$PR_NUMBER" --repo "$WORKER_REPO_SLUG" --timeout 220` up to 8 times, with one status line before each; exit 0 → merge; exit 1 → fix a failure caused by this PR, push, wait again once; exit 9 → `gh pr ready`, wait again; exit 2/8 after the bound → `POST_PR_HANDOFF`.
+1. Rewrite item 8 with the bounded wait: run `full-loop-helper.sh wait-checks "$PR_NUMBER" --repo "$WORKER_REPO_SLUG" --timeout 200` up to 8 times, with one status line before each; exit 0 → merge; exit 1 → fix a failure caused by this PR, push, wait again once; exit 9 → `gh pr ready`, wait again; exit 2/8 after the bound → `POST_PR_HANDOFF`.
 2. Keep the GH#27658 guard explicit: never wait for human review, approval or native auto-merge; never use `sleep` loops.
 3. Align the watchdog and pre-exit text and the AGENTS.md line.
 4. Run the contract tests and ShellCheck.
@@ -75,7 +76,7 @@ GH#27658 removed unbounded model polling for human reviews (16 `sleep 120` loops
 
 - **Concurrency/atomicity:** Pulse may merge the same green PR while the worker waits; `full-loop-helper.sh merge` and runtime classification already accept an already-merged PR (GH#34931).
 - **Migration/rollback:** prompt text plus one watchdog marker; revert restores the old contract.
-- **Watchdog:** each `wait-checks --timeout 220` call stays under the 240 s quiet rule; the helper's 120 s heartbeat and the new marker defer stall kills; the hard-kill backstop and 3 h sandbox limit still apply.
+- **Watchdog:** each `wait-checks --timeout 200` call stays under the 240 s quiet rule because the helper now caps its last sleep at the remaining budget (before the cap, a live `--timeout 220` call on PR #38390 ran 248 s); the helper's 120 s heartbeat and the new marker defer stall kills; the hard-kill backstop and 3 h sandbox limit still apply.
 - **Mixed-version/backward compatibility:** older runners keep the old contract until they update; both behaviours are safe together.
 - **Idempotency/retry:** a resumed session re-runs the bounded wait from the current PR state.
 - **Partial failure/recovery:** API errors (exit 2) end the wait and hand off as today.
@@ -95,6 +96,7 @@ shellcheck .agents/scripts/headless-runtime-contract.sh
 - `.agents/scripts/headless-runtime-contract.sh`
 - `.agents/scripts/pulse-dispatch-worker-prompt.sh`
 - `.agents/scripts/headless-runtime-lib.sh`
+- `.agents/scripts/gh-checks-wait-helper.sh`
 - `.agents/scripts/tests/test-headless-contract-clarity.sh`
 - `.agents/scripts/tests/test-zero-output-url-fallback.sh`
 - `.agents/scripts/tests/test-headless-runtime-provider-tests.sh`
@@ -109,7 +111,7 @@ shellcheck .agents/scripts/headless-runtime-contract.sh
   ```yaml
   verify:
     method: codebase
-    pattern: "wait-checks \"\\$PR_NUMBER\" --repo \"\\$WORKER_REPO_SLUG\" --timeout 220"
+    pattern: "wait-checks \"\\$PR_NUMBER\" --repo \"\\$WORKER_REPO_SLUG\" --timeout 200"
     path: ".agents/scripts/headless-runtime-contract.sh"
   ```
 
@@ -126,7 +128,7 @@ shellcheck .agents/scripts/headless-runtime-contract.sh
 ## Context & Decisions
 
 - Chose a prompt-level bounded wait over a runtime-owned post-PR waiter for the first step: it reuses the existing helper and watchdog CI-wait handling and can be measured within a day. If token cost or watchdog kills rise, move the wait into the runtime and resume the same session on failure.
-- 8 chunks × 220 s covers the observed CI p50 (21-28 min) and stays below the 240 s quiet-output rule and the 3 h sandbox limit.
+- 8 chunks × 200 s covers the observed CI p50 (21-28 min); 200 s leaves room for API fetch latency and stays below the 240 s quiet-output rule and the 3 h sandbox limit.
 
 ## Relevant Files
 
