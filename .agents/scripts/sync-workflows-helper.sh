@@ -1426,6 +1426,29 @@ _summarise_push_failure() {
 	return 0
 }
 
+# Find an existing same-content workflow PR before publishing a new branch.
+# API errors fail closed: an unknown list must not be treated as an empty list.
+_sync_find_identical_pr() {
+	local _slug="$1" _branch="$2" _workflow="$3" _content="$4"
+	local _prefix="${_branch%-????????}"
+	[[ "$_branch" =~ -[0-9]{8}$ ]] || _prefix="$_branch"
+	local _prs _row _number _url _files _sha _target_sha
+	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate) || return 1
+	_target_sha=$(printf '%s\n' "$_content" | git hash-object --stdin) || return 1
+	while IFS=$'\t' read -r _number _url; do
+		[[ -n "$_number" ]] || continue
+		_files=$(gh api "repos/$_slug/pulls/$_number/files?per_page=100" --paginate) || return 1
+		_sha=$(printf '%s\n' "$_files" | jq -sr --arg path "$_workflow" \
+			'[.[][] | select(.filename == $path and .status != "removed") | .sha][0] // empty') || return 1
+		if [[ "$_sha" == "$_target_sha" ]]; then
+			printf '%s\n' "$_url"
+			return 0
+		fi
+	done < <(printf '%s\n' "$_prs" | jq -sr --arg prefix "$_prefix" --arg slug "$_slug" \
+		'.[][] | select((.head.ref | startswith($prefix)) and .head.repo.full_name == $slug) | [.number, .html_url] | @tsv')
+	return 0
+}
+
 # _sync_open_pr <slug> <path> <status> <branch> <default_branch>
 #   <effective_ref> <workflow-relpath> <sync-contributing>
 _sync_open_pr() {
@@ -1667,6 +1690,19 @@ _sync_one_repo() {
 	# Rewrite branch filter to match downstream default branch (e.g. develop → develop).
 	if [[ "$_default_branch" != "$_BRANCH_DEFAULT_NAME" ]]; then
 		_target_content=$(_rewrite_content_branch_filter "$_target_content" "$_default_branch")
+	fi
+
+	# CONTRIBUTING updates require separate comparison and are not workflow-only.
+	if [[ "$_sync_contributing" -eq 0 ]]; then
+		local _identical_pr
+		if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch_name" "$_workflow_relpath" "$_target_content"); then
+			printf '%s\t%s\t%s\tunable to inspect open sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
+			return 1
+		fi
+		if [[ -n "$_identical_pr" ]]; then
+			printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_identical_pr"
+			return 0
+		fi
 	fi
 
 	local _write_output _write_rc
