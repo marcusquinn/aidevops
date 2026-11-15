@@ -11,6 +11,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 LOG_PREFIX="GH-CHECKS-WAIT"
 _GCW_DEFAULT_TIMEOUT="${AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS:-1800}"
+# t19045: a headless worker that omits --timeout must stay inside the 600s
+# shell-tool and activity-watchdog stall windows; match the worker contract's
+# 200s wait-checks chunk (headless-runtime-contract.sh Mandatory behavior 8).
+_GCW_DEFAULT_HEADLESS_TIMEOUT="${AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS:-200}"
 _GCW_DEFAULT_INITIAL_INTERVAL="${AIDEVOPS_GH_CHECKS_INITIAL_INTERVAL_SECONDS:-15}"
 _GCW_DEFAULT_MAX_INTERVAL="${AIDEVOPS_GH_CHECKS_MAX_INTERVAL_SECONDS:-120}"
 _GCW_DEFAULT_HEARTBEAT_INTERVAL="${AIDEVOPS_GH_CHECKS_HEARTBEAT_SECONDS:-120}"
@@ -44,7 +48,8 @@ Usage:
 Options:
   --repo OWNER/REPO          Repository (auto-detected when omitted)
   --all                      Include optional checks (default: required only)
-  --timeout SECONDS          Overall timeout (default: 1800)
+  --timeout SECONDS          Overall timeout (default: 1800; 200 in headless
+                             workers, AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS)
   --initial-interval SECONDS First and post-transition poll interval (default: 15)
   --max-interval SECONDS     Maximum unchanged-state interval (default: 120)
   --heartbeat SECONDS        Sparse unchanged-state message interval (default: 120)
@@ -67,6 +72,18 @@ validate_positive_integer() {
 	local value="$1"
 	[[ "$value" =~ ^[1-9][0-9]*$ ]]
 	return $?
+}
+
+# t19045: true inside a dispatched headless worker. Mirrors the dispatch
+# markers listed for detect_session_origin (shared-gh-wrappers-session.sh).
+_gcw_is_headless_worker() {
+	local marker
+	for marker in "${FULL_LOOP_HEADLESS:-}" "${AIDEVOPS_HEADLESS:-}" "${OPENCODE_HEADLESS:-}"; do
+		case "$marker" in
+		true | 1) return 0 ;;
+		esac
+	done
+	return 1
 }
 
 resolve_repo() {
@@ -906,18 +923,25 @@ cmd_wait() {
 	local initial_interval="$_GCW_DEFAULT_INITIAL_INTERVAL"
 	local max_interval="$_GCW_DEFAULT_MAX_INTERVAL"
 	local heartbeat_interval="$_GCW_DEFAULT_HEARTBEAT_INTERVAL"
+	local timeout_explicit=0
 	while [[ $# -gt 0 ]]; do
 		local opt="$1"
 		case "$opt" in
 		--repo) local repo_value="$2"; repo="$repo_value"; shift 2 ;;
 		--all) required_only=0; shift ;;
-		--timeout) local timeout_value="$2"; timeout="$timeout_value"; shift 2 ;;
+		--timeout) local timeout_value="$2"; timeout="$timeout_value"; timeout_explicit=1; shift 2 ;;
 		--initial-interval) local initial_value="$2"; initial_interval="$initial_value"; shift 2 ;;
 		--max-interval) local max_value="$2"; max_interval="$max_value"; shift 2 ;;
 		--heartbeat) local heartbeat_value="$2"; heartbeat_interval="$heartbeat_value"; shift 2 ;;
 		*) log_error "Unknown wait option: $opt"; return 1 ;;
 		esac
 	done
+	# t19045: an omitted --timeout in a headless worker must not outlast the
+	# watchdog stall window (the 1800s default did, ending in a cap kill).
+	if [[ "$timeout_explicit" -eq 0 && -z "${AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS:-}" ]] && _gcw_is_headless_worker; then
+		timeout="$_GCW_DEFAULT_HEADLESS_TIMEOUT"
+		printf 'NOTE: headless worker default --timeout %ss; call wait-checks again if checks are still pending.\n' "$timeout"
+	fi
 	if ! validate_nonnegative_integer "$timeout" || ! validate_nonnegative_integer "$heartbeat_interval" || \
 		! validate_positive_integer "$initial_interval" || ! validate_positive_integer "$max_interval"; then
 		log_error "timeout/heartbeat must be non-negative and poll intervals must be positive integers"

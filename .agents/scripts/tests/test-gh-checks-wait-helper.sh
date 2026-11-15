@@ -39,6 +39,18 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local name="$1"
+	local needle="$2"
+	local haystack="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		fail "$name" "unexpected ${needle}"
+	else
+		pass "$name"
+	fi
+	return 0
+}
+
 assert_eq() {
 	local name="$1" expected="$2" actual="$3"
 	if [[ "$actual" == "$expected" ]]; then
@@ -592,6 +604,27 @@ mkdir -p "$(dirname "$heartbeat_file")"
 write_fixture "$heartbeat_dir" 1 '[{"name":"Immediate","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
 AIDEVOPS_FULL_LOOP_HEARTBEAT_FILE="$heartbeat_file" run_fixture_wait "$heartbeat_dir" >/dev/null
 [[ -s "$heartbeat_file" ]] && pass "wait updates out-of-context runtime heartbeat" || fail "wait updates out-of-context runtime heartbeat"
+
+# t19045: a headless worker that omits --timeout gets the bounded worker chunk.
+headless_note="NOTE: headless worker default --timeout"
+set +e
+headless_default_output=$(unset AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	FULL_LOOP_HEADLESS=true AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS=0 \
+		run_fixture_wait "$timeout_dir" 2>&1)
+headless_default_rc=$?
+headless_explicit_output=$(unset AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	AIDEVOPS_HEADLESS=1 AIDEVOPS_GH_CHECKS_HEADLESS_TIMEOUT_SECONDS=0 \
+		run_fixture_wait "$timeout_dir" --timeout 0 2>&1)
+headless_explicit_rc=$?
+set -e
+assert_eq "headless default timeout bounds a pending wait" "8" "$headless_default_rc"
+assert_contains "headless default timeout is announced" "${headless_note} 0s" "$headless_default_output"
+assert_eq "explicit timeout still applies under headless" "8" "$headless_explicit_rc"
+assert_not_contains "explicit timeout is not replaced under headless" "$headless_note" "$headless_explicit_output"
+interactive_default_output=$(unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS OPENCODE_HEADLESS \
+	AIDEVOPS_GH_CHECKS_TIMEOUT_SECONDS
+	run_fixture_wait "$heartbeat_dir" 2>&1)
+assert_not_contains "interactive wait keeps the long default" "$headless_note" "$interactive_default_output"
 
 printf '%s passed, %s failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -ne 0 ]]; then
