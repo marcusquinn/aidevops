@@ -182,7 +182,7 @@ class LifecycleRegistry:
 
         result = compact(self, connection, age, apply=apply)
         if apply:
-            from .retirement import sweep_retirement_locks
+            from .retirement_locks import sweep_retirement_locks
 
             locks = sweep_retirement_locks(self, connection)
             result.update(retirement_locks_removed=locks["removed"],

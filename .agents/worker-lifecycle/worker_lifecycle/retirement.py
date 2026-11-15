@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
@@ -36,6 +36,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
+from .retirement_locks import event_id as _event_id
 from .storage import LifecycleRegistry, StoreConflict
 
 
@@ -50,10 +51,6 @@ class ArchiveTarget:
 def _id(path: Path) -> list[int]:
     info = path.lstat()
     return [info.st_dev, info.st_ino]
-
-
-def _event_id(generation: str, phase: str) -> str:
-    return str(uuid5(UUID(generation), f"retirement-{phase}"))
 
 
 def _event(store: LifecycleRegistry, key: str) -> dict | None:
@@ -96,75 +93,6 @@ def _lock(store: LifecycleRegistry, generation: str) -> Iterator[None]:
             yield
     finally:
         os.close(descriptor)
-
-
-LOCK_SWEEP_LIMIT = 500
-
-
-def _terminal_lock_generation(name: str) -> str | None:
-    """Return the canonical generation of a `retirement-<uuid>.lock` name."""
-    if not (name.startswith("retirement-") and name.endswith(".lock")):
-        return None
-    try:
-        generation = UUID(name[len("retirement-"):-len(".lock")])
-    except ValueError:
-        return None
-    return str(generation) if name == f"retirement-{generation}.lock" else None
-
-
-def _unlink_free_lock(path: Path) -> bool:
-    """Unlink a lock only while holding it, on the inode that is still named."""
-    try:
-        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return False
-    try:
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0):
-            return False
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if _id(path) != [info.st_dev, info.st_ino]:
-            return False
-        path.unlink()
-        return True
-    except OSError:
-        return False
-    finally:
-        os.close(descriptor)
-
-
-def sweep_retirement_locks(
-    store: LifecycleRegistry, connection, *, limit: int = LOCK_SWEEP_LIMIT,
-) -> dict[str, int]:
-    """Remove locks of terminally retired generations; refuse on any doubt.
-
-    Active or unknown generations are skipped untouched; only held or
-    unremovable terminal locks count as refused. At most `limit` locks are tried.
-    """
-    removed = refused = 0
-    try:
-        names = sorted(entry.name for entry in os.scandir(store.directory))
-    except OSError:
-        return {"removed": 0, "refused": 0}
-    for name in names:
-        generation = _terminal_lock_generation(name)
-        if generation is None or removed + refused >= limit:
-            continue
-        try:
-            terminal = connection.execute(
-                "SELECT 1 FROM events WHERE event_id=?",
-                (_event_id(generation, "retired"),),
-            ).fetchone()
-        except Exception:  # unreadable state: never unlink
-            continue
-        if terminal is None:
-            continue
-        if _unlink_free_lock(store.directory / name):
-            removed += 1
-        else:
-            refused += 1
-    return {"removed": removed, "refused": refused}
 
 
 def _git(*arguments: str) -> str:
