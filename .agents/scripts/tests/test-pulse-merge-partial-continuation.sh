@@ -94,6 +94,10 @@ reset_case() {
 	# GH#38355 closed checkpoint fixtures: release at 10:02, draft opened at
 	# 10:00:30 and closed the next day; the checkpoint removed auto-dispatch at 10:01:30.
 	TEST_CLOSED_PRS='[]'
+	TEST_CLOSED_PRS_P2='[]'
+	TEST_CLOSED_P2_RC=0
+	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
+	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
 	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
 	TEST_EVENTS='[[{"event":"labeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T09:00:00Z"},{"event":"unlabeled","label":{"name":"auto-dispatch"},"created_at":"2026-10-10T10:01:30Z"}]]'
 	PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS=999999999
@@ -240,7 +244,15 @@ gh() {
 		return 0
 	fi
 	if [[ "${2:-}" == "repos/${SLUG}/pulls?state=closed"* ]]; then
-		printf '%s' "$TEST_CLOSED_PRS"
+		# GH#38396: page=2 serves TEST_CLOSED_PRS_P2 (or fails); other pages TEST_CLOSED_PRS.
+		if [[ "${2:-}" == *"&page=2" ]]; then
+			[[ "$TEST_CLOSED_P2_RC" -eq 0 ]] || return "$TEST_CLOSED_P2_RC"
+			printf '%s' "$TEST_CLOSED_PRS_P2"
+		elif [[ "${2:-}" == *"&page=3" ]]; then
+			printf '[]'
+		else
+			printf '%s' "$TEST_CLOSED_PRS"
+		fi
 		return 0
 	fi
 	if [[ "${2:-}" == "repos/${SLUG}/pulls/905" ]]; then
@@ -1228,6 +1240,65 @@ test_closed_checkpoint_dispatch_recovery() {
 	return 0
 }
 
+# GH#38396: the closed-checkpoint scan pages until the floor and keeps a stamp.
+test_closed_checkpoint_scan_pagination() {
+	local stamp_file="${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.closed-scan"
+	local manual='{"number":%s,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","updated_at":"2026-10-12T00:00:00Z","head":{"ref":"bugfix/manual","repo":{"full_name":"owner/repo"}}}'
+	local p1="" p2=""
+	p1="[$(printf "$manual" 910),$(printf "$manual" 911)]"
+	p2='[{"number":905,"merged_at":null,"closed_at":"2026-10-11T00:00:00Z","updated_at":"2026-10-11T00:00:00Z","head":{"ref":"feature/auto-20261010-095500-gh501","repo":{"full_name":"owner/repo"}}}]'
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" \
+		"checkpoint PR only on page 2 restores auto-dispatch"
+	if [[ -r "$stamp_file" && "$(<"$stamp_file")" == "2000000000" ]]; then
+		pass "complete scan writes the stamp"
+	else
+		fail "complete scan writes the stamp"
+	fi
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS=100
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	if grep -Fq '&page=2' "$API_LOG"; then
+		fail "scan stops at the first page older than the floor"
+	else
+		pass "scan stops at the first page older than the floor"
+	fi
+	[[ -r "$stamp_file" ]] && pass "floor stop advances the stamp" || fail "floor stop advances the stamp"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	TEST_CLOSED_P2_RC=1
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060 || true
+	[[ ! -e "$stamp_file" ]] && pass "unreadable page leaves the stamp unchanged" || fail "unreadable page leaves the stamp unchanged"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000000
+	[[ ! -e "$stamp_file" ]] && pass "deadline stop leaves the stamp unchanged" || fail "deadline stop leaves the stamp unchanged"
+
+	closed_checkpoint_case
+	TEST_CLOSED_PRS="$p1"
+	TEST_CLOSED_PRS_P2="$p2"
+	PULSE_CLOSED_CHECKPOINT_PAGE_SIZE=2
+	PULSE_CLOSED_CHECKPOINT_MAX_PAGES=1
+	_pmpc_reconcile_closed_checkpoints "$SLUG" 2000000060
+	[[ ! -e "$stamp_file" ]] && pass "page-cap stop leaves the stamp unchanged" || fail "page-cap stop leaves the stamp unchanged"
+	return 0
+}
+
 # GH#38021: a draft checkpoint on a canonical consolidated spec gets back the
 # auto-dispatch label that the same worker run removed, and nothing else does.
 test_checkpoint_spec_dispatch_restore() {
@@ -1412,6 +1483,7 @@ main() {
 	test_periodic_pass
 	test_available_dispatch_recovery
 	test_closed_checkpoint_dispatch_recovery
+	test_closed_checkpoint_scan_pagination
 	test_checkpoint_spec_dispatch_restore
 	test_checkpoint_spec_receipt_outcomes
 
