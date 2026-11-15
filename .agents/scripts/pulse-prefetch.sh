@@ -112,30 +112,15 @@ prefetch_state() {
 	local tmpdir
 	tmpdir=$(mktemp -d)
 
-	# Launch parallel gh fetches for each repo
-	local pids=()
-	local idx=0
-	while IFS='|' read -r slug path; do
-		_prefetch_remaining_seconds 120 >/dev/null || {
-			prefetch_rc=124
-			break
-		}
-		(
-			_prefetch_single_repo "$slug" "$path" "${tmpdir}/${idx}.txt"
-		) &
-		pids+=($!)
-		idx=$((idx + 1))
-	done <<<"$repo_entries"
+	# Fetch each repo in parallel under one hard timeout (t1482, GH#15060:
+	# 120s, as large PR backlogs made 60s silently report "Open PRs (0)").
+	# t19041: at most PULSE_PREFETCH_MAX_PARALLEL shards run at once, so
+	# dormancy proofs and full sweeps no longer time each other out.
+	PREFETCH_FANOUT_LAUNCHED=0
+	_prefetch_fanout "$parallel_timeout" "$tmpdir" "$repo_entries" || prefetch_rc=$?
 
-	# Wait for all parallel fetches with a hard timeout (t1482).
-	# Each repo does 3 gh API calls (pr list, pr list --state all, issue list).
-	# GH#15060: Raised from 60s to 120s. With 13 repos and repos having 100+ PRs,
-	# the GraphQL responses are large and rate limiting serializes parallel calls.
-	# 60s caused silent timeouts producing "Open PRs (0)" on large backlogs.
-	_wait_parallel_pids "$parallel_timeout" "${pids[@]}" || prefetch_rc=$?
-
-	# Assemble state file in repo order
-	_assemble_state_file "$tmpdir"
+	# Assemble state file in repo order; skip shards killed before writing.
+	_assemble_state_file "$tmpdir" "$PREFETCH_FANOUT_LAUNCHED"
 
 	# Clean up
 	rm -rf "$tmpdir"

@@ -2141,6 +2141,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19039 fix(checkpoints): continuation workers route concrete code/infra blockers to a prerequisite issue instead of parking for a human #interactive #feat tier:standard assignee:marcusquinn ref:GH#38507 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19039-brief.md]
 
+- [ ] t19041 fix(pulse): bound prefetch fan-out so concurrent dormancy reads stop timing out and waking repos #interactive #bug tier:standard assignee:marcusquinn ref:GH#38515 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19041-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
