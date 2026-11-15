@@ -581,8 +581,8 @@ fi
 
 _reset_dbs
 now_seconds=$(date +%s)
-old_default_ms=$(((now_seconds - 91 * 86400) * 1000))
-recent_default_ms=$(((now_seconds - 89 * 86400) * 1000))
+old_default_ms=$(((now_seconds - 31 * 86400) * 1000))
+recent_default_ms=$(((now_seconds - 29 * 86400) * 1000))
 worker_old_ms=$(((now_seconds - 8 * 86400) * 1000))
 worker_recent_ms=$(((now_seconds - 6 * 86400) * 1000))
 _make_active_db_with_sessions "default_old,${old_default_ms}
@@ -609,7 +609,7 @@ fi
 split_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
 split_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
 if [[ "$split_active" == "default_recent,interactive_8d,worker_recent" && "$split_archived" == "default_old,worker_child,worker_old" ]]; then
-	_pass "default retention archives workers after 7 days and interactive sessions after 90"
+	_pass "default retention archives workers after 7 days and interactive sessions after 30"
 else
 	_fail "split retention mismatch: active=${split_active}, archived=${split_archived}"
 fi

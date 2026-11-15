@@ -12,8 +12,9 @@
 #   2. asks busy sessions over the session bus to checkpoint and pause;
 #   3. waits for idle and never signals a busy session;
 #   4. stops idle TUIs gracefully (SIGTERM) and records a restart manifest;
-#   5. after maintenance, relaunches `opencode -s <id>` in the original
-#      tmux/screen pane, or leaves a resume command for bare-TTY sessions.
+#   5. after maintenance, restores the session from opencode-archive.db when it
+#      was archived (GH#38431), then relaunches `opencode -s <id>` in the
+#      original tmux/screen pane, or leaves a resume command for bare-TTY sessions.
 #
 # Authority: stopping is opt-in. A terminal operator confirms (or passes
 # --yes). Without a terminal (scheduler, headless agent) the helper only
@@ -23,6 +24,7 @@
 #   inventory [--json] [--all]       Interactive holders: pid, session, cwd, age, busy/idle, pane
 #   stop [options]                   Checkpoint request → wait idle → SIGTERM idle TUIs → manifest
 #   resume                           Relaunch stopped sessions from the manifest
+#   open <session-id> [--dir PATH]   Restore an archived session, then run opencode -s
 #   run [options] -- <command…>      stop, run the command, then always resume
 #   notify [--reason <text>]         Session-bus note to holders (throttled, never stops)
 #   notice                           One session-start line for sessions awaiting manual resume
@@ -72,6 +74,7 @@ readonly SEP=$'\x1f'
 : "${OPENCODE_RESTART_SCREEN_BIN:=screen}"
 : "${OPENCODE_RESTART_SESSION_BUS_HELPER:=${SCRIPT_DIR}/session-bus-helper.sh}"
 : "${OPENCODE_RESTART_PS:=ps}"
+: "${OPENCODE_RESTART_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
 
 # -----------------------------------------------------------------------------
 # Process facts
@@ -794,6 +797,29 @@ _session_live() {
 	return $?
 }
 
+# _restore_archived_session <sid> — move an archived session (and its subagent
+# children) back into the live DB before OpenCode opens it (GH#38431), as
+# headless workers do in _seed_worker_db_session_context. Advisory: a missing
+# live DB, archive or archived row is a silent no-op, and a failed restore only
+# warns so the relaunch still happens. All output goes to stderr.
+_restore_archived_session() {
+	local sid="$1"
+	local out rc=0
+	[[ "$sid" =~ $RESTART_SESSION_RE && "$sid" != unknown* ]] || return 0
+	[[ -f "$RESTART_DB" && -x "$OPENCODE_RESTART_ARCHIVE_HELPER" ]] || return 0
+	out=$(OPENCODE_DB_PATH="$RESTART_DB" "$OPENCODE_RESTART_ARCHIVE_HELPER" restore --session "$sid" 2>&1) || rc=$?
+	case "$rc" in
+	0)
+		if [[ "$out" == *Restored* ]]; then
+			print_info "Session ${sid}: restored from the archive DB before relaunch" >&2
+		fi
+		;;
+	4) ;;
+	*) print_warning "Session ${sid}: archive restore failed (exit ${rc}); relaunching anyway" >&2 ;;
+	esac
+	return 0
+}
+
 _tmux() {
 	local socket="$1"
 	shift
@@ -870,6 +896,8 @@ cmd_resume() {
 		reason=$(jq -r --arg d "$RESTART_DEFAULT_REASON" '.reason // $d' <<<"$entry")
 		stopped=$(jq -r '.stopped_epoch // 0' <<<"$entry")
 		when=$(date -u -d "@${stopped}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$stopped" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "$stopped")
+		# Restore first, for in-place and manual resumes alike.
+		_restore_archived_session "$sid"
 		status=$(_relaunch_entry "$entry")
 		_manifest_set_status "$sid" "$status"
 		_bus_send "$sid" "$(_resumed_note_text "$reason" "$when")" || true
@@ -883,6 +911,30 @@ cmd_resume() {
 	done <<<"$entries"
 	print_info "Interactive resume: ${resumed} resumed, ${pending} awaiting manual resume"
 	return 0
+}
+
+# cmd_open <session-id> [--dir PATH] — manual resume of any interactive
+# session, including one archived out of the live DB (GH#38431).
+cmd_open() {
+	local sid="" dir=""
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--dir) dir="${2:-}"; [[ -n "$dir" ]] || { print_error "--dir requires a path"; return 1; }; shift 2 ;;
+		-*) print_error "Unknown open option: $arg"; return 1 ;;
+		*) [[ -z "$sid" ]] || { print_error "open takes one session id"; return 1; }; sid="$arg"; shift ;;
+		esac
+	done
+	if [[ ! "$sid" =~ $RESTART_SESSION_RE || "$sid" == unknown* ]]; then
+		print_error "open requires a session id (letters, digits, '_' or '-')"
+		return 1
+	fi
+	if [[ -n "$dir" ]]; then
+		cd -- "$dir" || { print_error "Directory not found: ${dir}"; return 1; }
+	fi
+	_restore_archived_session "$sid"
+	exec "$OPENCODE_RESTART_OPENCODE_BIN" -s "$sid"
+	return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -966,7 +1018,7 @@ cmd_notice() {
 }
 
 cmd_help() {
-	sed -n '5,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '5,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 	cat <<EOF
 
 Options (stop/run): --yes  --all (every live TUI, not only active-DB holders)
@@ -998,6 +1050,7 @@ main() {
 	inventory | list) cmd_inventory "$@" ;;
 	stop) cmd_stop "$@" ;;
 	resume) cmd_resume "$@" ;;
+	open) cmd_open "$@" ;;
 	run) cmd_run "$@" ;;
 	notify) cmd_notify "$@" ;;
 	notice) cmd_notice "$@" ;;
