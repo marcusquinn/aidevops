@@ -2103,7 +2103,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19015 perf(pulse): a drained cycle exits at the next stage boundary instead of running its full maintenance tail #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38413 logged:2026-11-15 started:2026-11-15 pr:#38414 completed:2026-11-15 -> [todo/tasks/t19015-brief.md]
 
-- [ ] t19016 perf(profile): project OpenCode usage rows per table instead of materializing the full message history #interactive #bug tier:standard assignee:marcusquinn ref:GH#38425 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19016-brief.md]
+- [x] t19016 perf(profile): project OpenCode usage rows per table instead of materializing the full message history #interactive #bug tier:standard assignee:marcusquinn ref:GH#38425 logged:2026-11-15 started:2026-11-15 pr:#38427 completed:2026-11-15 -> [todo/tasks/t19016-brief.md]
+
+- [ ] t19017 fix(opencode-db-archive): an archive-DB event-expiry deferral must not skip the live-DB session move #auto-dispatch #bug tier:standard ref:GH#38429 logged:2026-11-15 -> [todo/tasks/t19017-brief.md]
+
+- [ ] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 logged:2026-11-15 -> [todo/tasks/t19018-brief.md]
+
+- [ ] t19019 perf(opencode-db): restore archived interactive sessions on resume so the live DB can keep 30 days instead of 90 #auto-dispatch #feat tier:thinking ref:GH#38431 logged:2026-11-15 -> [todo/tasks/t19019-brief.md]
 
 ## In Progress
 
