@@ -877,6 +877,15 @@ _shim_privacy_scan() {
 	rm -f "$_slugs_file"
 
 	if [[ $_scan_rc -eq 1 ]]; then
+		local _target_slug="${target_url#https://github.com/}"
+		_target_slug="${_target_slug%.git}"
+		if [[ "$_target_slug" =~ ^[^/]+/[^/]+$ ]] &&
+			_hits=$(privacy_filter_slug_hits_by_public_tree "$_hits" "$_target_slug"); then
+			_scan_rc=0
+		fi
+	fi
+
+	if [[ $_scan_rc -eq 1 ]]; then
 		printf '\n[aidevops][privacy-scan][BLOCK] Write to public %s contains private-repo references:\n\n' "$target_url" >&2
 		printf '%s\n' "$_hits" | sed 's/^/  /' >&2
 		printf '\n  Use generic placeholders (e.g. <webapp>) for private repo names before posting to public repos.\n' >&2

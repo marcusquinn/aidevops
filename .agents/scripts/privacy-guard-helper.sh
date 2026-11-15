@@ -441,6 +441,40 @@ privacy_resolve_public_tree() {
 }
 
 #######################################
+# Drop legacy slug-scan hits already tracked in the target repo's verified
+# default-branch tree. Local-path labels and unmatched hits are always kept.
+# Arguments: $1=hit lines from privacy_scan_text $2=target owner/repo
+# Output: remaining hits. Returns 1 if any remain, else 0.
+#######################################
+privacy_filter_slug_hits_by_public_tree() {
+	local hits="$1"
+	local repo="$2"
+	local tree_result tree_repo="" public_tree="" line token escaped boundary_re remaining=0
+
+	tree_result=$(privacy_resolve_public_tree "$repo") || tree_result=""
+	[[ -n "$tree_result" ]] && IFS=$'\t' read -r tree_repo public_tree <<<"$tree_result"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" ]] && continue
+		if [[ -n "$public_tree" && "$line" != \[* ]]; then
+			if [[ "$line" == *" (basename of "* ]]; then
+				token="${line%% (basename of *}"
+				escaped=$(printf '%s' "$token" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+				boundary_re="(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|\$)"
+				if git -C "$tree_repo" grep -Iq -E -e "$boundary_re" "$public_tree" -- 2>/dev/null; then
+					continue
+				fi
+			elif git -C "$tree_repo" grep -Iq -F -e "$line" "$public_tree" -- 2>/dev/null; then
+				continue
+			fi
+		fi
+		printf '%s\n' "$line"
+		remaining=1
+	done <<<"$hits"
+	[[ "$remaining" -eq 1 ]] && return 1
+	return 0
+}
+
+#######################################
 # Redact tagged private entities in locally previewed text.
 # Arguments: $1=text $2=entity inventory $3=optional public target slug
 #######################################

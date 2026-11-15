@@ -223,6 +223,7 @@ cp "$SHIM" "$PATH_DIR/gh"
 cp "${SCRIPT_DIR}/gh-native-transport-lib.sh" "$PATH_DIR/gh-native-transport-lib.sh"
 cp "${SCRIPT_DIR}/gh-api-guards-lib.sh" "$PATH_DIR/gh-api-guards-lib.sh"
 cp "${SCRIPT_DIR}/gh-write-policy-lib.sh" "$PATH_DIR/gh-write-policy-lib.sh"
+cp "${SCRIPT_DIR}/managed-label-provisioning-lib.sh" "$PATH_DIR/managed-label-provisioning-lib.sh"
 cp "${SCRIPT_DIR}/gh-closing-reference-lib.sh" "$PATH_DIR/gh-closing-reference-lib.sh"
 chmod +x "$PATH_DIR/gh"
 
@@ -317,6 +318,9 @@ run_shim() {
 	local _path_dir="$1"
 	local _rc=0
 	shift
+	# Run outside any aidevops checkout so its tracked tree cannot exempt hits.
+	mkdir -p "$TMP/neutral-cwd"
+	cd "${SHIM_CWD:-$TMP/neutral-cwd}" || return 1
 	HOME="$PRIV_HOME" \
 		PRIVACY_REPOS_CONFIG="$PRIV_HOME/.config/aidevops/repos.json" \
 		PRIVACY_CACHE_FILE="$PRIV_HOME/.aidevops/cache/repo-privacy.json" \
@@ -399,6 +403,37 @@ for _body in "Hit a bug in ordinaryprivate today" "Mentions acme/ordinaryprivate
 		fail "expected rc=1 for cached-private repo. rc=$rc out='$out'"
 	fi
 done
+
+# -- Test 2.2b: slug tracked in the target repo's default-branch tree is exempt
+# for the shim's legacy scan; an untracked private slug still blocks.
+TREE_REPO="${TMP}/tree-repo"
+mkdir -p "$TREE_REPO"
+(
+	cd "$TREE_REPO" &&
+		git init -q &&
+		git config user.email t@example.com && git config user.name t &&
+		git remote add origin https://github.com/marcusquinn/aidevops.git &&
+		printf '%s\n' 'Author URI: https://longprivate.example' >plugin.txt &&
+		git add plugin.txt && git commit -qm seed &&
+		git update-ref refs/remotes/origin/main HEAD &&
+		git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+) >/dev/null 2>&1 || fail "could not seed tracked-tree fixture"
+rm -f "$RECORD_FILE"
+out=$(SHIM_CWD="$TREE_REPO" run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "See longprivate docs" 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 ]] && [[ -f "$RECORD_FILE" ]]; then
+	pass "shim permits basename tracked in target repo tree"
+else
+	fail "expected tracked basename to pass. rc=$rc out='$out'"
+fi
+rm -f "$RECORD_FILE"
+out=$(SHIM_CWD="$TREE_REPO" run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "See ordinaryprivate docs" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
+	pass "shim still blocks private basename absent from target tree"
+else
+	fail "expected untracked basename to block. rc=$rc out='$out'"
+fi
 
 # -- Test 2.3: public target + clean body → ALLOWED
 rm -f "$RECORD_FILE"
