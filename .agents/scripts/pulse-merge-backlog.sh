@@ -148,8 +148,49 @@ _pmp_backlog_priority() {
 }
 
 #######################################
+# GH#38508: PR numbers the dispatch PR backlog guardrail counted when it last
+# applied to this repository, while that marker is younger than
+# PULSE_MERGE_GUARDRAIL_PRIORITY_MAX_AGE seconds (default 900, about three
+# cycles; 0 disables). Written by
+# pulse-dispatch-current-state-guardrails.sh::_dispatch_record_pr_backlog_guardrail_marker.
+# Args: $1 - repo slug
+# Stdout: "|<n>|<n>|" key list; empty when the guardrail is not active.
+#######################################
+_pmp_guardrail_counted_pr_keys() {
+	local repo_slug="$1"
+	local state_dir="${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-pr-backlog-guardrail}"
+	local max_age="${PULSE_MERGE_GUARDRAIL_PRIORITY_MAX_AGE:-900}" marker="" recorded_at="" numbers="" now_epoch=""
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=900
+	[[ "$max_age" -gt 0 && "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	marker="${state_dir}/${repo_slug%%/*}--${repo_slug##*/}"
+	[[ -f "$marker" && ! -L "$marker" ]] || return 0
+	IFS=$'\t' read -r recorded_at numbers <"$marker" || true
+	[[ "$recorded_at" =~ ^[0-9]+$ && "$numbers" =~ ^\|([1-9][0-9]*\|)+$ ]] || return 0
+	now_epoch=$(_pmp_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$recorded_at" ]] || return 0
+	[[ $((now_epoch - recorded_at)) -lt "$max_age" ]] || return 0
+	printf '%s' "$numbers"
+	return 0
+}
+
+# GH#38508: true when a guardrail-counted PR is in a bucket pulse can move
+# without a human (the same buckets the resume lane refreshes).
+# Args: $1 - counted keys, $2 - PR number, $3 - backlog category
+_pmp_guardrail_counted_actionable() {
+	local counted_keys="$1" pr_number="$2" category="$3"
+	[[ -n "$counted_keys" && "$pr_number" =~ ^[1-9][0-9]*$ && "$counted_keys" == *"|${pr_number}|"* ]] || return 1
+	case "$category" in
+	"$_PMP_BACKLOG_MERGE_READY" | "$_PMP_BACKLOG_CHECKS_IN_PROGRESS" | "$_PMP_BACKLOG_SMALL_FIX_NEEDED") return 0 ;;
+	esac
+	return 1
+}
+
+#######################################
 # Sort a PR JSON array by backlog attention priority, preserving original
-# order inside each category. Emits a JSON array.
+# order inside each category. Emits a JSON array. GH#38508: while the
+# dispatch PR backlog guardrail is active for the repo, the worker PRs it
+# counted (actionable buckets only) sort first, so the backlog that suppresses
+# dispatch drains first. Ordering only; every merge gate still runs.
 #
 # Args:
 #   $1 - JSON array of PR objects
@@ -168,13 +209,14 @@ _pmp_sort_prs_by_backlog_priority() {
 
 	local _tmp_lines=""
 	_tmp_lines=$(mktemp)
-	local dirty_keys=""
+	local dirty_keys="" counted_keys=""
 	if declare -F _pulse_merge_queue_priority_keys >/dev/null 2>&1; then
 		dirty_keys=$(_pulse_merge_queue_priority_keys "$repo_slug")
 	fi
+	counted_keys=$(_pmp_guardrail_counted_pr_keys "$repo_slug")
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" category="" priority="" retry_priority=1 dirty_priority=1 pr_number=""
+		local pr_obj="" category="" priority="" retry_priority=1 guardrail_priority=1 dirty_priority=1 pr_number=""
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		priority=$(_pmp_backlog_priority "$category")
@@ -183,15 +225,16 @@ _pmp_sort_prs_by_backlog_priority() {
 		# only; the evaluator still re-reads and enforces every gate.
 		printf '%s' "$pr_obj" | jq -e '._pulseDeferredRetry == true and (.isDraft // false) != true
 			and (any((.labels // [])[]; (.name? // .) == "hold-for-review") | not)' >/dev/null 2>&1 && retry_priority=0
-		if [[ -n "$dirty_keys" ]]; then
+		if [[ -n "$dirty_keys" || -n "$counted_keys" ]]; then
 			pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
-			[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
+			[[ -n "$dirty_keys" && "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
+			_pmp_guardrail_counted_actionable "$counted_keys" "$pr_number" "$category" && guardrail_priority=0
 		fi
-		printf '%d\t%03d\t%d\t%06d\t%s\n' "$retry_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
+		printf '%d\t%d\t%03d\t%d\t%06d\t%s\n' "$retry_priority" "$guardrail_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
 		i=$((i + 1))
 	done
 
-	LC_ALL=C sort "$_tmp_lines" | cut -f5- | jq -s '.'
+	LC_ALL=C sort "$_tmp_lines" | cut -f6- | jq -s '.'
 	rm -f "$_tmp_lines"
 	return 0
 }
@@ -663,6 +706,21 @@ _pmp_lane_last_refresh_epoch() {
 	return 0
 }
 
+# GH#38508: true when fewer than PULSE_MERGE_RESUME_REFRESH_RESERVE_SECONDS
+# (default 30) remain before the effective merge deadline. Lane refreshes stop
+# there, so the pass keeps time to prepare and evaluate a promoted PR instead
+# of spending the rest of its budget on refreshes. Unbounded passes never stop.
+_pmp_lane_refresh_reserve_reached() {
+	local reserve="${PULSE_MERGE_RESUME_REFRESH_RESERVE_SECONDS:-30}" deadline_epoch="" now_epoch=""
+	[[ "$reserve" =~ ^[0-9]+$ ]] || reserve=30
+	deadline_epoch=$(_pmp_merge_effective_deadline_epoch)
+	[[ "$deadline_epoch" =~ ^[0-9]+$ && "$deadline_epoch" -gt 0 ]] || return 1
+	now_epoch=$(_pmp_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ $((now_epoch + reserve)) -ge "$deadline_epoch" ]] || return 1
+	return 0
+}
+
 #######################################
 # GH#38248: the advisory snapshot is cached per number/head for the whole
 # walk, so it cannot see same-head transitions such as checks finishing or a
@@ -676,7 +734,8 @@ _pmp_lane_last_refresh_epoch() {
 _pmp_refresh_lane_candidate() {
 	local repo_slug="$1" lane_idx="$2" out_var="$3"
 	local lane_obj="" lane_key="" lane_now="" lane_last="" lane_fresh="" lane_rc=0
-	local min_age="${PULSE_MERGE_RESUME_REFRESH_MIN_AGE:-600}" refreshed_file="${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-refreshed"
+	# GH#38508: the lane sets _PMP_LANE_REFRESH_MIN_AGE for guardrail-counted PRs.
+	local min_age="${_PMP_LANE_REFRESH_MIN_AGE:-${PULSE_MERGE_RESUME_REFRESH_MIN_AGE:-600}}" refreshed_file="${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-refreshed"
 	[[ "$out_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 1
 	[[ "$min_age" =~ ^[0-9]+$ ]] || min_age=600
 	lane_obj=$(_pmp_pr_object_at_index "$pr_json" "$lane_idx") || return 1
@@ -691,6 +750,7 @@ _pmp_refresh_lane_candidate() {
 		return 1
 	fi
 	_pmp_merge_pass_budget_exhausted && return 1
+	_pmp_lane_refresh_reserve_reached && return 1
 	_pmp_rest_core_priority_allows_next progress "merge_resume_lane_refresh:${repo_slug}" || return 1
 	# Stamp before the read so a failing read is not retried every resume.
 	printf '%s|%s\n' "$lane_key" "$lane_now" >>"$refreshed_file" 2>/dev/null || true
@@ -713,6 +773,10 @@ _pmp_refresh_lane_candidate() {
 # instead of after the walk wraps. The original resume item keeps its index
 # (_PMP_RESUME_LANE_END) and predecessor (_PMP_RESUME_LANE_LAST_PR) so durable
 # cursor writes never rewind the walk. Ordering only: every gate still runs.
+# GH#38508: while the dispatch PR backlog guardrail is active for the repo,
+# the PRs it counted get the larger budgets from _pmp_guardrail_lane_limits
+# and a shorter refresh age, so worker PRs that went CLEAN after a `not ready`
+# visit drain within one resume instead of one revolution later.
 # Uses the caller's dynamically scoped pr_json, pr_count, _PMP_RESUME_LANE_END
 # and _PMP_RESUME_LANE_LAST_PR.
 # Args: $1=repo slug, $2=start index output var
@@ -722,6 +786,10 @@ _pmp_resume_cursor_with_priority_lane() {
 	# Not named start_index: the resume helper's own local would shadow it.
 	local lane_resume_index=0 limit="${PULSE_MERGE_RESUME_PRIORITY_LIMIT:-2}" idx=0 moved=0 lane="" reordered=""
 	local refresh_limit="${PULSE_MERGE_RESUME_REFRESH_LIMIT:-2}" refreshes=0 refresh_rc=0 candidate_obj=""
+	local counted_keys="" counted_limit=0 counted_refresh_limit=0 counted_moved=0 cand_number="" cand_counted=0
+	local cand_limit=0 cand_refresh_limit=0
+	# Read by _pmp_refresh_lane_candidate through dynamic scope.
+	local _PMP_LANE_REFRESH_MIN_AGE=""
 	[[ "$start_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	_PMP_RESUME_LANE_END=0
 	_PMP_RESUME_LANE_LAST_PR=""
@@ -736,11 +804,19 @@ _pmp_resume_cursor_with_priority_lane() {
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=2
 	[[ "$refresh_limit" =~ ^[0-9]+$ ]] || refresh_limit=2
 	[[ "$limit" -gt 0 ]] || return 0
+	counted_keys=$(_pmp_guardrail_counted_pr_keys "$repo_slug")
+	_pmp_guardrail_lane_limits "$counted_keys" "$limit" "$refresh_limit" counted_limit counted_refresh_limit || return 0
 	local start_index="$lane_resume_index"
-	while [[ "$idx" -lt "$start_index" && "$moved" -lt "$limit" ]]; do
+	while [[ "$idx" -lt "$start_index" && "$moved" -lt "$counted_limit" ]]; do
 		candidate_obj=$(_pmp_pr_object_at_index "$pr_json" "$idx")
-		if ! _pmp_lane_already_served "$repo_slug" "$candidate_obj"; then
-			if [[ "$refreshes" -lt "$refresh_limit" ]]; then
+		cand_number=$(_pmp_pr_number_at_index "$pr_json" "$idx") || cand_number=""
+		cand_counted=0 cand_limit="$limit" cand_refresh_limit="$refresh_limit" _PMP_LANE_REFRESH_MIN_AGE=""
+		if [[ -n "$counted_keys" && "$cand_number" =~ ^[1-9][0-9]*$ && "$counted_keys" == *"|${cand_number}|"* ]]; then
+			cand_counted=1 cand_limit="$counted_limit" cand_refresh_limit="$counted_refresh_limit"
+			_PMP_LANE_REFRESH_MIN_AGE="${PULSE_MERGE_GUARDRAIL_RESUME_REFRESH_MIN_AGE:-240}"
+		fi
+		if [[ "$moved" -lt "$cand_limit" ]] && ! _pmp_lane_already_served "$repo_slug" "$candidate_obj"; then
+			if [[ "$refreshes" -lt "$cand_refresh_limit" ]]; then
 				refresh_rc=0
 				_pmp_refresh_lane_candidate "$repo_slug" "$idx" candidate_obj || refresh_rc=$?
 				[[ "$refresh_rc" -eq 1 ]] || refreshes=$((refreshes + 1))
@@ -748,6 +824,7 @@ _pmp_resume_cursor_with_priority_lane() {
 			if [[ "$(_pmp_classify_pr_backlog_state "$candidate_obj" "$repo_slug")" == "$_PMP_BACKLOG_MERGE_READY" ]]; then
 				lane="${lane}${lane:+,}${idx}"
 				moved=$((moved + 1))
+				counted_moved=$((counted_moved + cand_counted))
 			fi
 		fi
 		idx=$((idx + 1))
@@ -762,7 +839,34 @@ _pmp_resume_cursor_with_priority_lane() {
 	pr_json="$reordered"
 	_PMP_RESUME_LANE_END="$start_index"
 	printf -v "$start_var" '%s' "$((start_index - moved))"
-	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${moved} merge-ready PR(s) ahead of cursor index=${start_index} (GH#38248)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${moved} merge-ready PR(s) ahead of cursor index=${start_index} guardrail_counted=${counted_moved} (GH#38248, GH#38508)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#38508: resume-lane budgets for PRs the active dispatch PR backlog
+# guardrail counted: the larger of the base budgets and
+# PULSE_MERGE_GUARDRAIL_RESUME_PRIORITY_LIMIT / _REFRESH_LIMIT (default 10
+# each). Without counted keys the base budgets apply unchanged.
+# Args: $1=counted keys, $2=base lane limit, $3=base refresh limit,
+#       $4=lane limit output var, $5=refresh limit output var
+#######################################
+_pmp_guardrail_lane_limits() {
+	local counted_keys="$1" base_limit="$2" base_refresh="$3" limit_var="$4" refresh_var="$5"
+	local guard_limit="${PULSE_MERGE_GUARDRAIL_RESUME_PRIORITY_LIMIT:-10}" guard_refresh="${PULSE_MERGE_GUARDRAIL_RESUME_REFRESH_LIMIT:-10}"
+	[[ "$limit_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$refresh_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	[[ "$base_limit" =~ ^[0-9]+$ ]] || base_limit=0
+	[[ "$base_refresh" =~ ^[0-9]+$ ]] || base_refresh=0
+	[[ "$guard_limit" =~ ^[0-9]+$ ]] || guard_limit=10
+	[[ "$guard_refresh" =~ ^[0-9]+$ ]] || guard_refresh=10
+	if [[ -z "$counted_keys" ]]; then
+		guard_limit=0
+		guard_refresh=0
+	fi
+	[[ "$guard_limit" -gt "$base_limit" ]] || guard_limit="$base_limit"
+	[[ "$guard_refresh" -gt "$base_refresh" ]] || guard_refresh="$base_refresh"
+	printf -v "$limit_var" '%s' "$guard_limit"
+	printf -v "$refresh_var" '%s' "$guard_refresh"
 	return 0
 }
 

@@ -341,6 +341,17 @@ JSON
 	worker=$(_dispatch_filter_repo_pr_backlog_candidates owner/worker "$candidates" | jq 'length')
 	low_cap=$(_dispatch_filter_repo_pr_backlog_candidates owner/low-cap "$candidates" | jq 'length')
 	disabled=$(_dispatch_filter_repo_pr_backlog_candidates owner/disabled "$candidates" | jq 'length')
+	# GH#38508: an applied guardrail records the counted PRs for the merge pass.
+	local marker_dir="${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-pr-backlog-guardrail}"
+	local low_cap_marker="" mixed_marker="absent"
+	[[ -f "${marker_dir}/owner--low-cap" ]] && { IFS=$'\t' read -r _ low_cap_marker <"${marker_dir}/owner--low-cap" || true; }
+	[[ -f "${marker_dir}/owner--mixed" ]] && mixed_marker="present"
+	if [[ "$low_cap_marker" != "|11|12|" || "$mixed_marker" != "absent" ]]; then
+		print_result "guardrail: applied PR backlog guardrail records only counted worker PRs" 1 \
+			"low_cap_marker=${low_cap_marker} mixed_marker=${mixed_marker}"
+	else
+		print_result "guardrail: applied PR backlog guardrail records only counted worker PRs" 0
+	fi
 	if [[ "$mixed" == "1" && "$worker" == "0" && "$low_cap" == "0" && "$disabled" == "1" ]] &&
 		grep -q 'not applied: repo=owner/mixed open_prs_total=13 open_prs_counted=2 threshold=12' "$LOGFILE" &&
 		grep -q 'repo=owner/worker open_prs_total=12 open_prs_counted=12 threshold=12 ordinary_candidates_suppressed=1' "$LOGFILE" &&

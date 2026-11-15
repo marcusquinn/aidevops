@@ -152,6 +152,59 @@ _dispatch_repo_t2449_permanent_block_heads() {
 	return 0
 }
 
+# jq definitions shared by the guardrail count and its merge-priority marker
+# (GH#38508), so both always select the same ready worker PRs.
+# shellcheck disable=SC2016 # jq program text; $labels etc. are jq variables.
+_DISPATCH_READY_WORKER_PR_JQ_DEFS='
+	def ready_worker_pr:
+		(.isDraft // false) != true
+		and (((.labels // []) | map(.name? // .)) as $labels
+			| (($labels | index("origin:worker")) != null
+				or ($labels | index("origin:worker-takeover")) != null)
+			and ($labels | index("hold-for-review")) == null
+			and ($labels | index("needs-maintainer-review")) == null);
+	def t2449_marked($blocked):
+		(.headRefOid // "") as $head
+		| ($blocked[(.number | tostring)] // "") as $marked
+		| ($head != "" and $marked == $head);
+'
+
+#######################################
+# Record the ready worker PRs an applied backlog guardrail counted (GH#38508).
+# The next deterministic merge pass reads this marker
+# (pulse-merge-backlog.sh::_pmp_guardrail_counted_pr_keys; keep the directory,
+# file name and "<epoch>\t|<n>|<n>|" format in sync) and evaluates those PRs
+# first, so the backlog that suppresses dispatch drains before other work.
+# Permanently t2449-blocked PRs are left out: pulse cannot merge them.
+# Ordering only: the merge pass still enforces every merge gate.
+#
+# Args: $1 - repository slug, $2 - PR list JSON the guardrail counted
+#######################################
+_dispatch_record_pr_backlog_guardrail_marker() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local state_dir="${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-pr-backlog-guardrail}"
+	local blocked_heads="{}" numbers="" marker="" tmp_marker=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
+	blocked_heads=$(_dispatch_repo_t2449_permanent_block_heads "$repo_slug") || blocked_heads="{}"
+	numbers=$(jq -r --argjson blocked "$blocked_heads" "${_DISPATCH_READY_WORKER_PR_JQ_DEFS}"'
+		if type == "array" then
+			[.[] | select(ready_worker_pr) | select(t2449_marked($blocked) | not)
+				| .number | select(type == "number" and . >= 1) | tostring]
+			| if length > 0 then "|" + join("|") + "|" else "" end
+		else "" end
+	' <<<"$pr_json" 2>/dev/null) || numbers=""
+	[[ "$numbers" =~ ^\|([1-9][0-9]*\|)+$ ]] || return 0
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	marker="${state_dir}/${repo_slug%%/*}--${repo_slug##*/}"
+	tmp_marker=$(mktemp "${marker}.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\t%s\n' "$(date +%s)" "$numbers" >"$tmp_marker" 2>/dev/null && mv -f "$tmp_marker" "$marker" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$tmp_marker" 2>/dev/null || true
+	return 0
+}
+
 #######################################
 # Count one open-PR listing for the backlog guardrail: all listed PRs, ready
 # worker PRs (non-draft origin:worker/origin:worker-takeover without
@@ -170,19 +223,11 @@ _dispatch_repo_pr_backlog_counts() {
 	local fetch_limit="$3"
 	local blocked_heads="{}" counts="" open_prs_total=0 ready_worker_prs=0 t2449_excluded=0
 	blocked_heads=$(_dispatch_repo_t2449_permanent_block_heads "$repo_slug") || blocked_heads="{}"
-	counts=$(jq -r --argjson blocked "$blocked_heads" '
+	counts=$(jq -r --argjson blocked "$blocked_heads" "${_DISPATCH_READY_WORKER_PR_JQ_DEFS}"'
 		if type == "array" then
 			length as $total
-			| [.[] | select((.isDraft // false) != true)
-				| ((.labels // []) | map(.name? // .)) as $labels
-				| select(($labels | index("origin:worker")) != null
-					or ($labels | index("origin:worker-takeover")) != null)
-				| select(($labels | index("hold-for-review")) == null
-					and ($labels | index("needs-maintainer-review")) == null)
-				| ((.headRefOid // "") as $head
-					| ($blocked[(.number | tostring)] // "") as $marked
-					| ($head != "" and $marked == $head))
-			] | "\($total) \(length) \(map(select(.)) | length)"
+			| [.[] | select(ready_worker_pr) | t2449_marked($blocked)]
+			| "\($total) \(length) \(map(select(.)) | length)"
 		else "0 0 0" end
 	' <<<"$pr_json" 2>/dev/null) || counts=""
 	read -r open_prs_total ready_worker_prs t2449_excluded <<<"$counts"
@@ -288,6 +333,7 @@ _dispatch_filter_repo_pr_backlog_candidates() {
 	filtered_count=$(jq 'length' <<<"$filtered_json" 2>/dev/null) || filtered_count="$candidate_count"
 	echo "[pulse-wrapper] Repository PR backlog guardrail: repo=${repo_slug} open_prs_total=${open_prs_total} open_prs_counted=${open_prs} threshold=${pr_threshold} ordinary_candidates_suppressed=$((candidate_count - filtered_count)) exempt_candidates=${filtered_count} t2449_blocked_excluded=${t2449_excluded}" >>"$LOGFILE"
 	_dispatch_stats_increment "pulse_dispatch_repo_pr_backlog_guardrail_applied"
+	_dispatch_record_pr_backlog_guardrail_marker "$repo_slug" "$pr_json"
 	printf '%s\n' "$filtered_json"
 	return 0
 }
