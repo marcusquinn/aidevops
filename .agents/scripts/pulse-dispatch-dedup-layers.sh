@@ -706,14 +706,17 @@ _dedup_layer6_report_block() {
 #######################################
 # GH#38352: path of the private layer-6 free-verdict hint for this pulse
 # process ($$ is stable across the dispatch subshells), repository and issue.
-# Layer 7 hands it to dispatch-claim-helper.sh, which validates the same prefix.
+# Layer 7 hands it to dispatch-claim-helper.sh, which validates the directory.
+# t19022: hints live in their own private directory. In the shared temp root
+# every free verdict's age prune stat-ed every root entry; with ~100k entries
+# that took 100-450s of layer 6 per candidate.
 # Arguments: issue_number, repo_slug
 # Output: hint path; returns 1 for malformed input
 #######################################
 _dedup_assignment_verdict_path() {
 	local issue_number="$1" repo_slug="$2"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
-	printf '%s/dispatch-assignment-verdict.%s.%s--%s.%s\n' \
+	printf '%s/dispatch-assignment-verdicts/%s.%s--%s.%s\n' \
 		"${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" "$$" \
 		"${repo_slug%%/*}" "${repo_slug##*/}" "$issue_number"
 	return 0
@@ -732,8 +735,9 @@ _dedup_assignment_verdict_path() {
 #######################################
 _dedup_assignment_verdict_record() {
 	local issue_number="$1" repo_slug="$2" self_login="$3" started="$4"
-	local path="" meta="" tmp=""
+	local path="" dir="" meta="" tmp=""
 	path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || return 0
+	dir="${path%/*}"
 	rm -f "$path" 2>/dev/null || true
 	[[ "$started" =~ ^[0-9]+$ && "$self_login" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$ ]] || return 0
 	meta=$(jq -cSe --arg list array 'select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
@@ -741,9 +745,12 @@ _dedup_assignment_verdict_record() {
 		assignees: ([.assignees[] | (.login? // .) | strings | ascii_downcase] | sort),
 		labels: ([.labels[] | (.name? // .) | strings] | sort)}' <<<"${ISSUE_META_JSON:-}" 2>/dev/null) || return 0
 	[[ "$meta" != *$'\t'* && "$meta" != *$'\n'* ]] || return 0
+	[[ -d "$dir" ]] || (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+	[[ -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 0
 	# Hints from launches that stopped before the claim are inert (keyed by
-	# pulse PID and age-bounded by the reader); prune them here.
-	find "${path%/*}" -maxdepth 1 -type f -name 'dispatch-assignment-verdict.*' -mmin +30 -delete 2>/dev/null || true
+	# pulse PID and age-bounded by the reader); prune them here. The directory
+	# holds only hints, so this scan stays small (t19022).
+	find "$dir" -maxdepth 1 -type f -mmin +30 -delete 2>/dev/null || true
 	tmp=$(umask 077; mktemp "${path}.XXXXXX" 2>/dev/null) || return 0
 	if printf 'v1\t%s\t%s\t%s\t%s\t%s\n' "$started" "$issue_number" "$repo_slug" "$self_login" "$meta" >"$tmp" &&
 		mv -f "$tmp" "$path"; then
