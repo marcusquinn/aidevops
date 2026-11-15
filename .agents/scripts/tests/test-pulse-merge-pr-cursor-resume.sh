@@ -329,6 +329,114 @@ _pmp_prepare_enriched_pr_backlog "org/repo" "$reconcile_fresh" reconciled_backlo
 assert_eq "reordered and changed fresh items all receive advisory enrichment" "true" "$(printf '%s' "$reconciled_backlog" | jq -r 'all(.[]; has("mergeable") and has("reviewDecision") and has("statusCheckRollup"))')"
 _pmp_clear_merge_enrichment_state
 
+# GH#38508: four guardrail-counted worker PRs are visited `not ready` while
+# their checks run, then go CLEAN at the same head. With the base resume lane
+# (2) only two drain before the tail; while the dispatch PR backlog guardrail
+# marker is fresh, all four are refreshed and evaluated CLEAN ahead of the
+# cursor in the very next pass. Non-counted PRs keep the base ordering.
+export PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR="${TMPDIR_TEST}/guardrail-state"
+GUARDRAIL_PENDING_KEYS=""
+pulse_pr_list_get() {
+	jq -cn '[range(301; 307) | {number: ., state: "OPEN", title: "worker", isDraft: false, labels: [{name: "origin:worker"}], headRefOid: "sha\(.)"}]
+		+ [{number: 307, state: "OPEN", title: "conflicting", isDraft: false, labels: [{name: "origin:interactive"}], headRefOid: "sha307"}]'
+	return 0
+}
+_pmp_enrich_prs_with_mergeability() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	printf '%s' "$pr_json" | jq -c 'map(. + {mergeable: (if .number == 307 then "CONFLICTING" else "MERGEABLE" end)})'
+	return 0
+}
+_pmp_enrich_prs_with_rest_check_status() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	printf '%s' "$pr_json" | jq -c --arg pending "$GUARDRAIL_PENDING_KEYS" 'map(.number as $n | . + {statusCheckRollup: (if ($pending | contains("|\($n)|"))
+		then [{status: "IN_PROGRESS", conclusion: null, state: "PENDING"}]
+		else [{status: "COMPLETED", conclusion: "SUCCESS", state: "SUCCESS"}] end)})'
+	return 0
+}
+_pmp_enrich_prs_with_review_decisions() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	printf '%s' "$pr_json" | jq -c 'map(. + {reviewDecision: "APPROVED"})'
+	return 0
+}
+# Record what the evaluator saw for each PR: CLEAN (merge-ready) or not ready.
+_process_single_ready_pr() {
+	local repo_slug="$1"
+	local pr_obj="$2"
+	local pr_number="" state=""
+	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty') || pr_number=""
+	state=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
+	PROCESSED_PRS="${PROCESSED_PRS}${pr_number}:${state} "
+	FAKE_NOW=$((FAKE_NOW + 1))
+	return 4
+}
+
+run_guardrail_lane_scenario() {
+	local with_marker="$1"
+	local first_rc=0 second_rc=0
+	rm -rf "$PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR"
+	rm -f "$PULSE_MERGE_PR_CURSOR_FILE" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-refreshed" \
+		"$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE" "$ENRICH_PHASE_STATE"
+	: >"$LOGFILE"
+	# Pass 1: the walk visits 301-304 while their checks are in flight, then
+	# pauses at the tail PR 307.
+	GUARDRAIL_PENDING_KEYS="|301|302|303|304|"
+	PROCESSED_PRS=""
+	FAKE_NOW=100
+	export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=6
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+	_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || first_rc=$?
+	GUARDRAIL_LANE_FIRST="${first_rc}|${PROCESSED_PRS}"
+	# The checks finish; the dispatch guardrail applied in between.
+	GUARDRAIL_PENDING_KEYS=""
+	if [[ "$with_marker" == "1" ]]; then
+		mkdir -p "$PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR"
+		printf '%s\t%s\n' 150 "|301|302|303|304|305|306|" >"${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR}/org--repo"
+	fi
+	PROCESSED_PRS=""
+	FAKE_NOW=200
+	export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+	_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || second_rc=$?
+	GUARDRAIL_LANE_SECOND="${second_rc}|${PROCESSED_PRS}"
+	return 0
+}
+
+run_guardrail_lane_scenario 0
+assert_eq "guardrail lane setup visits the in-flight PRs not ready, then pauses" \
+	"5|305:merge-ready 306:merge-ready 301:checks-in-progress 302:checks-in-progress 303:checks-in-progress 304:checks-in-progress " "$GUARDRAIL_LANE_FIRST"
+# 303 and 304 stay behind the cursor until the next revolution (the bug).
+assert_eq "without the guardrail the base lane drains only two CLEAN PRs before the tail" \
+	"0|301:merge-ready 302:merge-ready 307:dirty-conflicted " "$GUARDRAIL_LANE_SECOND"
+run_guardrail_lane_scenario 1
+assert_eq "guardrail lane setup is unchanged by the marker" \
+	"5|305:merge-ready 306:merge-ready 301:checks-in-progress 302:checks-in-progress 303:checks-in-progress 304:checks-in-progress " "$GUARDRAIL_LANE_FIRST"
+assert_eq "active guardrail drains every counted PR that went CLEAN ahead of the cursor" \
+	"0|301:merge-ready 302:merge-ready 303:merge-ready 304:merge-ready 307:dirty-conflicted " "$GUARDRAIL_LANE_SECOND"
+assert_eq "guardrail lane promotion is logged" "1" "$(grep -c 'moved 4 merge-ready PR(s) ahead of cursor index=6 guardrail_counted=4' "$LOGFILE")"
+
+# A stale or foreign marker leaves the base ordering untouched.
+mkdir -p "$PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR"
+printf '%s\t%s\n' 100 "|301|" >"${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR}/org--repo"
+FAKE_NOW=1000
+assert_eq "stale guardrail marker is ignored" "" "$(_pmp_guardrail_counted_pr_keys org/repo)"
+FAKE_NOW=200
+assert_eq "fresh guardrail marker yields counted keys" "|301|" "$(_pmp_guardrail_counted_pr_keys org/repo)"
+assert_eq "guardrail marker is per repository" "" "$(_pmp_guardrail_counted_pr_keys org/other)"
+# Counted actionable PRs sort ahead of other work; held/conflicting ones do not.
+sort_input='[{"number":401,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS","state":"SUCCESS"}]},
+	{"number":402,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[]},
+	{"number":403,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":null,"state":"PENDING"}]}]'
+assert_eq "uncounted backlog sort keeps bucket order" "401,403,402" "$(_pmp_sort_prs_by_backlog_priority "$sort_input" org/repo | jq -r 'map(.number) | join(",")')"
+printf '%s\t%s\n' 150 "|402|403|" >"${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR}/org--repo"
+assert_eq "active guardrail sorts counted actionable PRs first" "403,401,402" "$(_pmp_sort_prs_by_backlog_priority "$sort_input" org/repo | jq -r 'map(.number) | join(",")')"
+unset PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR
+
 # A cycle deadline earlier than the merge-pass grace budget pauses the same
 # cursor machinery before the instance lock can be reclaimed.
 # shellcheck source=../pulse-watchdog.sh
