@@ -289,3 +289,49 @@ deployment. Review the expanded privilege scope before any operator-owned upgrad
 an older installed copy simply refuses the new mode. Do not invoke a source-checkout
 copy through sudo. Remove the opt-in flag to disable reference inspection. Actual
 protected-process verification and retirement require their own operation authority.
+
+### Same-boot cleanup census (GH#38428)
+
+Sealing a managed worktree during `worktree-helper.sh clean --auto` requires a
+same-boot census with no references **and no uncertain tasks** for the invoking
+UID. On shared Linux hosts, non-dumpable same-UID tasks such as `ssh-agent`,
+`gpg-agent`, `sshd` session children and `(sd-pam)` hide their CWD and descriptors,
+which used to leave every candidate uncertain. Skips now name the cause, with counts
+and classes only, for example:
+
+```text
+Skipped <branch> - cleanup lease was not acquired: same-boot process census active or unavailable: status=available references=0 uncertain=2(nondumpable=2) excluded_nondumpable=3(pam-session-keeper=1,privsep-session=1,user-manager=1) privileged_census=inspection-not-enabled
+```
+
+`worktree_process_census.py` excludes an unreadable task only when
+`worktree_process_attestation.py` proves, from facts the user cannot forge, that it
+runs root-installed session code. A census running as root, or in a non-initial
+user namespace, never attests a task:
+
+- `user-manager`: the exec'd child of a root `systemd` PID 1 that PID 1 itself
+  records as both `MainPID` and `ExecMainPID` of `user@UID.service` (read with a
+  root-owned `systemctl` and an empty environment), unchanged across that query.
+  Names, the user-delegated cgroup and root-owned executables are not evidence;
+  without `systemctl` the task stays uncertain.
+- `pam-session-keeper`: the first child of that manager, forked within five seconds
+  of the manager starting and never exec'd.
+- `privsep-session`: an unprivileged, never-exec'd child of a root `sshd` or
+  `sshd-session`.
+
+Process names alone never grant an exclusion: renamed, exec'd, re-parented or late
+look-alikes stay `nondumpable` uncertain. Agents such as `ssh-agent` and `gpg-agent`
+run user-controllable code, so only the root census below can clear them.
+
+With the reviewed inspector installed as above and
+`AIDEVOPS_PROTECTED_PROC_INSPECTION=1` set, any remaining uncertainty triggers one
+`--census CANDIDATE` call. The root inspector checks every task of the invoking UID
+(CWD, descriptors, `PWD`/`AIDEVOPS_WORKTREE`) and returns only counts bound to the
+directory device and inode, within its own five-second deadline. It refuses a `/proc`
+from another PID namespace or a `hidepid`/`subset` mount rather than count a partial
+view. Like the unprivileged census, it sees only its own PID namespace; processes in
+other namespaces sharing a bind-mounted tree are outside both views. `privileged_census=clear`
+resolves the uncertainty; `held` keeps the tree; any other value
+(`inspection-not-enabled`, `inspector-unavailable`) leaves the original uncertainty
+in place. An installed copy older than this mode refuses `--census` and keeps the tree,
+so upgrade it through the same review steps. Do not stop session agents or relax the
+census to clear a skip.

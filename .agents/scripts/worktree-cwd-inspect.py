@@ -3,7 +3,8 @@
 
 Install a root-owned copy with a single-executable sudoers rule. Never run
 this from a writable worktree through sudo. Legacy output is a CWD path;
---references emits bound census evidence, never deletion authority.
+--references (one PID) and --census (all invoker tasks, counts only) emit
+bound census evidence, never deletion authority.
 
 The interpreter is deliberately absolute, not `/usr/bin/env python3`: this
 runs as root via sudo, where an env lookup could follow the caller's PATH.
@@ -11,6 +12,7 @@ The installing operator rewrites line 1 to the root-owned python3 of the host
 (see reference/worktree-cwd-visibility.md).
 """
 
+import functools
 import json
 import os
 from pathlib import Path
@@ -28,14 +30,15 @@ def uid_fields_accepted(values: list, sudo_uid: int) -> bool:
     such as `fusermount3 auto_unmount` or an open `sudo` parent (GH#32871).
     Any other UID, including a root real UID, is another identity.
     """
-    if sudo_uid <= 0 or len(values) != 4:
-        return False
-    if not all(re.fullmatch(r"[0-9]+", value) for value in values):
-        return False
-    uids = [int(value) for value in values]
-    if uids[0] != sudo_uid:
-        return False
-    return all(uid in (sudo_uid, 0) for uid in uids[1:])
+    uids = parse_uids(values)
+    return sudo_uid > 0 and uids[0] == sudo_uid and all(uid in (sudo_uid, 0) for uid in uids[1:])
+
+
+def parse_uids(values: list) -> list:
+    """Real, effective, saved and filesystem UIDs; [-1] (no valid UID) when malformed."""
+    if not re.fullmatch(r"[0-9]+( [0-9]+){3}", " ".join(values)):
+        return [-1]
+    return [int(value) for value in values]
 
 
 def owned_by_invoker(pid: str, sudo_uid: int) -> bool:
@@ -70,17 +73,30 @@ def directory_identity(candidate: Path, sudo_uid: int) -> tuple:
     return info.st_dev, info.st_ino
 
 
-def holds_candidate(reference: Path, candidate: Path) -> bool:
-    raw = os.readlink(reference)
+def safe_text(text: str) -> bool:
+    """Bounded text without control characters."""
+    return len(text) <= 4096 and not any(ord(character) < 32 or ord(character) == 127 for character in text)
+
+
+def names_candidate(text: str, candidate: Path) -> bool:
     # The suffix can be a literal filename, not only a kernel annotation.
-    targets = (Path(raw), Path(raw.removesuffix(" (deleted)")))
+    targets = (Path(text), Path(text.removesuffix(" (deleted)")))
     return any(target == candidate or candidate in target.parents for target in targets)
+
+
+def link_texts(task: Path):
+    """Yield a task's CWD and open-descriptor targets."""
+    yield os.readlink(task / "cwd")
+    for descriptor in (task / "fd").iterdir():
+        try:
+            yield os.readlink(descriptor)
+        except FileNotFoundError:
+            continue  # Independently closed descriptor; the task identity is rechecked.
 
 
 def reference_report(pid: str, candidate_text: str, sudo_uid: int) -> dict:
     """Observe all task CWD/fd tables; emit no paths or descriptor contents."""
-    if (not re.fullmatch(r"[1-9][0-9]*", pid) or len(candidate_text) > 4096
-            or any(ord(character) < 32 or ord(character) == 127 for character in candidate_text)):
+    if not re.fullmatch(r"[1-9][0-9]*", pid) or not safe_text(candidate_text):
         raise ValueError("invalid reference request")
     candidate = Path(candidate_text)
     directory = directory_identity(candidate, sudo_uid)
@@ -90,14 +106,8 @@ def reference_report(pid: str, candidate_text: str, sudo_uid: int) -> dict:
     if not tasks or any(not task.name.isdecimal() for task in tasks):
         raise ValueError("thread inventory unavailable")
     identities = {task.name: task_identity(task, sudo_uid) for task in tasks}
-    held = False
-    for task in tasks:
-        held = holds_candidate(task / "cwd", candidate) or held
-        for descriptor in (task / "fd").iterdir():
-            try:
-                held = holds_candidate(descriptor, candidate) or held
-            except FileNotFoundError:
-                continue  # Independently closed descriptor; task identity is rechecked below.
+    # Every task is read (a list, not a generator); a match only ends that task's scan.
+    held = any([any(names_candidate(text, candidate) for text in link_texts(task)) for task in tasks])
     after = {task.name: task_identity(task, sudo_uid)
              for task in (process / "task").iterdir()}
     if (after != identities or task_identity(process, sudo_uid) != identity
@@ -107,28 +117,115 @@ def reference_report(pid: str, candidate_text: str, sudo_uid: int) -> dict:
             "directory": list(directory), "status": "held" if held else "clear"}
 
 
+def reference_texts(task: Path):
+    """Yield what the unprivileged census matches: CWD, descriptors, worktree env."""
+    yield from link_texts(task)
+    for entry in (task / "environ").read_bytes().split(b"\0"):
+        key, separator, value = entry.partition(b"=")
+        if separator and key in (b"PWD", b"AIDEVOPS_WORKTREE"):
+            yield os.fsdecode(value)
+
+
+def stat_fields(task: Path) -> list:
+    """Fields after the mutable comm: index 0 is the state, 19 the start time."""
+    return (task / "stat").read_text(encoding="ascii").rsplit(")", 1)[1].split()
+
+
+def task_outcome(task: Path, candidate: Path, sudo_uid: int) -> list:
+    """Return [held|clear|uncertain] for an invoker task; [] for foreign or ended tasks."""
+    (uids,) = [parse_uids(line.split()[1:]) for line in
+               (task / "status").read_text(encoding="ascii").splitlines() if line.startswith("Uid:")]
+    if -1 in uids:
+        raise ValueError("task UID unavailable")
+    # Mirror the unprivileged census: the invoker in any of the four UID fields.
+    if sudo_uid not in uids:
+        return []
+    fields = stat_fields(task)
+    if fields[0] in ("Z", "X"):
+        return []
+    held = any(names_candidate(text, candidate) for text in reference_texts(task))
+    return ["held" if held else "clear" if stat_fields(task)[19] == fields[19] else "uncertain"]
+
+
+def guarded(path: Path, observe) -> list:
+    """Vanished paths ended; any other unreadable state stays uncertain."""
+    try:
+        return observe()
+    except FileNotFoundError:
+        return ["uncertain" if os.path.lexists(path) else "ended"]
+    except (OSError, ValueError, IndexError):
+        return ["uncertain"]
+
+
+def process_outcomes(process: Path, candidate: Path, sudo_uid: int) -> list:
+    """Every thread is inspected: unshared CWD and descriptor tables can differ."""
+    return guarded(process, lambda: [
+        outcome for task in list((process / "task").iterdir())
+        for outcome in guarded(task, functools.partial(task_outcome, task, candidate, sudo_uid))])
+
+
+PROC_MOUNT = re.compile(r"\S+ \S+ \S+ \S+ /proc (\S+) .*?- (\S+) \S+ (\S+)")
+FILTERED_PROC_OPTION = re.compile(r"hidepid=(?!(?:0|off)$).*|subset=.*")
+
+
+def require_full_proc_view() -> None:
+    """Refuse a proc from another PID namespace or a filtered mount: hidden tasks are never clear.
+
+    Like the unprivileged census, this counts the census's own PID namespace;
+    processes in other namespaces (such as a host sharing a bind-mounted tree)
+    are outside both views, so this result adds no visibility either lacks.
+    """
+    namespace_pids = re.findall(r"^NSpid:\s+(.+)$",
+                                Path("/proc/self/status").read_text(encoding="ascii"), re.M)
+    mounts = [match.groups() for match in map(
+        PROC_MOUNT.fullmatch, Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines())
+        if match]
+    options = ",".join(mount[0] + "," + mount[2] for mount in mounts).split(",")
+    if (namespace_pids != [str(os.getpid())] or [mount[1] for mount in mounts] != ["proc"]
+            or any(map(FILTERED_PROC_OPTION.fullmatch, options))):
+        raise ValueError("partial proc view")
+
+
+def census_report(candidate_text: str, sudo_uid: int) -> dict:
+    """Count the invoker's task references to one tree; emit counts only (GH#38428)."""
+    if not safe_text(candidate_text):
+        raise ValueError("invalid census request")
+    require_full_proc_view()
+    candidate = Path(candidate_text)
+    directory = directory_identity(candidate, sudo_uid)
+    processes = [process for process in Path("/proc").iterdir() if process.name.isdecimal()]
+    outcomes = [outcome for process in processes
+                for outcome in process_outcomes(process, candidate, sudo_uid)]
+    if (str(os.getpid()) not in {process.name for process in processes}
+            or directory_identity(candidate, sudo_uid) != directory):
+        raise ValueError("census identities changed during inspection")
+    return {"version": 1, "mode": "census", "directory": list(directory),
+            "references": outcomes.count("held"), "uncertain": outcomes.count("uncertain")}
+
+
+def bounded_report(deadline: int, build) -> int:
+    """Bound the privileged child itself, not only its sudo parent's wait."""
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    signal.alarm(deadline)
+    try:
+        print(json.dumps(build(), sort_keys=True))
+    finally:
+        signal.alarm(0)
+    return 0
+
+
 def main() -> int:
     try:
-        if os.geteuid() != 0:
-            raise ValueError("privileged invocation is required")
         sudo_uid = os.environ.get("SUDO_UID", "")
-        if not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
-            raise ValueError("invoking identity is invalid")
+        if os.geteuid() != 0 or not re.fullmatch(r"[1-9][0-9]*", sudo_uid):
+            raise ValueError("privileged invocation by a valid invoking identity is required")
         if len(sys.argv) == 4 and sys.argv[1] == "--references":
-            # Bound the privileged child itself, not only its sudo parent's wait.
-            signal.signal(signal.SIGALRM, signal.SIG_DFL)
-            signal.alarm(2)
-            try:
-                report = reference_report(sys.argv[2], sys.argv[3], int(sudo_uid))
-                print(json.dumps(report, sort_keys=True))
-            finally:
-                signal.alarm(0)
-            return 0
-        if len(sys.argv) != 2:
+            return bounded_report(2, lambda: reference_report(sys.argv[2], sys.argv[3], int(sudo_uid)))
+        if len(sys.argv) == 3 and sys.argv[1] == "--census":
+            return bounded_report(5, lambda: census_report(sys.argv[2], int(sudo_uid)))
+        if len(sys.argv) != 2 or not re.fullmatch(r"[1-9][0-9]*", sys.argv[1]):
             raise ValueError("invalid inspector arguments")
         pid = sys.argv[1]
-        if not re.fullmatch(r"[1-9][0-9]*", pid):
-            raise ValueError("invoking identity is invalid")
         proc_dir = f"/proc/{pid}"
         invoker_uid = int(sudo_uid)
         before = os.stat(proc_dir, follow_symlinks=False)
@@ -136,10 +233,9 @@ def main() -> int:
             raise ValueError("process owner does not match the invoking user")
         cwd = os.readlink(f"{proc_dir}/cwd")
         after = os.stat(proc_dir, follow_symlinks=False)
-        if before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid):
-            raise ValueError("process identity changed during inspection")
-        if not cwd.startswith("/") or any(ord(character) < 32 or ord(character) == 127 for character in cwd):
-            raise ValueError("process CWD is not a safe absolute path")
+        if (before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid)
+                or not cwd.startswith("/") or not safe_text(cwd)):
+            raise ValueError("process changed or its CWD is not a safe absolute path")
     except (OSError, ValueError, IndexError):
         return 1
     print(cwd)

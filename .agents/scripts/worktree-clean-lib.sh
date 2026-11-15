@@ -197,22 +197,46 @@ _clean_deferred_parent_alive() {
 	return 2
 }
 
+# The census refusal from a seal's stderr, printable and bounded, for the skip
+# line. Only the census summary (counts and classes) passes; other stderr, such
+# as a traceback naming a path, yields nothing so the caller's fixed text is used.
+_clean_lease_refusal_text() {
+	local text="$1"
+	# Whole seal line: "managed-worktree: <Error>: <census summary of key=value tokens>".
+	local census_line='^managed-worktree: [A-Za-z]+: (same-boot process census active or unavailable: [A-Za-z0-9_=(),. -]+)$'
+	local line=""
+	local last=""
+	while IFS= read -r line; do
+		[[ "$line" =~ $census_line ]] && last="${BASH_REMATCH[1]}"
+	done <<<"$text"
+	# The skip line uses echo -e, so drop backslashes along with controls.
+	printf '%s' "$last" | LC_ALL=C tr -cd '[:print:]' | tr -d "\\\\" | cut -c1-400
+	return 0
+}
+
+# Sets _WT_CLEAN_LAST_LEASE_REFUSAL so skips name the cause (GH#38428).
 _clean_acquire_removal_lease() {
 	local wt_path="$1"
 	local wt_branch="$2"
+	_WT_CLEAN_LAST_LEASE_REFUSAL="ownership claim refused"
 	declare -F claim_worktree_ownership >/dev/null 2>&1 || return 1
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "$_WT_CLEAN_REMOVAL_LEASE_SESSION" \
 		--task "$_WT_CLEAN_REMOVAL_LEASE_TASK" >/dev/null 2>&1 || return 1
 	local lifetime_helper="${BASH_SOURCE[0]%/*}/worktree-managed-lifetime.py"
 	local managed_status=0
+	local seal_error=""
 	WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" status "$wt_path" >/dev/null 2>&1 || managed_status=$?
 	if [[ "$managed_status" -eq 0 ]]; then
-		if ! WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" seal "$wt_path"; then
+		# Capture only stderr: the seal refusal names the census class.
+		if ! seal_error=$(WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-}" python3 "$lifetime_helper" seal "$wt_path" 2>&1 >/dev/null); then
+			_WT_CLEAN_LAST_LEASE_REFUSAL=$(_clean_lease_refusal_text "$seal_error")
+			[[ -n "$_WT_CLEAN_LAST_LEASE_REFUSAL" ]] || _WT_CLEAN_LAST_LEASE_REFUSAL="managed-worktree seal refused"
 			_clean_release_removal_lease "$wt_path" || true
 			return 1
 		fi
 	elif [[ "$managed_status" -ne 3 ]]; then
+		_WT_CLEAN_LAST_LEASE_REFUSAL="managed-worktree status unavailable (exit $managed_status)"
 		_clean_release_removal_lease "$wt_path" || true
 		return 1
 	fi
@@ -221,9 +245,11 @@ _clean_acquire_removal_lease() {
 		receipt_path=$(full_loop_cleanup_receipt_for_worktree "$wt_path" 2>/dev/null || true)
 	fi
 	if [[ -n "$receipt_path" ]] && ! full_loop_transition_cleanup_receipt "$receipt_path" "$_FULL_LOOP_CLEANUP_LEASED" "$$"; then
+		_WT_CLEAN_LAST_LEASE_REFUSAL="cleanup receipt transition refused"
 		_clean_release_removal_lease "$wt_path" || true
 		return 1
 	fi
+	_WT_CLEAN_LAST_LEASE_REFUSAL=""
 	return 0
 }
 
@@ -1042,6 +1068,7 @@ _WT_CLEAN_LAST_REMOVAL_OUTCOME="$_WT_CLEAN_OUTCOME_SKIPPED"
 _WT_CLEAN_ARCHIVE_OPERATION_ID="worktree-cleanup"
 _WT_CLEAN_LAST_ARCHIVE_ID=""
 _WT_CLEAN_LAST_PRESERVE_BRANCH="${_WT_CLEAN_LAST_PRESERVE_BRANCH:-$_WT_CLEAN_BOOL_FALSE}"
+_WT_CLEAN_LAST_LEASE_REFUSAL=""
 
 _clean_protected_mark() {
 	local wt_path="$1"
@@ -1987,7 +2014,7 @@ _clean_remove_merged() {
 					fi
 					if ! _clean_acquire_removal_lease "$worktree_path" "$worktree_branch"; then
 						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "cleanup-lease-skip" "$_WT_CLEAN_MODE_SKIPPED"
-						echo -e "${YELLOW}Skipped $worktree_branch - cleanup lease was not acquired${NC}" >&2
+						echo -e "${YELLOW}Skipped $worktree_branch - cleanup lease was not acquired${_WT_CLEAN_LAST_LEASE_REFUSAL:+: $_WT_CLEAN_LAST_LEASE_REFUSAL}${NC}" >&2
 						worktree_path=""
 						worktree_branch=""
 						continue
