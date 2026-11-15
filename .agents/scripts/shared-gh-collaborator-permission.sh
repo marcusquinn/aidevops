@@ -303,6 +303,21 @@ _gh_collaborator_permission_not_collaborator() {
 # Returns: 0=lookup succeeded (404 maps to none), 2=lookup/API/parse failure,
 #          75=transport admission deferred (no permission verdict).
 #######################################
+# Only use caller-provided scratch files inside the framework temp root. Resolve
+# parent directories physically so a symlinked directory cannot escape it.
+_gh_collaborator_scratch_file_safe() {
+	local file="$1"
+	local root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	local parent=""
+	[[ -n "$file" && -f "$file" && ! -L "$file" && -O "$file" ]] || return 1
+	root=$(cd "$root" && pwd -P) || return 1
+	parent=$(cd "$(dirname "$file")" && pwd -P) || return 1
+	case "$parent/" in
+	"$root/"*) return 0 ;;
+	esac
+	return 1
+}
+
 _gh_collaborator_permission_lookup() {
 	local repo_slug="$1"
 	local user="$2"
@@ -323,8 +338,21 @@ _gh_collaborator_permission_lookup() {
 			_gcp_cached="${_gcp_entry#*=}"
 		fi
 	done <<<"$_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO"
+	local _gcp_file="${AIDEVOPS_GH_COLLAB_MEMO_FILE:-}"
+	if ! _gh_collaborator_scratch_file_safe "$_gcp_file"; then
+		_gcp_file=""
+	fi
+	if [[ -z "$_gcp_cached" && -n "$_gcp_file" ]]; then
+		while IFS= read -r _gcp_entry; do
+			if [[ "${_gcp_entry%%=*}" == "$_gcp_key" ]]; then
+				case "${_gcp_entry#*=}" in
+				admin | maintain | write | triage | read | none) _gcp_cached="${_gcp_entry#*=}" ;;
+				esac
+			fi
+		done <"$_gcp_file"
+	fi
 	if [[ -n "$_gcp_cached" ]]; then
-		if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" && ! -L "$AIDEVOPS_GH_COLLAB_STATS_FILE" && -O "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+		if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
 			printf 'hit\n' >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
 		fi
 		AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
@@ -338,7 +366,7 @@ _gh_collaborator_permission_lookup() {
 		return 0
 	fi
 
-	if [[ -n "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}" && -f "$AIDEVOPS_GH_COLLAB_STATS_FILE" && ! -L "$AIDEVOPS_GH_COLLAB_STATS_FILE" && -O "$AIDEVOPS_GH_COLLAB_STATS_FILE" ]]; then
+	if _gh_collaborator_scratch_file_safe "${AIDEVOPS_GH_COLLAB_STATS_FILE:-}"; then
 		printf 'miss %s\n' "$_gcp_key" >>"$AIDEVOPS_GH_COLLAB_STATS_FILE" || true
 	fi
 	_gh_collaborator_permission_lookup_uncached "$repo_slug" "$user" _gcp_fresh || _gcp_rc=$?
@@ -346,6 +374,9 @@ _gh_collaborator_permission_lookup() {
 		case "$_gcp_fresh" in
 		admin | maintain | write | triage | read | none)
 			_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO="${_AIDEVOPS_GH_COLLAB_PERMISSION_MEMO}${_gcp_key}=${_gcp_fresh}"$'\n'
+			if [[ -n "$_gcp_file" ]]; then
+				printf '%s=%s\n' "$_gcp_key" "$_gcp_fresh" >>"$_gcp_file" || true
+			fi
 			;;
 		esac
 		if [[ -n "$out_var" ]]; then
@@ -358,7 +389,8 @@ _gh_collaborator_permission_lookup() {
 }
 
 # Per-process memo of successful lookups: newline-delimited "repo|login=perm",
-# lowercase keys. Never persisted, so the next process observes revocation.
+# lowercase keys. Optional per-run scratch sharing survives command substitution;
+# the routine deletes it on exit, so the next run observes revocation.
 # Failures, deferrals and fallback/retry routes are never memoized.
 _AIDEVOPS_GH_COLLAB_PERMISSION_MEMO=""
 
