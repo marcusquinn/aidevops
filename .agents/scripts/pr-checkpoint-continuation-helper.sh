@@ -401,6 +401,25 @@ _prrts_progress_step() {
 	return 0
 }
 
+# Prompt step 7 prerequisite route (t19039). Args: scanner path, repo ref, PR ref.
+_prrts_prerequisite_step() {
+	local scanner_path="$1"
+	local repo_slug_ref="$2"
+	local repair_number_ref="$3"
+	printf '%s\n' \
+		"   Prerequisite route (t19039): before \`mark-blocked code\` or" \
+		"   \`infrastructure\` for a concrete, reproducible defect in this repository's" \
+		"   code or tooling outside this draft's scope, run" \
+		"   \`\"${scanner_path}\" route-prerequisite \"${repo_slug_ref}\" \"${repair_number_ref}\" <code|infrastructure> <short_reason> <details_file>\`" \
+		'   once, with a details file naming the files, reproduction, guards to keep' \
+		'   and verification. It files or reuses one worker-ready prerequisite issue and' \
+		"   holds #${PCC_LINKED_ISSUE} until that issue closes; it is not a terminal" \
+		"   state, so then run \`mark-blocked\` with the same details. Skip it for" \
+		'   runner-local or transient blockers (quota, rate limit, a secret or login' \
+		"   missing on this runner), and fall back to plain \`mark-blocked\` when it refuses."
+	return 0
+}
+
 # Prompt steps 4-5 durability side-ref rule (non-PR ref; PR head stays unchanged).
 # Args: part (push|cleanup), side-ref name
 _prrts_durability_text() {
@@ -487,10 +506,11 @@ _prrts_write_prompt_file() {
 	local repo_slug_ref="\$WORKER_REPO_SLUG"
 	local linked_issue_ref="\$AIDEVOPS_PR_REPAIR_LINKED_ISSUE"
 	local issue_assignee_ref="\$AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE"
-	local closing_link_step="" progress_step="" durability_push="" durability_cleanup=""
+	local closing_link_step="" progress_step="" prerequisite_step="" durability_push="" durability_cleanup=""
 	: "$_thread_count" "$_fingerprint" "$_preview"
 	closing_link_step="$(_prrts_closing_link_step "$repair_number_ref" "$repo_slug_ref")"
 	progress_step="$(_prrts_progress_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
+	prerequisite_step="$(_prrts_prerequisite_step "$scanner_path" "$repo_slug_ref" "$repair_number_ref")"
 
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -555,16 +575,7 @@ ${durability_cleanup}
    values, inaccessible context, unknown secrets or an irreversible commitment,
    or contradicts the brief's explicit text; the details file then lists every
    option with your recommendation. Never close the draft.
-   Prerequisite route (t19039): before \`mark-blocked code\` or
-   \`infrastructure\` for a concrete, reproducible defect in this repository's
-   code or tooling outside this draft's scope, run
-   \`"${scanner_path}" route-prerequisite "${repo_slug_ref}" "${repair_number_ref}" <code|infrastructure> <short_reason> <details_file>\`
-   once, with a details file naming the files, reproduction, guards to keep
-   and verification. It files or reuses one worker-ready prerequisite issue and
-   holds #${PCC_LINKED_ISSUE} until that issue closes; it is not a terminal
-   state, so then run \`mark-blocked\` with the same details. Skip it for
-   runner-local or transient blockers (quota, rate limit, a secret or login
-   missing on this runner), and fall back to plain \`mark-blocked\` when it refuses.
+${prerequisite_step}
 ${progress_step}
 Do not invoke more than one terminal-state command. A prose report or successful process
 exit is not a terminal state: exiting without one leaves the draft for human
