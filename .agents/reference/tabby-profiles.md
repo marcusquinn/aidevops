@@ -120,8 +120,10 @@ the stop. The launcher waits in the same tab and, once `resume` releases the
 hold, reopens `opencode --session <id>`, keeping the tab's profile name,
 colour and position. Ctrl-C while waiting leaves a shell instead.
 
-When the tab is gone, `resume` (or `opencode-session-restart-helper.sh
-tabby-open <ses_id>`) opens a new tab with `Tabby profile <name>`. Tabby's CLI
+When the tab is gone, or its launcher predates hold support (tabs opened
+before the update leave a shell after the stop), `resume` (or
+`opencode-session-restart-helper.sh tabby-open <ses_id>`) opens a new tab with
+`Tabby profile <name>`. Tabby's CLI
 cannot pass a directory or command, and it does not reload an externally
 edited `config.yaml`, so the helper finds the unique aidevops OpenCode profile
 for the session's directory (`tabby_session_resume.py`) and writes a
