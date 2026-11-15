@@ -57,3 +57,55 @@ summary and the `collaborator-permission-rest` attempts in the API ledger.
 Report a measurable reduction against the issue's 56–77 attempts/30-minute
 baseline, or evidence that the remaining misses are distinct pairs, before
 marking operational acceptance complete. Do not bypass the reserve.
+
+## Continuation verification
+
+At 2026-11-15T00:59Z, PR #38284 still pointed to
+`2c54f12f5baaf303e16d4b8440da7bfd66b5cfd4`. Its reported CI checks were
+successful or skipped, including the previously delegated
+[ShellCheck job](https://github.com/marcusquinn/aidevops/actions/runs/43657626428/job/132641209895)
+and
+[Bash 3.2 compatibility job](https://github.com/marcusquinn/aidevops/actions/runs/43657626428/job/132641209859).
+The cache suite's 29 assertions and standalone suite's 37/37 checks passed
+again using the commands above. No implementation changes were needed for
+this continuation.
+
+### Scope correction for measurement
+
+The admitted `--dry-run --repo marcusquinn/aidevops` passes at
+01:07:05–01:07:09Z and 01:17:25–01:17:30Z completed with zero lookups. A further
+attempt at 01:20:33Z deferred at 311/5000. The authoritative rate probe at
+01:21:36Z reported 259 remaining and reset epoch 1794706054. After waiting for
+that reset, a pass at 01:27:36–01:27:41Z again completed with zero lookups.
+None of those zero samples proves effectiveness.
+
+The empty scoped runs have a separate configuration explanation:
+`pulse-merge-routine.sh` synthesizes a `--repo` entry without `role` or
+`maintainer`. `get_repo_role_by_slug` in `pulse-repo-meta.sh` conservatively
+defaults that entry to contributor for a non-owner runner, before any
+collaborator permission lookup. The authenticated user was verified as
+`vladimirdulov`, not the repo owner. The operator's real target entry explicitly
+configures that user as maintainer and has `role=maintainer`.
+
+For a valid bounded measurement, copy only the existing target entry into a
+private `REPOS_JSON` file, verify JSON equality with the source entry, and use
+the normal `--dry-run` path without `--repo`. Point
+`PULSE_MERGE_CHECKPOINT_FILE` and `PULSE_MERGE_PR_CURSOR_FILE` at private scratch
+paths to avoid changing the scheduled pass's cursor. This preserves configured
+authority; it does not substitute for the live collaborator permission check
+or bypass quota admission. Temporary provenance and execution-line diagnostics
+were removed, leaving the implementation identical to the published head.
+
+### Follow-up brief: preserve scoped repo metadata
+
+The pre-existing `--repo` metadata loss is outside this memo-sharing change.
+No additional issue was opened under the bounded continuation contract.
+
+- Files: `pulse-merge-routine.sh` single-repo entry construction and the
+  existing `tests/test-pulse-merge-routine-standalone.sh` suite.
+- Pattern: preserve the matching configured entry's role/maintainer metadata
+  when narrowing scope; keep unknown repos conservative. Never infer elevated
+  authority from the CLI slug or remove `repo_allows_pulse_write_actions`.
+- Verification: configured non-owner maintainer reaches the live permission
+  gate; unknown/contributor repos remain blocked; an explicit repo filter never
+  includes another repo. Run the existing standalone suite and ShellCheck.
