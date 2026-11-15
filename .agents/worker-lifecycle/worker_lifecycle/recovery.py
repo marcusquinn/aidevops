@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid5
 
 from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .reclaim.unowned import unowned_authorized
 from .enrollment import GenerationEnrollment, _directory_inode, _git_directory
 from .storage import LifecycleRegistry, StoreConflict
 
@@ -21,13 +22,20 @@ def recovery_evidence(
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
-    if not rows and enrolled_only_authorized(store, generation):
+    # Reclaim's evidence-backed event (GH#38405) is preferred and named as such;
+    # the legacy operator-confirmed event is removed with the legacy path.
+    proof: dict[str, object] | None = None
+    if not rows and unowned_authorized(store, generation):
+        proof = {"authorization": "reclaim"}
+    elif not rows and enrolled_only_authorized(store, generation):
+        proof = {"operator_confirmed": True}
+    if proof is not None:
         admin = _git_directory(path)
         return {
             "type": "worktree-recovery-authorized", "generation_id": generation,
             "path": str(path), "directory_identity": _directory_inode(path),
             "git_directory": str(admin), "git_identity": _directory_inode(admin),
-            "admitted_runs": [], "operator_confirmed": True,
+            "admitted_runs": [], **proof,
         }
     if (admission is None or admission["state"] != "closed" or not rows
             or not all(row["admitted"] and row["state"] == "ended" for row in rows)):

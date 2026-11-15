@@ -629,20 +629,35 @@ _pulse_run_routines_while_busy() {
 # phase assigns _pulse_merge_stage_reserve_s, declared here, through bash
 # dynamic scoping; the PR sweeps reuse it. tests/test-permission-block-breaker.sh
 # extracts this function plus every _pulse_pipeline_* helper.
+# t19015: a cooperatively drained cycle stops at the next phase boundary
+# (_pulse_cycle_drain_exit, pulse-dispatch-lib.sh); prefetch counters and
+# merge health are still collected.
 #
 # Exit code: always 0
 # ---------------------------------------------------------------------------
 _pulse_run_deterministic_pipeline() {
+	if _pulse_cycle_drain_exit "cycle_start_stages"; then
+		_pulse_drain_prefetch_counters
+		return 0
+	fi
 	_pulse_pipeline_cycle_start_stages
 	local _pulse_merge_stage_reserve_s=""
+	_pulse_cycle_drain_exit "merge_pass" && return 0
 	_pulse_pipeline_merge_pass
+	if _pulse_cycle_drain_exit "pr_sweeps"; then
+		_pulse_pipeline_accumulate_merge_health
+		return 0
+	fi
 	_pulse_pipeline_pr_sweeps "$_pulse_merge_stage_reserve_s"
 	_pulse_pipeline_accumulate_merge_health
+	_pulse_cycle_drain_exit "graph_stages" && return 0
 	_pulse_pipeline_graph_stages
+	_pulse_cycle_drain_exit "dispatch_max" && return 0
 	_pulse_pipeline_dispatch_max
 	# Main dispatch has had its turn (including stop/breaker/quota gates).
 	# Later maintenance can use the normal finalisation-only budget again.
 	_PULSE_MAIN_DISPATCH_RESERVE_S=0
+	_pulse_cycle_drain_exit "maintenance_stages" && return 0
 	_pulse_pipeline_maintenance_stages
 	return 0
 }
@@ -1697,6 +1712,9 @@ _pulse_drain_cycle_final_refill() {
 	# GH#33307: an exhausted cycle cannot launch a candidate; leave the refill
 	# trigger for a fresh-budget worker-exit refill or the next cycle instead of
 	# re-enumerating every candidate and consuming the trigger with 0 launches.
+	# t19015: a drained cycle cannot dispatch either; the activated bundle
+	# consumes the retained trigger.
+	_pulse_cycle_drain_exit "cycle_final_refill" && return 0
 	local _pulse_refill_trigger="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
 	if [[ ! -f "$_pulse_refill_trigger" ]] || _pulse_cycle_budget_admits_dispatch "Event refill drain (cycle-final)"; then
 		pulse_event_refill_drain "cycle-final" || true

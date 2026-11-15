@@ -25,6 +25,9 @@ _GCW_EMPTY_REQUIRED_SETTLE_SECONDS="${AIDEVOPS_GH_CHECKS_EMPTY_SETTLE_SECONDS:-9
 _GCW_CANCEL_GRACE_SECONDS="${AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS-180}"
 _GCW_CANCEL_FIRST_EPOCH=""
 _GCW_GRACED_CLASSIFICATION=""
+_GCW_CONFIGURED_CACHED=0
+_GCW_CONFIGURED_RC=1
+_GCW_CONFIGURED_CONTEXTS=""
 
 usage() {
 	cat <<'EOF'
@@ -438,13 +441,23 @@ classify_state() {
 	local repo="$4"
 	local elapsed="$5"
 	local head="${6:-}"
+	# t19014: wait_for_checks resolves the contexts once per wait and passes
+	# the read exit code and contexts. This function runs in a command
+	# substitution, so it cannot memoize them itself.
+	local passed_rc="${7:-}"
+	local passed_contexts="${8:-}"
 	local count=""
 	count=$(printf '%s' "$checks" | jq 'length')
 	# Absent configured required contexts are never success, in required-only
 	# and --all mode alike.
 	local configured_contexts="" configured_rc=0
 	local missing_contexts="" zero_runs=""
-	configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
+	if [[ "$passed_rc" =~ ^[0-9]+$ ]]; then
+		configured_rc="$passed_rc"
+		configured_contexts="$passed_contexts"
+	else
+		configured_contexts=$(configured_required_contexts "$pr_number" "$repo") || configured_rc=$?
+	fi
 	if [[ "$configured_rc" -eq 0 && -n "$configured_contexts" ]] &&
 		missing_contexts=$(configured_context_missing_from_checks "$configured_contexts" "$checks"); then
 		if [[ "$elapsed" -ge "$_GCW_EMPTY_REQUIRED_SETTLE_SECONDS" ]] &&
@@ -636,6 +649,25 @@ next_interval() {
 	return 0
 }
 
+# Next poll sleep: reset after a state change, otherwise back off; never sleep
+# past the draft-stall window or the remaining wall-clock --timeout (t19011:
+# callers run under a quiet-output watchdog; an uncapped sleep overshot 220s to 248s).
+poll_interval_after() {
+	local interval="$1" changed="$2" initial_interval="$3" max_interval="$4"
+	local draft_remaining="$5" timeout_remaining="$6"
+	if [[ "$changed" -eq 1 ]]; then
+		interval="$initial_interval"
+	else
+		interval=$(next_interval "$interval" "$max_interval")
+	fi
+	if [[ -n "$draft_remaining" && "$interval" -gt "$draft_remaining" ]]; then
+		interval="$draft_remaining"
+	fi
+	[[ "$interval" -le "$timeout_remaining" ]] || interval="$timeout_remaining"
+	printf '%s\n' "$interval"
+	return 0
+}
+
 emit_recovered_state() {
 	local state_summary="$1"
 	if [[ -n "$_GCW_ACTIVE_DEFERRAL" ]]; then
@@ -693,6 +725,20 @@ emit_wait_transition() {
 	return 0
 }
 
+# t19014: the base branch's required contexts (3 REST reads) do not change
+# during one wait, so read them once instead of on every poll. Only a
+# successful read is kept; a failed read is retried on the next poll.
+# Branch protection still decides at merge time, so reuse cannot bypass a gate.
+# Sets _GCW_CONFIGURED_RC and _GCW_CONFIGURED_CONTEXTS.
+resolve_configured_contexts_once() {
+	local pr_number="$1" repo="$2"
+	[[ "${_GCW_CONFIGURED_CACHED:-0}" -eq 1 ]] && return 0
+	_GCW_CONFIGURED_RC=0
+	_GCW_CONFIGURED_CONTEXTS=$(configured_required_contexts "$pr_number" "$repo") || _GCW_CONFIGURED_RC=$?
+	[[ "$_GCW_CONFIGURED_RC" -eq 0 ]] && _GCW_CONFIGURED_CACHED=1
+	return 0
+}
+
 wait_for_checks() {
 	local pr_number="$1" repo="$2" required_only="$3" timeout="$4"
 	local initial_interval="$5" max_interval="$6" heartbeat_interval="$7"
@@ -704,6 +750,7 @@ wait_for_checks() {
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
 	_GCW_CANCEL_FIRST_EPOCH=""
 	_GCW_CANCEL_SET=""
+	_GCW_CONFIGURED_CACHED=0
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
 	_GCW_ACTIVE_DEFERRAL=""
@@ -738,7 +785,8 @@ wait_for_checks() {
 			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
-		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head")"
+		resolve_configured_contexts_once "$pr_number" "$repo"
+		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
 		classification="$_GCW_GRACED_CLASSIFICATION"
 		state_summary=$(state_counts "$current" "$missing_contexts")
@@ -778,14 +826,9 @@ wait_for_checks() {
 			return 2
 		fi
 		previous="$current"
-		if [[ "$changed" -eq 1 ]]; then
-			interval="$initial_interval"
-		else
-			interval=$(next_interval "$interval" "$max_interval")
-		fi
-		if [[ -n "$draft_since" && "$interval" -gt $((draft_window - (now_epoch - draft_since))) ]]; then
-			interval=$((draft_window - (now_epoch - draft_since)))
-		fi
+		local draft_remaining=""
+		[[ -z "$draft_since" ]] || draft_remaining=$((draft_window - (now_epoch - draft_since)))
+		interval=$(poll_interval_after "$interval" "$changed" "$initial_interval" "$max_interval" "$draft_remaining" $((timeout - elapsed)))
 		poll_sleep "$interval"
 	done
 }

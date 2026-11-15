@@ -159,6 +159,13 @@ def argument_parser() -> argparse.ArgumentParser:
     enrolled_only.add_argument("--repos-config", required=True, type=Path)
     enrolled_only.add_argument("--output-root", required=True, type=Path)
     enrolled_only.add_argument("--confirm", action="store_true")
+    unowned = commands.add_parser(
+        "reclaim-unowned",
+        help="archive-first retirement of a never-owned enrolled tree on checked evidence",
+    )
+    unowned.add_argument("--path", required=True, type=Path)
+    unowned.add_argument("--repos-config", required=True, type=Path)
+    unowned.add_argument("--output-root", required=True, type=Path)
     vacant = commands.add_parser(
         "release-vacant-path",
         help="release the stale reservation of an absent path before re-creating it; never deletes",
@@ -244,14 +251,17 @@ def _retirement_operation(store: LifecycleRegistry, args: argparse.Namespace) ->
 
 
 def _cleanup_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Mapping[str, object]:
-    from . import cleanup, path_release
+    from . import cleanup, never_owned, path_release
 
     operations = {
         "cleanup-worktree": lambda: cleanup.cleanup_worktree(
             store, args.repos_config, args.output_root, args.path,
         ),
-        "retire-enrolled-only": lambda: cleanup.retire_enrolled_only(
+        "retire-enrolled-only": lambda: never_owned.retire_enrolled_only(
             store, args.repos_config, args.output_root, args.path, args.confirm,
+        ),
+        "reclaim-unowned": lambda: never_owned.reclaim_unowned(
+            store, args.repos_config, args.output_root, args.path,
         ),
         "release-vacant-path": lambda: path_release.release_vacant_path(store, args.path),
         "release-replaced-path": lambda: path_release.release_replaced_path(
@@ -288,7 +298,7 @@ def execute_operation(store: LifecycleRegistry, args: argparse.Namespace) -> Map
     if args.operation in {"reconcile", "enroll", "create-worktree", "admit-session"}:
         upgrade_registry(store)
     if args.operation in {"cleanup", "cleanup-worktree", "retire-enrolled-only",
-                          "release-vacant-path", "release-replaced-path"}:
+                          "reclaim-unowned", "release-vacant-path", "release-replaced-path"}:
         return _cleanup_operation(store, args)
     if args.operation in {
         "create-worktree", "admit-session", "relinquish-session", "preserve-wip",

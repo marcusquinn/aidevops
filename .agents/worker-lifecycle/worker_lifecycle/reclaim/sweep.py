@@ -5,21 +5,26 @@
 This is an always-on interim pass of the pulse cleanup stage, not the cleanup
 evidence collector that
 ``worker_lifecycle.cleanup_policy.decide_cleanup`` expects. It claims none of that
-policy's six proofs and reports no ``cleanup_authorized``. Removal is archive-free
-by explicit operator decision, so the checks in ``worker_lifecycle.reclaim.evidence`` are
-the only protection and each fails closed.
+policy's six proofs and reports no ``cleanup_authorized``. Stage-1 removal is
+archive-free by explicit operator decision, so the checks in
+``worker_lifecycle.reclaim.evidence`` are the only protection and each fails closed.
 
 Each candidate gets one decision (``reclaim.decision.classify``): ``remove``,
-``archive`` (finished work with local state to preserve, queued and skipped until
-the archive stage exists) or ``refuse``. Dry runs write nothing; applied removals
-are journaled as ``reclaim-authorized`` then ``reclaim-removed`` (GH#38348).
+``archive`` (finished work with local state to preserve) or ``refuse``. Stage 1
+removes ``remove`` trees as it judges them; ``archive`` trees are queued for
+stage 2 (``reclaim.archive``, GH#38394), which runs after every candidate was
+judged: archive with commits bundled, verify, journal, then remove. Dry runs
+write nothing; applied removals are journaled as ``reclaim-authorized`` (or
+``reclaim-archived``) then ``reclaim-removed`` (GH#38348).
+Applied passes also persist a scan cursor and defer trees whose own state stays
+unreadable (``reclaim.progress``, GH#38376); dry runs honour both but update neither.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -29,13 +34,20 @@ import time
 from .decision import (
     ARCHIVE, AUTHORIZED, REFUSE, REMOVE, REMOVED, cas_verify, classify, fingerprint, record,
 )
+from .archive import stage_two
 from .evidence import evidence, prefetch, references, repository
 from .host import common_directory, free_bytes, nothing_to_lose, remove, run
+from ..cleanup_quarantine import CleanupQuarantine
 from ..storage import LifecycleRegistry
 from .owners import RESIDUAL_RISK, OwnerCheck, default_state_dir, open_owners
+from .progress import (
+    deferred, listing, open_quarantine, ordered, read_cursor, remember, save_progress,
+)
 from .review import verify_idle_review
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
+# Largest fraction of the remaining pass budget reference prefetch may spend.
+PREFETCH_SHARE = 0.5
 # Re-exported for callers and tests that treat this script as the entry point.
 __all__ = ["SCHEMA", "evidence", "main", "references"]
 
@@ -49,6 +61,9 @@ class Pass:
     deadline: float
     limit: int = 0
     finished: dict = field(default_factory=dict)
+    quarantine: CleanupQuarantine | None = None
+    # ``archive`` trees judged in stage 1, in order, for stage 2.
+    queued: list = field(default_factory=list)
 
     def remaining(self) -> int:
         """Report whole seconds left, so no child outlives the pass budget."""
@@ -75,8 +90,9 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 def new_receipt(base_dir: Path, *, dry_run: bool) -> dict:
     return {"schema": SCHEMA, "base_dir": str(base_dir), "dry_run": dry_run,
-            "scanned": 0, "authorized": 0, "archive_queued": 0, "removed": 0,
-            "failed": 0, "refused": 0,
+            "scanned": 0, "authorized": 0, "archive_queued": 0, "archived": 0, "removed": 0,
+            "failed": 0, "refused": 0, "quarantine_deferred": 0,
+            "cursor_start": "", "resume_after": "",
             "reclaimed_bytes": 0, "budget_exhausted": False,
             "residual_risk": RESIDUAL_RISK, "results": []}
 
@@ -95,7 +111,7 @@ def judge(path: Path, current: Pass, receipt: dict) -> dict:
     if verdict["decision"] == REFUSE:
         receipt["refused"] += 1
     elif verdict["decision"] == ARCHIVE:
-        # Queued for the preserving archive stage, which is not yet enabled.
+        # Archived and removed by stage 2 once every candidate was judged.
         receipt["archive_queued"] += 1
     else:
         receipt["authorized"] += 1
@@ -108,10 +124,23 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     """Judge one worktree and, when removable and applying, remove it.
 
     Removal is journaled before and after (``decision.record``) and refused when
-    the evidence fingerprint changed since judgement. Returns the repository
-    needing a worktree prune, or None.
+    the evidence fingerprint changed since judgement. An applied pass also feeds
+    the outcome to the unreadable backoff (``reclaim.progress``). Returns the
+    repository needing a worktree prune, or None.
     """
     verdict = judge(path, current, receipt)
+    if verdict["decision"] == ARCHIVE:
+        # Stage 2 acts on it and feeds its own outcome to the backoff.
+        current.queued.append((path, verdict))
+        return None
+    common = _act(path, verdict, current, receipt)
+    if current.apply_removal:
+        remember(current.quarantine, path, verdict)
+    return common
+
+
+def _act(path: Path, verdict: dict, current: Pass, receipt: dict) -> Path | None:
+    """Remove one judged worktree when its decision and the pass allow it."""
     # A remove decision implies owners were observed; the check narrows the type.
     if (verdict["decision"] != REMOVE or not current.apply_removal
             or current.owner is None):
@@ -146,18 +175,27 @@ def reclaim_one(path: Path, current: Pass, receipt: dict) -> Path | None:
     return common
 
 
-def candidates(base_dir: Path, current: Pass, receipt: dict) -> Iterator[Path]:
-    """Yield each worktree directory until the budget or limit stops the pass."""
-    for path in sorted(base_dir.iterdir()):
-        if not path.is_dir():
-            continue
+def candidates(paths: list[Path], current: Pass, receipt: dict) -> Iterator[Path]:
+    """Yield worktrees in cursor order until the budget or limit stops the pass.
+
+    Deferred trees are skipped before the limit applies, so they cannot occupy
+    it. ``resume_after`` names where the next pass starts: the last tree reached
+    when the pass stopped early, or "" once the whole listing was covered.
+    """
+    receipt["resume_after"] = receipt.get("cursor_start", "")
+    for path in paths:
         if current.remaining() == 0:
             receipt["budget_exhausted"] = True
             return
         if current.limit and receipt["scanned"] >= current.limit:
             return
+        if deferred(current.quarantine, path):
+            receipt["quarantine_deferred"] += 1
+            continue
         receipt["scanned"] += 1
+        receipt["resume_after"] = path.name
         yield path
+    receipt["resume_after"] = ""
 
 
 def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
@@ -167,28 +205,34 @@ def reclaimed_bytes(before: int | None, after: int | None, removed: int) -> int:
     return max(after - before, 0)
 
 
-def prefetch_references(base_dir: Path, current: Pass) -> None:
+def prefetch_references(paths: list[Path], current: Pass) -> None:
     """Resolve the references this pass will judge, in batches, before judging any.
 
-    The limit the candidate generator applies is applied here too, so a limited run
-    does not spend its budget resolving trees it will never reach. A failed batch
-    leaves the cache untouched, so judgement falls back to per-reference queries.
+    The order, deferral and limit the candidate generator applies are applied
+    here too, so a limited run does not spend its budget resolving trees it will
+    never reach. A failed batch leaves the cache untouched, so judgement falls
+    back to per-reference queries.
+
+    Prefetch gets at most ``PREFETCH_SHARE`` of the remaining budget: a stalled
+    batch must not leave judgement no time to yield a tree, or the cursor would
+    never advance and the tail would starve again (GH#38376).
     """
+    share = replace(current, deadline=time.monotonic() + current.remaining() * PREFETCH_SHARE)
     wanted: dict[str, list[tuple[str, int]]] = {}
     examined = 0
-    for path in sorted(base_dir.iterdir()):
-        if not path.is_dir():
-            continue
-        if current.remaining() == 0 or (current.limit and examined >= current.limit):
+    for path in paths:
+        if share.remaining() == 0 or (current.limit and examined >= current.limit):
             break
+        if deferred(current.quarantine, path):
+            continue
         examined += 1
         found = references(path.name)
         if path.is_symlink() or not found:
             continue
-        slug = repository(path, timeout=min(current.remaining(), 60))
+        slug = repository(path, timeout=min(share.remaining(), 60))
         if slug:
             wanted.setdefault(slug, []).extend(found)
-    prefetch(wanted, current.finished, remaining=current.remaining)
+    prefetch(wanted, current.finished, remaining=share.remaining)
 
 
 def main() -> int:
@@ -201,19 +245,25 @@ def main() -> int:
     owner = open_owners(arguments.state_dir)
     current = Pass(owner=owner, apply_removal=arguments.apply,
                    deadline=time.monotonic() + max(arguments.budget_seconds, 1),
-                   limit=arguments.limit)
+                   limit=arguments.limit, quarantine=open_quarantine(arguments.state_dir))
     receipt["owner_observation"] = "registry" if owner else "unavailable"
+    receipt["cursor_start"] = read_cursor(arguments.state_dir)
+    universe = listing(arguments.base_dir)
+    paths = ordered(universe, receipt["cursor_start"])
     repositories: set[Path] = set()
     free_before = free_bytes(arguments.base_dir)
-    prefetch_references(arguments.base_dir, current)
-    for path in candidates(arguments.base_dir, current, receipt):
+    prefetch_references(paths, current)
+    for path in candidates(paths, current, receipt):
         common = reclaim_one(path, current, receipt)
         if common is not None:
             repositories.add(common)
+    repositories |= stage_two(current.queued, current, receipt)
     for common in repositories:
         run(["git", "--git-dir", str(common), "worktree", "prune"])
     receipt["reclaimed_bytes"] = reclaimed_bytes(
         free_before, free_bytes(arguments.base_dir), receipt["removed"])
+    if arguments.apply:
+        save_progress(arguments.state_dir, universe, current.quarantine, receipt)
     print(json.dumps(receipt))
     return 0
 

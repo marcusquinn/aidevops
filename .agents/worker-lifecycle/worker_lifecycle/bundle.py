@@ -14,11 +14,16 @@ REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "maco
                     "launch_state.py", "upgrade.py", "archive_path.py", "filesystem.py", "permissions.py",
                     "admission.py", "directory_handle.py", "cleanup_policy.py", "enrollment.py",
                     "cleanup_plan.py", "preservation.py", "session.py", "creation.py",
-                    "retirement.py", "recovery.py", "absence.py", "cleanup.py", "bundle.py",
+                    "retirement.py", "retirement_proof.py", "recovery.py", "absence.py",
+                    "cleanup.py", "bundle.py",
                     "cleanup_failure.py", "cleanup_quarantine.py", "pull_requests.py",
                     "pull_requests_graphql.py", "refusal.py", "legacy_proc.py", "legacy_proc_macos.py", "protected_proc.py", "interrupted_removal.py",
                     "retirement_fence.py", "foreign_git.py", "foreign_proof.py",
-                    "foreign_retirement.py")
+                    "foreign_retirement.py", "never_owned.py",
+                    # Reclaim's never-owned authorization and its readers (GH#38405).
+                    "reclaim/__init__.py", "reclaim/unowned.py", "reclaim/decision.py",
+                    "reclaim/host.py", "reclaim/evidence.py", "reclaim/owners.py",
+                    "reclaim/review.py")
 REGISTRY_TESTS = ("test_storage.py", "test_events.py", "test_launch.py", "test_admission.py",
                   "test_admitted_launch.py", "test_directory_handle.py", "test_cleanup_policy.py",
                   "test_creation.py", "test_preservation.py", "test_retirement.py",

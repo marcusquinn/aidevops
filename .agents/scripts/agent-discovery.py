@@ -15,6 +15,7 @@ from agent_config import (
     managed_external_directories,
 )
 from opencode_operator_agents import extend_opencode_operator_subagents
+from subagent_validation import PLUGIN_ACTIVATION_SUBAGENTS
 from mcp_config import (
     apply_mcp_loading_policy, remove_deprecated_mcps,
     register_standard_mcps,
@@ -81,6 +82,7 @@ OPENCODE_PROFILE_ID, OPENCODE_PROFILE = _load_opencode_profile()
 
 primary_agents, sorted_agents, subagent_filtered_count = discover_primary_agents(agents_dir)
 operator_subagents = (extend_opencode_operator_subagents(primary_agents)
+                      | PLUGIN_ACTIVATION_SUBAGENTS
                       if output_format == 'opencode-json' else set())
 
 # Validate subagent references

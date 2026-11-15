@@ -26,6 +26,27 @@ class BundleContract(unittest.TestCase):
             )
             self.assertEqual(imported.returncode, 0, imported.stderr)
 
+    def test_registry_bundle_imports_every_bundled_module(self):
+        """The exact allowlist must cover the import closure of what it bundles (GH#38411)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            bundle = root / "registry.pyz"
+            build(bundle, suite="registry")
+            with zipfile.ZipFile(bundle) as archive:
+                modules = sorted(
+                    name[:-3].replace("/", ".").removesuffix(".__init__")
+                    for name in archive.namelist()
+                    if name.endswith(".py") and name.startswith(("worker_lifecycle/", "tests/"))
+                )
+            imported = subprocess.run(  # nosec B603 # imports locally built bundle
+                [sys.executable, "-I", "-B", "-c",
+                 "import importlib, sys; sys.path.insert(0, sys.argv[1]); "
+                 "[importlib.import_module(name) for name in sys.argv[2:]]",
+                 str(bundle), *modules],
+                cwd=root, capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(imported.returncode, 0, imported.stderr)
+
     def test_reproducible_and_preserves_failed_exit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

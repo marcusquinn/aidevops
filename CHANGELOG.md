@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.200] - 2026-11-15
+
+### Added
+
+- auto-sweep stale research-staging children (GH#38366) (#38375)
+
+### Changed
+
+- Maintenance: complete t19009 (pr:#38367)
+
+### Fixed
+
+- quiet false-alarm setup warnings on fresh installs
+- accept proven release-commit and image-digest pins in semver policy (#38384)
+- supersede unsigned same-version cloudron release request bound to another PR (GH#38369) (#38373)
+- derive decision-policy fixture timestamps from current time (GH#38365) (#38378)
+- accept proven commit pins (#38363)
+- preserve approvals for canonical blocker releases (#38357)
+
 ## [3.39.199] - 2026-11-14
 
 ### Fixed

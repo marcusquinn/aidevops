@@ -1,6 +1,8 @@
-"""Advisory backoff for admission-cleanup candidates whose archive keeps failing.
+"""Advisory backoff for cleanup candidates that keep failing the same way.
 
-The state only delays attempts and never grants retirement authority. Unreadable
+Admission cleanup keys it by generation (repeat archive failures); the reclaim
+pass keys a separate file by worktree path (repeat unreadable refusals). The
+state only delays attempts and never grants retirement authority. Unreadable
 state degrades to "no quarantine", never to skipped safety checks.
 """
 
@@ -36,12 +38,22 @@ def _valid(key: object, value: object) -> bool:
 class CleanupQuarantine:
     """Durable per-generation backoff, loaded once and saved once per pass."""
 
-    def __init__(self, directory: Path):
-        """Load quarantine entries from the given store directory."""
+    def __init__(self, directory: Path, name: str = "cleanup-quarantine"):
+        """Load quarantine entries from the given store directory.
+
+        ``name`` separates callers with different key spaces (generation IDs for
+        admission cleanup, worktree paths for reclaim), so two passes never
+        rewrite each other's entries.
+        """
         self.directory = Path(directory)
-        self.path = self.directory / "cleanup-quarantine"
+        self.name = name
+        self.path = self.directory / name
         self.entries = self._load()
         self.changed = False
+
+    def deferred(self, key: str) -> bool:
+        """Report whether ``key`` is still inside its backoff window."""
+        return self.entries.get(key, {}).get("until", 0) > time.time()
 
     def _load(self) -> dict:
         """Load valid entries from the private quarantine file, or an empty dict."""
@@ -62,24 +74,36 @@ class CleanupQuarantine:
         A few recurring archive/verify-local failures then cannot occupy the
         front of every run and starve the remaining eligible generations.
         """
-        now = time.time()
-        ready = [row for row in rows
-                 if self.entries.get(row["generation_id"], {}).get("until", 0) <= now]
+        ready = [row for row in rows if not self.deferred(row["generation_id"])]
         return ready, len(rows) - len(ready)
 
-    def record(self, generation: str, result: dict, retry_later: bool = False) -> None:
+    def record(self, generation: str, result: dict, retry_later: bool = False,
+               *, threshold: int = 1) -> None:
         """Back off exponentially on archive failure or a caller-requested retry.
 
-        Clear on any other outcome.
+        Clear on any other outcome. Failures below ``threshold`` consecutive
+        occurrences are counted but not deferred, so a single transient failure
+        is retried on the next pass.
         """
         if not (result.get("archive_failure", False) or retry_later):
             self.changed |= self.entries.pop(generation, None) is not None
             return
         count = int(self.entries.get(generation, {}).get("count", 0)) + 1
-        delay = min(_BASE_SECONDS * 2 ** min(count - 1, 10), _MAX_SECONDS)
+        self.changed = True
+        if count < threshold:
+            self.entries[generation] = {"count": count, "until": 0}
+            return
+        steps = count - threshold
+        delay = min(_BASE_SECONDS * 2 ** min(steps, 10), _MAX_SECONDS)
         self.entries[generation] = {"count": count, "until": time.time() + delay}
         result.update(quarantined=True, quarantine_failures=count)
-        self.changed = True
+
+    def retain(self, keys: set[str]) -> None:
+        """Drop entries whose key is no longer a candidate, such as removed paths."""
+        stale = [key for key in self.entries if key not in keys]
+        for key in stale:
+            del self.entries[key]
+        self.changed |= bool(stale)
 
     def save(self, report: dict) -> None:
         """Persist changes; a write failure must not hide the pass report."""
@@ -99,7 +123,7 @@ class CleanupQuarantine:
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=self.directory,
-                prefix=".cleanup-quarantine-", delete=False,
+                prefix=f".{self.name}-", delete=False,
             ) as stream:
                 temporary = Path(stream.name)
                 json.dump(kept, stream)

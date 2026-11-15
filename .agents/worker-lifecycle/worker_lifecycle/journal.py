@@ -102,7 +102,7 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
         "SELECT e.* FROM events e WHERE julianday(e.recorded_at)<=julianday('now',?) "
         "AND ((json_extract(e.payload,'$.type') IN "
         "('close-admission','created-worktree','retirement-removing',"
-        "'worktree-recovery-authorized') AND EXISTS ("
+        "'worktree-recovery-authorized','reclaim-unowned-authorized') AND EXISTS ("
         "SELECT 1 FROM generations g JOIN retired ON retired.generation_id=g.generation_id "
         "WHERE g.generation_id=json_extract(e.payload,'$.generation_id') "
         "AND retired.kind='worktree-retired' "
@@ -124,7 +124,8 @@ def compact(store: LifecycleRegistry, connection: sqlite3.Connection, age: int, 
     # or refused; once past retention it is archived like any other history.
     rows += connection.execute(
         "SELECT * FROM events WHERE julianday(recorded_at)<=julianday('now',?) "
-        "AND json_extract(payload,'$.type') IN ('reclaim-authorized','reclaim-removed') "
+        "AND json_extract(payload,'$.type') IN "
+        "('reclaim-authorized','reclaim-archived','reclaim-removed') "
         "ORDER BY sequence LIMIT 1000", (f"-{age} seconds",),
     ).fetchall()
     result: dict[str, object] = {"eligible_events": len(rows), "archived_events": 0,
