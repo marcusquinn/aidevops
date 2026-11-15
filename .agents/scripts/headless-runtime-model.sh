@@ -874,7 +874,13 @@ model_text = "\n".join(model_text_parts)
 # Fallback (claude CLI stream-json, plain text): treat escaped newlines and
 # JSON text/result value starts as line starts for the anchored match.
 candidate = model_text if model_text.strip() else re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
-sys.exit(0 if blocked_line.search(candidate) else 1)
+# A negated status is not a blocker, but must not mask another real BLOCKED line.
+negated = re.compile(r'[ \t]*(?:[:-][ \t]*)?(?:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?])', re.IGNORECASE)
+for match in blocked_line.finditer(candidate):
+    payload = candidate[match.end():].split('\n', 1)[0]
+    if not negated.match(payload):
+        sys.exit(0)
+sys.exit(1)
 PY
 	return $?
 }
