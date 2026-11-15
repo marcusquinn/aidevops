@@ -706,6 +706,21 @@ _pmp_lane_last_refresh_epoch() {
 	return 0
 }
 
+# GH#38508: true when fewer than PULSE_MERGE_RESUME_REFRESH_RESERVE_SECONDS
+# (default 30) remain before the effective merge deadline. Lane refreshes stop
+# there, so the pass keeps time to prepare and evaluate a promoted PR instead
+# of spending the rest of its budget on refreshes. Unbounded passes never stop.
+_pmp_lane_refresh_reserve_reached() {
+	local reserve="${PULSE_MERGE_RESUME_REFRESH_RESERVE_SECONDS:-30}" deadline_epoch="" now_epoch=""
+	[[ "$reserve" =~ ^[0-9]+$ ]] || reserve=30
+	deadline_epoch=$(_pmp_merge_effective_deadline_epoch)
+	[[ "$deadline_epoch" =~ ^[0-9]+$ && "$deadline_epoch" -gt 0 ]] || return 1
+	now_epoch=$(_pmp_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ $((now_epoch + reserve)) -ge "$deadline_epoch" ]] || return 1
+	return 0
+}
+
 #######################################
 # GH#38248: the advisory snapshot is cached per number/head for the whole
 # walk, so it cannot see same-head transitions such as checks finishing or a
@@ -735,6 +750,7 @@ _pmp_refresh_lane_candidate() {
 		return 1
 	fi
 	_pmp_merge_pass_budget_exhausted && return 1
+	_pmp_lane_refresh_reserve_reached && return 1
 	_pmp_rest_core_priority_allows_next progress "merge_resume_lane_refresh:${repo_slug}" || return 1
 	# Stamp before the read so a failing read is not retried every resume.
 	printf '%s|%s\n' "$lane_key" "$lane_now" >>"$refreshed_file" 2>/dev/null || true

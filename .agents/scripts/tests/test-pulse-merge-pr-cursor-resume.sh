@@ -420,6 +420,14 @@ assert_eq "active guardrail drains every counted PR that went CLEAN ahead of the
 	"0|301:merge-ready 302:merge-ready 303:merge-ready 304:merge-ready 307:dirty-conflicted " "$GUARDRAIL_LANE_SECOND"
 assert_eq "guardrail lane promotion is logged" "1" "$(grep -c 'moved 4 merge-ready PR(s) ahead of cursor index=6 guardrail_counted=4' "$LOGFILE")"
 
+# Lane refreshes stop while time remains to evaluate a promoted PR.
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$((FAKE_NOW + 10))
+assert_eq "lane refreshes stop inside the evaluation reserve" "0" "$(_pmp_lane_refresh_reserve_reached; printf '%s' "$?")"
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$((FAKE_NOW + 100))
+assert_eq "lane refreshes continue outside the evaluation reserve" "1" "$(_pmp_lane_refresh_reserve_reached; printf '%s' "$?")"
+_PMP_MERGE_PASS_DEADLINE_EPOCH=0
+assert_eq "unbounded passes never reserve" "1" "$(_pmp_lane_refresh_reserve_reached; printf '%s' "$?")"
+
 # A stale or foreign marker leaves the base ordering untouched.
 mkdir -p "$PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR"
 printf '%s\t%s\n' 100 "|301|" >"${PULSE_PR_BACKLOG_GUARDRAIL_STATE_DIR}/org--repo"
