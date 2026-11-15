@@ -202,11 +202,12 @@ _clean_deferred_parent_alive() {
 # as a traceback naming a path, yields nothing so the caller's fixed text is used.
 _clean_lease_refusal_text() {
 	local text="$1"
-	local marker="same-boot process census active or unavailable: "
+	# Whole seal line: "managed-worktree: <Error>: <census summary of key=value tokens>".
+	local census_line='^managed-worktree: [A-Za-z]+: (same-boot process census active or unavailable: [A-Za-z0-9_=(),. -]+)$'
 	local line=""
 	local last=""
 	while IFS= read -r line; do
-		[[ "$line" == *"$marker"* ]] && last="${marker}${line##*"$marker"}"
+		[[ "$line" =~ $census_line ]] && last="${BASH_REMATCH[1]}"
 	done <<<"$text"
 	# The skip line uses echo -e, so drop backslashes along with controls.
 	printf '%s' "$last" | LC_ALL=C tr -cd '[:print:]' | tr -d "\\\\" | cut -c1-400

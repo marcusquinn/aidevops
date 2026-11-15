@@ -324,6 +324,29 @@ class SessionAttestationTests(unittest.TestCase):
         (self.proc / "self" / "uid_map").write_text("0 0 4294967295\n")
         (self.proc / "117" / "uid_map").write_text("0 100000 65536\n")
         self.assertIsNone(self.attest(128))
+        # Another PID 1 (e.g. a container with the host bus) names foreign PIDs.
+        self.task(1, name="tini", ppid=0, flags=0x100, start=1, uids="0")
+        self.assertIsNone(self.attest(91))
+        self.assertIsNone(self.attest(92))
+
+    def test_system_manager_record_must_agree_and_answer(self):
+        self.main_pid.stop()
+        self.addCleanup(self.main_pid.start)
+        answers = {"MainPID and ExecMainPID agree": ("91\n91\n", 0, "91"),
+                   "MainPID repointed by notification": ("140\n91\n", 0, None),
+                   "no main process": ("0\n0\n", 0, None),
+                   "one property missing": ("91\n", 0, None),
+                   "systemctl failed": ("", 1, None),
+                   "systemctl timed out": (subprocess.TimeoutExpired("systemctl", 5), 0, None)}
+        with patch.object(attestation, "_root_owned_file", return_value=True):
+            for label, (stdout, code, expected) in answers.items():
+                with self.subTest(case=label):
+                    effect = stdout if isinstance(stdout, Exception) else None
+                    reply = subprocess.CompletedProcess([], code, stdout if effect is None else "", "")
+                    with patch.object(attestation.subprocess, "run", return_value=reply,
+                                      side_effect=effect) as run:
+                        self.assertEqual(attestation.user_manager_main_pid(self.UID), expected)
+                    self.assertEqual(run.call_args.kwargs["env"], {})
 
     def test_attested_and_uncertain_tasks_are_counted_by_class(self):
         self.task(138, name="ssh-agent", ppid=1, flags=0x400140, start=2000)

@@ -308,10 +308,11 @@ Skipped <branch> - cleanup lease was not acquired: same-boot process census acti
 runs root-installed session code. A census running as root, or in a non-initial
 user namespace, never attests a task:
 
-- `user-manager`: the exec'd child of PID 1 that PID 1 itself records as the
-  `MainPID` of `user@UID.service` (read with a root-owned `systemctl` and an empty
-  environment), unchanged across that query. Names, the user-delegated cgroup and
-  root-owned executables are not evidence; without `systemctl` the task stays uncertain.
+- `user-manager`: the exec'd child of a root `systemd` PID 1 that PID 1 itself
+  records as both `MainPID` and `ExecMainPID` of `user@UID.service` (read with a
+  root-owned `systemctl` and an empty environment), unchanged across that query.
+  Names, the user-delegated cgroup and root-owned executables are not evidence;
+  without `systemctl` the task stays uncertain.
 - `pam-session-keeper`: the first child of that manager, forked within five seconds
   of the manager starting and never exec'd.
 - `privsep-session`: an unprivileged, never-exec'd child of a root `sshd` or
@@ -325,8 +326,10 @@ With the reviewed inspector installed as above and
 `AIDEVOPS_PROTECTED_PROC_INSPECTION=1` set, any remaining uncertainty triggers one
 `--census CANDIDATE` call. The root inspector checks every task of the invoking UID
 (CWD, descriptors, `PWD`/`AIDEVOPS_WORKTREE`) and returns only counts bound to the
-directory device and inode, within its own five-second deadline. It refuses a nested
-PID namespace or a `hidepid`/`subset` proc mount rather than count a partial view. `privileged_census=clear`
+directory device and inode, within its own five-second deadline. It refuses a `/proc`
+from another PID namespace or a `hidepid`/`subset` mount rather than count a partial
+view. Like the unprivileged census, it sees only its own PID namespace; processes in
+other namespaces sharing a bind-mounted tree are outside both views. `privileged_census=clear`
 resolves the uncertainty; `held` keeps the tree; any other value
 (`inspection-not-enabled`, `inspector-unavailable`) leaves the original uncertainty
 in place. An installed copy older than this mode refuses `--census` and keeps the tree,

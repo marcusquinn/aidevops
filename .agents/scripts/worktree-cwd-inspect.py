@@ -169,7 +169,12 @@ FILTERED_PROC_OPTION = re.compile(r"hidepid=(?!(?:0|off)$).*|subset=.*")
 
 
 def require_full_proc_view() -> None:
-    """A nested PID namespace or filtered proc mount hides tasks; never count them as clear."""
+    """Refuse a proc from another PID namespace or a filtered mount: hidden tasks are never clear.
+
+    Like the unprivileged census, this counts the census's own PID namespace;
+    processes in other namespaces (such as a host sharing a bind-mounted tree)
+    are outside both views, so this result adds no visibility either lacks.
+    """
     namespace_pids = re.findall(r"^NSpid:\s+(.+)$",
                                 Path("/proc/self/status").read_text(encoding="ascii"), re.M)
     mounts = [match.groups() for match in map(

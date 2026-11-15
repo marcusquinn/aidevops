@@ -43,7 +43,8 @@ def user_manager_main_pid(uid):
 
     Names, cgroups (delegated to the user) and executables (any root-owned
     binary) are all user-influenced; only the system manager knows which
-    process it started for user@UID.service.
+    process it started for user@UID.service. MainPID alone can be repointed by
+    a MAINPID= notification, so the PID it exec'd (ExecMainPID) must agree.
     """
     for path in SYSTEMCTL_PATHS:
         try:
@@ -53,14 +54,23 @@ def user_manager_main_pid(uid):
             continue
         try:
             result = subprocess.run(  # nosec B603 - absolute root-owned binary, no shell
-                [path, "show", "--property=MainPID", "--value", f"user@{uid}.service"],
+                [path, "show", "--property=MainPID", "--property=ExecMainPID", "--value",
+                 f"user@{uid}.service"],
                 env={}, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                 timeout=SYSTEMCTL_TIMEOUT_SECONDS, check=False)
         except (OSError, subprocess.SubprocessError):
             return None
-        value = result.stdout.strip()
-        return value if result.returncode == 0 and value.isdecimal() and value != "0" else None
+        values = result.stdout.split()
+        if result.returncode or len(values) != 2 or len(set(values)) != 1:
+            return None
+        return values[0] if values[0].isdecimal() and values[0] != "0" else None
     return None
+
+
+def _system_manager_is_pid_1():
+    """systemctl's answer names PIDs in our namespace only if our PID 1 is systemd."""
+    status = _status_fields(PROC / "1")
+    return status.get("Name", "").strip() == "systemd" and _uids(status) == ["0"] * 4
 
 
 def _initial_user_namespace(*processes):
@@ -92,7 +102,8 @@ def _is_user_manager(process, status, fields):
     PID 1 named is the same process before and after the query.
     """
     uid = str(os.getuid())
-    if (fields[1] != "1" or int(fields[6]) & PF_FORKNOEXEC or _uids(status) != [uid] * 4):
+    if (fields[1] != "1" or int(fields[6]) & PF_FORKNOEXEC or _uids(status) != [uid] * 4
+            or not _system_manager_is_pid_1()):
         return False
     return user_manager_main_pid(uid) == process.name
 
