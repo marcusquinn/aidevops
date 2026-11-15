@@ -1007,6 +1007,8 @@ _setup_run_noncritical_stage_bounded() {
 	local start_s=$SECONDS
 	local pid=""
 	local rc=0
+	# Lets callers tell a timeout kill apart from a clean return (t19030).
+	_SETUP_NONCRITICAL_STAGE_TIMED_OUT=false
 	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=60
 	"$@" &
 	pid=$!
@@ -1017,6 +1019,7 @@ _setup_run_noncritical_stage_bounded() {
 			sleep "${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}" 2>/dev/null || true
 			_setup_kill_pid_tree KILL "$pid"
 			wait "$pid" 2>/dev/null || true
+			_SETUP_NONCRITICAL_STAGE_TIMED_OUT=true
 			print_warning "${stage_label} exceeded ${timeout_s}s — skipping remaining non-critical work"
 			return 0
 		fi
@@ -1937,6 +1940,11 @@ _setup_noninteractive_schedulers() {
 	# whenever the supervisor pulse is consented.
 	if _should_setup_noninteractive_pulse_merge_routine; then
 		_time_step "setup_pulse_merge_routine" _setup_run_noncritical_stage_bounded "Pulse merge routine setup" "${AIDEVOPS_SETUP_PULSE_MERGE_ROUTINE_TIMEOUT:-30}" setup_pulse_merge_routine
+		# t19030: a timeout kill can leave the merge scheduler unregenerated
+		# before the child reaches its own deferral.
+		if [[ "${_SETUP_NONCRITICAL_STAGE_TIMED_OUT:-false}" == "true" ]]; then
+			_schedulers_defer_template_hash "pulse merge routine setup timed out"
+		fi
 	fi
 	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
 	# dispatch coordination, runs every 30 min.

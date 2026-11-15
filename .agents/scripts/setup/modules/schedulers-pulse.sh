@@ -665,7 +665,13 @@ _install_supervisor_pulse() {
 #######################################
 _schedulers_defer_template_hash() {
 	local reason="${1:-scheduler not regenerated}"
+	local defer_file="${_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE:-}"
 	_SCHEDULERS_TEMPLATE_HASH_DEFERRED="$reason"
+	# The marker carries the deferral out of a background stage child.
+	if [[ -n "$defer_file" ]]; then
+		mkdir -p "${defer_file%/*}" 2>/dev/null || true
+		printf '%s\n' "$reason" >>"$defer_file" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -673,6 +679,15 @@ _schedulers_record_template_hash() {
 	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
 	local hash_file="$state_dir/schedulers-template-hash.state"
 	local template_hash="${_SCHEDULERS_TEMPLATE_HASH_AT_LOAD:-}"
+	local defer_file="${_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE:-}"
+	local child_reason=""
+	if [[ -z "${_SCHEDULERS_TEMPLATE_HASH_DEFERRED:-}" && -n "$defer_file" && -s "$defer_file" ]]; then
+		IFS= read -r child_reason <"$defer_file" 2>/dev/null || true
+		_SCHEDULERS_TEMPLATE_HASH_DEFERRED="${child_reason:-scheduler deferred in a setup stage child}"
+	fi
+	if [[ -n "$defer_file" ]]; then
+		rm -f "$defer_file" 2>/dev/null || true
+	fi
 	if [[ -n "${_SCHEDULERS_TEMPLATE_HASH_DEFERRED:-}" ]]; then
 		print_info "Scheduler template hash not recorded: ${_SCHEDULERS_TEMPLATE_HASH_DEFERRED}"
 		return 0

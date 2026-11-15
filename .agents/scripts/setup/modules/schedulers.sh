@@ -83,6 +83,12 @@ _SCHEDULERS_TEMPLATE_HASH_AT_LOAD=$(scheduler_template_hash "$SCRIPT_DIR" 2>/dev
 # Set by _schedulers_defer_template_hash when a scheduler in this run was left
 # unregenerated (runtime pin, refused pin, failed install); blocks recording.
 _SCHEDULERS_TEMPLATE_HASH_DEFERRED=""
+# setup.sh runs some scheduler stages in a bounded background child
+# (_setup_run_noncritical_stage_bounded), where the variable above never
+# reaches the parent recorder. Deferrals are also written to this marker,
+# keyed by the setup shell's $$ (the same value in every subshell of the run).
+_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE="${HOME:-}/.aidevops/.agent-workspace/tmp/schedulers-template-hash.defer.$$"
+rm -f "$_SCHEDULERS_TEMPLATE_HASH_DEFER_FILE" 2>/dev/null || true
 
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor
