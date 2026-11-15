@@ -46,6 +46,11 @@ class ArchiveTarget:
     recover: bool = False
 
 
+def _id(path: Path) -> list[int]:
+    info = path.lstat()
+    return [info.st_dev, info.st_ino]
+
+
 def _event(store: LifecycleRegistry, key: str) -> dict | None:
     with store.connection() as connection:
         row = connection.execute(
