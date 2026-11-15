@@ -369,6 +369,11 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	led=$(PULSE_CENSUS_ENUMERATION_BUDGET_S=70 build_ranked_dispatch_candidates_json 50 skip)
 	[[ "$(tr '\n' ';' <"$EVENTS")" == 'budget:owner/big:60;budget:owner/small2:15;budget:owner/small1:15;' ]]
 	jq -e 'length == 1 and .[0].repo_slug == "owner/big" and .[0].number == 7' <<<"$led" >/dev/null
+	# Only full censuses defer: first waves order leads ahead of the cursor.
+	admit_rc=0
+	_dispatch_census_admit_repo owner/big tooling "" "" "" "" 15 10 1 || admit_rc=$?
+	[[ "$admit_rc" == 3 ]]
+	_PULSE_FIRST_DISPATCH_WAVE=1 _dispatch_census_admit_repo owner/big tooling "" "" "" "" 15 10 1
 	# The first repository is scanned even when its learned budget (45s after
 	# the 30s completion) exceeds the whole census budget.
 	: >"$EVENTS"
@@ -381,6 +386,12 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	[[ "$rc" == 124 ]]
 	jq -e 'length == 1 and .[0].number == 7' <<<"$reused" >/dev/null
 	grep -q 'reused last-good candidates: repo=owner/big count=1 age=30s (GH#38483)' "$LOGFILE"
+	# The PR-backlog guardrail is reapplied to the reused list.
+	(
+		_dispatch_filter_repo_pr_backlog_candidates() { printf '[]\n'; return 0; }
+		capped=$(_dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "") || true
+		[[ "$capped" == '[]' ]]
+	)
 	# A timeout keeps the stored list; a non-timeout failure never reuses it.
 	printf '1\n' >"$big_rc_file"
 	rc=0

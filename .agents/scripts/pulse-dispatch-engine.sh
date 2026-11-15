@@ -568,8 +568,15 @@ _dispatch_census_enumerate_repo() {
 	else
 		echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${rc} budget=${budget}s (GH#38226)" >>"$LOGFILE"
 		candidates='[]'
-		# Only a timeout: auth, source or rate-limit failures stay empty.
-		((rc != 124)) || candidates=$(_dispatch_census_last_good_candidates "$repo_slug")
+		# Only a timeout: auth, source or rate-limit failures stay empty. The
+		# stored list passed the PR-backlog guardrail at scan time; the
+		# backlog may have grown since, so reapply it (cached PR list).
+		if ((rc == 124)); then
+			candidates=$(_dispatch_census_last_good_candidates "$repo_slug")
+			if [[ "$candidates" != '[]' ]] && declare -F _dispatch_filter_repo_pr_backlog_candidates >/dev/null 2>&1; then
+				candidates=$(_dispatch_filter_repo_pr_backlog_candidates "$repo_slug" "$candidates") || candidates='[]'
+			fi
+		fi
 	fi
 	printf '%s\n' "$candidates"
 	return "$rc"
@@ -582,6 +589,9 @@ _dispatch_census_enumerate_repo() {
 # stamp and the rotation cursor stay put, so the next census starts with it
 # and its full budget instead of a clamped scan that times out. The first
 # repository of a census is never deferred, so every census makes progress.
+# Full censuses only: first waves order arrival/backlog leads ahead of the
+# cursor, so a deferral there could repeat; their clamped scan falls back to
+# the fresh last-good list instead.
 # Args: slug, priority, pulse-hours start/end, expiry, interval, base budget,
 #   remaining census seconds, repositories already polled this census.
 # Returns: 0 poll, 1 skip, 2 skip and mark product discovery incomplete,
@@ -596,6 +606,7 @@ _dispatch_census_admit_repo() {
 		[[ "$repo_priority" != product ]] || return 2
 		return 1
 	fi
+	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != 1 ]] || return 0
 	need=$(_dispatch_repo_enumeration_budget "$repo_slug" "$base")
 	if [[ "$polled" =~ ^[0-9]+$ && "$need" =~ ^[0-9]+$ ]] && ((polled > 0 && need > base && remaining < need)); then
 		echo "[pulse-wrapper] Candidate census deferred slow repository to the next census: repo=${repo_slug} budget=${need}s remaining=${remaining}s (GH#38483)" >>"$LOGFILE"
