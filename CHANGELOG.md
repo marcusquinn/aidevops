@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.205] - 2026-11-15
+
+### Changed
+
+- Refactor: split headless runtime completion tests into focused modules (GH#38472) (#38474)
+- Maintenance: sync GitHub issue refs to TODO.md (#38470)
+- Refactor: split checkpoint-revision-recovery history edge cases into sub-doc (GH#38463) (#38465)
+
+### Fixed
+
+- make t2119 plist drift detection converge instead of running full setup every 6 hours
+- make stale scheduler test suites hermetic and passing on worker hosts
+
 ## [3.39.204] - 2026-11-15
 
 ### Fixed
