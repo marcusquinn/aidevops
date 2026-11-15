@@ -73,7 +73,7 @@ _dispatch_secret_starvation_notice() {
 	# Status and companion membership are checked independently.
 	local companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}"
 	local -a edit_args=()
-	local has_label='any(.labels[]?; (if type == "object" then .name else . end) == $l)' wanted=""
+	local has_label="any(.labels[]?; (if type == \"object\" then .name else . end) == \$l)" wanted=""
 	for wanted in status:blocked "$companion"; do
 		printf '%s' "$issue_json" | jq -e --arg l "$wanted" "$has_label" >/dev/null || edit_args+=(--add-label "$wanted")
 	done
