@@ -29,7 +29,7 @@ function fixture(t) {
   // The production probe always reads the actual sibling installation.
   for (const name of moduleNames) copyFileSync(join(plugin, name), join(runtime, name));
   symlinkSync(runtime, join(installed, "plugins/opencode-aidevops"), "dir");
-  for (const name of ["oauth-pool-rotation-probe.mjs", "oauth-pool-helper.sh", "oauth-pool-add.sh", "oauth-pool-manage.sh", "oauth-pool-diagnose.sh"]) {
+  for (const name of ["oauth-pool-rotation-probe.mjs", "oauth-pool-helper.sh", "oauth-pool-add.sh", "oauth-pool-manage.sh", "oauth-pool-diagnose.sh", "oauth-pool-remote-sync.sh"]) {
     copyFileSync(join(scripts, name), join(installed, "scripts", name));
   }
   const home = join(root, "home");

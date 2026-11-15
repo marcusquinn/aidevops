@@ -93,7 +93,7 @@ import {
   isRemoteInteractiveConversation,
 } from "./team-interface-context.mjs";
 import { enforceConversationPathAccess } from "./team-interface-path-guard.mjs";
-import { assertLocalOnlyEgress, initLocalOnlyPolicy } from "./local-only-policy.mjs";
+import { assertLocalOnlyEgress, formatLocalOnlyBinding, initLocalOnlyPolicy } from "./local-only-policy.mjs";
 
 // Existing modules
 import { createTools, tool } from "./tools.mjs";
@@ -277,7 +277,7 @@ function createConversationHooks({client, conversation, directory, localOnlyPoli
     "tool.definition": adaptToolDefinition,
     "chat.message": async () => 0,
     "chat.params": async (input, output) => {
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       return applyConversationRootVariant(
         input,
         output,
@@ -359,6 +359,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // GH#34125 #aidevops:trust-boundary: bind local-only policy from the launch
   // environment before any hook can run; later env mutation cannot change it.
   const localOnlyPolicy = initLocalOnlyPolicy(process.env);
+  // GH#38424: content-free binding state, so operators can confirm this process is bound.
+  console.error(formatLocalOnlyBinding(localOnlyPolicy));
   const conversation = loadTeamInterfaceConversation(process.env, AGENTS_DIR, {
     pluginEntryPath: PLUGIN_ENTRY_PATH,
     repositoryDir: directory,
@@ -756,7 +758,7 @@ export async function AidevopsPlugin({ directory, client }) {
     "chat.params": async (input, output) => {
       // GH#34125: first, so a bound session never reaches the provider stream
       // (parent turns, subagents, compaction and resumed sessions alike).
-      assertLocalOnlyEgress(localOnlyPolicy, input, "chat");
+      assertLocalOnlyEgress(localOnlyPolicy, input, "chat", (line) => console.error(line));
       contextBudget.apply(input);
       const { sessionId, modelId } = sessionModelIdentity(input);
       // Before remember(): compare against the parent's model, not this request's.
