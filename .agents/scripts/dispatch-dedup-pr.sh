@@ -1249,7 +1249,7 @@ _has_open_pr_check_superseded_issue_pr() {
 					(($title | test($ref_pattern; "i")) or ($body | test($ref_pattern; "i"))) and
 					((($title + "\n" + $body) | test($planning_pattern; "i")) | not) and
 					((
-						(($author == "dependabot[bot]") or ($author == "renovate[bot]")) and
+						(($author | ascii_downcase) | IN("dependabot[bot]", "app/dependabot", "renovate[bot]", "app/renovate")) and
 						($title | test($bump_title_pattern; "i"))
 					) | not))
 			] | .[0].number // empty' 2>/dev/null) || {
