@@ -148,12 +148,13 @@ _brew_upgrade_cmd() {
 # PEP 668-safe pip upgrade command.
 # Ubuntu 24.04+, Fedora 38+, and modern Debian mark the system Python as
 # "externally managed" — bare `pip install` is blocked with an error.
-# Safe upgrade order: pipx (isolated venv) → pip --user (user site-packages).
+# Safe upgrade order: pipx (isolated venv) → uv tool (isolated venv).
+# Never user-scope (--user) or system-scope pip installs.
 # $1 = pip package name (e.g. "analytics-mcp")
 # shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 _pip_upgrade_cmd() {
 	local pkg="$1"
-	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; else pip install --user --upgrade '"${pkg}"' 2>/dev/null || pip install --upgrade '"${pkg}"'; fi'
+	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; elif command -v uv >/dev/null 2>&1; then uv tool install --upgrade '"${pkg}"'; else echo "Neither pipx nor uv found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; fi'
 }
 
 # GH#35515: the reviewed Playwriter pin has one source of truth, the MCP

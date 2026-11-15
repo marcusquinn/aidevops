@@ -679,15 +679,7 @@ _install_skill_scanner() {
 		fi
 	fi
 
-	# 4. pip3 --user (legacy fallback, fails on PEP 668 systems)
-	if [[ "$installed" == "false" ]] && command -v pip3 &>/dev/null; then
-		print_info "Installing Cisco Skill Scanner via pip3 --user..."
-		if run_with_spinner "Installing cisco-ai-skill-scanner" pip3 install --user cisco-ai-skill-scanner 2>/dev/null; then
-			print_success "Cisco Skill Scanner installed via pip3"
-			installed=true
-			skill_scanner_bin=$(command -v skill-scanner 2>/dev/null || echo "$HOME/.local/bin/skill-scanner")
-		fi
-	fi
+	# No user/system-scope pip fallback (PEP 668): uv, pipx and venv above are isolated.
 
 	if [[ "$installed" == "false" ]]; then
 		print_warning "Failed to install Cisco Skill Scanner - skipping security scan"

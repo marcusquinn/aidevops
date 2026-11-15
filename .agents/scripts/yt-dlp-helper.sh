@@ -739,6 +739,21 @@ except Exception as e:
 	return $?
 }
 
+# Install or upgrade yt-dlp in an isolated environment (uv tool, then pipx).
+# Never installs to user or system Python scope (PEP 668).
+install_ytdlp_isolated() {
+	if command -v uv &>/dev/null; then
+		uv tool install --upgrade yt-dlp
+		return $?
+	fi
+	if command -v pipx &>/dev/null; then
+		pipx install yt-dlp || pipx upgrade yt-dlp
+		return $?
+	fi
+	print_error "Neither uv nor pipx found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+	return 1
+}
+
 # Install yt-dlp and ffmpeg
 install_ytdlp() {
 	print_header "Installing yt-dlp and Dependencies"
@@ -753,7 +768,7 @@ install_ytdlp() {
 			brew install yt-dlp ffmpeg
 		else
 			print_info "Installing yt-dlp via pip..."
-			pip3 install -U yt-dlp
+			install_ytdlp_isolated
 			print_warning "Please install ffmpeg manually: https://ffmpeg.org/download.html"
 		fi
 		;;
@@ -761,23 +776,23 @@ install_ytdlp() {
 		if command -v apt-get &>/dev/null; then
 			print_info "Installing via apt..."
 			sudo apt-get update && sudo apt-get install -y ffmpeg
-			pip3 install -U yt-dlp
+			install_ytdlp_isolated
 		elif command -v dnf &>/dev/null; then
 			print_info "Installing via dnf..."
 			sudo dnf install -y ffmpeg
-			pip3 install -U yt-dlp
+			install_ytdlp_isolated
 		elif command -v pacman &>/dev/null; then
 			print_info "Installing via pacman..."
 			sudo pacman -S --noconfirm yt-dlp ffmpeg
 		else
 			print_info "Installing yt-dlp via pip..."
-			pip3 install -U yt-dlp
+			install_ytdlp_isolated
 			print_warning "Please install ffmpeg manually: https://ffmpeg.org/download.html"
 		fi
 		;;
 	*)
 		print_info "Installing yt-dlp via pip..."
-		pip3 install -U yt-dlp
+		install_ytdlp_isolated
 		print_warning "Please install ffmpeg manually: https://ffmpeg.org/download.html"
 		;;
 	esac
@@ -797,7 +812,7 @@ update_ytdlp() {
 		brew upgrade yt-dlp
 	else
 		print_info "Updating via pip..."
-		pip3 install -U yt-dlp
+		install_ytdlp_isolated
 	fi
 
 	local version

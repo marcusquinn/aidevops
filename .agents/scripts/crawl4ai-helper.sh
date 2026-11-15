@@ -95,13 +95,31 @@ install_crawl4ai() {
 		return 1
 	fi
 
-	print_info "Installing Crawl4AI with pip..."
-	if pip3 install -U crawl4ai; then
-		print_success "Crawl4AI installed successfully"
+	# Isolated install only: never user- or system-scope pip (PEP 668).
+	local venv_dir="${CRAWL4AI_VENV_DIR:-$HOME/.aidevops/crawl4ai-venv}"
+	if command -v uv &>/dev/null; then
+		print_info "Installing Crawl4AI with uv tool..."
+		if ! uv tool install --upgrade crawl4ai; then
+			print_error "Failed to install Crawl4AI"
+			return 1
+		fi
+		local uv_bin_dir
+		uv_bin_dir="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
+		export PATH="${uv_bin_dir}:$PATH"
+	elif python3 -m venv --help &>/dev/null; then
+		print_info "Installing Crawl4AI into venv ${venv_dir}..."
+		if { [[ -x "${venv_dir}/bin/python" ]] || python3 -m venv "$venv_dir"; } &&
+			"${venv_dir}/bin/python" -m pip install --quiet --upgrade crawl4ai; then
+			export PATH="${venv_dir}/bin:$PATH"
+		else
+			print_error "Failed to install Crawl4AI"
+			return 1
+		fi
 	else
-		print_error "Failed to install Crawl4AI"
+		print_error "Neither uv nor python3 venv is available. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
 		return 1
 	fi
+	print_success "Crawl4AI installed successfully"
 
 	print_info "Running post-installation setup..."
 	if crawl4ai-setup; then

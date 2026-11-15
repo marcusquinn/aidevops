@@ -412,7 +412,7 @@ cmd_add_related_docs() {
 			python3 -m venv "${VENV_DIR}"
 		fi
 		activate_venv
-		pip install --quiet PyYAML
+		"${VENV_DIR}/bin/python" -m pip install --quiet PyYAML
 	fi
 
 	local args=()

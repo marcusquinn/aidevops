@@ -78,9 +78,9 @@ setup_camoufox() {
 		echo -e "${RED}Error: Failed to activate venv at $VENV_DIR${NC}" >&2
 		return 1
 	}
-	pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
-		echo -e "${YELLOW}Warning: pip install failed. Trying with --break-system-packages...${NC}"
-		pip install --quiet --upgrade --break-system-packages camoufox browserforge 2>/dev/null || true
+	# Venv-scoped only: never fall back to system scope (--break-system-packages).
+	"$VENV_DIR/bin/python" -m pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
+		echo -e "${YELLOW}Warning: pip install into $VENV_DIR failed; no system-scope fallback is used.${NC}" >&2
 	}
 
 	# Fetch browser binary

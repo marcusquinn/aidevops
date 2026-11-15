@@ -33,7 +33,43 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Isolated Python environment for embeddings dependencies (never user/system scope).
+# When it exists, put it first on PATH so every `python3` call below resolves to it.
+MEMORY_EMBEDDINGS_VENV_DIR="${MEMORY_EMBEDDINGS_VENV_DIR:-$HOME/.aidevops/memory-embeddings-venv}"
+if [[ -x "${MEMORY_EMBEDDINGS_VENV_DIR}/bin/python3" ]]; then
+	PATH="${MEMORY_EMBEDDINGS_VENV_DIR}/bin:${PATH}"
+	export PATH
+fi
+
 # --- Functions ---
+
+#######################################
+# Install Python packages into the embeddings venv (uv preferred, else venv pip).
+# Creates the venv if needed and puts it first on PATH.
+# Args: $1... = pip requirement specs
+#######################################
+_embeddings_pip_install() {
+	local venv_dir="$MEMORY_EMBEDDINGS_VENV_DIR"
+	if [[ ! -x "${venv_dir}/bin/python3" ]]; then
+		mkdir -p "$(dirname "$venv_dir")"
+		if command -v uv &>/dev/null; then
+			uv venv --quiet "$venv_dir" || return 1
+		elif python3 -m venv --help &>/dev/null; then
+			python3 -m venv "$venv_dir" || return 1
+		else
+			log_error "Cannot create venv. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+			return 1
+		fi
+	fi
+	if command -v uv &>/dev/null; then
+		uv pip install --quiet --python "${venv_dir}/bin/python3" "$@" || return 1
+	else
+		"${venv_dir}/bin/python3" -m pip install --quiet "$@" || return 1
+	fi
+	PATH="${venv_dir}/bin:${PATH}"
+	export PATH
+	return 0
+}
 
 #######################################
 # Setup: install dependencies and configure provider
@@ -67,7 +103,7 @@ cmd_setup() {
 
 		if ! python3 -c "import numpy" &>/dev/null 2>&1; then
 			log_info "Installing numpy..."
-			pip install --quiet numpy
+			_embeddings_pip_install numpy || return 1
 		fi
 
 		# Check for API key
@@ -105,7 +141,7 @@ cmd_setup() {
 		fi
 
 		log_info "Installing Python dependencies..."
-		pip install --quiet sentence-transformers numpy
+		_embeddings_pip_install sentence-transformers numpy || return 1
 
 		save_config "local"
 		create_python_engine
