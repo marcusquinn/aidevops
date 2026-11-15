@@ -153,6 +153,49 @@ _dispatch_repo_t2449_permanent_block_heads() {
 }
 
 #######################################
+# Count one open-PR listing for the backlog guardrail: all listed PRs, ready
+# worker PRs (non-draft origin:worker/origin:worker-takeover without
+# hold-for-review/needs-maintainer-review, GH#33727), and the subset marked
+# permanently t2449-blocked at their listed head (GH#38496). A missing head or
+# a new push keeps a marked PR counted. A full page may hide unmarked worker
+# PRs beyond fetch_limit, so exclusions are dropped (fail closed) when the
+# listing may be truncated.
+#
+# Args: $1 - repository slug, $2 - PR list JSON, $3 - fetch limit
+# Stdout: "<open_prs_total> <ready_worker_prs> <t2449_excluded>".
+#######################################
+_dispatch_repo_pr_backlog_counts() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local fetch_limit="$3"
+	local blocked_heads="{}" counts="" open_prs_total=0 ready_worker_prs=0 t2449_excluded=0
+	blocked_heads=$(_dispatch_repo_t2449_permanent_block_heads "$repo_slug") || blocked_heads="{}"
+	counts=$(jq -r --argjson blocked "$blocked_heads" '
+		if type == "array" then
+			length as $total
+			| [.[] | select((.isDraft // false) != true)
+				| ((.labels // []) | map(.name? // .)) as $labels
+				| select(($labels | index("origin:worker")) != null
+					or ($labels | index("origin:worker-takeover")) != null)
+				| select(($labels | index("hold-for-review")) == null
+					and ($labels | index("needs-maintainer-review")) == null)
+				| ((.headRefOid // "") as $head
+					| ($blocked[(.number | tostring)] // "") as $marked
+					| ($head != "" and $marked == $head))
+			] | "\($total) \(length) \(map(select(.)) | length)"
+		else "0 0 0" end
+	' <<<"$pr_json" 2>/dev/null) || counts=""
+	read -r open_prs_total ready_worker_prs t2449_excluded <<<"$counts"
+	[[ "$open_prs_total" =~ ^[0-9]+$ ]] || open_prs_total=0
+	[[ "$ready_worker_prs" =~ ^[0-9]+$ ]] || ready_worker_prs=0
+	[[ "$t2449_excluded" =~ ^[0-9]+$ ]] || t2449_excluded=0
+	[[ "$fetch_limit" =~ ^[0-9]+$ ]] || fetch_limit=0
+	((open_prs_total < fetch_limit)) || t2449_excluded=0
+	printf '%s %s %s\n' "$open_prs_total" "$ready_worker_prs" "$t2449_excluded"
+	return 0
+}
+
+#######################################
 # Filter ordinary candidates when their repository has reached its open-PR cap.
 # Only merge backlog that workers create and pulse can move counts toward the
 # cap: non-draft PRs labelled origin:worker/origin:worker-takeover without a
@@ -194,27 +237,10 @@ _dispatch_filter_repo_pr_backlog_candidates() {
 		printf '%s\n' "$candidates_json"
 		return 0
 	}
-	open_prs_total=$(jq 'if type == "array" then length else 0 end' <<<"$pr_json" 2>/dev/null) || open_prs_total=0
+	local ready_worker_prs=0 t2449_excluded=0 counts=""
+	counts=$(_dispatch_repo_pr_backlog_counts "$repo_slug" "$pr_json" "$fetch_limit") || counts=""
+	read -r open_prs_total ready_worker_prs t2449_excluded <<<"$counts"
 	[[ "$open_prs_total" =~ ^[0-9]+$ ]] || open_prs_total=0
-	local blocked_heads="{}" ready_worker_prs=0 t2449_excluded=0 counts=""
-	blocked_heads=$(_dispatch_repo_t2449_permanent_block_heads "$repo_slug") || blocked_heads="{}"
-	# Exclude a marked PR only while its listed head equals the marked head;
-	# a missing head or a new push keeps it counted (GH#38496).
-	counts=$(jq -r --argjson blocked "$blocked_heads" '
-		if type == "array" then
-			[.[] | select((.isDraft // false) != true)
-				| ((.labels // []) | map(.name? // .)) as $labels
-				| select(($labels | index("origin:worker")) != null
-					or ($labels | index("origin:worker-takeover")) != null)
-				| select(($labels | index("hold-for-review")) == null
-					and ($labels | index("needs-maintainer-review")) == null)
-				| ((.headRefOid // "") as $head
-					| ($blocked[(.number | tostring)] // "") as $marked
-					| ($head != "" and $marked == $head))
-			] | "\(length) \(map(select(.)) | length)"
-		else "0 0" end
-	' <<<"$pr_json" 2>/dev/null) || counts="0 0"
-	read -r ready_worker_prs t2449_excluded <<<"$counts"
 	[[ "$ready_worker_prs" =~ ^[0-9]+$ ]] || ready_worker_prs=0
 	[[ "$t2449_excluded" =~ ^[0-9]+$ && "$t2449_excluded" -le "$ready_worker_prs" ]] || t2449_excluded=0
 	open_prs=$((ready_worker_prs - t2449_excluded))
