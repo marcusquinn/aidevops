@@ -32,7 +32,7 @@ Verification on 2026-11-15:
 - Local ShellCheck binary is unavailable. Covering CI job: Code Quality
   Analysis / ShellCheck (ubuntu-latest), delegated under GH#34758.
 
-## Live attempt and remaining acceptance
+## Initial live attempt
 
 The local worktree routine was invoked with `--dry-run --repo
 marcusquinn/aidevops`. Initial attempts skipped the scheduled routine's lock;
@@ -50,13 +50,10 @@ The runner log confirms live summary emission, but no permission lookup was
 admitted. Zero lookups are not evidence of memo effectiveness or distinct-pair
 volume. No 30-minute production reduction is claimed.
 
-**Infrastructure blocker:** the worker REST reserve prevents the required
-operational measurement. Keep PR #38284 draft until the normal quota gate
-admits a representative pass. Then inspect its hit/miss and distinct-miss
-summary and the `collaborator-permission-rest` attempts in the API ledger.
-Report a measurable reduction against the issue's 56–77 attempts/30-minute
-baseline, or evidence that the remaining misses are distinct pairs, before
-marking operational acceptance complete. Do not bypass the reserve.
+**Initial infrastructure blocker, resolved below:** the worker REST reserve
+prevented the operational measurement. The PR stayed draft until a normal
+quota-admitted pass could establish either the requested reduction or
+distinct-pair remaining misses. The reserve was not bypassed.
 
 ## Continuation verification
 
@@ -109,3 +106,45 @@ No additional issue was opened under the bounded continuation contract.
 - Verification: configured non-owner maintainer reaches the live permission
   gate; unknown/contributor repos remain blocked; an explicit repo filter never
   includes another repo. Run the existing standalone suite and ShellCheck.
+
+## Successful live candidate measurement
+
+The unchanged candidate implementation ran against the live target repository
+from **2026-11-15T01:40:11Z to 01:44:02Z**, after acquiring the normal routine
+lock and passing normal quota admission. It used the target's existing
+configuration as described above, with private cursor/checkpoint files and
+`--dry-run`; no global installation or release was performed.
+
+Runner receipt:
+
+```text
+[2026-11-15T01:40:11Z] [INFO] DRY-RUN mode: merge routine (pid=863961, timeout=600s)
+[2026-11-15T01:44:02Z] [INFO] DRY-RUN merge routine completed (exit=0)
+[2026-11-15T01:44:02Z] [INFO] collab_memo hits=0 misses=3
+[2026-11-15T01:44:02Z] [INFO] collab_memo distinct_miss_keys=3
+```
+
+The API ledger was filtered to the inclusive epoch window
+`1794706811..1794707042`, consumer `pulse-merge-routine.sh`, stage
+`collaborator-permission-rest`, and event `attempt`. It contains exactly:
+
+| Attempt epoch | HTTP status |
+| --- | --- |
+| 1794706813 | 200 |
+| 1794706959 | 200 |
+| 1794706979 | 200 |
+
+Later scheduled-run attempts at epochs 1794707056 and 1794707060 were excluded.
+During the run, the owned scratch memo contained a successful write verdict;
+after exit, `test ! -e <observed-run-scratch-directory>` succeeded, confirming
+that both memo and stats were removed.
+
+**Acceptance conclusion:** this sample meets the issue's distinct-pair evidence
+alternative: all three remaining permission misses are distinct `(repo, login)`
+keys, with three successful REST attempts and no repeated miss in this run.
+There were no live hits, so this sample alone does not demonstrate API savings.
+The existing mirrored test independently proves that a repeated substitution
+lookup is reused with one request instead of two. No 30-minute reduction is
+extrapolated from this single configured-repo dry-run. The prior quota blocker
+is cleared for this measurement; operational evidence is sufficient to mark
+the draft ready, with issue closure linked to the PR's eventual merge.
