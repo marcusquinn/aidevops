@@ -79,6 +79,8 @@ test_unknown_triage() (
 		expected="known:${reason}"
 		[[ "$reason" != input_required ]] || expected="${expected}:maintainer"
 		[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE" == "$expected" ]] || status=1
+		# GH#38353: only the external class carries its quoted trigger.
+		[[ "$reason" != external_trigger_pending || "${AIDEVOPS_TERMINAL_BLOCKER_TRIGGER:-}" == 'Await model publication' ]] || status=1
 	done
 	TRIAGE_RESPONSE='{"reason":"permission_required","owner":"","pending_only":true}'
 	if _terminal_blocker_triage_unknown "$captured" "$issue"; then status=1; fi
@@ -596,6 +598,139 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 	terminal_blocker_capture_output "${TEST_ROOT}/absent-question.ndjson" && status=1
 	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_QUESTION" ]] || status=1
 	print_result "input_required publishes only bounded redacted questions and an actionable supervisor fallback" "$status"
+	return 0
+}
+
+# GH#38353: an awaited external trigger is published verbatim or not at all.
+test_external_trigger_public_line() {
+	local output="${TEST_ROOT}/trigger.ndjson" fragment="" fingerprint="" status=0 trigger=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/trigger-entities.txt"
+	printf 'client: Synthetic Trigger Client\n' >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:external_trigger_pending')
+	jq -nc --arg text "BLOCKED: private dossier
+TERMINAL_BLOCKER_REASON=external_trigger_pending
+TERMINAL_BLOCKER_TRIGGER=Vendor release 4.2 ships on 2026-12-01" '{type:"text",text:$text}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ "$AIDEVOPS_TERMINAL_BLOCKER_TRIGGER" == 'Vendor release 4.2 ships on 2026-12-01' ]] || status=1
+	fragment=$(terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+	[[ "$fragment" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01'* &&
+		"$fragment" != *'private dossier'* ]] || status=1
+	# Another class never captures or publishes a trigger line.
+	printf '%s\n' '{"type":"text","text":"BLOCKED: x\nTERMINAL_BLOCKER_REASON=target_code_blocker\nTERMINAL_BLOCKER_TRIGGER=Vendor release 4.2"}' >"$output"
+	terminal_blocker_capture_output "$output" || status=1
+	[[ -z "$AIDEVOPS_TERMINAL_BLOCKER_TRIGGER" ]] || status=1
+	fragment=$(AIDEVOPS_TERMINAL_BLOCKER_TRIGGER='Vendor release 4.2' terminal_blocker_observation_fragment 111111111111111111111111 "$(_terminal_blocker_hash 'v2:target_code_blocker')")
+	[[ "$fragment" != *'Trigger awaited:'* ]] || status=1
+	# URLs, paths, inventory names, credentials, markup, controls and
+	# over-length text are dropped whole rather than partially redacted.
+	local private_path='/ho'
+	private_path+='me/example/private-project'
+	local credential='ghp_'
+	credential+='0123456789abcdef'
+	for trigger in '' 'see https:''//example.com/release notes' "deploy lands in ${private_path}" \
+		'Synthetic Trigger Client signs the contract' "rotate ${credential} first" 'token=abc123 rotates' \
+		$'first\nsecond' '<b>vendor</b> release' '@someone approves' "$(printf '%0501d' 0)"; do
+		fragment=$(AIDEVOPS_TERMINAL_BLOCKER_TRIGGER="$trigger" terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint")
+		[[ "$fragment" == *'Wait for the specified external trigger.'* && "$fragment" != *'Trigger awaited:'* ]] || status=1
+	done
+	unset AIDEVOPS_TERMINAL_BLOCKER_TRIGGER
+	print_result "external_trigger_pending publishes only an unaltered one-line trigger" "$status"
+	return 0
+}
+
+# GH#38353: a due hold gets one recorded outcome per interval; only
+# external_trigger_pending holds are read. GitHub and AI are stubbed.
+_trigger_revisit_cases() (
+	# Stub-visible fixtures use tb_* names: _tbtr_issue's locals shadow
+	# issue/comments under dynamic scoping.
+	local log="${TEST_ROOT}/trigger-revisit.log" tb_issue_json="" tb_comments="" revision="" fingerprint="" body="" record=""
+	local now="" next="" decision_reply="" rc=0 reason=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON" AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+	# shellcheck source=../terminal-blocker-trigger-revisit.sh
+	source "${SCRIPT_DIR}/terminal-blocker-trigger-revisit.sh"
+	_TBTR_LOADED=1
+	_TBTR_RECORD_DIR="${TEST_ROOT}/trigger-revisit"
+	tb_issue_json='{"number":42,"title":"Await vendor","body":"brief","state":"open","labels":[{"name":"status:available"}],"assignees":[]}'
+	terminal_blocker_fetch_issue() { printf '%s\n' "$tb_issue_json"; return 0; }
+	terminal_blocker_fetch_trusted_comments() { printf '%s\n' "$tb_comments"; return 0; }
+	_tbtr_decide() { printf 'decide\n' >>"$log"; [[ -n "$decision_reply" ]] || return 1; printf '%s\n' "$decision_reply"; return 0; }
+	_tbtr_enqueue_recovery() { printf 'enqueue %s\n' "$3" >>"$log"; return 0; }
+	blocked_needs_label_for_reason() { printf 'needs-dependency\n'; return 0; }
+	set_issue_status() { printf 'status %s\n' "$*" >>"$log"; return 0; }
+	gh_issue_comment() {
+		local arg="" take=0
+		for arg in "$@"; do
+			[[ "$take" != 1 ]] || { printf 'comment ' >>"$log"; tr '\n' ' ' <"$arg" >>"$log"; printf '\n' >>"$log"; }
+			take=0
+			[[ "$arg" != --body-file ]] || take=1
+		done
+		return 0
+	}
+	_observation() {
+		local id="$1" kind="$2" trigger_line="${3:-}"
+		fingerprint=$(_terminal_blocker_hash "v2:${kind}")
+		revision=$(terminal_blocker_task_revision "$tb_issue_json" owner/repo 42 "" "$kind") || return 1
+		body="<!-- aidevops:terminal-blocker-observation revision=${revision} blocker=${fingerprint} -->
+
+Terminal blocker: reason=${kind} owner=dependency-owner task=42 attempt=x.
+${trigger_line}"
+		tb_comments=$(jq -nc --arg body "$body" --argjson id "$id" \
+			'[{id:$id,author:"runner-a",author_association:"MEMBER",created_at:"2026-01-01T00:00:00Z",body:$body}]')
+		return 0
+	}
+	_count() { rg -c -- "$1" "$log" 2>/dev/null || printf '0\n'; return 0; }
+	# trigger_met: one retry directive with a per-observation marker, label restored.
+	_observation 10 external_trigger_pending $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+	decision_reply=$'trigger_met\tVendor release 4.2 shipped'
+	_tbtr_issue owner/repo 42 u1 runner-a true true true >/dev/null || return 1
+	[[ "$(_count '^comment .*aidevops:trigger-revisit observation=10 .*terminal-blocker-circuit:retry')" == 1 ]] || return 1
+	[[ "$(_count '^status 42 owner/repo blocked --add-label needs-dependency')" == 1 ]] || return 1
+	record=$(_tbtr_record_read owner/repo 42) || return 1
+	now=$(date +%s)
+	jq -e --argjson now "$now" '.decision == "trigger_met" and .attempts == 1 and .next_at > $now' <<<"$record" >/dev/null || return 1
+	# Not due: an unchanged or newly updated issue is not revisited again.
+	rc=0; _tbtr_issue owner/repo 42 u1 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 ]] || return 1
+	rc=0; _tbtr_issue owner/repo 42 u2 runner-a true true true >/dev/null || rc=$?
+	[[ "$rc" == 3 && "$(_count '^decide')" == 1 ]] || return 1
+	# still_pending doubles from the interval; a failed inference backs off and posts nothing.
+	_observation 20 external_trigger_pending $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+	decision_reply=$'still_pending\t'
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at')
+	now=$(date +%s)
+	[[ "$((next - now))" -ge 86000 && "$((next - now))" -le 86400 ]] || return 1
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	next=$(_tbtr_record_read owner/repo 42 | jq -r '.next_at')
+	[[ "$((next - now))" -ge 172000 && "$((next - now))" -le 172800 ]] || return 1
+	_tbtr_record_write owner/repo 42 "$(_tbtr_record_read owner/repo 42 | jq -c '.next_at = 1')" || return 1
+	decision_reply=""
+	_tbtr_issue owner/repo 42 u3 runner-a true true true >/dev/null || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "still_pending" and .attempts == 2' >/dev/null || return 1
+	[[ "$(_count '^comment ')" == 1 ]] || return 1
+	# A legacy hold without a trigger line is not_external without inference.
+	_observation 30 external_trigger_pending '' || return 1
+	_tbtr_issue owner/repo 42 u4 runner-a true true true >/dev/null || return 1
+	_tbtr_record_read owner/repo 42 | jq -e '.decision == "not_external"' >/dev/null || return 1
+	[[ "$(_count '^enqueue local')" == 1 && "$(_count '^decide')" == 4 ]] || return 1
+	# Permission and source-access holds are never revisited or recorded.
+	rm -rf "$_TBTR_RECORD_DIR"
+	for reason in permission_required source_access_blocked; do
+		_observation 40 "$reason" $'Trigger awaited: Vendor release 4.2 ships\n' || return 1
+		rc=0; _tbtr_issue owner/repo 42 u5 runner-a true true true >/dev/null || rc=$?
+		[[ "$rc" == 3 ]] || return 1
+		_tbtr_record_read owner/repo 42 >/dev/null && return 1
+	done
+	[[ "$(_count '^decide')" == 4 ]] || return 1
+	return 0
+)
+
+test_external_trigger_revisit() {
+	local status=0
+	_trigger_revisit_cases || status=1
+	print_result "external_trigger_pending holds get one revisit outcome per interval; other classes are never revisited" "$status"
 	return 0
 }
 
@@ -1983,6 +2118,8 @@ main() {
 	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
 	test_input_required_public_question
+	test_external_trigger_public_line
+	test_external_trigger_revisit
 	test_excluded_scope_revision
 	test_unknown_and_redaction
 	test_final_dossier_and_structural_precedence

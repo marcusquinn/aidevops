@@ -358,6 +358,27 @@ _pulse_housekeeping_on_signal() {
 }
 
 #######################################
+# GH#38353: revisit due external_trigger_pending holds on maintainer repos.
+# The helper owns its knobs (interval, per-cycle AI budget, wall-clock budget).
+# Returns 0 always; a failed pass is retried by the next cycle.
+#######################################
+_run_terminal_blocker_trigger_revisit() {
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
+	local slugs="" slug="" maintained=""
+	[[ -x "$helper" && -f "${REPOS_JSON:-}" ]] || return 0
+	declare -F _pulse_enabled_repo_slugs >/dev/null 2>&1 || return 0
+	declare -F get_repo_role_by_slug >/dev/null 2>&1 || return 0
+	slugs=$(_pulse_enabled_repo_slugs "$REPOS_JSON") || return 0
+	while IFS= read -r slug; do
+		[[ -n "$slug" && "$(get_repo_role_by_slug "$slug")" == "maintainer" ]] || continue
+		maintained+="${slug}"$'\n'
+	done <<<"$slugs"
+	[[ -n "$maintained" ]] || return 0
+	printf '%s' "$maintained" | "$helper" pulse >>"$LOGFILE" 2>&1 || true
+	return 0
+}
+
+#######################################
 # Run non-dispatch post-dispatch housekeeping stages.
 #
 # These stages are intentionally after early dispatch and do not protect the
@@ -409,6 +430,8 @@ _pulse_run_post_dispatch_housekeeping_stages() {
 		_pulse_run_resumable_housekeeping_stage "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$state_file" \
 			_pulse_run_budget_priority_stage_with_timeout "$_PULSE_BRIEF_HOLD_RELEASE_STAGE" "$stage_timeout" release_repaired_brief_holds || incomplete=1
 	fi
+	_pulse_run_resumable_housekeeping_stage "trigger_revisit" "$state_file" \
+		_pulse_run_optional_stage_with_timeout "trigger_revisit" "$stage_timeout" _run_terminal_blocker_trigger_revisit || incomplete=1
 	# GH#38204: per-repo setup (gate probe, merged-PR list, issue index) takes
 	# 6-28s before the first cursor write, so the cheap slice killed every run.
 	_pulse_run_resumable_housekeeping_stage "post_merge_scanner" "$state_file" \

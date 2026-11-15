@@ -109,6 +109,7 @@ shellcheck .agents/scripts/terminal-blocker-circuit.sh .agents/scripts/terminal-
 - `.agents/scripts/approval-snapshot-v2.sh`
 - `.agents/scripts/pulse-dispatch-lib.sh`
 - `.agents/scripts/pulse-dispatch-engine-housekeeping.sh`
+- `.agents/scripts/headless-runtime-contract.sh` (integration scope recovery, GH#38353: workers must be told to emit `TERMINAL_BLOCKER_TRIGGER=`)
 - `.agents/scripts/tests/test-terminal-blocker-circuit.sh`
 - `.agents/scripts/tests/test-approval-helper-content-binding.sh`
 - `.agents/reference/worker-diagnostics.md`

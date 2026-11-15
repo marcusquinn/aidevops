@@ -130,6 +130,25 @@ not unrelated code/brief edits or dependency API availability. Resolve the
 human-owned prerequisite before explicitly retrying; scheduling consent never
 grants source access, and the original guard must verify the exact context.
 
+An `external_trigger_pending` report may add one final-message
+`TERMINAL_BLOCKER_TRIGGER=<event, owner or date>` line (GH#38353); AI triage of
+an unclassified report supplies its quoted evidence instead. The release
+publishes it as `Trigger awaited: <text>` only when every privacy guard leaves it
+unchanged: URLs, paths, inventory names, credential shapes, markup, controls and
+over 500 characters drop the line whole. `approval-snapshot-v2.sh` treats the
+exact line (and the GH#38360 `Unblock label:` companion line) as canonical;
+extra prose stays content-bound. `terminal-blocker-trigger-revisit.sh`, a
+post-dispatch housekeeping stage on maintainer repos, revisits each hold once
+due (first after `AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S`, default 24 hours, then
+doubling to 7 days). An AI decision over the trigger and newer issue and linked
+evidence records one outcome per hold in
+`~/.aidevops/logs/terminal-blocker-trigger-revisit/`: `trigger_met` (quoted
+evidence required) posts the standalone retry directive or queues recovery,
+`still_pending` schedules the next revisit, and `not_external` routes the hold
+to recovery triage. The pass restores `status:blocked` when a held unassigned
+issue shows `status:available`. Permission and source-access holds are never
+revisited.
+
 A missing verification tool, or a forbidden dependency install, is not a
 permission boundary (GH#34110). Workers first check repository-declared tools
 (`.aidevops.json` `.verify`, worktree `.venv/bin/<tool>`), then report

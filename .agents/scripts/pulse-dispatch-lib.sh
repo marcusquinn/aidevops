@@ -364,20 +364,28 @@ _dispatch_checkpoint_decimal() {
 # release and doubles up to _PCC_ATTENTION_REARM_MAX_DOUBLINGS (6) times, so
 # every such anchor contributes each doubled deadline.
 # Assigned issues must retain the live/stale-owner checks on every cycle.
+# GH#38353: an external_trigger_pending hold also wakes at its first revisit
+# deadline and at the next revisit recorded by terminal-blocker-trigger-revisit.sh.
 _dispatch_draft_hint_boundary() {
-	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed=""
+	local candidate="$1" repo="$2" issue="$3" comments="" rearm="" observed="" revisit="" due=""
+	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-trigger-revisit.sh"
 	jq -e '(.assignees // [] | length) == 0' <<<"$candidate" >/dev/null || return 1
 	rearm=$(_dispatch_checkpoint_decimal "${AIDEVOPS_PCC_ATTENTION_REARM_SECONDS:-43200}" 43200)
+	revisit=$(_dispatch_checkpoint_decimal "${AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S:-86400}" 86400)
+	[[ ! -x "$helper" ]] || due=$("$helper" next-due "$repo" "$issue" 2>/dev/null) || due=""
+	due=$(_dispatch_checkpoint_decimal "$due" 0)
 	# A deadline crossed during the bounded read must still invalidate the hint.
 	observed=$(date +%s)
 	comments=$(timeout_sec "$_DISPATCH_NEGATIVE_PR_REST_TIMEOUT_SECONDS" \
 		gh api "repos/${repo}/issues/${issue}/comments?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-	jq -er --argjson rearm "$rearm" --argjson observed "$observed" '
+	jq -er --argjson rearm "$rearm" --argjson observed "$observed" --argjson revisit "$revisit" --argjson due "$due" '
 		if type != "array" then error("invalid comments") else flatten end |
 		[.[] | (.body // "") as $body |
 			($body | scan("expires_at=([0-9]+)") | .[0] | tonumber),
 			(select($rearm > 0 and ($body | test("aidevops:(blocked|stalled)-checkpoint-attention|(^|\n)CLAIM_RELEASED "))) |
-				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor)] |
+				(.created_at | fromdateiso8601) as $anchor | range(0; 7) | $anchor + $rearm * pow(2; .) | floor),
+			(select($revisit > 0 and ($body | test("(^|\n)Terminal blocker: reason=external_trigger_pending "))) |
+				(.created_at | fromdateiso8601) + $revisit | floor)] + [$due] |
 		map(select(. >= $observed)) | (min // 0) | tostring + ":" + ($rearm | tostring)
 	' <<<"$comments" 2>/dev/null
 	return $?
