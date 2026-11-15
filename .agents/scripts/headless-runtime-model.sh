@@ -682,7 +682,9 @@ _build_claude_cmd() {
 # Quoted instructions such as "stop only at `FULL_LOOP_COMPLETE` or `BLOCKED`"
 # are prose mentions, not a terminal state.
 # shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
-_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])'
+_HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?BLOCKED(?:\*\*|__|`)?(?=$|[ \t:.,;!\-])(?![ \t]*(?:[:-][ \t]*)?(?i:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?]+(?:[ \t"]|$)|"))'
+# The trailing negative lookahead excludes negated statuses ("BLOCKED: none") at a
+# standalone boundary, so "no.json" and "none available" still count as blockers.
 
 # output_has_completion_signal: check if a worker run produced a meaningful
 # completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored
