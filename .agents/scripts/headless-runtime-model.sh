@@ -759,9 +759,19 @@ model_text = "\n".join(model_text_parts)
 def has_post_pr_handoff(text):
     return any(line.strip() == "POST_PR_HANDOFF" for line in text.splitlines())
 
+# A negated status ("BLOCKED: none") is not a terminal blocked signal.
+negated = re.compile(r'[ \t]*(?:[:-][ \t]*)?(?:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?]+(?:[ \t]|$)|")', re.IGNORECASE)
+
+def has_real_blocked(text):
+    for match in blocked_line.finditer(text):
+        payload = text[match.end():].split('\n', 1)[0]
+        if not negated.match(payload):
+            return True
+    return False
+
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    if has_post_pr_handoff(model_text) or blocked_line.search(model_text):
+    if has_post_pr_handoff(model_text) or has_real_blocked(model_text):
         sys.exit(0)
     if completion_marker.search(model_text):
         sys.exit(0)
@@ -780,7 +790,7 @@ if model_text.strip():
 # Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
 # JSON text/result value starts count as line starts for anchored BLOCKED.
 raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
-if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
+if has_post_pr_handoff(raw) or has_real_blocked(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
@@ -875,7 +885,7 @@ model_text = "\n".join(model_text_parts)
 # JSON text/result value starts as line starts for the anchored match.
 candidate = model_text if model_text.strip() else re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
 # A negated status is not a blocker, but must not mask another real BLOCKED line.
-negated = re.compile(r'[ \t]*(?:[:-][ \t]*)?(?:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?])', re.IGNORECASE)
+negated = re.compile(r'[ \t]*(?:[:-][ \t]*)?(?:none|n/a|no|nothing)(?=$|[ \t]*$|[.,;!?]+(?:[ \t]|$)|")', re.IGNORECASE)
 for match in blocked_line.finditer(candidate):
     payload = candidate[match.end():].split('\n', 1)[0]
     if not negated.match(payload):

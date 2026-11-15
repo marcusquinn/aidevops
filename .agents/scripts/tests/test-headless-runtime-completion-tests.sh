@@ -98,12 +98,22 @@ test_negated_blocked_signals() {
 		print_result "Negated blocker preserves completion: $text" "$result"
 	done
 	for text in 'BLOCKED: source_exhausted' '**BLOCKED**: needs maintainer publish' \
-		'BLOCKED: none available' $'BLOCKED: none\nBLOCKED: real failure'; do
+		'BLOCKED: none available' $'BLOCKED: none\nBLOCKED: real failure' \
+		'BLOCKED: no.json is missing' \
+		'{"type":"result","result":"FULL_LOOP_COMPLETE\nBLOCKED: source_exhausted"}'; do
 		printf '%s\n' "$text" >"$file"
 		result=0
 		output_has_blocked_signal "$file" || result=1
 		print_result "Real blocker remains blocked: $text" "$result"
 	done
+	printf '%s\n' '{"type":"result","result":"FULL_LOOP_COMPLETE\nBLOCKED: none"}' >"$file"
+	result=0
+	output_has_blocked_signal "$file" && result=1
+	print_result "Negated blocker ending a JSON result is not blocked" "$result"
+	printf '%s\n' $'BLOCKED: none\nunfinished work' >"$file"
+	result=0
+	output_has_completion_signal "$file" && result=1
+	print_result "Negated blocker alone is not completion" "$result"
 	return 0
 }
 
