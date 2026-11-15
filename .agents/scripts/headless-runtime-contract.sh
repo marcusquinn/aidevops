@@ -160,7 +160,8 @@ When the trusted brief explicitly requires waiting for a named external event
 (for example a model ID publication) and current evidence confirms it has not
 occurred, use:
 TERMINAL_BLOCKER_REASON=external_trigger_pending
-Name the exact trigger and checked evidence in the protected dossier. This class
+Name the exact trigger and checked evidence in the protected dossier. Also add one
+public TERMINAL_BLOCKER_TRIGGER=<event, owner or date, one line, no URLs/secrets>. This class
 re-arms on a brief or linked dependency change or trusted retry, not unrelated
 default-branch commits. Do not use it for generic provider outages, missing
 permissions, uncertain availability or a trigger that is already satisfied.

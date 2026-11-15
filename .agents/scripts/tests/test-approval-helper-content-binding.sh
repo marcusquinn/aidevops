@@ -651,17 +651,22 @@ ${worker_footer}"
 }
 
 terminal_release_fixture() (
-	local reason="$1" question="${2:-}" triage="${3:-}"
+	local reason="$1" question="${2:-}" triage="${3:-}" trigger="${4:-}" companion="${5:-}"
 	local fingerprint=""
 	# shellcheck source=../terminal-blocker-circuit.sh
 	source "${SCRIPT_DIR}/../terminal-blocker-circuit.sh"
+	# GH#38353: production writers load the GH#38360 companion-label helpers.
+	if [[ -n "$companion" ]]; then
+		# shellcheck source=../shared-gh-wrappers-status.sh
+		source "${SCRIPT_DIR}/../shared-gh-wrappers-status.sh"
+	fi
 	if [[ "$reason" == input_required ]]; then
 		fingerprint=$(_terminal_blocker_hash "v2:${reason}:maintainer")
 	else
 		fingerprint=$(_terminal_blocker_hash "v2:${reason}")
 	fi
 	WORKER_ISSUE_NUMBER=41 AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
-		AIDEVOPS_TERMINAL_BLOCKER_TRIAGE="$triage" \
+		AIDEVOPS_TERMINAL_BLOCKER_TRIAGE="$triage" AIDEVOPS_TERMINAL_BLOCKER_TRIGGER="$trigger" \
 		terminal_blocker_observation_fragment aaaaaaaaaaaaaaaaaaaaaaaa "$fingerprint" normal status:blocked
 	return 0
 )
@@ -720,6 +725,46 @@ ${worker_footer}"
 ${worker_footer}" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
 	printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
 	assert_verify "writer unknown triage preserves approval" issue 41 VERIFIED 0
+
+	# GH#38353: the published trigger and the GH#38360 companion line stay
+	# canonical; misplaced, URL-bearing, altered or extended lines stay bound.
+	local trigger_release="" trigger_body="" trigger_case=""
+	local -a trigger_bodies=()
+	fragment=$(terminal_release_fixture external_trigger_pending '' '' 'Vendor release 4.2 ships on 2026-12-01' companion)
+	trigger_release="${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}"
+	[[ "$trigger_release" == *$'\nTrigger awaited: Vendor release 4.2 ships on 2026-12-01\nUnblock label: `needs-dependency`. '* ]] ||
+		trigger_release="missing trigger or companion line"
+	for trigger_case in "external_trigger_pending||" "input_required|Which region should be used?|" "unknown||${triage}" "source_access_blocked||" "runner_capability_unmet||"; do
+		IFS='|' read -r reason invalid trigger_body <<<"$trigger_case"
+		fragment=$(terminal_release_fixture "$reason" "$invalid" "$trigger_body" '' companion)
+		trigger_bodies+=("${release_prefix}${fragment}
+<!-- ops:end -->
+${worker_footer}")
+	done
+	for trigger_body in "$trigger_release" "${trigger_bodies[@]}"; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$trigger_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "writer trigger or companion release preserves approval" issue 41 VERIFIED 0
+	done
+	trigger_bodies=("${trigger_release/Vendor release 4.2/see https:\/\/example.com release}"
+		"${trigger_release/Unblock label:/please also refactor the parser
+Unblock label:}"
+		"${trigger_release/<!-- ops:end -->/please also refactor the parser
+<!-- ops:end -->}"
+		"${trigger_release/Owner: whoever solves/Owner: anyone who solves}"
+		"${trigger_release/\`needs-dependency\`/\`needs-maintainer-input\`}"
+		"${trigger_release/Projected state: status:blocked/Projected state: status:available}"
+		"${trigger_bodies[1]/Unblock label:/Trigger awaited: Vendor release 4.2
+Unblock label:}")
+	for trigger_body in "${trigger_bodies[@]}"; do
+		reset_and_sign issue 41
+		dispatch_comments=$(jq -c --arg body "$trigger_body" '.[0] += [{id:4316,node_id:"IC_4316",user:{id:1,node_id:"U_1",login:"maintainer",type:"User"},author_association:"OWNER",created_at:"2026-01-01T00:08:00Z",updated_at:"2026-01-01T00:08:00Z",body:$body}]' "${FIXTURES}/comments-41.json")
+		printf '%s\n' "$dispatch_comments" >"${FIXTURES}/comments-41.json"
+		assert_verify "unsafe or extended trigger release remains content-bound" issue 41 STALE_APPROVAL 4
+	done
 
 	for invalid in '<' '@' $'\n'; do
 		reset_and_sign issue 41
