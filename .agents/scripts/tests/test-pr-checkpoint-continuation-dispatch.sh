@@ -90,7 +90,8 @@ test_decision_policy_decide() (
 	comments=$(jq --arg head "$head" --arg stamp "$DECISION_STAMP" '. + [{id:22,user:{login:"outsider"},created_at:$stamp,body:("<!-- aidevops:decision-resolution pr=42 head="+$head+" finding=21 -->\nDECISION_ESCALATION head="+$head+" class=authority")}]' <<<"$comments")
 	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
 	jq -e '.body | startswith("Original brief\n\n\n\n### Decision record (AI brief owner, ")' "${root}/issue.json" >/dev/null || return 1
-	[[ "$(wc -l <"${root}/writes")" == 2 && "$(wc -l <"${root}/inferences")" == 1 ]] || return 1
+	# Numeric -eq: BSD wc -l pads its count, so string == fails on macOS (t19040).
+	[[ "$(wc -l <"${root}/writes")" -eq 2 && "$(wc -l <"${root}/inferences")" -eq 1 ]] || return 1
 	jq -eRs 'contains("CHECKPOINT_CONTINUATION_APPROVED")' "${root}/published" >/dev/null || return 1
 	jq -eRs 'contains("--model thinking")' "${root}/inferences" >/dev/null || return 1
 	jq -eRs 'contains("+default=existing") and contains("UNTRUSTED")' "${root}/prompt" >/dev/null || return 1
@@ -103,7 +104,7 @@ test_decision_policy_decide() (
 		 [{id:30,body:$approval,user:{login:"maintainer"},author_association:"OWNER",created_at:$now}])}' |
 		python3 "$_PR_CHECKPOINT_REVISION_VALIDATOR" >/dev/null || return 1
 	_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
-	[[ "$(wc -l <"${root}/inferences")" == 1 ]] || return 1
+	[[ "$(wc -l <"${root}/inferences")" -eq 1 ]] || return 1
 	return 0
 )
 
@@ -128,7 +129,7 @@ test_decision_policy_escalate() (
 		fi
 		_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
 		_pcc_resolve_decision owner/repo 123 42 "$head" worker-bot 20 attempt:old "$comments" || return 1
-		[[ "$(wc -l <"${root}/inferences")" == 1 && "$(wc -l <"${root}/writes")" == 1 ]] || return 1
+		[[ "$(wc -l <"${root}/inferences")" -eq 1 && "$(wc -l <"${root}/writes")" -eq 1 ]] || return 1
 		jq -eRs 'contains("DECISION_ESCALATION") and (contains("CHECKPOINT_CONTINUATION_APPROVED") | not)' "${root}/published" >/dev/null || return 1
 	done
 	return 0
@@ -179,7 +180,7 @@ test_decision_policy_races() (
 	second=$!
 	wait "$first" || return 1
 	wait "$second" || return 1
-	[[ "$(wc -l <"${root}/inferences")" == 1 && "$(wc -l <"${root}/writes")" == 2 ]] || return 1
+	[[ "$(wc -l <"${root}/inferences")" -eq 1 && "$(wc -l <"${root}/writes")" -eq 2 ]] || return 1
 	return 0
 )
 
