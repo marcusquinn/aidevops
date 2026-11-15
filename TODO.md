@@ -2099,7 +2099,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19012 fix(tests): 7 failing cases in 3 local-only test suites on main #auto-dispatch #bug tier:standard ref:GH#38392 logged:2026-11-15 -> [todo/tasks/t19012-brief.md]
 
-- [ ] t19014 perf(ci-wait): resolve required check contexts once per wait, not every poll #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38404 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19014-brief.md]
+- [x] t19014 perf(ci-wait): resolve required check contexts once per wait, not every poll #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38404 logged:2026-11-15 started:2026-11-15 pr:#38407 completed:2026-11-15 -> [todo/tasks/t19014-brief.md]
+
+- [ ] t19015 perf(pulse): a drained cycle exits at the next stage boundary instead of running its full maintenance tail #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38413 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19015-brief.md]
 
 ## In Progress
 
