@@ -1173,10 +1173,26 @@ cmd_archive() {
 	fi
 	local expiry_budget="$max_duration"
 	((events_only)) || expiry_budget=$((max_duration / 4))
+	local expiry_rc=0
 	if ((expiry_budget > 0)); then
-		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || return $?
+		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || expiry_rc=$?
+		# Only a deferral (2) must not block the session move; errors stop here.
+		if [[ "$expiry_rc" -ne 0 && "$expiry_rc" -ne 2 ]]; then
+			return "$expiry_rc"
+		fi
 	fi
-	((events_only)) && return 0
+	((events_only)) && return "$expiry_rc"
+	local move_rc=0
+	_archive_move_phase || move_rc=$?
+	# Keep rc 2 after a successful move so the scheduler retries the expiry.
+	if [[ "$move_rc" -eq 0 && "$expiry_rc" -eq 2 ]]; then
+		return 2
+	fi
+	return "$move_rc"
+}
+
+# Session-move phase of cmd_archive; shares its dynamic-scope settings.
+_archive_move_phase() {
 	local preflight_rc=0
 	_archive_mutation_preflight || preflight_rc=$?
 	if [[ "$preflight_rc" -ne 0 ]]; then
