@@ -79,9 +79,9 @@ Schema 2 supports this API; schema 1 requires the explicit transactional upgrade
 automatically resolved enrolled generations use it; unmanaged observe-only launches
 bypass it. It proves neither system-wide exclusion, physical generation nor cleanup
 authority. Production launcher coverage, run completion, restart recovery and
-closing-versus-exec integration remain unqualified. Retained Linux/macOS Intel reports
-cover their recorded admission, directory-handle and disposable archive/retirement
-source only, not production AI launchers, unregistered writers or rollout.
+closing-versus-exec integration remain unqualified; retained reports (see above)
+cover only recorded admission, directory-handle and disposable archive/retirement
+source, not production AI launchers, unregistered writers or rollout.
 
 ### Explicit admitted launch
 
@@ -124,11 +124,10 @@ into that store. Existing private/disabled observation without admission metadat
 retains its previous behavior.
 
 The shim preserves sandbox environment clearing, egress/seatbelt policy, native-command
-permissions and isolation. Bare launch still needs sandbox-policy permission. Its
-fixture stubs only upstream policy/runtime setup before executing the real launch
-boundary; the sandbox fixture exercises the command-line helper. Tests use disposable
-state and `touch`, not AI workers. Linux evidence covers these shell integrations;
-the portable Mac report does not cover shell hooks.
+permissions and isolation; bare launch still needs sandbox-policy permission. Fixtures
+stub only upstream policy/runtime setup (the sandbox fixture exercises the command-line
+helper), using disposable state and `touch`, not AI workers. Linux evidence covers these
+shell integrations; the portable Mac report does not cover shell hooks.
 
 Without explicit controller metadata, the shim checks the new admission table.
 A registered generation must pass enrollment validation and admission; a closed
@@ -206,16 +205,16 @@ OpenCode's shell environment, bounded-operation supervisor, native launcher, Pul
 runner and release executor declare their own `AIDEVOPS_LIFECYCLE_RUNTIME_PID` and `AIDEVOPS_LIFECYCLE_SESSION_ID`.
 The routine runner and release executor clear these when lifecycle is disabled, prerequisites fail
 or the workload is private; automatic retirement is not expected then. Otherwise their trees become
-eligible for registry retirement after the routine runner or release executor exits (GH#36494, GH#37365).
+eligible for registry retirement after they exit (GH#36494, GH#37365).
 For a new path, the shared helper invokes `create-worktree`: it exclusively creates the directory, runs native Git,
 captures the owner's start identity and binds it before returning the new tree.
-Only successful controlled creation records a `created-worktree` event; ordinary enrollment or
+Only successful controlled creation records a `created-worktree` event; enrollment or
 admission of an existing tree cannot mint it. `prepare-cleanup` exposes the validated receipt as
 `creation_verified`, not deletion authority, a PID-only liveness test or a legacy ownership lookup.
 Independent launches replace inherited creator identity; excluded launches clear it.
 Partial declarations fail without removal; missing declarations bind the creating shell for a fresh
-path, not later writers, who need their own admission. Coverage stops at that creator. Callers with
-pre-reserved directories retain their creation path without controlled-creation provenance.
+path, not later writers, who need their own admission. Callers with pre-reserved directories
+retain their creation path without controlled-creation provenance.
 Failed construction retains partial results; repeating it cannot adopt even an empty existing directory.
 
 Managed producers use `worker-lifecycle-state.sh` to enter the native launcher before execution.
@@ -223,8 +222,8 @@ Parent runtime/session identity is replaced; explicit generation/attempt require
 Post-completion callbacks run outside that identity; legacy receipts cannot replace registry creation, admission or retirement checks.
 
 Claude creator integration is outside this rollout; standalone creators and unknown pre-enrollment
-writers still prevent a claim of complete registered-owner coverage.
-Linux disposable-Git tests cover creation, enrollment and native launch; portable reports do not qualify enrollment.
+writers still prevent a claim of complete registered-owner coverage. Linux disposable-Git tests
+cover creation, enrollment and native launch; portable reports do not qualify enrollment.
 
 ### Remaining rollout boundaries
 
@@ -327,9 +326,8 @@ repositories; it does not qualify production scheduling or existing worktrees.
 ## Archive payload qualification
 
 `tests/test_preservation.py` tests `scripts/worktree-archive-helper.sh` and new registry orchestration, not legacy controllers.
-Private Git fixtures use an invalid legacy-state sentinel and unregistered `--verification-copy` restores.
-They touch no production data and grant no cleanup authority; the portable validator includes these Git/Bash tests and dependencies.
-
+Private Git fixtures use an invalid legacy-state sentinel and unregistered `--verification-copy` restores;
+they touch no production data, grant no cleanup authority, and the portable validator includes them.
 Linux checks cover unpublished commits, independent staged/unstaged changes, binary edits, unusual filenames,
 symlinks, corrupt payload rejection and late source changes. Round trips make the original path unavailable
 while retaining its contents and common Git repository.
@@ -339,11 +337,10 @@ without following links; unsupported restoration fails without changing targets,
 `untracked_symlink_modes` binds modes into verification; older fingerprints verify content only, not current preservation evidence.
 Portable tests cross creation/restoration masks `022`, `077`, `002`, including dangling links and ordinary untracked files.
 
-Ignored-file exclusion is deliberate; its test verifies policy, not a defect or need
-to expand capture. WIP archives are not full environment backups: they need retained
-base Git objects, and round-trip tests do not prove recovery after common-repository
-loss. Evidence must name the WIP payload and actual Git-object dependencies, never
-claim self-contained backup or preservation of excluded data.
+Ignored-file exclusion is deliberate; its test verifies policy, not a defect. WIP archives
+are not full environment backups: they need retained base Git objects, and round-trip tests
+do not prove recovery after common-repository loss. Evidence must name the WIP payload and
+actual Git-object dependencies, never claim self-contained backup or preservation of excluded data.
 
 ### Compact deletion payloads
 
@@ -367,10 +364,9 @@ state, unstaged modifications, deletions, non-ignored untracked files,
 symlinks and executable modes. Submodules, external dependencies and unsupported
 filesystem features must be handled explicitly or block the operation.
 
-Honor Git ignore policy, including local configuration/databases: no filename
-exceptions or content-based guesses may add ignored files and unexpectedly archive
-sensitive data. Exclusion is not a secret scanner; archives stay local/private,
-with no automatic public push, PR or upload.
+Honor Git ignore policy, including local configuration/databases: no filename exceptions
+or content-based guesses may add ignored files. Exclusion is not a secret scanner; archives
+stay local/private, with no automatic public push, PR or upload.
 
 The executor must:
 
@@ -437,8 +433,7 @@ candidates across bounded passes (not deletion authority); a pass lock prevents 
 
 Pulse's `cleanup_worktrees` calls this operation without initializing/migrating the
 registry. Missing state/configuration or invocation failure never falls back to old
-passes. Disposable tests exercise refusal and successful preservation/removal through
-the actual shell entrypoint.
+passes. Disposable tests exercise refusal and preservation/removal via the shell entrypoint.
 
 `cleanup-worktree --path PATH --repos-config CONFIG --output-root ROOT` selects only that path's
 validated generation, sharing the collector's policy/executor without adopting unknown trees or
