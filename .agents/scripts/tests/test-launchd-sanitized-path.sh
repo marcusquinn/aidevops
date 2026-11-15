@@ -84,7 +84,7 @@ test_sanitized_path_filters_unsafe_entries() {
 
 	local polluted_path result
 	polluted_path="${stale_bundle}:${missing_dir}:${existing_dir}:/usr/bin:${stable_scripts}:${existing_dir}:/opt/pkg/env/active/bin:/opt/pmk/env/global/bin"
-	result=$(HOME="$test_home" aidevops_launchd_sanitized_path "$polluted_path")
+	result=$(HOME="$test_home" _AIDEVOPS_NPM_GLOBAL_BIN="" aidevops_launchd_sanitized_path "$polluted_path")
 
 	local ok=0 stable_scripts_count=0
 	[[ "$result" == "${stable_bun_bin}:${stable_local_bin}:${stable_scripts}:${stable_bin}:"* ]] || ok=1
