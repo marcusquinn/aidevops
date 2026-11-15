@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.201] - 2026-11-15
+
+### Fixed
+
+- _common.sh npm_global_install policy is canonical during setup.sh
+- exclude full-loop runtime state from git (#38395)
+- portable file mode check in test-opencode-runtime-profile.sh (GH#38401) (#38402)
+- registry validation zipapp bundles its tests' full import closure
+- npm global install no longer falls back to sudo for a fresh user prefix
+
 ## [3.39.200] - 2026-11-15
 
 ### Added
