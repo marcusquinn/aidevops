@@ -54,6 +54,56 @@ aidevops_pulse_worker_log_candidates() {
 	return 0
 }
 
+# Best-effort removal of stale direct children of research-staging (GH#38366).
+# A child is stale when its own mtime and its newest descendant mtime are older
+# than AIDEVOPS_RESEARCH_STAGING_MAX_AGE_DAYS (default 7). Never follows symlinks.
+_aidevops_research_staging_sweep() {
+	local staging="$1"
+	local max_age_days="${AIDEVOPS_RESEARCH_STAGING_MAX_AGE_DAYS:-7}"
+	[[ "$max_age_days" =~ ^[0-9]+$ ]] || max_age_days=7
+	[[ -d "$staging" && ! -L "$staging" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 - "$staging" "$max_age_days" <<'PY' 2>/dev/null || true
+import os
+import shutil
+import sys
+import time
+
+root = sys.argv[1]
+max_age = int(sys.argv[2]) * 86400
+now = time.time()
+
+
+def newest_mtime(path, st):
+    newest = st.st_mtime
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        for name in dirnames + filenames:
+            try:
+                newest = max(newest, os.lstat(os.path.join(dirpath, name)).st_mtime)
+            except OSError:
+                pass
+    return newest
+
+
+for name in os.listdir(root):
+    path = os.path.join(root, name)
+    try:
+        st = os.lstat(path)
+        newest = st.st_mtime
+        if os.path.isdir(path) and not os.path.islink(path):
+            newest = newest_mtime(path, st)
+        if now - newest <= max_age:
+            continue
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            os.unlink(path)
+    except OSError:
+        continue
+PY
+	return 0
+}
+
 aidevops_pulse_tmp_cleanup() {
 	local max_age_minutes="${1:-2880}"
 	local root=""
@@ -88,6 +138,8 @@ for name in os.listdir(root):
         pass
 PY
 	fi
+	temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+	_aidevops_research_staging_sweep "${temp_root}/research-staging"
 	helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pulse-todo-sync-workspace.sh"
 	if [[ -f "$helper" ]]; then
 		# shellcheck source=pulse-todo-sync-workspace.sh
