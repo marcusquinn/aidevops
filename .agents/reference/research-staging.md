@@ -45,5 +45,7 @@ capabilities remain unavailable.
 ## Independent code review
 
 Linked worktrees are outside staging. For a closeout review, write the review
-bundle or `git diff origin/main...HEAD` into a fresh task child here and give the
-reviewer that path; `reference/review-core.md` "Review efficiency" applies.
+bundle (`review-evidence-helper.sh bundle local|branch --output FILE`) into a
+fresh task child here and give the reviewer that path. A plain
+`git diff origin/main...HEAD` omits uncommitted work; use it only when every
+change is committed. `reference/review-core.md` "Review efficiency" applies.
