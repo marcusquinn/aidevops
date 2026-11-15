@@ -419,14 +419,16 @@ prefetch_hygiene_anomalies() {
 		return 0
 	fi
 
-	local status_fixed tier_fixed triage_missing ts checked
+	local status_fixed=0 tier_fixed=0 triage_missing=0 ts="" checked=0 companion_fixed=0
 	status_fixed=$(jq -r '.status_fixed // 0' "$counters_file" 2>/dev/null) || status_fixed=0
 	tier_fixed=$(jq -r '.tier_fixed // 0' "$counters_file" 2>/dev/null) || tier_fixed=0
 	triage_missing=$(jq -r '.triage_missing // 0' "$counters_file" 2>/dev/null) || triage_missing=0
+	companion_fixed=$(jq -r '.blocked_companion_fixed // 0' "$counters_file" 2>/dev/null) || companion_fixed=0
+	[[ "$companion_fixed" =~ ^[0-9]+$ ]] || companion_fixed=0
 	ts=$(jq -r '.timestamp // ""' "$counters_file" 2>/dev/null) || ts=""
 	checked=$(jq -r '.checked // 0' "$counters_file" 2>/dev/null) || checked=0
 
-	if [[ "$status_fixed" -eq 0 && "$tier_fixed" -eq 0 && "$triage_missing" -eq 0 ]]; then
+	if [[ "$status_fixed" -eq 0 && "$tier_fixed" -eq 0 && "$triage_missing" -eq 0 && "$companion_fixed" -eq 0 ]]; then
 		echo "None — label invariants clean (checked=${checked} at ${ts})."
 		echo ""
 		return 0
@@ -442,6 +444,9 @@ prefetch_hygiene_anomalies() {
 	fi
 	if [[ "$triage_missing" -gt 0 ]]; then
 		echo "- **${triage_missing} issues** marked \`origin:interactive\` but missing tier/auto-dispatch/status (need maintainer triage)"
+	fi
+	if [[ "$companion_fixed" -gt 0 ]]; then
+		echo "- **${companion_fixed} issues** had \`status:blocked\` without a \`needs-*\` reason, or a blocked-owned \`needs-*\` label after unblock (GH#38360; bare holds routed to \`needs-ai-recovery\`)"
 	fi
 	echo ""
 	echo "If non-zero on consecutive cycles, investigate the source of the pollution —"

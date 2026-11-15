@@ -28,6 +28,8 @@ _PULSE_DEP_GRAPH_LOADED=1
 [[ -n "${DEP_FALSE+x}" ]] || DEP_FALSE="false"
 [[ -n "${DEP_CACHE_EMPTY_JSON+x}" ]] || DEP_CACHE_EMPTY_JSON='{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 [[ -n "${DEP_AVAILABLE_STATUS+x}" ]] || DEP_AVAILABLE_STATUS="status:available"
+# GH#38360: companion label that explains a dependency-owned status:blocked.
+[[ -n "${DEP_NEEDS_DEPENDENCY+x}" ]] || DEP_NEEDS_DEPENDENCY="needs-dependency"
 [[ -n "${DEP_JQ_NONEMPTY_LINES+x}" ]] || DEP_JQ_NONEMPTY_LINES='split("\n") | map(select(length > 0))'
 [[ -n "${_DEP_CACHED_REPO_SLUG+x}" ]] || _DEP_CACHED_REPO_SLUG=""
 [[ -n "${_DEP_CACHED_REPO_ID+x}" ]] || _DEP_CACHED_REPO_ID=""
@@ -698,8 +700,13 @@ _refresh_ensure_unresolved_is_blocked() {
 	if _dep_labels_has_active_status "$current_labels"; then
 		return 1
 	fi
+	# GH#38360: the dependency hold names what unblocks it.
+	if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+		ensure_blocked_companion_label "$slug" "$DEP_NEEDS_DEPENDENCY" || true
+	fi
 	if ! gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" >/dev/null 2>&1; then
+		--remove-label "$DEP_AVAILABLE_STATUS" --add-label "status:blocked" \
+		--add-label "$DEP_NEEDS_DEPENDENCY" >/dev/null 2>&1; then
 		return 1
 	fi
 	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
@@ -710,7 +717,8 @@ _refresh_ensure_unresolved_is_blocked() {
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
 	if _dep_labels_has "$current_labels" "status:blocked" &&
 		_dep_labels_has_active_status "$current_labels"; then
-		if gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1; then
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" \
+			--remove-label "$DEP_NEEDS_DEPENDENCY" >/dev/null 2>&1; then
 			DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 		fi
 		return 1
@@ -822,8 +830,10 @@ _refresh_try_unblock_issue() {
 	_dep_labels_has_active_status "$current_labels" && return 1
 	# Preserve any lifecycle transition that races this edit: mutate only the
 	# dependency statuses, then remove available if an active status appeared.
-	gh issue edit "$issue_num" --repo "$slug" \
-		--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS" >/dev/null 2>&1 || return 1
+	# GH#38360: the dependency companion leaves with status:blocked.
+	local -a unblock_args=(--remove-label "status:blocked" --add-label "$DEP_AVAILABLE_STATUS")
+	_dep_labels_has "$current_labels" "$DEP_NEEDS_DEPENDENCY" && unblock_args+=(--remove-label "$DEP_NEEDS_DEPENDENCY")
+	gh issue edit "$issue_num" --repo "$slug" "${unblock_args[@]}" >/dev/null 2>&1 || return 1
 	DEP_GRAPH_REFRESH_CHANGED_COUNT=$((${DEP_GRAPH_REFRESH_CHANGED_COUNT:-0} + 1))
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""

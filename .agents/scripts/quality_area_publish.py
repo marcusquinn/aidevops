@@ -13,6 +13,10 @@ import subprocess
 from quality_area_findings import exact
 
 SCRIPTS = Path(__file__).resolve().parent
+# GH#38360: status:blocked always travels with a needs-* companion label.
+BLOCKED = "status:blocked"
+AI_RECOVERY = "needs-ai-recovery"
+DEPENDENCY = "needs-dependency"
 
 
 def load(path):
@@ -127,14 +131,18 @@ def prepare_item(item):
         # after our read, so do not change their body or labels.
         item["released"] = any(label["name"] == "auto-dispatch" for label in issue["labels"])
     else:
+        # GH#38360: a staged hold names its owner. An interrupted sweep leaves
+        # the issue routed to AI recovery, never as a bare status:blocked.
         url = write("issue", "create", "--repo", repo, "--title", item["title"],
-                    "--body-file", item["brief"], "--label", "status:blocked", "--label", "tier:standard").strip().splitlines()[-1]
+                    "--body-file", item["brief"], "--label", BLOCKED, "--label", AI_RECOVERY,
+                    "--label", "tier:standard").strip().splitlines()[-1]
         number = int(url.rstrip("/").split("/")[-1])
         print(f"created_issue={repo}#{number}", flush=True)
     item["number"] = number
     if not item.get("released"):
         check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
-        write("issue", "edit", str(number), "--repo", repo, "--add-label", "status:blocked",
+        write("issue", "edit", str(number), "--repo", repo, "--add-label", BLOCKED,
+              "--add-label", AI_RECOVERY,
               "--remove-label", "status:available", "--remove-label", "auto-dispatch")
 
 
@@ -170,9 +178,15 @@ def release_item(item, endpoint):
     blocked = any(edge.get("state", "open") == "open" for edge in dependency_edges(endpoint))
     repo, number = item["repo"], item["number"]
     check_unclaimed(json.loads(gh("api", f"repos/{repo}/issues/{number}")))
-    status = "status:blocked" if blocked else "status:available"
-    write("issue", "edit", str(number), "--repo", repo, "--add-label", status,
-          "--remove-label", "status:available" if blocked else "status:blocked", "--add-label", "auto-dispatch")
+    # GH#38360: a dependency hold carries needs-dependency; release drops the
+    # staging companion and, when available, the dependency companion too.
+    if blocked:
+        labels = ["--add-label", BLOCKED, "--add-label", DEPENDENCY,
+                  "--remove-label", "status:available", "--remove-label", AI_RECOVERY]
+    else:
+        labels = ["--add-label", "status:available", "--remove-label", BLOCKED,
+                  "--remove-label", AI_RECOVERY, "--remove-label", DEPENDENCY]
+    write("issue", "edit", str(number), "--repo", repo, *labels, "--add-label", "auto-dispatch")
 
 
 def publish(plans):

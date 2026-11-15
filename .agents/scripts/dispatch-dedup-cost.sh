@@ -565,7 +565,10 @@ _apply_cost_breaker_side_effects() {
 	local attempts="$6"
 	# NMR is an external-author trust gate, not a circuit breaker. Preserve any
 	# independently valid trust gate while recording the budget stop as lifecycle state.
-	set_issue_status "$issue_number" "$repo_slug" "blocked" 2>/dev/null || true
+	# GH#38360: root-cause triage is AI-owned (the meta flow below), so the
+	# hold routes to AI recovery; the meta filer adds needs-dependency once linked.
+	set_issue_status "$issue_number" "$repo_slug" "blocked" \
+		--add-label "${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}" 2>/dev/null || true
 
 	local _spent_k=$((spent / 1000))
 	local _budget_k=$((budget / 1000))

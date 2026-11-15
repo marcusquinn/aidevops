@@ -214,7 +214,9 @@ already-authorized outcome, the assigned AI executor owns brief correction:
 
 Lifecycle integration must retain the canonical projection: `status:claimed` or
 `status:in-progress` means active implementation, `status:blocked` needs a
-structured reason/action, `status:available` is an executable continuation, and
+structured reason/action and a `needs-*` companion naming its owner
+(`reference/dispatch-blockers.md` "Blocked Companion Labels"; the runtime picks it
+from `TERMINAL_BLOCKER_REASON`), `status:available` is an executable continuation, and
 `status:in-review` requires a current open non-draft PR. Never use this scope
 recovery to weaken trust, hold, exact-head, or assignment-plus-active-state gates.
 On blocked exits, emit `BLOCKED: <reason>` instead of editing lifecycle labels: the runtime persists the release before projecting state. Declare missing runner secret/config **names** only as `TERMINAL_BLOCKER_MISSING_SECRETS=NAME1,NAME2`; never include values.

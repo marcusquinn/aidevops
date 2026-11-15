@@ -537,8 +537,10 @@ _cb_meta_link_original() {
 	# unblock independently (matches t2442 parent-task linkage style).
 	local blocked_label
 	blocked_label=$(_cb_meta_blocked_label "$repo_slug" "$meta_repo" "$meta_number")
+	# GH#38360: the per-meta blocked-by label is a dependency; name it so the
+	# hold explains itself and leaves with status:blocked.
 	if ! set_issue_status "$original_issue" "$repo_slug" "blocked" \
-		--add-label "$blocked_label" >/dev/null 2>&1; then
+		--add-label "$blocked_label" --add-label "needs-dependency" >/dev/null 2>&1; then
 		gh issue edit "$original_issue" --repo "$repo_slug" \
 			--remove-label "status:available" \
 			--remove-label "status:queued" \

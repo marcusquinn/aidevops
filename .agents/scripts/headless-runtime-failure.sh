@@ -658,6 +658,10 @@ _hrff_hold_terminal_blocker_circuit() {
 		return 0
 	fi
 	[[ -z "$runner_name" ]] || hold_args+=(--remove-assignee "$runner_name")
+	# GH#38360: name the companion so set_issue_status need not guess it.
+	local companion=""
+	companion=$(_hrff_blocked_companion_label)
+	[[ -z "$companion" ]] || hold_args+=(--add-label "$companion")
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$issue_number" "$repo_slug" blocked \
 			${hold_args[@]+"${hold_args[@]}"} >/dev/null 2>&1 ||
@@ -1144,9 +1148,29 @@ _hrff_blocked_release_persisted() {
 	return 0
 }
 
+#######################################
+# GH#38360: print the needs-* companion that explains this blocked exit.
+# Missing runner secrets need credentials; otherwise the classified blocker
+# reason picks the owner (unknown or unclassified routes to AI recovery).
+# Prints nothing when the shared companion mapping is unavailable.
+#######################################
+_hrff_blocked_companion_label() {
+	declare -F blocked_needs_label_for_reason >/dev/null 2>&1 || return 0
+	if [[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]]; then
+		blocked_needs_label_for_reason missing_secret
+		return 0
+	fi
+	local reason=""
+	if declare -F _terminal_blocker_reason >/dev/null 2>&1; then
+		reason=$(_terminal_blocker_reason "${AIDEVOPS_TERMINAL_BLOCKER_FINGERPRINT:-}" 2>/dev/null) || reason=""
+	fi
+	blocked_needs_label_for_reason "${reason:-unknown}"
+	return 0
+}
+
 _hrff_project_blocked_exit() {
 	local issue_number="$1" repo_slug="$2" runner_name="$3"
-	local issue_json="" status="" issue_endpoint=""
+	local issue_json="" status="" issue_endpoint="" companion=""
 	local -a edit_args=()
 	printf -v issue_endpoint 'repos/%s/issues/%s' "$repo_slug" "$issue_number"
 	issue_json=$(gh api "$issue_endpoint" 2>/dev/null) || return 1
@@ -1162,6 +1186,13 @@ _hrff_project_blocked_exit() {
 		[[ -z "$status" ]] || edit_args+=(--remove-label "$status")
 	done < <(jq -r '.labels[]?.name | select(startswith("status:") and . != "status:blocked")' <<<"$issue_json")
 	[[ -z "$runner_name" ]] || edit_args+=(--remove-assignee "$runner_name")
+	# GH#38360: the hold names what unblocks it.
+	companion=$(_hrff_blocked_companion_label)
+	if [[ -n "$companion" ]]; then
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		edit_args+=(--add-label "$companion")
+	fi
 	gh_issue_edit_safe "$issue_number" --repo "$repo_slug" --add-label status:blocked \
 		${edit_args[@]+"${edit_args[@]}"} || return 1
 	return 0

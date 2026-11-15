@@ -99,6 +99,10 @@ _TBR_OTHER_HOLDS_JQ='def other_holds($blocked): [.[] | select(. == "needs-mainta
 	. == "hold-for-review" or . == "no-auto-dispatch" or . == "parent-task" or
 	. == "needs-maintainer-review" or
 	(startswith("status:") and . != $blocked and . != "status:available"))];'
+# GH#38360: a companion that already names a human or dependency owner makes a
+# hold classified; only bare or needs-ai-recovery holds enter unclassified intake.
+_TBR_CLASSIFIED_COMPANION_JQ='def classified_companion: any(.[]; . == "needs-maintainer-input" or
+	. == "needs-credentials" or . == "needs-dependency");'
 # Shape predicates for listing/comment validation.
 _TBR_SHAPE_JQ='def arr: type == ([] | type); def bool: type == (true | type);'
 # Evaluated-issue memory older than this is pruned after a complete pass.
@@ -635,7 +639,7 @@ _tbr_unclassified_listing() {
 		-f query='query($owner:String!,$name:String!,$label:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(states:OPEN,labels:[$label],first:100,after:$endCursor){nodes{number updatedAt labels(first:50){nodes{name} pageInfo{hasNextPage}} blockedBy(first:20){nodes{state} pageInfo{hasNextPage}}} pageInfo{hasNextPage endCursor}}}}' \
 		2>/dev/null) || return 2
 	# shellcheck disable=SC2016 # jq variables are supplied via --arg/--argjson
-	printf '%s' "$pages" | jq -r --argjson cutoff "$cutoff" --arg blocked "$blocked" "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}"'
+	printf '%s' "$pages" | jq -r --argjson cutoff "$cutoff" --arg blocked "$blocked" "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}${_TBR_CLASSIFIED_COMPANION_JQ}"'
 		if arr and length > 0
 			and all(.[]; (.errors // [] | length) == 0
 				and (.data.repository.issues.nodes | arr)
@@ -648,7 +652,8 @@ _tbr_unclassified_listing() {
 		then . else error("invalid node") end
 		| sort_by(.number)[]
 		| select(.labels.pageInfo.hasNextPage == false)
-		| select(.labels.nodes | map(.name) | (index($blocked) != null) and (other_holds($blocked) | length == 0))
+		| select(.labels.nodes | map(.name) | (index($blocked) != null) and (other_holds($blocked) | length == 0)
+			and (classified_companion | not))
 		| select(.blockedBy.pageInfo.hasNextPage == false and all(.blockedBy.nodes[]; .state == "CLOSED"))
 		| select((.updatedAt | fromdateiso8601) <= $cutoff)
 		| "\(.number)\t\(.updatedAt)"
@@ -661,9 +666,10 @@ _tbr_unclassified_listing() {
 _tbr_unclassified_labels_ok() {
 	local issue_json="$1" rc=0
 	# shellcheck disable=SC2016 # jq variables are supplied via --arg
-	jq -e --arg blocked status:blocked "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}"'
+	jq -e --arg blocked status:blocked "${_TBR_SHAPE_JQ}${_TBR_OTHER_HOLDS_JQ}${_TBR_CLASSIFIED_COMPANION_JQ}"'
 		(.labels | if arr then map(.name) else error("labels") end)
 		| (index($blocked) != null) and (other_holds($blocked) | length == 0)
+			and (classified_companion | not)
 	' <<<"$issue_json" >/dev/null 2>&1 || rc=$?
 	[[ "$rc" -le 1 ]] || return 2
 	return "$rc"
@@ -1224,7 +1230,13 @@ _tbr_project_rearm() {
 	# Reconcile a failed receipt write after a successful projection without
 	# projecting availability twice on the next pass.
 	if printf '%s' "$issue_json" | jq -e --arg blocked status:blocked 'any(.labels[]; .name == $blocked)' >/dev/null; then
-		set_issue_status "$issue" "$repo" available >/dev/null 2>&1 || return 2
+		# GH#38360: the re-arm is the trusted retry or revision that the
+		# needs-credentials companion asked for, so it leaves with the hold.
+		# set_issue_status removes the blocked-owned companions itself.
+		local -a release_args=()
+		printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "needs-credentials")' >/dev/null &&
+			release_args+=(--remove-label needs-credentials)
+		set_issue_status "$issue" "$repo" available ${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2
 	return 0
