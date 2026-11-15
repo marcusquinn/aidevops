@@ -456,6 +456,37 @@ _dispatch_negative_cache_ops_only() (
 	return 0
 )
 
+#######################################
+# GH#38352: log one draft-checkpoint record skip per issue, revision, cache
+# reason and skip reason. The marker is a sibling of the per-issue record
+# (readers open only the exact record path), so every pulse process and
+# parallel dispatch child shares the once-per-issue suppression. detail=assigned
+# is by design: assigned issues keep live/stale-owner checks every cycle.
+# Args: candidate JSON, candidate revision, cache reason, skip reason
+# Returns: 0 always (diagnostic only; never changes the dispatch decision)
+#######################################
+_dispatch_negative_cache_skip_log() {
+	local candidate="$1" updated="$2" cache_reason="$3" skip_reason="$4"
+	local fields issue repo file marker previous detail=unavailable
+	previous=""
+	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate" 2>/dev/null) || return 0
+	IFS=$'\t' read -r issue repo _ <<<"$fields"
+	file=$(_dispatch_negative_cache_path "$issue" "$repo") || return 0
+	if [[ "$skip_reason" == boundary ]] && jq -e '(.assignees // [] | length) > 0' <<<"$candidate" >/dev/null 2>&1; then
+		detail=assigned
+	fi
+	marker="${skip_reason}:${detail}:${cache_reason}:${updated}"
+	if [[ -f "${file}.skip" && ! -L "${file}.skip" ]]; then
+		IFS= read -r previous <"${file}.skip" || previous=""
+	fi
+	[[ "$previous" != "$marker" ]] || return 0
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	[[ ! -L "${file}.skip" ]] || return 0
+	(umask 077 && printf '%s\n' "$marker" >"${file}.skip") 2>/dev/null || true
+	echo "[pulse-wrapper] negative_cache_record_skipped reason=${skip_reason} detail=${detail} cache_reason=${cache_reason} issue=#${issue} repo=${repo}" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
 _dispatch_negative_cache_record() {
 	local candidate="$1" reason="$2" pr="${3:-}" fingerprint="${4:-}" owner_path="${5:-}"
 	local fields="" issue="" repo="" updated="" file="" tmp="" checkpoint_boundary="" material=""
@@ -478,18 +509,25 @@ _dispatch_negative_cache_record() {
 		([.labels[]? | .name? // .] | any(. == "status:claimed" or . == "status:in-progress" or . == "status:in-review"))' <<<"$candidate" >/dev/null 2>&1; then
 		return 0
 	fi
+	# GH#38352: a draft-checkpoint hint that cannot be recorded names its
+	# reason once per issue revision instead of silently re-running the ceremony.
 	if [[ "$reason" == worker_draft_checkpoint_blocked || "$reason" == stale_draft_checkpoint ]]; then
-		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") || return 0
-		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
+		fingerprint=$(_dispatch_negative_pr_fingerprint "$repo" "$pr") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
+		owner_path=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" boundary; return 0; }
 	fi
 	if [[ "$reason" == dedup_pr_evidence ]]; then
 		fingerprint=$(_dispatch_pr_evidence_fingerprint "$repo" "$pr") || return 0
 	fi
 	if [[ "$reason" == worker_draft_checkpoint_cooldown ]]; then
 		[[ "$_DISPATCH_CHECKPOINT_COOLDOWN_SECONDS" -gt 0 ]] || return 0
-		checkpoint_boundary=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") || return 0
-		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) || return 0
-		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") || return 0
+		checkpoint_boundary=$(_dispatch_draft_hint_boundary "$candidate" "$repo" "$issue") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" boundary; return 0; }
+		owner_path=$(_dispatch_checkpoint_pr_head "$repo" "$pr" allow_rest) ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" pr_head; return 0; }
+		fingerprint=$(_dispatch_checkpoint_fingerprint "$candidate") ||
+			{ _dispatch_negative_cache_skip_log "$candidate" "$updated" "$reason" fingerprint; return 0; }
 	fi
 	# Live-owner holds never consult material; skip the issue read for them.
 	if [[ "$reason" != "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] &&
