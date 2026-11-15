@@ -709,7 +709,7 @@ def main():
         last_fetch = [0]
         digest_slug = None
         digest_entries = []
-        digest_complete = True
+        uncertain = set()
         if args.apply and config.get('fallback_repo') and private_repo(config['fallback_repo']):
             digest_slug = config['fallback_repo']  # one consolidated caa-missing issue
         with open(directory / '.lock', 'a') as lock:
@@ -740,9 +740,13 @@ def main():
                     if digest_slug:
                         digest_entries += [(row, f) for f in found if f['kind'] == 'caa-missing']
                         if any(f['kind'] == 'caa-unknown' for f in found):
-                            digest_complete = False  # DNS failure is not proof a finding disappeared
-            if digest_slug and args.command in ('caa', 'run') and digest_complete:
-                scanned_apexes = {row['apex'] for row in rows} if args.domain else None
+                            uncertain.add(row['apex'])  # DNS failure is not proof a finding disappeared
+            if digest_slug and args.command in ('caa', 'run'):
+                # Confirmed findings are always delivered; only uncertain apexes keep their prior section.
+                if args.domain:
+                    scanned_apexes = {row['apex'] for row in rows} - uncertain
+                else:
+                    scanned_apexes = ({row['apex'] for row in rows} - uncertain) if uncertain else None
                 file_digest(digest_slug, digest_entries, scanned_apexes, repos, fleet, config)
     if args.format == 'json':
         print(json.dumps(output, indent=2))

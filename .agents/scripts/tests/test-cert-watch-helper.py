@@ -448,6 +448,16 @@ class CertWatchTest(unittest.TestCase):
         self.run_helper('run', '--apply', '--domain', 'example.org')
         self.assertEqual(json.loads((self.fixture_dir / 'issues.json').read_text()), [])
 
+    def test_digest_delivers_confirmed_findings_despite_other_apex_dns_failure(self):
+        self.config['extra_domains'] = ['example.com', 'example.org']
+        self.write_config()
+        self.write_fixture('dns.json', {'example.com': None})
+        self.run_helper('run', '--apply')
+        issues = json.loads((self.fixture_dir / 'issues.json').read_text())
+        self.assertEqual(len(issues), 1)
+        self.assertIn('### example.org', issues[0]['body'])
+        self.assertNotIn('### example.com', issues[0]['body'])
+
     def test_caa_missing_without_fallback_stays_per_repo(self):
         self.config['extra_domains'] = ['example.com', 'example.org']
         self.config['fallback_repo'] = None
