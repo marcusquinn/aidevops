@@ -81,7 +81,8 @@ _decide() {
 		else
 			# Only a verified 404 proves the file is gone; other failures are unobservable.
 			local status_out=""
-			status_out=$(gh api -i "$(_contents_endpoint "$repo" "$head" "$path")" 2>&1 | head -n 1) || true
+			status_out=$(gh api -i "$(_contents_endpoint "$repo" "$head" "$path")" 2>&1) || true
+			status_out="${status_out%%$'\n'*}"
 			if [[ "$status_out" != *" 404"* ]]; then
 				printf 'REAL: could not read %s at head\n' "$path"
 				return 2
