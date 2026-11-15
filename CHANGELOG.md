@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.203] - 2026-11-15
+
+### Added
+
+- session-greeting advisories ask only for real human action
+- classify stale Codacy PR aggregation in checks gate (GH#38385) (#38391)
+- detect Backblaze safety freeze or stale upload
+
+### Changed
+
+- Maintenance: t19016 done; add t19017-t19019 briefs (archive expiry coupling, Backblaze health, live-DB retention)
+
+### Fixed
+
+- publish the external trigger and revisit external_trigger_pending holds (#38449)
+- refresh caller counter-branch tracking ref after CAS (#38448)
+- sweep retirement locks of terminal generations on compaction (#38386)
+- stop shim temp-file leaks that bloat agent tmp and slow dispatch
+- status:blocked always carries a needs-* companion naming what unblocks it (#38377)
+- expiry deferral must not skip live-DB session move (#38442)
+- attest unforgeable session tasks, opt-in root census, refusal diagnostics
+
 ## [3.39.202] - 2026-11-15
 
 ### Added
