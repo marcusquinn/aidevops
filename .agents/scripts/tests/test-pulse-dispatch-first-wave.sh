@@ -329,6 +329,74 @@ printf 'PASS empty censuses rotate at the total deadline and repository timeout 
 )
 printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 
+# GH#38483: a known-slow repository the census cannot afford is deferred, not
+# scanned with a clamped budget; it leads the next census with its full budget.
+# The first repository of a census is never deferred. A timed-out scan reuses
+# the repository's fresh last-good candidates; other failures and expired
+# lists stay empty.
+(
+	jq -n '{initialized_repos:[{slug:"owner/small1",path:"/fixture",pulse:true},{slug:"owner/big",path:"/fixture",pulse:true},{slug:"owner/small2",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	budget_file=$(_dispatch_repo_enumeration_budget_file owner/big)
+	mkdir -p "${budget_file%/*}"
+	printf '60\n' >"$budget_file"
+	big_rc_file="${TEST_ROOT}/big-rc"
+	printf '0\n' >"$big_rc_file"
+	_dispatch_enumerate_repo_bounded() {
+		local big_rc=0
+		printf 'budget:%s:%s\n' "$2" "$1" >>"$EVENTS"
+		if [[ "$2" == owner/big ]]; then
+			advance_clock 30
+			read -r big_rc <"$big_rc_file"
+			((big_rc == 0)) || return "$big_rc"
+			printf '[{"number":7,"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]\n'
+			return 0
+		fi
+		advance_clock 5
+		printf '[]\n'
+		return 0
+	}
+	rm -f "${HOME}/.aidevops/cache/pulse-census-cursor"
+	: >"$EVENTS"
+	PULSE_CENSUS_ENUMERATION_BUDGET_S=50 build_ranked_dispatch_candidates_json 50 skip >/dev/null || true
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'budget:owner/small1:15;' ]]
+	grep -q 'deferred slow repository to the next census: repo=owner/big budget=60s remaining=45s (GH#38483)' "$LOGFILE"
+	[[ "$(<"${HOME}/.aidevops/cache/pulse-census-cursor")" == owner/small1 ]]
+	: >"$EVENTS"
+	led=$(PULSE_CENSUS_ENUMERATION_BUDGET_S=70 build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'budget:owner/big:60;budget:owner/small2:15;budget:owner/small1:15;' ]]
+	jq -e 'length == 1 and .[0].repo_slug == "owner/big" and .[0].number == 7' <<<"$led" >/dev/null
+	# The first repository is scanned even when its learned budget (45s after
+	# the 30s completion) exceeds the whole census budget.
+	: >"$EVENTS"
+	PULSE_CENSUS_ENUMERATION_BUDGET_S=20 build_ranked_dispatch_candidates_json 50 skip >/dev/null || true
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'budget:owner/big:20;' ]]
+	# A timeout reuses the last completed list and still reports the failure.
+	printf '124\n' >"$big_rc_file"
+	rc=0
+	reused=$(_dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "") || rc=$?
+	[[ "$rc" == 124 ]]
+	jq -e 'length == 1 and .[0].number == 7' <<<"$reused" >/dev/null
+	grep -q 'reused last-good candidates: repo=owner/big count=1 age=30s (GH#38483)' "$LOGFILE"
+	# A timeout keeps the stored list; a non-timeout failure never reuses it.
+	printf '1\n' >"$big_rc_file"
+	rc=0
+	failed=$(_dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "") || rc=$?
+	[[ "$rc" == 1 && "$failed" == '[]' ]]
+	printf '124\n' >"$big_rc_file"
+	advance_clock 3600
+	rc=0
+	expired=$(_dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "") || rc=$?
+	[[ "$rc" == 124 && "$expired" == '[]' ]]
+	# 0 disables reuse even for a fresh list.
+	rm -f "$budget_file"
+	printf '0\n' >"$big_rc_file"
+	_dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "" >/dev/null
+	printf '124\n' >"$big_rc_file"
+	disabled=$(PULSE_CENSUS_LAST_GOOD_MAX_AGE_S=0 _dispatch_census_enumerate_repo owner/big /fixture 15 60 50 skip "") || true
+	[[ "$disabled" == '[]' ]]
+)
+printf 'PASS slow repositories defer instead of clamped scans; timeouts reuse fresh last-good candidates\n'
+
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"
 _preflight_early_dispatch
