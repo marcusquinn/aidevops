@@ -10,15 +10,13 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from .archive_path import validate_archive_path
 from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
@@ -36,6 +34,7 @@ from .preservation import (
     SCRIPTS, _run, _snapshot, inherit_operation_lock, preserve_wip, verify_preservation,
 )
 from .recovery import prepare_retirement, recovery_evidence
+from .retirement_locks import event_id as _event_id, lock_exclusive_named
 from .storage import LifecycleRegistry, StoreConflict
 
 
@@ -50,10 +49,6 @@ class ArchiveTarget:
 def _id(path: Path) -> list[int]:
     info = path.lstat()
     return [info.st_dev, info.st_ino]
-
-
-def _event_id(generation: str, phase: str) -> str:
-    return str(uuid5(UUID(generation), f"retirement-{phase}"))
 
 
 def _event(store: LifecycleRegistry, key: str) -> dict | None:
@@ -80,11 +75,8 @@ def _lock(store: LifecycleRegistry, generation: str) -> Iterator[None]:
     )
     try:
         _private(path)
-        info = os.fstat(descriptor)
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size != 0 or _id(path) != [info.st_dev, info.st_ino]):
+        if not lock_exclusive_named(descriptor, path):
             raise StoreConflict("invalid-retirement-lock")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Close our descriptor, never explicitly unlock the shared description:
         # an already-started helper may still own it after controller death.
         with inherit_operation_lock(descriptor):
