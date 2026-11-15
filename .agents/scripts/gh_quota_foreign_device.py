@@ -50,21 +50,27 @@ def classify(text, self_login, device):
     return "none" if seen else "unknown"
 
 
+_EVIDENCE_LIMIT_BYTES = 4 * 1024 * 1024
+
+
 def hint(claims_file, self_login, device_file=""):
-    """Return the hint token; unreadable or absent evidence is `unknown`."""
+    """Return the hint token; unreadable, oversized or absent evidence is `unknown`."""
     if not claims_file or not self_login:
         return "unknown"
-    device = local_device(device_file or os.path.expanduser("~/.aidevops/state/device-id"))
-    limit = 4 * 1024 * 1024
+    # Same precedence as dispatch-claim-helper.sh, which writes the claim device.
+    device_path = (device_file or os.environ.get("AIDEVOPS_DEVICE_ID_FILE", "").strip()
+                   or os.path.expanduser("~/.aidevops/state/device-id"))
+    device = local_device(device_path)
     try:
-        with open(claims_file, encoding="utf-8", errors="replace") as handle:
-            text = handle.read(limit + 1)
+        with open(claims_file, "rb") as handle:
+            raw = handle.read(_EVIDENCE_LIMIT_BYTES + 1)
     except OSError:
         return "unknown"
-    # Do not classify incomplete evidence or a device value split at the limit.
-    if len(text) > limit:
+    # Do not classify incomplete evidence or a device value split at the limit;
+    # the limit is in bytes, so multi-byte UTF-8 cannot slip past it.
+    if len(raw) > _EVIDENCE_LIMIT_BYTES:
         return "unknown"
-    return classify(text, self_login, device)
+    return classify(raw.decode("utf-8", errors="replace"), self_login, device)
 
 
 def main(argv):
