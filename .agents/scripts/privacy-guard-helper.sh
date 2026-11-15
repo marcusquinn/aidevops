@@ -356,7 +356,7 @@ privacy_enumerate_private_entities() {
 #   $1 - text content
 #   $2 - entity file from privacy_enumerate_private_entities
 #   $3 - optional precomputed aidevops script basename allowlist
-#   $4 - optional target slug; $5 - verified public tree
+#   $4 - optional target slug; $5 - verified public tree; $6 - tree repository
 # Output: generic hit classes only
 #######################################
 privacy_scan_public_text() {
@@ -366,6 +366,7 @@ privacy_scan_public_text() {
 	local aidevops_script_basenames="${3:-}"
 	local target_repo="${4:-}"
 	local public_tree="${5:-}"
+	local tree_repo="${6:-.}"
 	local hits=0 class value secret_hits path_hits basename escaped scan_text
 
 	[[ -f "$entities_file" ]] || return 2
@@ -387,7 +388,7 @@ privacy_scan_public_text() {
 	while IFS=$'\t' read -r class value || [[ -n "$class" ]]; do
 		[[ -z "$class" || -z "$value" ]] && continue
 		if [[ "$text" == *"$value"* ]]; then
-			if [[ -n "$public_tree" ]] && git grep -Iq -F -e "$value" "$public_tree" -- 2>/dev/null; then
+			if [[ -n "$public_tree" ]] && git -C "$tree_repo" grep -Iq -F -e "$value" "$public_tree" -- 2>/dev/null; then
 				continue
 			fi
 			printf '[private-%s]\n' "$class"
@@ -402,7 +403,7 @@ privacy_scan_public_text() {
 				fi
 				escaped=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
 				if printf '%s' "$scan_text" | grep -qE "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)"; then
-					if [[ -n "$public_tree" ]] && git grep -Iq -E -e "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)" "$public_tree" -- 2>/dev/null; then
+					if [[ -n "$public_tree" ]] && git -C "$tree_repo" grep -Iq -E -e "(^|[^a-zA-Z0-9-])${escaped}([^a-zA-Z0-9-]|$)" "$public_tree" -- 2>/dev/null; then
 						continue
 					fi
 					printf '[private-repo]\n'
@@ -413,6 +414,30 @@ privacy_scan_public_text() {
 	done <"$entities_file"
 	[[ "$hits" -gt 0 ]] && return 1
 	return 0
+}
+
+#######################################
+# Resolve only a matching origin's remote default branch; never the worktree.
+# Output is a tab-separated repository path and commit, or nothing on failure.
+#######################################
+privacy_resolve_public_tree() {
+	local repo="$1"
+	local path="." remote_url remote_head commit registered=""
+	if [[ -f "$PRIVACY_REPOS_CONFIG" ]]; then
+		registered=$(jq -r --arg slug "$repo" 'first(.initialized_repos[]? | select(.slug == $slug) | .path) // empty' "$PRIVACY_REPOS_CONFIG" 2>/dev/null) || registered=""
+	fi
+	for path in "." "$registered"; do
+		[[ -n "$path" ]] || continue
+		[[ "$path" == \~/* ]] && path="$HOME/${path#\~/}"
+		remote_url=$(git -C "$path" remote get-url origin 2>/dev/null) || continue
+		if [[ "$remote_url" =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[2]%.git}" == "$repo" ]]; then
+			remote_head=$(git -C "$path" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || continue
+			commit=$(git -C "$path" rev-parse --verify "${remote_head}^{commit}" 2>/dev/null) || continue
+			printf '%s\t%s\n' "$path" "$commit"
+			return 0
+		fi
+	done
+	return 1
 }
 
 #######################################
@@ -485,7 +510,7 @@ privacy_redact_local_paths() {
 privacy_guard_public_write() {
 	local repo="$1"
 	local text="$2"
-	local target_status entities_file hits scan_rc remote_url public_tree="" remote_head
+	local target_status entities_file hits scan_rc public_tree="" tree_repo="" tree_result=""
 
 	if [[ -z "$repo" || ! "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
 		printf '[privacy-guard][BLOCK] Public-write target privacy could not be established.\n' >&2
@@ -509,12 +534,11 @@ privacy_guard_public_write() {
 		printf '[privacy-guard][BLOCK] Private entity inventory could not be loaded.\n' >&2
 		return 1
 	fi
-	remote_url=$(git remote get-url origin 2>/dev/null) || remote_url=""
-	if [[ "$remote_url" =~ ^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+)$ ]] && [[ "${BASH_REMATCH[2]%.git}" == "$repo" ]]; then
-		remote_head=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || remote_head=""
-		[[ -n "$remote_head" ]] && public_tree=$(git rev-parse --verify "${remote_head}^{commit}" 2>/dev/null)
+	tree_result=$(privacy_resolve_public_tree "$repo") || tree_result=""
+	if [[ -n "$tree_result" ]]; then
+		IFS=$'\t' read -r tree_repo public_tree <<<"$tree_result"
 	fi
-	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo" "$public_tree")
+	hits=$(privacy_scan_public_text "$text" "$entities_file" "$(_privacy_aidevops_script_reference_basenames)" "$repo" "$public_tree" "${tree_repo:-.}")
 	scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 ]]; then
