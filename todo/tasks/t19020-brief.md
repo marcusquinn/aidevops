@@ -47,7 +47,7 @@ Measured on 2026-11-15 (local machine, point-in-time):
 
 ### Files to Modify
 
-- `EDIT: .agents/scripts/pulse-canonical-recovery.sh:165-182`: in `_pcr_detect_state`, drop untracked (`?? `) porcelain rows whose path is OS metadata (basename `.DS_Store`, `Thumbs.db`, `desktop.ini`) or an OpenCode dependency artefact at `.opencode/` root (`package-lock.json`, `bun.lock`, `package.json`, `node_modules/`) before classifying `uncommitted`. Tracked edits and every other untracked path remain `uncommitted`.
+- `EDIT: .agents/scripts/pulse-canonical-recovery.sh:165-182`: in `_pcr_detect_state`, drop untracked (`??`) records from `git status --porcelain -z --untracked-files=all` (raw paths, untracked directories expanded) whose path is OS metadata (basename `.DS_Store`, `Thumbs.db`, `desktop.ini`) or an OpenCode dependency artefact under `.opencode/` (`package-lock.json`, `bun.lock`, `package.json`, `node_modules/*`) before classifying `uncommitted`. Tracked edits and every other untracked path remain `uncommitted`.
 - `EDIT: .agents/scripts/pulse-canonical-recovery.sh:337-338`: correct the `Effect:` text. Keep lines 1-4 unchanged: `canonical-recovery-routine.sh::_crr_extract_repo_path` parses line 4.
 - `EDIT: .agents/scripts/aidevops-update-check.sh:373-443`: in `_check_advisories`, skip setup-debt-covered prefixes when the aggregate line was emitted, collapse the `underfill-*` and `canonical-recovery-*` families, and limit the `aidevops security` suffix to `[SECURITY ADVISORY]`/`[ADVISORY]` lines.
 - `EDIT: .agents/scripts/github_auth_usage.py:98-110`: prefix line 1 with `[WARN]` and include the `app create` command plus the unbound owners in it.
