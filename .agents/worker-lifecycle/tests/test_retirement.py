@@ -15,13 +15,21 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from worker_lifecycle import interrupted_removal, pull_requests, retirement
+from worker_lifecycle import interrupted_removal, never_owned, pull_requests, retirement
 from worker_lifecycle.admission import AdmissionClosed, AdmissionRegistry
-from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree, retire_enrolled_only
-from worker_lifecycle.cleanup_plan import enrolled_only_event_id
+from worker_lifecycle.cleanup import cleanup_pass, cleanup_worktree
+from worker_lifecycle.never_owned import reclaim_unowned, retire_enrolled_only
+from worker_lifecycle.cleanup_plan import (
+    enrolled_only_event_id, never_owned_authorized, prepare_cleanup,
+)
 from worker_lifecycle.creation import WorktreeSpec, create_worktree
 from worker_lifecycle.enrollment import MARKER, GenerationEnrollment
 from worker_lifecycle.preservation import _helper
+from worker_lifecycle.reclaim import unowned
+from worker_lifecycle.reclaim.unowned import (
+    UNOWNED_AUTHORIZED, authorize as authorize_unowned, unowned_authorized, unowned_event_id,
+)
+from worker_lifecycle.recovery import recovery_evidence
 from worker_lifecycle.refusal import refusal_code
 from worker_lifecycle.retirement_proof import verify_retirement
 from worker_lifecycle.runtime import adapter_for
@@ -900,6 +908,137 @@ class RetirementContract(unittest.TestCase):
         )
         self.assertEqual(result["status"], "retired")
         self.assertFalse(self.target.exists())
+
+    def unowned_fixture(self):
+        """A never-owned enrolled tree whose HEAD is published to a remote."""
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("worktree", "add", "--detach", str(self.target), "HEAD")
+        return GenerationEnrollment(self.store).resolve(self.target, create=True)
+
+    def reclaim(self):
+        return reclaim_unowned(self.store, self.cleanup_config(), self.output, self.target)
+
+    def admission_state(self, generation):
+        with self.store.connection() as connection:
+            row = connection.execute(
+                "SELECT state FROM generation_admissions WHERE generation_id=?",
+                (generation,),
+            ).fetchone()
+        return row["state"] if row else None
+
+    def test_reclaim_unowned_retires_on_evidence_without_confirmation(self):
+        generation = self.unowned_fixture()
+        result = self.reclaim()
+        self.assertEqual(result["status"], "retired", result)
+        self.assertFalse(self.target.exists())
+        self.assertTrue(list(Path(result["archive"]).rglob("manifest.json")))
+        event = retirement._event(self.store, unowned_event_id(generation))
+        self.assertEqual(event["type"], UNOWNED_AUTHORIZED)
+        self.assertEqual((event["owner_check"], event["git_state"], event["path"]),
+                         ("never-bound", "nothing-to-lose", str(self.target)))
+        self.assertTrue(event["fingerprint"] and event["checked_at"])
+        self.assertNotIn("operator_confirmed", event)
+        self.assertIsNone(retirement._event(self.store, enrolled_only_event_id(generation)))
+
+    def test_reclaim_unowned_authorization_is_idempotent_and_read_by_readers(self):
+        generation = self.unowned_fixture()
+        self.assertFalse(never_owned_authorized(self.store, generation))
+        self.assertIsNone(authorize_unowned(self.store, self.target, generation, []))
+        first = retirement._event(self.store, unowned_event_id(generation))
+        self.assertIsNone(authorize_unowned(self.store, self.target, generation, []))
+        self.assertEqual(retirement._event(self.store, unowned_event_id(generation)), first)
+        self.assertEqual(self.admission_state(generation), "closed")
+        self.assertTrue(unowned_authorized(self.store, generation))
+        self.assertTrue(never_owned_authorized(self.store, generation))
+        evidence = recovery_evidence(self.store, self.target, generation)
+        self.assertEqual(evidence["authorization"], "reclaim")
+        self.assertNotIn("operator_confirmed", evidence)
+        prepared = prepare_cleanup(self.store, self.target)
+        self.assertEqual(prepared["status"], "registered-runs-ended")
+        retirement._validate_owner_evidence(self.store, generation)
+
+    def test_reclaim_unowned_refuses_local_state_and_keeps_admission_open(self):
+        def dirty():
+            (self.target / "untracked.txt").write_text("keep")
+
+        def unpushed():
+            retirement._git("-C", str(self.target), "-c", "user.name=Fixture",
+                            "-c", "user.email=fixture@example.invalid", "commit", "-q",
+                            "--allow-empty", "-m", "local only")
+
+        for change, reason in ((dirty, "uncommitted-changes"),
+                               (unpushed, "unpushed-commits-1")):
+            with self.subTest(reason=reason):
+                # A refused path keeps its reservation, so each case gets its own.
+                self.target = self.root / f"tree {reason}"
+                generation = self.unowned_fixture()
+                change()
+                result = self.reclaim()
+                self.assertEqual((result["status"], result["reason"]),
+                                 ("reclaim-refused", reason))
+                self.assertTrue(self.target.exists())
+                self.assertEqual(self.admission_state(generation), "open")
+                self.assertIsNone(retirement._event(self.store, unowned_event_id(generation)))
+                self.assertFalse(never_owned_authorized(self.store, generation))
+
+    def test_reclaim_unowned_refuses_change_during_check(self):
+        generation = self.unowned_fixture()
+        checked = unowned.nothing_to_lose
+
+        def change_after_check(path, **options):
+            verdict = checked(path, **options)
+            (path / "late.txt").write_text("arrived during the check")
+            return verdict
+
+        with patch.object(unowned, "nothing_to_lose", side_effect=change_after_check):
+            result = self.reclaim()
+        self.assertEqual((result["status"], result["reason"]),
+                         ("reclaim-refused", "evidence-changed"))
+        self.assertTrue((self.target / "late.txt").exists())
+        self.assertEqual(self.admission_state(generation), "open")
+
+    def test_reclaim_unowned_live_process_refuses_before_authorization(self):
+        """A never-owned tree has no runs to observe, so the census gates authorization."""
+        generation = self.unowned_fixture()
+        with patch.object(never_owned, "require_idle_processes",
+                          side_effect=ValueError("live-process-reference")):
+            result = self.reclaim()
+        self.assertEqual((result["status"], result["reason"]),
+                         ("reclaim-refused", "live-process-reference"))
+        self.assertTrue(self.target.exists())
+        self.assertEqual(self.admission_state(generation), "open")
+        self.assertIsNone(retirement._event(self.store, unowned_event_id(generation)))
+
+    def test_reclaim_unowned_reader_requires_recorded_facts(self):
+        generation = self.unowned_fixture()
+        self.assertIsNone(authorize_unowned(self.store, self.target, generation, []))
+        self.assertTrue(unowned_authorized(self.store, generation))
+        event = retirement._event(self.store, unowned_event_id(generation))
+        with self.store.connection(write=True) as connection:
+            connection.execute("UPDATE events SET payload=? WHERE event_id=?",
+                               (json.dumps(dict(event, fingerprint="")),
+                                unowned_event_id(generation)))
+        self.assertFalse(unowned_authorized(self.store, generation))
+
+    def test_reclaim_unowned_refuses_any_admitted_run(self):
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.create()
+        self.assertEqual(self.reclaim()["status"], "not-enrolled-only")
+        self.assertTrue(self.target.exists())
+
+    def test_reclaim_unowned_cli_retires_without_confirmation(self):
+        generation = self.unowned_fixture()
+        entry = Path(__file__).resolve().parents[1] / "worker-registry.py"
+        completed = subprocess.run(  # nosec B603 # disposable registry and repositories
+            [sys.executable, "-E", "-s", "-B", str(entry), "--state-dir",
+             str(self.store.directory), "reclaim-unowned", "--repos-config",
+             str(self.cleanup_config()), "--output-root", str(self.output),
+             "--path", str(self.target)],
+            capture_output=True, check=True, timeout=120,
+        )
+        self.assertEqual(json.loads(completed.stdout)["status"], "retired")
+        self.assertFalse(self.target.exists())
+        self.assertIsNotNone(retirement._event(self.store, unowned_event_id(generation)))
 
     def test_cleanup_respects_maintenance_scope_and_live_owner(self):
         self.create()

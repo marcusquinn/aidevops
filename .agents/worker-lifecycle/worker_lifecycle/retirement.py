@@ -21,7 +21,7 @@ import tempfile
 from uuid import UUID, uuid5
 
 from .archive_path import validate_archive_path
-from .cleanup_plan import _runs, enrolled_only_authorized, prepare_cleanup
+from .cleanup_plan import _runs, never_owned_authorized, prepare_cleanup
 from .directory_handle import DirectoryHandle
 from .filesystem import validate_private_path as _private
 from .interrupted_removal import (
@@ -247,14 +247,14 @@ def _remove_private(
 
 
 def _validate_owner_evidence(store: LifecycleRegistry, generation: str) -> None:
-    """Require closed admission and either ended owners or operator authorization."""
+    """Require closed admission and either ended owners or never-owned authorization."""
     with store.connection() as connection:
         admission = connection.execute(
             "SELECT state FROM generation_admissions WHERE generation_id=?",
             (generation,),
         ).fetchone()
     rows = _runs(store, generation)
-    enrolled_only = not rows and enrolled_only_authorized(store, generation)
+    enrolled_only = not rows and never_owned_authorized(store, generation)
     if not enrolled_only:
         if admission is None or admission["state"] != "closed":
             raise StoreConflict("retirement-owner-evidence-changed")
