@@ -1031,6 +1031,10 @@ _list_actionable_repos() {
 		_needs_sync=0
 		_needs_runner_sync "$_row_slug" "$_wf_file" && _needs_sync=1
 		_needs_ref_bump "$_row_slug" "$_wf_file" && _needs_sync=1
+		# Apply must revisit workflow-only callers to repair partial supersession.
+		if [[ "${_OPT_APPLY:-0}" -eq 1 && "$_row_workflow" != "$LINKED_ISSUE_WORKFLOW_NAME" ]]; then
+			_needs_sync=1
+		fi
 		if [[ "$_row_workflow" == "$LINKED_ISSUE_WORKFLOW_NAME" ]]; then
 			_contributing_policy_needs_sync "$_row_path" && _needs_sync=1
 			[[ "$?" -eq 2 ]] && _needs_sync=1
@@ -1430,20 +1434,20 @@ _summarise_push_failure() {
 # Strip a generated date suffix, retaining the '-' boundary between prefixes.
 # API/JSON errors fail closed; unrelated paths, forks and policy PRs are untouched.
 _sync_workflow_prs() {
-	local _slug="$1" _branch="$2" _workflow="$3"
+	local _slug="$1" _branch="$2" _workflow="$3" _base="$4"
 	local _prefix="${_branch%????????}"
 	[[ "$_branch" =~ -[0-9]{8}$ ]] || _prefix="$_branch"
 	local _prs _rows _number _url _files _sha
 	_prs=$(gh api "repos/$_slug/pulls?state=open&per_page=100" --paginate) || return 1
 	[[ -n "$_prs" ]] || return 1
-	_rows=$(printf '%s\n' "$_prs" | jq -sr --arg prefix "$_prefix" --arg slug "$_slug" \
-		'.[][] | select((.head.ref | startswith($prefix)) and .head.repo.full_name == $slug) | [.number, .html_url] | @tsv') || return 1
+	_rows=$(printf '%s\n' "$_prs" | jq -sr --arg prefix "$_prefix" --arg slug "$_slug" --arg base "$_base" \
+		'.[][] | select((.head.ref | startswith($prefix)) and ((.head.repo.full_name // "" | ascii_downcase) == ($slug | ascii_downcase)) and .base.ref == $base) | [.number, .html_url] | @tsv') || return 1
 	while IFS=$'\t' read -r _number _url; do
 		[[ -n "$_number" ]] || continue
 		_files=$(gh api "repos/$_slug/pulls/$_number/files?per_page=100" --paginate) || return 1
 		[[ -n "$_files" ]] || return 1
 		_sha=$(printf '%s\n' "$_files" | jq -sr --arg path "$_workflow" \
-			'[.[][]] | select(length == 1) | .[0] | select(.filename == $path and .status != "removed") | .sha // empty') || return 1
+			'[.[][]] | select(length == 1) | .[0] | select(.filename == $path and (.status == "added" or .status == "modified")) | .sha // empty') || return 1
 		[[ -z "$_sha" ]] || printf '%s\t%s\t%s\n' "$_number" "$_url" "$_sha"
 	done <<<"$_rows"
 	return 0
@@ -1451,9 +1455,9 @@ _sync_workflow_prs() {
 
 # Find an existing same-content workflow PR before publishing a new branch.
 _sync_find_identical_pr() {
-	local _slug="$1" _branch="$2" _workflow="$3" _content="$4"
+	local _slug="$1" _branch="$2" _workflow="$3" _content="$4" _base="$5"
 	local _rows _number _url _sha _target_sha
-	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow") || return 1
+	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow" "$_base") || return 1
 	_target_sha=$(printf '%s\n' "$_content" | git hash-object --stdin) || return 1
 	while IFS=$'\t' read -r _number _url _sha; do
 		if [[ "$_sha" == "$_target_sha" ]]; then
@@ -1467,9 +1471,9 @@ _sync_find_identical_pr() {
 # Create-and-supersede rather than force-updating someone else's open branch.
 # Close older workflow-only PRs only after a replacement has been confirmed.
 _sync_supersede_prs() {
-	local _slug="$1" _branch="$2" _workflow="$3" _replacement="$4"
+	local _slug="$1" _branch="$2" _workflow="$3" _replacement="$4" _base="$5"
 	local _rows _number _url _sha _body_file _rc=0
-	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow") || return 1
+	_rows=$(_sync_workflow_prs "$_slug" "$_branch" "$_workflow" "$_base") || return 1
 	local _temp_root="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	mkdir -p "$_temp_root" || return 1
 	_body_file=$(mktemp "${_temp_root%/}/sync-workflows-superseded.XXXXXX") || return 1
@@ -1488,14 +1492,15 @@ _sync_supersede_prs() {
 # Emit an applied result for an identical workflow-only PR; return 2 if found.
 _sync_report_identical_pr() {
 	local _slug="$1" _status="$2" _branch="$3" _workflow="$4" _content="$5" _contributing="$6"
+	local _base="$7"
 	[[ "$_contributing" -eq 0 ]] || return 0
 	local _identical_pr
-	if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch" "$_workflow" "$_content"); then
+	if ! _identical_pr=$(_sync_find_identical_pr "$_slug" "$_branch" "$_workflow" "$_content" "$_base"); then
 		printf '%s\t%s\t%s\tunable to inspect open sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
 	[[ -n "$_identical_pr" ]] || return 0
-	if ! _sync_supersede_prs "$_slug" "$_branch" "$_workflow" "$_identical_pr"; then
+	if ! _sync_supersede_prs "$_slug" "$_branch" "$_workflow" "$_identical_pr" "$_base"; then
 		printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_identical_pr"
 		return 1
 	fi
@@ -1524,9 +1529,13 @@ _sync_open_pr() {
 		return 1
 	fi
 	local _existing_pr
-	_existing_pr=$(gh pr list --repo "$_slug" --head "$_branch_name" --state open \
+	_existing_pr=$(gh pr list --repo "$_slug" --head "$_branch_name" --base "$_default_branch" --state open \
 		--json url --jq '.[0].url // empty' 2>/dev/null || true)
 	if [[ -n "$_existing_pr" ]]; then
+		if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_existing_pr" "$_default_branch"; then
+			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
+			return 1
+		fi
 		printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_existing_pr"
 		return 0
 	fi
@@ -1575,7 +1584,7 @@ _sync_open_pr() {
 			"$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
-	if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_pr_url"; then
+	if [[ "$_sync_contributing" -eq 0 ]] && ! _sync_supersede_prs "$_slug" "$_branch_name" "$_workflow_relpath" "$_pr_url" "$_default_branch"; then
 		printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_pr_url"
 		return 1
 	fi
@@ -1659,6 +1668,8 @@ _resolve_refreshed_sync_status() {
 		fi
 		printf '%s\t%s\t%s\trefreshed checkout is CURRENT/CALLER; no changes\n' \
 			"$_slug" "$_prior_status" "$_STATUS_SKIPPED"
+		# Defer this skip until workflow-only PR reconciliation has run.
+		[[ "$_sync_contributing" -eq 0 ]] && return 3
 		return 2
 		;;
 	*)
@@ -1669,10 +1680,26 @@ _resolve_refreshed_sync_status() {
 	esac
 }
 
+# Serialize publication across clones sharing this user's installation. Atomic
+# mkdir is portable to macOS; contention (including a stale lock after SIGKILL)
+# fails closed rather than risking two publishers closing each other's PRs.
+# The caller's subshell owns cleanup, including on ordinary failure and signals.
+_sync_acquire_publication_lock() {
+	local _slug="$1" _workflow="$2" _branch="$3"
+	local _prefix="${_branch%????????}" _key
+	[[ "$_branch" =~ -[0-9]{8}$ ]] || _prefix="$_branch"
+	_key=$(printf '%s\n%s\n%s\n' "$(printf '%s' "$_slug" | tr '[:upper:]' '[:lower:]')" "$_workflow" "$_prefix" | git hash-object --stdin) || return 1
+	local _root="${HOME}/.aidevops/.agent-workspace/locks/sync-workflows"
+	mkdir -p "$_root" || return 1
+	_sync_lock_dir="$_root/$_key.lock"
+	mkdir "$_sync_lock_dir" 2>/dev/null || return 1
+	return 0
+}
+
 # _sync_one_repo <slug> <path> <status> <template_path> <target_repo> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
 # Emits a single-line summary; returns 0 on success, 1 on failure.
 # workflow_relpath — path relative to repo root e.g. .github/workflows/review-bot-gate.yml
-_sync_one_repo() {
+_sync_one_repo() (
 	local _slug="$1"
 	local _path="$2"
 	local _status="$3"
@@ -1696,6 +1723,14 @@ _sync_one_repo() {
 			"$_slug" "$_status" "$_effective_ref" "$_workflow_relpath" "$_sync_contributing" "$_workflow" "$_path"
 		return 0
 	fi
+
+	local _sync_lock_dir=""
+	if ! _sync_acquire_publication_lock "$_slug" "$_workflow_relpath" "$_branch_name"; then
+		printf '%s\t%s\t%s\tpublication lock unavailable; retry after the active sync exits (remove stale lock only after verifying no publisher remains)\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
+	fi
+	trap 'rmdir "$_sync_lock_dir"' EXIT
+	trap 'exit 1' HUP INT TERM
 
 	_PREFLIGHT_DEFAULT_BRANCH="" _PREFLIGHT_REMOTE=""
 	local _pf_rc
@@ -1734,11 +1769,15 @@ _sync_one_repo() {
 		printf '%s\n' "$_status_resolution"
 		return 0
 	fi
-	if [[ "$_status_rc" -ne 0 ]]; then
+	if [[ "$_status_rc" -ne 0 && "$_status_rc" -ne 3 ]]; then
 		printf '%s\n' "$_status_resolution"
 		return 1
 	fi
-	_status="$_status_resolution"
+	if [[ "$_status_rc" -eq 0 ]]; then
+		_status="$_status_resolution"
+	else
+		_status="$_refreshed_status"
+	fi
 
 	local _effective_ref
 	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
@@ -1754,14 +1793,18 @@ _sync_one_repo() {
 	fi
 
 	local _identical_rc=0
-	_sync_report_identical_pr "$_slug" "$_status" "$_branch_name" "$_workflow_relpath" "$_target_content" "$_sync_contributing" || _identical_rc=$?
+	_sync_report_identical_pr "$_slug" "$_status" "$_branch_name" "$_workflow_relpath" "$_target_content" "$_sync_contributing" "$_default_branch" || _identical_rc=$?
 	[[ "$_identical_rc" -eq 2 ]] && return 0
 	[[ "$_identical_rc" -eq 0 ]] || return 1
+	if [[ "$_status_rc" -eq 3 ]]; then
+		printf '%s\n' "$_status_resolution"
+		return 0
+	fi
 
 	_sync_publish_rendered "$_slug" "$_path" "$_status" "$_branch_name" "$_remote" \
 		"$_default_branch" "$_effective_ref" "$_target_content" "$_workflow_relpath" "$_sync_contributing"
 	return $?
-}
+)
 
 # Publish a rendered target, treating a no-op as success.
 _sync_publish_rendered() {

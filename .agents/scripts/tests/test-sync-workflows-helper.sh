@@ -121,6 +121,8 @@ elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls\?state=open* ]]; then
 	printf '%s\n' "${GH_SYNC_PRS_JSON:-[]}"
 elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
 	printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
+elif [[ "${1:-} ${2:-}" == "pr close" ]]; then
+	[[ "${GH_SYNC_CLOSE_FAIL:-0}" == 0 ]] || exit 1
 elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
 	while [[ $# -gt 0 ]]; do
 		if [[ "$1" == --body-file ]]; then
@@ -330,7 +332,7 @@ fi
 # GH#38487: reuse yesterday's same-content PR before any new branch is pushed.
 SYNC_SHA_10=$(git -C "$REPO_10" rev-parse "${SYNC_BRANCH_10}:.github/workflows/issue-sync.yml")
 SYNC_PRS_10=$(jq -cn --arg branch "$SYNC_BRANCH_10" \
-	'[{number:1,html_url:"https://github.com/owner/repo-develop/pull/1",head:{ref:$branch,repo:{full_name:"owner/repo-develop"}}}]')
+	'[{number:1,html_url:"https://github.com/owner/repo-develop/pull/1",base:{ref:"develop"},head:{ref:$branch,repo:{full_name:"Owner/Repo-Develop"}}}]')
 SYNC_FILES_10=$(jq -cn --arg sha "$SYNC_SHA_10" \
 	'[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:$sha}]')
 OUT_10_REUSE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
@@ -360,6 +362,56 @@ CALLS_10=$(cat "$TMPDIR_10/gh-calls.log")
 _assert_contains "GH#38487 older PR closes after replacement" "$CALLS_10" "pr close 1 --repo owner/repo-develop"
 COMMENTS_10=$(cat "$TMPDIR_10/gh-calls.log.comments" 2>/dev/null || true)
 _assert_contains "GH#38487 supersession comment links replacement" "$COMMENTS_10" "Superseded by https://github.com/owner/repo-develop/pull/2"
+
+# A PR for another publication base must neither be reused nor closed.
+OTHER_BASE_10=$(printf '%s\n' "$SYNC_PRS_10" | jq '.[0].base.ref = "release"')
+SYNC_FILES_10=$(jq -cn --arg sha "$SYNC_SHA_10" \
+	'[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:$sha}]')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_BASE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$OTHER_BASE_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_NEW_PR_NUMBER=3 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990105 2>&1)
+_assert_exit "review: other-base publication succeeds" 0 "$?"
+_assert_contains "review: other-base PR is not reused" "$OUT_10_BASE" "PR: https://github.com/owner/repo-develop/pull/3"
+_assert_exit "review: other-base PR is not closed" 0 "$(grep -c '^pr close ' "$TMPDIR_10/gh-calls.log")"
+
+# A rename also removes another workflow and is not workflow-only.
+RENAME_FILES_10=$(printf '%s\n' "$SYNC_FILES_10" | jq '.[0] += {status:"renamed",previous_filename:".github/workflows/legacy.yml"}')
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_RENAME=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$RENAME_FILES_10" GH_NEW_PR_NUMBER=4 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: rename publication succeeds" 0 "$?"
+_assert_contains "review: rename PR is not reused" "$OUT_10_RENAME" "PR: https://github.com/owner/repo-develop/pull/4"
+_assert_exit "review: rename PR is not closed" 0 "$(grep -c '^pr close ' "$TMPDIR_10/gh-calls.log")"
+
+# The checkout is now canonical on this exact branch. Failed supersession must
+# remain FAILED, and a retry must still attempt to close the duplicate.
+RETRY_PRS_10=$(printf '%s\n' "$SYNC_PRS_10" | jq '. + [.[0] | .number = 2 | .html_url = "https://github.com/owner/repo-develop/pull/2"]')
+OUT_10_RETRY_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_SYNC_CLOSE_FAIL=1 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: canonical exact-branch reconciliation failure propagates" 1 "$?"
+_assert_contains "review: retry reports supersession failure" "$OUT_10_RETRY_FAIL" "unable to supersede older sync PRs"
+OUT_10_RETRY=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$RETRY_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990106 2>&1)
+_assert_exit "review: canonical exact-branch retry reconciles" 0 "$?"
+_assert_contains "review: canonical exact-branch retry reports canonical PR" "$OUT_10_RETRY" "PR: https://github.com/owner/repo-develop/pull/1"
+
+# Different date suffixes share the installation-scoped lock; a held lock must
+# prevent inspection/publication, and all preceding failure paths released it.
+LOCK_KEY_10=$(printf '%s\n%s\n%s\n' owner/repo-develop .github/workflows/issue-sync.yml chore/workflow-sync- | git hash-object --stdin)
+LOCK_DIR_10="$TMPDIR_10/.aidevops/.agent-workspace/locks/sync-workflows/$LOCK_KEY_10.lock"
+mkdir "$LOCK_DIR_10"
+_assert_exit "review: failure paths release publication lock" 0 "$?"
+: >"$TMPDIR_10/gh-calls.log"
+OUT_10_LOCK=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990107 2>&1)
+_assert_exit "review: concurrent publication fails closed" 1 "$?"
+_assert_contains "review: lock contention is actionable" "$OUT_10_LOCK" "publication lock unavailable"
+_assert_exit "review: contending publisher never inspects PRs" 0 "$(grep -c '^api repos/.*/pulls?' "$TMPDIR_10/gh-calls.log")"
+rmdir "$LOCK_DIR_10"
 rm -rf "$TMPDIR_10"
 
 # ─── Test 11: GH#21897 — CURRENT/CALLER + repos.json runner field is actionable ───
@@ -603,8 +655,9 @@ _write_repos_json "$TMPDIR_14" \
 OUT_14=$(HOME="$TMPDIR_14" PATH="$TMPDIR_14/bin:$PATH" GH_CALL_LOG="$TMPDIR_14/gh-calls.log" \
 	bash "$HELPER" --apply --branch chore/test-stale-current 2>&1)
 EXIT_14=$?
+# Reconciliation may inspect open PRs, but an empty list must not publish or close.
 if [[ "$OUT_14" == *"refreshed checkout is CURRENT/CALLER; no changes"* ]] &&
-	[[ ! -s "$TMPDIR_14/gh-calls.log" ]] &&
+	! grep -qE '^pr (create|close|comment) ' "$TMPDIR_14/gh-calls.log" &&
 	! git --git-dir="$BARE_14" show-ref --verify --quiet refs/heads/chore/test-stale-current; then
 	printf '%sPASS%s GH#27726 stale local + canonical remote → no push or PR\n' "$GREEN" "$NC"
 	((_PASS++))
