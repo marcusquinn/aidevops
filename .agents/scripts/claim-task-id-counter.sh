@@ -1794,6 +1794,26 @@ allocate_counter_cas() {
 	return 0
 }
 
+# Refresh the caller repository's remote-tracking ref for the counter branch
+# after a successful CAS. The CAS runs in an isolated Git context, so its push
+# leaves the caller's refs/remotes/<remote>/<counter-branch> stale and the
+# task-id commit-msg guard then misses the fresh claim. Best-effort and bounded:
+# failure never changes the claim result.
+# Args: $1 — caller repo_path
+_cas_refresh_caller_tracking_ref() {
+	local repo_path="$1"
+	[[ -n "$repo_path" && -d "$repo_path" ]] || return 0
+	local refspec="+refs/heads/${COUNTER_BRANCH}:refs/remotes/${REMOTE_NAME}/${COUNTER_BRANCH}"
+	if timeout_sec "${CAS_HTTPS_TIMEOUT_S:-30}" git -C "$repo_path" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="${CAS_GIT_CMD_TIMEOUT_S:-10}" \
+		fetch --quiet "$REMOTE_NAME" "$refspec" >/dev/null 2>&1; then
+		log_info "Refreshed ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo"
+	else
+		log_info "Could not refresh ${REMOTE_NAME}/${COUNTER_BRANCH} in caller repo (non-fatal)"
+	fi
+	return 0
+}
+
 # Online allocation with CAS retry loop.
 # GH#20137: enforces a wall-clock timeout (CAS_WALL_TIMEOUT_S, default 30s)
 # in addition to the retry count.  Under concurrent-worker contention, each
@@ -1857,6 +1877,7 @@ allocate_online() {
 		0)
 			# go for it — CAS succeeded on this attempt
 			log_success "Claimed $(_format_legacy_task_id "$first_id") (attempt ${attempt}, ${elapsed}s)"
+			_cas_refresh_caller_tracking_ref "$repo_path"
 			# Phase 3 (t2569 / GH#20001): structured audit log.
 			_append_claim_audit_log "$first_id" "$attempt" "$elapsed"
 			_task_coordinator_shadow_legacy "$first_id" "$count"
