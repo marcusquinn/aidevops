@@ -145,7 +145,7 @@ _launch_background() {
 		EXECUTOR_PID=""
 		NEXT_ACTION="attach-executor-or-resume"
 		PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
-		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
 		_full_loop_append_event "executor.initialized" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 		print_warning "Background loop initialized, but no executor was launched."
 		printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -179,7 +179,7 @@ _launch_background() {
 		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		NEXT_ACTION="monitor"
 		PHASE_STATUS="$_FULL_LOOP_PHASE_RUNNING"
-		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
 		_full_loop_append_event "executor.started" "$_FULL_LOOP_PHASE_RUNNING"
 		print_success "Background executor started (PID: ${EXECUTOR_PID}). Use 'status' or 'logs' to monitor."
 		printf 'FULL_LOOP_START_RESULT=running\n'
@@ -190,7 +190,7 @@ _launch_background() {
 	EXECUTOR_PID=""
 	NEXT_ACTION="attach-executor-or-resume"
 	PHASE_STATUS="$_FULL_LOOP_PHASE_WAITING"
-	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
 	_full_loop_append_event "executor.start_failed" "$_FULL_LOOP_EXECUTOR_INITIALIZED"
 	print_warning "Background executor exited before liveness could be verified."
 	printf 'FULL_LOOP_START_RESULT=initialized-only\n'
@@ -319,7 +319,10 @@ _cmd_start_locked() {
 	PHASE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	NEXT_ACTION="complete-task-development"
 	EXECUTOR_STATUS="$_FULL_LOOP_EXECUTOR_INITIALIZED"
-	save_state "$_FULL_LOOP_PHASE_TASK" "$prompt"
+	if ! save_state "$_FULL_LOOP_PHASE_TASK" "$prompt"; then
+		print_error "Failed to save full-loop checkpoint; start aborted."
+		return 1
+	fi
 	SAVED_PROMPT="$prompt"
 	_full_loop_append_event "phase.started" "$_FULL_LOOP_PHASE_WAITING"
 

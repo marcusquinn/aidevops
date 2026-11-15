@@ -15,6 +15,7 @@ _full_loop_exclude_runtime_path() {
 	git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1 || return 0
 	exclude_file=$(git -C "$worktree" rev-parse --git-path info/exclude) || return 1
 	[[ "$exclude_file" == /* ]] || exclude_file="${worktree}/${exclude_file}"
+	mkdir -p "${exclude_file%/*}" || return 1
 	if ! grep -Fxq -- "$pattern" "$exclude_file" 2>/dev/null; then
 		printf '\n%s\n' "$pattern" >>"$exclude_file" || return 1
 	fi
@@ -28,7 +29,9 @@ save_state() {
 	local tmp_file="${STATE_FILE}.tmp.$$"
 	RUN_ID="${RUN_ID:-run-$(date -u '+%Y%m%dT%H%M%SZ')-$$}"
 	STATE_REVISION=$((${STATE_REVISION:-0} + 1))
-	_full_loop_exclude_runtime_path "$PWD" '/.agents/loop-state/' || return 1
+	local state_prefix
+	state_prefix=$(git rev-parse --show-prefix 2>/dev/null) || state_prefix=""
+	_full_loop_exclude_runtime_path "$PWD" "/${state_prefix}${STATE_DIR}/" || return 1
 	mkdir -p "$STATE_DIR"
 	cat >"$tmp_file" <<EOF
 ---
