@@ -789,7 +789,7 @@ _repos_list() {
 	fi
 	local current_ver
 	current_ver=$(get_version)
-	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\((.features // []) | join(","))|\(if .maintenance == false then false else true end)|\(.pulse // false)"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features maintenance pulse; do
+	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\((.features // []) | join(","))|\(if .maintenance == false then false else true end)|\(.pulse // false)|\(.checkpoint_policy.auto_resolve_decisions == true)|\(.checkpoint_policy.auto_continue_unknown_pending_work == true)"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features maintenance pulse decisions pending; do
 		local name
 		name=$(basename "$path")
 		local status="✓" status_color="$GREEN"
@@ -810,6 +810,7 @@ _repos_list() {
 		else
 			echo "    Automation: dormant (Pulse: off)"
 		fi
+		echo "    Checkpoint policy: decisions=$decisions pending-work=$pending"
 		echo ""
 	done
 	echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
@@ -1011,6 +1012,46 @@ _repos_pulse() {
 	return 0
 }
 
+_repos_checkpoint_policy() {
+	local state="${1:-}" selector="" owner="" arg="" owner_arg=""
+	case "$state" in
+	on | off) shift ;;
+	*) print_error "Usage: aidevops repos checkpoint-policy <on|off> [slug-or-path] [--owner OWNER]"; return 2 ;;
+	esac
+	while [[ $# -gt 0 ]]; do
+		arg="${1:-}"
+		owner_arg="${2:-}"
+		case "$arg" in
+		--owner)
+			[[ $# -ge 2 && -z "$owner" ]] || { print_error "--owner requires one owner"; return 2; }
+			owner="$owner_arg"
+			[[ -n "$owner" ]] || return 2
+			shift 2
+			;;
+		-*) print_error "Unknown checkpoint-policy option: $arg"; return 2 ;;
+		*)
+			[[ -z "$selector" ]] || { print_error "Specify only one repository"; return 2; }
+			selector="$arg"
+			shift
+			;;
+		esac
+	done
+	if [[ -n "$owner" ]]; then
+		[[ -z "$selector" ]] || { print_error "Use a repository selector or --owner, not both"; return 2; }
+		set_owner_checkpoint_policy "$owner" "$state"
+		return $?
+	fi
+	if [[ -z "$selector" ]]; then
+		selector=$(git rev-parse --show-toplevel 2>/dev/null) || {
+			print_error "Checkpoint policy needs a registered repo selector or a current Git worktree"
+			return 1
+		}
+	fi
+	set_repo_checkpoint_policy "$selector" "$state" || return $?
+	print_success "Checkpoint policy $state for $selector (decisions and pending work)"
+	return 0
+}
+
 _repos_actions() {
 	local state="${1:-}" selector="${2:-}" reason="${3:-}"
 	case "$state" in
@@ -1076,6 +1117,10 @@ cmd_repos() {
 		shift
 		_repos_pulse "$@"
 		;;
+	checkpoint-policy)
+		shift
+		_repos_checkpoint_policy "$@"
+		;;
 	actions)
 		shift
 		_repos_actions "$@"
@@ -1096,6 +1141,8 @@ cmd_repos() {
 		echo "           Include/exclude a registered repo from recurring automation"
 		echo "  pulse <on|off> [repo]"
 		echo "           Enable/disable Pulse task automation (on requires maintenance)"
+		echo "  checkpoint-policy <on|off> [slug-or-path] [--owner OWNER]"
+		echo "           Toggle AI decision/pending-work recovery; --owner selects Pulse-enabled repos"
 		echo "  pulse auth <set|status|check|clear> owner/repo [options]"
 		echo "           Configure repository GitHub App reads without changing write auth"
 		echo "  pulse auth usage [--since 1h]"
