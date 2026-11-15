@@ -415,6 +415,8 @@ _worker_briefed_link_kind() {
 	issue_labels="${state_labels#*$'\t'}"
 	if [[ "$issue_state" != "open" ]]; then
 		WORKER_BRIEFED_TRUST_REASON="non-closing reference to issue #${linked_issue} which is not open (GH#33999)"
+		# GH#38496: no merge pass can land this head; see the marker sync below.
+		_WORKER_BRIEFED_PERMANENT_BLOCK="non_closing_reference_not_open"
 		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
 		return 1
 	fi
@@ -533,6 +535,8 @@ _worker_briefed_trust_check() {
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} is a starter-sync issue and the diff stays within scripts/core-files.txt (GH#37289)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "$_true_status" ]]; then
 			WORKER_BRIEFED_TRUST_REASON="linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)"
+			# GH#38496: only a maintainer approval can unblock it; pulse cannot.
+			_WORKER_BRIEFED_PERMANENT_BLOCK="untrusted_issue_author_no_crypto_approval"
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — ${WORKER_BRIEFED_TRUST_REASON}" >>"$LOGFILE"
 			if [[ "$issue_author_login" == "$_PM_WORKFLOW_BOT_LOGIN" ]]; then
 				_worker_briefed_record_bot_decision "$linked_issue" "$repo_slug" ||
@@ -658,9 +662,72 @@ worker_briefed_trust_verdict() {
 	return 1
 }
 
+#######################################
+# Per-PR marker path for a permanent t2449 refusal (GH#38496). The dispatch PR
+# backlog guardrail (pulse-dispatch-current-state-guardrails.sh) reads the
+# same directory; keep the default and file naming in sync with it.
+# Args: $1=repo_slug, $2=pr_number
+# Stdout: marker path. Returns 1 for an unsafe slug or PR number.
+#######################################
+_worker_briefed_permanent_block_file() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local state_dir="${PULSE_T2449_BLOCK_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/pulse-t2449-permanent-blocks}"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s/%s--%s--pr-%s\n' "$state_dir" "${repo_slug%%/*}" "${repo_slug##*/}" "$pr_number"
+	return 0
+}
+
+#######################################
+# Record or clear the permanent t2449 marker after one merge-pass verdict
+# (GH#38496). Permanent means a non-closing reference to a non-open issue, or
+# an untrusted linked-issue author without cryptographic approval: no merge
+# pass can land that head. The marker binds the head SHA, so a new push makes
+# the PR count again. An allow verdict or any other (transient) refusal clears
+# it, and an unknown head never writes one. The marker only shapes dispatch
+# backlog counting; it never grants or denies merge authority.
+# Args: $1=pr_number, $2=repo_slug, $3=verdict rc, $4=permanent block class
+#       (empty when not permanent), $5=pinned head SHA (optional)
+#######################################
+_worker_briefed_sync_permanent_block_marker() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local verdict_rc="$3"
+	local block_class="$4"
+	local head_sha="${5:-}"
+	local marker="" tmp_file="" pr_path="pulls/${pr_number}"
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	marker=$(_worker_briefed_permanent_block_file "$repo_slug" "$pr_number") || return 0
+	if [[ "$verdict_rc" != 0 && -n "$block_class" && ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		head_sha=$(gh api "repos/${repo_slug}/${pr_path}" --jq '.head.sha // ""' 2>/dev/null) || head_sha=""
+	fi
+	if [[ "$verdict_rc" == 0 || -z "$block_class" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+		rm -f "$marker" 2>/dev/null || true
+		return 0
+	fi
+	mkdir -p "${marker%/*}" 2>/dev/null || return 0
+	tmp_file=$(mktemp "${marker}.XXXXXX" 2>/dev/null) || return 0
+	if printf '%s\t%s\t%s\n' "$head_sha" "$block_class" "$(date +%s)" >"$tmp_file" &&
+		mv -f "$tmp_file" "$marker" 2>/dev/null; then
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} marked permanently t2449-blocked at head ${head_sha:0:12} (${block_class}); excluded from the dispatch PR backlog count until its head or verdict changes (GH#38496)" >>"${LOGFILE:-/dev/null}"
+	else
+		rm -f "$tmp_file" 2>/dev/null || true
+	fi
+	return 0
+}
+
 _attempt_worker_briefed_auto_merge() {
-	worker_briefed_trust_verdict "$@" >/dev/null
-	return $?
+	local verdict_rc=0
+	_WORKER_BRIEFED_PERMANENT_BLOCK=""
+	worker_briefed_trust_verdict "$@" >/dev/null || verdict_rc=$?
+	if declare -F _worker_briefed_sync_permanent_block_marker >/dev/null 2>&1; then
+		# The merge pass pins the head in _check_pr_merge_gates (dynamic scope);
+		# the marker sync falls back to a REST head read when it is absent.
+		# shellcheck disable=SC2154
+		_worker_briefed_sync_permanent_block_marker "${1:-}" "${2:-}" "$verdict_rc" \
+			"${_WORKER_BRIEFED_PERMANENT_BLOCK:-}" "${expected_head_sha:-}" || true
+	fi
+	return "$verdict_rc"
 }
 
 # Full-loop adapter runs in a subshell: loading the deterministic parser and
