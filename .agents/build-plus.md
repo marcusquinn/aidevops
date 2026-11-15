@@ -22,7 +22,6 @@ subagents:
   # Code quality
   - code-standards
   - code-simplifier
-  - best-practices
   - auditing
   - secretlint
   - content-provenance
