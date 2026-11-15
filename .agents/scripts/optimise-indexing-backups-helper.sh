@@ -405,7 +405,7 @@ _backblaze_last_upload_epoch() {
     local file="$BACKBLAZE_BZDATA/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
     [[ -r "$file" ]] || return 0
     local millis
-    millis="$(grep -Eo 'gmt_millis="[0-9]+"' "$file" 2>/dev/null | head -n 1 | grep -Eo '[0-9]+' || true)"
+    millis="$(grep -Eo 'gmt_millis="[0-9]+"' "$file" 2>/dev/null | sed -n '1p' | grep -Eo '[0-9]+' || true)"
     [[ -n "$millis" ]] && printf '%s\n' "$((millis / 1000))"
     return 0
 }
