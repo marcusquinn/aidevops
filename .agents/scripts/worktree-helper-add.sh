@@ -433,7 +433,8 @@ _provision_worktree_owner_still_exact() {
 # GH#38065: cheap bounded pre-check so a source that can never fit the byte
 # budget is refused without the full validator walk. Returns 0 only when the
 # apparent size clearly (>2x) exceeds the budget; any uncertainty (no timeout
-# tool, no GNU --apparent-size, timeout, error) returns 1 and the validator decides.
+# tool, no apparent-size du, timeout, error) returns 1 and the validator decides.
+# GH#38525: BSD/macOS du rejects GNU --apparent-size; fall back to its -A flag.
 # Args: $1=source node_modules path, $2=max bytes
 _provision_source_clearly_over_budget() {
 	local source_dir="$1"
@@ -447,7 +448,10 @@ _provision_source_clearly_over_budget() {
 	else
 		return 1
 	fi
-	size_kb=$("$timeout_cmd" 5 du -sk --apparent-size -- "$source_dir" 2>/dev/null | cut -f1) || return 1
+	size_kb=$("$timeout_cmd" 5 du -sk --apparent-size -- "$source_dir" 2>/dev/null | cut -f1) || size_kb=""
+	if [[ ! "$size_kb" =~ ^[0-9]+$ ]]; then
+		size_kb=$("$timeout_cmd" 5 du -skA -- "$source_dir" 2>/dev/null | cut -f1) || return 1
+	fi
 	[[ "$size_kb" =~ ^[0-9]+$ ]] || return 1
 	((size_kb > (max_bytes / 1024) * 2)) || return 1
 	return 0
