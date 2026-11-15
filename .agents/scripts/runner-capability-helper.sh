@@ -83,6 +83,7 @@ runner_capability_check() {
 		_runner_capability_python_classes
 		_runner_capability_python_tools
 		_runner_capability_python_services
+		_runner_capability_python_device
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -362,10 +363,10 @@ PY
 	return 0
 }
 
-_runner_capability_python_requirements() {
+# GH#38547: requires-device: only the runner whose local device id matches may
+# claim. Device ids are public in claim comments; checked before any secret read.
+_runner_capability_python_device() {
 	cat <<'PY'
-# requires-device: only the runner whose local device id matches may claim.
-# Device ids are public in claim comments; checked first, before any secret read.
 def check_device(body):
     wanted = []
     for line in body.splitlines():
@@ -385,6 +386,12 @@ def check_device(body):
     if local not in wanted:
         unmet('device_mismatch')
 
+PY
+	return 0
+}
+
+_runner_capability_python_requirements() {
+	cat <<'PY'
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
