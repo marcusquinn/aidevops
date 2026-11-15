@@ -706,16 +706,33 @@ _dedup_layer6_report_block() {
 #######################################
 # GH#38352: path of the private layer-6 free-verdict hint for this pulse
 # process ($$ is stable across the dispatch subshells), repository and issue.
-# Layer 7 hands it to dispatch-claim-helper.sh, which validates the same prefix.
+# Layer 7 hands it to dispatch-claim-helper.sh, which validates the directory.
+# t19022: hints live in their own private directory. In the shared temp root
+# every free verdict's age prune stat-ed every root entry; with ~100k entries
+# that took 100-450s of layer 6 per candidate.
 # Arguments: issue_number, repo_slug
 # Output: hint path; returns 1 for malformed input
 #######################################
 _dedup_assignment_verdict_path() {
 	local issue_number="$1" repo_slug="$2"
 	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
-	printf '%s/dispatch-assignment-verdict.%s.%s--%s.%s\n' \
+	printf '%s/dispatch-assignment-verdicts/%s.%s--%s.%s\n' \
 		"${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" "$$" \
 		"${repo_slug%%/*}" "${repo_slug##*/}" "$issue_number"
+	return 0
+}
+
+#######################################
+# t19022: the hint directory must be a real, user-owned directory with no
+# group or other write bits before a hint in it is removed, written or
+# trusted. A find error prints nothing, so the check fails closed.
+# Arguments: hint directory
+# Returns: 0 when private, 1 otherwise
+#######################################
+_dedup_assignment_verdict_dir_private() {
+	local dir="$1"
+	[[ -n "$dir" && -d "$dir" && ! -L "$dir" && -O "$dir" ]] || return 1
+	[[ "$(find "$dir" -maxdepth 0 ! -perm -020 ! -perm -002 -print 2>/dev/null)" == "$dir" ]] || return 1
 	return 0
 }
 
@@ -732,18 +749,25 @@ _dedup_assignment_verdict_path() {
 #######################################
 _dedup_assignment_verdict_record() {
 	local issue_number="$1" repo_slug="$2" self_login="$3" started="$4"
-	local path="" meta="" tmp=""
+	local path="" dir="" meta="" tmp=""
 	path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || return 0
-	rm -f "$path" 2>/dev/null || true
+	dir="${path%/*}"
+	# A non-private directory is never written to; the reader rejects it too.
+	if _dedup_assignment_verdict_dir_private "$dir"; then
+		rm -f "$path" 2>/dev/null || true
+	fi
 	[[ "$started" =~ ^[0-9]+$ && "$self_login" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$ ]] || return 0
 	meta=$(jq -cSe --arg list array 'select((.assignees | type) == $list and (.labels | type) == $list and (.state | type) == "string") |
 		{state: (.state | ascii_upcase),
 		assignees: ([.assignees[] | (.login? // .) | strings | ascii_downcase] | sort),
 		labels: ([.labels[] | (.name? // .) | strings] | sort)}' <<<"${ISSUE_META_JSON:-}" 2>/dev/null) || return 0
 	[[ "$meta" != *$'\t'* && "$meta" != *$'\n'* ]] || return 0
+	[[ -d "$dir" ]] || (umask 077 && mkdir -p "$dir") 2>/dev/null || return 0
+	_dedup_assignment_verdict_dir_private "$dir" || return 0
 	# Hints from launches that stopped before the claim are inert (keyed by
-	# pulse PID and age-bounded by the reader); prune them here.
-	find "${path%/*}" -maxdepth 1 -type f -name 'dispatch-assignment-verdict.*' -mmin +30 -delete 2>/dev/null || true
+	# pulse PID and age-bounded by the reader); prune them here. The directory
+	# holds only hints, so this scan stays small (t19022).
+	find "$dir" -maxdepth 1 -type f -mmin +30 -delete 2>/dev/null || true
 	tmp=$(umask 077; mktemp "${path}.XXXXXX" 2>/dev/null) || return 0
 	if printf 'v1\t%s\t%s\t%s\t%s\t%s\n' "$started" "$issue_number" "$repo_slug" "$self_login" "$meta" >"$tmp" &&
 		mv -f "$tmp" "$path"; then
@@ -781,7 +805,10 @@ _dedup_layer6_assignee_and_stale() {
 		fi
 		local verdict_started="" verdict_path=""
 		# GH#38352: only this run's plain free verdict may reach layer 7.
-		verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") && rm -f "$verdict_path" 2>/dev/null
+		if verdict_path=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") &&
+			_dedup_assignment_verdict_dir_private "${verdict_path%/*}"; then
+			rm -f "$verdict_path" 2>/dev/null || true
+		fi
 		verdict_started=$(date +%s)
 		assigned_output=$(AIDEVOPS_DDH_BLOCKER_REASON_FILE="$layer6_reason_file" \
 			"${layer6_cmd[@]}" 2>>"$LOGFILE") || assigned_rc=$?
@@ -904,13 +931,19 @@ _dedup_layer7_claim_lock() {
 		# guard; the helper validates it and the final guard stays fresh.
 		local assignment_verdict=""
 		assignment_verdict=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || assignment_verdict=""
-		[[ -n "$assignment_verdict" && -f "$assignment_verdict" && ! -L "$assignment_verdict" ]] || assignment_verdict=""
+		if [[ -z "$assignment_verdict" || ! -f "$assignment_verdict" || -L "$assignment_verdict" ]] ||
+			! _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			assignment_verdict=""
+		fi
 		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
 		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" \
 			DISPATCH_ASSIGNMENT_VERDICT_FILE="$assignment_verdict" \
 			"$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
-		[[ -z "$assignment_verdict" ]] || rm -f "$assignment_verdict"
+		# Re-validate after the claim: the directory must still be private.
+		if [[ -n "$assignment_verdict" ]] && _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			rm -f "$assignment_verdict"
+		fi
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then

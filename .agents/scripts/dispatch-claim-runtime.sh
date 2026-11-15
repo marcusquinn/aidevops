@@ -72,11 +72,18 @@ _dch_snapshot_valid() {
 }
 
 # GH#38352: the layer-6 free-verdict hint written by pulse-dispatch-dedup-layers.sh
-# (_dedup_assignment_verdict_record) must be a private regular file under the
-# same temp root as the claim snapshot.
+# (_dedup_assignment_verdict_record) must be a private regular file directly in
+# the private hint directory under the same temp root as the claim snapshot
+# (t19022: the hints moved out of the shared root).
 _dch_assignment_verdict_file_valid() {
 	local path="${DISPATCH_ASSIGNMENT_VERDICT_FILE:-}"
-	[[ -n "$path" && "$path" == "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-assignment-verdict."* && -f "$path" && ! -L "$path" && -O "$path" ]]
+	local dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-assignment-verdicts"
+	[[ -n "$path" && "$path" == "${dir}/"* && "${path#"${dir}/"}" != */* ]] || return 1
+	[[ -d "$dir" && ! -L "$dir" && -O "$dir" && -f "$path" && ! -L "$path" && -O "$path" ]] || return 1
+	# The directory must also carry no group/other write bits; a find error
+	# prints nothing, so this fails closed.
+	[[ "$(find "$dir" -maxdepth 0 ! -perm -020 ! -perm -002 -print 2>/dev/null)" == "$dir" ]] || return 1
+	return 0
 }
 
 # Record the reuse decision in the pulse call log only; standalone callers and
