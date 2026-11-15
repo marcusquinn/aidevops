@@ -18,6 +18,16 @@ assert_eq() {
 	fi
 }
 
+test_file_mode() {
+	local path="$1"
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		stat -f %Lp "$path"
+	else
+		stat -c %a "$path"
+	fi
+	return 0
+}
+
 assert_eq "default remains rollback-safe until canary promotion" "v1" "$(python3 "$HELPER" default)"
 assert_eq "V1 package" "opencode-ai" "$(python3 "$HELPER" get v1 package)"
 assert_eq "V2 package" "@opencode/cli" "$(python3 "$HELPER" get v2 package)"
@@ -80,7 +90,7 @@ AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 setup_opencode_runtime_plugins
 jq -e --arg url "file://$managed/v2-plugin" \
   '(.plugins | index($url)) != null and (.plugins | index("other-plugin")) != null and (.plugins | index("file:///foreign/plugins/opencode-aidevops/index.mjs")) != null and (has("plugin") | not)' "$config" >/dev/null
 [[ ! -L "$HOME/.config/opencode/plugins/opencode-aidevops" ]]
-assert_eq "global config mode unchanged" "755" "$(stat -c %a "$HOME/.config/opencode")"
+assert_eq "global config mode unchanged" "755" "$(test_file_mode "$HOME/.config/opencode")"
 before=$(<"$config")
 AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 setup_opencode_runtime_plugins
 assert_eq "v2 registration is idempotent" "$before" "$(<"$config")"
