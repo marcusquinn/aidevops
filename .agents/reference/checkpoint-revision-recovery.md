@@ -12,7 +12,7 @@ The comment names the release ID, attempt and both exits: approve after correcti
 
 ### AI brief-owner decisions (GH#38155)
 
-Decision-blocked drafts opt in independently of unknown-blocker continuation: set `checkpoint_policy.auto_resolve_decisions: true` beside `configured_by` in the registered `repos.json` entry.
+Enable decision and unknown-pending-work recovery together with `aidevops repos checkpoint-policy on OWNER/REPO` (omit the selector inside a registered repo, or use its path). Use `off` to disable both. `aidevops repos list` shows each policy separately; their stored keys remain independently readable.
 The default is off, preserving attention-only behaviour. No issue body, model output or comment can enable the policy.
 
 - **Eligibility:** after existing blocked-release checks, use the newest unedited current-head decision finding (excluding `already_landed`), or an explicitly decision-class blocked release bound to that head. Require an open, unassigned, auto-dispatchable issue without unknown-policy hold labels; validate the exact worker draft, release and attempt through `approval-template` before inference.
@@ -30,12 +30,15 @@ Continue in-scope work where possible. If execution must stop with a pushed draf
 Only a complete report positively establishing unfinished authorised work without a prerequisite emits `CHECKPOINT_UNKNOWN_TRIAGE pending_work brief=... head=...`. Missing tooling, timeout, invalid JSON, conflicting declarations, truncation or uncertainty retain the unknown hold; draft prose is not evidence.
 
 Automatic approval is **off by default**. An operator with current repository
-write/maintain/admin permission can configure the registered `repos.json` entry:
+write/maintain/admin permission can run `aidevops repos checkpoint-policy on OWNER/REPO`.
+For all Pulse-enabled repositories owned by an account, use `aidevops repos checkpoint-policy on --owner OWNER`.
+The command verifies current push permission for each enabled repo, records the current `gh` login as `configured_by`, and preserves unrelated registry and policy keys. Bulk output reports changed/skipped counts; a skipped repo returns a nonzero status. The registry remains mode 600. The stored shape is:
 
 ```json
 {
   "slug": "OWNER/REPO",
   "checkpoint_policy": {
+    "auto_resolve_decisions": true,
     "auto_continue_unknown_pending_work": true,
     "configured_by": "WRITE_AUTHORISED_LOGIN"
   }
