@@ -372,6 +372,25 @@ configure_managed_repo_identity() {
 	return 0
 }
 
+test_runtime_paths_are_git_excluded() {
+	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
+	local target="${worktree_path}"$'\t''feature/full-loop-cleanup'$'\t''false'
+	local rc=0 exclude_file=""
+	_merge_record_deferred_cleanup_owner 123 example/repo "$target" || rc=1
+	[[ -f "${worktree_path}/.agents/.full-loop-cleanup-deferred" ]] || rc=1
+	( STATE_DIR=".agents/loop-state"; STATE_FILE="${STATE_DIR}/full-loop.local.state"; save_state task test ) || rc=1
+	_full_loop_exclude_runtime_path "$worktree_path" '/.agents/.full-loop-cleanup-deferred' || rc=1
+	_full_loop_exclude_runtime_path "$worktree_path" '/.agents/loop-state/' || rc=1
+	exclude_file=$(git -C "$worktree_path" rev-parse --git-path info/exclude) || rc=1
+	[[ $(grep -Fxc '/.agents/.full-loop-cleanup-deferred' "$exclude_file") == 1 ]] || rc=1
+	[[ $(grep -Fxc '/.agents/loop-state/' "$exclude_file") == 1 ]] || rc=1
+	git -C "$worktree_path" add -A || rc=1
+	[[ -z $(git -C "$worktree_path" status --porcelain -- .agents) ]] || rc=1
+	[[ -z $(git -C "$worktree_path" ls-files -- .agents/.full-loop-cleanup-deferred .agents/loop-state) ]] || rc=1
+	print_result "linked worktree runtime state stays unstaged and excludes are idempotent" "$rc"
+	return 0
+}
+
 test_cmd_merge_defers_current_linked_worktree() {
 	local canonical_repo="${TEST_ROOT}/repo"
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
@@ -1071,6 +1090,8 @@ test_release_evidence_transient_read_retry() {
 
 main() {
 	resolve_fixture_git
+	setup_subject
+	test_runtime_paths_are_git_excluded
 	setup_subject
 	test_release_evidence_transient_read_retry
 	test_refresh_canonical_reports_pending_without_mutation
