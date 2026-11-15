@@ -715,10 +715,10 @@ _pmpc_closed_checkpoint_release() {
 # Prove the PR is this issue's checkpoint draft and was closed unmerged after
 # the release: same-repo worker branch for the issue, opened before the release.
 # Args: $1=repo slug, $2=PR number, $3=issue number, $4=release epoch
-# Returns: 0 when proven, 1 otherwise (unreadable included)
+# Returns: 0 when proven, 1 when ineligible, 2 when unreadable (transient)
 _pmpc_closed_checkpoint_pr_void() {
 	local repo_slug="$1" pr_number="$2" issue_num="$3" release_epoch="$4" pr_json=""
-	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number:?}" 2>/dev/null) || return 1
+	pr_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls/${pr_number:?}" 2>/dev/null) || return 2
 	printf '%s' "$pr_json" | jq -e --arg slug "$repo_slug" --arg issue "$issue_num" \
 		--argjson release "$release_epoch" '
 		.state == "closed" and .merged == false and .merged_at == null
@@ -737,11 +737,11 @@ _pmpc_closed_checkpoint_pr_void() {
 # more than an hour earlier was a person's (during the run) and is respected,
 # as is a removal after the release or an issue that never had the label.
 # Args: $1=repo slug, $2=issue number, $3=release epoch
-# Returns: 0 when the checkpoint made the last removal, 1 otherwise
+# Returns: 0 when the checkpoint made the last removal, 1 otherwise, 2 when unreadable
 _pmpc_checkpoint_removed_dispatch() {
 	local repo_slug="$1" issue_num="$2" release_epoch="$3" events_json=""
 	events_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/events?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
+		--paginate --slurp 2>/dev/null) || return 2
 	printf '%s' "$events_json" | jq -e --argjson release "$release_epoch" '
 		if type != "array" then error("unreadable events")
 		elif (.[0]? | type) == "array" then [.[][]] else . end
@@ -756,7 +756,8 @@ _pmpc_checkpoint_removed_dispatch() {
 #aidevops:trust-boundary -- trusted release comments, the live PR and the label
 # timeline prove the restore; any unreadable or held state means no write.
 # Args: $1=repo slug, $2=issue number, $3=closed checkpoint PR number
-# Returns: 0 when auto-dispatch was restored, 1 otherwise
+# Returns: 0 when auto-dispatch was restored, 1 when ineligible, 2 on a transient
+#          read or write failure (the checkpoint stays eligible for a later scan)
 _pmpc_restore_closed_checkpoint_dispatch() {
 	local repo_slug="$1" issue_num="$2" pr_number="$3"
 	local issue_json="" mode="" assignee=""
@@ -764,12 +765,12 @@ _pmpc_restore_closed_checkpoint_dispatch() {
 	local -a transition_args=(--add-label auto-dispatch)
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$issue_num" =~ ^[1-9][0-9]*$ &&
 		"$pr_number" =~ ^[1-9][0-9]*$ ]] || return 1
-	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num:?}" 2>/dev/null) || return 1
-	mode=$(_pmpc_closed_checkpoint_issue_mode "$issue_json") || return 1
+	issue_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num:?}" 2>/dev/null) || return 2
+	mode=$(_pmpc_closed_checkpoint_issue_mode "$issue_json") || return 2
 	[[ -n "$mode" ]] || return 1
 	comments_json=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null) || return 1
-	release=$(_pmpc_closed_checkpoint_release "$comments_json" "$pr_number") || return 1
+		--paginate --slurp 2>/dev/null) || return 2
+	release=$(_pmpc_closed_checkpoint_release "$comments_json" "$pr_number") || return 2
 	read -r release_epoch runner <<<"$release"
 	[[ "$release_epoch" =~ ^[0-9]+$ && "$runner" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || return 1
 	if [[ "$mode" == review\ * ]]; then
@@ -778,10 +779,13 @@ _pmpc_restore_closed_checkpoint_dispatch() {
 		[[ "$assignee" == "$runner" ]] || return 1
 		transition_args+=(--remove-assignee "$runner")
 	fi
-	_pmpc_closed_checkpoint_pr_void "$repo_slug" "$pr_number" "$issue_num" "$release_epoch" || return 1
-	_pmpc_checkpoint_removed_dispatch "$repo_slug" "$issue_num" "$release_epoch" || return 1
+	local void_rc=0
+	_pmpc_closed_checkpoint_pr_void "$repo_slug" "$pr_number" "$issue_num" "$release_epoch" || void_rc=$?
+	[[ "$void_rc" -eq 0 ]] || return "$void_rc"
+	_pmpc_checkpoint_removed_dispatch "$repo_slug" "$issue_num" "$release_epoch" || void_rc=$?
+	[[ "$void_rc" -eq 0 ]] || return "$void_rc"
 	_pmpc_other_open_pr_owns_issue "$repo_slug" "$issue_num" 0 && return 1
-	set_issue_status "$issue_num" "$repo_slug" available "${transition_args[@]}" >/dev/null 2>&1 || return 1
+	set_issue_status "$issue_num" "$repo_slug" available "${transition_args[@]}" >/dev/null 2>&1 || return 2
 	body="<!-- ops:start -->
 <!-- aidevops:ops kind=${_PMPC_CLOSED_CHECKPOINT_KIND} pr=${pr_number} -->
 Draft checkpoint PR #${pr_number} was closed without merging, so it no longer holds this issue. Restored the auto-dispatch label that the checkpoint removed, after verifying no open linked PR, hold or newer owner. The next worker starts from the default branch; it does not resume the closed PR's head.
@@ -828,7 +832,7 @@ _pmpc_reconcile_closed_checkpoints() {
 	local repo_slug="$1" deadline="$2" traversal="${3:-review:1:}" page_json="" rows="" pr="" issue=""
 	local now_epoch="" start_epoch="" floor="" stamp="" stamp_file="" first="" oldest=""
 	local count=""
-	local page=1 reached=0
+	local page=1 reached=0 transient=0 restore_rc=0
 	[[ "$traversal" == "review:1:" ]] || return 0
 	local lookback="${PULSE_CLOSED_CHECKPOINT_LOOKBACK_SECONDS:-604800}"
 	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
@@ -848,6 +852,8 @@ _pmpc_reconcile_closed_checkpoints() {
 		fi
 	fi
 	while [[ "$page" -le "$max_pages" ]]; do
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 0
 		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=${per_page}&page=${page}" 2>/dev/null) || return 1
 		rows=$(_pmpc_closed_checkpoint_rows "$repo_slug" "$floor" "$page_json") || return 1
 		first="${rows%%$'\n'*}"
@@ -858,7 +864,10 @@ _pmpc_reconcile_closed_checkpoints() {
 			[[ "$pr" =~ ^[0-9]+$ && "$issue" =~ ^[0-9]+$ ]] || continue
 			now_epoch=$(date +%s) || return 1
 			[[ "$now_epoch" -lt "$deadline" ]] || return 0
-			_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || true
+			restore_rc=0
+			_pmpc_restore_closed_checkpoint_dispatch "$repo_slug" "$issue" "$pr" || restore_rc=$?
+			# A transient failure keeps the stamp unchanged so the gap is rescanned.
+			[[ "$restore_rc" -ne 2 ]] || transient=1
 		done <<<"$rows"
 		if [[ "$count" -lt "$per_page" || "$oldest" -lt "$floor" ]]; then
 			reached=1
@@ -866,7 +875,7 @@ _pmpc_reconcile_closed_checkpoints() {
 		fi
 		page=$((page + 1))
 	done
-	if [[ "$reached" -eq 1 ]]; then
+	if [[ "$reached" -eq 1 && "$transient" -eq 0 ]]; then
 		mkdir -p "$stamp_dir" 2>/dev/null || return 0
 		printf '%s\n' "$start_epoch" >"${stamp_file}.$$" 2>/dev/null &&
 			mv -f "${stamp_file}.$$" "$stamp_file" 2>/dev/null || rm -f "${stamp_file}.$$" 2>/dev/null
