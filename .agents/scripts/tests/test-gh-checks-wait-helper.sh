@@ -492,6 +492,27 @@ cancel_final_rc=$?
 set -e
 [[ "$cancel_final_rc" -eq 1 ]] && pass "unsuperseded cancel is terminal after grace" || fail "unsuperseded cancel is terminal after grace" "got ${cancel_final_rc}"
 
+# GH#38537: with other checks still pending, the replacement run may be queued;
+# even a zero grace must not turn the cancellation terminal before they settle.
+cancel_queued_dir="${TMPDIR_TEST}/cancel-queued"
+write_fixture "$cancel_queued_dir" 1 '[{"name":"Gate","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":"run-old"},{"name":"Lint","workflow":"CI","state":"IN_PROGRESS","bucket":"pending","link":""}]'
+write_fixture "$cancel_queued_dir" 2 '[{"name":"Gate","workflow":"CI","state":"SUCCESS","bucket":"pass","link":"run-new"},{"name":"Lint","workflow":"CI","state":"SUCCESS","bucket":"pass","link":""}]'
+set +e
+cancel_queued_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=0 run_fixture_wait "$cancel_queued_dir" 2>&1)
+cancel_queued_rc=$?
+set -e
+assert_eq "cancel beside pending checks waits for its queued replacement" "0" "$cancel_queued_rc"
+assert_contains "queued replacement reaches pass" "PASS: required checks completed" "$cancel_queued_output"
+
+cancel_mixed_dir="${TMPDIR_TEST}/cancel-mixed-pending"
+write_fixture "$cancel_mixed_dir" 1 '[{"name":"Gate","workflow":"CI","state":"CANCELLED","bucket":"cancel","link":""},{"name":"Test","workflow":"CI","state":"FAILURE","bucket":"fail","link":""},{"name":"Lint","workflow":"CI","state":"IN_PROGRESS","bucket":"pending","link":""}]'
+set +e
+cancel_mixed_output=$(AIDEVOPS_GH_CHECKS_CANCEL_GRACE_SECONDS=180 run_fixture_wait "$cancel_mixed_dir" 2>&1)
+cancel_mixed_rc=$?
+set -e
+assert_eq "real failure beside cancel and pending stays terminal" "1" "$cancel_mixed_rc"
+assert_contains "real failure is reported" "Test: fail" "$cancel_mixed_output"
+
 # Exercise timer transitions deterministically without adding a test clock.
 cancel_timer_output=$(
 	# shellcheck source=../gh-checks-wait-helper.sh
@@ -517,9 +538,19 @@ cancel_timer_output=$(
 	apply_cancel_grace failure "$cancel_c1" 500
 	apply_cancel_grace failure "$cancel_c2" 700
 	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	# GH#38537: an elapsed window is cleared while another check is pending;
+	# the next window starts when nothing else is pending.
+	cancel_d_pending='[{"name":"D","workflow":"CI","bucket":"cancel","link":"run-d"},{"name":"E","workflow":"CI","bucket":"pending","link":""}]'
+	cancel_d_settled='[{"name":"D","workflow":"CI","bucket":"cancel","link":"run-d"},{"name":"E","workflow":"CI","bucket":"pass","link":""}]'
+	apply_cancel_grace failure "$cancel_d_pending" 1000
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_d_settled" 1500
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
+	apply_cancel_grace failure "$cancel_d_settled" 1680
+	printf '%s:%s\n' "$_GCW_GRACED_CLASSIFICATION" "$_GCW_CANCEL_FIRST_EPOCH"
 )
 assert_eq "grace follows the cancelled set without extending unchanged cancellations" \
-	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:\npending:700' "$cancel_timer_output"
+	$'pending:100\nfailure:100\npending:281\npending:281\nfailure:281\npending:\npending:700\npending:\npending:1500\nfailure:1500' "$cancel_timer_output"
 
 for invalid_grace in '' 08 180s -1 86401 999999999999999999999999; do
 	set +e
