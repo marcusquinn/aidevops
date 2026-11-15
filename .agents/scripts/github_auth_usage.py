@@ -98,8 +98,11 @@ def advisory_due(opportunity, floor):
 def advisory_text(opportunity):
     share = round(opportunity["routable_share"] * 100)
     owners = ", ".join(opportunity["owners_without_app_read"])
+    # t19020: line 1 is the whole greeting entry, so it is [WARN]-classified
+    # and names the setup command itself; later lines are detail.
     return "\n".join([
-        f"GitHub REST quota is the pulse ceiling: {share}% of known API cost could move to a GitHub App read route.",
+        f"[WARN] GitHub REST quota is the pulse ceiling: {share}% of known API cost could move to a GitHub App"
+        f" read route. Run `aidevops github auth app create --owner OWNER` for: {owners}",
         f"Owners without an App read binding: {owners}",
         "An App installation has its own primary rate limit, so pulse reads stop competing with your token.",
         "Setup (owner clicks Create, then Install; binding and checks are automatic):",

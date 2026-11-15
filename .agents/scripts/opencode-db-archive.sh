@@ -58,10 +58,12 @@ fi
 readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 # Split retention (GH#35492): headless worker sessions are bulky and rarely
 # reopened, so they leave the active DB after 7 days; interactive sessions stay
-# visible in the OpenCode session list for 90 days. Archived history remains
-# queryable and is restored automatically when a worker resumes its session.
+# visible in the OpenCode session list for 30 days (GH#38431; was 90). Archived
+# history remains queryable and is restored automatically when a worker resumes
+# its session or an interactive session is resumed through
+# opencode-session-restart-helper.sh (resume / open).
 readonly DEFAULT_WORKER_RETENTION_DAYS=7
-readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=90
+readonly DEFAULT_INTERACTIVE_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 # Held mode (GH#35517): small batches keep each write lock brief while idle
 # OpenCode processes hold the DB open.
@@ -1171,10 +1173,26 @@ cmd_archive() {
 	fi
 	local expiry_budget="$max_duration"
 	((events_only)) || expiry_budget=$((max_duration / 4))
+	local expiry_rc=0
 	if ((expiry_budget > 0)); then
-		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || return $?
+		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || expiry_rc=$?
+		# Only a deferral (2) must not block the session move; errors stop here.
+		if [[ "$expiry_rc" -ne 0 && "$expiry_rc" -ne 2 ]]; then
+			return "$expiry_rc"
+		fi
 	fi
-	((events_only)) && return 0
+	((events_only)) && return "$expiry_rc"
+	local move_rc=0
+	_archive_move_phase || move_rc=$?
+	# Keep rc 2 after a successful move so the scheduler retries the expiry.
+	if [[ "$move_rc" -eq 0 && "$expiry_rc" -eq 2 ]]; then
+		return 2
+	fi
+	return "$move_rc"
+}
+
+# Session-move phase of cmd_archive; shares its dynamic-scope settings.
+_archive_move_phase() {
 	local preflight_rc=0
 	_archive_mutation_preflight || preflight_rc=$?
 	if [[ "$preflight_rc" -ne 0 ]]; then
@@ -1860,7 +1878,7 @@ ARCHIVE OPTIONS (split retention by session origin):
   --worker-retention-days N       Headless sessions inactive N days are archived (default: 7)
                                   Headless = headless-runtime ledger worker sessions and their
                                   subagents, temp-dir one-shot runs, supervisor pulse sessions.
-  --interactive-retention-days N  All other sessions inactive N days are archived (default: 90)
+  --interactive-retention-days N  All other sessions inactive N days are archived (default: 30)
   --retention-days N        One cutoff for every session (sets both values above)
   --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
@@ -1892,7 +1910,7 @@ ENVIRONMENT:
   OPENCODE_ARCHIVE_DB       Archive DB path (default: next to active opencode.db)
   OPENCODE_INTERACTIVE_ROOT  Isolated DB root (default: aidevops work/opencode-interactive)
   OPENCODE_DB_ARCHIVE_WORKER_RETENTION_DAYS       Default for --worker-retention-days (7)
-  OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (90)
+  OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (30)
   OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
   OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Archived event expiry, default 7; 0 disables
                             archive-all always uses an archive beside each active DB;
@@ -1908,7 +1926,7 @@ EXAMPLES:
   # Keep the 500 most recently updated active sessions, archive older sessions
   opencode-db-archive.sh archive --keep-sessions 500
 
-  # Archive with defaults (workers 7 days, interactive 90 days, 60s budget)
+  # Archive with defaults (workers 7 days, interactive 30 days, 60s budget)
   opencode-db-archive.sh archive
 
   # Bring an archived session back so OpenCode can resume it

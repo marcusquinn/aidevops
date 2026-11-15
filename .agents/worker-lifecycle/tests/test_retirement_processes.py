@@ -158,6 +158,45 @@ class ProtectedProcesses(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
             self.observe(error=subprocess.TimeoutExpired("inspector", 3))
 
+    def census(self, report=None, *, output=None, code=0, stderr=b""):
+        directory = self.candidate.stat()
+        default = {"version": 1, "mode": "census", "directory": [directory.st_dev, directory.st_ino],
+                   "references": 0, "uncertain": 0}
+        output = json.dumps(default if report is None else report).encode() if output is None else output
+        result = subprocess.CompletedProcess([], code, output, stderr)
+        with (patch.object(protected_proc, "_allowed", return_value=True),
+              patch.object(protected_proc, "_trusted_executable", return_value=True),
+              patch.object(protected_proc, "SUDO", Path(sys.executable)),
+              patch.object(protected_proc.subprocess, "run", return_value=result) as run):
+            return protected_proc.privileged_path_census(self.candidate), run.call_args, default
+
+    def test_bound_census_counts_and_fixed_command(self):
+        counts, call, default = self.census()
+        self.assertEqual(counts, {"references": 0, "uncertain": 0})
+        self.assertEqual(call.args[0][1:], ["-n", "--", str(protected_proc.INSPECTOR),
+                                          "--census", str(self.candidate)])
+        self.assertEqual(call.kwargs["env"], {"PATH": "/usr/bin:/bin", "LANG": "C"})
+        self.assertEqual(self.census({**default, "references": 2})[0]["references"], 2)
+
+    def test_malformed_or_unbound_census_fails_closed(self):
+        _, _, default = self.census()
+        for report in ([], {}, {**default, "directory": [0, 0]}, {**default, "mode": "references"},
+                       {**default, "version": True}, {**default, "references": True},
+                       {**default, "uncertain": -1}, {**default, "extra": "untrusted"}):
+            with self.subTest(report=report), self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census(report)
+        for output, code, stderr in ((b"", 0, b""), (b"x" * 4097, 0, b""), (b"{}", 1, b""),
+                                     (json.dumps(default).encode(), 0, b"warning")):
+            with self.subTest(code=code, stderr=bool(stderr)), \
+                    self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census(output=output, code=code, stderr=stderr)
+        with (patch.dict(os.environ, {}, clear=True),
+              patch.object(protected_proc.subprocess, "run") as run):
+            with self.assertRaises(protected_proc.ProcessCensusUnavailable) as refusal:
+                protected_proc.privileged_path_census(self.candidate)
+            run.assert_not_called()
+        self.assertEqual(refusal.exception.observation["cause"], "inspection-not-enabled")
+
     def test_default_opt_out_never_invokes_privilege(self):
         with (patch.dict(os.environ, {}, clear=True),
               patch.object(protected_proc.subprocess, "run") as run):

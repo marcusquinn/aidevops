@@ -141,7 +141,8 @@ provider approval environment gate, or when any task marks prompt context as
 Interactive sessions (GH#34125) are bound at launch with
 `AIDEVOPS_RUNTIME_POLICY=local-only aidevops opencode`: remote providers and
 non-loopback endpoints fail closed before sending. Launch rules, enforcement
-surfaces and trust gaps: `reference/vault-local-only-binding.md`.
+surfaces and trust gaps: `reference/vault-local-only-binding.md`. Plugin log
+lines `local-only: bound` and `local-only: denied` (no `bound` line = unbound process): same file, "Diagnosing the gate".
 
 ## 4. Threat Environments
 

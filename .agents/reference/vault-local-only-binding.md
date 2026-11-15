@@ -227,3 +227,16 @@ the plugin cannot revoke an exporter already initialized by trusted host code.
   owned-listener startup. The parent remains open for these gaps.
 
 The binding gates controlled tool execution; it is not an OS isolation mechanism.
+
+## Diagnosing the gate (GH#38424)
+
+The plugin writes two content-free lines to `~/.aidevops/logs/opencode-plugin.log`
+(never the endpoint, message content or credentials):
+
+- At init: `[aidevops] local-only: bound reason=<declared|unrecognised-policy-fails-closed> localProvidersSource=<shared|operator|operator-invalid> providers=<count>` (`unbound` when not bound).
+- Before each egress denial: `[aidevops] local-only: denied surface=<chat|context|http> agent=<name|unknown> provider=<id|unknown> session=<id|none> reason=<non-local-provider|non-loopback-endpoint>`.
+
+Background requests such as title generation (`agent=title`) do not surface as
+session errors, so the denied line is the only record of their denial. No
+`local-only: bound` line means this process is not bound; attached TUIs inherit
+the server's environment, not the client's.

@@ -558,6 +558,10 @@ _update_finish() {
 	# warnings in setup.sh-driven flows that already do their own check.
 	if [[ -t 0 ]] && [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "${NON_INTERACTIVE:-false}" != "true" ]]; then
 		_update_check_daemon_health
+	else
+		# t19020: any update, including the daemon's own runs, clears a stale
+		# advisory once the daemon is healthy; only interactive runs write it.
+		_update_check_daemon_health --clear-only
 	fi
 
 	# t2946: one-shot idempotent migration from legacy supervisor.* to canonical
