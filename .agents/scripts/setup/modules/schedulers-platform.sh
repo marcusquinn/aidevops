@@ -476,9 +476,11 @@ setup_pulse_merge_routine() {
 	_pulse_runtime_pin_preserves_scheduler "$pmr_installed" || pin_scheduler_rc=$?
 	if [[ "$pin_scheduler_rc" -eq 0 ]]; then
 		print_info "Pulse merge scheduler preserved while its bounded runtime pin is active"
+		_schedulers_defer_template_hash "pulse merge scheduler preserved by runtime pin"
 		return 0
 	elif [[ "$pin_scheduler_rc" -ne 1 ]]; then
 		print_error "Pulse merge scheduler refused an invalid runtime pin"
+		_schedulers_defer_template_hash "pulse merge scheduler refused an invalid runtime pin"
 		return 1
 	fi
 
