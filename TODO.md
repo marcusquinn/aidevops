@@ -2113,6 +2113,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19028 perf(full-loop): drain the cleanup-receipt archive backlog in one run so worktree admission scans a small hot set #interactive #feat tier:standard assignee:marcusquinn ref:GH#38458 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19028-brief.md]
 
+- [ ] t19029 perf(gh-permission): make collaborator permission lookups conditional so an unchanged verdict costs no REST quota #interactive #feat tier:standard assignee:marcusquinn ref:GH#38466 logged:2026-11-15 started:2026-11-15
+
 - [x] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 pr:#38435 logged:2026-11-15 -> [todo/tasks/t19018-brief.md] completed:2026-11-15
 
 - [x] t19019 perf(opencode-db): restore archived interactive sessions on resume so the live DB can keep 30 days instead of 90 #auto-dispatch #feat tier:thinking ref:GH#38431 pr:#38437 logged:2026-11-15 -> [todo/tasks/t19019-brief.md] completed:2026-11-15
