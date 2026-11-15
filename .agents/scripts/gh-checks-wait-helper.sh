@@ -301,6 +301,52 @@ emit_qlty_billing_notes() {
 	return 0
 }
 
+# GH#38385: a failing Codacy check whose head commit has no new issues and whose
+# PR-level issue lines are gone from the head is stale PR aggregation. Evidence
+# comes from codacy-stale-check-helper.sh (fails closed). The verdict is cached
+# per wait in _GCW_CODACY_VERDICT ("" = unchecked, "stale:<evidence>", "real").
+_GCW_CODACY_VERDICT=""
+_GCW_CODACY_CHECKS=""
+
+# Result is returned in _GCW_CODACY_CHECKS (not stdout) so the verdict cache
+# survives across polls. Only the issue-aggregation check is suppressed; Codacy
+# coverage checks keep their own failures.
+apply_codacy_stale_policy() {
+	local checks="$1" pr_number="$2" repo="$3"
+	local has_fail="" evidence="" rc=0
+	has_fail=$(printf '%s' "$checks" | jq -r 'any(.[]; (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail"))')
+	if [[ "$has_fail" != "true" ]]; then
+		_GCW_CODACY_CHECKS="$checks"
+		return 0
+	fi
+	if [[ -z "$_GCW_CODACY_VERDICT" ]]; then
+		evidence=$("${SCRIPT_DIR}/codacy-stale-check-helper.sh" classify "$pr_number" --repo "$repo" 2>/dev/null) || rc=$?
+		if [[ "$rc" -eq 0 && "$evidence" == STALE* ]]; then
+			_GCW_CODACY_VERDICT="stale:${evidence}"
+		else
+			_GCW_CODACY_VERDICT="real"
+		fi
+	fi
+	if [[ "$_GCW_CODACY_VERDICT" != stale:* ]]; then
+		_GCW_CODACY_CHECKS="$checks"
+		return 0
+	fi
+	_GCW_CODACY_CHECKS=$(printf '%s' "$checks" | jq -c --arg ev "${_GCW_CODACY_VERDICT#stale:}" '
+		map(if (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail")
+		then . + {codacy_stale: $ev, bucket: "skipping"} else . end)')
+	return 0
+}
+
+emit_codacy_stale_notes() {
+	local checks="$1" previous="$2"
+	printf '%s' "$checks" | jq -r --argjson previous "${previous:-[]}" '
+		.[] | select(.codacy_stale != null) | . as $check
+		| select(any($previous[]; .codacy_stale != null and .name == $check.name and .link == $check.link) | not)
+		| "\(.codacy_stale): \(.name) \(.link)"
+	'
+	return 0
+}
+
 state_counts() {
 	local checks="$1"
 	local missing_contexts="${2:-}"
@@ -750,6 +796,7 @@ wait_for_checks() {
 	[[ "$draft_window" -gt 0 && "$draft_window" -le 120 ]] || draft_window=120
 	_GCW_CANCEL_FIRST_EPOCH=""
 	_GCW_CANCEL_SET=""
+	_GCW_CODACY_VERDICT=""
 	_GCW_CONFIGURED_CACHED=0
 	initial_head=$(verified_head_sha "$pr_number" "$repo" 'before required-check observation') || return 2
 	note_if_draft "$pr_number" "$repo"
@@ -785,6 +832,9 @@ wait_for_checks() {
 			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
+		apply_codacy_stale_policy "$current" "$pr_number" "$repo"
+		current="$_GCW_CODACY_CHECKS"
+		emit_codacy_stale_notes "$current" "$previous"
 		resolve_configured_contexts_once "$pr_number" "$repo"
 		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"
 		apply_cancel_grace "$classification" "$current" "$now_epoch" "$raw"
@@ -808,6 +858,7 @@ wait_for_checks() {
 			if [[ -n "$initial_head" && -n "$final_head" && "$initial_head" != "$final_head" ]]; then
 				printf '+ PR head changed while waiting; restarting required-check observation\n'
 				initial_head="$final_head"
+				_GCW_CODACY_VERDICT=""
 				previous=""
 				interval="$initial_interval"
 				poll_sleep "$interval"
