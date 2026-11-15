@@ -348,6 +348,15 @@ class CertWatchTest(unittest.TestCase):
             'canonical_hostname': 'a.example.com', 'aliases': []}}})
         self.assertEqual(self.run_helper('domains')[0]['apex'], 'a.example.com')
 
+    def test_shared_parent_survives_explicit_anchor_and_ad_hoc_scan(self):
+        self.config.update(extra_domains=['tenant-1.hostingersite.com'])
+        self.write_config()
+        self.private_json('site-inventory.json', {'sites': {'site': {
+            'canonical_hostname': 'www.tenant-1.hostingersite.com', 'aliases': []}}})
+        self.assertTrue(self.run_helper('domains')[0].get('shared_parent'))
+        self.assertEqual([f for f in self.run_helper('caa', '--domain', 'tenant-1.hostingersite.com')], [])
+        self.assertEqual([f for f in self.run_helper('caa', '--domain', 'tenant-9.hostingersite.com')], [])
+
     def test_www_san_with_expected_issuer_is_auto_known(self):
         self.write_fixture('ct.json', [self.cert()])
         self.run_helper('ct')
