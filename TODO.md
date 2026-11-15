@@ -2095,6 +2095,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19010 fix(tests): test_decision_policy_decide/escalate/races fail on main #auto-dispatch #bug tier:standard ref:GH#38365 logged:2026-11-14 -> [todo/tasks/t19010-brief.md]
 
+- [ ] t19011 perf(worker): wait once, bounded, for the PR's required checks and merge in-session instead of handing every pending PR to pulse #interactive #enhancement tier:standard assignee:marcusquinn ref:GH#38388 logged:2026-11-14 started:2026-11-14 -> [todo/tasks/t19011-brief.md]
+
+- [ ] t19012 fix(tests): 7 failing cases in 3 local-only test suites on main #auto-dispatch #bug tier:standard ref:GH#38392 logged:2026-11-15 -> [todo/tasks/t19012-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
