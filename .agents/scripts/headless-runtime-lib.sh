@@ -966,7 +966,7 @@ _activity_output_has_provider_rate_limit() {
 _activity_output_has_ci_wait() {
 	local output_file="$1"
 	[[ -f "$output_file" ]] || return 1
-	grep -Eqi 'gh pr checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$output_file" 2>/dev/null
+	grep -Eqi 'gh pr checks|wait-checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$output_file" 2>/dev/null
 }
 
 #######################################
