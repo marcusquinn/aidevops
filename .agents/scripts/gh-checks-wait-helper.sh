@@ -306,13 +306,17 @@ emit_qlty_billing_notes() {
 # comes from codacy-stale-check-helper.sh (fails closed). The verdict is cached
 # per wait in _GCW_CODACY_VERDICT ("" = unchecked, "stale:<evidence>", "real").
 _GCW_CODACY_VERDICT=""
+_GCW_CODACY_CHECKS=""
 
+# Result is returned in _GCW_CODACY_CHECKS (not stdout) so the verdict cache
+# survives across polls. Only the issue-aggregation check is suppressed; Codacy
+# coverage checks keep their own failures.
 apply_codacy_stale_policy() {
 	local checks="$1" pr_number="$2" repo="$3"
 	local has_fail="" evidence="" rc=0
-	has_fail=$(printf '%s' "$checks" | jq -r 'any(.[]; (.name | test("^codacy"; "i")) and (.bucket | . == "fail"))')
+	has_fail=$(printf '%s' "$checks" | jq -r 'any(.[]; (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail"))')
 	if [[ "$has_fail" != "true" ]]; then
-		printf '%s' "$checks"
+		_GCW_CODACY_CHECKS="$checks"
 		return 0
 	fi
 	if [[ -z "$_GCW_CODACY_VERDICT" ]]; then
@@ -324,12 +328,12 @@ apply_codacy_stale_policy() {
 		fi
 	fi
 	if [[ "$_GCW_CODACY_VERDICT" != stale:* ]]; then
-		printf '%s' "$checks"
+		_GCW_CODACY_CHECKS="$checks"
 		return 0
 	fi
-	printf '%s' "$checks" | jq -c --arg ev "${_GCW_CODACY_VERDICT#stale:}" '
-		map(if (.name | test("^codacy"; "i")) and (.bucket | . == "fail")
-		then . + {codacy_stale: $ev, bucket: "skipping"} else . end)'
+	_GCW_CODACY_CHECKS=$(printf '%s' "$checks" | jq -c --arg ev "${_GCW_CODACY_VERDICT#stale:}" '
+		map(if (.name | test("^codacy static code analysis"; "i")) and (.bucket | . == "fail")
+		then . + {codacy_stale: $ev, bucket: "skipping"} else . end)')
 	return 0
 }
 
@@ -828,7 +832,8 @@ wait_for_checks() {
 			current=$(apply_qlty_billing_policy "$current" "$qlty_credit_policy")
 		fi
 		emit_qlty_billing_notes "$current" "$previous" "$qlty_credit_policy"
-		current=$(apply_codacy_stale_policy "$current" "$pr_number" "$repo")
+		apply_codacy_stale_policy "$current" "$pr_number" "$repo"
+		current="$_GCW_CODACY_CHECKS"
 		emit_codacy_stale_notes "$current" "$previous"
 		resolve_configured_contexts_once "$pr_number" "$repo"
 		IFS=$'\t' read -r classification missing_contexts zero_job_detail <<<"$(classify_state "$current" "$required_only" "$pr_number" "$repo" "$elapsed" "$initial_head" "$_GCW_CONFIGURED_RC" "$_GCW_CONFIGURED_CONTEXTS")"

@@ -24,10 +24,17 @@ _codacy_get() {
 	return $?
 }
 
+# Build the GitHub contents endpoint once for all reads.
+_contents_endpoint() {
+	local repo="$1" head="$2" file_path="$3"
+	printf 'repos/%s/contents/%s?ref=%s' "$repo" "$file_path" "$head"
+	return 0
+}
+
 # Print the file at the PR head (raw), exit non-zero when unreadable.
 _head_file() {
 	local repo="$1" head="$2" file_path="$3"
-	gh api -H "Accept: application/vnd.github.raw" "repos/${repo}/contents/${file_path}?ref=${head}" 2>/dev/null
+	gh api -H "Accept: application/vnd.github.raw" "$(_contents_endpoint "$repo" "$head" "$file_path")" 2>/dev/null
 	return $?
 }
 
@@ -35,7 +42,7 @@ _head_file() {
 _decide() {
 	local repo="$1" head="$2" pr_issues="$3" delta="$4"
 	local delta_count=""
-	delta_count=$(printf '%s' "$delta" | jq -er '(.data // []) | length') || {
+	delta_count=$(printf '%s' "$delta" | jq -er 'if .analyzed == true and (.data | type) == "array" then .data | length else error("incomplete") end') || {
 		printf 'REAL: deltaIssues response malformed\n'
 		return 2
 	}
@@ -61,15 +68,26 @@ _decide() {
 			return 1
 		fi
 		if content=$(_head_file "$repo" "$head" "$path"); then
-			if printf '%s\n' "$content" | grep -qF -- "$text"; then
+			# Capture grep status (no -q: it must consume all input) to separate match/no match/error.
+			local grep_rc=0
+			printf '%s\n' "$content" | grep -F -- "$text" >/dev/null || grep_rc=$?
+			if [[ "$grep_rc" -eq 0 ]]; then
 				printf 'REAL: flagged line still present in %s at head\n' "$path"
 				return 1
+			elif [[ "$grep_rc" -ne 1 ]]; then
+				printf 'REAL: search of %s at head failed\n' "$path"
+				return 2
 			fi
-		elif gh api "repos/${repo}/contents/${path}?ref=${head}" >/dev/null 2>&1; then
-			printf 'REAL: could not read %s at head\n' "$path"
-			return 2
+		else
+			# Only a verified 404 proves the file is gone; other failures are unobservable.
+			local status_out=""
+			status_out=$(gh api -i "$(_contents_endpoint "$repo" "$head" "$path")" 2>&1 | head -n 1) || true
+			if [[ "$status_out" != *" 404"* ]]; then
+				printf 'REAL: could not read %s at head\n' "$path"
+				return 2
+			fi
 		fi
-		# File unreadable and absent at head => line is gone; otherwise absent text.
+		# Verified absent file or absent text => line is gone.
 	done <<<"$entries"
 	if [[ "$total" -eq 0 ]]; then
 		printf 'REAL: no PR-level issues listed; staleness not provable\n'
@@ -126,7 +144,12 @@ cmd_classify() {
 		printf 'REAL: Codacy PR issues unavailable\n'
 		return 2
 	}
-	delta=$(_codacy_get "${base}/commits/${head}/deltaIssues?status=added&limit=100") || {
+	# Another page remaining means the first 100 issues cannot prove staleness.
+	if printf '%s' "$pr_issues" | jq -e '(.pagination.cursor // "") != ""' >/dev/null 2>&1; then
+		printf 'REAL: Codacy PR issues span multiple pages; staleness not provable\n'
+		return 2
+	fi
+	delta=$(_codacy_get "${base}/commits/${head}/deltaIssues?status=new&limit=100") || {
 		printf 'REAL: Codacy deltaIssues unavailable\n'
 		return 2
 	}
