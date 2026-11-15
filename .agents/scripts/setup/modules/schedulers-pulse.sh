@@ -648,29 +648,25 @@ _install_supervisor_pulse() {
 # The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 # thresholds). Only the first-install prompt is gated on consent state.
 #######################################
-# t2119: Record the schedulers.sh template hash to the shared state
-# directory. auto-update-helper.sh's check_launchd_plist_drift compares
-# this against the current hash on every update cycle — whenever
-# schedulers.sh changes without a VERSION bump (PR #19079 scenario),
-# drift is detected and setup.sh --non-interactive is re-run to
-# regenerate the installed plists.
+# t2119/t19030: Record the scheduler template hash to the shared state
+# directory. auto-update's check_launchd_plist_drift recomputes it from the
+# source checkout with the same scheduler_template_hash function
+# (schedulers-template-hash.sh) and re-runs setup.sh --non-interactive when
+# the values differ, e.g. when a template changes without a VERSION bump.
 #
-# Called from setup_supervisor_pulse unconditionally so the hash is
-# kept current on every setup.sh run, whether pulse is installed,
-# upgraded, or disabled. Whole-file hash is the simplest signal that
-# any plist-generating change has occurred.
+# The recorded value is the hash of the templates this run loaded, and only
+# a full scheduler pass may record it (setup.sh _setup_noninteractive_schedulers
+# and the interactive post-setup list). Pulse-only paths do not regenerate
+# the watchdog or other plists, so recording there would claim a convergence
+# that did not happen.
 #######################################
 _schedulers_record_template_hash() {
 	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
-	mkdir -p "$state_dir" 2>/dev/null || return 0
 	local hash_file="$state_dir/schedulers-template-hash.state"
-	local schedulers_src="${BASH_SOURCE[0]:-}"
-	[[ -f "$schedulers_src" ]] || return 0
-	if command -v shasum >/dev/null 2>&1; then
-		shasum -a 256 "$schedulers_src" 2>/dev/null | awk '{print $1}' >"$hash_file" 2>/dev/null || true
-	elif command -v sha256sum >/dev/null 2>&1; then
-		sha256sum "$schedulers_src" 2>/dev/null | awk '{print $1}' >"$hash_file" 2>/dev/null || true
-	fi
+	local template_hash="${_SCHEDULERS_TEMPLATE_HASH_AT_LOAD:-}"
+	[[ "$template_hash" =~ ^[0-9a-f]{64}$ ]] || return 0
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	printf '%s\n' "$template_hash" >"$hash_file" 2>/dev/null || true
 	return 0
 }
 
@@ -696,10 +692,6 @@ setup_supervisor_pulse() {
 	local _os="$1"
 	# Never retain a previous successful install decision after a failed retry.
 	PULSE_ENABLED="false"
-
-	# Record template hash so auto-update can detect drift between
-	# schedulers.sh and the installed plists on macOS (t2119).
-	_schedulers_record_template_hash
 
 	# Ensure crontab has a global PATH= line (Linux only; macOS uses launchd env).
 	# Must run before any cron entries are installed so they inherit the PATH.

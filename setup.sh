@@ -1964,6 +1964,8 @@ _setup_noninteractive_schedulers() {
 	_time_step "setup_storage_hygiene" setup_storage_hygiene
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	_time_step "migrate_cron_to_systemd" migrate_cron_to_systemd
+	# t19030: only a full scheduler pass records the plist drift template hash.
+	_schedulers_record_template_hash
 	_time_step "$SETUP_STAGE_TABBY" setup_tabby
 	return 0
 }
@@ -2021,6 +2023,8 @@ _setup_post_setup_steps() {
 	setup_storage_hygiene
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	migrate_cron_to_systemd
+	# t19030: only a full scheduler pass records the plist drift template hash.
+	_schedulers_record_template_hash
 	setup_tabby
 	print_final_instructions
 

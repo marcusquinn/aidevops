@@ -71,6 +71,16 @@ source "${SCRIPT_DIR}/schedulers-linux.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/schedulers-platform.sh"
 
+# shellcheck source=./schedulers-template-hash.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/schedulers-template-hash.sh"
+
+# t19030: hash the templates this run loaded, not the checkout at record time.
+# A fast-forward during a long setup must not be recorded as converged.
+# shellcheck disable=SC2034  # read by _schedulers_record_template_hash
+_SCHEDULERS_TEMPLATE_HASH_AT_LOAD=$(scheduler_template_hash "$SCRIPT_DIR" 2>/dev/null) ||
+	_SCHEDULERS_TEMPLATE_HASH_AT_LOAD=""
+
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor
 # pulse is enabled (stats are useless without it).
