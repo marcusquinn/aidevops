@@ -116,6 +116,19 @@ printf '%s\n' "$*" >>"${GH_CALL_LOG:?}"
 if [[ "${1:-}" == api && "${2:-}" == repos/* && "$*" == *'.private | tostring'* ]]; then
 	# Model a known public repository; keep the real privacy scanner enabled.
 	printf 'false\n'
+elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls\?state=open* ]]; then
+	[[ "${GH_SYNC_LIST_FAIL:-0}" == 0 ]] || exit 1
+	printf '%s\n' "${GH_SYNC_PRS_JSON:-[]}"
+elif [[ "${1:-}" == api && "${2:-}" == repos/*/pulls/*/files\?* ]]; then
+	printf '%s\n' "${GH_SYNC_FILES_JSON:-[]}"
+elif [[ "${1:-} ${2:-}" == "pr comment" ]]; then
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == --body-file ]]; then
+			cat "$2" >>"$GH_CALL_LOG.comments"
+			break
+		fi
+		shift
+	done
 elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
 	repo=""
 	while [[ $# -gt 0 ]]; do
@@ -126,7 +139,7 @@ elif [[ "${1:-} ${2:-}" == "pr create" ]]; then
 		shift
 	done
 	[[ -n "$repo" && -s "$GH_CALL_LOG.origin" ]] || exit 1
-	printf 'https://github.com/%s/pull/1\n' "$repo"
+	printf 'https://github.com/%s/pull/%s\n' "$repo" "${GH_NEW_PR_NUMBER:-1}"
 elif [[ "${1:-}" == api && "${2:-}" == /repos/*/issues/* ]]; then
 	cat "$GH_CALL_LOG.origin"
 fi
@@ -313,6 +326,40 @@ else
 	printf '       got: %s\n' "$WF_BRANCHES_10"
 	((_FAIL++))
 fi
+
+# GH#38487: reuse yesterday's same-content PR before any new branch is pushed.
+SYNC_SHA_10=$(git -C "$REPO_10" rev-parse "${SYNC_BRANCH_10}:.github/workflows/issue-sync.yml")
+SYNC_PRS_10=$(jq -cn --arg branch "$SYNC_BRANCH_10" \
+	'[{number:1,html_url:"https://github.com/owner/repo-develop/pull/1",head:{ref:$branch,repo:{full_name:"owner/repo-develop"}}}]')
+SYNC_FILES_10=$(jq -cn --arg sha "$SYNC_SHA_10" \
+	'[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:$sha}]')
+OUT_10_REUSE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990102 2>&1)
+_assert_exit "GH#38487 identical next-day sync succeeds" 0 "$?"
+_assert_contains "GH#38487 identical next-day sync reuses existing URL" "$OUT_10_REUSE" "PR: https://github.com/owner/repo-develop/pull/1"
+CREATE_COUNT_10=$(grep -c '^pr create ' "$TMPDIR_10/gh-calls.log")
+_assert_exit "GH#38487 next-day sync leaves one PR creation" 1 "$CREATE_COUNT_10"
+NEW_HEAD_10=$(git -C "$BARE_10" for-each-ref --format='%(refname)' refs/heads/chore/workflow-sync-20990102)
+_assert_exit "GH#38487 identical next-day sync does not push a branch" 0 "${#NEW_HEAD_10}"
+
+# An unavailable PR list must not result in another publication.
+OUT_10_FAIL=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_LIST_FAIL=1 bash "$HELPER" --apply --branch chore/workflow-sync-20990103 2>&1)
+_assert_exit "GH#38487 PR-list failure fails closed" 1 "$?"
+_assert_contains "GH#38487 PR-list failure is actionable" "$OUT_10_FAIL" "unable to inspect open sync PRs"
+
+# A different blob gets a replacement first, then the older PR is commented/closed.
+SYNC_FILES_10=$(jq -cn '[{filename:".github/workflows/issue-sync.yml",status:"modified",sha:"0000000000000000000000000000000000000000"}]')
+OUT_10_REPLACE=$(HOME="$TMPDIR_10" PATH="$TMPDIR_10/bin:$PATH" GH_CALL_LOG="$TMPDIR_10/gh-calls.log" \
+	GH_SYNC_PRS_JSON="$SYNC_PRS_10" GH_SYNC_FILES_JSON="$SYNC_FILES_10" GH_NEW_PR_NUMBER=2 \
+	bash "$HELPER" --apply --branch chore/workflow-sync-20990104 2>&1)
+_assert_exit "GH#38487 changed-content replacement succeeds" 0 "$?"
+_assert_contains "GH#38487 changed-content replacement reports new PR" "$OUT_10_REPLACE" "PR: https://github.com/owner/repo-develop/pull/2"
+CALLS_10=$(cat "$TMPDIR_10/gh-calls.log")
+_assert_contains "GH#38487 older PR closes after replacement" "$CALLS_10" "pr close 1 --repo owner/repo-develop"
+COMMENTS_10=$(cat "$TMPDIR_10/gh-calls.log.comments" 2>/dev/null || true)
+_assert_contains "GH#38487 supersession comment links replacement" "$COMMENTS_10" "Superseded by https://github.com/owner/repo-develop/pull/2"
 rm -rf "$TMPDIR_10"
 
 # ─── Test 11: GH#21897 — CURRENT/CALLER + repos.json runner field is actionable ───

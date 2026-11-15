@@ -100,6 +100,9 @@ if [[ "${1:-}" != "api" ]]; then
 	exit 0
 fi
 case "${2:-}" in
+repos/fake/apply/pulls\?state=open*)
+	printf '%s\n' '[]'
+	;;
 repos/marcusquinn/aidevops/releases/latest | repos/other/project/releases/latest)
 	printf '%s\n' 'v3.39.45'
 	;;
