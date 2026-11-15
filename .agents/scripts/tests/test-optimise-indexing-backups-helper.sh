@@ -102,11 +102,17 @@ warnings_after="$(jq -r '.linux.last_warning_count' "$AIDEVOPS_STATE_DIR/optimis
 [[ "$applied_after" == "$applied_before" ]] || fail "reminder should preserve last applied count"
 [[ "$warnings_after" == "$warnings_before" ]] || fail "reminder should preserve last warning count"
 
-bz="$tmpdir/bzdata"
+bz="$tmpdir/bzpkg/bzdata"
 export AIDEVOPS_BACKBLAZE_BZDATA="$bz"
 export AIDEVOPS_OPTIMISE_NOW=1800000000
 assert_contains "$($HELPER macos health)" "backblaze_health=not-installed"
+assert_not_contains "$($HELPER macos reminder --format=toast --no-notify)" "Backblaze"
+mkdir -p "$tmpdir/bzpkg"
+assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
+assert_contains "$($HELPER macos reminder --format=toast --no-notify)" "could not be read"
 mkdir -p "$bz/bzreports_lastfilestransmitted" "$bz/bzlogs/bztransmit"
+assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
+printf '<x gmt_millis="%s000"/>\n' "$((1800000000 + 7200))" >"$bz/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
 assert_contains "$($HELPER macos health)" "backblaze_health=unknown"
 printf '<x acct="SECRET-ID" gmt_millis="%s000"/>\n' "$((1800000000 - 3600))" >"$bz/bzreports_lastfilestransmitted/bzstat_lastfile_transmitted.xml"
 assert_contains "$($HELPER macos health)" "backblaze_health=ok"

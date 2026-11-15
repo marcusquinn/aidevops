@@ -434,8 +434,12 @@ _backblaze_frozen_hint() {
 # Prints ok | stale:<hours> | safety_frozen:<hint> | unknown | not-installed.
 # Read-only; threshold from AIDEVOPS_BACKBLAZE_STALE_HOURS (default 48).
 _backblaze_health() {
-    if [[ ! -d "$BACKBLAZE_BZDATA" ]]; then
+    if [[ ! -d "${BACKBLAZE_BZDATA%/*}" ]]; then
         printf 'not-installed\n'
+        return 0
+    fi
+    if [[ ! -d "$BACKBLAZE_BZDATA" || ! -r "$BACKBLAZE_BZDATA" ]]; then
+        printf 'unknown\n'
         return 0
     fi
     local hint
@@ -450,7 +454,12 @@ _backblaze_health() {
         printf 'unknown\n'
         return 0
     fi
-    local hours=$((($(_now_epoch) - last) / 3600))
+    local age=$(($(_now_epoch) - last))
+    if [[ "$age" -lt 0 ]]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    local hours=$((age / 3600))
     if [[ "$hours" -ge "$BACKBLAZE_STALE_HOURS" ]]; then
         printf 'stale:%s\n' "$hours"
     else
@@ -470,6 +479,7 @@ _backblaze_action_line() {
     case "$health" in
         safety_frozen:*) printf 'Backblaze backup frozen since %s; open Backblaze and resolve the safety freeze (needs your private encryption key)\n' "$since" ;;
         stale:*) printf 'Backblaze has not uploaded for %s hours (last upload %s); open Backblaze and check its status\n' "${health#stale:}" "$since" ;;
+        unknown) printf 'Backblaze health could not be read; open Backblaze and confirm backups are uploading\n' ;;
     esac
     return 0
 }
@@ -479,7 +489,6 @@ _backblaze_action_line() {
 _backblaze_surface() {
     local format="$1"
     local no_notify="$2"
-    [[ -d "$BACKBLAZE_BZDATA" ]] || return 0
     local health action
     health="$(_backblaze_health)"
     action="$(_backblaze_action_line "$health")"
