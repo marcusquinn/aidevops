@@ -80,6 +80,9 @@ source "${SCRIPT_DIR}/schedulers-template-hash.sh"
 # shellcheck disable=SC2034  # read by _schedulers_record_template_hash
 _SCHEDULERS_TEMPLATE_HASH_AT_LOAD=$(scheduler_template_hash "$SCRIPT_DIR" 2>/dev/null) ||
 	_SCHEDULERS_TEMPLATE_HASH_AT_LOAD=""
+# Set by _schedulers_defer_template_hash when a scheduler in this run was left
+# unregenerated (runtime pin, refused pin, failed install); blocks recording.
+_SCHEDULERS_TEMPLATE_HASH_DEFERRED=""
 
 # Setup stats-wrapper scheduler — runs quality sweep and health issue updates
 # separately from the pulse (t1429). Only installed when the supervisor

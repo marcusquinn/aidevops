@@ -658,12 +658,25 @@ _install_supervisor_pulse() {
 # a full scheduler pass may record it (setup.sh _setup_noninteractive_schedulers
 # and the interactive post-setup list). Pulse-only paths do not regenerate
 # the watchdog or other plists, so recording there would claim a convergence
-# that did not happen.
+# that did not happen. For the same reason a pass that left any scheduler
+# unregenerated (active runtime pin, refused pin, failed install) defers the
+# record via _schedulers_defer_template_hash, so the next auto-update cycle
+# retries the repair instead of treating the stale plist as converged.
 #######################################
+_schedulers_defer_template_hash() {
+	local reason="${1:-scheduler not regenerated}"
+	_SCHEDULERS_TEMPLATE_HASH_DEFERRED="$reason"
+	return 0
+}
+
 _schedulers_record_template_hash() {
 	local state_dir="$HOME/.aidevops/.agent-workspace/tmp"
 	local hash_file="$state_dir/schedulers-template-hash.state"
 	local template_hash="${_SCHEDULERS_TEMPLATE_HASH_AT_LOAD:-}"
+	if [[ -n "${_SCHEDULERS_TEMPLATE_HASH_DEFERRED:-}" ]]; then
+		print_info "Scheduler template hash not recorded: ${_SCHEDULERS_TEMPLATE_HASH_DEFERRED}"
+		return 0
+	fi
 	[[ "$template_hash" =~ ^[0-9a-f]{64}$ ]] || return 0
 	mkdir -p "$state_dir" 2>/dev/null || return 0
 	printf '%s\n' "$template_hash" >"$hash_file" 2>/dev/null || true
@@ -740,10 +753,15 @@ setup_supervisor_pulse() {
 		_pulse_runtime_pin_preserves_scheduler "$_pulse_installed" || _pin_scheduler_rc=$?
 		if [[ "$_pin_scheduler_rc" -eq 0 ]]; then
 			print_info "Supervisor pulse scheduler preserved while its bounded runtime pin is active"
+			_schedulers_defer_template_hash "supervisor pulse preserved by runtime pin"
 		elif [[ "$_pin_scheduler_rc" -eq 1 ]]; then
-			_install_supervisor_pulse "$_os" "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed" || return 1
+			_install_supervisor_pulse "$_os" "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed" || {
+				_schedulers_defer_template_hash "supervisor pulse install failed"
+				return 1
+			}
 		else
 			print_error "Supervisor pulse scheduler refused an invalid runtime pin"
+			_schedulers_defer_template_hash "supervisor pulse refused an invalid runtime pin"
 			return 1
 		fi
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
