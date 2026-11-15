@@ -36,14 +36,14 @@ from .decision import (
 )
 from .archive import stage_two
 from .evidence import evidence, prefetch, references, repository
-from .host import common_directory, free_bytes, nothing_to_lose, remove, run
+from .host import common_directory, free_bytes, remove, run
 from ..cleanup_quarantine import CleanupQuarantine
 from ..storage import LifecycleRegistry
 from .owners import RESIDUAL_RISK, OwnerCheck, default_state_dir, open_owners
 from .progress import (
     deferred, listing, open_quarantine, ordered, read_cursor, remember, save_progress,
 )
-from .review import verify_idle_review
+from .review import idle_verifier
 
 SCHEMA = "aidevops.worktree-reclaim-finished/v1"
 # Largest fraction of the remaining pass budget reference prefetch may spend.
@@ -160,8 +160,8 @@ def _act(path: Path, verdict: dict, current: Pass, receipt: dict) -> Path | None
         receipt["failed"] += 1
         return None
     common = common_directory(path)
-    # A review tree was authorized for being quiet, so removal re-checks that too.
-    verify = verify_idle_review if verdict["reason"] == "review-idle" else nothing_to_lose
+    # An idle tree was authorized for being quiet, so removal re-checks that too.
+    verify = idle_verifier(verdict["reason"])
     removed, detail = remove(path, cas_verify(digest, verify, current.remaining), current.owner)
     verdict["removal"] = detail
     if not removed:
