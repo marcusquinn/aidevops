@@ -1081,6 +1081,8 @@ _dispatch_preclaim_brief_scope_verdict() {
 		return 0
 	fi
 	_brief_scope_block="hold_marker_unavailable"
+	# GH#38360: a missing Files Scope is brief-owned and AI-resolvable.
+	local -a brief_hold_companion=(--add-label "${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}")
 	body_hash=$(_dispatch_brief_hold_body_hash "$issue_body") || return 1
 	hold_marker="<!-- aidevops:brief-hold reason=missing_files_scope body=${body_hash} -->"
 	_dispatch_brief_hold_recorded "$issue_number" "$repo_slug" "$hold_marker" || recorded_rc=$?
@@ -1089,7 +1091,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	[[ "$recorded_rc" -eq 2 ]] && return 1
 	if [[ "$recorded_rc" -eq 0 ]]; then
 		_brief_scope_block="hold_recorded"
-		set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null || true
+		set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null || true
 		echo "[dispatch_with_dedup] Brief hold for #${issue_number} in ${repo_slug} already recorded for this body; relabelled without a new comment" >>"${LOGFILE:-/dev/null}"
 		return 1
 	fi
@@ -1098,7 +1100,7 @@ _dispatch_preclaim_brief_scope_verdict() {
 	aidevops_ops_marker brief-hold >"$comment_file" || return 1
 	# shellcheck disable=SC2016 # literal Markdown backticks, not expansions
 	printf '%s\nBrief hold: reason=missing_files_scope owner=brief-author.\nProjected state: status:blocked.\nNext action: Add a canonical ### Files Scope section with one `` - `repo/relative/path` `` line per permitted file (no prefix, nothing after the path) to the issue body, or explicit `` `EDIT: path` `` / `` `NEW: path` `` bullets under ### Files to Modify; verify with pre-dispatch-validator-helper.sh scope-check. The pulse releases this hold automatically once the edited body passes; no label change is needed. This body is not held again unless it changes.\n' "$hold_marker" >>"$comment_file"
-	if ! set_issue_status "$issue_number" "$repo_slug" blocked >/dev/null; then
+	if ! set_issue_status "$issue_number" "$repo_slug" blocked "${brief_hold_companion[@]}" >/dev/null; then
 		rm -f "$comment_file"
 		return 1
 	fi
@@ -1681,10 +1683,23 @@ _apply_terminal_blocker() {
 		already_blocked=1
 	fi
 
+	# GH#38360: every pattern here needs a human on the runner or account.
+	# Token and authentication failures need credentials; the rest (gh
+	# upgrade, ACTION REQUIRED) need one maintainer action named in the comment.
+	local companion="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+	case "$blocker_reason" in
+	*[Tt]oken* | *[Aa]uthentication*) companion="${BLOCKED_NEEDS_CREDENTIALS:-needs-credentials}" ;;
+	esac
+
 	# Add label if not already present (t2033: use set_issue_status to atomically
 	# clear all sibling status:* labels, not just available/queued)
 	if [[ "$already_blocked" -eq 0 ]]; then
-		set_issue_status "$issue_number" "$repo_slug" "blocked" || true
+		set_issue_status "$issue_number" "$repo_slug" "blocked" --add-label "$companion" || true
+	elif [[ ",${existing_labels}," != *",${companion},"* ]]; then
+		# Already blocked but the classified companion is missing: add it only.
+		declare -F ensure_blocked_companion_label >/dev/null 2>&1 &&
+			ensure_blocked_companion_label "$repo_slug" "$companion"
+		gh issue edit "$issue_number" --repo "$repo_slug" --add-label "$companion" >/dev/null 2>&1 || true
 	fi
 
 	# Post comment if not already posted (idempotent — safe against concurrent pulses)
@@ -1695,7 +1710,7 @@ _apply_terminal_blocker() {
 **Action required:** ${user_action}
 
 ---
-*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*"
+*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` and \`${companion}\` labels to re-enable dispatch.*"
 
 	_gh_idempotent_comment "$issue_number" "$repo_slug" \
 		"Terminal blocker detected" "$blocker_body"

@@ -383,6 +383,9 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 #   #15: finite publication-backed task + persistent → remove persistent only
 #   #16: health dashboard with task-like residue → preserve persistent identity
 #   #17: persistent + dispatch labels without publication hold → preserve
+#   #18: bare status:blocked → add needs-ai-recovery (GH#38360)
+#   #19: status:available + blocked-owned needs-dependency → remove companion
+#   #20: status:blocked + needs-credentials → already explained, no edit
 OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
 	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -406,7 +409,10 @@ ISSUES_JSON=$(
 	{"number":14,"labels":[{"name":"auto-dispatch"},{"name":"no-auto-dispatch"}],"createdAt":"${OLD_ISO}"},
 	{"number":15,"labels":[{"name":"persistent"},{"name":"publication:pending"},{"name":"auto-dispatch"},{"name":"status:claimed"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":16,"labels":[{"name":"persistent"},{"name":"source:health-dashboard"},{"name":"publication:pending"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
-	{"number":17,"labels":[{"name":"persistent"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"}
+	{"number":17,"labels":[{"name":"persistent"},{"name":"auto-dispatch"},{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":18,"labels":[{"name":"status:blocked"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":19,"labels":[{"name":"status:available"},{"name":"needs-dependency"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":20,"labels":[{"name":"status:blocked"},{"name":"needs-credentials"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"}
 ]
 JSON
 )
@@ -444,6 +450,12 @@ case "$1" in
 			exit $?
 		fi
 		[[ "$2" == /repos/*/issues/[0-9]* ]] && exit 1
+		# GH#38360: live label re-read (the stub returns the --jq result).
+		case "$2" in
+			repos/test/repo/issues/18) echo "status:blocked,tier:standard"; exit 0 ;;
+			repos/test/repo/issues/19) echo "status:available,needs-dependency,tier:standard"; exit 0 ;;
+			repos/*/issues/[0-9]*) exit 1 ;;
+		esac
 		;;
 	issue)
 		case "$2" in
@@ -626,6 +638,34 @@ if [[ -f "$COUNTER_FILE" ]]; then
 	else
 		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 1 "(got: $triage_missing)"
 	fi
+
+	# GH#38360: #18 bare hold and #19 orphan companion; #20 is explained.
+	blocked_companion_fixed=$(jq -r '.blocked_companion_fixed' "$COUNTER_FILE" 2>/dev/null || echo 0)
+	if [[ "$blocked_companion_fixed" -eq 2 ]]; then
+		print_result "counter blocked_companion_fixed=2 (issues #18, #19)" 0
+	else
+		print_result "counter blocked_companion_fixed=2 (issues #18, #19)" 1 "(got: $blocked_companion_fixed)"
+	fi
+fi
+
+# GH#38360: blocked companion invariant.
+edit18=$(grep "^issue edit 18 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit18" == *"--add-label needs-ai-recovery"* ]]; then
+	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 0
+else
+	print_result "reconciler routes a bare status:blocked to needs-ai-recovery" 1 "(line: '$edit18')"
+fi
+edit19=$(grep "^issue edit 19 " "$GH_CALLS" | sed -n "1p")
+if [[ "$edit19" == *"--remove-label needs-dependency"* && "$edit19" != *"status:"* ]]; then
+	print_result "reconciler removes a blocked-owned companion left after unblock" 0
+else
+	print_result "reconciler removes a blocked-owned companion left after unblock" 1 "(line: '$edit19')"
+fi
+n20=$(count_edits_for 20)
+if [[ "$n20" -eq 0 ]]; then
+	print_result "reconciler leaves an explained status:blocked untouched" 0
+else
+	print_result "reconciler leaves an explained status:blocked untouched" 1 "(edit calls: #20=$n20)"
 fi
 
 # =============================================================================
