@@ -931,13 +931,19 @@ _dedup_layer7_claim_lock() {
 		# guard; the helper validates it and the final guard stays fresh.
 		local assignment_verdict=""
 		assignment_verdict=$(_dedup_assignment_verdict_path "$issue_number" "$repo_slug") || assignment_verdict=""
-		[[ -n "$assignment_verdict" && -f "$assignment_verdict" && ! -L "$assignment_verdict" ]] || assignment_verdict=""
+		if [[ -z "$assignment_verdict" || ! -f "$assignment_verdict" || -L "$assignment_verdict" ]] ||
+			! _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			assignment_verdict=""
+		fi
 		# shellcheck disable=SC2094 # LOGFILE is an output-only diagnostic sink, not an input.
 		claim_output=$(AIDEVOPS_DISPATCH_CLAIM_CALL_LOG="$LOGFILE" DISPATCH_CLAIM_SNAPSHOT_FILE="$claim_snapshot" \
 			DISPATCH_ASSIGNMENT_VERDICT_FILE="$assignment_verdict" \
 			"$claim_helper" check-and-claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		[[ -z "$claim_snapshot" ]] || rm -f "$claim_snapshot"
-		[[ -z "$assignment_verdict" ]] || rm -f "$assignment_verdict"
+		# Re-validate after the claim: the directory must still be private.
+		if [[ -n "$assignment_verdict" ]] && _dedup_assignment_verdict_dir_private "${assignment_verdict%/*}"; then
+			rm -f "$assignment_verdict"
+		fi
 		_ds_record "$issue_number" "$repo_slug" "claim_consensus" "$_claim_started_ns"
 		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then
