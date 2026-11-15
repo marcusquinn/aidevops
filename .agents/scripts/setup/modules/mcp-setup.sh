@@ -871,6 +871,25 @@ _setup_opencode_v2_prepare_config() {
 	return 0
 }
 
+# A fresh V1 install has no opencode.json until update_opencode_config writes
+# one later in setup, so plugin registration used to warn that the plugin was
+# missing and then "re-register" it (GH#38389). Create the minimal config now,
+# as the V2 path does. The directory comes from the V2-filtered XDG path; a
+# user-authored opencode.jsonc is never shadowed. Prints the config path.
+_setup_opencode_v1_ensure_config() {
+	local opencode_config_dir="$1"
+	local opencode_config="${opencode_config_dir}/opencode.json"
+	[[ -n "$opencode_config_dir" ]] || return 1
+	[[ -e "${opencode_config_dir}/opencode.jsonc" ]] && return 1
+	if [[ ! -e "$opencode_config" ]]; then
+		mkdir -p "$opencode_config_dir" || return 1
+		(umask 077 && printf '{\n  "%s": "%s"\n}\n' "\$schema" "https://opencode.ai/config.json" >"$opencode_config") || return 1
+		print_info "Created OpenCode config: $opencode_config" >&2
+	fi
+	printf '%s\n' "$opencode_config"
+	return 0
+}
+
 setup_opencode_plugins() {
 	local profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
 	local binary_name="opencode"
@@ -938,7 +957,8 @@ setup_opencode_plugins() {
 	if [[ "$profile" == "v2" ]]; then
 		_setup_opencode_v2_prepare_config "$config_home" "$opencode_config_dir" "$opencode_config" || return 1
 	fi
-	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config); then
+	if [[ -n "$opencode_config" ]] || opencode_config=$(_setup_opencode_v1_find_config) ||
+		{ [[ "$profile" != "v2" ]] && opencode_config=$(_setup_opencode_v1_ensure_config "$opencode_config_dir"); }; then
 		pool_plugin_registered=$(_setup_opencode_plugins_register_file_url "$opencode_config" "$aidevops_plugin_entrypoint" "$plugin_key")
 	else
 		print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"

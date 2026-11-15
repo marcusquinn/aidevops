@@ -19,6 +19,10 @@ BUILTIN_SUBAGENTS = {"general", "explore"}
 # Bounded roles supplied by the OpenCode plugin, not standalone prompt copies.
 # Other runtimes retain their existing research-only fallback.
 PLUGIN_SUBAGENTS = {"domain-focused", "domain-light", "specialist-advisor"}
+# MCP activation agents the OpenCode plugin registers under a name that differs
+# from their source file stem (mcp-registry.mjs `activationAgent`; e.g.
+# ios-simulator is built from tools/mobile/ios-simulator-mcp.md) (GH#38389).
+PLUGIN_ACTIVATION_SUBAGENTS = {"ios-simulator"}
 
 # Files to skip during subagent scanning
 _SKIP_SUBAGENT_FILES = {"AGENTS.md", "README.md"}
@@ -137,7 +141,8 @@ def _collect_missing_for_agent(display_name, agent_config, display_to_filename_f
     missing = []
     for subagent_name in task_perms:
         if (subagent_name == '*' or subagent_name in BUILTIN_SUBAGENTS
-                or subagent_name in PLUGIN_SUBAGENTS):
+                or subagent_name in PLUGIN_SUBAGENTS
+                or subagent_name in PLUGIN_ACTIVATION_SUBAGENTS):
             continue
         if not subagent_ref_exists(display_name, subagent_name, agent_slug,
                                    all_subagent_files, all_subagent_paths):
