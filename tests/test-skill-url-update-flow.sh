@@ -524,7 +524,7 @@ touch "$MIGRATION_HOME/.aidevops/agents/tools/video/remotion.md" \
 	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/kv-patterns.md" \
 	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/01-streaming-large-files.md" \
 	"$MIGRATION_HOME/.aidevops/agents/services/hosting/cloudflare-platform-skill/r2-patterns/custom.md"
-HOME="$MIGRATION_HOME" bash -c 'source "$1"; source "$2"; cleanup_deprecated_paths' bash \
+HOME="$MIGRATION_HOME" bash -c 'source "$1"; source "$2"; cleanup_retired_global_npm_packages() { return 0; }; _retire_brew_formula() { return 1; }; cleanup_deprecated_paths' bash \
 	"$REPO_DIR/.agents/scripts/shared-constants.sh" \
 	"$REPO_DIR/.agents/scripts/setup/modules/migrations.sh" >/dev/null
 if [[ ! -e "$MIGRATION_HOME/.aidevops/agents/tools/video/remotion.md" &&
