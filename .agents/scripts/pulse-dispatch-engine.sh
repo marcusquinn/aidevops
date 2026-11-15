@@ -1762,6 +1762,8 @@ _run_preflight_stages() {
 	# Mechanical release precedes dispatch and never depends on supervisor
 	# eligibility, daily cadence, failure cooldown or degraded prefetch.
 	_pulse_rearm_blocker_holds "$(date +%s)" || true
+	# t19015: a drained cycle cannot dispatch; skip the remaining stages.
+	_pulse_cycle_drain_exit "preflight_blocker_refresh" && return 0
 	# Overdue synchronous recovery needs admission before dispatch can spend
 	# the cycle budget. The bounded attempt retains the main-dispatch reserve.
 	_pulse_run_pre_dispatch_blocker_refresh "$_pflt_timeout"
@@ -1784,6 +1786,7 @@ _run_preflight_stages() {
 	_pulse_run_budget_priority_stage "preflight_early_dispatch" _preflight_early_dispatch || _pflt_ed_rc=$?
 	[[ "${_PULSE_BUDGET_STAGE_DEFERRED:-0}" == "1" ]] && _pflt_ed_outcome="skipped"
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc" "$_pflt_ed_outcome"
+	_pulse_cycle_drain_exit "preflight_cleanup_and_ledger" && return "$_pflt_prefetch_rc"
 	_preflight_start_macos_verification || true
 	run_stage_with_timeout "preflight_cleanup_and_ledger" "$_pflt_timeout" \
 		_preflight_cleanup_and_ledger || true
