@@ -179,7 +179,10 @@ _launch_background() {
 		HEARTBEAT_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 		NEXT_ACTION="monitor"
 		PHASE_STATUS="$_FULL_LOOP_PHASE_RUNNING"
-		save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}" || return 1
+		if ! save_state "$_FULL_LOOP_PHASE_TASK" "$prompt" "" "${STARTED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"; then
+			kill "$EXECUTOR_PID" 2>/dev/null || true
+			return 1
+		fi
 		_full_loop_append_event "executor.started" "$_FULL_LOOP_PHASE_RUNNING"
 		print_success "Background executor started (PID: ${EXECUTOR_PID}). Use 'status' or 'logs' to monitor."
 		printf 'FULL_LOOP_START_RESULT=running\n'
