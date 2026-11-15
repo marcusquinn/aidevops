@@ -17,6 +17,7 @@ import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { registerApprovedWorkerPermissions } from "./config-worker-permissions.mjs";
 import { applyCompactionRouting } from "./compaction-routing.mjs";
+import { applyLocalOnlyTitleRouting } from "./title-routing.mjs";
 import { registerPendingAnthropicModels } from "./anthropic-catalog-bridge.mjs";
 import {
   registerAgentRoutingIntent,
@@ -422,6 +423,9 @@ export function createConfigHook(deps) {
     const openai = registerGpt56ContextLimits(config) + registerAstraContextLimits(config) +
       registerGpt6ContextLimits(config);
     applyCompactionRouting(config, modelRouting);
+    // GH#34125 follow-up: title generation bypasses chat.params entirely
+    // (see title-routing.mjs), so bound sessions are enforced here instead.
+    applyLocalOnlyTitleRouting(config);
     // Discover and register proxy provider models only when a proxy listener is
     // already active. The normal startup path intentionally leaves these ports
     // null until first use, so unconditional imports/discovery here made config
