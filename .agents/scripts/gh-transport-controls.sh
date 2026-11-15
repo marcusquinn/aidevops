@@ -13,6 +13,39 @@ fi
 # shellcheck source=./shared-gh-secondary-cooldown.sh
 source "${_GHGT_DIR}/shared-gh-secondary-cooldown.sh"
 
+# Scratch paths this process created and has not yet removed (t19021). The shim
+# EXIT trap removes them when a timeout signal lands between mktemp and rm;
+# before this, TERM left one error/meta pair per interrupted REST read.
+_GHGT_LIVE_TEMPS=()
+
+_gh_transport_track_temp() {
+	_GHGT_LIVE_TEMPS+=("$@")
+	return 0
+}
+
+# Remove the given paths and forget them, so the EXIT trap never deletes a
+# later process's file that reused a freed mktemp name.
+_gh_transport_remove_temps() {
+	local temp_path="" tracked=""
+	local -a kept=()
+	for temp_path in "$@"; do
+		[[ -z "$temp_path" ]] || rm -rf -- "$temp_path" 2>/dev/null || true
+	done
+	for tracked in ${_GHGT_LIVE_TEMPS[@]+"${_GHGT_LIVE_TEMPS[@]}"}; do
+		for temp_path in "$@"; do
+			[[ "$tracked" != "$temp_path" ]] || continue 2
+		done
+		kept+=("$tracked")
+	done
+	_GHGT_LIVE_TEMPS=(${kept[@]+"${kept[@]}"})
+	return 0
+}
+
+_gh_transport_cleanup_live_temps() {
+	_gh_transport_remove_temps ${_GHGT_LIVE_TEMPS[@]+"${_GHGT_LIVE_TEMPS[@]}"}
+	return 0
+}
+
 _gh_transport_preflight() {
 	local op_class="read"
 	local arg=""
@@ -140,13 +173,14 @@ _gh_transport_capture_errors() {
 	fi
 	mkdir -p "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}" || return 75
 	error_file=$(mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-transport-error.XXXXXX") || return 75
+	_gh_transport_track_temp "$error_file"
 	"$@" 2>"$error_file" || rc=$?
 	command cat "$error_file" >&2
 	if [[ "$rc" -ne 0 ]]; then
 		_GH_TRANSPORT_ERROR_HTTP_STATUS=$(_gh_transport_error_http_status "$error_file")
 	fi
 	_gh_transport_record_error "$rc" "$error_file"
-	rm -f -- "$error_file"
+	_gh_transport_remove_temps "$error_file"
 	return "$rc"
 }
 
@@ -193,10 +227,12 @@ _gh_transport_run_rest() {
 	local request_method="" endpoint_class="" endpoint_family=""
 	mkdir -p "$temp_dir" || return 75
 	metadata=$(mktemp "${temp_dir}/gh-transport-meta.XXXXXX") || return 75
+	_gh_transport_track_temp "$metadata"
 	error_file=$(mktemp "${temp_dir}/gh-transport-error.XXXXXX") || {
-		rm -f "$metadata"
+		_gh_transport_remove_temps "$metadata"
 		return 75
 	}
+	_gh_transport_track_temp "$error_file"
 	_shim_timing rest_tempfiles
 	start_ms=$(_gh_now_ms)
 	_shim_timing rest_clock
@@ -212,7 +248,7 @@ _gh_transport_run_rest() {
 	# that case; writes never reach this GET-only transport path. Do not treat the
 	# local-state failure as an HTTP failure or invent quota telemetry.
 	if [[ "$rc" -eq 75 && "$attempted" != true && "$deferred_by" == "local_state" ]]; then
-		rm -f -- "$metadata" "$error_file"
+		_gh_transport_remove_temps "$metadata" "$error_file"
 		_gh_transport_capture_errors "$executable" "$@"
 		return $?
 	fi
@@ -237,7 +273,7 @@ _gh_transport_run_rest() {
 		_gh_transport_emit_local_deferral "$metadata" || true
 	fi
 	if [[ "$rc" -eq 125 && "$attempted" != true ]]; then
-		rm -f -- "$metadata" "$error_file"
+		_gh_transport_remove_temps "$metadata" "$error_file"
 		return 125
 	fi
 	_GHGT_HANDLED=1
@@ -276,7 +312,7 @@ _gh_transport_run_rest() {
 	if [[ "$attempted" == true && ("$rc" -ne 0 || "$remaining" == 0 || "$retry_after" != x || "$status" =~ ^[45]) ]]; then
 		_gh_transport_record_error "$rc" "$error_file" "$response"
 	fi
-	rm -f -- "$metadata" "$error_file"
+	_gh_transport_remove_temps "$metadata" "$error_file"
 	_shim_timing rest_metadata_and_log
 	return "$rc"
 }
@@ -317,6 +353,7 @@ _gh_transport_identity_read() {
 	local capture="" rc=0
 	mkdir -p "$temp_dir" || return 75
 	capture=$(mktemp -d "${temp_dir}/gh-identity.XXXXXX") || return 75
+	_gh_transport_track_temp "$capture"
 	_GH_IDENTITY_FALLBACK_ALLOWED=0
 	_shim_run_transport "$executable" rest "$caller" 0 "$@" >"$capture/out" 2>"$capture/err" || rc=$?
 	if [[ "$rc" -eq 75 && "$_GH_IDENTITY_FALLBACK_ALLOWED" -eq 1 ]] &&
@@ -328,7 +365,7 @@ _gh_transport_identity_read() {
 		command cat "$capture/out"
 		command cat "$capture/err" >&2
 	fi
-	rm -rf -- "$capture"
+	_gh_transport_remove_temps "$capture"
 	return "$rc"
 }
 
