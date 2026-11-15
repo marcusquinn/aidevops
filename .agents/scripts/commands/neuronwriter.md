@@ -1,1 +1,0 @@
-../../seo/neuronwriter.md

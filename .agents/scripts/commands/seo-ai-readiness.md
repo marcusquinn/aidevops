@@ -1,1 +1,0 @@
-../../seo/seo-ai-readiness.md
