@@ -505,8 +505,8 @@ test_origin_identity_drift_prerequisite_and_repair() {
 			esac
 			return 0
 		}
-		_DSI_TOKEN_HELPER=/usr/bin/true
-		_DSI_ASKPASS_HELPER=/usr/bin/true
+		_DSI_TOKEN_HELPER=$(type -P true)
+		_DSI_ASKPASS_HELPER=$(type -P true)
 		MOCK_REPO_PATH="$root/repo"
 		local repo="$root/repo"
 		command git -C "$root" init -q repo
