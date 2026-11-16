@@ -1346,11 +1346,12 @@ _setup_ai_session_plan_file() {
 		_SETUP_AI_SESSION_NEEDS_PULSE=1
 		;;
 	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh | \
-		.agents/scripts/runtime-env.sh)
+		.agents/scripts/runtime-env.sh | .agents/scripts/plist-env-overrides-lib.sh)
 		# Shared scheduler modules define non-pulse schedulers too (e.g. the
 		# Linux screen-activity sampler); refresh every installed one (GH#36709).
 		# runtime-env.sh renders every service PATH (aidevops_service_path), so
-		# its changes reach installed units only through this refresh (GH#37888).
+		# its changes reach installed units only through this refresh (GH#37888);
+		# plist-env-overrides-lib.sh renders the plist env overrides (GH#38661).
 		_SETUP_AI_SESSION_NEEDS_SCHEDULERS=1
 		;;
 	.agents/scripts/setup/modules/agent-deploy.sh | .agents/scripts/setup/modules/plugins.sh)
