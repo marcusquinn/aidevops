@@ -886,9 +886,14 @@ _tbr_decision_active() {
 	ts=$(jq -r '.recorded_epoch // 0' "$file" 2>/dev/null) || ts=0
 	[[ "$ts" =~ ^[0-9]+$ ]] || ts=0
 	now=$(date +%s)
-	[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
 	wake=$(jq -r '.wake // ""' "$file" 2>/dev/null) || wake=""
-	[[ "$wake" == human_decision ]] || return 0
+	# GH#38692: a human_decision ends only on a positive wake signal (reply or
+	# policy change below), never on the flat TTL, so decided holds stop
+	# resurfacing daily and crowding out undecided entries.
+	if [[ "$wake" != human_decision ]]; then
+		[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
+		return 0
+	fi
 	if [[ -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
 		return 1
 	fi
@@ -1503,6 +1508,21 @@ _tbr_check_entry() {
 	return $?
 }
 
+# GH#38692: true when a recorded human_decision still stands locally (no network
+# read). Such entries are scanned after every undecided entry so they cannot
+# starve the queue budget; a reply or policy change still wakes them when reached.
+_tbr_entry_decided() {
+	local file="$1"
+	local repo issue key
+	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
+	issue=$(jq -r '.issue // ""' "$file" 2>/dev/null) || return 1
+	[[ -n "$repo" && -n "$issue" ]] || return 1
+	key=$(_tbr_key "$repo" "$issue")
+	[[ -f "${TBR_ROOT}/decisions/${key}.json" ]] || return 1
+	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" == human_decision ]] || return 1
+	return 0
+}
+
 tbr_pending() {
 	local mode="${1:-}"
 	local cursor_name=pending_cursor entry_mode=""
@@ -1537,12 +1557,22 @@ tbr_pending() {
 		_tbr_run_stage discovery tbr_discover || rc=$?
 		[[ "$rc" -eq 0 ]] || incomplete=1
 	fi
-	[[ ! -f "${TBR_ROOT}/${cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${cursor_name}" || true
+	# GH#38692: tier 0 = entries without a standing human_decision, tier 1 =
+	# decided ones; each tier rotates with its own cursor.
+	local tier=0 tier_cursor_name="" decided=0
+	for tier in 0 1; do
+	tier_cursor_name="$cursor_name"
+	[[ "$tier" -eq 0 ]] || tier_cursor_name="${cursor_name}_decided"
+	cursor=""
+	[[ ! -f "${TBR_ROOT}/${tier_cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${tier_cursor_name}" || true
 	# Resume in sorted order, then wrap. Advance only the scan cursor, never
 	# queue ownership or decisions, even when a stage times out.
 	for pass in 1 2; do
 		for file in "${TBR_ROOT}"/queue/*.json; do
 			[[ -f "$file" ]] || continue
+			decided=0
+			_tbr_entry_decided "$file" && decided=1
+			[[ "$decided" -eq "$tier" ]] || continue
 			if [[ "$pass" -eq 1 ]]; then
 				[[ "${file##*/}" > "$cursor" ]] || continue
 			else
@@ -1551,19 +1581,19 @@ tbr_pending() {
 			if [[ "$SECONDS" -ge "$TBR_QUEUE_DEADLINE" ]]; then
 				printf 'blocker-recovery: incomplete stage=queue reason=budget_exhausted\n' >&2
 				incomplete=1
-				break 2
+				break 3
 			fi
 			# GH#33025: resolve once, only when work exists, so this runner's own
 			# collaborator-authored circuits stay recognised during recovery.
 			if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
 				TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || {
 					incomplete=1
-					break 2
+					break 3
 				}
 				export TERMINAL_BLOCKER_SELF_LOGIN
 			fi
 			self_resolved=1
-			_tbr_save_cursor "$cursor_name" "${file##*/}" || return 2
+			_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
 			observed+="${file##*/};"
 			rc=0
 			if [[ "$mode" == "--count" ]]; then
@@ -1574,6 +1604,7 @@ tbr_pending() {
 			[[ "$rc" -ne 0 ]] || count=$((count + 1))
 			[[ "$rc" -lt 2 ]] || incomplete=1
 		done
+	done
 	done
 	# Existing ownership is observed before potentially slow remote discovery.
 	# Seed has its own stage cap and cannot consume more than the overall budget.
