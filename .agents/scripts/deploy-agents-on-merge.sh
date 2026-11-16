@@ -31,6 +31,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=canonical-recovery-lock.sh
+source "${SCRIPT_DIR}/canonical-recovery-lock.sh"
 
 QUIET=false
 
@@ -171,7 +173,7 @@ release_source_lock() {
 	local lock_dir="${SOURCE_LOCK_DIR:-}"
 
 	if [[ -n "$lock_dir" && -d "$lock_dir" ]]; then
-		rmdir "$lock_dir" 2>/dev/null || true
+		crl_release "$lock_dir"
 	fi
 	SOURCE_LOCK_DIR=""
 	return 0
@@ -197,7 +199,7 @@ acquire_source_lock() {
 	else
 		SOURCE_LOCK_DIR="$git_dir/aidevops-source-deploy.lock"
 	fi
-	if ! mkdir "$SOURCE_LOCK_DIR" 2>/dev/null; then
+	if ! crl_acquire "$SOURCE_LOCK_DIR" "deploy-agents-on-merge"; then
 		log_error "Source checkout is changing or another deployment is active; active bundle was not changed"
 		SOURCE_LOCK_DIR=""
 		return 1
