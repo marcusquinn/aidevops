@@ -27,15 +27,49 @@ _worktree_proc_cwd_map() {
 	python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_process_proc.py" cwdmap "$proc_root" 2>/dev/null
 }
 
+# Read one cwd link. Prints the target and returns 0 when captured, 1 when the
+# entry is harmless to skip, or 2 when visibility is degraded.
+_worktree_read_proc_cwd_link() {
+	local proc_root="$1"
+	local cwd_link="$2"
+	local current_uid="$3"
+	local cwd_target=""
+	local proc_dir=""
+
+	[[ -L "$cwd_link" || -e "$cwd_link" ]] || return 1
+	if cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
+		[[ -n "$cwd_target" ]] || return 1
+		printf '%s\n' "$cwd_target"
+		return 0
+	fi
+	# Vanished processes are harmless. Linux commonly denies cwd reads for
+	# other users, so skip entries whose ownership proves they are foreign.
+	# Same-UID metadata such as comm, cmdline, parent, or process start time
+	# cannot prove that an unreadable process is unrelated to this worktree.
+	# Preserve degraded visibility rather than adding daemon exemptions.
+	[[ -L "$cwd_link" || -e "$cwd_link" ]] || return 1
+	proc_dir="${cwd_link%/cwd}"
+	_worktree_proc_entry_is_zombie "$proc_dir" && return 1
+	_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && return 1
+	# The optional inspector is governed separately from evidence collection.
+	if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
+		if [[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]]; then
+			printf '%s\n' "$cwd_target"
+			return 0
+		fi
+	fi
+	[[ -L "$cwd_link" || -e "$cwd_link" ]] || return 1
+	return 2
+}
+
 _capture_worktree_proc_cwds() {
 	local proc_root="$1"
 	local cwd_link=""
-	local cwd_target=""
 	local captured_count=0
 	local current_uid=""
 	local visibility_degraded=0
-	local proc_dir=""
-	local cwd_map="" map_line="" map_kind="" map_pid="" map_target=""
+	local rc=0
+	local cwd_map="" map_kind="" map_pid="" map_target=""
 	local -a cwd_links=()
 
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
@@ -55,33 +89,12 @@ _capture_worktree_proc_cwds() {
 	fi
 
 	for cwd_link in ${cwd_links[@]+"${cwd_links[@]}"}; do
-		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
-			# Vanished processes are harmless. Linux commonly denies cwd reads for
-			# other users, so skip entries whose ownership proves they are foreign.
-			# Same-UID metadata such as comm, cmdline, parent, or process start time
-			# cannot prove that an unreadable process is unrelated to this worktree.
-			# Preserve degraded visibility rather than adding daemon exemptions.
-			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-			proc_dir="${cwd_link%/cwd}"
-			_worktree_proc_entry_is_zombie "$proc_dir" && continue
-			_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && continue
-			# The optional inspector is governed separately from evidence collection.
-			if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
-				if [[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]]; then
-					printf '%s\n' "$cwd_target"
-					captured_count=$((captured_count + 1))
-					continue
-				fi
-			fi
-			[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
-			visibility_degraded=1
-			continue
-		fi
-		if [[ -n "$cwd_target" ]]; then
-			printf '%s\n' "$cwd_target"
-			captured_count=$((captured_count + 1))
-		fi
+		rc=0
+		_worktree_read_proc_cwd_link "$proc_root" "$cwd_link" "$current_uid" || rc=$?
+		case "$rc" in
+		0) captured_count=$((captured_count + 1)) ;;
+		2) visibility_degraded=1 ;;
+		esac
 	done
 	if [[ "$visibility_degraded" -eq 1 ]]; then
 		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
