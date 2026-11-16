@@ -33,7 +33,7 @@ setup_test_env() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-	printf '[{"number":1,"title":"ordinary candidate","author":{"login":"reporter"},"labels":[{"name":"auto-dispatch"}]},{"number":2,"title":"Dependency Dashboard","author":{"login":"renovate[bot]"},"labels":[{"name":"auto-dispatch"}]},{"number":3,"title":"chore(deps): update jq","author":{"login":"renovate[bot]"},"labels":[{"name":"auto-dispatch"}]},{"number":4,"title":"Dependency Dashboard help","author":{"login":"reporter"},"labels":[{"name":"auto-dispatch"}]}]\n[]\n'
+	printf '[{"number":1,"title":"ordinary candidate","author":{"login":"reporter"},"labels":[{"name":"auto-dispatch"}]},{"number":2,"title":"Dependency Dashboard","author":{"is_bot":true,"login":"app/renovate"},"labels":[{"name":"auto-dispatch"}]},{"number":3,"title":"chore(deps): update jq","author":{"is_bot":true,"login":"app/renovate"},"labels":[{"name":"auto-dispatch"}]},{"number":4,"title":"Dependency Dashboard help","author":{"login":"reporter"},"labels":[{"name":"auto-dispatch"}]}]\n[]\n'
 	exit 0
 fi
 
