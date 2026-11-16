@@ -76,13 +76,12 @@ _capture_worktree_proc_cwds() {
 
 	if cwd_map=$(_worktree_proc_cwd_map "$proc_root"); then
 		while IFS=$'\t' read -r map_kind map_pid map_target; do
-			case "$map_kind" in
-			R)
+			if [[ "$map_kind" == R ]]; then
 				printf '%s\n' "$map_target"
 				captured_count=$((captured_count + 1))
-				;;
-			F) cwd_links+=("$proc_root/$map_pid/cwd") ;;
-			esac
+			elif [[ "$map_kind" == F ]]; then
+				cwd_links+=("$proc_root/$map_pid/cwd")
+			fi
 		done <<<"$cwd_map"
 	else
 		cwd_links=("$proc_root"/[0-9]*/cwd)
