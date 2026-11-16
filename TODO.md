@@ -2177,7 +2177,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19068 fix(recovery): a changed recovery policy ends human_decision suppression #interactive #bug #framework tier:standard assignee:marcusquinn ref:GH#38654 pr:#38656 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19068-brief.md] completed:2026-11-16
 
-- [ ] t19069 fix(setup): a service PATH generator change regenerates installed scheduler plists #interactive #bug #framework tier:simple assignee:marcusquinn ref:GH#38661 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19069-brief.md]
+- [x] t19069 fix(setup): a service PATH generator change regenerates installed scheduler plists #interactive #bug #framework tier:simple assignee:marcusquinn ref:GH#38661 pr:#38663 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19069-brief.md] completed:2026-11-16
+
+- [ ] t19071 fix(pulse): fix-the-fixer detector caches verdicts so hourly runs progress within the 60s stage bound #interactive #bug #framework tier:standard assignee:marcusquinn ref:GH#38673 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19071-brief.md]
 
 - [x] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619 pr:#38628 completed:2026-11-16
 
