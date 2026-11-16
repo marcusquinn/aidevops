@@ -152,6 +152,11 @@ _invoke_opencode_discard_failed_continuation() {
 
 _invoke_opencode_export_isolation() {
 	[[ -n "$isolated_data_dir" ]] || return 0
+	# GH#38587: trusted workers keep uv tools/Python in the user's locations;
+	# untrusted public triage stays fully inside its isolated data root.
+	if [[ "$public_triage" -ne 1 ]] && command -v aidevops_export_user_tool_dirs >/dev/null 2>&1; then
+		aidevops_export_user_tool_dirs
+	fi
 	export XDG_DATA_HOME="$isolated_data_dir"
 	if [[ "$public_triage" -eq 1 ]]; then
 		isolated_home_dir="${isolated_data_dir}/home"

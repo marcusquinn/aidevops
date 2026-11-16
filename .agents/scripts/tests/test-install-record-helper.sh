@@ -125,7 +125,9 @@ ensure_mkcert; ensure_mkcert
     executable('npm', 'print(' + repr(str(root / 'npm')) + ')\n')
     (root / 'npm/bin').mkdir(parents=True)
     (root / 'npm/bin/npm-fixture').write_text('fixture')
-    executable('dpkg-query', 'print("above\\t2.0\\nactive\\t2.0")\n')
+    (root / 'npm/bin/npm-fixture').chmod(0o700)
+    # Real dpkg-query output: status abbreviation first; rc = removed, not purged.
+    executable('dpkg-query', 'print("ii \\tabove\\t2.0\\nii \\tactive\\t2.0\\nrc \\tremoved\\t3.0")\n')
     policy = '''above:
   Installed: 2.0
   Candidate: 2.0
@@ -141,15 +143,22 @@ active:
  *** 2.0 500
         500 https://distro.invalid stable/main amd64 Packages
         100 /var/lib/dpkg/status
+removed:
+  Installed: (none)
+  Candidate: 1.0
+  Version table:
+     1.0 500
+        500 https://distro.invalid stable/main amd64 Packages
 '''
     executable('apt-cache', 'print(' + repr(policy) + ')\n')
     executable('dpkg', 'raise SystemExit(0)\n')
     live_queries = dict(env)
     del live_queries['AIDEVOPS_INSTALL_SCAN_ROOT']
     output = run(['bash', str(helper), 'report'], environment=live_queries)
-    assert 'npm-fixture' in output and '- above 2.0' in output
-    assert '- active 2.0' not in output
-    print('PASS: npm prefix discovery and disabled-source APT version warning')
+    assert 'npm-fixture' in output and '- above 2.0' in output, output
+    assert '- active 2.0' not in output, output
+    assert '- removed' not in output and '(none)' not in output, output
+    print('PASS: npm prefix discovery, disabled-source APT warning, removed packages skipped')
 
     # A translated parent locale must not change the labels parsed by the report.
     executable('apt-cache', 'import os\npolicy = ' + repr(policy) + '\n'

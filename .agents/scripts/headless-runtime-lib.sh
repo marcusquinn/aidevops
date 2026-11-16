@@ -925,6 +925,9 @@ build_sandbox_passthrough_csv() {
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
 		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*) ;;
+		# GH#38587: user uv tool/Python dirs exported for trusted workers;
+		# triage and private workloads return above and never receive them.
+		UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_PYTHON_INSTALL_DIR | UV_PYTHON_BIN_DIR) ;;
 		*) continue ;;
 		esac
 		if [[ "$seen_names" == *" ${name} "* ]]; then

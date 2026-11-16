@@ -23,7 +23,9 @@ _install_record_cli() {
 		printf 'Install records require Python 3.\n' >&2
 		return 1
 	fi
-	python3 -c "$_AIDEVOPS_INSTALL_RECORD_PROGRAM" "$@"
+	local checker="${BASH_SOURCE[0]%/*}/tool-version-check.sh"
+	AIDEVOPS_TOOL_VERSION_CHECK="${AIDEVOPS_TOOL_VERSION_CHECK:-$checker}" \
+		python3 -c "$_AIDEVOPS_INSTALL_RECORD_PROGRAM" "$@"
 	return $?
 }
 
@@ -46,6 +48,9 @@ NAME, METHOD, PATH, REASON, UPDATE, INSTALLER, DATE = (
     "name", "method", "path", "reason", "update", "installer", "date"
 )
 FIELDS = (NAME, METHOD, PATH, REASON, UPDATE, INSTALLER)
+# Scan directory kinds: plain bin, global npm bin, global npm node_modules.
+BIN, NPM_BIN, NPM_LIB = "bin", "npm-bin", "npm-lib"
+BIN_KINDS = (BIN, NPM_BIN)
 
 
 def command(args):
@@ -135,8 +140,11 @@ def shebang_warning(path):
 def apt_report():
     if not shutil.which("dpkg-query") or not shutil.which("apt-cache"):
         return
-    installed = command(["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n"])
-    packages = [row.split("\t")[0] for row in installed.splitlines() if "\t" in row]
+    # GH#38587: removed-but-not-purged packages (rc) are still listed by
+    # dpkg-query; keep only installed rows (ii, or hi when held).
+    installed = command(["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${binary:Package}\t${Version}\n"])
+    packages = [row.split("\t")[1] for row in installed.splitlines()
+                if row.count("\t") >= 2 and row.split("\t")[0].strip() in ("ii", "hi")]
     print("\nAPT packages above enabled-source versions (possible disabled source):")
     found = False
     # Batch queries rather than starting a process for every installed package.
@@ -145,7 +153,7 @@ def apt_report():
         package, version, current, available, sourced = "", "", "", [], False
 
         def flush():
-            if version and available and not sourced and all(
+            if version not in ("", "(none)") and available and not sourced and all(
                 subprocess.run(["dpkg", "--compare-versions", version, "gt", v],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
                 for v in available
@@ -174,6 +182,75 @@ def apt_report():
         print("No above-source versions detected (or package policy unavailable).")
 
 
+def resolved(path):
+    try:
+        return os.path.realpath(str(path))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def managed_inventory():
+    """Tools `aidevops update` maintains, from tool-version-check.sh --inventory.
+
+    GH#38587: one source of truth with the updater; network-free, no version calls.
+    """
+    rows = []
+    checker = os.environ.get("AIDEVOPS_TOOL_VERSION_CHECK", "")
+    if checker and os.path.isfile(checker):
+        for line in command(["bash", checker, "--inventory"]).splitlines():
+            fields = line.split("\t")
+            if len(fields) == 4 and all(fields):
+                rows.append(fields)
+    return rows
+
+
+def uv_tools(lines):
+    """Map uv tool package lines to their exported executable names."""
+    tools, current = [], None
+    for line in lines:
+        if line and not line[0].isspace() and not line.startswith("-"):
+            current = (line, [])
+            tools.append(current)
+        elif current and line.strip().startswith("- "):
+            current[1].append(line.strip()[2:].strip())
+    return tools
+
+
+def npm_packages(directory):
+    """Package directories under node_modules, expanding @scope folders."""
+    packages = []
+    for path in sorted(directory.iterdir()):
+        if path.name.startswith("@") and path.is_dir() and not path.is_symlink():
+            packages.extend(sorted(p for p in path.iterdir() if p.is_dir()))
+        elif path.is_dir() and not path.name.startswith("."):
+            packages.append(path)
+    return packages
+
+
+def directory_entries(directory, kind):
+    """Install candidates: executables/symlinks in bin dirs, non-empty dirs elsewhere."""
+    if kind == NPM_LIB:
+        return npm_packages(directory)
+    entries = []
+    for path in sorted(directory.iterdir()):
+        if kind == NPM_BIN and path.is_symlink() and path.exists():
+            # A shared prefix bin (e.g. Homebrew's) also links other managers'
+            # payloads; only links staying inside this prefix are npm's.
+            owned = (resolved(directory) + os.sep,
+                     resolved(directory.parent / "lib/node_modules") + os.sep)
+            if not resolved(path).startswith(owned):
+                continue
+        if kind in BIN_KINDS:
+            if path.is_symlink() or (path.is_file() and os.access(str(path), os.X_OK)):
+                entries.append(path)
+        elif path.is_dir() and not path.is_symlink():
+            if any(path.iterdir()):
+                entries.append(path)
+        elif path.is_symlink() or path.is_file():
+            entries.append(path)
+    return entries
+
+
 def report(ledger):
     records = read_records(ledger)
     print("Recorded installs:")
@@ -188,39 +265,95 @@ def report(ledger):
     if not records:
         print("None recorded yet.")
     root = Path(os.environ.get("AIDEVOPS_INSTALL_SCAN_ROOT", str(Path.home())))
-    directories = [root / p for p in (".local/bin", ".bun/bin", ".aidevops/runtimes", ".aidevops/tools")]
+    directories = [(root / ".local/bin", BIN), (root / ".bun/bin", BIN),
+                   (root / ".aidevops/runtimes", "dir"), (root / ".aidevops/tools", "dir")]
     isolated = "AIDEVOPS_INSTALL_SCAN_ROOT" in os.environ
     uv_items = []
+    uv_bin_dirs = set()
+    npm_lib = None
+    managed_paths, managed_packages, recorded_packages = set(), set(), set()
     if not isolated:
+        # Discover manager bin dirs first so managed tools outside PATH resolve.
         prefix = command(["npm", "prefix", "-g"]).strip()
         if prefix and Path(prefix).is_absolute():
-            directories.extend([Path(prefix) / "bin", Path(prefix) / "lib/node_modules"])
+            npm_lib = Path(prefix) / "lib/node_modules"
+            directories.extend([(Path(prefix) / "bin", NPM_BIN), (npm_lib, NPM_LIB)])
+            # A recorded npm executable resolves inside its package directory.
+            lib_real = resolved(npm_lib) + os.sep
+            for path in known:
+                real = resolved(path)
+                if real.startswith(lib_real):
+                    parts = Path(real[len(lib_real):]).parts
+                    recorded_packages.add("/".join(parts[:2] if parts[0].startswith("@") else parts[:1]))
         uv_items = command(["uv", "tool", "list"]).splitlines()
         uv_bin = command(["uv", "tool", "dir", "--bin"]).strip()
         if uv_bin and Path(uv_bin).is_absolute():
-            directories.append(Path(uv_bin))
+            directories.append((Path(uv_bin), BIN))
+            uv_bin_dirs.add(resolved(uv_bin))
+        print("\nManaged by aidevops update:")
+        listed = False
+        launcher = shutil.which("aidevops")
+        if launcher:
+            print("- aidevops (framework): " + display(launcher))
+            managed_paths.update({launcher, resolved(launcher)})
+            listed = True
+        for name, category, cli, package in managed_inventory():
+            managed_packages.add(package)
+            location = shutil.which(cli)
+            if not location:
+                # User bin dirs may be absent from a restricted PATH.
+                location = next((str(d / cli) for d, kind in directories
+                                 if kind in BIN_KINDS and os.access(str(d / cli), os.X_OK)), None)
+            if not location:
+                continue
+            # The updater rejects the Cloud Foundry `cf` ("cf version 8.x");
+            # it stays an untracked install, not Cloudflare's managed CLI.
+            if cli == "cf" and command([location, "--version"]).startswith("cf version "):
+                continue
+            managed_paths.update({location, resolved(location)})
+            print("- " + display(name) + " (" + display(category) + "): " + display(location))
+            listed = True
+        if not listed:
+            print("None found on PATH.")
+    tools = uv_tools(uv_items)
+    recorded_names = {r[NAME] for r in records}
+    uv_executables = {exe for _, exes in tools for exe in exes}
     print("\nKnown untracked installs (origin and update path unknown):")
-    seen = set(known)
-    for directory in directories:
+    seen = set(known) | managed_paths
+    seen_real = {resolved(p) for p in seen}
+    for directory, kind in directories:
         if not directory.is_dir():
             continue
         try:
-            children = sorted(directory.iterdir())
+            children = directory_entries(directory, kind)
         except OSError:
             print("- Cannot read " + display(directory))
             continue
         for path in children:
-            if str(path) in seen:
+            real = resolved(path)
+            if str(path) in seen or real in seen_real:
                 continue
+            # uv tools print once, as their package line below.
+            if kind == BIN and path.name in uv_executables and resolved(directory) in uv_bin_dirs:
+                continue
+            # npm bin links print once, as their package directory.
+            if npm_lib and kind in BIN_KINDS and real.startswith(resolved(npm_lib) + os.sep):
+                continue
+            if kind == NPM_LIB:
+                package = str(path.relative_to(directory))
+                if package in managed_packages or package in recorded_packages:
+                    continue
             seen.add(str(path))
+            seen_real.add(real)
             warning = shebang_warning(path) if path.is_file() else ""
             if path.is_symlink() and not path.exists():
                 warning = " [broken symlink]"
             print("- " + display(path) + warning)
     # uv lists package names and their exported executables; paths above identify
     # tracked tools even when the distribution and executable names differ.
-    for line in uv_items:
-        if line and not line[0].isspace() and line.split()[0] not in {r[NAME] for r in records}:
+    for line, _ in tools:
+        name = line.split()[0]
+        if name not in recorded_names and name not in managed_packages:
             print("- uv tool: " + display(line))
     if not isolated:
         apt_report()
