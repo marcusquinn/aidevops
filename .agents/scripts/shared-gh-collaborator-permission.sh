@@ -543,46 +543,67 @@ _gh_collaborator_permission_parse_response() {
 #       $6=etag key, $7=same-route retry used
 # Returns: 0=stored verdict emitted, else resolve_failure status.
 _gh_collaborator_permission_resolve_not_modified() {
-	local route="$1"
-	local repo="$2"
-	local login="$3"
-	local out_var="$4"
-	local perm="$5"
-	local key="$6"
-	local retry_used="$7"
+	# Prefixed locals: printf -v writes the caller's output name through bash
+	# dynamic scope, so a plain local (e.g. perm) would swallow the verdict.
+	local _nm_route="$1"
+	local _nm_repo="$2"
+	local _nm_login="$3"
+	local _nm_out_var="$4"
+	local _nm_perm="$5"
+	local _nm_key="$6"
+	local _nm_retry_used="$7"
 
 	AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="304"
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
-	case "$perm" in
+	case "$_nm_perm" in
 	admin | maintain | write | triage | read | none)
-		_gh_collaborator_permission_emit_ok "$route" "$out_var" "$perm"
+		_gh_collaborator_permission_emit_ok "$_nm_route" "$_nm_out_var" "$_nm_perm"
 		return 0
 		;;
 	esac
-	_gh_collaborator_etag_forget "$key"
-	_gh_collaborator_permission_resolve_failure "$route" "$repo" "$login" "$out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$retry_used"
+	_gh_collaborator_etag_forget "$_nm_key"
+	_gh_collaborator_permission_resolve_failure "$_nm_route" "$_nm_repo" "$_nm_login" "$_nm_out_var" "$_AIDEVOPS_GH_COLLAB_UNEXPECTED_HTTP_REASON" "$_nm_retry_used"
 	return $?
 }
 
 # Emit a confirmed permission verdict and its success reason.
 # Args: $1=route, $2=optional output variable, $3=permission
 _gh_collaborator_permission_emit_ok() {
-	local route="$1"
-	local out_var="${2:-}"
-	local perm="$3"
+	local _eo_route="$1"
+	local _eo_out_var="${2:-}"
+	local _eo_perm="$3"
 
-	if [[ "$route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
+	if [[ "$_eo_route" == "$_AIDEVOPS_GH_COLLAB_GH_FALLBACK_ROUTE" ]]; then
 		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="gh-fallback-ok"
 	else
 		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
 	fi
 	export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
-	if [[ -n "$out_var" ]]; then
-		printf -v "$out_var" '%s' "$perm"
+	if [[ -n "$_eo_out_var" ]]; then
+		printf -v "$_eo_out_var" '%s' "$_eo_perm"
 	else
-		printf '%s\n' "$perm"
+		printf '%s\n' "$_eo_perm"
 	fi
 	return 0
+}
+
+# GH#38562: `gh api -i` on the REST route prints a 304's status line and
+# headers to stdout; a bare gh prints nothing and reports it on stderr. Either
+# shape is a 304 only for a sent ETag, a failed transport and an empty body.
+# Args: $1=transport rc, $2=sent ETag, $3=parsed body, $4=parsed HTTP status,
+#       $5=1 when stderr reported "gh: HTTP 304"
+# Returns: 0=not modified, 1=otherwise.
+_gh_collaborator_permission_is_not_modified() {
+	local _inm_rc="$1"
+	local _inm_etag="$2"
+	local _inm_body="$3"
+	local _inm_status="$4"
+	local _inm_stderr_304="$5"
+
+	[[ "$_inm_rc" -ne 0 && -n "$_inm_etag" && -z "${_inm_body//[[:space:]]/}" ]] || return 1
+	[[ "$_inm_status" == "304" ]] && return 0
+	[[ -z "$_inm_status" && "$_inm_stderr_304" -eq 1 ]] && return 0
+	return 1
 }
 
 _gh_collaborator_permission_lookup_uncached() {
@@ -597,7 +618,7 @@ _gh_collaborator_permission_lookup_uncached() {
 	# uses dynamic scope, so a local named permission_value would shadow the
 	# common caller output variable and silently return an empty permission.
 	local resolved_permission=""
-	local etag_key="" stored_etag="" stored_perm="" err_file="" response_etag="" not_modified=0
+	local etag_key="" stored_etag="" stored_perm="" err_file="" response_etag="" not_modified=0 stderr_not_modified=0
 
 	AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
 	AIDEVOPS_GH_COLLAB_PERMISSION_REASON="$_AIDEVOPS_GH_PERMISSION_UNKNOWN_VALUE"
@@ -623,11 +644,11 @@ _gh_collaborator_permission_lookup_uncached() {
 	api_response=$(_gh_collaborator_permission_request "$auth_route" "$perm_url" "$stored_etag" 2>"${err_file:-/dev/null}")
 	rc=$?
 	if [[ -n "$err_file" ]]; then
-		[[ "$rc" -ne 0 && -z "$api_response" && -n "$stored_etag" ]] &&
-			grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file" 2>/dev/null && not_modified=1
+		grep -qE '^gh: HTTP 304([[:space:]]|$)' "$err_file" 2>/dev/null && stderr_not_modified=1
 		rm -f "$err_file" 2>/dev/null || true
 	fi
 	_gh_collaborator_permission_parse_response "$api_response" http_status body response_etag
+	_gh_collaborator_permission_is_not_modified "$rc" "$stored_etag" "$body" "$http_status" "$stderr_not_modified" && not_modified=1
 
 	[[ -n "$http_status" ]] && AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$http_status"
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
