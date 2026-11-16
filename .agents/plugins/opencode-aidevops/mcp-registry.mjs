@@ -3,10 +3,10 @@
 // Extracted from index.mjs (t1914) — MCP registration logic.
 // ---------------------------------------------------------------------------
 
-import { accessSync, constants, readFileSync } from "fs";
+import { accessSync, constants, readFileSync, realpathSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { homedir, platform } from "os";
-import { delimiter, isAbsolute, join, relative, resolve } from "path";
+import { basename, delimiter, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const IS_MACOS = platform() === "darwin";
@@ -37,8 +37,10 @@ const OPENCODE_BROWSE_HELPER = fileURLToPath(
 );
 
 /**
- * Resolve the browse CLI the same way opencode-browse-helper.sh does: the
- * installer's bin dir first, then a bare name for the PATH lookup.
+ * Resolve the browse CLI like opencode-browse-helper.sh: the installer's bin
+ * dir first, then PATH. Debian/Ubuntu xdg-utils installs /usr/bin/browse as an
+ * xdg-open alias (GH#38585); treat that as missing. The helper also checks
+ * `browse --version`, which this config hook must not spawn.
  * @returns {string}
  */
 function opencodeBrowseBinary() {
@@ -49,8 +51,15 @@ function opencodeBrowseBinary() {
     accessSync(candidate, constants.X_OK);
     return candidate;
   } catch {
-    return "browse";
+    // Not in the installer location; fall back to a non-alias PATH entry.
   }
+  const onPath = findExecutable("browse");
+  try {
+    if (onPath && basename(realpathSync(onPath)) !== "xdg-open") return onPath;
+  } catch {
+    // Unresolvable PATH entry: treat as missing.
+  }
+  return candidate;
 }
 
 const MCP_ROOTS_FILTER = fileURLToPath(

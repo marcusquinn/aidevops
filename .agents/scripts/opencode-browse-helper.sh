@@ -67,7 +67,20 @@ EOF
 	return 0
 }
 
-# Resolve the browse binary: installer location first, then PATH.
+# True when $1 is the OpenCode browse CLI rather than another command named
+# browse (Debian/Ubuntu xdg-utils installs /usr/bin/browse -> xdg-open, GH#38585).
+# The CLI prints a bare semver for --version; xdg-open prints "xdg-open <ver>".
+is_browse_cli() {
+	local candidate="$1"
+	local version=""
+	version="$("$candidate" --version 2>/dev/null </dev/null)" || return 1
+	version="${version%%$'\n'*}"
+	[[ "$version" =~ ^(browse[[:space:]]+)?v?[0-9]+\.[0-9]+\.[0-9]+ ]] && return 0
+	return 1
+}
+
+# Resolve the browse binary: installer location first, then a verified PATH
+# entry (npm installs live outside the installer's bin dir).
 browse_bin() {
 	local bin_dir="${XDG_BIN_HOME:-}"
 	[[ "$bin_dir" == /* ]] || bin_dir="${HOME}/.local/bin"
@@ -75,11 +88,11 @@ browse_bin() {
 		printf '%s\n' "${bin_dir}/browse"
 		return 0
 	fi
-	if command -v browse >/dev/null 2>&1; then
-		command -v browse
-		return 0
-	fi
-	return 1
+	local path_bin=""
+	path_bin="$(command -v browse 2>/dev/null)" || return 1
+	is_browse_cli "$path_bin" || return 1
+	printf '%s\n' "$path_bin"
+	return 0
 }
 
 # True inside headless/worker runtimes (mirrors the plugin's
