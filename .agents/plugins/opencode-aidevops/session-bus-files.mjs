@@ -182,6 +182,13 @@ export function pruneBusFiles(root, now = Date.now()) {
     const stale = !Number.isFinite(setting?.updated_ms) || setting.updated_ms < cutoff;
     if (!readJson(join(presenceDir(root), name)) && stale) rmSync(file, { force: true });
   }
+  // t19047: a keepalive opt-in ends with its expiry (max 72 h) or its session.
+  for (const name of listDir(join(root, "keepalive")).filter((file) => file.endsWith(".json"))) {
+    const file = join(root, "keepalive", name);
+    const setting = readJson(file);
+    const expired = !Number.isFinite(setting?.expires_at) || setting.expires_at <= now;
+    if (expired && !readJson(join(presenceDir(root), name))) rmSync(file, { force: true });
+  }
   pruneReleaseWatches(root, now, cutoff);
   return removed.count;
 }

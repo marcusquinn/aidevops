@@ -25,6 +25,7 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | `notify-when-idle` | `to` | One idle notice when a busy session next goes idle. |
 | `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
+| `keepalive` | `text: "on"` or `"off"`, optional `hours` (1–72, default 24) | Opt this caller's root session in or out of idle wakes; see [Mission keepalive](#mission-keepalive-t19047). `to` is rejected. |
 
 `to` accepts a session ID, `@<id>` (the last 6 session-ID characters), handle, `#<issue>`, `PR#<n>`, repo name, worktree path or `channel:<app>:<channel>` (a binding; see below). Exact matches win; if several live sessions match, the call fails and lists the candidates. Sending to yourself is rejected. The sender is always the caller's root session, taken from the tool context, never from arguments.
 
@@ -46,6 +47,8 @@ Use `ask` with `wait_seconds` when a subagent (or any tool call) needs one fact 
 ```bash
 aidevops sessions list [--all] [--json] [--redact] # redact omits title, repo, branch, worktree and directory
 aidevops sessions chat-wake <target> on      # default off; use off to revoke
+aidevops sessions keepalive <target> on|off [--hours N]  # mission keepalive, default off; see Mission keepalive
+aidevops sessions keepalive status [--json]  # opted-in sessions: idle time, next wake, skip reason; sends nothing
 aidevops sessions show '#123'
 aidevops sessions who '#123' src/a.sh [--repo owner/repo] [--json]  # all live sessions on any target; no match: empty stdout, note on stderr
 aidevops sessions send <target> "text"        # or --text-file <path>, or - for stdin
@@ -219,6 +222,34 @@ next run. The sender rate limit (10 per minute) bounds bursts.
   workers in `status` show that it runs.
 - Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
 
+## Mission keepalive (t19047)
+
+An owner who makes an interactive session a long-running unattended mission has
+that session run `keepalive on` for itself (tool action, or
+`aidevops sessions keepalive <target> on [--hours N]`). Default off; expires in
+24 h (`--hours` 1–72). Local interactive sessions only: workers, headless,
+read-only and chat-driven sessions are rejected.
+
+- **Relay pass:** each `worker-bus-relay-helper.sh relay` run (every 2 minutes)
+  calls `aidevops sessions keepalive sweep`. For each opted-in session that is
+  `idle` for at least `idle_threshold_s` (default 600), not expired, not waiting
+  on a permission request and under the 6/h wake budget, it sends one `ask`
+  from `cli:pulse` with fixed text that adds no instructions or authority. One
+  wake per idle period; it makes no GitHub calls.
+- **Backoff:** the session plugin counts the root session's tool calls (the bus
+  tool excluded). A wake turn with none doubles `idle_threshold_s` (cap 4 h) and
+  adds to `consecutive_no_progress`; a turn with tool calls resets both. At 3
+  in a row `on` becomes false and the session gets one `info` notice.
+- **Dry run:** `keepalive status` (or `sweep --dry-run`) lists each opted-in
+  session with idle time, next eligible wake and skip reason (`busy`,
+  `permission-pending`, `below-threshold`, `wake-pending`, `wake-budget`,
+  `expired`, `not-live`, `not-wakeable`). `worker-bus-relay-helper.sh status`
+  prints it too.
+- **State:** `keepalive/<session>.json` holds `on`, `set_at`, `expires_at`,
+  `idle_threshold_s`, `base_idle_threshold_s`, `consecutive_no_progress`,
+  `last_wake_ms` and `wake_times`. Expired opt-ins are pruned once the session
+  is gone.
+
 ## Overlap visibility (t18895)
 
 Interactive sessions and pulse workers can start on the same issue without
@@ -302,6 +333,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `subs/<session>/` | Idle-notice subscriptions. |
 | `outbox/<app>/` | Replies for senders without a session (`cli`, chat gateways). |
 | `chat-wake/<session>.json` | Atomic persistent owner-chat wake setting, default off; pruned after retention when presence is absent. |
+| `keepalive/<session>.json` | Mission keepalive opt-in (t19047), default off; pruned after expiry once presence is gone. |
 | `overlaps/<hash>.json` | One marker per sent overlap notice (sender, recipient, shared key); pruned after 7 days. |
 | `release-watch/<owner@repo>/<session>.json` | Release-lane watch per root session, keyed by repo (unlike `subs/`); removed on expiry (7 days) or when presence is gone. `notices/` holds sent-once markers, pruned after 7 days. |
 | `bindings/<app>/<channel>.json` | Chat channel → session binding (t18892). Pruned when the session has had no presence, no pending message and no delivered message for the retention period; a rebind that races the prune is kept. |

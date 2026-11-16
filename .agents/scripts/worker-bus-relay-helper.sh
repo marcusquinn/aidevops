@@ -425,6 +425,22 @@ _relay_load_budget_gate() {
 	return 0
 }
 
+# t19047: mission keepalive. One local ask from cli:pulse per opted-in idle
+# session; the Node pass decides eligibility (threshold, expiry, permission,
+# wake budget) and makes no GitHub calls. Bounded by RELAY_CALL_TIMEOUT.
+_relay_keepalive() {
+	local output="$1"
+	local line
+	_relay_bus keepalive sweep >"$output" 2>/dev/null || {
+		_relay_log "keepalive sweep failed or timed out"
+		return 0
+	}
+	while IFS= read -r line; do
+		[[ "$line" == *" woke" ]] && _relay_log "keepalive: ${line}"
+	done <"$output"
+	return 0
+}
+
 cmd_relay() {
 	[[ "${AIDEVOPS_WORKER_BUS_RELAY:-1}" != "0" ]] || return 0
 	command -v jq >/dev/null 2>&1 || return 0
@@ -439,6 +455,7 @@ cmd_relay() {
 	local work now repo
 	work=$(mktemp -d) || return 0
 	now=$(date +%s)
+	_relay_keepalive "${work}/keepalive.txt" || true
 	if _relay_live_workers "${work}/workers.json"; then
 		_relay_prune_state "${work}/workers.json"
 		_relay_due_workers "${work}/workers.json" "$now" "${work}/due.jsonl"
@@ -462,6 +479,8 @@ cmd_status() {
 		jq -r '"\(.session_id) \(.repo)#\(.issue) checked=\(.checked) comments_seen=\(.comments_seen) last_comment=\(.last_comment_id) closed_sent=\(.closed_sent) labels_sent=\(.labels_sent | join(","))"' "$file" 2>/dev/null || true
 	done
 	[[ "$found" -eq 1 ]] || printf 'No tracked workers.\n'
+	printf 'Mission keepalive (dry run, nothing sent):\n'
+	_relay_bus keepalive status 2>/dev/null || printf 'unavailable\n'
 	return 0
 }
 
