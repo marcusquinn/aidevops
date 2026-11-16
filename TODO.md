@@ -2189,6 +2189,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19064 perf(pulse): let an admitted dispatch round finish under a bounded cooperative-drain grace #auto-dispatch #performance tier:thinking assignee:marcusquinn ref:GH#38633 pr:#38635 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19064-brief.md] completed:2026-11-16
 
+- [ ] t19072 fix(logs): honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh #auto-dispatch #bug #interactive #priority:low tier:simple ref:GH#38695 logged:2026-11-16 -> [todo/tasks/t19072-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
