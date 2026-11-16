@@ -440,14 +440,16 @@ _dispatch_repo_enumeration_budget_stored() {
 # Args: repo slug, base budget seconds. Stdout: this repository's budget.
 _dispatch_repo_enumeration_budget() {
 	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file="" limit_file="" limit="" successes=""
+	local marker=""
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
 	read -r stored mode <<<"$(_dispatch_repo_enumeration_budget_stored "$file")"
 	# GH#38548: admission and execution must agree on the reduced-work budget;
 	# otherwise the census could defer a retry using an obsolete 120s estimate.
+	# GH#38690: a retained snapshot (floor or fixed cost) may escalate again.
 	limit_file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
 	if [[ -f "$limit_file" && ! -L "$limit_file" ]]; then
-		read -r limit successes <"$limit_file" 2>/dev/null || true
-		[[ ! "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || mode=""
+		read -r limit successes marker <"$limit_file" 2>/dev/null || true
+		[[ ! "$limit" =~ ^[1-9][0-9]{0,8}$ || "$marker" == retained ]] || mode=""
 	fi
 	if ((stored > base)); then
 		if [[ "$mode" == escalated ]]; then
@@ -685,15 +687,21 @@ _dispatch_record_repo_enumeration_cost() {
 	return 0
 }
 
-# GH#38690: succeeds when fresh completed scans show the cost does not depend
-# on the snapshot limit: a scan at no more than half another scan's limit took
-# at least three quarters of its time. Halving such a repository's snapshot
-# cannot end its timeouts. Samples older than
+# GH#38690: succeeds when fresh completed scans show that a timeout at this
+# limit is not caused by the snapshot size, so halving it cannot end the
+# timeouts. Evidence is a completed scan at this limit or larger that either
+# took under three quarters of the timed-out budget (the timeout was variance),
+# or took a measurable cost (>= 4s) that a scan at half its limit or less
+# matched within a quarter (fixed cost). Samples older than
 # PULSE_REPO_ENUMERATION_COST_MAX_AGE_S (default 86400) are ignored.
+# Args: repo slug, timed-out limit, budget seconds used by the timed-out scan.
 _dispatch_repo_enumeration_cost_is_fixed() {
-	local repo_slug="$1" file="" now=0 max_age="${PULSE_REPO_ENUMERATION_COST_MAX_AGE_S:-86400}"
+	local repo_slug="$1" limit="$2" used="$3" file="" now=0 max_age="${PULSE_REPO_ENUMERATION_COST_MAX_AGE_S:-86400}"
 	local sample_limit="" sample_cost="" sample_at="" i=0 j=0
 	local -a limits=() costs=()
+	[[ "$limit" =~ ^[1-9][0-9]{0,8}$ && "$used" =~ ^[0-9]{1,9}$ ]] || return 1
+	limit=$((10#$limit))
+	used=$((10#$used))
 	[[ "$max_age" =~ ^[0-9]{1,7}$ ]] || max_age=86400
 	max_age=$((10#$max_age))
 	file=$(_dispatch_repo_enumeration_cost_file "$repo_slug")
@@ -707,6 +715,9 @@ _dispatch_repo_enumeration_cost_is_fixed() {
 		costs+=("$((10#$sample_cost))")
 	done <"$file"
 	for ((i = 0; i < ${#limits[@]}; i++)); do
+		((limits[i] >= limit)) || continue
+		((costs[i] * 4 >= used * 3)) || return 0
+		((costs[i] >= 4)) || continue
 		for ((j = 0; j < ${#limits[@]}; j++)); do
 			if ((limits[j] * 2 <= limits[i] && costs[j] * 4 >= costs[i] * 3)); then
 				return 0
@@ -716,21 +727,45 @@ _dispatch_repo_enumeration_cost_is_fixed() {
 	return 1
 }
 
+# GH#38690: a snapshot kept at the floor or for fixed cost is not newly reduced
+# work, so its limit file carries a "retained" marker that lets the budget
+# escalate again (_dispatch_repo_enumeration_budget). Only an existing reduced
+# limit is marked; an unreduced repository has no limit file to mark.
+_dispatch_mark_repo_enumeration_limit_retained() {
+	local repo_slug="$1" limit="$2" file=""
+	local stored=""
+	local successes=""
+	local marker=""
+	local temporary=""
+	file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	[[ -f "$file" && ! -L "$file" ]] || return 0
+	read -r stored successes marker <"$file" 2>/dev/null || true
+	[[ "$marker" != retained || "$stored" != "$limit" ]] || return 0
+	[[ "$successes" =~ ^[0-7]$ ]] || successes=0
+	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	printf '%s %s retained\n' "$limit" "$successes" >"$temporary"
+	mv -f "$temporary" "$file" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
 # Args: repo slug, limit that timed out, requested per-repo limit (defaults to
-# the timed-out limit). GH#38690: never below the floor, and not at all when
-# recorded costs show the timeout is fixed cost; the snapshot is then retained.
+# the timed-out limit), budget seconds the timed-out scan used (default 0).
+# GH#38690: never below the floor, and not at all when recorded costs show the
+# timeout is not size-driven; the snapshot is then retained.
 _dispatch_reduce_repo_enumeration_limit() {
-	local repo_slug="$1" limit="$2" requested="${3:-$2}" file="" temporary="" next=0 floor=0 reason=""
+	local repo_slug="$1" limit="$2" requested="${3:-$2}" used="${4:-0}" file="" next=0 floor=0 reason=""
+	local temporary=""
 	[[ "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || return 0
 	limit=$((10#$limit))
 	floor=$(_dispatch_repo_enumeration_limit_floor "$requested")
 	if ((limit <= floor)); then
 		reason=at_floor
-	elif _dispatch_repo_enumeration_cost_is_fixed "$repo_slug"; then
+	elif _dispatch_repo_enumeration_cost_is_fixed "$repo_slug" "$limit" "$used"; then
 		reason=fixed_cost
 	fi
 	if [[ -n "$reason" ]]; then
 		echo "[pulse-wrapper] Candidate repository enumeration limit retained: repo=${repo_slug} limit=${limit} floor=${floor} reason=${reason} (GH#38690)" >>"$LOGFILE"
+		_dispatch_mark_repo_enumeration_limit_retained "$repo_slug" "$limit"
 		return 0
 	fi
 	next=$(((limit + 1) / 2))
@@ -755,14 +790,15 @@ _dispatch_reduce_repo_enumeration_limit() {
 _dispatch_recover_repo_enumeration_limit() {
 	local repo_slug="$1" used="$2" requested="$3" count="${4:-}" file="" stored=""
 	local temporary=""
-	local successes=""
+	local successes="" marker=""
 	((used < requested)) || return 0
 	file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
 	[[ -f "$file" && ! -L "$file" ]] || return 0
-	read -r stored successes <"$file" 2>/dev/null || true
+	read -r stored successes marker <"$file" 2>/dev/null || true
 	[[ "$stored" =~ ^[1-9][0-9]{0,8}$ ]] || return 0
 	# A stored limit below the floor was raised to it for this scan.
 	((10#$stored <= used)) || return 0
+	[[ "$marker" == retained && "$stored" == "$used" ]] || marker=""
 	stored="$used"
 	[[ "$successes" =~ ^[0-7]$ ]] || successes=0
 	successes=$((successes + 1))
@@ -770,11 +806,13 @@ _dispatch_recover_repo_enumeration_limit() {
 		stored=$((used * 2))
 		((stored <= requested)) || stored="$requested"
 		successes=0
+		# A larger probe is new reduced work again.
+		marker=""
 		[[ "$count" != 0 ]] ||
 			echo "[pulse-wrapper] Candidate repository enumeration limit probed: repo=${repo_slug} from=${used} to=${stored} reason=empty_prefix (GH#38690)" >>"$LOGFILE"
 	fi
 	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
-	printf '%s %s\n' "$stored" "$successes" >"$temporary"
+	printf '%s %s%s\n' "$stored" "$successes" "${marker:+ $marker}" >"$temporary"
 	mv -f "$temporary" "$file" 2>/dev/null || rm -f "$temporary"
 	return 0
 }
@@ -799,7 +837,7 @@ _dispatch_census_enumerate_repo() {
 	elapsed=$(($(_dispatch_first_wave_now_s) - started))
 	_dispatch_record_repo_enumeration_outcome "$repo_slug" "$base" "$budget" "$rc" "$elapsed"
 	if ((rc == 124 && budget >= cap)); then
-		_dispatch_reduce_repo_enumeration_limit "$repo_slug" "$source_limit" "$per_repo_limit"
+		_dispatch_reduce_repo_enumeration_limit "$repo_slug" "$source_limit" "$per_repo_limit" "$budget"
 	fi
 	# A reduced snapshot cannot establish absence across the original scope.
 	if ((source_limit < per_repo_limit)) && [[ -n "$completeness_file" ]]; then

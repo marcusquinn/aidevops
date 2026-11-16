@@ -411,8 +411,10 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	printf '4 escalated\n' >"$sleepy_file"
 	: >"$EVENTS"
 	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || true
-	[[ "$(<"$EVENTS")" == '1:25' && "$(<"$limit_file")" == 25 ]]
+	[[ "$(<"$EVENTS")" == '1:25' && "$(<"$limit_file")" == '25 0 retained' ]]
 	grep -q 'limit retained: repo=owner/sleepy limit=25 floor=25 reason=at_floor (GH#38690)' "$LOGFILE"
+	# A retained snapshot is not newly reduced work: its budget may escalate.
+	[[ "$(_dispatch_repo_enumeration_budget owner/sleepy 1)" == 4 ]]
 	[[ "$(_dispatch_repo_enumeration_limit_floor 400)" == 50 && "$(_dispatch_repo_enumeration_limit_floor 10)" == 10 ]]
 	_dispatch_reduce_repo_enumeration_limit owner/sleepy 400 400
 	[[ "$(<"$limit_file")" == 200 ]]
@@ -442,30 +444,53 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null
 	[[ "$(<"$limit_file")" == '50 0' ]]
 	grep -q 'limit probed: repo=owner/sleepy from=25 to=50 reason=empty_prefix (GH#38690)' "$LOGFILE"
-	# Completed scans record cost per limit; a halved limit that saved under a
-	# quarter of the time marks fixed cost, so a timeout retains the snapshot.
+	# Completed scans record cost per limit. A timeout keeps the snapshot when
+	# a completed scan at that limit or larger shows it is not size-driven.
 	cost_file=$(_dispatch_repo_enumeration_cost_file owner/sleepy)
 	now=$(_dispatch_first_wave_now_s)
 	[[ "$(head -n 1 "$cost_file")" == "25 0 ${now}" ]]
+	# Fixed cost: 200 took 16s and half of it took 15s; a 20s budget expired.
+	printf '200 16 %s\n100 15 %s\n' "$now" "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 20
+	[[ "$(<"$limit_file")" == '200 0 retained' ]]
+	grep -q 'limit retained: repo=owner/sleepy limit=200 floor=50 reason=fixed_cost (GH#38690)' "$LOGFILE"
+	# Variance: the same snapshot completed in 10s, far inside a 60s budget.
+	printf '200 10 %s\n' "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 60
+	[[ "$(<"$limit_file")" == '200 0 retained' ]]
+	# Flat cost below the timed-out limit does not block its reduction.
 	printf '100 16 %s\n50 15 %s\n' "$now" "$now" >"$cost_file"
 	printf '200\n' >"$limit_file"
-	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400
-	[[ "$(<"$limit_file")" == 200 ]]
-	grep -q 'limit retained: repo=owner/sleepy limit=200 floor=50 reason=fixed_cost (GH#38690)' "$LOGFILE"
-	# Proportional or stale costs still halve.
-	printf '100 16 %s\n50 6 %s\n' "$now" "$now" >"$cost_file"
-	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 60
 	[[ "$(<"$limit_file")" == 100 ]]
-	printf '100 16 %s\n50 15 %s\n' "$now" "$now" >"$cost_file"
+	# Proportional, unmeasurably small or stale costs still halve.
+	printf '200 16 %s\n100 6 %s\n' "$now" "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 20
+	[[ "$(<"$limit_file")" == 100 ]]
+	printf '200 3 %s\n100 3 %s\n' "$now" "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 4
+	[[ "$(<"$limit_file")" == 100 ]]
+	printf '200 16 %s\n100 15 %s\n' "$now" "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
 	advance_clock 90000
-	_dispatch_reduce_repo_enumeration_limit owner/sleepy 100 400
-	[[ "$(<"$limit_file")" == 50 ]]
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400 20
+	[[ "$(<"$limit_file")" == 100 ]]
 	printf '%s\n' "$now" >"$CLOCK"
 	# Recording keeps one sample per limit, newest first, four limits at most.
 	_dispatch_record_repo_enumeration_cost owner/sleepy 25 4
 	_dispatch_record_repo_enumeration_cost owner/sleepy 12 3
 	_dispatch_record_repo_enumeration_cost owner/sleepy 25 5
-	[[ "$(awk '{print $1 ":" $2}' "$cost_file" | tr '\n' ';')" == '25:5;12:3;100:16;50:15;' ]]
+	[[ "$(awk '{print $1 ":" $2}' "$cost_file" | tr '\n' ';')" == '25:5;12:3;200:16;100:15;' ]]
+	# A completed scan at a retained limit keeps the marker; a probe clears it.
+	printf '25 6 retained\n' >"$limit_file"
+	_dispatch_recover_repo_enumeration_limit owner/sleepy 25 50 3
+	[[ "$(<"$limit_file")" == '25 7 retained' ]]
+	_dispatch_recover_repo_enumeration_limit owner/sleepy 25 50 3
+	[[ "$(<"$limit_file")" == '50 0' ]]
 	printf 'malformed\n' >"$limit_file"
 	[[ "$(_dispatch_repo_enumeration_limit owner/sleepy 50)" == 50 ]]
 )
