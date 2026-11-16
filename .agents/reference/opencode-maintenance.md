@@ -180,7 +180,7 @@ plain `opencode -s` never restores. Lookup: `opencode-db-maintenance-helper.sh
 sessions --include-archive --id ses_...`. Manual: `opencode-db-archive.sh
 restore --session ses_... [--dry-run]` (exit `0` restored/already active, `4`
 not archived, `3` incompatible schema; nothing changed). Archived rows free
-pages for reuse; shrinking the file still needs a maintenance-window VACUUM.
+pages for reuse; shrinking the file still needs a maintenance-window VACUUM. Event retention: `reference/opencode-event-retention.md`.
 
 The archive helper follows OpenCode's active DB resolution (`OPENCODE_DB_PATH`,
 then `OPENCODE_DB`, then `XDG_DATA_HOME/opencode/opencode.db`, then

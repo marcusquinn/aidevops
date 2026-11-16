@@ -287,8 +287,15 @@ _record_deferral() {
 # worker events never wait for the next day or the 7-day worker retention.
 # Deferrals here are expected and do not count toward the full-pass escalation.
 _run_worker_event_pass() {
+	local mode="${1:-only}"
 	local rc=0
-	echo "[opencode-db-archive-async] Full pass already completed today — running worker event expiry only (OPENCODE_DB_ARCHIVE_FORCE=1 forces a full pass)" >>"$LOGFILE"
+	if [[ "$mode" == "only" ]]; then
+		echo "[opencode-db-archive-async] Full pass already completed today — running worker event expiry only (OPENCODE_DB_ARCHIVE_FORCE=1 forces a full pass)" >>"$LOGFILE"
+	else
+		# GH#38630: expiry of idle-session events needs no idle holders, so it
+		# runs first and still frees space when the full pass defers (rc=2).
+		echo "[opencode-db-archive-async] Running idle-session event expiry before the full pass (independent of holders)" >>"$LOGFILE"
+	fi
 	"$ARCHIVE_HELPER" archive-all --worker-events-only --max-duration-seconds "$OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC" >>"$LOGFILE" 2>&1 &
 	_ARCHIVE_CHILD_PID=$!
 	wait "$_ARCHIVE_CHILD_PID" || rc=$?
@@ -322,6 +329,8 @@ main() {
 		_run_worker_event_pass
 		return 0
 	fi
+
+	_run_worker_event_pass before-full
 
 	echo "[opencode-db-archive-async] Starting archive (budget=${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC}s)" >>"$LOGFILE"
 
