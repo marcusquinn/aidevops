@@ -312,6 +312,69 @@ jq -e '
 }
 printf 'PASS unavailable registry prevents creation and preserves terminal receipt\n'
 
+# GH#38685: a retired worker leaves an unsealed Pulse lifetime row for a path
+# that no longer exists. Unprovable completion must fail with the named cause
+# and remediation, not a bare ValueError; provable completion seals the stale
+# generation into history and lets the replacement creation proceed.
+# Args: $1 - path, $2 - lifetime record JSON
+seed_stale_lifetime() {
+	local seed_path="$1"
+	local seed_record="$2"
+	sqlite3 "$REGISTRY_DB" \
+		"CREATE TABLE IF NOT EXISTS worktree_managed_lifetimes (path TEXT PRIMARY KEY, record TEXT NOT NULL);
+		 INSERT INTO worktree_managed_lifetimes VALUES ('${seed_path}', '${seed_record}');"
+	return 0
+}
+STALE_BRANCH="test/stale-lifetime-unproven"
+STALE_PATH="${WORKTREES}/canonical-test-stale-lifetime-unproven"
+git -C "$CANONICAL" branch "$STALE_BRANCH" "$PINNED_SHA"
+# An invalid recorded boot identity can never be proven drained.
+STALE_RECORD='{"schema":1,"manager":"pulse","generation":"'"$(printf 'a%.0s' {1..32})"'","state":"running","identity":{"path":"'"$STALE_PATH"'","source_inode":"1:2"},"launches":[{"unit":"aidevops-worker-gh38685","invocation":"'"$(printf 'b%.0s' {1..32})"'","boot_id":"unknown","cgroup":"/fixture"}],"created_at":1}'
+seed_stale_lifetime "$STALE_PATH" "$STALE_RECORD"
+STALE_RC=0
+STALE_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$STALE_BRANCH" "$STALE_PATH" 2>&1
+) || STALE_RC=$?
+if [[ "$STALE_RC" -eq 0 || -e "$STALE_PATH" ||
+	"$STALE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_STAGE=lifecycle:begin-create"* ||
+	"$STALE_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_REASON=stale-lifetime-record"* ||
+	"$STALE_OUTPUT" != *"no sealed generation"* ||
+	"$STALE_OUTPUT" != *"pass an explicit alternate path"* ]]; then
+	printf 'FAIL unprovable stale lifetime record did not fail with cause and remediation: rc=%s output=%s\n' \
+		"$STALE_RC" "$STALE_OUTPUT"
+	exit 1
+fi
+[[ "$(sqlite3 "$REGISTRY_DB" "SELECT record FROM worktree_managed_lifetimes WHERE path = '${STALE_PATH}';")" == "$STALE_RECORD" ]] || {
+	printf 'FAIL refused stale lifetime record was mutated or deleted\n'
+	exit 1
+}
+printf 'PASS unprovable stale lifetime record fails with explicit cause and remediation\n'
+
+RETIRED_BRANCH="test/stale-lifetime-retired"
+RETIRED_PATH="${WORKTREES}/canonical-test-stale-lifetime-retired"
+RETIRED_GENERATION=$(printf 'c%.0s' {1..32})
+git -C "$CANONICAL" branch "$RETIRED_BRANCH" "$PINNED_SHA"
+# A never-admitted generation is provably complete: sealing cancels admission.
+seed_stale_lifetime "$RETIRED_PATH" '{"schema":1,"manager":"pulse","generation":"'"$RETIRED_GENERATION"'","state":"created","identity":{"path":"'"$RETIRED_PATH"'","source_inode":"1:3"},"launches":[],"created_at":1}'
+RETIRED_RC=0
+RETIRED_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$RETIRED_BRANCH" "$RETIRED_PATH" 2>&1
+) || RETIRED_RC=$?
+RETIRED_HISTORY=$(sqlite3 "$REGISTRY_DB" \
+	"SELECT json_extract(record, '\$.state') || '|' || json_extract(record, '\$.admission_cancelled')
+	 FROM worktree_lifetime_history WHERE path = '${RETIRED_PATH}' AND generation = '${RETIRED_GENERATION}';")
+RETIRED_ACTIVE=$(sqlite3 "$REGISTRY_DB" \
+	"SELECT COUNT(*) FROM worktree_managed_lifetimes WHERE path = '${RETIRED_PATH}'
+	 AND json_extract(record, '\$.generation') = '${RETIRED_GENERATION}';")
+if [[ "$RETIRED_RC" -ne 0 || ! -d "$RETIRED_PATH" || "$RETIRED_HISTORY" != "sealed|1" || "$RETIRED_ACTIVE" != 0 ]]; then
+	printf 'FAIL provably retired stale lifetime record blocked creation: rc=%s history=%s active=%s output=%s\n' \
+		"$RETIRED_RC" "$RETIRED_HISTORY" "$RETIRED_ACTIVE" "$RETIRED_OUTPUT"
+	exit 1
+fi
+printf 'PASS provably retired stale lifetime record is sealed into history and creation proceeds\n'
+
 ACTIVE_RECEIPT_BRANCH="test/recreated-active-path"
 ACTIVE_RECEIPT_PATH="${WORKTREES}/canonical-test-recreated-active-path"
 git -C "$CANONICAL" branch "$ACTIVE_RECEIPT_BRANCH" "$PINNED_SHA"

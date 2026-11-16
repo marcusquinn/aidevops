@@ -248,6 +248,42 @@ def require_admission_observed(record):
             "ownership changed without process admission evidence")
 
 
+PULSE_MANAGER = "pulse"
+# Generations a replacement creation may supersede. Pulse rows qualify only once
+# their worktree is gone; live and unknown managers keep their fence.
+SUPERSEDABLE = (MANAGER, PULSE_MANAGER)
+
+
+class StaleLifetime(ValueError):
+    """An absent path's earlier generation cannot be proven complete now.
+
+    The message is fixed and path-free so callers may print it verbatim.
+    """
+
+    reason = "stale-lifetime-record"
+    remediation = ("stale lifetime record for retired path; no sealed generation and the previous "
+                   "owner's completion is unproven. Retry after the previous worker drains, or pass "
+                   "an explicit alternate path: worktree-helper.sh add <branch> <new-path>")
+
+    def __init__(self):
+        super().__init__(self.remediation)
+
+
+def retire_absent(connection, record, path):
+    """Seal an absent path's earlier generation from present-tense evidence only.
+
+    Workers retire worktrees without sealing, which leaves the row unsealed.
+    Sealing uses the same unit/process drain proof as Pulse cleanup, so a live
+    or unprovable owner still refuses. A recorded live owner lease refuses too.
+    """
+    if record.get("state") == "sealed":
+        return
+    from worktree_lifetime_archive import managed_module
+    import worktree_lifetime_idle as idle_policy
+    idle_policy.owner_clear(connection, path)
+    managed_module().seal(record)
+
+
 def begin_creation(connection, path):
     """Fence old receipts durably BEFORE Git can recreate or reuse any inode."""
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_managed_lifetimes'").fetchone():
@@ -256,10 +292,18 @@ def begin_creation(connection, path):
     if row is None:
         return ""
     record = json.loads(row[0])
-    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
     record.pop("creation_pending", None)
     from worktree_lifetime_proof import proof
-    proof(record, record["identity"]["source_inode"], fresh=True)
+    if os.path.lexists(path):
+        require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+        proof(record, record["identity"]["source_inode"], fresh=True)
+    else:
+        try:
+            require(record.get("manager") in SUPERSEDABLE, "different lifetime manager owns this path")
+            retire_absent(connection, record, path)
+            proof(record, record["identity"]["source_inode"], fresh=True)
+        except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
+            raise StaleLifetime() from error
     token = uuid.uuid4().hex
     record["creation_pending"] = token
     connection.execute("UPDATE worktree_managed_lifetimes SET record=? WHERE path=?",
@@ -275,7 +319,8 @@ def prepare_creation(connection, path):
     if row is None:
         return
     record = json.loads(row[0])
-    require(record.get("manager") == MANAGER, "different lifetime manager owns this path")
+    # begin_creation admitted Pulse rows only for absent paths and after proof.
+    require(record.get("manager") in SUPERSEDABLE, "different lifetime manager owns this path")
     token = record.pop("creation_pending", None)
     require(bool(token) and token == os.environ.get("AIDEVOPS_WORKTREE_CREATION_TOKEN"),
             "replacement has no matching pre-creation fence")
