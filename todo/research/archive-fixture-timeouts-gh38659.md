@@ -64,7 +64,7 @@ not root-caused (the archive helper does not read them directly).
 - Per-case slowness is unchanged: the fan-out is not fixed here, so the full suite still takes
   roughly 23 min at this load and does not meet the 300 s bound.
 
-## Remaining blocker (tracked, not resolved)
+## Remaining blocker (tracked in #38675, not resolved)
 
 Reduce subprocess fan-out in the lifecycle path. Starting points from the strace profile:
 `rev-parse --absolute-git-dir` / `--git-common-dir` and `config` repeated per path,
