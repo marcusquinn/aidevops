@@ -507,6 +507,15 @@ test_health_dashboard_slow_cross_repo_rates_are_bounded_once() {
 		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
 		[[ "$rc" -eq 124 ]] || exit 16
 		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=1s)' "$LOGFILE" || exit 17
+		# GH#38631: a budget stop escalates the next budget; success resets it.
+		[[ "$(<"$(_health_schedule_cache_file owner/slow tester).timeouts")" == 1 ]] || exit 23
+		_HEALTH_WORK_DEADLINE=$(($(date +%s) + 8))
+		rc=0
+		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || rc=$?
+		grep -q 'owner/slow (rc=124 stage=data-gather elapsed=[0-9]*s timeout=2s)' "$LOGFILE" || exit 24
+		_update_health_issue_for_repo() { return 0; }
+		_refresh_health_repo_bounded owner/slow "$HOME" '' '' '' || exit 25
+		[[ ! -f "$(_health_schedule_cache_file owner/slow tester).timeouts" ]] || exit 26
 	); then
 		pass "slow cross-repo rate collection is bounded once and leaves truthful render/stage evidence"
 	else
