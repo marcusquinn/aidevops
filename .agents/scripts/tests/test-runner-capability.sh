@@ -266,6 +266,11 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     env['AIDEVOPS_DEVICE_ID_FILE'] = str(root / 'missing-device-id')
     check('missing device file is unknown', {'body': 'requires-device: device-1-2-3'},
           success=False, reason='device_unknown')
+    binary_device = root / 'binary-device-id'
+    binary_device.write_bytes(b'\xff\xfe\x80')
+    env['AIDEVOPS_DEVICE_ID_FILE'] = str(binary_device)
+    check('undecodable device file is unknown', {'body': 'requires-device: device-1-2-3'},
+          success=False, reason='device_unknown')
     check('issue without device line is unaffected', {'body': ''})
     env['AIDEVOPS_DEVICE_ID_FILE'] = str(device_file)
     deferral = subprocess.run(['bash', '-c',
