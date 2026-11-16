@@ -58,7 +58,9 @@ Permission grants are limited to exact-pattern `bash` and `external_directory` r
 
 Every request, grantable or not, can be released with a signed withdrawal (`--withdraw`). The withdrawal grants nothing and binds to one request digest; a newer request still blocks. A non-grantable latest request (for example a `task` denial) on an issue with label history blocks dispatch (`MALFORMED_REQUEST`) until it is withdrawn. To clear many stale holds with one sudo prompt and one `WITHDRAW` confirmation, run `sudo aidevops approve permissions batch --withdraw --all-blocked <owner/repo>`, or list explicit `issue:<n>:perm-<id>` targets instead of `--all-blocked`. Each request is preflighted (trusted, intact, still latest) and signed individually. Grants are never batched.
 
-Scratch `external_directory` requests are owned recovery, not holds: `write`/`edit` on `tmp`, `temp` or `.cache` paths, and `bash`/`read` on `tmp`/`temp` paths outside `node_modules`. The worker is pointed at `AIDEVOPS_TEMP_DIR` and the issue redispatches without a grant.
+Scratch `external_directory` requests are owned recovery, not holds: `write`/`edit` on `tmp`, `temp` or `.cache` paths, and `bash`/`read` on `tmp`/`temp` paths outside `node_modules` or on OS binary directories (`/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`). The worker is pointed at `AIDEVOPS_TEMP_DIR` and the issue redispatches without a grant.
+
+Avoid the request entirely: any absolute path written into a bash tool command outside the worktree triggers `external_directory`. The common cause is an inline restricted `PATH` for test stubs (GH#38523). Build stubs under `AIDEVOPS_TEMP_DIR`, set `PATH` inside a worktree script from variables, and run the script with a worktree-relative command.
 
 The permission broker, approval flow, and grant verifier append blocker-state
 transitions to `~/.aidevops/logs/worker-progress-blockers.jsonl`. Diagnose the
