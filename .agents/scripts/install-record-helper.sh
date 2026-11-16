@@ -22,7 +22,13 @@ _install_record_cli() {
 		printf 'Install records require Python 3.\n' >&2
 		return 1
 	fi
-	python3 - "$@" <<'PY'
+	python3 -c "$_AIDEVOPS_INSTALL_RECORD_PROGRAM" "$@"
+	return $?
+}
+
+# Keep the portable standard-library implementation as data, not a shell
+# function body. Sourcing the library performs no scans or filesystem writes.
+IFS= read -r -d '' _AIDEVOPS_INSTALL_RECORD_PROGRAM <<'PY' || true
 import argparse
 import datetime
 import fcntl
@@ -238,8 +244,6 @@ except (OSError, ValueError, KeyError) as error:
     print("Install records: operation failed (" + type(error).__name__ + "). Check metadata and ledger access.", file=sys.stderr)
     sys.exit(1)
 PY
-	return $?
-}
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 	_install_record_cli "$@"

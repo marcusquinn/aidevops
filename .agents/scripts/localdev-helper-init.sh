@@ -123,6 +123,18 @@ run_stable_mkcert() {
 	return 1
 }
 
+record_mkcert_install() {
+	local install_method="$1"
+	[[ -z "$install_method" ]] && return 0
+	# shellcheck source=install-record-helper.sh
+	source "$SCRIPT_DIR/install-record-helper.sh"
+	local update_path="$install_method package manager"
+	[[ "$install_method" == "binary-download" ]] && update_path="Re-download mkcert upstream binary"
+	install_record "mkcert" "$install_method" "$(command -v mkcert)" \
+		"Local development TLS certificates" "$update_path" || print_warning "Could not record mkcert install"
+	return 0
+}
+
 # Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
 # Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
@@ -214,14 +226,7 @@ ensure_mkcert() {
 	fi
 
 	print_success "mkcert available"
-	if [[ -n "$install_method" ]]; then
-		# shellcheck source=install-record-helper.sh
-		source "$SCRIPT_DIR/install-record-helper.sh"
-		local update_path="$install_method package manager"
-		[[ "$install_method" == "binary-download" ]] && update_path="Re-download mkcert upstream binary"
-		install_record "mkcert" "$install_method" "$(command -v mkcert)" \
-			"Local development TLS certificates" "$update_path" || print_warning "Could not record mkcert install"
-	fi
+	record_mkcert_install "$install_method"
 
 	# Install the local CA into the system trust store (one-time setup).
 	# This makes mkcert-generated certs trusted by browsers and curl.
