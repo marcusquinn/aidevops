@@ -64,7 +64,7 @@ _runner_capability_log_deferral() {
 		fi
 	fi
 	case "$signal" in
-	secret_missing | probe_failed | tool_missing | service_unhealthy | invalid_requirements) cooldown="eligible" ;;
+	secret_missing | probe_failed | tool_missing | service_unhealthy | invalid_requirements | device_mismatch) cooldown="eligible" ;;
 	esac
 	printf '[dispatch_with_dedup] #%s deferred: %s — DISPATCH_BLOCK_REASON reason=runner_capability_unmet signal=%s cooldown=%s issue=#%s repo=%s\n' \
 		"$issue_number" "$reason" "$signal" "$cooldown" "$issue_number" "$repo_slug" >&3
@@ -83,6 +83,7 @@ runner_capability_check() {
 		_runner_capability_python_classes
 		_runner_capability_python_tools
 		_runner_capability_python_services
+		_runner_capability_python_device
 		_runner_capability_python_requirements
 	)
 	local rc=$?
@@ -362,11 +363,39 @@ PY
 	return 0
 }
 
+# GH#38547: requires-device: only the runner whose local device id matches may
+# claim. Device ids are public in claim comments; checked before any secret read.
+_runner_capability_python_device() {
+	cat <<'PY'
+def check_device(body):
+    wanted = []
+    for line in body.splitlines():
+        if line.startswith('requires-device:'):
+            wanted.extend(re.split(r'[,\s]+', line.partition(':')[2].strip()))
+    if not wanted:
+        return
+    if len(wanted) > 4 or not all(re.fullmatch(r'device-[0-9]+-[0-9]+-[0-9]+', item) for item in wanted):
+        unmet('invalid_requirements')
+    device_file = os.environ.get('AIDEVOPS_DEVICE_ID_FILE') or str(Path.home() / '.aidevops/state/device-id')
+    try:
+        local = Path(device_file).read_text().strip()
+    except (OSError, UnicodeError):
+        local = ''
+    if not local:
+        unmet('device_unknown')
+    if local not in wanted:
+        unmet('device_mismatch')
+
+PY
+	return 0
+}
+
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
+    check_device(issue.get('body', ''))
     requirements = class_requirements(root, issue)
     # Issue text can name secrets and PATH tools, never executable commands.
     for label in issue.get('labels', []):

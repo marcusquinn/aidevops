@@ -203,6 +203,17 @@ unhealthy service defers with `service_unhealthy port=<port>`
 (`cooldown=eligible`); an invalid value defers with `invalid_requirements`. This
 runs after the `PATH` tool check and before secret reads.
 
+A host-bound task (GH#38547) is a standalone issue-body line such as
+`requires-device: device-1783820013-77368-17015` (at most four comma/space
+separated ids, each `device-<digits>-<digits>-<digits>`). Only the runner whose
+local device id matches may claim; the id is read from `AIDEVOPS_DEVICE_ID_FILE`
+or `~/.aidevops/state/device-id`, the same source as dispatch claims. Every other
+runner defers locally with `device_mismatch` (`cooldown=eligible`); a missing or
+unreadable device file defers with `device_unknown` (no cooldown), and a
+malformed or oversized list with `invalid_requirements`. This is the first
+check, before tools, services and secret reads. Device ids are already public in
+claim comments and are not secrets.
+
 Unmet candidates log `runner_capability_unmet` locally and return before claim,
 scope writes or worker launch. No issue label or comment is posted, so a capable
 peer can dispatch normally. A worker discovering the same problem after claiming
