@@ -1523,6 +1523,25 @@ _tbr_entry_decided() {
 	return 0
 }
 
+# Seed, holds and unclassified discovery stages of a supervisor pending pass.
+# Returns 1 when any stage was incomplete. Runs inside tbr_pending's scope.
+_tbr_pending_discovery_stages() {
+	local rc=0 incomplete=0
+	_tbr_run_stage seed tbr_seed || rc=$?
+	[[ "$rc" -eq 0 ]] || incomplete=1
+	# GH#38311: maintainer replies and unexplained hold-for-review holds,
+	# before the six-hourly unclassified stage: a reply wants a fast answer.
+	rc=0
+	_tbr_run_stage holds tbr_discover_holds || rc=$?
+	[[ "$rc" -eq 0 ]] || incomplete=1
+	# GH#37978: bare status:blocked holds with no recorded reason.
+	rc=0
+	_tbr_run_stage unclassified tbr_discover_unclassified || rc=$?
+	[[ "$rc" -eq 0 ]] || incomplete=1
+	[[ "$incomplete" -eq 0 ]] || return 1
+	return 0
+}
+
 tbr_pending() {
 	local mode="${1:-}"
 	local cursor_name=pending_cursor entry_mode=""
@@ -1609,19 +1628,7 @@ tbr_pending() {
 	# Existing ownership is observed before potentially slow remote discovery.
 	# Seed has its own stage cap and cannot consume more than the overall budget.
 	if [[ "$mode" != --rearm-only ]]; then
-		rc=0
-		_tbr_run_stage seed tbr_seed || rc=$?
-		[[ "$rc" -eq 0 ]] || incomplete=1
-		# GH#38311: maintainer replies and unexplained hold-for-review holds,
-		# before the six-hourly unclassified stage: a reply wants a fast answer.
-		rc=0
-		_tbr_run_stage holds tbr_discover_holds || rc=$?
-		[[ "$rc" -eq 0 ]] || incomplete=1
-		# GH#37978: bare status:blocked holds with no recorded reason. Never
-		# from the mechanical rearm pass.
-		rc=0
-		_tbr_run_stage unclassified tbr_discover_unclassified || rc=$?
-		[[ "$rc" -eq 0 ]] || incomplete=1
+		_tbr_pending_discovery_stages || incomplete=1
 	fi
 	for file in "${TBR_ROOT}"/queue/*.json; do
 		[[ -f "$file" ]] || continue
