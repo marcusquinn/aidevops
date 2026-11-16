@@ -2163,25 +2163,25 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19054 fix(plugin): let repo-rooted sessions run bounded operations in registered-repo worktrees #interactive #bug tier:simple assignee:marcusquinn ref:GH#38577 pr:#38579 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19054-brief.md] completed:2026-11-16
 
-- [ ] t19055 fix(setup): refuse ephemeral OpenCode targets in the Pulse direct shim writer #interactive #bug tier:simple assignee:marcusquinn ref:GH#38581 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19055-brief.md]
+- [x] t19055 fix(setup): refuse ephemeral OpenCode targets in the Pulse direct shim writer #interactive #bug tier:simple assignee:marcusquinn ref:GH#38581 pr:#38588 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19055-brief.md] completed:2026-11-16
 
-- [ ] t19056 fix(opencode-db-archive): persist batch adaptation across runs so the shared DB archive and worker-event expiry stop livelocking #auto-dispatch #bug #priority:high tier:standard ref:GH#38590 logged:2026-11-16 -> [todo/tasks/t19056-brief.md]
+- [x] t19056 fix(opencode-db-archive): persist batch adaptation across runs so the shared DB archive and worker-event expiry stop livelocking #auto-dispatch #bug #priority:high tier:standard ref:GH#38590 pr:#38608 logged:2026-11-16 -> [todo/tasks/t19056-brief.md] completed:2026-11-16
 
-- [ ] t19057 fix(headless-runtime): accept labelled POST_PR_HANDOFF lines so verified handoffs do not loop as premature exits #interactive #bug tier:simple assignee:marcusquinn ref:GH#38596 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19057-brief.md]
+- [x] t19057 fix(headless-runtime): accept labelled POST_PR_HANDOFF lines so verified handoffs do not loop as premature exits #interactive #bug tier:simple assignee:marcusquinn ref:GH#38596 pr:#38601 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19057-brief.md] completed:2026-11-16
 
-- [ ] t19058 fix(setup): ai-session deploy redeploys incrementally when canonical main advances mid-deploy instead of rolling back into a full setup #interactive #bug tier:standard assignee:marcusquinn ref:GH#38607 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19058-brief.md]
+- [x] t19058 fix(setup): ai-session deploy redeploys incrementally when canonical main advances mid-deploy instead of rolling back into a full setup #interactive #bug tier:standard assignee:marcusquinn ref:GH#38607 pr:#38611 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19058-brief.md] completed:2026-11-16
 
-- [ ] t19065 fix(recovery): repo recovery policy survives the .aidevops.json untrack migration #auto-dispatch #bug tier:standard assignee:marcusquinn ref:GH#38636 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19065-brief.md]
+- [x] t19065 fix(recovery): repo recovery policy survives the .aidevops.json untrack migration #auto-dispatch #bug tier:standard assignee:marcusquinn ref:GH#38636 pr:#38637 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19065-brief.md] completed:2026-11-16
 
-- [ ] t19066 fix(runtime): service PATH must keep aidevops gh/git shims ahead of npm global bin #interactive #bug #framework tier:simple assignee:marcusquinn ref:GH#38642 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19066-brief.md]
+- [x] t19066 fix(runtime): service PATH must keep aidevops gh/git shims ahead of npm global bin #interactive #bug #framework tier:simple assignee:marcusquinn ref:GH#38642 pr:#38644 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19066-brief.md] completed:2026-11-16
 
-- [ ] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619
+- [x] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619 pr:#38628 completed:2026-11-16
 
-- [ ] t19061 fix(pulse): fix-the-fixer detector classifies 0 of N issues when ai-research cannot authenticate the simple tier #auto-dispatch #priority:medium ref:GH#38620
+- [x] t19061 fix(pulse): fix-the-fixer detector classifies 0 of N issues when ai-research cannot authenticate the simple tier #auto-dispatch #priority:medium ref:GH#38620 pr:#38623 completed:2026-11-16
 
-- [ ] t19062 fix(pulse): rotate worktree-recovery-timings and worker-progress-blockers jsonl like every sibling metrics file #auto-dispatch #priority:medium ref:GH#38621
+- [x] t19062 fix(pulse): rotate worktree-recovery-timings and worker-progress-blockers jsonl like every sibling metrics file #auto-dispatch #priority:medium ref:GH#38621 pr:#38625 completed:2026-11-16
 
-- [ ] t19064 perf(pulse): let an admitted dispatch round finish under a bounded cooperative-drain grace #auto-dispatch #performance tier:thinking assignee:marcusquinn ref:GH#38633 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19064-brief.md]
+- [x] t19064 perf(pulse): let an admitted dispatch round finish under a bounded cooperative-drain grace #auto-dispatch #performance tier:thinking assignee:marcusquinn ref:GH#38633 pr:#38635 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19064-brief.md] completed:2026-11-16
 
 ## In Progress
 
