@@ -330,7 +330,8 @@ complete_task() {
 			log_success "Task completion committed and pushed"
 		fi
 	else
-		log_error "Task completion publication failed; no successful direct push or planning PR was created"
+		# GH#38586: failure can happen after a push or PR; never assert neither exists.
+		log_error "Task completion publication failed; see the [todo_commit_push] / AIDEVOPS_PLANNING_RECOVERY_* lines above for remote, PR and worktree state"
 		return 1
 	fi
 
@@ -662,7 +663,7 @@ commit_planning_files() {
 		if [[ "$PLANNING_PUBLISH_RESULT" == "published_receipt_failed" ]]; then
 			log_error "Planning files reached the remote branch, but receipt persistence failed; retry to reconstruct the safe handoff"
 		else
-			log_error "Planning file publication failed; no successful direct push or planning PR was created"
+			log_error "Planning file publication failed; see the publication output above for remote, PR and worktree state"
 		fi
 		return 1
 	fi
