@@ -112,6 +112,12 @@ mkdir -p "${GLOB_REPO}/src"
 printf 'fixture\n' >"${GLOB_REPO}/src/a.sh"
 glob_context=$(cd "$GLOB_REPO" && _runtime_paths_keyword_context 'src/[ab].sh')
 assert_contains "runtime path context preserves glob metacharacters" "$glob_context" "src/[ab].sh"
+for low_path in test-infra/deploy.sh test_harness/auth.py src/a.test.d/auth.sh src/auth.spec.d/session.ts src/splinter.config.js; do
+	assert_rejected "directory/substring path is not Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
+for low_path in tests/test-docs.sh foo.test.ts test_foo.py foo_test.go src/foo.test.ts pkg/foo_test.go commitlint.config.js; do
+	assert_accepted "test/lint file stays Low: ${low_path}" _runtime_path_is_low "$low_path"
+done
 assert_rejected "invalid diff base fails closed" \
 	_derive_runtime_risk "" "src/app.sh" "Adjust helper behavior" "missing-runtime-base"
 
