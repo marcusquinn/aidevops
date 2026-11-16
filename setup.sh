@@ -1404,8 +1404,24 @@ _setup_git_checkout_available() {
 	return 0
 }
 
+# _setup_ai_session_verify_deploy <floor_sha>
+# floor_sha is the checkout commit when this setup began. Canonical main can
+# fast-forward during a multi-minute deploy (t19058: 36 logged convergence
+# failures, each rolling back a consistent bundle and repeating the deploy as a
+# full setup). Accept the activated bundle's commit when it lies between the
+# floor and the current HEAD; the verifier still pins manifest, stamp, VERSION
+# and sentinels to that commit. The next update cycle deploys the newer HEAD.
 _setup_ai_session_verify_deploy() {
-	local expected_sha="$1"
+	local floor_sha="$1"
+	local expected_sha="$floor_sha"
+	local stamp_sha=""
+	local _AIDEVOPS_RUNTIME_VERIFY_ALLOW_SOURCE_ADVANCE=1
+
+	stamp_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || stamp_sha=""
+	if [[ -n "$stamp_sha" && "$stamp_sha" != "$floor_sha" ]] &&
+		git -C "$INSTALL_DIR" merge-base --is-ancestor "$floor_sha" "$stamp_sha" 2>/dev/null; then
+		expected_sha="$stamp_sha"
+	fi
 	verify_aidevops_runtime_bundle_convergence \
 		"$INSTALL_DIR" \
 		"$expected_sha" \
@@ -1415,6 +1431,9 @@ _setup_ai_session_verify_deploy() {
 			print_error "Failed to roll back the runtime bundle after convergence failure"
 		return 1
 	}
+	if [[ -n "${_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO:-}" ]]; then
+		print_info "Checkout advanced to ${_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO:0:12} during deploy; runtime ${expected_sha:0:12} is consistent and the next update deploys the newer commit"
+	fi
 	return 0
 }
 
@@ -1560,10 +1579,12 @@ _setup_run_scoped_stage() {
 	"$SETUP_STAGE_AI_SESSION")
 		if ! _setup_run_ai_session_incremental "$os"; then
 			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
-			_setup_run_non_interactive || return $?
-			_setup_post_setup_steps "$os" || return $?
+			# Floor for verification: the deploy below reads HEAD at its own
+			# start, which may be later than this point but never earlier.
 			current_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || current_sha=""
 			[[ -n "$current_sha" ]] || return 1
+			_setup_run_non_interactive || return $?
+			_setup_post_setup_steps "$os" || return $?
 			_setup_ai_session_verify_deploy "$current_sha" || return $?
 		fi
 		;;

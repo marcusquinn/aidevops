@@ -101,6 +101,7 @@ _AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA=""
 _AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT=""
 _AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION=""
 _AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA=""
+_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO=""
 
 _runtime_bundle_verify_source() {
 	local repo_dir="$1"
@@ -121,8 +122,19 @@ _runtime_bundle_verify_source() {
 		return 1
 	}
 	if [[ "$source_sha" != "$resolved_expected_sha" ]]; then
-		_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source checkout HEAD ${source_sha:0:12} does not match release commit ${resolved_expected_sha:0:12}"
-		return 1
+		# t19058: setup's ai-session path may set a caller-local
+		# _AIDEVOPS_RUNTIME_VERIFY_ALLOW_SOURCE_ADVANCE=1. The canonical checkout
+		# can fast-forward while a multi-minute deploy runs; a bundle built from
+		# an ancestor of the current HEAD is still a consistent deploy of that
+		# commit. Every manifest, stamp and sentinel check below still pins the
+		# expected commit. Release and update callers never set the flag.
+		if [[ -n "${_AIDEVOPS_RUNTIME_VERIFY_ALLOW_SOURCE_ADVANCE:-}" ]] &&
+			git -C "$repo_dir" merge-base --is-ancestor "$resolved_expected_sha" "$source_sha" 2>/dev/null; then
+			_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO="$source_sha"
+		else
+			_runtime_bundle_verify_emit_error "Runtime bundle convergence failed: source checkout HEAD ${source_sha:0:12} does not match release commit ${resolved_expected_sha:0:12}"
+			return 1
+		fi
 	fi
 	_AIDEVOPS_RUNTIME_VERIFY_SOURCE_SHA="$resolved_expected_sha"
 	return 0
@@ -287,6 +299,7 @@ verify_aidevops_runtime_bundle_convergence() {
 	_AIDEVOPS_RUNTIME_VERIFY_ACTIVE_ROOT=""
 	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_VERSION=""
 	_AIDEVOPS_RUNTIME_VERIFY_MANIFEST_CLI_SHA=""
+	_AIDEVOPS_RUNTIME_VERIFY_SOURCE_ADVANCED_TO=""
 	_runtime_bundle_verify_source "$repo_dir" "$expected_sha" || return 1
 	_runtime_bundle_verify_active_link "$active_link" || return 1
 	_runtime_bundle_verify_manifest \
