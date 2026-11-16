@@ -9,7 +9,8 @@
 
 install_record() {
 	local name="${1:-}" method="${2:-}" path="${3:-}" reason="${4:-}" update="${5:-}"
-	local installer="${BASH_SOURCE[1]##*/}"
+	local installer="${BASH_SOURCE[1]:-session}"
+	installer="${installer##*/}"
 	if _install_record_cli add --name "$name" --method "$method" --path "$path" \
 		--reason "$reason" --update "$update" --installer "${installer:-session}"; then
 		return 0
