@@ -379,7 +379,7 @@ def check_device(body):
     device_file = os.environ.get('AIDEVOPS_DEVICE_ID_FILE') or str(Path.home() / '.aidevops/state/device-id')
     try:
         local = Path(device_file).read_text().strip()
-    except OSError:
+    except (OSError, UnicodeError):
         local = ''
     if not local:
         unmet('device_unknown')
