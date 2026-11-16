@@ -439,9 +439,16 @@ _dispatch_repo_enumeration_budget_stored() {
 
 # Args: repo slug, base budget seconds. Stdout: this repository's budget.
 _dispatch_repo_enumeration_budget() {
-	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file=""
+	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file="" limit_file="" limit="" successes=""
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
 	read -r stored mode <<<"$(_dispatch_repo_enumeration_budget_stored "$file")"
+	# GH#38548: admission and execution must agree on the reduced-work budget;
+	# otherwise the census could defer a retry using an obsolete 120s estimate.
+	limit_file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	if [[ -f "$limit_file" && ! -L "$limit_file" ]]; then
+		read -r limit successes <"$limit_file" 2>/dev/null || true
+		[[ ! "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || mode=""
+	fi
 	if ((stored > base)); then
 		if [[ "$mode" == escalated ]]; then
 			ceiling=$(_dispatch_repo_enumeration_budget_escalated_cap "$base")
@@ -599,6 +606,69 @@ _dispatch_census_last_good_candidates() {
 	return 0
 }
 
+# GH#38548: learn a smaller source snapshot after a full-cap timeout. Successful
+# scans retain it briefly, then probe larger snapshots to avoid prefix starvation.
+_dispatch_repo_enumeration_limit_file() {
+	local repo_slug="$1"
+	printf '%s/pulse-repo-enumeration-limit/%s\n' "${HOME}/.aidevops/cache" "${repo_slug//\//--}"
+	return 0
+}
+
+_dispatch_repo_enumeration_limit() {
+	local repo_slug="$1" requested="$2" file="" stored="" successes=""
+	file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	if [[ -f "$file" && ! -L "$file" ]]; then
+		read -r stored successes <"$file" 2>/dev/null || true
+	fi
+	if [[ "$stored" =~ ^[1-9][0-9]{0,8}$ ]] && ((10#$stored < requested)); then
+		requested=$((10#$stored))
+	fi
+	printf '%s\n' "$requested"
+	return 0
+}
+
+_dispatch_reduce_repo_enumeration_limit() {
+	local repo_slug="$1" limit="$2" file="" temporary="" next=0
+	((limit > 1)) || return 0
+	next=$(((limit + 1) / 2))
+	file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	mkdir -p "${file%/*}" 2>/dev/null || return 0
+	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	printf '%s\n' "$next" >"$temporary"
+	if mv -f "$temporary" "$file" 2>/dev/null; then
+		echo "[pulse-wrapper] Candidate repository enumeration limit reduced: repo=${repo_slug} from=${limit} to=${next} reason=timeout_at_cap (GH#38548)" >>"$LOGFILE"
+	else
+		rm -f "$temporary"
+	fi
+	return 0
+}
+
+# Every eight completed reduced scans, double the next snapshot (never beyond
+# the caller's limit). The normal time cap still applies; a failed probe halves
+# it again and resets this counter. This also probes beyond an empty prefix.
+_dispatch_recover_repo_enumeration_limit() {
+	local repo_slug="$1" used="$2" requested="$3" file="" stored=""
+	local temporary=""
+	local successes=""
+	((used < requested)) || return 0
+	file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	[[ -f "$file" && ! -L "$file" ]] || return 0
+	read -r stored successes <"$file" 2>/dev/null || true
+	[[ "$stored" =~ ^[1-9][0-9]{0,8}$ ]] || return 0
+	((10#$stored == used)) || return 0
+	[[ "$successes" =~ ^[0-7]$ ]] || successes=0
+	successes=$((successes + 1))
+	if ((successes == 8)); then
+		stored=$((used * 2))
+		((stored <= requested)) || stored="$requested"
+		successes=0
+	fi
+	temporary=$(mktemp "${file}.XXXXXX" 2>/dev/null) || return 0
+	printf '%s %s\n' "$stored" "$successes" >"$temporary"
+	mv -f "$temporary" "$file" 2>/dev/null || rm -f "$temporary"
+	return 0
+}
+
 # GH#38274: scan one repository with its adaptive budget, clamped to the
 # remaining census time per call so one escalated budget never leaks.
 # GH#38483: a completed scan refreshes the last-good list; a timeout reuses it.
@@ -608,15 +678,25 @@ _dispatch_census_last_good_candidates() {
 _dispatch_census_enumerate_repo() {
 	local repo_slug="$1" repo_path="$2" base="$3" remaining="$4" per_repo_limit="$5"
 	local normalization_mode="$6" completeness_file="$7"
-	local budget=0 started=0 rc=0 candidates=""
+	local budget=0 started=0 rc=0 candidates="" source_limit=0 cap=0
+	source_limit=$(_dispatch_repo_enumeration_limit "$repo_slug" "$per_repo_limit")
+	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
 	budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$base")
 	((remaining >= budget)) || budget="$remaining"
 	started=$(_dispatch_first_wave_now_s)
-	candidates=$(_dispatch_enumerate_repo_bounded "$budget" "$repo_slug" "$repo_path" "$per_repo_limit" \
+	candidates=$(_dispatch_enumerate_repo_bounded "$budget" "$repo_slug" "$repo_path" "$source_limit" \
 		"$normalization_mode" "$completeness_file") || rc=$?
 	_dispatch_record_repo_enumeration_outcome "$repo_slug" "$base" "$budget" "$rc" \
 		"$(($(_dispatch_first_wave_now_s) - started))"
+	if ((rc == 124 && budget >= cap)); then
+		_dispatch_reduce_repo_enumeration_limit "$repo_slug" "$source_limit"
+	fi
+	# A reduced snapshot cannot establish absence across the original scope.
+	if ((source_limit < per_repo_limit)) && [[ -n "$completeness_file" ]]; then
+		printf '0\n' >"$completeness_file"
+	fi
 	if ((rc == 0)); then
+		_dispatch_recover_repo_enumeration_limit "$repo_slug" "$source_limit" "$per_repo_limit"
 		_dispatch_census_store_last_good "$repo_slug" "$candidates"
 	else
 		echo "[pulse-wrapper] Candidate repository enumeration unavailable: repo=${repo_slug} rc=${rc} budget=${budget}s (GH#38226)" >>"$LOGFILE"
