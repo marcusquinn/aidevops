@@ -825,10 +825,7 @@ dispatch_triage_reviews() {
 
 	# GH#38655: skip model launch while a runner-local provider-auth cooldown is
 	# active for the unchanged provider pool (Anthropic OAuth-only runners).
-	if _triage_auth_cooldown_skip "$resolved_model"; then
-		_triage_outcome_json 0 0 0 0 0
-		return 0
-	fi
+	_triage_auth_cooldown_skip "$resolved_model" && { _triage_outcome_json 0 0 0 0 0; return 0; }
 
 	# Parse "## owner/repo" headers and "- Issue #N: ... [status: **needs-review**]" lines.
 	local candidates=""
