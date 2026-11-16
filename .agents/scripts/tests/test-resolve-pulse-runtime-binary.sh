@@ -520,6 +520,30 @@ else
 		"rc=$rc15 result=$result15"
 fi
 
+# Test 16 (GH#38581): with a durable HOME, an ephemeral target is neither
+# accepted as a candidate nor written into the live daemon shim. The sandbox
+# HOME is itself under a temp root, so the predicate is narrowed in a subshell
+# to treat only the marked segment as ephemeral.
+fixture16=$(mktemp -d 2>/dev/null || mktemp -d -t t19055)
+target16=$(build_fixture_node_install "$fixture16/t19055-ephemeral" "opencode" "nvm" "v24.13.1")
+result16=$(
+	_setup_opencode_binary_is_ephemeral() {
+		[[ "${1:-}" == */t19055-ephemeral/* ]] && return 0
+		return 1
+	}
+	export HOME="$fixture16/home"
+	_pulse_validate_opencode_candidate "$target16" 1 && printf 'candidate-accepted\n'
+	_pulse_write_direct_opencode_shim "$target16" && printf 'shim-written\n'
+	true
+)
+if [[ -z "$result16" && ! -e "$fixture16/home/.local/bin/opencode" ]]; then
+	print_result "durable HOME — ephemeral target rejected and live shim untouched" 0
+else
+	print_result "durable HOME — ephemeral target rejected and live shim untouched" 1 \
+		"result=$result16"
+fi
+rm -rf "$fixture16"
+
 # --- Summary ---
 echo ""
 echo "Tests run: $TESTS_RUN"
