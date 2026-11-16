@@ -350,6 +350,7 @@ docs.perplexity.ai
 docs.pipecat.ai
 docs.pydantic.dev
 docs.runpod.io
+docs.salad.com
 docs.sentry.io
 docs.skyvern.com
 docs.snyk.io
@@ -515,6 +516,7 @@ mcp.grep.app
 mcp.linear.app
 mcp.linkup.so
 mcp.provider.com
+mcp.runpod.io
 mcp.sentry.dev
 mcp.socket.dev
 mcporter.dev

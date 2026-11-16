@@ -2155,6 +2155,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19050 x-search-research-helper.sh: Grok X and web search for first-hand user-experience research #auto-dispatch #feat tier:simple ref:GH#38557 logged:2026-11-15 -> [todo/tasks/t19050-brief.md]
 
+- [ ] t19051 Runpod CLI-first + on-demand MCP, and SaladCloud CLI support for remote GPU rendering #interactive #feat tier:standard assignee:marcusquinn ref:GH#38563 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19051-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

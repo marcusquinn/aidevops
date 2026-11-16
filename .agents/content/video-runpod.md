@@ -45,7 +45,8 @@ changing any Serverless endpoint or Pod.
   `GET .../<endpoint-id>/status/<job-id>` with bounded backoff
 - **Model list and per-model schema/pricing**: `https://docs.runpod.io/public-endpoints/reference`
 - **Serverless ComfyUI worker**: GitHub `runpod-workers/worker-comfyui`
-- **CLI**: `runpodctl` (Pods/Serverless lifecycle, see `cloud-gpu.md`)
+- **CLI**: `runpodctl` (Pods/Serverless lifecycle; `serverless run <id> --input-file payload.json` submits on `/run` and polls; see `tools/infrastructure/runpod.md`)
+- **MCP**: on-demand `@runpod` for interactive inspection; endpoint runs and other billable writes need approval
 - **JS/TS**: `@runpod/ai-sdk-provider` integrates Public Endpoints with the Vercel AI SDK
 
 <!-- AI-CONTEXT-END -->

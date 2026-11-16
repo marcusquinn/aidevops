@@ -54,6 +54,7 @@ subagents:
   - vercel
   - cloudflare-mcp
   - idrive-e2
+  - runpod
   # Analytics / monitoring
   - posthog
   - sentry
