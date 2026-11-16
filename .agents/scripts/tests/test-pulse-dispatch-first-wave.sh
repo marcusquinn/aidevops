@@ -402,8 +402,8 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	rc=0
 	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || rc=$?
 	[[ "$rc" == 124 && "$(<"$limit_file")" == 25 ]]
-	# Reduced scans cannot use the old above-cap budget, and repeated full-cap
-	# timeouts continue shrinking only this repository, with a floor of one.
+	# Reduced scans cannot use the old above-cap budget. GH#38690: a full-cap
+	# timeout at the floor (max(limit/8, 25)) retains the snapshot.
 	_dispatch_enumerate_repo_bounded() {
 		printf '%s:%s\n' "$1" "$4" >>"$EVENTS"
 		return 124
@@ -411,14 +411,65 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	printf '4 escalated\n' >"$sleepy_file"
 	: >"$EVENTS"
 	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || true
-	[[ "$(<"$EVENTS")" == '1:25' && "$(<"$limit_file")" == 13 ]]
-	_dispatch_reduce_repo_enumeration_limit owner/sleepy 2
-	_dispatch_reduce_repo_enumeration_limit owner/sleepy 1
+	[[ "$(<"$EVENTS")" == '1:25' && "$(<"$limit_file")" == 25 ]]
+	grep -q 'limit retained: repo=owner/sleepy limit=25 floor=25 reason=at_floor (GH#38690)' "$LOGFILE"
+	[[ "$(_dispatch_repo_enumeration_limit_floor 400)" == 50 && "$(_dispatch_repo_enumeration_limit_floor 10)" == 10 ]]
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 400 400
+	[[ "$(<"$limit_file")" == 200 ]]
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 60 400
+	[[ "$(<"$limit_file")" == 50 ]]
+	grep -q 'limit reduced: repo=owner/sleepy from=60 to=50 reason=timeout_at_cap (GH#38548)' "$LOGFILE"
+	PULSE_REPO_ENUMERATION_LIMIT_FLOOR=1 _dispatch_reduce_repo_enumeration_limit owner/sleepy 2 2
 	[[ "$(<"$limit_file")" == 1 ]]
+	# A limit collapsed before the floor existed scans at the floor and
+	# recovers from it.
+	printf '2 0\n' >"$limit_file"
+	[[ "$(_dispatch_repo_enumeration_limit owner/sleepy 50)" == 25 ]]
+	_dispatch_enumerate_repo_bounded() {
+		printf '%s:%s\n' "$1" "$4" >>"$EVENTS"
+		printf '[{"number":9}]\n'
+		return 0
+	}
+	: >"$EVENTS"
+	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null
+	[[ "$(<"$EVENTS")" == '1:25' && "$(<"$limit_file")" == '25 1' ]]
+	# A completed reduced scan with no candidates exhausted its prefix and
+	# probes a larger snapshot immediately.
+	_dispatch_enumerate_repo_bounded() {
+		printf '[]\n'
+		return 0
+	}
+	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null
+	[[ "$(<"$limit_file")" == '50 0' ]]
+	grep -q 'limit probed: repo=owner/sleepy from=25 to=50 reason=empty_prefix (GH#38690)' "$LOGFILE"
+	# Completed scans record cost per limit; a halved limit that saved under a
+	# quarter of the time marks fixed cost, so a timeout retains the snapshot.
+	cost_file=$(_dispatch_repo_enumeration_cost_file owner/sleepy)
+	now=$(_dispatch_first_wave_now_s)
+	[[ "$(head -n 1 "$cost_file")" == "25 0 ${now}" ]]
+	printf '100 16 %s\n50 15 %s\n' "$now" "$now" >"$cost_file"
+	printf '200\n' >"$limit_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400
+	[[ "$(<"$limit_file")" == 200 ]]
+	grep -q 'limit retained: repo=owner/sleepy limit=200 floor=50 reason=fixed_cost (GH#38690)' "$LOGFILE"
+	# Proportional or stale costs still halve.
+	printf '100 16 %s\n50 6 %s\n' "$now" "$now" >"$cost_file"
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 200 400
+	[[ "$(<"$limit_file")" == 100 ]]
+	printf '100 16 %s\n50 15 %s\n' "$now" "$now" >"$cost_file"
+	advance_clock 90000
+	_dispatch_reduce_repo_enumeration_limit owner/sleepy 100 400
+	[[ "$(<"$limit_file")" == 50 ]]
+	printf '%s\n' "$now" >"$CLOCK"
+	# Recording keeps one sample per limit, newest first, four limits at most.
+	_dispatch_record_repo_enumeration_cost owner/sleepy 25 4
+	_dispatch_record_repo_enumeration_cost owner/sleepy 12 3
+	_dispatch_record_repo_enumeration_cost owner/sleepy 25 5
+	[[ "$(awk '{print $1 ":" $2}' "$cost_file" | tr '\n' ';')" == '25:5;12:3;100:16;50:15;' ]]
 	printf 'malformed\n' >"$limit_file"
 	[[ "$(_dispatch_repo_enumeration_limit owner/sleepy 50)" == 50 ]]
 )
-printf 'PASS capped timeouts reduce repository work and recover candidates (GH#38543, GH#38548)\n'
+printf 'PASS capped timeouts reduce repository work and recover candidates (GH#38543, GH#38548, GH#38690)\n'
 
 # GH#38483: a known-slow repository the census cannot afford is deferred, not
 # scanned with a clamped budget; it leads the next census with its full budget.
