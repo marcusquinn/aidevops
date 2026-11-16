@@ -129,15 +129,27 @@ child environment; credentials are never exported to a long-lived parent.
 - PID birth identity protects recovery. A credential changing owner
   configuration cannot obtain an independent second budget: live scope state
   and reservations are merged conservatively.
-- `AIDEVOPS_GH_QUOTA_OWNER` may identify a trusted user/installation owner.
+- A configured quota owner identifies a trusted user/installation owner.
   Multiple PATs for that owner share an allowance. Unresolved callers share a
   conservative host scope. This is local coordination, **not distributed fleet
   admission**. Permission-scoped cache identity remains a separate concern.
-- Status reports the number of bound credentials and an anonymous ambiguity
+- Owner configuration (GH#38619): the supported location is the mode-600
+  `quota-owner` file in the transport state directory
+  (`${AIDEVOPS_GH_TRANSPORT_STATE_DIR:-~/.aidevops/state/gh-transport}`). Every
+  governed caller (pulse, workers, interactive shells) already reads that
+  directory, so no shell profile or generated systemd unit is involved and
+  `setup.sh` never rewrites it. Create it with
+  `python3 ~/.aidevops/agents/scripts/gh_transport_budget.py set-owner`: it proves the
+  authenticated `gh` login and stores only its digest, refuses `ghs_`
+  installation tokens, refuses when another proven login still holds live
+  bindings, and never replaces a different configured owner. An
+  `AIDEVOPS_GH_QUOTA_OWNER` environment value overrides the file for one caller
+  (tests, CI, or `unresolved` to opt out); it is not the host-wide surface.
+- Status reports the number of live bound credentials and an anonymous ambiguity
   reason. It never exposes credential fingerprints or owner values. When a
-  previously unresolved scope retains stale evidence, stop all local GitHub
-  requests, set one trusted owner consistently for every caller using that state,
-  then run `python3 .agents/scripts/gh_transport_budget.py reconcile`. Reconciliation refuses
+  previously unresolved scope retains stale evidence, run `set-owner` once, stop
+  all local GitHub requests, then run
+  `python3 ~/.aidevops/agents/scripts/gh_transport_budget.py reconcile`. Reconciliation refuses
   active or uncertain requests, preserves live server cooldowns, reverses the
   unresolved alias into the configured owner, and makes the next normal GET the
   single serialized source of fresh quota. It is idempotent and cannot be used
@@ -147,14 +159,32 @@ child environment; credentials are never exported to a long-lived parent.
   governed read per PAT/OAuth credential resolves the authenticated login once
   (`gh api user`) and caches only a one-way digest in `quota-owners.json` (mode
   600, 5 minute retry after failure). The login is never stored or logged. Scope
-  keys do not change. When every credential bound to a scope has the same digest,
-  or a configured owner is set, a newer reset window with its balance replaces a
-  stale low pair at once. Unproven or different owners remain conservative and
-  never inherit each other's balance. `ghs_` installation tokens are never
-  attributed to a login.
-- Status adds `stale_multi_credential_scope` when more than one credential is bound
-  and a later reset was observed (numbers only, `live-windows.json`) than the
-  stored one. Resolution: owner proof accrues automatically; otherwise reconcile.
+  keys do not change. When every live credential bound to a scope has the same
+  digest, or a configured owner is set, a newer reset window with its balance
+  replaces a stale low pair at once. Unproven or different live owners remain
+  conservative and never inherit each other's balance. `ghs_` installation
+  tokens are never attributed to a login, so a live one keeps its scope
+  conservative.
+- Binding lifecycle (GH#38619): rotated or retired credential fingerprints used
+  to stay bound forever, so one digest-less row pinned a single-account host to
+  conservative accounting. `binding_seen` records each binding's last write
+  (an `AFTER INSERT` trigger stamps writes from every runtime bundle in the same
+  transaction; `user_version` is unchanged, so older bundles keep working).
+  Allowance decisions and status count only live bindings: seen within one core
+  window plus the maximum reservation age (3780 s), holding any reservation, or
+  without recency evidence (older writer or failed migration stays
+  conservative). A credential outside that window cannot own a stored reset
+  still in the future. Rows are filtered, never deleted, so a returning
+  credential still merges into its earlier scope. The idempotent migration
+  backfills existing rows as seen at migration time; they age out one window
+  later, after which a single live credential, or live credentials sharing one
+  proven digest, accept the newer window automatically.
+- Status adds `stale_multi_credential_scope` when more than one live credential
+  is bound and a later reset was observed (numbers only, `live-windows.json`)
+  than the stored one. Resolution: retired bindings age out and owner proof
+  accrues automatically; when two live credentials remain unproven (for example
+  a live `ghs_` token alongside a PAT), run `set-owner` then `reconcile` only if
+  they truly belong to one owner.
 - Rollout caveat: processes started from older runtime bundles keep the old
   `finish()` and may re-stamp a stale reset until they restart.
 
