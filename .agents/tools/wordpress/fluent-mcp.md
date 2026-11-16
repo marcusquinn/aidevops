@@ -125,7 +125,7 @@ wp eval 'fluentcrm_update_option("mcp_enabled", "yes");'
 
 ### Fluent Boards cards over SSH (`wp-helper.sh --fluent-boards`)
 
-For sites where you have SSH (or LocalWP) access but no MCP Adapter or Application Password. Uses the `wp-helper.sh` site config and the change-plan transport: `wp-fluent-boards.php` is uploaded to a private temporary directory outside the webroot, run with `wp eval-file` from `wp_path` (works where `proc_open()` is disabled, as on Hostinger shared hosting), then removed and the removal checked. Reads and writes go through the plugin's own models and the hooks its board UI fires, so the activity log records each change. Output is JSON.
+For sites where you have SSH (or LocalWP) access but no MCP Adapter or Application Password. Uses the `wp-helper.sh` site config and the change-plan transport: `wp-fluent-boards.php` and its `-store`, `-reader` and `-writer` siblings (keep the four together) are uploaded to a private temporary directory outside the webroot, run with `wp eval-file wp-fluent-boards.php` from `wp_path` (works where `proc_open()` is disabled, as on Hostinger shared hosting), then removed and the removal checked. Reads and writes go through the plugin's own models and the hooks its board UI fires, so the activity log records each change. Output is JSON.
 
 ```bash
 wp-helper.sh --fluent-boards SITE boards [--url BLOG_URL]                  # boards, stages, card counts

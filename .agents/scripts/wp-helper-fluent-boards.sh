@@ -26,6 +26,8 @@
 _WP_FLUENT_BOARDS_LIB_LOADED=1
 
 WPFB_PHP_FILE="wp-fluent-boards.php"
+# The entry file loads its siblings from its own directory; upload them together.
+WPFB_PHP_FILES=("$WPFB_PHP_FILE" wp-fluent-boards-store.php wp-fluent-boards-reader.php wp-fluent-boards-writer.php)
 WPFB_USAGE="Usage: wp-helper.sh --fluent-boards <site> <boards | cards --board ID [--stage S] | show --card ID | move --card ID --stage S | comment --card ID --body-file F | check --card ID --item ID> [--url URL] [--user=<id>]"
 # Parsed options (globals keep Bash 3.2 compatibility without namerefs).
 WPFB_ARGS=()
@@ -136,11 +138,15 @@ _wpfb_run_remote() {
 	remote_tmp=$(_wpcp_remote_mktemp wp-fluent-boards) || return 1
 	trap '_wpcp_cleanup_remote "$remote_tmp"; trap - INT TERM; exit 130' INT TERM
 
-	local rc=0
+	local rc=0 php_file
 	local -a wp_args=(eval-file "${remote_tmp}/${WPFB_PHP_FILE}" "${WPFB_ARGS[@]}")
-	if ! _wpcp_scp "${SCRIPT_DIR}/${WPFB_PHP_FILE}" "${WPCP_TARGET}:${remote_tmp}/${WPFB_PHP_FILE}"; then
-		rc=1
-	elif [[ -n "$WPFB_BODY_FILE" ]]; then
+	for php_file in "${WPFB_PHP_FILES[@]}"; do
+		_wpcp_scp "${SCRIPT_DIR}/${php_file}" "${WPCP_TARGET}:${remote_tmp}/${php_file}" || {
+			rc=1
+			break
+		}
+	done
+	if [[ "$rc" -eq 0 && -n "$WPFB_BODY_FILE" ]]; then
 		_wpcp_scp "$WPFB_BODY_FILE" "${WPCP_TARGET}:${remote_tmp}/body.txt" || rc=1
 		wp_args+=("body_file=${remote_tmp}/body.txt")
 	fi
