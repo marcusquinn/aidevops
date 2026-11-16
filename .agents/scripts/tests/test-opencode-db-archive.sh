@@ -44,7 +44,11 @@ ARCHIVE_DB="${SANDBOX}/opencode-archive.db"
 # Never classify against the host's real headless-runtime ledger.
 export OPENCODE_DB_HEADLESS_LEDGER="${SANDBOX}/headless-ledger.db"
 
+# Batch-adaptation state (GH#38590) must never touch the host's real logs dir.
+export OPENCODE_DB_ARCHIVE_STATE_DIR="${SANDBOX}/archive-state"
+
 _reset_dbs() {
+	rm -rf "$OPENCODE_DB_ARCHIVE_STATE_DIR"
 	rm -f "$ACTIVE_DB" "$ARCHIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm" "${ARCHIVE_DB}-wal" "${ARCHIVE_DB}-shm"
 	return 0
 }
@@ -1095,6 +1099,9 @@ for sql_stage in candidate commit_gap; do
 		else
 			_fail "copy/delete gap archive copy mismatch: $out"
 		fi
+		# These retries test the duplicate guard, not batch adaptation: drop the
+		# marker so the killed 1-session batch is not deferred as oversized.
+		rm -rf "$OPENCODE_DB_ARCHIVE_STATE_DIR"
 		# A changed source must not be deleted in favor of a stale duplicate.
 		sqlite3 "$ACTIVE_DB" "UPDATE message SET data='changed';"
 		set +e
@@ -1146,6 +1153,54 @@ for budget_stage in preflight batch; do
 		_fail "deadline $budget_stage mismatch: rc=$rc elapsed=$elapsed remaining=$remaining output=$out"
 	fi
 done
+
+# GH#38590: a batch write killed by the deadline leaves an in-flight marker;
+# the next run halves the session limit and still archives; a 1-session batch
+# that is killed again is deferred as oversized with one warning.
+_reset_dbs
+_make_active_db_1_18_3
+_add_second_active_1_18_3_session
+set +e
+out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="commit_gap" \
+	TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
+	OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=2 "$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 2 && -n "$(find "$OPENCODE_DB_ARCHIVE_STATE_DIR" -name '*.sessions.inflight' 2>/dev/null)" ]]; then
+	_pass "killed batch write leaves an in-flight marker"
+else
+	_fail "in-flight marker missing after killed batch: rc=$rc output=$out"
+fi
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=2 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 && "$out" == *"halving limits to 1 row"* && "$out" == *"Archived 1/2 sessions [batch 1]"* &&
+	"$out" == *"Archived 2/2 sessions [batch 2]"* && "$out" == *"Phase seconds:"* &&
+	-z "$(find "$OPENCODE_DB_ARCHIVE_STATE_DIR" -name '*.sessions.inflight' 2>/dev/null)" ]]; then
+	_pass "next run halves the batch limit, archives, clears the marker and regrows"
+else
+	_fail "halved retry mismatch: rc=$rc output=$out"
+fi
+
+_reset_dbs
+_make_active_db_1_18_3
+set +e
+out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="commit_gap" \
+	TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
+	OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 2>&1)
+rc=$?
+set -e
+if [[ "$out" == *"deferring it as oversized"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
+	_pass "an interrupted 1-session batch is deferred as oversized"
+else
+	_fail "oversized deferral mismatch: rc=$rc output=$out"
+fi
 
 # Signal the scheduled runner, rather than its foreground SQLite child. Its
 # EXIT receipt must include the signal status and it must release its lock.
@@ -1407,32 +1462,27 @@ setup = '''
 has_session_message_table=1 has_event_table=1
 has_session_input_table=1 has_session_context_epoch_table=1
 candidate_filter=1
+_archive_octet_supported() { return 0; }
+_archive_len_expr() { printf 'octet_length(%s)\\n' "$1"; return 0; }
 _archive_active_query() {
-    local sql="$1"
-    if [[ "$sql" == 'SELECT id FROM session '* ]]; then
-        printf 'one\\ntwo\\nthree\\n'
-    else
-        printf 'sized\\n' >&2
-        printf '%s\\n' "$TEST_BYTES"
-    fi
+    printf 'query\\n' >&2
+    case "$1" in *octet_length*"SUM(b) OVER"*) ;; *) printf 'bad-sql\\n' >&2 ;; esac
+    printf 'one\\ntwo\\n'
     return 0
 }
 '''
-for size, deadline, expected, count, status in [
-    (6, 4102444800, 'one\n', 2, 0),
-    (20, 4102444800, 'one\n', 1, 0),
-    (5, 4102444800, 'one\ntwo\n', 2, 0),
-    (6, 0, '', 0, 2),
+for deadline, expected, count, bad, status in [
+    (4102444800, 'one\ntwo\n', 1, 0, 0),
+    (0, '', 0, 0, 2),
 ]:
-    result = subprocess.run(['bash', '-c', selector + setup +
-                             f'TEST_BYTES={size}; _archive_select_batch 500 10 {deadline}'],
+    result = subprocess.run(['bash', '-c', selector + setup + f'_archive_select_batch 500 10 {deadline}'],
                             capture_output=True, text=True, check=False)
-    assert (result.returncode, result.stdout, result.stderr.count('sized\n')) == (status, expected, count), result
+    assert (result.returncode, result.stdout, result.stderr.count('query\n'), result.stderr.count('bad-sql')) == (status, expected, count, bad), result
 PY
 then
-	_pass "payload discovery stops at byte/deadline limits and keeps oversized first sessions"
+	_pass "candidate sizing uses one window-sum query and honours the deadline"
 else
-	_fail "payload discovery exceeded the required prefix or deadline"
+	_fail "candidate sizing issued extra queries or ignored the deadline"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

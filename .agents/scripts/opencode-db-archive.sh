@@ -370,6 +370,194 @@ _archive_interrupt() {
 	return 1
 }
 
+# --- Persisted batch adaptation (GH#38590) -------------------------------------
+# A batch killed by the per-DB deadline, SIGTERM or SIGKILL rolls back and the
+# next run used to retry the identical batch forever. State lives beside the
+# deferral counter (not beside the DB), keyed by a hash of the active DB path:
+#   <base>.<kind>.limits    "<row limit> <byte limit>" last committed/halved size
+#   <base>.<kind>.inflight  "<row limit> <byte limit> <csv ids>" written before a
+#                           write; still present on the next start => no commit
+#   <base>.sessions.oversized  one session ID per line, skipped by later runs
+# kind is "sessions" (session move) or "events" (worker-event expiry).
+readonly ARCHIVE_MIN_BATCH_BYTES=1048576
+_ARCHIVE_ADAPT_LIMIT=0
+_ARCHIVE_ADAPT_BYTES=0
+_ARCHIVE_ADAPT_IDS=""
+# Per-phase seconds for the one-line per-DB timing report.
+_ARCHIVE_T_EVENT=0
+_ARCHIVE_T_WORKER=0
+_ARCHIVE_T_PREP=0
+_ARCHIVE_T_SIZING=0
+_ARCHIVE_T_WRITE=0
+_ARCHIVE_OCTET_SUPPORTED=""
+
+# Print the state file prefix for this DB; return 1 when no state dir exists.
+_archive_state_base() {
+	local kind="$1" dir key
+	dir="${OPENCODE_DB_ARCHIVE_STATE_DIR:-}"
+	if [[ -z "$dir" ]]; then
+		[[ -n "${HOME:-}" ]] || return 1
+		dir="${HOME}/.aidevops/logs"
+	fi
+	key=$(printf '%s' "$ACTIVE_DB" | cksum | awk '{print $1}')
+	printf '%s/opencode-db-archive.%s.%s\n' "$dir" "$key" "$kind"
+	return 0
+}
+
+# _archive_adapt_write <kind> <suffix> <content>
+_archive_adapt_write() {
+	local kind="$1" suffix="$2" content="$3" base
+	base=$(_archive_state_base "$kind") || return 0
+	mkdir -p "${base%/*}" 2>/dev/null || return 0
+	printf '%s\n' "$content" >"${base}.${suffix}" 2>/dev/null || true
+	return 0
+}
+
+# _archive_adapt_recover <kind> <floor_rows>
+# Sets _ARCHIVE_ADAPT_LIMIT/_BYTES (0 = no persisted limit). A leftover
+# in-flight marker means the previous write never committed: halve and clear it,
+# and print the marker's IDs so callers can detect a still-failing 1-row batch.
+_archive_adapt_recover() {
+	local kind="$1" floor_rows="$2" base limit=0 bytes=0 m_limit m_bytes m_pid="" m_ids="" m_floor=0
+	_ARCHIVE_ADAPT_LIMIT=0
+	_ARCHIVE_ADAPT_BYTES=0
+	_ARCHIVE_ADAPT_IDS=""
+	base=$(_archive_state_base "$kind") || return 0
+	if [[ -f "${base}.limits" ]]; then
+		read -r limit bytes <"${base}.limits" || true
+	fi
+	[[ "$limit" =~ ^[0-9]+$ && "$bytes" =~ ^[0-9]+$ ]] || {
+		limit=0
+		bytes=0
+	}
+	if [[ -f "${base}.inflight" ]]; then
+		m_limit=0
+		m_bytes=0
+		read -r m_limit m_bytes m_pid m_ids <"${base}.inflight" || true
+		# A marker owned by a live run is not an interruption: leave it be.
+		if [[ "$m_pid" =~ ^[0-9]+$ && "$m_pid" != "$$" ]] && kill -0 "$m_pid" 2>/dev/null; then
+			_ARCHIVE_ADAPT_LIMIT="$limit"
+			_ARCHIVE_ADAPT_BYTES="$bytes"
+			return 0
+		fi
+		if [[ "$m_limit" =~ ^[0-9]+$ && "$m_bytes" =~ ^[0-9]+$ ]] && ((m_limit > 0 && m_bytes > 0)); then
+			# Only a batch that was already at the 1-row floor is "still interrupted".
+			((m_limit > 1)) || [[ "$kind" != sessions ]] || m_floor=1
+			limit=$((m_limit / 2))
+			bytes=$((m_bytes / 2))
+			((limit >= floor_rows)) || limit="$floor_rows"
+			((bytes >= ARCHIVE_MIN_BATCH_BYTES)) || bytes="$ARCHIVE_MIN_BATCH_BYTES"
+			_archive_adapt_write "$kind" limits "$limit $bytes"
+			print_warning "Previous ${kind} batch never committed; halving limits to ${limit} row(s) / $(format_bytes "$bytes")."
+		fi
+		rm -f "${base}.inflight" 2>/dev/null || true
+	fi
+	_ARCHIVE_ADAPT_LIMIT="$limit"
+	_ARCHIVE_ADAPT_BYTES="$bytes"
+	((m_floor)) && _ARCHIVE_ADAPT_IDS="$m_ids"
+	return 0
+}
+
+# _archive_adapt_mark <kind> <rows> <bytes> [csv_ids]
+# The marker records this run's PID so a concurrent run never treats a live
+# run's marker as an interruption.
+_archive_adapt_mark() {
+	local kind="$1" rows="$2" bytes="$3" ids="${4:-}"
+	_archive_adapt_write "$kind" inflight "$rows $bytes $$ $ids"
+	return 0
+}
+
+_archive_adapt_clear() {
+	local kind="$1" base
+	base=$(_archive_state_base "$kind") || return 0
+	rm -f "${base}.inflight" 2>/dev/null || true
+	return 0
+}
+
+# _archive_adapt_commit <kind> <rows> <bytes> <default_rows> <default_bytes>
+# Clear the marker and double the limits back toward the defaults.
+_archive_adapt_commit() {
+	local kind="$1" rows="$2" bytes="$3" max_rows="$4" max_bytes="$5"
+	_archive_adapt_clear "$kind"
+	rows=$((rows * 2))
+	bytes=$((bytes * 2))
+	((rows <= max_rows)) || rows="$max_rows"
+	((bytes <= max_bytes)) || bytes="$max_bytes"
+	_archive_adapt_write "$kind" limits "$rows $bytes"
+	return 0
+}
+
+# Persist halved limits after an observed timeout (no marker involved).
+_archive_adapt_halve() {
+	local kind="$1" rows="$2" bytes="$3" floor_rows="$4"
+	rows=$((rows / 2))
+	bytes=$((bytes / 2))
+	((rows >= floor_rows)) || rows="$floor_rows"
+	((bytes >= ARCHIVE_MIN_BATCH_BYTES)) || bytes="$ARCHIVE_MIN_BATCH_BYTES"
+	_archive_adapt_clear "$kind"
+	_archive_adapt_write "$kind" limits "$rows $bytes"
+	_ARCHIVE_ADAPT_LIMIT="$rows"
+	_ARCHIVE_ADAPT_BYTES="$bytes"
+	return 0
+}
+
+# Print SQL "AND id NOT IN (...)" for sessions whose 1-session batch was
+# interrupted; empty when none (or when the run has a larger budget).
+_archive_oversized_exclude_clause() {
+	local base sid list=""
+	base=$(_archive_state_base sessions) || return 0
+	[[ -f "${base}.oversized" ]] || return 0
+	if ((max_duration > DEFAULT_MAX_DURATION)); then
+		# Manual long run: retry deferred sessions; failures are re-recorded.
+		# A dry run only previews, so it must not drop the persisted list.
+		((dry_run)) || rm -f "${base}.oversized" 2>/dev/null || true
+		return 0
+	fi
+	while IFS= read -r sid; do
+		[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || continue
+		list="${list}${list:+,}'${sid}'"
+	done <"${base}.oversized"
+	[[ -z "$list" ]] || printf ' AND id NOT IN (%s)\n' "$list"
+	return 0
+}
+
+# _archive_oversized_record <session_id>
+_archive_oversized_record() {
+	local sid="$1" base
+	[[ "$sid" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 0
+	base=$(_archive_state_base sessions) || return 0
+	mkdir -p "${base%/*}" 2>/dev/null || return 0
+	if ! grep -qxF -- "$sid" "${base}.oversized" 2>/dev/null; then
+		printf '%s\n' "$sid" >>"${base}.oversized" 2>/dev/null || true
+	fi
+	print_warning "Session ${sid} still interrupted a 1-session batch; deferring it as oversized. Remedy: run the archive manually with a larger --max-duration-seconds while the host is idle."
+	return 0
+}
+
+# Cached probe: octet_length() (SQLite 3.43+) reads only the record header.
+_archive_octet_supported() {
+	if [[ -z "$_ARCHIVE_OCTET_SUPPORTED" ]]; then
+		if [[ "$(sqlite3 :memory: "SELECT octet_length('ab');" 2>/dev/null)" == "2" ]]; then
+			_ARCHIVE_OCTET_SUPPORTED=1
+		else
+			_ARCHIVE_OCTET_SUPPORTED=0
+		fi
+	fi
+	((_ARCHIVE_OCTET_SUPPORTED))
+	return $?
+}
+
+# _archive_len_expr <column> — byte length expression for a payload column.
+_archive_len_expr() {
+	local column="$1"
+	if _archive_octet_supported; then
+		printf 'octet_length(%s)\n' "$column"
+	else
+		printf 'LENGTH(CAST(%s AS BLOB))\n' "$column"
+	fi
+	return 0
+}
+
 # --- Schema creation in archive DB (extracted module) -------------------------
 # shellcheck source=./opencode-db-archive-schema.sh
 # shellcheck disable=SC1091 # sibling module resolved via the entry point directory
@@ -777,7 +965,10 @@ cmd_archive() {
 	((events_only)) || expiry_budget=$((max_duration / 4))
 	local expiry_rc=0
 	if ((expiry_budget > 0)); then
+		local event_t0
+		event_t0=$(date +%s)
 		_archive_expire_events "$event_retention_days" "$dry_run" "$expiry_budget" || expiry_rc=$?
+		_ARCHIVE_T_EVENT=$(($(date +%s) - event_t0))
 		# Only a deferral (2) must not block the session move; errors stop here.
 		if [[ "$expiry_rc" -ne 0 && "$expiry_rc" -ne 2 ]]; then
 			return "$expiry_rc"
@@ -786,6 +977,7 @@ cmd_archive() {
 	((events_only)) && return "$expiry_rc"
 	local move_rc=0
 	_archive_move_phase || move_rc=$?
+	print_info "Phase seconds: event_expiry=${_ARCHIVE_T_EVENT} worker_event_expiry=${_ARCHIVE_T_WORKER} candidate_prep=${_ARCHIVE_T_PREP} sizing=${_ARCHIVE_T_SIZING} batch_write=${_ARCHIVE_T_WRITE} (rc=${move_rc})"
 	# Keep rc 2 after a successful move so the scheduler retries the expiry.
 	if [[ "$move_rc" -eq 0 && "$expiry_rc" -eq 2 ]]; then
 		return 2
@@ -802,8 +994,16 @@ _archive_move_phase() {
 	fi
 	# GH#38491: drop dead-worker events before the move so their pages are
 	# reused at once instead of after the 7-day worker retention.
-	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$((max_duration / 4))" || return $?
+	# Events of terminated workers are expendable, and expiring them first stops
+	# the move from copying and verifying those bytes (GH#38590), so they get
+	# half the budget. The pass ends at once when nothing is expirable.
+	local t0 now
+	t0=$(date +%s)
+	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$((max_duration / 2))" || return $?
+	now=$(date +%s)
+	_ARCHIVE_T_WORKER=$((now - t0))
 	_archive_prepare_candidates || return $?
+	_ARCHIVE_T_PREP=$(($(date +%s) - now))
 	if ((total_eligible == 0)); then
 		print_success "No sessions match the archive retention target."
 		((dry_run)) && return 0
@@ -981,6 +1181,19 @@ _archive_prepare_candidates() {
 	fi
 	exclude_clause="${exclude_clause}$(_archive_held_exclude_clause)"
 
+	# GH#38590: a leftover in-flight marker means the previous batch never
+	# committed. Halve the persisted limits; a still-failing 1-session batch is
+	# deferred as oversized so it cannot block the queue head forever.
+	_ARCHIVE_ADAPT_LIMIT=0
+	_ARCHIVE_ADAPT_BYTES=0
+	if ! ((dry_run)); then
+		_archive_adapt_recover sessions 1
+		if [[ -n "$_ARCHIVE_ADAPT_IDS" && "$_ARCHIVE_ADAPT_IDS" != *,* ]]; then
+			_archive_oversized_record "$_ARCHIVE_ADAPT_IDS"
+		fi
+	fi
+	exclude_clause="${exclude_clause}$(_archive_oversized_exclude_clause)"
+
 	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause" "$worker_cutoff_ms" "$headless_predicate")
 
 	# Count eligible sessions
@@ -1085,34 +1298,31 @@ _archive_move_candidates() {
 
 _archive_select_batch() {
 	local batch_limit="$1" byte_limit="$2" deadline="$3"
-	local candidates sid escaped_sid bytes cumulative=0 selected="" extra_bytes_sql=""
+	local selected size_sql data_len extra_bytes_sql=""
+	data_len=$(_archive_len_expr data)
 	if ((has_session_message_table)); then
-		extra_bytes_sql=" + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM session_message WHERE session_id=c.id),0)"
+		extra_bytes_sql=" + COALESCE((SELECT SUM(${data_len}) FROM session_message WHERE session_id=c.id),0)"
 	fi
 	if ((has_event_table)); then
-		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM event WHERE aggregate_id=c.id),0)"
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(${data_len}) FROM event WHERE aggregate_id=c.id),0)"
 	fi
 	if ((has_session_input_table)); then
-		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(prompt AS BLOB))) FROM session_input WHERE session_id=c.id),0)"
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_len_expr prompt)) FROM session_input WHERE session_id=c.id),0)"
 	fi
 	if ((has_session_context_epoch_table)); then
-		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM(LENGTH(CAST(baseline AS BLOB)) + LENGTH(CAST(snapshot AS BLOB))) FROM session_context_epoch WHERE session_id=c.id),0)"
+		extra_bytes_sql="$extra_bytes_sql + COALESCE((SELECT SUM($(_archive_len_expr baseline) + $(_archive_len_expr snapshot)) FROM session_context_epoch WHERE session_id=c.id),0)"
 	fi
-	# Discover IDs without touching payloads, then size only the needed prefix.
-	candidates=$(_archive_active_query "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit;") || return 1
-	while IFS= read -r sid; do
-		[[ -n "$sid" ]] || continue
-		if (($(date +%s) >= deadline)); then return 2; fi
-		escaped_sid="${sid//\'/\'\'}"
-		bytes=$(_archive_active_query "SELECT COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(LENGTH(CAST(data AS BLOB))) FROM message WHERE session_id=c.id),0)$extra_bytes_sql FROM session c WHERE id='$escaped_sid';") || return 1
-		# Never begin a write after discovery has used the remaining budget.
-		if (($(date +%s) >= deadline)); then return 2; fi
-		if [[ -n "$selected" ]] && ((cumulative + bytes > byte_limit)); then break; fi
-		selected="${selected}${selected:+$'\n'}${sid}"
-		cumulative=$((cumulative + bytes))
-		# Keep the oversized-single-session exception without sizing its followers.
-		if ((cumulative >= byte_limit)); then break; fi
-	done <<<"$candidates"
+	# Never begin sizing or a write after the remaining budget is used.
+	if (($(date +%s) >= deadline)); then return 2; fi
+	# Without octet_length() every sized row reads its overflow pages, so keep
+	# the sized window small; later batches take the rest.
+	if ! _archive_octet_supported && ((batch_limit > 25)); then batch_limit=25; fi
+	# One query sizes the whole candidate window with a cumulative window sum
+	# and returns the prefix that fits the byte bound. The first session is
+	# always kept so an oversized single session can still move on its own.
+	size_sql="WITH cand AS (SELECT c.id AS id, ROW_NUMBER() OVER (ORDER BY c.time_updated, c.time_created, c.id) AS rn, COALESCE((SELECT SUM(${data_len}) FROM part WHERE session_id=c.id),0) + COALESCE((SELECT SUM(${data_len}) FROM message WHERE session_id=c.id),0)${extra_bytes_sql} AS b FROM (SELECT id, time_updated, time_created FROM session WHERE $candidate_filter ORDER BY time_updated, time_created, id LIMIT $batch_limit) c), cum AS (SELECT id, rn, SUM(b) OVER (ORDER BY rn) AS total FROM cand) SELECT id FROM cum WHERE rn = 1 OR total <= $byte_limit ORDER BY rn;"
+	selected=$(_archive_active_query "$size_sql") || return 1
+	if (($(date +%s) >= deadline)); then return 2; fi
 	[[ -z "$selected" ]] || printf '%s\n' "$selected"
 	return 0
 }
@@ -1126,6 +1336,14 @@ _archive_run_batches() {
 	local byte_limit="${OPENCODE_DB_ARCHIVE_BATCH_BYTES:-67108864}"
 	_validate_nonnegative_integer "$byte_limit" "OPENCODE_DB_ARCHIVE_BATCH_BYTES" || return 1
 	if ((byte_limit == 0)); then return 1; fi
+	local default_limit="$next_limit" default_bytes="$byte_limit" t0
+	# GH#38590: start from the persisted (halved or regrown) limits.
+	if ((_ARCHIVE_ADAPT_LIMIT > 0 && _ARCHIVE_ADAPT_LIMIT < next_limit)); then
+		next_limit="$_ARCHIVE_ADAPT_LIMIT"
+	fi
+	if ((_ARCHIVE_ADAPT_BYTES > 0 && _ARCHIVE_ADAPT_BYTES < byte_limit)); then
+		byte_limit="$_ARCHIVE_ADAPT_BYTES"
+	fi
 
 	while ((archived_total < total_eligible)); do
 		# Check time budget
@@ -1155,6 +1373,7 @@ _archive_run_batches() {
 		# Start the timer before sizing so selection cost counts toward adaptation.
 		batch_start=$(date +%s)
 		session_ids=$(_archive_select_batch "$batch_limit" "$byte_limit" "$((start_time + max_duration))") || return $?
+		_ARCHIVE_T_SIZING=$((_ARCHIVE_T_SIZING + $(date +%s) - batch_start))
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -1170,11 +1389,24 @@ _archive_run_batches() {
 		# archival and bloating the DB to multi-GB (3232+ sessions).
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
-		_archive_write_batch "$in_clause" || return 1
+		# The marker survives a deadline/SIGTERM/SIGKILL kill, so the next run
+		# knows this write never committed. An ordinary failure is not a kill.
+		_archive_adapt_mark sessions "$next_limit" "$byte_limit" "$(printf '%s' "$session_ids" | tr '\n' ',')"
+		t0=$(date +%s)
+		_archive_write_batch "$in_clause" || {
+			_archive_adapt_clear sessions
+			return 1
+		}
+		_ARCHIVE_T_WRITE=$((_ARCHIVE_T_WRITE + $(date +%s) - t0))
 		last_seconds=$(($(date +%s) - batch_start))
 		elapsed=$(($(date +%s) - start_time))
 		if ((last_seconds * 3 > max_duration - elapsed && next_limit > 1)); then
 			next_limit=$(((batch_count + 1) / 2))
+			# Persist the reduced limits as-is; growth is only for fast batches.
+			_archive_adapt_clear sessions
+			_archive_adapt_write sessions limits "$next_limit $byte_limit"
+		else
+			_archive_adapt_commit sessions "$next_limit" "$byte_limit" "$default_limit" "$default_bytes"
 		fi
 		archived_total=$((archived_total + batch_count))
 		_archive_report_batch || return 1

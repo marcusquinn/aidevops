@@ -128,6 +128,16 @@ _archive_expire_worker_events() {
 	if [[ "$size_expr" == "0" ]] && ((batch_size > ARCHIVE_HELD_BATCH_SIZE)); then
 		batch_size="$ARCHIVE_HELD_BATCH_SIZE"
 	fi
+	# GH#38590: a leftover marker or an earlier timeout halved the persisted
+	# limits; a committed pass doubles them back toward the defaults.
+	local default_size="$batch_size" default_bytes="$batch_bytes" timed_out=0
+	_archive_adapt_recover events 10
+	if ((_ARCHIVE_ADAPT_LIMIT > 0 && _ARCHIVE_ADAPT_LIMIT < batch_size)); then
+		batch_size="$_ARCHIVE_ADAPT_LIMIT"
+	fi
+	if ((_ARCHIVE_ADAPT_BYTES > 0 && _ARCHIVE_ADAPT_BYTES < batch_bytes)); then
+		batch_bytes="$_ARCHIVE_ADAPT_BYTES"
+	fi
 	batch_sql=$(_archive_worker_event_batch_sql "$filter" "$size_expr" "$batch_size" "$batch_bytes")
 	page_size=$(sqlite3 "$ACTIVE_DB" "PRAGMA page_size;") || return 1
 	free_before=$(sqlite3 "$ACTIVE_DB" "PRAGMA freelist_count;") || return 1
@@ -138,13 +148,26 @@ _archive_expire_worker_events() {
 		((remaining > 0)) || break
 		((total == 0)) || _archive_held_gate_recheck || break
 		rc=0
+		_archive_adapt_mark events "$batch_size" "$batch_bytes"
 		count=$(_archive_worker_event_sql "$remaining" "$batch_sql") || rc=$?
-		((rc != 124)) || break
-		((rc == 0)) || return 1
+		if ((rc == 124)); then
+			timed_out=1
+			_archive_adapt_halve events "$batch_size" "$batch_bytes" 10
+			break
+		fi
+		((rc == 0)) || {
+			_archive_adapt_clear events
+			return 1
+		}
 		[[ "$count" =~ ^[0-9]+$ ]] || return 1
 		total=$((total + count))
 		((count > 0)) || break
+		_archive_adapt_commit events "$batch_size" "$batch_bytes" "$default_size" "$default_bytes"
 	done
+	((timed_out)) || _archive_adapt_clear events
+	if ((timed_out)); then
+		print_warning "Worker event expiry timed out after $(($(date +%s) - start))s; ${total} committed; next batch limit ${_ARCHIVE_ADAPT_LIMIT} row(s) / $(format_bytes "$_ARCHIVE_ADAPT_BYTES")"
+	fi
 	free_after=$(sqlite3 "$ACTIVE_DB" "PRAGMA freelist_count;") || free_after="$free_before"
 	# Concurrent OpenCode writes may already reuse freed pages: a lower bound.
 	((free_after <= free_before)) || freed_pages=$((free_after - free_before))
