@@ -69,7 +69,7 @@ One loop for every paid order. Each step names its record, so anyone can see whe
 |------|--------|-------|
 | 1. Order | Ultimate Multisite payment and membership | Payment `completed` (or the deposit's), membership created, customer email arrived |
 | 2. Intake | Fluent Support ticket per ordered product (or one per order) | The ticket holds what is included, what the team needs from the customer, and what is due |
-| 3. Plan | Fluent Boards card, linked from the ticket | Owner, due date, checklist; requests and feedback stay on the card |
+| 3. Plan | Fluent Boards card, linked from the ticket | Owner, due date, checklist; requests and feedback stay on the card. SSH-only access: `wp-helper.sh --fluent-boards` (`fluent-mcp.md` "Work a setup board") |
 | 4. Build | The customer's site or service | Work happens on a staging copy or the customer site, never on a template |
 | 5. Review | Ticket reply to the customer | The customer confirms. The card moves to "Done (please check)", then to Closed |
 | 6. Bill | Ultimate Multisite payment or membership change | Any balance or recurring price starts as the network's terms say; failed charges get a payment link |
