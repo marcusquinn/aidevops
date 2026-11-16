@@ -176,6 +176,13 @@ _collect_report_json() {
 	local queue="{}"
 	local pulse_health="{}"
 	local delivery='{"_collection":{"state":"not_requested"}}'
+	local detector_status='{}'
+	local detector_file="${PULSE_CHECK_DETECTOR_STATUS_FILE:-${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json}"
+	if [[ -f "$detector_file" ]]; then
+		detector_status=$(jq -ce --argjson now "$(date +%s)" \
+			'[objects][0] // {} | if (.timestamp | type) == "number" and .timestamp <= $now and .timestamp > ($now - 86400) then . else {} end' \
+			"$detector_file" 2>/dev/null) || detector_status='{}'
+	fi
 	_PULSE_CHECK_REPORT_DEADLINE=$((SECONDS + REPORT_BUDGET_SECONDS))
 
 	current_state=$(_run_json_helper '{}' "$CURRENT_STATE_HELPER" --window "$WINDOW" --json)
@@ -232,7 +239,15 @@ _collect_report_json() {
 		--argjson queue "$queue" \
 		--argjson delivery "$delivery" \
 		-f "$REPORT_FILTER" |
-		jq --argjson underfill "$underfill" '.current_state.underfill_attribution = $underfill'
+		jq --argjson underfill "$underfill" --argjson detector "$detector_status" '
+			.current_state.underfill_attribution = $underfill
+			| .current_state.fix_the_fixer_detector = $detector
+			| if ($detector.processed // 0) > 0 and $detector.classified == 0 and ($detector.skipped_auth // 0) > 0 then
+				.findings += [{id:"fix-the-fixer-detector-auth-degraded", severity:"high", autofile:false,
+					title:"Fix-the-fixer detector capability degraded (zero classifications)",
+					evidence:[("processed=" + ($detector.processed|tostring) + ", classified=0, skipped_auth=" + ($detector.skipped_auth|tostring))],
+					recommendation:"Configure a direct API credential securely: aidevops secret set ANTHROPIC_API_KEY; rerun the detector to verify recovery."}]
+			  else . end'
 	return 0
 }
 

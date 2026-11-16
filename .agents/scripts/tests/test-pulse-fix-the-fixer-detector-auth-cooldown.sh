@@ -41,12 +41,17 @@ setup_sandbox() {
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export ANTHROPIC_API_KEY="test-invalid-key"
 	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_AUTH_COOLDOWN_SECONDS=3600
+	export AIDEVOPS_AI_RESEARCH_PROVIDER=anthropic
 	export CURL_COUNT_FILE="${TEST_ROOT}/curl-count"
 	printf '0\n' >"$CURL_COUNT_FILE"
 
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/labels/fix-the-fixer" ]]; then
+	printf '{"name":"fix-the-fixer"}\n'
+	exit 0
+fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
 	printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]},{"number":2,"labels":[{"name":"auto-dispatch"}]}]\n'
 	exit 0
@@ -169,6 +174,50 @@ main() {
 		print_result "subsequent run reports concise auth skip" 0
 	else
 		print_result "subsequent run reports concise auth skip" 1 "second log: $(tr '\n' ' ' <"$second_log")"
+	fi
+
+	# GH#38620: reproduce the actual pure-runtime error without provider access.
+	unset ANTHROPIC_API_KEY
+	export PULSE_AI_RESEARCH_HELPER_OVERRIDE="${TEST_ROOT}/runtime-research"
+	cat >"$PULSE_AI_RESEARCH_HELPER_OVERRIDE" <<'STUB'
+#!/usr/bin/env bash
+count=$(tr -cd '0-9' <"$CURL_COUNT_FILE")
+printf '%s\n' "$((count + 1))" >"$CURL_COUNT_FILE"
+printf '%s\n' 'Error: The isolated OpenCode runtime cannot authenticate the Anthropic OAuth provider for the simple tier. Pure public triage does not load the provider-auth plugin; select a provider with native authentication.' >&2
+exit 1
+STUB
+	chmod +x "$PULSE_AI_RESEARCH_HELPER_OVERRIDE"
+	printf '0\n' >"$CURL_COUNT_FILE"
+	run_detector "$first_log"
+	run_detector "$second_log"
+	if [[ "$(tr -cd '0-9' <"$CURL_COUNT_FILE")" == "1" ]] &&
+		grep -q 'runtime_auth_unavailable' "$second_log" &&
+		grep -q 'DEGRADED capability' "$second_log" &&
+		grep -q 'aidevops secret set ANTHROPIC_API_KEY' "$second_log" &&
+		! grep -q 'credentials invalid' "$second_log"; then
+		print_result "runtime failure remains distinct and actionable during cooldown" 0
+	else
+		print_result "runtime failure remains distinct and actionable during cooldown" 1
+	fi
+	local status_file="${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json"
+	if jq -e '.processed == 2 and .classified == 0 and .skipped_auth == 2' "$status_file" >/dev/null; then
+		print_result "fully skipped run persists aggregate degradation evidence" 0
+	else
+		print_result "fully skipped run persists aggregate degradation evidence" 1
+	fi
+	# Credential config changes invalidate the cooldown; a valid NO must clear
+	# the status without any GitHub writes (the stub rejects all writes).
+	export ANTHROPIC_API_KEY="test-recovery-value"
+	cat >"$PULSE_AI_RESEARCH_HELPER_OVERRIDE" <<'STUB'
+#!/usr/bin/env bash
+printf 'NO unrelated change\n'
+STUB
+	run_detector "$first_log"
+	if jq -e '.classified == 2 and .skipped_auth == 0' "$status_file" >/dev/null &&
+		[[ ! -f "${HOME}/.aidevops/cache/fix-the-fixer-detector-auth.cooldown" ]]; then
+		print_result "configuration recovery clears cooldown and degraded status" 0
+	else
+		print_result "configuration recovery clears cooldown and degraded status" 1
 	fi
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
