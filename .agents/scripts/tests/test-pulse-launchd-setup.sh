@@ -221,13 +221,30 @@ test_reconcile_respects_stop() {
 	! grep -q '^start$' "$TEST_EVENTS"
 }
 
+# GH#37888: runtime-env.sh renders every service PATH, so editing it must
+# change the scheduler template hash that drives installed-unit drift repair.
+test_template_hash_covers_runtime_env() {
+	local scripts="$HOME/hash-fixture/.agents/scripts" before="" after=""
+	mkdir -p "$scripts/setup/modules" || return 1
+	cp "$TEST_REPO_ROOT/.agents/scripts/setup/modules/"schedulers*.sh "$scripts/setup/modules/" || return 1
+	cp "$TEST_REPO_ROOT/.agents/scripts/setup/_scheduler_runtime.sh" "$scripts/setup/" || return 1
+	cp "$TEST_REPO_ROOT/.agents/scripts/runtime-env.sh" "$scripts/" || return 1
+	# shellcheck source=../setup/modules/schedulers-template-hash.sh
+	source "$scripts/setup/modules/schedulers-template-hash.sh" || return 1
+	before=$(scheduler_template_hash "$scripts/setup/modules") || return 1
+	printf '# path order change\n' >>"$scripts/runtime-env.sh"
+	after=$(scheduler_template_hash "$scripts/setup/modules") || return 1
+	[[ -n "$before" && "$before" != "$after" ]]
+}
+
 main() {
 	local test_name output
 	for test_name in test_disabled_converges test_disabled_loaded_preserves_timing \
 		test_repeat_preserves_timing test_load_noop_bootstraps test_enable_failure \
 		test_bootstrap_failure_retry test_bootstrap_noop_fails test_consent_false \
 		test_consent_false_cleanup test_stop_wins test_disabled_parser \
-		test_failure_does_not_report_enabled test_reconcile_respects_stop; do
+		test_failure_does_not_report_enabled test_reconcile_respects_stop \
+		test_template_hash_covers_runtime_env; do
 		TESTS_RUN=$((TESTS_RUN + 1))
 		if output=$(setup_fixture && "$test_name"); then
 			printf 'PASS %s\n' "$test_name"
