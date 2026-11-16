@@ -338,6 +338,8 @@ preserves continuation; it does not make incomplete delivery complete.
 Review these examples against the task's actual evidence; literal policy checks do
 not prove a future model run complies with the contract.
 
+Unattended missions: when the owner grants unattended mission authority, the session runs `keepalive on` (session-bus tool action, 24 h default, 72 h max) so the 2-minute relay resumes it after idle gaps; it runs `keepalive off` when it needs the user. See `reference/session-bus.md` "Mission keepalive".
+
 ## New Topic Hygiene
 
 Use only in interactive sessions; headless workers stay on their assigned task.

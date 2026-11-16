@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
 import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
+import { keepaliveCommand } from "./session-bus-keepalive.mjs";
 import { notifyReleaseCommand, watchReleaseCommand } from "./session-bus-cli-release.mjs";
 import { DEFAULT_SERVER } from "./session-bus-launch.mjs";
 import { bindCommand, bindingsCommand, launchSessionCommand, unbindCommand } from "./session-bus-cli-bindings.mjs";
@@ -31,6 +32,9 @@ const USAGE = `Usage: aidevops sessions <command> [options]
 
   list [--all] [--json] [--redact]   Live messageable OpenCode sessions, workers included (--all adds read-only)
   chat-wake <target> on|off          Opt in/out of verified-owner chat asks (default off)
+  keepalive <target> on|off [--hours N]  Opt an unattended mission session in/out of idle wakes (default off; 1-72 h, default 24)
+  keepalive status [--json]          Opted-in sessions: idle time, next wake and skip reason (sends nothing)
+  keepalive sweep [--dry-run] [--json]  One relay pass: one fixed-text ask per idle opted-in session (the 2-minute relay runs it)
   show <target> [--json]             One session's presence record
   who <target…> [--repo <slug>] [--json]  Other live sessions (workers included) on #issue, PR#n, repo, worktree or file path
   send <target> <text…>              Info message; waits for the recipient's next tool result or turn
@@ -58,10 +62,10 @@ Message text: positional words, --text-file <path>, or - for stdin (max ${store.
 Targets: session ID, @id (from the session title), handle, #issue, PR#n, repo, worktree path, or channel:<app>:<channel>.
 Exit codes: 0 ok, 1 error, 2 ask --wait timeout, 3 bound session not live, 4 launch created a session but did not finish.`;
 
-const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "-h": "help", "--help": "help" };
+const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "--dry-run": "dryRun", "-h": "help", "--help": "help" };
 const VALUE_FLAGS = {
   "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
-  "--repo": "repo",
+  "--repo": "repo", "--hours": "hours",
   // t18892 bindings and launch
   "--app": "app", "--server": "server", "--title": "title", "--bind": "bind", "--directory": "directory",
 };
@@ -96,6 +100,7 @@ export function parseArgs(argv) {
 
 const COMMANDS = {
   "chat-wake": chatWakeCommand,
+  keepalive: keepaliveCommand,
   list: listCommand,
   show: showCommand,
   who: whoCommand,
