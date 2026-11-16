@@ -2171,6 +2171,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19058 fix(setup): ai-session deploy redeploys incrementally when canonical main advances mid-deploy instead of rolling back into a full setup #interactive #bug tier:standard assignee:marcusquinn ref:GH#38607 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19058-brief.md]
 
+- [ ] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619
+
+- [ ] t19061 fix(pulse): fix-the-fixer detector classifies 0 of N issues when ai-research cannot authenticate the simple tier #auto-dispatch #priority:medium ref:GH#38620
+
+- [ ] t19062 fix(pulse): rotate worktree-recovery-timings and worker-progress-blockers jsonl like every sibling metrics file #auto-dispatch #priority:medium ref:GH#38621
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
