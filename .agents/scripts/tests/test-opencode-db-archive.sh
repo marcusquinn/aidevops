@@ -1191,9 +1191,9 @@ set +e
 out=$(PATH="$SANDBOX/slow-sqlite:$PATH" TEST_REAL_SQLITE="$sqlite_bin" TEST_SQLITE_STAGE="commit_gap" \
 	TEST_SQLITE_MARKER="$SANDBOX/candidate-started" \
 	OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 --max-duration-seconds 10 2>&1)
 out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
-	"$HELPER" archive --retention-days 0 2>&1)
+	OPENCODE_DB_ARCHIVE_BATCH_SIZE=1 "$HELPER" archive --retention-days 0 2>&1)
 rc=$?
 set -e
 if [[ "$out" == *"deferring it as oversized"* && "$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM session;')" == 1 ]]; then
@@ -1462,6 +1462,7 @@ setup = '''
 has_session_message_table=1 has_event_table=1
 has_session_input_table=1 has_session_context_epoch_table=1
 candidate_filter=1
+_archive_octet_supported() { return 0; }
 _archive_len_expr() { printf 'octet_length(%s)\\n' "$1"; return 0; }
 _archive_active_query() {
     printf 'query\\n' >&2

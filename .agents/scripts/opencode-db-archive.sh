@@ -418,7 +418,7 @@ _archive_adapt_write() {
 # in-flight marker means the previous write never committed: halve and clear it,
 # and print the marker's IDs so callers can detect a still-failing 1-row batch.
 _archive_adapt_recover() {
-	local kind="$1" floor_rows="$2" base limit=0 bytes=0 m_limit m_bytes m_ids=""
+	local kind="$1" floor_rows="$2" base limit=0 bytes=0 m_limit m_bytes m_pid="" m_ids="" m_floor=0
 	_ARCHIVE_ADAPT_LIMIT=0
 	_ARCHIVE_ADAPT_BYTES=0
 	_ARCHIVE_ADAPT_IDS=""
@@ -433,8 +433,16 @@ _archive_adapt_recover() {
 	if [[ -f "${base}.inflight" ]]; then
 		m_limit=0
 		m_bytes=0
-		read -r m_limit m_bytes m_ids <"${base}.inflight" || true
+		read -r m_limit m_bytes m_pid m_ids <"${base}.inflight" || true
+		# A marker owned by a live run is not an interruption: leave it be.
+		if [[ "$m_pid" =~ ^[0-9]+$ && "$m_pid" != "$$" ]] && kill -0 "$m_pid" 2>/dev/null; then
+			_ARCHIVE_ADAPT_LIMIT="$limit"
+			_ARCHIVE_ADAPT_BYTES="$bytes"
+			return 0
+		fi
 		if [[ "$m_limit" =~ ^[0-9]+$ && "$m_bytes" =~ ^[0-9]+$ ]] && ((m_limit > 0 && m_bytes > 0)); then
+			# Only a batch that was already at the 1-row floor is "still interrupted".
+			((m_limit > 1)) || [[ "$kind" != sessions ]] || m_floor=1
 			limit=$((m_limit / 2))
 			bytes=$((m_bytes / 2))
 			((limit >= floor_rows)) || limit="$floor_rows"
@@ -446,14 +454,16 @@ _archive_adapt_recover() {
 	fi
 	_ARCHIVE_ADAPT_LIMIT="$limit"
 	_ARCHIVE_ADAPT_BYTES="$bytes"
-	_ARCHIVE_ADAPT_IDS="$m_ids"
+	((m_floor)) && _ARCHIVE_ADAPT_IDS="$m_ids"
 	return 0
 }
 
 # _archive_adapt_mark <kind> <rows> <bytes> [csv_ids]
+# The marker records this run's PID so a concurrent run never treats a live
+# run's marker as an interruption.
 _archive_adapt_mark() {
 	local kind="$1" rows="$2" bytes="$3" ids="${4:-}"
-	_archive_adapt_write "$kind" inflight "$rows $bytes $ids"
+	_archive_adapt_write "$kind" inflight "$rows $bytes $$ $ids"
 	return 0
 }
 
@@ -499,7 +509,8 @@ _archive_oversized_exclude_clause() {
 	[[ -f "${base}.oversized" ]] || return 0
 	if ((max_duration > DEFAULT_MAX_DURATION)); then
 		# Manual long run: retry deferred sessions; failures are re-recorded.
-		rm -f "${base}.oversized" 2>/dev/null || true
+		# A dry run only previews, so it must not drop the persisted list.
+		((dry_run)) || rm -f "${base}.oversized" 2>/dev/null || true
 		return 0
 	fi
 	while IFS= read -r sid; do
@@ -1303,6 +1314,9 @@ _archive_select_batch() {
 	fi
 	# Never begin sizing or a write after the remaining budget is used.
 	if (($(date +%s) >= deadline)); then return 2; fi
+	# Without octet_length() every sized row reads its overflow pages, so keep
+	# the sized window small; later batches take the rest.
+	if ! _archive_octet_supported && ((batch_limit > 25)); then batch_limit=25; fi
 	# One query sizes the whole candidate window with a cumulative window sum
 	# and returns the prefix that fits the byte bound. The first session is
 	# always kept so an oversized single session can still move on its own.
@@ -1388,7 +1402,9 @@ _archive_run_batches() {
 		elapsed=$(($(date +%s) - start_time))
 		if ((last_seconds * 3 > max_duration - elapsed && next_limit > 1)); then
 			next_limit=$(((batch_count + 1) / 2))
-			_archive_adapt_commit sessions "$((next_limit / 2 > 0 ? next_limit / 2 : 1))" "$((byte_limit / 2))" "$default_limit" "$default_bytes"
+			# Persist the reduced limits as-is; growth is only for fast batches.
+			_archive_adapt_clear sessions
+			_archive_adapt_write sessions limits "$next_limit $byte_limit"
 		else
 			_archive_adapt_commit sessions "$next_limit" "$byte_limit" "$default_limit" "$default_bytes"
 		fi
