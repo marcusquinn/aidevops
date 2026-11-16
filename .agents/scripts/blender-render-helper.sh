@@ -748,7 +748,7 @@ _brh_teardown() {
 	fi
 	while IFS=$'\t' read -r idx s e pod; do
 		[[ -n "$pod" ]] || continue
-		if printf '%s' "$remaining" | grep -qF "$pod"; then
+		if grep -qF "$pod" <<<"$remaining"; then
 			print_error "Pod ${pod} still listed: billing may continue"
 			failed=1
 		fi
