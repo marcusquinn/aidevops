@@ -36,6 +36,8 @@ export AIDEVOPS_GH_API_EVIDENCE="$TMPDIR/evidence.json"
 # never let a test run reach the host's root.
 export AIDEVOPS_TEMP_DIR="$TMPDIR/agent-tmp"
 mkdir -p "$AIDEVOPS_TEMP_DIR"
+# The foreign-device hint falls back to the pulse log; never read the host's.
+export AIDEVOPS_QUOTA_PULSE_LOG="$TMPDIR/pulse.log"
 unset AIDEVOPS_GH_QUOTA_COST AIDEVOPS_GH_QUOTA_COST_ON_SUCCESS
 
 assert_eq() {
@@ -659,6 +661,22 @@ AIDEVOPS_DEVICE_ID=dev-a AIDEVOPS_QUOTA_SELF_LOGIN=self-login AIDEVOPS_QUOTA_CLA
 	bash "${PARENT_DIR}/gh-api-instrument.sh" report "$AIDEVOPS_GH_API_REPORT" 3600 >/dev/null 2>&1 || true
 assert_eq "instrument report carries the same hint" "same_login_foreign_device" "$(jq -r '.rest_core_attribution.foreign_device_hint' "$AIDEVOPS_GH_API_REPORT")"
 rm -f "$claim_fixture"
+# GH#37888: without a claims file, positive pulse-log evidence is automatic.
+pulse_now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+printf '[%s] [pulse-wrapper] cycle\n[pulse-wrapper] Stale assignment skip (cross-runner guard): #1 in o/r — runner=self-login device=dev-a vs self=self-login, comment age 1s < max_runtime 9s\nCLAIM_LOST: runner=self-login lost to other on issue #2 winner_claim_ts=%s winner_age=1s — backing off\n' \
+	"$pulse_now" "$pulse_now" >"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "pulse log with only local-device or other-login evidence stays unknown" "unknown" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+printf '[pulse-wrapper] Stale assignment skip (cross-runner guard): #3 in o/r — runner=self-login device=dev-b vs self=self-login, comment age 1s < max_runtime 9s\n' >>"$AIDEVOPS_QUOTA_PULSE_LOG"
+quota_report=$(AIDEVOPS_DEVICE_ID=dev-a bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600 "$ci_fixture")
+assert_eq "pulse-log guard line for another same-login device reports the hint" "same_login_foreign_device" "$(jq -r '.foreign_device_hint' <<<"$quota_report")"
+printf '[2001-01-01T00:00:00Z] [pulse-wrapper] cycle\n[pulse-wrapper] Stale assignment skip (cross-runner guard): #3 in o/r — runner=self-login device=dev-b vs self=self-login, comment age 1s < max_runtime 9s\nCLAIM_LOST: runner=self-login lost to self-login on issue #4 winner_claim_ts=2001-01-01T00:00:00Z winner_age=1s — backing off\n' >"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "pulse-log evidence older than the lookback is ignored" "unknown" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+printf 'CLAIM_LOST: runner=self-login lost to self-login on issue #5 winner_claim_ts=%s winner_age=1s — backing off\n' "$pulse_now" >>"$AIDEVOPS_QUOTA_PULSE_LOG"
+assert_eq "same-login CLAIM_LOST in the pulse log reports the hint" "same_login_foreign_device" \
+	"$(AIDEVOPS_DEVICE_ID=dev-a python3 "${PARENT_DIR}/gh_quota_foreign_device.py" "" "")"
+rm -f "$AIDEVOPS_QUOTA_PULSE_LOG"
 quota_report=$(bash "${PARENT_DIR}/gh-checks-wait-helper.sh" quota-report 3600)
 assert_eq "no CI evidence never invents CI cost" "null" "$(jq '.attributed_ci_cost' <<<"$quota_report")"
 : >"$ci_fixture"
