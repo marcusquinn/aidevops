@@ -497,6 +497,8 @@ test_bounded_recovery_intake() {
 				;;
 			"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
 			"api -X GET repos/owner/repo/contents/.aidevops.json"*) printf 'HTTP 404\n' >&2; return 1 ;;
+			# t19065: no policy means the conventional document is absent too.
+			"api -X GET repos/owner/repo/contents/.agents/recovery-policy.md"*) printf 'HTTP 404\n' >&2; return 1 ;;
 			"api -X GET search/issues"*)
 				[[ "${TB_SEED:-0}" -eq 1 ]] || return 1
 				printf '1\n42\n'

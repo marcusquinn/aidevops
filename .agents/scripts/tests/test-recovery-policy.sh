@@ -51,7 +51,8 @@ _fixture_content() {
 }
 
 # Fixture state: FIX_PUSH (true|false), FIX_CONFIG (JSON text or 404),
-# FIX_DOC (Markdown text or 404).
+# FIX_DOC (Markdown text or 404), FIX_CONVENTIONAL (Markdown text or 404).
+FIX_CONVENTIONAL=404
 gh() {
 	printf '%s\n' "$*" >>"$GH_LOG"
 	[[ "${1:-}" == api ]] || return 1
@@ -75,6 +76,13 @@ gh() {
 			return 1
 		}
 		_fixture_content "$FIX_DOC"
+		;;
+	"api -X GET repos/owner/repo/contents/.agents/recovery-policy.md -f ref=${FIX_SHA}")
+		[[ "$FIX_CONVENTIONAL" != 404 ]] || {
+			printf 'gh: Not Found (HTTP 404)\n' >&2
+			return 1
+		}
+		_fixture_content "$FIX_CONVENTIONAL"
 		;;
 	*) return 1 ;;
 	esac
@@ -122,6 +130,60 @@ test_no_policy_is_distinct_and_unchanged() {
 	status=1
 	[[ "$LOAD_RC" -eq 1 ]] && status=0
 	print_result "declared but missing policy document fails closed (1)" "$status"
+	return 0
+}
+
+# t19065 (GH#38636): the untrack migration removes .aidevops.json from the
+# default branch, so the conventional tracked document carries the policy.
+_conventional_doc() {
+	local actions_json="$1"
+	local fence='```'
+	printf '# Recovery policy\n\nDelegated queue recovery.\n\n%sjson\n{"actions": %s}\n%s\n' \
+		"$fence" "$actions_json" "$fence"
+	return 0
+}
+
+test_conventional_fallback() {
+	local status=1
+	FIX_PUSH=true FIX_CONFIG=404 FIX_DOC=404
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"outlier_hold\": ${OUTLIER_ACTION}}")
+	_load
+	if [[ "$LOAD_RC" -eq 0 ]] &&
+		printf '%s' "$LOAD_OUT" | jq -e --arg sha "$FIX_SHA" '
+			.revision == $sha and .path == ".agents/recovery-policy.md" and
+			.heading == "Recovery policy" and (.actions | keys) == ["outlier_hold"]' >/dev/null &&
+		[[ "$(grep -c -- "ref=${FIX_SHA}" "$GH_LOG")" -eq 2 ]]; then
+		status=0
+	fi
+	print_result "untracked .aidevops.json falls back to pinned .agents/recovery-policy.md" "$status"
+
+	FIX_CONFIG='{"validator_timeout_seconds":600}'
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] && printf '%s' "$LOAD_OUT" | jq -e '.path == ".agents/recovery-policy.md"' >/dev/null && status=0
+	print_result "config without recovery_policy uses the conventional document" "$status"
+
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"auto_merge\": ${OUTLIER_ACTION}}")
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 1 && -z "$LOAD_OUT" ]] && status=0
+	print_result "fails closed: invalid conventional document" "$status"
+
+	FIX_CONFIG="$POLICY_CONFIG"
+	FIX_DOC=$(_policy_doc '{}')
+	FIX_CONVENTIONAL=$(_conventional_doc "{\"outlier_hold\": ${OUTLIER_ACTION}}")
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] && printf '%s' "$LOAD_OUT" | jq -e '.path == "docs/ops.md" and .actions == {}' >/dev/null &&
+		! grep -q -- 'recovery-policy.md' "$GH_LOG" && status=0
+	print_result "declared .aidevops.json pointer takes precedence over the conventional document" "$status"
+
+	FIX_PUSH=false FIX_CONFIG=404
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 1 ]] && ! grep -q -- '/contents/' "$GH_LOG" && status=0
+	print_result "read-only access fails closed before reading the conventional document" "$status"
+	FIX_PUSH=true FIX_CONVENTIONAL=404
 	return 0
 }
 
@@ -346,6 +408,7 @@ test_supervisor_prompt_contract() {
 }
 
 test_no_policy_is_distinct_and_unchanged
+test_conventional_fallback
 test_enabled_action_loads_pinned
 test_fail_closed_cases
 test_cross_runner_seed_reason

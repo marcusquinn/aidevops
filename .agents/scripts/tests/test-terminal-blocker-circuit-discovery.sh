@@ -309,6 +309,8 @@ _discovery_gh() {
 	"api repos/owner/repo") printf '{"permissions":{"push":true},"default_branch":"main"}\n' ;;
 	"api -X GET repos/owner/repo/commits"*) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
 	"api -X GET repos/owner/repo/contents/.aidevops.json"*) printf 'HTTP 404\n' >&2; return 1 ;;
+	# t19065: no policy means the conventional document is absent too.
+	"api -X GET repos/owner/repo/contents/.agents/recovery-policy.md"*) printf 'HTTP 404\n' >&2; return 1 ;;
 	"api repos/"*"/comments?per_page=100 --paginate --slurp")
 		[[ "$path" =~ ^repos/([^/]+)/([^/]+)/issues/([0-9]+)/comments ]] || return 1
 		key="${BASH_REMATCH[1]}--${BASH_REMATCH[2]}--${BASH_REMATCH[3]}"

@@ -2171,6 +2171,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19058 fix(setup): ai-session deploy redeploys incrementally when canonical main advances mid-deploy instead of rolling back into a full setup #interactive #bug tier:standard assignee:marcusquinn ref:GH#38607 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19058-brief.md]
 
+- [ ] t19065 fix(recovery): repo recovery policy survives the .aidevops.json untrack migration #auto-dispatch #bug tier:standard assignee:marcusquinn ref:GH#38636 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19065-brief.md]
+
 - [ ] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619
 
 - [ ] t19061 fix(pulse): fix-the-fixer detector classifies 0 of N issues when ai-research cannot authenticate the simple tier #auto-dispatch #priority:medium ref:GH#38620
