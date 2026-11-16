@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='install-record-test-', dir=base) as dir
     assert 'installs' in run(['bash', 'aidevops.sh', 'help'])
     print('PASS: routed report/help, concurrent deduplication, broken shebang, read-only ledger')
 
-    for unsafe in ['download --token=fixture', 'https://person:password@invalid.test', 'Bearer fixture', 'sk-fixturevalue']:
+    for unsafe in ['download --token=fixture', 'https://person:password@invalid.test', 'Bearer fixture', 'sk-' + 'fixturevalue']:
         rejected = args.copy()
         rejected[rejected.index('--reason') + 1] = unsafe
         run(rejected, expected=1)
