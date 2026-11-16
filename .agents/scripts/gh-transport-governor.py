@@ -6,11 +6,14 @@
 Return 125 with attempted=false for unsupported shapes; an executed native125
 is distinguished by attempted=true. Never decide fallback from exit code alone.
 Explicit pagination invokes this once per page.
-No response is cached, and no automatic transport retry is performed.
+Eligible GETs revalidate their last stdout with If-None-Match, and GitHub
+confirms every replay with a 304 (gh_conditional_cache, GH#38566). No automatic
+transport retry is performed.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -22,6 +25,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from gh_conditional_cache import ConditionalEntry, eligible as conditional_eligible
 from gh_native_response import (
     BOOL_FLAGS as BOOL_FLAGS,
     VALUE_FLAGS as VALUE_FLAGS,
@@ -52,9 +56,10 @@ def check_interrupted():
         raise SystemExit(128 + INTERRUPTED_SIGNAL)
 
 
-def execute(executable: str, args: list[str], output, environment: dict[str, str]) -> int:
+def execute(executable: str, args: list[str], output, environment: dict[str, str],
+            errors=None) -> int:
     check_interrupted()
-    child = subprocess.Popen([executable, *args], stdout=output, env=environment)
+    child = subprocess.Popen([executable, *args], stdout=output, stderr=errors, env=environment)
     deadline = time.monotonic() + 90
     try:
         while True:
@@ -198,6 +203,39 @@ def _state_directories() -> tuple[Path, Path]:
     return directory, temp_dir
 
 
+def _conditional_entry(directory: Path, credential: str, args: list[str], shape) -> ConditionalEntry | None:
+    """Open the credential-and-argv entry for an eligible GET, else None."""
+    _host, resource, include, silent = shape
+    if not conditional_eligible(args, resource, include, silent):
+        return None
+    try:
+        cache_dir = directory / "conditional"
+        private_directory(cache_dir)
+        return ConditionalEntry(cache_dir, credential, args)
+    except (OSError, ValueError):
+        # Unusable cache state keeps the ordinary unconditional request.
+        return None
+
+
+def _deliver(output, errors, conditional: ConditionalEntry | None, framing, rc: int) -> int:
+    """Write the caller's stdout/stderr; a validated 304 replays the stored stdout."""
+    include, silent, status, body_offset = framing
+    if conditional and conditional.etag and status == 304:
+        # GitHub confirmed the representation for this credential and request
+        # is unchanged. Native gh reports the 304 as an error; the caller asked
+        # for the resource, so replay it and drop that diagnostic.
+        conditional.replay(sys.stdout.buffer)
+        return 0
+    if errors is not None:
+        errors.seek(0)
+        sys.stderr.buffer.write(errors.read())
+        sys.stderr.buffer.flush()
+    rc = rc or _copy_response(output, include, silent, status, body_offset)
+    if conditional:
+        conditional.observe(status, rc, output, body_offset)
+    return rc
+
+
 def run(metadata: Path, executable: str, args: list[str]) -> int:
     phase_timer = _PhaseTimer()
     phase = phase_timer.phase
@@ -231,15 +269,19 @@ def run(metadata: Path, executable: str, args: list[str]) -> int:
         phase("sqlite_open")
         reservation = phase_timer.admit(budget, resource)
         phase("sqlite_admission_and_pacing")
-        with tempfile.TemporaryFile(dir=temp_dir) as output:
+        conditional = _conditional_entry(directory, credential, args, shape)
+        with tempfile.TemporaryFile(dir=temp_dir) as output, \
+                (tempfile.TemporaryFile(dir=temp_dir) if conditional else contextlib.nullcontext()) as errors:
             native_args = args if include else [*args, "--include"]
+            if conditional:
+                native_args = [*native_args, *conditional.validator_args()]
             metadata.write_text('{"attempted":true}', encoding="utf-8")
-            rc = execute(executable, native_args, output, environment)
+            rc = execute(executable, native_args, output, environment, errors)
             # Sample time belongs to the response, not to the later log append.
             sampled_at = int(time.time())
             phase("native_gh")
             status, headers, body_offset = included_headers(output)
-            rc = rc or _copy_response(output, include, silent, status, body_offset)
+            rc = _deliver(output, errors, conditional, (include, silent, status, body_offset), rc)
             observed = _response_metadata(status, headers, authenticated)
             observed["auth_fingerprint"] = _attribution_fingerprint(host, environment.get("GH_TOKEN", ""))
             observed["sampled_at"] = sampled_at
