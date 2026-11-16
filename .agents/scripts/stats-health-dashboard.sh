@@ -650,8 +650,28 @@ _refresh_health_repo_bounded() {
 		priority_timeout=$(_stats_seconds "${STATS_HEALTH_PRIORITY_REPO_TIMEOUT:-180}" 180)
 		[[ "$priority_timeout" -le "$repo_timeout" ]] || repo_timeout="$priority_timeout"
 	fi
+	# GH#38631: a large repository whose data-gather fills the whole budget on
+	# consecutive passes gets a size-aware budget (base x (stops + 1), capped)
+	# so it finishes in a bounded number of recovery passes instead of
+	# starving forever at a fixed cap. Reset on success.
+	local timeouts=0 max_timeout escalated
+	[[ -f "${cache}.timeouts" ]] && { read -r timeouts <"${cache}.timeouts" || true; }
+	[[ "$timeouts" =~ ^[0-9]{1,3}$ ]] || timeouts=0
+	timeouts=$((10#$timeouts))
+	if [[ "$timeouts" -gt 0 ]]; then
+		max_timeout=$(_stats_seconds "${STATS_HEALTH_MAX_REPO_TIMEOUT:-300}" 300)
+		escalated=$((repo_timeout * (timeouts + 1)))
+		[[ "$escalated" -le "$max_timeout" ]] || escalated="$max_timeout"
+		[[ "$escalated" -le "$repo_timeout" ]] || repo_timeout="$escalated"
+	fi
 	_stats_run_bounded "$repo_timeout" \
 		"$_HEALTH_WORK_DEADLINE" _update_health_issue_for_repo "$@" "${cache}.stage" || result=$?
+	if [[ "$result" -eq 0 ]]; then
+		rm -f "${cache}.timeouts"
+	elif [[ "$result" -eq 124 && "$(($(date +%s) - started))" -ge "$((repo_timeout - 1))" && "$timeouts" -lt 100 ]]; then
+		# Only genuine per-repository budget stops count, not aggregate-deadline stops.
+		printf '%s\n' "$((timeouts + 1))" >"${cache}.timeouts" || true
+	fi
 	if [[ "$result" -ne 0 && -f "${cache}.stage" ]]; then
 		IFS='|' read -r stage _ <"${cache}.stage" || stage="unknown"
 		echo "[stats] Health issue update stopped for ${slug} (rc=${result} stage=${stage:-unknown} elapsed=$(($(date +%s) - started))s timeout=${repo_timeout}s)" >>"$LOGFILE"
