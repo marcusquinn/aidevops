@@ -162,6 +162,26 @@ _is_auth_error() {
 	esac
 }
 
+_is_runtime_auth_error() {
+	local message="$1"
+	local normalized
+	normalized=$(printf '%s' "$message" | tr '[:upper:]' '[:lower:]')
+	case "$normalized" in
+		*"isolated opencode runtime cannot authenticate"*|*"does not load the provider-auth plugin"*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# Only persist fixed diagnostics, never provider stderr or credential values.
+_auth_failure_reason() {
+	if [[ -f "$AUTH_COOLDOWN_FILE" ]] && grep -q '^reason=runtime_auth_unavailable$' "$AUTH_COOLDOWN_FILE"; then
+		printf 'runtime_auth_unavailable: isolated runtime cannot load provider-auth plugin; action: aidevops secret set ANTHROPIC_API_KEY\n'
+	else
+		printf 'auth_error: %s or missing; action: aidevops secret set ANTHROPIC_API_KEY\n' "$AUTH_ERROR_REASON"
+	fi
+	return 0
+}
+
 _record_auth_cooldown() {
 	local reason="$1"
 	local now
@@ -274,8 +294,8 @@ _classify_via_llm() {
 	prompt=$(_compose_classification_prompt "$issue_title" "$issue_body")
 
 	if _auth_cooldown_active; then
-		RATIONALE="auth_error: ${AUTH_ERROR_REASON}; cooldown active"
-		_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+		RATIONALE="$(_auth_failure_reason); cooldown active"
+		_log_auth_skip "fix-the-fixer detector skipped: ${RATIONALE}"
 		printf 'SKIP_AUTH\n'
 		return 0
 	fi
@@ -301,21 +321,19 @@ _classify_via_llm() {
 		raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>"$err_log") || {
 			local helper_rc=$?
 			local err_snippet=""
-			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
+			[[ -s "$err_log" ]] && err_snippet=$(head -c 2000 "$err_log" | tr '\n' ' ')
 			rm -f "$err_log"
 			# GH#23594: rc=2 is ai-research-helper's documented exit code for
 			# "no API key resolved locally" — treat it as an auth class signal
 			# regardless of the error message, so the cooldown trips even when
 			# the prose message doesn't match _is_auth_error()'s API-response
 			# patterns (which are tuned for invalid x-api-key / 401 responses).
-			if [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
-				local cooldown_reason="$err_snippet"
-				if [[ "$helper_rc" -eq 2 && -z "$cooldown_reason" ]]; then
-					cooldown_reason="ai-research-helper rc=2: no Anthropic credentials resolvable"
-				fi
+			if _is_runtime_auth_error "$err_snippet" || [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
+				local cooldown_reason="auth_error"
+				_is_runtime_auth_error "$err_snippet" && cooldown_reason="runtime_auth_unavailable"
 				_record_auth_cooldown "$cooldown_reason"
-				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-				_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+				RATIONALE="$(_auth_failure_reason)"
+				_log_auth_skip "fix-the-fixer detector skipped: ${RATIONALE}"
 				printf 'SKIP_AUTH\n'
 				return 0
 			fi
@@ -519,7 +537,7 @@ cmd_check() {
 	local verdict
 	verdict=$(_classify_via_llm "$title" "$body")
 	if [[ "$verdict" == "SKIP_AUTH" ]]; then
-		[[ -n "$RATIONALE" ]] || RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
+		[[ -n "$RATIONALE" ]] || RATIONALE="$(_auth_failure_reason)"
 		_log_auth_skip "${slug}#${issue_num} classification skipped — ${RATIONALE}"
 		return 3
 	fi
@@ -541,9 +559,25 @@ cmd_check() {
 _log_run_summary() {
 	local processed="$1" classified="$2" apply_failed="$3"
 	local skipped_auth="$4" skipped_llm="$5" repo_count="$6"
+	# Atomic, credential-free evidence for pulse-check; successful/empty runs
+	# replace prior degradation instead of leaving a stale alarm behind.
+	local status_file="${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json"
+	local temporary=""
+	mkdir -p "$(dirname "$status_file")" 2>/dev/null || true
+	temporary=$(mktemp "${status_file}.XXXXXX") || temporary=""
+	if [[ -n "$temporary" ]]; then
+		if jq -n --argjson timestamp "$(date +%s)" --argjson processed "$processed" \
+			--argjson classified "$classified" --argjson skipped_auth "$skipped_auth" \
+			--arg reason "$(_auth_failure_reason)" \
+			'{timestamp:$timestamp,processed:$processed,classified:$classified,skipped_auth:$skipped_auth,reason:(if $skipped_auth > 0 then $reason else "" end)}' >"$temporary"; then
+			mv -f "$temporary" "$status_file" 2>/dev/null || rm -f "$temporary"
+		else
+			rm -f "$temporary"
+		fi
+	fi
 	local counts="processed ${processed} issue(s) across ${repo_count} repo(s) — classified=${classified}, apply-failed=${apply_failed}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm}"
 	if [[ "$skipped_auth" -gt 0 ]]; then
-		_log_warn "${counts} (detector observability degraded; ${AUTH_ERROR_REASON})"
+		_log_warn "${counts} (DEGRADED capability: detector observability degraded; $(_auth_failure_reason))"
 	elif [[ "$skipped_llm" -gt 0 ]]; then
 		_log_warn "${counts} (detector observability degraded; check ai-research-helper.sh / API credentials)"
 	elif [[ "$apply_failed" -gt 0 ]]; then

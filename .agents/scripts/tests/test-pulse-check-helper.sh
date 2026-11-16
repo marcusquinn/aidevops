@@ -393,6 +393,7 @@ COMMON_ENV=(
 	"PULSE_CHECK_GH_WRAPPERS=${TEST_ROOT}/wrappers.sh"
 	"PULSE_CHECK_CAPTURE=${TEST_ROOT}/capture.txt"
 	"PULSE_CHECK_PULSE_HEALTH_FILE=${TEST_ROOT}/missing-pulse-health.json"
+	"PULSE_CHECK_DETECTOR_STATUS_FILE=${TEST_ROOT}/detector-status.json"
 	"AIDEVOPS_GH_TRANSPORT_STATE_DIR=${TEST_ROOT}/transport-state"
 	"AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE=${TEST_ROOT}/secondary-cooldown.json"
 	"AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE=${TEST_ROOT}/secondary-events.jsonl"
@@ -410,6 +411,23 @@ assert_contains "canonical reconciliation finding appears" "pulse-canonical-reco
 assert_not_contains "text report omits private slug" "private/repo-one" "$OUT"
 assert_not_contains "text report omits issue titles" "secret one" "$OUT"
 assert_not_contains "text report omits canonical branch detail" "origin/develop" "$OUT"
+
+# GH#38620: aggregate status, not raw provider stderr, drives diagnostics.
+jq -n --argjson now "$(date +%s)" '{timestamp:$now,processed:10,classified:0,skipped_auth:10}' >"$TEST_ROOT/detector-status.json"
+DETECTOR_OUT=$(env "${COMMON_ENV[@]}" "$HELPER" report 2>&1)
+assert_contains "fully skipped detector appears in report" "fix-the-fixer-detector-auth-degraded" "$DETECTOR_OUT"
+assert_contains "detector finding gives secure configuration action" "aidevops secret set ANTHROPIC_API_KEY" "$DETECTOR_OUT"
+for detector_state in recovered stale malformed empty; do
+	case "$detector_state" in
+		recovered) jq -n --argjson now "$(date +%s)" '{timestamp:$now,processed:10,classified:10,skipped_auth:0}' >"$TEST_ROOT/detector-status.json" ;;
+		stale) printf '%s\n' '{"timestamp":1,"processed":10,"classified":0,"skipped_auth":10}' >"$TEST_ROOT/detector-status.json" ;;
+		malformed) printf 'partial JSON' >"$TEST_ROOT/detector-status.json" ;;
+		empty) : >"$TEST_ROOT/detector-status.json" ;;
+	esac
+	DETECTOR_OUT=$(env "${COMMON_ENV[@]}" "$HELPER" json 2>&1)
+	assert_eq "detector $detector_state status leaves report valid" "0" "$(jq '[.findings[] | select(.id == "fix-the-fixer-detector-auth-degraded")] | length' <<<"$DETECTOR_OUT")"
+done
+rm -f "$TEST_ROOT/detector-status.json"
 
 mkdir -p "$TEST_ROOT/.aidevops/cache"
 jq -n --argjson now "$(date +%s)" '{timestamp:$now,streak:3,deficit:100,top:"local_capacity_gate:5"}' >"$TEST_ROOT/.aidevops/cache/pulse-underfill.json"
