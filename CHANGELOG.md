@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.214] - 2026-11-16
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#38665)
+- Documentation: correct host-B scheduler evidence in rollout matrix (For #35359)
+- Documentation: map canary-1 to its host/account row with 2026-11-16 baseline
+- Documentation: per-account rollout matrix for managed worktree lifecycle (For #35359)
+- Maintenance: sync GitHub issue refs to TODO.md (#38650)
+
+### Fixed
+
+- plist env-override library changes regenerate installed scheduler plists
+- classify and cool down NMR triage on Anthropic-OAuth-only runners (GH#38655) (#38657)
+- a changed recovery policy ends human_decision suppression
+- owner-aware lock with audited stale takeover (GH#38643) (#38652)
+
 ## [3.39.213] - 2026-11-16
 
 ### Changed
