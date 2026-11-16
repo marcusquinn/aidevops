@@ -12,6 +12,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/wp-helper-change-plan.sh"
+source "${SCRIPT_DIR}/wp-helper-fluent-boards.sh"
 
 set -euo pipefail
 
@@ -673,6 +674,12 @@ Commands:
   --change-plan <site> PLAN.json [apply | restore BACKUP.json] [--user=<id>]
                                       Dry run (default), apply or restore a reviewed
                                       change plan (tools/wordpress/wp-change-plan.md)
+  --fluent-boards <site> <action> [--url URL] [--user=<id>]
+                                      Fluent Boards cards over WP-CLI (JSON output):
+                                      boards | cards --board ID [--stage S] | show --card ID
+                                      move --card ID --stage S | comment --card ID --body-file F
+                                      check --card ID --item ID  (writes need --user)
+                                      (tools/wordpress/fluent-mcp.md "Work a setup board")
   <site> <wp-cli-command>             Run command on specific site
   help                                Show this help
 
@@ -851,6 +858,10 @@ main() {
 	--change-plan)
 		shift
 		cmd_change_plan "$@" || return $?
+		;;
+	--fluent-boards)
+		shift
+		cmd_fluent_boards "$@" || return $?
 		;;
 	help | --help | -h)
 		show_help
