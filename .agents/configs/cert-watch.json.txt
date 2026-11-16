@@ -1,9 +1,0 @@
-{
-  "extra_domains": [],
-  "ignore": [],
-  "expected_issuers": {},
-  "issuer_caa_map": {},
-  "shared_parent_domains": [],
-  "fallback_repo": null,
-  "public_suffix_file": null
-}
