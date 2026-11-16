@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.211] - 2026-11-16
+
+### Added
+
+- opt-in mission keepalive so idle unattended sessions resume (#38578)
+- install record and cross-platform installs report (#38576)
+- migrate Runpod adapter to runpodctl pod JSON commands (#38573)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#38591)
+- Documentation: guide session host installs
+
+### Fixed
+
+- reject xdg-utils browse alias on PATH
+- refuse ephemeral OpenCode targets in the Pulse direct shim writer
+- keep drain starvation escape deferred across repeated drains (#38582)
+- print exact sudo command instead of unmanaged mkcert download (GH#38528)
+- let repo-rooted sessions run bounded operations in registered-repo worktrees
+
 ## [3.39.210] - 2026-11-16
 
 ### Added
