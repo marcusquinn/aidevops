@@ -75,6 +75,10 @@ cmd_pull() {
 				existing_ref=$(sed -n "${task_line_num}p" "$todo_file" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 			fi
 			if [[ "$existing_ref" != "$num" ]]; then
+				if [[ -n "$existing_ref" ]]; then
+					print_warning "DUPLICATE TASK ID: $tid already references #$existing_ref; refusing to replace it with #$num"
+					continue
+				fi
 				if [[ -z "$task_line_num" ]]; then
 					if [[ "$state" == "open" ]]; then
 						local labels_json
@@ -110,18 +114,10 @@ cmd_pull() {
 					continue
 				fi
 				if [[ "$DRY_RUN" == "true" ]]; then
-					if [[ -n "$existing_ref" ]]; then
-						print_info "[DRY-RUN] Would fix ref:GH#$existing_ref -> ref:GH#$num on $tid"
-					else
-						print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
-					fi
+					print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
 					synced=$((synced + 1))
 				else
-					if [[ -n "$existing_ref" ]]; then
-						fix_gh_ref_in_todo "$tid" "$existing_ref" "$num" "$todo_file"
-					else
-						add_gh_ref_to_todo "$tid" "$num" "$todo_file"
-					fi
+					add_gh_ref_to_todo "$tid" "$num" "$todo_file"
 					local updated_ref=""
 					updated_ref=$(resolve_task_gh_number "$tid" "$todo_file" "$repo" || true)
 					if [[ "$updated_ref" == "$num" ]]; then

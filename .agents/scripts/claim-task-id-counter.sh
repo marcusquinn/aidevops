@@ -778,6 +778,10 @@ resolve_implicit_counter_branch() {
 
 	if ((10#$candidate_counter < 10#$default_counter || 10#$candidate_counter < 10#$todo_seed)); then
 		log_warn "COUNTER_BRANCH_STALE: dedicated counter branch ${REMOTE_NAME}/${candidate} is behind canonical task state; refusing implicit migration"
+		if ((10#$candidate_counter > 10#$default_counter)); then
+			log_error "Refusing to allocate from the lower default counter; run --sync-counter-branch first"
+			return "$CAS_PROTECTED_BRANCH_RC"
+		fi
 		return 0
 	fi
 
@@ -1789,6 +1793,11 @@ allocate_counter_cas() {
 
 	_cas_validate_explicit_counter_branch "$pinned_sha" "$current_value" || return $?
 
+	local todo_seed remote_seed
+	todo_seed=$(_compute_counter_seed "$repo_path")
+	remote_seed=$(_cas_todo_seed_from_remote_refs "${DEFAULT_BRANCH:-main}")
+	((10#$remote_seed > 10#$todo_seed)) && todo_seed="$remote_seed"
+	((10#$todo_seed > 10#$current_value)) && current_value="$todo_seed"
 	local first_id="$current_value"
 	local last_id=$((current_value + count - 1))
 	local new_counter=$((current_value + count))
@@ -2007,6 +2016,9 @@ allocate_offline() {
 		log_info "BOOTSTRAP_COUNTER_OK: local counter initialized to ${seed}"
 	fi
 
+	local todo_seed
+	todo_seed=$(_compute_counter_seed "$repo_path")
+	((10#$todo_seed > 10#$current_value)) && current_value="$todo_seed"
 	local first_id=$((current_value + OFFLINE_OFFSET))
 	local last_id=$((first_id + count - 1))
 	local new_counter=$((first_id + count))
