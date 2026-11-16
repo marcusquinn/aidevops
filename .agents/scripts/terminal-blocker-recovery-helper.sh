@@ -29,6 +29,9 @@
 # answered with a plain reply (intake answered_hold) or held with no stated
 # reason (intake unexplained_hold); a maintainer reply newer than a recorded
 # human_decision ends its suppression. See terminal-blocker-recovery-holds.sh.
+# t19068: record stamps human_decision with the repo recovery policy's actions
+# fingerprint; a later added, restored, edited or withdrawn policy ends that
+# suppression too, so newly delegated authority is applied on the next pass.
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -806,31 +809,75 @@ _tbr_has_foreign_circuit() {
 	return 0
 }
 
-# GH#35129: true only when the repo's pinned default-branch recovery policy
-# loads and enables at least one action for this authenticated writer.
-# Cached per process so one pending/seed pass loads each repo once.
-_TBR_POLICY_CACHE=""
-_tbr_policy_enabled() {
+# Loader seam: prints the policy JSON; exit codes as recovery-policy-helper.sh.
+_tbr_policy_read() {
 	local repo="$1"
-	case ";${_TBR_POLICY_CACHE};" in
-	*";${repo}=1;"*) return 0 ;;
-	*";${repo}=0;"*) return 1 ;;
-	esac
-	local enabled=0 policy="" rc=0
-	policy=$(bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$repo" 2>/dev/null) || rc=$?
+	bash "${_TBR_SCRIPT_DIR}/recovery-policy-helper.sh" "$repo" 2>/dev/null
+	return $?
+}
+
+# GH#35129/t19068: load the repo's pinned default-branch recovery policy once
+# per process (callers must not use command substitution, which would drop
+# the cache). Sets _TBR_POLICY_STATE to "<fingerprint>:<enabled 0|1>", where
+# the fingerprint hashes the normalized actions, or is "none" when no action
+# is declared. Fingerprinting actions, not the pinned revision, keeps
+# unrelated default-branch commits from looking like a policy change.
+# Returns 0 when observed, 2 when the policy could not be read.
+_TBR_POLICY_CACHE=""
+_TBR_POLICY_STATE=""
+_tbr_policy_load() {
+	local repo="$1"
+	local cache=";${_TBR_POLICY_CACHE};" policy="" actions="" fingerprint=none enabled=0 rc=0
+	if [[ "$cache" == *";${repo}="* ]]; then
+		cache="${cache#*;"${repo}"=}"
+		_TBR_POLICY_STATE="${cache%%;*}"
+		return 0
+	fi
+	policy=$(_tbr_policy_read "$repo") || rc=$?
 	# Absence (3) is authoritative; failed observation is not withdrawal.
 	[[ "$rc" -eq 0 || "$rc" -eq 3 ]] || return 2
-	if [[ "$rc" -eq 0 ]] && printf '%s' "$policy" | jq -e '.actions | length > 0' >/dev/null 2>&1; then
+	if [[ "$rc" -eq 0 ]]; then
+		actions=$(printf '%s' "$policy" | jq -Sce '.actions | select(length > 0)' 2>/dev/null) || actions=""
+	fi
+	if [[ -n "$actions" ]]; then
+		# shellcheck source=terminal-blocker-circuit.sh
+		source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 2
+		fingerprint=$(_terminal_blocker_hash "$actions") || return 2
 		enabled=1
 	fi
-	_TBR_POLICY_CACHE="${_TBR_POLICY_CACHE};${repo}=${enabled}"
-	[[ "$enabled" -eq 1 ]] || return 1
+	_TBR_POLICY_STATE="${fingerprint}:${enabled}"
+	_TBR_POLICY_CACHE="${_TBR_POLICY_CACHE};${repo}=${_TBR_POLICY_STATE}"
+	return 0
+}
+
+# GH#35129: true only when the repo's pinned default-branch recovery policy
+# loads and enables at least one action for this authenticated writer.
+_tbr_policy_enabled() {
+	local repo="$1"
+	_tbr_policy_load "$repo" || return 2
+	[[ "$_TBR_POLICY_STATE" == *:1 ]] || return 1
+	return 0
+}
+
+# t19068: true when the decision file's repo policy now differs from the one
+# stamped at record time. Legacy records carry no stamp and count as "none",
+# so a policy that appeared since wakes them once. A record without a repo,
+# or an unreadable current policy, keeps the decision (fail closed).
+_tbr_policy_changed_since() {
+	local file="$1"
+	local repo="" recorded=""
+	repo=$(jq -r '.repo // ""' "$file" 2>/dev/null) || return 1
+	[[ -n "$repo" ]] || return 1
+	recorded=$(jq -r '.policy_fingerprint // "none"' "$file" 2>/dev/null) || return 1
+	_tbr_policy_load "$repo" || return 1
+	[[ "${_TBR_POLICY_STATE%:*}" != "$recorded" ]] || return 1
 	return 0
 }
 
 # Optional $2: comments already read for this entry. GH#38311: a maintainer
 # reply newer than a recorded human_decision ends its suppression, so the
-# supervisor re-assesses on its next pass instead of after the TTL.
+# supervisor re-assesses on its next pass instead of after the TTL. t19068:
+# so does a change to the repo's delegated recovery policy.
 _tbr_decision_active() {
 	local key="$1" comments="${2:-}"
 	local file="${TBR_ROOT}/decisions/${key}.json"
@@ -841,7 +888,11 @@ _tbr_decision_active() {
 	now=$(date +%s)
 	[[ $((now - ts)) -lt "$TBR_DECISION_TTL" ]] || return 1
 	wake=$(jq -r '.wake // ""' "$file" 2>/dev/null) || wake=""
-	if [[ "$wake" == human_decision && -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
+	[[ "$wake" == human_decision ]] || return 0
+	if [[ -n "$comments" ]] && _tbr_reply_after "$comments" "$ts"; then
+		return 1
+	fi
+	if _tbr_policy_changed_since "$file"; then
 		return 1
 	fi
 	return 0
@@ -1572,8 +1623,15 @@ tbr_record() {
 	# GitHub identity, never from stdin.
 	actor=$(_tbr_self_login) || return 1
 	key=$(_tbr_key "$repo" "$issue")
+	# t19068: stamp the policy a human_decision was made under; an unreadable
+	# policy leaves no stamp, which later compares as "none".
+	local stamp='{}'
+	if [[ "$(jq -r '.wake' <<<"$input")" == human_decision ]] && _tbr_policy_load "$repo"; then
+		stamp=$(jq -nc --arg fingerprint "${_TBR_POLICY_STATE%:*}" '{policy_fingerprint:$fingerprint}') || stamp='{}'
+	fi
 	printf '%s' "$input" | jq -c --arg actor "$actor" --arg repo "$repo" --argjson issue "$issue" \
-		--argjson now "$(date +%s)" '. + {actor:$actor, repo:$repo, issue:$issue, recorded_epoch:$now}' \
+		--argjson now "$(date +%s)" --argjson stamp "$stamp" \
+		'. + {actor:$actor, repo:$repo, issue:$issue, recorded_epoch:$now} + $stamp' \
 		>"${TBR_ROOT}/decisions/${key}.json" || return 1
 	return 0
 }

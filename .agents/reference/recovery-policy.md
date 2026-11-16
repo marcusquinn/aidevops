@@ -121,6 +121,11 @@ denials, trust or approval gates. Labels never authorize an action themselves.
    `brief_revision` for brief repairs. Record each affected issue separately when
    the action differs; evidence links the public decision and policy revision.
    Record the corresponding integration-recovery decision too, when applicable.
+   `record` stamps a `human_decision` with the policy's actions fingerprint
+   (`none` without a policy). When the repo later adds, restores, edits or
+   withdraws its policy, that decision stops suppressing re-assessment before
+   the TTL, so newly delegated authority is applied on the next pass (t19068).
+   An unreadable policy keeps the suppression.
 
 ## Cross-runner recovery
 

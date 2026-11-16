@@ -383,6 +383,7 @@ test_record_wake_values() {
 	if ! (
 		TBR_ROOT="${TEST_ROOT}/record"
 		export WORKER_GITHUB_LOGIN=runner-one
+		_tbr_policy_read() { return 3; }
 		printf '%s' '{"wake":"human_decision","next_action":"held outlier chain","evidence":"decision comment"}' |
 			tbr_record owner/repo 77 || exit 1
 		printf '%s' '{"wake":"dependency_change","next_action":"split task filed","evidence":"split link"}' |
@@ -393,6 +394,59 @@ test_record_wake_values() {
 		status=1
 	fi
 	print_result "policy outcomes record with human_decision/dependency_change wakes" "$status"
+	return 0
+}
+
+# t19068: a human_decision is stamped with the policy it was made under; a
+# restored, edited or newly readable-and-different policy ends its suppression,
+# while an unchanged or unreadable policy keeps it. Other wakes are unaffected.
+test_policy_change_ends_decision_suppression() {
+	local status=0
+	if ! (
+		TBR_ROOT="${TEST_ROOT}/policy-change"
+		export WORKER_GITHUB_LOGIN=runner-one
+		POLICY_RC=3 POLICY_EXTRA=""
+		_tbr_policy_read() {
+			[[ "$POLICY_RC" -ne 0 ]] || printf '{"actions":{"outlier_hold":%s%s}}\n' "$OUTLIER_ACTION" "$POLICY_EXTRA"
+			return "$POLICY_RC"
+		}
+		file="${TBR_ROOT}/decisions/owner--repo--80.json"
+		decision='{"wake":"human_decision","next_action":"maintainer picks a source","evidence":"packet"}'
+		printf '%s' "$decision" | tbr_record owner/repo 80 || exit 1
+		jq -e '.policy_fingerprint == "none"' "$file" >/dev/null || exit 1
+		_tbr_decision_active owner--repo--80 || exit 1
+		_tbr_policy_enabled owner/repo && exit 1
+		# Restored policy: the decision made without delegated authority wakes.
+		_TBR_POLICY_CACHE="" POLICY_RC=0
+		_tbr_policy_enabled owner/repo || exit 1
+		_tbr_decision_active owner--repo--80 && exit 1
+		# Re-recorded under the current policy: suppressed until TTL or reply.
+		printf '%s' "$decision" | tbr_record owner/repo 80 || exit 1
+		jq -e '.policy_fingerprint | test("^[a-f0-9]{24}$")' "$file" >/dev/null || exit 1
+		_tbr_decision_active owner--repo--80 || exit 1
+		# An edited policy wakes it again.
+		_TBR_POLICY_CACHE="" POLICY_EXTRA=',"session_cap_split":{"enabled":true}'
+		_tbr_decision_active owner--repo--80 && exit 1
+		# A legacy record without a stamp counts as "none".
+		jq -c 'del(.policy_fingerprint)' "$file" >"${file}.tmp" && mv "${file}.tmp" "$file"
+		_tbr_decision_active owner--repo--80 && exit 1
+		# Unreadable policy keeps the suppression (fail closed).
+		_TBR_POLICY_CACHE="" POLICY_RC=1
+		_tbr_decision_active owner--repo--80 || exit 1
+		rc=0
+		_tbr_policy_enabled owner/repo || rc=$?
+		[[ "$rc" -eq 2 ]] || exit 1
+		# Other wakes ignore policy changes.
+		printf '%s' '{"wake":"dependency_change","next_action":"split filed","evidence":"link"}' |
+			tbr_record owner/repo 80 || exit 1
+		jq -e 'has("policy_fingerprint") | not' "$file" >/dev/null || exit 1
+		_TBR_POLICY_CACHE="" POLICY_RC=0
+		_tbr_decision_active owner--repo--80 || exit 1
+		exit 0
+	); then
+		status=1
+	fi
+	print_result "a changed recovery policy ends human_decision suppression; unchanged or unreadable keeps it" "$status"
 	return 0
 }
 
@@ -414,6 +468,7 @@ test_fail_closed_cases
 test_cross_runner_seed_reason
 test_cross_runner_seed_and_pending
 test_record_wake_values
+test_policy_change_ends_decision_suppression
 test_supervisor_prompt_contract
 
 printf '\n%d run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
