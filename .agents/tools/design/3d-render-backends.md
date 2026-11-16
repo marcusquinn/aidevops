@@ -131,7 +131,42 @@ Blender 3.0+ also accepts `-- --cycles-device OPTIX` after the frame flags.
 Check the log for the chosen device; a silent CPU fallback is the most common
 cause of slow, expensive remote renders.
 
-These steps are manual until `blender-render-helper.sh` lands (t19049, GH#38556).
+## Helper: `blender-render-helper.sh` (Runpod)
+
+`scripts/blender-render-helper.sh` runs the job contract on Runpod. Every
+command prints its `runpodctl`/`rsync`/`ssh` calls and does nothing until
+`--live`; live mode needs `RUNPOD_API_KEY`
+(`aidevops secret RUNPOD_API_KEY -- blender-render-helper.sh <cmd> --live`).
+Providers sit behind `_brh_provider_call`; Vast.ai and SaladCloud adapters are not
+implemented.
+
+```bash
+H=~/.aidevops/agents/scripts/blender-render-helper.sh
+# 1. Estimate (calls media-gen-cost-helper.sh; setup hours are per worker)
+$H plan --frames 1-240 --workers 4 --gpu-rate <hourly> --gpu-secs-per-frame <measured> --setup-hours 0.25
+# 2. Package: manifest.json, enable_gpu.py, scene_overrides.py (settings + Blender pin), file hashes
+$H package --blend scene.blend --out job/ --frames 1-240 --blender-version <pinned> --samples 128 --asset textures/wood.png
+# 3. Submit: prints the billable contract and an approval token; re-run with the token after approval
+$H submit --manifest job/manifest.json --workers 4 --gpu-rate <hourly> --budget-usd <ceiling> \
+  --deadline-minutes <minutes> --image <approved-cuda-blender-image> --approve-contract <token> --live
+# 4. Per pod (host/port from status): stage inputs, monitor, fetch (re-runs resume)
+$H stage --job job/ --host <pod-ip> --port <ssh-port> --live
+$H status --job job/ --live
+$H fetch --job job/ --host <pod-ip> --port <ssh-port> --live
+# 5. Tear down and confirm nothing billable remains
+$H teardown --job job/ --live
+```
+
+Guardrails: `submit` refuses without `--budget-usd`, `--deadline-minutes`, `--image`
+and a matching token; worst case (workers x rate x (deadline + `--overhead-minutes`,
+default 15) + `--storage-usd`) must fit the budget; the token covers the manifest
+hash, so changed scene or asset files are refused. Pods wait for `stage`, render under
+a deadline `timeout`, check the pinned Blender version and remove themselves. `fetch`
+lists missing frame numbers and writes `frames/SHA256SUMS`; `teardown --live` refuses
+while frames are missing (`--force-discard` overrides) and fails if pods remain listed.
+The rate is the quoted rate: confirm it in `status`. Network volumes created outside
+the helper need a dashboard check. Live verification needs a Runpod account and spend
+approval and is operator-owned.
 
 ## Provider notes
 
