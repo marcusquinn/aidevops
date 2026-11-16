@@ -746,7 +746,7 @@ rotate_pulse_log() {
 	# t19062: diagnostics appended by writers that recreate the hot path (mode 0600,
 	# single link) after rotation; same PULSE_METRICS_HOT_MAX_BYTES cap and archive.
 	_rotate_metrics_jsonl "${AIDEVOPS_RECOVERY_TIMING_LOG:-${HOME}/.aidevops/logs/worktree-recovery-timings.jsonl}" "worktree-recovery-timings"
-	_rotate_metrics_jsonl "${WAH_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}" "worker-progress-blockers"
+	_rotate_metrics_jsonl "${AIDEVOPS_WORKER_BLOCKER_LOG_FILE:-${HOME}/.aidevops/logs/worker-progress-blockers.jsonl}" "worker-progress-blockers"
 	_prune_metrics_archive
 
 	return 0
