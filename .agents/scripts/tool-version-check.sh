@@ -652,6 +652,14 @@ _tool_installed_version() {
 		fi
 		# Read the npm copy that `npm install -g` updates, not whichever binary
 		# is first on PATH (a stale Bun-global copy can shadow it).
+		# GH#38605: OpenCode is the exception. Users run it through the managed
+		# launcher, its upgrade channel follows the selected binary
+		# (_opencode_upgrade_cmd), and a current npm copy behind a stale launcher
+		# must stay visible so the GH#35461 launcher repair runs.
+		if [[ "$pkg" == opencode-ai ]]; then
+			get_installed_version "$cmd" "$ver_flag" "$pkg"
+			return 0
+		fi
 		local npm_version=""
 		_warn_bun_global_duplicate "$pkg"
 		npm_version=$(get_npm_pkg_version "$pkg" 2>/dev/null || true)
