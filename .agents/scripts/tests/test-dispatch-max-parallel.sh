@@ -967,9 +967,10 @@ test_serial_loop_allows_unset_stop_flag() {
 
 # GH#37907: a deploy drain request that appears while candidate 1 runs stops
 # the serial loop before candidate 2, and skips the next dispatch_max census.
-# A marker naming another owner is ignored.
+# A marker naming another owner is ignored. Grace 0 pins the pre-t19064 stop.
 test_serial_loop_cooperative_drain() {
 	local LOCKDIR="${TEST_ROOT}/drain-lock"
+	local AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=0
 	rm -rf "$LOCKDIR"
 	mkdir -p "$LOCKDIR"
 	# shellcheck disable=SC2317  # called via name resolution from loop
@@ -1005,6 +1006,65 @@ test_serial_loop_cooperative_drain() {
 		print_result "serial_loop: drain marker for another lock owner is ignored" 0
 	else
 		print_result "serial_loop: drain marker for another lock owner is ignored" 1 "got=${result}"
+	fi
+	rm -rf "$LOCKDIR" "$candidate_file"
+	return 0
+}
+
+# t19064 (GH#38633): an admitted round keeps dispatching under a fresh drain
+# marker until the grace expires; the next census is still skipped. An aged
+# marker, or one rewritten after this process first saw the drain, stops it.
+test_serial_loop_drain_round_grace() {
+	local LOCKDIR="${TEST_ROOT}/drain-grace-lock"
+	local AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=600
+	rm -rf "$LOCKDIR"
+	mkdir -p "$LOCKDIR"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+		return 0
+	}
+
+	local candidate_file result capacity_rc=0
+	candidate_file=$(mktemp)
+	for i in 720 721 722; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	rm -f "$STOP_FLAG"
+	: >"$LOGFILE"
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	_dispatch_compute_capacity >/dev/null || capacity_rc=$?
+	if [[ "$result" == "3 3" && "$capacity_rc" -ne 0 ]] &&
+		[[ "$(grep -c 'continuing admitted round under cooperative drain grace' "$LOGFILE")" -eq 1 ]] &&
+		! grep -q 'stopping early: cooperative drain' "$LOGFILE" &&
+		grep -q 'Dispatch_max skipped: cooperative drain requested' "$LOGFILE"; then
+		print_result "serial_loop: fresh drain marker lets the admitted round finish and skips the next census" 0
+	else
+		print_result "serial_loop: fresh drain marker lets the admitted round finish and skips the next census" 1 \
+			"got=${result} capacity_rc=${capacity_rc}"
+	fi
+
+	_dispatch_process_candidate() {
+		return 0
+	}
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	touch -t 200001010000 "${LOCKDIR}/drain_requested"
+	: >"$LOGFILE"
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "0 1" ]] &&
+		grep -q 'cooperative drain requested for activated bundle bundle-next during serial loop' "$LOGFILE"; then
+		print_result "serial_loop: drain marker older than the grace stops the round" 0
+	else
+		print_result "serial_loop: drain marker older than the grace stops the round" 1 "got=${result}"
+	fi
+
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	result=$(_PULSE_DRAIN_GRACE_FIRST_SEEN=$(($(date +%s) - 1200)) _dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	if [[ "$result" == "0 1" ]]; then
+		print_result "serial_loop: rewritten drain marker does not extend the grace" 0
+	else
+		print_result "serial_loop: rewritten drain marker does not extend the grace" 1 "got=${result}"
 	fi
 	rm -rf "$LOCKDIR" "$candidate_file"
 	return 0
@@ -1616,6 +1676,7 @@ test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 test_serial_loop_allows_unset_stop_flag
 test_serial_loop_cooperative_drain
+test_serial_loop_drain_round_grace
 test_serial_loop_rest_reserve_recovery recover
 test_serial_loop_rest_reserve_recovery throttle
 test_serial_loop_rest_reserve_recovery persistent
