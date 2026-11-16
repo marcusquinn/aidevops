@@ -88,7 +88,12 @@ aidevops_service_path() {
 				[[ -z "$_AIDEVOPS_NPM_GLOBAL_BIN" ]] || _AIDEVOPS_NPM_GLOBAL_BIN="${_AIDEVOPS_NPM_GLOBAL_BIN}/bin"
 			fi
 		fi
-		stable_path="${_AIDEVOPS_NPM_GLOBAL_BIN:+${_AIDEVOPS_NPM_GLOBAL_BIN}:}${HOME}/.bun/bin:${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin"
+		# The aidevops shim dirs (gh, git) lead: the npm global bin is often a
+		# package-manager root (Homebrew: /opt/homebrew/bin) that also holds
+		# native gh and git, and daemons re-exec from runtime bundles whose
+		# own script dir is stripped from PATH, so service order decides
+		# whether instrumentation, budget routing and Git guards run (GH#38642).
+		stable_path="${HOME}/.aidevops/agents/scripts:${HOME}/.aidevops/bin:${_AIDEVOPS_NPM_GLOBAL_BIN:+${_AIDEVOPS_NPM_GLOBAL_BIN}:}${HOME}/.bun/bin:${HOME}/.local/bin"
 	fi
 	stable_path=$(AIDEVOPS_PATH_KEEP_MISSING=1 aidevops_compose_path "$stable_path")
 	input_path=$(aidevops_compose_path "$input_path" "$AIDEVOPS_DAEMON_PATH_FALLBACK")
