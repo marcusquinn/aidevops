@@ -81,6 +81,7 @@ reset_case() {
 	TEST_DEADLINE_AFTER_FIRST=0
 	PULSE_PARTIAL_LEASE_GRACE_SECONDS=900
 	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=10
+	unset PULSE_PARTIAL_RECONCILE_MAX_PAGES
 	PULSE_PARTIAL_RECONCILE_STATE_DIR="${TEST_ROOT}/partial-cursor"
 	if [[ -d "$PULSE_PARTIAL_RECONCILE_STATE_DIR" ]]; then
 		printf '1\n' >"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo"
@@ -226,6 +227,8 @@ gh() {
 			printf '%s' "$TEST_AVAILABLE_ISSUES"
 		elif [[ "${2:-}" == *"&page=2" ]]; then
 			printf '%s' "$TEST_REVIEW_PAGE2"
+		elif [[ "${2:-}" == *"&page="[3-9] ]]; then
+			printf '[]'
 		else
 			printf '%s' "$TEST_REVIEW_ISSUES"
 		fi
@@ -1032,16 +1035,50 @@ test_periodic_pass() {
 	assert_no_write "unreadable timeline: no write"
 	reset_case
 	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
+	PULSE_PARTIAL_RECONCILE_MAX_PAGES=1
 	TEST_REVIEW_ISSUES='[{"number":501}]'
 	rc=0
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
-	[[ "$rc" -eq 3 ]] && pass "full page remains due" || fail "full page remains due"
+	[[ "$rc" -eq 3 ]] && pass "page budget: full page remains due" || fail "page budget: full page remains due"
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	if grep -Fq '&page=2' "$API_LOG"; then
-		pass "bounded pass resumes next page"
+		pass "page budget: bounded pass resumes next page"
 	else
-		fail "bounded pass resumes next page"
+		fail "page budget: bounded pass resumes next page"
 	fi
+	unset PULSE_PARTIAL_RECONCILE_MAX_PAGES
+	return 0
+}
+
+# GH#38677: one call traverses pages while the deadline allows.
+test_multi_page_traversal() {
+	local rc=0
+	reset_case
+	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_PAGE2='[{"number":502}]'
+	rc=0
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
+	if [[ "$rc" -eq 0 ]] && grep -Fq 'issues/501/timeline' "$API_LOG" && grep -Fq 'issues/502/timeline' "$API_LOG"; then
+		pass "deadline allows: one call processes two full pages and completes"
+	else
+		fail "deadline allows: one call processes two full pages and completes (rc=${rc})"
+	fi
+	# GH#38677: a deadline after page 1 stops there and the cursor names page 2.
+	reset_case
+	PULSE_PARTIAL_RECONCILE_PAGE_SIZE=1
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_REVIEW_PAGE2='[{"number":502}]'
+	TEST_DEADLINE_AFTER_FIRST=1
+	rc=0
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || rc=$?
+	if [[ "$rc" -eq 3 && "$(head -n 1 "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo")" == "2" ]] \
+		&& ! grep -Fq 'issues/502/timeline' "$API_LOG"; then
+		pass "deadline after page 1: returns 3 and cursor names page 2"
+	else
+		fail "deadline after page 1: returns 3 and cursor names page 2 (rc=${rc})"
+	fi
+	TEST_DEADLINE_AFTER_FIRST=0
 	reset_case
 	rc=0
 	_pm_reconcile_partial_continuations "$SLUG" 2000000000 || rc=$?
@@ -1481,6 +1518,7 @@ main() {
 	test_unparsed_closing_reference_is_noop
 	test_expired_lease_recovery
 	test_periodic_pass
+	test_multi_page_traversal
 	test_available_dispatch_recovery
 	test_closed_checkpoint_dispatch_recovery
 	test_closed_checkpoint_scan_pagination
