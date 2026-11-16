@@ -206,6 +206,41 @@ test_proc_snapshot_skips_foreign_uid_unreadable_entry() {
 }
 
 # =============================================================================
+# GH#38675: the single-pass cwd map must give the same verdicts as the per-entry
+# shell loop without a readlink fork per process: readable entries are final,
+# provably foreign ones are skipped, and unknown unreadable ones stay degraded.
+# =============================================================================
+test_proc_snapshot_single_pass_map_matches_shell_loop() {
+	local proc_root="${TEST_DIR}/fake-proc-map"
+	local foreign_uid=""
+	local map=""
+	local output=""
+	local capture_status=0
+	local rc=0
+	foreign_uid=$(($(id -u) + 1))
+	mkdir -p "${proc_root}/1" "${proc_root}/2" "${proc_root}/3"
+	ln -s /visible-cwd "${proc_root}/1/cwd"
+	printf 'Uid:\t%s\t%s\t%s\t%s\n' \
+		"$foreign_uid" "$foreign_uid" "$foreign_uid" "$foreign_uid" >"${proc_root}/2/status"
+
+	map=$(_worktree_proc_cwd_map "$proc_root") || rc=1
+	[[ "$map" == *$'R\t1\t/visible-cwd'* ]] || rc=1
+	[[ "$map" == *$'S\t2'* ]] || rc=1
+	[[ "$map" == *$'F\t3'* ]] || rc=1
+	if output=$(_capture_worktree_proc_cwds "$proc_root"); then
+		capture_status=0
+	else
+		capture_status=$?
+	fi
+	# Entry 3 has no cwd link at all (vanished): the shell loop re-checks and skips it.
+	[[ "$capture_status" -eq 0 ]] || rc=1
+	[[ "$output" == "/visible-cwd" ]] || rc=1
+	print_result "proc_snapshot_single_pass_map_matches_shell_loop" "$rc" \
+		"Expected one-pass map to capture readable, skip foreign, and hand unknown entries to the shell loop"
+	return 0
+}
+
+# =============================================================================
 # hidepid-style /proc mounts can deny both cwd and status reads for other users.
 # Directory ownership still proves those entries are foreign, so they must not
 # degrade the whole snapshot and force recoverable archival for every cleanup.
