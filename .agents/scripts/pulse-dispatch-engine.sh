@@ -439,9 +439,16 @@ _dispatch_repo_enumeration_budget_stored() {
 
 # Args: repo slug, base budget seconds. Stdout: this repository's budget.
 _dispatch_repo_enumeration_budget() {
-	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file=""
+	local repo_slug="$1" base="$2" stored=0 mode="" ceiling=0 file="" limit_file="" limit=""
 	file=$(_dispatch_repo_enumeration_budget_file "$repo_slug")
 	read -r stored mode <<<"$(_dispatch_repo_enumeration_budget_stored "$file")"
+	# GH#38548: admission and execution must agree on the reduced-work budget;
+	# otherwise the census could defer a retry using an obsolete 120s estimate.
+	limit_file=$(_dispatch_repo_enumeration_limit_file "$repo_slug")
+	if [[ -f "$limit_file" && ! -L "$limit_file" ]]; then
+		read -r limit <"$limit_file" 2>/dev/null || true
+		[[ ! "$limit" =~ ^[1-9][0-9]{0,8}$ ]] || mode=""
+	fi
 	if ((stored > base)); then
 		if [[ "$mode" == escalated ]]; then
 			ceiling=$(_dispatch_repo_enumeration_budget_escalated_cap "$base")
@@ -649,8 +656,6 @@ _dispatch_census_enumerate_repo() {
 	source_limit=$(_dispatch_repo_enumeration_limit "$repo_slug" "$per_repo_limit")
 	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
 	budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$base")
-	# Reduced-work retries must not consume the above-cap escalation budget.
-	if ((source_limit < per_repo_limit && budget > cap)); then budget="$cap"; fi
 	((remaining >= budget)) || budget="$remaining"
 	started=$(_dispatch_first_wave_now_s)
 	candidates=$(_dispatch_enumerate_repo_bounded "$budget" "$repo_slug" "$repo_path" "$source_limit" \

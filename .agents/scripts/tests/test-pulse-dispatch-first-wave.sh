@@ -377,6 +377,8 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || rc=$?
 	[[ "$rc" == 124 && "$(<"$sleepy_file")" == '4 escalated' ]]
 	[[ "$(<"$limit_file")" == 25 ]]
+	# Census admission sees the same normal cap as the reduced-work scan.
+	[[ "$(_dispatch_repo_enumeration_budget owner/sleepy 1)" == 1 ]]
 	rc=0
 	clamped=$(_dispatch_census_enumerate_repo owner/sleepy /fixture 1 0 50 skip "") || rc=$?
 	[[ "$rc" == 124 && "$clamped" == '[]' && "$(<"$sleepy_file")" == '4 escalated' ]]
