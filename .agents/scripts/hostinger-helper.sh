@@ -19,6 +19,53 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 # not the caller's working directory.
 CONFIG_FILE="${HOSTINGER_CONFIG_FILE:-$SCRIPT_DIR/../configs/hostinger-config.json}"
 
+# Secret-store name holding the API token (GH#38589). The default name resolves
+# through `aidevops secret default hostinger NAME`; set another stored name to
+# use a second login for one call. Matches COOLIFY_SECRET_NAME.
+readonly HOSTINGER_DEFAULT_SECRET_NAME="HOSTINGER_API_TOKEN"
+HOSTINGER_SECRET_NAME="${HOSTINGER_SECRET_NAME:-$HOSTINGER_DEFAULT_SECRET_NAME}"
+
+# In the re-executed child, expose the selected secret under the variable the
+# API code and Python engines read, for this process tree only.
+if [[ -n "${HOSTINGER_API_REEXEC:-}" && "$HOSTINGER_SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ &&
+    "$HOSTINGER_SECRET_NAME" != "$HOSTINGER_DEFAULT_SECRET_NAME" ]]; then
+    export HOSTINGER_API_TOKEN="${!HOSTINGER_SECRET_NAME:-}"
+    unset "$HOSTINGER_SECRET_NAME"
+fi
+
+# Decide how API commands obtain the token: 0 = re-exec under secret-store
+# injection, 1 = use the environment/config as before, 2 = refuse (invalid
+# selector, or an explicitly selected secret that is not stored).
+hostinger_secret_mode() {
+    local name="$HOSTINGER_SECRET_NAME"
+    if [[ ! "$name" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+        print_error "Invalid HOSTINGER_SECRET_NAME: use an UPPER_SNAKE secret name, e.g. HOSTINGER_<ACCOUNT>_API_TOKEN" >&2
+        return 2
+    fi
+    [[ -z "${HOSTINGER_API_REEXEC:-}" ]] || return 1
+    if [[ "$name" == "$HOSTINGER_DEFAULT_SECRET_NAME" ]]; then
+        [[ -z "${HOSTINGER_API_TOKEN:-}" ]] || return 1
+        command -v aidevops >/dev/null 2>&1 || return 1
+        aidevops secret check "$name" >/dev/null 2>&1 || return 1
+        return 0
+    fi
+    if command -v aidevops >/dev/null 2>&1 && aidevops secret check "$name" >/dev/null 2>&1; then
+        return 0
+    fi
+    print_error "Selected Hostinger secret is not stored: $name" >&2
+    print_info "Store it with: aidevops secret set $name --provider hostinger --account REF" >&2
+    return 2
+}
+
+# Re-run this helper with the selected secret injected. The value never
+# appears on argv; api_call passes it to curl on stdin.
+hostinger_secret_reexec() {
+    local status=0
+    HOSTINGER_API_REEXEC=1 aidevops secret "$HOSTINGER_SECRET_NAME" -- \
+        "$SCRIPT_DIR/hostinger-helper.sh" "$@" || status=$?
+    return "$status"
+}
+
 # Check if config file exists
 check_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -149,8 +196,9 @@ exec_on_site() {
 }
 
 # API operations: api [METHOD] ENDPOINT [JSON_BODY]
-# The token comes from HOSTINGER_API_TOKEN, else the aidevops secret store
-# (re-exec with injection, like fleet/cron), else the legacy config file.
+# The token comes from HOSTINGER_API_TOKEN, else the secret named by
+# HOSTINGER_SECRET_NAME (re-exec with injection, like fleet/cron), else the
+# legacy config file. An explicit HOSTINGER_SECRET_NAME always wins.
 # It is passed to curl on stdin, never on the command line.
 api_call() {
     local first="${1:-}"
@@ -174,19 +222,22 @@ api_call() {
         return 1
     fi
 
-    if [[ -z "$api_token" && -z "${HOSTINGER_API_REEXEC:-}" ]] &&
-        command -v aidevops >/dev/null 2>&1 &&
-        aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
+    local mode=0
+    hostinger_secret_mode || mode=$?
+    if [[ "$mode" -eq 2 ]]; then
+        return 1
+    fi
+    if [[ "$mode" -eq 0 ]]; then
         local status=0
-        HOSTINGER_API_REEXEC=1 aidevops secret HOSTINGER_API_TOKEN -- \
-            "$SCRIPT_DIR/hostinger-helper.sh" api "$method" "$endpoint" "$body" || status=$?
+        hostinger_secret_reexec api "$method" "$endpoint" "$body" || status=$?
         return "$status"
     fi
 
     if [[ -z "$api_token" ]]; then
         if [[ ! -f "$CONFIG_FILE" ]]; then
             print_error "Hostinger API token not found"
-            print_info "Store it with: aidevops secret set HOSTINGER_API_TOKEN"
+            print_info "Store it with: aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
+            print_info "Then: aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
             return 1
         fi
         check_config
@@ -304,11 +355,14 @@ fleet_command() {
             [[ "$argument" == "--api-response" ]] && offline=1
         done
         # Inject the token from the secret store without exposing it.
-        if [[ "$offline" -eq 0 && -z "${HOSTINGER_API_TOKEN:-}" ]] &&
-            command -v aidevops >/dev/null 2>&1 &&
-            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
-            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" inventory "$@" || status=$?
-            return "$status"
+        if [[ "$offline" -eq 0 ]]; then
+            local mode=0
+            hostinger_secret_mode || mode=$?
+            [[ "$mode" -ne 2 ]] || return 1
+            if [[ "$mode" -eq 0 ]]; then
+                hostinger_secret_reexec fleet inventory "$@" || status=$?
+                return "$status"
+            fi
         fi
         python3 "$engine" inventory "$@" || status=$?
         return "$status"
@@ -375,10 +429,11 @@ cron_command() {
 
     case "$subcommand" in
     list | create | delete | output)
-        if [[ -z "${HOSTINGER_API_TOKEN:-}" ]] &&
-            command -v aidevops >/dev/null 2>&1 &&
-            aidevops secret check HOSTINGER_API_TOKEN >/dev/null 2>&1; then
-            aidevops secret HOSTINGER_API_TOKEN -- python3 "$engine" "$@" || status=$?
+        local mode=0
+        hostinger_secret_mode || mode=$?
+        [[ "$mode" -ne 2 ]] || return 1
+        if [[ "$mode" -eq 0 ]]; then
+            hostinger_secret_reexec cron "$@" || status=$?
             return "$status"
         fi
         python3 "$engine" "$@" || status=$?
@@ -846,6 +901,11 @@ main() {
         echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
         echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
         echo "  help                 - $HELP_SHOW_MESSAGE"
+        echo ""
+        echo "API token (api, ssl-status, wordpress-detect, fleet inventory, cron):"
+        echo "  aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
+        echo "  aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
+        echo "  HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN $0 api ...  # second login"
         echo ""
         echo "Examples:"
         echo "  $0 list"

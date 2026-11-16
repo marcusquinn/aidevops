@@ -33,6 +33,7 @@ DEFAULT_ENV = {
     "cloudflare": "CLOUDFLARE_API_TOKEN",
     "github": "GITHUB_TOKEN",
     "hetzner": "HCLOUD_TOKEN",
+    "hostinger": "HOSTINGER_API_TOKEN",
     "openai": "OPENAI_API_KEY",
     "vercel": "VERCEL_TOKEN",
 }
