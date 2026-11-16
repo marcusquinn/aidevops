@@ -502,6 +502,11 @@ _triage_runtime_result_failure_reason() {
 
 	if [[ "$runtime_status" -ne 0 ]]; then
 		failure_reason=$(_triage_runtime_infra_failure_reason "$raw_sample")
+		# Model text must not trigger the auth cooldown: also require the
+		# runtime's own exit status (86, set by headless-runtime-invoke.sh).
+		if [[ "$failure_reason" == "triage-provider-auth-unsupported" && "$runtime_status" -ne 86 ]]; then
+			failure_reason=""
+		fi
 	fi
 	if [[ "$artifact_cleanup_status" -ne 0 ]]; then
 		failure_reason="$_PAD_TRIAGE_RUNTIME_TEMP_FAILURE_REASON"

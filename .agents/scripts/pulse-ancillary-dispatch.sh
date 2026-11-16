@@ -757,7 +757,8 @@ _build_triage_review_prompt() {
 #######################################
 _triage_auth_cooldown_skip() {
 	local model="$1"
-	[[ -n "$model" ]] && _triage_auth_cooldown_active "$model" || return 1
+	# An empty model uses the same fingerprint key as _triage_auth_cooldown_record.
+	_triage_auth_cooldown_active "$model" || return 1
 	echo "[pulse-wrapper] dispatch_triage_reviews: triage-provider-auth-unsupported runner_capability_unmet cooldown skipped (provider pool unchanged; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"$LOGFILE"
 	return 0
 }
