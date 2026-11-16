@@ -420,7 +420,10 @@ _handle_cmd_run_continuation_attempt() {
 		continuation_count=$((continuation_count + 1))
 		routing_reason="continuation_retry"
 		print_warning "Premature exit detected — sending continuation prompt (attempt ${continuation_count}/${max_continuation_retries})"
-		prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. You have set up the environment but have not yet completed the task. Check your todo list, implement the required code changes, commit, push, and create a PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. Do not stop until the outcome is FULL_LOOP_COMPLETE or BLOCKED with evidence."
+		# GH#38596: name every valid terminal state and the handoff case; an
+		# unconditional "implement and create a PR" made handed-off workers
+		# repeat unchanged reports until the continuation budget ran out.
+		prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. Your previous turn ended without a recognised terminal state. Check git status, your todo list and your PR. If work remains, implement it, commit, push, and create or update the PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. If your PR already exists (open or merged) and only CI, review, merge or work outside this attempt remains, that is a handoff, not unfinished work. End with exactly one terminal marker alone on its own line: FULL_LOOP_COMPLETE, POST_PR_HANDOFF, or BLOCKED: <reason> with evidence."
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_CONTINUE"
 		return 0
 	fi

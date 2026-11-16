@@ -504,6 +504,14 @@ run_failure_evidence_tests() {
 	return 0
 }
 
+run_post_pr_handoff_signal_tests() {
+	test_post_pr_handoff_completion_signal_is_exact
+	test_post_pr_handoff_accepts_labelled_line_forms
+	test_private_task_complete_requires_exact_model_text_line
+	test_post_pr_handoff_records_distinct_result_label
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -555,9 +563,7 @@ main() {
 	test_provider_sessions_keep_pulse_unscoped
 	run_blocked_completion_tests
 	test_capability_escalation_ladder_is_bounded_and_exact
-	test_post_pr_handoff_completion_signal_is_exact
-	test_private_task_complete_requires_exact_model_text_line
-	test_post_pr_handoff_records_distinct_result_label
+	run_post_pr_handoff_signal_tests
 	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
 	test_headless_sandbox_timeout_budget
