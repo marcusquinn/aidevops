@@ -1710,6 +1710,7 @@ _main_dispatch() {
 	setup) cmd_setup "$@" ;;
 	features | f) cmd_features ;;
 	status | s) cmd_status "$@" ;;
+	installs) _dispatch_helper "install-record-helper.sh" "install-record-helper.sh" "$@" ;;
 	update | upgrade | u) cmd_update "$@" ;;
 	runtime-bundle | runtime_bundle) AIDEVOPS_INSTALL_DIR="$INSTALL_DIR" _dispatch_helper "runtime-bundle-rollback-helper.sh" "runtime-bundle-rollback-helper.sh" "$@" ;;
 	release) _dispatch_helper "full-loop-release-helper.sh" "full-loop-release-helper.sh" "$@" ;;

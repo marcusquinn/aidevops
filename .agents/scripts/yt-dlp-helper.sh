@@ -749,11 +749,13 @@ except Exception as e:
 # Install or upgrade yt-dlp in an isolated environment (uv tool, then pipx).
 # Never installs to user or system Python scope (PEP 668).
 install_ytdlp_isolated() {
+	local install_method="pipx"
 	# Preserve pipx ownership even when uv is also installed.
 	if command -v pipx &>/dev/null && pipx list --short | grep '^yt-dlp ' >/dev/null; then
 		pipx upgrade yt-dlp || return 1
 	elif command -v uv &>/dev/null; then
 		uv tool install --upgrade yt-dlp || return 1
+		install_method="uv-tool"
 	elif command -v pipx &>/dev/null; then
 		pipx install yt-dlp || return 1
 	else
@@ -764,6 +766,10 @@ install_ytdlp_isolated() {
 		print_error "yt-dlp is not on PATH. Add the uv tool dir --bin or pipx executable directory to PATH."
 		return 1
 	fi
+	# shellcheck source=install-record-helper.sh
+	source "$SCRIPT_DIR/install-record-helper.sh"
+	install_record "yt-dlp" "$install_method" "$(command -v yt-dlp)" \
+		"Video downloads in an isolated Python environment" "$install_method upgrade yt-dlp" || print_warning "Could not record yt-dlp install"
 	return 0
 }
 

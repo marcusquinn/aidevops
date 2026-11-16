@@ -28,6 +28,7 @@ _help_commands() {
 	echo "  skills <cmd>       Discover skills (search/browse/describe/recommend)"
 	echo "  plugin <cmd>       Manage plugins (add/list/update/enable/disable/remove)"
 	echo "  status             Check installation status of all components"
+	echo "  installs           Read-only install records, untracked tools and broken interpreters"
 	echo "  doctor             Detect duplicate installs and PATH conflicts (--fix to resolve)"
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
