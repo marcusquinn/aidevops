@@ -262,9 +262,32 @@ _sweep_legacy_install_paths_for_opencode() {
 	return 1
 }
 
+#######################################
+# GH#38581: a durable HOME must never get a daemon shim or persisted runtime
+# path that points into a temp tree. Deleting that tree breaks every worker
+# launch on the host with exit 127 (2026-11-15: 19 launches in 26 minutes).
+# Mirrors the guard in _setup_ensure_opencode_stable_shim; fixture HOMEs
+# under a temp root keep their behaviour. When this module is sourced without
+# the shared predicate the guard is a no-op, matching the optional validator.
+# Args: $1 = candidate binary path
+# Returns: 0 when the target is ephemeral and HOME is durable, 1 otherwise
+#######################################
+_pulse_opencode_target_is_unsafe_ephemeral() {
+	local _bin="${1:-}"
+	local _physical_dir=""
+	declare -F _setup_opencode_binary_is_ephemeral >/dev/null 2>&1 || return 1
+	[[ -n "$_bin" ]] || return 1
+	_setup_opencode_binary_is_ephemeral "${HOME:-}/.aidevops-home" && return 1
+	_setup_opencode_binary_is_ephemeral "$_bin" && return 0
+	_physical_dir=$(cd "$(dirname "$_bin")" 2>/dev/null && pwd -P) || return 1
+	_setup_opencode_binary_is_ephemeral "${_physical_dir}/$(basename "$_bin")" && return 0
+	return 1
+}
+
 _pulse_validate_opencode_candidate() {
 	local _candidate="${1:-}" _have_validator="${2:-0}"
 	[[ -n "$_candidate" ]] && [[ -x "$_candidate" ]] || return 1
+	_pulse_opencode_target_is_unsafe_ephemeral "$_candidate" && return 1
 	if [[ "$_have_validator" -eq 1 ]] && \
 		! _setup_validate_opencode_binary "$_candidate"; then
 		return 1
@@ -356,6 +379,7 @@ _pulse_write_direct_opencode_shim() {
 
 	[[ -n "$_home" ]] || return 1
 	[[ -n "$_opencode_bin" && -x "$_opencode_bin" ]] || return 1
+	_pulse_opencode_target_is_unsafe_ephemeral "$_opencode_bin" && return 1
 	_opencode_dir=$(dirname "$_opencode_bin")
 	mkdir -p "$_shim_dir" || return 1
 	_shim_tmp=$(mktemp "${_shim_path}.tmp.XXXXXX") || return 1
@@ -411,7 +435,8 @@ _resolve_pulse_runtime_binary() {
 	if [[ -z "$opencode_bin" && -f "$_persisted_file" ]]; then
 		local _persisted
 		_persisted=$(head -n1 "$_persisted_file" 2>/dev/null || true)
-		if [[ -n "$_persisted" ]] && [[ -x "$_persisted" ]]; then
+		if [[ -n "$_persisted" ]] && [[ -x "$_persisted" ]] && \
+			! _pulse_opencode_target_is_unsafe_ephemeral "$_persisted"; then
 			if [[ "$_have_validator" -eq 0 ]] || \
 				_setup_validate_opencode_binary "$_persisted"; then
 				printf '%s' "$_persisted"
