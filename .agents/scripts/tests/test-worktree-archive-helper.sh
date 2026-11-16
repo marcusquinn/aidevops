@@ -10,6 +10,8 @@ TEST_ROOT="$(mktemp -d)"
 export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/registry"
 export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
 export AIDEVOPS_WORKTREE_BASE_DIR="$TEST_ROOT"
+# Fixtures create tiny worktrees; host free space must not decide the result (GH#38659).
+export AIDEVOPS_MIN_WORKTREE_FREE_KB=0 AIDEVOPS_MIN_WORKTREE_FREE_PERCENT=0
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -311,7 +313,8 @@ path.write_text(path.read_text() + "tracked change\n" * 10000)
 PY
 		if [[ "$phase" == staged ]]; then git -C "$worktree" add file.txt || return 1; fi
 		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free - 4096))' "$TEST_ROOT") || return 1
-		if AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
+		if env -u AIDEVOPS_MIN_WORKTREE_FREE_KB -u AIDEVOPS_MIN_WORKTREE_FREE_PERCENT \
+			AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
 			bash "$HELPER" archive "$worktree" --repo owner/repo --issue 32 --reason failed-worker \
 			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
 		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
