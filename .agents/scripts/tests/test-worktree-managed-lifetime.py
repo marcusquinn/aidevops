@@ -357,12 +357,15 @@ class LifetimeTests(unittest.TestCase):
             def status(path):
                 return json.loads(run([*helper, "status", str(path)]).stdout)
 
-            def enroll(path, branch, issue, origin):
+            def plain_worktree(path, branch):
+                run(["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path)])
+
+            def registry_worktree(path, branch):
+                create_lifecycle_worktree(run, root / "lifecycle", repo, path, branch)
+
+            def enroll(path, branch, issue, origin, create=plain_worktree):
                 # Same enrollment worktree-helper-add.sh performs under AIDEVOPS_WORKTREE_MANAGER.
-                if path == manual_wt:  # the tree later retired through the lifecycle registry
-                    create_lifecycle_worktree(run, root / "lifecycle", repo, path, branch)
-                else:
-                    run(["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path)])
+                create(path, branch)
                 keys = ("AIDEVOPS_LAUNCH_ENTRYPOINT", "AIDEVOPS_LAUNCH_TRIGGER", "AIDEVOPS_LAUNCH_TRIGGER_EVIDENCE")
                 run([*helper, "enroll", str(path)], extra=dict(zip(keys, origin), AIDEVOPS_LAUNCH_TASK=issue,
                                                              AIDEVOPS_LAUNCH_REPO="owner/repo"))
@@ -382,7 +385,8 @@ class LifetimeTests(unittest.TestCase):
             pulse_wt, manual_wt, duplicate = root / "pulse-wt", root / "manual-wt", root / "duplicate-wt"
             pulse_origin = ("pulse", "scheduled", "pulse-cycle")
             enroll(pulse_wt, "feature/auto-1-gh101", "101", pulse_origin)
-            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"))
+            enroll(manual_wt, "feature/auto-2-gh102", "102", ("dispatch-single-issue", "manual", "interactive-terminal"),
+                   create=registry_worktree)  # retired later through the lifecycle registry
             pulse_select = ('SCRIPT_DIR="$1"; source "$1/pulse-dispatch-worker-systemd.sh"; LOGFILE="$3/pulse.log"; '
                             '_dlw_select_issue_worktree "$2" 101 owner/repo; rc=$?; '
                             'printf "%s|%s|%s|%s\\n" "$rc" "$_DLW_REUSE_PATH" "$_DLW_REUSE_GENERATION" "$_DLW_REUSE_REFUSAL"')
