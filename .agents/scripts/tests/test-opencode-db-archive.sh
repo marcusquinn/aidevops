@@ -659,9 +659,9 @@ sqlite3 "$OPENCODE_DB_HEADLESS_LEDGER" "INSERT OR IGNORE INTO worker_sessions (s
 transcript_before=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
 out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
 	"$HELPER" archive --worker-events-only --dry-run 2>&1) || true
-if [[ "$out" == *"would expire 3 active-DB events of 2 terminated worker session(s)"* &&
+if [[ "$out" == *"would expire 4 active-DB events of 3 inactive session(s)"* &&
 	"$(sqlite3 "$ACTIVE_DB" 'SELECT COUNT(*) FROM event;')" == 5 ]]; then
-	_pass "worker event expiry dry run reports terminated worker events without deleting"
+	_pass "event expiry dry run reports idle-session events without deleting"
 else
 	_fail "worker event expiry dry run mismatch: $out"
 fi
@@ -672,11 +672,32 @@ rc=$?
 set -e
 remaining_events=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
 transcript_after=$(sqlite3 "$ACTIVE_DB" 'SELECT (SELECT COUNT(*) FROM session), (SELECT COUNT(*) FROM message), (SELECT COUNT(*) FROM part);')
-if [[ "$rc" -eq 0 && "$out" == *"expired 3 active-DB events"* && "$remaining_events" == "interactive_old,worker_live" &&
+if [[ "$rc" -eq 0 && "$out" == *"expired 4 active-DB events"* && "$remaining_events" == "worker_live" &&
 	"$transcript_before" == "$transcript_after" && ! -e "$ARCHIVE_DB" ]]; then
-	_pass "worker event expiry keeps transcripts, live workers and interactive sessions"
+	_pass "event expiry drops idle interactive and worker events, keeps transcripts and recent sessions (GH#38630)"
 else
-	_fail "worker event expiry mismatch: rc=$rc events=$remaining_events transcript=$transcript_before->$transcript_after output=$out"
+	_fail "event expiry mismatch: rc=$rc events=$remaining_events transcript=$transcript_before->$transcript_after output=$out"
+fi
+
+# GH#38630: over the byte cap the pass warns and still expires only idle sessions.
+_reset_dbs
+now_seconds=$(date +%s)
+dead_ms=$(((now_seconds - 2 * 3600) * 1000))
+older_ms=$(((now_seconds - 5 * 3600) * 1000))
+live_ms=$(((now_seconds - 5 * 60) * 1000))
+_make_active_db_with_sessions "idle_new,${dead_ms}
+idle_old,${older_ms}
+live_one,${live_ms}"
+set +e
+out=$(OPENCODE_DB_PATH="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" OPENCODE_DB_WAL_STABILITY_DELAY_SECONDS=0 \
+	OPENCODE_DB_EVENT_MAX_BYTES=1 "$HELPER" archive --worker-events-only 2>&1)
+rc=$?
+set -e
+remaining_events=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
+if [[ "$rc" -eq 0 && "$out" == *"exceeds OPENCODE_DB_EVENT_MAX_BYTES"* && "$remaining_events" == "live_one" ]]; then
+	_pass "event expiry above OPENCODE_DB_EVENT_MAX_BYTES warns and never touches live sessions"
+else
+	_fail "event cap expiry mismatch: rc=$rc events=$remaining_events output=$out"
 fi
 rm -f "$OPENCODE_DB_HEADLESS_LEDGER"
 

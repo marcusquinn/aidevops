@@ -943,7 +943,7 @@ cmd_archive() {
 	local max_duration="$DEFAULT_MAX_DURATION"
 	local event_retention_days="${OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS:-$DEFAULT_WORKER_RETENTION_DAYS}"
 	local events_only=0
-	local worker_event_minutes="${OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES:-$DEFAULT_WORKER_EVENT_EXPIRY_MINUTES}"
+	local worker_event_minutes="${OPENCODE_DB_ARCHIVE_EVENT_IDLE_MINUTES:-${OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES:-$DEFAULT_WORKER_EVENT_EXPIRY_MINUTES}}"
 	local worker_events_only=0
 
 	# Phase helpers share only these command-local settings/results via Bash's
@@ -988,20 +988,15 @@ cmd_archive() {
 # Session-move phase of cmd_archive; shares its dynamic-scope settings.
 _archive_move_phase() {
 	local preflight_rc=0
+	# GH#38630: idle-session event expiry no longer runs inside the move; the
+	# async runner and --worker-events-only run it independently of holders, so a
+	# deferred move cannot starve it. Sessions moved here carry their events.
+	local now
 	_archive_mutation_preflight || preflight_rc=$?
 	if [[ "$preflight_rc" -ne 0 ]]; then
 		return "$preflight_rc"
 	fi
-	# GH#38491: drop dead-worker events before the move so their pages are
-	# reused at once instead of after the 7-day worker retention.
-	# Events of terminated workers are expendable, and expiring them first stops
-	# the move from copying and verifying those bytes (GH#38590), so they get
-	# half the budget. The pass ends at once when nothing is expirable.
-	local t0 now
-	t0=$(date +%s)
-	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$((max_duration / 2))" || return $?
 	now=$(date +%s)
-	_ARCHIVE_T_WORKER=$((now - t0))
 	_archive_prepare_candidates || return $?
 	_ARCHIVE_T_PREP=$(($(date +%s) - now))
 	if ((total_eligible == 0)); then
@@ -1020,15 +1015,11 @@ _archive_move_phase() {
 	return $?
 }
 
-# Light hourly pass (--worker-events-only): expire terminated worker events
-# without moving sessions; shares cmd_archive's dynamic-scope settings.
+# Light hourly pass (--worker-events-only): expire events of idle sessions
+# without moving sessions; shares cmd_archive's dynamic-scope settings. It never
+# waits for idle holders: each delete is a short write transaction (GH#38630).
 _archive_worker_event_phase() {
 	local budget="$1"
-	local preflight_rc=0
-	_archive_mutation_preflight || preflight_rc=$?
-	if [[ "$preflight_rc" -ne 0 ]]; then
-		return "$preflight_rc"
-	fi
 	_archive_expire_worker_events "$worker_event_minutes" "$dry_run" "$budget"
 	return $?
 }
@@ -1749,11 +1740,11 @@ ARCHIVE OPTIONS (split retention by session origin):
                             (default 7; 0 disables). Keeps session/message/part/todo.
                             Runs before moving sessions; freed pages are reused.
   --events-only             Expire archive events without moving active sessions
-  --worker-event-expiry-minutes N  Expire active-DB event rows of terminated headless
-                            worker sessions (ledger worker_sessions) inactive N minutes
-                            (default 60; 0 disables). Keeps message/part/todo, so
-                            transcripts stay resumable; interactive sessions untouched.
-  --worker-events-only      Run only the active-DB worker event expiry (hourly pass)
+  --worker-event-expiry-minutes N  Expire active-DB event rows of ANY session (interactive,
+                             worker, subagent) idle N minutes (default 60; 0 disables).
+                             Keeps session/message/part/todo, so transcripts stay
+                             resumable. Runs even while TUIs hold the DB.
+  --worker-events-only      Run only the active-DB event expiry (hourly pass)
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 RESTORE OPTIONS:
@@ -1780,7 +1771,9 @@ ENVIRONMENT:
   OPENCODE_DB_ARCHIVE_INTERACTIVE_RETENTION_DAYS  Default for --interactive-retention-days (30)
   OPENCODE_DB_HEADLESS_LEDGER  Headless ledger DB (default: headless-runtime/state.db)
   OPENCODE_ARCHIVE_EVENT_RETENTION_DAYS  Archived event expiry, default 7; 0 disables
-  OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES  Default for --worker-event-expiry-minutes (60)
+  OPENCODE_DB_ARCHIVE_EVENT_IDLE_MINUTES  Default for --worker-event-expiry-minutes (60);
+                             legacy OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES still honoured
+  OPENCODE_DB_EVENT_MAX_BYTES  Event payload ceiling for report/notice/expiry (2 GiB)
   OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_SIZE   Max events per worker-expiry transaction (500)
   OPENCODE_DB_ARCHIVE_WORKER_EVENT_BATCH_BYTES  Max event payload bytes per transaction (64 MiB)
                             archive-all always uses an archive beside each active DB;
