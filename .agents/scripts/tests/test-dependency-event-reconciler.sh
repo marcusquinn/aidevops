@@ -543,11 +543,23 @@ _run_stale_cursor_pass() (
 	shift
 	gh() {
 		if [[ "$1 $2" != "api graphql" ]]; then
-			[[ "${CURSOR_BODY_FETCH_FAIL:-false}" == false ]] || return 1
+			# all = every read fails; a number = only that issue's read fails.
+			case "${CURSOR_BODY_FETCH_FAIL:-}" in
+			'') ;;
+			all) return 1 ;;
+			*) [[ "$2" != */"${CURSOR_BODY_FETCH_FAIL}" ]] || return 1 ;;
+			esac
 			printf '%s\n' '{"body":""}'
 			return 0
 		fi
-		jq -cn '[{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[9,3,7,5] | map({number:.,updatedAt:"v1",labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},blockedBy:{totalCount:0,nodes:[]}})}}}}]'
+		# CURSOR_OPEN / CURSOR_READY: issues with an open / closed native blocker.
+		jq -cn --arg open "${CURSOR_OPEN:-}" --arg ready "${CURSOR_READY:-}" '
+			($open | split(" ") | map(select(. != "") | tonumber)) as $o
+			| ($ready | split(" ") | map(select(. != "") | tonumber)) as $r
+			| [{data:{repository:{issues:{pageInfo:{hasNextPage:false},nodes:[9,3,7,5] | map(. as $n | {number:.,updatedAt:"v1",labels:{nodes:[{name:"status:blocked"}],pageInfo:{hasNextPage:false}},
+				blockedBy:(if ($o | index($n)) != null then {totalCount:1,nodes:[{number:99,state:"OPEN"}]}
+					elif ($r | index($n)) != null then {totalCount:1,nodes:[{number:98,state:"CLOSED"}]}
+					else {totalCount:0,nodes:[]} end)})}}}}]'
 		return 0
 	}
 	_der_try_unblock() {
@@ -570,15 +582,29 @@ assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "stale sweep reports a batch-limited p
 assert_eq 5 "$(cat "$cursor_file")" "stale sweep persists the last visited issue"
 : >"$visited_log"
 pass_rc=0
-_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=true || pass_rc=$?
-assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "failed body fetch reports an incomplete traversal"
-assert_eq 5 "$(_der_stale_cursor_read "$cursor_file")" "failed body fetch preserves the nonzero ordinary cursor"
-assert_eq "" "$(paste -sd' ' "$visited_log")" "failed body fetch does not visit the candidate"
-pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 || pass_rc=$?
 assert_eq "7 9" "$(paste -sd' ' "$visited_log")" "next stale sweep resumes after the cursor"
 assert_eq 0 "$pass_rc" "stale sweep reports a finished traversal as complete"
 assert_eq 0 "$(cat "$cursor_file")" "finished traversal resets the cursor"
+# GH#38680: an unreadable issue is handed to the retry ledger (whose drain
+# re-reads it and still decides through _der_try_unblock) instead of ending
+# the pass; only consecutive failures stop it, past the issues handed off.
+retry_ledger="${DER_RETRY_DIR}/owner__cursor.txt"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=7 || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "failed body fetch reports an incomplete traversal"
+assert_eq "3 5 9" "$(paste -sd' ' "$visited_log")" "failed body fetch does not end the pass"
+assert_eq "issue 7" "$(cat "$retry_ledger")" "failed body fetch queues the issue for retry"
+: >"$visited_log"
+pass_rc=0
+_run_stale_cursor_pass "$visited_log" CURSOR_BODY_FETCH_FAIL=all DER_STALE_BLOCKED_MAX_CONSECUTIVE_FAILURES=2 || pass_rc=$?
+assert_eq "$DER_SWEEP_PARTIAL" "$pass_rc" "consecutive read failures report partial"
+assert_eq "" "$(paste -sd' ' "$visited_log")" "consecutive read failures visit nothing"
+assert_eq 5 "$(_der_stale_cursor_read "$cursor_file")" "consecutive read failures stop after the issues handed off"
+assert_eq "issue 3 issue 5" "$(paste -sd' ' "$retry_ledger")" "consecutive read failures queue each handed-off issue"
+rm -rf "$DER_RETRY_DIR"
+_der_stale_cursor_write "$cursor_file" 0
 : >"$visited_log"
 pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || pass_rc=$?
@@ -599,6 +625,17 @@ pass_rc=0
 _run_stale_cursor_pass "$visited_log" DER_STALE_BLOCKED_MAX_CANDIDATES=2 \
 	"DER_STALE_BLOCKED_CURSOR_DIR=${cursor_file}/unwritable" || pass_rc=$?
 assert_eq 1 "$pass_rc" "unpersistable cursor reports failure instead of partial progress"
+# GH#38680: open-blocker candidates are settled in the listing filter, so they
+# no longer spend the candidate budget; a ready-only pass (the Pulse ready
+# lane) visits only ready candidates and leaves the ordinary cursor alone.
+_der_stale_cursor_write "$cursor_file" 0
+: >"$visited_log"
+_run_stale_cursor_pass "$visited_log" "CURSOR_OPEN=3 5" DER_STALE_BLOCKED_MAX_CANDIDATES=1 || true
+assert_eq "7" "$(paste -sd' ' "$visited_log")" "prefiltered open-blocker candidates do not consume the candidate budget"
+: >"$visited_log"
+_run_stale_cursor_pass "$visited_log" CURSOR_READY=9 DER_STALE_BLOCKED_READY_ONLY=1 || true
+assert_eq "9" "$(paste -sd' ' "$visited_log")" "ready-only pass visits only ready candidates"
+assert_eq 7 "$(_der_stale_cursor_read "$cursor_file")" "ready-only pass leaves the ordinary cursor alone"
 rm -f "$visited_log"
 
 # GH#37965: exercise the production unblock path with thirty non-native held
@@ -669,7 +706,7 @@ _reset_ready_pass() {
 }
 _reset_ready_pass
 _run_ready_pass DER_STALE_BLOCKED_DEADLINE_EPOCH=1 || true
-assert_eq '31 32 33' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG" | paste -sd' ')" "ready issues release before thirty ordinary candidates despite expired share"
+assert_eq '31 32 33' "$(awk '/^release / {print $2}' "$SCHEDULE_LOG" | paste -sd' ' -)" "ready issues release before thirty ordinary candidates despite expired share"
 assert_eq 3 "$(grep -c '^visit ' "$SCHEDULE_LOG")" "ready allowance does not spend expired share on ordinary candidates"
 assert_eq 1 "$(grep -c 'ready=3 ready_visited=3 skipped_unchanged=0' "$SCHEDULE_SUMMARY")" "summary preserves ready counters"
 _reset_ready_pass

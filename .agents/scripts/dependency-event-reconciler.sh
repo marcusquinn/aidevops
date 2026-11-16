@@ -796,15 +796,34 @@ _der_stale_memo_record() {
 }
 
 _der_stale_candidates() {
-	local pages="$1" repo="$2" cursor="$3" ready_cursor="$4"
+	local pages="$1" repo="$2" cursor="$3" ready_cursor="$4" prefilter="${5:-1}" ready_only="${6:-0}"
 	# The ready queue rotates independently of the ordinary cursor. In
 	# particular, a high ordinary cursor must not hide a newly-ready low issue.
+	# GH#38680: an ordinary candidate with a still-open native blocker is
+	# settled without any API call, so the prefilter drops it here instead of
+	# inside the deadline-checked loop (which never reached it once the stop
+	# deadline had passed). A ready-only pass drops every ordinary candidate.
 	printf '%s' "$pages" | jq -c --arg repo "$repo" \
-		--argjson cursor "$cursor" --argjson ready_cursor "$ready_cursor" '
+		--argjson cursor "$cursor" --argjson ready_cursor "$ready_cursor" \
+		--argjson prefilter "$prefilter" --argjson ready_only "$ready_only" '
 		[.[]]
 		| ([.[] | select(.sweep_ready)] | sort_by([(.number <= $ready_cursor), .number]))
-			+ ([.[] | select(.sweep_ready == false and .number > $cursor)] | sort_by(.number))
+			+ (if $ready_only == 1 then [] else [.[] | select(.sweep_ready == false and .number > $cursor
+				and ($prefilter != 1 or (.sweep_open | not)))] | sort_by(.number) end)
 		| .[] | . + {repository:{nameWithOwner:$repo}}' || return 1
+	return 0
+}
+
+# GH#38680: count the ordinary candidates the prefilter settled (still-open
+# native blocker), so the summary and the pulse backlog weight stay truthful.
+_der_stale_prefiltered_count() {
+	local pages="$1" cursor="$2" prefilter="$3" ready_only="$4"
+	if [[ "$prefilter" != 1 || "$ready_only" == 1 ]]; then
+		printf '0\n'
+		return 0
+	fi
+	printf '%s' "$pages" | jq --argjson cursor "$cursor" \
+		'[.[] | select(.sweep_ready == false and .number > $cursor and .sweep_open)] | length' || return 1
 	return 0
 }
 
@@ -831,6 +850,34 @@ _der_stale_skip_memo() {
 	return 0
 }
 
+# GH#38680: one unreadable issue used to end the whole pass (break), and with
+# the ready cursor unmoved the same issue headed the next pass too. Queue it
+# for the retry drain instead (which re-reads it and still decides through
+# _der_try_unblock), move past it, and stop only after consecutive failures,
+# such as an outage or an exhausted REST budget. Uses the caller's loop state,
+# like _der_stale_skip_memo. Returns 0 to continue, 1 to stop the pass.
+_der_stale_read_failed() {
+	failed=$((failed + 1))
+	consecutive_failed=$((consecutive_failed + 1))
+	complete=false
+	if ! _der_retry_append "$repo" issue "$issue_number"; then
+		# No hand-off: keep the cursor so the next pass revisits this issue.
+		ordinary_complete=false
+		return 1
+	fi
+	retry_queued=$((retry_queued + 1))
+	if [[ "$is_ready" == true ]]; then
+		_der_stale_cursor_write "$ready_file" "$issue_number" || cursor_failed=true
+	else
+		_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
+	fi
+	if [[ "$consecutive_failed" -ge "$max_failures" ]]; then
+		ordinary_complete=false
+		return 1
+	fi
+	return 0
+}
+
 # Periodically recover status:blocked issues whose close event was missed.
 # GraphQL pagination is consumed in full, then bounded before any mutation.
 # Candidates are visited in ascending issue order after the persisted cursor;
@@ -840,6 +887,9 @@ _der_stale_skip_memo() {
 # whole sweep's stop margin) permits one ready visit even when expired. Returns
 # DER_SWEEP_PARTIAL when candidates remain for a later pass, or 1 when the
 # cursor cannot be persisted; unblock decisions are unchanged (_der_try_unblock).
+# GH#38680: DER_STALE_BLOCKED_READY_ONLY=1 visits only ready candidates and
+# leaves the ordinary cursor untouched (the Pulse ready lane); an unreadable
+# issue is queued for retry (_der_stale_read_failed) instead of ending the pass.
 reconcile_stale_blocked_issues() {
 	local repo="$1"
 	local max_candidates="${DER_STALE_BLOCKED_MAX_CANDIDATES:-500}"
@@ -851,10 +901,16 @@ reconcile_stale_blocked_issues() {
 	local memo_file="" memo='{}' memo_enabled=false try_status=0 ordinary_complete=true examined=0
 	local total=0 pending=0 visited=0 reconciled=0 failed=0 complete=true cursor_failed=false
 	local retry_status=0 ready_hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
+	local prefilter="${DER_STALE_BLOCKED_PREFILTER:-1}" ready_only="${DER_STALE_BLOCKED_READY_ONLY:-0}"
+	local max_failures="${DER_STALE_BLOCKED_MAX_CONSECUTIVE_FAILURES:-3}" consecutive_failed=0 retry_queued=0
 	[[ "$repo" == */* ]] || return 1
 	[[ "$max_candidates" =~ ^[1-9][0-9]*$ ]] || max_candidates=500
 	[[ "$ready_max" =~ ^[1-9][0-9]*$ ]] || ready_max=10
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=21600
+	[[ "$max_failures" =~ ^[1-9][0-9]*$ ]] || max_failures=3
+	[[ "$prefilter" == 1 ]] || prefilter=0
+	# A ready-only pass never finishes (so never resets) the ordinary traversal.
+	if [[ "$ready_only" == 1 ]]; then ordinary_complete=false; else ready_only=0; fi
 	cursor_file=$(_der_stale_cursor_file "$repo") || return 1
 	cursor=$(_der_stale_cursor_read "$cursor_file")
 	ready_file="${cursor_file}.ready"
@@ -865,8 +921,11 @@ reconcile_stale_blocked_issues() {
 	pages=$(_der_stale_listing "$repo") || return 1
 	total=$(printf '%s' "$pages" | jq 'length') || return 1
 	memo=$(_der_stale_memo_load "$memo_file" "$ttl") && memo_enabled=true
-	candidates=$(_der_stale_candidates "$pages" "$repo" "$cursor" "$ready_cursor") || return 1
+	candidates=$(_der_stale_candidates "$pages" "$repo" "$cursor" "$ready_cursor" "$prefilter" "$ready_only") || return 1
+	prefiltered=$(_der_stale_prefiltered_count "$pages" "$cursor" "$prefilter" "$ready_only") || return 1
 	pending=$(printf '%s\n' "$candidates" | jq -s length) || return 1
+	# pending keeps its meaning (candidates after the cursor, prefiltered included).
+	pending=$((pending + prefiltered))
 	ready=$(printf '%s\n' "$candidates" | jq -s '[.[] | select(.sweep_ready)] | length') || return 1
 	# Hint counts only actionable ready work: exclude unchanged memo-skipped issues.
 	_der_stale_write_ready_hint "$ready_hint" "$candidates" "$memo" "$ttl" "$ready"
@@ -885,28 +944,19 @@ reconcile_stale_blocked_issues() {
 			continue
 		fi
 		[[ "$is_ready" == true ]] || examined=$((examined + 1))
-		# A still-open native blocker is a verdict without API calls; advance
-		# the cursor so the share is spent on candidates that may be ready.
-		if [[ "${DER_STALE_BLOCKED_PREFILTER:-1}" == 1 ]] && printf '%s' "$candidate" | jq -e '.sweep_open' >/dev/null; then
-			prefiltered=$((prefiltered + 1))
-			_der_stale_cursor_write "$cursor_file" "$issue_number" || cursor_failed=true
-			continue
-		fi
 		_der_stale_skip_memo && continue
 		if [[ "$is_ready" == false && "$visited" -gt 0 ]] && _der_stale_epoch_reached "$share_deadline"; then
 			complete=false ordinary_complete=false
 			break
 		fi
-		issue_number=$(printf '%s' "$candidate" | jq -r '.number') || {
-			failed=$((failed + 1))
-			continue
-		}
-		body=$(gh api "repos/${repo}/issues/${issue_number}" 2>/dev/null) || {
-			failed=$((failed + 1))
-			complete=false ordinary_complete=false
+		[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || { failed=$((failed + 1)); continue; }
+		if ! body=$(gh api "repos/${repo}/issues/${issue_number}" 2>/dev/null) ||
+			! body=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // "")}'); then
+			_der_stale_read_failed && continue
 			break
-		}
-		candidate=$(printf '%s' "$body" | jq -ce --argjson candidate "$candidate" 'select(has("body") and ((.body == null) or (.body | type == ("" | type)))) | $candidate + {body:(.body // "")}') || return 1
+		fi
+		consecutive_failed=0
+		candidate="$body"
 		# GH#35130: make the graph truthful when every native blocker is a closed,
 		# superseded original with an open successor. Best effort; never gates unblock.
 		dsr_repoint_if_superseded "$repo" "$issue_number" || true
@@ -932,7 +982,7 @@ reconcile_stale_blocked_issues() {
 	if [[ "$ordinary_complete" == true ]]; then
 		_der_stale_cursor_write "$cursor_file" 0 || cursor_failed=true
 	fi
-	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s ready=%s ready_visited=%s skipped_unchanged=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" "$ready" "$ready_visited" "$skipped" >&2
+	printf '[dependency-reconciler] stale sweep repo=%s candidates=%s resumed_after=%s pending=%s visited=%s checked=%s prefiltered_open_blocker=%s failed=%s batch_limit=%s complete=%s cursor_write_failed=%s ready=%s ready_visited=%s skipped_unchanged=%s retry_queued=%s ready_only=%s\n' "$repo" "$total" "$cursor" "$pending" "$visited" "$reconciled" "$prefiltered" "$failed" "$max_candidates" "$complete" "$cursor_failed" "$ready" "$ready_visited" "$skipped" "$retry_queued" "$ready_only" >&2
 	# Without a durable cursor, later passes cannot resume; report a failure
 	# (not partial progress) so the operator sees it in the cycle summary.
 	[[ "$cursor_failed" == false ]] || return 1

@@ -1565,11 +1565,18 @@ _pulse_run_pre_dispatch_stages() {
 	# blocked issues before early dispatch. Bound it like cache priming while
 	# preserving the first-wave reserve and the reconciler's fail-closed checks.
 	# The sweep stops before this deadline and resumes from a per-repo cursor
-	# on the next cycle (GH#33957).
+	# on the next cycle (GH#33957). GH#38680: the stage grows by the ready-lane
+	# reserve only while a pulse repo holds ready dependants (local hint reads);
+	# the reserve is spent on ready-only passes, never on the rotation.
 	local _pulse_stale_blocked_timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
+	local _pulse_stale_blocked_ready_s=0
 	[[ "$_pulse_stale_blocked_timeout" =~ ^[1-9][0-9]*$ ]] || _pulse_stale_blocked_timeout=60
+	_pulse_stale_blocked_ready_s=$(_pulse_stale_blocked_ready_extension) || _pulse_stale_blocked_ready_s=0
+	[[ "$_pulse_stale_blocked_ready_s" =~ ^[0-9]{1,4}$ ]] || _pulse_stale_blocked_ready_s=0
 	AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S="$_pulse_pre_dispatch_reserve_s" \
-		_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" "$_pulse_stale_blocked_timeout" \
+		PULSE_STALE_BLOCKED_READY_RESERVE_S="$_pulse_stale_blocked_ready_s" \
+		_pulse_run_budget_priority_stage_with_timeout "stale_blocked_reconcile" \
+		"$((_pulse_stale_blocked_timeout + _pulse_stale_blocked_ready_s))" \
 		_pulse_reconcile_stale_blocked_if_due || true
 
 	# t3077: LLM-driven fix-the-fixer detector. Classifies new auto-dispatch

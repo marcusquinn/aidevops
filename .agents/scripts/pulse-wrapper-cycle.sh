@@ -634,18 +634,109 @@ _pulse_check_runaway_log() {
 # stage deadline exported by run_stage_with_timeout (already clamped to the
 # cycle budget); otherwise fall back to the configured stage timeout. A margin
 # lets the sweep finish and log before the watchdog kill.
+# GH#38680: PULSE_STALE_BLOCKED_READY_RESERVE_S (the ready-lane extension the
+# stage was granted, or after the lane its unused part) is held back, so the
+# extension never lengthens the claim fallback or the rotating sweep.
 _pulse_stale_blocked_sweep_deadline() {
 	local deadline="${PULSE_STAGE_DEADLINE_EPOCH:-}"
 	local timeout="${PULSE_STALE_BLOCKED_RECONCILE_TIMEOUT_SECONDS:-60}"
 	local margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
+	local reserve="${PULSE_STALE_BLOCKED_READY_RESERVE_S:-0}"
 	local now_epoch=""
 	[[ "$timeout" =~ ^[1-9][0-9]*$ ]] || timeout=60
 	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
+	[[ "$reserve" =~ ^[0-9]{1,4}$ ]] || reserve=0
 	if ! [[ "$deadline" =~ ^[1-9][0-9]*$ ]]; then
 		now_epoch=$(date +%s 2>/dev/null) || return 1
 		deadline=$((now_epoch + timeout))
+		reserve=0
 	fi
-	printf '%s\n' "$((deadline - margin))"
+	printf '%s\n' "$((deadline - margin - reserve))"
+	return 0
+}
+
+# Pulse-enabled remote repos the stale-blocked cadence covers, in repos.json order.
+_pulse_stale_blocked_pulse_repos() {
+	local repos_json="$1"
+	[[ -f "$repos_json" ]] || return 0
+	jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true
+	return 0
+}
+
+# GH#38680: pulse repos whose last stale pass left actionable ready work (every
+# native blocker closed, not memo-suppressed; _der_stale_write_ready_hint).
+# Local hint reads only. Args: repos_json. Prints one slug per line.
+_pulse_stale_blocked_ready_repos() {
+	local repos_json="$1" repo="" count="" hint=""
+	while IFS= read -r repo; do
+		[[ -n "$repo" ]] || continue
+		count="" hint="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}.ready"
+		[[ -f "$hint" ]] || continue
+		IFS= read -r count <"$hint" 2>/dev/null || true
+		[[ "$count" =~ ^[1-9][0-9]{0,5}$ ]] || continue
+		printf '%s\n' "$repo"
+	done < <(_pulse_stale_blocked_pulse_repos "$repos_json")
+	return 0
+}
+
+# GH#38680: seconds the stale_blocked_reconcile stage is extended for the ready
+# lane: PULSE_STALE_BLOCKED_READY_SECONDS (default 60, 0 disables the lane)
+# while a pulse repo has a ready hint, else 0. Local hint reads only.
+_pulse_stale_blocked_ready_extension() {
+	local ready_seconds="${PULSE_STALE_BLOCKED_READY_SECONDS:-60}"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	[[ "$ready_seconds" =~ ^[0-9]{1,4}$ ]] || ready_seconds=60
+	if [[ "$ready_seconds" -gt 0 && -n "$(_pulse_stale_blocked_ready_repos "$repos_json")" ]]; then
+		printf '%s\n' "$ready_seconds"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# GH#38680: the rotating sweep reached a large repo about once per rotation and
+# spent that share mostly on its listing, so its ready dependants (every native
+# blocker closed) waited hours (one large repo: ready=13 ready_visited=1). Before the
+# rotation, spend the granted reserve (PULSE_STALE_BLOCKED_READY_RESERVE_S) on
+# repos with a ready hint: ready-only passes (DER_STALE_BLOCKED_READY_ONLY), a
+# fair share each, unused time rolling forward. Every release still goes
+# through _der_try_unblock. Args: repos_json. Prints the unused reserve seconds.
+_pulse_stale_blocked_run_ready_lane() {
+	local repos_json="$1" reserve="${PULSE_STALE_BLOCKED_READY_RESERVE_S:-0}" lane_start="" lane_deadline=""
+	local repo="" now_epoch="" repo_deadline="" left=0 rc=0 done_count=0
+	local stage="${PULSE_STAGE_DEADLINE_EPOCH:-}" margin="${PULSE_STALE_BLOCKED_RECONCILE_MARGIN_SECONDS:-15}"
+	local ready_repos=()
+	[[ "$reserve" =~ ^[0-9]{1,4}$ ]] || reserve=0
+	[[ "$margin" =~ ^[0-9]+$ ]] || margin=15
+	lane_start=$(date +%s 2>/dev/null) || lane_start=0
+	[[ "$lane_start" =~ ^[0-9]+$ ]] || lane_start=0
+	if [[ "$reserve" -gt 0 && "$lane_start" -gt 0 ]]; then
+		lane_deadline=$((lane_start + reserve))
+		# Never past the stage deadline less the sweep margin.
+		if [[ "$stage" =~ ^[1-9][0-9]*$ ]] && [[ $((stage - margin)) -lt "$lane_deadline" ]]; then
+			lane_deadline=$((stage - margin))
+		fi
+		while IFS= read -r repo; do
+			[[ -n "$repo" ]] && ready_repos+=("$repo")
+		done < <(_pulse_stale_blocked_ready_repos "$repos_json")
+		left="${#ready_repos[@]}"
+	fi
+	for repo in "${ready_repos[@]+"${ready_repos[@]}"}"; do
+		now_epoch=$(date +%s 2>/dev/null) || break
+		[[ "$now_epoch" -lt "$lane_deadline" ]] || break
+		repo_deadline=$(_pulse_stale_blocked_repo_deadline "$now_epoch" "$lane_deadline" "$left" 1)
+		left=$((left - 1))
+		rc=0
+		DER_STALE_BLOCKED_READY_ONLY=1 DER_STALE_BLOCKED_DEADLINE_EPOCH="$repo_deadline" \
+			DER_STALE_BLOCKED_STOP_EPOCH="$repo_deadline" reconcile_stale_blocked_issues "$repo" >>"$LOGFILE" 2>&1 || rc=$?
+		done_count=$((done_count + 1))
+		[[ "$rc" -eq 0 ]] || echo "[pulse-wrapper] stale-blocked ready lane: ${repo} rc=${rc} (GH#38680)" >>"$LOGFILE"
+	done
+	[[ "${#ready_repos[@]}" -eq 0 ]] || echo "[pulse-wrapper] stale-blocked ready lane completed repos=${done_count}/${#ready_repos[@]} reserve=${reserve}s (GH#38680)" >>"$LOGFILE"
+	now_epoch=$(date +%s 2>/dev/null) || now_epoch="$lane_start"
+	reserve=$((reserve - (now_epoch - lane_start)))
+	[[ "$reserve" -ge 0 ]] || reserve=0
+	printf '%s\n' "$reserve"
 	return 0
 }
 
@@ -954,6 +1045,32 @@ _pulse_stale_claim_deadline() {
 	return 0
 }
 
+# Fallback rotation (claims predating the ledger): revisited even when the
+# stale-blocked cadence is fresh, as their issue is normally not blocked.
+# Args: repos_json. Returns 1 only when no deadline can be computed.
+_pulse_stale_blocked_claim_fallback() {
+	local repos_json="$1" repo_slug="" sweep_deadline="" now_epoch="" claim_deadline=""
+	local claim_repos=() claim_index=0 claim_start=0 claim_position=0
+	local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
+	declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1 || return 0
+	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 1
+	now_epoch=$(date +%s) || return 1
+	claim_deadline=$(_pulse_stale_claim_deadline "$now_epoch" "$sweep_deadline")
+	while IFS= read -r repo_slug; do
+		[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
+	done < <(_pulse_stale_blocked_pulse_repos "$repos_json")
+	[[ ! -f "$claim_cursor" ]] || IFS= read -r claim_start <"$claim_cursor" || claim_start=0
+	[[ "$claim_start" =~ ^[0-9]{1,9}$ ]] || claim_start=0
+	for ((claim_index = 0; claim_index < ${#claim_repos[@]}; claim_index++)); do
+		now_epoch=$(date +%s) || break
+		[[ "$now_epoch" -lt "$claim_deadline" ]] || break
+		claim_position=$(((claim_start + claim_index) % ${#claim_repos[@]}))
+		_pdcu_cursor_write "$claim_cursor" "$(((claim_position + 1) % ${#claim_repos[@]}))"
+		_pdcu_sweep_expired_claims "${claim_repos[claim_position]}" "$claim_deadline" || true
+	done
+	return 0
+}
+
 _pulse_reconcile_stale_blocked_if_due() {
 	[[ "${AIDEVOPS_SKIP_STALE_BLOCKED_RECONCILE:-0}" == "1" ]] && return 0
 	local sentinel="${HOME}/.aidevops/cache/pulse-stale-blocked-reconcile-last-run"
@@ -962,31 +1079,12 @@ _pulse_reconcile_stale_blocked_if_due() {
 	local repo_slug="" failures=0 partial=0 rc=0 index=0 repo_count=0 sweep_deadline="" repo_deadline="" start_offset=0 position=0
 	local partial_rc="${DER_SWEEP_PARTIAL:-3}" due_count=0 fresh=0 weight=0 weight_left=0
 	local next_repo_file="${HOME}/.aidevops/cache/pulse-stale-blocked-next-repo"
-	local repos=() due=() weights=()
+	local repos=() due=() weights=() ready_unused=0
 	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1800
 	[[ -f "$repos_json" ]] || return 0
-	# Fallback rotation (claims predating the ledger): revisited even when the
-	# stale-blocked cadence is fresh, as their issue is normally not blocked.
-	if declare -F _pdcu_sweep_expired_claims >/dev/null 2>&1; then
-		local claim_repos=() claim_index=0 claim_start=0 claim_position=0
-		local claim_cursor="${HOME}/.aidevops/cache/checkpoint-claim-next-repo"
-		sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
-		now_epoch=$(date +%s) || return 0
-		local claim_deadline=""
-		claim_deadline=$(_pulse_stale_claim_deadline "$now_epoch" "$sweep_deadline")
-		while IFS= read -r repo_slug; do
-			[[ -n "$repo_slug" ]] && claim_repos+=("$repo_slug")
-		done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
-		[[ ! -f "$claim_cursor" ]] || IFS= read -r claim_start <"$claim_cursor" || claim_start=0
-		[[ "$claim_start" =~ ^[0-9]{1,9}$ ]] || claim_start=0
-		for ((claim_index = 0; claim_index < ${#claim_repos[@]}; claim_index++)); do
-			now_epoch=$(date +%s) || break
-			[[ "$now_epoch" -lt "$claim_deadline" ]] || break
-			claim_position=$(((claim_start + claim_index) % ${#claim_repos[@]}))
-			_pdcu_cursor_write "$claim_cursor" "$(((claim_position + 1) % ${#claim_repos[@]}))"
-			_pdcu_sweep_expired_claims "${claim_repos[claim_position]}" "$claim_deadline" || true
-		done
-	fi
+	_pulse_stale_blocked_claim_fallback "$repos_json" || return 0
+	# GH#38680: ready dependants first, every cycle, independent of the cadence.
+	ready_unused=$(_pulse_stale_blocked_run_ready_lane "$repos_json") || ready_unused=0
 	if [[ -f "$sentinel" ]]; then
 		now_epoch=$(date +%s 2>/dev/null) || return 0
 		stamp_epoch=$(_file_mtime_epoch "$sentinel")
@@ -996,9 +1094,9 @@ _pulse_reconcile_stale_blocked_if_due() {
 	mkdir -p "${sentinel%/*}" 2>/dev/null || return 0
 	while IFS= read -r repo_slug; do
 		[[ -n "$repo_slug" ]] && repos+=("$repo_slug")
-	done < <(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null || true)
+	done < <(_pulse_stale_blocked_pulse_repos "$repos_json")
 	repo_count="${#repos[@]}"
-	sweep_deadline=$(_pulse_stale_blocked_sweep_deadline) || return 0
+	sweep_deadline=$(PULSE_STALE_BLOCKED_READY_RESERVE_S="$ready_unused" _pulse_stale_blocked_sweep_deadline) || return 0
 	# Each due repo gets a backlog-weighted share of the remaining budget; unused time
 	# rolls forward, and each repo's cursor resumes partial passes. Once the
 	# sweep deadline passes, remaining due repos are deferred as partial rather
