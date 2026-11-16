@@ -646,6 +646,62 @@ _pmrs_remediate_zero_job_runs() {
 }
 
 #######################################
+# True when the head has no GitHub Actions check suite at all, i.e. GitHub
+# dropped the pull_request event for Actions. Fails closed (returns 1) when
+# the suite listing cannot be read.
+# Args: $1=repo slug, $2=head SHA
+# Returns: 0=no github-actions suite, 1=suite exists or unknown
+#######################################
+_pmrs_head_lacks_actions_suite() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local suites=""
+
+	suites=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-suites-rest" \
+		_pmrs_gh_call read gh api -X GET "repos/${repo_slug}/commits/${head_sha}/check-suites" \
+		-f per_page=100 2>/dev/null) || return 1
+	printf '%s' "$suites" | jq -e '(.check_suites | type == "array")
+		and ([.check_suites[] | select(.app.slug == "github-actions")] | length == 0)' >/dev/null 2>&1
+}
+
+#######################################
+# One close/reopen of a trusted same-repo PR to re-fire pull_request when the
+# head has no Actions check suite (GH#38624). Never for fork or untrusted
+# authors. The caller records the per-head attempt before this runs.
+# Args: $1=repo slug, $2=PR number, $3=head SHA
+# Returns: 0=reopened, 1=not permitted or failed
+#######################################
+_pmrs_reopen_pr_for_missing_actions() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local head_sha="$3"
+	local meta="" trusted=""
+
+	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
+		! repo_allows_pulse_write_actions "$repo_slug"; then
+		return 1
+	fi
+	meta=$(AIDEVOPS_GH_ROUTE_DECISION="pulse-missing-checks-pr-meta-rest" \
+		_pmrs_gh_call read gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null) || return 1
+	#aidevops:trust-boundary — same-repo head and collaborator-level author only.
+	trusted=$(printf '%s' "$meta" | jq -r --arg head "$head_sha" '
+		if (.state == "open" and .head.sha == $head
+			and .head.repo.full_name == .base.repo.full_name
+			and (.head.repo.fork | not)
+			and (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR"))
+		then "yes" else "no" end' 2>/dev/null) || return 1
+	[[ "$trusted" == "yes" ]] || return 1
+	_pmrs_gh_call write gh pr close "$pr_number" --repo "$repo_slug" >/dev/null 2>&1 || return 1
+	if _pmrs_gh_call write gh pr reopen "$pr_number" --repo "$repo_slug" >/dev/null 2>&1; then
+		return 0
+	fi
+	# Never leave the PR closed: one retry, then report failure loudly.
+	_pmrs_gh_call write gh pr reopen "$pr_number" --repo "$repo_slug" >/dev/null 2>&1 && return 0
+	echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug} was closed for CI retrigger but reopen failed; reopen manually (GH#38624)" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Remediate required contexts that will never report on the current head
 # (GH#32951). GitHub can drop a workflow run for a PR event; the required
 # context then stays "expected" forever, native auto-merge can never finish,
@@ -692,9 +748,22 @@ _pmp_remediate_missing_required_checks() {
 	age=$(_pmrs_head_commit_age_seconds "$repo_slug" "$head_sha") || return 1
 	[[ "$age" =~ ^[0-9]+$ && "$age" -ge "$threshold" ]] || return 1
 
+	# GH#38624: no Actions check suite means the pull_request event was dropped;
+	# no run exists to re-run and update-branch may be a no-op. One close/reopen
+	# per head re-fires the event.
+	if ! awk -v sha="$head_sha" '$1 == sha && $3 == "reopen" { f = 1 } END { exit !f }' "$state_file" 2>/dev/null \
+		&& _pmrs_head_lacks_actions_suite "$repo_slug" "$head_sha"; then
+		printf '%s %s reopen\n' "$head_sha" "$now_epoch" >>"$state_file"
+		if _pmrs_reopen_pr_for_missing_actions "$repo_slug" "$pr_number" "$head_sha"; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: head ${head_sha:0:12} has no GitHub Actions check suite (${age}s old, ${missing} required context(s) never reported); closed and reopened once to re-fire pull_request (GH#38624)" >>"$LOGFILE"
+			return 0
+		fi
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: head ${head_sha:0:12} has no GitHub Actions check suite but close/reopen was not permitted or failed; falling back to update-branch (GH#38624)" >>"$LOGFILE"
+	fi
+
 	if [[ "$attempts" -ge "$max_attempts" ]]; then
 		printf '%s %s exhausted\n' "$head_sha" "$now_epoch" >>"$state_file"
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
+		echo "[pulse-merge] ATTENTION: PR #${pr_number} in ${repo_slug}: ${missing} required context(s) never reported on head ${head_sha:0:12} after ${attempts} update-branch attempt(s); native auto-merge not re-armed — check required workflow triggers/path filters or re-run CI (GH#32951)" >>"$LOGFILE"
 		return 0
 	fi
 
