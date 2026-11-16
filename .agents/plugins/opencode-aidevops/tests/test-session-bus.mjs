@@ -1011,6 +1011,38 @@ test("keepalive relay pass wakes one idle session once and skips busy, expired, 
   assert.match(out.join(""), /threshold 10m next .* skip: wake-pending/);
 });
 
+test("queued keepalive asks cannot wake after opt-out or expiry, while peer asks still deliver", async () => {
+  for (const mode of ["off", "expired"]) {
+    const id = mode === "off" ? "ses_kpOff01" : "ses_kpExp01";
+    const client = fakeClient({ [id]: { id, title: "", directory: root } });
+    const bus = busFor(client);
+    await bus.handleEvent({ event: { type: "session.created", properties: { info: { id, directory: root } } } });
+    const record = bus.record(bus.state(id));
+    const now = bus.now();
+    setKeepalive(root, record, true, { now });
+    store.sendMessage(root, {
+      from: { session_id: "", handle: "pulse", origin: "cli:pulse" },
+      to: id, type: "ask", text: KEEPALIVE_TEXT,
+    });
+    const state = bus.state(id);
+    state.status = "idle";
+    state.wakeTimes = Array(store.LIMITS.wakesPerHour).fill(now);
+    assert.equal(await bus.deliverToIdle(id, state), false, "wake initially waits for budget");
+    if (mode === "off") setKeepalive(root, record, false);
+    else bus.now = () => now + 24 * 60 * 60 * 1000;
+    state.wakeTimes = [];
+    assert.equal(await bus.deliverToIdle(id, state), false, `${mode} keepalive cannot wake`);
+    assert.equal(client.calls.prompts.length, 0);
+    assert.equal(store.pendingMessages(root, id).length, 1, "inactive wake remains unclaimed");
+    store.sendMessage(root, { from: peer("ses_peer01"), to: id, type: "ask", text: "peer status?" });
+    assert.equal(await bus.deliverToIdle(id, state), true, "normal asks still wake");
+    const text = client.calls.prompts[0].body.parts[0].text;
+    assert.match(text, /peer status\?/);
+    assert.ok(!text.includes(KEEPALIVE_TEXT), "inactive wake is excluded from mixed batches");
+    assert.equal(state.keepaliveWake, undefined, "peer wake does not count as keepalive progress");
+  }
+});
+
 test("keepalive backoff doubles the threshold after a no-tool turn, resets on progress and stops after 3 with one notice", async () => {
   const id = "ses_kpBack1";
   const client = fakeClient({ [id]: { id, title: "", directory: root } });

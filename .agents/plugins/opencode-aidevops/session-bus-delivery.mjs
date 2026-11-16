@@ -11,7 +11,7 @@
 
 import * as store from "./session-bus-store.mjs";
 import { chatWakeEnabled } from "./session-bus-chat-trust.mjs";
-import { isKeepaliveMessage, settleKeepalive } from "./session-bus-keepalive.mjs";
+import { isKeepaliveMessage, keepaliveActive, readKeepalive, settleKeepalive } from "./session-bus-keepalive.mjs";
 import { canPrompt, liveStatuses, promptSession, showToast, warn } from "./session-bus-client.mjs";
 import { setStatus, statusFromType } from "./session-bus-events.mjs";
 
@@ -103,7 +103,9 @@ function rollbackWake(bus, sessionID, state, claimed) {
 export async function deliverToIdle(bus, sessionID, state, allPending = store.pendingMessages(bus.root, sessionID)) {
   const now = bus.now();
   // A reply reserved by a waiting ask call (t18897) neither wakes nor is delivered here.
-  const pending = bus.unreserved(allPending);
+  // Recheck opt-in at delivery: a queued wake can outlive opt-out or expiry.
+  const activeKeepalive = keepaliveActive(readKeepalive(bus.root, sessionID), now);
+  const pending = bus.unreserved(allPending).filter((entry) => activeKeepalive || !isKeepaliveMessage(entry.message));
   const chatWake = chatWakeEnabled(bus.root, sessionID);
   if (!canWake(bus, state, pending, now, chatWake)) return false;
   const claimed = bus.claimPending(sessionID, store.LIMITS.deliverPerBatch, wakeBatch(pending, chatWake));
