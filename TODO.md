@@ -2115,9 +2115,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19029 perf(gh-permission): make collaborator permission lookups conditional so an unchanged verdict costs no REST quota #interactive #feat tier:standard assignee:marcusquinn ref:GH#38466 pr:#38468 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
-- [ ] t19030 fix(auto-update): make t2119 plist drift detection converge instead of running full setup every 6 hours #interactive #bug tier:standard assignee:marcusquinn ref:GH#38471 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19030-brief.md]
+- [x] t19030 fix(auto-update): make t2119 plist drift detection converge instead of running full setup every 6 hours #interactive #bug tier:standard assignee:marcusquinn ref:GH#38471 pr:#38473 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19030-brief.md] completed:2026-11-16
 
-- [ ] t19035 perf(pulse): census defers doomed clamped scans and reuses last-good candidates on repo timeout #interactive #bug tier:standard assignee:marcusquinn ref:GH#38483 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19035-brief.md]
+- [x] t19035 perf(pulse): census defers doomed clamped scans and reuses last-good candidates on repo timeout #interactive #bug tier:standard assignee:marcusquinn ref:GH#38483 pr:#38485 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19035-brief.md] completed:2026-11-16
 
 - [x] t19018 feat(backups): detect a Backblaze safety freeze or stale last upload and surface it as a user action #auto-dispatch #feat tier:standard ref:GH#38430 pr:#38435 logged:2026-11-15 -> [todo/tasks/t19018-brief.md] completed:2026-11-15
 
@@ -2133,35 +2133,35 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19027 fix(test): test-pulse-defense-restart.sh fails 10 revival assertions on current main #interactive #bug tier:standard assignee:marcusquinn ref:GH#38457 pr:#38461 logged:2026-11-15 started:2026-11-15 completed:2026-11-15
 
-- [ ] t19040 fix(tests): decision-policy tests fail on macOS from BSD wc -l padding #interactive #bug tier:simple assignee:marcusquinn ref:GH#38513 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19040-brief.md]
-- [ ] t19045 fix(ci-wait): default wait-checks to the 200s worker chunk in headless sessions #interactive #bug tier:standard assignee:marcusquinn ref:GH#38541 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19045-brief.md]
+- [x] t19040 fix(tests): decision-policy tests fail on macOS from BSD wc -l padding #interactive #bug tier:simple assignee:marcusquinn ref:GH#38513 pr:#38514 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19040-brief.md] completed:2026-11-16
+- [x] t19045 fix(ci-wait): default wait-checks to the 200s worker chunk in headless sessions #interactive #bug tier:standard assignee:marcusquinn ref:GH#38541 pr:#38542 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19045-brief.md] completed:2026-11-16
 
-- [ ] t19036 fix(pulse): trigger revisit never completes — 12s slice and one search per repository #bug ref:GH#38489
+- [x] t19036 fix(pulse): trigger revisit never completes — 12s slice and one search per repository #bug ref:GH#38489 pr:#38490 completed:2026-11-16
 
-- [ ] t19037 Resume maintenance-stopped Tabby sessions in their profile tabs #bug ref:GH#38495
+- [x] t19037 Resume maintenance-stopped Tabby sessions in their profile tabs #bug ref:GH#38495 pr:#38497 completed:2026-11-16
 
-- [ ] t19039 fix(checkpoints): continuation workers route concrete code/infra blockers to a prerequisite issue instead of parking for a human #interactive #feat tier:standard assignee:marcusquinn ref:GH#38507 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19039-brief.md]
+- [x] t19039 fix(checkpoints): continuation workers route concrete code/infra blockers to a prerequisite issue instead of parking for a human #interactive #feat tier:standard assignee:marcusquinn ref:GH#38507 pr:#38512 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19039-brief.md] completed:2026-11-16
 
-- [ ] t19041 fix(pulse): bound prefetch fan-out so concurrent dormancy reads stop timing out and waking repos #interactive #bug tier:standard assignee:marcusquinn ref:GH#38515 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19041-brief.md]
-- [ ] t19044 fix(ci-wait): keep a cancel-only failure pending while other checks are still pending #interactive #bug tier:standard assignee:marcusquinn ref:GH#38537 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19044-brief.md]
+- [x] t19041 fix(pulse): bound prefetch fan-out so concurrent dormancy reads stop timing out and waking repos #interactive #bug tier:standard assignee:marcusquinn ref:GH#38515 pr:#38517 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19041-brief.md] completed:2026-11-16
+- [x] t19044 fix(ci-wait): keep a cancel-only failure pending while other checks are still pending #interactive #bug tier:standard assignee:marcusquinn ref:GH#38537 pr:#38539 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19044-brief.md] completed:2026-11-16
 
-- [ ] t19042 feat(repos): aidevops repos checkpoint-policy command so operators can enable AI decision/pending-work resolution without hand-editing repos.json #auto-dispatch #feat tier:standard ref:GH#38520 logged:2026-11-15 -> [todo/tasks/t19042-brief.md]
+- [x] t19042 feat(repos): aidevops repos checkpoint-policy command so operators can enable AI decision/pending-work resolution without hand-editing repos.json #auto-dispatch #feat tier:standard ref:GH#38520 pr:#38540 logged:2026-11-15 -> [todo/tasks/t19042-brief.md] completed:2026-11-16
 
-- [ ] t19043 fix(full-loop): merge reads use the intended 60s timeout instead of the shadowing 15s generic default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38535 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19043-brief.md]
+- [x] t19043 fix(full-loop): merge reads use the intended 60s timeout instead of the shadowing 15s generic default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38535 pr:#38536 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19043-brief.md] completed:2026-11-16
 
-- [ ] t19048 Remote 3D rendering playbook: Blender cloud GPU and render-farm comparison #interactive #feat tier:standard assignee:marcusquinn ref:GH#38554 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19048-brief.md]
+- [x] t19048 Remote 3D rendering playbook: Blender cloud GPU and render-farm comparison #interactive #feat tier:standard assignee:marcusquinn ref:GH#38554 pr:#38560 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19048-brief.md] completed:2026-11-16
 
-- [ ] t19049 blender-render-helper.sh: plan, package, submit, fetch and teardown Blender renders on rented GPUs #auto-dispatch #feat tier:standard ref:GH#38556 logged:2026-11-15 -> [todo/tasks/t19049-brief.md]
+- [x] t19049 blender-render-helper.sh: plan, package, submit, fetch and teardown Blender renders on rented GPUs #auto-dispatch #feat tier:standard ref:GH#38556 pr:#38559 logged:2026-11-15 -> [todo/tasks/t19049-brief.md] completed:2026-11-16
 
-- [ ] t19050 x-search-research-helper.sh: Grok X and web search for first-hand user-experience research #auto-dispatch #feat tier:simple ref:GH#38557 logged:2026-11-15 -> [todo/tasks/t19050-brief.md]
+- [x] t19050 x-search-research-helper.sh: Grok X and web search for first-hand user-experience research #auto-dispatch #feat tier:simple ref:GH#38557 pr:#38564 logged:2026-11-15 -> [todo/tasks/t19050-brief.md] completed:2026-11-16
 
-- [ ] t19051 Runpod CLI-first + on-demand MCP, and SaladCloud CLI support for remote GPU rendering #interactive #feat tier:standard assignee:marcusquinn ref:GH#38563 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19051-brief.md]
+- [x] t19051 Runpod CLI-first + on-demand MCP, and SaladCloud CLI support for remote GPU rendering #interactive #feat tier:standard assignee:marcusquinn ref:GH#38563 pr:#38568 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19051-brief.md] completed:2026-11-16
 
-- [ ] t19052 fix(worker): avoid permission holds from absolute system paths in bash commands #auto-dispatch #bug tier:standard ref:GH#38567 logged:2026-11-16 -> [todo/tasks/t19052-brief.md]
+- [x] t19052 fix(worker): avoid permission holds from absolute system paths in bash commands #auto-dispatch #bug tier:standard ref:GH#38567 pr:#38570 logged:2026-11-16 -> [todo/tasks/t19052-brief.md] completed:2026-11-16
 
-- [ ] t19053 blender-render-helper.sh: migrate Runpod adapter to current runpodctl noun-verb JSON commands #auto-dispatch #feat tier:standard ref:GH#38569 logged:2026-11-16 -> [todo/tasks/t19053-brief.md]
+- [x] t19053 blender-render-helper.sh: migrate Runpod adapter to current runpodctl noun-verb JSON commands #auto-dispatch #feat tier:standard ref:GH#38569 pr:#38573 logged:2026-11-16 -> [todo/tasks/t19053-brief.md] completed:2026-11-16
 
-- [ ] t19054 fix(plugin): let repo-rooted sessions run bounded operations in registered-repo worktrees #interactive #bug tier:simple assignee:marcusquinn ref:GH#38577 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19054-brief.md]
+- [x] t19054 fix(plugin): let repo-rooted sessions run bounded operations in registered-repo worktrees #interactive #bug tier:simple assignee:marcusquinn ref:GH#38577 pr:#38579 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19054-brief.md] completed:2026-11-16
 
 ## In Progress
 
