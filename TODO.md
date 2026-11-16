@@ -2157,6 +2157,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19051 Runpod CLI-first + on-demand MCP, and SaladCloud CLI support for remote GPU rendering #interactive #feat tier:standard assignee:marcusquinn ref:GH#38563 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19051-brief.md]
 
+- [ ] t19052 fix(worker): avoid permission holds from absolute system paths in bash commands #auto-dispatch #bug tier:standard ref:GH#38567 logged:2026-11-16 -> [todo/tasks/t19052-brief.md]
+
 - [ ] t19053 blender-render-helper.sh: migrate Runpod adapter to current runpodctl noun-verb JSON commands #auto-dispatch #feat tier:standard ref:GH#38569 logged:2026-11-16 -> [todo/tasks/t19053-brief.md]
 
 ## In Progress

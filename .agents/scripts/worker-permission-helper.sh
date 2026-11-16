@@ -148,6 +148,10 @@ permission_blocker_capability_json() {
 # never be usefully approved; owned recovery grants nothing and redispatches.
 # Caches are excluded for bash/read: they hold real dependency content and keep
 # the node_modules provisioning route and maintainer hold.
+# GH#38567: bash/read on OS-owned binary directories (/bin, /sbin, /usr/bin,
+# /usr/sbin) are owned recovery too. They come from an inline restricted PATH
+# in a bash command (GH#38523); those binaries already run via PATH, so the
+# worker is told to set PATH inside a worktree script. Nothing is granted.
 permission_capture_is_temp_write_recovery() {
 	local capture_file="$1"
 	jq -e --arg perm "$PERMISSION_EXTERNAL_DIRECTORY" '
@@ -155,8 +159,11 @@ permission_capture_is_temp_write_recovery() {
 			test("(^|/)([.]ssh|[.]gnupg|[.]aws|[.]git|[.]env[^/]*|credentials[^/]*|secrets?)(/|$)|[.][.]");
 		def scratch:
 			test("(^|/)(tmp|temp|[.]cache)(/|$)") and (unsafe | not);
+		def system_bin:
+			test("^/(usr/)?s?bin(/[*]{1,2})?$");
 		def ephemeral:
-			test("(^|/)(tmp|temp)(/|$)") and (test("/node_modules(/|$)") | not) and (unsafe | not);
+			(test("(^|/)(tmp|temp)(/|$)") and (test("/node_modules(/|$)") | not) and (unsafe | not))
+			or system_bin;
 		(.requests | length > 0)
 		and all(.requests[];
 			.permission == $perm
@@ -573,7 +580,7 @@ cmd_request() {
 			"$PERMISSION_EXTERNAL_DIRECTORY" "$(jq -r '.tool' <<<"$capability_json")" \
 			"$(jq -r '.risk_level' <<<"$capability_json")" "false"
 		# shellcheck disable=SC2016 # Markdown backticks are intentional literals.
-		printf '%s\n' 'Recovery: use `AIDEVOPS_TEMP_DIR` (default `$HOME/.aidevops/.agent-workspace/tmp`) for temp artifacts. The requested path is not granted; no needs-maintainer-permissions hold applied.'
+		printf '%s\n' 'Recovery: use `AIDEVOPS_TEMP_DIR` (default `$HOME/.aidevops/.agent-workspace/tmp`) for temp artifacts, and set PATH or stub directories inside a worktree script instead of naming absolute paths in bash commands. The requested path is not granted; no needs-maintainer-permissions hold applied.'
 		return "$PERMISSION_OWNED_RECOVERY_RC"
 	fi
 	permission="$(jq -r '.permission' <<<"$capability_json")"

@@ -60,6 +60,11 @@ Setup shortcuts -- the dispatcher has already done these for you:
   only a worktree-local environment, following the repository's documented
   setup when needed. Never seek a broad external_directory grant for the
   canonical checkout; genuinely external access still needs exact approval.
+- Every absolute path written in a bash command outside the worktree (for
+  example /usr/bin, /tmp or a literal $HOME path) needs maintainer approval
+  and pauses your issue. For test stubs or a restricted PATH, create fixtures
+  under $AIDEVOPS_TEMP_DIR and set PATH inside a worktree script built from
+  variables; run it with a worktree-relative command (bash .agents/...).
 - Do NOT call aidevops-update-check.sh -- it exits immediately for headless workers.
 - Do NOT call session-rename or session-rename_sync_branch -- your session title
   is already set by the dispatcher with the issue marker and issue title first

@@ -266,6 +266,23 @@ if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
 	printf 'task request misclassified as temp recovery\n' >&2
 	exit 1
 fi
+# GH#38567: inline restricted PATH (GH#38523 shape) is owned recovery for
+# bash/read; writes into OS binary dirs and non-OS bin dirs are not.
+# shellcheck disable=SC2088 # Literal tilde patterns mirror captured requests.
+jq '.requests[0].tool = "bash" | .requests[0].patterns = ["/usr/bin/*", "~/.aidevops/.agent-workspace/tmp/gh38523-test/bin/*"]' \
+	"$temp_capture" >"${temp_capture}.n"
+if ! permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+	printf 'inline PATH request (tmp bin + /usr/bin) was not classified as owned recovery\n' >&2
+	exit 1
+fi
+for non_recovery in 'write:/usr/bin/*' 'bash:/usr/local/bin/*' 'bash:/usr/bin/../../etc/*' 'bash:/opt/homebrew/bin/*'; do
+	jq --arg t "${non_recovery%%:*}" --arg p "${non_recovery#*:}" '.requests[0].tool = $t | .requests[0].patterns = [$p]' \
+		"$temp_capture" >"${temp_capture}.n"
+	if permission_capture_is_temp_write_recovery "${temp_capture}.n"; then
+		printf 'non-recovery request misclassified as owned recovery: %s\n' "$non_recovery" >&2
+		exit 1
+	fi
+done
 permission_record_blocker "permission_capability_true_fixture" "blocked" "permission_required" "true" \
 	123 "owner/repo" "issue-123" "perm-true" "Boolean transport fixture" \
 	"external_directory" "read" "medium" "true"
