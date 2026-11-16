@@ -184,6 +184,40 @@ describe("bounded interactive operations", () => {
     }
   });
 
+  test("repo-rooted session accepts owned worktrees of registered repos only (GH#38577)", async () => {
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-repo-rooted-")));
+    const sessionRepo = join(fixture, "session-repo");
+    const other = join(fixture, "other-repo");
+    const otherLinked = join(fixture, "other-linked");
+    const reposFile = join(fixture, "repos.json");
+    const previousRepos = process.env.AIDEVOPS_REPOS_JSON;
+    let verified = 0;
+    const options = { subject: "Operation", verifyWorktreeOwnership: async () => { verified++; } };
+    try {
+      for (const repo of [sessionRepo, other]) {
+        execFileSync("git", ["init", "-q", repo]);
+        execFileSync("git", ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"]);
+      }
+      execFileSync("git", ["-C", other, "worktree", "add", "-q", "--detach", otherLinked]);
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: sessionRepo }] }));
+      process.env.AIDEVOPS_REPOS_JSON = reposFile;
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, options), /unrelated Git repository/);
+      assert.equal(verified, 0, "unregistered repos must not reach ownership verification");
+      writeFileSync(reposFile, JSON.stringify({ initialized_repos: [{ path: sessionRepo }, { path: other }] }));
+      assert.deepEqual(await resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, options), { root: otherLinked, linked: true });
+      assert.equal(verified, 1, "registered repos must still verify session ownership");
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(other, sessionRepo, owner, options), /linked Git worktree/);
+      await assert.rejects(resolveSessionOwnedWorktreeRoot(otherLinked, sessionRepo, owner, {
+        ...options, verifyWorktreeOwnership: async () => { throw new Error("Operation workdir is not owned by the current OpenCode session."); },
+      }), /not owned by the current OpenCode session/);
+    } finally {
+      if (previousRepos === undefined) delete process.env.AIDEVOPS_REPOS_JSON;
+      else process.env.AIDEVOPS_REPOS_JSON = previousRepos;
+      execFileSync("git", ["-C", other, "worktree", "remove", "--force", otherLinked]);
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   test("explicit audited adoption enables a previous session worktree without taking a live owner", async () => {
     const fixture = realpathSync(mkdtempSync(join(tmpdir(), "aidevops-adopt-")));
     const repo = join(fixture, "repo");
