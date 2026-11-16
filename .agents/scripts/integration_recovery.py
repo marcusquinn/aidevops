@@ -173,10 +173,15 @@ def observe(db, request_id, state):
         "dependency_change": digest(state["dependencies"]),
         "human_decision": digest([brief["body"], state["comments"]]),
     }
+    labels = {label["name"] for label in brief["labels"] if isinstance(label, dict) and "name" in label}
+    status_surface = {"persistent", "quality-review"} <= labels
+    if status_surface:
+        observed["retirement_reason"] = "status_surface"
+    resolved = brief["state"] == "closed" or status_surface
     with db:
         db.execute("UPDATE requests SET observed=?,status=? WHERE id=?",
-                   (json.dumps(observed), "resolved" if brief["state"] == "closed" else "active", request_id))
-    if brief["state"] == "closed":
+                   (json.dumps(observed), "resolved" if resolved else "active", request_id))
+    if resolved:
         return None
     decision = record["decision"]
     if decision and decision["observed"][decision["wake"]] == observed[decision["wake"]]:
