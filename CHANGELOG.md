@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.209] - 2026-11-16
+
+### Fixed
+
+- detect Renovate dashboards for app/\<slug> and self-hosted app authors
+- accept app/ bot logins in dispatch-dedup bump-PR exclusion
+- read npm copy version; add npm global bin to service PATH (#38549)
+
 ## [3.39.208] - 2026-11-15
 
 ### Added
