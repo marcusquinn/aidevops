@@ -457,9 +457,10 @@ fast_forward_local() {
 	local_ref="refs/heads/${default_branch}"
 	[[ -x "$audit" ]] || { ffl_block "tamper-evident audit helper is unavailable"; return 1; }
 
-	mkdir "$lock" 2>/dev/null || { ffl_block "canonical recovery lock is already held"; return 1; }
+	crl_acquire "$lock" "$LOCAL_FAST_FORWARD_CMD" || { ffl_block "canonical recovery lock is already held"; return 1; }
 	# shellcheck disable=SC2064
-	trap "rmdir '${lock}' 2>/dev/null || true" EXIT
+	trap "crl_release '${lock}'" EXIT
+	trap 'exit 143' TERM
 
 	# GH#35659: three-way re-apply cannot keep edits to an untracked config.
 	project_config_untrack_preserve "$repo" "$old_sha" "$new_sha" "$task_id" false || return 1

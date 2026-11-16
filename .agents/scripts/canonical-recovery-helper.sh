@@ -35,6 +35,9 @@ source "${SCRIPT_DIR}/canonical-recovery-rebase.sh"
 # shellcheck source=./canonical-recovery-ffl.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/canonical-recovery-ffl.sh"
+# shellcheck source=./canonical-recovery-lock.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/canonical-recovery-lock.sh"
 
 
 usage() {
@@ -288,11 +291,12 @@ if [[ "$cmd" == "$FOLLOW_TRANSFER_CMD" ]]; then
 		exit 1
 	}
 	transfer_lock="${common_dir}/aidevops-canonical-recovery.lock"
-	mkdir "$transfer_lock" 2>/dev/null || {
+	crl_acquire "$transfer_lock" "$cmd" || {
 		printf 'BLOCKED: canonical recovery lock is already held\n' >&2
 		exit 1
 	}
-	trap 'rmdir "$transfer_lock" 2>/dev/null || true' EXIT
+	trap 'crl_release "$transfer_lock"' EXIT
+	trap 'exit 143' TERM
 	# The native Git entrypoint is restricted to this audited recovery operation.
 	# No fetch, ref update, checkout, transfer API write, or layout move occurs here.
 	python3 - "$repo_path" "$registered_slug" "$bootstrap_slug" \
@@ -501,11 +505,12 @@ while IFS= read -r line; do
 done < <("$REAL_GIT" -C "$repo_path" worktree list --porcelain)
 
 lock_dir="${common_dir}/aidevops-canonical-recovery.lock"
-mkdir "$lock_dir" 2>/dev/null || {
+crl_acquire "$lock_dir" "$cmd" || {
 	printf 'BLOCKED: canonical recovery lock is already held\n' >&2
 	exit 1
 }
-trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+trap 'crl_release "$lock_dir"' EXIT
+trap 'exit 143' TERM
 
 local_ref="refs/heads/${target_branch}"
 remote_ref="refs/remotes/${canonical_remote}/${target_branch}"
