@@ -271,8 +271,25 @@ def report(ledger):
     uv_items = []
     uv_bin_dirs = set()
     npm_lib = None
-    managed_paths, managed_packages = set(), set()
+    managed_paths, managed_packages, recorded_packages = set(), set(), set()
     if not isolated:
+        # Discover manager bin dirs first so managed tools outside PATH resolve.
+        prefix = command(["npm", "prefix", "-g"]).strip()
+        if prefix and Path(prefix).is_absolute():
+            npm_lib = Path(prefix) / "lib/node_modules"
+            directories.extend([(Path(prefix) / "bin", NPM_BIN), (npm_lib, NPM_LIB)])
+            # A recorded npm executable resolves inside its package directory.
+            lib_real = resolved(npm_lib) + os.sep
+            for path in known:
+                real = resolved(path)
+                if real.startswith(lib_real):
+                    parts = Path(real[len(lib_real):]).parts
+                    recorded_packages.add("/".join(parts[:2] if parts[0].startswith("@") else parts[:1]))
+        uv_items = command(["uv", "tool", "list"]).splitlines()
+        uv_bin = command(["uv", "tool", "dir", "--bin"]).strip()
+        if uv_bin and Path(uv_bin).is_absolute():
+            directories.append((Path(uv_bin), BIN))
+            uv_bin_dirs.add(resolved(uv_bin))
         print("\nManaged by aidevops update:")
         listed = False
         launcher = shutil.which("aidevops")
@@ -286,23 +303,18 @@ def report(ledger):
             if not location:
                 # User bin dirs may be absent from a restricted PATH.
                 location = next((str(d / cli) for d, kind in directories
-                                 if kind == BIN and os.access(str(d / cli), os.X_OK)), None)
+                                 if kind in BIN_KINDS and os.access(str(d / cli), os.X_OK)), None)
             if not location:
+                continue
+            # The updater rejects the Cloud Foundry `cf` ("cf version 8.x");
+            # it stays an untracked install, not Cloudflare's managed CLI.
+            if cli == "cf" and command([location, "--version"]).startswith("cf version "):
                 continue
             managed_paths.update({location, resolved(location)})
             print("- " + display(name) + " (" + display(category) + "): " + display(location))
             listed = True
         if not listed:
             print("None found on PATH.")
-        prefix = command(["npm", "prefix", "-g"]).strip()
-        if prefix and Path(prefix).is_absolute():
-            npm_lib = Path(prefix) / "lib/node_modules"
-            directories.extend([(Path(prefix) / "bin", NPM_BIN), (npm_lib, NPM_LIB)])
-        uv_items = command(["uv", "tool", "list"]).splitlines()
-        uv_bin = command(["uv", "tool", "dir", "--bin"]).strip()
-        if uv_bin and Path(uv_bin).is_absolute():
-            directories.append((Path(uv_bin), BIN))
-            uv_bin_dirs.add(resolved(uv_bin))
     tools = uv_tools(uv_items)
     recorded_names = {r[NAME] for r in records}
     uv_executables = {exe for _, exes in tools for exe in exes}
@@ -329,7 +341,7 @@ def report(ledger):
                 continue
             if kind == NPM_LIB:
                 package = str(path.relative_to(directory))
-                if package in managed_packages:
+                if package in managed_packages or package in recorded_packages:
                     continue
             seen.add(str(path))
             seen_real.add(real)
