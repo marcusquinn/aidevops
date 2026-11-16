@@ -36,11 +36,15 @@ def initialize_or_open(state_dir: Path) -> LifecycleRegistry:
                 return store
             except (OSError, ValueError, sqlite3.Error):
                 if time.monotonic() >= deadline:
-                    if state_dir.is_dir() and not (state_dir / "registry.sqlite3").exists():
-                        raise StateDirectoryUninitialised(
-                            "private-path-check-requires-absent-state-dir") from None
+                    _require_registry_present(state_dir)
                     raise
                 time.sleep(0.05)
+
+
+def _require_registry_present(state_dir: Path) -> None:
+    """Name an existing directory that never received a registry."""
+    if state_dir.is_dir() and not (state_dir / "registry.sqlite3").exists():
+        raise StateDirectoryUninitialised("private-path-check-requires-absent-state-dir")
 
 
 def enrolled_generation(
