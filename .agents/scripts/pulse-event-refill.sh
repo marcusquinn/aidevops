@@ -139,6 +139,79 @@ _pulse_event_refill_wrapper_is_active() {
 	return $?
 }
 
+#######################################
+# Return 0 while setup or rollback holds the runtime transition lock
+# (GH#38627). Activation and Pulse reconciliation (pulse-lifecycle-helper.sh
+# reconcile-managed) hold it across stop, restart wait and managed start: the
+# exact GH#32546 window in which a refill must not take the instance lock.
+# A pid not yet written counts as held only while the directory is fresh, so
+# an abandoned empty lock cannot suppress refills indefinitely.
+#######################################
+_pulse_event_refill_runtime_transition_active() {
+	local lock_dir="${AIDEVOPS_RUNTIME_TRANSITION_LOCK_DIR:-${HOME}/.aidevops/locks/runtime-transition.lock.d}"
+	local owner_pid=""
+	[[ -d "$lock_dir" ]] || return 1
+	if [[ -r "${lock_dir}/pid" ]]; then
+		IFS= read -r owner_pid <"${lock_dir}/pid" 2>/dev/null || owner_pid=""
+	fi
+	if [[ -z "$owner_pid" ]]; then
+		[[ -n "$(find "$lock_dir" -maxdepth 0 -mmin -2 2>/dev/null)" ]]
+		return $?
+	fi
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+	kill -0 "$owner_pid" 2>/dev/null
+	return $?
+}
+
+#######################################
+# Print the active bundle's pulse-wrapper.sh when it can serve a worker-exit
+# refill (GH#38627). Its entry re-exec (pulse_runtime_pin_reexec, GH#33113)
+# validates the active bundle manifest again before any lease or lock.
+#######################################
+_pulse_event_refill_active_wrapper() {
+	local active_agents_link="${AIDEVOPS_ACTIVE_AGENTS_LINK:-${HOME}/.aidevops/agents}"
+	local active_agents_root=""
+	local active_wrapper=""
+	active_agents_root=$(cd "$active_agents_link" 2>/dev/null && pwd -P) || return 1
+	[[ -r "${active_agents_root}/.bundle-manifest" ]] || return 1
+	active_wrapper="${active_agents_root}/scripts/pulse-wrapper.sh"
+	[[ -f "$active_wrapper" && ! -L "$active_wrapper" && -x "$active_wrapper" ]] || return 1
+	_pulse_event_refill_wrapper_supports_mode "$active_wrapper" || return 1
+	printf '%s\n' "$active_wrapper"
+	return 0
+}
+
+#######################################
+# Choose the wrapper a worker-exit signal wakes (GH#38627). Workers keep the
+# wrapper of the bundle that launched them and activations are frequent, so
+# most exits come from an inactive bundle. Skipping those wakes (GH#32546)
+# left freed slots empty until the next cycle; wake the active bundle instead,
+# except during a runtime transition or when no valid active wrapper exists.
+# Args: $1 - launch-time wrapper path
+# Stdout: wrapper to wake
+# Returns: 0 to wake, 1 to skip (trigger retained, reason logged)
+#######################################
+_pulse_event_refill_resolve_wake_wrapper() {
+	local wrapper="$1"
+	local active_wrapper=""
+	if _pulse_event_refill_wrapper_is_active "$wrapper"; then
+		printf '%s\n' "$wrapper"
+		return 0
+	fi
+	if _pulse_event_refill_runtime_transition_active; then
+		pulse_event_refill_log "action=wake_skipped reason=runtime-transition trigger=retained wrapper=${wrapper}"
+		return 1
+	fi
+	if ! active_wrapper=$(_pulse_event_refill_active_wrapper); then
+		pulse_event_refill_log "action=wake_skipped reason=inactive-bundle trigger=retained wrapper=${wrapper}"
+		return 1
+	fi
+	pulse_event_refill_log "action=wake_rebased from=${wrapper} to=${active_wrapper}"
+	pulse_event_refill_counter "pulse_event_refill_wake_rebased" >/dev/null
+	printf '%s\n' "$active_wrapper"
+	return 0
+}
+
 pulse_event_refill_signal() {
 	local issue_number="$1"
 	local worker_pid="$2"
@@ -160,8 +233,7 @@ pulse_event_refill_signal() {
 		pulse_event_refill_log "action=wrapper_unsupported trigger=retained wrapper=${wrapper}"
 		return 0
 	fi
-	if ! _pulse_event_refill_wrapper_is_active "$wrapper"; then
-		pulse_event_refill_log "action=wake_skipped reason=inactive-bundle trigger=retained wrapper=${wrapper}"
+	if ! wrapper=$(_pulse_event_refill_resolve_wake_wrapper "$wrapper"); then
 		return 0
 	fi
 	if ! _pulse_event_refill_acquire_wake_lock "$wake_lock"; then
@@ -538,6 +610,21 @@ pulse_event_refill_drain() {
 	return 0
 }
 
+#######################################
+# Defer a refill-only run while a runtime transition is active (GH#38627), so
+# a refill never holds the instance lock when reconciliation starts the
+# activated Pulse (GH#32546). The trigger stays for the next wake or cycle.
+# Args: $1 - refill source label
+# Returns: 0 when the caller must defer, 1 otherwise
+#######################################
+_pulse_event_refill_defer_for_transition() {
+	local source_name="$1"
+	_pulse_event_refill_runtime_transition_active || return 1
+	pulse_event_refill_log "action=deferred reason=runtime_transition trigger=retained source=${source_name}"
+	pulse_event_refill_counter "pulse_event_refill_deferred_transition"
+	return 0
+}
+
 _pulse_run_refill_only() {
 	local source_name="${PULSE_REFILL_SOURCE:-event}"
 	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}"
@@ -555,12 +642,20 @@ _pulse_run_refill_only() {
 		return 0
 	fi
 	_pulse_event_refill_run_routines_if_busy "$source_name"
+	if _pulse_event_refill_defer_for_transition "$source_name"; then
+		return 0
+	fi
 	if ! _pulse_event_refill_wait_for_instance_lock; then
 		[[ -f "$trigger_file" ]] && pulse_event_refill_log "action=lock_busy trigger=retained source=${source_name}"
 		pulse_event_refill_counter "pulse_event_refill_lock_busy"
 		return 0
 	fi
 	trap '_pulse_event_refill_cleanup' EXIT
+	# GH#38627: a transition that began during the lock wait owns the restart.
+	if _pulse_event_refill_defer_for_transition "$source_name"; then
+		release_instance_lock
+		return 0
+	fi
 	if ! check_session_gate; then
 		pulse_event_refill_log "action=blocked reason=session_gate trigger=retained source=${source_name}"
 		release_instance_lock
