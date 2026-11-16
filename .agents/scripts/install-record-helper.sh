@@ -51,7 +51,8 @@ FIELDS = (NAME, METHOD, PATH, REASON, UPDATE, INSTALLER)
 def command(args):
     """Read-only package queries, bounded and without shell evaluation."""
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30,
+                                env=dict(os.environ, LC_ALL="C"))
         return result.stdout if result.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -161,7 +162,8 @@ def apt_report():
             elif line.strip().startswith("Installed:"):
                 version = line.split(":", 1)[1].strip()
             else:
-                match = re.match(r"\s+(?:\*\*\*\s+)?(\S+)\s+(-?\d+)\s*$", line)
+                match = re.match(r"\s+(?:\*\*\*\s+)?(\S+)\s+(-?\d+)"
+                                 r"(?:\s+\(phased \d+%\))?\s*$", line)
                 if match:
                     current = match.group(1)
                 elif re.match(r"\s+-?\d+\s+", line) and "/var/lib/dpkg/status" not in line:

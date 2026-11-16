@@ -151,5 +151,22 @@ active:
     assert '- active 2.0' not in output
     print('PASS: npm prefix discovery and disabled-source APT version warning')
 
+    # A translated parent locale must not change the labels parsed by the report.
+    executable('apt-cache', 'import os\npolicy = ' + repr(policy) + '\n'
+               'print(policy if os.environ.get("LC_ALL") == "C" else '
+               'policy.replace("Installed:", "Installiert:"))\n')
+    translated_queries = dict(live_queries, LC_ALL='de_DE.UTF-8', LANG='de_DE.UTF-8')
+    output = run(['bash', str(helper), 'report'], environment=translated_queries)
+    assert '- above 2.0' in output and '- active 2.0' not in output
+    print('PASS: APT version warning under a translated parent locale')
+
+    # Both older and installed versions can carry phased-update annotations.
+    for phased_policy in (policy.replace('1.0 500', '1.0 500 (phased 10%)'),
+                          policy.replace('2.0 500', '2.0 500 (phased 20%)')):
+        executable('apt-cache', 'print(' + repr(phased_policy) + ')\n')
+        output = run(['bash', str(helper), 'report'], environment=live_queries)
+        assert '- above 2.0' in output and '- active 2.0' not in output
+    print('PASS: phased APT headers retain correct source/version associations')
+
 print('All isolated runtime checks passed')
 PY
