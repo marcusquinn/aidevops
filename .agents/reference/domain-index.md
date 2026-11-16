@@ -55,6 +55,7 @@ This index describes what is catalogued, not what is usable now. Query `scripts/
 | Database/Local-first | Postgres, Drizzle, migration, schema, PGlite, local-first, accounts, contacts, RLS | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md`, `tools/app-stack/database-foundation.md` |
 | Vector Search | vector, embeddings, RAG, semantic search, zvec | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | localhost, local dev, Traefik, mkcert, preview proxy | `services/hosting/local-hosting.md` |
+| Host installs | install a tool, missing command, host install, workaround install | `reference/host-installs.md` |
 | Operating-system selection | distro choice, Linux desktop, server OS, Omarchy, Kubuntu, Alpine, Rocky Linux, AlmaLinux, NixOS, Parrot OS, Kali VM, Tails, Hetzner ARM, ARM64 image | `reference/os-selection.md`, `aidevops/recommendations.md`, `reference/platform-support.md` |
 | Machine migration | new Mac, Migration Assistant, Intel to Apple Silicon, restore from backup, copied worktree, generation-directory-mismatch, StoreConflict | `reference/machine-migration.md`, `scripts/worktree-rescue-helper.sh` |
 | Node server administration | Node.js server, Node runtime, Node LTS/EOL, npm/pnpm/Yarn/Bun drift, PM2, systemd Node, next start, SSR server, event-loop lag, heap OOM, memory leak, CPU/RAM spike | `tools/runtime/node-server-admin.md` |
