@@ -752,6 +752,17 @@ _build_triage_review_prompt() {
 }
 
 #######################################
+# Log and return 0 when the triage provider-auth cooldown skips model launch
+# (GH#38655). Arguments: $1 - resolved triage model.
+#######################################
+_triage_auth_cooldown_skip() {
+	local model="$1"
+	[[ -n "$model" ]] && _triage_auth_cooldown_active "$model" || return 1
+	echo "[pulse-wrapper] dispatch_triage_reviews: triage-provider-auth-unsupported runner_capability_unmet cooldown skipped (provider pool unchanged; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Dispatch triage review workers for needs-maintainer-review issues
 #
 # Reads the pre-fetched triage status from the triage state file and
@@ -802,8 +813,7 @@ dispatch_triage_reviews() {
 
 	# GH#38655: skip model launch while a runner-local provider-auth cooldown is
 	# active for the unchanged provider pool (Anthropic OAuth-only runners).
-	if [[ -n "$resolved_model" ]] && _triage_auth_cooldown_active "$resolved_model"; then
-		echo "[pulse-wrapper] dispatch_triage_reviews: triage-provider-auth-unsupported runner_capability_unmet cooldown skipped (provider pool unchanged; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"$LOGFILE"
+	if _triage_auth_cooldown_skip "$resolved_model"; then
 		_triage_outcome_json 0 0 0 0 0
 		return 0
 	fi
