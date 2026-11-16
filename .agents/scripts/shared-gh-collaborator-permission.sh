@@ -587,6 +587,25 @@ _gh_collaborator_permission_emit_ok() {
 	return 0
 }
 
+# GH#38562: `gh api -i` on the REST route prints a 304's status line and
+# headers to stdout; a bare gh prints nothing and reports it on stderr. Either
+# shape is a 304 only for a sent ETag, a failed transport and an empty body.
+# Args: $1=transport rc, $2=sent ETag, $3=parsed body, $4=parsed HTTP status,
+#       $5=1 when stderr reported "gh: HTTP 304"
+# Returns: 0=not modified, 1=otherwise.
+_gh_collaborator_permission_is_not_modified() {
+	local _inm_rc="$1"
+	local _inm_etag="$2"
+	local _inm_body="$3"
+	local _inm_status="$4"
+	local _inm_stderr_304="$5"
+
+	[[ "$_inm_rc" -ne 0 && -n "$_inm_etag" && -z "${_inm_body//[[:space:]]/}" ]] || return 1
+	[[ "$_inm_status" == "304" ]] && return 0
+	[[ -z "$_inm_status" && "$_inm_stderr_304" -eq 1 ]] && return 0
+	return 1
+}
+
 _gh_collaborator_permission_lookup_uncached() {
 	local repo_slug="$1"
 	local user="$2"
@@ -629,14 +648,7 @@ _gh_collaborator_permission_lookup_uncached() {
 		rm -f "$err_file" 2>/dev/null || true
 	fi
 	_gh_collaborator_permission_parse_response "$api_response" http_status body response_etag
-	# GH#38562: `gh api -i` on the REST route prints a 304's status line and
-	# headers to stdout; a bare gh prints nothing and reports it on stderr.
-	# Either shape is a 304 only for a sent ETag, a failed transport and no body.
-	if [[ "$rc" -ne 0 && -n "$stored_etag" && -z "${body//[[:space:]]/}" ]]; then
-		if [[ "$http_status" == "304" ]] || [[ -z "$http_status" && "$stderr_not_modified" -eq 1 ]]; then
-			not_modified=1
-		fi
-	fi
+	_gh_collaborator_permission_is_not_modified "$rc" "$stored_etag" "$body" "$http_status" "$stderr_not_modified" && not_modified=1
 
 	[[ -n "$http_status" ]] && AIDEVOPS_GH_COLLAB_PERMISSION_HTTP="$http_status"
 	export AIDEVOPS_GH_COLLAB_PERMISSION_HTTP
