@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.212] - 2026-11-16
+
+### Fixed
+
+- ai-session deploy accepts a fast-forwarded checkout instead of rolling back into a full setup
+- uv tools stay in user dirs under isolated runtimes; installs report and ShellCheck version fixes
+- align test-deploy-mutex backup-restore case with runtime-bundle deploy
+- OpenCode version reads the selected launcher again, restoring the GH#35461 stale-launcher repair
+- planning publication worktree owned by helper; cleanup after PR is non-fatal
+- accept labelled POST_PR_HANDOFF lines so verified handoffs do not loop as premature exits
+- retire recovery entries for quality dashboards (#38598)
+
 ## [3.39.211] - 2026-11-16
 
 ### Added
