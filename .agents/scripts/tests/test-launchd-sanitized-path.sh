@@ -87,7 +87,7 @@ test_sanitized_path_filters_unsafe_entries() {
 	result=$(HOME="$test_home" _AIDEVOPS_NPM_GLOBAL_BIN="" aidevops_launchd_sanitized_path "$polluted_path")
 
 	local ok=0 stable_scripts_count=0
-	[[ "$result" == "${stable_bun_bin}:${stable_local_bin}:${stable_scripts}:${stable_bin}:"* ]] || ok=1
+	[[ "$result" == "${stable_scripts}:${stable_bin}:${stable_bun_bin}:${stable_local_bin}:"* ]] || ok=1
 	[[ "$result" == *"$existing_dir"* ]] || ok=1
 	[[ "$result" == *"/usr/bin"* ]] || ok=1
 	stable_scripts_count=$(printf '%s' "$result" | tr ':' '\n' | grep -Fxc "$stable_scripts" || true)
@@ -105,6 +105,34 @@ test_sanitized_path_filters_unsafe_entries() {
 		pass "test_sanitized_path_filters_unsafe_entries"
 	else
 		fail "test_sanitized_path_filters_unsafe_entries" "sanitized PATH was: $result"
+	fi
+	return 0
+}
+
+# GH#38642: a package-manager npm prefix (Homebrew: /opt/homebrew/bin) also
+# holds native gh/git; it must stay behind the aidevops shim dirs while still
+# leading ~/.bun/bin (GH#38526).
+test_sanitized_path_keeps_shims_ahead_of_npm_bin() {
+	local test_home="$TEST_DIR/npm-home"
+	local npm_bin="$TEST_DIR/npm-prefix/bin"
+	local stable_scripts="$test_home/.aidevops/agents/scripts"
+	local stable_bin="$test_home/.aidevops/bin"
+	local stable_bun_bin="$test_home/.bun/bin"
+	mkdir -p "$npm_bin" "$stable_scripts" "$stable_bin" "$stable_bun_bin"
+	printf '#!/bin/sh\nexit 0\n' >"$npm_bin/gh"
+	printf '#!/bin/sh\nexit 0\n' >"$stable_scripts/gh"
+	chmod +x "$npm_bin/gh" "$stable_scripts/gh"
+
+	local result="" resolved="" ok=0
+	result=$(HOME="$test_home" _AIDEVOPS_NPM_GLOBAL_BIN="$npm_bin" aidevops_launchd_sanitized_path "${npm_bin}:/usr/bin:/bin")
+	[[ "$result" == "${stable_scripts}:${stable_bin}:${npm_bin}:${stable_bun_bin}:"* ]] || ok=1
+	resolved=$(PATH="$result" command -v gh) || ok=1
+	[[ "$resolved" == "$stable_scripts/gh" ]] || ok=1
+
+	if [[ "$ok" -eq 0 ]]; then
+		pass "test_sanitized_path_keeps_shims_ahead_of_npm_bin"
+	else
+		fail "test_sanitized_path_keeps_shims_ahead_of_npm_bin" "PATH was: $result (gh -> ${resolved:-none})"
 	fi
 	return 0
 }
@@ -198,6 +226,7 @@ EOF
 main() {
 	setup
 	test_sanitized_path_filters_unsafe_entries
+	test_sanitized_path_keeps_shims_ahead_of_npm_bin
 	test_sanitized_path_preserves_unset_ifs
 	test_auto_update_plist_filters_polluted_env_path
 	test_auto_update_plist_injects_label_overrides
