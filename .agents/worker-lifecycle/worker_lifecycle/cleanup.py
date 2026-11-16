@@ -31,8 +31,8 @@ def _repository_entries(config: Path) -> list:
     """Read a bounded operator-owned configuration without following links."""
     try:
         raw = read_owned_file(config, REPOSITORY_CONFIG)
-    except FileNotFoundError as error:
-        # GH#38667: name the missing configuration instead of a bare FileNotFoundError.
+    except (FileNotFoundError, PermissionError) as error:
+        # GH#38667: name missing/unreadable configuration instead of a bare OSError.
         raise ValueError("repository-config-unavailable") from error
     configuration = json.loads(raw.decode("utf-8"))
     if not isinstance(configuration, dict):

@@ -44,6 +44,14 @@ class FailureCategory(unittest.TestCase):
         detail = error_details(caught.exception, "cleanup-worktree")
         self.assertEqual(detail["detail"], "repository-config-unavailable")
 
+    def test_unreadable_repository_config_is_a_named_refusal(self):
+        with patch("worker_lifecycle.cleanup.read_owned_file", side_effect=PermissionError(13, "denied")):
+            with self.assertRaises(ValueError) as caught:
+                _repository_entries(Path("/unreadable.json"))
+        self.assertIsInstance(caught.exception.__cause__, PermissionError)
+        for operation in ("cleanup", "cleanup-worktree"):
+            self.assertEqual(error_details(caught.exception, operation)["detail"], "repository-config-unavailable")
+
     def test_invalid_event_limit_is_not_exhaustion(self):
         with tempfile.TemporaryDirectory() as name:
             with self.assertRaisesRegex(ValueError, "invalid-event-limit") as caught:

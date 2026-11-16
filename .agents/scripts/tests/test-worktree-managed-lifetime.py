@@ -220,7 +220,7 @@ class LifetimeTests(unittest.TestCase):
         base = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
         self.assertTrue(base.is_dir())
         with tempfile.TemporaryDirectory(prefix="managed-lifetime-", dir=base) as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             repo, worktree = root / "repo", root / "worktree"
             db = root / "registry.db"
             home = root / "home"
