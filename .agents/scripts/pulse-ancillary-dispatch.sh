@@ -800,6 +800,14 @@ dispatch_triage_reviews() {
 	fi
 	[[ -n "$resolved_model" ]] || echo "[pulse-wrapper] dispatch_triage_reviews: thinking and standard model resolution failed" >>"$LOGFILE"
 
+	# GH#38655: skip model launch while a runner-local provider-auth cooldown is
+	# active for the unchanged provider pool (Anthropic OAuth-only runners).
+	if [[ -n "$resolved_model" ]] && _triage_auth_cooldown_active "$resolved_model"; then
+		echo "[pulse-wrapper] dispatch_triage_reviews: triage-provider-auth-unsupported runner_capability_unmet cooldown skipped (provider pool unchanged; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"$LOGFILE"
+		_triage_outcome_json 0 0 0 0 0
+		return 0
+	fi
+
 	# Parse "## owner/repo" headers and "- Issue #N: ... [status: **needs-review**]" lines.
 	local candidates=""
 	candidates=$(_triage_review_candidates "$triage_file" "$repos_json")
