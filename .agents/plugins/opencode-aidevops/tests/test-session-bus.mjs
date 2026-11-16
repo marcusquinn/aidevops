@@ -961,7 +961,7 @@ test("keepalive persists for the caller's root session only, defaults off, expir
   livePresence("ses_keepR1", { kind: "tui", messageable: false, handle: "repo-readonly" });
   livePresence("ses_keepC1", { interface: "matrix", handle: "repo-chat" });
   for (const target of ["repo-worker", "repo-readonly", "repo-chat"]) {
-    assert.throws(() => cliMain(["keepalive", target, "on"], { root, env: {}, out: noOut }), /keepalive needs a wakeable|driven from/);
+    assert.throws(() => cliMain(["keepalive", target, "on"], { root, env: {}, out: noOut }), /keepalive needs a local interactive session/);
   }
   assert.equal(readKeepalive(root, "ses_keepW1"), null);
   store.writeJsonAtomic(join(root, "keepalive", "ses_bad001.json"), { on: true });

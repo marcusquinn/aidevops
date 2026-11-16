@@ -21,7 +21,6 @@ import {
 import { pendingMessages } from "./session-bus-inbox.mjs";
 import { sendMessage } from "./session-bus-messages.mjs";
 import { isMessageable, isWorker, readPresence } from "./session-bus-presence-store.mjs";
-import { resolveTarget } from "./session-bus-targets.mjs";
 
 const HOUR_MS = 60 * 60 * 1000;
 export const KEEPALIVE = Object.freeze({
@@ -66,11 +65,10 @@ export const keepaliveActive = (setting, now = Date.now()) => setting?.on === tr
 
 function assertKeepaliveSession(record) {
   if (!record || !isSafeId(record.session_id)) throw new Error("that session is not running");
-  if (!isMessageable(record) || isWorker(record) || !WAKEABLE_KINDS.includes(record.kind)) {
-    throw new Error(`${record.handle || record.session_id} is a ${record.kind} session; keepalive needs a wakeable interactive session (not a worker, headless or read-only session)`);
-  }
   // A chat-driven session has no channel for a turn the chat app did not start.
-  if (record.interface) throw new Error(`${record.handle} is driven from ${record.interface}; keepalive is for local interactive sessions`);
+  if (wakeableRecord(record)) return;
+  const why = record.interface ? `driven from ${record.interface}` : `a ${record.kind} session`;
+  throw new Error(`${record.handle || record.session_id} is ${why}; keepalive needs a local interactive session (not a worker, headless, read-only or chat-driven session)`);
 }
 
 function parseHours(hours) {
@@ -119,31 +117,36 @@ function skip(row, reason, nextWakeMs = null) {
   return { ...row, wake: false, reason, next_wake_ms: nextWakeMs };
 }
 
+const wakeableRecord = (record) =>
+  isMessageable(record) && !isWorker(record) && WAKEABLE_KINDS.includes(record.kind) && !record.interface;
+
+// The first failing check is the reason; checks run in order and lazily, so the
+// inbox is read only for a session that is otherwise due.
 function evaluate(root, sessionID, setting, record, now) {
-  const base = {
+  const activityMs = Number(record?.last_activity_epoch) * 1000;
+  const idleS = Number.isFinite(activityMs) ? Math.max(0, Math.floor((now - activityMs) / 1000)) : null;
+  const dueMs = activityMs + setting.idle_threshold_s * 1000;
+  const recent = setting.wake_times.filter((time) => time > now - HOUR_MS).sort((a, b) => a - b);
+  const row = {
     session_id: sessionID, handle: record?.handle || sessionID, status: record?.status || "gone",
-    idle_s: null, threshold_s: setting.idle_threshold_s, expires_at: setting.expires_at,
+    idle_s: record ? idleS : null, threshold_s: setting.idle_threshold_s, expires_at: setting.expires_at,
     consecutive_no_progress: setting.consecutive_no_progress,
   };
-  if (!keepaliveActive(setting, now)) return skip(base, "expired");
-  if (!record) return skip(base, "not-live");
-  if (!isMessageable(record) || isWorker(record) || !WAKEABLE_KINDS.includes(record.kind) || record.interface) {
-    return skip(base, "not-wakeable");
-  }
-  const activityMs = Number(record.last_activity_epoch) * 1000;
-  const row = { ...base, idle_s: Number.isFinite(activityMs) ? Math.max(0, Math.floor((now - activityMs) / 1000)) : null };
-  if (record.status === "permission") return skip(row, "permission-pending");
-  if (record.status !== "idle") return skip(row, record.status === "busy" ? "busy" : `status-${record.status}`);
-  if (row.idle_s === null) return skip(row, "no-activity-time");
-  const dueMs = activityMs + setting.idle_threshold_s * 1000;
-  if (now < dueMs) return skip(row, "below-threshold", dueMs);
-  // One wake per idle period: a wake already sent since the last activity is queued or being delivered.
-  if (setting.last_wake_ms >= activityMs || pendingMessages(root, sessionID).some((entry) => isKeepaliveMessage(entry.message))) {
-    return skip(row, "wake-pending");
-  }
-  const recent = setting.wake_times.filter((time) => time > now - HOUR_MS).sort((a, b) => a - b);
-  if (recent.length >= LIMITS.wakesPerHour) return skip(row, "wake-budget", recent[0] + HOUR_MS);
-  return { ...row, wake: true, reason: "eligible", next_wake_ms: now };
+  const checks = [
+    ["expired", () => !keepaliveActive(setting, now)],
+    ["not-live", () => !record],
+    ["not-wakeable", () => !wakeableRecord(record)],
+    ["permission-pending", () => record.status === "permission"],
+    [record?.status === "busy" ? "busy" : `status-${record?.status}`, () => record.status !== "idle"],
+    ["no-activity-time", () => idleS === null],
+    ["below-threshold", () => now < dueMs, dueMs],
+    // One wake per idle period: a wake sent since the last activity is queued or being delivered.
+    ["wake-pending", () => setting.last_wake_ms >= activityMs
+      || pendingMessages(root, sessionID).some((entry) => isKeepaliveMessage(entry.message))],
+    ["wake-budget", () => recent.length >= LIMITS.wakesPerHour, recent[0] + HOUR_MS],
+  ];
+  const [reason, , nextWakeMs] = checks.find(([, failed]) => failed()) || [];
+  return reason ? skip(row, reason, nextWakeMs ?? null) : { ...row, wake: true, reason: "eligible", next_wake_ms: now };
 }
 
 function sendWake(root, row, setting, now) {
@@ -206,33 +209,3 @@ export function settleKeepalive(root, sessionID, progressed, now = Date.now()) {
   return next;
 }
 
-// ---------------------------------------------------------------------------
-// CLI: aidevops sessions keepalive <target> on|off [--hours N] | status | sweep [--dry-run]
-// ---------------------------------------------------------------------------
-
-function describe(row, now) {
-  const minutes = (seconds) => (seconds === null ? "?" : `${Math.round(seconds / 60)}m`);
-  const next = row.next_wake_ms === null ? "-" : row.next_wake_ms <= now ? "now" : new Date(row.next_wake_ms).toISOString();
-  const outcome = row.woke ? "woke" : row.wake ? "would-wake" : `skip: ${row.reason}`;
-  return `${row.handle} ${row.status} idle ${minutes(row.idle_s)} threshold ${minutes(row.threshold_s)} next ${next} ${outcome}`;
-}
-
-export function keepaliveCommand({ root, options, out }) {
-  const [, first, second] = options.positional;
-  const now = Date.now();
-  if (first === "status" || first === "sweep") {
-    const rows = keepalivePass(root, { now, send: first === "sweep" && !options.dryRun });
-    out.write(`${options.json ? JSON.stringify(rows, null, 2) : rows.length === 0 ? "No sessions have keepalive on." : rows.map((row) => describe(row, now)).join("\n")}\n`);
-    return;
-  }
-  if (!["on", "off"].includes(second)) throw new Error("keepalive needs <target> on|off [--hours N], status, or sweep [--dry-run]");
-  const resolved = resolveTarget(readPresence(root), first, "", { root });
-  if (resolved.error) throw new Error(resolved.error);
-  const record = resolved.record;
-  if (second === "on" && !record) throw new Error("that session is not running");
-  const sessionID = record?.session_id || resolved.sessionID;
-  const setting = setKeepalive(root, record || { session_id: sessionID }, second === "on", { hours: options.hours, now });
-  out.write(second === "on"
-    ? `Keepalive on for ${record.handle} until ${new Date(setting.expires_at).toISOString()}.\n`
-    : `Keepalive off for ${sessionID}.\n`);
-}

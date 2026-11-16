@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import * as store from "./session-bus-store.mjs";
 import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
-import { keepaliveCommand } from "./session-bus-keepalive.mjs";
+import { keepaliveCommand } from "./session-bus-keepalive-cli.mjs";
 import { notifyReleaseCommand, watchReleaseCommand } from "./session-bus-cli-release.mjs";
 import { DEFAULT_SERVER } from "./session-bus-launch.mjs";
 import { bindCommand, bindingsCommand, launchSessionCommand, unbindCommand } from "./session-bus-cli-bindings.mjs";
