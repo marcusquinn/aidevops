@@ -1873,6 +1873,22 @@ _pcc_dispatch_expired_recovery_draft() {
 }
 
 #######################################
+# Read a PR's commits through REST, which supplies parent counts that the
+# gh pr view commit projection omits. Callers treat failure as no metadata,
+# so no release is credited as progress.
+# GH#38185: gh rejects --slurp with --jq, so the pages are flattened with jq.
+# Args: $1=repo slug, $2=PR number
+# Output: flat JSON commit array; returns 1 when unreadable
+#######################################
+_pcc_pr_rest_commits() {
+	local repo="$1" pr="$2"
+	(set -o pipefail
+		gh api --paginate --slurp "repos/${repo}/pulls/${pr}/commits?per_page=100" |
+			jq -c 'if type == "array" then flatten else error("invalid commit pages") end') || return 1
+	return 0
+}
+
+#######################################
 # Continue an unassigned worker draft left by a stall/timeout release
 # (GH#33654). Stall releases unassign the issue, so neither stale-assignment
 # recovery nor the blocked-release attention path sees it, and the draft held
@@ -1904,8 +1920,10 @@ _pcc_dispatch_stalled() {
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
 	fi
+	# GH#38651: mergeability and checks ride the same call for the paused-land
+	# pre-check; headRefName lets draft linkage pick among several For #N refs.
 	pr_json=$(gh pr view "$pr" --repo "$repo" \
-		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt) || return 1
+		--json state,isDraft,isCrossRepository,headRefName,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt,mergeable,statusCheckRollup) || return 1
 	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
@@ -1921,12 +1939,7 @@ _pcc_dispatch_stalled() {
 	fi
 	comments=$(_pcc_issue_comments "$repo" "$issue") || return 1
 	trusted_logins=$(_pr_checkpoint_trusted_logins "$comments" "$repo") || return 1
-	# REST supplies parent counts, which gh pr view's commit projection omits.
-	# Missing metadata is conservative: no release is credited as progress.
-	# GH#38185: gh rejects --slurp with --jq, so flatten the pages with jq.
-	commits=$(set -o pipefail
-		gh api --paginate --slurp "repos/${repo}/pulls/${pr}/commits?per_page=100" |
-			jq -c 'if type == "array" then flatten else error("invalid commit pages") end') || commits='[]'
+	commits=$(_pcc_pr_rest_commits "$repo" "$pr") || commits='[]'
 	key="${_PCC_STALL_ATTENTION_MARKER} pr=${pr} head=${head}"
 	evidence=$(_pcc_stall_release_evidence "$comments" "$head_date" "$key" "$trusted_logins" \
 		"$pr_created" "${_PCC_ATTENTION_MARKER} pr=${pr} head=${head}" \
@@ -1950,6 +1963,9 @@ _pcc_dispatch_stalled() {
 	_pcc_prepare_stall_escalation "$repo" "$pr" "$head" "$release_id" "$stalls" \
 		"$nonprogress" "$pr_releases" "$comments" "$trusted_logins" || true
 	if [[ ( "$stalls" -ge 2 && -z "$PCC_ESCALATION_TIER" ) || "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
+		# GH#38651: land verified partial work instead of pausing the issue.
+		_pcc_land_paused_checkpoint "$repo" "$issue" "$pr" "$head" "$release_id" \
+			"$pr_json" "$comments" "$trusted_logins" && return 0
 		# GH#36019: a fuse-only stop reports the per-PR count in the record and
 		# is posted once per PR, so later human-pushed heads add no comments.
 		local fuse=false

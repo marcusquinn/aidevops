@@ -14,6 +14,8 @@ test_fuse_terminal_action() (
 	# Distinct names: the helper's own locals (e.g. `files`) shadow these
 	# inside the gh stub through bash dynamic scoping.
 	local fixture_pr_files="$1" expected="$2" comments="$3" window="${4:-43200}"
+	# GH#38651: the legacy fuse cases opt out of landing paused heads at once.
+	local land_paused="${5:-0}"
 	local fixture_writes_file="${TEST_ROOT}/terminal-writes" output="" writes="" record=""
 	: >"$fixture_writes_file"
 	printf '[]' >"$STUB_CLAIM_FILE"
@@ -46,6 +48,7 @@ test_fuse_terminal_action() (
 		return 0
 	}
 	_PCC_TERMINAL_ACTION_SECONDS="$window"
+	_PCC_LAND_PAUSED_CHECKPOINTS="$land_paused"
 	STUB_COMMENTS_JSON="$comments"
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
 	STUB_PR_JSON="$(valid_pr_json 'Partial checkpoint.\nFor #123' '' '[]' | jq -c '. + {createdAt:"2026-09-29T23:00:00Z",
@@ -61,8 +64,19 @@ test_fuse_terminal_action() (
 	posts_after="$(post_count)"
 	writes="$(<"$fixture_writes_file")"
 	local ok=true
-	[[ -z "$DISPATCH_ARGS" && "$output" == *"STALLED_CHECKPOINT_REARM_BLOCKED:"*"reason=per_pr_fuse"* ]] || ok=false
+	if [[ "$expected" == landed_paused ]]; then
+		# Landing replaces the pause: no rearm/attention record, no continuation.
+		[[ -z "$DISPATCH_ARGS" && "$output" != *STALLED_CHECKPOINT_REARM_BLOCKED* ]] || ok=false
+	else
+		[[ -z "$DISPATCH_ARGS" && "$output" == *"STALLED_CHECKPOINT_REARM_BLOCKED:"*"reason=per_pr_fuse"* ]] || ok=false
+	fi
 	case "$expected" in
+	landed_paused)
+		[[ "$posts_after" -eq $((posts_before + 1)) ]] && record="$(<"${STUB_POST_DIR}/post-${posts_after}")"
+		[[ "$output" == *"STALLED_CHECKPOINT_TERMINAL_ACTION:"*"action=ready_for_merge"*"cause=paused_landable"* &&
+			"$writes" == ready && "$record" == *"action=ready_for_merge cause=paused_landable"* &&
+			"$record" == *"lands it now rather than holding this issue"* ]] || ok=false
+		;;
 	pointer_failed | contended)
 		[[ -z "$writes" && "$posts_after" -eq "$posts_before" &&
 			"$output" == *STALLED_CHECKPOINT_TERMINAL_DEFERRED* ]] || ok=false
@@ -127,6 +141,17 @@ if test_fuse_terminal_action "$additive_files" none "$fuse_terminal_comments" 0;
 	print_result "a zero terminal window keeps the fuse a visible permanent stop" 0
 else
 	print_result "a zero terminal window keeps the fuse a visible permanent stop" 1
+fi
+# GH#38651: a landable paused head lands at once, independent of the window.
+if test_fuse_terminal_action "$additive_files" landed_paused "$fuse_terminal_comments" 0 1; then
+	print_result "a landable paused checkpoint lands at once instead of pausing" 0
+else
+	print_result "a landable paused checkpoint lands at once instead of pausing" 1
+fi
+if test_fuse_terminal_action '[[{"status":"removed"}]]' none "$fuse_terminal_comments" 0 1; then
+	print_result "a non-landable paused checkpoint keeps the existing pause" 0
+else
+	print_result "a non-landable paused checkpoint keeps the existing pause" 1
 fi
 PCC_ALLOW_RELEASED=false
 STUB_PR_JSON="$(valid_pr_json 'Resolves #123' '' '' | with_head_commit)"

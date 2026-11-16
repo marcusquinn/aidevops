@@ -46,6 +46,10 @@ _PCC_TERMINAL_ACTION_SECONDS="${AIDEVOPS_PCC_TERMINAL_ACTION_SECONDS:-43200}"
 _PCC_TERMINAL_ACTION_SECONDS=$((10#$_PCC_TERMINAL_ACTION_SECONDS))
 ((_PCC_TERMINAL_ACTION_SECONDS < 2147483648)) || _PCC_TERMINAL_ACTION_SECONDS=43200
 _PCC_PR_ONLY_CONTRACT_MARKER="aidevops:completion-contract:pr-only"
+# GH#38651: a paused head that is landable lands at once instead of waiting
+# for the fuse and brief-owner windows. 0 restores waiting; nothing else.
+_PCC_LAND_PAUSED_CHECKPOINTS="${AIDEVOPS_PCC_LAND_PAUSED_CHECKPOINTS:-1}"
+[[ "$_PCC_LAND_PAUSED_CHECKPOINTS" == 0 ]] || _PCC_LAND_PAUSED_CHECKPOINTS=1
 
 #######################################
 # Decide whether the brief owner's window has passed: measured from the newer
@@ -155,6 +159,9 @@ _pcc_terminal_comment_state() {
 _pcc_terminal_post_record() {
 	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" action="$6" cause="$7" ref="$8"
 	local summary="" pointer=""
+	local reason="Pulse can no longer continue draft PR #${pr} automatically (\`${cause}\`), and the window for the brief owner has passed without a change."
+	[[ "$cause" != paused_landable ]] ||
+		reason="Automatic continuation of draft PR #${pr} paused (\`${cause}\`) while its verified partial work was landable, so Pulse lands it now rather than holding this issue."
 	if [[ "$action" == ready_for_merge ]]; then
 		summary="Draft PR #${pr} was additive, mergeable, non-closing and its checks passed, so Pulse marked it ready for review. The guarded Pulse merge pass lands it as a partial \`For #${issue}\` checkpoint; this issue stays open and ordinary dispatch continues from the default branch."
 	else
@@ -166,7 +173,7 @@ Preserved checkpoint: branch \`${ref}\` at \`${head}\` (closed draft PR #${pr}).
 <!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} release=${release_id} -->
 STALLED_CHECKPOINT_TERMINAL_ACTION pr=${pr} head=${head} action=${action} cause=${cause}
 
-Pulse can no longer continue draft PR #${pr} automatically (\`${cause}\`), and the window for the brief owner has passed without a change. ${summary}
+${reason} ${summary}
 
 See \`reference/checkpoint-revision-recovery.md\` \"Bounded terminal action\". Posted once per PR head.
 <!-- ops:end -->${pointer}"
@@ -231,6 +238,14 @@ _pcc_terminal_fenced_apply() (
 		trusted=$(_pr_checkpoint_trusted_logins "$comments" "$repo") &&
 		state=$(_pcc_terminal_comment_state "$comments" "$trusted" "$release_id" \
 			"<!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} ") && [[ "$state" == current ]] || return 1
+	# GH#38651: a trusted revision approval posted after the paused-land
+	# snapshot owns scheduling; recheck it on the fresh comments.
+	if [[ "$cause" == paused_landable ]]; then
+		declare -F _pcc_comments_have_revision_approval >/dev/null || return 1
+		if _pcc_comments_have_revision_approval "$comments" "$trusted"; then
+			return 1
+		fi
+	fi
 	metadata=$(gh api "repos/${repo}/issues/${issue}") && _pcc_terminal_issue_eligible "$metadata" || return 1
 	metadata=$(gh pr view "$pr" --repo "$repo" --json number,state,isDraft,isCrossRepository,headRefOid,headRefName,author,labels,body,closingIssuesReferences) &&
 		_pr_checkpoint_pr_metadata_is_eligible "$metadata" "$repo" "$pr" "$issue" "$head" "$ref" "" || return 1
@@ -264,12 +279,13 @@ _pcc_terminal_fenced_apply() (
 # Take the bounded terminal action for a stalled draft that can no longer be
 # continued. Never acts on unreadable, pending or protected state.
 # Args: $1=repo slug, $2=issue, $3=PR, $4=exact head SHA, $5=stall release id,
-#       $6=cause (per_pr_fuse | target_rejected)
+#       $6=cause (per_pr_fuse | target_rejected | paused_landable),
+#       $7=optional mode: land_only never closes (GH#38651)
 # Output: STALLED_CHECKPOINT_TERMINAL_{ACTION,EXISTS,DEFERRED,SKIPPED} line
 # Returns: 0 action taken or already recorded, 1 deferred/skipped/failed
 #######################################
 _pcc_terminal_checkpoint_action() {
-	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" cause="$6"
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5" cause="$6" mode="${7:-}"
 	local pr_json="" issue_json="" comments="" trusted_logins="" state="" checks="" ref=""
 	local action="close" mergeable="" merge_state="" additive_rc=0
 	local prefix="PR #${pr} in ${repo} head=${head} issue=#${issue}"
@@ -329,6 +345,11 @@ _pcc_terminal_checkpoint_action() {
 		fi
 		[[ "$additive_rc" -ne 0 ]] || action="ready_for_merge"
 	fi
+	if [[ "$mode" == land_only && "$action" != ready_for_merge ]]; then
+		# The caller keeps the existing pause, fuse and close windows.
+		printf 'STALLED_CHECKPOINT_TERMINAL_SKIPPED: %s reason=not_landable\n' "$prefix"
+		return 1
+	fi
 	ref=$(jq -r '.headRefName // ""' <<<"$pr_json" 2>/dev/null) || ref=""
 	if ! _pcc_terminal_fenced_apply "$repo" "$issue" "$pr" "$head" "$release_id" "$action" "$cause" "$ref"; then
 		printf 'STALLED_CHECKPOINT_TERMINAL_DEFERRED: %s reason=%s_failed\n' "$prefix" "$action"
@@ -337,5 +358,31 @@ _pcc_terminal_checkpoint_action() {
 	[[ "$action" == ready_for_merge ]] || action="closed"
 	printf 'STALLED_CHECKPOINT_TERMINAL_ACTION: %s action=%s cause=%s checks=%s mergeable=%s\n' \
 		"$prefix" "$action" "$cause" "$checks" "$mergeable"
+	return 0
+}
+
+#######################################
+# GH#38651: land a paused draft head now when its partial work is landable,
+# as an interactive full-loop would, instead of holding the issue through the
+# re-arm, fuse and brief-owner windows. The pre-check reads only the caller's
+# PR snapshot, so heads that cannot land cost no extra API call; the terminal
+# action then re-reads every gate fresh and never closes in land_only mode.
+# Args: repo, issue, PR, exact head, stall release id, PR JSON (with
+#       mergeable and statusCheckRollup), comments JSON, trusted logins JSON
+# Returns: 0 when landed or already recorded, 1 to keep the existing pause
+#######################################
+_pcc_land_paused_checkpoint() {
+	local repo="$1" issue="$2" pr="$3" head="$4" release_id="$5"
+	local pr_json="$6" comments="$7" trusted_logins="$8" checks=""
+	[[ "$_PCC_LAND_PAUSED_CHECKPOINTS" == 1 ]] || return 1
+	checks=$(_pcc_terminal_checks_state "$pr_json") || return 1
+	[[ "$checks" == success ]] || return 1
+	jq -e '(.mergeable // "" | ascii_upcase) == "MERGEABLE"' <<<"$pr_json" >/dev/null 2>&1 || return 1
+	_pr_checkpoint_nonclosing_draft_links_issue "$pr_json" "$issue" || return 1
+	# A current trusted revision approval owns scheduling; never act then.
+	if _pcc_comments_have_revision_approval "$comments" "$trusted_logins"; then
+		return 1
+	fi
+	_pcc_terminal_checkpoint_action "$repo" "$issue" "$pr" "$head" "$release_id" paused_landable land_only || return 1
 	return 0
 }

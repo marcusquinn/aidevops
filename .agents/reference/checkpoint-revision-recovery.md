@@ -148,6 +148,15 @@ marker) are listed in the `pr-checkpoint-terminal-action.sh` header; pending or 
 defers. Terminal writes compete in continuation's distributed claim consensus, revalidate ownership under the winning lease, and remove the claim on exit.
 Closing first persists the branch/head salvage pointer on the issue; a failed pointer post leaves the draft open for retry. A failed final audit post reports `STALLED_CHECKPOINT_TERMINAL_RECORD_FAILED`, not success; the pointer is already durable.
 Signals: `terminal_action=<ready_for_merge|closed>`, `terminal_deferred=<reason>`.
+
+**Landable paused heads land at once (GH#38651).** Where `dispatch-stalled` would pause a head
+(two stalls with no higher tier, or the fuse), a draft that is already landable (the land
+criteria above) is marked ready immediately with cause `paused_landable`, without waiting for
+re-arm, fuse or brief-owner windows, as an interactive full-loop would merge verified partial
+work and continue from the default branch. The pre-check uses only the PR snapshot already read,
+the terminal action re-reads every gate fresh, and this mode never closes: non-landable heads keep
+the pause, re-arm, fuse and close rules above. `AIDEVOPS_PCC_LAND_PAUSED_CHECKPOINTS=0` restores waiting.
+
 `dispatch` re-verifies a `STALE_PR_CONTINUATION` whose issue was already released unassigned
 through `dispatch-stalled`.
 
