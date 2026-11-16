@@ -50,6 +50,8 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
                         AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
                         AIDEVOPS_WORKTREE_RECOVERY_POLICY="git-only",
                         AIDEVOPS_WORKTREE_BASE_DIR=str(self.root),
+                        # Tiny fixture worktrees: host free space must not decide the result (GH#38659).
+                        AIDEVOPS_MIN_WORKTREE_FREE_KB="0", AIDEVOPS_MIN_WORKTREE_FREE_PERCENT="0",
                         AIDEVOPS_LIFECYCLE_STATE_DIR=str(self.root / "lifecycle"),
                         HOME=str(self.root),
                         WORKTREE_REGISTRY_DIR=str(self.root / "registry"),
