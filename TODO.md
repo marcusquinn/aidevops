@@ -2165,6 +2165,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19055 fix(setup): refuse ephemeral OpenCode targets in the Pulse direct shim writer #interactive #bug tier:simple assignee:marcusquinn ref:GH#38581 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19055-brief.md]
 
+- [ ] t19056 fix(opencode-db-archive): persist batch adaptation across runs so the shared DB archive and worker-event expiry stop livelocking #auto-dispatch #bug #priority:high tier:standard ref:GH#38590 logged:2026-11-16 -> [todo/tasks/t19056-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
