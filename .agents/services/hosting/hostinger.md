@@ -23,7 +23,7 @@ tools:
 - **Alternatives**: Prefer Hetzner for self-managed control/price-performance; prefer Cloudflare for edge/static/headless workloads or global delivery/security
 - **Type**: Shared/VPS/Cloud hosting, budget-friendly
 - **API**: REST at `https://developers.hostinger.com`
-- **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `HOSTINGER_API_TOKEN`
+- **Auth**: Bearer token stored as `HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF`, then `aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN` so `HOSTINGER_API_TOKEN` resolves to it; `HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN` selects a second login per call
 - **SSH**: Port 65002, key auth (recommended) or password auth; framework prefers key when `ssh_identity_file` is configured
 - **Credential scope**: Hostinger SSH access is hosting-account scoped, not domain scoped; inventory and group sites before requesting credentials
 - **Client accounts**: hPanel Account sharing (hPanel only, no API; the agency token does not reach the client's plan) → `hostinger-client-access.md`
@@ -271,7 +271,16 @@ Take `{username}` from the website list response inside the same command; tool o
 
 ### Legacy Hostinger helper
 
-`api`, `fleet` and `cron` need no config file: they use `HOSTINGER_API_TOKEN` from the secret store. The site commands (`list`, `connect`, `exec`) still need the legacy config, read from `configs/hostinger-config.json` beside the scripts directory or from `HOSTINGER_CONFIG_FILE`. Copy the template and edit it with server details:
+`api`, `ssl-status`, `wordpress-detect`, `fleet inventory` and `cron` need no config file: they inject the token from the secret store. Store it under an account-specific name and declare it the Hostinger default (a bare `HOSTINGER_API_TOKEN` name breaks the naming rule in `tools/credentials/credential-inventory.md`):
+
+```bash
+aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF
+aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN
+# Second login, one call only (the selected secret must be stored):
+HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN hostinger-helper.sh api api/hosting/v1/orders
+```
+
+A `HOSTINGER_SECRET_NAME` other than the default wins over an exported `HOSTINGER_API_TOKEN`. Setting it to `HOSTINGER_API_TOKEN` (the default) behaves like leaving it unset: an exported token is used as is, and only without one does the provider default resolve. An invalid or unstored selector is refused before any request. The site commands (`list`, `connect`, `exec`) still need the legacy config, read from `configs/hostinger-config.json` beside the scripts directory or from `HOSTINGER_CONFIG_FILE`. Copy the template and edit it with server details:
 
 ```bash
 cp configs/hostinger-config.json.txt configs/hostinger-config.json
