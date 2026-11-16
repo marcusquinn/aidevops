@@ -958,6 +958,15 @@ _report_print_wal_status() {
 	return 0
 }
 
+# _report_print_page_stats <pages> <page_size> <free> <free_pct> <db_bytes>
+_report_print_page_stats() {
+	local pages="$1" page_size="$2" free="$3" free_pct="$4" db_bytes="$5"
+	printf '  Pages:         %s (page_size=%sB)\n' "$pages" "$page_size"
+	printf '  Free pages:    %s (%s%% of total)\n' "$free" "$free_pct"
+	_report_print_event_stats "$db_bytes"
+	return 0
+}
+
 cmd_report() {
 	local inventory_db
 	printf '\nOpenCode DB inventory (active / WAL / archive bytes):\n'
@@ -1007,9 +1016,7 @@ cmd_report() {
 	# WAL status: distinguish active-DB table size from WAL size; show checkpoint state
 	# when WAL is large so users understand why it hasn't shrunk after archiving.
 	_report_print_wal_status "$wal_bytes"
-	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
-	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
-	_report_print_event_stats "$db_bytes"
+	_report_print_page_stats "$page_count" "$page_size" "$freelist_count" "$freelist_pct" "$db_bytes"
 	local compact_large=false
 	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
 		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \

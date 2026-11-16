@@ -180,33 +180,7 @@ plain `opencode -s` never restores. Lookup: `opencode-db-maintenance-helper.sh
 sessions --include-archive --id ses_...`. Manual: `opencode-db-archive.sh
 restore --session ses_... [--dry-run]` (exit `0` restored/already active, `4`
 not archived, `3` incompatible schema; nothing changed). Archived rows free
-pages for reuse; shrinking the file still needs a maintenance-window VACUUM.
-
-### Active-DB event retention (GH#38630)
-
-OpenCode re-serialises payloads (including the full `summary.diffs`) into every
-`message.updated` / `message.part.updated` event, so the `event` table once held
-~64 GB of a 72 GB DB. The transcript lives in `session`/`message`/`part`; events
-are expendable. `opencode-db-archive.sh archive --worker-events-only` (run first
-by every `opencode-db-archive-async-helper.sh` invocation, before the full pass)
-deletes `event` rows of **any** session (interactive, worker, subagent) whose
-`time_updated` is older than `OPENCODE_DB_ARCHIVE_EVENT_IDLE_MINUTES` (default 60;
-legacy `OPENCODE_DB_ARCHIVE_WORKER_EVENT_MINUTES` and
-`--worker-event-expiry-minutes` still work; 0 disables). It keeps sessions inside
-the window, running workers named in pulse logs, `session`/`message`/`part`/`todo`
-and `event_sequence`.
-
-- Short batched write transactions (`..._WORKER_EVENT_BATCH_SIZE` / `_BYTES`,
-  adaptive), least recently updated sessions first. It never waits for idle
-  holders and does not depend on the full pass; `SQLITE_BUSY` after a 5 s timeout
-  defers (rc 2) to the next hourly run. `--dry-run` reports rows and bytes.
-- `OPENCODE_DB_EVENT_MAX_BYTES` (default 2 GiB of payload) is the ceiling: the pass
-  warns above it, and `opencode-db-maintenance-helper.sh report` prints event
-  rows/bytes while `notice` warns above it or when the DB grew over 5 GB since the
-  previous report. Sessions inside the idle window are never expired, so an
-  active session can exceed the cap until it goes idle.
-- The full archive move no longer pre-expires events; sessions it moves carry
-  their events.
+pages for reuse; shrinking the file still needs a maintenance-window VACUUM. Event retention: `reference/opencode-event-retention.md`.
 
 The archive helper follows OpenCode's active DB resolution (`OPENCODE_DB_PATH`,
 then `OPENCODE_DB`, then `XDG_DATA_HOME/opencode/opencode.db`, then
