@@ -129,9 +129,34 @@ record_mkcert_install() {
 	# shellcheck source=install-record-helper.sh
 	source "$SCRIPT_DIR/install-record-helper.sh"
 	local update_path="$install_method package manager"
-	[[ "$install_method" == "binary-download" ]] && update_path="Re-download mkcert upstream binary"
+	[[ "$install_method" == "binary-download" ]] && update_path="none"
 	install_record "mkcert" "$install_method" "$(command -v mkcert)" \
 		"Local development TLS certificates" "$update_path" || print_warning "Could not record mkcert install"
+	return 0
+}
+
+# Print the first supported Linux package manager name, or nothing.
+mkcert_pkg_manager() {
+	local pm
+	for pm in apt-get apt dnf pacman apk; do
+		if command -v "$pm" >/dev/null 2>&1; then
+			printf '%s\n' "$pm"
+			return 0
+		fi
+	done
+	return 0
+}
+
+# Print the install command (without sudo) for a package manager name.
+mkcert_pkg_command() {
+	local pm="$1"
+	case "$pm" in
+	apt-get | apt) printf '%s install -y mkcert libnss3-tools\n' "$pm" ;;
+	dnf) printf 'dnf install -y mkcert\n' ;;
+	pacman) printf 'pacman -S --noconfirm mkcert\n' ;;
+	apk) printf 'apk add mkcert\n' ;;
+	*) return 1 ;;
+	esac
 	return 0
 }
 
@@ -156,37 +181,30 @@ ensure_mkcert() {
 				installed=true
 				install_method="brew"
 			fi
-		elif command -v apt-get >/dev/null 2>&1; then
-			if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
-				installed=true
-				install_method="apt"
+		elif [[ -n "$(mkcert_pkg_manager)" ]]; then
+			# A package manager exists: install through it, or print the exact
+			# command. Never prompt for sudo or fall back to an unmanaged download.
+			local pm
+			pm=$(mkcert_pkg_manager)
+			local -a pkg_cmd=()
+			read -r -a pkg_cmd <<<"$(mkcert_pkg_command "$pm")"
+			if [[ "$(id -u)" -eq 0 ]]; then
+				"${pkg_cmd[@]}" 2>/dev/null && installed=true
+			elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+				sudo -n "${pkg_cmd[@]}" 2>/dev/null && installed=true
+			else
+				print_error "mkcert needs a system package install and sudo is unavailable"
+				echo "  Run this command, then re-run localdev-helper.sh init:"
+				echo "    sudo ${pkg_cmd[*]}"
+				return 1
 			fi
-		elif command -v apt >/dev/null 2>&1; then
-			if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
-				installed=true
-				install_method="apt"
-			fi
-		elif command -v dnf >/dev/null 2>&1; then
-			if sudo dnf install -y mkcert 2>/dev/null; then
-				installed=true
-				install_method="dnf"
-			fi
-		elif command -v pacman >/dev/null 2>&1; then
-			if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
-				installed=true
-				install_method="pacman"
-			fi
-		elif command -v apk >/dev/null 2>&1; then
-			if sudo apk add mkcert 2>/dev/null; then
-				installed=true
-				install_method="apk"
-			fi
+			install_method="$pm"
 		fi
 	fi
 
-	# Binary download fallback for distros without a supported package manager.
+	# Binary download fallback only where no supported package manager exists.
 	# Supports x86_64 (amd64), aarch64/arm64, and armv7l architectures.
-	if [[ "$installed" != "true" ]] && command -v curl >/dev/null 2>&1; then
+	if [[ "$installed" != "true" ]] && [[ -z "$(mkcert_pkg_manager)" ]] && ! command -v brew >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
 		local raw_arch
 		raw_arch=$(uname -m)
 		local arch=""
