@@ -752,6 +752,34 @@ _build_triage_review_prompt() {
 }
 
 #######################################
+# Log and return 0 when the triage provider-auth cooldown skips model launch
+# (GH#38655). Arguments: $1 - resolved triage model.
+#######################################
+_triage_auth_cooldown_skip() {
+	local model="$1"
+	# An empty model uses the same fingerprint key as _triage_auth_cooldown_record.
+	_triage_auth_cooldown_active "$model" || return 1
+	echo "[pulse-wrapper] dispatch_triage_reviews: triage-provider-auth-unsupported runner_capability_unmet cooldown skipped (provider pool unchanged; ttl=${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}s)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Resolve the triage model: thinking tier first, then standard. Prints
+# "<tier>|<model>" (model empty when both resolutions fail).
+#######################################
+_triage_resolve_model_and_tier() {
+	local tier="thinking" model=""
+	model=$("$MODEL_AVAILABILITY_HELPER" resolve thinking || echo "")
+	if [[ -z "$model" ]]; then
+		tier="standard"
+		model=$("$MODEL_AVAILABILITY_HELPER" resolve standard || echo "")
+	fi
+	[[ -n "$model" ]] || echo "[pulse-wrapper] dispatch_triage_reviews: thinking and standard model resolution failed" >>"$LOGFILE"
+	printf '%s|%s\n' "$tier" "$model"
+	return 0
+}
+
+#######################################
 # Dispatch triage review workers for needs-maintainer-review issues
 #
 # Reads the pre-fetched triage status from the triage state file and
@@ -791,14 +819,14 @@ dispatch_triage_reviews() {
 
 	# Resolve the thinking tier first, then fall back to the standard tier. Keep
 	# the canonical tier paired with the concrete model for honest telemetry.
-	local resolved_model=""
-	local resolved_tier="thinking"
-	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve thinking || echo "")
-	if [[ -z "$resolved_model" ]]; then
-		resolved_tier="standard"
-		resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve standard || echo "")
-	fi
-	[[ -n "$resolved_model" ]] || echo "[pulse-wrapper] dispatch_triage_reviews: thinking and standard model resolution failed" >>"$LOGFILE"
+	local resolved_model="" resolved_tier="" resolution=""
+	resolution=$(_triage_resolve_model_and_tier)
+	resolved_tier="${resolution%%|*}"
+	resolved_model="${resolution#*|}"
+
+	# GH#38655: skip model launch while a runner-local provider-auth cooldown is
+	# active for the unchanged provider pool (Anthropic OAuth-only runners).
+	_triage_auth_cooldown_skip "$resolved_model" && { _triage_outcome_json 0 0 0 0 0; return 0; }
 
 	# Parse "## owner/repo" headers and "- Issue #N: ... [status: **needs-review**]" lines.
 	local candidates=""

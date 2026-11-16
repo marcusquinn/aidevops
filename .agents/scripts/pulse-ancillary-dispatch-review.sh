@@ -173,7 +173,7 @@ _dispatch_triage_review_worker() {
 	# classification only. Suppression diagnostics never retain this content.
 	local raw_sample=""
 	if [[ -f "$review_output_file" ]]; then
-		raw_sample=$(head -c 1000 "$review_output_file" 2>/dev/null || true)
+		raw_sample=$(_triage_runtime_output_sample "$review_output_file")
 	fi
 	local artifact_cleanup_status=0
 	_triage_cleanup_sensitive_artifact_dir "$review_artifact_dir" \
@@ -187,6 +187,9 @@ _dispatch_triage_review_worker() {
 		"$runtime_status" "$artifact_cleanup_status" "$raw_sample")
 	if [[ -n "$infra_failure_reason" ]]; then
 		echo "[pulse-wrapper] Triage runtime failure for #${issue_num} in ${repo_slug}: ${infra_failure_reason} — infrastructure/contract failure, not a review failure (GH#23854)" >>"$LOGFILE"
+	fi
+	if [[ "$infra_failure_reason" == "triage-provider-auth-unsupported" ]]; then
+		_triage_auth_cooldown_record "$resolved_model"
 	fi
 
 	# Validate output safety and post or suppress the review comment.
