@@ -1920,9 +1920,10 @@ _pcc_dispatch_stalled() {
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
 	fi
-	# GH#38651: mergeability and checks ride the same call for the paused-land pre-check.
+	# GH#38651: mergeability and checks ride the same call for the paused-land
+	# pre-check; headRefName lets draft linkage pick among several For #N refs.
 	pr_json=$(gh pr view "$pr" --repo "$repo" \
-		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt,mergeable,statusCheckRollup) || return 1
+		--json state,isDraft,isCrossRepository,headRefName,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt,mergeable,statusCheckRollup) || return 1
 	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1

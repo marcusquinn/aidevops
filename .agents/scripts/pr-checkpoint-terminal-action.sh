@@ -238,6 +238,14 @@ _pcc_terminal_fenced_apply() (
 		trusted=$(_pr_checkpoint_trusted_logins "$comments" "$repo") &&
 		state=$(_pcc_terminal_comment_state "$comments" "$trusted" "$release_id" \
 			"<!-- ${_PCC_TERMINAL_MARKER} pr=${pr} head=${head} ") && [[ "$state" == current ]] || return 1
+	# GH#38651: a trusted revision approval posted after the paused-land
+	# snapshot owns scheduling; recheck it on the fresh comments.
+	if [[ "$cause" == paused_landable ]]; then
+		declare -F _pcc_comments_have_revision_approval >/dev/null || return 1
+		if _pcc_comments_have_revision_approval "$comments" "$trusted"; then
+			return 1
+		fi
+	fi
 	metadata=$(gh api "repos/${repo}/issues/${issue}") && _pcc_terminal_issue_eligible "$metadata" || return 1
 	metadata=$(gh pr view "$pr" --repo "$repo" --json number,state,isDraft,isCrossRepository,headRefOid,headRefName,author,labels,body,closingIssuesReferences) &&
 		_pr_checkpoint_pr_metadata_is_eligible "$metadata" "$repo" "$pr" "$issue" "$head" "$ref" "" || return 1
