@@ -38,10 +38,7 @@ _full_loop_release_resolve_repo_root() {
 	return 1
 }
 
-REPO_ROOT=$(_full_loop_release_resolve_repo_root) || {
-	printf 'Cannot locate the canonical aidevops repository. Set AIDEVOPS_REPO_PATH.\n' >&2
-	exit 1
-}
+REPO_ROOT=""
 _FULL_LOOP_RELEASE_PATH=""
 _FULL_LOOP_RELEASE_CONTROL_PATH=""
 _FULL_LOOP_RELEASE_PREPARATION_PATH=""
@@ -86,7 +83,7 @@ _full_loop_release_reap_stale_control_worktrees() {
 		_full_loop_release_tree_recently_active "$stale_path" 1 && continue
 		# Non-force via the audited fence: a dirty or busy snapshot is preserved.
 		: "$repository_root"
-		_full_loop_release_remove_worktree "$stale_path" release-control-stale || true
+		_full_loop_release_remove_worktree "$stale_path" release-control-stale >&2 || true
 	done
 	return 0
 }
@@ -113,14 +110,6 @@ _full_loop_release_prepare_control_worktree() {
 	trap 'cleanup_release_worktree' EXIT
 	return 0
 }
-
-# Every release-owned tree below is created in this process (GH#37365).
-_full_loop_release_declare_lifecycle_owner
-
-if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
-	printf 'Cannot prepare a linked release control worktree.\n' >&2
-	exit 1
-fi
 
 _full_loop_release_bind_repo_context() {
 	local repo="${AIDEVOPS_FULL_LOOP_REPO:-}"
@@ -1061,4 +1050,111 @@ main() {
 	return $?
 }
 
+# Shape-only checks for `hold` (OWNER/REPO --pr N ...) and `reap-stale`
+# (--limit N); the delegated handlers stay authoritative.
+_full_loop_release_valid_hold_argv() {
+	local repo="${2:-}"
+	local has_pr=0
+	[[ -n "$repo" && "$repo" != --* ]] || return 1
+	shift 2
+	while [[ $# -gt 0 ]]; do
+		local flag="${1:-}"
+		case "$flag" in
+		--pr)
+			[[ "${2:-}" =~ ^[0-9]+$ ]] || return 1
+			has_pr=1
+			shift 2
+			;;
+		--version | --ttl-minutes)
+			[[ -n "${2:-}" ]] || return 1
+			shift 2
+			;;
+		*) return 1 ;;
+		esac
+	done
+	[[ "$has_pr" -eq 1 ]] || return 1
+	return 0
+}
+
+_full_loop_release_valid_reap_argv() {
+	shift
+	while [[ $# -gt 0 ]]; do
+		local flag="${1:-}"
+		[[ "$flag" == --limit && "${2:-}" =~ ^[0-9]+$ ]] || return 1
+		shift 2
+	done
+	return 0
+}
+
+# Check argv before resolving a repository or creating a control checkout. The
+# command handlers remain authoritative for semantic and runtime validation.
+_full_loop_release_valid_argv() {
+	local command_name="${1:-patch}"
+	local source_pr="${2:-}"
+	local tag_name="" reason="" aggregate=""
+	local expected="${AIDEVOPS_RELEASE_EXPECTED_SOURCES:-}"
+	case "$command_name" in
+	hold)
+		_full_loop_release_valid_hold_argv "$@"
+		return $?
+		;;
+	reap-stale)
+		_full_loop_release_valid_reap_argv "$@"
+		return $?
+		;;
+	esac
+	_full_loop_release_is_manual_hold_command "$command_name" && return 0
+	[[ "$source_pr" =~ ^[0-9]+$ ]] || return 1
+	shift 2
+	while [[ $# -gt 0 ]]; do
+		local argument="$1"
+		local value="${2:-}"
+		case "$argument" in
+		incremental | full) shift ;;
+		--expected-sources | --tag | --reason | --aggregate-commit)
+			[[ -n "$value" ]] || return 1
+			case "$argument" in
+			--expected-sources) expected="$value" ;;
+			--tag) tag_name="$value" ;;
+			--reason) reason="$value" ;;
+			--aggregate-commit)
+				[[ "$value" =~ ^[0-9a-f]{40}$ ]] || return 1
+				aggregate="$value"
+				;;
+			esac
+			shift 2 ;;
+		*) return 1 ;;
+		esac
+	done
+	[[ -z "$aggregate" || ("$command_name" == recover-aggregate && "$aggregate" =~ ^[0-9a-f]{40}$) ]] || return 1
+	case "$command_name" in
+	sources | recover-reservation) [[ -z "$tag_name$reason$expected" ]] || return 1 ;;
+	status | reconcile | refresh-aggregate) ;;
+	recover-aggregate) [[ "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && -n "$expected" ]] || return 1 ;;
+	adopt-published) [[ -n "$tag_name" && -z "$expected$reason" ]] || return 1 ;;
+	authorization-gap) [[ -n "$tag_name" && -n "$expected" && -n "$reason" ]] || return 1 ;;
+	patch | minor | major) [[ -z "$tag_name$reason" ]] || return 1 ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+if [[ $# -eq 1 && ( "${1:-}" == help || "${1:-}" == --help || "${1:-}" == -h ) ]]; then
+	_full_loop_release_usage
+	exit 0
+fi
+if ! _full_loop_release_valid_argv "$@"; then
+	_full_loop_release_usage >&2
+	exit 1
+fi
+REPO_ROOT=$(_full_loop_release_resolve_repo_root) || {
+	printf 'Cannot locate the canonical aidevops repository. Set AIDEVOPS_REPO_PATH.\n' >&2
+	exit 1
+}
+# Every release-owned tree below is created in this process (GH#37365).
+_full_loop_release_declare_lifecycle_owner
+if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
+	printf 'Cannot prepare a linked release control worktree.\n' >&2
+	exit 1
+fi
 main "$@"
