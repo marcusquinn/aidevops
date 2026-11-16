@@ -375,6 +375,30 @@ if [[ "$RETIRED_RC" -ne 0 || ! -d "$RETIRED_PATH" || "$RETIRED_HISTORY" != "seal
 fi
 printf 'PASS provably retired stale lifetime record is sealed into history and creation proceeds\n'
 
+# A sealed Pulse row is still refused while a live owner lease names the path:
+# Pulse proofs never inspect owner leases, so begin-create must.
+LEASED_BRANCH="test/stale-lifetime-leased"
+LEASED_PATH="${WORKTREES}/canonical-test-stale-lifetime-leased"
+LEASED_RECORD='{"schema":1,"manager":"pulse","generation":"'"$(printf 'd%.0s' {1..32})"'","state":"sealed","sealed_at":1,"admission_cancelled":true,"identity":{"path":"'"$LEASED_PATH"'","source_inode":"1:4"},"launches":[],"created_at":1}'
+git -C "$CANONICAL" branch "$LEASED_BRANCH" "$PINNED_SHA"
+sqlite3 "$REGISTRY_DB" "INSERT INTO worktree_owners (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_process_start, owner_dead_seen_at)
+	VALUES ('${LEASED_PATH}', '${LEASED_BRANCH}', $$, 'leased-session', '', '', 'bash', '', '');"
+seed_stale_lifetime "$LEASED_PATH" "$LEASED_RECORD"
+LEASED_RC=0
+LEASED_OUTPUT=$(
+	cd "$CANONICAL" || exit 1
+	AIDEVOPS_SKIP_AUTO_CLAIM=1 "$HELPER" add "$LEASED_BRANCH" "$LEASED_PATH" 2>&1
+) || LEASED_RC=$?
+if [[ "$LEASED_RC" -eq 0 || -e "$LEASED_PATH" ||
+	"$LEASED_OUTPUT" != *"WORKTREE_OWNERSHIP_ERROR_REASON=stale-lifetime-record"* ]] ||
+	[[ "$(sqlite3 "$REGISTRY_DB" "SELECT record FROM worktree_managed_lifetimes WHERE path = '${LEASED_PATH}';")" != "$LEASED_RECORD" ]]; then
+	printf 'FAIL live owner lease did not refuse replacement of a sealed Pulse record: rc=%s output=%s\n' \
+		"$LEASED_RC" "$LEASED_OUTPUT"
+	exit 1
+fi
+sqlite3 "$REGISTRY_DB" "DELETE FROM worktree_owners WHERE worktree_path = '${LEASED_PATH}';"
+printf 'PASS live owner lease refuses replacement of a sealed Pulse record without mutating it\n'
+
 ACTIVE_RECEIPT_BRANCH="test/recreated-active-path"
 ACTIVE_RECEIPT_PATH="${WORKTREES}/canonical-test-recreated-active-path"
 git -C "$CANONICAL" branch "$ACTIVE_RECEIPT_BRANCH" "$PINNED_SHA"

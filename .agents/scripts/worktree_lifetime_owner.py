@@ -274,13 +274,15 @@ def retire_absent(connection, record, path):
 
     Workers retire worktrees without sealing, which leaves the row unsealed.
     Sealing uses the same unit/process drain proof as Pulse cleanup, so a live
-    or unprovable owner still refuses. A recorded live owner lease refuses too.
+    or unprovable owner still refuses. A recorded live owner lease refuses even
+    for an already sealed row: Pulse proofs never inspect owner leases.
     """
+    import worktree_lifetime_idle as idle_policy
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='worktree_owners'").fetchone():
+        idle_policy.owner_clear(connection, path)
     if record.get("state") == "sealed":
         return
     from worktree_lifetime_archive import managed_module
-    import worktree_lifetime_idle as idle_policy
-    idle_policy.owner_clear(connection, path)
     managed_module().seal(record)
 
 
