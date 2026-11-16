@@ -873,6 +873,48 @@ _pulse_drain_requested_bundle() {
 }
 
 #######################################
+# t19064 (GH#38633): a dispatch round admitted before the drain request keeps
+# starting ranked candidates for a bounded grace. Stopping at the next
+# candidate boundary left 76% of ranked candidates unprocessed in drained
+# rounds, and every runtime activation writes the marker, so post-activation
+# launches waited a median 11 minutes. No new round, census or floor
+# re-enumeration starts under a drain (_dispatch_compute_capacity and floor
+# refill still read _pulse_drain_requested_bundle). The grace counts from the
+# earliest marker mtime this process has observed, so marker rewrites by
+# repeated activations never extend it. Launched candidates are in
+# the snapshot .consumed ledger handed to the activated bundle (GH#38048).
+# AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=0 restores the immediate stop.
+# Globals: _PULSE_DRAIN_ROUND_BUNDLE (set to the activated bundle on stop)
+# Returns: 0 when the admitted round must stop, 1 to keep dispatching
+#######################################
+_pulse_drain_stops_admitted_round() {
+	local bundle="" grace="" now_epoch="" mtime="" age=0
+	_PULSE_DRAIN_ROUND_BUNDLE=""
+	bundle=$(_pulse_drain_requested_bundle) || return 1
+	_PULSE_DRAIN_ROUND_BUNDLE="$bundle"
+	grace="${AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S:-600}"
+	[[ "$grace" =~ ^[0-9]+$ ]] || grace=600
+	[[ "$grace" -gt 0 ]] || return 0
+	now_epoch=$(date +%s 2>/dev/null) || return 0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
+	mtime=$(_file_mtime_epoch "${LOCKDIR}/drain_requested" 2>/dev/null) || return 0
+	[[ "$mtime" =~ ^[1-9][0-9]*$ && "$mtime" -le "$now_epoch" ]] || return 0
+	if [[ ! "${_PULSE_DRAIN_GRACE_START:-}" =~ ^[0-9]+$ || "$mtime" -lt "$_PULSE_DRAIN_GRACE_START" ]]; then
+		_PULSE_DRAIN_GRACE_START="$mtime"
+	fi
+	age=$((now_epoch - _PULSE_DRAIN_GRACE_START))
+	[[ "$age" -lt "$grace" ]] || return 0
+	if [[ "${_PULSE_DRAIN_GRACE_LOGGED:-0}" != "1" ]]; then
+		_PULSE_DRAIN_GRACE_LOGGED=1
+		echo "[pulse-wrapper] Dispatch_max continuing admitted round under cooperative drain grace (age ${age}s < ${grace}s) for activated bundle ${bundle} (t19064, GH#37907)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_drain_round_grace" 2>/dev/null || true
+		fi
+	fi
+	return 1
+}
+
+#######################################
 # t19015 (GH#38413): GH#37907 asks a drained earlier-bundle cycle to exit so
 # the scheduler starts the activated bundle. Dispatch stops under the drain,
 # but the cycle still ran every remaining preflight and pipeline stage (p50
@@ -1297,9 +1339,8 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
-		local drain_bundle=""
-		if drain_bundle=$(_pulse_drain_requested_bundle); then
-			echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during serial loop (GH#37907)" >>"$LOGFILE"
+		if _pulse_drain_stops_admitted_round; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${_PULSE_DRAIN_ROUND_BUNDLE} during serial loop (GH#37907)" >>"$LOGFILE"
 			break
 		fi
 		local budget_rc=0
@@ -1660,9 +1701,8 @@ _dispatch_max_should_stop() {
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 		return 0
 	fi
-	local drain_bundle=""
-	if drain_bundle=$(_pulse_drain_requested_bundle); then
-		echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${drain_bundle} during parallel loop (GH#37907)" >>"$LOGFILE"
+	if _pulse_drain_stops_admitted_round; then
+		echo "[pulse-wrapper] Dispatch_max stopping early: cooperative drain requested for activated bundle ${_PULSE_DRAIN_ROUND_BUNDLE} during parallel loop (GH#37907)" >>"$LOGFILE"
 		return 0
 	fi
 	local budget_rc=0
