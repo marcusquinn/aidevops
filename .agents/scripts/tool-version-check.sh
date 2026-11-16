@@ -473,8 +473,11 @@ get_installed_version() {
 		fi
 
 		if [[ -z "$version" && -n "$ver_rest" ]]; then
-			version=$(echo "$ver_rest" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-			[[ -n "$version" ]] || version=$(echo "$ver_rest" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+			# Here-string + first-line expansion: no early-exit reader under pipefail.
+			local rest_matches
+			rest_matches=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$ver_rest") ||
+				rest_matches=$(grep -oE '[0-9]+\.[0-9]+' <<<"$ver_rest") || rest_matches=""
+			version="${rest_matches%%$'\n'*}"
 		fi
 
 		echo "${version:-unknown}"
