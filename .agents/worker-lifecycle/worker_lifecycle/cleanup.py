@@ -29,7 +29,12 @@ REPOSITORY_CONFIG = FilePolicy("unsafe-repository-config", max_size=1048576, pri
 
 def _repository_entries(config: Path) -> list:
     """Read a bounded operator-owned configuration without following links."""
-    configuration = json.loads(read_owned_file(config, REPOSITORY_CONFIG).decode("utf-8"))
+    try:
+        raw = read_owned_file(config, REPOSITORY_CONFIG)
+    except FileNotFoundError as error:
+        # GH#38667: name the missing configuration instead of a bare FileNotFoundError.
+        raise ValueError("repository-config-unavailable") from error
+    configuration = json.loads(raw.decode("utf-8"))
     if not isinstance(configuration, dict):
         raise ValueError("invalid-repository-config")
     entries = configuration.get("initialized_repos")

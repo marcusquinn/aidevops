@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from worker_lifecycle import launch
-from worker_lifecycle.cleanup import _failure_details
+from worker_lifecycle.cleanup import _failure_details, _repository_entries
 from worker_lifecycle.cli_errors import error_details
 from worker_lifecycle.filesystem import FilesystemValidationError, validate_private_path
 from worker_lifecycle.refusal import failure_category
@@ -35,6 +35,14 @@ class FailureCategory(unittest.TestCase):
         for error, label in cases:
             with self.subTest(error=repr(error)):
                 self.assertEqual(failure_category(error), label)
+
+    def test_missing_repository_config_is_a_named_refusal(self):
+        """GH#38667: not a bare FileNotFoundError / unexpected-error."""
+        with tempfile.TemporaryDirectory() as name:
+            with self.assertRaises(ValueError) as caught:
+                _repository_entries(Path(name) / "absent.json")
+        detail = error_details(caught.exception, "cleanup-worktree")
+        self.assertEqual(detail["detail"], "repository-config-unavailable")
 
     def test_invalid_event_limit_is_not_exhaustion(self):
         with tempfile.TemporaryDirectory() as name:
