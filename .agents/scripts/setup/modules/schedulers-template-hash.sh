@@ -14,9 +14,10 @@
 # drift and ran a full setup without ever converging.
 #
 # The template set matches the incremental planner in setup.sh
-# (_setup_ai_session_plan_file): setup/modules/schedulers*.sh plus
-# setup/_scheduler_runtime.sh. This file matches that glob, so a change to the
-# hash itself also counts as drift.
+# (_setup_ai_session_plan_file): setup/modules/schedulers*.sh,
+# setup/_scheduler_runtime.sh and runtime-env.sh, which renders every service
+# PATH (GH#37888: a PATH-order fix there never reached installed units). This
+# file matches that glob, so a change to the hash itself also counts as drift.
 #
 # Usage: source "${SCRIPT_DIR}/schedulers-template-hash.sh"
 #        scheduler_template_hash <setup modules dir>
@@ -54,7 +55,7 @@ scheduler_template_hash() {
 	local setup_dir="" file="" digest="" manifest=""
 	[[ -n "$modules_dir" && -d "$modules_dir" ]] || return 1
 	setup_dir="${modules_dir%/*}"
-	for file in "$modules_dir"/schedulers*.sh "$setup_dir/_scheduler_runtime.sh"; do
+	for file in "$modules_dir"/schedulers*.sh "$setup_dir/_scheduler_runtime.sh" "${setup_dir%/*}/runtime-env.sh"; do
 		[[ -f "$file" ]] || continue
 		digest=$(_scheduler_template_sha256 <"$file") || return 1
 		[[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
