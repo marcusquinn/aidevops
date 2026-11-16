@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.215] - 2026-11-16
+
+### Changed
+
+- Performance: single-pass procfs cwd scan in recovery process guard (GH#38675)
+
+### Fixed
+
+- stale-blocked sweep prefilters in jq, hands failed reads to retry, adds ready lane
+- surface not-open non-closing refs and anchor For/Ref closure check
+- continue partial-continuation reconcile across pages within the deadline (GH#38677) (#38679)
+- fix-the-fixer detector caches verdicts, gates dispatch repos and stays inside its stage bound
+- native systemd lifecycle fixtures match registry-authorised retirement (GH#38667) (#38671)
+- clearer lifecycle admission and producer verify errors (GH#38668)
+
 ## [3.39.214] - 2026-11-16
 
 ### Changed
