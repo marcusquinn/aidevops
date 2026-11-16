@@ -397,6 +397,10 @@ _brh_require_live_credentials() {
 		print_error "RUNPOD_API_KEY is not set. Run: aidevops secret RUNPOD_API_KEY -- blender-render-helper.sh <command> --live"
 		return 1
 	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		print_error "jq not found; required to record pod IDs before live create"
+		return 1
+	fi
 	if ! command -v runpodctl >/dev/null 2>&1; then
 		print_error "runpodctl not found (brew install runpod/runpodctl/runpodctl)"
 		return 1
@@ -436,7 +440,7 @@ _brh_runpod_create() {
 			--ports "22/tcp" --docker-args "bash -c '${remote_cmd}'"
 		return $?
 	fi
-	local err_file="" out="" rc=0 code="" id=""
+	local err_file="" out="" rc=0 code="" id="" error_json=""
 	err_file="$(mktemp)" || return 1
 	out="$(runpodctl pod create --name "$name" --image "$image" \
 		--gpu-id "$gpu_type" --gpu-count 1 --volume-in-gb "$volume" \
@@ -447,8 +451,12 @@ _brh_runpod_create() {
 		printf '%s\n' "$out"
 		return 0
 	fi
-	code="$(jq -r 'first(.code // empty)' "$err_file" 2>/dev/null)" || code=""
-	id="$(jq -r 'first(.id // empty)' "$err_file" 2>/dev/null)" || id=""
+	# runpodctl emits a compact JSON error line, possibly after config diagnostics.
+	# Select one object so code and id always come from the same error; retain
+	# the original stderr below for operators.
+	error_json="$(jq -Rsc '[split("\n")[] | fromjson? | objects | select(.code != null)][0] // {}' "$err_file")" || error_json='{}'
+	code="$(jq -r '.code // empty' <<<"$error_json")" || code=""
+	id="$(jq -r '.id // empty' <<<"$error_json")" || id=""
 	cat "$err_file" >&2
 	rm -f "$err_file"
 	case "$code" in
@@ -463,7 +471,7 @@ _brh_runpod_create() {
 }
 
 _brh_runpod_status() {
-	_brh_exec runpodctl pod list
+	_brh_exec runpodctl pod list --all
 	return $?
 }
 
@@ -781,7 +789,7 @@ _brh_teardown() {
 		return 0
 	fi
 	local remaining=""
-	if ! remaining="$(runpodctl pod list)"; then
+	if ! remaining="$(runpodctl pod list --all)"; then
 		print_error "Could not list pods to confirm removal: check the provider dashboard before assuming billing stopped"
 		return 1
 	fi
