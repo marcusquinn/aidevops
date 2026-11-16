@@ -1904,8 +1904,9 @@ _pcc_dispatch_stalled() {
 		! "$pr" =~ ^[1-9][0-9]*$ || ! -d "$path" ]] || ! _pcc_login_is_safe "$login"; then
 		return 2
 	fi
+	# GH#38651: mergeability and checks ride the same call for the paused-land pre-check.
 	pr_json=$(gh pr view "$pr" --repo "$repo" \
-		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt) || return 1
+		--json state,isDraft,isCrossRepository,headRefOid,author,commits,body,labels,closingIssuesReferences,createdAt,mergeable,statusCheckRollup) || return 1
 	head=$(jq -er 'select(.state == "OPEN" and .isDraft == true) | .headRefOid |
 		select(test("^[0-9a-fA-F]{40,64}$"))' <<<"$pr_json") || return 1
 	runner=$(jq -er '.author.login' <<<"$pr_json") || return 1
@@ -1950,6 +1951,11 @@ _pcc_dispatch_stalled() {
 	_pcc_prepare_stall_escalation "$repo" "$pr" "$head" "$release_id" "$stalls" \
 		"$nonprogress" "$pr_releases" "$comments" "$trusted_logins" || true
 	if [[ ( "$stalls" -ge 2 && -z "$PCC_ESCALATION_TIER" ) || "$nonprogress" -ge "$_PCC_MAX_PR_RELEASES" || "$pr_releases" -ge "$_PCC_MAX_PR_PROGRESS_RELEASES" ]]; then
+		# GH#38651: land verified partial work instead of pausing the issue.
+		if _pcc_land_paused_checkpoint "$repo" "$issue" "$pr" "$head" "$release_id" \
+			"$pr_json" "$comments" "$trusted_logins"; then
+			return 0
+		fi
 		# GH#36019: a fuse-only stop reports the per-PR count in the record and
 		# is posted once per PR, so later human-pushed heads add no comments.
 		local fuse=false
