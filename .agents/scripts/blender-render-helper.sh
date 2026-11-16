@@ -415,32 +415,62 @@ _brh_render_command() {
 	# The deadline timeout covers the wait too. Settings and the Blender pin are
 	# applied by scene_overrides.py. No single quotes: the caller wraps in bash -c '...'.
 	# shellcheck disable=SC2016
-	printf 'mkdir -p %s && cd %s && timeout %sm bash -c "until [ -f .staged ]; do sleep 10; done; blender -b %s -Y -P enable_gpu.py -P scene_overrides.py -E %s -o //frames/frame_#### -s %s -e %s -a"; runpodctl remove pod $RUNPOD_POD_ID' \
+	printf 'mkdir -p %s && cd %s && timeout %sm bash -c "until [ -f .staged ]; do sleep 10; done; blender -b %s -Y -P enable_gpu.py -P scene_overrides.py -E %s -o //frames/frame_#### -s %s -e %s -a"; runpodctl pod delete $RUNPOD_POD_ID' \
 		"$BRH_REMOTE_DIR" "$BRH_REMOTE_DIR" "$deadline" "$blend_base" "$engine" "$start" "$end"
 	return 0
 }
 
+# Creates one pod. Live: stdout is the create JSON. On failure the stderr JSON
+# error is parsed: codes create_uncertain/wait_timeout/wait_interrupted mean the
+# pod may exist and bill, so its id is printed as "UNCERTAIN_POD_ID=<id>" on
+# stdout (return 2) for the caller to record. Never retry a create blindly.
 _brh_runpod_create() {
 	local name="$1"
 	local gpu_type="$2"
 	local image="$3"
 	local volume="$4"
 	local remote_cmd="$5"
-	_brh_exec runpodctl create pod --name "$name" --gpuType "$gpu_type" --gpuCount 1 \
-		--imageName "$image" --volumeSize "$volume" --ports "22/tcp" \
-		--args "bash -c '${remote_cmd}'"
-	return $?
+	if [[ "$BRH_LIVE" -ne 1 ]]; then
+		_brh_exec runpodctl pod create --name "$name" --image "$image" \
+			--gpu-id "$gpu_type" --gpu-count 1 --volume-in-gb "$volume" \
+			--ports "22/tcp" --docker-args "bash -c '${remote_cmd}'"
+		return $?
+	fi
+	local err_file="" out="" rc=0 code="" id=""
+	err_file="$(mktemp)" || return 1
+	out="$(runpodctl pod create --name "$name" --image "$image" \
+		--gpu-id "$gpu_type" --gpu-count 1 --volume-in-gb "$volume" \
+		--ports "22/tcp" --docker-args "bash -c '${remote_cmd}'" 2>"$err_file")"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		rm -f "$err_file"
+		printf '%s\n' "$out"
+		return 0
+	fi
+	code="$(jq -r '.code // empty' "$err_file" 2>/dev/null | head -n 1)"
+	id="$(jq -r '.id // empty' "$err_file" 2>/dev/null | head -n 1)"
+	cat "$err_file" >&2
+	rm -f "$err_file"
+	case "$code" in
+	create_uncertain | wait_timeout | wait_interrupted)
+		if [[ -n "$id" ]]; then
+			printf 'UNCERTAIN_POD_ID=%s\n' "$id"
+			return 2
+		fi
+		;;
+	esac
+	return 1
 }
 
 _brh_runpod_status() {
-	_brh_exec runpodctl get pod
+	_brh_exec runpodctl pod list
 	return $?
 }
 
 _brh_runpod_teardown_one() {
 	local pod_id="$1"
-	_brh_exec runpodctl stop pod "$pod_id" || true
-	_brh_exec runpodctl remove pod "$pod_id"
+	_brh_exec runpodctl pod stop "$pod_id" || true
+	_brh_exec runpodctl pod delete "$pod_id"
 	return $?
 }
 
@@ -577,17 +607,26 @@ _brh_submit() {
 	job_dir="$(cd "$(dirname "$BRH_O_MANIFEST")" && pwd)" || return 1
 	local blend_base=""
 	blend_base="$(basename "$blend")"
-	local idx="" s="" e="" remote_cmd="" name="" pod_out="" pod_id=""
+	local idx="" s="" e="" remote_cmd="" name="" pod_out="" pod_id="" create_rc=0
 	while read -r idx s e; do
 		remote_cmd="$(_brh_render_command "$s" "$e" "$BRH_O_DEADLINE_MINUTES" "$engine" "$blend_base")"
 		name="blender-render-${idx}-$(printf '%s' "$token" | cut -c9-14)"
 		printf '# worker %s: frames %s-%s\n' "$idx" "$s" "$e"
-		pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd")" || return 1
+		create_rc=0
+		pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd")" || create_rc=$?
+		if [[ "$create_rc" -ne 0 ]]; then
+			pod_id="$(printf '%s\n' "$pod_out" | sed -n 's/^UNCERTAIN_POD_ID=//p' | head -n 1)"
+			if [[ "$BRH_LIVE" -eq 1 && -n "$pod_id" ]]; then
+				printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
+				print_error "Pod ${pod_id} may exist and bill (recorded in ${job_dir}/jobs.tsv). Stopping: check runpodctl pod list, then teardown or keep it deliberately"
+			fi
+			return 1
+		fi
 		printf '%s\n' "$pod_out"
 		if [[ "$BRH_LIVE" -eq 1 ]]; then
-			pod_id="$(printf '%s\n' "$pod_out" | sed -n 's/.*pod "\{0,1\}\([A-Za-z0-9]*\)"\{0,1\} created.*/\1/p')"
+			pod_id="$(printf '%s\n' "$pod_out" | jq -r '.id // empty' 2>/dev/null | head -n 1)"
 			if [[ -z "$pod_id" ]]; then
-				print_error "Could not read the pod id from runpodctl output; run status and teardown manually"
+				print_error "Could not read the pod id (.id) from runpodctl JSON output; run pod list and teardown manually"
 				return 1
 			fi
 			printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
@@ -738,17 +777,22 @@ _brh_teardown() {
 		_brh_provider_call teardown "$pod" || failed=1
 	done <"${BRH_O_JOB}/jobs.tsv"
 	if [[ "$BRH_LIVE" -ne 1 ]]; then
-		printf '+ runpodctl get pod   # then confirm none of the job pod ids are listed\n'
+		printf '+ runpodctl pod list   # then confirm none of the job pod ids are listed\n'
 		return 0
 	fi
 	local remaining=""
-	if ! remaining="$(runpodctl get pod)"; then
+	if ! remaining="$(runpodctl pod list)"; then
 		print_error "Could not list pods to confirm removal: check the provider dashboard before assuming billing stopped"
+		return 1
+	fi
+	local listed_ids=""
+	if ! listed_ids="$(printf '%s' "$remaining" | jq -r '(if type == "array" then . else (.pods // .data // []) end)[]?.id')"; then
+		print_error "Could not parse the pod list JSON: check the provider dashboard before assuming billing stopped"
 		return 1
 	fi
 	while IFS=$'\t' read -r idx s e pod; do
 		[[ -n "$pod" ]] || continue
-		if grep -qF "$pod" <<<"$remaining"; then
+		if grep -qxF "$pod" <<<"$listed_ids"; then
 			print_error "Pod ${pod} still listed: billing may continue"
 			failed=1
 		fi
