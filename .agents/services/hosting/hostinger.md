@@ -280,7 +280,7 @@ aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN
 HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN hostinger-helper.sh api api/hosting/v1/orders
 ```
 
-An explicit `HOSTINGER_SECRET_NAME` always wins over an exported `HOSTINGER_API_TOKEN`; an invalid or unstored selector is refused before any request. The site commands (`list`, `connect`, `exec`) still need the legacy config, read from `configs/hostinger-config.json` beside the scripts directory or from `HOSTINGER_CONFIG_FILE`. Copy the template and edit it with server details:
+A `HOSTINGER_SECRET_NAME` other than the default wins over an exported `HOSTINGER_API_TOKEN`. Setting it to `HOSTINGER_API_TOKEN` (the default) behaves like leaving it unset: an exported token is used as is, and only without one does the provider default resolve. An invalid or unstored selector is refused before any request. The site commands (`list`, `connect`, `exec`) still need the legacy config, read from `configs/hostinger-config.json` beside the scripts directory or from `HOSTINGER_CONFIG_FILE`. Copy the template and edit it with server details:
 
 ```bash
 cp configs/hostinger-config.json.txt configs/hostinger-config.json

@@ -198,7 +198,8 @@ exec_on_site() {
 # API operations: api [METHOD] ENDPOINT [JSON_BODY]
 # The token comes from HOSTINGER_API_TOKEN, else the secret named by
 # HOSTINGER_SECRET_NAME (re-exec with injection, like fleet/cron), else the
-# legacy config file. An explicit HOSTINGER_SECRET_NAME always wins.
+# legacy config file. A non-default HOSTINGER_SECRET_NAME wins over an exported
+# HOSTINGER_API_TOKEN; the default name keeps an exported token.
 # It is passed to curl on stdin, never on the command line.
 api_call() {
     local first="${1:-}"
@@ -352,7 +353,9 @@ fleet_command() {
     inventory)
         shift
         for argument in "$@"; do
-            [[ "$argument" == "--api-response" ]] && offline=1
+            case "$argument" in
+            --api-response | --api-response=*) offline=1 ;;
+            esac
         done
         # Inject the token from the secret store without exposing it.
         if [[ "$offline" -eq 0 ]]; then
