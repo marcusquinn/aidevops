@@ -16,6 +16,17 @@ _worktree_unprivileged_proc_scan() {
 	return 1
 }
 
+# One python pass replaces a readlink fork per process (about 400 per scan).
+# Readable entries are final; every unreadable one is returned as `F pid` so the
+# shell loop below still applies its denial handling. A shell-level readlink
+# override is honoured by using the per-process loop instead.
+_worktree_proc_cwd_map() {
+	local proc_root="$1"
+	[[ "$(type -t readlink)" == file ]] || return 1
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_process_proc.py" cwdmap "$proc_root" 2>/dev/null
+}
+
 _capture_worktree_proc_cwds() {
 	local proc_root="$1"
 	local cwd_link=""
@@ -24,10 +35,26 @@ _capture_worktree_proc_cwds() {
 	local current_uid=""
 	local visibility_degraded=0
 	local proc_dir=""
+	local cwd_map="" map_line="" map_kind="" map_pid="" map_target=""
+	local -a cwd_links=()
 
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
 
-	for cwd_link in "$proc_root"/[0-9]*/cwd; do
+	if cwd_map=$(_worktree_proc_cwd_map "$proc_root"); then
+		while IFS=$'\t' read -r map_kind map_pid map_target; do
+			case "$map_kind" in
+			R)
+				printf '%s\n' "$map_target"
+				captured_count=$((captured_count + 1))
+				;;
+			F) cwd_links+=("$proc_root/$map_pid/cwd") ;;
+			esac
+		done <<<"$cwd_map"
+	else
+		cwd_links=("$proc_root"/[0-9]*/cwd)
+	fi
+
+	for cwd_link in ${cwd_links[@]+"${cwd_links[@]}"}; do
 		[[ -L "$cwd_link" || -e "$cwd_link" ]] || continue
 		if ! cwd_target=$(readlink "$cwd_link" 2>/dev/null); then
 			# Vanished processes are harmless. Linux commonly denies cwd reads for

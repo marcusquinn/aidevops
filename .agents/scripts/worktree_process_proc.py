@@ -70,7 +70,38 @@ def diagnostic_name(process: Path) -> str:
     return "".join(char for char in name if 32 <= ord(char) < 127)[:32] or "unknown"
 
 
+def cwd_map(proc_root: Path) -> int:
+    """Print `R<TAB>pid<TAB>cwd` (readable), `S<TAB>pid` (provably irrelevant), else `F<TAB>pid`.
+
+    Replaces one readlink fork per process for the shell provider. Every failed
+    or unusual read is reported as `F` so the caller applies its full
+    denial/zombie/foreign-UID/privileged handling; nothing is decided here.
+    """
+    with os.scandir(proc_root) as entries:
+        for entry in entries:
+            if not entry.name.isascii() or not entry.name.isdigit():
+                continue
+            try:
+                target = os.readlink(os.path.join(entry.path, "cwd"))
+            except OSError:
+                # Same rule as the shell consumer: only vanished, zombie and
+                # provably foreign-UID processes are skipped here; the rest stay F.
+                irrelevant = denied_process_is_irrelevant(Path(entry.path), os.getuid())
+                print(f"{'S' if irrelevant else 'F'}\t{entry.name}")
+                continue
+            if not target or any(ord(char) < 32 or ord(char) == 127 for char in target):
+                print(f"F\t{entry.name}")
+                continue
+            print(f"R\t{entry.name}\t{target}")
+    return 0
+
+
 def main(arguments: list[str]) -> int:
+    if len(arguments) == 2 and arguments[0] == "cwdmap":
+        try:
+            return cwd_map(Path(arguments[1]))
+        except OSError:
+            return 1
     if len(arguments) != 1 or arguments[0] not in ("paths", "denied"):
         return 1
     try:
