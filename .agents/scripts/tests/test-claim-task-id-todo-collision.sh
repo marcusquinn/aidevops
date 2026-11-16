@@ -152,6 +152,28 @@ test_id_active_in_todo() {
 	return 0
 }
 
+test_id_declined_in_todo() {
+	local name="3b: _id_exists_in_todo — declined [-] and cancelled [~] entries return 0"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	_make_todo "$tmpdir" \
+		"- [-] t2159 declined task ref:GH#19455 declined:2026-10-19" \
+		"- [~] t2160 cancelled task"
+
+	local rc1=0 rc2=0
+	_id_exists_in_todo "2159" "$tmpdir" || rc1=$?
+	_id_exists_in_todo "2160" "$tmpdir" || rc2=$?
+	if [[ $rc1 -eq 0 && $rc2 -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected return 0 for both, got $rc1/$rc2"
+	fi
+	return 0
+}
+
 test_id_zero_padded_variant() {
 	local name="4: _id_exists_in_todo — zero-padded t02155 matches query 2155"
 	local tmpdir
@@ -404,6 +426,7 @@ main() {
 	test_id_not_in_empty_todo
 	test_id_completed_in_todo
 	test_id_active_in_todo
+	test_id_declined_in_todo
 	test_id_zero_padded_variant
 	test_no_collision
 	test_single_skip
