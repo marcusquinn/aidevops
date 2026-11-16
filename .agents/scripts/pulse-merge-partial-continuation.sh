@@ -1036,19 +1036,51 @@ _pmpc_revisit_in_review_issue() {
 # origin:worker issues without auto-dispatch for _pmpc_restore_available_dispatch),
 # never every open issue. Persist the next page, pending issue IDs and their
 # phase before processing so a killed/slow issue cannot starve the page suffix.
-# Full pages stay due next cycle; the final available page resets the cursor and
-# starts the normal cadence interval.
+# Full pages continue within the deadline (GH#38677; optional page budget
+# PULSE_PARTIAL_RECONCILE_MAX_PAGES, 0 = unbounded); the final available page
+# resets the cursor and starts the normal cadence interval.
 # Cursor: line 1 = next page ("N" in-review, "aN" available), optional
 # "phase=review|available" for the pending issues, then pending issue numbers.
+# Process one page of pending issues, persisting the cursor before each issue.
+# A deadline between issues retains every unstarted issue in the cursor.
+# Args: $1=repo slug, $2=deadline epoch, $3=cursor file, $4=cursor token,
+#       $5=phase of the pending issues, $6=newline-separated issue numbers
+# Returns: 0 page done, 3 deadline reached, 1 on failure
+_pmpc_process_page() {
+	local repo_slug="$1" deadline="$2" cursor="$3" token="$4" pending_phase="$5" issues="$6"
+	local remaining="$issues" issue_num=""
+	local now_epoch
+	printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+	while IFS= read -r issue_num; do
+		[[ -n "$issue_num" ]] || continue
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		# Advance past only the current issue before its potentially slow API reads.
+		if [[ "$remaining" == *$'\n'* ]]; then
+			remaining="${remaining#*$'\n'}"
+		else
+			remaining=""
+		fi
+		printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
+		if [[ "$pending_phase" == available ]]; then
+			_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
+			continue
+		fi
+		_pmpc_revisit_in_review_issue "$repo_slug" "$issue_num" || return 1
+	done <<<"$issues"
+	return 0
+}
+
 # Args: $1=repo slug, $2=deadline epoch
 # Returns: 0 at traversal end, 3 when more pages/time are needed, 1 on read failure
 _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
 	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" issue_num="" now_epoch="" count=0
-	local line="" loaded=0 remaining="" phase="review" pending_phase="review" last_page=0 resumed=0
-	local avail_phase="available"
+	local cursor="" issues_json="" issues="" now_epoch="" count=0
+	local line="" loaded=0 phase="review" pending_phase="review" last_page=0 resumed=0
+	local avail_phase="available" pages_done=0 max_pages="${PULSE_PARTIAL_RECONCILE_MAX_PAGES:-0}"
+	[[ "$max_pages" =~ ^[0-9]+$ ]] || max_pages=0
 	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ && "$deadline" =~ ^[0-9]+$ ]] || return 1
 	[[ "$cap" =~ ^[1-9][0-9]*$ && "$cap" -le 100 ]] || cap=10
 	cursor="${cursor_dir}/${repo_slug//\//__}"
@@ -1108,26 +1140,7 @@ _pm_reconcile_partial_continuations() {
 		else
 			token="${next_page}"
 		fi
-		remaining="$issues"
-		printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
-		while IFS= read -r issue_num; do
-			[[ -n "$issue_num" ]] || continue
-			now_epoch=$(date +%s) || return 1
-			[[ "$now_epoch" -lt "$deadline" ]] || return 3
-			# Advance past only the current issue before its potentially slow API
-			# reads. A deadline between issues retains every unstarted issue.
-			if [[ "$remaining" == *$'\n'* ]]; then
-				remaining="${remaining#*$'\n'}"
-			else
-				remaining=""
-			fi
-			printf '%s\nphase=%s\n%s\n' "$token" "$pending_phase" "$remaining" >"$cursor" || return 1
-			if [[ "$pending_phase" == available ]]; then
-				_pmpc_restore_available_dispatch "$repo_slug" "$issue_num" || true
-				continue
-			fi
-			_pmpc_revisit_in_review_issue "$repo_slug" "$issue_num" || return 1
-		done <<<"$issues"
+		_pmpc_process_page "$repo_slug" "$deadline" "$cursor" "$token" "$pending_phase" "$issues" || return $?
 		issues=""
 		if [[ "$token" == a1 && "$phase" == review ]]; then
 			phase="$avail_phase"
@@ -1137,7 +1150,16 @@ _pm_reconcile_partial_continuations() {
 			[[ "$now_epoch" -lt "$deadline" ]] || return 3
 			continue
 		fi
-		break
+		# GH#38677: the available phase's last page resets the token to "1".
+		[[ "$token" != "1" ]] || break
+		# More pages remain: keep going while time and the optional page budget allow.
+		pages_done=$((pages_done + 1))
+		if [[ "$max_pages" -gt 0 && "$pages_done" -ge "$max_pages" ]]; then
+			return 3
+		fi
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		page="$next_page"
 	done
 	[[ "$token" == "1" ]] || return 3
 	return 0
