@@ -380,16 +380,28 @@ printf 'PASS slow repositories get an adaptive per-repository census budget\n'
 	# Census admission sees the same normal cap as the reduced-work scan.
 	[[ "$(_dispatch_repo_enumeration_budget owner/sleepy 1)" == 1 ]]
 	rc=0
-	clamped=$(_dispatch_census_enumerate_repo owner/sleepy /fixture 1 0 50 skip "") || rc=$?
+	clamped=$(
+		_dispatch_enumerate_repo_bounded() { return 124; }
+		_dispatch_census_enumerate_repo owner/sleepy /fixture 1 0 50 skip ""
+	) || rc=$?
 	[[ "$rc" == 124 && "$clamped" == '[]' && "$(<"$sleepy_file")" == '4 escalated' ]]
 	[[ "$(<"$limit_file")" == 25 ]]
 	grep -q 'enumeration unavailable: repo=owner/sleepy rc=124 budget=1s' "$LOGFILE"
 	completeness_file="${TEST_ROOT}/reduced-completeness"
 	recovered=$(_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "$completeness_file")
 	jq -e 'length == 1 and .[0].number == 9' <<<"$recovered" >/dev/null
-	[[ "$(<"$completeness_file")" == 0 && "$(<"$limit_file")" == 25 ]]
+	[[ "$(<"$completeness_file")" == 0 && "$(<"$limit_file")" == '25 1' ]]
 	[[ "$(_dispatch_repo_enumeration_limit owner/other 50)" == 50 ]]
 	[[ "$(_dispatch_repo_enumeration_limit owner/sleepy 10)" == 10 ]]
+	# Seven more completed reduced scans permit a larger, still-capped probe.
+	for scan in 2 3 4 5 6 7 8; do
+		_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null
+	done
+	[[ "$(<"$limit_file")" == '50 0' ]]
+	[[ "$(_dispatch_repo_enumeration_budget owner/sleepy 1)" == 1 ]]
+	rc=0
+	_dispatch_census_enumerate_repo owner/sleepy /fixture 1 100 50 skip "" >/dev/null || rc=$?
+	[[ "$rc" == 124 && "$(<"$limit_file")" == 25 ]]
 	# Reduced scans cannot use the old above-cap budget, and repeated full-cap
 	# timeouts continue shrinking only this repository, with a floor of one.
 	_dispatch_enumerate_repo_bounded() {
