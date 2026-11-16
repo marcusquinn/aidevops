@@ -1060,12 +1060,31 @@ test_serial_loop_drain_round_grace() {
 	fi
 
 	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
-	result=$(_PULSE_DRAIN_GRACE_FIRST_SEEN=$(($(date +%s) - 1200)) _dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	result=$(_PULSE_DRAIN_GRACE_START=$(($(date +%s) - 1200)) _dispatch_floor_loop "$candidate_file" 10 10 "test_user")
 	if [[ "$result" == "0 1" ]]; then
 		print_result "serial_loop: rewritten drain marker does not extend the grace" 0
 	else
 		print_result "serial_loop: rewritten drain marker does not extend the grace" 1 "got=${result}"
 	fi
+
+	# A marker already old at first sighting anchors the grace at its mtime,
+	# not at the sighting, so a later rewrite cannot stretch it.
+	local first_rc=0 rewrite_rc=0 old_mtime="" anchored_grace=0
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	touch -t 200001010000 "${LOCKDIR}/drain_requested"
+	old_mtime=$(_file_mtime_epoch "${LOCKDIR}/drain_requested")
+	unset _PULSE_DRAIN_GRACE_START
+	AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=4000000000 _pulse_drain_stops_admitted_round || first_rc=$?
+	anchored_grace=$(($(date +%s) - old_mtime - 60))
+	printf 'owner=%s\nbundle=bundle-next\n' "$$" >"${LOCKDIR}/drain_requested"
+	AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S="$anchored_grace" _pulse_drain_stops_admitted_round || rewrite_rc=$?
+	if [[ "$first_rc" -eq 1 && "${_PULSE_DRAIN_GRACE_START:-}" == "$old_mtime" && "$rewrite_rc" -eq 0 ]]; then
+		print_result "drain grace anchors at the earliest observed marker mtime" 0
+	else
+		print_result "drain grace anchors at the earliest observed marker mtime" 1 \
+			"first_rc=${first_rc} start=${_PULSE_DRAIN_GRACE_START:-} old=${old_mtime} rewrite_rc=${rewrite_rc}"
+	fi
+	unset _PULSE_DRAIN_GRACE_START
 	rm -rf "$LOCKDIR" "$candidate_file"
 	return 0
 }

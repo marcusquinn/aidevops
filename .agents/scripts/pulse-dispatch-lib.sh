@@ -880,8 +880,8 @@ _pulse_drain_requested_bundle() {
 # launches waited a median 11 minutes. No new round, census or floor
 # re-enumeration starts under a drain (_dispatch_compute_capacity and floor
 # refill still read _pulse_drain_requested_bundle). The grace counts from the
-# earlier of the marker mtime and this process's first sighting, so marker
-# rewrites by repeated activations never extend it. Launched candidates are in
+# earliest marker mtime this process has observed, so marker rewrites by
+# repeated activations never extend it. Launched candidates are in
 # the snapshot .consumed ledger handed to the activated bundle (GH#38048).
 # AIDEVOPS_PULSE_DRAIN_ROUND_GRACE_S=0 restores the immediate stop.
 # Globals: _PULSE_DRAIN_ROUND_BUNDLE (set to the activated bundle on stop)
@@ -897,11 +897,12 @@ _pulse_drain_stops_admitted_round() {
 	[[ "$grace" -gt 0 ]] || return 0
 	now_epoch=$(date +%s 2>/dev/null) || return 0
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
-	[[ "${_PULSE_DRAIN_GRACE_FIRST_SEEN:-}" =~ ^[0-9]+$ ]] || _PULSE_DRAIN_GRACE_FIRST_SEEN="$now_epoch"
 	mtime=$(_file_mtime_epoch "${LOCKDIR}/drain_requested" 2>/dev/null) || return 0
 	[[ "$mtime" =~ ^[1-9][0-9]*$ && "$mtime" -le "$now_epoch" ]] || return 0
-	[[ "$_PULSE_DRAIN_GRACE_FIRST_SEEN" -ge "$mtime" ]] || mtime="$_PULSE_DRAIN_GRACE_FIRST_SEEN"
-	age=$((now_epoch - mtime))
+	if [[ ! "${_PULSE_DRAIN_GRACE_START:-}" =~ ^[0-9]+$ || "$mtime" -lt "$_PULSE_DRAIN_GRACE_START" ]]; then
+		_PULSE_DRAIN_GRACE_START="$mtime"
+	fi
+	age=$((now_epoch - _PULSE_DRAIN_GRACE_START))
 	[[ "$age" -lt "$grace" ]] || return 0
 	if [[ "${_PULSE_DRAIN_GRACE_LOGGED:-0}" != "1" ]]; then
 		_PULSE_DRAIN_GRACE_LOGGED=1
