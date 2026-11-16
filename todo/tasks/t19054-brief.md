@@ -10,7 +10,7 @@
 
 `aidevops_bounded_operation` (and the GPT image tool, which shares the resolver) rejects a session-owned linked worktree of a repo registered in `repos.json` when the OpenCode session started inside a *different* Git repository. A session rooted in the framework repo that full-loops a PR in another registered repo gets:
 
-```
+```json
 {"schema":"aidevops.interactive-operation/v1","error":"Operation workdir belongs to an unrelated Git repository."}
 ```
 
