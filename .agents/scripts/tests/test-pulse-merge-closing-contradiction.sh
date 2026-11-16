@@ -91,6 +91,8 @@ check_case 'inline code between negation and keyword routed without looping' "Do
 check_case 'case-insensitive Ref/native contradiction held' 'rEf #123' "$LOCAL_REFS" 1
 check_case 'qualified same-repo contradiction held' 'For test/repo#123' "$LOCAL_REFS" 1
 check_case 'legitimate leaf closure allowed' 'Resolves #123' "$LOCAL_REFS" 0
+check_case 'prose for #N is not a For link (GH#38682)' $'Dates lane batch for #123: notes\nResolves #123' "$LOCAL_REFS" 0
+check_case 'indented For line with native closure still held' $'Summary\n  For #123\nResolves #123' "$LOCAL_REFS" 1
 check_case 'different For issue allowed' $'For #124\nResolves #123' "$LOCAL_REFS" 0
 check_case 'same number in other repo allowed' 'For other/repo#123' "$LOCAL_REFS" 0
 check_case 'native cross-repo identity preserved' 'For #123' '[{"number":123,"repository":{"nameWithOwner":"other/repo"}}]' 0

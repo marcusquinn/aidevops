@@ -417,6 +417,7 @@ _worker_briefed_link_kind() {
 		WORKER_BRIEFED_TRUST_REASON="non-closing reference to issue #${linked_issue} which is not open (GH#33999)"
 		# GH#38496: no merge pass can land this head; see the marker sync below.
 		_WORKER_BRIEFED_PERMANENT_BLOCK="non_closing_reference_not_open"
+		_WORKER_BRIEFED_NOT_OPEN_ISSUE="$linked_issue"
 		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked via non-closing reference to issue #${linked_issue} which is not open (GH#33999)" >>"$LOGFILE"
 		return 1
 	fi
@@ -679,6 +680,43 @@ _worker_briefed_permanent_block_file() {
 }
 
 #######################################
+# Post one idempotent PR comment and add a discoverable label for a PR whose
+# non-closing reference points at a not-open issue. Comment is keyed by marker
+# and deduped against existing PR comments; it never grants merge authority.
+# Args: $1=pr_number, $2=repo_slug, $3=linked issue number
+# Returns: 0 always (best effort)
+#######################################
+_worker_briefed_flag_not_open_reference() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local marker="<!-- aidevops:non-closing-ref-not-open:v1 -->"
+	local label="non-closing-ref-closed-issue"
+	local reason="" existing="" body_file=""
+	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	existing=$(gh api --paginate --slurp "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null |
+		jq -r --arg m "$marker" '.[][] | select((.body // "") | contains($m)) | .id' 2>/dev/null) || existing=""
+	if [[ -n "$existing" ]]; then
+		return 0
+	fi
+	reason=$(gh api "repos/${repo_slug}/issues/${linked_issue}" --jq '.state_reason // "unknown"' 2>/dev/null) || reason="unknown"
+	body_file=$(mktemp "${TMPDIR:-/tmp}/non-closing-ref.XXXXXX") || return 0
+	printf '%s\n\n%s\n' "$marker" \
+		"Automated merge is blocked (t2449/GH#33999): this PR references issue #${linked_issue} with a non-closing keyword (For/Ref) but the issue is not open (stateReason: ${reason}). Next action (maintainer or interactive session): if the issue closed as completed and this diff only records completion evidence, rewrite the keyword to \`Resolves #${linked_issue}\` (harmless on a closed issue) and rerun the merge; if it was superseded or not planned, close this PR. The next merge pass re-evaluates automatically; all CI, review and hold gates still apply." >"$body_file"
+	if declare -F gh_pr_comment >/dev/null 2>&1; then
+		gh_pr_comment "$pr_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null 2>&1 || true
+	fi
+	rm -f "$body_file"
+	gh label create "$label" --repo "$repo_slug" --color D93F0B \
+		--description "Worker PR links a closed issue with For/Ref; needs relink or close" >/dev/null 2>&1 || true
+	if declare -F gh_pr_edit_safe >/dev/null 2>&1; then
+		gh_pr_edit_safe "$pr_number" --repo "$repo_slug" --add-label "$label" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
 # Record or clear the permanent t2449 marker after one merge-pass verdict
 # (GH#38496). Permanent means a non-closing reference to a non-open issue, or
 # an untrusted linked-issue author without cryptographic approval: no merge
@@ -704,6 +742,12 @@ _worker_briefed_sync_permanent_block_marker() {
 	if [[ "$verdict_rc" == 0 || -z "$block_class" || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
 		rm -f "$marker" 2>/dev/null || true
 		return 0
+	fi
+	# Surface a not-open non-closing link once per head (new marker only), so a
+	# maintainer session can find and repair it instead of it stalling silently.
+	if [[ "$block_class" == "non_closing_reference_not_open" ]] &&
+		! { [[ -f "$marker" ]] && [[ "$(cut -f1 "$marker" 2>/dev/null)" == "$head_sha" ]]; }; then
+		_worker_briefed_flag_not_open_reference "$pr_number" "$repo_slug" "${_WORKER_BRIEFED_NOT_OPEN_ISSUE:-}" || true
 	fi
 	mkdir -p "${marker%/*}" 2>/dev/null || return 0
 	tmp_file=$(mktemp "${marker}.XXXXXX" 2>/dev/null) || return 0
