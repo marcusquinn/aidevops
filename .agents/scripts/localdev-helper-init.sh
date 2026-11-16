@@ -123,6 +123,18 @@ run_stable_mkcert() {
 	return 1
 }
 
+record_mkcert_install() {
+	local install_method="$1"
+	[[ -z "$install_method" ]] && return 0
+	# shellcheck source=install-record-helper.sh
+	source "$SCRIPT_DIR/install-record-helper.sh"
+	local update_path="$install_method package manager"
+	[[ "$install_method" == "binary-download" ]] && update_path="Re-download mkcert upstream binary"
+	install_record "mkcert" "$install_method" "$(command -v mkcert)" \
+		"Local development TLS certificates" "$update_path" || print_warning "Could not record mkcert install"
+	return 0
+}
+
 # Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
 # Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
@@ -134,6 +146,7 @@ run_stable_mkcert() {
 # Returns: 0 if mkcert is available after this function, 1 if installation failed.
 ensure_mkcert() {
 	local installed=false
+	local install_method=""
 	if command -v mkcert >/dev/null 2>&1; then
 		installed=true
 	else
@@ -141,26 +154,32 @@ ensure_mkcert() {
 		if command -v brew >/dev/null 2>&1; then
 			if brew install mkcert 2>/dev/null; then
 				installed=true
+				install_method="brew"
 			fi
 		elif command -v apt-get >/dev/null 2>&1; then
 			if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
 				installed=true
+				install_method="apt"
 			fi
 		elif command -v apt >/dev/null 2>&1; then
 			if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
 				installed=true
+				install_method="apt"
 			fi
 		elif command -v dnf >/dev/null 2>&1; then
 			if sudo dnf install -y mkcert 2>/dev/null; then
 				installed=true
+				install_method="dnf"
 			fi
 		elif command -v pacman >/dev/null 2>&1; then
 			if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
 				installed=true
+				install_method="pacman"
 			fi
 		elif command -v apk >/dev/null 2>&1; then
 			if sudo apk add mkcert 2>/dev/null; then
 				installed=true
+				install_method="apk"
 			fi
 		fi
 	fi
@@ -188,6 +207,7 @@ ensure_mkcert() {
 				export PATH="$bin_dir:$PATH"
 				if command -v mkcert >/dev/null 2>&1; then
 					installed=true
+					install_method="binary-download"
 					print_success "mkcert installed via binary download to $bin_dir/mkcert"
 				fi
 			fi
@@ -206,6 +226,7 @@ ensure_mkcert() {
 	fi
 
 	print_success "mkcert available"
+	record_mkcert_install "$install_method"
 
 	# Install the local CA into the system trust store (one-time setup).
 	# This makes mkcert-generated certs trusted by browsers and curl.

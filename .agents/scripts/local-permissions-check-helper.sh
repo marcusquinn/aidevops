@@ -586,6 +586,7 @@ render_platform_json() {
 render_apps() {
 	if ! is_macos; then
 		printf 'Host/runtime app inventory is macOS-specific.\n'
+		printf 'Use aidevops installs for cross-platform install records and untracked tools.\n'
 		printf 'Active host: %s\n' "$(detect_active_host)"
 		printf 'Use report or json for %s capability checks.\n' "$(platform_family)"
 		return 0
