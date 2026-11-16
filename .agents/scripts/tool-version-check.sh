@@ -25,6 +25,7 @@ AUTO_UPDATE=false
 CATEGORY="all"
 JSON_OUTPUT=false
 QUIET=false
+INVENTORY=false
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
 		QUIET=true
 		shift
 		;;
+	--inventory)
+		INVENTORY=true
+		shift
+		;;
 	--help | -h)
 		echo "Usage: tool-version-check.sh [OPTIONS]"
 		echo ""
@@ -56,6 +61,8 @@ while [[ $# -gt 0 ]]; do
 		echo "  --category, -c     Check only specific category (npm, brew, pip, custom, all)"
 		echo "  --json, -j         Output results as JSON"
 		echo "  --quiet, -q        Only show outdated tools"
+		echo "  --inventory        List managed tools (name, category, command, package; tab-separated)"
+		echo "                     without version or network calls"
 		echo "  --help, -h         Show this help"
 		exit 0
 		;;
@@ -440,8 +447,11 @@ get_installed_version() {
 			return 0
 		fi
 
-		local ver_output
+		local ver_output ver_rest
 		ver_output=$(head -1 "$_ver_log")
+		# GH#38587: some tools (ShellCheck: "version: 0.11.0") print the
+		# version after a banner line; consulted only when line 1 has none.
+		ver_rest=$(tail -n +2 "$_ver_log")
 		rm -f "$_ver_log"
 		if [[ -n "$pkg" ]]; then
 			version=$(echo "$ver_output" | grep -oE "$_NPM_SEMVER_PATTERN" | head -1)
@@ -460,6 +470,11 @@ get_installed_version() {
 				echo "$pkg_version"
 				return 0
 			fi
+		fi
+
+		if [[ -z "$version" && -n "$ver_rest" ]]; then
+			version=$(echo "$ver_rest" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+			[[ -n "$version" ]] || version=$(echo "$ver_rest" | grep -oE '[0-9]+\.[0-9]+' | head -1)
 		fi
 
 		echo "${version:-unknown}"
@@ -1230,8 +1245,25 @@ _output_summary_and_updates() {
 	return 0
 }
 
+# GH#38587: one source of truth for "managed by aidevops update" consumers
+# (install-record-helper.sh report). Reads the tool rows only: no version
+# probes, registry lookups or network calls.
+_output_inventory() {
+	local tool_spec category name cmd ver_flag pkg update_cmd
+	for tool_spec in "${NPM_TOOLS[@]}" "${BREW_TOOLS[@]}" "${PIP_TOOLS[@]}" "${CUSTOM_TOOLS[@]}"; do
+		IFS='|' read -r category name cmd ver_flag pkg update_cmd <<<"$tool_spec"
+		_tool_package_supported_on_platform "$pkg" || continue
+		printf '%s\t%s\t%s\t%s\n' "$name" "$category" "$cmd" "$pkg"
+	done
+	return 0
+}
+
 # Main
 main() {
+	if [[ "$INVENTORY" == "true" ]]; then
+		_output_inventory
+		return 0
+	fi
 	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
 		echo -e "${BOLD}${BLUE}Tool Version Check${NC}"
 		echo "=================="

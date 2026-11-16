@@ -185,6 +185,29 @@ aidevops_ensure_symlink_target() {
 	return 0
 }
 
+# GH#38587: session isolation repoints XDG_DATA_HOME at a per-project OpenCode
+# data root. uv derives its tool, tool-bin and managed-Python locations from
+# XDG_DATA_HOME, so tools installed in a session would land in (and be read
+# from) that disposable folder. Call this BEFORE exporting the isolated
+# XDG_DATA_HOME: it pins uv to the user's real locations, exporting each
+# variable only when unset so nested launches inherit the outer values.
+aidevops_export_user_tool_dirs() {
+	local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+	# Already inside an isolated session (pre-fix parent): its XDG_DATA_HOME is
+	# the session root, never the user's; fall back to the XDG default.
+	[[ "${AIDEVOPS_OPENCODE_ISOLATED_DB:-0}" != 1 ]] || data_home="$HOME/.local/share"
+	local bin_dir="${XDG_BIN_HOME:-}"
+	if [[ -z "$bin_dir" ]]; then
+		bin_dir="${data_home%/}"
+		bin_dir="${bin_dir%/*}/bin"
+	fi
+	[[ -n "${UV_TOOL_DIR:-}" ]] || export UV_TOOL_DIR="${data_home%/}/uv/tools"
+	[[ -n "${UV_TOOL_BIN_DIR:-}" ]] || export UV_TOOL_BIN_DIR="$bin_dir"
+	[[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]] || export UV_PYTHON_INSTALL_DIR="${data_home%/}/uv/python"
+	[[ -n "${UV_PYTHON_BIN_DIR:-}" ]] || export UV_PYTHON_BIN_DIR="$bin_dir"
+	return 0
+}
+
 # =============================================================================
 # Tool Version Pins
 # =============================================================================

@@ -455,6 +455,15 @@ run_tabby_tui_with_maintenance_resume() {
     return 0
 }
 
+# GH#38587: keep uv tools/Python in the user's real locations, not the
+# per-project data root that XDG_DATA_HOME is about to point at.
+export_user_tool_dirs_before_isolation() {
+    if command -v aidevops_export_user_tool_dirs >/dev/null 2>&1; then
+        aidevops_export_user_tool_dirs
+    fi
+    return 0
+}
+
 run_isolated_tui() {
     local launch_dir="$1"
     local data_dir="$2"
@@ -486,6 +495,7 @@ run_isolated_tui() {
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     if ((tabby_shell == 1)); then
@@ -1173,6 +1183,7 @@ execute_desktop_launch() {
     prewarm_opencode_data_dir "${data_dir}"
 
     cd "${launch_dir}" || return 1
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     exec "${desktop_binary}" "$@"
@@ -1347,6 +1358,7 @@ run_server_owner() {
 
     print_info "Starting foreground OpenCode owner on ${server_url}"
     print_info "Server shard: ${data_dir}"
+    export_user_tool_dirs_before_isolation
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
     export AIDEVOPS_OPENCODE_SERVER_OWNER=1
