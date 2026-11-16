@@ -76,15 +76,22 @@ _runtime_path_is_low() {
 	local path="$1"
 	case "$path" in
 	*.md | *.mdx | *.rst | *.adoc | docs/*.txt | */docs/*.txt | README | README.* | */README | */README.* | CHANGELOG* | */CHANGELOG* | LICENSE | LICENSE.* | */LICENSE | */LICENSE.* | \
-		*.d.ts | *.d.mts | *.d.cts | *.pyi | */tests/* | */test/* | */__tests__/* | test-* | test_* | *_test.* | *.test.* | *.spec.* | \
+		*.d.ts | *.d.mts | *.d.cts | *.pyi | */tests/* | */test/* | */__tests__/* | \
 		.github/* | .qlty/* | .shellcheckrc | */.shellcheckrc | .markdownlint* | */.markdownlint* | .yamllint* | */.yamllint* | \
 		.eslintrc* | */.eslintrc* | eslint.config.* | */eslint.config.* | .prettierrc* | */.prettierrc* | prettier.config.* | */prettier.config.* | \
-		.stylelintrc* | */.stylelintrc* | stylelint.config.* | */stylelint.config.* | biome.json | */biome.json | *lint*.config.* | *linters*.conf | \
+		.stylelintrc* | */.stylelintrc* | stylelint.config.* | */stylelint.config.* | biome.json | */biome.json | *linters*.conf | \
 		.agents/prompts/* | .agents/configs/prompt-hook-candidates.conf | todo/*.json | todo/*.jsonl | */todo/*.json | */todo/*.jsonl)
 		return 0
 		;;
-	*) return 1 ;;
 	esac
+	# Basename-only forms: a directory or substring must not make runtime source Low.
+	local base="${path##*/}"
+	case "$base" in
+	test-* | test_* | *_test.* | *.test.* | *.spec.* | *lint.config.* | *lint-staged.config.*)
+		return 0
+		;;
+	esac
+	return 1
 }
 
 _runtime_paths_are_low() {
