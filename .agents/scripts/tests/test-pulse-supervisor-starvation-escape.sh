@@ -112,7 +112,8 @@ reset_case() {
 	SUPERVISOR_QUEUE_ONLY=""
 	RECOVERY_CALLS=0
 	_PULSE_PREFETCH_DEGRADED=0
-	unset PULSE_LLM_DRAIN_ESCAPE_SECONDS PULSE_LLM_DEGRADED_ESCAPE_SECONDS PULSE_LLM_DRAIN_ESCAPE_DEFER
+	unset PULSE_LLM_DRAIN_ESCAPE_SECONDS PULSE_LLM_DEGRADED_ESCAPE_SECONDS PULSE_LLM_DRAIN_ESCAPE_DEFER \
+		PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS
 	return 0
 }
 
@@ -155,17 +156,52 @@ rc=1
 	grep -q 'evaluating the deferred drain escape' "$LOGFILE" && rc=0
 check "(b1) activated bundle cycle runs the deferred supervisor and clears the deferral" "$rc"
 
-# (b2a) a drained activated cycle runs the already-deferred escape itself.
+# (b2a) GH#38580: a second drained cycle keeps the escape deferred, with the
+# first-deferral epoch, so the activated bundle starts and dispatches first.
 reset_case 7300
 STUB_DRAIN_BUNDLE="bundle-next"
 STUB_RECOVERY_DUE=0
 _pulse_run_supervisor_phase
+read -r first_deferral_epoch _ <"$DEFERRAL_MARKER"
 STUB_DRAIN_BUNDLE="bundle-after"
+_pulse_run_supervisor_phase
+read -r kept_deferral_epoch kept_bundle <"$DEFERRAL_MARKER"
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && "$kept_bundle" == "bundle-after" ]] &&
+	[[ "$kept_deferral_epoch" -le "$first_deferral_epoch" ]] &&
+	grep -q 'keeping the GH#38162 escape deferred' "$LOGFILE" &&
+	! grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
+check "(b2a) a second drained cycle keeps the escape deferred" "$rc"
+
+# (b2b) the next undrained cycle then runs the deferred supervisor.
+STUB_DRAIN_BUNDLE=""
+_pulse_run_supervisor_phase
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && ! -f "$DEFERRAL_MARKER" ]] &&
+	grep -q 'evaluating the deferred drain escape' "$LOGFILE" && rc=0
+check "(b2b) the undrained cycle after repeated drains runs the deferred supervisor" "$rc"
+
+# (b2c) backstop: a deferral older than the ceiling runs in the drained cycle.
+reset_case 30000
+STUB_DRAIN_BUNDLE="bundle-next"
+STUB_RECOVERY_DUE=0
+printf '%s bundle-old\n' "$(($(date +%s) - 14500))" >"$DEFERRAL_MARKER"
 _pulse_run_supervisor_phase
 rc=1
 [[ "$SUPERVISOR_CALLS" -eq 1 && "$SUPERVISOR_ADMITTED" == "blocker_recovery" && "$SUPERVISOR_QUEUE_ONLY" == "0" && ! -f "$DEFERRAL_MARKER" ]] &&
-	grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
-check "(b2a) a second drained cycle runs the deferred escape" "$rc"
+	grep -q 'backstop 14400s' "$LOGFILE" && grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
+check "(b2c) a deferral past the backstop runs the escape in the drained cycle" "$rc"
+
+# (b2d) PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS=0 never runs it while drained.
+reset_case 30000
+STUB_DRAIN_BUNDLE="bundle-next"
+STUB_RECOVERY_DUE=0
+PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS=0
+printf '%s bundle-old\n' "$(($(date +%s) - 99999))" >"$DEFERRAL_MARKER"
+_pulse_run_supervisor_phase
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && -f "$DEFERRAL_MARKER" ]] && rc=0
+check "(b2d) MAX_DEFER_SECONDS=0 keeps deferring under drains" "$rc"
 
 # (b3) PULSE_LLM_DRAIN_ESCAPE_DEFER=0 runs the escape in the drained cycle.
 reset_case 7300
