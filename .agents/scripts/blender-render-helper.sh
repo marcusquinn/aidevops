@@ -447,8 +447,8 @@ _brh_runpod_create() {
 		printf '%s\n' "$out"
 		return 0
 	fi
-	code="$(jq -r '.code // empty' "$err_file" 2>/dev/null | head -n 1)"
-	id="$(jq -r '.id // empty' "$err_file" 2>/dev/null | head -n 1)"
+	code="$(jq -r 'first(.code // empty)' "$err_file" 2>/dev/null)" || code=""
+	id="$(jq -r 'first(.id // empty)' "$err_file" 2>/dev/null)" || id=""
 	cat "$err_file" >&2
 	rm -f "$err_file"
 	case "$code" in
@@ -615,7 +615,7 @@ _brh_submit() {
 		create_rc=0
 		pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd")" || create_rc=$?
 		if [[ "$create_rc" -ne 0 ]]; then
-			pod_id="$(printf '%s\n' "$pod_out" | sed -n 's/^UNCERTAIN_POD_ID=//p' | head -n 1)"
+			pod_id="$(printf '%s\n' "$pod_out" | sed -n '/^UNCERTAIN_POD_ID=/{s///p;q;}')"
 			if [[ "$BRH_LIVE" -eq 1 && -n "$pod_id" ]]; then
 				printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
 				print_error "Pod ${pod_id} may exist and bill (recorded in ${job_dir}/jobs.tsv). Stopping: check runpodctl pod list, then teardown or keep it deliberately"
@@ -624,7 +624,7 @@ _brh_submit() {
 		fi
 		printf '%s\n' "$pod_out"
 		if [[ "$BRH_LIVE" -eq 1 ]]; then
-			pod_id="$(printf '%s\n' "$pod_out" | jq -r '.id // empty' 2>/dev/null | head -n 1)"
+			pod_id="$(printf '%s\n' "$pod_out" | jq -r 'first(.id // empty)' 2>/dev/null)"
 			if [[ -z "$pod_id" ]]; then
 				print_error "Could not read the pod id (.id) from runpodctl JSON output; run pod list and teardown manually"
 				return 1
