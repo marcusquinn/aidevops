@@ -792,7 +792,8 @@ _gh_pr_merge_closure_check() {
 		awk '/^[[:space:]]*(```|~~~)/ { fenced = !fenced; next } !fenced' |
 		sed -E "s/${backtick}[^${backtick}]*${backtick}//g")
 	contradiction=$(printf '%s' "$pr_json" | jq -r --arg body "$stripped" --arg repo "$repo_slug" '
-		[ $body | scan("(?i)(?:^|[^a-z0-9_])(?:For|Ref):?[[:space:]]+(?:([a-z0-9_.-]+/[a-z0-9_.-]+))?#([0-9]+)")
+		[ $body | split("\n")[]
+		  | scan("(?i)^[[:space:]]*(?:For|Ref):?[[:space:]]+(?:([a-z0-9_.-]+/[a-z0-9_.-]+))?#([0-9]+)")
 		  | {repo: (.[0] // $repo), number: (.[1] | tonumber)} ] as $nonclosing
 		| [.closingIssuesReferences[] as $ref
 		   | ($ref.repository | .nameWithOwner //
