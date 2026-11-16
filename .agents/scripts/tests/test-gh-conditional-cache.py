@@ -23,7 +23,8 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 GOVERNOR = SCRIPTS / "gh-transport-governor.py"
 sys.path.insert(0, str(SCRIPTS))
 
-from gh_conditional_cache import MAX_AGE_SECONDS, eligible, prune  # noqa: E402
+from gh_conditional_cache import MAX_AGE_SECONDS, prune  # noqa: E402
+from gh_conditional_request import eligible  # noqa: E402
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys, time
