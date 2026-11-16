@@ -576,7 +576,8 @@ _triage_auth_cooldown_file() {
 #######################################
 _triage_auth_cooldown_record() {
 	local model="$1"
-	local cooldown_file fingerprint
+	local cooldown_file=""
+	local fingerprint=""
 	cooldown_file=$(_triage_auth_cooldown_file)
 	fingerprint=$(_triage_auth_fingerprint "$model")
 	[[ -n "$fingerprint" ]] || return 0
@@ -592,7 +593,7 @@ _triage_auth_cooldown_record() {
 #######################################
 _triage_auth_cooldown_active() {
 	local model="$1"
-	local cooldown_file recorded_at recorded_fp current_fp now
+	local cooldown_file="" recorded_at="" recorded_fp="" current_fp="" now=""
 	local ttl="${TRIAGE_AUTH_COOLDOWN_TTL_SECONDS:-21600}"
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=21600
 	cooldown_file=$(_triage_auth_cooldown_file)
