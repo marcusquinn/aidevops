@@ -1050,6 +1050,42 @@ main() {
 	return $?
 }
 
+# Shape-only checks for `hold` (OWNER/REPO --pr N ...) and `reap-stale`
+# (--limit N); the delegated handlers stay authoritative.
+_full_loop_release_valid_hold_argv() {
+	local repo="${2:-}"
+	local has_pr=0
+	[[ -n "$repo" && "$repo" != --* ]] || return 1
+	shift 2
+	while [[ $# -gt 0 ]]; do
+		local flag="${1:-}"
+		case "$flag" in
+		--pr)
+			[[ "${2:-}" =~ ^[0-9]+$ ]] || return 1
+			has_pr=1
+			shift 2
+			;;
+		--version | --ttl-minutes)
+			[[ -n "${2:-}" ]] || return 1
+			shift 2
+			;;
+		*) return 1 ;;
+		esac
+	done
+	[[ "$has_pr" -eq 1 ]] || return 1
+	return 0
+}
+
+_full_loop_release_valid_reap_argv() {
+	shift
+	while [[ $# -gt 0 ]]; do
+		local flag="${1:-}"
+		[[ "$flag" == --limit && "${2:-}" =~ ^[0-9]+$ ]] || return 1
+		shift 2
+	done
+	return 0
+}
+
 # Check argv before resolving a repository or creating a control checkout. The
 # command handlers remain authoritative for semantic and runtime validation.
 _full_loop_release_valid_argv() {
@@ -1057,8 +1093,17 @@ _full_loop_release_valid_argv() {
 	local source_pr="${2:-}"
 	local tag_name="" reason="" aggregate=""
 	local expected="${AIDEVOPS_RELEASE_EXPECTED_SOURCES:-}"
+	case "$command_name" in
+	hold)
+		_full_loop_release_valid_hold_argv "$@"
+		return $?
+		;;
+	reap-stale)
+		_full_loop_release_valid_reap_argv "$@"
+		return $?
+		;;
+	esac
 	_full_loop_release_is_manual_hold_command "$command_name" && return 0
-	[[ "$command_name" == reap-stale ]] && return 0
 	[[ "$source_pr" =~ ^[0-9]+$ ]] || return 1
 	shift 2
 	while [[ $# -gt 0 ]]; do
@@ -1072,7 +1117,10 @@ _full_loop_release_valid_argv() {
 			--expected-sources) expected="$value" ;;
 			--tag) tag_name="$value" ;;
 			--reason) reason="$value" ;;
-			--aggregate-commit) aggregate="$value" ;;
+			--aggregate-commit)
+				[[ "$value" =~ ^[0-9a-f]{40}$ ]] || return 1
+				aggregate="$value"
+				;;
 			esac
 			shift 2 ;;
 		*) return 1 ;;
