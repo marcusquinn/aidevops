@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.210] - 2026-11-16
+
+### Added
+
+- Runpod CLI-first guide and on-demand MCP, SaladCloud CLI guide
+- add Grok X research helper (#38564)
+
+### Fixed
+
+- avoid permission holds from absolute system paths in bash commands
+- accept ETag 304 when gh api -i prints headers
+- reduce work after capped enumeration timeouts
+- treat undecodable device file as device_unknown
+
 ## [3.39.209] - 2026-11-16
 
 ### Fixed
