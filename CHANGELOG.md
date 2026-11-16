@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.213] - 2026-11-16
+
+### Changed
+
+- Performance: expire active-DB events of all idle sessions (GH#38630)
+
+### Fixed
+
+- service PATH keeps aidevops gh/git shims ahead of npm global bin
+- repo recovery policy survives the .aidevops.json untrack migration
+- report detector authentication capability failures (#38623)
+- escalate per-repo health dashboard budget after data-gather timeouts (GH#38631) (#38632)
+- reopen PRs with no GitHub Actions check suite (GH#38624) (#38626)
+- rotate worktree-recovery-timings and worker-progress-blockers jsonl
+- wake worker-exit refills from the active bundle
+- age out retired bindings and add quota owner surface
+- validate arguments before control checkout (#38618)
+- prevent stale task ID allocation (#38617)
+- persist batch adaptation across runs (#38608)
+- treat all TODO.md checkbox states as occupied in claim-task-id collision guard
+
 ## [3.39.212] - 2026-11-16
 
 ### Fixed
