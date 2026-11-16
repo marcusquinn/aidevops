@@ -1312,7 +1312,7 @@ _id_exists_in_todo() {
 
 	# Match "- [?] tNNN" for any single checkbox state (space, x, -, ~, !, ...);
 	# zero-padded variant included via 0*
-	if grep -qE "^[[:space:]]*-[[:space:]]\[[^]]\][[:space:]]t0*${id_num}([[:space:]]|$)" "$todo_file"; then
+	if grep -qE "^[[:space:]]*-[[:space:]]\[.\][[:space:]]t0*${id_num}([[:space:]]|$)" "$todo_file"; then
 		return 0
 	fi
 
