@@ -266,6 +266,7 @@ re-reads current issue, trusted comments and dependency state. Each request keep
 its exact PR/branch/head; the helper never launches workers or changes scope,
 credentials, holds, assignments or approvals. Raw evidence stays in the private
 queue. Publish only allowlisted summaries through existing signed wrappers.
+Persistent quality-review dashboards are status surfaces and never hold recovery entries.
 
 For each actionable request:
 
