@@ -599,6 +599,26 @@ STUB
 	return 0
 }
 
+test_stale_dedicated_above_default() {
+	local tmpdir="$1" case_dir="${1}/stale-above-default"
+	local work_dir bin_dir output rc=0
+	mkdir -p "$case_dir" || return 1
+	work_dir=$(setup_develop_default_remote "$case_dir") || return 1
+	bin_dir=$(setup_open_policy_stub "$case_dir") || return 1
+	git -C "${case_dir}/seed" checkout task-id-counter-local >/dev/null 2>&1 || git -C "${case_dir}/seed" checkout -b task-id-counter-local origin/task-id-counter >/dev/null 2>&1 || return 1
+	printf '2200\n' >"${case_dir}/seed/.task-counter"
+	git -C "${case_dir}/seed" commit -am 'advance dedicated' >/dev/null 2>&1 || return 1
+	git -C "${case_dir}/seed" push origin task-id-counter-local:task-id-counter >/dev/null 2>&1 || return 1
+	printf '\n- [ ] t2500 out of band\n' >>"${work_dir}/TODO.md"
+	output=$(PATH="${bin_dir}:${PATH}" CAS_SSH_FALLBACK_ENABLED=0 "$CLAIM_SCRIPT" --title 'stale floor' --no-issue --repo-path "$work_dir" 2>&1) || rc=$?
+	if [[ $rc -ne 4 || "$output" != *'--sync-counter-branch'* ]]; then
+		fail "stale dedicated above default fails closed" "rc=$rc: $output"
+	else
+		pass "stale dedicated above default fails closed"
+	fi
+	return 0
+}
+
 test_develop_default_branch_sync_and_claim() {
 	local tmpdir="$1"
 	local name_detect="develop-default repo detects remote default branch instead of assuming main"
@@ -833,6 +853,7 @@ main() {
 	test_linked_worktree_preserves_history "$tmpdir" "$bin_dir"
 	test_canonical_implicit_counter_discovery "$tmpdir" "$bin_dir"
 	test_canonical_context_setup_failure "$tmpdir" "$bin_dir"
+	test_stale_dedicated_above_default "$tmpdir" || fail "stale dedicated above default" "fixture failed"
 	test_develop_default_branch_sync_and_claim "$tmpdir"
 	test_explicit_counter_freshness "$tmpdir" || fail "explicit counter freshness" "fixture failed"
 	test_stale_pin_repair "$tmpdir" || fail "stale pin repair" "fixture failed"
