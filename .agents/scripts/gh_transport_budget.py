@@ -178,6 +178,8 @@ class Budget:
             self.db.execute("DELETE FROM revalidation WHERE scope=?", (self.scope,))
             self.db.execute("INSERT OR REPLACE INTO alias VALUES(?,?)", (self.scope, previous))
             self.scope = previous
+        # The binding_seen_stamp trigger refreshes this credential's recency in
+        # the same transaction, for this and older bundles alike (GH#38619).
         self.db.execute("INSERT OR REPLACE INTO binding VALUES(?,?)", (self.credential, self.scope))
         return events
 

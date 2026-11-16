@@ -39,6 +39,23 @@ SCHEMA_STATEMENTS = (
         source TEXT PRIMARY KEY, owner TEXT NOT NULL, reconciled REAL NOT NULL)""",
 )
 
+# Binding recency (GH#38619). A separate table keeps the positional
+# `INSERT OR REPLACE INTO binding VALUES(?,?)` of older runtime bundles valid,
+# and the trigger stamps every binding write from any bundle inside the writer's
+# own transaction. user_version is unchanged, so older bundles keep working.
+# One core window plus the maximum reservation age: a credential not bound for
+# longer cannot own a stored reset which is still in the future.
+BINDING_RECENCY_SECONDS = 3600 + 180
+BINDING_SEEN_TRIGGER = "binding_seen_stamp"
+_BINDING_SEEN_TABLE = (
+    "CREATE TABLE IF NOT EXISTS binding_seen (credential TEXT PRIMARY KEY, last_seen REAL NOT NULL)"
+)
+_BINDING_SEEN_STAMP = (
+    f"CREATE TRIGGER IF NOT EXISTS {BINDING_SEEN_TRIGGER} AFTER INSERT ON binding BEGIN "
+    "INSERT OR REPLACE INTO binding_seen VALUES("
+    "NEW.credential, (julianday('now') - 2440587.5) * 86400.0); END"
+)
+
 
 def _enable_wal(db: sqlite3.Connection) -> str:
     """Switch to WAL, retrying lock contention within a bounded deadline.
@@ -62,8 +79,65 @@ def _enable_wal(db: sqlite3.Connection) -> str:
         delay = min(delay * 2, 0.1)
 
 
+def ensure_binding_recency(db: sqlite3.Connection, now: float | None = None) -> bool:
+    """Idempotently add binding recency evidence; never required for admission.
+
+    Existing bindings are backfilled as seen now, so they stay live for one
+    more window before ageing out. A losing or locked racer returns False and
+    leaves every binding live (conservative), never unbounded admission.
+    """
+    present = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?", (BINDING_SEEN_TRIGGER,),
+    ).fetchone()
+    if present:
+        return True
+    try:
+        db.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError:
+        return False
+    try:
+        db.execute(_BINDING_SEEN_TABLE)
+        db.execute("INSERT OR IGNORE INTO binding_seen SELECT credential, ? FROM binding",
+                    (time.time() if now is None else now,))
+        db.execute(_BINDING_SEEN_STAMP)
+        db.execute("COMMIT")
+    except sqlite3.OperationalError:
+        db.rollback()
+        return False
+    except BaseException:
+        db.rollback()
+        raise
+    return True
+
+
+def live_binding_credentials(db, scope: str, root, now: float) -> list:
+    """Credentials bound to scope which may still own live quota evidence.
+
+    A binding is live when it was seen inside BINDING_RECENCY_SECONDS, when its
+    credential holds any reservation (live or uncertain debt), or when it has no
+    recency evidence at all (older writer or failed migration): unknown stays
+    conservative and is never treated as retired.
+    """
+    try:
+        rows = db.execute(
+            "SELECT b.credential,b.scope FROM binding b "
+            "LEFT JOIN binding_seen s ON s.credential=b.credential "
+            "WHERE s.last_seen IS NULL OR s.last_seen>=? "
+            "OR EXISTS(SELECT 1 FROM reservation r WHERE r.credential=b.credential)",
+            (now - BINDING_RECENCY_SECONDS,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = db.execute("SELECT credential,scope FROM binding").fetchall()
+    return [credential for credential, bound in rows if root(bound) == scope]
+
+
 def ensure_schema(db: sqlite3.Connection) -> None:
     """Initialize or migrate schema once under a bounded write lock."""
+    _ensure_versioned_schema(db)
+    ensure_binding_recency(db)
+
+
+def _ensure_versioned_schema(db: sqlite3.Connection) -> None:
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version == SCHEMA_VERSION:
         return

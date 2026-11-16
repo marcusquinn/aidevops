@@ -7,6 +7,7 @@ import os
 import time
 
 from gh_transport_identity import credentials_share_proven_owner
+from gh_transport_schema import live_binding_credentials
 from gh_transport_status import LIVE_WINDOWS, admission_status
 
 __all__ = ["LIVE_WINDOWS", "admission_status"]
@@ -107,9 +108,9 @@ def probe_recovers(budget, reservation, resource, row, reset_at):
         return False
     bound = bound_credentials(budget)
     owners = len(bound)
-    # One allowance: a single bound credential, a configured owner, or every
-    # bound credential proven to belong to one login (digest only). Different
-    # or unproven owners never inherit each other's balance.
+    # One allowance: a single live bound credential, a configured owner, or
+    # every live bound credential proven to belong to one login (digest only).
+    # Different or unproven live owners never inherit each other's balance.
     one_allowance = (owners == 1 or budget.attributed
                      or credentials_share_proven_owner(budget.path.parent, bound))
     # A later reset identifies a new window for the one allowance, even
@@ -141,7 +142,12 @@ def note_live_window(budget, resource, reset_at, now):
         return
 
 
-def bound_credentials(budget) -> list:
-    return [credential for credential, scope in
-            budget.db.execute("SELECT credential,scope FROM binding").fetchall()
-            if budget._root(scope) == budget.scope]
+def bound_credentials(budget, now=None) -> list:
+    """Live bindings only (GH#38619): retired credentials cannot own live quota.
+
+    Binding recency is stamped from the SQLite wall clock, so the cutoff uses
+    wall-clock time rather than a caller's logical response time. Unknown
+    recency and credentials holding reservations remain bound.
+    """
+    return live_binding_credentials(budget.db, budget.scope, budget._root,
+                                    time.time() if now is None else now)

@@ -31,7 +31,9 @@ from gh_transport_budget import (
     reconcile_scope,
     scope_key,
 )
-from gh_transport_identity import resolve_owner_proof
+from gh_transport_identity import configure_owner, resolve_owner_proof
+from gh_transport_recovery import bound_credentials, note_live_window
+from gh_transport_schema import BINDING_RECENCY_SECONDS, BINDING_SEEN_TRIGGER
 
 SPEC = importlib.util.spec_from_file_location("governor", SCRIPTS / "gh-transport-governor.py")
 governor = importlib.util.module_from_spec(SPEC)
@@ -343,6 +345,123 @@ class AdmissionTests(unittest.TestCase):
             self.assertIsNone(resolve_owner_proof(
                 ("gh", "github.com"), "cred", {"GH_TOKEN": "ghs_example"}, self.directory))  # nosec B105
             run.assert_not_called()
+
+    def retire_bindings(self, count, scope="owner-one"):
+        """Bind many credentials, then age them out of the recency window."""
+        retired = [f"retired-{index}" for index in range(count)]
+        self.budget.db.executemany("INSERT OR REPLACE INTO binding VALUES(?,?)",
+                                   [(credential, scope) for credential in retired])
+        self.budget.db.executemany(
+            "UPDATE binding_seen SET last_seen=? WHERE credential=?",
+            [(time.time() - 2 * BINDING_RECENCY_SECONDS, credential) for credential in retired])
+        return retired
+
+    def prove_logins(self, logins):
+        for credential, login in logins.items():
+            with patch("gh_transport_identity.subprocess.run") as run:
+                run.return_value = Mock(stdout=login)
+                self.assertTrue(resolve_owner_proof(
+                    ("gh", "github.com"), credential, {"GH_TOKEN": "ghp_example"},  # nosec B105
+                    self.directory))
+
+    def test_retired_bindings_do_not_pin_a_proven_owner_scope(self):
+        # GH#38619: hundreds of retired fingerprints must not block convergence.
+        self.seed(42, 2000)
+        self.retire_bindings(200)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            self.prove_logins({"owner-one": b"same-user\n", "different-credential": b"same-user\n"})
+            note_live_window(other, "core", 2200, 1001)
+            before = admission_status(self.directory, "owner-one")
+            self.assertEqual(before["bound_credentials"], 2)
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota").fetchone(), (4999, 2200))
+            self.assertNotIn("stale_multi_credential_scope",
+                             admission_status(self.directory, "owner-one"))
+            # Retired rows are filtered, never deleted.
+            self.assertEqual(other.db.execute("SELECT COUNT(*) FROM binding").fetchone()[0], 202)
+        finally:
+            other.close()
+
+    def test_retired_bindings_never_merge_live_different_logins(self):
+        self.seed(540, 2000)
+        self.retire_bindings(20)
+        other = Budget(self.directory, "owner-one", "different-credential")
+        try:
+            self.prove_logins({"owner-one": b"user-a\n", "different-credential": b"user-b\n"})
+            request = other.acquire("core", now=1002)
+            other.finish(request, "core", headers(4999, 2200), started=1002, now=1003)
+            self.assertEqual(other.db.execute(
+                "SELECT remaining,reset FROM quota").fetchone(), (540, 2000))
+        finally:
+            other.close()
+
+    def test_unknown_recency_and_reserved_bindings_stay_bound(self):
+        retired = self.retire_bindings(2)
+        self.budget.db.execute(
+            "INSERT INTO reservation VALUES('debt','owner-one','core',1,?,?,?,1)",
+            (os.getpid(), self.budget.birth, retired[0]))
+        self.assertEqual(set(bound_credentials(self.budget)), {"owner-one", retired[0]})
+        # An older writer or failed migration leaves no recency: stay conservative.
+        self.budget.db.execute("DELETE FROM binding_seen WHERE credential=?", (retired[1],))
+        self.assertIn(retired[1], bound_credentials(self.budget))
+        self.budget.db.execute(f"DROP TRIGGER {BINDING_SEEN_TRIGGER}")
+        self.budget.db.execute("DROP TABLE binding_seen")
+        self.assertEqual(len(bound_credentials(self.budget)), 3)
+
+    def test_binding_recency_migration_backfills_and_keeps_legacy_writers(self):
+        self.budget.db.execute(f"DROP TRIGGER {BINDING_SEEN_TRIGGER}")
+        self.budget.db.execute("DROP TABLE binding_seen")
+        self.budget.db.execute("INSERT OR REPLACE INTO binding VALUES('legacy','owner-one')")
+        self.budget.close()
+        self.budget = Budget(self.directory, "owner-one")
+        seen = dict(self.budget.db.execute("SELECT credential,last_seen FROM binding_seen"))
+        self.assertEqual(set(seen), {"owner-one", "legacy"})
+        self.assertGreater(seen["legacy"], time.time() - 60)
+        self.assertEqual(self.budget.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        # Older bundles keep their positional two-column binding write.
+        self.budget.db.execute("UPDATE binding_seen SET last_seen=0 WHERE credential='legacy'")
+        self.budget.db.execute("INSERT OR REPLACE INTO binding VALUES('legacy','owner-one')")
+        self.assertGreater(self.budget.db.execute(
+            "SELECT last_seen FROM binding_seen WHERE credential='legacy'").fetchone()[0], 1)
+
+    def test_configured_owner_file_reaches_callers_without_environment(self):
+        with patch.dict(os.environ, {"AIDEVOPS_GH_TRANSPORT_STATE_DIR": str(self.directory)}):
+            os.environ.pop("AIDEVOPS_GH_QUOTA_OWNER", None)
+            self.assertEqual(quota_owner(), ("unresolved", False))
+            self.assertEqual(configure_owner(self.directory, "a" * 64), "configured")
+            self.assertEqual(oct((self.directory / "quota-owner").stat().st_mode & 0o777), "0o600")
+            self.assertEqual(quota_owner(), ("a" * 64, True))
+            self.assertEqual(configure_owner(self.directory, "a" * 64), "unchanged")
+            with self.assertRaisesRegex(ValueError, "different GitHub quota owner"):
+                configure_owner(self.directory, "b" * 64)
+            with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "unresolved"}):
+                self.assertEqual(quota_owner(), ("unresolved", False))
+
+    def test_set_owner_requires_every_live_binding_to_prove_the_same_login(self):
+        import gh_transport_budget_cli as cli
+        unresolved = scope_key("github.com", "unresolved")
+        for credential in ("pat-one", "app-token"):
+            Budget(self.directory, unresolved, credential).close()
+        identity = ("pat-one", True, {"GH_TOKEN": "ghp_example"})  # nosec B105
+        self.prove_logins({"pat-one": b"same-user\n"})
+        with patch.object(cli, "credential_identity", return_value=identity):
+            # A live unproven binding (for example a ghs_ token) is never merged.
+            with self.assertRaisesRegex(ValueError, "not all proven"):
+                cli.set_owner(self.directory)
+            self.assertFalse((self.directory / "quota-owner").exists())
+            self.budget.db.execute(
+                "UPDATE binding_seen SET last_seen=? WHERE credential='app-token'",
+                (time.time() - 2 * BINDING_RECENCY_SECONDS,))
+            self.assertEqual(cli.set_owner(self.directory)["state"], "configured")
+        with patch.dict(os.environ):
+            os.environ.pop("AIDEVOPS_GH_QUOTA_OWNER", None)
+            configured, attributed = quota_owner(self.directory)
+        self.assertTrue(attributed)
+        self.assertNotIn("same-user", configured)
+        self.assertEqual(len(configured), 64)
 
     def test_shared_scope_stale_balance_expires_at_its_own_reset(self):
         # GH#33701: a sliding later reset from another unresolved credential
@@ -693,7 +812,8 @@ class AdmissionTests(unittest.TestCase):
             self.assertEqual(first, scope_key("github.com"))
 
     def test_quota_owner_requires_explicit_valid_attribution(self):
-        with patch.dict(os.environ, {}, clear=True):
+        isolated = {"AIDEVOPS_GH_TRANSPORT_STATE_DIR": str(self.directory)}
+        with patch.dict(os.environ, isolated, clear=True):
             self.assertEqual(quota_owner(), ("unresolved", False))
         with patch.dict(os.environ, {"AIDEVOPS_GH_QUOTA_OWNER": "account-one"}):
             self.assertEqual(quota_owner(), ("account-one", True))
