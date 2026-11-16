@@ -20,6 +20,13 @@ Labels may not be lifecycle, origin or trust labels (`status:*`, `origin:*`,
 case-insensitively); those stay with their guarded helpers. The config must
 be valid JSON for this remote reader.
 
+**Conventional location (t19065).** `.aidevops.json` is local config: `aidevops
+init` gitignores it and `aidevops update` files migrations that untrack it, so a
+pointer there disappears from the default branch. With no remote `.aidevops.json`
+or no `recovery_policy` key, the loader reads the tracked
+`.agents/recovery-policy.md` section `Recovery policy` instead, under the same
+rules. Prefer that location; an explicit `.aidevops.json` pointer still wins.
+
 `bash ~/.aidevops/agents/scripts/recovery-policy-helper.sh <owner/repo>` checks
 authenticated write/maintain/admin access and reads both files at one pinned
 default-branch commit, without accessing managed repository directories. The
@@ -28,7 +35,7 @@ integration-recovery supervisor loads policy the same way.
 | Exit | Meaning | Supervisor behaviour |
 |------|---------|----------------------|
 | `0` | Valid policy; stdout JSON has `repo`, `revision`, `path`, `heading`, `actions` | Apply only the returned actions |
-| `3` | No `.aidevops.json` or no `recovery_policy` key | Existing recovery behaviour; not a blocker |
+| `3` | No `recovery_policy` pointer and no `.agents/recovery-policy.md` | Existing recovery behaviour; not a blocker |
 | `1` | Invalid policy, insufficient access or API failure | Fail closed to existing behaviour; note a diagnostic |
 
 ## Declaration example

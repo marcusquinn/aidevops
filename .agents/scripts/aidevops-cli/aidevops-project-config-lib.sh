@@ -182,9 +182,11 @@ _project_config_queue_migration() {
 	trap 'rm -f "${body_file:-}"' RETURN
 	printf '%s\n' "$_PROJECT_CONFIG_MIGRATION_MARKER" "## Goal" "" \
 		"Stop tracking \`.aidevops.json\` while preserving its local bytes." "" \
-		"## Files Scope" "" "- \`.aidevops.json\`" "- \`.gitignore\`" "" \
+		"## Files Scope" "" "- \`.aidevops.json\`" "- \`.gitignore\`" \
+		"- \`.agents/recovery-policy.md\` (only when \`recovery_policy\` is declared)" "" \
 		"## Implementation" "" \
 		"In a fresh linked worktree, add \`.aidevops.json\` to \`.gitignore\`, run \`git rm --cached -- .aidevops.json\`, and commit the index-only migration. Never delete the local file or edit a canonical checkout." "" \
+		"If \`.aidevops.json\` declares \`recovery_policy\`, move that section's \`json\` block into a tracked \`.agents/recovery-policy.md\` under \`# Recovery policy\` in the same PR, or delegated queue recovery stops (reference/recovery-policy.md)." "" \
 		"## Verification" "" \
 		"- Confirm \`.aidevops.json\` remains byte-identical in the worktree." \
 		"- Confirm \`git ls-files -- .aidevops.json\` is empty and \`.gitignore\` contains the entry." >"$body_file"
