@@ -400,7 +400,8 @@ crl_run_acquire() {
 }
 if (crl_run_acquire) 2>/dev/null &&
 	[[ "$(grep -c 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" || true)" -eq $((crl_audit_before + 1)) ]] &&
-	grep 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" | tail -1 | grep -q "dead_owner_pid.*${crl_dead_pid}"; then
+	crl_last_record="$(grep 'Canonical recovery lock takeover' "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" | tail -1)" &&
+	[[ "$crl_last_record" =~ dead_owner_pid.*${crl_dead_pid} ]]; then
 	printf 'PASS dead-owner recovery lock is taken over with one audit record naming the owner\n'
 else
 	printf 'FAIL dead-owner recovery lock was not taken over and audited\n'
