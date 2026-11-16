@@ -2161,6 +2161,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19053 blender-render-helper.sh: migrate Runpod adapter to current runpodctl noun-verb JSON commands #auto-dispatch #feat tier:standard ref:GH#38569 logged:2026-11-16 -> [todo/tasks/t19053-brief.md]
 
+- [ ] t19054 fix(plugin): let repo-rooted sessions run bounded operations in registered-repo worktrees #interactive #bug tier:simple assignee:marcusquinn ref:GH#38577 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19054-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
