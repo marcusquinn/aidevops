@@ -48,16 +48,18 @@ setup_sandbox() {
 	cat >"${TEST_ROOT}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/example/repo/labels/fix-the-fixer" ]]; then
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/labels/fix-the-fixer ]]; then
 	printf '{"name":"fix-the-fixer"}\n'
 	exit 0
 fi
+body="Touches pulse-wrapper.sh dispatch behaviour."
+[[ -f "${ISSUE_BODY_FILE:-}" ]] && body=$(cat "$ISSUE_BODY_FILE")
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-	printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]},{"number":2,"labels":[{"name":"auto-dispatch"}]}]\n'
+	jq -cn --arg body "$body" '[1, 2 | {number: ., title: "fix dispatch path", body: $body, labels: [{name: "auto-dispatch"}]}]'
 	exit 0
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
-	printf '{"title":"fix dispatch path","body":"Touches pulse-wrapper.sh dispatch behaviour.","labels":[{"name":"auto-dispatch"}],"state":"OPEN"}\n'
+	jq -cn --arg body "$body" '{title: "fix dispatch path", body: $body, labels: [{name: "auto-dispatch"}], state: "OPEN"}'
 	exit 0
 fi
 printf 'unexpected gh invocation: %s\n' "$*" >&2
@@ -92,6 +94,101 @@ run_detector() {
 	local output_file="$1"
 	"${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh" run \
 		--repo example/repo --limit 2 >"$output_file" 2>&1
+	return 0
+}
+
+llm_calls() {
+	tr -cd '0-9' <"$CURL_COUNT_FILE"
+	return 0
+}
+
+# GH#38673: verdict cache, rationale propagation, run budget and repo cursor.
+assert_cache_budget_cursor() {
+	local log="${TEST_ROOT}/cache.log"
+	local status_file="${HOME}/.aidevops/cache/fix-the-fixer-detector-status.json"
+	cat >"$PULSE_AI_RESEARCH_HELPER_OVERRIDE" <<'STUB'
+#!/usr/bin/env bash
+count=$(tr -cd '0-9' <"$CURL_COUNT_FILE")
+printf '%s\n' "$((count + 1))" >"$CURL_COUNT_FILE"
+case "${STUB_MODE:-no}" in
+	fail) printf 'upstream overloaded\n' >&2; exit 1 ;;
+	slow) sleep 3 ;;
+esac
+printf 'NO counted rationale\n'
+STUB
+	export ISSUE_BODY_FILE="${TEST_ROOT}/issue-body"
+
+	# Both issues were classified NO by the preceding recovery run.
+	printf '0\n' >"$CURL_COUNT_FILE"
+	run_detector "$log"
+	if [[ "$(llm_calls)" == "0" ]] && jq -e '.cached == 2 and .processed == 0' "$status_file" >/dev/null; then
+		print_result "unchanged issues reuse cached verdicts without LLM calls" 0
+	else
+		print_result "unchanged issues reuse cached verdicts without LLM calls" 1 "calls=$(llm_calls); log: $(tr '\n' ' ' <"$log")"
+	fi
+
+	printf 'Edited body that now names dispatch-dedup-helper.sh.\n' >"$ISSUE_BODY_FILE"
+	run_detector "$log"
+	if [[ "$(llm_calls)" == "2" ]] && grep -q 'verdict=NO counted rationale' "$log"; then
+		print_result "edited content is reclassified and its rationale is logged" 0
+	else
+		print_result "edited content is reclassified and its rationale is logged" 1 "calls=$(llm_calls); log: $(tr '\n' ' ' <"$log")"
+	fi
+
+	printf 'Third body revision.\n' >"$ISSUE_BODY_FILE"
+	printf '0\n' >"$CURL_COUNT_FILE"
+	STUB_MODE=fail run_detector "$log"
+	STUB_MODE=fail run_detector "$log"
+	if [[ "$(llm_calls)" == "4" ]] && grep -q 'classification skipped — LLM call failed' "$log"; then
+		print_result "LLM failures are not cached and keep their rationale" 0
+	else
+		print_result "LLM failures are not cached and keep their rationale" 1 "calls=$(llm_calls); log: $(tr '\n' ' ' <"$log")"
+	fi
+
+	# Integer SECONDS can tick within milliseconds, so a 2s budget (not 1s)
+	# guarantees the first classification starts and the second does not.
+	local rc=0
+	AIDEVOPS_FIX_THE_FIXER_DETECTOR_BUDGET_SECONDS=2 STUB_MODE=slow run_detector "$log" || rc=$?
+	if [[ "$rc" -eq 0 ]] && jq -e '.processed == 1 and .budget_exhausted == true' "$status_file" >/dev/null; then
+		print_result "spent budget stops new work and still writes the summary" 0
+	else
+		print_result "spent budget stops new work and still writes the summary" 1 "rc=${rc}; status: $(tr '\n' ' ' <"$status_file")"
+	fi
+
+	# Two dispatch-system repositories plus one product repository, one
+	# classification per run: the second run must resume inside the first
+	# repository, then hand off to the second; the product repo never counts.
+	local repo_name=""
+	for repo_name in one two; do
+		mkdir -p "${TEST_ROOT}/repos/${repo_name}/.agents/scripts"
+		: >"${TEST_ROOT}/repos/${repo_name}/.agents/scripts/pulse-wrapper.sh"
+	done
+	mkdir -p "${TEST_ROOT}/repos/product" "${HOME}/.config/aidevops"
+	jq -n --arg root "${TEST_ROOT}/repos" '{initialized_repos: [
+		{slug: "c/product", pulse: true, path: ($root + "/product")},
+		{slug: "a/one", pulse: true, path: ($root + "/one")},
+		{slug: "b/two", pulse: true, path: ($root + "/two")}]}' \
+		>"${HOME}/.config/aidevops/repos.json"
+	local cursor_file="${HOME}/.aidevops/cache/fix-the-fixer-detector-cursor"
+	"${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh" run --limit 1 >"$log" 2>&1
+	local first_cursor=""
+	first_cursor=$(cat "$cursor_file" 2>/dev/null) || first_cursor=""
+	"${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh" run --limit 1 >"$log" 2>&1
+	local second_cursor=""
+	second_cursor=$(cat "$cursor_file" 2>/dev/null) || second_cursor=""
+	if [[ "$first_cursor" == "a/one" && "$second_cursor" == "b/two" ]] &&
+		jq -e '.repo_count == 2 and .cached == 1 and .processed == 1 and .stop_reason == "limit"' "$status_file" >/dev/null; then
+		print_result "repo cursor resumes where the previous run stopped" 0
+	else
+		print_result "repo cursor resumes where the previous run stopped" 1 "cursors=${first_cursor},${second_cursor}; status: $(tr '\n' ' ' <"$status_file")"
+	fi
+	# Product repositories without the dispatch system are never scanned.
+	"${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh" run --limit 10 >"$log" 2>&1
+	if jq -e '.repo_count == 2' "$status_file" >/dev/null && ! grep -q 'c/product' "$log"; then
+		print_result "repositories without the dispatch system are excluded" 0
+	else
+		print_result "repositories without the dispatch system are excluded" 1 "status: $(tr '\n' ' ' <"$status_file")"
+	fi
 	return 0
 }
 
@@ -219,6 +316,7 @@ STUB
 	else
 		print_result "configuration recovery clears cooldown and degraded status" 1
 	fi
+	assert_cache_budget_cursor
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
