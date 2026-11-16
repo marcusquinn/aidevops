@@ -606,7 +606,14 @@ _todo_create_planning_worktree() {
 	(
 		# shellcheck source=shared-worktree-create.sh
 		source "${BASH_SOURCE[0]%/*}/shared-worktree-create.sh" || exit 1
-		worktree_create_registered "$repo_path" "$worktree_path" "origin/${default_branch}" --detach
+		# Synchronous, process-scoped publication tree: this helper creates,
+		# uses and removes it. Own it here, not by the calling runtime, so the
+		# managed-lifetime removal proof can pass while that runtime is alive
+		# (GH#38586; same pattern as remote-branch-cleanup-helper.sh GH#35490).
+		AIDEVOPS_WORKTREE_MANAGER=legacy-guards \
+			AIDEVOPS_WORKTREE_CREATE_OWNER_PID="$$" \
+			AIDEVOPS_WORKTREE_CREATE_TASK=planning-publication \
+			worktree_create_registered "$repo_path" "$worktree_path" "origin/${default_branch}" --detach
 	) >/dev/null 2>>"$log_target" || {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot create linked worktree" >>"$log_target"
 		return 1
@@ -755,14 +762,22 @@ _todo_finalize_planning_pr() {
 	local log_target="$7"
 	local cleanup_state="not-created"
 	local remote_state="not-pushed"
+	local report_recovery=0
 	if [[ -n "$worktree_path" ]]; then
 		if _todo_remove_temp_worktree "$repo_path" "$worktree_path"; then
 			cleanup_state="removed"
 		else
 			cleanup_state="retained"
-			terminal_rc=1
+			report_recovery=1
+			# GH#38586: once the PR is open and caller edits are cleaned, the
+			# publication succeeded; a retained disposable tree is a warning.
+			if [[ "$pr_state" != "open" && "$pr_state" != "open-reused" ||
+				"$source_state" != "cleaned" ]]; then
+				terminal_rc=1
+			fi
 		fi
 	fi
+	[[ "$terminal_rc" -eq 0 ]] || report_recovery=1
 	if [[ -n "${_TODO_PLANNING_PR_BRANCH:-}" ]] &&
 		git -C "$repo_path" ls-remote --exit-code --heads origin \
 			"refs/heads/${_TODO_PLANNING_PR_BRANCH}" >/dev/null 2>&1; then
@@ -771,9 +786,14 @@ _todo_finalize_planning_pr() {
 	elif [[ -n "${_TODO_PLANNING_PR_COMMIT:-}" ]]; then
 		remote_state="local-recovery-ref"
 	fi
-	if [[ "$terminal_rc" -ne 0 ]]; then
-		printf '[todo_commit_push] Planning publication stopped after %s; caller planning edits are %s and the disposable worktree is %s.\n' \
-			"$remote_state" "$source_state" "$cleanup_state" >&2
+	if [[ "$report_recovery" -eq 1 ]]; then
+		if [[ "$terminal_rc" -eq 0 ]]; then
+			printf '[todo_commit_push] Planning PR is %s, but the disposable worktree was retained (%s); routine worktree cleanup can reclaim it.\n' \
+				"$pr_state" "$worktree_path" >&2
+		else
+			printf '[todo_commit_push] Planning publication stopped after %s; caller planning edits are %s and the disposable worktree is %s.\n' \
+				"$remote_state" "$source_state" "$cleanup_state" >&2
+		fi
 		printf 'AIDEVOPS_PLANNING_RECOVERY_PUBLICATION_ID=%s\n' "$publication_id" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_BRANCH=%s\n' "${_TODO_PLANNING_PR_BRANCH:-}" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_COMMIT=%s\n' "${_TODO_PLANNING_PR_COMMIT:-}" >&2
@@ -781,9 +801,11 @@ _todo_finalize_planning_pr() {
 		printf 'AIDEVOPS_PLANNING_RECOVERY_PR_STATE=%s\n' "$pr_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_SOURCE_STATE=%s\n' "$source_state" >&2
 		printf 'AIDEVOPS_PLANNING_RECOVERY_WORKTREE_STATE=%s\n' "$cleanup_state" >&2
-		printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
-			"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
-		printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
+		if [[ "$terminal_rc" -ne 0 ]]; then
+			printf '[todo_commit_push] For transient failures, retry with the same planning snapshot; publication %s reuses branch %s instead of creating a duplicate.\n' \
+				"$publication_id" "${_TODO_PLANNING_PR_BRANCH:-unknown}" >&2
+			printf '[todo_commit_push] A pre-push content block requires fixing the reported content before retrying. A guard failure that is not a content block (for example, an inventory enumeration or scan failure) can be retried after the reported environment problem is resolved.\n' >&2
+		fi
 		if [[ "$log_target" != "/dev/null" ]]; then
 			printf '%s\n' "[todo_commit_push] Recovery publication=${publication_id} branch=${_TODO_PLANNING_PR_BRANCH:-} commit=${_TODO_PLANNING_PR_COMMIT:-} remote=${remote_state} pr=${pr_state} source=${source_state} worktree=${cleanup_state}" >>"$log_target"
 		fi
