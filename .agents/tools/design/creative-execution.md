@@ -67,6 +67,7 @@ claims Astra scene code, Blender and Cycles on Supercomputer. Arbitrary-job API,
 editable-source export, costs and actual availability remain unverified here.
 Existing generation APIs are not automatically general GPU/Blender render services.
 
-Use `tools/infrastructure/cloud-gpu.md` and the selected provider's guide only
-when such execution is authorised. Render success is not geometric or aesthetic
+Choose and cost remote routes (rented GPUs, managed/community farms) with
+`tools/design/3d-render-backends.md`; use `tools/infrastructure/cloud-gpu.md`
+and the selected provider's guide only when such execution is authorised. Render success is not geometric or aesthetic
 acceptance; return the checks from `workflows/creative-production.md`.

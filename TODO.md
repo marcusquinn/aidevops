@@ -2149,6 +2149,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19043 fix(full-loop): merge reads use the intended 60s timeout instead of the shadowing 15s generic default #interactive #bug tier:standard assignee:marcusquinn ref:GH#38535 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19043-brief.md]
 
+- [ ] t19048 Remote 3D rendering playbook: Blender cloud GPU and render-farm comparison #interactive #feat tier:standard assignee:marcusquinn ref:GH#38554 logged:2026-11-15 started:2026-11-15 -> [todo/tasks/t19048-brief.md]
+
+- [ ] t19049 blender-render-helper.sh: plan, package, submit, fetch and teardown Blender renders on rented GPUs #auto-dispatch #feat tier:standard ref:GH#38556 logged:2026-11-15 -> [todo/tasks/t19049-brief.md]
+
+- [ ] t19050 x-search-research-helper.sh: Grok X and web search for first-hand user-experience research #auto-dispatch #feat tier:simple ref:GH#38557 logged:2026-11-15 -> [todo/tasks/t19050-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

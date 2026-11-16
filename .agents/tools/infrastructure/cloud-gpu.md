@@ -33,6 +33,13 @@ Deploy GPU-intensive AI models (voice, vision, LLMs) when local hardware is insu
 | [Vast.ai](https://vast.ai/) | Consumer+datacenter, 10k+ | Auction+fixed, 5-6x cheaper | Budget, experimentation |
 | [Lambda](https://lambdalabs.com/) | GB300, B200, H200, H100 | Per-hour, reserved discounts | Research, training, enterprise |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (DGX) | Per-hour, enterprise | Official NVIDIA stack |
+| SaladCloud | Consumer RTX 3090/4090/5090 | Per-second, priority tiers, interruptible | Cheapest resumable batch jobs (frame renders) |
+| TensorDock | Marketplace incl. RTX 4090, H100 | Per-hour from deposit, no egress fees | Full VMs (Linux/Windows) |
+| DigitalOcean GPU Droplets | L40S, RTX 6000 Ada, RTX 4000 Ada | Per-second, 5 min minimum, stopped Droplets bill | Simple managed VMs |
+| Hetzner GEX | RTX PRO 4000/6000 Blackwell | Monthly dedicated plus setup fee | Sustained EU workloads |
+
+Dated prices and sources for rendering-relevant GPUs:
+`todo/research/t19048-remote-3d-render-backends.md`.
 
 ## GPU Selection
 
@@ -47,6 +54,10 @@ VRAM: RTX 4090=24GB, L4=24GB, L40S=48GB, A100=80GB, H100=80GB, H200=141GB, B200=
 | 70B LLM (Llama 3.3 70B, Qwen 2.5 72B) | 40-80GB | A100 / H100 | 1.79-4.18 |
 | 96GB workloads | 96GB | RTX Pro 6000 | 1.50-2.00 |
 | 400B+ quantized (Llama 3.1 405B 4-bit) | 140-180GB | H200 / B200 | 3.35-8.64 |
+| 3D rendering (Blender Cycles OptiX) | 24-96GB | RTX 4090/5090, L40S, RTX Pro 6000 (RT cores) | 0.34-2.69 |
+
+Rendering needs RT cores: A100/H100/H200/B200 lack them and are poor Cycles
+value. Playbook: `tools/design/3d-render-backends.md`.
 
 ## Deployment
 
@@ -158,6 +169,7 @@ Never expose model APIs without auth -- use SSH tunnels or VPN. Store keys: `aid
 ## See Also
 
 - `content/video-runpod.md` -- Runpod Public Endpoints, Hub and bring-your-own media models
+- `tools/design/3d-render-backends.md` -- Blender render routes, farm comparison and job contract
 - `content/media-generation-providers.md` -- API vs rented-GPU media cost comparison (`media-gen-cost-helper.sh`)
 - `tools/infrastructure/fireworks.md` -- managed inference, fine-tuning, and model hosting (Fireworks AI)
 - `tools/infrastructure/nearai.md` -- TEE-backed private inference (NEAR AI Cloud)
