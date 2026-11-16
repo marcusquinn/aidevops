@@ -686,8 +686,17 @@ _HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Sta
 # The trailing negative lookahead excludes negated statuses ("BLOCKED: none") at a
 # standalone boundary, so "no.json" and "none available" still count as blockers.
 
+# GH#38596: POST_PR_HANDOFF must also lead a model-text line, with the same
+# optional quote, label and emphasis markup as BLOCKED, plus the `State:` and
+# `FULL_LOOP:` labels workers emit. Only end of line or a `:`/`.`/`;`/dash
+# separator may follow, so mid-sentence mentions ("POST_PR_HANDOFF is not valid
+# here") and negations ("POST_PR_HANDOFF: not yet") stay rejected. The marker
+# only routes into the exact-head handoff gate, which verifies the PR itself.
+# shellcheck disable=SC2016 # literal backticks are Python regex syntax, not expansion
+_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Status|Result|State|FULL_LOOP)(?:[ \t]*:(?:\*\*|__)?|(?:\*\*|__)[ \t]*:)[ \t]*)?(?:\*\*|__|`)?POST_PR_HANDOFF(?:\*\*|__|`)?(?=[ \t]*(?:$|[:.;]|-[ \t]|—|–))(?![ \t]*(?:[:—–-][ \t]*)?(?i:not\b|(?:none|n/a|no)(?=[ \t]*$|[.,;!?])))'
+
 # output_has_completion_signal: check if a worker run produced a meaningful
-# completion signal (FULL_LOOP_COMPLETE, exact POST_PR_HANDOFF, anchored
+# completion signal (FULL_LOOP_COMPLETE, line-leading POST_PR_HANDOFF, anchored
 # BLOCKED, or PR creation).
 # Workers that produce tool calls but exit without these signals stopped
 # prematurely -- typically after investigation/setup but before implementation.
@@ -697,7 +706,7 @@ _HEADLESS_BLOCKED_LINE_PATTERN='^[ \t]*(?:>[ \t]*)?(?:(?:\*\*|__)?(?:Outcome|Sta
 output_has_completion_signal() {
 	local file_path="$1"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" <<'PY'
+	python3 - "$file_path" "$_HEADLESS_BLOCKED_LINE_PATTERN" "$_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN" <<'PY'
 import sys, json, re
 from pathlib import Path
 
@@ -712,8 +721,10 @@ from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
 # GH#33274: completion markers count bare or as <promise>MARKER</promise>,
-# not when quoted or backticked as a mention.
+# not when quoted or backticked as a mention. An empty handoff pattern would
+# match everything, so it falls back to the exact line (GH#38596).
 blocked_line = re.compile(sys.argv[2], re.MULTILINE)
+handoff_line = re.compile(sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else r"^[ \t]*POST_PR_HANDOFF[ \t]*$", re.MULTILINE)
 completion_marker = re.compile(r"(?<![`'\"\w])(?:FULL_LOOP_COMPLETE|TASK_COMPLETE)(?![`'\"\w])")
 
 # Extract model text from JSON stream (OpenCode format)
@@ -758,12 +769,9 @@ for line in raw.splitlines():
 
 model_text = "\n".join(model_text_parts)
 
-def has_post_pr_handoff(text):
-    return any(line.strip() == "POST_PR_HANDOFF" for line in text.splitlines())
-
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    if has_post_pr_handoff(model_text) or blocked_line.search(model_text):
+    if handoff_line.search(model_text) or blocked_line.search(model_text):
         sys.exit(0)
     if completion_marker.search(model_text):
         sys.exit(0)
@@ -780,9 +788,9 @@ if model_text.strip():
     sys.exit(1)
 
 # Fallback for non-JSON output (claude CLI, plain text). Escaped newlines and
-# JSON text/result value starts count as line starts for anchored BLOCKED.
+# JSON text/result value starts count as line starts for anchored markers.
 raw_lines = re.sub(r'\\n|"(?:text|result)":\s*"', "\n", raw)
-if has_post_pr_handoff(raw) or blocked_line.search(raw_lines) or completion_marker.search(raw):
+if handoff_line.search(raw_lines) or blocked_line.search(raw_lines) or completion_marker.search(raw):
     sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
     sys.exit(0)
@@ -796,17 +804,22 @@ PY
 	return $?
 }
 
+# Match a model-authored text line: exactly equal to $2, or, when $3 is set,
+# matching that multiline Python regex instead (GH#38596).
 _output_has_exact_model_text_line() {
 	local file_path="$1"
 	local marker="$2"
+	local line_pattern="${3:-}"
 	[[ -f "$file_path" ]] || return 1
-	python3 - "$file_path" "$marker" <<'PY'
+	python3 - "$file_path" "$marker" "$line_pattern" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors='ignore')
 marker = sys.argv[2]
+line_pattern = re.compile(sys.argv[3], re.MULTILINE) if sys.argv[3] else None
 model_text_parts = []
 json_stream_seen = False
 for line in raw.splitlines():
@@ -827,6 +840,8 @@ for line in raw.splitlines():
 
 model_text = '\n'.join(model_text_parts)
 candidate = model_text if json_stream_seen else raw
+if line_pattern is not None:
+    sys.exit(0 if line_pattern.search(candidate) else 1)
 sys.exit(0 if any(line.strip() == marker for line in candidate.splitlines()) else 1)
 PY
 	return $?
@@ -834,7 +849,7 @@ PY
 
 output_has_post_pr_handoff_signal() {
 	local file_path="$1"
-	_output_has_exact_model_text_line "$file_path" "POST_PR_HANDOFF"
+	_output_has_exact_model_text_line "$file_path" "POST_PR_HANDOFF" "$_HEADLESS_POST_PR_HANDOFF_LINE_PATTERN"
 	return $?
 }
 

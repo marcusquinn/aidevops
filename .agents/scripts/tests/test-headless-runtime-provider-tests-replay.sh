@@ -84,7 +84,47 @@ test_post_pr_handoff_completion_signal_is_exact() {
 	if output_has_post_pr_handoff_signal "$prose_file" || output_has_completion_signal "$prose_file"; then
 		result=1
 	fi
-	print_result "POST_PR_HANDOFF is accepted only as an exact model-text line" "$result"
+	print_result "POST_PR_HANDOFF is accepted only as a line-leading model-text marker" "$result"
+	return 0
+}
+
+# GH#38596: labelled and annotated handoff lines observed from real workers
+# count; mid-sentence mentions and negations stay rejected.
+test_post_pr_handoff_accepts_labelled_line_forms() {
+	local case_file="${TEST_ROOT}/post-pr-handoff-form.jsonl"
+	local text="" result=0 failures=""
+	# shellcheck disable=SC2016 # literal backticks are worker markdown, not expansion
+	local accepted=(
+		'FULL_LOOP: POST_PR_HANDOFF'
+		'POST_PR_HANDOFF: the people phase is published to beta, but #25573 stays open.'
+		'`POST_PR_HANDOFF`: PR #25345 is open and all required checks pass.'
+		'Outcome: POST_PR_HANDOFF. The media phase is published and PR #25048 is merged.'
+		'**Outcome:** POST_PR_HANDOFF'
+		'State: POST_PR_HANDOFF.'
+		'POST_PR_HANDOFF. No new work was needed this turn.'
+	)
+	local rejected=(
+		'I will mention POST_PR_HANDOFF after more work.'
+		'POST_PR_HANDOFF is not valid here because CI failed.'
+		'POST_PR_HANDOFF: not yet, CI is failing.'
+		'Outcome: not POST_PR_HANDOFF'
+		'Next I will emit POST_PR_HANDOFF once CI passes.'
+	)
+	for text in "${accepted[@]}"; do
+		jq -nc --arg text $'Summary first.\n'"$text" '{type:"text",part:{text:$text}}' >"$case_file"
+		if ! output_has_post_pr_handoff_signal "$case_file" || ! output_has_completion_signal "$case_file"; then
+			result=1
+			failures+="missed:[${text}] "
+		fi
+	done
+	for text in "${rejected[@]}"; do
+		jq -nc --arg text "$text" '{type:"text",part:{text:$text}}' >"$case_file"
+		if output_has_post_pr_handoff_signal "$case_file" || output_has_completion_signal "$case_file"; then
+			result=1
+			failures+="accepted:[${text}] "
+		fi
+	done
+	print_result "POST_PR_HANDOFF accepts labelled line forms and rejects mentions or negations" "$result" "$failures"
 	return 0
 }
 
