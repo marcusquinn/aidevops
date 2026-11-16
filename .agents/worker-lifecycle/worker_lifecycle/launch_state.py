@@ -15,6 +15,10 @@ from .runtime import adapter_for, require_ready
 from .storage import LifecycleRegistry
 
 
+class StateDirectoryUninitialised(ValueError):
+    """The state path exists but holds no registry; initialisation requires it absent."""
+
+
 def initialize_or_open(state_dir: Path) -> LifecycleRegistry:
     """Claim a new directory, or wait briefly for another initializer's commit.
 
@@ -32,6 +36,9 @@ def initialize_or_open(state_dir: Path) -> LifecycleRegistry:
                 return store
             except (OSError, ValueError, sqlite3.Error):
                 if time.monotonic() >= deadline:
+                    if state_dir.is_dir() and not (state_dir / "registry.sqlite3").exists():
+                        raise StateDirectoryUninitialised(
+                            "private-path-check-requires-absent-state-dir") from None
                     raise
                 time.sleep(0.05)
 
