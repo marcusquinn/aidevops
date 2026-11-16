@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.208] - 2026-11-15
+
+### Added
+
+- add checkpoint-policy command (t19042) (#38540)
+
+### Fixed
+
+- default wait-checks to the 200s worker chunk in headless sessions
+- keep a cancel-only failure pending while other checks are still pending
+- escalate census budget above the cap for repos timing out at it
+- isolate helper Python installs in venvs or uv tools (GH#38524) (#38531)
+- merge reads use the intended 60s timeout instead of the shadowing 15s generic default
+
 ## [3.39.207] - 2026-11-15
 
 ### Added
