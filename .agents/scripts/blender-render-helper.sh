@@ -22,10 +22,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly BRH_NUMBER_RE='^[0-9]+([.][0-9]+)?$'
 readonly BRH_INT_RE='^[0-9]+$'
-readonly BRH_RANGE_RE='^[0-9]+-[0-9]+$'
-readonly BRH_DEFAULT_IMAGE="linuxserver/blender:latest"
+readonly BRH_RANGE_RE='^(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$'
 readonly BRH_DEFAULT_GPU="NVIDIA GeForce RTX 4090"
 readonly BRH_REMOTE_DIR="/workspace/job"
+readonly BRH_UNPINNED="unpinned"
 
 _brh_usage() {
 	cat <<'EOF'
@@ -34,17 +34,25 @@ blender-render-helper.sh - Blender renders on rented GPUs (Runpod adapter)
 Usage:
   blender-render-helper.sh plan     --frames A-B --workers N --gpu-rate USD_HR --gpu-secs-per-frame S [--setup-hours H] [--api "LABEL=RATE[:asset]"]
   blender-render-helper.sh package  --blend FILE --out DIR --frames A-B [--engine CYCLES] [--device OPTIX] [--samples N] [--resolution WxH] [--blender-version V] [--asset FILE]...
-  blender-render-helper.sh submit   --manifest DIR/manifest.json --workers N --gpu-rate USD_HR --budget-usd B --deadline-minutes M --approve-contract TOKEN [--gpu-type NAME] [--image IMG] [--volume-gb G] [--live]
+  blender-render-helper.sh submit   --manifest DIR/manifest.json --workers N --gpu-rate USD_HR --budget-usd B --deadline-minutes M --approve-contract TOKEN --image IMG [--gpu-type NAME] [--volume-gb G] [--overhead-minutes M] [--storage-usd USD] [--live]
+  blender-render-helper.sh stage    --job DIR --host HOST --port PORT [--live]
   blender-render-helper.sh status   --job DIR [--live]
-  blender-render-helper.sh fetch    --job DIR --host HOST --port PORT [--worker N] [--live]
-  blender-render-helper.sh teardown --job DIR [--live]
+  blender-render-helper.sh fetch    --job DIR --host HOST --port PORT [--live]
+  blender-render-helper.sh teardown --job DIR [--force-discard] [--live]
   blender-render-helper.sh help
 
 Safety:
   - submit refuses without --budget-usd and --deadline-minutes, refuses when
-    workers x rate x deadline exceeds the budget, and requires
-    --approve-contract to equal the token printed for that exact contract.
-  - Every worker self-terminates at the deadline (timeout) and removes its pod.
+    workers x rate x (deadline + overhead minutes, default 15) + storage
+    exceeds the budget, refuses if packaged files changed since package, and
+    requires --approve-contract to equal the token printed for that exact
+    contract (token covers manifest hash, image, GPU, rate, storage, workers).
+  - --image is required (a CUDA-capable headless Blender image you approved).
+    --gpu-rate is the quoted rate used for the ceiling; verify it in status.
+  - Pods wait for staged inputs (run stage per pod), render under a deadline
+    timeout, enforce the pinned Blender version, then remove themselves.
+  - teardown refuses live removal while expected frames are missing locally
+    unless --force-discard is given.
   - Everything is a dry run (commands printed, no network) unless --live is
     set; live mode needs RUNPOD_API_KEY, e.g.
     aidevops secret RUNPOD_API_KEY -- blender-render-helper.sh submit ... --live
@@ -110,6 +118,11 @@ _brh_parse() {
 			shift
 			continue
 			;;
+		--force-discard)
+			BRH_FORCE=1
+			shift
+			continue
+			;;
 		esac
 		case " ${allowed} " in
 		*" ${opt} "*) ;;
@@ -143,11 +156,12 @@ _brh_set_opt() {
 
 _brh_reset_opts() {
 	local v=""
-	for v in FRAMES WORKERS GPU_RATE GPU_SECS_PER_FRAME SETUP_HOURS API BLEND OUT ENGINE DEVICE SAMPLES RESOLUTION BLENDER_VERSION MANIFEST BUDGET_USD DEADLINE_MINUTES APPROVE_CONTRACT GPU_TYPE IMAGE VOLUME_GB JOB HOST PORT WORKER; do
+	for v in FRAMES WORKERS GPU_RATE GPU_SECS_PER_FRAME SETUP_HOURS API BLEND OUT ENGINE DEVICE SAMPLES RESOLUTION BLENDER_VERSION MANIFEST BUDGET_USD DEADLINE_MINUTES APPROVE_CONTRACT GPU_TYPE IMAGE VOLUME_GB OVERHEAD_MINUTES STORAGE_USD JOB HOST PORT; do
 		printf -v "BRH_O_${v}" '%s' ""
 	done
 	BRH_ASSETS=""
 	BRH_LIVE=0
+	BRH_FORCE=0
 	return 0
 }
 
@@ -200,7 +214,7 @@ _brh_json_escape() {
 _brh_manifest_get() {
 	local file="$1"
 	local key="$2"
-	sed -n "s/^[[:space:]]*\"${key}\":[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p" "$file" | head -n 1
+	sed -n "s/^[[:space:]]*\"${key}\":[[:space:]]*\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p" "$file"
 	return 0
 }
 
@@ -269,6 +283,28 @@ EOF
 	return 0
 }
 
+# Applies the approved render settings on the worker and enforces the Blender pin.
+_brh_write_overrides_script() {
+	local out="$1"
+	local bver="$2"
+	local samples="$3"
+	local res="$4"
+	cat >"$out" <<EOF
+# scene_overrides.py - run with: blender -b scene.blend -Y -P scene_overrides.py
+import bpy
+
+pinned = "${bver}"
+if pinned != "${BRH_UNPINNED}" and not bpy.app.version_string.startswith(pinned):
+    raise SystemExit("Blender %s does not match pinned %s" % (bpy.app.version_string, pinned))
+scene = bpy.context.scene
+scene.cycles.samples = ${samples}
+scene.render.resolution_x = ${res%x*}
+scene.render.resolution_y = ${res#*x}
+scene.render.resolution_percentage = 100
+EOF
+	return 0
+}
+
 _brh_package() {
 	_brh_reset_opts
 	_brh_parse "--blend --out --frames --engine --device --samples --resolution --blender-version --asset" "$@" || return 1
@@ -293,10 +329,11 @@ _brh_package() {
 	fi
 	if [[ -z "$bver" ]]; then
 		print_warning "--blender-version not set; pin it so every worker renders identically"
-		bver="unpinned"
+		bver="$BRH_UNPINNED"
 	fi
 	mkdir -p "$BRH_O_OUT"
 	_brh_write_gpu_script "${BRH_O_OUT}/enable_gpu.py" "$device"
+	_brh_write_overrides_script "${BRH_O_OUT}/scene_overrides.py" "$bver" "$samples" "$res"
 
 	local blend_sha=""
 	blend_sha="$(_brh_sha256 "$BRH_O_BLEND")"
@@ -324,13 +361,14 @@ _brh_package() {
   "blend": "$(_brh_json_escape "$BRH_O_BLEND")",
   "blend_sha256": "${blend_sha}",
   "gpu_script": "enable_gpu.py",
+  "overrides_script": "scene_overrides.py",
   "packed_assets": [
 ${assets_json}
   ]
 }
 EOF
-	print_success "Packaged job in ${BRH_O_OUT} (manifest.json, enable_gpu.py)"
-	printf 'Upload %s, assets and enable_gpu.py to %s on each worker (submit prints the commands).\n' "$BRH_O_BLEND" "$BRH_REMOTE_DIR"
+	print_success "Packaged job in ${BRH_O_OUT} (manifest.json, enable_gpu.py, scene_overrides.py)"
+	printf 'After submit, run stage per pod to upload the blend, assets and scripts to %s.\n' "$BRH_REMOTE_DIR"
 	return 0
 }
 
@@ -372,14 +410,13 @@ _brh_render_command() {
 	local end="$2"
 	local deadline="$3"
 	local engine="$4"
-	local samples="$5"
-	local res="$6"
-	local blend_base="$7"
-	local w="${res%x*}"
-	local h="${res#*x}"
+	local blend_base="$5"
+	# Waits for the staged-inputs marker (see stage), renders, then removes the pod.
+	# The deadline timeout covers the wait too. Settings and the Blender pin are
+	# applied by scene_overrides.py. No single quotes: the caller wraps in bash -c '...'.
 	# shellcheck disable=SC2016
-	printf 'cd %s && timeout %sm blender -b %s -Y -P enable_gpu.py -E %s --python-expr "import bpy; s=bpy.context.scene; s.cycles.samples=%s; s.render.resolution_x=%s; s.render.resolution_y=%s" -o //frames/frame_####  -s %s -e %s -a; runpodctl remove pod $RUNPOD_POD_ID' \
-		"$BRH_REMOTE_DIR" "$deadline" "$blend_base" "$engine" "$samples" "$w" "$h" "$start" "$end"
+	printf 'mkdir -p %s && cd %s && timeout %sm bash -c "until [ -f .staged ]; do sleep 10; done; blender -b %s -Y -P enable_gpu.py -P scene_overrides.py -E %s -o //frames/frame_#### -s %s -e %s -a"; runpodctl remove pod $RUNPOD_POD_ID' \
+		"$BRH_REMOTE_DIR" "$BRH_REMOTE_DIR" "$deadline" "$blend_base" "$engine" "$start" "$end"
 	return 0
 }
 
@@ -434,6 +471,7 @@ _brh_provider_call() {
 # ---------------------------------------------------------------- submit
 
 # Deterministic text of the billable contract; its hash is the approval token.
+# manifest_sha256 covers the scene hash, packed asset set, settings and scripts list.
 _brh_contract_text() {
 	local manifest="$1"
 	local workers="$2"
@@ -443,23 +481,49 @@ _brh_contract_text() {
 	local volume="$6"
 	local deadline="$7"
 	local budget="$8"
-	printf 'provider=runpod\nblender=%s\nengine=%s\ndevice=%s\nsamples=%s\nresolution=%s\nframes=%s\nblend_sha256=%s\nimage=%s\ngpu=%s\nrate_usd_hr=%s\nstorage_gb=%s\nworkers_min=0\nworkers_max=%s\nidle_timeout=0 (self-removes after render)\ndeadline_minutes=%s\nbudget_usd=%s\n' \
+	local overhead="$9"
+	local storage="${10}"
+	local msha=""
+	msha="$(_brh_sha256 "$manifest")"
+	printf 'provider=runpod\nblender=%s\nengine=%s\ndevice=%s\nsamples=%s\nresolution=%s\nframes=%s\nmanifest_sha256=%s\nimage=%s\ngpu=%s\nrate_usd_hr=%s (quoted; verify in status)\nstorage_gb=%s\nstorage_usd=%s\nworkers_min=0\nworkers_max=%s\nidle_timeout=0 (self-removes after render)\ndeadline_minutes=%s\noverhead_minutes=%s\nbudget_usd=%s\n' \
 		"$(_brh_manifest_get "$manifest" blender_version)" "$(_brh_manifest_get "$manifest" engine)" \
 		"$(_brh_manifest_get "$manifest" device)" "$(_brh_manifest_get "$manifest" samples)" \
 		"$(_brh_manifest_get "$manifest" resolution)" "$(_brh_manifest_get "$manifest" frames)" \
-		"$(_brh_manifest_get "$manifest" blend_sha256)" "$image" "$gpu_type" "$rate" "$volume" "$workers" "$deadline" "$budget"
+		"$msha" "$image" "$gpu_type" "$rate" "$volume" "$storage" "$workers" "$deadline" "$overhead" "$budget"
+	return 0
+}
+
+# Fails when the scene or any packed asset changed since package.
+_brh_verify_packaged_files() {
+	local manifest="$1"
+	local want="" path="" got=""
+	while read -r want path; do
+		[[ -n "$path" ]] || continue
+		if [[ ! -f "$path" ]]; then
+			print_error "Packaged file missing: ${path}"
+			return 1
+		fi
+		got="$(_brh_sha256 "$path")"
+		if [[ "$got" != "$want" ]]; then
+			print_error "${path} changed since package (re-run package and re-approve)"
+			return 1
+		fi
+	done < <(
+		printf '%s %s\n' "$(_brh_manifest_get "$manifest" blend_sha256)" "$(_brh_manifest_get "$manifest" blend)"
+		sed -n 's/^.*"path": "\(.*\)", "sha256": "\([0-9a-f]*\)"}.*$/\2 \1/p' "$manifest"
+	)
 	return 0
 }
 
 _brh_submit() {
 	_brh_reset_opts
-	_brh_parse "--manifest --workers --gpu-rate --budget-usd --deadline-minutes --approve-contract --gpu-type --image --volume-gb" "$@" || return 1
+	_brh_parse "--manifest --workers --gpu-rate --budget-usd --deadline-minutes --approve-contract --gpu-type --image --volume-gb --overhead-minutes --storage-usd" "$@" || return 1
 	if [[ -z "$BRH_O_BUDGET_USD" || -z "$BRH_O_DEADLINE_MINUTES" ]]; then
 		print_error "submit requires --budget-usd and --deadline-minutes (spend ceiling and hard stop)"
 		return 1
 	fi
-	if [[ -z "$BRH_O_MANIFEST" || -z "$BRH_O_GPU_RATE" ]]; then
-		print_error "--manifest and --gpu-rate (quoted USD/hour) are required"
+	if [[ -z "$BRH_O_MANIFEST" || -z "$BRH_O_GPU_RATE" || -z "$BRH_O_IMAGE" ]]; then
+		print_error "--manifest, --gpu-rate (quoted USD/hour) and --image (approved CUDA Blender image) are required"
 		return 1
 	fi
 	[[ -f "$BRH_O_MANIFEST" ]] || {
@@ -468,31 +532,39 @@ _brh_submit() {
 	}
 	local workers="${BRH_O_WORKERS:-1}"
 	local gpu_type="${BRH_O_GPU_TYPE:-$BRH_DEFAULT_GPU}"
-	local image="${BRH_O_IMAGE:-$BRH_DEFAULT_IMAGE}"
+	local image="$BRH_O_IMAGE"
 	local volume="${BRH_O_VOLUME_GB:-50}"
+	local overhead="${BRH_O_OVERHEAD_MINUTES:-15}"
+	local storage="${BRH_O_STORAGE_USD:-0}"
 	_brh_require_int "--workers" "$workers" || return 1
 	_brh_require_int "--deadline-minutes" "$BRH_O_DEADLINE_MINUTES" || return 1
 	_brh_require_int "--volume-gb" "$volume" || return 1
+	_brh_require_number "--overhead-minutes" "$overhead" || return 1
+	_brh_require_number "--storage-usd" "$storage" || return 1
 	_brh_require_number "--budget-usd" "$BRH_O_BUDGET_USD" || return 1
 	_brh_require_number "--gpu-rate" "$BRH_O_GPU_RATE" || return 1
 
-	local frames="" blend="" engine="" samples="" res=""
+	local frames="" blend="" engine="" bver=""
 	frames="$(_brh_manifest_get "$BRH_O_MANIFEST" frames)"
 	blend="$(_brh_manifest_get "$BRH_O_MANIFEST" blend)"
 	engine="$(_brh_manifest_get "$BRH_O_MANIFEST" engine)"
-	samples="$(_brh_manifest_get "$BRH_O_MANIFEST" samples)"
-	res="$(_brh_manifest_get "$BRH_O_MANIFEST" resolution)"
+	bver="$(_brh_manifest_get "$BRH_O_MANIFEST" blender_version)"
 	_brh_require_range "$frames" || return 1
+	if [[ "$bver" == "$BRH_UNPINNED" ]]; then
+		print_error "Manifest has no pinned Blender version; re-run package with --blender-version"
+		return 1
+	fi
+	_brh_verify_packaged_files "$BRH_O_MANIFEST" || return 1
 
 	local worst=""
-	worst="$(awk -v w="$workers" -v r="$BRH_O_GPU_RATE" -v m="$BRH_O_DEADLINE_MINUTES" 'BEGIN { printf "%.2f", w * r * m / 60 }')"
+	worst="$(awk -v w="$workers" -v r="$BRH_O_GPU_RATE" -v m="$BRH_O_DEADLINE_MINUTES" -v o="$overhead" -v s="$storage" 'BEGIN { printf "%.2f", w * r * (m + o) / 60 + s }')"
 	if awk -v a="$worst" -v b="$BRH_O_BUDGET_USD" 'BEGIN { exit !(a > b) }'; then
-		print_error "Worst-case spend \$${worst} (${workers} x \$${BRH_O_GPU_RATE}/hr x ${BRH_O_DEADLINE_MINUTES} min) exceeds --budget-usd \$${BRH_O_BUDGET_USD}"
+		print_error "Worst-case spend \$${worst} (${workers} x \$${BRH_O_GPU_RATE}/hr x (${BRH_O_DEADLINE_MINUTES}+${overhead}) min + \$${storage} storage) exceeds --budget-usd \$${BRH_O_BUDGET_USD}"
 		return 1
 	fi
 
 	local contract="" token=""
-	contract="$(_brh_contract_text "$BRH_O_MANIFEST" "$workers" "$gpu_type" "$BRH_O_GPU_RATE" "$image" "$volume" "$BRH_O_DEADLINE_MINUTES" "$BRH_O_BUDGET_USD")"
+	contract="$(_brh_contract_text "$BRH_O_MANIFEST" "$workers" "$gpu_type" "$BRH_O_GPU_RATE" "$image" "$volume" "$BRH_O_DEADLINE_MINUTES" "$BRH_O_BUDGET_USD" "$overhead" "$storage")"
 	token="APPROVE-$(printf '%s' "$contract" | _brh_sha256_stdin | cut -c1-8 | tr '[:lower:]' '[:upper:]')"
 	printf 'Billable deployment contract (worst-case spend $%s):\n%s\n\nApproval token: %s\n\n' "$worst" "$contract" "$token"
 	if [[ "$BRH_O_APPROVE_CONTRACT" != "$token" ]]; then
@@ -505,22 +577,56 @@ _brh_submit() {
 	job_dir="$(cd "$(dirname "$BRH_O_MANIFEST")" && pwd)" || return 1
 	local blend_base=""
 	blend_base="$(basename "$blend")"
-	local idx="" s="" e="" remote_cmd="" name="" pod_out=""
+	local idx="" s="" e="" remote_cmd="" name="" pod_out="" pod_id=""
 	while read -r idx s e; do
-		remote_cmd="$(_brh_render_command "$s" "$e" "$BRH_O_DEADLINE_MINUTES" "$engine" "$samples" "$res" "$blend_base")"
+		remote_cmd="$(_brh_render_command "$s" "$e" "$BRH_O_DEADLINE_MINUTES" "$engine" "$blend_base")"
 		name="blender-render-${idx}-$(printf '%s' "$token" | cut -c9-14)"
 		printf '# worker %s: frames %s-%s\n' "$idx" "$s" "$e"
 		pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd")" || return 1
 		printf '%s\n' "$pod_out"
 		if [[ "$BRH_LIVE" -eq 1 ]]; then
-			printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$(printf '%s' "$pod_out" | tr -d '"' | awk '{for(i=1;i<=NF;i++) if ($i=="pod") {print $(i+1); exit}}')" >>"${job_dir}/jobs.tsv"
+			pod_id="$(printf '%s\n' "$pod_out" | sed -n 's/.*pod "\{0,1\}\([A-Za-z0-9]*\)"\{0,1\} created.*/\1/p')"
+			if [[ -z "$pod_id" ]]; then
+				print_error "Could not read the pod id from runpodctl output; run status and teardown manually"
+				return 1
+			fi
+			printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
 		fi
 	done < <(_brh_split_ranges "$frames" "$workers")
 	if [[ "$BRH_LIVE" -eq 1 ]]; then
-		print_info "Pod ids recorded in ${job_dir}/jobs.tsv. Next: status, fetch, then teardown."
+		print_info "Pod ids recorded in ${job_dir}/jobs.tsv. Pods wait for staging: run stage per pod (host/port from status), then fetch and teardown."
 	else
-		print_info "Dry run: nothing created. Upload ${blend_base}, assets and enable_gpu.py to ${BRH_REMOTE_DIR} on each pod, then re-run with --live."
+		print_info "Dry run: nothing created. Re-run with --live after approval; then stage inputs per pod."
 	fi
+	return 0
+}
+
+# Uploads scene, assets and scripts, then releases the pod's wait loop.
+_brh_stage() {
+	_brh_reset_opts
+	_brh_parse "--job --host --port" "$@" || return 1
+	if [[ -z "$BRH_O_JOB" || -z "$BRH_O_HOST" || -z "$BRH_O_PORT" ]]; then
+		print_error "--job, --host and --port (pod SSH endpoint from status) are required"
+		return 1
+	fi
+	local manifest="${BRH_O_JOB}/manifest.json"
+	[[ -f "$manifest" ]] || {
+		print_error "No manifest.json in ${BRH_O_JOB}"
+		return 1
+	}
+	_brh_verify_packaged_files "$manifest" || return 1
+	local ssh_cmd="ssh -p ${BRH_O_PORT} -o StrictHostKeyChecking=accept-new"
+	local dest="root@${BRH_O_HOST}"
+	local path="" want=""
+	while read -r want path; do
+		[[ -n "$path" ]] || continue
+		_brh_exec rsync -av -e "$ssh_cmd" "$path" "${dest}:${BRH_REMOTE_DIR}/$(basename "$path")" || return 1
+	done < <(
+		printf '%s %s\n' "x" "$(_brh_manifest_get "$manifest" blend)"
+		sed -n 's/^.*"path": "\(.*\)", "sha256": "\([0-9a-f]*\)"}.*$/\2 \1/p' "$manifest"
+	)
+	_brh_exec rsync -av -e "$ssh_cmd" "${BRH_O_JOB}/enable_gpu.py" "${BRH_O_JOB}/scene_overrides.py" "${dest}:${BRH_REMOTE_DIR}/" || return 1
+	_brh_exec ssh -p "$BRH_O_PORT" -o StrictHostKeyChecking=accept-new "$dest" "touch ${BRH_REMOTE_DIR}/.staged" || return 1
 	return 0
 }
 
@@ -544,7 +650,7 @@ _brh_status() {
 
 _brh_fetch() {
 	_brh_reset_opts
-	_brh_parse "--job --host --port --worker" "$@" || return 1
+	_brh_parse "--job --host --port" "$@" || return 1
 	if [[ -z "$BRH_O_JOB" || -z "$BRH_O_HOST" || -z "$BRH_O_PORT" ]]; then
 		print_error "--job, --host and --port (pod SSH endpoint from status) are required"
 		return 1
@@ -554,23 +660,51 @@ _brh_fetch() {
 		return 1
 	}
 	mkdir -p "${BRH_O_JOB}/frames"
-	# --ignore-existing makes fetch resumable: finished frames are never re-downloaded.
-	_brh_exec rsync -av --ignore-existing -e "ssh -p ${BRH_O_PORT} -o StrictHostKeyChecking=accept-new" \
+	# Run once per pod (each pod holds only its own range). --checksum makes re-runs
+	# resumable: identical frames are skipped, partial or changed ones are re-fetched;
+	# rsync only publishes a file after its transfer completes.
+	_brh_exec rsync -av --checksum -e "ssh -p ${BRH_O_PORT} -o StrictHostKeyChecking=accept-new" \
 		"root@${BRH_O_HOST}:${BRH_REMOTE_DIR}/frames/" "${BRH_O_JOB}/frames/" || return 1
 	if [[ "$BRH_LIVE" -ne 1 ]]; then
 		return 0
 	fi
-	local frames="" expected=0 got=0
+	local frames="" expected=0 missing=""
 	frames="$(_brh_manifest_get "${BRH_O_JOB}/manifest.json" frames)"
 	expected=$((${frames#*-} - ${frames%-*} + 1))
-	got="$(find "${BRH_O_JOB}/frames" -type f ! -name 'SHA256SUMS' | wc -l | tr -d ' ')"
+	missing="$(_brh_missing_frames "$BRH_O_JOB")"
 	(cd "${BRH_O_JOB}/frames" && find . -type f ! -name 'SHA256SUMS' | LC_ALL=C sort | while read -r f; do
 		printf '%s  %s\n' "$(_brh_sha256 "$f")" "$f"
 	done >SHA256SUMS)
-	printf 'Frames present: %s of %s expected (hashes in frames/SHA256SUMS)\n' "$got" "$expected"
-	if [[ "$got" -lt "$expected" ]]; then
-		print_warning "Incomplete: re-run fetch after remaining workers finish (existing frames are skipped)"
+	if [[ -n "$missing" ]]; then
+		print_warning "Missing frames (of ${expected}): $(printf '%s' "$missing" | tr '\n' ' ')"
+		print_warning "Fetch from the remaining pods once they finish, then re-check"
+	else
+		print_success "All ${expected} expected frames present (hashes in frames/SHA256SUMS)"
 	fi
+	return 0
+}
+
+# Prints each expected frame number with no matching frame_NNNN.* file (empty = complete).
+_brh_missing_frames() {
+	local job="$1"
+	local frames=""
+	if [[ ! -f "${job}/manifest.json" ]]; then
+		return 0
+	fi
+	frames="$(_brh_manifest_get "${job}/manifest.json" frames)"
+	if [[ ! "$frames" =~ $BRH_RANGE_RE ]]; then
+		return 0
+	fi
+	local n="${frames%-*}"
+	local end="${frames#*-}"
+	local padded=""
+	while [[ "$n" -le "$end" ]]; do
+		padded="$(printf '%04d' "$n")"
+		if ! compgen -G "${job}/frames/frame_${padded}.*" >/dev/null; then
+			printf '%s\n' "$n"
+		fi
+		n=$((n + 1))
+	done
 	return 0
 }
 
@@ -589,7 +723,16 @@ _brh_teardown() {
 		fi
 		return 0
 	fi
-	local idx="" s="" e="" pod="" failed=0
+	local idx="" s="" e="" pod="" failed=0 missing=""
+	missing="$(_brh_missing_frames "$BRH_O_JOB")"
+	if [[ -n "$missing" ]]; then
+		if [[ "$BRH_LIVE" -eq 1 && "$BRH_FORCE" -ne 1 ]]; then
+			print_error "Refusing to remove pods: frames not fetched locally: $(printf '%s' "$missing" | tr '\n' ' ')"
+			print_error "Fetch them from each pod first, or pass --force-discard to accept losing them"
+			return 1
+		fi
+		print_warning "Frames still missing locally: $(printf '%s' "$missing" | tr '\n' ' ')"
+	fi
 	while IFS=$'\t' read -r idx s e pod; do
 		[[ -n "$pod" ]] || continue
 		_brh_provider_call teardown "$pod" || failed=1
@@ -599,7 +742,10 @@ _brh_teardown() {
 		return 0
 	fi
 	local remaining=""
-	remaining="$(runpodctl get pod 2>/dev/null || true)"
+	if ! remaining="$(runpodctl get pod)"; then
+		print_error "Could not list pods to confirm removal: check the provider dashboard before assuming billing stopped"
+		return 1
+	fi
 	while IFS=$'\t' read -r idx s e pod; do
 		[[ -n "$pod" ]] || continue
 		if printf '%s' "$remaining" | grep -qF "$pod"; then
@@ -625,6 +771,7 @@ main() {
 	plan) _brh_plan "$@" ;;
 	package) _brh_package "$@" ;;
 	submit) _brh_submit "$@" ;;
+	stage) _brh_stage "$@" ;;
 	status) _brh_status "$@" ;;
 	fetch) _brh_fetch "$@" ;;
 	teardown) _brh_teardown "$@" ;;
