@@ -1803,20 +1803,15 @@ _pulse_take_drain_escape_deferral() {
 	return 0
 }
 
-# Stdout: seconds since the pending deferral was first recorded
-# Returns: 0 with an age, 1 when no parseable deferral is pending
-_pulse_drain_escape_deferral_age() {
-	local marker="" deferred_epoch="" now_epoch=""
+# Stdout: the epoch at which the pending deferral was first recorded
+# Returns: 0 with an epoch, 1 when no parseable deferral is pending
+_pulse_drain_escape_deferral_epoch() {
+	local marker="" deferred_epoch=""
 	marker=$(_pulse_drain_escape_deferral_file)
 	[[ -f "$marker" ]] || return 1
 	read -r deferred_epoch _ 2>/dev/null <"$marker" || [[ -n "$deferred_epoch" ]] || return 1
 	[[ "$deferred_epoch" =~ ^[0-9]+$ ]] || return 1
-	now_epoch=$(date +%s) || return 1
-	if [[ "$now_epoch" -le "$deferred_epoch" ]]; then
-		printf '0\n'
-		return 0
-	fi
-	printf '%s\n' "$((now_epoch - deferred_epoch))"
+	printf '%s\n' "$deferred_epoch"
 	return 0
 }
 
@@ -1842,11 +1837,12 @@ _pulse_drain_escape_deferral_age() {
 _pulse_defer_drain_supervisor_escape() {
 	local bundle="$1"
 	local supervisor_age="$2"
-	local marker="" now_epoch="" deferral_age="" max_defer=""
+	local marker="" now_epoch="" deferred_epoch="" deferral_age=0 max_defer=""
 	[[ "${PULSE_LLM_DRAIN_ESCAPE_DEFER:-1}" != "0" ]] || return 1
 	marker=$(_pulse_drain_escape_deferral_file)
 	now_epoch=$(date +%s) || return 1
-	if deferral_age=$(_pulse_drain_escape_deferral_age); then
+	if deferred_epoch=$(_pulse_drain_escape_deferral_epoch); then
+		[[ "$now_epoch" -le "$deferred_epoch" ]] || deferral_age=$((now_epoch - deferred_epoch))
 		max_defer="${PULSE_LLM_DRAIN_ESCAPE_MAX_DEFER_SECONDS:-14400}"
 		[[ "$max_defer" =~ ^[0-9]+$ ]] || max_defer=14400
 		if [[ "$max_defer" -gt 0 && "$deferral_age" -ge "$max_defer" ]]; then
@@ -1855,7 +1851,7 @@ _pulse_defer_drain_supervisor_escape() {
 			return 1
 		fi
 		# Keep the first-deferral epoch so the backstop measures total delay.
-		printf '%s %s\n' "$((now_epoch - deferral_age))" "$bundle" >"$marker" 2>/dev/null || true
+		printf '%s %s\n' "$deferred_epoch" "$bundle" >"$marker" 2>/dev/null || true
 		echo "[pulse-wrapper] LLM supervisor: cooperative drain requested again; keeping the GH#38162 escape deferred ${deferral_age}s so bundle ${bundle} starts and dispatches first (GH#38580, last_attempt_age_s=${supervisor_age})" >>"$LOGFILE"
 		return 0
 	fi

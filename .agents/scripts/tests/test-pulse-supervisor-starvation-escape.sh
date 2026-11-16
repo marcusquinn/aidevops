@@ -168,10 +168,21 @@ _pulse_run_supervisor_phase
 read -r kept_deferral_epoch kept_bundle <"$DEFERRAL_MARKER"
 rc=1
 [[ "$SUPERVISOR_CALLS" -eq 0 && "$kept_bundle" == "bundle-after" ]] &&
-	[[ "$kept_deferral_epoch" -le "$first_deferral_epoch" ]] &&
+	[[ "$kept_deferral_epoch" == "$first_deferral_epoch" ]] &&
 	grep -q 'keeping the GH#38162 escape deferred' "$LOGFILE" &&
 	! grep -q 'GH#38162 starvation escape' "$LOGFILE" && rc=0
 check "(b2a) a second drained cycle keeps the escape deferred" "$rc"
+
+# (b2a1) an older stored epoch is rewritten byte-for-byte, never reconstructed
+# from clock reads, so repeated drains cannot drift toward the backstop.
+stored_epoch=$(($(date +%s) - 1001))
+printf '%s bundle-old\n' "$stored_epoch" >"$DEFERRAL_MARKER"
+_pulse_run_supervisor_phase
+_pulse_run_supervisor_phase
+read -r kept_deferral_epoch kept_bundle <"$DEFERRAL_MARKER"
+rc=1
+[[ "$SUPERVISOR_CALLS" -eq 0 && "$kept_deferral_epoch" == "$stored_epoch" && "$kept_bundle" == "bundle-after" ]] && rc=0
+check "(b2a1) repeated drains preserve the stored deferral epoch exactly" "$rc"
 
 # (b2b) the next undrained cycle then runs the deferred supervisor.
 STUB_DRAIN_BUNDLE=""
