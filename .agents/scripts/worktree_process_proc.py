@@ -17,7 +17,7 @@ def denied_process_is_irrelevant(process: Path, uid: int) -> bool:
     try:
         fields = dict(
             line.split(":", 1)
-            for line in (process / "status").read_text().splitlines()
+            for line in (process / "status").read_text(errors="surrogateescape").splitlines()
             if ":" in line
         )
     except (OSError, UnicodeError):
