@@ -171,12 +171,16 @@ approval and is operator-owned.
 ## Provider notes
 
 - **Runpod**: per-second billing, community pods cheapest but less stable;
-  stopped pods keep billing storage. Provisioning and Serverless rules:
+  stopped pods keep billing storage. Script with `runpodctl` (`pod create
+  --wait`, resumable `network-volume upload/download` for scenes and frames);
+  inspect interactively with the on-demand `@runpod` MCP. Guide:
+  `tools/infrastructure/runpod.md`; provisioning and Serverless rules:
   `tools/infrastructure/cloud-gpu.md`; media-generation routes: `content/video-runpod.md`.
 - **Vast.ai**: lowest list prices; host quality varies, interruptible jobs get
   outbid, bandwidth may be billed per byte. Filter by reliability score.
 - **SaladCloud**: consumer RTX at the lowest rates; interruptible by design.
-  Only for resumable frame jobs with external storage.
+  Only for resumable frame jobs with external storage; feed frame ranges
+  through a job queue. `saladcloud` CLI guide: `tools/infrastructure/saladcloud.md`.
 - **TensorDock**: full VMs (including Windows), no egress fees; servers are
   deleted when balance reaches zero.
 - **DigitalOcean**: L40S/RTX 6000 Ada Droplets, 5-minute minimum; powered-off

@@ -108,7 +108,7 @@ tools/document/extraction-schemas/,tools/document/extraction-schemas subagents,0
 tools/document/,tools/document subagents,extraction-workflow
 tools/,tools subagents,git
 tools/git/,tools/git subagents,authentication|conflict-resolution|git-security|gitea-cli|github-actions|github-cli|gitlab-cli|jujutsu|lumen|opencode-github-security|opencode-github|opencode-gitlab|worktrunk
-tools/infrastructure/,tools/infrastructure subagents,cloud-gpu|cloudflare-ai|fireworks|nearai|nvidia-cloud|together
+tools/infrastructure/,tools/infrastructure subagents,cloud-gpu|cloudflare-ai|fireworks|nearai|nvidia-cloud|runpod|saladcloud|together
 tools/legal/,tools/legal subagents,legal-research
 tools/local-models/,tools/local-models subagents,huggingface|local-models
 tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter|prospecting
