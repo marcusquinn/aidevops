@@ -352,6 +352,52 @@
       "shared_mailbox_support": "Partial. Supports aliases and identities. Team plans support shared folders but not true shared mailboxes.",
       "notes": "JMAP reference implementation — best provider for JMAP integration. Excellent CalDAV/CardDAV support. Masked email (aliases) feature for privacy."
     },
+    "purelymail": {
+      "name": "Purelymail",
+      "slug": "purelymail",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.purelymail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.purelymail.com",
+        "port": 465,
+        "security": "TLS",
+        "alt_port": 587,
+        "alt_security": "STARTTLS"
+      },
+      "pop3": {
+        "host": "pop3.purelymail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "managesieve": {
+        "host": "mailserver.purelymail.com",
+        "port": 4190,
+        "security": "STARTTLS"
+      },
+      "api": {
+        "base_url": "https://purelymail.com/api/v0",
+        "auth_header": "Purelymail-Api-Token",
+        "spec": "https://news.purelymail.com/api/index.html",
+        "helper": "purelymail-helper.sh"
+      },
+      "protocols_supported": ["imap", "smtp", "pop3", "managesieve"],
+      "auth_methods": ["password", "app_password"],
+      "auth_notes": "Username is the full address. With 2FA on, IMAP/SMTP need an app password (createAppPassword API or portal). The API token is account-wide: treat it as an admin secret.",
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "via client (GPG/S-MIME). No built-in E2EE.",
+        "jurisdiction": "United States",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "Small subscription-funded provider: no ads, no data mining. US jurisdiction."
+      },
+      "shared_mailbox_support": "Routing rules (aliases, prefix and catch-all) to one or more mailboxes; no native shared mailbox.",
+      "notes": "Cheap multi-domain hosting priced by storage, not users. Custom domains need MX, SPF, ownership TXT, three DKIM CNAMEs and a DMARC CNAME (purelymail.com/docs/domainDocs). New users default to password reset ON: create them with enablePasswordReset=false. See services/email/purelymail.md."
+    },
     "mailbox_org": {
       "name": "mailbox.org",
       "slug": "mailbox-org",

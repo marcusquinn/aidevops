@@ -21,9 +21,10 @@ tools:
 ## Quick Reference
 
 - **Config**: `configs/email-providers.json` (from `.json.txt` template)
-- **Providers**: 19 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud
+- **Providers**: 20 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, Purelymail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud
 - **Protocols**: IMAP (993/TLS), SMTP (465/TLS or 587/STARTTLS), POP3 (995/TLS), JMAP (Fastmail only)
-- **Privacy**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Zoho, IONOS, Namecheap, iCloud) > C (GWS, M365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
+- **Privacy**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Purelymail, Zoho, IONOS, Namecheap, iCloud) > C (GWS, M365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
+- **Provisioning helpers**: Purelymail domains, DNS, mailboxes and routing via `purelymail-helper.sh` (`services/email/purelymail.md`)
 - **Default protocol**: IMAP. POP only for shared mailboxes where all users must read the same emails.
 
 <!-- AI-CONTEXT-END -->
@@ -43,7 +44,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 |--------|-----------|-----------------|
 | A+ | Proton Mail, Tuta, Cloudron | E2EE / self-hosted, zero-knowledge, open-source |
 | A | Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused model |
-| B | Zoho, IONOS, Namecheap, iCloud | No ads/mining; less privacy-focused jurisdiction |
+| B | Purelymail, Zoho, IONOS, Namecheap, iCloud | No ads/mining; less privacy-focused jurisdiction |
 | C | Google Workspace, Microsoft 365, GMX, mail.com | Business plans without ad targeting; telemetry active |
 | D | Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning, broad data usage |
 
@@ -53,7 +54,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 |----------|-----------|-------|
 | IMAP + SMTP | All except Tuta | Gmail: enable in Settings > Forwarding and POP/IMAP. Zoho: enable in settings; regional hostnames (zoho.com/eu/in/com.au/jp) |
 | JMAP | Fastmail | RFC 8620/8621 — prefer over IMAP for new Fastmail integrations |
-| POP3 | Gmail, GWS, Outlook, M365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron | |
+| POP3 | Gmail, GWS, Outlook, M365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, Purelymail, mailbox.org, Disroot, Cloudron | |
 | Graph API | Outlook, Microsoft 365 | Recommended for programmatic access |
 | Bridge required | Proton Mail | Local IMAP 1143 / SMTP 1025 via Proton Bridge (use Bridge-generated password). Not suitable for headless without Bridge CLI |
 | No standard protocols | Tuta | Proprietary client only — deliberate design for encryption architecture |
@@ -63,7 +64,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 | Method | Providers | Notes |
 |--------|-----------|-------|
 | OAuth2 | Gmail, GWS, Outlook, M365, Zoho | Gmail/GWS: required since May 2022. M365: basic auth deprecated Oct 2022 (OAuth2 via Entra ID) |
-| App passwords | Gmail, Fastmail, Yahoo, StartMail, iCloud | |
+| App passwords | Gmail, Fastmail, Purelymail, Yahoo, StartMail, iCloud | Purelymail: required for IMAP/SMTP once 2FA is on |
 | Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho | |
 | Bridge password | Proton Mail | |
 | Service account | Google Workspace, Microsoft 365 | |
@@ -122,6 +123,7 @@ cloudron mail catch-all yourdomain.com target@yourdomain.com
 ## Related
 
 - `services/email/ses.md` — Amazon SES for outbound delivery
+- `services/email/purelymail.md` — Purelymail mailbox hosting: DNS, users, routing, auth checks
 - `services/email/email-agent.md` — Autonomous email agent
 - `services/email/email-testing.md` — Deliverability testing
 - `configs/email-providers.json.txt` — Provider configuration template
