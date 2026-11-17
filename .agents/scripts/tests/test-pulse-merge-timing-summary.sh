@@ -268,6 +268,7 @@ final_gate_timing_regression() {
     fi
     return 0
   }
+  _pulse_merge_prospective_todo_gate() { return 0; }
   _pulse_merge_maybe_dispatch_preflight_remediation() { return 0; }
   _route_pr_to_fix_worker() { local checks_json="${9:-}"; route_calls=$((route_calls + 1)); routed_evidence="$checks_json"; return 0; }
   for failure in authority review worker snapshot; do

@@ -445,13 +445,16 @@ _merge_reconcile_closing_issues() {
 }
 
 # Fail closed unless the exact current PR head can be merged prospectively into
-# the fresh base without introducing duplicate TODO task IDs or issue mappings.
+# the live base-branch tip without introducing duplicate TODO task IDs or issue
+# mappings. The PR's recorded base.sha can lag the tip (GH#38703) and is kept
+# for diagnostics only.
 _merge_guard_prospective_todo() (
 	local pr_number="$1"
 	local repo="$2"
 	local refs=""
 	local base_ref=""
 	local base_sha=""
+	local recorded_base_sha=""
 	local head_sha=""
 	local target_repo=""
 	local normalized_repo=""
@@ -470,8 +473,8 @@ _merge_guard_prospective_todo() (
 		print_error "Merge blocked: unable to pin fresh PR base/head evidence for prospective TODO validation"
 		return 1
 	}
-	IFS=$'\t' read -r base_ref base_sha head_sha target_repo remote_url <<<"$refs"
-	if [[ -z "$base_ref" || -z "$base_sha" || -z "$head_sha" || -z "$target_repo" || -z "$remote_url" ]]; then
+	IFS=$'\t' read -r base_ref recorded_base_sha head_sha target_repo remote_url <<<"$refs"
+	if [[ -z "$base_ref" || -z "$recorded_base_sha" || -z "$head_sha" || -z "$target_repo" || -z "$remote_url" ]]; then
 		print_error "Merge blocked: incomplete PR base/head evidence for prospective TODO validation"
 		return 1
 	fi
@@ -488,6 +491,15 @@ _merge_guard_prospective_todo() (
 	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
 		print_error "Merge blocked: PR head changed before prospective TODO validation"
 		return 1
+	fi
+	# GH#38703: validate against the commit the merge will land on, not the
+	# base recorded on the PR, so rows the base gained later are visible.
+	base_sha=$(_merge_fetch_base_tip_rest "$target_repo" "$base_ref") || {
+		print_error "Merge blocked: unable to resolve the current ${base_ref} tip for prospective TODO validation"
+		return 1
+	}
+	if [[ "$base_sha" != "$recorded_base_sha" ]]; then
+		print_info "PR #${pr_number} recorded base ${recorded_base_sha} differs from current ${base_ref} tip ${base_sha}; validating against the tip" >&2
 	fi
 	if [[ -n "${AIDEVOPS_TEMP_DIR:-}" ]]; then
 		temp_root="$AIDEVOPS_TEMP_DIR"
@@ -591,6 +603,26 @@ _merge_guard_prospective_todo() (
 	[[ -n "$report" ]] && printf '%s\n' "$report" >&2
 	return 1
 )
+
+# Standalone entry point so Pulse's deterministic merge runs the same guard in
+# an isolated process (GH#38703). Optional EXPECTED_HEAD pins the reviewed head.
+# Usage: full-loop-helper.sh prospective-todo-guard <PR> <owner/repo> [EXPECTED_HEAD]
+# Returns: 0 = no duplicate TODO mappings, 1 = blocked or indeterminate
+cmd_prospective_todo_guard() {
+	local pr_number="${1:-}"
+	local repo="${2:-}"
+	local expected_head="${3:-}"
+	if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ || ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		print_error "Usage: full-loop-helper.sh prospective-todo-guard <PR> <owner/repo> [EXPECTED_HEAD]"
+		return 1
+	fi
+	if [[ -n "$expected_head" ]] && ! _merge_is_pinned_object_id "$expected_head"; then
+		print_error "Merge blocked: expected head must be a full commit SHA"
+		return 1
+	fi
+	FULL_LOOP_VERIFIED_PR_HEAD_SHA="$expected_head" _merge_guard_prospective_todo "$pr_number" "$repo" || return 1
+	return 0
+}
 
 # Resolve one authoritative Conventional Commit type from the reviewed PR's
 # commit metadata. Every commit must be conventional and use the same type;
