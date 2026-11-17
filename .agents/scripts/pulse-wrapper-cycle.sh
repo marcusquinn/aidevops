@@ -1072,12 +1072,20 @@ _pulse_stale_blocked_repo_deadline() {
 # Bounded, best-effort scheduling hint, never an unblock verdict. Ignore stale
 # backlog hints once the stale pass is fresh (only partial continuation is due).
 _pulse_stale_blocked_repo_weight() {
-	local repo="$1" interval="$2" now_epoch="$3" weight=""
+	local repo="$1" interval="$2" now_epoch="$3" weight="" partial_page=""
 	local file="${HOME}/.aidevops/cache/stale-blocked-weight/${repo//\//__}"
 	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" && [[ -f "$file" ]]; then
 		IFS= read -r weight <"$file" 2>/dev/null || true
 	fi
 	[[ "$weight" =~ ^[1-9][0-9]{0,5}$ ]] || weight=1
+	file="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}/${repo//\//__}"
+	if ! _pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" partial-continuation-complete && [[ -r "$file" ]]; then
+		IFS= read -r partial_page <"$file" || partial_page=""
+		partial_page="${partial_page#a}"
+		if [[ "$partial_page" =~ ^[1-9][0-9]{0,2}$ && "$partial_page" -gt "$weight" ]]; then
+			weight="$partial_page"
+		fi
+	fi
 	printf '%s\n' "$weight"
 	return 0
 }
@@ -1148,7 +1156,7 @@ _PULSE_STALE_BLOCKED_OPTIONAL_PASSES="_pm_reconcile_draft_checkpoint_blocks:draf
 _pulse_stale_blocked_later_reserve() {
 	local repo="$1" interval="$2" now_epoch="$3" after_kind="${4:-}"
 	local min_pass="${PULSE_STALE_BLOCKED_MIN_PASS_SECONDS:-${PULSE_STALE_BLOCKED_MIN_REPO_SECONDS:-5}}"
-	local reserve=0 pass_spec="" counting=false
+	local reserve=0 pass_spec="" pass_share=0 counting=false
 	[[ "$min_pass" =~ ^[0-9]+$ ]] || min_pass=5
 	[[ -n "$after_kind" ]] || counting=true
 	for pass_spec in $_PULSE_STALE_BLOCKED_OPTIONAL_PASSES; do
@@ -1158,7 +1166,13 @@ _pulse_stale_blocked_later_reserve() {
 		fi
 		declare -F "${pass_spec%%:*}" >/dev/null 2>&1 || continue
 		_pulse_stale_blocked_repo_fresh "$repo" "$interval" "$now_epoch" "${pass_spec#*:}" && continue
-		reserve=$((reserve + min_pass))
+		pass_share="$min_pass"
+		if [[ "${pass_spec#*:}" == partial-continuation-complete ]]; then
+			pass_share="${PULSE_PARTIAL_RECONCILE_MIN_SECONDS:-15}"
+			[[ "$pass_share" =~ ^[0-9]+$ ]] || pass_share=15
+			[[ "$pass_share" -ge "$min_pass" ]] || pass_share="$min_pass"
+		fi
+		reserve=$((reserve + pass_share))
 	done
 	printf '%s\n' "$reserve"
 	return 0
@@ -1260,7 +1274,13 @@ _pulse_stale_blocked_optional_pass() {
 	fi
 	_pulse_stale_blocked_log_stamp_age "$repo" "$kind" "$pass_now"
 	later_reserve=$(_pulse_stale_blocked_later_reserve "$repo" "$interval" "$now_epoch" "$kind")
-	pass_deadline=$(_pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now" "$later_reserve")
+	if [[ "$kind" == partial-continuation-complete ]]; then
+		local partial_min="${PULSE_PARTIAL_RECONCILE_MIN_SECONDS:-15}"
+		[[ "$partial_min" =~ ^[0-9]+$ ]] || partial_min=15
+		pass_deadline=$(PULSE_STALE_BLOCKED_MIN_PASS_SECONDS="$partial_min" _pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now" "$later_reserve")
+	else
+		pass_deadline=$(_pulse_stale_blocked_pass_deadline "$repo_deadline" "$sweep_deadline" "$pass_now" "$later_reserve")
+	fi
 	"$pass_fn" "$repo" "$pass_deadline" "$sweep_deadline" 2>>"$LOGFILE" || pass_rc=$?
 	[[ "$pass_rc" -eq 0 ]] && _pulse_stale_blocked_repo_mark_complete "$repo" "$kind"
 	return "$pass_rc"

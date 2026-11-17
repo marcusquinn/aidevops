@@ -359,14 +359,15 @@ _pmpc_other_open_pr_owns_issue() {
 # issue URL). GitHub closes those targets on merge, so such a PR completes
 # work rather than delivering a partial.
 # Args: $1=PR number, $2=repo slug, $3=optional PR body (skips live read)
-# Returns: 0 when a closing reference exists or the body is unreadable (fail
-#          closed), 1 when the body has none
+# Returns: 0 when a closing reference exists or unreadable, 1 when absent.
+# Sets _PMPC_BODY_STATUS to distinguish unreadable from a real closing reference.
 #######################################
 _pmpc_pr_body_has_closing_ref() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local supplied_body="${3-}"
 	local pr_body="" verdict=""
+	_PMPC_BODY_STATUS=unreadable
 	if [[ "$#" -ge 3 ]]; then
 		pr_body="$supplied_body"
 	else
@@ -374,6 +375,7 @@ _pmpc_pr_body_has_closing_ref() {
 	fi
 	verdict=$(printf '%s' "$pr_body" | jq -Rrs --arg pattern "$_PMPC_CLOSING_REF_PATTERN" \
 		'test($pattern; "i")' 2>/dev/null) || return 0
+	_PMPC_BODY_STATUS=readable
 	[[ "$verdict" == "false" ]] && return 1
 	return 0
 }
@@ -557,7 +559,7 @@ _pm_restore_partial_continuation() {
 	local pr_labels="${4:-}"
 	local expected_target="${5:-}"
 	local closing="" target="" issue_api="" issue_json="" scope="" comments_json=""
-	local runner_login="" pr_author="" assignees="" parent_has_dispatch=0
+	local runner_login="" pr_author="" assignees="" parent_has_dispatch=0 body_rc=0
 
 	[[ -z "$linked_issue" && "$pr_number" =~ ^[0-9]+$ && "$repo_slug" == */* ]] || return 0
 	if [[ -z "$pr_labels" ]]; then
@@ -578,8 +580,13 @@ _pm_restore_partial_continuation() {
 		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — it closes #${closing} (GH#38869)" >>"$LOGFILE"
 		return 0
 	fi
-	if _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug"; then
-		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue or is unreadable (GH#34312)" >>"$LOGFILE"
+	_pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug" || body_rc=$?
+	if [[ "$body_rc" -ne 1 ]]; then
+		if [[ "$_PMPC_BODY_STATUS" == unreadable ]]; then
+			echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body unreadable (GH#38885)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue (GH#34312)" >>"$LOGFILE"
+		fi
 		return 0
 	fi
 	target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit 2>/dev/null) || target=""
@@ -886,6 +893,54 @@ _pmpc_reconcile_closed_checkpoints() {
 	return 0
 }
 
+# Revisit recent merged PRs independently of the issue traversal cursor. Repeat
+# the lookback window rather than stamping a scan complete: restore is best
+# effort and an unreadable issue or PR must be retried on a later cycle.
+_pmpc_reconcile_recent_merges() {
+	local repo_slug="$1" deadline="$2" now_epoch="" page_json="" rows="" pr=""
+	local state_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	local cursor="${state_dir}/${repo_slug//\//__}.merged-page" page=1 count=0 oldest=0 floor=0 line="" loaded=0
+	local lookback="${PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS:-604800}"
+	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
+	if [[ -r "$cursor" ]]; then
+		while IFS= read -r line; do
+			if [[ "$loaded" -eq 0 ]]; then page="$line"; loaded=1
+			elif [[ "$line" =~ ^[0-9]+$ ]]; then rows="${rows}${rows:+$'\n'}${line}"; fi
+		done <"$cursor"
+	fi
+	[[ "$page" =~ ^[1-9][0-9]{0,3}$ ]] || page=1
+	now_epoch=$(date +%s) || return 1
+	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	if [[ -z "$rows" ]]; then
+		floor=$((now_epoch - lookback))
+		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
+		rows=$(printf '%s' "$page_json" | jq -r --argjson floor "$floor" '
+		if type != "array" then error("unreadable PR list") else . end
+		| "\(length) \(map(.updated_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
+		  (.[] | select((.number | type) == "number" and (.merged_at | type) == "string")
+		   | select((.merged_at | fromdateiso8601) >= $floor) | .number)
+		' 2>/dev/null) || return 1
+		read -r count oldest <<<"${rows%%$'\n'*}"
+		[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+		if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	while [[ -n "$rows" ]]; do
+		# Persist the unprocessed suffix before each attempt, so a deadline or
+		# interrupted process cannot repeatedly starve the end of a full page.
+		printf '%s\n%s\n' "$page" "$rows" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		pr="${rows%%$'\n'*}"
+		_pm_restore_partial_continuation "$pr" "$repo_slug" "" ""
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+	done
+	printf '%s\n' "$page" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
+	[[ "$page" -eq 1 ]] || return 3
+	return 0
+}
+
 # GH#38021: a worker draft checkpoint removes auto-dispatch so that no second
 # branch opens beside the draft. A canonical consolidated spec is a dispatch
 # candidate only while it carries that label (_has_consolidated_label), and the
@@ -1089,7 +1144,7 @@ _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
 	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" now_epoch="" count=0
+	local cursor="" issues_json="" issues="" now_epoch="" count=0 merged_rc=0 merged_deadline=0
 	local line="" loaded=0 phase="review" pending_phase="review" last_page=0 resumed=0
 	local avail_phase="available" pages_done=0 max_pages="${PULSE_PARTIAL_RECONCILE_MAX_PAGES:-0}"
 	[[ "$max_pages" =~ ^[0-9]+$ ]] || max_pages=0
@@ -1118,6 +1173,8 @@ _pm_reconcile_partial_continuations() {
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	merged_deadline=$((now_epoch + (deadline - now_epoch + 1) / 2))
+	_pmpc_reconcile_recent_merges "$repo_slug" "$merged_deadline" || merged_rc=$?
 	_pmpc_reconcile_closed_checkpoints "$repo_slug" "$deadline" "${phase}:${page}:${issues:+pending}" || true
 	while true; do
 		if [[ -z "$issues" ]]; then
@@ -1174,5 +1231,6 @@ _pm_reconcile_partial_continuations() {
 		page="$next_page"
 	done
 	[[ "$token" == "1" ]] || return 3
+	[[ "$merged_rc" -eq 0 ]] || return "$merged_rc"
 	return 0
 }
