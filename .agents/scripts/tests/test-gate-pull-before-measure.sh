@@ -386,9 +386,9 @@ test_triage_refresh_before_issue_targets_large_files() {
 
 # GH#38785: worker merges create the remote tip on the forge, so a lagging
 # canonical mirror lacks its objects. Refresh must fetch them into the pulse
-# sidecar cache (the canonical Git guard forbids canonical fetches, simulated
-# here) without touching canonical refs, HEAD, index, worktree or objects; the
-# gate must then measure the pinned blob from the cache.
+# sidecar cache (the real canonical Git guard, active here, forbids canonical
+# fetches) without touching canonical refs, HEAD, index, worktree or objects;
+# the gate must then measure the pinned blob from the cache.
 test_refresh_fetches_absent_tip_objects_without_ref_changes() {
 	local sandbox="${TMP}/sandbox-absent"
 	_setup_git_sandbox "$sandbox" || {
@@ -419,20 +419,16 @@ test_refresh_fetches_absent_tip_objects_without_ref_changes() {
 		# shellcheck disable=SC1090
 		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
 		LOGFILE="$absent_log"
-		# Simulate the canonical Git guard: any fetch targeting the canonical
-		# sandbox is refused, as it is for managed canonical checkouts.
-		git() {
-			local arg="" targets_canonical=0
-			[[ "${1:-}" == "-C" && "${2:-}" == "$sandbox" ]] && targets_canonical=1
-			for arg in "$@"; do
-				if [[ "$targets_canonical" -eq 1 && "$arg" == "fetch" ]]; then
-					printf 'guard-blocked-canonical-fetch\n' >>"$LOGFILE"
-					return 42
-				fi
-			done
-			command git "$@"
-			return $?
-		}
+		# Run under the real canonical Git guard: register the sandbox as a
+		# managed root and put the repo's guard shim first on PATH, as the
+		# pulse runtime does. The probe proves the guard blocks canonical fetch.
+		printf '{"initialized_repos":[{"path":"%s"}]}\n' "$sandbox" >"${TMP}/guard-repos.json"
+		export AIDEVOPS_REPOS_FILE="${TMP}/guard-repos.json"
+		PATH="${SCRIPT_DIR_TEST}/..:${PATH}"
+		hash -r
+		local probe_rc=0
+		git -C "$sandbox" fetch aidevops-guard-probe-missing >/dev/null 2>&1 || probe_rc=$?
+		printf 'guard-probe-rc=%s\n' "$probe_rc" >>"$LOGFILE"
 		declare -A _PULSE_REFRESHED_THIS_CYCLE=()
 		_pulse_refresh_repo "$sandbox" 2>>"$LOGFILE"
 		_large_file_gate_issue_labels() { printf ''; return 0; }
@@ -449,7 +445,7 @@ test_refresh_fetches_absent_tip_objects_without_ref_changes() {
 	_git_test -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || failures+=" tip-absent-from-cache"
 	! _git_test -C "$sandbox" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || failures+=" canonical-objects-written"
 	[[ "$(_git_test -C "$sandbox" count-objects -v)" == "$before_objects" ]] || failures+=" canonical-object-count-changed"
-	! grep -Fq 'guard-blocked-canonical-fetch' "$absent_log" || failures+=" canonical-fetch-attempted"
+	grep -Fxq 'guard-probe-rc=42' "$absent_log" || failures+=" guard-inactive($(grep -F 'guard-probe-rc=' "$absent_log"))"
 	[[ "$(_git_test -C "$sandbox" show-ref)" == "$before_refs" ]] || failures+=" refs-changed"
 	[[ "$(_git_test -C "$sandbox" rev-parse HEAD)" == "$before_head" ]] || failures+=" head-changed"
 	[[ "$(_git_test hash-object "${sandbox}/.git/index")" == "$before_index" ]] || failures+=" index-changed"
