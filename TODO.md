@@ -2195,6 +2195,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19075 perf(pulse): park 403-undeletable ghost runs so the stale-queued watchdog stops re-probing them every scan #feat #performance #interactive tier:standard assignee:marcusquinn ref:GH#38810 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19075-brief.md]
 
+- [ ] t19082 fix(headless): apply the ChatGPT OAuth model denylist to worker same-tier fallback #bug #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38901 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19082-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
