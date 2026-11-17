@@ -254,7 +254,8 @@ PLIST_PATH=${PLIST_PATH#*<string>}
 PLIST_PATH=${PLIST_PATH%%</string>*}
 PATH_OK=1
 SEEN_PATH=":"
-IFS=: read -r -a PATH_ENTRIES <<<"$PLIST_PATH"
+IFS=: read -r -a PATH_ENTRIES <<<"${PLIST_PATH}:sentinel"
+unset 'PATH_ENTRIES[${#PATH_ENTRIES[@]}-1]'
 for entry in "${PATH_ENTRIES[@]}"; do
 	if [[ "$SEEN_PATH" == *":$entry:"* ]]; then PATH_OK=0; fi
 	SEEN_PATH="${SEEN_PATH}${entry}:"
