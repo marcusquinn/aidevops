@@ -59,6 +59,7 @@ backup_sqlite_db() {
 
 	# Use SQLite .backup for WAL-safe consistency
 	if sqlite3 "$db_path" ".backup '$backup_file'" 2>/dev/null; then
+		chmod 600 "$backup_file" "${backup_file}-wal" "${backup_file}-shm" 2>/dev/null || true
 		echo "$backup_file"
 		return 0
 	fi
@@ -68,6 +69,7 @@ backup_sqlite_db() {
 		# Also copy WAL/SHM if present for consistency
 		[[ -f "${db_path}-wal" ]] && cp "${db_path}-wal" "${backup_file}-wal" 2>/dev/null || true
 		[[ -f "${db_path}-shm" ]] && cp "${db_path}-shm" "${backup_file}-shm" 2>/dev/null || true
+		chmod 600 "$backup_file" "${backup_file}-wal" "${backup_file}-shm" 2>/dev/null || true
 		echo "$backup_file"
 		return 0
 	fi

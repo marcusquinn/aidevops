@@ -919,6 +919,37 @@ EOF
 }
 
 #######################################
+# Print a path's octal permission bits (portable GNU/BSD stat)
+#######################################
+_memory_path_mode() {
+	local path="$1"
+	_file_perms "$path"
+	return $?
+}
+
+#######################################
+# Restrict memory storage to the owner: the store is plaintext SQLite
+# classified confidential. Directory 700; memory.db and -wal/-shm 600.
+# Idempotent: one stat per path, chmod only when the mode differs.
+# Best-effort (never fails the caller).
+#######################################
+_secure_memory_storage() {
+	local mode path
+	if [[ -n "${MEMORY_DIR:-}" && -d "$MEMORY_DIR" ]]; then
+		mode=$(_memory_path_mode "$MEMORY_DIR") || mode=""
+		[[ "$mode" == "700" ]] || chmod 700 "$MEMORY_DIR" 2>/dev/null || true
+	fi
+	if [[ -n "${MEMORY_DB:-}" ]]; then
+		for path in "$MEMORY_DB" "${MEMORY_DB}-wal" "${MEMORY_DB}-shm"; do
+			[[ -f "$path" ]] || continue
+			mode=$(_memory_path_mode "$path") || mode=""
+			[[ "$mode" == "600" ]] || chmod 600 "$path" 2>/dev/null || true
+		done
+	fi
+	return 0
+}
+
+#######################################
 # Create a fresh memory database and companion tables
 #######################################
 _create_memory_db() {
@@ -956,6 +987,7 @@ init_db() {
 	_require_memory_db || return 1
 
 	mkdir -p "$MEMORY_DIR" || return 1
+	_secure_memory_storage
 
 	if [[ ! -f "$MEMORY_DB" ]]; then
 		_create_memory_db || return 1
@@ -968,6 +1000,8 @@ init_db() {
 	fi
 
 	_ensure_memory_wal_mode || return 1
+	# Re-run: DB, -wal and -shm files may only exist now
+	_secure_memory_storage
 
 	return 0
 }
