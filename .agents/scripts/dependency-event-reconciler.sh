@@ -497,8 +497,10 @@ _der_comments_after_dependency_conversion() {
 	[[ -n "$cutoff" ]] || return 1
 	# aidevops:trust-boundary — only trusted comments are considered at all.
 	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" --arg strong "$DER_STRONG_HOLD_RE" '
+		# Preserve both independent hold forms from _der_text_has_strong_hold.
+		def independent_hold: test($strong; "i") or (test("\\*\\*BLOCKED\\*\\*"; "i") and test("cannot proceed"; "i"));
 		.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
-		| select(((.created_at // "9999") >= $cutoff) or ((.body // "") | test($tb; "i") | not) or ((.body // "") | test($strong; "i")))
+		| select(((.created_at // "9999") >= $cutoff) or ((.body // "") | test($tb; "i") | not) or ((.body // "") | independent_hold))
 		| .body // ""' 2>/dev/null
 	return $?
 }
