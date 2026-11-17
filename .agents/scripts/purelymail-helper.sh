@@ -300,7 +300,7 @@ _pm_resolve_zone() {
 		print_error "Could not list zones with $PM_CF_SECRET"
 		return 1
 	}
-	id=$(jq -r --arg z "$PM_ZONE" '(if type == "array" then . else .result end)[] | select(.name == $z) | .id' <<<"$out" | head -1)
+	id=$(jq -r --arg z "$PM_ZONE" 'first((if type == "array" then . else .result end)[] | select(.name == $z) | .id) // empty' <<<"$out")
 	if [[ ! "$id" =~ ^[0-9a-f]{32}$ ]]; then
 		print_error "Zone $PM_ZONE is not visible to $PM_CF_SECRET (check: aidevops secret describe)"
 		return 1
@@ -740,8 +740,8 @@ cmd_imap_check() {
 		print_error "IMAP login or EXAMINE failed for $address. With 2FA on, use an app password: app-password $address --store-secret NAME"
 		return 1
 	fi
-	local exists_line
-	exists_line=$(grep -Eo '[0-9]+ EXISTS' <<<"$out" | head -1 || true)
+	local exists_line=""
+	[[ "$out" =~ [0-9]+\ EXISTS ]] && exists_line="${BASH_REMATCH[0]}"
 	print_success "IMAP login OK for $address (${exists_line:-INBOX opened})"
 	return 0
 }
@@ -766,7 +766,7 @@ cmd_auth_results() {
 		print_error "Usage: auth-results <addr> <secret-name> <subject-regex> [last-N]"
 		return 1
 	fi
-	local search uid uids headers tmp_dir header_file found=""
+	local search uid uids headers subject_line tmp_dir header_file found=""
 	if ! search=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX" -X "UID SEARCH ALL"); then
 		print_error "IMAP search failed for $address"
 		return 1
@@ -780,7 +780,8 @@ cmd_auth_results() {
 	for uid in $uids; do
 		headers=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX;UID=${uid};SECTION=HEADER.FIELDS%20(${fields})") || continue
 		headers=$(_pm_unfold_headers <<<"$headers")
-		if grep -i '^Subject:' <<<"$headers" | grep -Eq -- "$subject_regex"; then
+		subject_line=$(grep -i '^Subject:' <<<"$headers" || true)
+		if grep -Eq -- "$subject_regex" <<<"$subject_line"; then
 			cat >"$header_file" <<<"$headers"
 			found="$uid"
 			break
