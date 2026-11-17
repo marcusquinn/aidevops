@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.220] - 2026-11-17
+
+### Changed
+
+- Documentation: add WordPress multisite domain move procedure
+- Tests: make plist PATH assertion portable (#38740)
+
+### Fixed
+
+- bounded stage starvation fuse
+- update watchdog supervisor heartbeat stub (#38757)
+- skip t2769 no_work breaker for completion-infrastructure failures (GH#38752) (#38754)
+- report transient permission-lookup failures distinctly in interactive claim (#38749)
+- allow test override of signature helper timeout (GH#38750) (#38751)
+- bounded operation restoration_on mode for abort-only cleanup
+
 ## [3.39.219] - 2026-11-17
 
 ### Fixed
