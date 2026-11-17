@@ -16,6 +16,7 @@ permission; denied API calls are non-fatal and raw responses are never logged.
 | `AIDEVOPS_STALE_QUEUED_RUN_MAX_AGE_HOURS` | `8` | Minimum queued age in whole hours; `0` disables the stage. |
 | `AIDEVOPS_STALE_QUEUED_RUN_DELETE_EMPTY` | `1` | Deletes ghosts (409 from both cancellation endpoints) only when a fresh read shows zero jobs and the logs endpoint returns 404/410; logged as `deleted-empty-ghost`. Any API error keeps the run. `0` disables. |
 | `AIDEVOPS_STALE_QUEUED_RUN_DELETE` | `0` | Only `1` allows deletion of stale ghosts that return HTTP 409 from both cancellation endpoints and have jobs or logs. |
+| `AIDEVOPS_STALE_QUEUED_GHOST_REPROBE_HOURS` | `24` | Hours a ghost whose deletion GitHub refused (HTTP 403) stays parked. Later scans skip it without API calls. After expiry, at most 5 parked ghosts are re-probed per repository scan. |
 
 Each scan requests one page (up to 100 stale queued runs), rechecks status and
 age before writes, requests cancellation, and tries force-cancellation if the
@@ -50,6 +51,12 @@ runners, so requiring a listing would leave every hosted orphan pending forever
 
 Unkillable ghosts are logged once per repository/run ID and left alone by default,
 except job-less runs with no logs, which hold no work and are deleted.
+GitHub can refuse that deletion with HTTP 403 (`Could not delete the workflow
+run`) while it still lists the run as queued. A refused ghost is recorded as
+`<run-id>.undeletable` and skipped until its re-probe TTL expires, so a page of
+known ghosts no longer costs about ten REST calls each per scan or starves later
+repositories (GH#38810). Other failures, admission denials and read errors do
+not park a run.
 Deleting runs with jobs or logs removes history: enable it only deliberately. Cadence and
 ghost records live under `~/.aidevops/.agent-workspace/pulse/stale-queued-runs/`.
 The stage respects Pulse stop/rate-limit flags, the circuit breaker, REST budget

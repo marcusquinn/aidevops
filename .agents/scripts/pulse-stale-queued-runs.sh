@@ -36,7 +36,36 @@ _sq_api() {
 		SQ_HTTP=404
 	elif grep -q 'HTTP 410' "${output}.err"; then
 		SQ_HTTP=410
+	elif grep -q 'HTTP 403' "${output}.err"; then
+		SQ_HTTP=403
 	fi
+	return 1
+}
+
+# t19075 (GH#38810): GitHub answers DELETE on a still-queued ghost with 403
+# ("Could not delete the workflow run"), so every scan re-probed every known
+# ghost with ~10 REST calls and never reached later repositories. A refused
+# ghost is parked; later scans skip it without API calls until the re-probe
+# TTL expires, and only a few expired ghosts are re-probed per scan.
+_sq_ghost_park() {
+	local state="$1"
+	local id="$2"
+	printf '%s\n' "$SQ_NOW" >"${state}/${id}.undeletable" || return 1
+	return 0
+}
+
+# Returns 0 when the run is a parked ghost to skip in this scan.
+_sq_ghost_parked() {
+	local state="$1"
+	local id="$2"
+	local parked="" ttl="${AIDEVOPS_STALE_QUEUED_GHOST_REPROBE_HOURS:-24}"
+	[[ -f "${state}/${id}.undeletable" ]] || return 1
+	read -r parked <"${state}/${id}.undeletable" || parked=0
+	[[ "$parked" =~ ^[0-9]{1,12}$ ]] || parked=0
+	[[ "$ttl" =~ ^[0-9]{1,5}$ ]] || ttl=24
+	((SQ_NOW - 10#$parked < 10#$ttl * 3600)) && return 0
+	((SQ_GHOST_REPROBES < 5)) || return 0
+	SQ_GHOST_REPROBES=$((SQ_GHOST_REPROBES + 1))
 	return 1
 }
 
@@ -86,6 +115,7 @@ _sq_handle_run() {
 	id=$(printf '%s' "$run" | jq -r '.id')
 	run_ep="repos/${repo}/actions/runs/${id}"
 	[[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+	! _sq_ghost_parked "$state" "$id" || return 0
 	# Listing is only a candidate set: revalidate immediately before writes.
 	_sq_still_stale "$repo" "$id" || return 0
 	if ! _sq_api POST "repos/${repo}/actions/runs/${id}/cancel" "${SQ_WORK}/cancel.json"; then
@@ -124,6 +154,7 @@ _sq_handle_run() {
 				_sq_log deleted-empty-ghost "$run"
 			else
 				_sq_log delete-failed "$run"
+				[[ "$SQ_HTTP" != 403 ]] || _sq_ghost_park "$state" "$id" || return 1
 			fi
 			return 0
 		fi
@@ -133,6 +164,7 @@ _sq_handle_run() {
 				_sq_log deleted-ghost "$run"
 			else
 				_sq_log delete-failed "$run"
+				[[ "$SQ_HTTP" != 403 ]] || _sq_ghost_park "$state" "$id" || return 1
 			fi
 		fi
 		return 0
@@ -242,6 +274,7 @@ _sq_scan_queued() {
 	local repo="$1"
 	local state="$2"
 	local page=1 count run
+	SQ_GHOST_REPROBES=0
 	# One page per repo is intentional: bound both response size and write fanout.
 	if [[ -f "${state}/next-page" ]]; then
 		read -r page <"${state}/next-page" || page=1
@@ -291,7 +324,7 @@ pulse_stale_queued_runs_scan() (
 		# shellcheck source=./pulse-rate-limit-circuit-breaker.sh
 		source "${helper_dir}/pulse-rate-limit-circuit-breaker.sh"
 	fi
-	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_DENIED=0 SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF
+	local SQ_NOW SQ_CUTOFF SQ_CUTOFF_ISO SQ_STATE SQ_WORK SQ_HTTP="" SQ_DENIED=0 SQ_ORPHAN_MAX_AGE SQ_ORPHAN_CUTOFF SQ_GHOST_REPROBES=0
 	SQ_ORPHAN_MAX_AGE="${AIDEVOPS_ORPHAN_JOB_MAX_AGE_HOURS:-2}"
 	[[ "$SQ_ORPHAN_MAX_AGE" =~ ^[0-9]{1,5}$ ]] || SQ_ORPHAN_MAX_AGE=2
 	SQ_ORPHAN_MAX_AGE=$((10#$SQ_ORPHAN_MAX_AGE))
