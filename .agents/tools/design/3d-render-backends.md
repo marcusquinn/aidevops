@@ -175,8 +175,13 @@ Pod lifecycle:
   verifies Blender when packaged with a SHA256, checks the pin and renders.
 - It then writes `.rendered` and waits up to `--fetch-minutes`.
 - A `fetch` that starts after `.rendered` releases the pod, which then tries to
-  delete itself. In the 2026-11-17 live run the pod ended `EXITED` but not
+  delete itself. In every 2026-11-17 live run the pod ended `EXITED` but not
   deleted, and a stopped pod can still bill storage, so always run `teardown --live`.
+
+GPU fallback lists: one approved budget can cover several GPU/cloud options tried in
+order (for example RTX 4090 community, then A40 secure, then RTX 4090 secure).
+Give each option its own `--deadline-minutes` from its expected speed, so every
+option's worst case fits the cap. Re-run `submit` per option; a refusal creates nothing.
 
 `stage` copies without owner or group (`rsync -rtL`). SECURE pods mount `/workspace`
 on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23). `-L` sends symlinked
@@ -205,6 +210,16 @@ Measured on 2026-11-17 (smoke scene, 960×540, 128 samples):
   (OptiX is unavailable there, see `tools/infrastructure/saladcloud.md`).
 - Local M3 Max Metal: 1.8 s warm, but 280 s on the first run, which compiles the
   Metal kernels.
+
+Measured on 2026-11-17 (animated sunflower scenes, 120 frames, 1920×1080, 128 samples,
+OIDN, Runpod A40 secure at $0.59/hr; RTX 4090 community was refused on every attempt):
+- Simple scene (142 objects): 10 s/frame on the A40 against 8.1 s on an M3 Max;
+  21 minutes of rendering, $0.22 in total.
+- Richer scene (about 110k triangles, translucent petals, depth of field): 8.1 s/frame
+  warm on the A40, against a 20-31 s cold single frame on the M3 Max.
+- So one A40 is about as fast as an M3 Max for these scenes. It pays off by running
+  in parallel or by freeing the Mac. Prefer an RTX 4090/5090 when capacity allows.
+  Estimate from warm timing (`tools/design/blender-scripted-scenes.md`).
 
 Image hashes vary between runs and devices, so compare renders by eye or with a
 tolerance, not by hash.
@@ -239,5 +254,6 @@ tolerance, not by hash.
 
 - `tools/design/creative-execution.md` — local vs remote execution requirements
 - `tools/design/blender.md` — Blender Lab MCP and scene inspection
+- `tools/design/blender-scripted-scenes.md` — script-built scenes, loops, warm timing, delegated modelling
 - `tools/infrastructure/cloud-gpu.md` — providers, provisioning, billable deployment contract
 - `workflows/creative-production.md` — brief, quality mode and acceptance checks
