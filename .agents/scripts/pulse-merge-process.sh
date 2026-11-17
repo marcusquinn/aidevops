@@ -459,13 +459,7 @@ _merge_ready_prs_for_repo() {
 		_pr_head_sha=$(printf '%s' "$pr_obj" | jq -r '.headRefOid // empty' 2>/dev/null) || _pr_head_sha=""
 
 		local _pr_rc=0
-		if _pmp_negative_verdict_hit "$repo_slug" "$pr_obj"; then
-			_pr_rc=1
-			[[ -n "$_timing_prefix" ]] && _pmp_add_counter_seconds "${_timing_prefix}memo_skips" 1
-			_pmp_add_counter_seconds _PMP_PASS_MEMO_SKIPS 1
-		else
-			_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
-		fi
+		_pmp_evaluate_pr_with_memo "$repo_slug" "$pr_obj" "$_timing_prefix" || _pr_rc=$?
 		[[ -n "$_timing_prefix" ]] && _pmp_record_pr_processing_timing "$_timing_prefix" "$_pr_start" "$_cursor_last_pr" # GH#38259: rc 124 too
 		if [[ "$_pr_rc" -eq 124 ]]; then
 			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
