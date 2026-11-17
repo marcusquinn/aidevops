@@ -557,7 +557,7 @@ test_idle_dashboard_lookup() {
 		[[ "$(<"$stage")" == deferred-issue-resolution\|* ]] || exit 5
 		LOOKUP_RESULT=''
 		_update_health_issue_for_repo owner/absent "$HOME" '' '' '' "$stage" || exit 6
-		[[ "$(<"$stage")" == skipped-idle\|* ]] || exit 7
+		[[ "$(<"$stage")" == skipped-no-dashboard\|* ]] || exit 7
 	); then
 		pass "idle lookup refreshes existing dashboards and distinguishes lookup failures"
 	else
@@ -619,7 +619,7 @@ test_health_recovery_lane_candidates() {
 		printf 'idle|%s\n' "$((t - 259200))" >"${stale}.refresh-state"
 		for c in 1 2; do
 			printf '%s\n' "$t" >"${idle}.attempt"
-			printf 'skipped-idle|%s\n' "$t" >"${idle}.stage"
+			printf 'skipped-no-dashboard|%s\n' "$t" >"${idle}.stage"
 			if _health_repo_needs_recovery owner/idle tester >/dev/null; then exit 27; fi
 			entries=$'owner/p|/p\nowner/idle|/idle\nowner/stale|/stale'
 			ordered=$(_apply_health_recovery_lane "$entries" tester)
@@ -628,6 +628,12 @@ test_health_recovery_lane_candidates() {
 		# Once lookup finds a dashboard, an old skipped stage must not hide it.
 		printf '42\n' >"$idle"
 		[[ "$(_health_repo_needs_recovery owner/idle tester)" == 0 ]] || exit 29
+		# An interval deferral (cache later lost) stays recovery-eligible once aged.
+		local lost
+		lost=$(_health_schedule_cache_file owner/lost tester)
+		printf 'idle|%s\n' "$((t - 259200))" >"${lost}.refresh-state"
+		printf 'skipped-idle|%s\n' "$t" >"${lost}.stage"
+		[[ "$(_health_repo_needs_recovery owner/lost tester)" == "$((t - 259200))" ]] || exit 30
 	); then
 		pass "recovery lane promotes stale-failed and never-refreshed repos, one per cycle"
 	else

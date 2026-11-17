@@ -187,7 +187,7 @@ _check_health_issue_activity_guard() {
 		if [[ -z "$existing_issue" ]]; then
 			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
 				>>"${LOGFILE:-/dev/null}"
-			return 1
+			return 3
 		fi
 		_cache_health_issue_number "$existing_issue" "$health_issue_file"
 	fi
@@ -229,6 +229,9 @@ _record_health_activity_guard_result() {
 	local result="$1" stage_file="$2"
 	if [[ "$result" -eq 2 ]]; then
 		_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
+	elif [[ "$result" -eq 3 ]]; then
+		# Confirmed absence of a dashboard (distinct from interval deferral).
+		_record_health_repo_stage "$stage_file" "skipped-no-dashboard"
 	else
 		_record_health_repo_stage "$stage_file" "skipped-idle"
 	fi
@@ -600,7 +603,7 @@ _health_repo_needs_recovery() {
 	cache=$(_health_schedule_cache_file "$slug" "$runner")
 	if [[ ! -f "$cache" && -f "${cache}.stage" ]]; then
 		IFS='|' read -r stage _ <"${cache}.stage" || true
-		[[ "$stage" != "skipped-idle" ]] || return 1
+		[[ "$stage" != "skipped-no-dashboard" ]] || return 1
 	fi
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
