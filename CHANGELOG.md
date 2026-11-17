@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.221] - 2026-11-17
+
+### Added
+
+- t19073 runpod and saladcloud conventional defaults (RUNPOD_API_KEY, SALAD_API_KEY)
+- classify affected script test suites (#38772)
+- auto-triage GH audit anomaly alerts on the producing runner (GH#38770) (#38784)
+- standing policy proofs for registry digests, release checksums and version-tagged license URLs (#38746)
+
+### Changed
+
+- Performance: skip canonical probe for read-only git subcommands in shim policy
+- Documentation: Hostinger PHP switch retry and served-version proof (GH#38771) (#38775)
+
+### Fixed
+
+- Buzz ACP runtime no longer inherits stale lifecycle identity
+- bound locked secret test within watchdog (#38794)
+- report aliases shadowing credential defaults
+- make auto-recover PR titles pass squash-subject validation (#38786)
+- aidevops_memory reports helper failures instead of success (#38766)
+- reset collaborator permission memo between NMR authority test cases (GH#38761) (#38767)
+- align pulse lease-recovery cases with t18978 contract (#38782)
+- retry blocker recovery after failed supervisor attempts; fall back from backed-off thinking tier
+- skip prune while Vault locked, keep accessed rows, cap bulk deletes (GH#38769)
+- verify permission withdrawals in audit alerts (#38773)
+- repair four pulse suites pointing at moved code (GH#38759)
+- fold long-s in shell hold-marker parser to match jq reducer (#38765)
+
 ## [3.39.220] - 2026-11-17
 
 ### Changed
