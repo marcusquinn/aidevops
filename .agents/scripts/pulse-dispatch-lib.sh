@@ -933,6 +933,13 @@ _pulse_cycle_drain_exit() {
 	bundle=$(_pulse_drain_requested_bundle) || return 1
 	# Main dispatch cannot run again in this cycle; release its reserve.
 	_PULSE_MAIN_DISPATCH_RESERVE_S=0
+	# t19074: a starved maintenance tail runs once (pulse-watchdog.sh). The
+	# cycle-final event refill never reads the drain marker and would consume
+	# the retained trigger with no launch, so it always exits.
+	if [[ "$phase" != "cycle_final_refill" ]] && declare -F _pulse_drain_tail_starved >/dev/null 2>&1 &&
+		_pulse_drain_tail_starved "$bundle"; then
+		return 1
+	fi
 	# A skipped prefetch leaves STATE_FILE from an earlier cycle; a drain
 	# escape supervisor (GH#38162) must treat it as incomplete (GH#34000).
 	[[ "${_PULSE_PREFETCH_RAN:-0}" == "1" ]] || _PULSE_PREFETCH_DEGRADED=1

@@ -384,6 +384,52 @@ _pulse_stage_starvation_fuse() {
 	return 0
 }
 
+# t19074 (GH#38802): the t19015 drain fast exit skips the whole maintenance
+# tail, and the fuse above never sees those stages. With hourly bundle
+# activations every cycle drained after early dispatch, so stale queued runs,
+# the orphan reaper, graph refresh and TODO sync went 6-34h without a start.
+# The lock owner stamps each completed tail. A drained cycle whose last tail is
+# older than AIDEVOPS_PULSE_DRAIN_TAIL_STARVATION_S (default: the stage
+# starvation bound; 0 disables) runs its remaining stages once. Dispatch stays
+# suppressed: every dispatch entry still reads the drain marker.
+_pulse_drain_tail_note_complete() {
+	local dir=""
+	_pulse_stage_owner_heartbeat >/dev/null || return 0
+	_pulse_stage_state_dir dir
+	mkdir -p "$dir" 2>/dev/null || return 0
+	date +%s >"${dir}/maintenance_tail.complete" 2>/dev/null || true
+	return 0
+}
+
+# Decide once per cycle whether a drained cycle must run its tail.
+# Args: $1 - activated bundle (log label)
+# Returns: 0 to run the remaining stages, 1 to keep the t19015 fast exit
+_pulse_drain_tail_starved() {
+	local bundle="$1"
+	local bound="${AIDEVOPS_PULSE_DRAIN_TAIL_STARVATION_S:-${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}}"
+	local dir="" last="" now="" age="never"
+	case "${_PULSE_DRAIN_TAIL_OVERRIDE:-}" in
+	1) return 0 ;;
+	0) return 1 ;;
+	esac
+	_PULSE_DRAIN_TAIL_OVERRIDE=0
+	[[ "$bound" =~ ^[0-9]+$ && "$bound" -gt 0 ]] || return 1
+	_pulse_stage_owner_heartbeat >/dev/null || return 1
+	now=$(date +%s) || return 1
+	_pulse_stage_state_dir dir
+	read -r last 2>/dev/null <"${dir}/maintenance_tail.complete" || last=""
+	if [[ "$last" =~ ^[1-9][0-9]*$ ]] && ((last <= now)); then
+		((now - last >= bound)) || return 1
+		age="$((now - last))s ago"
+	fi
+	_PULSE_DRAIN_TAIL_OVERRIDE=1
+	echo "[pulse-wrapper] Cooperative drain: maintenance tail starved (last completed ${age}, bound ${bound}s); running remaining non-dispatch stages before activated bundle ${bundle} starts (t19074, GH#38802)" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_drain_tail_starvation_override" 2>/dev/null || true
+	fi
+	return 0
+}
+
 # GH#20025: Append a structured timing record for a finished or timed-out
 # stage, and charge a fused stage's duration to the fuse budget (GH#38747).
 # Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code
