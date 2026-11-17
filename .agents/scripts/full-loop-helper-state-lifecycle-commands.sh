@@ -922,6 +922,45 @@ _full_loop_report_release_run_events() {
 	return 0
 }
 
+# Read 100-run pages until a successful matching run is found or results run
+# out, so newer non-matching runs cannot hide it. Returns 0 match, 1 no match,
+# 2 unreadable (error already printed).
+# Args: $1 endpoint, $2 tag, $3 merge commit, $4 event
+_full_loop_find_successful_run() {
+	local endpoint="$1"
+	local tag_name="$2"
+	local merge_commit="$3"
+	local workflow_event="$4"
+	local run_page=1
+	local max_run_pages=10
+	local page_endpoint=""
+	local runs_json=""
+	local run_count=0
+	while [[ "$run_page" -le "$max_run_pages" ]]; do
+		page_endpoint="$endpoint"
+		[[ "$run_page" -eq 1 ]] || page_endpoint="${endpoint}&page=${run_page}"
+		_full_loop_gh_read_evidence "$page_endpoint" || {
+			print_error "Cannot read workflow runs from ${page_endpoint} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
+			return 2
+		}
+		runs_json="$_FULL_LOOP_GH_READ_OUT"
+		if jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
+			--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
+			[.workflow_runs[]? | select(
+				.event == $workflow_event and .status == $completed and .conclusion == "success"
+				and .head_sha == $merge_commit
+				and ($workflow_event != "release" or .head_branch == $tag_name)
+			)] | length > 0
+		' <<<"$runs_json" >/dev/null; then
+			return 0
+		fi
+		run_count=$(jq -r '[.workflow_runs[]?] | length' <<<"$runs_json" 2>/dev/null || echo 0)
+		[[ "$run_count" =~ ^[0-9]+$ && "$run_count" -ge 100 ]] || break
+		run_page=$((run_page + 1))
+	done
+	return 1
+}
+
 _full_loop_verify_published_release() {
 	local repo="$1"
 	local tag_name="$2"
@@ -931,7 +970,6 @@ _full_loop_verify_published_release() {
 	local generated_catalog="${6:-$_FULL_LOOP_BOOL_FALSE}"
 	local tag_commit=""
 	local release_json=""
-	local workflow_runs_json=""
 	local workflow_runs_endpoint=""
 
 	if [[ "$repo" != */* || ! "$tag_name" =~ $_FULL_LOOP_VERSION_TAG_REGEX || ! "$merge_commit" =~ $_FULL_LOOP_SHA40_REGEX ]]; then
@@ -996,33 +1034,10 @@ _full_loop_verify_published_release() {
 		print_error "Release for tag ${tag_name} is a draft or does not match the tag"
 		return 1
 	}
-	# Read subsequent 100-run pages until a match is found or results run out,
-	# so newer non-matching runs cannot hide the successful run.
-	local run_page=1 max_run_pages=10 page_endpoint="" run_count=0 run_matched=1
-	while [[ "$run_page" -le "$max_run_pages" ]]; do
-		page_endpoint="$workflow_runs_endpoint"
-		[[ "$run_page" -eq 1 ]] || page_endpoint="${workflow_runs_endpoint}&page=${run_page}"
-		_full_loop_gh_read_evidence "$page_endpoint" || {
-			print_error "Cannot read workflow runs from ${page_endpoint} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
-			return 1
-		}
-		workflow_runs_json="$_FULL_LOOP_GH_READ_OUT"
-		if jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
-			--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
-			[.workflow_runs[]? | select(
-				.event == $workflow_event and .status == $completed and .conclusion == "success"
-				and .head_sha == $merge_commit
-				and ($workflow_event != "release" or .head_branch == $tag_name)
-			)] | length > 0
-		' <<<"$workflow_runs_json" >/dev/null; then
-			run_matched=0
-			break
-		fi
-		run_count=$(jq -r '[.workflow_runs[]?] | length' <<<"$workflow_runs_json" 2>/dev/null || echo 0)
-		[[ "$run_count" =~ ^[0-9]+$ && "$run_count" -ge 100 ]] || break
-		run_page=$((run_page + 1))
-	done
-	[[ "$run_matched" -eq 0 ]] || {
+	local runs_rc=0
+	_full_loop_find_successful_run "$workflow_runs_endpoint" "$tag_name" "$merge_commit" "$workflow_event" || runs_rc=$?
+	[[ "$runs_rc" -ne 2 ]] || return 1
+	[[ "$runs_rc" -eq 0 ]] || {
 		print_error "No successful ${workflow_event} run${workflow_file:+ of workflow ${workflow_file}} found for ${merge_commit}"
 		if [[ -n "$workflow_file" && "$workflow_event" == "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]]; then
 			_full_loop_report_release_run_events "$repo" "$workflow_file" "$merge_commit" "$tag_name"
