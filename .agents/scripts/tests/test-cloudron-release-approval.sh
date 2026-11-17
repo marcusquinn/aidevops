@@ -1157,6 +1157,44 @@ reject("wrong proven constant", lambda d: d["contents"][spec["verify_file"]].upd
 reject("unrelated ARG", lambda d: d["contents"]["Dockerfile"].update(head=encoded(docker(new).replace("UNRELATED=1", "UNRELATED=2"))), "pinned file changes")
 reject("catalog checksum remains non-routine", lambda d: d["files"].append(dict(filename="test/published-catalog-manifests.sha256",status="modified")), "outside the standing policy")
 
+# GH#38854: opt-in catalog append composes with the full Buzz companion proof.
+baseline_path = "test/published-catalog-manifests.sha256"
+baseline_digest = "e" * 64
+baseline_base = "0.1.0 " + "f" * 64 + "\n"
+baseline_line = "0.1.1 " + baseline_digest + "\n"
+doc["policy"]["catalog_baseline"] = dict(file=baseline_path)
+validate_pins_request(dict(catalog_baseline=dict(file=baseline_path)))
+assert check(doc, "owner/app")  # Unchanged baseline requires no proof or catalog read.
+doc["files"].append(dict(filename=baseline_path, status="modified"))
+doc["contents"][baseline_path] = contents(baseline_base, baseline_base + baseline_line)
+doc["catalog_baseline_proof"] = dict(version="0.1.1", sha256=baseline_digest)
+assert check(doc, "owner/app")
+print("PASS catalog_baseline: verified append with synthetic Buzz 1.0.4 -> 1.0.5")
+reject("baseline missing proof", lambda d: d.pop("catalog_baseline_proof"), "catalog_baseline: missing proof")
+reject("baseline proof version", lambda d: d["catalog_baseline_proof"].update(version="0.1.2"), "catalog_baseline: proof version")
+reject("baseline malformed digest", lambda d: d["catalog_baseline_proof"].update(sha256="bad"), "catalog_baseline: invalid proof")
+reject("baseline unterminated base", lambda d: d["contents"][baseline_path].update(base=encoded(baseline_base.rstrip("\n"))), "catalog_baseline: base lacks trailing newline")
+for key in ("changelog_files", "pinned_files", "check_files"):
+    reject("baseline overlaps " + key, lambda d, key=key: d["policy"][key].append(baseline_path), "catalog_baseline:")
+for label, text in (("wrong digest", baseline_base + baseline_line.replace("e", "a")),
+                    ("wrong version", baseline_base + baseline_line.replace("0.1.1", "0.1.2")),
+                    ("two lines", baseline_base + baseline_line * 2),
+                    ("earlier edit", baseline_base.replace("f", "a") + baseline_line),
+                    ("missing newline", (baseline_base + baseline_line).rstrip("\n")),
+                    ("extra newline", baseline_base + baseline_line + "\n")):
+    reject("baseline " + label, lambda d, text=text: d["contents"][baseline_path].update(head=encoded(text)), "catalog_baseline:")
+for path in ("../baseline", "/baseline", "CloudronManifest.json", "CloudronVersions.json", "Dockerfile", "CHANGELOG", spec["verify_file"]):
+    reject("baseline invalid or overlapping " + path,
+           lambda d, path=path: d["policy"]["catalog_baseline"].update(file=path), "catalog_baseline:")
+for invalid in (None, {}, {"file": baseline_path, "extra": True}, {"file": []},
+                {"file": "Dockerfile"}, {"file": "CHANGELOG"}, {"file": "test/package-test.sh"}):
+    try:
+        validate_pins_request(dict(catalog_baseline=invalid))
+    except NotRoutine as error:
+        assert "catalog_baseline:" in str(error)
+    else:
+        raise AssertionError("accepted malformed baseline policy")
+
 def with_identity(candidate):
     candidate["policy"].update(release_identity=dict(commit_arg="APP_COMMIT"), registry_images=[image])
     candidate["release_proof"].update(asset=None, digests=[])
@@ -1294,6 +1332,15 @@ PY
 		"Dockerfile@${HEAD_SHA}") b64 "$docker" ;;
 		"test/package-test.sh@${BASE_SHA}") b64 "$BASE_CHECK" ;;
 		"test/package-test.sh@${HEAD_SHA}") b64 "$check" ;;
+		"CloudronVersions.json@${BASE_SHA}")
+			if [[ "$POLICY_CASE" == baseline_unpublished ]]; then
+				b64 '{"versions":{"0.1.43":{"publishState":"pending","manifest":{"z":1,"a":2}}}}'
+			else
+				b64 '{"versions":{"0.1.43":{"publishState":"published","manifest":{"z":1,"a":2}}}}'
+			fi
+			;;
+		"test/published-catalog-manifests.sha256@${BASE_SHA}") b64 $'0.1.42 previous\n' ;;
+		"test/published-catalog-manifests.sha256@${HEAD_SHA}") b64 $'0.1.42 previous\n0.1.43 '"${BASELINE_DIGEST}"$'\n' ;;
 		*) return 1 ;;
 		esac
 		printf '\n'
@@ -1356,7 +1403,9 @@ PY
 				         {filename: "CloudronManifest.json", status: "modified", additions: 2, deletions: 2},
 				         {filename: "Dockerfile", status: "modified", additions: 2, deletions: 2},
 				         {filename: "test/package-test.sh", status: "modified", additions: 6, deletions: 4}]
-				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}] else [] end)}'
+				        + if $scenario == "extra_file" then [{filename: "start.sh", status: "modified", additions: 1, deletions: 0}]
+				          elif ($scenario | startswith("baseline_")) then [{filename:"test/published-catalog-manifests.sha256",status:"modified",additions:1,deletions:0}]
+				          else [] end)}'
 			;;
 		'api repos/owner/app/contents/'*) policy_contents_stub "${target#repos/owner/app/contents/}" || return 1 ;;
 		'api repos/owner/app/labels?per_page=100') printf 'bug\n' ;;
@@ -1425,6 +1474,18 @@ PY
 	assert_policy other_repo 1
 	assert_policy none 1
 	assert_policy verified 1 "$OTHER_SHA"
+	(
+		POLICY_MODE=pins
+		POLICY_UPSTREAM='{"catalog_baseline":{"file":"test/published-catalog-manifests.sha256"}}'
+		BASELINE_DIGEST=$(printf '{"a":2,"z":1}\n' | shasum -a 256)
+		BASELINE_DIGEST="${BASELINE_DIGEST%% *}"
+		assert_policy baseline_published 0
+		grep -Fq "gh api repos/owner/app/contents/CloudronVersions.json?ref=${BASE_SHA}" "${TEST_ROOT}/calls"
+		if grep -Fq "CloudronVersions.json?ref=${HEAD_SHA}" "${TEST_ROOT}/calls"; then exit 1; fi
+		assert_policy baseline_unpublished 1
+		assert_policy verified 0
+		if grep -Fq 'contents/CloudronVersions.json' "${TEST_ROOT}/calls"; then exit 1; fi
+	)
 
 	(
 		POLICY_MODE=commits
