@@ -34,6 +34,30 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Permission gate for lockdown/unlock. Returns 0 to proceed, 1 to skip with a
+# warning that distinguishes a lookup failure (retryable) from a confirmed
+# insufficient permission.
+_isc_state_permission_gate() {
+	local action="$1"
+	local issue="$2"
+	local slug="$3"
+	local user="$4"
+	local external_detail="${5:-}"
+	local gate_rc=0
+
+	_isc_can_manage_issue_state "$slug" "$user" || gate_rc=$?
+	if [[ "$gate_rc" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$gate_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 1
+	fi
+	_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+	[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
+	return 1
+}
+
 _isc_resolve_manageable_user() {
 	local action="$1"
 	local issue="$2"
@@ -598,16 +622,8 @@ _isc_cmd_lockdown() {
 		return 0
 	fi
 
-	local lockdown_perm_rc=0
-	_isc_can_manage_issue_state "$slug" "$user" || lockdown_perm_rc=$?
-	if [[ "$lockdown_perm_rc" -eq 2 ]]; then
-		_isc_warn "lockdown: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the lockdown"
-		return 0
-	elif [[ "$lockdown_perm_rc" -ne 0 ]]; then
-		_isc_warn "lockdown: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		_isc_warn "external repos must not receive aidevops lockdown labels, locks, or audit comments"
-		return 0
-	fi
+	_isc_state_permission_gate "lockdown" "$issue" "$slug" "$user" \
+		"external repos must not receive aidevops lockdown labels, locks, or audit comments" || return 0
 
 	# Step 1: Apply status:in-review + self-assign (same as claim)
 	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
@@ -709,15 +725,7 @@ _isc_cmd_unlock() {
 		return 0
 	fi
 
-	local unlock_perm_rc=0
-	_isc_can_manage_issue_state "$slug" "$user" || unlock_perm_rc=$?
-	if [[ "$unlock_perm_rc" -eq 2 ]]; then
-		_isc_warn "unlock: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the unlock"
-		return 0
-	elif [[ "$unlock_perm_rc" -ne 0 ]]; then
-		_isc_warn "unlock: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		return 0
-	fi
+	_isc_state_permission_gate "unlock" "$issue" "$slug" "$user" || return 0
 
 	# Step 1: Unlock conversation
 	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then
