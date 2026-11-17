@@ -420,8 +420,7 @@ _update_health_issue_for_repo() {
 	IFS='|' read -r runner_prefix role_label role_label_color role_label_desc role_display \
 		<<<"$role_config"
 
-	local slug_safe="${repo_slug//\//-}"
-	local cache_dir="${HOME}/.aidevops/logs"
+	local slug_safe="${repo_slug//\//-}" cache_dir="${HOME}/.aidevops/logs"
 	local canonical_identity_cache_safe
 	canonical_identity_cache_safe=$(_sanitize_runner_identity_for_cache "$canonical_identity")
 	local health_issue_file="${cache_dir}/health-issue-${canonical_identity_cache_safe}-${slug_safe}"
