@@ -33,7 +33,7 @@ class EvidenceGitHubFixture:
                 "contents/CloudronManifest.json?ref=" + self.source: self.api_content("CloudronManifest.json", self.manifest),
                 "contents/CHANGELOG?ref=" + self.source: self.api_content("CHANGELOG", "[2.0.12]\n* Fix startup.\n\n[2.0.11]\n* Earlier.\n"),
                 "contents/.github/workflows/publish.yml?ref=" + self.source: self.api_content(".github/workflows/publish.yml", self.workflow),
-                "actions/workflows/publish.yml/runs?event=push&status=success&per_page=100": {"workflow_runs": [self.run, *self.extra_runs]},
+                "actions/workflows/publish.yml/runs?head_sha=" + self.source + "&per_page=100": {"workflow_runs": [self.run, *self.extra_runs]},
             }
             mapping.update({"contents/" + path + "?ref=" + self.source: self.api_content(path, content)
                             for path, content in self.source_files.items()})
