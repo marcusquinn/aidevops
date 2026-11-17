@@ -787,7 +787,26 @@ test_qlty_credit_snapshot() {
 	return 0
 }
 
+assert_stale_pending_checks() {
+	local checks='[{"name":"required-a","family":"required-a","source":"check_run","status":"completed","conclusion":"success"},{"name":"CodeFactor","family":"CodeFactor","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	local pending_required='[{"name":"required-a","family":"required-a","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	local result=0
+	PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS=300
+	_pmrc_snapshot_checks_acceptable owner/repo 7 "$checks" required-a '' sha-reviewed || result=1
+	if [[ "$result" -eq 0 ]] && grep -q "IGNORED stale non-required pending check 'CodeFactor' (age=600s)" "$LOGFILE" &&
+		! _pmrc_snapshot_checks_acceptable owner/repo 7 "$pending_required" required-a '' sha-reviewed; then
+		printf 'PASS stale non-required run ignored only when required checks pass\n'
+	else
+		printf 'FAIL stale pending classification\n'
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	TESTS_RUN=$((TESTS_RUN + 1))
+	unset PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS
+	return 0
+}
+
 main() {
+	assert_stale_pending_checks
 	assert_infrastructure_rerun_unset_defaults_safe
 	assert_infrastructure_rerun_unset_logfile_safe
 	assert_actions_incident_suppresses_infrastructure_rerun
