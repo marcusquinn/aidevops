@@ -36,6 +36,10 @@ import { resolveTrustedExecutable } from "../../../scripts/trusted-executable.mj
 
 const realGit = resolveTrustedExecutable("git");
 
+// Parallel `npm run test` load can push a cold helper spawn past the 5s
+// production default (GH#38750); production default is unchanged.
+process.env.AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS ||= "60000";
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
