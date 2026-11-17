@@ -63,6 +63,7 @@ reset_case() {
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
+	TEST_CLOSING_950=""
 	TEST_PR_LABELS="origin:worker,tier:standard"
 	TEST_PR_JSON=$(pr_json true runner1)
 	TEST_PR_RC=0
@@ -176,6 +177,10 @@ _pm_issue_api() {
 _extract_linked_issue() {
 	printf '%s\n' "closing-read" >>"$API_LOG"
 	[[ "$TEST_CLOSING_RC" -eq 0 ]] || return "$TEST_CLOSING_RC"
+	if [[ "${1:-}" == "950" ]]; then
+		printf '%s' "${TEST_CLOSING_950:-}"
+		return 0
+	fi
 	printf '%s' "$TEST_CLOSING"
 	return 0
 }
@@ -1103,6 +1108,21 @@ test_multi_page_traversal() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
 		"periodic pass selects newest merged PR, not last timeline entry"
+	# GH#38869: newest merged PR closes a sibling issue; older partial restores.
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:950,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-11T12:00:00Z"}}}}]')
+	TEST_CLOSING_950="777"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"periodic pass skips newest PR closing a sibling issue and restores"
+	# Contrast: the newest PR closes this issue itself, so no restore.
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:950,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-11T12:00:00Z"}}}}]')
+	TEST_CLOSING_950="501"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic pass does not restore when newest PR closes the issue"
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:in-review,parent-task' runner1)
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
