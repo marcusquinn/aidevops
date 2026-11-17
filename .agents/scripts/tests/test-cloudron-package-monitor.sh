@@ -700,7 +700,7 @@ test_monitor_policy_briefs() {
 	write_fixture "$home_dir" "$repo_dir"
 	mkdir -p "${repo_dir}/test"
 	printf '# Version assertions\n' >"${repo_dir}/test/package-test.sh"
-	for scenario in verified license unavailable compatibility; do
+	for scenario in verified license identity invalid_identity unavailable compatibility; do
 		log_file="${TEST_ROOT}/policy-${scenario}.log"
 		(
 			export HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file"
@@ -713,6 +713,8 @@ test_monitor_policy_briefs() {
 				[[ "$scenario" != unavailable ]] || return 1
 				local license_flag=""
 				[[ "$scenario" != license ]] || license_flag=',"license_version_url":true'
+				[[ "$scenario" != identity ]] || license_flag=',"release_identity":{"commit_arg":"COMMIT"}'
+				[[ "$scenario" != invalid_identity ]] || license_flag=',"release_identity":false'
 				printf '138\t{"changelog_files":["CHANGELOG"],"pinned_files":["Dockerfile.cloudron"],"check_files":["test/package-test.sh"],"companion_image":{"verify_file":"test/verify-buzz-image.sh"},"catalog_baseline":{"file":"test/baseline.sha256"}%s}\n' "$license_flag"
 				return 0
 			}
@@ -730,9 +732,11 @@ test_monitor_policy_briefs() {
 			assert_equal 1 "$(grep -c 'closing reference to this upstream finding' "$log_file" || true)" 'policy brief preserves finding closure reference'
 			assert_equal 1 "$(grep -c 'Do not edit README, docs' "$log_file" || true)" 'policy brief excludes unrelated files'
 			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'policy without license permission keeps manifest restriction'
-		elif [[ "$scenario" == license ]]; then
+		elif [[ "$scenario" == license || "$scenario" == identity ]]; then
 			assert_equal 1 "$(grep -c 'additionally update upstreamLicense.url' "$log_file" || true)" 'license-permitting policy allows license URL update'
 			assert_equal 0 "$(grep -c 'Increment only the package patch' "$log_file" || true)" 'permitted brief drops blanket manifest prohibition'
+		elif [[ "$scenario" == invalid_identity ]]; then
+			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'non-object identity keeps manifest restriction'
 		else
 			assert_equal 0 "$(grep -c 'Standing release policy' "$log_file" || true)" "${scenario}: no policy guidance"
 			assert_equal 1 "$(grep -c 'version and digest assertions that must track the bump' "$log_file" || true)" "${scenario}: legacy test note retained"
