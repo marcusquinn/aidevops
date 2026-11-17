@@ -1024,6 +1024,105 @@ _pmp_record_deterministic_progress_now() {
 	return 0
 }
 
+# A memo is only a negative scheduling hint, never merge authority. Keep the
+# allowlist explicit: clock-driven repair, conflict and stale-run outcomes are
+# deliberately not recorded. Canonical JSON is hashed locally; no API reads.
+_pmp_verdict_key() {
+	local repo_slug="$1" pr_obj="$2"
+	jq -ceS --arg repo "$repo_slug" '
+		select(.state == "OPEN" and (.number | type == "number")
+			and (.headRefOid | type == "string" and length > 0)
+			and (.updatedAt | type == "string" and length > 0))
+		| [$repo, .number, .headRefOid, .updatedAt, .mergeStateStatus,
+			.mergeable, (.statusCheckRollup // [] | sort_by(tojson)),
+			([.labels[]?.name] | sort), .reviewDecision, .isDraft]' <<<"$pr_obj" |
+		shasum -a 256 | cut -d ' ' -f 1
+	return "${PIPESTATUS[0]}"
+}
+
+_pmp_verdict_file() {
+	local repo_slug="$1" pr_obj="$2" number=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	number=$(jq -er '.number | numbers' <<<"$pr_obj") || return 1
+	[[ "$number" =~ ^[0-9]+$ ]] || return 1
+	printf '%s/%s/%s.json' "${AIDEVOPS_MERGE_VERDICT_DIR:-${HOME}/.aidevops/.agent-workspace/state/merge-verdicts}" "$repo_slug" "$number"
+	return 0
+}
+
+_pmp_record_negative_verdict() {
+	local repo_slug="$1" pr_obj="$2" verdict="$3"
+	local key="" state_file="" now=0 temporary=""
+	case "$verdict" in draft | mergeable_unknown | review_unknown) ;; *) return 0 ;; esac
+	key=$(_pmp_verdict_key "$repo_slug" "$pr_obj") || return 0
+	[[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 0
+	state_file=$(_pmp_verdict_file "$repo_slug" "$pr_obj") || return 0
+	_pmp_now_epoch_into now
+	mkdir -p "${state_file%/*}" || return 0
+	temporary=$(mktemp "${state_file}.XXXXXX") || return 0
+	if ! jq -cn --arg key "$key" --arg verdict "$verdict" --argjson epoch "$now" \
+		'{key:$key,verdict:$verdict,epoch:$epoch}' >"$temporary" || ! mv -f "$temporary" "$state_file"; then
+		rm -f "$temporary"
+	fi
+	return 0
+}
+
+_pmp_negative_verdict_hit() {
+	local repo_slug="$1" pr_obj="$2" ttl="${AIDEVOPS_MERGE_VERDICT_TTL_S:-1800}"
+	local key="" state_file="" record="" verdict="" epoch="" now=0 age=0 number=""
+	[[ "$ttl" =~ ^[0-9]+$ && "$ttl" -gt 0 ]] || return 1
+	state_file=$(_pmp_verdict_file "$repo_slug" "$pr_obj") || return 1
+	[[ -f "$state_file" ]] || return 1
+	key=$(_pmp_verdict_key "$repo_slug" "$pr_obj") || return 1
+	[[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+	record=$(jq -er --arg key "$key" 'select(.key == $key)
+		| select(.epoch | type == "number" and floor == . and . >= 0)
+		| [.verdict, .epoch] | @tsv' "$state_file" 2>/dev/null) || return 1
+	IFS=$'\t' read -r verdict epoch <<<"$record"
+	# Re-check the negative condition as well as the key: even a stale or damaged
+	# memo must not park an apparently eligible PR. Never cache pass/eligible.
+	case "$verdict" in
+	draft) jq -e '.isDraft == true' <<<"$pr_obj" >/dev/null || return 1 ;;
+	mergeable_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '.mergeable == $unknown' <<<"$pr_obj" >/dev/null || return 1 ;;
+	review_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '.reviewDecision == $unknown' <<<"$pr_obj" >/dev/null || return 1 ;;
+	*) return 1 ;;
+	esac
+	_pmp_now_epoch_into now
+	age=$((now - epoch))
+	[[ "$age" -ge 0 && "$age" -lt "$ttl" ]] || return 1
+	number=$(jq -r '.number' <<<"$pr_obj") || return 1
+	printf '[pulse-wrapper] Merge pass: PR #%s unchanged since %s (memo age %ss)\n' "$number" "$verdict" "$age" >>"$LOGFILE"
+	return 0
+}
+
+# Query up to 50 aliases per read. Only explicit integer zero counts are
+# authoritative; partial/malformed/error responses fall back to per-repo reads.
+# Stdout is a newline-separated list of confirmed empty repository slugs.
+_pmp_empty_repo_prefilter() {
+	local repo_rows="$1" slug="" path="" owner="" name="" query="" response="" aliases='{}' count=0
+	while IFS='|' read -r slug path; do
+		[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
+		owner="${slug%/*}"; name="${slug#*/}"
+		query="${query} r${count}: repository(owner:\"${owner}\",name:\"${name}\") { pullRequests(states: OPEN) { totalCount } }"
+		aliases=$(jq -cn --argjson aliases "$aliases" --arg alias "r${count}" --arg slug "$slug" '$aliases + {($alias):$slug}') || return 1
+		count=$((count + 1))
+		if [[ "$count" -eq 50 ]]; then
+			_pmp_empty_repo_prefilter_chunk "$query" "$aliases"
+			query=""; aliases='{}'; count=0
+		fi
+	done <<<"$repo_rows"
+	[[ "$count" -eq 0 ]] || _pmp_empty_repo_prefilter_chunk "$query" "$aliases"
+	return 0
+}
+
+_pmp_empty_repo_prefilter_chunk() {
+	local query="$1" aliases="$2" response=""
+	response=$(_gh_with_timeout read gh api graphql -f "query={${query}}" 2>/dev/null) || return 0
+	jq -er --argjson aliases "$aliases" '
+		select((.errors // [] | length) == 0) | .data | objects | to_entries[]
+		| select(.value.pullRequests.totalCount == 0) | $aliases[.key] // empty' <<<"$response" 2>/dev/null || true
+	return 0
+}
+
 _pmp_process_merge_repo_for_pass() {
 	local repo_slug="$1"
 	local checkpoint_file="$2"
