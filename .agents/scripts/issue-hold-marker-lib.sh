@@ -11,6 +11,20 @@
 [[ -n "${_ISSUE_HOLD_MARKER_LIB_LOADED:-}" ]] && return 0
 _ISSUE_HOLD_MARKER_LIB_LOADED=1
 
+# GH#38821: human-owned hold labels shared by the dependency reconciler and the
+# blocked-companion normalizer so the two cannot drift. Space-separated.
+ISSUE_HUMAN_HOLD_LABELS="hold-for-review no-auto-dispatch"
+
+# Succeeds when a ",a,b," wrapped label CSV carries a human-owned hold label.
+issue_labels_csv_have_human_hold() {
+	local csv="$1"
+	local hold=""
+	for hold in $ISSUE_HUMAN_HOLD_LABELS; do
+		[[ "$csv" == *",${hold},"* ]] && return 0
+	done
+	return 1
+}
+
 _ihm_normalize_hold_line() {
 	local line="$1"
 	local prefix=""
