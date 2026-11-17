@@ -69,6 +69,23 @@ purelymail-helper.sh routes example.com
 
 `user-create` is idempotent. For an existing user it only enforces reset off. `route-add` makes no change when an identical rule exists. A different rule for the same alias is an error, so you delete it first with `route-delete <id> --yes`. App passwords are shown only once by Purelymail: the helper pipes the value into `aidevops secret set`, refuses an existing secret name, and never prints it.
 
+The app-password API takes no protocol scope. For an IMAP-only consumer, such as a help desk, give it its own app password with a descriptive `--label` and delete that password when the consumer is retired.
+
+### Mailbox roles for a WordPress site
+
+| Role | Setup |
+|------|-------|
+| Public inbox (`hello@`, `support@`) | Route to a help-desk mailbox; the help desk reads it over IMAP with its own app password |
+| Alerts mailbox | Real mailbox used as WordPress `admin_email` and for monitoring alerts |
+| Role sender addresses (`noreply@`, `billing@`) | Sent by the site through SES; route replies to the help-desk mailbox with `route-add` |
+
+### Account settings with no API
+
+Set these in the Purelymail portal; the API cannot read or change them:
+
+- **Send As**: the account default lets any user send as any address on the account. Choose "restrict" so each user keeps only the built-in own-address policy.
+- **2FA** per mailbox. Once it is on, IMAP/SMTP reject the main password (`curl: (67) Login denied`); use an app password.
+
 ## Verification
 
 ```bash
