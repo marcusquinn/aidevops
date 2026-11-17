@@ -46,6 +46,11 @@ _LFG_LARGE_FILE_PATHS=""
 # Pinned measurement source, populated only after all lagging-mirror targets
 # have been verified. Reset per candidate so another repository cannot reuse it.
 _LFG_REMOTE_MEASUREMENT_SHA=""
+# GH#38785: Git directory holding the pinned commit objects: the canonical
+# checkout, or the pulse-owned sidecar object cache. Reset with the SHA.
+_LFG_REMOTE_OBJECT_SOURCE=""
+# GH#38785: specific reason for the last freshness deferral, for diagnostics.
+_LFG_FRESHNESS_DEFER_CAUSE=""
 
 #######################################
 # Label-based early-exit precheck for the large-file gate.
@@ -270,6 +275,13 @@ _large_file_gate_evaluate_target() {
 		full_path="${repo_path}/.agents/${fpath}"
 	elif [[ -f "${repo_path}/.${fpath}" ]]; then
 		full_path="${repo_path}/.${fpath}"
+	elif [[ -n "$remote_sha" ]]; then
+		# GH#38785: a target added upstream is measured from the pinned tree.
+		local remote_variant="" variant_rc=0
+		remote_variant=$(_large_file_gate_remote_variant_path "${_LFG_REMOTE_OBJECT_SOURCE:-$repo_path}" "$remote_sha" "$fpath") || variant_rc=$?
+		[[ "$variant_rc" -ne 2 ]] || return 2
+		[[ "$variant_rc" -eq 0 && -n "$remote_variant" ]] || return 3
+		full_path="${repo_path}/${remote_variant}"
 	else
 		return 2
 	fi
@@ -299,13 +311,9 @@ _large_file_gate_evaluate_target() {
 
 	local line_count=0
 	if [[ -n "$remote_sha" ]]; then
-		local entry="" mode="" object_type="" object_sha="" entry_path=""
-		entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "${full_path#"${repo_path}/"}" 2>/dev/null) || return 3
-		[[ -n "$entry" && "$entry" != *$'\n'* ]] || return 3
-		read -r mode object_type object_sha entry_path <<<"$entry"
-		[[ "$mode" == "100644" || "$mode" == "100755" ]] || return 3
-		[[ "$object_type" == "blob" && -n "$object_sha" ]] || return 3
-		line_count=$(set -o pipefail; git -C "$repo_path" cat-file blob "$object_sha" 2>/dev/null | wc -l | tr -d ' ') || return 3
+		local object_sha="" object_dir="${_LFG_REMOTE_OBJECT_SOURCE:-$repo_path}"
+		object_sha=$(_large_file_gate_pinned_blob_sha "$object_dir" "$remote_sha" "${full_path#"${repo_path}/"}") || return 3
+		line_count=$(set -o pipefail; git -C "$object_dir" cat-file blob "$object_sha" 2>/dev/null | wc -l | tr -d ' ') || return 3
 		[[ "$line_count" =~ ^[0-9]+$ ]] || return 3
 	else
 		line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
@@ -379,40 +387,123 @@ _large_file_gate_remote_default_line_count() {
 }
 
 #######################################
+# Read one exact repo-relative path from the pinned remote tree.
+# Arguments: object Git directory (checkout or sidecar cache), remote_sha,
+#   relative_path
+# Stdout: blob SHA (exit 0)
+# Returns: 0 regular blob present locally; 2 absent at the pinned commit;
+#   1 non-blob, ambiguous, missing object, or unreadable tree
+#######################################
+_large_file_gate_pinned_blob_sha() {
+	local repo_path="$1"
+	local remote_sha="$2"
+	local relative_path="$3"
+	local entry="" mode="" object_type="" object_sha="" entry_path=""
+
+	entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$relative_path" 2>/dev/null) || return 1
+	[[ -n "$entry" ]] || return 2
+	[[ "$entry" != *$'\n'* ]] || return 1
+	read -r mode object_type object_sha entry_path <<<"$entry"
+	[[ "$mode" == "100644" || "$mode" == "100755" ]] || return 1
+	[[ "$object_type" == "blob" && -n "$object_sha" && -n "$entry_path" ]] || return 1
+	git -C "$repo_path" cat-file -e "${object_sha}^{blob}" 2>/dev/null || return 1
+	printf '%s' "$object_sha"
+	return 0
+}
+
+#######################################
+# GH#38785: Resolve a locally missing target against the pinned remote tree,
+# using the same bare, .agents/- and .-prefixed variants as the local resolver.
+# Arguments: object Git directory, remote_sha, target (no line qualifier)
+# Stdout: the single matching repo-relative path (exit 0)
+# Returns: 0 exactly one variant is a present regular blob; 2 no variant
+#   exists at the pinned commit; 1 ambiguous, non-blob, or unreadable
+#######################################
+_large_file_gate_remote_variant_path() {
+	local repo_path="$1"
+	local remote_sha="$2"
+	local target="$3"
+	local candidate="" match="" match_count=0 blob_rc=0
+
+	[[ -n "$repo_path" && -n "$remote_sha" && -n "$target" ]] || return 1
+	for candidate in "$target" ".agents/$target" ".$target"; do
+		blob_rc=0
+		_large_file_gate_pinned_blob_sha "$repo_path" "$remote_sha" "$candidate" >/dev/null || blob_rc=$?
+		[[ "$blob_rc" -ne 2 ]] || continue
+		[[ "$blob_rc" -eq 0 ]] || return 1
+		match="$candidate"
+		match_count=$((match_count + 1))
+	done
+	[[ "$match_count" -gt 0 ]] || return 2
+	[[ "$match_count" -eq 1 ]] || return 1
+	printf '%s' "$match"
+	return 0
+}
+
+#######################################
+# GH#38785: Locate a Git directory holding the pinned commit: the canonical
+# checkout itself, else the pulse-owned sidecar object cache that
+# _pulse_refresh_repo populates (canonical objects stay read-only).
+# Arguments: repo_path, remote_sha
+# Stdout: Git directory to read pinned objects from (exit 0)
+# Returns: 0 found; 1 the pinned commit is not available locally
+#######################################
+_large_file_gate_pinned_object_source() {
+	local repo_path="$1"
+	local remote_sha="$2"
+	local cache_dir=""
+
+	if git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		printf '%s' "$repo_path"
+		return 0
+	fi
+	declare -F _pulse_tip_object_cache_dir >/dev/null 2>&1 || return 1
+	cache_dir=$(_pulse_tip_object_cache_dir "$repo_path") || return 1
+	[[ -d "$cache_dir" ]] || return 1
+	git -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || return 1
+	printf '%s' "$cache_dir"
+	return 0
+}
+
+#######################################
 # Verify that measurements from a lagging mirror can use target blobs
 # from the pinned remote commit. This reads existing objects only: it neither
 # fetches per candidate nor modifies a checkout to recover dispatch capacity.
+# _pulse_refresh_repo fetches the tip objects once per repo beforehand into a
+# sidecar cache (GH#38785); on success _LFG_REMOTE_OBJECT_SOURCE names the
+# object source, on failure _LFG_FRESHNESS_DEFER_CAUSE records the reason.
 #######################################
 _large_file_gate_targets_match_remote_default() {
 	local repo_path="$1"
 	local remote_sha="$2"
 	local targets="$3"
-	local target="" full_path="" relative_path="" entry="" candidate=""
-	local mode="" object_type="" object_sha="" entry_path=""
+	local target="" full_path="" relative_path="" variant_rc=0 object_dir=""
+	_LFG_REMOTE_OBJECT_SOURCE=""
 	[[ -n "$targets" ]] || return 1
-	git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null || return 1
+	if ! object_dir=$(_large_file_gate_pinned_object_source "$repo_path" "$remote_sha"); then
+		_LFG_FRESHNESS_DEFER_CAUSE="remote tip objects ${remote_sha} are not in the local or pulse object cache"
+		return 1
+	fi
+	_LFG_FRESHNESS_DEFER_CAUSE="a target is not verifiable at pinned remote commit ${remote_sha}"
 	while IFS= read -r target; do
 		[[ -n "$target" ]] || continue
 		if [[ "$target" =~ ^(.+):([0-9]+(-[0-9]+)?)$ ]]; then
 			target="${BASH_REMATCH[1]}"
 		fi
 		if ! full_path=$(_large_file_gate_resolve_full_path "$target" "$repo_path"); then
-			# Missing locally is safe only when every resolver variant is also
-			# absent at the pinned remote commit. An upstream addition must defer.
-			for candidate in "$target" ".agents/$target" ".$target"; do
-				entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$candidate" 2>/dev/null) || return 1
-				[[ -z "$entry" ]] || return 1
-			done
+			# GH#38785: missing locally is measurable when every resolver variant
+			# is absent at the pinned commit, or exactly one is a regular blob
+			# there (an upstream addition). Ambiguous or non-blob entries defer.
+			variant_rc=0
+			_large_file_gate_remote_variant_path "$object_dir" "$remote_sha" "$target" >/dev/null || variant_rc=$?
+			[[ "$variant_rc" -eq 0 || "$variant_rc" -eq 2 ]] || return 1
 			continue
 		fi
 		relative_path="${full_path#"${repo_path}/"}"
-		entry=$(git -C "$repo_path" --literal-pathspecs ls-tree "$remote_sha" -- "$relative_path" 2>/dev/null) || return 1
-		[[ -n "$entry" && "$entry" != *$'\n'* ]] || return 1
-		read -r mode object_type object_sha entry_path <<<"$entry"
-		[[ "$mode" == "100644" || "$mode" == "100755" ]] || return 1
-		[[ "$object_type" == "blob" && -n "$object_sha" ]] || return 1
-		git -C "$repo_path" cat-file -e "${object_sha}^{blob}" 2>/dev/null || return 1
+		_large_file_gate_pinned_blob_sha "$object_dir" "$remote_sha" "$relative_path" >/dev/null || return 1
 	done <<<"$targets"
+	_LFG_FRESHNESS_DEFER_CAUSE=""
+	_LFG_REMOTE_OBJECT_SOURCE="$object_dir"
 	return 0
 }
 
@@ -431,6 +522,8 @@ _large_file_gate_repo_matches_remote_default() {
 	local remote_line=""
 	local remote_sha=""
 	_LFG_REMOTE_MEASUREMENT_SHA=""
+	_LFG_REMOTE_OBJECT_SOURCE=""
+	_LFG_FRESHNESS_DEFER_CAUSE="canonical branch or remote default commit is unverifiable"
 
 	[[ -n "$repo_path" ]] || return 1
 	default_branch=$(git -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || return 1
@@ -443,7 +536,10 @@ _large_file_gate_repo_matches_remote_default() {
 	[[ -n "$remote_line" && "$remote_line" != *$'\n'* ]] || return 1
 	remote_sha="${remote_line%%[[:space:]]*}"
 	[[ "$remote_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
-	[[ "$local_sha" == "$remote_sha" ]] && return 0
+	if [[ "$local_sha" == "$remote_sha" ]]; then
+		_LFG_FRESHNESS_DEFER_CAUSE=""
+		return 0
+	fi
 	_large_file_gate_targets_match_remote_default "$repo_path" "$remote_sha" "$targets" || return 1
 	_LFG_REMOTE_MEASUREMENT_SHA="$remote_sha"
 	return 0
@@ -1355,9 +1451,10 @@ _large_file_gate_measure_verified_targets() {
 	local issue_number="$3"
 	local repo_slug="$4"
 	_LFG_REMOTE_MEASUREMENT_SHA=""
+	_LFG_REMOTE_OBJECT_SOURCE=""
 	if declare -F _pulse_refresh_repo >/dev/null 2>&1 \
 		&& ! _large_file_gate_repo_matches_remote_default "$repo_path" "$all_paths"; then
-		echo "[pulse-wrapper] Large-file gate: deferring #${issue_number} (${repo_slug}); ${repo_path} is not at the verified remote default-branch commit" >>"$LOGFILE"
+		echo "[pulse-wrapper] Large-file gate: deferring #${issue_number} (${repo_slug}); ${repo_path} is not at the verified remote default-branch commit (cause: ${_LFG_FRESHNESS_DEFER_CAUSE:-unverified})" >>"$LOGFILE"
 		return 1
 	fi
 	if ! _large_file_gate_collect_large_files "$all_paths" "$repo_path" "$issue_number" "$_LFG_REMOTE_MEASUREMENT_SHA"; then
