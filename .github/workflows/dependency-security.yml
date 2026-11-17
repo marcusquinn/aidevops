@@ -77,7 +77,10 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Audit disclosed vulnerabilities
-        run: bun audit
+        # GHSA-fc5q-39xc-vjpf (picomatch ReDoS, <=4.0.7) has no patched release
+        # (latest is 4.0.7); only build-time glob tooling uses it. Remove this
+        # ignore once a fixed picomatch is published.
+        run: bun audit --ignore=GHSA-fc5q-39xc-vjpf
 
       - name: Scan supply-chain indicators
         run: bash .agents/scripts/supply-chain-advisory-helper.sh scan .
