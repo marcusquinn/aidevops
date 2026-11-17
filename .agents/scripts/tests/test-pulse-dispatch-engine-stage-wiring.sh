@@ -928,6 +928,62 @@ assert_stage_starvation_fuse_contract() {
 	return 0
 }
 
+# GH#38840: while the main-dispatch reserve is protected, a starved critical
+# stage borrows from AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S less this cycle's
+# fuse spend; deferrable stages, a missing classifier and 0 still defer.
+assert_stage_reserve_borrow_contract() {
+	local test_root="" actual=""
+	local expected="unclassified:124;deferrable:124;off:124;borrowed:0;capped:124;"
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-borrow-XXXXXX") || return 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual=$(
+		(
+			LOGFILE="$test_root/stages.log" EVENTS="$test_root/events"
+			LOCKDIR="$test_root/lock" STOP_FLAG="$test_root/stop" AIDEVOPS_PULSE_STAGE_STATE_DIR="$test_root/state"
+			PULSE_START_EPOCH=1000 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800 _PULSE_MAIN_DISPATCH_RESERVE_S=1293
+			mkdir -p "$LOCKDIR" "$AIDEVOPS_PULSE_STAGE_STATE_DIR"
+			printf '%s\n' "$$" >"$LOCKDIR/pid"
+			# Cycle clock past budget at 3000; 1610s of lease after the
+			# finalisation reserve; 40s of fuse already spent this cycle.
+			printf '2900\n' >"$LOCKDIR/supervisor_heartbeat_epoch"
+			printf '%s 1000 40\n' "$$" >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			date() { [[ "${1:-}" == '+%s' ]] || return 1; printf '3000\n'; return 0; }
+			stage_probe() { printf '%s\n' "$1" >>"$EVENTS"; return 0; }
+			fuse_rc() {
+				local rc=0
+				run_stage_with_timeout "$1" 600 stage_probe "$1" || rc=$?
+				printf '%s' "$rc"
+				return 0
+			}
+			printf 'unclassified:%s;' "$(fuse_rc preflight_capacity)"
+			# No case statement: Bash 3.2 cannot parse one inside $( ).
+			_pulse_stage_priority_class() {
+				local class=critical
+				[[ "$1" != build_dependency_graph_cache ]] || class=deferrable
+				printf '%s\n' "$class"
+				return 0
+			}
+			printf 'deferrable:%s;' "$(fuse_rc build_dependency_graph_cache)"
+			printf 'off:%s;' "$(AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S=0 fuse_rc preflight_capacity)"
+			printf 'borrowed:%s;' "$(fuse_rc preflight_capacity)"
+			# 110 of the 120s borrow is spent: 10s is below the 15s floor.
+			printf '%s 1000 110\n' "$$" >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			printf 'capped:%s;' "$(fuse_rc reap_zombie_workers)"
+		)
+	)
+	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "preflight_capacity " ]] &&
+		grep -q 'Stage starvation fuse: preflight_capacity last_start_age=never timeout=80s fuse_spent=40s reserve_borrow=120s' "$test_root/stages.log" &&
+		grep -q 'Stage start: preflight_capacity (timeout 80s)' "$test_root/stages.log" &&
+		grep -q 'Stage deferred: reap_zombie_workers cycle budget exhausted' "$test_root/stages.log"; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: starved critical stages borrow a capped slice of the protected dispatch reserve (GH#38840)"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: starved critical stages borrow a capped slice of the protected dispatch reserve (${actual:-none})"
+	fi
+	rm -rf "$test_root"
+	return 0
+}
+
 assert_dispatch_cycle_budget_contract() {
 	local actual="" expected="deferred:1;unclamped:0;margin:1;stage_guard:1;admitted:0;"
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -1430,6 +1486,7 @@ assert_grep \
 assert_ownership_deadline_contract
 assert_stage_cycle_budget_contract
 assert_stage_starvation_fuse_contract
+assert_stage_reserve_borrow_contract
 assert_dispatch_cycle_budget_contract
 assert_interrupted_dispatch_progress_contract
 
