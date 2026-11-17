@@ -829,6 +829,25 @@ _buzz_acp_parse_args() {
 	return 0
 }
 
+# GH#38787: the plugin starts this runtime with whatever environment Buzz
+# Desktop inherited. An app first opened from an OpenCode shell (and kept by its
+# in-app updater) carries that session's lifecycle and OpenCode identity, whose
+# runtime PID is usually dead, so native worktree creation refuses with
+# process-identity-unavailable. Like worker_lifecycle/launch.py, an independent
+# launch drops inherited creator identity; children stamp their own. Lifecycle
+# configuration (AIDEVOPS_LIFECYCLE_STATE_DIR, _DISABLED, ...) is kept.
+_buzz_acp_clear_inherited_identity() {
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID \
+		AIDEVOPS_LIFECYCLE_RUN_ID AIDEVOPS_LIFECYCLE_GENERATION_ID \
+		AIDEVOPS_LIFECYCLE_WORKTREE AIDEVOPS_MANAGED_WORKTREE_RUN_UNIT \
+		AIDEVOPS_OPENCODE_SESSION_ID AIDEVOPS_OPENCODE_ISOLATED_DB \
+		AIDEVOPS_OPENCODE_SERVER_OWNER AIDEVOPS_SOURCE_CONTEXT_SOCKET \
+		AIDEVOPS_SOURCE_CONTEXT_INSTANCE OPENCODE OPENCODE_SESSION_ID \
+		OPENCODE_PID OPENCODE_PID_START_IDENTITY OPENCODE_RUN_ID \
+		OPENCODE_PROCESS_ROLE OPENCODE_SERVER_PASSWORD
+	return 0
+}
+
 # Starts one aidevops OpenCode ACP process for an agent of the Buzz 0.7+
 # aidevops plugin's agent type. Stdout is the ACP channel: every step before
 # the proxy writes to stderr or a private file. The app's harness kit admits
@@ -836,6 +855,7 @@ _buzz_acp_parse_args() {
 # proxy runs in --no-publish mode and only binds sessions to the worktree.
 cmd_acp() {
 	_buzz_acp_parse_args "$@" || return 64
+	_buzz_acp_clear_inherited_identity
 	local member="$BUZZ_ACP_MEMBER"
 	local -a project_args=()
 	[[ -z "$BUZZ_ACP_PROJECT" ]] || project_args=(--project-root "$BUZZ_ACP_PROJECT")
