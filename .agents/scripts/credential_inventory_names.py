@@ -72,6 +72,14 @@ def alias_owner(data: dict[str, Any], alias: str) -> str | None:
     return None
 
 
+def reserved_aliases(data: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Find legacy aliases that shadow a provider's conventional variable."""
+    providers = {env: provider for provider, env in DEFAULT_ENV.items()}
+    return [(name, alias, providers[alias])
+            for name, record in sorted((data.get("credentials") or {}).items())
+            for alias in record.get("aliases") or [] if alias in providers]
+
+
 def related_names(data: dict[str, Any], name: str) -> list[str]:
     """Canonical name first, then its declared aliases (works from an alias too)."""
     check_name("secret name", name)
@@ -84,6 +92,9 @@ def add_alias(data: dict[str, Any], name: str, alias: str) -> None:
     """Declare `alias` as another name for recorded credential `name`."""
     check_name("secret name", name)
     check_name("alias", alias)
+    for provider, env_name in DEFAULT_ENV.items():
+        if alias == env_name:
+            raise InventoryError(f"{alias} is reserved for the {provider} default; use: aidevops secret default {provider} NAME")
     record = data["credentials"].get(name)
     if record is None:
         raise InventoryError(f"{name} is not recorded")
