@@ -347,7 +347,9 @@ _dlw_prepare_existing_worktree() {
 
 	_dlw_restore_missing_tracked_files "$existing_path"
 	local existing_status=""
-	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
+	# Report untracked files whatever status.showUntrackedFiles says: the reset
+	# path below runs `git clean`, and must never reach a tree holding them.
+	existing_status=$(git -C "$existing_path" status --porcelain --untracked-files=all 2>/dev/null || true)
 	if [[ -n "$existing_status" ]]; then
 		# A same-runner retry must resume staged, unstaged, and untracked edits.
 		# Resetting here destroyed the only useful copy before GH#27138.
