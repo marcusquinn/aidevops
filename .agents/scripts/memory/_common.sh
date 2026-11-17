@@ -1209,13 +1209,35 @@ auto_prune() {
 	local has_learning_entities
 	has_learning_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_entities';" 2>/dev/null || echo "0")
 
+	local unlinked_stale_count=0 linked_stale_count=0 stale_count=0 total
+	if [[ "$has_learning_entities" == "1" ]]; then
+		unlinked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL;") || return 0
+		linked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(DISTINCT l.id) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL;") || return 0
+	else
+		stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;") || return 0
+	fi
+	local total_pruned=$((unlinked_stale_count + linked_stale_count + stale_count))
+	if [[ "$total_pruned" -gt 0 ]]; then
+		total=$(db "$MEMORY_DB" "SELECT COUNT(id) FROM learnings;") || return 0
+		local max_share_pct="${AIDEVOPS_MEMORY_PRUNE_MAX_SHARE_PCT:-25}"
+		local min_total="${AIDEVOPS_MEMORY_PRUNE_CAP_MIN_ENTRIES:-20}"
+		if [[ "$total" -ge "$min_total" ]] && [[ $((total_pruned * 100)) -gt $((total * max_share_pct)) ]]; then
+			log_warn "Skipping auto-prune of $total_pruned of $total entries (>${max_share_pct}%); use memory-helper.sh prune --force if intended"
+			touch "$prune_marker"
+			return 0
+		fi
+		local prune_backup
+		if ! prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-auto-prune") || [[ -z "$prune_backup" ]]; then
+			log_warn "Backup failed before auto-prune; skipping deletion"
+			touch "$prune_marker"
+			return 0
+		fi
+	fi
+
 	if [[ "$has_learning_entities" == "1" ]]; then
 		# Two-tier pruning: unlinked entries at base threshold, entity-linked at extended threshold
 
 		# Tier 1: Prune unlinked entries older than DEFAULT_MAX_AGE_DAYS, never accessed
-		local unlinked_stale_count
-		unlinked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL;" 2>/dev/null || echo "0")
-
 		if [[ "$unlinked_stale_count" -gt 0 ]]; then
 			local unlinked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL"
 			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($unlinked_subquery);"
@@ -1226,9 +1248,6 @@ auto_prune() {
 		fi
 
 		# Tier 2: Prune entity-linked entries older than extended threshold, never accessed
-		local linked_stale_count
-		linked_stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL;" 2>/dev/null || echo "0")
-
 		if [[ "$linked_stale_count" -gt 0 ]]; then
 			local linked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL"
 			db_cleanup "$MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id IN ($linked_subquery);"
@@ -1239,15 +1258,11 @@ auto_prune() {
 			log_info "Auto-pruned $linked_stale_count entity-linked stale entries (>$entity_max_age_days days, never accessed)"
 		fi
 
-		local total_pruned=$((unlinked_stale_count + linked_stale_count))
 		if [[ "$total_pruned" -gt 0 ]]; then
 			db_cleanup "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 		fi
 	else
 		# Fallback: no entity tables — use original fixed-threshold pruning
-		local stale_count
-		stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL;" 2>/dev/null || echo "0")
-
 		if [[ "$stale_count" -gt 0 ]]; then
 			local subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL"
 			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"

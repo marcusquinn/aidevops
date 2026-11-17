@@ -67,7 +67,11 @@ backup_sqlite_db() {
 	# Fallback to file copy if .backup fails
 	if cp "$db_path" "$backup_file" 2>/dev/null; then
 		# Also copy WAL/SHM if present for consistency
-		[[ -f "${db_path}-wal" ]] && cp "${db_path}-wal" "${backup_file}-wal" 2>/dev/null || true
+		if [[ -f "${db_path}-wal" ]] && ! cp "${db_path}-wal" "${backup_file}-wal" 2>/dev/null; then
+			rm -f "$backup_file" "${backup_file}-wal"
+			echo "[backup] Failed to copy WAL for: $db_path" >&2
+			return 1
+		fi
 		[[ -f "${db_path}-shm" ]] && cp "${db_path}-shm" "${backup_file}-shm" 2>/dev/null || true
 		chmod 600 "$backup_file" "${backup_file}-wal" "${backup_file}-shm" 2>/dev/null || true
 		echo "$backup_file"
