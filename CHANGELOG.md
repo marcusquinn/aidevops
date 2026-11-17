@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.216] - 2026-11-17
+
+### Fixed
+
+- classify blueprints/\<app>/test.yml app-test definitions as low runtime risk
+- honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh (t19072) (#38698)
+- keep a floor and fixed-cost guard on the repository enumeration limit
+- decided human_decision holds no longer starve terminal-blocker pending queue
+- retire provably complete stale lifetime rows so worktree add stops failing with bare ValueError
+- match test-file Low globs on basename only (GH#38686) (#38688)
+
 ## [3.39.215] - 2026-11-16
 
 ### Changed
