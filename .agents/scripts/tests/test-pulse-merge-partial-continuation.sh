@@ -98,6 +98,8 @@ reset_case() {
 	TEST_CLOSED_PRS='[]'
 	TEST_CLOSED_PRS_P2='[]'
 	TEST_CLOSED_P2_RC=0
+	PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS=999999999
+	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page"
 	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
 	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
 	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
@@ -774,6 +776,7 @@ test_unparsed_closing_reference_is_noop() {
 		TEST_PR_BODY="$body"
 		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
 		assert_no_write "PR body closes [${body//$'\n'/ }]: no write"
+		assert_log_contains "body closes an issue" "closing body logged distinctly"
 		if grep -Fq "issues/501" "$API_LOG"; then
 			fail "PR body closes [${body//$'\n'/ }]: no issue lookups" "$(tr '\n' ' ' <"$API_LOG")"
 		else
@@ -789,7 +792,19 @@ test_unparsed_closing_reference_is_noop() {
 	TEST_PR_BODY_RC=1
 	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
 	assert_no_write "PR body read failure: no write"
-	assert_log_contains "body closes an issue or is unreadable" "closing-reference skip is logged"
+	assert_log_contains "body unreadable" "unreadable body is logged distinctly"
+	return 0
+}
+
+test_recent_merged_scan_outside_traversal() {
+	reset_case
+	mkdir -p "$PULSE_PARTIAL_RECONCILE_STATE_DIR"
+	printf 'a9\n' >"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo"
+	TEST_REVIEW_ISSUES='[]'
+	TEST_CLOSED_PRS='[{"number":900,"merged_at":"2026-10-10T12:00:00Z","updated_at":"2026-10-10T12:00:00Z"}]'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"recent merged PR restores outside the in-review traversal window"
 	return 0
 }
 
@@ -1225,10 +1240,10 @@ test_closed_checkpoint_dispatch_recovery() {
 	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" \
 		"closed checkpoint draft restores auto-dispatch for any origin"
 	assert_comment_contains "kind=closed-checkpoint-dispatch-recovery pr=905 " "closed checkpoint restore records audit"
-	if grep -Fq 'pulls/904' "$API_LOG" || grep -Fq 'pulls/906' "$API_LOG"; then
-		fail "closed checkpoint scan reads only unmerged worker branches"
+	if grep -Fq 'pulls/906' "$API_LOG"; then
+		fail "closed scans skip unmerged non-worker branches"
 	else
-		pass "closed checkpoint scan reads only unmerged worker branches"
+		pass "closed scans skip unmerged non-worker branches"
 	fi
 
 	closed_checkpoint_case 'status:in-review,origin:interactive' runner1
@@ -1536,6 +1551,7 @@ main() {
 	test_unreadable_reread_skips_retry
 	test_qualified_open_pr_reference_keeps_review
 	test_unparsed_closing_reference_is_noop
+	test_recent_merged_scan_outside_traversal
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_multi_page_traversal
