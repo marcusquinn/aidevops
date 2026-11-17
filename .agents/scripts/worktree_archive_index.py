@@ -38,12 +38,15 @@ def archive_policies(manifest):
 
 def git_index_state(path, head=None):
     root = Path(path).resolve(strict=True)
-    lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
+    # One spawn for admin, common and lock paths; --absolute-git-dir is absolute before the format switch.
+    admin_raw, common_raw, lock = (os.fsdecode(line) for line in git(
+        root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute', '--git-common-dir',
+        '--git-path', 'index.lock').rstrip(b'\n').split(b'\n'))
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
     from worktree_archive_state import merge_pending, merge_state
     # Share reads only within this capture; subsequent snapshots start fresh.
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    admin, common = Path(admin_raw), Path(common_raw)
     if merge_pending(root, admin=admin):
         state = merge_state(root)
         return {'head': state['head'], 'merge': state}
@@ -64,7 +67,7 @@ def git_index_state(path, head=None):
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
-    state = administration(root, admin=admin)
+    state = administration(root, admin=admin, common=common)
     if state['files'].get('config.worktree'):
         # GH#36883: only known runtime-local keys are preserved (as bytes, never
         # restored); unknown, mixed or comment-only configuration is refused.
