@@ -145,6 +145,8 @@ def pin_policy(doc, policy):
     validate_pin_fields(policy)
     pins = {"registry": None, "checksum": None, "license": policy.get("license_version_url") is True,
             "refs": {}, "sha256": None}
+    require(not pins["license"] or policy.get("upstream_mode", "semver") == "semver",
+            "license_version_url needs a semver policy")
     if policy.get("registry_images") is None and policy.get("release_checksum") is None:
         return pins
     require(policy.get("upstream_mode", "semver") == "semver", "pin proofs need a semver policy")

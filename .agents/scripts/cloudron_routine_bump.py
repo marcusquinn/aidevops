@@ -213,9 +213,11 @@ def check_manifest_fields(base_manifest, head_manifest, identity, pins):
             license_mappings += [{**identity["commits"], **{old_up: new_up}}]
     exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
     unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt})
-            and (not license_mappings or license_changes_ok(base_manifest, head_manifest, license_mappings)),
+    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),
             "manifest changes beyond version and upstreamVersion")
+    require(not license_mappings or license_changes_ok(base_manifest, head_manifest, license_mappings),
+            "manifest changes beyond version and upstreamVersion: upstreamLicense.url "
+            "is outside the permitted substitution")
 
 
 def check(doc, repository):
