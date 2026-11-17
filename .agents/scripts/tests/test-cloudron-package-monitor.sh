@@ -263,7 +263,7 @@ SUPERSEDE
 write_fake_source_commands() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh-source" <<'SOURCE'
-if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/git/ref/tags/desktop-v2.0.0 ]]; then
+if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/git/ref/tags/desktop-v* ]]; then
     printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     exit 0
 fi
@@ -1133,6 +1133,24 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	assert_equal 1 "$(grep -c '^CALL ' "$overdue_log")" "expired missing-image wait creates one durable finding"
 	grep -Fq 'Do not update or publish the package without qualified source proof' "$overdue_log" &&
 		assert_equal true true "overdue finding does not authorize unqualified source" || assert_equal true false "overdue finding does not authorize unqualified source"
+	# Advance the persisted first observation, not the release timestamp: daily
+	# releases with fresh commits must not keep restarting the wait deadline.
+	local wait_file="" daily_log="${case_root}/daily.log" daily_version=""
+	for wait_file in "${home_dir}/.aidevops/cache/cloudron-image-waits/"*; do
+		printf '1\n' >"$wait_file"
+	done
+	for daily_version in 2.1.0 2.2.0; do
+		printf '[{"tag_name":"desktop-v%s","draft":false,"prerelease":false}]\n' "$daily_version" >"$releases_file"
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$daily_log" MONITOR_RELEASES_FILE="$releases_file" \
+			MONITOR_IMAGE_STATE=missing CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" \
+			bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 1 "$(grep -c '^CALL ' "$daily_log")" "daily releases preserve the outage deadline and deduplicate its finding"
+	printf '%s\n' '[{"tag_name":"desktop-v2.0.0","draft":false,"prerelease":false}]' >"$releases_file"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	[[ ! -f "$wait_file" ]] && assert_equal true true "positive source proof clears the unresolved wait" ||
+		assert_equal true false "positive source proof clears the unresolved wait"
 	# Companion releases use the pinned source repository for both attestations.
 	jq '.initialized_repos[0].cloudron_package |= (.upstream_slug = "exampleorg/app" |
 		.upstream_image.source_slug = "exampleorg/upstream" |

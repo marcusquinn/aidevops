@@ -728,6 +728,33 @@ _cloudron_monitor_commit_entry() {
 	return $?
 }
 
+# Preserve an unresolved outage across successive releases. The release age is
+# an immediate fallback on first observation; a newer release must not restart
+# an already running deadline. Clear only on positive proof or a caught-up package.
+_cloudron_monitor_image_wait() {
+	local entry="$1" ready_rc="$2" key="" first="" now="" state_file=""
+	local state_dir="${HOME}/.aidevops/cache/cloudron-image-waits"
+	key=$(jq -c '[.slug, .cloudron_package.upstream_slug, .cloudron_package.upstream_image]' <<<"$entry" | cksum | awk '{print $1}') || return 1
+	state_file="${state_dir}/${key}"
+	_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT=""
+	if [[ "$ready_rc" -eq 0 ]]; then
+		rm -f "$state_file" || return 1
+		return 0
+	fi
+	[[ "$ready_rc" -eq 3 || "$ready_rc" -eq 4 ]] || return "$ready_rc"
+	now=$(date +%s) || return 1
+	mkdir -p "$state_dir" || return 1
+	if [[ ! -f "$state_file" ]]; then
+		# Noclobber protects the earliest observation from overlapping scans.
+		( set -C; printf '%s\n' "$now" >"$state_file" ) 2>/dev/null || [[ -f "$state_file" ]] || return 1
+	fi
+	read -r first <"$state_file" || return 1
+	[[ "$first" =~ ^[1-9][0-9]{0,11}$ ]] || _cloudron_monitor_error "Invalid image wait timestamp." || return 1
+	_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT="image-wait-${key}-${first}"
+	[[ "$ready_rc" -ne 4 && $((now - first)) -lt 172800 ]] || return 4
+	return 3
+}
+
 _cloudron_monitor_upstream_entry() {
 	local entry="$1"
 	local apply="$2"
@@ -775,16 +802,22 @@ _cloudron_monitor_upstream_entry() {
 	local current_version=""
 	current_version=$(jq -r '.upstreamVersion // empty' <<<"$remote_manifest") || return 1
 	if [[ -n "$current_version" ]] && ! _cloudron_monitor_version_newer "$latest_version" "$current_version"; then
+		_cloudron_monitor_image_wait "$entry" 0 || return 1
 		return 0
 	fi
 	local source_proof="" ready_rc=0
 	if jq -e '.cloudron_package.upstream_image != null' <<<"$entry" >/dev/null; then
 		source_proof=$(_cloudron_monitor_upstream_image_ready "$entry" "$upstream_slug" "$releases_json" "$tag_prefixes" "$latest_version" "$upstream_source") || ready_rc=$?
+		if [[ "$ready_rc" -eq 0 || "$ready_rc" -eq 3 || "$ready_rc" -eq 4 ]]; then
+			local wait_rc=0
+			_cloudron_monitor_image_wait "$entry" "$ready_rc" || wait_rc=$?
+			ready_rc="$wait_rc"
+		fi
 		[[ "$ready_rc" -ne 3 ]] || return 0
 		if [[ "$ready_rc" -eq 4 ]]; then
 			_cloudron_monitor_apply_finding "$apply" "$slug" "${package_title} upstream v${latest_version} image qualification is overdue" \
-				"image-wait-v${latest_version}" \
-				"Upstream ${upstream_slug} v${latest_version} is newer than the packaged version, but its configured source image remains unavailable or unqualified at least 48 hours after the release commit. Check upstream_image source, path-filtered builds, qualification and attestations. Do not update or publish the package without qualified source proof." \
+				"$_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT" \
+				"Upstream ${upstream_slug} v${latest_version} is newer than the packaged version, but its configured source image remains unavailable or unqualified at least 48 hours after the release commit or the first unresolved image wait. Check upstream_image source, path-filtered builds, qualification and attestations. Do not update or publish the package without qualified source proof." \
 				"Re-run cloudron-package-monitor-helper.sh upstream and verify the configured source image and provenance before proposing any package change." "$manifest_rel" "$repo_path"
 			return $?
 		fi
