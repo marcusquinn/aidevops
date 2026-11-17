@@ -34,6 +34,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-storage-lib.sh
+source "${SCRIPT_DIR}/vault-storage-lib.sh"
 
 readonly MEMORY_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 readonly MEMORY_DB="$MEMORY_DIR/memory.db"
@@ -156,8 +158,9 @@ phase_prune() {
 		if [[ "$dry_run" == "true" ]]; then
 			[[ "$quiet" != "true" ]] && log_info "Prune: would remove $stale_count stale entries"
 		else
-			# The auto_prune in memory-helper.sh handles this, but we force it here
-			"${SCRIPT_DIR}/memory-helper.sh" prune --older-than-days 90 >/dev/null 2>&1 || true
+			# --keep-accessed makes the delete match the count above (GH#38769);
+			# the prune safety cap still applies (no --force).
+			"${SCRIPT_DIR}/memory-helper.sh" prune --older-than-days 90 --keep-accessed >/dev/null 2>&1 || true
 			[[ "$quiet" != "true" ]] && log_success "Prune: removed $stale_count stale entries"
 		fi
 	else
@@ -1012,6 +1015,13 @@ cmd_run() {
 		*) shift ;;
 		esac
 	done
+
+	# Skip all maintenance while store/recall are gated by a locked Vault:
+	# entries cannot be refreshed, so pruning would age out the whole DB (GH#38769).
+	if ! vault_storage_require_unlocked "memory" 2>/dev/null; then
+		log_warn "VAULT_LOCKED: memory audit pulse skipped while the aidevops Vault is locked"
+		return 0
+	fi
 
 	# Check interval (skip if --force)
 	if [[ "$force" != "true" ]] && ! should_run; then

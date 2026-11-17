@@ -388,6 +388,21 @@ cmd_help() {
 }
 
 #######################################
+# Vault gate for maintenance commands (prune, dedup, consolidate, graduate).
+# While store/recall are blocked by a locked Vault, aging entries must not be
+# pruned (GH#38769). Returns 0 to proceed, 1 to skip (VAULT_LOCKED is logged).
+#######################################
+_MEMORY_VAULT_COLLECTION="memory"
+_vault_maintenance_gate() {
+	local operation="$1"
+	if vault_storage_require_unlocked "$_MEMORY_VAULT_COLLECTION" 2>/dev/null; then
+		return 0
+	fi
+	printf '%s\n' "VAULT_LOCKED: memory ${operation} skipped while the aidevops Vault is locked" >&2
+	return 1
+}
+
+#######################################
 # Main entry point
 # Parses global --namespace flag before dispatching to commands
 #######################################
@@ -418,19 +433,20 @@ main() {
 	fi
 
 	case "$command" in
-	store) vault_storage_require_unlocked "memory" && cmd_store "$@" ;;
-	recall) vault_storage_require_unlocked "memory" && cmd_recall "$@" ;;
+	store) vault_storage_require_unlocked "$_MEMORY_VAULT_COLLECTION" && cmd_store "$@" ;;
+	recall) vault_storage_require_unlocked "$_MEMORY_VAULT_COLLECTION" && cmd_recall "$@" ;;
 	feedback) cmd_feedback "$@" ;;
 	log) cmd_log "$@" ;;
 	history) cmd_history "$@" ;;
 	latest) cmd_latest "$@" ;;
 	stats) cmd_stats ;;
 	validate) cmd_validate ;;
-	prune) cmd_prune "$@" ;;
-	prune-patterns) cmd_prune_patterns "$@" ;;
-	dedup) cmd_dedup "$@" ;;
-	consolidate) cmd_consolidate "$@" ;;
+	prune) _vault_maintenance_gate "prune" || return 0; cmd_prune "$@" ;;
+	prune-patterns) _vault_maintenance_gate "prune-patterns" || return 0; cmd_prune_patterns "$@" ;;
+	dedup) _vault_maintenance_gate "dedup" || return 0; cmd_dedup "$@" ;;
+	consolidate) _vault_maintenance_gate "consolidate" || return 0; cmd_consolidate "$@" ;;
 	insights)
+		_vault_maintenance_gate "insights" || return 0
 		# Delegate to memory-audit-pulse.sh (t1413)
 		# Runs the full audit pulse with --force to bypass interval check.
 		# The consolidation phase runs as Phase 4 within the pulse.
@@ -452,6 +468,7 @@ main() {
 		;;
 	export) cmd_export "$@" ;;
 	graduate)
+		_vault_maintenance_gate "graduate" || return 0
 		# Delegate to memory-graduate-helper.sh
 		# Propagate resolved MEMORY_DIR so the child uses the correct namespace.
 		local graduate_script
