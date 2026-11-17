@@ -424,7 +424,7 @@ _cloudron_monitor_policy_brief() {
 - Keep the PR's closing reference to this upstream finding issue; the routine classifier requires exactly one open, trusted finding.
 EOF
 	if jq -e '.catalog_baseline.file // empty' <<<"$policy" >/dev/null; then
-		printf '\n- In `%s`, append exactly one `<base version> <sha256>` line, computed as in the repository test/package-test.sh: `jq -cS '\''.versions["<base version>"].manifest'\'' CloudronVersions.json | shasum -a 256`. Use the base package version and preserve all existing lines. Do not edit CloudronVersions.json.\n' \
+		printf "\n- In \`%s\`, append exactly one \`<base version> <sha256>\` line, computed as in the repository test/package-test.sh: \`jq -cS '.versions[\"<base version>\"].manifest' CloudronVersions.json | shasum -a 256\`. Use the base package version and preserve all existing lines. Do not edit CloudronVersions.json.\n" \
 			"$(jq -r '.catalog_baseline.file' <<<"$policy")"
 	fi
 	return 0
@@ -499,7 +499,7 @@ _cloudron_monitor_create_issue() {
 - Dockerfile: final Cloudron base image and packaged upstream artifacts.
 - \`CHANGELOG\` (Cloudron format) and/or \`CHANGELOG.md\`: package release notes before any version bump.
 ${package_test_note}"
-	release_note='- Prepare and verify the release PR, then run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue.'
+	release_note="- Prepare and verify the release PR, then run \`cloudron-release-approval-helper.sh request <repo> <pr>\`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue."
 	if [[ "$fingerprint" == upstream-v* || "$fingerprint" == upstream-commit-* ]]; then
 		active_policy=$(_cloudron_monitor_active_policy "$slug") || active_policy=""
 	fi
@@ -511,7 +511,7 @@ ${package_test_note}"
 - Changelogs: additions only; pinned files: version tokens and policy-proven pins only.
 - Check files (including test/package-test.sh when listed): version tokens only, plus check_insertion_pattern lines; never refresh digest/commit assertions.
 - Companion verify file: only the policy-listed, proven constants; catalog baseline: append-only as specified below.'
-		release_note='- Prepare and verify the release PR, then run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge. r924 merges and publishes automatically when the PR is a routine bump under the verified standing policy; otherwise a signed maintainer approval of the release issue is needed.'
+		release_note="- Prepare and verify the release PR, then run \`cloudron-release-approval-helper.sh request <repo> <pr>\`; do not merge. r924 merges and publishes automatically when the PR is a routine bump under the verified standing policy; otherwise a signed maintainer approval of the release issue is needed."
 	fi
 	cat >"$body_file" <<EOF
 <!-- aidevops:cloudron-package-monitor ${fingerprint} -->

@@ -690,12 +690,12 @@ test_monitor_scopes_package_tests_when_present() {
 test_monitor_policy_briefs() {
 	local home_dir="${TEST_ROOT}/policy-home" repo_dir="${TEST_ROOT}/policy-package"
 	local bin_dir="${TEST_ROOT}/policy-bin" log_file="" scenario="" scope=""
-	local expected_scope='- `CHANGELOG`
-- `CloudronManifest.json`
-- `Dockerfile.cloudron`
-- `test/baseline.sha256`
-- `test/package-test.sh`
-- `test/verify-buzz-image.sh`'
+	local expected_scope="- \`CHANGELOG\`
+- \`CloudronManifest.json\`
+- \`Dockerfile.cloudron\`
+- \`test/baseline.sha256\`
+- \`test/package-test.sh\`
+- \`test/verify-buzz-image.sh\`"
 	write_fake_commands "$bin_dir"
 	write_fixture "$home_dir" "$repo_dir"
 	mkdir -p "${repo_dir}/test"
