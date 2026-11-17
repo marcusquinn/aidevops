@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.219] - 2026-11-17
+
+### Fixed
+
+- fix worker_lifecycle TypeGuard import on Python 3.9; gate 3.10+ typing imports
+- prospective TODO guard uses live base tip; Pulse merges run the guard
+- gate r914 trust-workflow rollout on admin/maintain permission
+- census carries fresh last-good candidates for repositories it did not reach
+- unassigned active status label no longer holds idle interactive PRs forever
+
 ## [3.39.218] - 2026-11-17
 
 ### Fixed

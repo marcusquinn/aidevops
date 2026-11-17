@@ -34,6 +34,30 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Permission gate for lockdown/unlock. Returns 0 to proceed, 1 to skip with a
+# warning that distinguishes a lookup failure (retryable) from a confirmed
+# insufficient permission.
+_isc_state_permission_gate() {
+	local action="$1"
+	local issue="$2"
+	local slug="$3"
+	local user="$4"
+	local external_detail="${5:-}"
+	local gate_rc=0
+
+	_isc_can_manage_issue_state "$slug" "$user" || gate_rc=$?
+	if [[ "$gate_rc" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$gate_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 1
+	fi
+	_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+	[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
+	return 1
+}
+
 _isc_resolve_manageable_user() {
 	local action="$1"
 	local issue="$2"
@@ -60,6 +84,10 @@ _isc_resolve_manageable_user() {
 	if [[ "$permission_rc" -eq 75 ]]; then
 		_isc_warn "$action: #$issue in $slug deferred — GitHub permission read admission deferred; retry when capacity returns"
 		return 75
+	fi
+	if [[ "$permission_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 2
 	fi
 	if [[ "$permission_rc" -ne 0 ]]; then
 		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
@@ -386,7 +414,9 @@ _isc_resolve_claim_user() {
 		"" \
 		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
 	if [[ "$resolve_rc" -ne 0 ]]; then
-		if [[ "$resolve_rc" -eq 75 && "$implementing" -eq 1 ]]; then
+		# Lookup failure (2) on an implementing claim is retryable: surface it as
+		# an unapplied claim so the caller does not run parallel to a worker.
+		if [[ ( "$resolve_rc" -eq 75 || "$resolve_rc" -eq 2 ) && "$implementing" -eq 1 ]]; then
 			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
 			return 75
 		fi
@@ -592,11 +622,8 @@ _isc_cmd_lockdown() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "lockdown: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		_isc_warn "external repos must not receive aidevops lockdown labels, locks, or audit comments"
-		return 0
-	fi
+	_isc_state_permission_gate "lockdown" "$issue" "$slug" "$user" \
+		"external repos must not receive aidevops lockdown labels, locks, or audit comments" || return 0
 
 	# Step 1: Apply status:in-review + self-assign (same as claim)
 	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
@@ -698,10 +725,7 @@ _isc_cmd_unlock() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "unlock: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		return 0
-	fi
+	_isc_state_permission_gate "unlock" "$issue" "$slug" "$user" || return 0
 
 	# Step 1: Unlock conversation
 	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then

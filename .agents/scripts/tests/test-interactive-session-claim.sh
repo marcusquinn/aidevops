@@ -1393,7 +1393,9 @@ lookup_fail_rc=$?
 if [[ $lookup_fail_rc -eq 0 ]] &&
 	[[ ! -f "$lookup_fail_stamp" ]] &&
 	! grep -q 'issue edit 61002' "$STUB_LOG" &&
-	printf '%s' "$lookup_fail_out" | grep -q 'not a maintainer-equivalent collaborator'; then
+	grep -q 'collaborator permission lookup failed' <<<"$lookup_fail_out" &&
+	! grep -q 'not a maintainer-equivalent collaborator' <<<"$lookup_fail_out" &&
+	! grep -q 'external repos should receive a PR' <<<"$lookup_fail_out"; then
 	print_result "permission lookup failure skips public claim lifecycle" 0
 else
 	lookup_fail_log=$(tr '\n' '|' <"$STUB_LOG")

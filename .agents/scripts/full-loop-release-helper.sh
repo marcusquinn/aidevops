@@ -1153,7 +1153,9 @@ REPO_ROOT=$(_full_loop_release_resolve_repo_root) || {
 }
 # Every release-owned tree below is created in this process (GH#37365).
 _full_loop_release_declare_lifecycle_owner
-if [[ "${1:-}" != "sources" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
+# GH#38741: read-only commands (sources, status) never need a control checkout;
+# status reads git refs/objects from REPO_ROOT. reap-stale reaps by itself.
+if [[ "${1:-}" != "sources" && "${1:-}" != "status" && "${1:-}" != "reap-stale" && -d "$REPO_ROOT/.git" ]] && ! _full_loop_release_prepare_control_worktree "$REPO_ROOT"; then
 	printf 'Cannot prepare a linked release control worktree.\n' >&2
 	exit 1
 fi
