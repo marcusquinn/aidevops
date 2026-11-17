@@ -61,6 +61,10 @@ _isc_resolve_manageable_user() {
 		_isc_warn "$action: #$issue in $slug deferred — GitHub permission read admission deferred; retry when capacity returns"
 		return 75
 	fi
+	if [[ "$permission_rc" -eq 2 ]]; then
+		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
+		return 2
+	fi
 	if [[ "$permission_rc" -ne 0 ]]; then
 		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
 		[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
@@ -386,7 +390,9 @@ _isc_resolve_claim_user() {
 		"" \
 		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
 	if [[ "$resolve_rc" -ne 0 ]]; then
-		if [[ "$resolve_rc" -eq 75 && "$implementing" -eq 1 ]]; then
+		# Lookup failure (2) on an implementing claim is retryable: surface it as
+		# an unapplied claim so the caller does not run parallel to a worker.
+		if [[ ( "$resolve_rc" -eq 75 || "$resolve_rc" -eq 2 ) && "$implementing" -eq 1 ]]; then
 			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
 			return 75
 		fi
@@ -592,7 +598,12 @@ _isc_cmd_lockdown() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+	local lockdown_perm_rc=0
+	_isc_can_manage_issue_state "$slug" "$user" || lockdown_perm_rc=$?
+	if [[ "$lockdown_perm_rc" -eq 2 ]]; then
+		_isc_warn "lockdown: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the lockdown"
+		return 0
+	elif [[ "$lockdown_perm_rc" -ne 0 ]]; then
 		_isc_warn "lockdown: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
 		_isc_warn "external repos must not receive aidevops lockdown labels, locks, or audit comments"
 		return 0
@@ -698,7 +709,12 @@ _isc_cmd_unlock() {
 		return 0
 	fi
 
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+	local unlock_perm_rc=0
+	_isc_can_manage_issue_state "$slug" "$user" || unlock_perm_rc=$?
+	if [[ "$unlock_perm_rc" -eq 2 ]]; then
+		_isc_warn "unlock: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the unlock"
+		return 0
+	elif [[ "$unlock_perm_rc" -ne 0 ]]; then
 		_isc_warn "unlock: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
 		return 0
 	fi
