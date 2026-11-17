@@ -77,9 +77,9 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Audit disclosed vulnerabilities
-        # GHSA-fc5q-39xc-vjpf (picomatch ReDoS, <=4.0.7) has no patched release
-        # (latest is 4.0.7); only build-time glob tooling uses it. Remove this
-        # ignore once a fixed picomatch is published.
+        # GHSA-fc5q-39xc-vjpf affects dev-only Vite and secretlint walker paths;
+        # no patched picomatch release exists. Remove this ignore once a fix is
+        # published and Dependabot raises the bump (GH#38867).
         run: bun audit --ignore=GHSA-fc5q-39xc-vjpf
 
       - name: Scan supply-chain indicators
