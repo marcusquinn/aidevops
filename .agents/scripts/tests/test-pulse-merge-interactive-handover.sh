@@ -91,7 +91,8 @@ reset_mock_state() {
 	rm -rf "${TEST_ROOT}/interactive-claims"
 	mkdir -p "${TEST_ROOT}/interactive-claims"
 	# GH#38291 idle-session fixtures: registry owner row, bus record, notices.
-	rm -f "${TEST_ROOT}/registry-owner.txt" "${TEST_ROOT}/bus-show.json" "${TEST_ROOT}/bus-send.log"
+	rm -f "${TEST_ROOT}/registry-owner.txt" "${TEST_ROOT}/bus-show.json" "${TEST_ROOT}/bus-send.log" \
+		"${TEST_ROOT}/issue-assignees-json.txt"
 	_INTERACTIVE_PR_IDLE_SESSION_EVIDENCE=""
 	return 0
 }
@@ -685,6 +686,39 @@ test_M5_handover_without_session_evidence_sends_no_notice() {
 	return 0
 }
 
+# GH#38724: an active status label with no assignee is an orphan (GH#33420)
+# and must not hold an idle PR forever; it gets the full 12h threshold only.
+test_N1_unassigned_status_label_is_orphan() {
+	local orphan_48h orphan_6h assigned_48h orphan_with_stamp logged=1
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	orphan_48h=$(_stale_rc)
+	grep -q 'has no assignee and no local claim stamp; orphaned claim' "$LOGFILE" && logged=0
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	_iso_hours_ago 6 >"${TEST_ROOT}/updated.txt"; _iso_hours_ago 6 >"${TEST_ROOT}/head-commit.txt"
+	orphan_6h=$(_stale_rc)
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '["claimant"]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	assigned_48h=$(_stale_rc)
+	# A local stamp still requires idle-session evidence (none here).
+	reset_mock_state
+	printf '["status:claimed"]' >"${TEST_ROOT}/issue-labels-json.txt"
+	printf '[]' >"${TEST_ROOT}/issue-assignees-json.txt"
+	echo '{"pid":12345}' >"${TEST_ROOT}/interactive-claims/owner-repo-42.json"
+	orphan_with_stamp=$(_stale_rc)
+	if [[ "$orphan_48h$logged$orphan_6h$assigned_48h$orphan_with_stamp" == "00111" ]]; then
+		print_result "N1: unassigned status label is an orphan at 12h; assigned label, local stamp and 6h PR still hold" 0
+	else
+		print_result "N1: unassigned status label is an orphan at 12h; assigned label, local stamp and 6h PR still hold" 1 \
+			"orphan_48h=${orphan_48h} logged=${logged} orphan_6h=${orphan_6h} assigned_48h=${assigned_48h} orphan_with_stamp=${orphan_with_stamp}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -731,6 +765,7 @@ main() {
 	test_M3_session_window_requires_pr_idle_too
 	test_M4_handover_notifies_idle_owner_once
 	test_M5_handover_without_session_evidence_sends_no_notice
+	test_N1_unassigned_status_label_is_orphan
 
 	printf '\n=== %d test(s), %d failure(s) ===\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
