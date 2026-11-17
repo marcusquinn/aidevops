@@ -249,7 +249,20 @@ AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY=1
 # shellcheck source=/dev/null
 source "$HELPER"
 PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
-assert_contains "plist legacy call keeps environment path" "$PLIST_OUT" "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
+PLIST_PATH=${PLIST_OUT#*<key>PATH</key>}
+PLIST_PATH=${PLIST_PATH#*<string>}
+PLIST_PATH=${PLIST_PATH%%</string>*}
+PATH_OK=1
+SEEN_PATH=":"
+IFS=: read -r -a PATH_ENTRIES <<<"$PLIST_PATH"
+for entry in "${PATH_ENTRIES[@]}"; do
+	if [[ "$SEEN_PATH" == *":$entry:"* ]]; then PATH_OK=0; fi
+	SEEN_PATH="${SEEN_PATH}${entry}:"
+done
+for entry in /usr/local/bin /usr/bin /bin /usr/sbin /sbin; do
+	if [[ -d "$entry" && "$SEEN_PATH" != *":$entry:"* ]]; then PATH_OK=0; fi
+done
+assert_equal "plist legacy call keeps unique environment and fallback paths" "$PATH_OK" "1"
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 assert_equal "shared accessor reads canonical version" "$(_project_config_read_version "$STALE_REPO/.aidevops.json")" "9.9.9"
 
