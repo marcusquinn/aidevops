@@ -428,6 +428,52 @@ attempt_pool_recovery() {
 	return 1
 }
 
+# GH#38713: an entitlement rejection (model_unavailable) is definite and does
+# not clear by itself, so re-probing it every hour burned whole dispatches.
+# Print the backoff for a new rejection of $1 under auth $2: the $3 base for a
+# first rejection, double the previous duration (capped) when a same-auth
+# record has expired, or "keep" while a same-auth record is still active (a
+# concurrent launch from the same burst must not escalate it again).
+_model_unavailable_backoff_seconds() {
+	local backoff_key="$1"
+	local auth_signature="$2"
+	local base_seconds="$3"
+	local max_seconds="${AIDEVOPS_MODEL_UNAVAILABLE_BACKOFF_MAX_S:-86400}"
+	local row="" prev_reason="" prev_signature="" prev_retry="" prev_updated="" now="" next=0
+	[[ "$max_seconds" =~ ^[0-9]+$ ]] && ((max_seconds >= base_seconds)) || max_seconds="$base_seconds"
+	row=$(db_query "SELECT reason || '|' || auth_signature || '|' ||
+	COALESCE(CAST(strftime('%s', retry_after) AS INTEGER), 0) || '|' ||
+	COALESCE(CAST(strftime('%s', updated_at) AS INTEGER), 0) || '|' ||
+	CAST(strftime('%s', 'now') AS INTEGER)
+	FROM provider_backoff WHERE provider = '$(sql_escape "$backoff_key")';") || row=""
+	IFS='|' read -r prev_reason prev_signature prev_retry prev_updated now <<<"$row"
+	if [[ "$prev_reason" != "model_unavailable" || -z "$auth_signature" || "$prev_signature" != "$auth_signature" ]] ||
+		! [[ "$prev_retry" =~ ^[0-9]+$ && "$prev_updated" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] ||
+		((prev_retry <= prev_updated || now - prev_updated > 2 * max_seconds)); then
+		printf '%s' "$base_seconds"
+		return 0
+	fi
+	if ((now < prev_retry)); then
+		printf '%s' "keep"
+		return 0
+	fi
+	next=$(((prev_retry - prev_updated) * 2))
+	((next > max_seconds)) && next="$max_seconds"
+	((next < base_seconds)) && next="$base_seconds"
+	printf '%s' "$next"
+	return 0
+}
+
+# GH#38713: a successful run proves the entitlement, so forget the model's
+# rejection history and let a later rejection start again at the base backoff.
+clear_model_unavailable_history() {
+	local model="$1"
+	[[ -n "$model" ]] || return 0
+	db_query "DELETE FROM provider_backoff WHERE reason = 'model_unavailable'
+	AND provider IN ('$(sql_escape "$model")', 'pulse/$(sql_escape "$model")');" >/dev/null || true
+	return 0
+}
+
 record_provider_backoff() {
 	local provider="$1"
 	local reason="$2"
@@ -471,7 +517,10 @@ PY
 		# t1835: Reduced rate_limit fallback from 900s to 60s
 		case "$reason" in
 		rate_limit) retry_seconds=60 ;;
-		model_unavailable) retry_seconds=3600 ;;
+		model_unavailable)
+			retry_seconds=$(_model_unavailable_backoff_seconds "$backoff_key" "$auth_signature" 3600)
+			[[ "$retry_seconds" == "keep" ]] && return 0
+			;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac
@@ -500,7 +549,7 @@ ON CONFLICT(provider) DO UPDATE SET
 backoff_active_for_key() {
 	local key="$1"
 	local provider="$2"
-	local row stored_retry_after stored_signature current_signature
+	local row stored_reason stored_retry_after stored_signature current_signature
 	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$key")';")
 	if [[ -z "$row" ]]; then
 		return 1
@@ -518,7 +567,9 @@ backoff_active_for_key() {
 		now_epoch=$(date -u '+%s')
 		retry_epoch=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
-			clear_provider_backoff "$key"
+			# GH#38713: an expired entitlement rejection stays as escalation
+			# history; readers already ignore rows whose retry_after has passed.
+			[[ "$stored_reason" == "model_unavailable" ]] || clear_provider_backoff "$key"
 			return 1
 		fi
 	fi
