@@ -1476,8 +1476,16 @@ _worker_failure_reason_is_completion_infrastructure() {
 
 _no_work_reason_is_prelaunch_skip() {
 	local reason="${1:-}"
-	_worker_failure_reason_is_launch_preflight "$reason"
-	return $?
+	# Completion-path infrastructure failures (GitHub API / command-policy
+	# timeouts, blocked push of a prepared commit) happen AFTER the worker read
+	# the brief and may hold a local checkpoint. The fast-fail recorder already
+	# skips them; the breaker must too, or escalate_issue_tier(crash_type=no_work)
+	# can trip t2769 on work that was actually done (GH#38752).
+	if _worker_failure_reason_is_launch_preflight "$reason" ||
+		_worker_failure_reason_is_completion_infrastructure "$reason"; then
+		return 0
+	fi
+	return 1
 }
 
 _log_no_work_skip_escalation() {
