@@ -21,8 +21,9 @@ _dispatch_read_census_cursor() {
 }
 
 # Finish a collected census using the existing cross-repository rank order.
+# Args: candidate JSONL file (removed), product discovery completeness.
 _dispatch_finish_ranked_census() {
-	local candidates="$1" completeness="$2" product_complete="$3"
+	local candidates="$1" product_complete="$2"
 	jq -cs --argjson product_complete "$product_complete" '
 		def rank_date: select(. != "") // "9999-12-31T23:59:59Z";
 		map(. + {product_discovery_complete:$product_complete}) | sort_by([
@@ -33,7 +34,7 @@ _dispatch_finish_ranked_census() {
 		(.repo_slug // ""),
 		(.number // 0)
 	])' "$candidates" 2>/dev/null || printf '[]\n'
-	rm -f "$candidates" "$completeness"
+	rm -f "$candidates"
 	return 0
 }
 

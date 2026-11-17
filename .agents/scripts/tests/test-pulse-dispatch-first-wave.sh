@@ -30,6 +30,10 @@ jq -n '{initialized_repos:[range(1;41) | {slug:("owner/repo" + tostring),path:"/
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # shellcheck source=../pulse-wrapper-cycle-gates.sh
 source "${SCRIPT_DIR}/pulse-wrapper-cycle-gates.sh"
+# Cases below share one simulated clock file that concurrent scans cannot
+# advance consistently, so they pin the serial census; the GH#38730 case
+# exercises bounded-parallel full censuses in real time.
+PULSE_CENSUS_MAX_PARALLEL=1
 
 # Transport I/O is simulated as five seconds per read at 540/5000 core.
 # Real ranking, enumeration reserve, first-wave scope and orchestration run.
@@ -632,6 +636,91 @@ printf 'PASS slow repositories defer instead of clamped scans; timeouts reuse fr
 	printf '%s\n' "$registry" >"$REPOS_JSON"
 )
 printf 'PASS stopped censuses carry fresh last-good candidates of unreached repositories without polling them (GH#38727)\n'
+
+# GH#38730: a full census overlaps up to PULSE_CENSUS_MAX_PARALLEL scans in
+# real time, absorbs every scan in launch order (same ranking as the serial
+# census), keeps scan-failure and product-completeness semantics, clamps
+# every scan to the census deadline, and drains real timed-out scans.
+(
+	registry=$(<"$REPOS_JSON")
+	jq -n '{initialized_repos:[range(1;9) | {slug:("owner/p" + tostring),path:"/fixture",pulse:true,
+		priority:(if . == 3 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
+	_dispatch_now_ms() { printf '%s\n' "$(($(date +%s) * 1000))"; return 0; }
+	# Real process-group timeouts drain under concurrency: eight 3s adapters
+	# with a 1s budget, four at a time. Separate HOME: the timeouts escalate
+	# per-repository budgets that the cases below must not inherit.
+	(
+		HOME="${TEST_ROOT}/parallel-drain-home"
+		pulse_campaign_shadow_candidates_json() {
+			sleep 3
+			printf 'leaked\n' >>"$EVENTS"
+			return 0
+		}
+		: >"$EVENTS"
+		started=$SECONDS
+		rc=0
+		drained=$(PULSE_CENSUS_MAX_PARALLEL=4 PULSE_REPO_ENUMERATION_BUDGET_S=1 \
+			build_ranked_dispatch_candidates_json 50 skip) || rc=$?
+		elapsed=$((SECONDS - started))
+		[[ "$rc" == 1 && "$drained" == '[]' && ! -s "$EVENTS" ]]
+		((elapsed <= 5)) || { printf 'FAIL timed-out parallel census took %ss\n' "$elapsed" >&2; exit 1; }
+	)
+	_dispatch_enumerate_repo_bounded() {
+		local slug="$2" completeness="$6" n="${2#owner/p}"
+		printf 'scan:%s:%s\n' "$slug" "$1" >>"$EVENTS"
+		sleep "${SCAN_SECONDS:-1}"
+		[[ "$slug" != owner/p5 ]] || return 1
+		[[ -z "$completeness" ]] || printf '1\n' >"$completeness"
+		printf '[{"number":%s,"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]\n' "$n"
+		return 0
+	}
+	census_cursor="${HOME}/.aidevops/cache/pulse-census-cursor"
+	rm -f "$census_cursor"
+	: >"$EVENTS"
+	started=$SECONDS
+	parallel=$(PULSE_CENSUS_MAX_PARALLEL=4 PULSE_CENSUS_ENUMERATION_BUDGET_S=60 build_ranked_dispatch_candidates_json 50 skip)
+	elapsed=$((SECONDS - started))
+	# Eight one-second scans: serial takes 8s; four at a time about 2-3s.
+	((elapsed <= 5)) || { printf 'FAIL parallel census took %ss\n' "$elapsed" >&2; exit 1; }
+	[[ "$(wc -l <"$EVENTS")" -eq 8 && "$(<"$census_cursor")" == owner/p8 ]]
+	jq -e 'length == 7 and ([.[].repo_slug] | index("owner/p5")) == null
+		and all(.[]; .product_discovery_complete == true)' <<<"$parallel" >/dev/null
+	grep -q 'Candidate census parallel scans: repos=8 max_parallel=4 (GH#38730)' "$LOGFILE"
+	rm -f "$census_cursor"
+	serial=$(SCAN_SECONDS=0 PULSE_CENSUS_MAX_PARALLEL=1 PULSE_CENSUS_ENUMERATION_BUDGET_S=60 \
+		build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$serial" == "$parallel" ]] || { printf 'FAIL parallel ranking differs from serial\n' >&2; exit 1; }
+	# An incomplete product scan still marks product discovery incomplete.
+	rm -f "$census_cursor"
+	incomplete=$(
+		_dispatch_enumerate_repo_bounded() {
+			printf '[{"number":%s,"labels":[{"name":"auto-dispatch"}]}]\n' "${2#owner/p}"
+			return 0
+		}
+		PULSE_CENSUS_MAX_PARALLEL=4 build_ranked_dispatch_candidates_json 50 skip
+	)
+	jq -e 'length == 8 and all(.[]; .product_discovery_complete == false)' <<<"$incomplete" >/dev/null
+	# Scans that use their whole budget never outlive the census deadline:
+	# each launch waits for a slot, then is clamped to the remainder, and the
+	# census stops at the deadline before reaching the tail.
+	_dispatch_enumerate_repo_bounded() {
+		printf 'scan:%s:%s\n' "$2" "$1" >>"$EVENTS"
+		sleep "$1"
+		printf '[]\n'
+		return 0
+	}
+	rm -f "$census_cursor"
+	: >"$EVENTS"
+	started=$SECONDS
+	PULSE_CENSUS_MAX_PARALLEL=2 PULSE_CENSUS_ENUMERATION_BUDGET_S=2 build_ranked_dispatch_candidates_json 50 skip >/dev/null || true
+	elapsed=$((SECONDS - started))
+	((elapsed <= 4)) || { printf 'FAIL clamped parallel census took %ss\n' "$elapsed" >&2; exit 1; }
+	awk -F: '$3 > 2 { exit 1 }' "$EVENTS"
+	if grep -q 'scan:owner/p8:' "$EVENTS"; then exit 1; fi
+	grep -q 'Candidate census deadline reached' "$LOGFILE"
+	printf '%s\n' "$registry" >"$REPOS_JSON"
+)
+printf 'PASS full censuses overlap bounded scans, absorb them in launch order and stay clamped to the deadline (GH#38730)\n'
 
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"
