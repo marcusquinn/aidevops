@@ -899,33 +899,45 @@ _pmpc_reconcile_closed_checkpoints() {
 _pmpc_reconcile_recent_merges() {
 	local repo_slug="$1" deadline="$2" now_epoch="" page_json="" rows="" pr=""
 	local state_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="${state_dir}/${repo_slug//\//__}.merged-page" page=1 count=0 oldest=0 floor=0
+	local cursor="${state_dir}/${repo_slug//\//__}.merged-page" page=1 count=0 oldest=0 floor=0 line="" loaded=0
 	local lookback="${PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS:-604800}"
 	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
-	[[ ! -r "$cursor" ]] || read -r page <"$cursor" || page=1
+	if [[ -r "$cursor" ]]; then
+		while IFS= read -r line; do
+			if [[ "$loaded" -eq 0 ]]; then page="$line"; loaded=1
+			elif [[ "$line" =~ ^[0-9]+$ ]]; then rows="${rows}${rows:+$'\n'}${line}"; fi
+		done <"$cursor"
+	fi
 	[[ "$page" =~ ^[1-9][0-9]{0,3}$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
-	floor=$((now_epoch - lookback))
-	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
-	rows=$(printf '%s' "$page_json" | jq -r --argjson floor "$floor" '
+	if [[ -z "$rows" ]]; then
+		floor=$((now_epoch - lookback))
+		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
+		rows=$(printf '%s' "$page_json" | jq -r --argjson floor "$floor" '
 		if type != "array" then error("unreadable PR list") else . end
 		| "\(length) \(map(.updated_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
 		  (.[] | select((.number | type) == "number" and (.merged_at | type) == "string")
 		   | select((.merged_at | fromdateiso8601) >= $floor) | .number)
-	' 2>/dev/null) || return 1
-	read -r count oldest <<<"${rows%%$'\n'*}"
-	[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
-	[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
-	while read -r pr; do
-		[[ "$pr" =~ ^[0-9]+$ ]] || continue
+		' 2>/dev/null) || return 1
+		read -r count oldest <<<"${rows%%$'\n'*}"
+		[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+		if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	while [[ -n "$rows" ]]; do
+		# Persist the unprocessed suffix before each attempt, so a deadline or
+		# interrupted process cannot repeatedly starve the end of a full page.
+		printf '%s\n%s\n' "$page" "$rows" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
 		now_epoch=$(date +%s) || return 1
 		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		pr="${rows%%$'\n'*}"
 		_pm_restore_partial_continuation "$pr" "$repo_slug" "" ""
-	done <<<"$rows"
-	if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
-	mkdir -p "$state_dir" 2>/dev/null || return 1
+		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+	done
 	printf '%s\n' "$page" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
+	[[ "$page" -eq 1 ]] || return 3
 	return 0
 }
 
@@ -1132,7 +1144,7 @@ _pm_reconcile_partial_continuations() {
 	local repo_slug="$1" deadline="$2"
 	local cap="${PULSE_PARTIAL_RECONCILE_PAGE_SIZE:-10}" page=1 next_page=1 token="1"
 	local cursor_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
-	local cursor="" issues_json="" issues="" now_epoch="" count=0
+	local cursor="" issues_json="" issues="" now_epoch="" count=0 merged_rc=0 merged_deadline=0
 	local line="" loaded=0 phase="review" pending_phase="review" last_page=0 resumed=0
 	local avail_phase="available" pages_done=0 max_pages="${PULSE_PARTIAL_RECONCILE_MAX_PAGES:-0}"
 	[[ "$max_pages" =~ ^[0-9]+$ ]] || max_pages=0
@@ -1161,7 +1173,8 @@ _pm_reconcile_partial_continuations() {
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
-	_pmpc_reconcile_recent_merges "$repo_slug" "$deadline" || true
+	merged_deadline=$((now_epoch + (deadline - now_epoch + 1) / 2))
+	_pmpc_reconcile_recent_merges "$repo_slug" "$merged_deadline" || merged_rc=$?
 	_pmpc_reconcile_closed_checkpoints "$repo_slug" "$deadline" "${phase}:${page}:${issues:+pending}" || true
 	while true; do
 		if [[ -z "$issues" ]]; then
@@ -1218,5 +1231,6 @@ _pm_reconcile_partial_continuations() {
 		page="$next_page"
 	done
 	[[ "$token" == "1" ]] || return 3
+	[[ "$merged_rc" -eq 0 ]] || return "$merged_rc"
 	return 0
 }
