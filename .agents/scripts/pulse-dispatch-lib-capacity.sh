@@ -75,10 +75,12 @@ _dispatch_candidate_snapshot_path() {
 
 # A snapshot is reusable from capture for the longer of the enumeration
 # estimate and the census that built it. A census read across runtime bundles
-# must also carry the reader's snapshot schema (GH#38048). GH#38210: a drain
+# must also carry the reader's snapshot schema (GH#38048). GH#38210: a
 # handoff (handed_off_at) is reusable for that window from the handoff, so the
-# drained cycle's tail does not expire it, but never past twice the window
-# from capture. Adopted candidates still pass every live dispatch gate.
+# handing process's tail does not expire it, but never past twice the window
+# from capture. GH#38908: a handoff also carries the full-cycle reuse window
+# (reuse_window, from _dispatch_candidate_reuse_ttl) it had in its own cycle.
+# Adopted candidates still pass every live dispatch gate.
 # Args: $1=snapshot file $2=now epoch $3=ttl seconds $4=required schema (optional)
 _dispatch_candidate_snapshot_is_fresh() {
 	local snapshot_file="$1" now_epoch="$2" snapshot_ttl="$3" schema="${4:-}"
@@ -87,7 +89,8 @@ _dispatch_candidate_snapshot_is_fresh() {
 		'if type == "object" and ($schema == "" or .schema == $schema) and (.captured_at | type == "number") and .captured_at <= $now and (.candidates | type == "array") then
 			([$ttl, (.census_seconds // 0)] | max) as $window |
 			if ([.handed_off_at | numbers] | length) > 0 then
-				.handed_off_at >= .captured_at and .handed_off_at <= $now and .handed_off_at > ($now - $window) and .captured_at > ($now - 2 * $window)
+				([$window] + [.reuse_window | numbers | select(. <= 3600)] | max) as $handoff_window |
+				.handed_off_at >= .captured_at and .handed_off_at <= $now and .handed_off_at > ($now - $handoff_window) and .captured_at > ($now - 2 * $handoff_window)
 			else .captured_at > ($now - $window) end
 		else false end' \
 		"$snapshot_file" >/dev/null 2>&1
@@ -134,18 +137,36 @@ _dispatch_candidate_handoff_path() {
 # activated bundle's first wave decides whether the census is still usable.
 # GH#38210: the census is stamped with handed_off_at, from which that reuse
 # window is measured (see _dispatch_candidate_snapshot_is_fresh).
-# Args: $1=per-repo limit $2=activated bundle id
+# GH#38908: every dispatch process exit hands on a census that is still inside
+# its full-cycle reuse window and has unattempted candidates, not only a drain.
+# Cycles and refill-only runs otherwise discarded 120-245 known candidates and
+# the next first wave re-scanned serially, often finding 1-3 of them.
+# Args: $1=per-repo limit $2=receiving bundle id or label
 _dispatch_hand_off_candidate_snapshots() {
 	local per_repo_limit="$1" bundle="$2" mode="" snapshot="" handoff="" staged="" now_epoch=""
-	local _PULSE_FIRST_DISPATCH_WAVE=0
+	local _PULSE_FIRST_DISPATCH_WAVE=0 base_ttl=300 reuse_ttl=300 remaining=""
 	now_epoch=$(date +%s) || return 0
+	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
+		base_ttl=$(_dispatch_enumeration_expected_seconds) || base_ttl=300
+	fi
+	reuse_ttl=$(_dispatch_candidate_reuse_ttl "$base_ttl")
 	for mode in normalize "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP"; do
 		snapshot=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$mode") || continue
 		handoff=$(_dispatch_candidate_handoff_path "$per_repo_limit" "$mode") || continue
 		[[ -f "$snapshot" && ! -L "$snapshot" && ! -L "${snapshot}.consumed" ]] || continue
+		# An expired or fully attempted census has nothing to hand on.
+		remaining="[]"
+		if _dispatch_candidate_snapshot_is_fresh "$snapshot" "$now_epoch" "$reuse_ttl"; then
+			remaining=$(_dispatch_filter_consumed_ranked_candidates "$snapshot" "$(jq -c '.candidates' "$snapshot" 2>/dev/null || printf '[]')" 2>/dev/null) || remaining="[]"
+		fi
+		if [[ "$remaining" == "[]" || -z "$remaining" ]]; then
+			rm -f "$snapshot" "${snapshot}.consumed" 2>/dev/null || true
+			continue
+		fi
 		rm -f "$handoff" "${handoff}.consumed" 2>/dev/null || continue
 		staged=$(mktemp "${handoff}.tmp.XXXXXX" 2>/dev/null) || continue
-		if ! jq -ce --argjson at "$now_epoch" 'objects | .handed_off_at = $at' "$snapshot" >"$staged" 2>/dev/null ||
+		if ! jq -ce --argjson at "$now_epoch" --argjson window "$reuse_ttl" \
+			'objects | .handed_off_at = $at | .reuse_window = $window' "$snapshot" >"$staged" 2>/dev/null ||
 			! mv -f "$staged" "$handoff" 2>/dev/null; then
 			rm -f "$staged" 2>/dev/null || true
 			continue
@@ -155,7 +176,7 @@ _dispatch_hand_off_candidate_snapshots() {
 			rm -f "$handoff" 2>/dev/null || true
 			continue
 		fi
-		echo "[pulse-wrapper] Dispatch candidate census handed to activated bundle ${bundle}: mode=${mode} (GH#38048)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch candidate census handed to next dispatch process: bundle=${bundle} mode=${mode} reuse_window=${reuse_ttl}s (GH#38048/GH#38908)" >>"$LOGFILE"
 	done
 	return 0
 }
@@ -230,11 +251,15 @@ _dispatch_cleanup_cycle_cache() {
 	local per_repo_limit="${1:-${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}}"
 	local _PULSE_FIRST_DISPATCH_WAVE=0
 	local candidate_file="" skip_candidate_file="" triage_file="" cache_file="" drain_bundle=""
-	# GH#38048: under a cooperative drain the full census outlives its cycle.
-	# The marker exists only while this process owns the instance lock.
+	# GH#38048/GH#38908: a usable full census outlives the process that built
+	# it. A drain names the activated bundle; the marker exists only while this
+	# process owns the instance lock. Otherwise the next process receives it.
 	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 && drain_bundle=$(_pulse_drain_requested_bundle); then
-		_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "$drain_bundle"
+		:
+	else
+		drain_bundle="next-process"
 	fi
+	_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "$drain_bundle"
 	candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" 2>/dev/null || true)
 	skip_candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" 2>/dev/null || true)
 	triage_file=$(_dispatch_cycle_cache_path "pulse-triage-prepass" ".done" 2>/dev/null || true)
@@ -624,7 +649,7 @@ _dispatch_ranked_candidates_json() {
 	local carried="{}"
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == 1 && "$snapshot_fresh" == 1 ]]; then
 		now_epoch=$(jq -r '.captured_at' "$snapshot_file") || return 1
-		carried=$(jq -c '{handed_off_at,census_seconds} | with_entries(select(.value | type == "number"))' "$snapshot_file" 2>/dev/null) || carried="{}"
+		carried=$(jq -c '{handed_off_at,census_seconds,reuse_window} | with_entries(select(.value | type == "number"))' "$snapshot_file" 2>/dev/null) || carried="{}"
 	fi
 	snapshot_tmp=$(mktemp "${snapshot_file}.tmp.XXXXXX" 2>/dev/null || true)
 	if [[ -n "$snapshot_tmp" ]] && (umask 077 && jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured_at "$now_epoch" \
