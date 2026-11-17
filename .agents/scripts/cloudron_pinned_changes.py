@@ -58,7 +58,9 @@ def commit_arg_ok(head_body, identity):
     return re.search(arg_line, head_body) is not None
 
 
-def pinned_changes_ok(base_text, head_text, mappings, identity, pins, version_mappings):
+def pinned_changes_ok(texts, identity, pins, mapping_sets):
+    base_text, head_text = texts
+    mappings, version_mappings = mapping_sets
     if head_text == base_text:
         return False
     if identity is None and pins["registry"] is None and pins["checksum"] is None:
