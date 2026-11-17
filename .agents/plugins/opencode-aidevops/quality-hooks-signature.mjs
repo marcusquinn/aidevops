@@ -93,19 +93,14 @@ function _signatureHelperEnv(explicitModel = "", useProcessModelFallback = true)
  * @param {Function} log
  * @returns {{ status: "ok", sig: string } | { status: "fail", reason: string, detail: string }}
  */
-function _signatureHelperTimeoutMs() {
-  const parsed = Number.parseInt(process.env.AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS || "", 10);
-  if (!Number.isFinite(parsed)) return 5000;
-  return Math.min(Math.max(parsed, 5000), 120000);
-}
-
 function _generateSignature(helperPath, bodyValue, log, options = {}) {
   try {
     // ~0.3s idle; 1.5s timed out under load (~17 on 16 cores) and blocked
     // legitimate gh writes plus the plugin test suite (GH#32807).
     const sig = execFileSync(helperPath, ["footer", "--no-session", "--body", bodyValue], {
       encoding: "utf-8",
-      timeout: _signatureHelperTimeoutMs(),
+      // AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS: test-load override, clamped 5s..120s (GH#38750).
+      timeout: Math.min(Math.max(process.env.AIDEVOPS_SIGNATURE_HELPER_TIMEOUT_MS | 0, 5000), 120000),
       stdio: ["pipe", "pipe", "pipe"],
       env: _signatureHelperEnv(options.model, options.useProcessModelFallback),
     });
