@@ -255,8 +255,112 @@ _pulse_main_dispatch_round_unadmittable() {
 	return 0
 }
 
+# GH#38747: once elastic dispatch filled whole cycles, every stage measured
+# against the cycle-start clock deferred for 20-28h, including 2-12s stages
+# that free slots (reap_orphan_workers) and delete ghost CI runs
+# (stale_queued_runs). A named stage whose last start is older than
+# AIDEVOPS_PULSE_STAGE_STARVATION_S (default 3600) may run once more with a
+# short timeout. All such fused stages share AIDEVOPS_PULSE_STAGE_FUSE_BUDGET_S
+# (default 300) per cycle, and each must finish inside the owner's lock lease
+# (heartbeat + PULSE_LOCK_MAX_AGE_S - reserve), which is the limit contenders
+# use before force-reclaiming the lock. Only the instance-lock owner stamps or
+# fuses stages; standalone routines and tests are unchanged.
+# Store the stage state directory in the named variable (no subshell).
+_pulse_stage_state_dir() {
+	# Unique name: a local called "dir" would shadow the caller's variable.
+	local _pulse_stage_dest="$1"
+	printf -v "$_pulse_stage_dest" '%s' "${AIDEVOPS_PULSE_STAGE_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/state/pulse-stages}"
+	return 0
+}
+
+# Print the owner heartbeat epoch; fails unless this process owns the lock.
+_pulse_stage_owner_heartbeat() {
+	local owner=""
+	local heartbeat=""
+	[[ -n "${LOCKDIR:-}" ]] || return 1
+	read -r owner 2>/dev/null <"${LOCKDIR}/pid" || return 1
+	[[ "$owner" == "$$" ]] || return 1
+	read -r heartbeat 2>/dev/null <"${LOCKDIR}/supervisor_heartbeat_epoch" || return 1
+	[[ "$heartbeat" =~ ^[1-9][0-9]*$ ]] || return 1
+	printf '%s\n' "$heartbeat"
+	return 0
+}
+
+# Seconds of fused stage time already used by this cycle (0 for other cycles).
+_pulse_stage_fuse_spent() {
+	local file="$1" pid="" start="" spent=""
+	read -r pid start spent 2>/dev/null <"$file" || {
+		printf '0\n'
+		return 0
+	}
+	if [[ "$pid" == "$$" && "$start" == "${PULSE_START_EPOCH:-}" && "$spent" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$spent"
+	else
+		printf '0\n'
+	fi
+	return 0
+}
+
+# Stamp a named stage's start (lock owner only; dynamic candidate names skip).
+_pulse_stage_note_start() {
+	local stage="$1" dir=""
+	[[ "$stage" =~ ^[a-z][a-z_]*$ ]] || return 0
+	_pulse_stage_owner_heartbeat >/dev/null || return 0
+	_pulse_stage_state_dir dir
+	mkdir -p "$dir" 2>/dev/null || return 0
+	date +%s >"${dir}/${stage}.start" 2>/dev/null || true
+	return 0
+}
+
+# Charge a finished fused stage's duration to this cycle's fuse budget.
+_pulse_stage_fuse_finish() {
+	local stage="$1" seconds="$2" dir="" spent=0
+	[[ "$stage" =~ ^[a-z][a-z_]*$ ]] || return 0
+	_pulse_stage_state_dir dir
+	[[ -f "${dir}/${stage}.fused" ]] || return 0
+	rm -f "${dir}/${stage}.fused"
+	[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+	spent=$(_pulse_stage_fuse_spent "${dir}/fuse-cycle")
+	printf '%s %s %s\n' "$$" "${PULSE_START_EPOCH:-0}" "$((spent + seconds))" >"${dir}/fuse-cycle" 2>/dev/null || true
+	return 0
+}
+
+# Print a fused timeout for a stage the cycle clock would defer.
+# Args: stage, requested timeout, effective reserve.
+# Returns 1 (defer as before) unless the stage has starved and the fuse
+# budget and lock lease both leave at least 15s.
+_pulse_stage_starvation_fuse() {
+	local stage="$1" timeout_seconds="$2" reserve="$3"
+	local starvation="${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}" cap="${AIDEVOPS_PULSE_STAGE_FUSE_TIMEOUT_S:-120}"
+	local budget="${AIDEVOPS_PULSE_STAGE_FUSE_BUDGET_S:-300}" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
+	local dir=""
+	local heartbeat=""
+	local now="" last=0 age="never" spent=0 grant=0
+	[[ "$stage" =~ ^[a-z][a-z_]*$ && ! -f "${STOP_FLAG:-/nonexistent}" ]] || return 1
+	[[ "$starvation" =~ ^[0-9]+$ && "$cap" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] || return 1
+	[[ "$ceiling" =~ ^[1-9][0-9]*$ && "$reserve" =~ ^[0-9]+$ && "$timeout_seconds" =~ ^[0-9]+$ ]] || return 1
+	heartbeat=$(_pulse_stage_owner_heartbeat) || return 1
+	now=$(date +%s) || return 1
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	_pulse_stage_state_dir dir
+	read -r last 2>/dev/null <"${dir}/${stage}.start" || last=0
+	[[ "$last" =~ ^[0-9]+$ ]] || last=0
+	((last == 0)) || age="$((now - last))s"
+	((last == 0 || now - last >= starvation)) || return 1
+	spent=$(_pulse_stage_fuse_spent "${dir}/fuse-cycle")
+	grant="$timeout_seconds"
+	((grant <= cap)) || grant="$cap"
+	((grant <= budget - spent)) || grant=$((budget - spent))
+	((grant <= heartbeat + ceiling - reserve - now)) || grant=$((heartbeat + ceiling - reserve - now))
+	((grant >= 15)) || return 1
+	mkdir -p "$dir" 2>/dev/null && : >"${dir}/${stage}.fused" || return 1
+	echo "[pulse-wrapper] Stage starvation fuse: ${stage} last_start_age=${age} timeout=${grant}s fuse_spent=${spent}s (GH#38747)" >>"$LOGFILE"
+	printf '%s\n' "$grant"
+	return 0
+}
+
 _pulse_stage_cycle_timeout() {
-	local stage_name="$1" timeout_seconds="$2" remaining=""
+	local stage_name="$1" timeout_seconds="$2" remaining="" dispatch_reserved=0 fused=""
 	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
 	local reserve="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
 	local dispatch_reserve="${_PULSE_MAIN_DISPATCH_RESERVE_S:-0}"
@@ -270,10 +374,16 @@ _pulse_stage_cycle_timeout() {
 			echo "[pulse-wrapper] Stage dispatch reserve released: ${stage_name} main dispatch round cannot be admitted this cycle (GH#37811)" >>"$LOGFILE"
 		else
 			reserve="$dispatch_reserve"
+			dispatch_reserved=1
 		fi
 	fi
 	remaining=$(_pulse_cycle_remaining_seconds "$reserve") || { printf '%s\n' "$timeout_seconds"; return 0; }
 	if [[ "$remaining" -lt 15 ]]; then
+		# GH#38747: a protected main-dispatch reserve is never fused away.
+		if ((dispatch_reserved == 0)) && fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$reserve"); then
+			printf '%s\n' "$fused"
+			return 0
+		fi
 		echo "[pulse-wrapper] Stage deferred: ${stage_name} cycle budget exhausted" >>"$LOGFILE"
 		return 124
 	fi
@@ -303,6 +413,7 @@ run_stage_with_timeout() {
 	local stage_start
 	stage_start=$(date +%s)
 	echo "[pulse-wrapper] Stage start: ${stage_name} (timeout ${timeout_seconds}s)" >>"$LOGFILE"
+	_pulse_stage_note_start "$stage_name"
 
 	(
 		# Background stages inherit the parent's shell state but must never run
@@ -343,6 +454,7 @@ run_stage_with_timeout() {
 					"$$" \
 					"$stage_pid" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
 			fi
+			_pulse_stage_fuse_finish "$stage_name" "$elapsed"
 			return 124
 		fi
 		# GH#35695: Refresh only while the owner is actively supervising an
@@ -362,6 +474,7 @@ run_stage_with_timeout() {
 	local stage_end
 	stage_end=$(date +%s)
 	local stage_duration=$((stage_end - stage_start))
+	_pulse_stage_fuse_finish "$stage_name" "$stage_duration"
 
 	# GH#20025: Append structured timing record to dedicated log for analysis.
 	# Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code

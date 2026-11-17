@@ -831,6 +831,90 @@ assert_stage_cycle_budget_contract() {
 	return 0
 }
 
+# GH#38747: a stage starved past the threshold runs once with a short timeout
+# from the shared per-cycle fuse budget, inside the owner's lock lease. Recent,
+# dynamic-name, foreign-owner, expired-lease, stopped and dispatch-reserved
+# stages still defer. A file clock lets a background stage advance time.
+assert_stage_starvation_fuse_contract() {
+	local test_root="" actual=""
+	local expected="fused:1;stamped:1;recent:124;repeat:124;budget:124;newcycle:1;spent:40;candidate:124;foreign:124;lease:124;stopped:124;reserved:124;"
+	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-fuse-XXXXXX") || return 1
+	TESTS_RUN=$((TESTS_RUN + 1))
+	actual=$(
+		(
+			LOGFILE="$test_root/stages.log" EVENTS="$test_root/events" CLOCK="$test_root/clock"
+			LOCKDIR="$test_root/lock" STOP_FLAG="$test_root/stop" AIDEVOPS_PULSE_STAGE_STATE_DIR="$test_root/state"
+			PULSE_START_EPOCH=1000 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800
+			AIDEVOPS_DISPATCH_STAGES_LOG="$test_root/no-ceremony-samples.tsv"
+			mkdir -p "$LOCKDIR" "$AIDEVOPS_PULSE_STAGE_STATE_DIR"
+			printf '%s\n' "$$" >"$LOCKDIR/pid"
+			# The cycle clock is 290s past its budget; the owner heartbeat is
+			# 100s old, so 1610s of the lock lease remain after the reserve.
+			printf '3000\n' >"$CLOCK"
+			printf '2900\n' >"$LOCKDIR/supervisor_heartbeat_epoch"
+			date() {
+				local now=""
+				[[ "${1:-}" == '+%s' ]] || return 1
+				read -r now <"$CLOCK"
+				printf '%s\n' "$now"
+				return 0
+			}
+			stage_probe() { printf '%s\n' "$1" >>"$EVENTS"; return 0; }
+			# Atomic clock writes: the supervising loop reads the clock concurrently.
+			slow_probe() { printf '3040\n' >"$CLOCK.next" && mv -f "$CLOCK.next" "$CLOCK"; printf 'slow\n' >>"$EVENTS"; return 0; }
+			fuse_rc() {
+				local rc=0
+				run_stage_with_timeout "$1" 600 stage_probe "$1" || rc=$?
+				printf '%s' "$rc"
+				return 0
+			}
+			local rc=0
+			run_stage_with_timeout reap_orphan_workers 600 stage_probe reap || rc=$?
+			[[ "$rc" -eq 0 && "$(<"$EVENTS")" == reap ]] && printf 'fused:1;'
+			[[ "$(<"$AIDEVOPS_PULSE_STAGE_STATE_DIR/reap_orphan_workers.start")" == 3000 ]] && printf 'stamped:1;'
+			printf '2000\n' >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/stale_queued_runs.start"
+			printf 'recent:%s;' "$(fuse_rc stale_queued_runs)"
+			printf 'repeat:%s;' "$(fuse_rc reap_orphan_workers)"
+			# 290 of the 300s cycle budget is spent: 10s is below the 15s floor.
+			printf '%s 1000 290\n' "$$" >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			printf 'budget:%s;' "$(fuse_rc dirty_pr_sweep)"
+			# Spend recorded by an earlier cycle does not count against this one.
+			printf '%s 999 290\n' "$$" >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			rc=0
+			run_stage_with_timeout dirty_pr_sweep 600 stage_probe dirty || rc=$?
+			[[ "$rc" -eq 0 ]] && printf 'newcycle:1;'
+			# A fused stage's real duration is charged to the shared budget.
+			run_stage_with_timeout canonical_maintenance 600 slow_probe || true
+			read -r _ _ rc <"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			printf 'spent:%s;' "$rc"
+			printf 'candidate:%s;' "$(fuse_rc dispatch_candidate_1)"
+			printf '1\n' >"$LOCKDIR/pid"
+			printf 'foreign:%s;' "$(fuse_rc redirect_spam_sweep)"
+			printf '%s\n' "$$" >"$LOCKDIR/pid"
+			printf '1300\n' >"$LOCKDIR/supervisor_heartbeat_epoch"
+			printf 'lease:%s;' "$(fuse_rc sync_todo_refs_all_repos)"
+			printf '2900\n' >"$LOCKDIR/supervisor_heartbeat_epoch"
+			: >"$STOP_FLAG"
+			printf 'stopped:%s;' "$(fuse_rc dependabot_alert_monitor)"
+			rm -f "$STOP_FLAG"
+			# An admittable main dispatch round keeps its protected reserve.
+			printf 'reserved:%s;' "$(_PULSE_MAIN_DISPATCH_RESERVE_S=1293 fuse_rc build_dependency_graph_cache)"
+		)
+	)
+	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "reap dirty slow " ]] &&
+		grep -q 'Stage starvation fuse: reap_orphan_workers last_start_age=never timeout=120s fuse_spent=0s' "$test_root/stages.log" &&
+		grep -q 'Stage start: reap_orphan_workers (timeout 120s)' "$test_root/stages.log" &&
+		grep -q 'Stage deferred: stale_queued_runs cycle budget exhausted' "$test_root/stages.log" &&
+		[[ ! -e "$test_root/state/dispatch_candidate_1.start" && ! -e "$test_root/state/canonical_maintenance.fused" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: starved stages run once from a bounded fuse inside the owner lease (GH#38747)"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: starved stages run once from a bounded fuse inside the owner lease (${actual:-none})"
+	fi
+	rm -rf "$test_root"
+	return 0
+}
+
 assert_dispatch_cycle_budget_contract() {
 	local actual="" expected="deferred:1;unclamped:0;margin:1;stage_guard:1;admitted:0;"
 	TESTS_RUN=$((TESTS_RUN + 1))
@@ -1332,6 +1416,7 @@ assert_grep \
 
 assert_ownership_deadline_contract
 assert_stage_cycle_budget_contract
+assert_stage_starvation_fuse_contract
 assert_dispatch_cycle_budget_contract
 assert_interrupted_dispatch_progress_contract
 
