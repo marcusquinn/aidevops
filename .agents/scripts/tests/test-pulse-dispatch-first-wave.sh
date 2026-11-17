@@ -575,6 +575,64 @@ printf 'PASS capped timeouts reduce repository work and recover candidates (GH#3
 )
 printf 'PASS slow repositories defer instead of clamped scans; timeouts reuse fresh last-good candidates\n'
 
+# GH#38727: a full census stopped by its deadline or a slow-repository deferral
+# offers unreached repositories' fresh last-good candidates without polling or
+# stamping them. Issues launched after the snapshot, expired lists, a disabled
+# max age and first waves carry nothing; product discovery stays incomplete.
+(
+	registry=$(<"$REPOS_JSON")
+	jq -n '{initialized_repos:[{slug:"owner/a",path:"/fixture",pulse:true},{slug:"owner/b",path:"/fixture",pulse:true},{slug:"owner/c",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	AIDEVOPS_DISPATCH_LEDGER_FILE="${TEST_ROOT}/carry-ledger.jsonl"
+	update_repo_pulse_timestamp() { printf 'stamp:%s\n' "$1" >>"$EVENTS"; return 0; }
+	_dispatch_enumerate_repo_bounded() {
+		printf 'scan:%s\n' "$2" >>"$EVENTS"
+		advance_clock 10
+		printf '[]\n'
+		return 0
+	}
+	advance_clock 5000
+	now=$(_dispatch_first_wave_now_s)
+	_dispatch_census_store_last_good owner/b '[{"number":5,"labels":[{"name":"auto-dispatch"}]},{"number":6,"labels":[{"name":"auto-dispatch"}]}]'
+	jq -nc --argjson at "$((now - 4000))" '{stored_at:$at,candidates:[{number:9,labels:[]}]}' >"$(_dispatch_census_last_good_file owner/c)"
+	# #6 launched after the snapshot was stored; #5 only before it.
+	{
+		jq -nc --argjson at "$((now + 1))" '{repo_slug:"owner/b",issue_number:"6",dispatched_at:($at | todate)}'
+		jq -nc --argjson at "$((now - 100))" '{repo_slug:"owner/b",issue_number:"5",dispatched_at:($at | todate)}'
+		printf 'not-json\n'
+	} >"$AIDEVOPS_DISPATCH_LEDGER_FILE"
+	census_cursor="${HOME}/.aidevops/cache/pulse-census-cursor"
+	rm -f "$census_cursor"
+	: >"$EVENTS"
+	carried=$(PULSE_CENSUS_ENUMERATION_BUDGET_S=5 build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'stamp:owner/a;scan:owner/a;' ]]
+	jq -e 'length == 1 and .[0].repo_slug == "owner/b" and .[0].number == 5
+		and .[0].product_discovery_complete == false' <<<"$carried" >/dev/null
+	grep -q 'carried last-good candidates: repos=1 count=1 from=owner/b (GH#38727)' "$LOGFILE"
+	[[ "$(<"$census_cursor")" == owner/a ]]
+	# A deferred slow repository is carried, not scanned with a clamped budget.
+	budget_file=$(_dispatch_repo_enumeration_budget_file owner/b)
+	mkdir -p "${budget_file%/*}"
+	printf '60\n' >"$budget_file"
+	rm -f "$census_cursor"
+	: >"$EVENTS"
+	deferred=$(PULSE_CENSUS_ENUMERATION_BUDGET_S=50 build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$(tr '\n' ';' <"$EVENTS")" == 'stamp:owner/a;scan:owner/a;' ]]
+	jq -e 'length == 1 and .[0].number == 5 and .[0].product_discovery_complete == false' <<<"$deferred" >/dev/null
+	[[ "$(grep -c 'carried last-good candidates: repos=1 count=1 from=owner/b (GH#38727)' "$LOGFILE")" == 2 ]]
+	# 0 disables carrying, as it disables timeout reuse.
+	rm -f "$census_cursor"
+	disabled=$(PULSE_CENSUS_LAST_GOOD_MAX_AGE_S=0 PULSE_CENSUS_ENUMERATION_BUDGET_S=50 build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$disabled" == '[]' ]]
+	# First waves keep their own bounds and never carry.
+	rm -f "$budget_file"
+	carries=$(grep -c '(GH#38727)' "$LOGFILE" || true)
+	first=$(_PULSE_FIRST_DISPATCH_WAVE=1 PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=5 build_ranked_dispatch_candidates_json 50 skip)
+	[[ "$first" == '[]' ]]
+	[[ "$(grep -c '(GH#38727)' "$LOGFILE")" == "$carries" ]]
+	printf '%s\n' "$registry" >"$REPOS_JSON"
+)
+printf 'PASS stopped censuses carry fresh last-good candidates of unreached repositories without polling them (GH#38727)\n'
+
 # A stop flag prevents the first-wave path from invoking dispatch at all.
 : >"$STOP_FLAG"
 _preflight_early_dispatch
