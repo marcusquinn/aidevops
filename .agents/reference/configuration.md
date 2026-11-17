@@ -106,7 +106,7 @@ Supervisor, dispatch, and autonomous operation settings.
 | Key | Type | Default | Env Override | Description |
 |-----|------|---------|-------------|-------------|
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
-| `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
+| `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily read-only drift report on clean repos in `repos.json`; never fetches or pulls canonical checkouts. |
 | `orchestration.max_workers_cap` | integer | `0` (auto: `(total RAM − RAM_RESERVE_MB) / RAM_PER_WORKER_MB`, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
 | `orchestration.max_load_per_core` | — | — | — | **Deprecated, ignored** (GH#35537). CPU load never gates admission; see [Worker resource policy](#worker-resource-policy). Remove from config. |
 | `orchestration.cpu_idle_admit_percent` | — | — | — | **Deprecated, ignored** (GH#35537). Remove from config. |

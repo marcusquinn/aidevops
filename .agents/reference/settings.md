@@ -45,8 +45,8 @@
 
 | Key | Type | Default | Env Var | Description |
 |-----|------|---------|---------|-------------|
-| `repo_sync.enabled` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos. |
-| `repo_sync.schedule` | string | `"daily"` | -- | Sync schedule (`daily` only). |
+| `repo_sync.enabled` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily read-only drift report on clean repos; never fetches or pulls canonical checkouts. |
+| `repo_sync.schedule` | string | `"daily"` | -- | Check schedule (`daily` only). |
 
 ### quality
 

@@ -14,9 +14,9 @@
 # Usage:
 #   repo-sync-helper.sh enable           Install daily scheduler (launchd/systemd/cron)
 #   repo-sync-helper.sh disable          Remove scheduler
-#   repo-sync-helper.sh status           Show current state and last sync results
-#   repo-sync-helper.sh check            One-shot: sync all configured repos now
-#   repo-sync-helper.sh logs [--tail N]  View sync logs
+#   repo-sync-helper.sh status           Show current state and last check results
+#   repo-sync-helper.sh check            One-shot: report drift for all configured repos now
+#   repo-sync-helper.sh logs [--tail N]  View check logs
 #   repo-sync-helper.sh config           Show/edit configuration
 #   repo-sync-helper.sh help             Show this help
 #
@@ -615,18 +615,22 @@ update_state_action() {
 }
 
 #######################################
-# Update state file after a sync run
+# Update state file after a check run. Legacy last_synced/total_synced keys
+# (a pull counter that stopped changing when repo-sync became read-only,
+# GH#32453) are left as-is in existing state files (GH#38879).
 # Arguments:
-#   $1 - synced count
-#   $2 - skipped count
-#   $3 - failed count
-#   $4 - JSON array of per-repo observations
+#   $1 - up-to-date count
+#   $2 - stale count
+#   $3 - skipped count
+#   $4 - failed count
+#   $5 - JSON array of per-repo observations
 #######################################
 update_state() {
-	local synced="$1"
-	local skipped="$2"
-	local failed="$3"
-	local observations="$4"
+	local up_to_date="$1"
+	local stale="$2"
+	local skipped="$3"
+	local failed="$4"
+	local observations="$5"
 	local timestamp
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -644,12 +648,13 @@ update_state() {
 	fi
 	jq -n --argjson previous "$previous" --arg ts "$timestamp" \
 		--arg fail "$SYNC_RESULT_FAIL" --arg stale "$SYNC_RESULT_STALE" \
-		--argjson synced "$synced" --argjson skipped "$skipped" \
+		--argjson up_to_date "$up_to_date" --argjson stale_count "$stale" \
+		--argjson skipped "$skipped" \
 		--argjson failed "$failed" --argjson observations "$observations" \
 		'$previous | . + {
-			last_sync: $ts, last_synced: $synced, last_skipped: $skipped,
+			last_sync: $ts, last_up_to_date: $up_to_date,
+			last_stale: $stale_count, last_skipped: $skipped,
 			last_failed: $failed,
-			total_synced: ((.total_synced // 0) + $synced),
 			total_failed: ((.total_failed // 0) + $failed)
 		} | reduce $observations[] as $obs (.;
 			(.repo_observations[$obs.path] // {}) as $prior |
@@ -687,12 +692,13 @@ cmd_check() {
 	fi
 	trap 'release_lock' EXIT
 
-	local synced=0
+	local up_to_date=0
+	local stale=0
 	local skipped=0
 	local failed=0
 	local -a observations=()
 
-	log_info "Starting repo sync..."
+	log_info "Starting read-only repo drift check..."
 
 	# Read parent directories
 	local parent_dirs=()
@@ -721,16 +727,18 @@ cmd_check() {
 		while IFS= read -r -d '' repo_dir; do
 			local result="SKIP"
 			if sync_repo "$repo_dir"; then
-				# Determine if it was pulled or skipped based on log
+				# sync_repo is read-only: classify its last log line as
+				# OK (up to date), STALE (remote drift) or SKIP.
 				local last_log
 				last_log=$(tail -1 "$LOG_FILE" 2>/dev/null || true)
-				if [[ "$last_log" == *"PULLED"* ]]; then
-					synced=$((synced + 1))
-				elif [[ "$last_log" == *"OK"* ]]; then
+				if [[ "$last_log" == *"] OK "* ]]; then
+					up_to_date=$((up_to_date + 1))
 					result="OK"
+				elif [[ "$last_log" == *"$SYNC_RESULT_STALE"* ]]; then
+					stale=$((stale + 1))
+					result="$SYNC_RESULT_STALE"
 				else
 					skipped=$((skipped + 1))
-					[[ "$last_log" == *"$SYNC_RESULT_STALE"* ]] && result="$SYNC_RESULT_STALE"
 				fi
 			else
 				failed=$((failed + 1))
@@ -742,12 +750,12 @@ cmd_check() {
 		done < <(aidevops_discover_canonical_repos "$parent_dir")
 	done
 
-	log_info "Sync complete: ${synced} pulled, ${skipped} skipped, ${failed} failed"
+	log_info "Check complete: ${up_to_date} up to date, ${stale} stale, ${skipped} skipped, ${failed} failed"
 	local observations_json="[]"
 	if [[ ${#observations[@]} -gt 0 ]]; then
 		observations_json=$(printf '%s\n' "${observations[@]}" | jq -sc '.')
 	fi
-	update_state "$synced" "$skipped" "$failed" "$observations_json"
+	update_state "$up_to_date" "$stale" "$skipped" "$failed" "$observations_json"
 
 	if [[ $failed -gt 0 ]]; then
 		return 1
@@ -1251,18 +1259,18 @@ cmd_status() {
 
 	# Show state file info
 	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		local last_sync last_synced last_skipped last_failed total_synced total_failed
+		local last_sync last_up_to_date last_stale last_skipped last_failed total_failed
 		last_sync=$(jq -r '.last_sync // "never"' "$STATE_FILE" 2>/dev/null)
-		last_synced=$(jq -r '.last_synced // 0' "$STATE_FILE" 2>/dev/null)
+		last_up_to_date=$(jq -r '.last_up_to_date // 0' "$STATE_FILE" 2>/dev/null)
+		last_stale=$(jq -r '.last_stale // 0' "$STATE_FILE" 2>/dev/null)
 		last_skipped=$(jq -r '.last_skipped // 0' "$STATE_FILE" 2>/dev/null)
 		last_failed=$(jq -r '.last_failed // 0' "$STATE_FILE" 2>/dev/null)
-		total_synced=$(jq -r '.total_synced // 0' "$STATE_FILE" 2>/dev/null)
 		total_failed=$(jq -r '.total_failed // 0' "$STATE_FILE" 2>/dev/null)
 
 		echo ""
-		echo "  Last sync:    $last_sync"
-		echo "  Last result:  ${last_synced} pulled, ${last_skipped} skipped, ${last_failed} failed"
-		echo "  Lifetime:     ${total_synced} total pulled, ${total_failed} total failed"
+		echo "  Last check:   $last_sync"
+		echo "  Last result:  ${last_up_to_date} up to date, ${last_stale} stale, ${last_skipped} skipped, ${last_failed} failed"
+		echo "  Lifetime:     ${total_failed} total failed"
 	fi
 
 	# Check env var overrides
@@ -1512,7 +1520,7 @@ cmd_logs() {
 #######################################
 cmd_help() {
 	cat <<'EOF'
-repo-sync-helper.sh - Daily git pull for repos in configured parent directories
+repo-sync-helper.sh - Daily read-only drift report for repos in configured parent directories
 
 USAGE:
     repo-sync-helper.sh <command> [options]
@@ -1521,20 +1529,20 @@ USAGE:
 COMMANDS:
     enable              Install daily scheduler (launchd on macOS, systemd/cron on Linux)
     disable             Remove scheduler
-    status              Show current state and last sync results
-    check               One-shot: sync all configured repos now
+    status              Show current state and last check results
+    check               One-shot: report drift for all configured repos now
     dirs [subcmd]       Manage git parent directories:
         list            Show configured directories (default)
         add <path>      Add a parent directory
         remove <path>   Remove a parent directory
     config              Show configuration and how to edit it
-    logs [--tail N]     View sync logs (default: last 50 lines)
+    logs [--tail N]     View check logs (default: last 50 lines)
     logs --follow       Follow log output in real-time
     help                Show this help
 
 ENVIRONMENT:
     AIDEVOPS_REPO_SYNC=false             Disable even if scheduler is installed
-    AIDEVOPS_REPO_SYNC_INTERVAL=1440     Minutes between syncs (default: 1440 = daily)
+    AIDEVOPS_REPO_SYNC_INTERVAL=1440     Minutes between checks (default: 1440 = daily)
 
 CONFIGURATION:
     Manage with: aidevops repo-sync dirs [add|remove|list]
@@ -1547,8 +1555,10 @@ SAFETY:
     - Skips repos with dirty working trees (uncommitted changes)
     - Skips repos not on their default branch (main/master)
     - Skips repos with no remote configured
-    - Logs failures without stopping (other repos still sync)
-    - Worktrees are ignored — only main checkouts are synced
+    - Logs failures without stopping (other repos are still checked)
+    - Worktrees are ignored — only canonical checkouts are checked
+    - STALE repos are reported only; converge them with the audited
+      canonical-recovery-helper.sh sync-mirror path printed in the log
 
 SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/sh.aidevops.repo-sync.plist)
@@ -1560,13 +1570,13 @@ SCHEDULER BACKENDS:
 HOW IT WORKS:
     1. Scheduler runs 'repo-sync-helper.sh check' daily
     2. Reads git_parent_dirs from ~/.config/aidevops/repos.json
-    3. Scans each parent directory for git repos (maxdepth 1)
+    3. Scans each parent directory for git repos (direct and owner/repo level)
     4. For each repo:
        a. Skips if no remote, detached HEAD, or not on default branch
        b. Skips if working tree is dirty
        c. Reads the remote ref with ls-remote
        d. Reports stale/diverged state without changing the checkout
-    5. Logs results (pulled/skipped/failed) to ~/.aidevops/logs/repo-sync.log
+    5. Logs results (ok/stale/skipped/failed) to ~/.aidevops/logs/repo-sync.log
 
 LOGS:
     ~/.aidevops/logs/repo-sync.log
