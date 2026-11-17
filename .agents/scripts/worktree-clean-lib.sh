@@ -1743,6 +1743,11 @@ _clean_worktree_index_is_readable() {
 	local worktree_branch="$2"
 	local audit_context="$3"
 
+	# An absent source has no index to protect; the archive step reports
+	# path-already-gone and only stale metadata remains to be pruned.
+	if [[ ! -e "$worktree_path" && ! -L "$worktree_path" ]]; then
+		return 0
+	fi
 	if GIT_OPTIONAL_LOCKS=0 git -C "$worktree_path" status --porcelain >/dev/null 2>&1; then
 		return 0
 	fi
