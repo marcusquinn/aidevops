@@ -638,6 +638,8 @@ _gh_collaborator_permission_lookup_uncached() {
 		err_file=$(umask 077 && mktemp "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/gh-collab-err.XXXXXX" 2>/dev/null) || err_file=""
 	fi
 	[[ -n "$err_file" ]] || stored_etag=""
+	# GH#38798: callers needing a fresh verdict skip the conditional request.
+	[[ "${AIDEVOPS_GH_COLLAB_SKIP_ETAG:-0}" != "1" ]] || stored_etag=""
 
 	# stdout only: stderr diagnostics (e.g. "[gh-cooldown] ...") start with "["
 	# and would be parsed as body, turning a 200 into malformed-response.
