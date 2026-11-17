@@ -1481,10 +1481,10 @@ PY
 		BASELINE_DIGEST="${BASELINE_DIGEST%% *}"
 		assert_policy baseline_published 0
 		grep -Fq "gh api repos/owner/app/contents/CloudronVersions.json?ref=${BASE_SHA}" "${TEST_ROOT}/calls"
-		! grep -Fq "CloudronVersions.json?ref=${HEAD_SHA}" "${TEST_ROOT}/calls"
+		if grep -Fq "CloudronVersions.json?ref=${HEAD_SHA}" "${TEST_ROOT}/calls"; then exit 1; fi
 		assert_policy baseline_unpublished 1
 		assert_policy verified 0
-		! grep -Fq 'contents/CloudronVersions.json' "${TEST_ROOT}/calls"
+		if grep -Fq 'contents/CloudronVersions.json' "${TEST_ROOT}/calls"; then exit 1; fi
 	)
 
 	(
