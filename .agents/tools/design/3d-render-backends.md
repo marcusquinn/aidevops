@@ -216,7 +216,11 @@ OIDN, Runpod A40 secure at $0.59/hr; RTX 4090 community was refused on every att
 - Simple scene (142 objects): 10 s/frame on the A40 against 8.1 s on an M3 Max;
   21 minutes of rendering, $0.22 in total.
 - Richer scene (about 110k triangles, translucent petals, depth of field): 8.1 s/frame
-  warm on the A40, against a 20-31 s cold single frame on the M3 Max.
+  warm on the A40, against a 20-31 s cold single frame on the M3 Max; 16 minutes of
+  rendering, $0.21 in total.
+- After `fetch` released each pod, SSH was refused within a minute, so pod internals
+  (for example whether the image has `runpodctl` for self-delete) must be checked
+  before `fetch`.
 - So one A40 is about as fast as an M3 Max for these scenes. It pays off by running
   in parallel or by freeing the Mac. Prefer an RTX 4090/5090 when capacity allows.
   Estimate from warm timing (`tools/design/blender-scripted-scenes.md`).
