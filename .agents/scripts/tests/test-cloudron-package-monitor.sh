@@ -263,12 +263,18 @@ SUPERSEDE
 write_fake_source_commands() {
 	local bin_dir="$1"
 	cat >"${bin_dir}/gh-source" <<'SOURCE'
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/git/ref/tags/desktop-v2.0.0" ]]; then
+if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/git/ref/tags/desktop-v2.0.0 ]]; then
     printf '%s\n' '{"object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     exit 0
 fi
-if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]; then
-    printf '%s\n' '{"parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}'
+if [[ "${1:-}" == "api" && "${2:-}" == repos/exampleorg/*/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]; then
+    jq -nc --arg date "${MONITOR_RELEASE_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+        '{parents:[{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],commit:{committer:{date:$date}}}'
+    exit 0
+fi
+if [[ "${1:-}" == "api" && "${2:-}" == 'repos/exampleorg/app/contents/src-tauri/Cargo.toml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]; then
+    printf 'PIN %s\n' "$2" >>"${MONITOR_API_LOG:-/dev/null}"
+    printf '%s' "${MONITOR_PIN_CONTENT:-relay rev = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" | base64
     exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/exampleorg/example-package/issues/101" ]]; then
@@ -1117,6 +1123,32 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$log_file")" "existing target-code circuit receives one proven-source retry"
 	grep -Fq 'terminal-blocker-circuit:retry' "$log_file" && assert_equal true true "ready source retry carries standalone circuit directive" || assert_equal true false "ready source retry carries standalone circuit directive"
 	grep -Fq -- '--source-digest bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$api_log" && assert_equal true true "upstream attestation is bound to release-parent commit" || assert_equal true false "upstream attestation is bound to release-parent commit"
+	# Expired waits must be visible and deduplicated, without asserting readiness.
+	local overdue_log="${case_root}/overdue.log" run=0
+	for run in 1 2; do
+		HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$overdue_log" MONITOR_RELEASES_FILE="$releases_file" \
+			MONITOR_RELEASE_DATE=2020-01-01T00:00:00Z MONITOR_IMAGE_STATE=missing \
+			CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	done
+	assert_equal 1 "$(grep -c '^CALL ' "$overdue_log")" "expired missing-image wait creates one durable finding"
+	grep -Fq 'Do not update or publish the package without qualified source proof' "$overdue_log" &&
+		assert_equal true true "overdue finding does not authorize unqualified source" || assert_equal true false "overdue finding does not authorize unqualified source"
+	# Companion releases use the pinned source repository for both attestations.
+	jq '.initialized_repos[0].cloudron_package |= (.upstream_slug = "exampleorg/app" |
+		.upstream_image.source_slug = "exampleorg/upstream" |
+		.upstream_image.source_pin = {path:"src-tauri/Cargo.toml",regex:"rev = ([a-f0-9]{40})"})' \
+		"${home_dir}/.config/aidevops/repos.json" >"$config_tmp"
+	mv "$config_tmp" "${home_dir}/.config/aidevops/repos.json"
+	local pin_log="${case_root}/pin.log" pin_api="${case_root}/pin-api.log" rc=0
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$pin_log" MONITOR_API_LOG="$pin_api" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_IMAGE_STATE=ready CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue" bash "$HELPER" upstream --apply >/dev/null
+	assert_equal 1 "$(grep -c '^CALL ' "$pin_log")" "companion release accepts a qualified image of its exact source pin"
+	assert_equal 2 "$(grep -c -- '--repo exampleorg/upstream' "$pin_api")" "both attestations are verified in the image source repository"
+	grep -Fq 'src-tauri/Cargo.toml?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$pin_api" &&
+		assert_equal true true "pin is read from the immutable release tree" || assert_equal true false "pin is read from the immutable release tree"
+	HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$pin_log" MONITOR_RELEASES_FILE="$releases_file" \
+		MONITOR_PIN_CONTENT='no revision here' MONITOR_IMAGE_STATE=ready bash "$HELPER" upstream >/dev/null 2>&1 || rc=$?
+	assert_equal 1 "$rc" "missing captured source revision fails closed"
 	return 0
 }
 
