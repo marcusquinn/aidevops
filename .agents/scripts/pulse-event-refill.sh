@@ -212,15 +212,24 @@ _pulse_event_refill_resolve_wake_wrapper() {
 	return 0
 }
 
+#######################################
+# Record a refill trigger and wake one coalesced refill-only run.
+# Args: $1 - issue number (0 for a pool-level wake), $2 - signalling pid,
+#       $3 - refill source (default worker-exit; GH#38696 adds active-pulse)
+#######################################
 pulse_event_refill_signal() {
 	local issue_number="$1"
 	local worker_pid="$2"
+	local refill_source="${3:-worker-exit}"
 	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
 	local wake_lock="${trigger_file}.wake.lock"
 	local wrapper="${PULSE_EVENT_REFILL_WRAPPER:-${AIDEVOPS_PULSE_EVENT_REFILL_WRAPPER:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper.sh}}"
 	local wake_pass=0
 	local max_wake_passes="${PULSE_EVENT_REFILL_WAKE_PASSES:-2}"
 
+	case "$refill_source" in
+	"" | *[!A-Za-z0-9:_-]*) refill_source="worker-exit" ;;
+	esac
 	if ! pulse_event_refill_write_trigger "$issue_number" "$worker_pid"; then
 		pulse_event_refill_log "action=trigger_failed issue=${issue_number} worker_pid=${worker_pid}"
 		return 0
@@ -244,16 +253,54 @@ pulse_event_refill_signal() {
 	((max_wake_passes > 0)) || max_wake_passes=1
 	while [[ -f "$trigger_file" && "$wake_pass" -lt "$max_wake_passes" ]]; do
 		wake_pass=$((wake_pass + 1))
-		pulse_event_refill_log "action=wake_started issue=${issue_number} worker_pid=${worker_pid} pass=${wake_pass}"
+		pulse_event_refill_log "action=wake_started issue=${issue_number} worker_pid=${worker_pid} pass=${wake_pass} source=${refill_source}"
 		AIDEVOPS_PULSE_EVENT_REFILL_ENABLED=1 \
 			PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger_file" \
 			PULSE_EVENT_REFILL_WRAPPER="$wrapper" \
-			bash "$wrapper" --refill-only --refill-source=worker-exit || true
+			bash "$wrapper" --refill-only --refill-source="$refill_source" || true
 		if [[ -f "$trigger_file" && "$wake_pass" -lt "$max_wake_passes" ]]; then
 			sleep 1
 		fi
 	done
 	_pulse_event_refill_release_wake_lock "$wake_lock"
+	return 0
+}
+
+#######################################
+# Wake a detached refill-only run for an underfilled pool while the LLM
+# supervisor runs (GH#38696). The supervisor phase has released the instance
+# lock and spent the cycle budget, so an in-process dispatch_max always stops
+# before enumeration. The wake reuses pulse_event_refill_signal: active-bundle
+# rebase, transition deferral, wake-lock coalescing and the failed-drain
+# cooldown; the refill-only run takes the instance lock with a fresh budget.
+# Detached like the worker-exit observer, so the watchdog keeps supervising
+# and the run outlives the supervisor's process group or service cgroup.
+# Returns: 0 when a wake was started, 1 when event refill is unavailable
+#######################################
+pulse_event_refill_wake_underfilled() {
+	local helper="${PULSE_EVENT_REFILL_HELPER:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-event-refill.sh}"
+	local trigger_file="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
+	local wrapper="${PULSE_EVENT_REFILL_WRAPPER:-${AIDEVOPS_PULSE_EVENT_REFILL_WRAPPER:-${_PULSE_EVENT_REFILL_SCRIPT_DIR}/pulse-wrapper.sh}}"
+	local owner_pid="$$"
+	pulse_event_refill_is_enabled || return 1
+	[[ -x "$helper" ]] || return 1
+	_pulse_event_refill_wrapper_supports_mode "$wrapper" || return 1
+	local -a wake_command=(env AIDEVOPS_PULSE_EVENT_REFILL_ENABLED=1
+		"PULSE_EVENT_REFILL_TRIGGER_FILE=${trigger_file}"
+		"PULSE_EVENT_REFILL_WRAPPER=${wrapper}"
+		"$helper" signal 0 "$owner_pid" active-pulse)
+	if declare -F _dlw_systemd_user_service_available >/dev/null 2>&1 &&
+		declare -F _dlw_exec_systemd_user_service >/dev/null 2>&1 &&
+		_dlw_systemd_user_service_available; then
+		_dlw_exec_systemd_user_service "aidevops-pulse-refill" "/dev/null" "0" \
+			"${wake_command[@]}" >/dev/null 2>&1 && return 0
+	fi
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup "${wake_command[@]}" </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup "${wake_command[@]}" </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	fi
+	disown 2>/dev/null || true
 	return 0
 }
 
@@ -689,11 +736,12 @@ _pulse_event_refill_main() {
 		shift
 		local issue_number="${1:-}"
 		local worker_pid="${2:-}"
-		pulse_event_refill_signal "$issue_number" "$worker_pid"
+		local refill_source="${3:-worker-exit}"
+		pulse_event_refill_signal "$issue_number" "$worker_pid" "$refill_source"
 		return $?
 		;;
 	*)
-		printf 'Usage: %s signal <issue-number> <worker-pid>\n' "$0" >&2
+		printf 'Usage: %s signal <issue-number> <worker-pid> [refill-source]\n' "$0" >&2
 		return 2
 		;;
 	esac

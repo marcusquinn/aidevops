@@ -2080,6 +2080,16 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
+	# GH#38696: this runs inside the LLM supervisor phase, after the instance
+	# lock is released and the cycle budget is spent, so an in-process
+	# dispatch_max always stops before enumeration. Wake a detached refill-only
+	# run instead: it takes the lock with a fresh budget from the active bundle.
+	if declare -F pulse_event_refill_wake_underfilled >/dev/null 2>&1 &&
+		pulse_event_refill_wake_underfilled; then
+		echo "[pulse-wrapper] Active pulse refill: woke a fresh-budget refill-only run (source=active-pulse, GH#38696)" >>"$LOGFILE"
+		echo "$now_epoch"
+		return 0
+	fi
 	local active_refill_dispatched
 	active_refill_dispatched=$(dispatch_max) || active_refill_dispatched=0
 	[[ "$active_refill_dispatched" =~ ^[0-9]+$ ]] || active_refill_dispatched=0

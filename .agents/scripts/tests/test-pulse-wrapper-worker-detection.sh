@@ -1665,7 +1665,7 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	local action_log="${TEST_ROOT}/active-refill.log"
 	local original_function_definitions original_refill_interval="${PULSE_ACTIVE_REFILL_INTERVAL:-}"
 	local had_original_refill_interval=0
-	original_function_definitions=$(capture_function_definitions get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill)
+	original_function_definitions=$(capture_function_definitions get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill pulse_event_refill_wake_underfilled)
 	if [[ -n "${PULSE_ACTIVE_REFILL_INTERVAL+x}" ]]; then
 		had_original_refill_interval=1
 	fi
@@ -1687,26 +1687,32 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	_dispatch_min_worker_floor_refill() {
 		return 0
 	}
+	# GH#38696: the supervisor-phase refill wakes a fresh-budget refill-only
+	# run; in-process dispatch_max is only the fallback when no wake starts.
+	pulse_event_refill_wake_underfilled() {
+		printf 'wake\n' >>"$action_log"
+		return 0
+	}
 
 	local first_refill second_refill actions
 	first_refill=$(maybe_refill_underfilled_pool_during_active_pulse 0 0 60 true)
 	second_refill=$(maybe_refill_underfilled_pool_during_active_pulse "$first_refill" 0 60 true)
 	actions=$(tr '\n' ',' <"$action_log" | sed 's/,$//')
 
-	restore_function_definitions "$original_function_definitions" get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill
+	restore_function_definitions "$original_function_definitions" get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max _dispatch_min_worker_floor_refill pulse_event_refill_wake_underfilled
 	if [[ "$had_original_refill_interval" -eq 1 ]]; then
 		export PULSE_ACTIVE_REFILL_INTERVAL="$original_refill_interval"
 	else
 		unset PULSE_ACTIVE_REFILL_INTERVAL
 	fi
 
-	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,dispatch" ]]; then
+	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,wake" ]]; then
 		print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 0
 		return 0
 	fi
 
 	print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 1 \
-		"Expected one recycler+dispatch pass with cooldown; got first=${first_refill}, second=${second_refill}, actions=${actions}"
+		"Expected one recycler+wake pass with cooldown; got first=${first_refill}, second=${second_refill}, actions=${actions}"
 	return 0
 }
 
