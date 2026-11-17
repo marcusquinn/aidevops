@@ -288,6 +288,74 @@ _dedup_layer3_title_match() {
 }
 
 #######################################
+# Layer 3b (GH#38770): GH audit anomaly alerts are runner-local.
+# The evidence (~/.aidevops/logs/gh-audit.log) exists only on the runner that
+# filed the alert (the issue author), so every other runner must skip it
+# (GH#34499/#34495). Applies to open issues labelled `monitoring` whose body
+# carries the scanner marker. Fails closed: an unreadable issue or unknown
+# self_login blocks dispatch of anything titled as an audit alert.
+# Stale fallback: the maintainer runner (self_login == repo owner) labels an
+# unclaimed alert needs-maintainer-input after AIDEVOPS_AUDIT_ALERT_STALE_HOURS
+# (default 72) so alerts never sit open with no owner.
+# Arguments: issue_number, repo_slug, issue_title, self_login
+# Exit: 0 = blocked (not this runner's alert), 1 = continue
+#######################################
+_dedup_audit_alert_locality() {
+	local issue_number="$1" repo_slug="$2" issue_title="$3" self_login="$4"
+	case "$issue_title" in
+	"GH Audit Anomaly Alert:"* | "GH Audit Log Integrity Alert:"*) ;;
+	*) return 1 ;;
+	esac
+	local meta="" fields="" author="" created="" assigned="" marker="" monitoring="" needs=""
+	meta=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || meta=""
+	if [[ -z "$meta" ]] || [[ -z "$self_login" ]]; then
+		echo "[pulse-wrapper] Dedup: audit alert #${issue_number} in ${repo_slug} unreadable or self_login unknown; blocking (GH#38770)" >>"$LOGFILE"
+		return 0
+	fi
+	fields=$(printf '%s' "$meta" | jq -r '[
+		(.user.login // ""),
+		(.created_at // ""),
+		((.assignees // []) | length | tostring),
+		(((.body // "") | contains("<!-- gh-audit-anomaly-scanner:")) | tostring),
+		(([.labels[]? | (.name? // .)] | index("monitoring") != null) | tostring),
+		(([.labels[]? | (.name? // .)] | map(select(. == "needs-maintainer-input")) | length) | tostring)
+	] | join("\t")' 2>/dev/null) || fields=""
+	if [[ -z "$fields" ]]; then
+		return 0
+	fi
+	IFS=$'\t' read -r author created assigned marker monitoring needs <<<"$fields"
+	[[ "$marker" == "true" && "$monitoring" == "true" ]] || return 1
+	# aidevops:trust-boundary - only the producing runner may claim an alert.
+	if [[ "$author" != "$self_login" ]]; then
+		echo "[pulse-wrapper] Dedup: audit alert #${issue_number} in ${repo_slug} authored by ${author}; runner ${self_login} skips (GH#38770)" >>"$LOGFILE"
+		_dedup_audit_alert_stale_fallback "$issue_number" "$repo_slug" "$self_login" "$created" "$assigned" "$needs"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Stale fallback for unclaimed audit alerts (GH#38770). Only the maintainer
+# runner (self_login equals the repo owner) acts, once per alert.
+# Arguments: issue_number, repo_slug, self_login, created_at, assignee_count, needs_label_count
+# Exit: 0 always
+#######################################
+_dedup_audit_alert_stale_fallback() {
+	local issue_number="$1" repo_slug="$2" self_login="$3" created="$4" assigned="$5" needs="$6"
+	local stale_hours="${AIDEVOPS_AUDIT_ALERT_STALE_HOURS:-72}"
+	[[ "$stale_hours" =~ ^[0-9]+$ ]] || stale_hours=72
+	[[ "$self_login" == "${repo_slug%%/*}" && "$assigned" == "0" && "$needs" == "0" ]] || return 0
+	local created_epoch="" now_epoch=""
+	created_epoch=$(date -d "$created" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created" +%s 2>/dev/null) || return 0
+	now_epoch=$(date +%s)
+	((now_epoch - created_epoch >= stale_hours * 3600)) || return 0
+	gh issue edit "$issue_number" --repo "$repo_slug" --add-label "needs-maintainer-input" >/dev/null 2>&1 || return 0
+	gh issue comment "$issue_number" --repo "$repo_slug" --body "Audit alert unclaimed by its producing runner for over ${stale_hours}h (runner may be retired or offline). Flagged \`needs-maintainer-input\`: review the alert's author runner log, or close it if that runner no longer exists." >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Dedup: audit alert #${issue_number} in ${repo_slug} stale >${stale_hours}h; labelled needs-maintainer-input (GH#38770)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # GH#38101: layer-4 steps are timed only when the dispatcher loaded both the
 # stage recorder and _dedup_layer_timed; other callers run them unchanged.
 # Returns: 0 when timing is available
