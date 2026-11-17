@@ -659,6 +659,8 @@ _pulse_run_deterministic_pipeline() {
 	_PULSE_MAIN_DISPATCH_RESERVE_S=0
 	_pulse_cycle_drain_exit "maintenance_stages" && return 0
 	_pulse_pipeline_maintenance_stages
+	# t19074: bounds how long later drains may skip this tail.
+	! declare -F _pulse_drain_tail_note_complete >/dev/null 2>&1 || _pulse_drain_tail_note_complete
 	return 0
 }
 
