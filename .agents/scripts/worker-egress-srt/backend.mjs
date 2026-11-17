@@ -89,9 +89,14 @@ export function loadEnvelope(filename) {
   const cwd = fs.realpathSync(data.cwd);
   insist(inside(cwd, lists.write[0]), 'cwd-must-be-owned-output');
   const tools = {};
-  insist(data.tools && Object.keys(data.tools).every(key => ['shell', 'python', 'bwrap', 'socat', 'rg', 'coreutils', 'procps', 'setsid'].includes(key)),
+  // `which` is mandatory because SRT resolves every dependency by spawning the
+  // external which(1); cleanEnvironment() below builds PATH only from these
+  // directories. On FHS distributions the tools share /usr/bin, which also
+  // holds which(1), so the need is invisible; on NixOS each package has its own
+  // bin directory and every SRT lookup fails with "<tool> not found".
+  insist(data.tools && Object.keys(data.tools).every(key => ['shell', 'python', 'bwrap', 'socat', 'rg', 'coreutils', 'procps', 'setsid', 'which'].includes(key)),
     'unknown-tool');
-  for (const key of ['shell', 'python', 'rg', 'coreutils', 'procps', ...(process.platform === 'linux' ? ['bwrap', 'socat', 'setsid'] : [])]) {
+  for (const key of ['shell', 'python', 'rg', 'coreutils', 'procps', 'which', ...(process.platform === 'linux' ? ['bwrap', 'socat', 'setsid'] : [])]) {
     tools[key] = executable(data.tools[key]);
     insist(!lists.write.some(root => inside(tools[key], root)), 'writable-tool');
   }

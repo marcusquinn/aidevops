@@ -69,7 +69,7 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
   };
   try {
     const tools = { shell: resolve('bash'), python: resolve('python3'), rg: resolve('rg'),
-      coreutils: resolve('env'), procps: resolve('ps') };
+      coreutils: resolve('env'), procps: resolve('ps'), which: resolve('which') };
     if (process.platform === 'linux') {
       tools.bwrap = resolve('bwrap');
       tools.socat = process.env.AIDEVOPS_SRT_TEST_SOCAT || resolve('socat');

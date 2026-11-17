@@ -55,7 +55,8 @@ Example shape (all paths are placeholders requiring review):
     "procps": "/trusted/bin/ps",
     "bwrap": "/trusted/bin/bwrap",
     "socat": "/trusted/bin/socat",
-    "setsid": "/trusted/bin/setsid"
+    "setsid": "/trusted/bin/setsid",
+    "which": "/trusted/bin/which"
   }
 }
 ```
@@ -76,6 +77,14 @@ underlying supervisor also needs the usual coreutils commands, including `wc`,
 `bwrap`, `socat`, and `setsid` are Linux-only fields; omit them on macOS.
 The Linux canary uses Python 3.12+'s `os.unshare`.
 
+`which` is required on every platform. SRT resolves each dependency by spawning
+the external `which(1)` rather than testing the configured absolute path, so an
+unreachable `which` makes every lookup report the tool as missing — including
+tools that are present and already configured by absolute path. On FHS
+distributions this is invisible because the tools share `/usr/bin` with
+`which(1)`; on NixOS each package has its own `bin` directory, so omitting this
+field fails the probe with `dependencies-not-ready`.
+
 The child inherits no broad host environment, credential files or agent sockets.
 SRT's own proxy configuration is generated, never inherited from HTTP_PROXY or
 other ambient proxy variables. The workload sees only the owned proxy bridge
@@ -89,7 +98,8 @@ credential rewriting. It is not a ready-to-use model-client launch command.
 | Platform | Implementation | Evidence / qualification |
 | --- | --- | --- |
 | Ubuntu/Linux x64 | Explicit bwrap/socat, namespaces, shipped seccomp helper, strict host-side proxy | Real synthetic checks run on Ubuntu 24.04.5, bwrap 0.9.0; see below |
-| NixOS x64/arm64 | Same Linux backend; tools resolved to explicit immutable paths, no `/usr/bin/bwrap` assumption | Paths and policy translation checked; no NixOS host execution yet |
+| NixOS x64 | Same Linux backend; tools resolved to explicit immutable store paths, no `/usr/bin/bwrap` assumption | Real synthetic checks run on NixOS 26.05, kernel 6.18.60, bubblewrap 0.12.0, socat 1.8.1.3, no AppArmor profile needed; see below |
+| NixOS arm64 | Same Linux backend | No host execution yet; do not infer from x64 |
 | macOS x64/arm64 | SRT Seatbelt profile with explicit Mach-service allows removed, IPC grants narrowed, no Apple Events / local binding / weaker isolation | Profile-shape unit checks only; no macOS host execution yet; DNS/process-tree qualification remains open |
 
 ### Ubuntu / other Linux
@@ -109,8 +119,28 @@ Supply real tool paths and the reviewed Nix runtime closure in `read`; never
 grant the entire `/nix/store` as a convenience. Include dynamic loader/library
 and Python standard-library store outputs, plus the shipped seccomp helper.
 Use native nixpkgs packages for Node, bash, Python, ripgrep, bubblewrap, socat,
-coreutils, procps and util-linux. This prototype is not a nixpkgs derivation and
-has not been built or run on NixOS. Do not infer compatibility from Linux alone.
+coreutils, procps, util-linux and which. This prototype is not a nixpkgs
+derivation.
+
+The 64-entry `read` bound is the binding constraint, because a Nix closure is
+structurally larger than an FHS one. On the qualified host the naive closure of
+the eight tools is 94 paths and is refused with `bounded-path-list-required`.
+Dropping Node, preferring `coreutils` over `coreutils-full` and `util-linuxMinimal`
+for `setsid` reduces it to 44 closure paths; with nine tool paths, the seccomp
+vendor directory, `which`'s `bin` directory and the three FHS roots that exist on
+NixOS (`/usr`, `/bin`, `/lib64` — `/lib` and `/etc/ld.so.cache` do not) the
+envelope holds 57 of 64 entries. Treat the remaining margin as small: a nixpkgs
+bump that grows the coreutils or Python closure can exceed the bound. Trim the
+closure rather than raising the bound, and never substitute `/nix/store`.
+
+`bwrap` and `socat` are absent from a stock NixOS system profile and are not
+setuid-wrapped. An unprivileged `nix build` is sufficient and keeps them as
+root-owned immutable store paths, but unreferenced store paths are deleted by
+`nix-collect-garbage` regardless of age — root them, or install them into the
+system profile, before relying on them. `which` is already part of the base
+system profile. Record store paths and the nixpkgs `narHash`, not build commands:
+the registry can be pinned to a store-path flake whose outputs change after a
+`nixos-rebuild`.
 
 ### macOS
 
@@ -185,19 +215,24 @@ They use native tool discovery to build a synthetic envelope and ephemeral local
 listeners, never a provider call. `AIDEVOPS_SRT_TEST_SOCAT` can identify a reviewed
 non-privileged socat binary; `AIDEVOPS_SRT_TEST_READ` can supply a JSON array of
 reviewed extra runtime closure paths for NixOS/macOS. An incomplete closure must
-fail, not widen itself. Inspect bounded-operation cleanup receipts as well as
+fail, not widen itself. On NixOS, native discovery alone exceeds the 64-entry
+bound: supply the trimmed closure described above through `AIDEVOPS_SRT_TEST_READ`
+and keep the minimal coreutils and util-linux variants ahead of the system
+profile on `PATH`. Inspect bounded-operation cleanup receipts as well as
 test exit status; child exit alone does not establish absence of descendants.
 
 ## Before promotion
 
-Actual macOS/NixOS host testing is deferred by the operator for manual execution
-under [GH#38701](https://github.com/marcusquinn/aidevops/issues/38701), a sub-issue
-of GH#35043 with an explicit `no-auto-dispatch` hold. No approved host connections
-are available. Deferral does not qualify either platform or remove the macOS
-readiness hold.
+NixOS x64 host testing is complete under
+[GH#38701](https://github.com/marcusquinn/aidevops/issues/38701), a sub-issue of
+GH#35043. macOS host testing remains deferred for manual execution and keeps the
+macOS readiness hold: the backend refuses readiness on `darwin` by design until
+the DNS and inherited-Mach-IPC boundary is reviewed, so a passing macOS canary
+run would not qualify the platform either. Qualifying NixOS x64 does not qualify
+NixOS arm64.
 
-Still required: actual macOS/NixOS runtime evidence; macOS DNS and inherited-IPC
-review; the dependency-advisory disposition; proxy resolved-address/redirect and
+Still required: actual macOS runtime evidence; NixOS arm64 evidence; macOS DNS
+and inherited-IPC review; the dependency-advisory disposition; proxy resolved-address/redirect and
 protocol bypass qualification; independent review of filesystem composition;
 hostile descendant cancellation/timeout verification on each platform; separately
 reviewed provider endpoint/method probe; minimal credential handling and an
