@@ -734,7 +734,7 @@ cmd_check() {
 				if [[ "$last_log" == *"] OK "* ]]; then
 					up_to_date=$((up_to_date + 1))
 					result="OK"
-				elif [[ "$last_log" == *"$SYNC_RESULT_STALE"* ]]; then
+				elif [[ "$last_log" == *"] $SYNC_RESULT_STALE "* ]]; then
 					stale=$((stale + 1))
 					result="$SYNC_RESULT_STALE"
 				else
