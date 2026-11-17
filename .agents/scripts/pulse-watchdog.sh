@@ -348,21 +348,27 @@ _pulse_stage_fuse_finish() {
 }
 
 # Print a fused timeout for a stage the cycle clock would defer.
-# Args: stage, requested timeout, effective reserve.
+# Args: stage, requested timeout, effective reserve, optional borrow budget
+# (GH#38840: caps the per-cycle fuse budget when lending dispatch reserve).
 # Returns 1 (defer as before) unless the stage has starved and the fuse
 # budget and lock lease both leave at least 15s.
 _pulse_stage_starvation_fuse() {
-	local stage="$1" timeout_seconds="$2" reserve="$3"
+	local stage="$1" timeout_seconds="$2" reserve="$3" borrow="${4:-}"
 	local starvation="${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}" cap="${AIDEVOPS_PULSE_STAGE_FUSE_TIMEOUT_S:-120}"
 	local budget="${AIDEVOPS_PULSE_STAGE_FUSE_BUDGET_S:-300}" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	local dir=""
 	local heartbeat=""
-	local now="" last=0 age="never" spent=0 grant=0
+	local now="" last=0 age="never" spent=0 grant=0 note=""
 	# A stage nested inside a fused stage stays within its parent's grant.
 	[[ -z "${PULSE_STAGE_FUSE_DEADLINE_EPOCH:-}" ]] || return 1
 	[[ "$stage" =~ ^[a-z][a-z_]*$ && ! -f "${STOP_FLAG:-/nonexistent}" ]] || return 1
 	[[ "$starvation" =~ ^[0-9]+$ && "$cap" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] || return 1
 	[[ "$ceiling" =~ ^[1-9][0-9]*$ && "$reserve" =~ ^[0-9]+$ && "$timeout_seconds" =~ ^[0-9]+$ ]] || return 1
+	if [[ -n "$borrow" ]]; then
+		[[ "$borrow" =~ ^[0-9]+$ ]] || return 1
+		((borrow >= budget)) || budget="$borrow"
+		note=" reserve_borrow=${borrow}s"
+	fi
 	heartbeat=$(_pulse_stage_owner_heartbeat) || return 1
 	now=$(date +%s) || return 1
 	[[ "$now" =~ ^[0-9]+$ ]] || return 1
@@ -379,8 +385,26 @@ _pulse_stage_starvation_fuse() {
 	((grant >= 15)) || return 1
 	mkdir -p "$dir" 2>/dev/null || return 1
 	printf '%s %s\n' "$$" "${PULSE_START_EPOCH:-0}" >"${dir}/${stage}.fused" 2>/dev/null || return 1
-	echo "[pulse-wrapper] Stage starvation fuse: ${stage} last_start_age=${age} timeout=${grant}s fuse_spent=${spent}s (GH#38747)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Stage starvation fuse: ${stage} last_start_age=${age} timeout=${grant}s fuse_spent=${spent}s${note} (GH#38747)" >>"$LOGFILE"
 	printf '%s\n' "$grant"
+	return 0
+}
+
+# GH#38840: every stage before the main round sees the protected dispatch
+# reserve, so the fuse above never reached the orphan reaper, stale queued-run
+# cleanup or capacity refresh (35h without a start on a 20-slot runner while
+# early dispatch spent each cycle clock). A starved budget-priority "critical"
+# stage may borrow up to AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S (default 120;
+# 0 disables) of that reserve per cycle, charged to the shared fuse spend.
+# Deferrable stages, and every stage when the classifier is absent, defer.
+# Prints the borrow budget; returns 1 when the stage may not borrow.
+_pulse_stage_reserve_borrow_budget() {
+	local stage="$1" borrow="${AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S:-120}" class=""
+	[[ "$borrow" =~ ^[1-9][0-9]*$ ]] || return 1
+	declare -F _pulse_stage_priority_class >/dev/null 2>&1 || return 1
+	class=$(_pulse_stage_priority_class "$stage" 2>/dev/null) || return 1
+	[[ "$class" == critical ]] || return 1
+	printf '%s\n' "$borrow"
 	return 0
 }
 
@@ -450,9 +474,10 @@ _pulse_stage_record_timing() {
 }
 
 _pulse_stage_cycle_timeout() {
-	local stage_name="$1" timeout_seconds="$2" remaining="" dispatch_reserved=0 fused=""
+	local stage_name="$1" timeout_seconds="$2" remaining="" dispatch_reserved=0 fused="" borrow=""
 	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
 	local reserve="${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}"
+	local finalise_reserve="$reserve"
 	local dispatch_reserve="${_PULSE_MAIN_DISPATCH_RESERVE_S:-0}"
 	# GH#37051: every pre-dispatch stage, including nested cleanup and graph
 	# work, must leave the main round its enumeration + candidate budget.
@@ -469,8 +494,16 @@ _pulse_stage_cycle_timeout() {
 	fi
 	remaining=$(_pulse_cycle_remaining_seconds "$reserve") || { printf '%s\n' "$timeout_seconds"; return 0; }
 	if [[ "$remaining" -lt 15 ]]; then
-		# GH#38747: a protected main-dispatch reserve is never fused away.
-		if ((dispatch_reserved == 0)) && fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$reserve"); then
+		# GH#38747: a protected main-dispatch reserve is fused only through the
+		# bounded critical-stage borrow (GH#38840). The borrowed grant's lease
+		# check keeps just the finalisation reserve: the dispatch reserve is
+		# what is being lent.
+		if ((dispatch_reserved == 0)); then
+			fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$reserve") || fused=""
+		elif borrow=$(_pulse_stage_reserve_borrow_budget "$stage_name"); then
+			fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$finalise_reserve" "$borrow") || fused=""
+		fi
+		if [[ -n "$fused" ]]; then
 			printf '%s\n' "$fused"
 			return 0
 		fi
