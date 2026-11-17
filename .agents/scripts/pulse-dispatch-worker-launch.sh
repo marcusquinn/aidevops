@@ -314,6 +314,28 @@ _dlw_setup_worker_log() {
 #
 # Arguments: issue_number, repo_path
 #######################################
+# t19076 (GH#38818): a cleanup pass killed inside `git worktree remove` leaves
+# the tree registered with tracked files deleted from disk. That looked like a
+# dirty resume below, so workers inherited a checkout missing lockfiles and
+# tooling. When unstaged deletions are the only tracked change, restore them
+# from HEAD: no content is lost and untracked files are never touched.
+_dlw_restore_missing_tracked_files() {
+	local existing_path="$1"
+	local tracked_status="" deleted=0 other=0
+	tracked_status=$(git -C "$existing_path" status --porcelain --untracked-files=no 2>/dev/null) || return 0
+	[[ -n "$tracked_status" ]] || return 0
+	deleted=$(grep -c '^ D ' <<<"$tracked_status" || true)
+	other=$(grep -vc '^ D ' <<<"$tracked_status" || true)
+	[[ "$deleted" =~ ^[0-9]+$ && "$other" =~ ^[0-9]+$ ]] || return 0
+	[[ "$deleted" -gt 0 && "$other" -eq 0 ]] || return 0
+	if git -C "$existing_path" checkout -- . 2>/dev/null; then
+		echo "[dispatch_with_dedup] Restored ${deleted} tracked files missing after an interrupted worktree removal: ${existing_path}" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[dispatch_with_dedup] Could not restore ${deleted} missing tracked files; preserving worktree as found: ${existing_path}" >>"$LOGFILE"
+	return 0
+}
+
 _dlw_prepare_existing_worktree() {
 	local existing_path="$1"
 	local repo_path="$2"
@@ -323,8 +345,11 @@ _dlw_prepare_existing_worktree() {
 		return 0
 	fi
 
+	_dlw_restore_missing_tracked_files "$existing_path"
 	local existing_status=""
-	existing_status=$(git -C "$existing_path" status --porcelain 2>/dev/null || true)
+	# Report untracked files whatever status.showUntrackedFiles says: the reset
+	# path below runs `git clean`, and must never reach a tree holding them.
+	existing_status=$(git -C "$existing_path" status --porcelain --untracked-files=all 2>/dev/null || true)
 	if [[ -n "$existing_status" ]]; then
 		# A same-runner retry must resume staged, unstaged, and untracked edits.
 		# Resetting here destroyed the only useful copy before GH#27138.

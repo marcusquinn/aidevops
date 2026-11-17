@@ -9,7 +9,11 @@ source "${SCRIPT_DIR}/../shared-constants.sh"
 # shellcheck source=../pulse-dispatch-worker-launch.sh
 source "${SCRIPT_DIR}/../pulse-dispatch-worker-launch.sh"
 
-test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/model-ab-dispatch.XXXXXX")
+# A fresh CI HOME has no workspace tmp dir; without it mktemp fails, and the
+# affected-suite base rerun only passed because a parallel suite created it.
+test_tmp_parent="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
+mkdir -p "$test_tmp_parent"
+test_root=$(mktemp -d "${test_tmp_parent}/model-ab-dispatch.XXXXXX")
 trap 'rm -rf "$test_root"' EXIT
 export HOME="$test_root"
 export AIDEVOPS_MODEL_AB_CONFIG="${test_root}/experiment.json"

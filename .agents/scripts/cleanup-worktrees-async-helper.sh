@@ -493,8 +493,10 @@ _recover_interactive_capacity() {
 	local cursor="${LOG_DIR}/cleanup_worktrees.capacity-repo"
 	local max_count="" threshold=""
 	local repo="" saved="" start=0 offset=0 index=0 count=0 after=0 rc=0 listing=""
-	local deadline=$((SECONDS + 120)) remaining=0
+	local deadline=$((SECONDS + 120)) remaining=0 clean_deadline=0
+	local grace="${AIDEVOPS_WORKTREE_CLEAN_REMOVAL_GRACE_S:-90}"
 	local repos=()
+	[[ "$grace" =~ ^[0-9]{1,4}$ ]] || grace=90
 	[[ -x "$helper" ]] && declare -F timeout_sec >/dev/null 2>&1 || return 0
 	[[ "${AIDEVOPS_LIFECYCLE_DISABLED:-0}" != 1 ]] || return 0
 	read -r max_count threshold < <(_worktree_cap_and_threshold)
@@ -517,7 +519,14 @@ _recover_interactive_capacity() {
 		[[ "$remaining" -gt 0 ]] || break
 		rc=0
 		# --capacity never forces dirty trees or admits closed-issue-only proof.
-		(cd "$repo" && timeout_sec "$remaining" bash "$helper" clean --auto --capacity) >>"$LOGFILE" 2>&1 || rc=$?
+		# t19076 (GH#38818): the clean pass stops starting removals at the
+		# deadline; the hard timeout is only a backstop after a grace period,
+		# because killing git inside `worktree remove` leaves a registered,
+		# half-deleted tree that dispatch later handed to workers.
+		clean_deadline=$(($(date +%s) + remaining))
+		(cd "$repo" && timeout_sec "$((remaining + grace))" \
+			env AIDEVOPS_WORKTREE_CLEAN_DEADLINE_EPOCH="$clean_deadline" \
+			bash "$helper" clean --auto --capacity) >>"$LOGFILE" 2>&1 || rc=$?
 		remaining=$((deadline - SECONDS))
 		if [[ "$remaining" -le 0 ]]; then
 			printf '[cleanup-worktrees-async] interactive-capacity budget exhausted; progress unverified repo=%s rc=%s\n' "$repo" "$rc" >>"$LOGFILE"
