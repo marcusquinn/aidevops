@@ -141,6 +141,17 @@ function storeMemory(scriptsDir, memoryHelper, args, run) {
   return `${result}${hint}`;
 }
 
+function recallMemory(memoryHelper, args, run) {
+  const query = args.query.trim();
+  const limit = String(args.limit ?? "").trim() || "5";
+  const cmd = `bash "${memoryHelper}" recall --query ${shellEscape(query)} --limit ${shellEscape(limit)}`;
+  try {
+    return run(cmd, 10000) || "No memories found for this query.";
+  } catch (err) {
+    return `Memory recall failed: ${memoryFailureDetail(err)}`;
+  }
+}
+
 /**
  * Create the unified memory tool (recall and store in one tool).
  *
@@ -183,22 +194,9 @@ function createMemoryTool(scriptsDir, run) {
 
       const action = String(args.action || "recall");
 
-      if (action === "recall") {
-        const query = args.query.trim();
-        const limit = String(args.limit ?? "").trim() || "5";
-        const cmd = `bash "${memoryHelper}" recall --query ${shellEscape(query)} --limit ${shellEscape(limit)}`;
-        try {
-          return run(cmd, 10000) || "No memories found for this query.";
-        } catch (err) {
-          return `Memory recall failed: ${memoryFailureDetail(err)}`;
-        }
-      }
-
-      if (action === "store") {
-        return storeMemory(scriptsDir, memoryHelper, args, run);
-      }
-
-      return validationError;
+      return action === "store"
+        ? storeMemory(scriptsDir, memoryHelper, args, run)
+        : recallMemory(memoryHelper, args, run);
     },
   });
 }
