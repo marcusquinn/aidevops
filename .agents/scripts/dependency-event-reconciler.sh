@@ -117,6 +117,8 @@ _der_labels_have_hold() {
 # document the worker protocol (`TERMINAL_BLOCKER_REASON=...`) as instructions.
 DER_STRONG_HOLD_RE='HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold'
 DER_TERMINAL_BLOCKER_RE='Terminal[_ -]blocker([_ -]detected)?|^CLAIM_RELEASED reason=blocked([[:space:]]|$)'
+# jq (Oniguruma) twin of DER_TERMINAL_BLOCKER_RE; ^ is line-anchored via \n.
+DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(\s|$)'
 
 # $1: issue body plus trusted comments; $2: trusted comments only.
 _der_text_has_strong_hold() {
@@ -480,6 +482,30 @@ _der_upstream_gates_ready() {
 	return $?
 }
 
+# GH#38866: a terminal-blocker observation older than the latest transition to
+# needs-dependency was superseded by that recovery decision; the dependency pass
+# owns release. Prints trusted comment bodies minus the terminal-blocker lines of
+# such superseded observations (other hold text is kept). Fails closed
+# (non-zero) when the label history is unreadable or has no transition.
+_der_comments_after_dependency_conversion() {
+	local repo="$1"
+	local issue_number="$2"
+	local comments_json="$3"
+	local events="" cutoff=""
+	events=$(gh api --paginate --slurp "repos/${repo}/issues/${issue_number}/events?per_page=100" 2>/dev/null) || return 1
+	cutoff=$(printf '%s' "$events" | jq -r '[.[][] | select(.event == "labeled" and .label.name == "needs-dependency") | .created_at] | max // ""' 2>/dev/null) || return 1
+	[[ -n "$cutoff" ]] || return 1
+	# aidevops:trust-boundary — only trusted comments are considered at all.
+	# Older comments lose only their terminal-blocker lines, so every other hold
+	# marker or operational hold in the same comment still counts.
+	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" '
+		.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+		| (.body // "") as $body
+		| if (.created_at // "9999") >= $cutoff then $body
+		  else ($body | split("\n") | map(select(test($tb; "i") | not)) | join("\n")) end' 2>/dev/null
+	return $?
+}
+
 _der_try_unblock() {
 	local repo="$1"
 	local issue_number="$2"
@@ -494,6 +520,13 @@ _der_try_unblock() {
 	_der_json_pages_valid "$comments_json" || return 1
 	# aidevops:trust-boundary — external comments cannot assert a hold.
 	comments=$(printf '%s' "$comments_json" | jq -r '.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR")) | .body // ""' 2>/dev/null) || return 1
+	if _der_labels_has "$labels" needs-dependency; then
+		local filtered=""
+		# Unreadable label history keeps every observation (fail closed).
+		if filtered=$(_der_comments_after_dependency_conversion "$repo" "$issue_number" "$comments_json"); then
+			comments="$filtered"
+		fi
+	fi
 	if _der_has_hold "$body" "$comments" "$labels" "$comments_json"; then
 		_DER_RESULT=held
 		return 0
