@@ -1,6 +1,6 @@
 <?php
 /**
- * Fluent Boards write actions: move, comment, check (GH#38593).
+ * Fluent Boards write actions: add (GH#38699), move, comment, check (GH#38593).
  *
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 Marcus Quinn
@@ -22,7 +22,8 @@ if ( ! class_exists( 'WPFB_Writer' ) ) {
 	 */
 	final class WPFB_Writer {
 
-		const MAX_BODY = 20000;
+		const MAX_BODY  = 20000;
+		const MAX_TITLE = 255;
 
 		/**
 		 * Place a card at the end of its new stage.
@@ -97,7 +98,8 @@ if ( ! class_exists( 'WPFB_Writer' ) ) {
 		}
 
 		/**
-		 * Plain-text comment body from a file, size-limited and non-empty.
+		 * Plain-text body (comment or card description) from a file,
+		 * size-limited and non-empty.
 		 *
 		 * @param string $path Body file.
 		 * @return string Text.
@@ -105,13 +107,85 @@ if ( ! class_exists( 'WPFB_Writer' ) ) {
 		 */
 		private static function read_body( $path ) {
 			if ( ! is_readable( $path ) || filesize( $path ) > self::MAX_BODY ) {
-				throw new WPFB_Error( 'Comment body file is unreadable or larger than ' . self::MAX_BODY . ' bytes', 2 );
+				throw new WPFB_Error( 'Body file is unreadable or larger than ' . self::MAX_BODY . ' bytes', 2 );
 			}
 			$raw = trim( (string) file_get_contents( $path ) );
 			if ( '' === $raw ) {
-				throw new WPFB_Error( 'Comment body file is empty', 2 );
+				throw new WPFB_Error( 'Body file is empty', 2 );
 			}
 			return $raw;
+		}
+
+		/**
+		 * One-line card title, sanitised as the board UI does.
+		 *
+		 * @param string $title Requested title.
+		 * @return string Title.
+		 * @throws WPFB_Error On an empty or over-long title.
+		 */
+		private static function card_title( $title ) {
+			$clean = sanitize_text_field( (string) $title );
+			if ( '' === $clean || mb_strlen( $clean ) > self::MAX_TITLE ) {
+				throw new WPFB_Error( 'Card title must be 1-' . self::MAX_TITLE . ' characters of plain text', 2 );
+			}
+			return $clean;
+		}
+
+		/**
+		 * Create a card through TaskService::createTask, the call behind the
+		 * board UI's TaskController::create (Fluent Boards 2.3). The Task model's
+		 * created event fires fluent_boards/task_created, which logs the activity.
+		 * Placement and open/closed status follow the stage, as in the UI.
+		 *
+		 * @param array $options board, title, optional stage and body_file.
+		 * @return array Result.
+		 * @throws WPFB_Error On bad input, no stages or a failed read-back.
+		 */
+		public static function action_add( array $options ) {
+			$board = WPFB_Store::board( $options['board'] );
+			$title = self::card_title( $options['title'] );
+			if ( isset( $options['stage'] ) ) {
+				$stage = WPFB_Store::stage( $board->id, $options['stage'] );
+			} else {
+				$stages = WPFB_Store::stages( $board->id );
+				if ( ! $stages ) {
+					throw new WPFB_Error( 'Board ' . $board->id . ' has no stages', 1 );
+				}
+				$stage = $stages[0];
+			}
+			$tasks = WPFB_Store::service( 'TaskService' );
+			if ( ! $tasks || ! method_exists( $tasks, 'createTask' ) ) {
+				throw new WPFB_Error( 'This Fluent Boards version has no TaskService::createTask; add the card in the board UI', 2 );
+			}
+			$data = array(
+				'title'    => $title,
+				'board_id' => (int) $board->id,
+				'stage_id' => (int) $stage->id,
+			);
+			if ( isset( $options['body_file'] ) ) {
+				// Plain text in, escaped paragraphs out, as for comments; the
+				// plugin converts stored HTML to its own description format.
+				// Drop the newline after each <br /> so the conversion does not
+				// turn it into a leading space on the next line.
+				$html                = wpautop( esc_html( self::read_body( $options['body_file'] ) ) );
+				$data['description'] = wp_kses_post( preg_replace( '#<br\s*/?>\n#', '<br />', $html ) );
+			}
+			$card  = $tasks->createTask( $data, (int) $board->id );
+			$class = WPFB_Store::model( 'Task' );
+			$after = empty( $card->id ) ? null : $class::find( (int) $card->id );
+			// Title is reported as stored: a site filter may rewrite it.
+			if ( ! $after || (int) $after->board_id !== (int) $board->id || (int) $after->stage_id !== (int) $stage->id ) {
+				throw new WPFB_Error( 'Read-back found no new card "' . $title . '" on board ' . $board->id, 1 );
+			}
+			return array(
+				'added'    => true,
+				'card'     => (int) $after->id,
+				'board'    => (int) $after->board_id,
+				'stage_id' => (int) $after->stage_id,
+				'stage'    => (string) $stage->title,
+				'title'    => (string) $after->title,
+				'status'   => (string) $after->status,
+			);
 		}
 
 		/**
