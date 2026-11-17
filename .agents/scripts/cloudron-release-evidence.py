@@ -172,7 +172,7 @@ class CatalogEvidence:
 
     def invocations(self):
         runs = self.api("actions/workflows/" + self.workflow
-                        + "/runs?event=" + self.event + "&status=success&per_page=100")["workflow_runs"]
+                        + "/runs?head_sha=" + self.source + "&per_page=100")["workflow_runs"]
         accepted = set()
         expected = {"status": "completed", "conclusion": "success", "event": self.event,
                     "head_sha": self.source, "head_branch": "main", "path": self.workflow_path}
