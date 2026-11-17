@@ -137,13 +137,16 @@ _dispatch_candidate_handoff_path() {
 # activated bundle's first wave decides whether the census is still usable.
 # GH#38210: the census is stamped with handed_off_at, from which that reuse
 # window is measured (see _dispatch_candidate_snapshot_is_fresh).
-# GH#38908: every dispatch process exit hands on a census that is still inside
-# its full-cycle reuse window and has unattempted candidates, not only a drain.
-# Cycles and refill-only runs otherwise discarded 120-245 known candidates and
-# the next first wave re-scanned serially, often finding 1-3 of them.
-# Args: $1=per-repo limit $2=receiving bundle id or label
+# GH#38908: any process holding the instance lock hands on a census that is
+# still inside its full-cycle reuse window and has unattempted candidates, not
+# only a drained one. Cycles and refill-only runs otherwise discarded 120-245
+# known candidates and the next first wave re-scanned serially, often finding
+# 1-3 of them. Transfer "copy" shares the census and its ledger while this
+# process keeps its own: the early-exit recycle loop dispatches from it after
+# the lock is released (live gates arbitrate the overlap, as before).
+# Args: $1=per-repo limit $2=receiving bundle id or label $3=move|copy
 _dispatch_hand_off_candidate_snapshots() {
-	local per_repo_limit="$1" bundle="$2" mode="" snapshot="" handoff="" staged="" now_epoch=""
+	local per_repo_limit="$1" bundle="$2" transfer="${3:-move}" mode="" snapshot="" handoff="" staged="" now_epoch=""
 	local _PULSE_FIRST_DISPATCH_WAVE=0 base_ttl=300 reuse_ttl=300 remaining=""
 	now_epoch=$(date +%s) || return 0
 	if declare -F _dispatch_enumeration_expected_seconds >/dev/null 2>&1; then
@@ -160,7 +163,7 @@ _dispatch_hand_off_candidate_snapshots() {
 			remaining=$(_dispatch_filter_consumed_ranked_candidates "$snapshot" "$(jq -c '.candidates' "$snapshot" 2>/dev/null || printf '[]')" 2>/dev/null) || remaining="[]"
 		fi
 		if [[ "$remaining" == "[]" || -z "$remaining" ]]; then
-			rm -f "$snapshot" "${snapshot}.consumed" 2>/dev/null || true
+			[[ "$transfer" == "copy" ]] || rm -f "$snapshot" "${snapshot}.consumed" 2>/dev/null || true
 			continue
 		fi
 		rm -f "$handoff" "${handoff}.consumed" 2>/dev/null || continue
@@ -171,13 +174,30 @@ _dispatch_hand_off_candidate_snapshots() {
 			rm -f "$staged" 2>/dev/null || true
 			continue
 		fi
-		rm -f "$snapshot" 2>/dev/null || true
-		if [[ -f "${snapshot}.consumed" ]] && ! mv -f "${snapshot}.consumed" "${handoff}.consumed" 2>/dev/null; then
-			rm -f "$handoff" 2>/dev/null || true
-			continue
+		if [[ "$transfer" == "copy" ]]; then
+			if [[ -f "${snapshot}.consumed" ]] && ! cp "${snapshot}.consumed" "${handoff}.consumed" 2>/dev/null; then
+				rm -f "$handoff" "${handoff}.consumed" 2>/dev/null || true
+				continue
+			fi
+		else
+			rm -f "$snapshot" 2>/dev/null || true
+			if [[ -f "${snapshot}.consumed" ]] && ! mv -f "${snapshot}.consumed" "${handoff}.consumed" 2>/dev/null; then
+				rm -f "$handoff" 2>/dev/null || true
+				continue
+			fi
 		fi
-		echo "[pulse-wrapper] Dispatch candidate census handed to next dispatch process: bundle=${bundle} mode=${mode} reuse_window=${reuse_ttl}s (GH#38048/GH#38908)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch candidate census handed to next dispatch process: bundle=${bundle} mode=${mode} transfer=${transfer} reuse_window=${reuse_ttl}s (GH#38048/GH#38908)" >>"$LOGFILE"
 	done
+	return 0
+}
+
+# GH#38908: a cycle that keeps dispatching after lock release (the LLM
+# supervisor's early-exit recycle loop) shares a copy of its census with the
+# next dispatch process before releasing the lock, keeping its own census and
+# triage marker. Call only while this process holds the instance lock.
+_dispatch_share_cycle_census() {
+	local per_repo_limit="${1:-${PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT:-1000}}"
+	_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "next-process" copy
 	return 0
 }
 
@@ -253,13 +273,14 @@ _dispatch_cleanup_cycle_cache() {
 	local candidate_file="" skip_candidate_file="" triage_file="" cache_file="" drain_bundle=""
 	# GH#38048/GH#38908: a usable full census outlives the process that built
 	# it. A drain names the activated bundle; the marker exists only while this
-	# process owns the instance lock. Otherwise the next process receives it.
+	# process owns the instance lock. Otherwise the next process receives it,
+	# but only from a lock holder: after release (an EXIT trap behind the LLM
+	# supervisor) a newer process owns the handoff slot.
 	if declare -F _pulse_drain_requested_bundle >/dev/null 2>&1 && drain_bundle=$(_pulse_drain_requested_bundle); then
-		:
-	else
-		drain_bundle="next-process"
+		_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "$drain_bundle"
+	elif [[ "${_LOCK_OWNED:-false}" == "true" ]]; then
+		_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "next-process"
 	fi
-	_dispatch_hand_off_candidate_snapshots "$per_repo_limit" "$drain_bundle"
 	candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" 2>/dev/null || true)
 	skip_candidate_file=$(_dispatch_candidate_snapshot_path "$per_repo_limit" "$_DISPATCH_DEPENDENCY_NORMALIZATION_SKIP" 2>/dev/null || true)
 	triage_file=$(_dispatch_cycle_cache_path "pulse-triage-prepass" ".done" 2>/dev/null || true)

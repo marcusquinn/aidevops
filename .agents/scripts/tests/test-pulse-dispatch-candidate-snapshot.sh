@@ -301,16 +301,24 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	partial=$(_PULSE_FIRST_DISPATCH_WAVE=1 _dispatch_candidate_snapshot_path 50 skip)
 
 	# GH#38908: without a drain (a marker naming another lock owner is not
-	# this cycle's drain) the census still goes to the next process, stamped
-	# with the full-cycle reuse window. An exhausted census is not handed on.
+	# this cycle's drain) a lock holder still hands its census to the next
+	# process, stamped with the full-cycle reuse window. An exhausted census
+	# is not handed on, and a process past lock release only deletes its own.
+	_PULSE_CYCLE_ID="unlocked-cycle"
+	_LOCK_OWNED=false
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "$handoff" ]]
 	_PULSE_CYCLE_ID="undrained-cycle"
+	_LOCK_OWNED=true
 	_dispatch_ranked_candidates_json 50 >/dev/null
 	full=$(_dispatch_candidate_snapshot_path 50)
 	request_drain 1
 	_dispatch_cleanup_cycle_cache 50
 	[[ ! -e "$full" && -f "$handoff" ]]
 	jq -e '.reuse_window == 1200 and (.handed_off_at | type) == "number"' "$handoff" >/dev/null
-	grep -q 'handed to next dispatch process: bundle=next-process mode=normalize' "$LOGFILE"
+	grep -q 'handed to next dispatch process: bundle=next-process mode=normalize transfer=move' "$LOGFILE"
 	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
 	_PULSE_CYCLE_ID="exhausted-cycle"
 	_dispatch_ranked_candidates_json 50 >/dev/null
@@ -320,6 +328,22 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	done
 	_dispatch_cleanup_cycle_cache 50
 	[[ ! -e "$full" && ! -e "${full}.consumed" && ! -e "$handoff" ]]
+	# A cycle that keeps dispatching after lock release (early-exit recycle)
+	# shares a copy with its ledger and keeps its own census and ledger.
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
+	_PULSE_CYCLE_ID="sharing-cycle"
+	_dispatch_ranked_candidates_json 50 >/dev/null
+	full=$(_dispatch_candidate_snapshot_path 50)
+	_dispatch_ranked_candidate_consumed '{"number":1,"repo_slug":"o/product"}'
+	_dispatch_share_cycle_census 50
+	[[ -f "$full" && -f "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	cmp -s "${full}.consumed" "${handoff}.consumed"
+	jq -e '.reuse_window == 1200' "$handoff" >/dev/null
+	grep -q 'mode=normalize transfer=copy' "$LOGFILE"
+	_LOCK_OWNED=false
+	_dispatch_cleanup_cycle_cache 50
+	[[ ! -e "$full" && ! -e "${full}.consumed" && -f "$handoff" && -f "${handoff}.consumed" ]]
+	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50
 
 	_PULSE_CYCLE_ID="drained-cycle"
 	_dispatch_ranked_candidates_json 50 >/dev/null
