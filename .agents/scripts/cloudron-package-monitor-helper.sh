@@ -412,13 +412,25 @@ _cloudron_monitor_active_policy() {
 	return 0
 }
 
+# True when the policy authorises upstreamLicense.url substitution
+# (mirrors check_manifest_fields in cloudron_routine_bump.py).
+_cloudron_monitor_policy_allows_license_url() {
+	local policy="$1"
+	jq -e '(.license_version_url == true) or (.release_identity != null)' <<<"$policy" >/dev/null
+	return $?
+}
+
 # Print guidance only for the verified policy's file classes.
 _cloudron_monitor_policy_brief() {
 	local number="$1" policy="$2"
+	local manifest_rule="Increment only the package patch version and update upstreamVersion; change no other manifest fields."
+	if _cloudron_monitor_policy_allows_license_url "$policy"; then
+		manifest_rule="Increment the package patch version and update upstreamVersion; additionally update upstreamLicense.url only to the new version or commit the policy permits; change no other manifest fields."
+	fi
 	cat <<EOF
 ## Standing release policy #${number}
 
-- Increment only the package patch version and update upstreamVersion; change no other manifest fields.
+- ${manifest_rule}
 - Pinned files and check files may change only by whole-token old→new version substitution. Pinned files and the companion verify file may additionally update commit/digest pins only with the proofs required by the signed policy. Check files may additionally insert only lines fully matching the policy's check_insertion_pattern; do not edit digest or commit assertions there.
 - Changelogs: additions only. Do not edit README, docs, scripts or any other file outside Files Scope, even to refresh derived values.
 - Keep the PR's closing reference to this upstream finding issue; the routine classifier requires exactly one open, trusted finding.
@@ -507,7 +519,7 @@ ${package_test_note}"
 		IFS=$'\t' read -r policy_number policy <<<"$active_policy"
 		files_scope=$(jq -r '["CloudronManifest.json"] + (.changelog_files // []) + (.pinned_files // []) + (.check_files // []) + [.companion_image.verify_file, .catalog_baseline.file] | map(select(. != null)) | unique[] | "- `\(.)`"' <<<"$policy") || return 1
 		policy_section=$(_cloudron_monitor_policy_brief "$policy_number" "$policy") || return 1
-		file_notes='- Manifest: package patch version and upstreamVersion only.
+		file_notes='- Manifest: package patch version and upstreamVersion only, unless the policy section below permits more.
 - Changelogs: additions only; pinned files: version tokens and policy-proven pins only.
 - Check files (including test/package-test.sh when listed): version tokens only, plus check_insertion_pattern lines; never refresh digest/commit assertions.
 - Companion verify file: only the policy-listed, proven constants; catalog baseline: append-only as specified below.'
