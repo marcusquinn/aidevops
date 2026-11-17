@@ -218,7 +218,21 @@ test_postlaunch_noop_still_applies_structural_breaker() {
 	return 0
 }
 
+test_completion_infrastructure_skips_breaker() {
+	reset_observations
+	local output=""
+	output=$(_log_no_work_skip_escalation \
+		"4003" "exampleorg/examplerepo" "3" "github_api_timeout" 2>&1)
+	if [[ "$BREAKER_CALLS" -ne 0 || "$output" != *"no_work breaker skipped"* ]]; then
+		fail "completion infrastructure failure skips no_work breaker" "calls=${BREAKER_CALLS} output=${output}"
+		return 0
+	fi
+	pass "completion infrastructure failure bypasses no_work breaker"
+	return 0
+}
+
 test_prelaunch_reason_skips_breaker
+test_completion_infrastructure_skips_breaker
 test_worker_launch_rc_2_skips_breaker
 test_launch_preflight_reason_skips_fast_fail_state
 test_sensitive_temp_preflight_skips_fast_fail_state
