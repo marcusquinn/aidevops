@@ -38,7 +38,7 @@ changing any Serverless endpoint or Pod.
 
 ## Quick Reference
 
-- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY` (account-named key + `aidevops secret default runpod NAME`; setup: `tools/infrastructure/runpod.md`)
+- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY`, where `RUNPOD_API_KEY` exists only inside a process started with `aidevops secret RUNPOD_API_KEY -- <cmd>` (never exported to your shell). It resolves to the account-named key declared by `aidevops secret default runpod NAME`; setup: `tools/infrastructure/runpod.md`
 - **Public Endpoint sync**: `POST https://api.runpod.ai/v2/<endpoint-id>/runsync`
   with `{"input":{...}}`
 - **Async**: `POST .../<endpoint-id>/run` returns a job ID; poll
@@ -54,6 +54,7 @@ changing any Serverless endpoint or Pod.
 ## Public Endpoints
 
 ```bash
+# Save as flux.sh and run: aidevops secret RUNPOD_API_KEY -- bash flux.sh
 curl -s -X POST "https://api.runpod.ai/v2/black-forest-labs-flux-1-schnell/runsync" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
