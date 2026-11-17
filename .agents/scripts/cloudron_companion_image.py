@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 
@@ -170,7 +171,12 @@ def mask_image(text, companion, side):
 
 
 def run_json(*args):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=60, check=False)
+    require(args[0] in ("gh", "curl"), "companion_image: unsupported proof command")
+    executable = shutil.which(args[0])
+    require(executable is not None, "companion_image: proof command unavailable")
+    result = subprocess.run(  # nosec B603 -- allowlisted CLI, policy-validated argv, never a shell
+        [executable, *args[1:]], capture_output=True, text=True, timeout=60, check=False,
+    )
     require(result.returncode == 0, "companion_image: trusted source or signature verification failed")
     return json.loads(result.stdout)
 
@@ -183,7 +189,10 @@ def registry_json(spec, token, kind, digest):
     require(matches(IMAGE_DIGEST, digest), "companion_image: invalid registry object digest")
     host, name = spec["image"].split("/", 1)
     registry = "registry-1.docker.io" if host == "docker.io" else host
-    result = subprocess.run(["curl", "-fsSL", "--max-time", "30", "-H", "Authorization: Bearer " + token,
+    executable = shutil.which("curl")
+    require(executable is not None, "companion_image: registry client unavailable")
+    result = subprocess.run(  # nosec B603 -- fixed curl CLI, validated signed registry/digest, never a shell
+        [executable, "-fsSL", "--max-time", "30", "-H", "Authorization: Bearer " + token,
                              "-H", "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json",
                              "https://" + registry + "/v2/" + name + "/" + kind + "/" + digest],
                             capture_output=True, timeout=40, check=False)

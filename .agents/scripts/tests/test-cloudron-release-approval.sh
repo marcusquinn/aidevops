@@ -1184,6 +1184,7 @@ print("PASS companion: unchanged image and platform attestation")
 # Collector integration: stub process and registry boundaries, not the collector.
 calls = []
 def process(args, **kwargs):
+    args = (args[0].rsplit("/", 1)[-1], *args[1:])
     calls.append(args)
     if args[:2] == ("gh", "api"):
         endpoint = args[2]
@@ -1216,6 +1217,7 @@ with patch.object(companion.subprocess, "run", side_effect=process), patch.objec
 print("PASS companion: signed-source collector integration")
 
 def failed_verifier(args, **kwargs):
+    args = (args[0].rsplit("/", 1)[-1], *args[1:])
     if args[:3] == ("gh", "attestation", "verify"):
         # Even plausible JSON must not be consumed after failed verification.
         return subprocess.CompletedProcess(args, 1, stdout=json.dumps(attestation()), stderr="unverified")
