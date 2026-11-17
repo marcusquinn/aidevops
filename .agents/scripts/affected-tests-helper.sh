@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 
 def interrupted(signum, frame):
     raise KeyboardInterrupt("signal %s" % signum)
@@ -37,7 +38,11 @@ if min(args.max, args.jobs, args.timeout) < 1:
 
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 os.chdir(root)
-changed = subprocess.check_output(["git", "diff", "--name-only", args.base + "...HEAD", "--", ".agents/scripts"], text=True).splitlines()
+merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
+# Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
+changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
+changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))
 selected = set()
 for name in changed:
@@ -57,22 +62,54 @@ if args.command == "list":
     print("\n".join(ordered)) if ordered else None
     sys.exit(0)
 
+stop = threading.Event()
+running = set()
+running_lock = threading.Lock()
+
+def kill_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
 def execute(item):
     directory, suite = item
-    if not (directory / suite).is_file():
+    if stop.is_set() or not (directory / suite).is_file():
         return None
-    proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, start_new_session=True)
+    with running_lock:
+        if stop.is_set():
+            return None
+        proc = subprocess.Popen(["bash", suite], cwd=directory, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        running.add(proc)
     try:
         return proc.wait(timeout=args.timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        kill_group(proc)
         proc.wait()
         return 124
+    finally:
+        with running_lock:
+            running.discard(proc)
+
+def cancel_all():
+    with running_lock:
+        stop.set()
+        active = list(running)
+    for proc in active:
+        kill_group(proc)
+    for proc in active:
+        proc.wait()
 
 def run_all(directory, suites):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs)
+    try:
         return dict(zip(suites, pool.map(execute, ((directory, s) for s in suites))))
+    except BaseException:
+        cancel_all()
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=stop.is_set())
 
 head = run_all(root, ordered)
 failed = [s for s in ordered if head[s] != 0]
