@@ -7,7 +7,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -195,6 +195,13 @@ describe("aidevops_memory execution", () => {
     assert.doesNotMatch(results[0], /stored successfully/);
     assert.match(results[1], /^Memory recall failed: VAULT_LOCKED/);
     assert.doesNotMatch(results[1], /No memories found/);
+  });
+
+  test("V1 and V2 adapters pass the checked runner as memoryRun", () => {
+    for (const file of ["../v2.mjs", "../index.mjs"]) {
+      const src = readFileSync(new URL(file, import.meta.url), "utf8");
+      assert.match(src, /memoryRun:\s*runChecked/, file);
+    }
   });
 
   test("empty store content returns a validation error", async () => {

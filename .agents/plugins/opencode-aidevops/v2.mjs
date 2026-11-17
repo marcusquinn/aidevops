@@ -385,6 +385,7 @@ export async function setupAidevopsV2(ctx) {
     const baseTools = createSchemaGatedTools(tool, () => {
       const tools = createTools(SCRIPTS_DIR, run, {
         aidevopsRun: runChecked,
+        memoryRun: runChecked,
         sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
         poolToolFactory: () => createPoolTool(client),
         ...v2ImageToolOptions(),
