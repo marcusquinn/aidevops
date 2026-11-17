@@ -130,8 +130,9 @@ _worktree_refusal_remediation() {
 		printf 'Refusal cause: %s; the ref is checked out in another worktree. Create a new branch instead.\n' "$code" >&2
 		;;
 	process-identity-unavailable | process-already-ended)
-		# GH#38787: usually lifecycle identity inherited from an earlier session.
-		printf 'Refusal cause: %s; AIDEVOPS_LIFECYCLE_RUNTIME_PID is not a live process, usually identity inherited from an earlier session. Relaunch the parent app from a clean environment, not from an aidevops session shell, or unset AIDEVOPS_LIFECYCLE_RUNTIME_PID and AIDEVOPS_LIFECYCLE_SESSION_ID.\n' "$code" >&2
+		# GH#38787: a common cause is lifecycle identity inherited from an earlier
+		# session; unavailable can also mean the live process could not be read.
+		printf 'Refusal cause: %s; the process in AIDEVOPS_LIFECYCLE_RUNTIME_PID could not be verified as live. If AIDEVOPS_LIFECYCLE_RUNTIME_PID and AIDEVOPS_LIFECYCLE_SESSION_ID were inherited from an earlier session, relaunch the parent app from a clean environment (not from an aidevops session shell) or unset both.\n' "$code" >&2
 		;;
 	disk-quota-exceeded | disk-full)
 		# GH#37922: retries cannot succeed until space is reclaimed; free files
