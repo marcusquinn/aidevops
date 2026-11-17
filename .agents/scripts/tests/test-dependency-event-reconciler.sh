@@ -378,6 +378,8 @@ EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL=
 assert_eq 1 "$(run_reconcile)" "terminal blocker older than needs-dependency conversion does not hold"
 EDIT_COUNT=0 COMMENTS='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker\nWorker result: **BLOCKED** and cannot proceed safely"}]]'
 assert_eq 0 "$(run_reconcile)" "superseded terminal blocker preserves an independent BLOCKED escalation"
+EDIT_COUNT=0 COMMENTS='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker\nOn hold for maintainer"}]]'
+assert_eq 0 "$(run_reconcile)" "superseded terminal blocker preserves an operational hold in the same comment"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_NEW" EVENTS="$CONVERT_EVENTS"
 assert_eq 0 "$(run_reconcile)" "terminal blocker newer than needs-dependency conversion still holds"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_OLD" EVENTS=""

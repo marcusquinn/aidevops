@@ -118,7 +118,7 @@ _der_labels_have_hold() {
 DER_STRONG_HOLD_RE='HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold'
 DER_TERMINAL_BLOCKER_RE='Terminal[_ -]blocker([_ -]detected)?|^CLAIM_RELEASED reason=blocked([[:space:]]|$)'
 # jq (Oniguruma) twin of DER_TERMINAL_BLOCKER_RE; ^ is line-anchored via \n.
-DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|(^|\n)CLAIM_RELEASED reason=blocked(\s|$)'
+DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(\s|$)'
 
 # $1: issue body plus trusted comments; $2: trusted comments only.
 _der_text_has_strong_hold() {
@@ -484,8 +484,8 @@ _der_upstream_gates_ready() {
 
 # GH#38866: a terminal-blocker observation older than the latest transition to
 # needs-dependency was superseded by that recovery decision; the dependency pass
-# owns release. Prints trusted comment bodies minus such superseded observations
-# (comments that also carry another strong hold marker are kept). Fails closed
+# owns release. Prints trusted comment bodies minus the terminal-blocker lines of
+# such superseded observations (other hold text is kept). Fails closed
 # (non-zero) when the label history is unreadable or has no transition.
 _der_comments_after_dependency_conversion() {
 	local repo="$1"
@@ -496,12 +496,13 @@ _der_comments_after_dependency_conversion() {
 	cutoff=$(printf '%s' "$events" | jq -r '[.[][] | select(.event == "labeled" and .label.name == "needs-dependency") | .created_at] | max // ""' 2>/dev/null) || return 1
 	[[ -n "$cutoff" ]] || return 1
 	# aidevops:trust-boundary — only trusted comments are considered at all.
-	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" --arg strong "$DER_STRONG_HOLD_RE" '
-		# Preserve both independent hold forms from _der_text_has_strong_hold.
-		def independent_hold: test($strong; "i") or (test("\\*\\*BLOCKED\\*\\*"; "i") and test("cannot proceed"; "i"));
+	# Older comments lose only their terminal-blocker lines, so every other hold
+	# marker or operational hold in the same comment still counts.
+	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" '
 		.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
-		| select(((.created_at // "9999") >= $cutoff) or ((.body // "") | test($tb; "i") | not) or ((.body // "") | independent_hold))
-		| .body // ""' 2>/dev/null
+		| (.body // "") as $body
+		| if (.created_at // "9999") >= $cutoff then $body
+		  else ($body | split("\n") | map(select(test($tb; "i") | not)) | join("\n")) end' 2>/dev/null
 	return $?
 }
 
