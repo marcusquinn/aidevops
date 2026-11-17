@@ -837,7 +837,7 @@ assert_stage_cycle_budget_contract() {
 # stages still defer. A file clock lets a background stage advance time.
 assert_stage_starvation_fuse_contract() {
 	local test_root="" actual=""
-	local expected="fused:1;stamped:1;recent:124;repeat:124;budget:124;newcycle:1;spent:40;candidate:124;foreign:124;lease:124;stopped:124;reserved:124;"
+	local expected="fused:1;stamped:1;recent:124;repeat:124;budget:124;newcycle:1;spent:40;fuseclock:120;candidate:124;foreign:124;lease:124;stopped:124;reserved:124;stale:40;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-fuse-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
@@ -862,6 +862,8 @@ assert_stage_starvation_fuse_contract() {
 			stage_probe() { printf '%s\n' "$1" >>"$EVENTS"; return 0; }
 			# Atomic clock writes: the supervising loop reads the clock concurrently.
 			slow_probe() { printf '3040\n' >"$CLOCK.next" && mv -f "$CLOCK.next" "$CLOCK"; printf 'slow\n' >>"$EVENTS"; return 0; }
+			normal_probe() { printf '1150\n' >"$CLOCK.next" && mv -f "$CLOCK.next" "$CLOCK"; printf 'normal\n' >>"$EVENTS"; return 0; }
+			remaining_probe() { _pulse_cycle_remaining_seconds 90 >"$test_root/remaining"; return 0; }
 			fuse_rc() {
 				local rc=0
 				run_stage_with_timeout "$1" 600 stage_probe "$1" || rc=$?
@@ -887,6 +889,10 @@ assert_stage_starvation_fuse_contract() {
 			run_stage_with_timeout canonical_maintenance 600 slow_probe || true
 			read -r _ _ rc <"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
 			printf 'spent:%s;' "$rc"
+			# Inside a fused stage the cycle clock is its grant, not the
+			# exhausted cycle remainder (-330s here).
+			run_stage_with_timeout worktree_cleanup 600 remaining_probe || true
+			printf 'fuseclock:%s;' "$(<"$test_root/remaining")"
 			printf 'candidate:%s;' "$(fuse_rc dispatch_candidate_1)"
 			printf '1\n' >"$LOCKDIR/pid"
 			printf 'foreign:%s;' "$(fuse_rc redirect_spam_sweep)"
@@ -899,9 +905,16 @@ assert_stage_starvation_fuse_contract() {
 			rm -f "$STOP_FLAG"
 			# An admittable main dispatch round keeps its protected reserve.
 			printf 'reserved:%s;' "$(_PULSE_MAIN_DISPATCH_RESERVE_S=1293 fuse_rc build_dependency_graph_cache)"
+			# A stale marker from another process/cycle is discarded; the
+			# 50s normal run that follows is not charged to the fuse budget.
+			printf '1 999\n' >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/label_maintenance.fused"
+			printf '1100\n' >"$CLOCK"
+			run_stage_with_timeout label_maintenance 600 normal_probe || true
+			read -r _ _ rc <"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
+			[[ ! -e "$AIDEVOPS_PULSE_STAGE_STATE_DIR/label_maintenance.fused" ]] && printf 'stale:%s;' "$rc"
 		)
 	)
-	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "reap dirty slow " ]] &&
+	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "reap dirty slow normal " ]] &&
 		grep -q 'Stage starvation fuse: reap_orphan_workers last_start_age=never timeout=120s fuse_spent=0s' "$test_root/stages.log" &&
 		grep -q 'Stage start: reap_orphan_workers (timeout 120s)' "$test_root/stages.log" &&
 		grep -q 'Stage deferred: stale_queued_runs cycle budget exhausted' "$test_root/stages.log" &&

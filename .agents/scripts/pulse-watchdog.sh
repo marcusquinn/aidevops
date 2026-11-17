@@ -231,6 +231,15 @@ _pulse_cycle_remaining_seconds() {
 	local reserve="${1:-${AIDEVOPS_PULSE_CYCLE_FINALISE_RESERVE_S:-90}}"
 	local start="${PULSE_START_EPOCH:-}" stale="${PULSE_STALE_THRESHOLD:-}"
 	local lock="${PULSE_LOCK_MAX_AGE_S:-1800}" now=""
+	# GH#38747: inside a fused stage the exhausted cycle clock would cap the
+	# stage's own work to nothing; its grant (already inside the lock lease
+	# minus the finalisation reserve) is the budget instead.
+	if [[ "${PULSE_STAGE_FUSE_DEADLINE_EPOCH:-}" =~ ^[1-9][0-9]*$ ]]; then
+		now=$(date +%s 2>/dev/null) || return 1
+		[[ "$now" =~ ^[0-9]+$ ]] || return 1
+		printf '%s\n' "$((PULSE_STAGE_FUSE_DEADLINE_EPOCH - now))"
+		return 0
+	fi
 	[[ "$reserve" =~ ^[0-9]+$ && "$start" =~ ^[0-9]+$ &&
 		"$stale" =~ ^[1-9][0-9]*$ && "$lock" =~ ^[1-9][0-9]*$ ]] || return 1
 	now=$(date +%s 2>/dev/null) || return 1
@@ -312,13 +321,26 @@ _pulse_stage_note_start() {
 	return 0
 }
 
-# Charge a finished fused stage's duration to this cycle's fuse budget.
-_pulse_stage_fuse_finish() {
-	local stage="$1" seconds="$2" dir="" spent=0
-	[[ "$stage" =~ ^[a-z][a-z_]*$ ]] || return 0
+# Consume the fuse marker the grant just wrote. Returns 0 only when the marker
+# names this process and cycle; any other (stale) marker is discarded, so a
+# later normal run is never charged to a fuse budget.
+_pulse_stage_fuse_claim() {
+	local stage="$1" dir="" pid="" start=""
+	[[ "$stage" =~ ^[a-z][a-z_]*$ ]] || return 1
 	_pulse_stage_state_dir dir
-	[[ -f "${dir}/${stage}.fused" ]] || return 0
+	[[ -f "${dir}/${stage}.fused" ]] || return 1
+	read -r pid start 2>/dev/null <"${dir}/${stage}.fused" || pid=""
 	rm -f "${dir}/${stage}.fused"
+	[[ "$pid" == "$$" && "$start" == "${PULSE_START_EPOCH:-0}" ]] || return 1
+	return 0
+}
+
+# Charge a finished fused stage's duration to this cycle's fuse budget.
+# Args: stage, seconds, fused flag (1 only for a claimed fuse grant).
+_pulse_stage_fuse_finish() {
+	local stage="$1" seconds="$2" fused="${3:-0}" dir="" spent=0
+	[[ "$fused" == 1 && "$stage" =~ ^[a-z][a-z_]*$ ]] || return 0
+	_pulse_stage_state_dir dir
 	[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
 	spent=$(_pulse_stage_fuse_spent "${dir}/fuse-cycle")
 	printf '%s %s %s\n' "$$" "${PULSE_START_EPOCH:-0}" "$((spent + seconds))" >"${dir}/fuse-cycle" 2>/dev/null || true
@@ -336,6 +358,8 @@ _pulse_stage_starvation_fuse() {
 	local dir=""
 	local heartbeat=""
 	local now="" last=0 age="never" spent=0 grant=0
+	# A stage nested inside a fused stage stays within its parent's grant.
+	[[ -z "${PULSE_STAGE_FUSE_DEADLINE_EPOCH:-}" ]] || return 1
 	[[ "$stage" =~ ^[a-z][a-z_]*$ && ! -f "${STOP_FLAG:-/nonexistent}" ]] || return 1
 	[[ "$starvation" =~ ^[0-9]+$ && "$cap" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] || return 1
 	[[ "$ceiling" =~ ^[1-9][0-9]*$ && "$reserve" =~ ^[0-9]+$ && "$timeout_seconds" =~ ^[0-9]+$ ]] || return 1
@@ -353,7 +377,8 @@ _pulse_stage_starvation_fuse() {
 	((grant <= budget - spent)) || grant=$((budget - spent))
 	((grant <= heartbeat + ceiling - reserve - now)) || grant=$((heartbeat + ceiling - reserve - now))
 	((grant >= 15)) || return 1
-	mkdir -p "$dir" 2>/dev/null && : >"${dir}/${stage}.fused" || return 1
+	mkdir -p "$dir" 2>/dev/null || return 1
+	printf '%s %s\n' "$$" "${PULSE_START_EPOCH:-0}" >"${dir}/${stage}.fused" 2>/dev/null || return 1
 	echo "[pulse-wrapper] Stage starvation fuse: ${stage} last_start_age=${age} timeout=${grant}s fuse_spent=${spent}s (GH#38747)" >>"$LOGFILE"
 	printf '%s\n' "$grant"
 	return 0
@@ -363,9 +388,10 @@ _pulse_stage_starvation_fuse() {
 # stage, and charge a fused stage's duration to the fuse budget (GH#38747).
 # Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code
 #         \t cycle_owner_pid \t executor_pid
+# Args: stage, duration, status, executor pid, fused flag (default 0).
 _pulse_stage_record_timing() {
-	local stage_name="$1" duration="$2" status="$3" stage_pid="$4"
-	_pulse_stage_fuse_finish "$stage_name" "$duration"
+	local stage_name="$1" duration="$2" status="$3" stage_pid="$4" fused="${5:-0}"
+	_pulse_stage_fuse_finish "$stage_name" "$duration" "$fused"
 	[[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]] || return 0
 	printf '%s\t%s\t%d\t%d\t%d\t%d\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -427,6 +453,8 @@ run_stage_with_timeout() {
 		timeout_seconds=1
 	fi
 	timeout_seconds=$(_pulse_stage_cycle_timeout "$stage_name" "$timeout_seconds") || return $?
+	local fused=0
+	_pulse_stage_fuse_claim "$stage_name" && fused=1
 
 	local stage_start
 	stage_start=$(date +%s)
@@ -440,6 +468,8 @@ run_stage_with_timeout() {
 		# GH#33957: expose the effective (cycle-clamped) kill deadline so
 		# resumable stages can stop cleanly before the watchdog fires.
 		export PULSE_STAGE_DEADLINE_EPOCH="$((stage_start + timeout_seconds))"
+		# GH#38747: a fused stage's own cycle-clock caps use its grant.
+		((fused == 0)) || export PULSE_STAGE_FUSE_DEADLINE_EPOCH="$PULSE_STAGE_DEADLINE_EPOCH"
 		"$@"
 	) &
 	local stage_pid=$!
@@ -462,7 +492,7 @@ run_stage_with_timeout() {
 				_force_kill_tree "$stage_pid" || true
 			fi
 			wait "$stage_pid" 2>/dev/null || true
-			_pulse_stage_record_timing "$stage_name" "$elapsed" 124 "$stage_pid"
+			_pulse_stage_record_timing "$stage_name" "$elapsed" 124 "$stage_pid" "$fused"
 			return 124
 		fi
 		# GH#35695: Refresh only while the owner is actively supervising an
@@ -482,7 +512,7 @@ run_stage_with_timeout() {
 	local stage_end
 	stage_end=$(date +%s)
 	local stage_duration=$((stage_end - stage_start))
-	_pulse_stage_record_timing "$stage_name" "$stage_duration" "$stage_status" "$stage_pid"
+	_pulse_stage_record_timing "$stage_name" "$stage_duration" "$stage_status" "$stage_pid" "$fused"
 
 	if [[ "$stage_status" -ne 0 ]]; then
 		echo "[pulse-wrapper] Stage failed: ${stage_name} exited with ${stage_status} (${stage_duration}s)" >>"$LOGFILE"

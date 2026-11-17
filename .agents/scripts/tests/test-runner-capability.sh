@@ -431,6 +431,7 @@ runner_capability_check_fresh "$2" 42 owner/repo "$3"
     timeout_function = re.search(r'(?ms)^run_stage_with_timeout\(\) \{.*?^}', watchdog).group()
     cycle_invocation = 'source "$1/runner-capability-helper.sh"; ' + stub + timeout_function + '''
 _pulse_stage_cycle_timeout() { printf '%s' "$2"; return 0; }
+_pulse_stage_fuse_claim() { return 1; }
 _pulse_stage_note_start() { return 0; }
 _pulse_stage_record_timing() { return 0; }
 LOGFILE="$3"
