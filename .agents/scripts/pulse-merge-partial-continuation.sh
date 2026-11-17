@@ -574,7 +574,10 @@ _pm_restore_partial_continuation() {
 	# failed, and the explicit resolver returns a closing target first. Prove
 	# independently that the PR closes nothing before using its For/Ref target.
 	closing=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 0
-	[[ -z "$closing" ]] || return 0
+	if [[ -n "$closing" ]]; then
+		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — it closes #${closing} (GH#38869)" >>"$LOGFILE"
+		return 0
+	fi
 	if _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue or is unreadable (GH#34312)" >>"$LOGFILE"
 		return 0
@@ -1005,28 +1008,37 @@ _pmpc_list_candidates() {
 	return 0
 }
 
-# Revisit one in-review issue: find its newest merged cross-referenced PR and
-# let the merge-time guard decide. Timeline cross-references carry merged_at;
-# select the newest merged PR, not an older eligible partial hidden by a later
-# closing delivery.
+# Revisit one in-review issue: walk its merged cross-referenced PRs newest
+# first and let the merge-time guard decide. Timeline cross-references carry
+# merged_at. A PR closing a different (sibling) issue is skipped so it cannot
+# hide an older eligible partial; the first PR that closes this issue stops the
+# walk with no restore, and the first non-closing PR goes to the guard.
 # Args: $1=repo slug, $2=issue number
 # Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
 _pmpc_revisit_in_review_issue() {
-	local repo_slug="$1" issue_num="$2" timeline="" pr_number=""
+	local repo_slug="$1" issue_num="$2" timeline="" pr_numbers="" pr_number="" closing=""
 	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-	pr_number=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+	pr_numbers=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
 		if type != "array" then error("unreadable timeline")
 		elif (.[0]? | type) == "array" then [.[][]] else . end
 		| [ .[] | select(.event == "cross-referenced") | .source.issue
 			| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
-		| sort_by(.pull_request.merged_at, .number) | last
-		| if . == null then empty elif (.number | type) == "number" then .number
+		| sort_by(.pull_request.merged_at, .number) | reverse | .[]
+		| if (.number | type) == "number" then .number
 			else error("unreadable PR number") end
 	' 2>/dev/null) || return 1
-	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
-	# All current issue/PR/comment metadata is re-read by the merge-time
-	# guard, including open PR ownership, held issues and marker idempotency.
-	_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+		closing=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 0
+		if [[ -n "$closing" && "$closing" != "$issue_num" ]]; then
+			echo "[pulse-wrapper] Deterministic merge: skipped merged PR #${pr_number} in #${issue_num} revisit — it closes sibling issue #${closing} (GH#38869)" >>"$LOGFILE"
+			continue
+		fi
+		# The merge-time guard re-reads all current issue/PR/comment metadata
+		# and returns without a restore when this PR closes the issue.
+		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
+		return 0
+	done <<<"$pr_numbers"
 	return 0
 }
 
