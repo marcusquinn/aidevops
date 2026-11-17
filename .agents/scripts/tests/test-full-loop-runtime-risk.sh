@@ -622,6 +622,12 @@ printf 'export const value = 2;\n' >"${FINAL_REPO}/src/helper.js"
 final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
 assert_contains "metadata lists only branch files" "$final_body" $'## Files Changed\n\nsrc/helper.js\n'
 assert_contains "metadata risk ignores upstream sensitive changes" "$final_body" '**Risk level:** Medium'
+prepare_partial_closing_metadata() {
+	(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: remaining items" "diff reviewed") || return 1
+	return 0
+}
+assert_rejected "GH#38823 final closing metadata rejects partial self-reference" \
+	prepare_partial_closing_metadata
 final_pending=$(cd "$FINAL_REPO" && _validate_pending_runtime_metadata Medium self-assessed \
 	"diff reviewed" "Adjust helper" origin/main && printf accepted)
 assert_contains "pending and final risk agree behind upstream" "$final_pending" accepted
@@ -636,6 +642,8 @@ bookkeeping_result=$(cd "$FINAL_REPO" &&
 assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "$bookkeeping_result" accepted
 planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
 assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
+partial_planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: planning checkpoint" "diff reviewed")
+assert_contains "GH#38823 planning checkpoint allows partial self-reference" "$partial_planning_body" $'self-assessed — diff reviewed\n\nFor #34465'
 
 # GH#36002: nested markdown under todo/ stays planning; data files under todo/
 # are deliverables, alone or mixed with planning files.
