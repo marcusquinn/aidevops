@@ -62,7 +62,17 @@ _worktree_read_proc_cwd_link() {
 	return 2
 }
 
+# One platform lookup per pass; cleared on every exit so no verdict outlives it.
 _capture_worktree_proc_cwds() {
+	local proc_root="$1"
+	local rc=0
+	_WT_PASS_PLATFORM=$(worktree_process_platform)
+	_capture_worktree_proc_cwds_pass "$proc_root" || rc=$?
+	_WT_PASS_PLATFORM=""
+	return "$rc"
+}
+
+_capture_worktree_proc_cwds_pass() {
 	local proc_root="$1"
 	local cwd_link=""
 	local captured_count=0
