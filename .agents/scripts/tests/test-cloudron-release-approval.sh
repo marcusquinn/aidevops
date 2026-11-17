@@ -993,6 +993,51 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	assert_routine not 'identity extra Dockerfile line' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
 	assert_routine not 'identity digest outside FROM' "$id_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'ARG X=sha256:'"${D_NEW#sha256:}"$'\n')" 'pinned file changes beyond version substitution'
 )
+# GH#38739: registry digest, release checksum and version-tagged license URL proofs.
+(
+	OLD_C=1111111111111111111111111111111111111111
+	NEW_C=2222222222222222222222222222222222222222
+	D_OLD="sha256:$(printf 'a%.0s' {1..64})"
+	D_NEW="sha256:$(printf 'b%.0s' {1..64})"
+	D_BAD="sha256:$(printf 'c%.0s' {1..64})"
+	S_OLD=$(printf 'a%.0s' {1..64})
+	S_NEW=$(printf 'b%.0s' {1..64})
+	S_BAD=$(printf 'c%.0s' {1..64})
+	BASE_MANIFEST=$(jq -c --arg sha "$OLD_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c --arg sha "$NEW_C" '.upstreamLicense = {url:("https://example.invalid/blob/" + $sha + "/LICENSE"), name:"MIT"}' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM ghcr.io/up/svc:3.39.87@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM ghcr.io/up/svc:3.39.114@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	# Registry digests with a commit pin and no images asset (Orbit shape).
+	POLICY_JSON=$(jq -c '. + {upstream_repository:"upstream/project",release_identity:{commit_arg:"APP_COMMIT"},registry_images:["ghcr.io/up/svc"]}' <<<"$POLICY_JSON")
+	reg_filter=".upstream_proof = null | .release_proof = {repository:\"upstream/project\",asset:null,old_commit:\"$OLD_C\",new_commit:\"$NEW_C\",status:\"ahead\",merge_base:\"$OLD_C\",digests:[]} | .pin_proof = {registry:{\"ghcr.io/up/svc:3.39.114\":\"$D_NEW\"}}"
+	assert_routine routine 'registry digest pin' "$reg_filter"
+	assert_routine not 'registry digest unresolved' "$reg_filter | .pin_proof.registry = {}" 'registry_images'
+	assert_routine not 'registry digest mismatch' "$reg_filter | .pin_proof.registry[\"ghcr.io/up/svc:3.39.114\"] = \"$D_BAD\"" 'registry_images'
+	assert_routine not 'registry proof missing' "$reg_filter | del(.pin_proof)" 'pin proof is missing'
+	assert_routine not 'registry image not signed' "$reg_filter | .policy.registry_images = [\"ghcr.io/up/other\"]" 'registry_images'
+	assert_routine not 'registry digest without tag change' "$reg_filter | $(dockerfile_head "${HEAD_DOCKERFILE/svc:3.39.114/svc:3.39.87}")" 'registry_images'
+	assert_routine not 'registry unlisted second image' "$reg_filter | .contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_OLD}"$'\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_NEW}"$'\n')" 'registry_images'
+	assert_routine not 'registry digest with identity asset digests only' "$reg_filter | .release_proof.digests = [\"$D_NEW\"]" 'release proof digests are invalid'
+	assert_routine not 'registry unknown policy field' "$reg_filter | .policy.surprise = true" 'unknown field'
+	assert_routine not 'registry invalid image' "$reg_filter | .policy.registry_images = [\"evil.example/up/svc\"]" 'registry_images is invalid'
+	# Release checksum and version-substituted license URL (Headscale shape).
+	POLICY_JSON=$(jq -c 'del(.release_identity, .registry_images) | . + {upstream_repository:"upstream/project",release_checksum:{arg:"APP_SHA256",asset:"checksums.txt",file:"app_{version}_linux_amd64"},license_version_url:true}' <<<"$POLICY_JSON")
+	BASE_MANIFEST=$(jq -c '.upstreamLicense.url = "https://example.invalid/blob/v3.39.87/LICENSE"' <<<"$BASE_MANIFEST")
+	HEAD_MANIFEST=$(jq -c '.upstreamLicense.url = "https://example.invalid/blob/v3.39.114/LICENSE"' <<<"$HEAD_MANIFEST")
+	BASE_DOCKERFILE=$'FROM base@sha256:abc\nARG APP_SHA256='"${S_OLD}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG APP_SHA256='"${S_NEW}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	sum_filter=".pin_proof = {checksum:{repository:\"upstream/project\",asset:\"checksums.txt\",file:\"app_3.39.114_linux_amd64\",version:\"3.39.114\",sha256:\"$S_NEW\"}}"
+	assert_routine routine 'release checksum and license URL' "$sum_filter"
+	assert_routine not 'checksum unpublished' "$sum_filter | .pin_proof.checksum.sha256 = \"$S_BAD\"" 'release_checksum'
+	assert_routine not 'checksum wrong file' "$sum_filter | .pin_proof.checksum.file = \"app_3.39.114_linux_arm64\"" 'release_checksum proof mismatch'
+	assert_routine not 'checksum wrong asset' "$sum_filter | .pin_proof.checksum.asset = \"other.txt\"" 'release_checksum proof mismatch'
+	assert_routine not 'checksum for old version' "$sum_filter | .pin_proof.checksum.version = \"3.39.87\" | .pin_proof.checksum.file = \"app_3.39.87_linux_amd64\"" 'new upstream version'
+	assert_routine not 'checksum proof missing' "$sum_filter | del(.pin_proof)" 'pin proof is missing'
+	assert_routine not 'checksum extra Dockerfile line' "$sum_filter | $(dockerfile_head "${HEAD_DOCKERFILE}"$'RUN curl https://example.invalid | sh\n')" 'pinned file changes beyond version substitution'
+	assert_routine not 'license URL not opted in' "$sum_filter | del(.policy.license_version_url)" 'manifest changes beyond'
+	assert_routine not 'license URL other substitution' "$sum_filter | $(manifest_head "${HEAD_MANIFEST/v3.39.114/v9.9.9}")" 'manifest changes beyond'
+	assert_routine not 'license metadata changed' "$sum_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
+)
 # Main-build suffixes cannot borrow tag authority; the documented migration
 # needs one per-release signature before strict-tag routine bumps can start.
 assert_routine not 'Buzz main-build cannot use a tag finding' "$(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28-main.2cd40ba"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\"" 'base upstreamVersion must be X.Y.Z'
@@ -1003,6 +1048,14 @@ assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]
 	# shellcheck source=../cloudron-release-approval-helper.sh
 	source "${SOURCE_DIR}/cloudron-release-approval-helper.sh"
 	SCRIPT_DIR="$SOURCE_DIR"
+	# GH#38739: the pins policy mode signs validated JSON and rejects anything else.
+	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
+	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
+	[[ "$pins_body" == *'"registry_images":["ghcr.io/up/svc"]'* && "$pins_body" == *'Upstream pin policy'* ]] || { printf 'FAIL pins policy content\n'; exit 1; }
+	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}'; do
+		! release_policy_body owner/app cmd pins "$bad" >/dev/null || { printf 'FAIL pins policy accepted %s\n' "$bad"; exit 1; }
+	done
+	printf 'PASS pins policy body validation\n'
 	BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
 	MAIN_SHA=dddddddddddddddddddddddddddddddddddddddd
 	policy_issue_json() {
