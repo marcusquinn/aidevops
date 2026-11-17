@@ -345,7 +345,9 @@ _dlw_canary_preflight() {
 
 	local -a _canary_cmd=("$HEADLESS_RUNTIME_HELPER" canary --role worker --tier "$dispatch_model_tier")
 	if [[ -n "$selected_model" ]]; then
-		_canary_cmd+=(--model "$selected_model")
+		# GH#38717: the worker receives this pick as --initial-model, a
+		# same-tier preference; probe it with the same semantics.
+		_canary_cmd+=(--initial-model "$selected_model")
 	fi
 	local -a _canary_env=()
 	if _dlw_min_worker_floor_active; then
@@ -353,8 +355,21 @@ _dlw_canary_preflight() {
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — canary still checks runtime/model health only" >>"$LOGFILE"
 	fi
 
-	if env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
-		return 0
+	local canary_rc=0
+	env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1 || canary_rc=$?
+	[[ "$canary_rc" -ne 0 ]] || return 0
+
+	if [[ "$canary_rc" -eq 75 || "$canary_rc" -eq 78 ]]; then
+		# GH#38717: no model in the dispatch tier is selectable (75 = every
+		# candidate backed off, 78 = none configured). The worker would exit
+		# worker_not_launched after a claim and worktree, and the shared canary
+		# reason file is stale or absent, so this is never a soft failure, even
+		# under the minimum worker floor.
+		local selection_state="every candidate backed off or unavailable"
+		[[ "$canary_rc" -eq 75 ]] || selection_state="no candidate configured"
+		pulse_stats_increment "worker_canary_no_selectable_model_count" 2>/dev/null || true
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — no selectable model in tier ${dispatch_model_tier} (${selection_state}); will retry next cycle (GH#38717)" >>"$LOGFILE"
+		return 1
 	fi
 
 	local canary_reason

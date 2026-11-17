@@ -935,6 +935,46 @@ EOF
 	return 0
 }
 
+test_no_selectable_model_canary_stays_hard_under_minimum_floor() {
+	# GH#38717: exit 75 means no model in the dispatch tier is selectable; a
+	# stale soft reason file must not turn it into a minimum-floor bypass.
+	local fake_helper worker_log state_dir args_file
+	fake_helper="${TEST_ROOT}/fake-no-model-canary.sh"
+	worker_log="${TEST_ROOT}/worker-no-model.log"
+	state_dir="${HOME}/.aidevops/.agent-workspace/headless-runtime"
+	args_file="${TEST_ROOT}/no-model-canary.args"
+	mkdir -p "$state_dir"
+	printf 'inconclusive\n' >"${state_dir}/canary-last-fail.reason"
+	cat >"$fake_helper" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >"${args_file}"
+exit 75
+EOF
+	chmod +x "$fake_helper"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	AIDEVOPS_HEADLESS_RUNTIME_DIR="$state_dir"
+	AIDEVOPS_DISPATCH_LEDGER_DIR="${TEST_ROOT}/empty-ledger"
+	mkdir -p "$AIDEVOPS_DISPATCH_LEDGER_DIR"
+	TEST_ACTIVE_WORKERS=5
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	_DLW_CANARY_SOFT_BYPASS_REASON="stale"
+	local args=""
+	if _dlw_canary_preflight 106 "o/r" "$worker_log" "thinking" "anthropic/pick"; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 "unexpected success"
+		return 0
+	fi
+	args=$(<"$args_file")
+	if [[ -n "${_DLW_CANARY_SOFT_BYPASS_REASON:-}" ]]; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 \
+			"soft_bypass_reason=${_DLW_CANARY_SOFT_BYPASS_REASON}"
+	elif [[ "$args" != *"--tier thinking"* || "$args" != *"--initial-model anthropic/pick"* || "$args" == *"--model "* ]]; then
+		print_result "canary: no selectable model stays hard under minimum floor" 1 "args=${args}"
+	else
+		print_result "canary: no selectable model stays hard under minimum floor" 0
+	fi
+	return 0
+}
+
 test_soft_canary_bypass_reason_propagates_to_worker_env() {
 	local -a worker_cmd=(env)
 	_DLW_CANARY_SOFT_BYPASS_REASON="inconclusive"
@@ -1092,6 +1132,7 @@ for test_name in \
 	test_hard_canary_failure_blocks_despite_recent_worker_evidence \
 	test_local_error_canary_failure_stays_hard_under_minimum_floor \
 	test_soft_canary_failure_bypasses_under_minimum_floor_without_recent_evidence \
+	test_no_selectable_model_canary_stays_hard_under_minimum_floor \
 	test_soft_canary_bypass_reason_propagates_to_worker_env \
 	test_class_cap_value_arithmetic \
 	test_class_cap_limits_class_to_half_of_target \
