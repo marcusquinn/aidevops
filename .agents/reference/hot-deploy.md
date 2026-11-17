@@ -86,6 +86,10 @@ Do NOT use `--hotfix` for:
 4. **Rate-limited polling**: Hotfix check runs every 5 minutes max, not on every session start.
 5. **Pulse restart gated**: `auto_hotfix_restart_pulse` controls whether the pulse is auto-restarted after applying a hotfix.
 
+## Interactive sessions stay pinned to their launch bundle
+
+A deploy (release, `setup.sh`, hotfix) updates `~/.aidevops/agents`, but a running OpenCode session keeps the runtime bundle it launched with, so it keeps running old scripts (for example `memory-helper.sh`). The plugin compares the launch-time `~/.aidevops/agents/VERSION` with the current file (cached, at most every 5 minutes, on tool calls) and shows one toast per session when a newer version is deployed. Restart OpenCode to pick up the fix. Helper: `.agents/plugins/opencode-aidevops/deployed-version.mjs`.
+
 ## Verification
 
 ```bash
