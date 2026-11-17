@@ -178,8 +178,9 @@ Pod lifecycle:
   delete itself. In the 2026-11-17 live run the pod ended `EXITED` but not
   deleted, and a stopped pod can still bill storage, so always run `teardown --live`.
 
-`stage` copies without owner or group (`rsync -rt`). SECURE pods mount `/workspace`
-on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23).
+`stage` copies without owner or group (`rsync -rtL`). SECURE pods mount `/workspace`
+on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23). `-L` sends symlinked
+inputs as their target contents.
 
 `status --live` prints each pod's `BRH_STAGE`/`BRH_GPU`/`BRH_RESULT`/`BRH_FAIL` log
 lines, so progress needs no SSH. Community pods do not guarantee a public port 22,

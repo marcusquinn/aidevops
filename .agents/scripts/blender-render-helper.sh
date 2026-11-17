@@ -876,7 +876,9 @@ _brh_stage() {
 	local dest="root@${BRH_O_HOST}"
 	# Not -a: SECURE pods mount /workspace on MooseFS (FUSE), where rsync's
 	# chown fails (exit 23) and would abort staging. Owner/perms are not needed.
-	local -a sync=(rsync -rtv --no-owner --no-group -e "$ssh_cmd")
+	# -L copies symlinked inputs as their (hashed) target contents; without -a's
+	# --links, rsync would otherwise skip them as non-regular files.
+	local -a sync=(rsync -rtLv --no-owner --no-group -e "$ssh_cmd")
 	local path="" want=""
 	while read -r want path; do
 		[[ -n "$path" ]] || continue
