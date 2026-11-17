@@ -174,8 +174,12 @@ Pod lifecycle:
 - Under the deadline `timeout`, it runs `render_worker.sh`, which installs and
   verifies Blender when packaged with a SHA256, checks the pin and renders.
 - It then writes `.rendered` and waits up to `--fetch-minutes`.
-- A `fetch` that starts after `.rendered` releases the pod, which then removes
-  itself.
+- A `fetch` that starts after `.rendered` releases the pod, which then tries to
+  delete itself. In the 2026-11-17 live run the pod ended `EXITED` but not
+  deleted, and a stopped pod can still bill storage, so always run `teardown --live`.
+
+`stage` copies without owner or group (`rsync -rt`). SECURE pods mount `/workspace`
+on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23).
 
 `status --live` prints each pod's `BRH_STAGE`/`BRH_GPU`/`BRH_RESULT`/`BRH_FAIL` log
 lines, so progress needs no SSH. Community pods do not guarantee a public port 22,
@@ -192,6 +196,10 @@ account and spend approval and is operator-owned.
 Measured on 2026-11-17 (smoke scene, 960×540, 128 samples):
 - Runpod RTX 4090 community: Blender 5.3.0 download, checksum and extract in 120 s,
   then OptiX render in 1.7 s, for about $0.02 in total.
+- Runpod A40 secure ($0.59/hr), full helper flow (`submit` → `stage` → `fetch` →
+  `teardown`): created on the 3rd capacity attempt (RTX 4090 and 3090 were refused
+  on both tiers); Blender 5.3.0 verified in 85 s; OptiX render at 64 samples in
+  under 2 s; pod lived about 4 minutes, roughly $0.04.
 - SaladCloud RTX 3090 low priority: Blender installed in 30 s; CUDA render in 1.4 s
   (OptiX is unavailable there, see `tools/infrastructure/saladcloud.md`).
 - Local M3 Max Metal: 1.8 s warm, but 280 s on the first run, which compiles the
