@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.224] - 2026-11-17
+
+### Added
+
+- verify catalog-baseline appends
+
+### Changed
+
+- Maintenance: bump hono from 4.13.16 to 4.13.17 (Supersedes #38836)
+- Maintenance: bump vite from 8.3.5 to 8.3.7 (#38860)
+- Maintenance: bump elysia from 1.4.30 to 1.4.31 (Supersedes #38838)
+- Maintenance: bump actions group (codeql-action v4.39.3, opencode v2.2.7)
+
+### Fixed
+
+- release needs-dependency issues past superseded terminal-blocker comments (#38870)
+- skip sibling-closing PRs in partial-continuation revisit (#38873)
+- stage without chown on Runpod SECURE MooseFS; require teardown after fetch
+- cheap macOS descendant snapshot + close two cleanup identity gaps
+- report repo_path_missing for pulse repos with absent local path (GH#38825) (#38830)
+- strip trailing whitespace in secret-helper credentials.sh fallback (GH#38844) (#38852)
+- refuse worker summary For/Ref #N self-reference that would emit Resolves (GH#38823) (#38829)
+
 ## [3.39.223] - 2026-11-17
 
 ### Changed
