@@ -31,6 +31,9 @@
 [[ -n "${_HEADLESS_RUNTIME_PROVIDER_LOADED:-}" ]] && return 0
 readonly _HEADLESS_RUNTIME_PROVIDER_LOADED=1
 
+# GH#38713: entitlement-rejection reason; its expired rows persist as history.
+_HRP_REASON_MODEL_UNAVAILABLE="model_unavailable"
+
 # --- Provider Auth ---
 
 extract_provider() {
@@ -447,7 +450,7 @@ _model_unavailable_backoff_seconds() {
 	CAST(strftime('%s', 'now') AS INTEGER)
 	FROM provider_backoff WHERE provider = '$(sql_escape "$backoff_key")';") || row=""
 	IFS='|' read -r prev_reason prev_signature prev_retry prev_updated now <<<"$row"
-	if [[ "$prev_reason" != "model_unavailable" || -z "$auth_signature" || "$prev_signature" != "$auth_signature" ]] ||
+	if [[ "$prev_reason" != "$_HRP_REASON_MODEL_UNAVAILABLE" || -z "$auth_signature" || "$prev_signature" != "$auth_signature" ]] ||
 		! [[ "$prev_retry" =~ ^[0-9]+$ && "$prev_updated" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] ||
 		((prev_retry <= prev_updated || now - prev_updated > 2 * max_seconds)); then
 		printf '%s' "$base_seconds"
@@ -513,14 +516,17 @@ PY
 	fi
 	auth_signature=$(get_auth_signature "$provider")
 	retry_seconds=$(parse_retry_after_seconds "$details_file" "$provider")
-	if [[ "$retry_seconds" -le 0 ]]; then
+	if [[ "$reason" == "${_HRP_REASON_MODEL_UNAVAILABLE:-model_unavailable}" ]]; then
+		# GH#38713: entitlement history governs even when the rejection text
+		# carries a retry hint; a hint may only lengthen the escalated backoff.
+		local policy_seconds=""
+		policy_seconds=$(_model_unavailable_backoff_seconds "$backoff_key" "$auth_signature" 3600)
+		[[ "$policy_seconds" == "keep" ]] && return 0
+		[[ "$retry_seconds" -gt "$policy_seconds" ]] || retry_seconds="$policy_seconds"
+	elif [[ "$retry_seconds" -le 0 ]]; then
 		# t1835: Reduced rate_limit fallback from 900s to 60s
 		case "$reason" in
 		rate_limit) retry_seconds=60 ;;
-		model_unavailable)
-			retry_seconds=$(_model_unavailable_backoff_seconds "$backoff_key" "$auth_signature" 3600)
-			[[ "$retry_seconds" == "keep" ]] && return 0
-			;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac
@@ -569,7 +575,7 @@ backoff_active_for_key() {
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
 			# GH#38713: an expired entitlement rejection stays as escalation
 			# history; readers already ignore rows whose retry_after has passed.
-			[[ "$stored_reason" == "model_unavailable" ]] || clear_provider_backoff "$key"
+			[[ "$stored_reason" == "$_HRP_REASON_MODEL_UNAVAILABLE" ]] || clear_provider_backoff "$key"
 			return 1
 		fi
 	fi
