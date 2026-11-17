@@ -104,8 +104,9 @@ Checked 2026-11-17 against the providers' docs.
   async only, ChatGPT, Gemini and Perplexity answers with citations.
   Billing draws dollars from one credit balance shared by all Oxylabs products
   at rates shown in the dashboard; the API does not return a request's cost.
-  New accounts get a one-time $5 welcome credit. Key variable:
-  `OXYLABS_WEB_API_KEY` (Bearer). Hosted MCP: `https://mcp.oxylabs.io/web-api-mcp`
+  New accounts get a one-time $5 welcome credit. Key: store
+  `OXYLABS_<ACCOUNT>_WEB_API_KEY` and inject it as `OXYLABS_WEB_API_KEY`
+  (Bearer), the name Oxylabs' examples read. Hosted MCP: `https://mcp.oxylabs.io/web-api-mcp`
   with the key in an `Authorization` header; official skills:
   `npx skills add oxylabs/web-api-skills`. Fits pages Linkup and plain fetches
   cannot read; check its dashboard rates before loops.
