@@ -706,18 +706,21 @@ normalization_seconds_file="${TMP_ROOT}/normalization-seconds"
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
 printf '0\n' >"$normalization_seconds_file"
-export candidate_fetch_file normalization_file normalization_seconds_file
+# GH#38720: 1 adds one unrelated runnable issue to the first snapshot.
+snapshot_has_runnable=1
+export candidate_fetch_file normalization_file normalization_seconds_file snapshot_has_runnable
 gh_issue_list() {
 	local candidate_fetch_count=""
 	candidate_fetch_count=$(<"$candidate_fetch_file")
 	candidate_fetch_count=$((candidate_fetch_count + 1))
 	printf '%s\n' "$candidate_fetch_count" >"$candidate_fetch_file"
 	if [[ "$candidate_fetch_count" -eq 1 ]]; then
-		# A complete snapshot with 118 blocked issues and one runnable issue.
-		jq -cn '[20, range(100;217)] | map({number:., title:"blocked child",
+		# A complete snapshot with 118 blocked issues and optionally one
+		# runnable issue.
+		jq -cn --argjson runnable "$snapshot_has_runnable" '[20, range(100;217)] | map({number:., title:"blocked child",
 			url:"", assignees:[], labels:[{name:"auto-dispatch"},{name:"status:blocked"}]})
-			+ [{number:30,title:"unrelated work",url:"",assignees:[],
-			labels:[{name:"auto-dispatch"},{name:"status:available"}]}]'
+			+ (if $runnable == 1 then [{number:30,title:"unrelated work",url:"",assignees:[],
+			labels:[{name:"auto-dispatch"},{name:"status:available"}]}] else [] end)'
 	else
 		printf '%s\n' '[{"number":20,"title":"next child","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]},{"number":30,"title":"unrelated work","url":"","updatedAt":"2026-07-11T00:00:00Z","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"status:available"}]}]'
 	fi
@@ -749,6 +752,18 @@ assert_eq "fast candidate mode keeps already-available work" "30" \
 fast_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "skip" "$completeness_file")
 assert_eq "fast candidate mode with no blocked work retains completeness" "1" "$(<"$completeness_file")"
 
+# GH#38720: blocked work beside runnable work is read in skip mode, even when
+# the caller asks for normalization.
+printf '0\n' >"$candidate_fetch_file"
+mixed_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
+assert_eq "runnable snapshot fetches once" "1" "$(<"$candidate_fetch_file")"
+assert_eq "runnable snapshot skips inline normalization" "0" "$(<"$normalization_file")"
+assert_eq "runnable snapshot returns the runnable issue" "30" "$(jq -r 'map(.number) | join(",")' <<<"$mixed_candidates")"
+assert_eq "skipped normalization proves no absence" "0" "$(<"$completeness_file")"
+assert_true "skipped normalization is logged" grep -q 'inline dependency normalization skipped for owner/repo; 1 candidate(s) already runnable (GH#38720)' "$LOGFILE"
+
+snapshot_has_runnable=0
+export snapshot_has_runnable
 printf '0\n' >"$candidate_fetch_file"
 printf '0\n' >"$normalization_file"
 recovered_candidates=$(list_dispatchable_issue_candidates_json "owner/repo" 200 "" "" "normalize" "$completeness_file")
