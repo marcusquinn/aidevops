@@ -682,6 +682,46 @@
       "shared_mailbox_support": "None in basic plans.",
       "notes": "Bundled with Namecheap domain purchases. Powered by Titan email platform."
     },
+    "hostinger": {
+      "name": "Hostinger Email",
+      "slug": "hostinger",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.hostinger.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.hostinger.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.hostinger.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "Cyprus (Hostinger International Ltd), EU",
+        "open_source": false,
+        "data_mining": "platform marketing analysis; mailbox content scanning not stated",
+        "notes": "Privacy policy describes marketing analysis and ad-platform targeting for the Hostinger platform; it does not state mailbox content scanning."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam"
+      },
+      "shared_mailbox_support": "None documented.",
+      "notes": "Works with domain and DNS at Cloudflare or elsewhere; add MX/SPF/DKIM CNAME records manually. Default folders are not documented by Hostinger; namecheap defaults used. Prepaid plans; check renewal pricing."
+    },
     "mail_com": {
       "name": "mail.com",
       "slug": "mail-com",

@@ -21,9 +21,9 @@ tools:
 ## Quick Reference
 
 - **Config**: `configs/email-providers.json` (from `.json.txt` template)
-- **Providers**: 20 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, Purelymail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud
+- **Providers**: 21 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, Purelymail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, Hostinger, mail.com, StartMail, Disroot, ChatMail, iCloud
 - **Protocols**: IMAP (993/TLS), SMTP (465/TLS or 587/STARTTLS), POP3 (995/TLS), JMAP (Fastmail only)
-- **Privacy**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Purelymail, Zoho, IONOS, Namecheap, iCloud) > C (GWS, M365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
+- **Privacy**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Purelymail, Zoho, IONOS, Namecheap, iCloud) > C (GWS, M365, GMX, mail.com, Hostinger) > D (Gmail, Outlook, Yahoo)
 - **Provisioning helpers**: Purelymail domains, DNS, mailboxes and routing via `purelymail-helper.sh` (`services/email/purelymail.md`)
 - **Default protocol**: IMAP. POP only for shared mailboxes where all users must read the same emails.
 
@@ -45,7 +45,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 | A+ | Proton Mail, Tuta, Cloudron | E2EE / self-hosted, zero-knowledge, open-source |
 | A | Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused model |
 | B | Purelymail, Zoho, IONOS, Namecheap, iCloud | No ads/mining; less privacy-focused jurisdiction |
-| C | Google Workspace, Microsoft 365, GMX, mail.com | Business plans without ad targeting; telemetry active |
+| C | Google Workspace, Microsoft 365, GMX, mail.com, Hostinger | Business plans without ad targeting; telemetry active |
 | D | Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning, broad data usage |
 
 ### By Protocol Support
@@ -54,7 +54,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 |----------|-----------|-------|
 | IMAP + SMTP | All except Tuta | Gmail: enable in Settings > Forwarding and POP/IMAP. Zoho: enable in settings; regional hostnames (zoho.com/eu/in/com.au/jp) |
 | JMAP | Fastmail | RFC 8620/8621 — prefer over IMAP for new Fastmail integrations |
-| POP3 | Gmail, GWS, Outlook, M365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, Purelymail, mailbox.org, Disroot, Cloudron | |
+| POP3 | Gmail, GWS, Outlook, M365, Yahoo, Zoho, GMX, IONOS, Namecheap, Hostinger, mail.com, Fastmail, Purelymail, mailbox.org, Disroot, Cloudron | |
 | Graph API | Outlook, Microsoft 365 | Recommended for programmatic access |
 | Bridge required | Proton Mail | Local IMAP 1143 / SMTP 1025 via Proton Bridge (use Bridge-generated password). Not suitable for headless without Bridge CLI |
 | No standard protocols | Tuta | Proprietary client only — deliberate design for encryption architecture |
@@ -65,7 +65,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 |--------|-----------|-------|
 | OAuth2 | Gmail, GWS, Outlook, M365, Zoho | Gmail/GWS: required since May 2022. M365: basic auth deprecated Oct 2022 (OAuth2 via Entra ID) |
 | App passwords | Gmail, Fastmail, Purelymail, Yahoo, StartMail, iCloud | Purelymail: required for IMAP/SMTP once 2FA is on; the account admin creates them under **Users**, and only the portal can scope them (IMAP-only, SMTP-only). See `services/email/purelymail.md` |
-| Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho | |
+| Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, Hostinger, mail.com, Disroot, ChatMail, Zoho | |
 | Bridge password | Proton Mail | |
 | Service account | Google Workspace, Microsoft 365 | |
 
@@ -120,8 +120,33 @@ cloudron mail alias-add alias@yourdomain.com target@yourdomain.com
 cloudron mail catch-all yourdomain.com target@yourdomain.com
 ```
 
+## Hostinger Email
+
+The domain registration and DNS **can remain at Cloudflare or any other registrar/DNS host**. Hostinger nameservers and domain transfer are optional conveniences (they only enable one-click automatic DNS setup), not requirements. An email plan does not need Hostinger web hosting; it is a separate service. Add the records below at the current DNS provider.
+
+| Type | Host | Value |
+|------|------|-------|
+| TXT | per hPanel | Domain ownership proof (value shown in hPanel) |
+| MX | `@` | `mx1.hostinger.com` priority 5; `mx2.hostinger.com` priority 10 |
+| TXT | `@` | `v=spf1 include:_spf.mail.hostinger.com ~all` |
+| CNAME | `hostingermail-a._domainkey` | `hostingermail-a.dkim.mail.hostinger.com` (same for `-b` and `-c`) |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@yourdomain.com` (start at `p=none`) |
+| CNAME | `autodiscover` | `autodiscover.mail.hostinger.com` |
+| CNAME | `autoconfig` | `autoconfig.mail.hostinger.com` |
+
+- **Cloudflare**: set the CNAMEs to **DNS only** (grey cloud) and enter the short host name, because Cloudflare appends the zone. DKIM must be CNAME; publishing it as TXT breaks signing.
+- **Verify**: hPanel > Emails > Mailboxes > Domain settings > **Check status**. Propagation can take 12-24 h.
+- **Existing records**: switching inbound mail means replacing the old provider's MX records, not adding to them (a lower-priority-number old MX stays preferred). Keep one SPF record per host: merge the Hostinger include into any existing `v=spf1` record rather than adding a second. Keep an existing `_dmarc` policy; add the example only when none exists.
+- **Also sending via SES**: the apex SPF record needs only the Hostinger include unless SES uses the apex as its envelope sender; a custom MAIL FROM subdomain carries its own MX and SPF records (see `services/email/ses.md`).
+- **Client settings**: IMAP `imap.hostinger.com:993` TLS, SMTP `smtp.hostinger.com:465` TLS, POP3 `pop.hostinger.com:995` TLS (IMAP preferred). Username is the full address; use an app password when 2FA is on.
+- **Pricing**: plans are prepaid, the headline price is a long-term (48-month) rate, and renewal is typically several times the intro price. Compare renewal price per mailbox, not intro price; check current renewal pricing. Contrast: Purelymail has a flat annual price with unlimited domains/users (`services/email/purelymail.md`).
+- **Privacy**: rated C because the privacy policy describes marketing analysis and ad-platform targeting; it does not state that mailbox content is scanned. Operator: Hostinger International Ltd (Cyprus).
+
+Sources: Hostinger Help Center "Set up a domain for Hostinger Email manually", docs.hostinger.com "Setting Up Apps & Devices". Hostinger verified 2026-11.
+
 ## Related
 
+- `services/hosting/hostinger.md` — Hostinger hosting (email is a separate plan)
 - `services/email/ses.md` — Amazon SES for outbound delivery
 - `services/email/purelymail.md` — Purelymail mailbox hosting: DNS, users, routing, auth checks
 - `services/email/email-agent.md` — Autonomous email agent
