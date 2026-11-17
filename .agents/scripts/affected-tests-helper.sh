@@ -18,6 +18,12 @@ import subprocess
 import sys
 import tempfile
 
+def interrupted(signum, frame):
+    raise KeyboardInterrupt("signal %s" % signum)
+
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGINT, interrupted)
+
 parser = argparse.ArgumentParser(description="Run suites referencing changed scripts")
 parser.add_argument("command", choices=("list", "run"))
 parser.add_argument("--base", required=True)

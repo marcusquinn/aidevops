@@ -173,6 +173,7 @@ Never substitute a Linux pass for native macOS evidence or wait for hosted macOS
 Do not skip linters/type-checkers. Optimise how they run:
 
 1. Inner loop: run the narrowest repo-supported check that covers changed files/packages first (for JS/TS monorepos, package filters such as `pnpm -F <package> lint`, `typecheck`, and existing targeted tests when applicable; otherwise changed-file or affected-package commands).
+   For script changes, run `.agents/scripts/affected-tests-helper.sh run --base origin/<default> --compare-base` using the actual default branch. Regressions block; report pre-existing failures in one line linking a deduplicated existing drift issue, or file one if none exists. An omitted suite count means coverage was capped; adjust `--max` as appropriate.
 2. Preflight/PR readiness: broaden to affected packages, then full repo only when the task changes shared config, root tooling, dependency graph, or cross-package contracts.
 3. Broad root checks must be bounded and non-TUI in background/headless sessions: prefer `--ui=stream` plus explicit concurrency caps or env knobs (for example `TURBO_LINT_CONCURRENCY`, `TURBO_TYPECHECK_CONCURRENCY`).
 4. Avoid launching `format:fix && lint:fix && typecheck && test` unbounded across multiple active sessions. Stagger expensive broad gates or lower concurrency so worker throughput stays reliable without exhausting local CPU/RAM.

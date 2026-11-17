@@ -26,6 +26,31 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  affected-script-tests:
+    name: Affected script suites (advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Compare affected suites with base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -o pipefail
+          if git diff --quiet "origin/${BASE_REF}...HEAD" -- .agents/scripts/; then
+            echo "No script changes." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          .agents/scripts/affected-tests-helper.sh run --base "origin/${BASE_REF}" --compare-base 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          result=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
+
   # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
   # stop paying for a full ShellCheck / Framework Validation / Complexity
   # pass. Keep required matrix jobs ungated: a job-level `if:` prevents matrix
