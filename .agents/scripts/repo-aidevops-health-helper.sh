@@ -612,6 +612,7 @@ readonly REQUIRED_TRUST_WORKFLOWS=("issue-triage-gate")
 readonly TRUST_WORKFLOW_ISSUE_TITLE="chore: install aidevops issue triage gate"
 readonly TRUST_VISIBILITY_TTL_SECONDS=604800
 readonly TRUST_ATTEMPT_INTERVAL_SECONDS=72000
+readonly TRUST_PERMISSION_CAUSE="the runner account lacks admin or maintain permission on this repository"
 
 #######################################
 # Read one value from the keeper state file (empty when absent).
@@ -858,7 +859,6 @@ _trust_install_one() {
 	local workflow="$2"
 	local dry_run="$3"
 	local check_helper="${SCRIPT_DIR}/check-workflows-helper.sh"
-	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local class
 	class=$("$check_helper" --json --repo "$slug" --workflow "$workflow" 2>/dev/null |
 		jq -r 'select(.workflow == "'"$workflow"'") | .classification // empty' 2>/dev/null | sed -n '1p' || true)
@@ -910,7 +910,7 @@ _trust_install_one() {
 			local open_issue
 			open_issue=$(_trust_find_tracking_issue "$slug")
 			[[ -n "$open_issue" ]] && _trust_hold_tracking_issue "$slug" "$open_issue" "$workflow" \
-				permission_required "the runner account lacks admin or maintain permission on this repository"
+				permission_required "$TRUST_PERMISSION_CAUSE"
 		fi
 		echo skipped
 		return 0
@@ -937,6 +937,21 @@ _trust_install_one() {
 		echo failed
 		return 0
 	fi
+	_trust_sync_tracked "$slug" "$workflow" "$issue_number"
+	return 0
+}
+
+#######################################
+# Run the install sync for a filed tracking issue and classify its result.
+# Holds the issue when the sync proves it undeliverable (GH#38702).
+# Echoes: installed-pr | skipped | failed
+# Args: $1 slug, $2 workflow, $3 tracking issue number
+#######################################
+_trust_sync_tracked() {
+	local slug="$1"
+	local workflow="$2"
+	local issue_number="$3"
+	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local sync_out sync_rc=0
 	sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
 		--repo "$slug" --issue "$issue_number" 2>&1) || sync_rc=$?
@@ -968,7 +983,7 @@ _trust_install_one() {
 	log_info "trust-workflows: $slug — $workflow sync made no PR: $(printf '%s' "$skip_row" | tr '\t' ' ')"
 	if [[ "$skip_row" == *'eligibility: insufficient-permission'* ]]; then
 		_trust_hold_tracking_issue "$slug" "$issue_number" "$workflow" permission_required \
-			"the runner account lacks admin or maintain permission on this repository"
+			"$TRUST_PERMISSION_CAUSE"
 	fi
 	echo skipped
 	return 0
