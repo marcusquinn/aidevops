@@ -443,6 +443,8 @@ main() {
 	test_todo_duplicate_report_large_baseline
 	test_timeout_sec_fallback_preserves_stdin
 	test_prospective_todo_merge_guard
+	test_prospective_todo_stale_base_guard
+	test_prospective_todo_base_tip_reader
 	test_prospective_todo_requires_supported_native_git
 	test_prospective_todo_live_fetch_guard
 	test_prospective_todo_crisscross_fetch_guard

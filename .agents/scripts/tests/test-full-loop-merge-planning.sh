@@ -198,6 +198,11 @@ run_prospective_todo_guard() {
 	local reported_repo="${6:-testorg/testrepo}"
 	local caller_context="${7:-$fixture_dir}"
 	local real_git_bin="${8:-${TEST_NATIVE_GIT}}"
+	# GH#38703: $2 is the PR's recorded base.sha; $9 is the live base tip
+	# (defaults to the recorded base; "unresolvable" makes the tip read fail).
+	local tip_sha="${9:-$base_sha}"
+	local tip_override="_merge_fetch_base_tip_rest() { printf '%s\\n' '${tip_sha}'; return 0; }"
+	[[ "$tip_sha" != "unresolvable" ]] || tip_override='_merge_fetch_base_tip_rest() { return 1; }'
 	local scripts_dir="${SCRIPT_DIR}/.."
 	local tmp_runner=""
 	local verification_tmp="${fixture_dir}/verification-tmp"
@@ -230,6 +235,7 @@ SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
 source '${scripts_dir}/full-loop-helper-merge.sh'
 _merge_fetch_pr_refs_rest() { printf 'main\t%s\t%s\t%s\t%s\n' '${base_sha}' '${head_sha}' '${reported_repo}' '${remote_url}'; return 0; }
+${tip_override}
 ${fetch_override}
 ${validation_override}
 	cd '${caller_context}'
@@ -290,6 +296,7 @@ create_prospective_fixture() {
 		"$TEST_NATIVE_GIT" commit -q -m root
 		local root_sha=""
 		root_sha=$("$TEST_NATIVE_GIT" rev-parse HEAD)
+		printf '%s\n' "$root_sha" >root.sha
 		printf '## Base tasks\n- [ ] t1 Root ref:GH#1\n- [ ] t2 Base addition ref:GH#2\n\n## Branch tasks\n' >TODO.md
 		"$TEST_NATIVE_GIT" commit -q -am base
 		"$TEST_NATIVE_GIT" rev-parse HEAD >base.sha
@@ -623,6 +630,86 @@ test_prospective_todo_merge_guard() {
 	prospective_hostile_git_environment_clean "$fixture_dir" || environment_rc=$?
 	[[ "$environment_rc" -eq 0 ]] || cleanup_rc=1
 	print_result "prospective TODO: failure cleans isolated context" "$cleanup_rc"
+	return 0
+}
+
+# GH#38703: the PR's recorded base.sha predates a base-branch commit that added
+# the same mapping. Validation must use the live tip, not the recorded base.
+run_stale_base_guard() {
+	local fixture_dir="$1" recorded_sha="$2" head_sha="$3" tip_sha="$4"
+	run_prospective_todo_guard "$fixture_dir" "$recorded_sha" "$head_sha" stub \
+		'https://github.com/testorg/testrepo.git' 'testorg/testrepo' "$fixture_dir" \
+		"$TEST_NATIVE_GIT" "$tip_sha"
+	return $?
+}
+
+test_prospective_todo_stale_base_guard() {
+	local fixture_dir="" root_sha="" tip_sha="" head_sha="" output="" rc=0 cleanup_rc=0
+	fixture_dir=$(create_prospective_fixture collision)
+	root_sha=$(<"${fixture_dir}/root.sha")
+	tip_sha=$(<"${fixture_dir}/base.sha")
+	head_sha=$(<"${fixture_dir}/head.sha")
+	output=$(run_stale_base_guard "$fixture_dir" "$root_sha" "$head_sha" "$root_sha") || rc=$?
+	print_result "prospective TODO stale base: recorded base alone hides the duplicate (control)" "$rc" "output=$output"
+
+	rc=0
+	output=$(run_stale_base_guard "$fixture_dir" "$root_sha" "$head_sha" "$tip_sha") || rc=$?
+	print_result "prospective TODO stale base: duplicate gained by the tip is blocked" \
+		"$([[ "$rc" -ne 0 && "$output" == *"Duplicate issue mapping: ref:GH#2"* && "$output" == *"differs from current main tip ${tip_sha}"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+
+	rc=0
+	output=$(run_stale_base_guard "$fixture_dir" "$root_sha" "$head_sha" unresolvable) || rc=$?
+	print_result "prospective TODO stale base: unresolvable tip fails closed" \
+		"$([[ "$rc" -ne 0 && "$output" == *"unable to resolve the current main tip"* ]] && printf '0' || printf '1')" \
+		"rc=$rc output=$output"
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+
+	rc=0
+	fixture_dir=$(create_prospective_fixture unique)
+	root_sha=$(<"${fixture_dir}/root.sha")
+	tip_sha=$(<"${fixture_dir}/base.sha")
+	head_sha=$(<"${fixture_dir}/head.sha")
+	output=$(run_stale_base_guard "$fixture_dir" "$root_sha" "$head_sha" "$tip_sha") || rc=$?
+	print_result "prospective TODO stale base: unique stale branch passes against the tip" "$rc" "output=$output"
+	prospective_contexts_clean "$fixture_dir" || cleanup_rc=$?
+	print_result "prospective TODO stale base: checks clean isolated contexts" "$cleanup_rc"
+	return 0
+}
+
+# The production tip reader encodes the ref path and accepts only a full
+# commit SHA; tags, short names and transport failures fail closed.
+test_prospective_todo_base_tip_reader() {
+	local scripts_dir="${SCRIPT_DIR}/.." scenario="" result=0
+	for scenario in commit nested tag short transport; do
+		result=0
+		bash -c '
+			source "$1/shared-constants.sh"
+			source "$1/full-loop-helper-merge.sh"
+			scenario="$2" sha=$(printf "b%.0s" {1..40}) out="" rc=0 ref=main
+			[[ "$scenario" != nested ]] || ref="release/v1 rc"
+			_flm_gh_read() {
+				local path="$3"
+				case "$scenario" in
+				nested) [[ "$path" == "repos/testorg/testrepo/git/ref/heads/release/v1%20rc" ]] || return 9 ;;
+				*) [[ "$path" == "repos/testorg/testrepo/git/ref/heads/main" ]] || return 9 ;;
+				esac
+				case "$scenario" in
+				commit | nested) printf "%s\n" "$sha" ;;
+				tag) printf "\n" ;;
+				short) printf "bbbbbbb\n" ;;
+				transport) return 1 ;;
+				esac
+				return 0
+			}
+			out=$(_merge_fetch_base_tip_rest testorg/testrepo "$ref") || rc=$?
+			case "$scenario" in
+			commit | nested) [[ "$rc" -eq 0 && "$out" == "$sha" ]] ;;
+			*) [[ "$rc" -ne 0 && -z "$out" ]] ;;
+			esac
+		' _ "$scripts_dir" "$scenario" || result=$?
+		print_result "prospective TODO base tip reader: $scenario" "$result"
+	done
 	return 0
 }
 

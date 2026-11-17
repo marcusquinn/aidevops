@@ -69,6 +69,25 @@ _merge_fetch_pr_refs_rest() {
 	return 0
 }
 
+# GH#38703: a PR's REST base.sha is the base commit recorded when the PR was
+# opened or last synchronised, not the branch tip the merge will land on. Return
+# the live commit tip of refs/heads/<base_ref> so prospective validation sees
+# TODO rows the base gained later. Fails closed on any unresolvable answer.
+_merge_fetch_base_tip_rest() {
+	local repo="$1"
+	local base_ref="$2"
+	local encoded_ref=""
+	local tip_sha=""
+	[[ -n "$repo" && -n "$base_ref" ]] || return 1
+	encoded_ref=$(jq -rn --arg ref "$base_ref" '$ref | split("/") | map(@uri) | join("/")') || return 1
+	[[ -n "$encoded_ref" ]] || return 1
+	tip_sha=$(_flm_gh_read gh api "repos/${repo}/git/ref/heads/${encoded_ref}" \
+		--jq 'if .object.type == "commit" then (.object.sha // empty) else empty end') || return 1
+	_merge_is_pinned_object_id "$tip_sha" || return 1
+	printf '%s\n' "$tip_sha"
+	return 0
+}
+
 _merge_validate_target_remote_url() {
 	local target_repo="$1"
 	local remote_url="$2"
@@ -492,7 +511,8 @@ _merge_create_prospective_object_context() {
 	[[ -x "$real_git" ]] || return 1
 	mkdir -p "${context_root}/home" "${context_root}/xdg" || return 1
 	# Do not borrow objects or object-format details from the caller's Git
-	# context. This guard is also called by Pulse from a non-Git workspace.
+	# context. Pulse runs this guard from a non-Git workspace through
+	# `full-loop-helper.sh prospective-todo-guard` (GH#38703).
 	# The pinned target remote below supplies every object required for validation.
 	_merge_run_config_isolated_git "$real_git" "$context_root" -c init.templateDir= \
 		-C "$context_root" init --bare --quiet repository.git || return 1
