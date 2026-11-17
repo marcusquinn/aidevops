@@ -290,6 +290,11 @@ release_policy_body() {
 		policy=$(jq -c --argjson pins "$upstream" '. + $pins' <<<"$policy") || return 1
 		# shellcheck disable=SC2016 # Markdown backticks are literal.
 		printf 'Upstream pin policy: semver rules below still apply, and additionally the signed JSON fields extend the routine class with proofs read from the signed upstream and registries, never from PR content. `registry_images`: a `FROM <image>:<tag>@<digest>` digest may change only when the tag is the whole-token new upstream version and the registry resolves that exact image tag to that digest. `release_checksum`: the named `ARG` may change only to the sha256 listed for the named file in the new release checksum asset. `license_version_url`: `upstreamLicense.url` may differ only by whole-token upstream version substitution. `release_identity` may omit `images_json_asset` when `registry_images` proves the digests. Any other change, unknown field or unresolvable proof is not routine. A new signature is required for this mode.\n\n'
+		if jq -e '.companion_image != null' <<<"$upstream" >/dev/null; then
+			# Conditional text preserves every pre-existing signed policy body.
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'Companion image policy: stable v-prefixed upstream tags must prove strict forward ancestry. The signed image commit tag must be on the signed source branch and contain the release pin, every floor revision and the old image revision. The registry must prove the index, unique platform digest and full revision label, with cryptographically verified source-repository branch-workflow provenance. Only the proven FROM reference and listed readonly verifier constants may change; `image_ref` is the tagged image without its separately proven digest. All other verifier bytes, including floor constants, remain fixed. Catalog checksum changes remain non-routine.\n\n'
+		fi
 		;;
 	*) return 1 ;;
 	esac
@@ -507,6 +512,19 @@ release_pin_proof() {
 	return 0
 }
 
+# Reuse the anonymous tag resolver, then collect registry objects and verified
+# provenance from signed sources in the sibling Python module.
+release_companion_proof() {
+	local policy="$1" contents="$2" release="$3" document='' request='' image='' tag='' digest=''
+	document=$(jq -cn --argjson policy "$policy" --argjson contents "$contents" --argjson release "$release" \
+		'{policy:$policy,contents:$contents,release_proof:$release}') || return 1
+	request=$(python3 "${SCRIPT_DIR}/cloudron_companion_image.py" <<<"$document") || return 1
+	IFS=$'\t' read -r image tag <<<"$request"
+	digest=$(release_registry_digest "$image" "$tag") || return 1
+	python3 "${SCRIPT_DIR}/cloudron_companion_image.py" --digest "$digest" <<<"$document" || return 1
+	return 0
+}
+
 # Print the policy issue number when the signed standing policy authorizes the
 # open PR $2 at exact head $3 as a routine upstream bump. Any error fails closed.
 release_policy_authorizes() {
@@ -514,6 +532,7 @@ release_policy_authorizes() {
 	local active='' number='' policy='' snapshot='' view='' finding='' fingerprint='' compare='' merge_base=''
 	local files='' contents='{}' path='' base_content='' head_content='' document='' verdict='' rc=0
 	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null' pin_proof='null'
+	local companion_proof='null'
 	active=$(release_policy_active "$repo") || return 1
 	IFS=$'\t' read -r number policy <<<"$active"
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
@@ -553,18 +572,22 @@ release_policy_authorizes() {
 		head_content=$(release_raw_contents "$repo" "$path" "$head") || return 1
 		contents=$(jq -c --arg path "$path" --arg base "$base_content" --arg head "$head_content" \
 			'. + {($path): {base: $base, head: $head}}' <<<"$contents") || return 1
-	done < <(jq -r --argjson policy "$policy" '.[].filename | select(. == "CloudronManifest.json" or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))' <<<"$files")
+	done < <(jq -r --argjson policy "$policy" '[.[].filename | select(. == "CloudronManifest.json" or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))]
+		+ (if $policy.companion_image != null then ["Dockerfile", $policy.companion_image.verify_file] else [] end) | unique[]' <<<"$files")
 	if [[ "$mode" == commits ]]; then
 		upstream_proof=$(release_commit_proof "$repo" "$policy" "$finding_version" "$contents" "$finding_number") || return 1
 	fi
-	if [[ "$mode" == semver ]] && jq -e 'has("release_identity")' <<<"$policy" >/dev/null; then
+	if [[ "$mode" == semver ]] && jq -e 'has("release_identity") or has("companion_image")' <<<"$policy" >/dev/null; then
 		release_proof=$(release_identity_proof "$policy" "$contents") || return 1
 	fi
 	if [[ "$mode" == semver ]] && jq -e '.registry_images != null or .release_checksum != null' <<<"$policy" >/dev/null; then
 		pin_proof=$(release_pin_proof "$policy" "$contents") || return 1
 	fi
-	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" \
-		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, files: $files, contents: $contents}') || return 1
+	if [[ "$mode" == semver ]] && jq -e 'has("companion_image")' <<<"$policy" >/dev/null; then
+		companion_proof=$(release_companion_proof "$policy" "$contents" "$release_proof") || return 1
+	fi
+	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" --argjson companion "$companion_proof" \
+		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, companion_proof:$companion, files: $files, contents: $contents}') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2

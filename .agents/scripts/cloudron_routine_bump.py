@@ -43,7 +43,7 @@ from cloudron_release_identity import (
     pin_policy, validate_pins_request,
     release_identity, require, substitute_versions,
 )
-from cloudron_pinned_changes import pinned_changes_ok
+from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
@@ -228,6 +228,9 @@ def check(doc, repository):
     classes = {key: policy_paths(policy, key) for key in POLICY_FILE_CLASSES}
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
+    verify_file = companion_verify_file(policy, changelogs | pinned)
+    # Companion verification is byte-exact, never generic version substitution.
+    checks = checks - {verify_file}
     check_pattern = insertion_pattern(policy)
 
     files = doc.get("files")
@@ -240,7 +243,7 @@ def check(doc, repository):
         # introduce new build inputs; only in-place edits of named files qualify.
         require(entry.get("status") == "modified" and "previous_filename" not in entry,
                 name + ": only in-place modifications qualify")
-        require(name == MANIFEST or name in changelogs | pinned | checks, name + ": outside the standing policy")
+        require(name in (MANIFEST, verify_file) or name in changelogs | pinned | checks, name + ": outside the standing policy")
         names.append(name)
     require(len(set(names)) == len(names), "duplicate changed file entries")
     require(MANIFEST in names, "the manifest must change")
@@ -257,6 +260,7 @@ def check(doc, repository):
     check_upstream(doc, policy, old_up, new_up)
     pins = pin_policy(doc, policy)
     identity = release_identity(doc, policy)
+    companion = companion_proof(doc, policy, contents, file_text, new_up)
     require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
             "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
@@ -286,7 +290,8 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(pinned_changes_ok((base_text, head_text), identity, pins, (pinned_mappings, [{old_up: new_up}])),
+            require(companion_pinned_changes_ok((name, base_text, head_text), companion, identity, pins,
+                                                 (pinned_mappings, [{old_up: new_up}])),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
