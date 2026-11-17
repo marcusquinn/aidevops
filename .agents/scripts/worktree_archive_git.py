@@ -157,14 +157,18 @@ def capture_bundle(root, archive, roots, base):
     # tip. All writes go to scratch; the source object database is read-only.
     with tempfile.TemporaryDirectory(prefix=".admin-bundle-", dir=archive.parent) as temporary:
         scratch = Path(temporary)
-        object_format = git(root, 'rev-parse', '--show-object-format').strip().decode('ascii')
+        # One spawn resolves object format, objects path and HEAD (output order follows arguments).
+        object_format_raw, objects, head_raw = git(
+            root, 'rev-parse', '--show-object-format', '--path-format=absolute',
+            '--git-path', 'objects', 'HEAD').rstrip(b'\n').split(b'\n')
+        object_format = object_format_raw.decode('ascii')
+        head = head_raw.decode('ascii')
         git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
-        objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
         updates = ''.join(f'update refs/archive/{number} {oid}\n'
                           for number, oid in enumerate(roots))
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
-        git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
+        git(scratch, "update-ref", "refs/heads/archive-head", head)
         git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
         exclusions = (f'^{base}',) if base else ()
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
