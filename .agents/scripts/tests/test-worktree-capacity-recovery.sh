@@ -139,11 +139,11 @@ if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10; then
 [[ ! -d "$ROOT/contained" && ! -d "$ROOT/squash" ]]
 [[ -f "$ROOT/dirty/wip" && -d "$ROOT/open" && -d "$ROOT/live" && -d "$ROOT/unproven" ]]
 [[ -s "$ROOT/expiry" ]]
-count=$(git -C "$ROOT/repo" worktree list --porcelain | rg -c '^worktree ')
+count=$(git -C "$ROOT/repo" worktree list --porcelain | grep -c '^worktree ')
 [[ "$count" -eq 9 ]]
 _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 10
 [[ -d "$ROOT/hidden-open" && -d "$ROOT/unknown" && -d "$ROOT/fresh" && -d "$ROOT/reused" ]]
-if rg -q 'unexpected closed-PR query' "$HOME/.aidevops/logs/cleanup_worktrees.log"; then exit 1; fi
+if grep -q 'unexpected closed-PR query' "$HOME/.aidevops/logs/cleanup_worktrees.log"; then exit 1; fi
 printf 'PASS async pass reclaims contained and merged/expired trees; dirty/open/live/unproven preserved\n'
 printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh pre-work remain protected\n'
 
@@ -153,7 +153,7 @@ printf 'PASS dispatch gate reopens; exact open-PR, unavailable proof and fresh p
 	env AIDEVOPS_MAX_WORKTREES=9 bash "$ROOT/scripts/cleanup-worktrees-async-helper.sh"
 )
 if _dispatch_worktree_capacity_gate "$ROOT/repo" 36948 fixture/recovery 9; then exit 1; fi
-rg -q 'capacity-stuck: gate closed, zero safe removals' "$HOME/.aidevops/logs/cleanup_worktrees.log"
+grep -q 'capacity-stuck: gate closed, zero safe removals' "$HOME/.aidevops/logs/cleanup_worktrees.log"
 printf 'PASS closed gate with zero safe candidates produces capacity-stuck diagnostic\n'
 
 # Twenty guarded early candidates must not starve a safe later candidate.

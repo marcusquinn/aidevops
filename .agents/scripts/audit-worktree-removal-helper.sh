@@ -275,7 +275,8 @@ _worktree_privileged_read_cwd() {
 	local pid="${proc_dir##*/}"
 	local timeout_seconds=5
 	[[ "$proc_root" == /proc && "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-	worktree_process_inspector_allowed || return 1
+	# Within one capture pass the platform is resolved once, not per process.
+	worktree_process_inspector_allowed "${_WT_PASS_PLATFORM:-$(worktree_process_platform)}" || return 1
 	if declare -F timeout_sec >/dev/null 2>&1; then
 		timeout_sec "$timeout_seconds" sudo -n -- \
 			/usr/local/libexec/aidevops-worktree-cwd-inspect "$pid" 2>/dev/null

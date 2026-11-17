@@ -37,6 +37,17 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 [[ -n "${_LI_BOOL_TRUE+x}" ]] || _LI_BOOL_TRUE="true"
 [[ -n "${_LI_BOOL_FALSE+x}" ]] || _LI_BOOL_FALSE="false"
 [[ -n "${_LI_PERSISTENT_LABEL+x}" ]] || _LI_PERSISTENT_LABEL="persistent"
+_LI_BLOCKED_STATUS="blocked"
+_LI_BLOCKED_CSV=",status:${_LI_BLOCKED_STATUS},"
+_LI_AI_RECOVERY="needs-ai-recovery"
+# GH#38821: shared human-hold label list (also used by dependency-event-reconciler.sh).
+if ! declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1; then
+	_li_lib_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$_li_lib_dir" == "${BASH_SOURCE[0]}" ]] && _li_lib_dir="."
+	# shellcheck source=./issue-hold-marker-lib.sh
+	[[ -r "${_li_lib_dir}/issue-hold-marker-lib.sh" ]] && source "${_li_lib_dir}/issue-hold-marker-lib.sh"
+	unset _li_lib_dir
+fi
 
 #######################################
 # (t2040 Phase 3 helper) Enforce label invariants across all open issues.
@@ -63,6 +74,9 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 #      gets `needs-ai-recovery`; blocked-owned companions (`needs-ai-recovery`,
 #      `needs-dependency`, `needs-maintainer-input`) on a non-blocked issue
 #      are removed. Both repairs re-read live labels before writing.
+#      GH#38821: a bare hold carrying a human hold label (hold-for-review,
+#      no-auto-dispatch) gets `needs-maintainer-input` instead, and a hold
+#      re-queued as `needs-ai-recovery` after the hold is healed to it.
 #
 # Also counts (but does not auto-fix) triage-missing issues — those with
 # `origin:interactive` label AND no `tier:*` AND no `auto-dispatch` AND no
@@ -202,6 +216,25 @@ _enforce_persistent_task_invariant_one_issue() {
 	return 1
 }
 
+# GH#38821 heal: succeeds (0) only when the latest needs-ai-recovery label event
+# postdates the latest human-hold label event and no CLAIM_RELEASED or
+# terminal-blocker comment followed that hold, i.e. the normalizer, not a worker
+# blocker, re-queued a maintainer hold. Any lookup failure returns 1 (leave as is).
+_blocked_companion_hold_requeue_is_stale() {
+	local issue_num="$1" slug="$2"
+	local hold_at="" ai_at="" blockers="" times=""
+	local hold_re="${ISSUE_HUMAN_HOLD_LABELS// /|}"
+	times=$(gh api --paginate "repos/${slug}/issues/${issue_num}/events?per_page=100" \
+		--jq '.[] | select(.event == "labeled") | select(.label.name | test("^('"${_LI_AI_RECOVERY}|${hold_re}"')$")) | "\(.label.name)\t\(.created_at)"' 2>/dev/null) || return 1
+	hold_at=$(printf '%s\n' "$times" | awk -F'\t' -v ai="$_LI_AI_RECOVERY" '$1 != ai && $2 > m {m = $2} END {print m}')
+	ai_at=$(printf '%s\n' "$times" | awk -F'\t' -v ai="$_LI_AI_RECOVERY" '$1 == ai && $2 > m {m = $2} END {print m}')
+	[[ -n "$hold_at" && -n "$ai_at" && "$ai_at" > "$hold_at" ]] || return 1
+	blockers=$(gh api --paginate "repos/${slug}/issues/${issue_num}/comments?per_page=100" \
+		--jq '.[] | select(.created_at >= "'"$hold_at"'") | select(.body | test("CLAIM_RELEASED|terminal[-_ ]blocker"; "i")) | .id' 2>/dev/null) || return 1
+	[[ -z "$blockers" ]] || return 1
+	return 0
+}
+
 # GH#38360: status:blocked always carries a needs-* companion that names what
 # unblocks it, and blocked-owned companions leave with status:blocked. The
 # listing row is a hint; both repairs re-read live labels first so a racing
@@ -219,8 +252,14 @@ _enforce_blocked_companion_one_issue() {
 	live=",${live},"
 	case "$mode" in
 	bare)
-		[[ "$live" == *",status:blocked,"* && "$live" != *",needs-"* ]] || return 1
-		label="${BLOCKED_NEEDS_AI_RECOVERY:-needs-ai-recovery}"
+		[[ "$live" == *"$_LI_BLOCKED_CSV"* && "$live" != *",needs-"* ]] || return 1
+		label="${BLOCKED_NEEDS_AI_RECOVERY:-$_LI_AI_RECOVERY}"
+		# GH#38821: a human-owned hold waits on a maintainer decision, not AI
+		# recovery, which would only rediscover the same hold.
+		if declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+			issue_labels_csv_have_human_hold "$live"; then
+			label="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+		fi
 		# An open native blocker (rc 0) is a dependency hold, not recovery work;
 		# rc 1/2/3 (none, clear, unavailable) keep the recovery fallback.
 		local native_rc=1
@@ -233,11 +272,22 @@ _enforce_blocked_companion_one_issue() {
 		fi
 		edit_flags=(--add-label "$label")
 		;;
+	hold_heal)
+		[[ "$live" == *"$_LI_BLOCKED_CSV"* && "$live" == *",${_LI_AI_RECOVERY},"* ]] || return 1
+		declare -F issue_labels_csv_have_human_hold >/dev/null 2>&1 &&
+			issue_labels_csv_have_human_hold "$live" || return 1
+		_blocked_companion_hold_requeue_is_stale "$issue_num" "$slug" || return 1
+		label="${BLOCKED_NEEDS_MAINTAINER_INPUT:-needs-maintainer-input}"
+		if declare -F ensure_blocked_companion_label >/dev/null 2>&1; then
+			ensure_blocked_companion_label "$slug" "$label" || true
+		fi
+		edit_flags=(--remove-label "$_LI_AI_RECOVERY" --add-label "$label")
+		;;
 	orphan)
 		# Require a live core status other than blocked; a statusless hold keeps
 		# its human companion.
-		[[ "$live" != *",status:blocked,"* && "$live" == *",status:"* ]] || return 1
-		for label in needs-ai-recovery needs-dependency needs-maintainer-input; do
+		[[ "$live" != *"$_LI_BLOCKED_CSV"* && "$live" == *",status:"* ]] || return 1
+		for label in "$_LI_AI_RECOVERY" needs-dependency needs-maintainer-input; do
 			[[ "$live" == *",${label},"* ]] && edit_flags+=(--remove-label "$label")
 		done
 		;;
@@ -278,7 +328,7 @@ _fetch_label_invariant_rows() {
 	# triage-missing counter correctly ignores issues that are actively
 	# managed via an exception label (needs-info, verify-failed, stale,
 	# needs-testing, orphaned). See CodeRabbit review on PR #18546.
-	printf '%s' "$issues_json" | jq -r --arg persistent "$_LI_PERSISTENT_LABEL" '
+	printf '%s' "$issues_json" | jq -r --arg persistent "$_LI_PERSISTENT_LABEL" --arg ai "$_LI_AI_RECOVERY" --arg holds "${ISSUE_HUMAN_HOLD_LABELS:-hold-for-review no-auto-dispatch}" '
 		.[] | (.labels // []) as $labels | [
 			(.number | tostring),
 			([$labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
@@ -292,7 +342,8 @@ _fetch_label_invariant_rows() {
 			(any($labels[].name; . == "publication:pending") | tostring),
 			(any($labels[].name; . == ("quality-review", "routine-tracking", "source:health-dashboard", "supervisor", "contributor")) | tostring),
 			(any($labels[].name; startswith("needs-")) | tostring),
-			([$labels[].name | select(. == ("needs-ai-recovery", "needs-dependency", "needs-maintainer-input"))] | join(" "))
+			([$labels[].name | select(. == ("needs-ai-recovery", "needs-dependency", "needs-maintainer-input"))] | join(" ")),
+			((any($labels[].name; IN($holds | split(" ")[])) and any($labels[].name; . == $ai)) | tostring)
 		] | join("|")
 	' 2>/dev/null
 	return 0
@@ -319,9 +370,9 @@ _normalize_label_invariants_for_repo() {
 	[[ -n "$rows" ]] || return 0
 
 	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
-	local has_persistent="" has_publication_pending="" has_tracker_identity="" has_needs="" owned_companions=""
+	local has_persistent="" has_publication_pending="" has_tracker_identity="" has_needs="" owned_companions="" hold_recovery=""
 	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count \
-		has_persistent has_publication_pending has_tracker_identity has_needs owned_companions; do
+		has_persistent has_publication_pending has_tracker_identity has_needs owned_companions hold_recovery; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -336,8 +387,13 @@ _normalize_label_invariants_for_repo() {
 		# GH#38360: single-status rows only; a multi-status row was just
 		# repaired by set_issue_status, which owns its companions.
 		local companion_mode=""
-		if [[ "$core_count" -eq 1 && "${_LI_FILTERED_STATUS[0]}" == "blocked" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
+		local only_blocked="$_LI_BOOL_FALSE"
+		[[ "$core_count" -eq 1 && "${_LI_FILTERED_STATUS[0]}" == "$_LI_BLOCKED_STATUS" ]] && only_blocked="$_LI_BOOL_TRUE"
+		if [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$has_needs" == "$_LI_BOOL_FALSE" ]]; then
 			companion_mode="bare"
+		elif [[ "$only_blocked" == "$_LI_BOOL_TRUE" && "$hold_recovery" == "$_LI_BOOL_TRUE" ]]; then
+			# GH#38821: heal maintainer holds the normalizer re-queued as AI recovery.
+			companion_mode="hold_heal"
 		elif [[ "$core_count" -eq 1 && " ${status_list} " != *" blocked "* && -n "$owned_companions" ]]; then
 			# Only an issue with another live lifecycle status left blocked; a
 			# status-less issue may carry the label as a deliberate human hold.

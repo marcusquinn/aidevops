@@ -146,7 +146,11 @@ def cmd_resolve_name(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(_args: argparse.Namespace) -> int:
-    store.load()
+    conflicts = names.reserved_aliases(store.load())
+    if conflicts:
+        for name, alias, provider in conflicts:
+            print(f"credential {name} alias {alias} shadows the {provider} default; use: aidevops secret default {provider} NAME")
+        return 1
     print("Credential registry is valid")
     return 0
 

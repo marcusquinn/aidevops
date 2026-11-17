@@ -90,7 +90,7 @@ printf 'PASS: dead systemd-owned Pulse is revived\n'
 		watchdog_ticks=$((watchdog_ticks + 1))
 		return 0
 	}
-	_pulse_cycle_state_stage_heartbeat() {
+	_pulse_cycle_state_supervisor_heartbeat() {
 		heartbeat_calls=$((heartbeat_calls + 1))
 		return 1
 	}
@@ -111,18 +111,18 @@ printf 'PASS: dead systemd-owned Pulse is revived\n'
 	_force_kill_tree() { return 1; }
 	start_epoch=$(date +%s)
 	_run_pulse_watchdog sandbox "$start_epoch" 1800
-	[[ "$heartbeat_calls" == 2 && "$guard_calls" == 2 && "$kill_calls" == 0 ]]
-	[[ "$(wc -l <"${TEST_ROOT}/refill-calls")" -eq 2 ]]
-	[[ ! -s "$LOGFILE" ]]
+	[[ "$heartbeat_calls" == 2 && "$guard_calls" == 2 && "$kill_calls" == 0 ]] || { printf 'FAIL: failed heartbeat cadence and guards\n' >&2; exit 1; }
+	[[ "$(wc -l <"${TEST_ROOT}/refill-calls")" -eq 2 ]] || { printf 'FAIL: failed heartbeat refill\n' >&2; exit 1; }
+	[[ ! -s "$LOGFILE" ]] || { printf 'FAIL: failed heartbeat log progress\n' >&2; exit 1; }
 	printf 'PASS: failed heartbeat preserves watchdog cadence, guards and refill without log progress\n'
 
 	# Optional callback absence and callback failure both preserve child failures.
-	unset -f _pulse_cycle_state_stage_heartbeat
+	unset -f _pulse_cycle_state_supervisor_heartbeat
 	watchdog_ticks=0
 	child_status=9
 	watchdog_rc=0
 	_run_pulse_watchdog sandbox "$start_epoch" 1800 || watchdog_rc=$?
-	[[ "$watchdog_rc" == 9 && "$watchdog_ticks" == 2 ]]
+	[[ "$watchdog_rc" == 9 && "$watchdog_ticks" == 2 ]] || { printf 'FAIL: absent heartbeat callback preserves supervisor failure status\n' >&2; exit 1; }
 	printf 'PASS: absent heartbeat callback preserves supervisor failure status\n'
 
 	# A stop wins before heartbeat/guard/refill and cannot turn a child exit 0
@@ -133,6 +133,6 @@ printf 'PASS: dead systemd-owned Pulse is revived\n'
 	guard_calls=0
 	watchdog_rc=0
 	_run_pulse_watchdog sandbox "$start_epoch" 1800 || watchdog_rc=$?
-	[[ "$watchdog_rc" == 1 && "$kill_calls" == 1 && "$guard_calls" == 0 ]]
+	[[ "$watchdog_rc" == 1 && "$kill_calls" == 1 && "$guard_calls" == 0 ]] || { printf 'FAIL: stop flag priority and watchdog status\n' >&2; exit 1; }
 	printf 'PASS: stop flag retains priority and unsuccessful watchdog status\n'
 )

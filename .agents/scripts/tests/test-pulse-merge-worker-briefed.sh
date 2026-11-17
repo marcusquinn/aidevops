@@ -1168,6 +1168,7 @@ _define_starter_gate_chain() {
 	_pulse_recover_external_review() { return 0; }
 	_pulse_merge_refresh_review_gate_evidence() { return 0; }
 	_pulse_merge_preflight_snapshot_gate() { return 0; }
+	_pulse_merge_prospective_todo_gate() { return 0; }
 	# Final-boundary stand-in for _pulse_merge_admin_safety_check: it reads the
 	# same live PR metadata the real one feeds to _pulse_merge_live_state_gate.
 	_pulse_merge_admin_safety_check() {

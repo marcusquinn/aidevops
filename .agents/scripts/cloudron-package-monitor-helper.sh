@@ -212,23 +212,50 @@ _cloudron_monitor_latest_release_version() {
 	return 0
 }
 
+_cloudron_monitor_release_commit() {
+	local upstream_slug="$1" tag="$2" release_ref="" object_type="" release_sha="" depth=0
+	release_ref=$(gh api "repos/${upstream_slug}/git/ref/tags/${tag}") || return 1
+	object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
+	release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
+	while [[ "$object_type" == tag && "$depth" -lt 10 ]]; do
+		[[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || return 1
+		depth=$((depth + 1))
+		release_ref=$(gh api "repos/${upstream_slug}/git/tags/${release_sha}") || return 1
+		object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
+		release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
+	done
+	[[ "$object_type" == commit && "$release_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release tag $tag does not resolve to a commit." || return 1
+	printf '%s\n' "$release_sha"
+	return 0
+}
+
 # Some upstreams publish a desktop release before the package's source image is
-# qualified. Only an explicitly configured release-parent image can gate work;
-# a successful image built from a later commit is NOT the released source.
+# qualified. Keep exact source verification; after 48 hours surface missing
+# qualification as a durable finding instead of silently waiting forever.
+# source_slug defaults to upstream_slug. source_pin.path and source_pin.regex
+# resolve exactly one captured 40-hex revision from the release commit's tree.
 _cloudron_monitor_upstream_image_ready() {
 	local entry="$1" upstream_slug="$2" releases_json="$3" prefixes_json="$4" version="$5" source="${6:-releases}"
-	local image="" signer="" annotation="" eligibility_type="" tag="" candidate="" release_ref="" release_sha=""
-	local object_type="" commit="" source_sha="" image_ref="" manifest="" digest="" proof="" depth=0
+	local image="" signer="" annotation="" eligibility_type="" tag="" candidate="" release_sha=""
+	local commit="" source_sha="" image_ref="" manifest="" digest="" proof=""
+	local source_slug="" pin_path="" pin_regex="" pin_content="" wait_rc=3
 	image=$(jq -r '.cloudron_package.upstream_image.repository // empty' <<<"$entry") || return 1
 	signer=$(jq -r '.cloudron_package.upstream_image.signer_workflow // empty' <<<"$entry") || return 1
 	annotation=$(jq -r '.cloudron_package.upstream_image.qualification_annotation // empty' <<<"$entry") || return 1
 	eligibility_type=$(jq -r '.cloudron_package.upstream_image.eligibility_predicate_type // empty' <<<"$entry") || return 1
+	source_slug=$(jq -r --arg upstream "$upstream_slug" '.cloudron_package.upstream_image.source_slug // $upstream' <<<"$entry") || return 1
+	pin_path=$(jq -r '.cloudron_package.upstream_image.source_pin.path // empty' <<<"$entry") || return 1
+	pin_regex=$(jq -r '.cloudron_package.upstream_image.source_pin.regex // empty' <<<"$entry") || return 1
 	[[ "$image" =~ ^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
-		"$signer" == "$upstream_slug"/.github/workflows/* &&
+		"$source_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ &&
+		"$signer" == "$source_slug"/.github/workflows/* &&
 		"$signer" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$ &&
 		"$annotation" =~ ^[A-Za-z0-9_.-]+$ &&
 		(-z "$eligibility_type" || "$eligibility_type" =~ ^https://[A-Za-z0-9._/-]+$) ]] ||
 		_cloudron_monitor_error "Invalid upstream_image repository, signer_workflow, qualification_annotation or eligibility_predicate_type for $upstream_slug." || return 1
+	[[ ( -z "$pin_path" && -z "$pin_regex" && "$source_slug" == "$upstream_slug" ) ||
+		( "$pin_path" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ && "$pin_path" != *..* && -n "$pin_regex" ) ]] ||
+		_cloudron_monitor_error "upstream_image.source_pin requires a safe path and regex when using another source_slug." || return 1
 	command -v docker >/dev/null 2>&1 || _cloudron_monitor_error "Docker Buildx is required for upstream_image monitoring." || return 1
 	while IFS= read -r tag; do
 		[[ "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || continue
@@ -237,24 +264,27 @@ _cloudron_monitor_upstream_image_ready() {
 	done < <(jq -r --arg object_type "$_CLOUDRON_MONITOR_JSON_TYPE_OBJECT" \
 		--arg source "$source" --arg tags_source "$_CLOUDRON_MONITOR_SOURCE_TAGS" '.[] | select(type == $object_type and ($source == $tags_source or (.draft != true and .prerelease != true))) | (if $source == $tags_source then .name else .tag_name end) | select(type == "string")' <<<"$releases_json")
 	[[ "$candidate" == "$version" && "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || _cloudron_monitor_error "No stable tag resolves upstream v$version." || return 1
-	release_ref=$(gh api "repos/${upstream_slug}/git/ref/tags/${tag}") || return 1
-	object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
-	release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
-	while [[ "$object_type" == tag && "$depth" -lt 10 ]]; do
-		depth=$((depth + 1))
-		release_ref=$(gh api "repos/${upstream_slug}/git/tags/${release_sha}") || return 1
-		object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
-		release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
-	done
-	[[ "$object_type" == commit && "$release_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release tag $tag does not resolve to a commit." || return 1
+	release_sha=$(_cloudron_monitor_release_commit "$upstream_slug" "$tag") || return 1
 	commit=$(gh api "repos/${upstream_slug}/commits/${release_sha}") || return 1
-	source_sha=$(jq -r 'if (.parents | length) == 1 then .parents[0].sha else empty end' <<<"$commit") || return 1
-	[[ "$source_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release $tag is not a one-parent release commit." || return 1
+	# The immutable release commit date also works for upstream_source=tags.
+	wait_rc=$(jq -er '(.commit.committer.date | fromdateiso8601) as $released |
+		if now - $released >= 172800 then 4 else 3 end' <<<"$commit") ||
+		_cloudron_monitor_error "Release $tag has no valid commit date for the bounded image wait." || return 1
+	if [[ -n "$pin_path" ]]; then
+		pin_content=$(gh api "repos/${upstream_slug}/contents/${pin_path}?ref=${release_sha}" --jq '.content' | tr -d '\n' | base64 --decode) || return 1
+		source_sha=$(jq -ner --arg content "$pin_content" --arg regex "$pin_regex" '
+			[$content | match($regex; "g") | .captures | select(length == 1) | .[0].string] |
+			select(length == 1) | .[0] | select(test("^[a-f0-9]{40}$"))') ||
+			_cloudron_monitor_error "Release $tag source_pin must capture exactly one 40-hex revision." || return 1
+	else
+		source_sha=$(jq -r 'if (.parents | length) == 1 then .parents[0].sha else empty end' <<<"$commit") || return 1
+		[[ "$source_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release $tag is not a one-parent release commit." || return 1
+	fi
 	image_ref="${image}:sha-${source_sha:0:7}"
 	if ! manifest=$(docker buildx imagetools inspect "$image_ref" --format '{{json .Manifest}}' 2>&1); then
 		[[ "$manifest" == *"not found"* ]] || _cloudron_monitor_error "Could not inspect upstream image $image_ref." || return 1
 		printf 'WAITING %s: release-parent image %s is not published.\n' "$upstream_slug" "$image_ref" >&2
-		return 3
+		return "$wait_rc"
 	fi
 	digest=$(jq -er --arg revision "$source_sha" --arg annotation "$annotation" '
 		select(.mediaType == "application/vnd.oci.image.index.v1+json")
@@ -263,29 +293,29 @@ _cloudron_monitor_upstream_image_ready() {
 		  and any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64"))
 		| .digest | select(test("^sha256:[a-f0-9]{64}$"))' <<<"$manifest") || {
 		printf 'WAITING %s: %s lacks the qualified multi-architecture release-parent index.\n' "$upstream_slug" "$image_ref" >&2
-		return 3
+		return "$wait_rc"
 	}
-	proof=$(gh attestation verify "oci://${image}@${digest}" --repo "$upstream_slug" \
+	proof=$(gh attestation verify "oci://${image}@${digest}" --repo "$source_slug" \
 		--signer-workflow "$signer" --source-digest "$source_sha" \
 		--predicate-type 'https://slsa.dev/provenance/v1' --format json 2>/dev/null) || {
 		printf 'WAITING %s: %s has no matching upstream provenance attestation.\n' "$upstream_slug" "$image_ref" >&2
-		return 3
+		return "$wait_rc"
 	}
 	jq -e --arg image "$image" --arg digest "${digest#sha256:}" --arg revision "$source_sha" '
 		any(.[]; any(.verificationResult.statement.subject[]?; .name == $image and .digest.sha256 == $digest)
 		  and .verificationResult.signature.certificate.sourceRepositoryDigest == $revision)' <<<"$proof" >/dev/null || {
 		printf 'WAITING %s: source provenance does not match the release-parent index.\n' "$upstream_slug" >&2
-		return 3
+		return "$wait_rc"
 	}
 	if [[ -n "$eligibility_type" ]]; then
-		proof=$(gh attestation verify "oci://${image}@${digest}" --repo "$upstream_slug" \
+		proof=$(gh attestation verify "oci://${image}@${digest}" --repo "$source_slug" \
 			--signer-workflow "$signer" --source-digest "$source_sha" \
 			--predicate-type "$eligibility_type" --format json 2>/dev/null) || {
 			printf 'WAITING %s: %s has no matching deployment-eligibility attestation.\n' "$upstream_slug" "$image_ref" >&2
-			return 3
+			return "$wait_rc"
 		}
 		jq -e --arg image "$image" --arg digest "${digest#sha256:}" --arg revision "$source_sha" \
-			--arg upstream "$upstream_slug" --arg workflow "${signer#"$upstream_slug"/}" '
+			--arg upstream "$source_slug" --arg workflow "${signer#"$source_slug"/}" '
 			any(.[]; any(.verificationResult.statement.subject[]?; .name == $image and .digest.sha256 == $digest)
 			  and .verificationResult.signature.certificate.sourceRepositoryDigest == $revision
 			  and .verificationResult.statement.predicate.eligible == true
@@ -294,7 +324,7 @@ _cloudron_monitor_upstream_image_ready() {
 			  and .verificationResult.statement.predicate.build.workflow == $workflow
 			  and .verificationResult.statement.predicate.qualification.conclusion == "success")' <<<"$proof" >/dev/null || {
 			printf 'WAITING %s: deployment eligibility does not match the release-parent index.\n' "$upstream_slug" >&2
-			return 3
+			return "$wait_rc"
 		}
 	fi
 	printf '%s %s %s %s %s\n' "$tag" "$image_ref" "$digest" "$source_sha" "$release_sha"
@@ -698,6 +728,33 @@ _cloudron_monitor_commit_entry() {
 	return $?
 }
 
+# Preserve an unresolved outage across successive releases. The release age is
+# an immediate fallback on first observation; a newer release must not restart
+# an already running deadline. Clear only on positive proof or a caught-up package.
+_cloudron_monitor_image_wait() {
+	local entry="$1" ready_rc="$2" key="" first="" now="" state_file=""
+	local state_dir="${HOME}/.aidevops/cache/cloudron-image-waits"
+	key=$(jq -c '[.slug, .cloudron_package.upstream_slug, .cloudron_package.upstream_image]' <<<"$entry" | cksum | awk '{print $1}') || return 1
+	state_file="${state_dir}/${key}"
+	_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT=""
+	if [[ "$ready_rc" -eq 0 ]]; then
+		rm -f "$state_file" || return 1
+		return 0
+	fi
+	[[ "$ready_rc" -eq 3 || "$ready_rc" -eq 4 ]] || return "$ready_rc"
+	now=$(date +%s) || return 1
+	mkdir -p "$state_dir" || return 1
+	if [[ ! -f "$state_file" ]]; then
+		# Noclobber protects the earliest observation from overlapping scans.
+		( set -C; printf '%s\n' "$now" >"$state_file" ) 2>/dev/null || [[ -f "$state_file" ]] || return 1
+	fi
+	read -r first <"$state_file" || return 1
+	[[ "$first" =~ ^[1-9][0-9]{0,11}$ ]] || _cloudron_monitor_error "Invalid image wait timestamp." || return 1
+	_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT="image-wait-${key}-${first}"
+	[[ "$ready_rc" -ne 4 && $((now - first)) -lt 172800 ]] || return 4
+	return 3
+}
+
 _cloudron_monitor_upstream_entry() {
 	local entry="$1"
 	local apply="$2"
@@ -745,12 +802,25 @@ _cloudron_monitor_upstream_entry() {
 	local current_version=""
 	current_version=$(jq -r '.upstreamVersion // empty' <<<"$remote_manifest") || return 1
 	if [[ -n "$current_version" ]] && ! _cloudron_monitor_version_newer "$latest_version" "$current_version"; then
+		_cloudron_monitor_image_wait "$entry" 0 || return 1
 		return 0
 	fi
 	local source_proof="" ready_rc=0
 	if jq -e '.cloudron_package.upstream_image != null' <<<"$entry" >/dev/null; then
 		source_proof=$(_cloudron_monitor_upstream_image_ready "$entry" "$upstream_slug" "$releases_json" "$tag_prefixes" "$latest_version" "$upstream_source") || ready_rc=$?
+		if [[ "$ready_rc" -eq 0 || "$ready_rc" -eq 3 || "$ready_rc" -eq 4 ]]; then
+			local wait_rc=0
+			_cloudron_monitor_image_wait "$entry" "$ready_rc" || wait_rc=$?
+			ready_rc="$wait_rc"
+		fi
 		[[ "$ready_rc" -ne 3 ]] || return 0
+		if [[ "$ready_rc" -eq 4 ]]; then
+			_cloudron_monitor_apply_finding "$apply" "$slug" "${package_title} upstream v${latest_version} image qualification is overdue" \
+				"$_CLOUDRON_MONITOR_IMAGE_WAIT_FINGERPRINT" \
+				"Upstream ${upstream_slug} v${latest_version} is newer than the packaged version, but its configured source image remains unavailable or unqualified at least 48 hours after the release commit or the first unresolved image wait. Check upstream_image source, path-filtered builds, qualification and attestations. Do not update or publish the package without qualified source proof." \
+				"Re-run cloudron-package-monitor-helper.sh upstream and verify the configured source image and provenance before proposing any package change." "$manifest_rel" "$repo_path"
+			return $?
+		fi
 		[[ "$ready_rc" -eq 0 ]] || return "$ready_rc"
 	fi
 	local fingerprint="upstream-v${latest_version}"
@@ -762,7 +832,7 @@ _cloudron_monitor_upstream_entry() {
 	if [[ -n "$source_proof" ]]; then
 		summary="${summary}
 
-Qualified release-parent image: \`${source_proof}\`. Use this exact source; a later qualified main image does not establish that the release-parent commit was published."
+Qualified source image: \`${source_proof}\`. Use this exact source (the configured release-tree pin, or the release parent by default); do not substitute an unverified main image."
 	fi
 	printf -v verification "Run \`cloudron-package-helper.sh preflight-release v<package-version>\` after updating and testing the package."
 	_cloudron_monitor_apply_finding "$apply" "$slug" "$title" "$fingerprint" "$summary" "$verification" "$manifest_rel" "$repo_path" "$source_proof"

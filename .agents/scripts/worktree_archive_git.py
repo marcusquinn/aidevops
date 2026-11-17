@@ -167,19 +167,26 @@ def fetch_preservation(root, archive):
 
     Shared-repository callers must supply their owned linked worktree, never
     the canonical checkout. Independent repositories retain their legacy GC roots.
+
+    Returns the administrative directory it already resolved (None without a
+    bundle) so a caller in the same invocation can skip a repeat rev-parse.
     """
     bundle = archive / 'commits.bundle'
+    admin_path = None
     if bundle.is_file():
         git(root, 'bundle', 'verify', str(bundle))
-        admin = git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')
-        common = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').rstrip(b'\n')
-        if Path(os.fsdecode(admin)).resolve() != Path(os.fsdecode(common)).resolve():
+        # One spawn for both paths; --absolute-git-dir is absolute before the format switch.
+        admin, common = git(root, 'rev-parse', '--absolute-git-dir',
+                            '--path-format=absolute', '--git-common-dir').rstrip(b'\n').split(b'\n')
+        admin_path = Path(os.fsdecode(admin))
+        if admin_path.resolve() != Path(os.fsdecode(common)).resolve():
             git(root, 'bundle', 'unbundle', str(bundle))
         else:
             # Standalone restores must keep non-commit AUTO_MERGE/index objects
             # reachable across ordinary GC; these refs belong only to that repo.
             git(root, 'fetch', '--quiet', '--no-write-fetch-head', str(bundle),
                 '+refs/archive/*:refs/archive/*')
+    return admin_path
 
 
 def fetch_head_roots(encoded):

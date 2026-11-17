@@ -10,6 +10,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.223] - 2026-11-17
+
+### Changed
+
+- Performance: reuse resolved admin dir in archive restore (partial)
+- Maintenance: promote OpenCode v2 pin to 2.3.0 (#38820)
+
+### Fixed
+
+- neutralise inlined requires-* directives in consolidation task bodies (GH#38827) (#38832)
+- let starved critical stages borrow a bounded slice of the protected dispatch reserve
+- bound stale non-required check waits (#38834)
+- repair worktrees left half-deleted by interrupted cleanup before reusing them
+- Runpod cloud type, capacity retry, verified Blender bootstrap, fetch-gated pod removal
+- route hold-for-review blocked issues to needs-maintainer-input (GH#38821)
+- protect automatic pruning
+
+## [3.39.222] - 2026-11-17
+
+### Added
+
+- prove commit-tagged companion images
+
+### Changed
+
+- Maintenance: promote OpenCode v1 pin to 1.19.6 after passing canary (#38817)
+- Performance: single rev-parse for admin and common dir in fetch_preservation (GH#38675)
+- Performance: drop dirname forks in git shim and per-pid platform lookups in cwd capture
+
+### Fixed
+
+- create memory dir/DB/backups owner-only (700/600)
+- fetch lagging canonical tip objects so the large-file gate stops deferring
+- enrol worktree-cleanup test fixtures in the lifecycle registry (GH#38762) (#38801)
+- re-verify non-write claim verdict and surface unapplied auto-dispatch claim
+
+## [3.39.221] - 2026-11-17
+
+### Added
+
+- t19073 runpod and saladcloud conventional defaults (RUNPOD_API_KEY, SALAD_API_KEY)
+- classify affected script test suites (#38772)
+- auto-triage GH audit anomaly alerts on the producing runner (GH#38770) (#38784)
+- standing policy proofs for registry digests, release checksums and version-tagged license URLs (#38746)
+
+### Changed
+
+- Performance: skip canonical probe for read-only git subcommands in shim policy
+- Documentation: Hostinger PHP switch retry and served-version proof (GH#38771) (#38775)
+
+### Fixed
+
+- Buzz ACP runtime no longer inherits stale lifecycle identity
+- bound locked secret test within watchdog (#38794)
+- report aliases shadowing credential defaults
+- make auto-recover PR titles pass squash-subject validation (#38786)
+- aidevops_memory reports helper failures instead of success (#38766)
+- reset collaborator permission memo between NMR authority test cases (GH#38761) (#38767)
+- align pulse lease-recovery cases with t18978 contract (#38782)
+- retry blocker recovery after failed supervisor attempts; fall back from backed-off thinking tier
+- skip prune while Vault locked, keep accessed rows, cap bulk deletes (GH#38769)
+- verify permission withdrawals in audit alerts (#38773)
+- repair four pulse suites pointing at moved code (GH#38759)
+- fold long-s in shell hold-marker parser to match jq reducer (#38765)
+
+## [3.39.220] - 2026-11-17
+
+### Changed
+
+- Documentation: add WordPress multisite domain move procedure
+- Tests: make plist PATH assertion portable (#38740)
+
+### Fixed
+
+- bounded stage starvation fuse
+- update watchdog supervisor heartbeat stub (#38757)
+- skip t2769 no_work breaker for completion-infrastructure failures (GH#38752) (#38754)
+- report transient permission-lookup failures distinctly in interactive claim (#38749)
+- allow test override of signature helper timeout (GH#38750) (#38751)
+- bounded operation restoration_on mode for abort-only cleanup
+
+## [3.39.219] - 2026-11-17
+
+### Fixed
+
+- fix worker_lifecycle TypeGuard import on Python 3.9; gate 3.10+ typing imports
+- prospective TODO guard uses live base tip; Pulse merges run the guard
+- gate r914 trust-workflow rollout on admin/maintain permission
+- census carries fresh last-good candidates for repositories it did not reach
+- unassigned active status label no longer holds idle interactive PRs forever
+
+## [3.39.218] - 2026-11-17
+
+### Fixed
+
+- tier-aware worker canary hard-skips when no model is selectable
+
+## [3.39.217] - 2026-11-17
+
+### Changed
+
+- Documentation: add Oxylabs Web API and cloro as data service options
+
+### Fixed
+
+- escalate repeated model_unavailable backoff instead of hourly re-probes
+- bound image readiness waits and resolve companion source pins
+- prevent idle dashboard recovery starvation (#38711)
+- supervisor-phase active refill wakes a fresh-budget refill-only run
+
+## [3.39.216] - 2026-11-17
+
+### Fixed
+
+- classify blueprints/\<app>/test.yml app-test definitions as low runtime risk
+- honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh (t19072) (#38698)
+- keep a floor and fixed-cost guard on the repository enumeration limit
+- decided human_decision holds no longer starve terminal-blocker pending queue
+- retire provably complete stale lifetime rows so worktree add stops failing with bare ValueError
+- match test-file Low globs on basename only (GH#38686) (#38688)
+
 ## [3.39.215] - 2026-11-16
 
 ### Changed

@@ -98,7 +98,8 @@ _compose_consolidation_worker_instructions() {
      Preserve every wildcard scope entry verbatim from every superseded issue, including tool-generated paths such as \`- NEW: todo/<area>/log/*/*/<slug>-*.jsonl\`. Never invent a concrete machine, date, timestamp or filename in place of a pattern. Never change an existing \`EDIT:\` entry to \`NEW:\`.
      Check each path against the current default branch before copying its scope marker: use \`git ls-files\` in an up-to-date default-branch checkout or \`gh api\` for that branch's contents. Use \`EDIT:\` when the path already exists on the default branch; use \`NEW:\` only after confirming it is absent. A stale checkout or failed API lookup is not proof of absence.
    - **Runner prerequisites** — copy verbatim every line matching \`^requires-secrets:\` and its runner-prerequisite paragraph from every superseded issue. Keep all source lines (do not replace them with a summary): the runner capability gate unions comma/space-separated names across these lines. Never drop a prerequisite because this consolidation runner lacks the named secret; consolidation itself does not need those credentials.
-   - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
+       - **Quoted directives (GH#38827):** in the inlined sources below, every line-start \`requires-secrets:\`, \`requires-ssh:\`, \`requires-tools:\`, \`requires-loopback-health:\` and \`requires-device:\` line is quoted with a \`> \` prefix, and every \`<!-- aidevops:needs-secrets ... -->\` marker is renamed \`<!-- quoted-parent-directive aidevops:needs-secrets ... -->\`, so this GitHub-only task is not gated on them. Restore each one in the merged spec unquoted (no \`> \` prefix, original marker name) at the start of a line, so the successor keeps its runner gate.
+    - \`## Context & Decisions\` — which commenter contributed which insight (attribution matters)
    - \`## Contributors\` — a cc line @-mentioning every author from the list below
 
    Start the merged body with: \`_Supersedes #${parent_num} — this issue is the consolidated spec._\`
@@ -166,6 +167,12 @@ EOF
 	return 0
 }
 
+# GH#38827: jq filter that neutralises runner-capability directives inside
+# inlined parent text, so a GitHub-only consolidation task is not gated on the
+# parent's product prerequisites. Quotes line-start requires-* lines and
+# renames the needs-secrets marker; the worker restores both in the merged spec.
+_CONSOLIDATION_NEUTRALISE_JQ='gsub("(?<d>^|\\n)(?<w>[ \\t]*)(?<r>requires-(secrets|ssh|tools|loopback-health|device):)"; "\(.d)\(.w)> \(.r)") | gsub("<!-- aidevops:needs-secrets"; "<!-- quoted-parent-directive aidevops:needs-secrets")'
+
 #######################################
 # t1982: Compose a self-contained consolidation-task child issue body.
 #
@@ -190,6 +197,9 @@ _compose_consolidation_child_body() {
 
 	local authors_line="${authors_csv:-_no substantive authors detected_}"
 	local parent_body_section="${parent_body:-_(parent body was empty)_}"
+	# GH#38827: inlined directives must not gate this GitHub-only task.
+	parent_body_section=$(printf '%s' "$parent_body_section" | jq -Rs -r "$_CONSOLIDATION_NEUTRALISE_JQ") || return 1
+	substantive_json=$(printf '%s' "$substantive_json" | jq -c "map(.body |= (${_CONSOLIDATION_NEUTRALISE_JQ}))") || return 1
 	if [[ ${#authors_line} -gt 4000 ]]; then
 		authors_line="_Contributor list omitted (size limit): fetch parent comments and @mention every substantive author._"
 	fi

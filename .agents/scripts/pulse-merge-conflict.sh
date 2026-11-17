@@ -316,6 +316,10 @@ _interactive_pr_idle_session_evidence() {
 # GH#38291: a status label or claim stamp yields only to idle-session
 # evidence after the shorter session window; otherwise the full PR-age
 # threshold still applies.
+# GH#38724: an active status label on an issue with no assignees owns nothing
+# (GH#33420 invariant, shared with interactive claim and dispatch dedup). It
+# is an orphan, so only the full PR-age threshold applies. Unknown assignee
+# data still fails closed as status_label.
 #
 # Args: $1 pr_number, $2 repo_slug, $3 linked_issue, $4 pr_age_secs,
 #       $5 threshold_secs, $6 session_threshold_secs, $7 activity_source
@@ -331,14 +335,20 @@ _interactive_pr_session_gates() {
 	local session_threshold_secs="$6"
 	local activity_source="$7"
 	local issue_meta="" session_gate="" stamp_path="" evidence="" evidence_session="" evidence_idle_secs=""
+	local orphan_label=0
 
 	issue_meta=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
-		--jq '{state, labels: [.labels[].name]}' 2>/dev/null) || return 1
+		--jq '{state, labels: [.labels[].name], assignees: (if (.assignees | type) == "array" then [.assignees[].login] else null end)}' \
+		2>/dev/null) || return 1
 	printf '%s' "$issue_meta" | jq -e '.state == "open"' >/dev/null 2>&1 || return 1
 	if printf '%s' "$issue_meta" | jq -e \
 		'.labels | any(. == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed")' \
 		>/dev/null 2>&1; then
-		session_gate="status_label"
+		if printf '%s' "$issue_meta" | jq -e '.assignees == []' >/dev/null 2>&1; then
+			orphan_label=1
+		else
+			session_gate="status_label"
+		fi
 	fi
 
 	# Gate 3: no live claim stamp (session gone)
@@ -349,6 +359,8 @@ _interactive_pr_session_gates() {
 
 	if [[ -z "$session_gate" ]]; then
 		[[ "$pr_age_secs" -ge "$threshold_secs" ]] || return 1
+		[[ "$orphan_label" -eq 1 ]] &&
+			echo "[pulse-wrapper] _interactive_pr_is_stale: PR #${pr_number} in ${repo_slug} — active status label on #${linked_issue} has no assignee and no local claim stamp; orphaned claim, PR idle $((pr_age_secs / 3600))h via ${activity_source} >= $((threshold_secs / 3600))h — handover eligible (GH#38724)" >>"$LOGFILE"
 		return 0
 	fi
 	[[ "$session_threshold_secs" -gt 0 && "$pr_age_secs" -ge "$session_threshold_secs" ]] || return 1
@@ -377,7 +389,8 @@ _interactive_pr_session_gates() {
 # Combined signal — ALL must hold for a stale handover-eligible PR:
 #   1. PR has origin:interactive label
 #   2. Linked issue has NO active status label (status:queued, in-progress,
-#      in-review, claimed) — an active status means a human is driving it
+#      in-review, claimed) — an active status means a human is driving it.
+#      GH#38724: a label with no assignee is an orphan and does not count.
 #   3. No live claim stamp file in $CLAIM_STAMP_DIR for the linked issue
 #      (session is gone; no interactive-session-helper.sh claim active)
 #   4. PR updatedAt older than AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS (default 43200 = 12h)

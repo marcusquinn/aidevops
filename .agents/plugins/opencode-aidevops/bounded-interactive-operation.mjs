@@ -37,6 +37,10 @@ import { defaultSecretValueRedactor } from "./registered-value-redaction.mjs";
 import { runtimeOwner } from "./runtime-owner.mjs";
 
 const MAX_OPERATIONS = 24;
+// GH#38704: "always" (default) restores after every terminal path, success
+// included; "unsuccessful" skips restoration after success so abort-only
+// cleanup cannot destroy a good result.
+const RESTORATION_MODES = new Set(["always", "unsuccessful"]);
 const SUPERVISOR_PATH = fileURLToPath(new URL("./bounded-operation-supervisor.mjs", import.meta.url));
 const SUPERVISOR_RUNTIME = "node";
 
@@ -140,6 +144,8 @@ export class BoundedInteractiveOperationManager {
     if (!owner) throw new Error("runtime session identity is required");
     const invalid = commandError(args.command) || (args.restorationCommand ? commandError(args.restorationCommand) : "");
     if (invalid) throw new Error(invalid);
+    const restorationOn = args.restorationOn ?? "always";
+    if (!RESTORATION_MODES.has(restorationOn)) throw new Error("restoration_on must be \"always\" or \"unsuccessful\"");
     this.trimTerminalOperations();
 
     const startedAt = this.now();
@@ -149,6 +155,7 @@ export class BoundedInteractiveOperationManager {
       cwd: await this.resolveCwd(args.cwd, context),
       command: [...args.command],
       restorationCommand: args.restorationCommand ? [...args.restorationCommand] : null,
+      restorationOn,
       budgetMs: boundedInteger(args.budgetMs, 15 * 60 * 1000, 10, 24 * 60 * 60 * 1000),
       progressIntervalMs: boundedInteger(args.progressIntervalMs, 15 * 60 * 1000, 10, 60 * 60 * 1000),
       restorationBudgetMs: boundedInteger(args.restorationBudgetMs, 60 * 1000, 10, 10 * 60 * 1000),
@@ -237,7 +244,11 @@ export class BoundedInteractiveOperationManager {
     if (operation.disposition === "running") {
       operation.disposition = code === 0 && operation.commandStarted ? "succeeded" : "failed";
     }
-    if (operation.restorationCommand) await this.runRestoration(operation);
+    if (operation.restorationCommand && operation.restorationOn === "unsuccessful" && operation.disposition === "succeeded") {
+      operation.restorationState = "not_required";
+    } else if (operation.restorationCommand) {
+      await this.runRestoration(operation);
+    }
     await this.finalize(operation);
   }
 

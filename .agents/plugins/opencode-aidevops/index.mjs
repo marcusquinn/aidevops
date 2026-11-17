@@ -456,6 +456,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const baseTools = createSchemaGatedTools(tool, () => {
     const tools = createTools(SCRIPTS_DIR, run, {
       aidevopsRun: runChecked,
+      memoryRun: runChecked,
       sessionOrigin: process.env.AIDEVOPS_SESSION_ORIGIN,
       poolToolFactory: () => createPoolTool(client),
       imageFetch: IMAGE_FETCH,

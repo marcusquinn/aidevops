@@ -224,25 +224,25 @@ aidevops_export_user_tool_dirs() {
 # GH#30957 promoted 1.18.25, GH#31588 promoted 1.18.29, GH#31909 promoted
 # 1.18.31, GH#32210 promoted 1.18.32, GH#32761 promoted 1.18.33, and GH#33788
 # promoted 1.18.34, GH#34542 promoted 1.19.0, GH#35180 promoted 1.19.3,
-# and GH#36563 promoted 1.19.5 after the same isolated comparison passed with
+# GH#36563 promoted 1.19.5, and GH#38815 promoted 1.19.6 after the same isolated comparison passed with
 # required plugin tools and an empty native-tool diff; plugin packages unchanged.
 # Keep the compatibility decision machine-readable;
 # general installs track latest because the observed failure scope is Linux
 # headless.
-readonly OPENCODE_PINNED_VERSION="1.19.5"
+readonly OPENCODE_PINNED_VERSION="1.19.6"
 readonly OPENCODE_PIN_REASON="GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME"
 readonly OPENCODE_PIN_PLATFORM="Linux"
 readonly OPENCODE_PIN_RUNTIME_MODE="headless"
 readonly OPENCODE_PIN_INTRODUCED_DATE="2026-07-30"
-readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-11-03"
-readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.5"
-readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-11-10"
-readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.5"
-# GH#37580: V2 promoted 2.2.7 from 2.2.5 after isolated Linux-headless
+readonly OPENCODE_PIN_LAST_CANARY_DATE="2026-11-17"
+readonly OPENCODE_PIN_LAST_CANARY_RESULT="pass:1.19.6"
+readonly OPENCODE_PIN_REVIEW_DEADLINE="2026-11-24"
+readonly OPENCODE_PLUGIN_TESTED_VERSION="1.19.6"
+# GH#38816: V2 promoted 2.3.0 from 2.2.7 after isolated Linux-headless
 # baseline and candidate probes passed with no provider-visible native-tool diff.
 # V2 exposes plugin tools through execute; both probes passed the plugin health check.
-readonly OPENCODE_V2_PINNED_VERSION="2.2.7"
-readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.2.7"
+readonly OPENCODE_V2_PINNED_VERSION="2.3.0"
+readonly OPENCODE_V2_PLUGIN_TESTED_VERSION="2.3.0"
 
 aidevops_opencode_profile_id() {
 	local requested="${AIDEVOPS_OPENCODE_PROFILE:-}"
@@ -274,9 +274,9 @@ aidevops_opencode_profile_value() {
 		v2:pinReason) printf 'Initial OpenCode V2 compatibility qualification\n' ;;
 		v2:pinPlatform) printf 'Linux\n' ;;
 		v2:pinRuntimeMode) printf 'headless\n' ;;
-		v2:lastCanaryDate) printf '2026-11-10\n' ;;
-		v2:lastCanaryResult) printf 'pass:2.2.7\n' ;;
-		v2:reviewDeadline) printf '2026-11-17\n' ;;
+		v2:lastCanaryDate) printf '2026-11-17\n' ;;
+		v2:lastCanaryResult) printf 'pass:2.3.0\n' ;;
+		v2:reviewDeadline) printf '2026-11-24\n' ;;
 		v1:package) printf 'opencode-ai\n' ;;
 		v1:binary) printf 'opencode\n' ;;
 		v1:pluginEntry) printf 'index.mjs\n' ;;

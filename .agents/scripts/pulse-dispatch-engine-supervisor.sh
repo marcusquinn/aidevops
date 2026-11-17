@@ -121,6 +121,11 @@ _pulse_rearm_blocker_holds() {
 # t18514/GH#32754: decide whether pending terminal-blocker recovery entries
 # warrant an LLM supervisor run. Checks at most once per interval so the
 # GitHub-verified count never runs on every pulse cycle.
+# GH#38779: after a failed or killed attempt (latest attempt newer than the
+# latest success) the interval drops to PULSE_LLM_FAILURE_RETRY_INTERVAL, and
+# the failure cooldown is checked before the stamp. Otherwise one model backoff
+# or restart-killed session deferred all recovery for the full 3h interval,
+# and a check inside the cooldown spent that window without running.
 # Args: now_epoch last_success_epoch last_attempt_epoch
 # Returns: 0 when a recovery run should start (trigger mode written), 1 otherwise
 #######################################
@@ -129,14 +134,22 @@ _pulse_blocker_recovery_due() {
 	local last_success_epoch="$2"
 	local last_attempt_epoch="$3"
 	local interval="${PULSE_LLM_RECOVERY_INTERVAL:-10800}"
+	local retry_interval="${PULSE_LLM_FAILURE_RETRY_INTERVAL:-1800}"
 	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
 	local last_check=0 pending=0 pending_rc=0 scan_note=""
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
+	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
+	if [[ "$last_attempt_epoch" -gt "$last_success_epoch" && "$retry_interval" -lt "$interval" ]]; then
+		interval="$retry_interval"
+	fi
 	[[ -f "$helper" ]] || return 1
 	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
 	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
 	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 1
+	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
+		return 1
+	fi
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
 	# GH#35945: exit 2 is an incomplete scan whose stdout is still the partial
 	# count (helper contract). The bounded seed spans every pulse repo and
@@ -149,9 +162,6 @@ _pulse_blocker_recovery_due() {
 	*) pending=0 ;;
 	esac
 	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
-	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
-		return 1
-	fi
 	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
 	return 0

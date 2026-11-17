@@ -493,9 +493,18 @@ issue-view)
 	title) printf 'Test parent title\n' ;;
 	body) printf 'Parent body text for testing.\n' ;;
 	labels) printf 'bug,tier:standard\n' ;;
+	# Parent hold-state read (_consolidation_dispatch_defers_for_manual_hold)
+	# requires a valid state/labels/assignees object with no manual hold.
+	state,labels,assignees) printf '{"state":"OPEN","labels":[{"name":"bug"},{"name":"tier:standard"}],"assignees":[]}\n' ;;
 	*) printf '\n' ;;
 	esac ;;
-issue-list) printf '[]\n' ;;
+issue-list)
+	# With --jq the real gh prints the filtered result; the child-count
+	# filters used by consolidation expect a number (no children here).
+	case "$*" in
+	*--jq*) printf '0\n' ;;
+	*) printf '[]\n' ;;
+	esac ;;
 pr-list) printf '[]\n' ;;
 issue-create) printf 'https://github.com/owner/repo/issues/9999\n' ;;
 api-*) printf '[]\n' ;;

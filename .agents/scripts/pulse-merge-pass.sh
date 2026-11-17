@@ -967,14 +967,14 @@ _pmp_log_repo_timing_rows() {
 	local primary_rows="$1"
 	local diagnostic_rows="$2"
 	local repo_slug="" total_s=0 list_s=0 mergeability_s=0 ruleset_s=0 branch_protection_s=0 list_state="complete"
-	local merged=0 closed=0 failed=0 pr_count=0 stuck_s=0 enrichment_s=0 pr_s=0 slowest_pr="" trust_gate_s=0 slowest_stages=""
+	local merged=0 closed=0 failed=0 pr_count=0 stuck_s=0 enrichment_s=0 pr_s=0 slowest_pr="" trust_gate_s=0 slowest_stages="" memo_skips=0
 
-	while IFS='|' read -r repo_slug total_s list_s mergeability_s ruleset_s branch_protection_s merged closed failed pr_count list_state enrichment_s pr_s slowest_pr trust_gate_s slowest_stages; do
+	while IFS='|' read -r repo_slug total_s list_s mergeability_s ruleset_s branch_protection_s merged closed failed pr_count list_state enrichment_s pr_s slowest_pr trust_gate_s slowest_stages memo_skips; do
 		[[ -n "$repo_slug" ]] || continue
 		stuck_s=$(_pmp_diagnostic_seconds_for_repo "$diagnostic_rows" "$repo_slug")
 		[[ "$total_s" =~ ^[0-9]+$ ]] || total_s=0
 		total_s=$((total_s + stuck_s))
-		_pmp_log_repo_timing_summary "$repo_slug" "$total_s" "$list_s" "$mergeability_s" "$ruleset_s" "$branch_protection_s" "$stuck_s" "$merged" "$closed" "$failed" "$pr_count" "$list_state" "$enrichment_s" "$pr_s" "$slowest_pr" "$trust_gate_s" "$slowest_stages"
+		_pmp_log_repo_timing_summary "$repo_slug" "$total_s" "$list_s" "$mergeability_s" "$ruleset_s" "$branch_protection_s" "$stuck_s" "$merged" "$closed" "$failed" "$pr_count" "$list_state" "$enrichment_s" "$pr_s" "$slowest_pr" "$trust_gate_s" "$slowest_stages" "$memo_skips"
 	done <<<"$primary_rows"
 	return 0
 }
@@ -1024,6 +1024,156 @@ _pmp_record_deterministic_progress_now() {
 	return 0
 }
 
+# A memo is only a negative scheduling hint, never merge authority. Keep the
+# allowlist explicit: clock-driven repair, conflict and stale-run outcomes are
+# deliberately not recorded. Canonical JSON is hashed locally; no API reads.
+_pmp_verdict_key() {
+	local repo_slug="$1" pr_obj="$2"
+	jq -ceS --arg repo "$repo_slug" '
+		select(.state == "OPEN" and (.number | type == "number")
+			and (.headRefOid | type == "string" and length > 0)
+			and (.updatedAt | type == "string" and length > 0))
+		| [$repo, .number, .headRefOid, .updatedAt, .mergeStateStatus,
+			.mergeable, (.statusCheckRollup // [] | sort_by(tojson)),
+			([.labels[]?.name] | sort), .reviewDecision, .isDraft]' <<<"$pr_obj" |
+		shasum -a 256 | cut -d ' ' -f 1
+	return "${PIPESTATUS[0]}"
+}
+
+_pmp_evaluate_pr_with_memo() {
+	local repo_slug="$1" pr_obj="$2" timing_prefix="$3" result=0
+	if _pmp_negative_verdict_hit "$repo_slug" "$pr_obj"; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_counter_seconds "${timing_prefix}memo_skips" 1
+		_pmp_add_counter_seconds _PMP_PASS_MEMO_SKIPS 1
+		return 1
+	fi
+	_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	return "$result"
+}
+
+_pmp_verdict_file() {
+	local repo_slug="$1" pr_obj="$2" number=""
+	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+	number=$(jq -er '.number | numbers' <<<"$pr_obj") || return 1
+	[[ "$number" =~ ^[0-9]+$ ]] || return 1
+	printf '%s/%s/%s.json' "${AIDEVOPS_MERGE_VERDICT_DIR:-${HOME}/.aidevops/.agent-workspace/state/merge-verdicts}" "$repo_slug" "$number"
+	return 0
+}
+
+_pmp_record_negative_verdict() {
+	local repo_slug="$1" pr_obj="$2" verdict="$3"
+	local key="" state_file="" now=0 temporary=""
+	case "$verdict" in draft | mergeable_unknown | review_unknown) ;; *) return 0 ;; esac
+	key=$(_pmp_verdict_key "$repo_slug" "$pr_obj") || return 0
+	[[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 0
+	state_file=$(_pmp_verdict_file "$repo_slug" "$pr_obj") || return 0
+	_pmp_now_epoch_into now
+	mkdir -p "${state_file%/*}" || return 0
+	temporary=$(mktemp "${state_file}.XXXXXX") || return 0
+	if ! jq -cn --arg key "$key" --arg verdict "$verdict" --argjson epoch "$now" \
+		'{key:$key,verdict:$verdict,epoch:$epoch}' >"$temporary" || ! mv -f "$temporary" "$state_file"; then
+		rm -f "$temporary"
+	fi
+	return 0
+}
+
+_pmp_negative_verdict_hit() {
+	local repo_slug="$1" pr_obj="$2" ttl="${AIDEVOPS_MERGE_VERDICT_TTL_S:-1800}"
+	local key="" state_file="" record="" verdict="" epoch="" now=0 age=0 number=""
+	# Due durable events require queue claim/refresh/acknowledgement, even if
+	# a stale broad-list object happens to match an earlier negative memo.
+	jq -e '._pulseDeferredRetry != true' <<<"$pr_obj" >/dev/null || return 1
+	[[ "$ttl" =~ ^[0-9]+$ && "$ttl" -gt 0 ]] || return 1
+	state_file=$(_pmp_verdict_file "$repo_slug" "$pr_obj") || return 1
+	[[ -f "$state_file" ]] || return 1
+	key=$(_pmp_verdict_key "$repo_slug" "$pr_obj") || return 1
+	[[ "$key" =~ ^[0-9a-f]{64}$ ]] || return 1
+	record=$(jq -er --arg key "$key" 'select(.key == $key)
+		| select(.epoch | type == "number" and floor == . and . >= 0)
+		| [.verdict, .epoch] | @tsv' "$state_file" 2>/dev/null) || return 1
+	IFS=$'\t' read -r verdict epoch <<<"$record"
+	# Re-check the negative condition as well as the key: even a stale or damaged
+	# memo must not park an apparently eligible PR. Never cache pass/eligible.
+	case "$verdict" in
+	draft) jq -e '.isDraft == true' <<<"$pr_obj" >/dev/null || return 1 ;;
+	mergeable_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '((.mergeable // "") | tostring) as $m | ($m == "" or $m == $unknown)' <<<"$pr_obj" >/dev/null || return 1 ;;
+	review_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '((.reviewDecision // "") | tostring) as $d | ($d == "" or $d == $unknown)' <<<"$pr_obj" >/dev/null || return 1 ;;
+	*) return 1 ;;
+	esac
+	_pmp_now_epoch_into now
+	age=$((now - epoch))
+	[[ "$age" -ge 0 && "$age" -lt "$ttl" ]] || return 1
+	number=$(jq -r '.number' <<<"$pr_obj") || return 1
+	printf '[pulse-wrapper] Merge pass: PR #%s unchanged since %s (memo age %ss)\n' "$number" "$verdict" "$age" >>"$LOGFILE"
+	return 0
+}
+
+# Query up to 50 aliases per read. Only explicit integer zero counts are
+# authoritative; partial/malformed/error responses fall back to per-repo reads.
+# Stdout is a newline-separated list of confirmed empty repository slugs.
+_pmp_empty_repo_prefilter() {
+	local repo_rows="$1" slug="" path="" owner="" name="" query="" aliases='{}' count=0
+	local AIDEVOPS_GH_DEADLINE_EPOCH="${AIDEVOPS_GH_DEADLINE_EPOCH:-}"
+	_pmp_apply_merge_api_deadline
+	while IFS='|' read -r slug path; do
+		[[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue
+		owner="${slug%/*}"; name="${slug#*/}"
+		query="${query} r${count}: repository(owner:\"${owner}\",name:\"${name}\") { pullRequests(states: OPEN) { totalCount } }"
+		aliases=$(jq -cn --argjson aliases "$aliases" --arg alias "r${count}" --arg slug "$slug" '$aliases + {($alias):$slug}') || return 1
+		count=$((count + 1))
+		if [[ "$count" -eq 50 ]]; then
+			_pmp_empty_repo_prefilter_chunk "$query" "$aliases"
+			query=""; aliases='{}'; count=0
+		fi
+	done <<<"$repo_rows"
+	[[ "$count" -eq 0 ]] || _pmp_empty_repo_prefilter_chunk "$query" "$aliases"
+	return 0
+}
+
+_pmp_empty_repo_prefilter_chunk() {
+	local query="$1" aliases="$2" response=""
+	response=$(_gh_with_timeout read gh api graphql -f "query={${query}}" 2>/dev/null) || return 0
+	jq -er --argjson aliases "$aliases" '
+		select((.errors // [] | length) == 0) | .data | objects | to_entries[]
+		| select(.value.pullRequests.totalCount == 0) | $aliases[.key] // empty' <<<"$response" 2>/dev/null || true
+	return 0
+}
+
+_pmp_filter_empty_merge_repos() {
+	local rows="$1" destination="$2" empty_repos="" filtered="" slug="" path=""
+	[[ "$destination" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	empty_repos=$(_pmp_empty_repo_prefilter "$rows") || empty_repos=""
+	_PMP_PREFILTER_EMPTY_REPOS=""
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" ]] || continue
+		if [[ $'\n'"$empty_repos"$'\n' == *$'\n'"$slug"$'\n'* ]] && ! _pmp_repo_has_queue_work "$slug"; then
+			_pmp_add_counter_seconds _PMP_PREFILTER_SKIPPED_REPOS 1
+			_PMP_PREFILTER_EMPTY_REPOS="${_PMP_PREFILTER_EMPTY_REPOS}${slug}"$'\n'
+		else
+			filtered="${filtered}${slug}|${path}"$'\n'
+		fi
+	done <<<"$rows"
+	printf -v "$destination" '%s' "$filtered"
+	return 0
+}
+
+_pmp_repo_has_queue_work() {
+	local repo_slug="$1" keys=""
+	declare -F _pulse_merge_queue_priority_keys >/dev/null 2>&1 || return 1
+	keys=$(_pulse_merge_queue_priority_keys "$repo_slug") || return 0
+	[[ -n "$keys" ]] || return 1
+	return 0
+}
+
+_pmp_skip_prefiltered_repo() {
+	local repo_slug="$1" checkpoint_file="$2"
+	[[ $'\n'"${_PMP_PREFILTER_EMPTY_REPOS:-}" == *$'\n'"$repo_slug"$'\n'* ]] || return 1
+	_pmp_clear_merge_pr_cursor "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$repo_slug"
+	_pmp_clear_merge_enrichment_state "$repo_slug"
+	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
+	return 0
+}
+
 _pmp_process_merge_repo_for_pass() {
 	local repo_slug="$1"
 	local checkpoint_file="$2"
@@ -1039,6 +1189,7 @@ _pmp_process_merge_repo_for_pass() {
 		printf -v "$completed_all_var" '%s' '0'
 		return 0
 	fi
+	_pmp_skip_prefiltered_repo "$repo_slug" "$checkpoint_file" && return 0
 	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 		|| ! repo_allows_pulse_write_actions "$repo_slug"; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$logfile"
@@ -1054,6 +1205,7 @@ _pmp_process_merge_repo_for_pass() {
 	local repo_merged=0 repo_closed=0 repo_failed=0 _mr_repo_pr_count=0
 	local _mr_repo_list_s=0 _mr_repo_mergeability_s=0 _mr_repo_ruleset_s=0 _mr_repo_branch_protection_s=0 _mr_repo_list_state="complete"
 	local _mr_repo_enrichment_s=0 _mr_repo_pr_s=0 _mr_repo_slowest_pr="" _mr_repo_trust_gate_s=0 _mr_repo_slowest_stages=""
+	local _mr_repo_memo_skips=0
 	local _mr_repo_start _mr_repo_total_s=0
 	_mr_repo_start=$(_pmp_now_epoch)
 
@@ -1074,7 +1226,7 @@ _pmp_process_merge_repo_for_pass() {
 	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
 	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
 	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
-	_PMP_LAST_REPO_TIMING_ROW="${repo_slug}|${_mr_repo_total_s}|${_mr_repo_list_s}|${_mr_repo_mergeability_s}|${_mr_repo_ruleset_s}|${_mr_repo_branch_protection_s}|${repo_merged}|${repo_closed}|${repo_failed}|${_mr_repo_pr_count}|${_mr_repo_list_state}|${_mr_repo_enrichment_s}|${_mr_repo_pr_s}|${_mr_repo_slowest_pr}|${_mr_repo_trust_gate_s}|${_mr_repo_slowest_stages}"
+	_PMP_LAST_REPO_TIMING_ROW="${repo_slug}|${_mr_repo_total_s}|${_mr_repo_list_s}|${_mr_repo_mergeability_s}|${_mr_repo_ruleset_s}|${_mr_repo_branch_protection_s}|${repo_merged}|${repo_closed}|${repo_failed}|${_mr_repo_pr_count}|${_mr_repo_list_state}|${_mr_repo_enrichment_s}|${_mr_repo_pr_s}|${_mr_repo_slowest_pr}|${_mr_repo_trust_gate_s}|${_mr_repo_slowest_stages}|${_mr_repo_memo_skips}"
 	if [[ "$_mr_repo_rc" -eq 5 ]]; then
 		if [[ "$_mr_slice_hit" -eq 1 && ! -f "$stop_flag" ]]; then
 			# Per-repo slice used (GH#38213): keep this repo's own PR cursor,
@@ -1150,10 +1302,11 @@ merge_ready_prs_all_repos() {
 	fi
 
 	local total_merged=0 total_closed=0 total_failed=0
+	local _PMP_PASS_MEMO_SKIPS=0 _PMP_PREFILTER_SKIPPED_REPOS=0 _PMP_PREFILTER_EMPTY_REPOS=""
 
 	local total_eligible_unmerged=0
 	local AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=""
-	local _mr_repo_rows=""
+	local _mr_repo_rows="" _mr_active_repo_rows=""
 	local _mr_checkpoint="" _mr_resume_pending=0 _mr_resumed_from_checkpoint=0
 	local _mr_completed_all=1 _mr_outcomes_complete=1 _mr_diagnostics_complete=1
 	local _mr_primary_timing_rows="" _mr_diagnostic_timing_rows=""
@@ -1161,6 +1314,7 @@ merge_ready_prs_all_repos() {
 	AIDEVOPS_PULSE_MERGE_OUTCOME_DIR=$(_pmp_create_merge_outcome_dir "$_mr_logfile")
 
 	_mr_repo_rows=$(jq -r '.initialized_repos[] | select(.maintenance != false and .pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null) || _mr_repo_rows=""
+	_pmp_filter_empty_merge_repos "$_mr_repo_rows" _mr_active_repo_rows || _mr_active_repo_rows="$_mr_repo_rows"
 	_pmp_prepare_merge_checkpoint_resume "$_mr_repo_rows" "$_mr_checkpoint_file" "$_mr_logfile" \
 		_mr_checkpoint _mr_resume_pending _mr_resumed_from_checkpoint || true
 
@@ -1186,7 +1340,7 @@ merge_ready_prs_all_repos() {
 	fi
 	if [[ "$_mr_completed_all" -eq 1 ]]; then
 		if [[ "$_mr_resumed_from_checkpoint" -eq 0 && "${_PMP_REPO_SLICE_PAUSED:-0}" -eq 0 ]]; then
-			_pmp_collect_same_pass_eligible_unmerged "$_mr_repo_rows" "$_mr_logfile" \
+			_pmp_collect_same_pass_eligible_unmerged "$_mr_active_repo_rows" "$_mr_logfile" \
 				total_eligible_unmerged _mr_outcomes_complete || _mr_outcomes_complete=0
 		fi
 	fi
@@ -1196,7 +1350,7 @@ merge_ready_prs_all_repos() {
 	_pmp_record_pass_zero_progress "$total_eligible_unmerged" "$total_merged" "$total_closed" \
 		"$_mr_completed_all" "$_mr_resumed_from_checkpoint" "$_mr_outcomes_complete"
 	if [[ "$_mr_completed_all" -eq 1 ]]; then
-		_pmp_run_stuck_diagnostics_for_repos "$_mr_repo_rows" "$_mr_pass_start" "$_mr_logfile" \
+		_pmp_run_stuck_diagnostics_for_repos "$_mr_active_repo_rows" "$_mr_pass_start" "$_mr_logfile" \
 			_mr_diagnostic_timing_rows _mr_diagnostics_complete || _mr_diagnostics_complete=0
 	fi
 	_pmp_log_repo_timing_rows "$_mr_primary_timing_rows" "$_mr_diagnostic_timing_rows"
@@ -1214,7 +1368,7 @@ merge_ready_prs_all_repos() {
 		>"$_health_delta_file" || true
 	local _mr_pass_total_s=0
 	_pmp_add_elapsed_seconds _mr_pass_total_s "$_mr_pass_start"
-	echo "[pulse-wrapper] deterministic_merge_pass timing: total_s=${_mr_pass_total_s} merged=${total_merged} closed_conflicting=${total_closed} failed=${total_failed} eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
+	echo "[pulse-wrapper] deterministic_merge_pass timing: total_s=${_mr_pass_total_s} merged=${total_merged} closed_conflicting=${total_closed} failed=${total_failed} eligible_unmerged=${total_eligible_unmerged} memo_skips=${_PMP_PASS_MEMO_SKIPS} prefilter_skipped_repos=${_PMP_PREFILTER_SKIPPED_REPOS}" >>"$_mr_logfile"
 	[[ -n "$AIDEVOPS_PULSE_MERGE_OUTCOME_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_MERGE_OUTCOME_DIR"
 	return 0
 }

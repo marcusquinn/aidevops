@@ -587,12 +587,19 @@ _dispatch_census_store_last_good() {
 	return 0
 }
 
+# Stdout: PULSE_CENSUS_LAST_GOOD_MAX_AGE_S in seconds (default 3600; 0 disables).
+_dispatch_census_last_good_max_age() {
+	local max_age="${PULSE_CENSUS_LAST_GOOD_MAX_AGE_S:-3600}"
+	[[ "$max_age" =~ ^[0-9]{1,6}$ ]] || max_age=3600
+	printf '%s\n' "$((10#$max_age))"
+	return 0
+}
+
 # Stdout: the fresh stored candidate array, or '[]' when missing, malformed,
 # future-dated or older than PULSE_CENSUS_LAST_GOOD_MAX_AGE_S (0 disables).
 _dispatch_census_last_good_candidates() {
-	local repo_slug="$1" file="" now=0 max_age="${PULSE_CENSUS_LAST_GOOD_MAX_AGE_S:-3600}" summary="" age="" count=""
-	[[ "$max_age" =~ ^[0-9]{1,6}$ ]] || max_age=3600
-	max_age=$((10#$max_age))
+	local repo_slug="$1" file="" now=0 max_age=0 summary="" age="" count=""
+	max_age=$(_dispatch_census_last_good_max_age)
 	file=$(_dispatch_census_last_good_file "$repo_slug")
 	now=$(_dispatch_first_wave_now_s)
 	if ((max_age > 0)) && [[ "$now" =~ ^[0-9]+$ && -f "$file" && ! -L "$file" ]] &&
@@ -605,6 +612,93 @@ _dispatch_census_last_good_candidates() {
 		jq -c '.candidates' "$file" 2>/dev/null && return 0
 	fi
 	printf '[]\n'
+	return 0
+}
+
+# GH#38727: a full census that stops early (deadline or slow-repository
+# deferral) contributed nothing for the repositories it did not reach, though
+# their last completed lists were minutes old: rounds alternated between 130+
+# and 1-5 candidates while slots idled. Unreached repositories now offer their
+# fresh last-good candidates without being polled (no poll stamp, no cursor
+# advance, no source API read; product discovery stays incomplete). The
+# GH#38483 contract holds: every candidate still passes the live dispatch
+# gates, and a carried list never proves absence or completeness.
+#
+# Stdout: a file holding one JSON object that maps "<slug>#<number>" to the
+# latest local dispatch epoch from the dispatch ledger ({} when unreadable;
+# carried lists are then unfiltered and the live gates still apply).
+_dispatch_census_dispatched_index() {
+	local ledger="${AIDEVOPS_DISPATCH_LEDGER_FILE:-${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-ledger.jsonl}"
+	local index=""
+	index=$(mktemp) || return 1
+	if ! [[ -f "$ledger" && ! -L "$ledger" ]] || ! jq -nRc '
+		reduce (inputs | fromjson? | objects
+			| select((.repo_slug | strings | length > 0) and ((.issue_number // "") | tostring | test("^[0-9]+$")))
+			| {key: "\(.repo_slug)#\(.issue_number)", at: (try (.dispatched_at | fromdateiso8601) catch 0)}) as $entry
+		({}; .[$entry.key] = ([(.[$entry.key] // 0), $entry.at] | max))' "$ledger" >"$index" 2>/dev/null; then
+		printf '{}\n' >"$index"
+	fi
+	printf '%s\n' "$index"
+	return 0
+}
+
+# One unreached repository's carried candidates: its fresh last-good list,
+# minus issues launched since the list was stored (the snapshot predates
+# their claim), with the PR-backlog and capability-cooldown filters reapplied.
+# Args: slug, path, pulse-hours start/end, expiry, dispatched index file.
+# Stdout: candidate JSON array ('[]' when nothing can be carried).
+_dispatch_census_carry_repo() {
+	local repo_slug="$1" repo_path="$2" ph_start="$3" ph_end="$4" expires="$5" index="$6"
+	local file="" now=0 max_age=0 candidates="[]"
+	file=$(_dispatch_census_last_good_file "$repo_slug")
+	max_age=$(_dispatch_census_last_good_max_age)
+	now=$(_dispatch_first_wave_now_s)
+	if ((max_age > 0)) && [[ "$now" =~ ^[0-9]+$ && -f "$file" && ! -L "$file" && -f "$index" ]] &&
+		check_repo_pulse_schedule "$repo_slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
+		candidates=$(jq -c --argjson now "$now" --argjson max "$max_age" --arg slug "$repo_slug" \
+			--slurpfile dispatched "$index" '
+			select((.candidates | arrays | length > 0)
+				and (.stored_at | numbers | . <= $now and ($now - .) <= $max))
+			| .stored_at as $stored | ($dispatched[0] // {}) as $launched
+			| [.candidates[] | select(($launched["\($slug)#\(.number)"] // 0) < $stored)]' "$file" 2>/dev/null) || candidates="[]"
+	fi
+	[[ -n "$candidates" ]] || candidates="[]"
+	if [[ "$candidates" != "[]" ]] && declare -F _dispatch_filter_repo_pr_backlog_candidates >/dev/null 2>&1; then
+		candidates=$(_dispatch_filter_repo_pr_backlog_candidates "$repo_slug" "$candidates") || candidates="[]"
+	fi
+	if [[ -n "$candidates" && "$candidates" != "[]" ]] && declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1; then
+		candidates=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$candidates")
+	fi
+	printf '%s\n' "${candidates:-[]}"
+	return 0
+}
+
+# Append carried candidates for every repository row from the first one the
+# census did not poll to the end of its rotation. Full censuses only: first
+# waves have their own bounds, leads and durable remainder.
+# Args: census start cursor, first unpolled slug, destination JSONL file,
+#   age bonus/day, age bonus cap, current epoch.
+_dispatch_census_carry_unreached() {
+	local cursor="$1" stopped_at="$2" tmp_candidates="$3" age_bonus_per_day="$4" age_bonus_cap="$5" current_epoch="$6"
+	local index="" reached=0 repos=0 count=0 carried="" carried_count=0
+	local repo_slug="" repo_path="" repo_priority="" ph_start="" ph_end="" expires="" repo_interval="" repo_lead=""
+	index=$(_dispatch_census_dispatched_index) || return 0
+	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval repo_lead; do
+		[[ "$reached" == 1 || "$repo_slug" == "$stopped_at" ]] || continue
+		reached=1
+		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		carried=$(_dispatch_census_carry_repo "$repo_slug" "$repo_path" "$ph_start" "$ph_end" "$expires" "$index")
+		[[ -n "$carried" && "$carried" != "[]" ]] || continue
+		carried_count=$(jq 'length' <<<"$carried" 2>/dev/null) || carried_count=0
+		[[ "$carried_count" =~ ^[0-9]+$ ]] || carried_count=0
+		repos=$((repos + 1))
+		count=$((count + carried_count))
+		_append_ranked_repo_candidates "$carried" "$repo_slug" "$repo_path" \
+			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
+	done < <(_dispatch_repository_rows "$cursor")
+	rm -f "$index"
+	((count == 0)) ||
+		echo "[pulse-wrapper] Candidate census carried last-good candidates: repos=${repos} count=${count} from=${stopped_at} (GH#38727)" >>"$LOGFILE"
 	return 0
 }
 
@@ -913,6 +1007,127 @@ _dispatch_census_deadline() {
 	return 0
 }
 
+# GH#38730: a repository scan spends most of its time waiting on 5-6
+# sequential GitHub reads, so a serial full census of ~25 awake repositories
+# reached its 180s deadline in most cycles while slots idled. Full censuses
+# now overlap up to PULSE_CENSUS_MAX_PARALLEL scans (default 4, 1 = serial,
+# at most 16); bounded because unbounded fan-out (t19041) timed out reads.
+# First waves stay serial: they stop as soon as they can fill free slots.
+_dispatch_census_parallelism() {
+	local parallel="${PULSE_CENSUS_MAX_PARALLEL:-4}"
+	[[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" != 1 ]] || parallel=1
+	[[ "$parallel" =~ ^[1-9][0-9]?$ ]] || parallel=4
+	parallel=$((10#$parallel))
+	((parallel <= 16)) || parallel=16
+	printf '%s\n' "$parallel"
+	return 0
+}
+
+# One census repository scan: enumerate, then apply the pre-ranking filters.
+# Results go to <prefix>.json (candidates), <prefix>.complete (product
+# completeness) and <prefix>.rc (scan status, written last), so the scan can
+# run in the background. Its caches are keyed by slug and replaced atomically.
+# Args: output prefix, slug, path, base budget, remaining census seconds,
+#   per-repo limit, dependency normalization mode.
+_dispatch_census_scan_repo() {
+	local prefix="$1" repo_slug="$2" repo_path="$3" base="$4" remaining="$5" limit="$6" mode="$7"
+	local candidates="" rc=0
+	printf '0\n' >"${prefix}.complete"
+	candidates=$(_dispatch_census_enumerate_repo "$repo_slug" "$repo_path" "$base" "$remaining" \
+		"$limit" "$mode" "${prefix}.complete") || rc=$?
+	# GH#33743: drop unchanged runner_capability_unmet candidates before
+	# they count toward the first-wave candidate target.
+	if declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1 &&
+		[[ -n "$candidates" && "$candidates" != "[]" ]]; then
+		candidates=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$candidates")
+	fi
+	printf '%s\n' "${candidates:-[]}" >"${prefix}.json"
+	printf '%s\n' "$rc" >"${prefix}.rc"
+	return 0
+}
+
+# Start census scan <index> under <dir>; in the background when parallel.
+# <index>.row records "pid|slug|path|priority" for the slot wait and absorb.
+# Args: dir, index, parallelism, slug, path, priority, then the scan's base
+#   budget, remaining census seconds, per-repo limit and normalization mode.
+_dispatch_census_start_scan() {
+	local dir="$1" index="$2" parallel="$3" repo_slug="$4" repo_path="$5" repo_priority="$6"
+	local pid=""
+	shift 6
+	if ((parallel > 1)); then
+		_dispatch_census_scan_repo "${dir}/${index}" "$repo_slug" "$repo_path" "$@" </dev/null >/dev/null &
+		pid="$!"
+	else
+		_dispatch_census_scan_repo "${dir}/${index}" "$repo_slug" "$repo_path" "$@" </dev/null >/dev/null
+	fi
+	printf '%s|%s|%s|%s\n' "$pid" "$repo_slug" "$repo_path" "$repo_priority" >"${dir}/${index}.row"
+	return 0
+}
+
+# Wait until fewer than <parallel> of census scans 1..<launched> still run.
+# Returns 1 when the census deadline passes first.
+_dispatch_census_wait_for_slot() {
+	local dir="$1" launched="$2" parallel="$3" deadline="$4" index=0 live=0 pid="" rest=""
+	while true; do
+		live=0
+		for ((index = 1; index <= launched; index++)); do
+			IFS='|' read -r pid rest 2>/dev/null <"${dir}/${index}.row" || continue
+			if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+				live=$((live + 1))
+			fi
+		done
+		((live >= parallel)) || return 0
+		(($(_dispatch_first_wave_now_s) < deadline)) || return 1
+		sleep 0.2
+	done
+}
+
+# Wait for one background scan. Its clamped budget ends it by the census
+# deadline; one still running 30s later is terminated (its missing status
+# then counts as a failed scan), so a census can never wait unbounded.
+_dispatch_census_await_scan() {
+	local pid="$1" deadline="$2"
+	while kill -0 "$pid" 2>/dev/null; do
+		if (($(_dispatch_first_wave_now_s) >= deadline + 30)); then
+			echo "[pulse-wrapper] Candidate census scan outlived the deadline; terminated pid=${pid} (GH#38730)" >>"$LOGFILE"
+			kill -TERM "$pid" 2>/dev/null || true
+			break
+		fi
+		sleep 0.2
+	done
+	wait "$pid" 2>/dev/null || true
+	return 0
+}
+
+# Absorb census scans <first>..<last> in launch order (waiting for each), so
+# ranking input never depends on completion order.
+# Args: dir, first, last, census deadline, destination JSONL, bonus/day,
+#   bonus cap, epoch.
+# Returns flag bits: 1 a scan failed, 2 product discovery incomplete,
+#   4 candidates appended.
+_dispatch_census_absorb_scans() {
+	local dir="$1" first="$2" last="$3" deadline="$4" tmp_candidates="$5" bonus_day="$6" bonus_cap="$7" epoch="$8"
+	local index=0 flags=0 pid="" repo_slug="" repo_path="" repo_priority="" rc="" complete="" candidates=""
+	for ((index = first; index <= last; index++)); do
+		IFS='|' read -r pid repo_slug repo_path repo_priority 2>/dev/null <"${dir}/${index}.row" || continue
+		[[ -z "$pid" ]] || _dispatch_census_await_scan "$pid" "$deadline"
+		read -r rc 2>/dev/null <"${dir}/${index}.rc" || rc=1
+		read -r complete 2>/dev/null <"${dir}/${index}.complete" || complete=0
+		[[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+		((rc == 0)) || flags=$((flags | 1))
+		if [[ "$repo_priority" == product ]] && { ((rc != 0)) || [[ "$complete" != 1 ]]; }; then
+			flags=$((flags | 2))
+		fi
+		candidates='[]'
+		[[ ! -f "${dir}/${index}.json" ]] || candidates=$(<"${dir}/${index}.json")
+		[[ -n "$candidates" && "$candidates" != "[]" ]] || continue
+		_append_ranked_repo_candidates "$candidates" "$repo_slug" "$repo_path" \
+			"$repo_priority" "$bonus_day" "$bonus_cap" "$epoch" "$tmp_candidates"
+		flags=$((flags | 4))
+	done
+	return "$flags"
+}
+
 build_ranked_dispatch_candidates_json() {
 	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
 	local dependency_normalization_mode="${2:-normalize}"
@@ -930,12 +1145,13 @@ build_ranked_dispatch_candidates_json() {
 		return 0
 	fi
 
-	local tmp_candidates completeness_file product_complete=true scan_failed=0
+	local tmp_candidates scan_dir product_complete=true scan_failed=0 census_flags=0 parallel=1
 	local cursor="" cursor_file="${HOME}/.aidevops/cache/pulse-first-wave-cursor" first_wave_bounds=""
-	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 repo_rc=0 admit_rc=0 polled=0
+	local deadline=0 repo_budget="${PULSE_REPO_ENUMERATION_BUDGET_S:-15}" remaining=0 admit_rc=0 polled=0 stopped_at=""
 	[[ "$repo_budget" =~ ^[1-9][0-9]{0,2}$ ]] || repo_budget=15
 	repo_budget=$((10#$repo_budget))
 	deadline=$(_dispatch_census_deadline)
+	parallel=$(_dispatch_census_parallelism)
 	if [[ "${_PULSE_FIRST_DISPATCH_WAVE:-0}" == "1" ]]; then
 		first_wave_bounds=$(_dispatch_first_wave_bounds)
 	else
@@ -943,7 +1159,7 @@ build_ranked_dispatch_candidates_json() {
 	fi
 	cursor=$(_dispatch_read_census_cursor "$cursor_file")
 	tmp_candidates=$(mktemp) || return 1
-	completeness_file=$(mktemp) || {
+	scan_dir=$(mktemp -d) || {
 		rm -f "$tmp_candidates"
 		return 1
 	}
@@ -951,10 +1167,15 @@ build_ranked_dispatch_candidates_json() {
 
 	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval repo_lead; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		# GH#38730: take a free scan slot before measuring the remainder, so
+		# every launched scan's budget stays clamped to the census deadline.
+		((parallel == 1 || polled < parallel)) ||
+			_dispatch_census_wait_for_slot "$scan_dir" "$polled" "$parallel" "$deadline" || true
 		remaining=$((deadline - $(_dispatch_first_wave_now_s)))
 		if ((remaining <= 0)); then
 			echo "[pulse-wrapper] Candidate census deadline reached; retaining partial candidates and rotation cursor (GH#38226)" >>"$LOGFILE"
 			product_complete=false
+			stopped_at="$repo_slug"
 			break
 		fi
 		# GH#34331: stop a first wave once it can fill its free slots or its budget elapses.
@@ -966,49 +1187,40 @@ build_ranked_dispatch_candidates_json() {
 		_dispatch_census_admit_repo "$repo_slug" "$repo_priority" "$ph_start" "$ph_end" "$expires" \
 			"$repo_interval" "$repo_budget" "$remaining" "$polled" || admit_rc=$?
 		((admit_rc < 2)) || product_complete=false
-		((admit_rc != 3)) || break
+		((admit_rc != 3)) || { stopped_at="$repo_slug" && break; }
 		((admit_rc == 0)) || continue
 		polled=$((polled + 1))
 		# Record that we are polling this repo now (atomic write, non-fatal)
 		update_repo_pulse_timestamp "$repo_slug"
 		[[ -z "$first_wave_bounds" ]] || _dispatch_first_wave_note_polled "$repo_slug" "$repo_lead"
 		[[ -n "$first_wave_bounds" ]] || _dispatch_first_wave_advance_cursor "$repo_slug" pulse-census-cursor
-		local repo_candidates_json
-		printf '0\n' >"$completeness_file"
-		repo_rc=0
-		repo_candidates_json=$(_dispatch_census_enumerate_repo "$repo_slug" "$repo_path" "$repo_budget" "$remaining" \
-			"$per_repo_limit" "$dependency_normalization_mode" "$completeness_file") || repo_rc=$?
-		if ((repo_rc != 0)); then
-			scan_failed=1
-			[[ "$repo_priority" != product ]] || product_complete=false
-		fi
-		if [[ "$repo_priority" == product && "$(<"$completeness_file")" != 1 ]]; then
-			product_complete=false
-		fi
-		# GH#33743: drop unchanged runner_capability_unmet candidates before
-		# they count toward the first-wave candidate target.
-		if declare -F _dispatch_filter_capability_cooled_candidates >/dev/null 2>&1 &&
-			[[ -n "$repo_candidates_json" && "$repo_candidates_json" != "[]" ]]; then
-			repo_candidates_json=$(_dispatch_filter_capability_cooled_candidates "$repo_slug" "$repo_path" "$repo_candidates_json")
-		fi
-		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
-			continue
-		fi
-
-		_append_ranked_repo_candidates "$repo_candidates_json" "$repo_slug" "$repo_path" \
-			"$repo_priority" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" "$tmp_candidates"
-		# GH#33647/GH#34331: partial waves never imply complete product discovery.
-		[[ -z "$first_wave_bounds" ]] || product_complete=false
+		_dispatch_census_start_scan "$scan_dir" "$polled" "$parallel" "$repo_slug" "$repo_path" "$repo_priority" \
+			"$repo_budget" "$remaining" "$per_repo_limit" "$dependency_normalization_mode"
+		# A serial census absorbs each scan at once: first waves count candidates between repositories.
+		((parallel > 1)) || _dispatch_census_absorb_scans "$scan_dir" "$polled" "$polled" "$deadline" \
+			"$tmp_candidates" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" || census_flags=$((census_flags | $?))
 	done < <(_dispatch_repository_rows "$cursor")
+	if ((parallel > 1 && polled > 0)); then
+		_dispatch_census_absorb_scans "$scan_dir" 1 "$polled" "$deadline" "$tmp_candidates" \
+			"$age_bonus_per_day" "$age_bonus_cap" "$current_epoch" || census_flags=$((census_flags | $?))
+		echo "[pulse-wrapper] Candidate census parallel scans: repos=${polled} max_parallel=${parallel} (GH#38730)" >>"$LOGFILE"
+	fi
+	rm -rf "$scan_dir"
+	(((census_flags & 1) == 0)) || scan_failed=1
+	(((census_flags & 2) == 0)) || product_complete=false
+	# GH#33647/GH#34331: partial waves never imply complete product discovery.
+	(((census_flags & 4) == 0)) || [[ -z "$first_wave_bounds" ]] || product_complete=false
+	[[ -z "$stopped_at" || -n "$first_wave_bounds" ]] || _dispatch_census_carry_unreached "$cursor" "$stopped_at" \
+		"$tmp_candidates" "$age_bonus_per_day" "$age_bonus_cap" "$current_epoch"
 
 	if [[ ! -s "$tmp_candidates" ]]; then
-		rm -f "$tmp_candidates" "$completeness_file"
+		rm -f "$tmp_candidates"
 		printf '[]\n'
 		[[ "$scan_failed" -eq 0 ]]
 		return $?
 	fi
 
-	_dispatch_finish_ranked_census "$tmp_candidates" "$completeness_file" "$product_complete"
+	_dispatch_finish_ranked_census "$tmp_candidates" "$product_complete"
 	return 0
 }
 
@@ -2080,6 +2292,16 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
+	# GH#38696: this runs inside the LLM supervisor phase, after the instance
+	# lock is released and the cycle budget is spent, so an in-process
+	# dispatch_max always stops before enumeration. Wake a detached refill-only
+	# run instead: it takes the lock with a fresh budget from the active bundle.
+	if declare -F pulse_event_refill_wake_underfilled >/dev/null 2>&1 &&
+		pulse_event_refill_wake_underfilled; then
+		echo "[pulse-wrapper] Active pulse refill: woke a fresh-budget refill-only run (source=active-pulse, GH#38696)" >>"$LOGFILE"
+		echo "$now_epoch"
+		return 0
+	fi
 	local active_refill_dispatched
 	active_refill_dispatched=$(dispatch_max) || active_refill_dispatched=0
 	[[ "$active_refill_dispatched" =~ ^[0-9]+$ ]] || active_refill_dispatched=0

@@ -521,7 +521,8 @@ try:
         path = path.parent
     free = decimal(str(shutil.disk_usage(path).free))
     for flags in (("--cached",), ()):
-        command = ("git", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
+        # Sizing must not refresh the source's cached index stats.
+        command = ("git", "-c", "diff.autoRefreshIndex=false", "-C", sys.argv[5], "diff", *flags, *OPTIONS, "--diff-filter=d")
         with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
             for chunk in iter(lambda: process.stdout.read(65536), b""):
                 estimate += len(chunk)

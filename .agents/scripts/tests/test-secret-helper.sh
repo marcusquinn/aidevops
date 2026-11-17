@@ -577,6 +577,9 @@ test_locked_injection_exits_bounded() {
 	setup
 	trap 'teardown' RETURN
 	export AIDEVOPS_TEST_LOCKED=true
+	# The 12s production default exceeds the outer 8s watchdog. Exercise the
+	# same bounded decrypt promptly using its supported timeout override.
+	local -x AIDEVOPS_SECRET_READ_TIMEOUT_SECONDS=2
 	export AIDEVOPS_TEST_SECRET="fixture-${TEST_DIR##*/}"
 	local result=""
 	# shellcheck disable=SC2016 # The child shell expands the marker path.

@@ -133,7 +133,7 @@ assert_windowed_hold() {
 
 write_state 2
 GH_COMMENT_METRICS=""
-ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/true"
+ISSUE_BODY_SNAPSHOT_HELPER="$(type -P true)"
 export ISSUE_BODY_SNAPSHOT_HELPER
 fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if printf '%s' "$fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo --json body --jq' \
@@ -144,7 +144,7 @@ else
 	fail "repeated zero-output launches switch to URL-only bootstrap prompt" "$fallback_prompt"
 fi
 
-ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/false"
+ISSUE_BODY_SNAPSHOT_HELPER="$(type -P false)"
 fallback_without_snapshot=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if [[ "$fallback_without_snapshot" == *"implementation is not authorized"* ]] \
 	&& [[ "$fallback_without_snapshot" != *"issue-body-snapshot-helper.sh fetch"* ]]; then
@@ -152,7 +152,7 @@ if [[ "$fallback_without_snapshot" == *"implementation is not authorized"* ]] \
 else
 	fail "URL-only fallback refuses implementation when snapshot capture fails" "$fallback_without_snapshot"
 fi
-ISSUE_BODY_SNAPSHOT_HELPER="/usr/bin/true"
+ISSUE_BODY_SNAPSHOT_HELPER="$(type -P true)"
 
 write_state 1
 GH_COMMENT_ZERO_COUNT=0

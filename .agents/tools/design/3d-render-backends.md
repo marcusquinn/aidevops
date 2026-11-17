@@ -144,12 +144,16 @@ implemented.
 H=~/.aidevops/agents/scripts/blender-render-helper.sh
 # 1. Estimate (calls media-gen-cost-helper.sh; setup hours are per worker)
 $H plan --frames 1-240 --workers 4 --gpu-rate <hourly> --gpu-secs-per-frame <measured> --setup-hours 0.25
-# 2. Package: manifest.json, enable_gpu.py, scene_overrides.py (settings + Blender pin), file hashes
-$H package --blend scene.blend --out job/ --frames 1-240 --blender-version <pinned> --samples 128 --asset textures/wood.png
+# 2. Package: manifest.json, enable_gpu.py, scene_overrides.py (settings + Blender pin),
+#    render_worker.sh, file hashes. --blender-sha256 (Blender's published hash of
+#    blender-<X.Y.Z>-linux-x64.tar.xz) makes workers install the pinned official build
+#    and verify it, so any CUDA image works (e.g. runpod/pytorch)
+$H package --blend scene.blend --out job/ --frames 1-240 --blender-version 5.3.0 \
+  --blender-sha256 <published-sha256> --samples 128 --asset textures/wood.png
 # 3. Submit: prints the billable contract and an approval token; re-run with the token after approval
-$H submit --manifest job/manifest.json --workers 4 --gpu-rate <hourly> --budget-usd <ceiling> \
-  --deadline-minutes <minutes> --image <approved-cuda-blender-image> --approve-contract <token> --live
-# 4. Per pod (host/port from status): stage inputs, monitor, fetch (re-runs resume)
+$H submit --manifest job/manifest.json --workers 4 --gpu-rate <hourly-for-cloud-type> --budget-usd <ceiling> \
+  --deadline-minutes <minutes> --cloud-type COMMUNITY --image runpod/pytorch:<tag> --approve-contract <token> --live
+# 4. Per pod (host/port from status): stage inputs, monitor (BRH_ log lines), fetch (re-runs resume)
 $H stage --job job/ --host <pod-ip> --port <ssh-port> --live
 $H status --job job/ --live
 $H fetch --job job/ --host <pod-ip> --port <ssh-port> --live
@@ -158,15 +162,43 @@ $H teardown --job job/ --live
 ```
 
 Guardrails: `submit` refuses without `--budget-usd`, `--deadline-minutes`, `--image`
-and a matching token; worst case (workers x rate x (deadline + `--overhead-minutes`,
-default 15) + `--storage-usd`) must fit the budget; the token covers the manifest
-hash, so changed scene or asset files are refused. Pods wait for `stage`, render under
-a deadline `timeout`, check the pinned Blender version and remove themselves. `fetch`
-lists missing frame numbers and writes `frames/SHA256SUMS`; `teardown --live` refuses
-while frames are missing (`--force-discard` overrides) and fails if pods remain listed.
-The rate is the quoted rate: confirm it in `status`. Network volumes created outside
-the helper need a dashboard check. Live verification needs a Runpod account and spend
-approval and is operator-owned.
+and a matching token. The worst case, workers × rate × (deadline + `--fetch-minutes`
+(default 10) + `--overhead-minutes` (default 15)) + `--storage-usd`, must fit the
+budget. The token covers the manifest hash (scene, assets, Blender pin and SHA256,
+worker script), the image, GPU, `--cloud-type` (default SECURE, runpodctl's
+default, so quote that rate) and the time limits. Changed scene, asset or worker
+files are refused.
+
+Pod lifecycle:
+- Each pod starts the image's `/start.sh` (sshd) and waits for `stage`.
+- Under the deadline `timeout`, it runs `render_worker.sh`, which installs and
+  verifies Blender when packaged with a SHA256, checks the pin and renders.
+- It then writes `.rendered` and waits up to `--fetch-minutes`.
+- A `fetch` that starts after `.rendered` releases the pod, which then removes
+  itself.
+
+`status --live` prints each pod's `BRH_STAGE`/`BRH_GPU`/`BRH_RESULT`/`BRH_FAIL` log
+lines, so progress needs no SSH. Community pods do not guarantee a public port 22,
+and `stage`/`fetch` need one, so check `status` before staging. A no-capacity
+refusal creates nothing and is retried 3 times (`BRH_CAPACITY_RETRIES`,
+`BRH_CAPACITY_RETRY_SECS`); after that, retry later or approve a new contract.
+
+`fetch` lists missing frame numbers and writes `frames/SHA256SUMS`. `teardown --live`
+refuses while frames are missing (`--force-discard` overrides) and fails if pods
+remain listed. The rate is the quoted rate: confirm it in `status`. Network volumes
+created outside the helper need a dashboard check. Live verification needs a Runpod
+account and spend approval and is operator-owned.
+
+Measured on 2026-11-17 (smoke scene, 960×540, 128 samples):
+- Runpod RTX 4090 community: Blender 5.3.0 download, checksum and extract in 120 s,
+  then OptiX render in 1.7 s, for about $0.02 in total.
+- SaladCloud RTX 3090 low priority: Blender installed in 30 s; CUDA render in 1.4 s
+  (OptiX is unavailable there, see `tools/infrastructure/saladcloud.md`).
+- Local M3 Max Metal: 1.8 s warm, but 280 s on the first run, which compiles the
+  Metal kernels.
+
+Image hashes vary between runs and devices, so compare renders by eye or with a
+tolerance, not by hash.
 
 ## Provider notes
 

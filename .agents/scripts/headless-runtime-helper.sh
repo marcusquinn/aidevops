@@ -1092,6 +1092,8 @@ cmd_run() {
 cmd_canary() {
 	local role="worker"
 	local model_override=""
+	local initial_model=""
+	local tier_name="standard"
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -1104,9 +1106,12 @@ cmd_canary() {
 			model_override="${2:-}"
 			shift 2
 			;;
+		--initial-model)
+			initial_model="${2:-}"
+			shift 2
+			;;
 		--tier)
-			# Accepted for call-site clarity; the dispatcher resolves the
-			# concrete model before invoking this preflight.
+			tier_name="${2:-standard}"
 			shift 2
 			;;
 		*)
@@ -1119,9 +1124,21 @@ cmd_canary() {
 		print_error "The model-replay role is supported only by the run command"
 		return 1
 	fi
+	tier_name=$(_normalize_headless_tier "$tier_name")
 
-	local selected_model
-	selected_model=$(choose_model "$role" "$model_override") || return $?
+	# GH#38717: select exactly as the worker will (_select_cmd_run_model):
+	# requested tier, adaptive mode, dispatcher pick as a same-tier preference.
+	# A selection failure is not a probe failure; report it by exit code (75 =
+	# every candidate backed off, 78 = no candidate configured) and leave
+	# canary-last-fail* untouched, since that shared evidence describes the
+	# last real probe, not this tier.
+	local selected_model="" choose_exit=0
+	selected_model=$(choose_model "$role" "$model_override" "$tier_name" "adaptive" "$initial_model") || choose_exit=$?
+	if [[ "$choose_exit" -ne 0 ]]; then
+		[[ "$choose_exit" -eq 75 ]] || choose_exit=78
+		print_warning "[lifecycle] canary_model_selection_unavailable role=$role tier=$tier_name rc=$choose_exit"
+		return "$choose_exit"
+	fi
 	_enforce_opencode_version_pin || return $?
 	_run_canary_test "$selected_model"
 	return $?
@@ -1137,7 +1154,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
-  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier simple|standard|thinking]
+  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking]
   headless-runtime-helper.sh run --role pulse|worker|triage|model-replay --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier simple|standard|thinking] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--private-workload --private-profile-sha256 HASH] [--standalone-prompt] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]

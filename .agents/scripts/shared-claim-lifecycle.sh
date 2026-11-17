@@ -503,6 +503,29 @@ _scl_worker_issue_number() {
 }
 
 #######################################
+# _orphan_recovery_pr_title — validator-compliant recovery PR title (GH#38781)
+#
+# Titles must pass full-loop's squash-subject validator: `GH#N: ` task prefix
+# or a Conventional Commit type. Legacy `auto-recover:`/`checkpoint:` titles
+# are no longer generated.
+# Arguments: $1 issue number (may be empty), $2 recovery mode ("draft" or other)
+# Output: title on stdout
+#######################################
+_orphan_recovery_pr_title() {
+	local issue_number="$1"
+	local recovery_mode="$2"
+	local subject="chore: auto-recover orphaned worker branch"
+	if [[ "$recovery_mode" == "draft" ]]; then
+		subject="chore: recover dirty worker worktree checkpoint"
+	fi
+	if [[ -n "$issue_number" ]]; then
+		subject="GH#${issue_number}: ${subject}"
+	fi
+	printf '%s\n' "$subject"
+	return 0
+}
+
+#######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
@@ -619,14 +642,11 @@ _attempt_orphan_recovery_pr() {
 	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 
 	# Build PR metadata. Non-closing issue reference by design (GH#32933).
-	local pr_title="auto-recover: orphaned worker branch"
+	local pr_title=""
+	pr_title=$(_orphan_recovery_pr_title "$issue_number" "$recovery_mode")
 	local issue_reference_line=""
 	if [[ -n "$issue_number" ]]; then
-		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
 		issue_reference_line="For #${issue_number}"
-	fi
-	if [[ "$recovery_mode" == "draft" ]]; then
-		pr_title="checkpoint: recover dirty worker worktree for #${issue_number}"
 	fi
 
 	local pr_body

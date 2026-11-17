@@ -77,12 +77,15 @@ cat >"$LOG_FILE" <<'EOF'
 {"ts":"2026-07-31T00:28:00Z","op":"issue_edit","repo":"example/repo","number":29,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:available","auto-dispatch"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available","auto-dispatch"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 {"ts":"2026-07-31T00:29:00Z","op":"issue_edit","repo":"example/repo","number":30,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 {"ts":"2026-07-31T00:30:00Z","op":"issue_edit","repo":"example/repo","number":31,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","priority:high"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","priority:high"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:31:00Z","op":"issue_edit","repo":"example/repo","number":32,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_withdrawal_verified":"v1-current-state"},"before":{"capture_status":"ok","labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","labels":["status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:32:00Z","op":"issue_edit","repo":"example/repo","number":33,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","labels":["status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 EOF
 
 output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state.json" \
 	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
 
-[[ "$output" == *"**Anomalies found:** 17"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"**Anomalies found:** 18"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"| #33 |"* && "$output" != *"| #32 |"* ]] || fail "withdrawal proof filtering failed"
 [[ "$output" == *"| #30 |"* ]] || fail "unverified permission grant was hidden"
 [[ "$output" == *"| #31 |"* ]] || fail "permission grant with an extra label removal was hidden"
 [[ "$output" == *"| #3 |"* ]] || fail "unexpected lifecycle transition was hidden"
@@ -100,7 +103,9 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 [[ "$output" == *"| #23 |"* ]] || fail "permission block without a prior active status was hidden"
 [[ "$output" == *"| #25 |"* ]] || fail "planning transition without publication evidence was hidden"
 [[ "$output" == *"| #27 |"* ]] || fail "feedback redispatch with an additional label change was hidden"
-[[ "$output" == *"The audit log stores lengths, not content."* ]] || fail "recovery guidance overclaimed audit content"
+[[ "$output" == *"Alert Triage Contract"* ]] || fail "alert body lacks the automatic triage contract (GH#38770)"
+[[ "$output" == *$'### Files Scope\n\n- READ-ONLY: `~/.aidevops/logs/gh-audit.log`'* ]] || fail "alert body lacks canonical Files Scope (GH#38770)"
+[[ "$output" == *"<!-- gh-audit-anomaly-scanner:"* ]] || fail "alert body lacks scanner marker (GH#38770)"
 [[ "$output" != *"private/repo"* ]] || fail "private repository name leaked into the report"
 [[ "$output" != *"inaccessible/repo"* ]] || fail "unverified repository name leaked into the report"
 [[ "$output" == *"[private repository]"* ]] || fail "redacted repository placeholder was missing"
@@ -220,11 +225,16 @@ cmd_verify_permissions() {
 		printf 'VERIFIED\n'
 		return 0
 	fi
+	if [[ "$target_type" == "issue" && "$target_number" == "43" ]]; then
+		printf 'WITHDRAWN\n'
+		return 1
+	fi
 	printf 'NO_APPROVAL\n'
 	return 1
 }
 for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.sh" \
 	"41|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"43|/runtime/agents/scripts/approval-helper-permissions.sh" \
 	"42|/tmp/approval-helper-permissions-copy.sh"; do
 	_gh_audit_record_op \
 		"issue_edit" "example/repo" "${permission_case%%|*}" \
@@ -235,6 +245,8 @@ for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.s
 done
 jq -e -s 'map(select(.number == 40))[0].flags.permission_approval_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
 	fail "verified permission grant did not produce audit proof"
+jq -e -s 'map(select(.number == 43))[0].flags.permission_withdrawal_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "verified permission withdrawal did not produce audit proof"
 jq -e -s 'map(select(.number == 41 or .number == 42) | .flags == {}) | length == 2 and all' "$PROOF_LOG" >/dev/null ||
 	fail "unverified or foreign permission grant produced trusted audit proof"
 unset -f cmd_verify_permissions
@@ -847,6 +859,44 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 			[[ "$(wc -l <"$TIMELINE_CALLS" | tr -d ' ')" == 5 ]] || fail 'timeline cap not enforced'
 		fi
 	done
+)
+
+# GH#38770: audit alerts are dispatchable only by the producing runner.
+(
+	LOGFILE="${TEST_ROOT}/dedup.log"
+	ALERT_AUTHOR="runner-a"
+	ALERT_MARKER='<!-- gh-audit-anomaly-scanner:2026-01-01T00:00:00Z -->'
+	ALERT_LABELS='[{"name":"monitoring"},{"name":"auto-dispatch"}]'
+	ALERT_CREATED="2999-01-01T00:00:00Z"
+	WRITES="${TEST_ROOT}/dedup-writes"
+	: >"$WRITES"
+	gh() {
+		case "$1 $2" in
+		"api repos/example/repo/issues/7")
+			jq -cn --arg a "$ALERT_AUTHOR" --arg m "$ALERT_MARKER" --arg c "$ALERT_CREATED" --argjson l "$ALERT_LABELS" \
+				'{user:{login:$a},created_at:$c,assignees:[],body:("body " + $m),labels:$l}'
+			;;
+		"issue edit" | "issue comment") printf '%s\n' "$*" >>"$WRITES" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	# shellcheck source=../pulse-dispatch-dedup-layers.sh
+	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
+	title="GH Audit Anomaly Alert: 1 suspicious operations detected"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-a && fail "producing runner was blocked"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-b || fail "other runner was not blocked"
+	_dedup_audit_alert_locality 7 example/repo "$title" "" || fail "unknown self_login did not fail closed"
+	_dedup_audit_alert_locality 7 example/repo "Ordinary task" runner-b && fail "ordinary issue was gated"
+	ALERT_MARKER="no marker"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-b && fail "markerless issue was gated"
+	ALERT_MARKER='<!-- gh-audit-anomaly-scanner:2026-01-01T00:00:00Z -->'
+	[[ ! -s "$WRITES" ]] || fail "fresh alert was flagged stale"
+	ALERT_CREATED="2020-01-01T00:00:00Z"
+	_dedup_audit_alert_locality 7 example/repo "$title" other-maintainer || true
+	[[ ! -s "$WRITES" ]] || fail "non-maintainer runner flagged an alert"
+	_dedup_audit_alert_locality 7 example/repo "$title" example || fail "maintainer runner did not block foreign alert"
+	grep -q 'needs-maintainer-input' "$WRITES" || fail "stale alert was not labelled needs-maintainer-input"
 )
 
 printf 'PASS: expected approval, blocked and self-reversal transitions are retained in the log but excluded from alerts\n'

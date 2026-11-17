@@ -108,7 +108,13 @@ restoration-failed states. `AIDEVOPS_PROGRESS: ...` lines count as explicit
 meaningful progress; ordinary output is not a heartbeat substitute and is not
 copied into status receipts. `progress_overdue` is diagnostic only: missing
 progress does not cancel an operation or shorten its budget. An optional restoration argv runs after every
-terminal command path, and its exit remains independently visible. Raw output
+terminal command path, **including success**, and its exit remains independently visible. It must
+therefore be safe to run after a successful command. For abort-only cleanup (kill remote work, delete
+partial output), pass `restoration_on: "unsuccessful"`: restoration is then skipped after success and
+reported as `restoration_state: not_required`, while failure, timeout, cancel, disposal and session
+deletion still run it. Example: `restoration_command: ["ssh", "host", "pkill -f copy.sh; rm -f partial.sql"]`
+with `restoration_on: "unsuccessful"`. The default `always` and the receipt field `restoration_on` keep
+existing callers unchanged (GH#38704). Raw output
 is represented only by an opaque output ID when terminal evidence storage is
 available. Restoration receipts retain their own `restoration_termination_cause`
 and `restoration_signal`: a budget stop remains `timed_out`, and a disposal stop

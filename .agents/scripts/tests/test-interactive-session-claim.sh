@@ -176,6 +176,13 @@ auth)
 				printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Forbidden"}\n'
 				exit 1
 			fi
+			if [[ -n "${STUB_PERMISSION_SEQ_FILE:-}" && -s "$STUB_PERMISSION_SEQ_FILE" ]]; then
+				seq_perm=$(head -n 1 "$STUB_PERMISSION_SEQ_FILE")
+				tail -n +2 "$STUB_PERMISSION_SEQ_FILE" >"${STUB_PERMISSION_SEQ_FILE}.tmp"
+				mv "${STUB_PERMISSION_SEQ_FILE}.tmp" "$STUB_PERMISSION_SEQ_FILE"
+				printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "$seq_perm"
+				exit 0
+			fi
 			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "${STUB_PERMISSION:-admin}"
 			exit 0
 		fi
@@ -1393,7 +1400,9 @@ lookup_fail_rc=$?
 if [[ $lookup_fail_rc -eq 0 ]] &&
 	[[ ! -f "$lookup_fail_stamp" ]] &&
 	! grep -q 'issue edit 61002' "$STUB_LOG" &&
-	printf '%s' "$lookup_fail_out" | grep -q 'not a maintainer-equivalent collaborator'; then
+	grep -q 'collaborator permission lookup failed' <<<"$lookup_fail_out" &&
+	! grep -q 'not a maintainer-equivalent collaborator' <<<"$lookup_fail_out" &&
+	! grep -q 'external repos should receive a PR' <<<"$lookup_fail_out"; then
 	print_result "permission lookup failure skips public claim lifecycle" 0
 else
 	lookup_fail_log=$(tr '\n' '|' <"$STUB_LOG")
@@ -1415,6 +1424,36 @@ if [[ "$deferred_rc" -eq 75 && ! -f "$deferred_stamp" && "$deferred_out" == *"de
 	print_result "deferred permission claim reports deferral without lifecycle writes" 0
 else
 	print_result "deferred permission claim reports deferral without lifecycle writes" 1 "$deferred_out"
+fi
+
+# GH#38798: a first "none" verdict on an implementing claim is re-verified once
+# with a fresh read; a confirmed admin verdict applies the claim, while a
+# repeated "none" stays an unapplied claim (rc 75 on an auto-dispatch issue).
+seq_file="${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/perm-seq-38798.$$"
+printf 'none\nadmin\n' >"$seq_file"
+: >"$STUB_LOG"
+recheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61004 recheck/repo --implementing --worktree /tmp/recheck-wt 2>&1)
+recheck_rc=$?
+if [[ "$recheck_rc" -eq 0 && "$recheck_out" == *"fresh permission re-check confirmed"* ]] &&
+	grep -q 'issue edit 61004\|issue comment 61004' "$STUB_LOG"; then
+	print_result "GH#38798: none then admin re-check applies implementing claim" 0
+else
+	print_result "GH#38798: none then admin re-check applies implementing claim" 1 "(rc=$recheck_rc, out=${recheck_out:0:300})"
+fi
+
+printf 'none\nnone\n' >"$seq_file"
+: >"$STUB_LOG"
+norecheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_AUTO_DISPATCH=1 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61005 recheck/repo2 --implementing --worktree /tmp/recheck-wt 2>&1)
+norecheck_rc=$?
+rm -f "$seq_file" "${seq_file}.tmp"
+if [[ "$norecheck_rc" -eq 75 && "$norecheck_out" == *"claim NOT applied"* &&
+	"$norecheck_out" == *"http=200 reason=ok"* ]] &&
+	! grep -q 'issue edit 61005' "$STUB_LOG"; then
+	print_result "GH#38798: confirmed none on auto-dispatch exits 75 with http/reason" 0
+else
+	print_result "GH#38798: confirmed none on auto-dispatch exits 75 with http/reason" 1 "(rc=$norecheck_rc, out=${norecheck_out:0:400})"
 fi
 
 # =============================================================================

@@ -424,14 +424,45 @@ mismatches, and additional signals (including body loss or capture failures)
 retain the alert. Each exclusion logs `self_reversal`; the original log stays
 unchanged and the scan cursor still advances. Historical alerts are not rewritten.
 
-Alerts are labelled `monitoring` and `no-auto-dispatch` (GH#34499). The evidence
-is in the producing runner's local `gh-audit.log`, so the review owner is the
-runner that filed the alert (the issue author). Other runners' workers cannot read
-it: before this hold, #34495 used three worker launches that each ended blocked.
-Investigate on the producing runner with the Forensics Workflow above. Then close
-the alert with evidence, or file a separately scoped repair task. Do not remove
-`no-auto-dispatch` to "unstick" an alert; that removal is itself a
-protected-label audit signal.
+Alerts are labelled `monitoring`, `auto-dispatch` and `status:available`
+(GH#38770; previously a `no-auto-dispatch` hold, GH#34499). The evidence is in the
+producing runner's local `gh-audit.log`, so the triage owner is the runner that
+filed the alert (the issue author). Other runners' workers cannot read it: #34495
+used three worker launches that each ended blocked. Locality is enforced at dispatch
+time by `_dedup_audit_alert_locality` (`pulse-dispatch-dedup-layers.sh`,
+`# aidevops:trust-boundary`): for an alert titled `GH Audit Anomaly Alert:` /
+`GH Audit Log Integrity Alert:` that carries the `gh-audit-anomaly-scanner` marker and
+the `monitoring` label, every runner except the author skips it, failing closed when
+the issue or `self_login` is unreadable.
+
+### Alert Triage Contract
+
+The producing runner's worker triages each alert; a human only sees alerts that
+carry a `needs-*` label. For every table row:
+
+1. Find the local record in `gh-audit.log` by `ts` + `repo` + `number`; read `flags`,
+   `caller_*` and `delta`.
+2. Check live state: issue events and timeline, whether the protected label was
+   restored (label-protection Action or self-reversal), and approval or withdrawal
+   proof (`approval-helper.sh verify-permissions` / `verify`).
+3. Classify the entry: `expected` (cite the evidence), `reverted`, or `unexplained`.
+
+Outcome: all entries `expected` or `reverted` → close the alert with one evidence
+comment (`status:done`). Any `unexplained` → add `needs-maintainer-input` plus one
+decision-ready comment naming those entries, and leave the alert open (the label also
+blocks redispatch). A recurring expected shape gets a separately scoped filter-fix
+task, as #38764 did for withdrawals.
+
+Never edit the audit log, never change labels on the target issues, and keep the
+`[private repository]` placeholder in public comments. A `state_capture_unavailable:*`
+signal is a failed read, not evidence of wiped content; the log stores lengths, not
+content.
+
+Stale fallback: when an alert stays unassigned past `AIDEVOPS_AUDIT_ALERT_STALE_HOURS`
+(default 72) because the producing runner never claims it (for example it was retired),
+the pulse on the maintainer runner (`self_login` equals the repo owner) adds
+`needs-maintainer-input` with a one-line comment. Alerts filed before GH#38770 keep
+their `no-auto-dispatch` hold and are not backfilled.
 
 To run the scanner manually:
 

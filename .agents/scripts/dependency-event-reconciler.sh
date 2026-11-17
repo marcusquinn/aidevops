@@ -105,7 +105,7 @@ _der_labels_have_hold() {
 	local labels="$1"
 	local expected=""
 	# GH#38360: a human-owned blocked companion outlives a closed dependency.
-	for expected in needs-maintainer-review needs-maintainer-permissions needs-maintainer-input needs-credentials hold-for-review no-auto-dispatch; do
+	for expected in needs-maintainer-review needs-maintainer-permissions needs-maintainer-input needs-credentials $ISSUE_HUMAN_HOLD_LABELS; do
 		_der_labels_has "$labels" "$expected" && return 0
 	done
 	return 1

@@ -379,6 +379,37 @@ test_child_body_contains_parent_content_and_authors() {
 	return 0
 }
 
+# GH#38827: inlined parent requires-* directives must not gate the
+# consolidation task itself; the worker is told to restore them.
+test_child_body_neutralises_inlined_directives() {
+	local parent_body=$'Intro\nrequires-secrets: A B\n<!-- aidevops:needs-secrets C -->\nrequires-device: d1'
+	local comments='[{"login":"alice","created_at":"2026-01-01T00:00:00Z","body":"note\nrequires-ssh: host"}]'
+	local body
+	body=$(_compose_consolidation_child_body 123 "owner/repo" "t" "$parent_body" "$comments" "@alice" "bug")
+
+	local failmsg=""
+	if grep -Eq '^[[:space:]]*requires-(secrets|ssh|tools|loopback-health|device):' <<<"$body"; then
+		failmsg="${failmsg} | requires-* line still at line start"
+	fi
+	if grep -Eq '<!-- aidevops:needs-secrets [A-Za-z_0-9 ]+ -->' <<<"$body"; then
+		failmsg="${failmsg} | needs-secrets marker still intact"
+	fi
+	if ! grep -qF -- '> requires-secrets: A B' <<<"$body" ||
+		! grep -qF -- '> requires-ssh: host' <<<"$body"; then
+		failmsg="${failmsg} | directives not quoted"
+	fi
+	if ! grep -qF -- 'Restore each one in the merged spec unquoted' <<<"$body"; then
+		failmsg="${failmsg} | restore instruction missing"
+	fi
+
+	if [[ -z "$failmsg" ]]; then
+		print_result "inlined requires-* directives are neutralised with restore instruction" 0
+	else
+		print_result "inlined requires-* directives are neutralised with restore instruction" 1 "$failmsg"
+	fi
+	return 0
+}
+
 # GH#37809: a blocked parent hands status:blocked (not status:available) to its
 # consolidated successor; ownership statuses are still never copied.
 test_child_body_carries_blocked_status_to_successor() {
@@ -1870,6 +1901,7 @@ main() {
 	test_non_consolidating_comment_call_budget
 	test_dispatch_creates_child_issue
 	test_child_body_contains_parent_content_and_authors
+	test_child_body_neutralises_inlined_directives
 	test_child_body_carries_blocked_status_to_successor
 	test_dedup_skips_when_child_exists
 	test_consolidation_child_exists_detects_existing

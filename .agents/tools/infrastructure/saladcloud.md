@@ -22,8 +22,8 @@ tools:
 ## Quick Reference
 
 - **What**: per-second consumer RTX GPUs (3090/4090/5090 class) on interruptible nodes with ephemeral local disk. Cheapest route for resumable batch work such as frame-range renders; wrong for long stateful sessions.
-- **CLI**: `saladcloud` (GitHub `SaladTechnologies/salad-cloud-cli`, MIT, **beta**, examples here target v0.1.0). Always run `saladcloud -o json <command>`; `<command> --help` is the reference for the installed version.
-- **Credentials**: `aidevops secret set SALAD_API_KEY`, then `aidevops secret SALAD_API_KEY -- saladcloud ...`. Set `SALAD_ORGANIZATION`, `SALAD_PROJECT` (URL names) or pass `--org`/`--project`. Prefer this over `saladcloud login`, which stores the key in a plaintext config file.
+- **CLI**: `saladcloud` (GitHub `SaladTechnologies/salad-cloud-cli`, MIT, **beta**, examples here target v0.2.0). Always run `saladcloud -o json <command>`; `<command> --help` is the reference for the installed version.
+- **Credentials**: store an account-named key (`aidevops secret set SALAD_<ACCOUNT>_API_KEY --provider saladcloud --account <ref>`), declare it once with `aidevops secret default saladcloud SALAD_<ACCOUNT>_API_KEY`, then run `aidevops secret SALAD_API_KEY -- saladcloud ...`. A stored bare `SALAD_API_KEY` always wins over the default; remove it (`aidevops secret rm SALAD_API_KEY`) after migrating. Set `SALAD_ORGANIZATION`, `SALAD_PROJECT` (URL names) or pass `--org`/`--project`. Prefer this over `saladcloud login`, which stores the key in a plaintext config file.
 - **No prompts**: export `SALAD_CLI_NO_PROMPT=1` for agent runs; a missing key then fails with a JSON hint instead of waiting.
 - **Money rule**: a container group bills while it runs. `container-groups delete` is immediate with no confirmation and the name is never reusable. Follow the billable deployment contract in `tools/infrastructure/cloud-gpu.md`.
 - **Rendering playbook**: `tools/design/3d-render-backends.md`.
@@ -34,9 +34,9 @@ tools:
 
 ```bash
 # macOS/Linux installer verifies release checksums; installs to ~/.local/bin
-# Pin while in beta: SALAD_CLI_VERSION=v0.1.0 (see the overview page under Sources)
+# Pin while in beta: SALAD_CLI_VERSION=v0.2.0 (see the overview page under Sources)
 saladcloud version
-saladcloud changelog --since 0.1.0   # offline: what changed since the docs you know
+saladcloud changelog --since 0.2.0   # offline: what changed since the docs you know
 
 export SALAD_CLI_NO_PROMPT=1
 aidevops secret SALAD_API_KEY -- saladcloud -o json whoami   # masked key, org, project and their sources
@@ -48,8 +48,10 @@ Alternatives: `go install github.com/saladtechnologies/salad-cloud-cli/cmd/salad
 `gh attestation verify <archive> --repo SaladTechnologies/salad-cloud-cli`.
 
 Account creation, organizations, projects, billing, API keys, AI Gateway keys
-and SSH public-key registration stay in the Portal. Organizations need credits
-before anything can start.
+and SSH public-key registration stay in the Portal. A new key authenticates
+(`whoami` shows `"authenticated": true`) but `orgs list` stays empty until an
+organization is created in the Portal; organizations need credits before
+anything can start. The API cannot read back the registered SSH key.
 
 ## Common commands
 
@@ -84,8 +86,9 @@ rejects both scope flags.
   `5` rate limited, `6` invalid input, `7` network, `10` AI Gateway billing
   refusal. In JSON mode the last stderr line is `{"error":{...,"hint":...}}`; act
   on the `hint`.
-- Auth failures (`3`): ask the user to store the key with `aidevops secret set
-  SALAD_API_KEY` in their own terminal. Never ask for a key in chat.
+- Auth failures (`3`): check `aidevops secret resolve saladcloud`; if no default
+  is declared, ask the user to store or declare the key in their own terminal
+  (see Credentials above). Never ask for a key in chat.
 - Pass `--org`/`--project` on every command instead of `use` or `config set`.
   If a name is not found, ask; never pick one from a list.
 - Read `warning:` and `note:` lines on stderr after every write; verify every
@@ -99,6 +102,19 @@ rejects both scope flags.
   success (the relay drops exit codes); check the output instead.
 - Logs, env vars, job input/output and transcripts can contain secrets: redact
   before quoting.
+- `pending` with `container.size: 0` means the image is not cached yet and no
+  node is allocating. `stop` and `start` are rejected in this state; only
+  `delete` works. Nothing bills until an instance runs. In a 2026-11 test, a
+  new organization's groups stayed `pending` for 7–10 minutes for about an
+  hour, while `availability` reported free nodes and the log API returned 503.
+  An hour later the same config reached `running` about 8 minutes after create.
+  Give a first deployment `--wait --timeout 15m`, and treat a longer `pending`
+  as a provider-side delay: delete and retry later rather than changing the
+  config.
+- `aidevops secret NAME -- saladcloud ... -- <command>` loses the second
+  `--`, which `container-groups create` needs before the container command.
+  Put the `saladcloud` call in a script and run
+  `aidevops secret SALAD_API_KEY -- bash script.sh`.
 
 | Policy | Commands |
 |--------|----------|
@@ -113,7 +129,13 @@ rejects both scope flags.
 Nodes are interruptible and local disk is ephemeral, so design for loss:
 
 1. Bake the pinned Blender build and `enable_gpu.py` into the image
-   (`tools/design/3d-render-backends.md`).
+   (`tools/design/3d-render-backends.md`). Render with **CUDA, not OptiX**.
+   On a 2026-11 RTX 3090 node (plain `ubuntu:24.04`,
+   `NVIDIA_DRIVER_CAPABILITIES=all`), the container had `libcuda` but no
+   `libnvoptix`. Cycles OptiX failed (`error code 7804`) and a script that
+   tolerates fallback rendered on the CPU. CUDA rendered the same frame on the
+   GPU in 1.4 s. Make GPU selection fail hard on a missing device, as the
+   helper's `enable_gpu.py` does.
 2. Keep scenes and frames in external object storage; each worker pulls its
    inputs and uploads every finished frame immediately.
 3. Feed frame ranges through a job queue (`queues`, `queues jobs create`) so a

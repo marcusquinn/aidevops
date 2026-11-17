@@ -1743,6 +1743,11 @@ _clean_worktree_index_is_readable() {
 	local worktree_branch="$2"
 	local audit_context="$3"
 
+	# An absent source has no index to protect; the archive step reports
+	# path-already-gone and only stale metadata remains to be pruned.
+	if [[ ! -e "$worktree_path" && ! -L "$worktree_path" ]]; then
+		return 0
+	fi
 	if GIT_OPTIONAL_LOCKS=0 git -C "$worktree_path" status --porcelain >/dev/null 2>&1; then
 		return 0
 	fi
@@ -1929,6 +1934,20 @@ _clean_removal_inventory() {
 	return 0
 }
 
+# t19076 (GH#38818): read-only. Returns 0 (stop) when a capacity pass has a
+# valid deadline that has passed, so the pass ends before the caller's hard
+# timeout can kill git inside `git worktree remove` and leave a half-deleted
+# tree. Touches neither the cursor nor the attempt count.
+_clean_capacity_deadline_stop() {
+	local candidate="$1"
+	local deadline="${AIDEVOPS_WORKTREE_CLEAN_DEADLINE_EPOCH:-}"
+	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 1
+	[[ "$deadline" =~ ^[0-9]{9,11}$ ]] || return 1
+	[[ "$(date +%s)" -ge "$deadline" ]] || return 1
+	echo "Capacity pass: deadline reached before ${candidate}; no further removals this pass" >&2
+	return 0
+}
+
 # Args: $1=default_branch, $2=main_worktree_path, $3=remote_state_unknown,
 #       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged,
 #       $7=closed_pr_branches
@@ -1936,6 +1955,7 @@ _clean_capacity_checkpoint() {
 	local wt_path="$1"
 	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
 	[[ "$capacity_attempted" -lt 20 ]] || return 1
+	! _clean_capacity_deadline_stop "$wt_path" || return 1
 	# Write ahead so a slow/interrupted removal cannot starve later trees.
 	printf '%s\n' "$wt_path" >"$_WT_CLEAN_CAPACITY_CURSOR" || return 1
 	capacity_attempted=$((capacity_attempted + 1))
@@ -1995,6 +2015,8 @@ _clean_remove_merged() {
 				audit_context="$_WT_CLEAN_LAST_AUDIT_CONTEXT"
 				local preserve_branch="$_WT_CLEAN_LAST_PRESERVE_BRANCH"
 				if [[ -n "$merge_type" ]]; then
+					# Classification can outlast the deadline; re-check before any lease.
+					_clean_capacity_deadline_stop "$worktree_path" && break
 					echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
 					if _clean_protected_contains "$worktree_path" &&
 						! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then

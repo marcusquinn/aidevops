@@ -605,11 +605,14 @@ _check_no_init_repos() {
 # plus sync-workflows-helper.sh --apply --install-missing. Idempotent:
 # sync-workflows-helper.sh skips repos with an open sync PR, the tracking
 # issue is looked up before creation, and attempts are rate-limited in state.
+# Repos where the runner lacks ADMIN/MAINTAIN are skipped before filing, and
+# an existing undeliverable tracking issue is held (GH#38702).
 #######################################
 readonly REQUIRED_TRUST_WORKFLOWS=("issue-triage-gate")
 readonly TRUST_WORKFLOW_ISSUE_TITLE="chore: install aidevops issue triage gate"
 readonly TRUST_VISIBILITY_TTL_SECONDS=604800
 readonly TRUST_ATTEMPT_INTERVAL_SECONDS=72000
+readonly TRUST_PERMISSION_CAUSE="the runner account lacks admin or maintain permission on this repository"
 
 #######################################
 # Read one value from the keeper state file (empty when absent).
@@ -688,6 +691,126 @@ _trust_repo_visibility() {
 }
 
 #######################################
+# Echo the open rollout tracking issue number, or nothing when none exists.
+# Args: $1 — slug
+#######################################
+_trust_find_tracking_issue() {
+	local slug="$1"
+	local existing
+	existing=$(gh issue list --repo "$slug" --state open --search "\"${TRUST_WORKFLOW_ISSUE_TITLE}\" in:title" \
+		--json number,title --jq "[.[] | select(.title == \"${TRUST_WORKFLOW_ISSUE_TITLE}\")] | first | .number // empty" 2>/dev/null || true)
+	[[ "$existing" =~ ^[0-9]+$ ]] && echo "$existing"
+	return 0
+}
+
+#######################################
+# Echo rollout eligibility from one REST read (GH#38702), mirroring
+# sync-workflows-helper.sh _install_missing_skip_reason: eligible | archived |
+# insufficient-permission | unknown. The sync helper only opens a PR for
+# ADMIN/MAINTAIN, so a tracking issue filed without that permission is an
+# undeliverable worker dispatch.
+# Args: $1 — slug
+#######################################
+_trust_repo_eligibility() {
+	local slug="$1"
+	local state
+	# A response without a permissions object proves nothing: emit nothing so
+	# it maps to unknown and the caller skips without holding an existing issue.
+	state=$(gh api "repos/${slug}" --jq 'if .archived == true then "archived"
+		elif (.permissions | type) != "object" then empty
+		elif ((.permissions.admin // false) or (.permissions.maintain // false)) then "eligible"
+		else "insufficient-permission" end' 2>/dev/null || true)
+	case "$state" in
+	eligible | archived | insufficient-permission) echo "$state" ;;
+	*) echo unknown ;;
+	esac
+	return 0
+}
+
+#######################################
+# Hold an undeliverable tracking issue (GH#38702): status:blocked with the
+# reason's needs-* companion, plus one comment naming the human step.
+# Idempotent: an issue already carrying status:blocked is left unchanged.
+# Args: $1 — slug, $2 — issue number, $3 — workflow,
+#       $4 — reason class (blocked_needs_label_for_reason), $5 — cause text
+#######################################
+_trust_hold_tracking_issue() {
+	local slug="$1"
+	local issue_number="$2"
+	local workflow="$3"
+	local reason_class="$4"
+	local cause="$5"
+	local blocked
+	blocked=$(gh api "repos/${slug}/issues/${issue_number}" \
+		--jq 'any(.labels[]?; .name == "status:blocked")' 2>/dev/null || true)
+	case "$blocked" in
+	true)
+		# Hold already applied; repair a recovery comment lost to an earlier failure.
+		_trust_post_hold_comment "$slug" "$issue_number" "$workflow" "$cause" repair
+		return 0
+		;;
+	false) ;;
+	*)
+		log_warn "trust-workflows: $slug — could not read #${issue_number} labels; hold not applied"
+		return 0
+		;;
+	esac
+	if ! declare -F set_issue_status >/dev/null 2>&1 || ! declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
+		log_warn "trust-workflows: $slug — status wrappers unavailable; #${issue_number} left unchanged"
+		return 0
+	fi
+	if ! set_issue_status "$issue_number" "$slug" blocked \
+		--add-label "$(blocked_needs_label_for_reason "$reason_class")" >/dev/null 2>&1; then
+		log_warn "trust-workflows: $slug — could not block #${issue_number}"
+		return 0
+	fi
+	_trust_post_hold_comment "$slug" "$issue_number" "$workflow" "$cause" new
+	log_info "trust-workflows: $slug — #${issue_number} blocked: ${cause}"
+	return 0
+}
+
+#######################################
+# Post the hold recovery comment once, identified by a stable marker.
+# Mode "repair" first checks for the marker and posts only when it is absent
+# (and only when the comment list was readable); mode "new" posts directly.
+# Args: $1 slug, $2 issue, $3 workflow, $4 cause, $5 mode (new|repair)
+#######################################
+_trust_post_hold_comment() {
+	local slug="$1"
+	local issue_number="$2"
+	local workflow="$3"
+	local cause="$4"
+	local mode="$5"
+	local marker='<!-- aidevops:trust-hold-recovery -->'
+	if [[ "$mode" == "repair" ]]; then
+		local found
+		if ! found=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments?per_page=100" \
+			--jq '.[] | select(.body | contains("aidevops:trust-hold-recovery")) | .id' 2>/dev/null); then
+			log_warn "trust-workflows: $slug — could not read #${issue_number} comments; recovery comment not verified"
+			return 0
+		fi
+		[[ -z "$found" ]] || return 0
+	fi
+	local body_file
+	body_file=$(mktemp)
+	cat >"$body_file" <<EOF
+The aidevops repo health keeper (r914) cannot install \`${workflow}\` here: ${cause}. A worker using the same account cannot push \`.github/workflows/\` changes either, so dispatch is paused.
+
+Needed: from an account with admin or maintain permission on this repository and the \`workflow\` token scope, run:
+
+\`aidevops sync-workflows --repo ${slug} --workflow ${workflow} --install-missing --apply --issue ${issue_number}\`
+
+The resulting sync PR resolves this issue when it merges.
+
+${marker}
+EOF
+	gh_issue_comment "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 ||
+		log_warn "trust-workflows: $slug — could not comment on #${issue_number}"
+	rm -f "$body_file"
+	return 0
+}
+
+#######################################
 # Find or create the single tracking issue for a rollout.
 # Echoes the issue number on stdout; returns 1 on failure.
 # Args: $1 — slug
@@ -695,9 +818,8 @@ _trust_repo_visibility() {
 _trust_ensure_tracking_issue() {
 	local slug="$1"
 	local existing
-	existing=$(gh issue list --repo "$slug" --state open --search "\"${TRUST_WORKFLOW_ISSUE_TITLE}\" in:title" \
-		--json number,title --jq "[.[] | select(.title == \"${TRUST_WORKFLOW_ISSUE_TITLE}\")] | first | .number // empty" 2>/dev/null || true)
-	if [[ "$existing" =~ ^[0-9]+$ ]]; then
+	existing=$(_trust_find_tracking_issue "$slug")
+	if [[ -n "$existing" ]]; then
 		echo "$existing"
 		return 0
 	fi
@@ -769,7 +891,6 @@ _trust_install_one() {
 	local workflow="$2"
 	local dry_run="$3"
 	local check_helper="${SCRIPT_DIR}/check-workflows-helper.sh"
-	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local class
 	class=$("$check_helper" --json --repo "$slug" --workflow "$workflow" 2>/dev/null |
 		jq -r 'select(.workflow == "'"$workflow"'") | .classification // empty' 2>/dev/null | sed -n '1p' || true)
@@ -807,18 +928,39 @@ _trust_install_one() {
 		echo skipped
 		return 0
 	fi
+	[[ "$dry_run" == "1" ]] || _trust_state_set "trust_workflow_attempted" "${slug}|${workflow}" "$now"
+
+	# GH#38702: decide eligibility before any side effect. Only ADMIN/MAINTAIN
+	# can receive the sync PR; any other filing is an undeliverable dispatch.
+	local eligibility
+	eligibility=$(_trust_repo_eligibility "$slug")
+	case "$eligibility" in
+	eligible) ;;
+	insufficient-permission)
+		log_info "trust-workflows: $slug — insufficient permission (needs admin or maintain), skipping $workflow"
+		if [[ "$dry_run" != "1" ]]; then
+			local open_issue
+			open_issue=$(_trust_find_tracking_issue "$slug")
+			[[ -n "$open_issue" ]] && _trust_hold_tracking_issue "$slug" "$open_issue" "$workflow" \
+				permission_required "$TRUST_PERMISSION_CAUSE"
+		fi
+		echo skipped
+		return 0
+		;;
+	archived)
+		log_info "trust-workflows: $slug — archived, skipping $workflow"
+		echo skipped
+		return 0
+		;;
+	*)
+		log_warn "trust-workflows: $slug — repository permission unverified; not filing this run"
+		echo skipped
+		return 0
+		;;
+	esac
 	if [[ "$dry_run" == "1" ]]; then
 		log_info "trust-workflows (dry-run): $slug — would install $workflow"
 		echo installed-pr
-		return 0
-	fi
-	_trust_state_set "trust_workflow_attempted" "${slug}|${workflow}" "$now"
-
-	local archived
-	archived=$(gh api "repos/${slug}" --jq '.archived' 2>/dev/null || true)
-	if [[ "$archived" == "true" ]]; then
-		log_info "trust-workflows: $slug — archived, skipping $workflow"
-		echo skipped
 		return 0
 	fi
 
@@ -827,29 +969,58 @@ _trust_install_one() {
 		echo failed
 		return 0
 	fi
-	local sync_out
-	if ! sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
-		--repo "$slug" --issue "$issue_number" 2>&1); then
-		if grep -qiE 'workflow.*scope|refusing to allow.*workflow' <<<"$sync_out"; then
-			log_warn "trust-workflows: $slug — blocked: token lacks 'workflow' scope (run gh auth refresh -s workflow)"
-		else
-			log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
-		fi
-		echo failed
-		return 0
-	fi
-	# Result rows are TSV: slug<TAB>status<TAB>APPLIED|SKIPPED|FAILED<TAB>detail
-	if grep -qE $'\t''APPLIED'$'\t' <<<"$sync_out"; then
+	_trust_sync_tracked "$slug" "$workflow" "$issue_number"
+	return 0
+}
+
+#######################################
+# Run the install sync for a filed tracking issue and classify its result.
+# Holds the issue when the sync proves it undeliverable (GH#38702).
+# Echoes: installed-pr | skipped | failed
+# Args: $1 slug, $2 workflow, $3 tracking issue number
+#######################################
+_trust_sync_tracked() {
+	local slug="$1"
+	local workflow="$2"
+	local issue_number="$3"
+	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
+	local sync_out sync_rc=0
+	sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
+		--repo "$slug" --issue "$issue_number" --json 2>&1) || sync_rc=$?
+	# --json emits one object per result ({outcome, detail, ...}); diagnostics
+	# that are not valid JSON objects are ignored. Rows become "OUTCOME<TAB>detail".
+	local result_rows
+	result_rows=$(printf '%s\n' "$sync_out" |
+		jq -rR 'fromjson? | select(type == "object" and (.outcome | type) == "string") | "\(.outcome)\t\(.detail // "")"' 2>/dev/null || true)
+	if [[ "$sync_rc" -eq 0 ]] && grep -qE '^APPLIED'$'\t' <<<"$result_rows"; then
 		log_info "trust-workflows: $slug — $workflow sync PR opened (issue #${issue_number})"
 		echo installed-pr
 		return 0
 	fi
-	if grep -qE $'\t''FAILED'$'\t' <<<"$sync_out"; then
+	if grep -qiE 'workflow.*scope|refusing to allow.*workflow' <<<"$sync_out"; then
+		log_warn "trust-workflows: $slug — blocked: token lacks 'workflow' scope (run gh auth refresh -s workflow)"
+		_trust_hold_tracking_issue "$slug" "$issue_number" "$workflow" credentials \
+			"the runner token lacks the \`workflow\` scope"
+		echo failed
+		return 0
+	fi
+	if [[ "$sync_rc" -ne 0 ]]; then
+		log_warn "trust-workflows: $slug — sync-workflows-helper failed for $workflow: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
+		echo failed
+		return 0
+	fi
+	if grep -qE '^FAILED'$'\t' <<<"$result_rows"; then
 		log_warn "trust-workflows: $slug — $workflow sync reported failure: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
 		echo failed
 		return 0
 	fi
-	log_info "trust-workflows: $slug — $workflow sync made no PR: $(printf '%s' "$sync_out" | grep -E $'\t''SKIPPED'$'\t' | tail -n 1 | tr '\t' ' ')"
+	local skip_row
+	skip_row=$(printf '%s\n' "$result_rows" | grep -E '^SKIPPED'$'\t' | tail -n 1 || true)
+	log_info "trust-workflows: $slug — $workflow sync made no PR: $(printf '%s' "$skip_row" | tr '\t' ' ')"
+	if [[ "$skip_row" == *'eligibility: insufficient-permission'* ]]; then
+		_trust_hold_tracking_issue "$slug" "$issue_number" "$workflow" permission_required \
+			"$TRUST_PERMISSION_CAUSE"
+	fi
 	echo skipped
 	return 0
 }
@@ -914,7 +1085,7 @@ _check_required_trust_workflows() {
 			done
 		done
 	} <<<"$slugs_raw"
-	log_info "trust-workflows: ${_R914_TRUST_INSTALLED} installed-pr, ${_R914_TRUST_PRESENT} present, ${_R914_TRUST_SKIPPED} skipped(private), ${_R914_TRUST_FAILED} failed"
+	log_info "trust-workflows: ${_R914_TRUST_INSTALLED} installed-pr, ${_R914_TRUST_PRESENT} present, ${_R914_TRUST_SKIPPED} skipped, ${_R914_TRUST_FAILED} failed"
 	return 0
 }
 

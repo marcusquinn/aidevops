@@ -264,7 +264,7 @@ _gh_audit_absolute_caller_script() {
 #######################################
 _gh_audit_signed_approval_flags() {
 	local op="$1" repo="$2" number="$3" caller_script="$4" caller_function="$5"
-	local verification=""
+	local verification="" verification_rc=0
 	# aidevops:trust-boundary — caller provenance alone is spoofable. Record the
 	# exemption proof only after independently re-verifying the signed approval
 	# and authenticated actor authority against current GitHub state.
@@ -289,9 +289,13 @@ _gh_audit_signed_approval_flags() {
 		[[ "$caller_script" == */agents/scripts/approval-helper-permissions.sh ||
 			"$caller_script" == */.agents/scripts/approval-helper-permissions.sh ]] &&
 		command -v cmd_verify_permissions &>/dev/null; then
-		verification=$(cmd_verify_permissions issue "$number" "$repo" 2>/dev/null) || verification=""
-		if [[ "$verification" == "VERIFIED" ]]; then
+		verification=$(cmd_verify_permissions issue "$number" "$repo" 2>/dev/null) || verification_rc=$?
+		if [[ "$verification_rc" -eq 0 && "$verification" == "VERIFIED" ]]; then
 			printf '%s\n' '{"permission_approval_verified":"v1-current-state"}'
+			return 0
+		fi
+		if [[ "$verification_rc" -eq 1 && "$verification" == "WITHDRAWN" ]]; then
+			printf '%s\n' '{"permission_withdrawal_verified":"v1-current-state"}'
 			return 0
 		fi
 	fi

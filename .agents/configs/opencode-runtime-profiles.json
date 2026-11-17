@@ -13,15 +13,15 @@
       "configAgentKey": "agent",
       "configPermissionKey": "permission",
       "minimumVersion": "1.18.29",
-      "testedVersion": "1.19.5",
-      "headlessPin": "1.19.5",
+      "testedVersion": "1.19.6",
+      "headlessPin": "1.19.6",
       "pinReason": "GH#28766 Linux headless bootstrap stalled with isolated XDG_DATA_HOME",
       "pinPlatform": "Linux",
       "pinRuntimeMode": "headless",
       "introducedDate": "2026-07-30",
-      "lastCanaryDate": "2026-11-03",
-      "lastCanaryResult": "pass:1.19.5",
-      "reviewDeadline": "2026-11-10"
+      "lastCanaryDate": "2026-11-17",
+      "lastCanaryResult": "pass:1.19.6",
+      "reviewDeadline": "2026-11-24"
     },
     "v2": {
       "major": 2,
@@ -35,15 +35,15 @@
       "configAgentKey": "agents",
       "configPermissionKey": "permissions",
       "minimumVersion": "2.0.3",
-      "testedVersion": "2.2.7",
-      "headlessPin": "2.2.7",
+      "testedVersion": "2.3.0",
+      "headlessPin": "2.3.0",
       "pinReason": "Initial OpenCode V2 compatibility qualification",
       "pinPlatform": "Linux",
       "pinRuntimeMode": "headless",
       "introducedDate": "2026-09-15",
-      "lastCanaryDate": "2026-11-10",
-      "lastCanaryResult": "pass:2.2.7",
-      "reviewDeadline": "2026-11-17"
+      "lastCanaryDate": "2026-11-17",
+      "lastCanaryResult": "pass:2.3.0",
+      "reviewDeadline": "2026-11-24"
     }
   }
 }

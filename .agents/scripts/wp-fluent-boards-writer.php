@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 Marcus Quinn
  *
- * Loaded by wp-fluent-boards.php; keep the four wp-fluent-boards*.php files together.
+ * Loaded by wp-fluent-boards.php; keep the wp-fluent-boards*.php files together.
  * Each write goes through the plugin's models/services and hooks, then is read back.
  *
  * @package aidevops
@@ -97,19 +97,20 @@ if ( ! class_exists( 'WPFB_Writer' ) ) {
 		}
 
 		/**
-		 * Plain-text comment body from a file, size-limited and non-empty.
+		 * Plain-text body (comment or card description) from a file,
+		 * size-limited and non-empty. Shared with WPFB_Creator.
 		 *
 		 * @param string $path Body file.
 		 * @return string Text.
 		 * @throws WPFB_Error On a bad body.
 		 */
-		private static function read_body( $path ) {
+		public static function read_body( $path ) {
 			if ( ! is_readable( $path ) || filesize( $path ) > self::MAX_BODY ) {
-				throw new WPFB_Error( 'Comment body file is unreadable or larger than ' . self::MAX_BODY . ' bytes', 2 );
+				throw new WPFB_Error( 'Body file is unreadable or larger than ' . self::MAX_BODY . ' bytes', 2 );
 			}
 			$raw = trim( (string) file_get_contents( $path ) );
 			if ( '' === $raw ) {
-				throw new WPFB_Error( 'Comment body file is empty', 2 );
+				throw new WPFB_Error( 'Body file is empty', 2 );
 			}
 			return $raw;
 		}

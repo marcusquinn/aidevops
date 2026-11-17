@@ -290,6 +290,7 @@ _handle_cmd_run_terminal_attempt() {
 	case "$attempt_exit" in
 	0)
 		clear_startup_no_model_feedback "$selected_model"
+		clear_model_unavailable_history "$selected_model"
 		_cmd_run_finish "$session_key" "$completion_state" "$work_dir" || finish_status=$?
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_RETURN"
 		_cmd_run_return_status="$finish_status"

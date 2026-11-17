@@ -46,11 +46,13 @@ trap 'rm -rf "$ROOT"' EXIT
 ROOT=$(cd "$ROOT" && pwd -P)
 cd "$ROOT" || exit 1
 
-mkdir -p "$ROOT/real/Git" "$ROOT/link" "$ROOT/home" "$ROOT/tmp"
+mkdir -p "$ROOT/real/Git" "$ROOT/link" "$ROOT/home/.aidevops/.agent-workspace" "$ROOT/tmp"
 ln -s "$ROOT/real/Git" "$ROOT/link/Git"
 export HOME="$ROOT/home" WORKTREE_REGISTRY_DIR="$ROOT" WORKTREE_REGISTRY_DB="$ROOT/registry.db"
 export AIDEVOPS_WORKTREE_BASE_DIR="$ROOT/link/Git/_worktrees" AIDEVOPS_TEMP_DIR="$ROOT/tmp"
 export AIDEVOPS_CLEANUP_LOG="$ROOT/cleanup.log" AIDEVOPS_WORKTREE_TRASH_ROOT="$ROOT/recovery"
+# Host free space is not under test; keep the capacity gate from depending on it.
+export AIDEVOPS_MIN_WORKTREE_FREE_KB=1 AIDEVOPS_MIN_WORKTREE_FREE_PERCENT=0
 export AIDEVOPS_SESSION_ORIGIN=worker AIDEVOPS_SKIP_AUTO_CLAIM=1 WORKTREE_NODE_MODULES_RESTORE_ENABLED=0
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
@@ -104,6 +106,8 @@ fi
 # Disposable copy of the scripts tree with an enroll-only failure injected.
 stub_scripts="$ROOT/scripts"
 cp -R "$TEST_SCRIPTS_DIR" "$stub_scripts"
+# Scripts resolve sibling helpers through "<scripts>/../worker-lifecycle".
+cp -R "$TEST_SCRIPTS_DIR/../worker-lifecycle" "$ROOT/worker-lifecycle"
 mv "$stub_scripts/worktree-managed-lifetime.py" "$stub_scripts/worktree-managed-lifetime-real.py"
 printf '%s\n' 'import os, sys' \
 	'if sys.argv[1] == "enroll":' \
@@ -120,7 +124,7 @@ if [[ "$rc" -ne 0 && -z "$wt" && ! -d "$ROOT/real/Git/_worktrees/repo-feature-au
 	[[ "$output" == *"AIDEVOPS_WORKTREE_LIFECYCLE_DISPOSITION=MANAGED_ENROLL_FAILED"* ]]; then
 	pass "enrollment failure exits non-zero and leaves no worktree behind"
 else
-	fail "enrollment failure exits non-zero and leaves no worktree behind" "rc=$rc path='$wt'"
+	fail "enrollment failure exits non-zero and leaves no worktree behind" "rc=$rc path='$wt' output: $(printf '%s' "$output" | tail -n 4 | tr '\n' ' ')"
 fi
 
 # --- 4: Pulse names the enrollment cause in its precreation log ------------

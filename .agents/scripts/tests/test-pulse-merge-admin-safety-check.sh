@@ -291,6 +291,12 @@ define_helpers_under_test() {
 		_pmrc_review_evidence_permits_advisory "${_PULSE_REVIEW_GATE_EVIDENCE:-}" "$repo_slug" "$pr_number" "$expected_head_sha"
 		return $?
 	}
+	# GH#38703: the real gate shells out to full-loop-helper.sh; record calls.
+	_PULSE_PROSPECTIVE_CALLS=""
+	_pulse_merge_prospective_todo_gate() {
+		_PULSE_PROSPECTIVE_CALLS="${_PULSE_PROSPECTIVE_CALLS}$1 $2 $3;"
+		return "${_PULSE_PROSPECTIVE_RC:-0}"
+	}
 	return 0
 }
 
@@ -721,6 +727,65 @@ test_case_k_final_gate_refreshes_current_review_evidence() {
 	return 0
 }
 
+# GH#38703: a duplicate TODO mapping against the live base tip blocks the
+# Pulse merge after every other gate passed, with a distinct blocker kind.
+test_case_k2_final_gate_blocks_prospective_todo_duplicate() {
+	: >"$LOGFILE"
+	set_fixture '[{"name":"bug"}]' 'false' \
+		'## Summary\n\nResolves #930' 'VERIFIED' 'VERIFIED' 'trusted-contributor'
+	_PULSE_REVIEW_GATE_EVIDENCE=""
+	_PULSE_PREFLIGHT_CALLS=0
+	_PULSE_PROSPECTIVE_CALLS=""
+	local result=0
+	_PULSE_PROSPECTIVE_RC=1 _pulse_merge_final_trust_gate "930" "owner/repo" "head-current" || result=$?
+	if [[ "$result" -eq 1 && "$_PULSE_PREFLIGHT_CALLS" -eq 1 &&
+		"$_PULSE_PROSPECTIVE_CALLS" == "930 owner/repo head-current;" &&
+		"${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}" == "$PMRC_BLOCKER_PROSPECTIVE_TODO" ]]; then
+		print_result "Case K2: final gate blocks a prospective TODO duplicate" 0
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+		return 0
+	fi
+	print_result "Case K2: prospective TODO duplicate blocks the final gate" 1 \
+		"rc=${result}; preflight_calls=${_PULSE_PREFLIGHT_CALLS}; calls=${_PULSE_PROSPECTIVE_CALLS}; kind=${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND=""
+	return 0
+}
+
+# The real gate invokes the helper subcommand with the pinned head and fails
+# closed on helper failure (stub helper under a temporary _PULSE_MERGE_DIR).
+test_case_k3_prospective_gate_invokes_full_loop_helper() {
+	local helper_dir="${TEST_ROOT}/prospective-helper" gate_src="" result=0 args=""
+	mkdir -p "$helper_dir"
+	# shellcheck disable=SC2016  # The generated stub expands these at execution time.
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >"%s/args"\nexit "${PROSPECTIVE_STUB_RC:-0}"\n' "$helper_dir" \
+		>"${helper_dir}/full-loop-helper.sh"
+	gate_src=$(awk '/^_pulse_merge_prospective_todo_gate\(\) \{/,/^}$/ { print }' "$MERGE_SCRIPT")
+	if [[ -z "$gate_src" ]]; then
+		print_result "Case K3: prospective gate source is extractable" 1
+		return 0
+	fi
+	(
+		eval "$gate_src"
+		# Production loads timeout_sec from shared-constants.sh; this file does not.
+		declare -F timeout_sec >/dev/null 2>&1 || timeout_sec() {
+			shift
+			"$@"
+			return $?
+		}
+		_PULSE_MERGE_DIR="$helper_dir"
+		PROSPECTIVE_STUB_RC=0 _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 1
+		[[ "$(<"${helper_dir}/args")" == "prospective-todo-guard 940 owner/repo head-current" ]] || exit 2
+		export PROSPECTIVE_STUB_RC=1
+		! _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 3
+		grep -q "prospective TODO guard failed" "$LOGFILE" || exit 4
+		rm -f "${helper_dir}/full-loop-helper.sh"
+		! _pulse_merge_prospective_todo_gate 940 owner/repo head-current || exit 5
+		exit 0
+	) || result=$?
+	print_result "Case K3: prospective gate runs the helper and fails closed" "$result" "step=${result}"
+	return 0
+}
+
 # =============================================================================
 # Case E: unlabeled fork PR (isCrossRepository=true, no external label),
 # no crypto approval. Tests the label-system-failure detection path.
@@ -1000,6 +1065,8 @@ main() {
 	test_case_v_dependabot_without_linked_issue
 	test_case_j_final_gate_rejects_stale_cached_review_evidence
 	test_case_k_final_gate_refreshes_current_review_evidence
+	test_case_k2_final_gate_blocks_prospective_todo_duplicate
+	test_case_k3_prospective_gate_invokes_full_loop_helper
 	test_case_l_collaborator_linked_issue_nmr_blocks_final_gate
 	test_case_m_pr_metadata_command_failure_is_logged
 	test_case_n_empty_pr_metadata_is_logged

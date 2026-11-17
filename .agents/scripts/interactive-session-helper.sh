@@ -137,10 +137,12 @@ _isc_current_user() {
 # issue-state routines in this repo. External upstream repos do not run our
 # pulse, so posting claim/status/lockdown lifecycle markers there is noise.
 #
-# Returns 0 for maintainer-equivalent access, 1 otherwise, 75 for deferred reads.
-# Lookup failures are
-# treated as NOT authorized: skipping a claim is safer than publicly applying
-# internal aidevops workflow state to an upstream project we cannot verify.
+# Returns 0 for maintainer-equivalent access, 1 for confirmed insufficient
+# permission (read/triage/none), 2 for a lookup failure (retryable; reason in
+# AIDEVOPS_GH_COLLAB_PERMISSION_REASON), 75 for deferred reads.
+# Lookup failures are treated as NOT authorized: skipping a claim is safer than
+# publicly applying internal aidevops workflow state to an upstream project we
+# cannot verify. They are reported as lookup failures, not permission facts.
 _isc_can_manage_issue_state() {
 	local slug="${1:-}"
 	local user="${2:-}"
@@ -161,7 +163,7 @@ _isc_can_manage_issue_state() {
 	local permission_rc=0
 	_gh_collaborator_permission_lookup "$slug" "$user" permission || permission_rc=$?
 	[[ "$permission_rc" -ne 75 ]] || return 75
-	[[ "$permission_rc" -eq 0 ]] || return 1
+	[[ "$permission_rc" -eq 0 ]] || return 2
 	case "$permission" in
 		admin | maintain | write)
 			return 0

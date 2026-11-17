@@ -231,6 +231,8 @@ check_dispatch_dedup() {
 		_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
 	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer3_title" \
 		_dedup_layer3_title_match "$title" && return 0
+	# GH#38770: audit alerts are dispatchable only on the producing runner.
+	_dedup_audit_alert_locality "$issue_number" "$repo_slug" "$issue_title" "$self_login" && return 0
 	local _pr_evidence_rc=0
 	_dedup_layer_timed "$issue_number" "$repo_slug" "dedup.layer4_pr_evidence" \
 		_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" || _pr_evidence_rc=$?

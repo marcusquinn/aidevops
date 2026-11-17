@@ -20,14 +20,14 @@ assert_eq() {
 	return 0
 }
 
-assert_eq "pin version is explicit" "1.19.5" "$OPENCODE_PINNED_VERSION"
+assert_eq "pin version is explicit" "1.19.6" "$OPENCODE_PINNED_VERSION"
 assert_eq "pin platform is scoped" "Linux" "$OPENCODE_PIN_PLATFORM"
 assert_eq "pin runtime is scoped" "headless" "$OPENCODE_PIN_RUNTIME_MODE"
 assert_eq "introduction date is recorded" "2026-07-30" "$OPENCODE_PIN_INTRODUCED_DATE"
-assert_eq "last canary is recorded" "2026-11-03" "$OPENCODE_PIN_LAST_CANARY_DATE"
-assert_eq "last canary result is recorded" "pass:1.19.5" "$OPENCODE_PIN_LAST_CANARY_RESULT"
-assert_eq "review deadline is recorded" "2026-11-10" "$OPENCODE_PIN_REVIEW_DEADLINE"
-assert_eq "plugin compatibility signal is explicit" "1.19.5" "$OPENCODE_PLUGIN_TESTED_VERSION"
+assert_eq "last canary is recorded" "2026-11-17" "$OPENCODE_PIN_LAST_CANARY_DATE"
+assert_eq "last canary result is recorded" "pass:1.19.6" "$OPENCODE_PIN_LAST_CANARY_RESULT"
+assert_eq "review deadline is recorded" "2026-11-24" "$OPENCODE_PIN_REVIEW_DEADLINE"
+assert_eq "plugin compatibility signal is explicit" "1.19.6" "$OPENCODE_PLUGIN_TESTED_VERSION"
 
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/opencode-pin-policy.XXXXXX")
 trap 'rm -rf "$fixture_root"' EXIT INT TERM
@@ -87,9 +87,9 @@ status=$(
 	AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" PATH="/usr/bin:/bin" \
 		"$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status
 )
-[[ "$status" == *"pinned=1.19.5"* && "$status" == *"registry-latest="* &&
-	"$status" == *"plugin-tested=1.19.5"* &&
-	"$status" == *"last-canary=2026-11-03 (pass:1.19.5) review-deadline=2026-11-10"* ]] || {
+[[ "$status" == *"pinned=1.19.6"* && "$status" == *"registry-latest="* &&
+	"$status" == *"plugin-tested=1.19.6"* &&
+	"$status" == *"last-canary=2026-11-17 (pass:1.19.6) review-deadline=2026-11-24"* ]] || {
 	printf 'FAIL: status omits compatibility evidence: %s\n' "$status" >&2
 	fail=$((fail + 1))
 }

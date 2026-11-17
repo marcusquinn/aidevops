@@ -838,6 +838,34 @@ _pulse_merge_refresh_review_gate_evidence() {
 }
 
 #######################################
+# Run the full-loop prospective TODO guard against the live base tip (GH#38703).
+#
+# Pulse merges must not land a head that duplicates TODO task IDs or ref:GH#
+# mappings already on the base branch. The guard runs in its own process so
+# full-loop globals cannot leak into the pulse cycle; it fails closed.
+# Args: $1=PR number, $2=repo slug, $3=expected head SHA
+# Returns: 0=no duplicate mappings, 1=blocked or indeterminate
+#######################################
+_pulse_merge_prospective_todo_gate() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local expected_head_sha="$3"
+	local helper="${_PULSE_MERGE_DIR}/full-loop-helper.sh"
+	local guard_timeout="${AIDEVOPS_PULSE_PROSPECTIVE_TODO_TIMEOUT:-300}"
+	[[ "$guard_timeout" =~ ^[1-9][0-9]*$ ]] || guard_timeout=300
+	if [[ ! -f "$helper" ]]; then
+		echo "[pulse-merge] Merge blocked for PR #${pr_number} in ${repo_slug}: prospective TODO guard helper is missing" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	if ! timeout_sec "$guard_timeout" bash "$helper" prospective-todo-guard \
+		"$pr_number" "$repo_slug" "$expected_head_sha" >>"${LOGFILE:-/dev/null}" 2>&1; then
+		echo "[pulse-merge] Merge blocked for PR #${pr_number} in ${repo_slug}: prospective TODO guard failed against the live base tip (GH#38703)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Revalidate all final merge authority and current-head evidence.
 #
 # #aidevops:trust-boundary — invoke this immediately before every native,
@@ -867,8 +895,12 @@ _pulse_merge_final_trust_gate() {
 			worker_briefed_trust_verdict "$pr_number" "$repo_slug" >/dev/null; then
 		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_MERGE_AUTHORITY"
 		trust_gate_rc=1
-	else
-		_pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha" || trust_gate_rc=1
+	elif ! _pulse_merge_preflight_snapshot_gate "$repo_slug" "$pr_number" "$expected_head_sha"; then
+		trust_gate_rc=1
+	# GH#38703: last and most expensive; only reached once every cheaper gate passes.
+	elif ! _pulse_merge_prospective_todo_gate "$pr_number" "$repo_slug" "$expected_head_sha"; then
+		_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND="$PMRC_BLOCKER_PROSPECTIVE_TODO"
+		trust_gate_rc=1
 	fi
 	# Time every native/admin/direct invocation, including blocked gates and retries.
 	[[ -n "${timing_prefix:-}" ]] && _pmp_add_elapsed_seconds "${timing_prefix}trust_gate_s" "$trust_gate_start"
@@ -1088,6 +1120,7 @@ _pmp_stage_parse_and_validate() {
 	fi
 	if [[ "$pr_is_draft" == "$PULSE_MERGE_BOOL_TRUE" ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
+		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" draft
 		_PMP_HUMAN_GATED=1 # GH#38248
 		return 1
 	fi
@@ -1233,9 +1266,11 @@ _pmp_stage_review_and_gates() {
 	fi
 	if _pmp_review_decision_is_unknown "$pr_review"; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision unavailable after refresh (GH#26218)" >>"$LOGFILE"
+		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" review_unknown
 		return 1
 	fi
 	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable"; then
+		[[ "$pr_mergeable" != UNKNOWN ]] || _pmp_record_negative_verdict "$repo_slug" "$pr_obj" mergeable_unknown
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
 	fi

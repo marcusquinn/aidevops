@@ -38,6 +38,7 @@ PMRC_BLOCKER_CHECKS_FAILED="checks-failed"
 PMRC_BLOCKER_QUIET_PERIOD="quiet-period"
 PMRC_BLOCKER_SNAPSHOT_UNAVAILABLE="snapshot-unavailable"
 PMRC_BLOCKER_HEAD_CHANGED="head-changed"
+PMRC_BLOCKER_PROSPECTIVE_TODO="prospective-todo"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:=[]}"
 : "${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:=}"
 
@@ -1201,6 +1202,49 @@ _pmrc_nonrequired_failure_is_advisory() {
 	return 1
 }
 
+# Ignore only aged individual check runs after proving every required context
+# has a successful terminal result. Missing or malformed evidence fails closed.
+_pmrc_stale_pending_age() {
+	local repo_slug="$1" head_sha="$2" checks_json="$3" required_json="$4" name="$5"
+	local limit="${PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS:-3600}"
+	local now="${PULSE_MERGE_NOW_EPOCH:-$(date +%s)}" started="" epoch="" commit_json=""
+	[[ "$limit" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || return 1
+	jq -e --argjson required "$required_json" --arg completed "$PMRC_CHECK_COMPLETED" \
+		--arg success "$PMRC_CHECK_SUCCESS" '
+		. as $checks | all($required[]; . as $context |
+			any($checks[]; (.name == $context or any(.members[]?; .name == $context))
+				and .status == $completed and .conclusion == $success))
+	' <<<"$checks_json" >/dev/null 2>&1 || return 1
+	started=$(jq -er --arg name "$name" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg review "$PMRC_REVIEW_BOT_GATE" '
+		[.[] | select(.name == $name and .source == "check_run" and .family != $maintainer and .family != $review)
+		| .observed_at // ""] | if length == 1 then .[0] else error("ambiguous check") end
+	' <<<"$checks_json") || return 1
+	if [[ -z "$started" ]]; then
+		[[ -n "$head_sha" ]] || return 1
+		commit_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}" 2>/dev/null) || return 1
+		started=$(jq -r '.commit.committer.date // ""' <<<"$commit_json") || return 1
+	fi
+	epoch=$(_pmrc_iso_to_epoch "$started") || return 1
+	[[ "$epoch" =~ ^[0-9]+$ && "$now" -ge "$epoch" && $((now - epoch)) -gt "$limit" ]] || return 1
+	printf '%s\n' "$((now - epoch))"
+	return 0
+}
+
+_pmrc_pending_is_ignored() {
+	local name="$1" informational="$2" required="$3" repo_slug="$4" pr_number="$5"
+	local checks_json="$6" required_json="$7" head_sha="$8" stale_age=""
+	if [[ "$informational" == "$PMRC_BOOL_TRUE" ]]; then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required informational pending status '${name}' for PR #${pr_number} in ${repo_slug} — it never reaches a terminal state" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$required" != "$PMRC_BOOL_TRUE" ]] &&
+		stale_age=$(_pmrc_stale_pending_age "$repo_slug" "$head_sha" "$checks_json" "$required_json" "$name"); then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED stale non-required pending check '${name}' (age=${stale_age}s) for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
 _pmrc_snapshot_checks_acceptable() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -1236,10 +1280,7 @@ _pmrc_snapshot_checks_acceptable() {
 			continue
 		fi
 		if [[ "$status" != "$PMRC_CHECK_COMPLETED" || -z "$conclusion" ]]; then
-			if [[ "$informational" == "$PMRC_BOOL_TRUE" ]]; then
-				echo "[pulse-merge] pre-merge snapshot: IGNORED non-required informational pending status '${name}' for PR #${pr_number} in ${repo_slug} — it never reaches a terminal state" >>"$LOGFILE"
-				continue
-			fi
+			_pmrc_pending_is_ignored "$name" "$informational" "$required" "$repo_slug" "$pr_number" "$checks_json" "$required_json" "$head_sha" && continue
 			pending=$((pending + 1))
 			continue
 		fi

@@ -291,10 +291,12 @@ _commit_and_pr_prepare_metadata() {
 	if [[ -x "$sig_helper" ]]; then
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
 	fi
+	local worker_closing_check=0
 	if [[ "$allow_parent_close" -eq 1 ]]; then
 		closing_keyword="Resolves"
 	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
 		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
+		worker_closing_check=1
 	fi
 	local parent_for_link=0
 	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
@@ -316,6 +318,14 @@ _commit_and_pr_prepare_metadata() {
 	if [[ "$keep_issue_open" -eq 1 ]]; then
 		closing_keyword="For"
 		print_info "--keep-issue-open — using 'For' keyword; issue #${issue_number} stays open after merge"
+	fi
+	# GH#38823: evaluate the FINAL keyword (after planning/parent/keep-open
+	# overrides). A worker summary declaring `For/Ref #<this issue>` contradicts
+	# a closing PR; refuse instead of silently closing the issue.
+	if [[ "$worker_closing_check" -eq 1 && "$closing_keyword" != "For" && "$allow_parent_close" -eq 0 ]] &&
+		! _summary_declares_partial_self "$issue_number" "$summary_what" "$summary_testing" "${summary_decisions:-}"; then
+		print_error "Summary references 'For/Ref #${issue_number}' (partial PR) but commit-and-pr would emit a closing keyword and close the issue. Remove the self-reference if the work is complete (closure is intended), or finish the remaining criteria; unmet verification must not be lost on merge." >&2
+		return 1
 	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then
@@ -514,6 +524,9 @@ Commands:
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
+  prospective-todo-guard <PR> <REPO> [EXPECTED_HEAD]
+                                 Fail closed if merging the PR head into the live base
+                                 tip duplicates TODO task IDs or issue refs (GH#38703).
   wait-checks <PR> [options]     Wait with transition-only required-check output
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto] [--body-file PATH]
                                  Gate-enforced merge (runs pre-merge-gate first).
@@ -593,6 +606,7 @@ main() {
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
 	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
+	prospective-todo-guard) cmd_prospective_todo_guard "$@" ;;
 	wait-checks) cmd_wait_checks "$@" ;;
 	merge) cmd_merge "$@" ;;
 	record-no-release) cmd_record_no_release "$@" ;;

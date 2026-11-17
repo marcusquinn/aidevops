@@ -277,6 +277,41 @@ assert_contains "other agent configs still derive Critical" "$other_conf_risk" "
 registry_runtime_risk=$(_derive_runtime_risk "" ".agents/configs/prompt-hook-candidates.conf,src/auth.sh" "Registry and auth change")
 assert_contains "registry beside runtime code still derives Critical" "$registry_runtime_risk" "Critical"
 
+# GH#38640: catalog app-test definitions (blueprints/<app>/test.yml) are Low even
+# when fixture hunks mention authorization; look-alike test.yml paths are not.
+APP_TEST_REPO="${TEST_ROOT}/app-test-repo"
+app_test_paths="blueprints/app/test.yml blueprints/app/test.yaml config/settings/test.yml deploy/test.yaml blueprints/app/nested/test.yml vendor/blueprints/app/test.yml src/auth.sh"
+mkdir -p "$APP_TEST_REPO"
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" init -q
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" config user.name "Runtime Risk Test"
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" config user.email "runtime-risk@example.invalid"
+for app_test_path in $app_test_paths; do
+	mkdir -p "${APP_TEST_REPO}/${app_test_path%/*}"
+	printf 'name: fixture\n' >"${APP_TEST_REPO}/${app_test_path}"
+done
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" -c commit.gpgSign=false commit -qm "fixture: app-test base"
+app_test_base=$("$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" rev-parse HEAD)
+for app_test_path in $app_test_paths; do
+	printf 'name: fixture\nheaders:\n  authorization: fixture-header\n' >"${APP_TEST_REPO}/${app_test_path}"
+done
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" add -A
+"$TEST_NATIVE_GIT" -C "$APP_TEST_REPO" -c commit.gpgSign=false commit -qm "fixture: authorization hunks"
+for app_test_path in blueprints/app/test.yml blueprints/app/test.yaml; do
+	app_test_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "$app_test_path" "Fix app test fixture" "$app_test_base")
+	assert_contains "app-test definition ${app_test_path} derives Low" "<$app_test_risk>" "<Low>"
+done
+app_test_body=$(cd "$APP_TEST_REPO" && _build_pr_body \
+	"38640" "Fix app test fixture" "app-test CI on the PR" "blueprints/app/test.yml" "" \
+	"Resolves" "" "self-assessed" "$app_test_base")
+assert_contains "app-test definition accepts self-assessed" "$app_test_body" "**Verification:** self-assessed"
+app_test_mixed_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "blueprints/app/test.yml, src/auth.sh" "Fix app test fixture" "$app_test_base")
+assert_contains "runtime file beside app-test definition still derives Critical" "<$app_test_mixed_risk>" "<Critical>"
+for app_test_path in config/settings/test.yml deploy/test.yaml blueprints/app/nested/test.yml vendor/blueprints/app/test.yml; do
+	app_test_risk=$(cd "$APP_TEST_REPO" && _derive_runtime_risk "" "$app_test_path" "Fix app test fixture" "$app_test_base")
+	assert_contains "look-alike ${app_test_path} keeps Critical" "<$app_test_risk>" "<Critical>"
+done
+
 # GH#35709: runtime-owned leftovers must match product staging exclusions.
 RUNTIME_STATE_REPO="${TEST_ROOT}/runtime-state-repo"
 mkdir -p "${RUNTIME_STATE_REPO}/todo/x" "${RUNTIME_STATE_REPO}/.agents/loop-state/nested"
@@ -587,6 +622,12 @@ printf 'export const value = 2;\n' >"${FINAL_REPO}/src/helper.js"
 final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" "diff reviewed")
 assert_contains "metadata lists only branch files" "$final_body" $'## Files Changed\n\nsrc/helper.js\n'
 assert_contains "metadata risk ignores upstream sensitive changes" "$final_body" '**Risk level:** Medium'
+prepare_partial_closing_metadata() {
+	(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: remaining items" "diff reviewed") || return 1
+	return 0
+}
+assert_rejected "GH#38823 final closing metadata rejects partial self-reference" \
+	prepare_partial_closing_metadata
 final_pending=$(cd "$FINAL_REPO" && _validate_pending_runtime_metadata Medium self-assessed \
 	"diff reviewed" "Adjust helper" origin/main && printf accepted)
 assert_contains "pending and final risk agree behind upstream" "$final_pending" accepted
@@ -601,6 +642,8 @@ bookkeeping_result=$(cd "$FINAL_REPO" &&
 assert_contains "TODO-only bookkeeping excludes upstream files and TODO edits" "$bookkeeping_result" accepted
 planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Record completion" "diff reviewed")
 assert_contains "planning classification excludes upstream files" "$planning_body" 'For #34465'
+partial_planning_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "For #34465: planning checkpoint" "diff reviewed")
+assert_contains "GH#38823 planning checkpoint allows partial self-reference" "$partial_planning_body" $'self-assessed — diff reviewed\n\nFor #34465'
 
 # GH#36002: nested markdown under todo/ stays planning; data files under todo/
 # are deliverables, alone or mixed with planning files.
@@ -661,6 +704,13 @@ assert_rejected "final metadata rejects local Critical change without runtime ev
 critical_final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helper" \
 	"runtime-verified with sensitive branch fixture")
 assert_contains "local Critical change still derives Critical" "$critical_final_body" '**Risk level:** Critical'
+
+assert_rejected "GH#38823 worker summary For #<dispatched issue> is refused" \
+	_summary_declares_partial_self 42 "Partial work. For #42: remaining items" "ok"
+assert_rejected "GH#38823 Ref #<dispatched issue> in testing is refused" \
+	_summary_declares_partial_self 42 "done" "see ref #42"
+assert_accepted "GH#38823 reference to another issue is allowed" \
+	_summary_declares_partial_self 42 "Follow-up for #43" "ok"
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

@@ -27,7 +27,7 @@ mcp:
 - **Use the CLI for scripts and renders**: `runpodctl` (GitHub `runpod/runpodctl`, GPL-3.0). JSON output by default, stable error `code`s, `--wait` until usable, resumable network-volume transfers.
 - **Use the MCP for interactive inspection**: invoke `@runpod`; it connects the official hosted server `https://mcp.runpod.io/` (OAuth "Sign in with Runpod", no key on disk) on demand and disconnects afterwards. aidevops sends `X-Runpod-Analytics: off`.
 - **MCP permissions**: catalog, pod, volume, template, endpoint, log, billing and docs reads are allowed. Pod, network-volume, template and Serverless writes ask for approval. Organization admin, cost centers, clusters, secrets, registry credentials, ECR delegations, SSH-key updates, `exec-pod` and `deploy-hub-repo` are not exposed.
-- **Credentials**: `aidevops secret set RUNPOD_API_KEY`; run the CLI as `aidevops secret RUNPOD_API_KEY -- runpodctl ...` so the key never lands in argv, history or chat. S3 transfer keys: `RUNPOD_S3_ACCESS_KEY` / `RUNPOD_S3_SECRET_KEY`.
+- **Credentials**: store an account-named key (`aidevops secret set RUNPOD_<ACCOUNT>_API_KEY --provider runpod --account <ref>`), make it the default once with `aidevops secret default runpod RUNPOD_<ACCOUNT>_API_KEY`, then run the CLI as `aidevops secret RUNPOD_API_KEY -- runpodctl ...` so the key never lands in argv, history or chat. Switch accounts by changing the default. A stored bare `RUNPOD_API_KEY` always wins over the default: migrate it by storing the account-named key, then `aidevops secret rm RUNPOD_API_KEY` (check `aidevops secret dependents RUNPOD_API_KEY` first). S3 transfer keys: `RUNPOD_S3_ACCESS_KEY` / `RUNPOD_S3_SECRET_KEY`.
 - **Money rule**: any create, start, update, run or volume change bills. Follow the billable deployment contract in `tools/infrastructure/cloud-gpu.md`, report every resource ID and tear down when done.
 - **Rendering playbook**: `tools/design/3d-render-backends.md`; Blender jobs on Runpod: `scripts/blender-render-helper.sh` (dry-run by default). Media models: `content/video-runpod.md`.
 
@@ -89,6 +89,20 @@ command output.
 - `create_uncertain`, `wait_timeout` and `wait_interrupted` mean the resource
   **may exist and bill**: read the `id` field, check `pod list`, then delete or
   keep it deliberately. Never blindly retry a create.
+- No capacity: `pod create` returns `code: bad_request` (status 400) with
+  "There are no longer any instances available with the requested
+  specifications", and creates nothing. `bad_request` also covers invalid
+  input, so match this message as the one exception to branching on codes.
+  A short bounded retry is safe (`blender-render-helper.sh` retries 3 times,
+  every 20 s). `gpu list` showing `stockStatus: Low` still means "try"; in a
+  2026-11 test, 5 refusals came before the 6th create succeeded. Switching GPU
+  or `--cloud-type` changes the price and needs fresh approval.
+- Community cloud does not guarantee a public port 22 (`--wait` needs one), so
+  use `--wait-for running` and read results with `pod logs`, or check the
+  port mapping in `pod get` before relying on SSH.
+- `--docker-args` replaces the image's start command, which skips the
+  `runpod/*` images' `/start.sh` (it sets up sshd from `PUBLIC_KEY`). Start it
+  yourself first: `if [ -x /start.sh ]; then (/start.sh >/tmp/start.log 2>&1 &); fi; ...`.
 - `timeout` from `serverless run --wait` means the CLI stopped waiting; poll
   `serverless status` instead of resubmitting.
 - `transfer_incomplete`: rerun the same transfer command; finished files and

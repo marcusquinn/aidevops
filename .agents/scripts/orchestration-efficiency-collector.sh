@@ -394,6 +394,7 @@ collect_concurrency() {
 			FROM provider_backoff
 			WHERE updated_at >= datetime($start_epoch, 'unixepoch')
 			  AND updated_at < datetime($end_epoch, 'unixepoch')
+			  AND reason <> 'model_unavailable'
 			  AND CAST(strftime('%s', retry_after) AS INTEGER) > CAST(strftime('%s', updated_at) AS INTEGER);" \
 			2>/dev/null || echo "0")
 		backoff_duration_total_secs=$(safe_int "$backoff_duration_total_secs")
