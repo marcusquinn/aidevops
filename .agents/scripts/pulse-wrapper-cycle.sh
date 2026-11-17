@@ -310,8 +310,59 @@ run_pulse() {
 	local prompt
 	prompt=$(_pulse_supervisor_prompt "$pulse_command" "$STATE_FILE")
 
+	local pulse_rc=0 attempt_start="$start_epoch" attempt_duration=0
+	_run_pulse_supervisor_child thinking "$prompt" "$start_epoch" "$effective_cold_start_timeout" || pulse_rc=$?
+	attempt_duration=$(($(date +%s) - attempt_start))
+	if _pulse_supervisor_tier_fallback_due "$pulse_rc" "$attempt_duration"; then
+		echo "[pulse-wrapper] Supervisor tier fallback: thinking tier exited rc=75 after ${attempt_duration}s (model selection backed off); retrying once at tier=${PULSE_SUPERVISOR_FALLBACK_TIER:-standard} (GH#38779)" >>"$LOGFILE"
+		pulse_rc=0
+		_run_pulse_supervisor_child "${PULSE_SUPERVISOR_FALLBACK_TIER:-standard}" "$prompt" "$(date +%s)" "$effective_cold_start_timeout" || pulse_rc=$?
+	fi
+
+	local end_epoch
+	end_epoch=$(date +%s)
+	_pulse_reconcile_stale_supervisor_blockers "$start_epoch"
+	local duration=$((end_epoch - start_epoch))
+	if [[ "$pulse_rc" -eq 0 ]]; then
+		echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s)" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Pulse failed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s, rc=${pulse_rc})" >>"$LOGFILE"
+	fi
+	return "$pulse_rc"
+}
+
+# GH#38779: a supervisor child that exits 75 within
+# PULSE_SUPERVISOR_TIER_FALLBACK_MAX_SECONDS (default 300) failed model
+# selection before launch (every thinking-tier model backed off), so it did no
+# supervisor work. Retry once at PULSE_SUPERVISOR_FALLBACK_TIER (default
+# standard; empty disables). An explicit PULSE_MODEL pin is never swapped, and
+# a session that actually ran is never repeated.
+# Args: $1=child rc $2=attempt duration seconds
+# Returns: 0 when the fallback attempt should run, 1 otherwise
+_pulse_supervisor_tier_fallback_due() {
+	local child_rc="$1"
+	local attempt_duration="$2"
+	local fallback_tier="${PULSE_SUPERVISOR_FALLBACK_TIER-standard}"
+	local max_seconds="${PULSE_SUPERVISOR_TIER_FALLBACK_MAX_SECONDS:-300}"
+	[[ "$child_rc" == "75" ]] || return 1
+	[[ -n "$fallback_tier" && "$fallback_tier" != "thinking" ]] || return 1
+	[[ -z "${PULSE_MODEL:-}" ]] || return 1
+	[[ "$max_seconds" =~ ^[0-9]+$ ]] || max_seconds=300
+	[[ "$attempt_duration" =~ ^[0-9]+$ && "$attempt_duration" -lt "$max_seconds" ]] || return 1
+	return 0
+}
+
+# Launch one supervisor child at the given tier and watch it to completion.
+# Args: $1=tier $2=prompt $3=start epoch $4=cold-start timeout seconds
+# Returns: the child/watchdog exit code
+_run_pulse_supervisor_child() {
+	local tier="$1"
+	local prompt="$2"
+	local start_epoch="$3"
+	local effective_cold_start_timeout="$4"
+
 	# Run the provider-aware headless wrapper in background.
-	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier thinking)
+	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier "$tier")
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
@@ -340,16 +391,6 @@ run_pulse() {
 
 	# Write IDLE sentinel — never delete the PID file (GH#4324).
 	echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
-
-	local end_epoch
-	end_epoch=$(date +%s)
-	_pulse_reconcile_stale_supervisor_blockers "$start_epoch"
-	local duration=$((end_epoch - start_epoch))
-	if [[ "$pulse_rc" -eq 0 ]]; then
-		echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s)" >>"$LOGFILE"
-	else
-		echo "[pulse-wrapper] Pulse failed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s, rc=${pulse_rc})" >>"$LOGFILE"
-	fi
 	return "$pulse_rc"
 }
 

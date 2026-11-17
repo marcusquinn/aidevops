@@ -14,7 +14,10 @@ stdin JSON:
                     from the caller's upstream commit/compare API reads
   release_proof     semver policies with release_identity only: upstream repository,
                     peeled old/new release commits, compare status and the new
-                    release's published image digests (images asset)
+                     release's published image digests (images asset, optional)
+  pin_proof         registry_images: {"<image>:<tag>": digest} resolved from the
+                     registry; release_checksum: upstream repository, asset, file,
+                     version and the sha256 listed for that file
   files             GitHub compare entries for main...<exact head>
   contents          {path: {base: base64, head: base64}} for the manifest and
                     every changed pinned or check file (merge-base and exact head)
@@ -37,8 +40,10 @@ import sys
 
 from cloudron_release_identity import (
     COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
-    release_identity, require, split_digests, substitute_versions,
+    pin_policy, validate_pins_request,
+    release_identity, require, substitute_versions,
 )
+from cloudron_pinned_changes import pinned_changes_ok
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
@@ -138,27 +143,8 @@ def check_upstream(doc, policy, old_up, new_up):
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
 
-def pinned_changes_ok(base_text, head_text, mappings, identity):
-    if head_text == base_text:
-        return False
-    if identity is None:
-        return any(substitute_versions(base_text, candidate) == head_text for candidate in mappings)
-    base_body, base_digests = split_digests(base_text)
-    head_body, head_digests = split_digests(head_text)
-    # aidevops:trust-boundary — a FROM digest may change only to a digest the
-    # signed upstream release itself published; any other change fails closed.
-    if len(base_digests) != len(head_digests) or any(
-            old != new and new not in identity["digests"] for old, new in zip(base_digests, head_digests)):
-        return False
-    new_commit = next(iter(identity["commits"].values()))
-    arg_line = r"(?m)^ARG[ \t]+" + re.escape(identity["arg"]) + "=" + new_commit + r"[ \t]*$"
-    if re.search(arg_line, head_body) is None:
-        return False
-    return any(substitute_versions(base_body, candidate) == head_body for candidate in mappings)
-
-
-def license_changes_ok(base_manifest, head_manifest, identity):
-    """upstreamLicense may differ only by the proven release-commit substitution."""
+def license_changes_ok(base_manifest, head_manifest, mappings):
+    """upstreamLicense may differ only by the proven release-commit or version substitution."""
     base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
     if not isinstance(base, dict) or not isinstance(head, dict):
         return canonical(base) == canonical(head)
@@ -168,7 +154,7 @@ def license_changes_ok(base_manifest, head_manifest, identity):
     rest_base = {key: value for key, value in base.items() if key != "url"}
     rest_head = {key: value for key, value in head.items() if key != "url"}
     return canonical(rest_base) == canonical(rest_head) \
-        and substitute_versions(url_base, identity["commits"]) == url_head
+        and any(substitute_versions(url_base, candidate) == url_head for candidate in mappings)
 
 
 def insertion_pattern(policy):
@@ -211,6 +197,29 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, allow_nan=False)
 
 
+def check_manifest_fields(base_manifest, head_manifest, identity, pins):
+    """Keep non-version fields fixed unless a signed proof permits the license URL."""
+    old_up, new_up = base_manifest.get("upstreamVersion"), head_manifest.get("upstreamVersion")
+    # Without a signed release identity or license_version_url the policy permits
+    # no manifest field change beyond the version keys; with one, upstreamLicense
+    # may also change by the proven release-commit and/or whole-token upstream
+    # version substitution (checked separately).
+    license_mappings = []
+    if identity:
+        license_mappings += [identity["commits"]]
+    if pins["license"]:
+        license_mappings += [{old_up: new_up}]
+        if identity:
+            license_mappings += [{**identity["commits"], **{old_up: new_up}}]
+    exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
+    unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
+    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),
+            "manifest changes beyond version and upstreamVersion")
+    require(not license_mappings or license_changes_ok(base_manifest, head_manifest, license_mappings),
+            "manifest changes beyond version and upstreamVersion: upstreamLicense.url "
+            "is outside the permitted substitution")
+
+
 def check(doc, repository):
     require(isinstance(doc, dict), "input must be an object")
     policy = doc.get("policy")
@@ -246,16 +255,12 @@ def check(doc, repository):
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
     check_upstream(doc, policy, old_up, new_up)
+    pins = pin_policy(doc, policy)
     identity = release_identity(doc, policy)
+    require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
+            "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    # Without a signed release identity the policy permits no manifest field
-    # change beyond the version keys; with one, upstreamLicense may also change
-    # by the proven release-commit substitution (checked separately).
-    exempt = VERSION_KEYS + (("upstreamLicense",) if identity else ())
-    unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt})
-            and (identity is None or license_changes_ok(base_manifest, head_manifest, identity)),
-            "manifest changes beyond version and upstreamVersion")
+    check_manifest_fields(base_manifest, head_manifest, identity, pins)
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
@@ -281,7 +286,7 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(pinned_changes_ok(base_text, head_text, pinned_mappings, identity),
+            require(pinned_changes_ok((base_text, head_text), identity, pins, (pinned_mappings, [{old_up: new_up}])),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
@@ -293,9 +298,14 @@ def check(doc, repository):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repository", required=True)
+    parser.add_argument("--validate-pins", action="store_true",
+                        help="validate a pins-mode policy-request JSON object from stdin instead of a bump")
     args = parser.parse_args()
     try:
-        check(decode_json(sys.stdin.read()), args.repository)
+        if args.validate_pins:
+            validate_pins_request(decode_json(sys.stdin.read()))
+        else:
+            check(decode_json(sys.stdin.read()), args.repository)
     except NotRoutine as error:
         print("NOT_ROUTINE: " + str(error))
         return 1

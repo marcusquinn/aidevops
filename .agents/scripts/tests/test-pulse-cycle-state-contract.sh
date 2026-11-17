@@ -586,7 +586,9 @@ pass "dispatch owner supervises long final drain without progress; child and dea
 	unset -f ps _get_process_age _kill_tree _force_kill_tree
 	wait "$publisher_pid"
 	# Lease recognition must not disable stale-lock recovery: an expired lease
-	# or a marker without matching LLM ownership uses the existing kill policy.
+	# or a malformed marker uses the existing kill policy. A fresh heartbeat with
+	# a matching ${LOCKDIR}/pid is a valid lease (t18978/GH#37874: elastic
+	# dispatch holds the instance lock without the LLM lane), so no reclaim.
 	(
 		LOCKDIR="${TMP_DIR}/lease-recovery.lock"
 		_get_process_age() { printf '7200\n'; return 0; }
@@ -594,22 +596,27 @@ pass "dispatch owner supervises long final drain without progress; child and dea
 		_kill_tree() { : >"${TMP_DIR}/expected-reclaim"; return 0; }
 		_force_kill_tree() { return 0; }
 		sleep() { return 0; }
-		for lease_case in expired foreign; do
+		for lease_case in expired malformed empty fresh; do
 			mkdir "$LOCKDIR" "${LOCKDIR}.llm"
 			printf '%s\n' "$$" >"${LOCKDIR}/pid"
 			printf '%s\n' "$$" >"${LOCKDIR}.llm/pid"
-			if [[ "$lease_case" == expired ]]; then
-				printf '%s\n' "$((supervisor_clock - 2000))" >"${LOCKDIR}/supervisor_heartbeat_epoch"
+			case "$lease_case" in
+			expired) printf '%s\n' "$((supervisor_clock - 2000))" >"${LOCKDIR}/supervisor_heartbeat_epoch" ;;
+			malformed) printf 'not-a-number\n' >"${LOCKDIR}/supervisor_heartbeat_epoch" ;;
+			empty) : >"${LOCKDIR}/supervisor_heartbeat_epoch" ;;
+			*) printf '%s\n' "$supervisor_clock" >"${LOCKDIR}/supervisor_heartbeat_epoch" ;;
+			esac
+			rc=0
+			_handle_existing_lock >/dev/null 2>&1 || rc=$?
+			if [[ "$lease_case" == fresh ]]; then
+				[[ "$rc" -eq 1 && ! -f "${TMP_DIR}/expected-reclaim" ]] || { echo "FAIL lease-recovery ${lease_case} (rc=${rc})"; exit 1; }
 			else
-				printf '%s\n' "$supervisor_clock" >"${LOCKDIR}/supervisor_heartbeat_epoch"
-				printf 'foreign-owner\n' >"${LOCKDIR}.llm/pid"
+				[[ -f "${TMP_DIR}/expected-reclaim" ]] || { echo "FAIL lease-recovery ${lease_case} (rc=${rc})"; exit 1; }
+				rm "${TMP_DIR}/expected-reclaim"
 			fi
-			_handle_existing_lock
-			[[ -f "${TMP_DIR}/expected-reclaim" ]]
 			rm -rf "$LOCKDIR" "${LOCKDIR}.llm"
-			rm "${TMP_DIR}/expected-reclaim"
 		done
-	)
+	) || exit 1
 	cp "$PULSE_HEALTH_FILE" "${TMP_DIR}/newer-supervisor-snapshot.json"
 	_pulse_cycle_state_supervisor_heartbeat && exit 1
 	cmp -s "$PULSE_HEALTH_FILE" "${TMP_DIR}/newer-supervisor-snapshot.json"

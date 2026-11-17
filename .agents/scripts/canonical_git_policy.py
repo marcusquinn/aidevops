@@ -301,6 +301,9 @@ def classify_git_argv(
         return True, "read-only Git version query"
     if not subcommand:
         return False, "unable to classify Git subcommand"
+    if subcommand in READ_ONLY:
+        # Allowed in canonical and linked worktrees alike; skip the 2-spawn probe.
+        return True, "read-only Git operation"
     try:
         is_canonical = _is_canonical(real_git_path, effective_cwd, prefix)
     except RuntimeError as error:

@@ -77,12 +77,15 @@ cat >"$LOG_FILE" <<'EOF'
 {"ts":"2026-07-31T00:28:00Z","op":"issue_edit","repo":"example/repo","number":29,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["status:available","auto-dispatch"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available","auto-dispatch"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 {"ts":"2026-07-31T00:29:00Z","op":"issue_edit","repo":"example/repo","number":30,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 {"ts":"2026-07-31T00:30:00Z","op":"issue_edit","repo":"example/repo","number":31,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_approval_verified":"v1-current-state"},"before":{"capture_status":"ok","title_len":1,"body_len":1,"labels":["needs-maintainer-permissions","priority:high"]},"after":{"capture_status":"ok","title_len":1,"body_len":1,"labels":[]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","priority:high"],"labels_added":[]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:31:00Z","op":"issue_edit","repo":"example/repo","number":32,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{"permission_withdrawal_verified":"v1-current-state"},"before":{"capture_status":"ok","labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","labels":["status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
+{"ts":"2026-07-31T00:32:00Z","op":"issue_edit","repo":"example/repo","number":33,"caller_script":"/runtime/agents/scripts/approval-helper-permissions.sh","caller_function":"_apply_permission_approval_state","flags":{},"before":{"capture_status":"ok","labels":["needs-maintainer-permissions","status:blocked"]},"after":{"capture_status":"ok","labels":["status:available"]},"delta":{"comparable":true,"title_delta_pct":0,"body_delta_pct":0,"labels_removed":["needs-maintainer-permissions","status:blocked"],"labels_added":["status:available"]},"suspicious":["protected_label_removed:needs-maintainer-permissions"]}
 EOF
 
 output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state.json" \
 	GH_AUDIT_QUIET=true "$HELPER" scan --all --dry-run)
 
-[[ "$output" == *"**Anomalies found:** 17"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"**Anomalies found:** 18"* ]] || fail "expected transitions were not excluded exactly"
+[[ "$output" == *"| #33 |"* && "$output" != *"| #32 |"* ]] || fail "withdrawal proof filtering failed"
 [[ "$output" == *"| #30 |"* ]] || fail "unverified permission grant was hidden"
 [[ "$output" == *"| #31 |"* ]] || fail "permission grant with an extra label removal was hidden"
 [[ "$output" == *"| #3 |"* ]] || fail "unexpected lifecycle transition was hidden"
@@ -220,11 +223,16 @@ cmd_verify_permissions() {
 		printf 'VERIFIED\n'
 		return 0
 	fi
+	if [[ "$target_type" == "issue" && "$target_number" == "43" ]]; then
+		printf 'WITHDRAWN\n'
+		return 1
+	fi
 	printf 'NO_APPROVAL\n'
 	return 1
 }
 for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.sh" \
 	"41|/runtime/agents/scripts/approval-helper-permissions.sh" \
+	"43|/runtime/agents/scripts/approval-helper-permissions.sh" \
 	"42|/tmp/approval-helper-permissions-copy.sh"; do
 	_gh_audit_record_op \
 		"issue_edit" "example/repo" "${permission_case%%|*}" \
@@ -235,6 +243,8 @@ for permission_case in "40|/runtime/agents/scripts/approval-helper-permissions.s
 done
 jq -e -s 'map(select(.number == 40))[0].flags.permission_approval_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
 	fail "verified permission grant did not produce audit proof"
+jq -e -s 'map(select(.number == 43))[0].flags.permission_withdrawal_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
+	fail "verified permission withdrawal did not produce audit proof"
 jq -e -s 'map(select(.number == 41 or .number == 42) | .flags == {}) | length == 2 and all' "$PROOF_LOG" >/dev/null ||
 	fail "unverified or foreign permission grant produced trusted audit proof"
 unset -f cmd_verify_permissions

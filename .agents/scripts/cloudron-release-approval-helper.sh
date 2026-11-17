@@ -284,6 +284,13 @@ release_policy_body() {
 		# shellcheck disable=SC2016 # Markdown backticks are literal.
 		printf 'Release identity policy: upstream `%s`; semver rules below still apply, and additionally the pinned release commit (`ARG %s`, and the commit in `upstreamLicense.url`) may change only to the peeled commit of the new upstream release tag, strictly ahead of the old tag commit, and `FROM` image digests may change only to digests published in the new release asset `%s`. Any other manifest or pinned-file change is not routine. A new signature is required for this mode.\n\n' "$identity_repo" "$identity_arg" "$identity_asset"
 		;;
+	pins)
+		# upstream is one JSON object with only the opt-in pin fields; the signature covers all of it.
+		python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo" --validate-pins <<<"$upstream" >/dev/null || return 1
+		policy=$(jq -c --argjson pins "$upstream" '. + $pins' <<<"$policy") || return 1
+		# shellcheck disable=SC2016 # Markdown backticks are literal.
+		printf 'Upstream pin policy: semver rules below still apply, and additionally the signed JSON fields extend the routine class with proofs read from the signed upstream and registries, never from PR content. `registry_images`: a `FROM <image>:<tag>@<digest>` digest may change only when the tag is the whole-token new upstream version and the registry resolves that exact image tag to that digest. `release_checksum`: the named `ARG` may change only to the sha256 listed for the named file in the new release checksum asset. `license_version_url`: `upstreamLicense.url` may differ only by whole-token upstream version substitution. `release_identity` may omit `images_json_asset` when `registry_images` proves the digests. Any other change, unknown field or unresolvable proof is not routine. A new signature is required for this mode.\n\n'
+		;;
 	*) return 1 ;;
 	esac
 	# shellcheck disable=SC2016 # Markdown backticks are literal, not expansions.
@@ -392,7 +399,8 @@ release_identity_proof() {
 	local policy="$1" contents="$2" upstream='' asset='' old='' new='' versions='' tag_old='' tag_new=''
 	local base='' head='' comparison='' release='' asset_id='' digests=''
 	upstream=$(jq -er '.upstream_repository | strings | select(test("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
-	asset=$(jq -er '.release_identity.images_json_asset | strings | select(test("^[A-Za-z0-9_][A-Za-z0-9_.-]*$"))' <<<"$policy") || return 1
+	# The images asset is optional: registry digest proof may cover the images instead.
+	asset=$(jq -r '.release_identity.images_json_asset // empty | strings' <<<"$policy") || return 1
 	versions=$(release_manifest_versions "$contents" '^v?[0-9]+\.[0-9]+\.[0-9]+$') || return 1
 	IFS=$'\t' read -r old new <<<"$versions"
 	tag_old="v${old#v}"
@@ -402,12 +410,100 @@ release_identity_proof() {
 	head=$(gh api "repos/${upstream}/commits/${tag_new}" --jq '.sha') || return 1
 	[[ "$base" =~ $RELEASE_SHA_PATTERN && "$head" =~ $RELEASE_SHA_PATTERN ]] || return 1
 	comparison=$(gh api "repos/${upstream}/compare/${base}...${head}") || return 1
-	release=$(gh api "repos/${upstream}/releases/tags/${tag_new}") || return 1
+	digests='[]'
+	if [[ -n "$asset" ]]; then
+		release=$(gh api "repos/${upstream}/releases/tags/${tag_new}") || return 1
+		asset_id=$(jq -er --arg name "$asset" '[.assets[] | select(.name == $name) | .id] | select(length == 1) | .[0]' <<<"$release") || return 1
+		[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
+		digests=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | grep -Eo 'sha256:[a-f0-9]{64}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
+	fi
+	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" --argjson comparison "$comparison" \
+		'{repository:$repo,asset:(if $asset == "" then null else $asset end),old_commit:$base,new_commit:$head,status:$comparison.status,merge_base:$comparison.merge_base_commit.sha,digests:$digests}' || return 1
+	return 0
+}
+
+# Resolve "<image>:<tag>" (image in the signed registry_images) to its manifest
+# or index digest through the registry's anonymous token flow.
+release_registry_digest() {
+	local image="$1" tag="$2" host='' name='' token='' digest='' token_url='' registry=''
+	[[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || return 1
+	host="${image%%/*}"
+	name="${image#*/}"
+	case "$host" in
+	ghcr.io)
+		registry="https://ghcr.io"
+		token_url="https://ghcr.io/token?scope=repository:${name}:pull"
+		;;
+	docker.io)
+		registry="https://registry-1.docker.io"
+		token_url="https://auth.docker.io/token?service=registry.docker.io&scope=repository:${name}:pull"
+		;;
+	*) return 1 ;;
+	esac
+	token=$(curl -fsS --max-time 30 "$token_url" | jq -er '.token | strings | select(length > 0)') || return 1
+	digest=$(curl -fsSI --max-time 30 -H "Authorization: Bearer ${token}" \
+		-H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+		"${registry}/v2/${name}/manifests/${tag}" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" {print $2}') || return 1
+	[[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+	printf '%s\n' "$digest"
+	return 0
+}
+
+# Registry proof: resolve every FROM ref in the changed pinned files whose
+# image the signed policy lists. Keys are the raw refs; the predicate matches them.
+release_registry_proof() {
+	local policy="$1" contents="$2" file='' text='' ref='' image='' tag='' digest='' proof='{}' normalized=''
+	while IFS= read -r file; do
+		text=$(jq -er --arg file "$file" '.[$file].head | @base64d' <<<"$contents") || continue
+		while IFS= read -r ref; do
+			[[ -n "$ref" ]] || continue
+			image="${ref%:*}"
+			tag="${ref##*:}"
+			[[ "$ref" == *:* && "$image" != "$ref" && "$tag" != */* ]] || continue
+			normalized="$image"
+			case "${normalized%%/*}" in
+			*.* | *:*) ;;
+			*) if [[ "$normalized" == */* ]]; then normalized="docker.io/${normalized}"; else normalized="docker.io/library/${normalized}"; fi ;;
+			esac
+			jq -e --arg image "$normalized" '.registry_images | index($image) != null' <<<"$policy" >/dev/null || continue
+			digest=$(release_registry_digest "$normalized" "$tag") || return 1
+			proof=$(jq -c --arg ref "$ref" --arg digest "$digest" '. + {($ref): $digest}' <<<"$proof") || return 1
+		done < <(sed -nE 's/^FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*([^[:space:]@]+)@sha256:[a-f0-9]{64}.*/\2/p' <<<"$text")
+	done < <(jq -r --argjson policy "$policy" '. as $c | $policy.pinned_files[] | . as $f | select($c | has($f))' <<<"$contents")
+	printf '%s\n' "$proof"
+	return 0
+}
+
+# Checksum proof: the sha256 the new release's checksum asset lists for the signed file.
+release_checksum_proof() {
+	local policy="$1" contents="$2" upstream='' asset='' file='' versions='' old='' new='' version='' release='' asset_id='' sha=''
+	# Field shapes were validated when the policy was signed and are re-checked by the predicate.
+	upstream=$(jq -er '.upstream_repository | strings' <<<"$policy") || return 1
+	asset=$(jq -er '.release_checksum.asset | strings' <<<"$policy") || return 1
+	versions=$(release_manifest_versions "$contents" '^v?[0-9]+\.[0-9]+\.[0-9]+$') || return 1
+	IFS=$'\t' read -r old new <<<"$versions"
+	version="${new#v}"
+	file=$(jq -er --arg version "$version" '.release_checksum.file | strings | gsub("\\{version\\}"; $version)' <<<"$policy") || return 1
+	release=$(gh api "repos/${upstream}/releases/tags/v${version}") || return 1
 	asset_id=$(jq -er --arg name "$asset" '[.assets[] | select(.name == $name) | .id] | select(length == 1) | .[0]' <<<"$release") || return 1
 	[[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || return 1
-	digests=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | grep -Eo 'sha256:[a-f0-9]{64}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
-	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg base "$base" --arg head "$head" --argjson digests "$digests" --argjson comparison "$comparison" \
-		'{repository:$repo,asset:$asset,old_commit:$base,new_commit:$head,status:$comparison.status,merge_base:$comparison.merge_base_commit.sha,digests:$digests}' || return 1
+	sha=$(gh api -H 'Accept: application/octet-stream' "repos/${upstream}/releases/assets/${asset_id}" | awk -v file="$file" '$2 == file || $2 == "*" file {print $1}' | sort -u) || return 1
+	[[ "$sha" =~ ^[a-f0-9]{64}$ ]] || return 1
+	jq -cn --arg repo "$upstream" --arg asset "$asset" --arg file "$file" --arg version "$version" --arg sha "$sha" \
+		'{repository:$repo,asset:$asset,file:$file,version:$version,sha256:$sha}' || return 1
+	return 0
+}
+
+# Pin proofs for the opt-in registry_images / release_checksum policy fields.
+release_pin_proof() {
+	local policy="$1" contents="$2" registry='null' checksum='null'
+	if jq -e '.registry_images != null' <<<"$policy" >/dev/null; then
+		registry=$(release_registry_proof "$policy" "$contents") || return 1
+	fi
+	if jq -e '.release_checksum != null' <<<"$policy" >/dev/null; then
+		checksum=$(release_checksum_proof "$policy" "$contents") || return 1
+	fi
+	jq -cn --argjson registry "$registry" --argjson checksum "$checksum" '{registry:$registry,checksum:$checksum}' || return 1
 	return 0
 }
 
@@ -417,7 +513,7 @@ release_policy_authorizes() {
 	local repo="$1" pr="$2" head="$3"
 	local active='' number='' policy='' snapshot='' view='' finding='' fingerprint='' compare='' merge_base=''
 	local files='' contents='{}' path='' base_content='' head_content='' document='' verdict='' rc=0
-	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null'
+	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null' pin_proof='null'
 	active=$(release_policy_active "$repo") || return 1
 	IFS=$'\t' read -r number policy <<<"$active"
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
@@ -464,8 +560,11 @@ release_policy_authorizes() {
 	if [[ "$mode" == semver ]] && jq -e 'has("release_identity")' <<<"$policy" >/dev/null; then
 		release_proof=$(release_identity_proof "$policy" "$contents") || return 1
 	fi
-	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" \
-		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, files: $files, contents: $contents}') || return 1
+	if [[ "$mode" == semver ]] && jq -e '.registry_images != null or .release_checksum != null' <<<"$policy" >/dev/null; then
+		pin_proof=$(release_pin_proof "$policy" "$contents") || return 1
+	fi
+	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" \
+		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, files: $files, contents: $contents}') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2
@@ -1224,7 +1323,7 @@ main() {
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == release-identity ) ) ]] || return 1
+		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
 		release_policy_request "$arg2" "${arg3:-semver}" "$arg4" || return 1
 		;;
 	process)
@@ -1255,7 +1354,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

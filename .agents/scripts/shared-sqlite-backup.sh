@@ -201,6 +201,7 @@ rollback_sqlite_db() {
 # Arguments:
 #   $1 - database path (used to derive backup file pattern)
 #   $2 - number of backups to keep (default: SQLITE_BACKUP_RETAIN_COUNT)
+#   $3 - optional table name; protects the fullest backup if it has more rows than the live DB
 # Returns: 0 always
 cleanup_sqlite_backups() {
 	local db_path="$1"
@@ -220,8 +221,27 @@ cleanup_sqlite_backups() {
 	if [[ "$backup_count" -gt "$keep_count" ]]; then
 		local to_remove
 		to_remove=$((backup_count - keep_count))
+		# Optional $3: table name. The backup with the most rows in that table
+		# is kept when it holds more rows than the live DB (GH#38769).
+		local protect_table="${3:-}"
+		local protected_backup=""
+		if [[ -n "$protect_table" && "$protect_table" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && command -v sqlite3 >/dev/null 2>&1; then
+			local live_rows best_rows b_rows b
+			live_rows=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM ${protect_table};" 2>/dev/null || echo 0)
+			best_rows="$live_rows"
+			# shellcheck disable=SC2086
+			for b in $pattern; do
+				[[ -f "$b" ]] || continue
+				b_rows=$(sqlite3 "$b" "SELECT COUNT(*) FROM ${protect_table};" 2>/dev/null || echo 0)
+				if [[ "$b_rows" =~ ^[0-9]+$ && "$b_rows" -gt "$best_rows" ]]; then
+					best_rows="$b_rows"
+					protected_backup="$b"
+				fi
+			done
+		fi
 		# shellcheck disable=SC2012,SC2086
 		ls -1t $pattern 2>/dev/null | tail -n "$to_remove" | while IFS= read -r old_backup; do
+			[[ -n "$protected_backup" && "$old_backup" == "$protected_backup" ]] && continue
 			rm -f "$old_backup" "${old_backup}-wal" "${old_backup}-shm" 2>/dev/null || true
 		done
 	fi
