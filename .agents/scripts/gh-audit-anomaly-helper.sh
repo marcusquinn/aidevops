@@ -596,6 +596,7 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
+			--label "status:blocked" \
 			--label "$GH_ANOMALY_HOLD_LABEL" \
 			2>"$gh_stderr_file") || {
 			local gh_err
@@ -612,6 +613,7 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
+			--label "status:blocked" \
 			--label "$GH_ANOMALY_HOLD_LABEL") || {
 			_ga_warn "Failed to create anomaly issue on ${issue_repo}"
 			return 1

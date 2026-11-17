@@ -33,7 +33,8 @@ def expected_permission_approval_transition:
   and .op == $issue_edit
   and .caller_function == "_apply_permission_approval_state"
   and framework_script("approval-helper-permissions.sh")
-  and .flags.permission_approval_verified == "v1-current-state"
+  and (.flags.permission_approval_verified == "v1-current-state"
+       or .flags.permission_withdrawal_verified == "v1-current-state")
   and .suspicious == [("protected_label_removed:" + $permission)]
   and ((.delta.labels_removed // []) | index($permission) != null)
   and (((.delta.labels_removed // []) - [$permission, "status:blocked"]) | length == 0)
