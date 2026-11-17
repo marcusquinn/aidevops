@@ -359,6 +359,24 @@ _pulse_stage_starvation_fuse() {
 	return 0
 }
 
+# GH#20025: Append a structured timing record for a finished or timed-out
+# stage, and charge a fused stage's duration to the fuse budget (GH#38747).
+# Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code
+#         \t cycle_owner_pid \t executor_pid
+_pulse_stage_record_timing() {
+	local stage_name="$1" duration="$2" status="$3" stage_pid="$4"
+	_pulse_stage_fuse_finish "$stage_name" "$duration"
+	[[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]] || return 0
+	printf '%s\t%s\t%d\t%d\t%d\t%d\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		"$stage_name" \
+		"$duration" \
+		"$status" \
+		"$$" \
+		"$stage_pid" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+	return 0
+}
+
 _pulse_stage_cycle_timeout() {
 	local stage_name="$1" timeout_seconds="$2" remaining="" dispatch_reserved=0 fused=""
 	[[ "${AIDEVOPS_PULSE_STAGE_CYCLE_CLAMP:-1}" == "1" ]] || { printf '%s\n' "$timeout_seconds"; return 0; }
@@ -444,17 +462,7 @@ run_stage_with_timeout() {
 				_force_kill_tree "$stage_pid" || true
 			fi
 			wait "$stage_pid" 2>/dev/null || true
-			# GH#20025: Log timeout to structured timing log
-			if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
-				printf '%s\t%s\t%d\t%d\t%d\t%d\n' \
-					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-					"$stage_name" \
-					"$elapsed" \
-					124 \
-					"$$" \
-					"$stage_pid" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
-			fi
-			_pulse_stage_fuse_finish "$stage_name" "$elapsed"
+			_pulse_stage_record_timing "$stage_name" "$elapsed" 124 "$stage_pid"
 			return 124
 		fi
 		# GH#35695: Refresh only while the owner is actively supervising an
@@ -474,20 +482,7 @@ run_stage_with_timeout() {
 	local stage_end
 	stage_end=$(date +%s)
 	local stage_duration=$((stage_end - stage_start))
-	_pulse_stage_fuse_finish "$stage_name" "$stage_duration"
-
-	# GH#20025: Append structured timing record to dedicated log for analysis.
-	# Format: ISO-timestamp \t stage_name \t duration_seconds \t exit_code
-	#         \t cycle_owner_pid \t executor_pid
-	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
-		printf '%s\t%s\t%d\t%d\t%d\t%d\n' \
-			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-			"$stage_name" \
-			"$stage_duration" \
-			"$stage_status" \
-			"$$" \
-			"$stage_pid" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
-	fi
+	_pulse_stage_record_timing "$stage_name" "$stage_duration" "$stage_status" "$stage_pid"
 
 	if [[ "$stage_status" -ne 0 ]]; then
 		echo "[pulse-wrapper] Stage failed: ${stage_name} exited with ${stage_status} (${stage_duration}s)" >>"$LOGFILE"
