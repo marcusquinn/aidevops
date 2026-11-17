@@ -307,7 +307,7 @@ wp cache flush && wp rewrite flush
 
 For reviewed field-level changes to posts and terms on live sites (titles, slugs, meta, ACF/SCF fields, terms, term deletions), use `wp-helper.sh --change-plan`. It does a dry run, a JSON backup, read-back and conditional restore: see `wp-change-plan.md`.
 
-For Fluent Boards cards (list, show, move, comment, tick checklist items) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
+For Fluent Boards cards (list, show, add, move, comment, tick checklist items) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
 
 ## Security
 

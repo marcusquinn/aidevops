@@ -677,6 +677,7 @@ Commands:
   --fluent-boards <site> <action> [--url URL] [--user=<id>]
                                       Fluent Boards cards over WP-CLI (JSON output):
                                       boards | cards --board ID [--stage S] | show --card ID
+                                      add --board ID --title T [--stage S] [--body-file F]
                                       move --card ID --stage S | comment --card ID --body-file F
                                       check --card ID --item ID  (writes need --user)
                                       (tools/wordpress/fluent-mcp.md "Work a setup board")

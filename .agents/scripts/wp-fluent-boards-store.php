@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 Marcus Quinn
  *
- * Loaded by wp-fluent-boards.php; keep the four wp-fluent-boards*.php files together.
+ * Loaded by wp-fluent-boards.php; keep the wp-fluent-boards*.php files together.
  *
  * @package aidevops
  */
