@@ -388,17 +388,17 @@ test_child_body_neutralises_inlined_directives() {
 	body=$(_compose_consolidation_child_body 123 "owner/repo" "t" "$parent_body" "$comments" "@alice" "bug")
 
 	local failmsg=""
-	if printf '%s\n' "$body" | grep -Eq '^[[:space:]]*requires-(secrets|ssh|tools|loopback-health|device):'; then
+	if grep -Eq '^[[:space:]]*requires-(secrets|ssh|tools|loopback-health|device):' <<<"$body"; then
 		failmsg="${failmsg} | requires-* line still at line start"
 	fi
-	if printf '%s' "$body" | grep -Eq '<!-- aidevops:needs-secrets [A-Za-z_0-9 ]+ -->'; then
+	if grep -Eq '<!-- aidevops:needs-secrets [A-Za-z_0-9 ]+ -->' <<<"$body"; then
 		failmsg="${failmsg} | needs-secrets marker still intact"
 	fi
-	if ! printf '%s' "$body" | grep -qF -- '> requires-secrets: A B' ||
-		! printf '%s' "$body" | grep -qF -- '> requires-ssh: host'; then
+	if ! grep -qF -- '> requires-secrets: A B' <<<"$body" ||
+		! grep -qF -- '> requires-ssh: host' <<<"$body"; then
 		failmsg="${failmsg} | directives not quoted"
 	fi
-	if ! printf '%s' "$body" | grep -qF -- 'Restore each one in the merged spec unquoted'; then
+	if ! grep -qF -- 'Restore each one in the merged spec unquoted' <<<"$body"; then
 		failmsg="${failmsg} | restore instruction missing"
 	fi
 
