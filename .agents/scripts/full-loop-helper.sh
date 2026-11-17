@@ -291,10 +291,12 @@ _commit_and_pr_prepare_metadata() {
 	if [[ -x "$sig_helper" ]]; then
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
 	fi
+	local worker_closing_check=0
 	if [[ "$allow_parent_close" -eq 1 ]]; then
 		closing_keyword="Resolves"
 	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
 		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
+		worker_closing_check=1
 	fi
 	local parent_for_link=0
 	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
@@ -316,6 +318,14 @@ _commit_and_pr_prepare_metadata() {
 	if [[ "$keep_issue_open" -eq 1 ]]; then
 		closing_keyword="For"
 		print_info "--keep-issue-open — using 'For' keyword; issue #${issue_number} stays open after merge"
+	fi
+	# GH#38823: evaluate the FINAL keyword (after planning/parent/keep-open
+	# overrides). A worker summary declaring `For/Ref #<this issue>` contradicts
+	# a closing PR; refuse instead of silently closing the issue.
+	if [[ "$worker_closing_check" -eq 1 && "$closing_keyword" != "For" && "$allow_parent_close" -eq 0 ]] &&
+		! _summary_declares_partial_self "$issue_number" "$summary_what" "$summary_testing" "${summary_decisions:-}"; then
+		print_error "Summary references 'For/Ref #${issue_number}' (partial PR) but commit-and-pr would emit a closing keyword and close the issue. Remove the self-reference if the work is complete (closure is intended), or finish the remaining criteria; unmet verification must not be lost on merge." >&2
+		return 1
 	fi
 	local replacement_note=""
 	if [[ -n "$replacement_pr" ]]; then

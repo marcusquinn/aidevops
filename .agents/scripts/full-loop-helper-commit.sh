@@ -1017,6 +1017,28 @@ _review_repair_closing_keyword() {
 	return 0
 }
 
+# GH#38823: fail closed when a worker summary declares the dispatched issue
+# as `For`/`Ref #N` (a partial PR) while commit-and-pr would emit `Resolves #N`
+# and close it, losing unmet verification criteria. Returns 1 on contradiction.
+# Arguments: issue_number, then summary text fields. References to other
+# issues are unaffected (GH#36864 turns them into `Ref #M` under Related).
+_summary_declares_partial_self() {
+	local issue_number="$1"
+	shift
+	local text="" reference_number=""
+	local pattern='(^|[^[:alnum:]_])([Ff][Oo][Rr]|[Rr][Ee][Ff])[:[:space:]]+#([0-9]+)'
+	for text in "$@"; do
+		while [[ "$text" =~ $pattern ]]; do
+			reference_number="${BASH_REMATCH[3]}"
+			if [[ "$reference_number" == "$issue_number" ]]; then
+				return 1
+			fi
+			text="${text/"${BASH_REMATCH[0]}"/}"
+		done
+	done
+	return 0
+}
+
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
 #            sig_footer, closing_keyword (default: Resolves), requested_risk,
