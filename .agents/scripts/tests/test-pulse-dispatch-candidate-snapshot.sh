@@ -146,7 +146,7 @@ printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-ce
 	_PULSE_FIRST_DISPATCH_WAVE=1
 	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
 	REPOS_JSON="${TEST_ROOT}/partial-repos.json"
-	printf '{"initialized_repos":[{"slug":"o/product","path":"/fixture","pulse":true}]}\n' >"$REPOS_JSON"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/tmp","pulse":true}]}\n' >"$REPOS_JSON"
 	scheduled=1
 	check_repo_pulse_schedule() {
 		[[ "$scheduled" == 1 ]] && return 0
@@ -216,7 +216,7 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	REPOS_JSON="${TEST_ROOT}/handoff-repos.json"
 	builds="${TEST_ROOT}/handoff-builds"
 	stats="${TEST_ROOT}/handoff-stats"
-	printf '{"initialized_repos":[{"slug":"o/product","path":"/fixture","pulse":true}]}\n' >"$REPOS_JSON"
+	printf '{"initialized_repos":[{"slug":"o/product","path":"/tmp","pulse":true}]}\n' >"$REPOS_JSON"
 	check_repo_pulse_schedule() { return 0; }
 	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
 	pulse_stats_increment() {
