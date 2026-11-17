@@ -43,9 +43,19 @@ cmd_prune() {
 	local max_bytes="${AIDEVOPS_MEMORY_MAX_BYTES:-52428800}"
 	local dry_run=false
 	local ai_judged=false
+	local keep_accessed=false
+	local force=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--keep-accessed)
+			keep_accessed=true
+			shift
+			;;
+		--force)
+			force=true
+			shift
+			;;
 		--older-than-days)
 			older_than_days="$2"
 			shift 2
@@ -88,7 +98,7 @@ cmd_prune() {
 	if [[ "$ai_judged" == true ]]; then
 		log_info "Hard age retention applies before relevance judgment; accessed records cannot escape the age bound"
 	fi
-	_prune_flat_threshold "$older_than_days" "$dry_run"
+	_prune_flat_threshold "$older_than_days" "$dry_run" "$keep_accessed" "$force" || return $?
 	if [[ "$ai_judged" == true ]]; then
 		_prune_ai_judged "$older_than_days" "$dry_run" false
 	fi
@@ -246,7 +256,7 @@ _prune_ai_judged() {
 	log_success "Pruned $prune_count entries (AI-judged, kept $keep_count)"
 	log_info "Rebuilt search index"
 
-	cleanup_sqlite_backups "$MEMORY_DB" 5
+	cleanup_sqlite_backups "$MEMORY_DB" 5 learnings
 	return 0
 }
 
@@ -256,9 +266,27 @@ _prune_ai_judged() {
 _prune_flat_threshold() {
 	local older_than_days="$1"
 	local dry_run="$2"
+	local keep_accessed="${3:-false}"
+	local force="${4:-false}"
 
-	local count
-	count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days');")
+	local access_filter=""
+	if [[ "$keep_accessed" == true ]]; then
+		access_filter=" AND id NOT IN (SELECT id FROM learning_access)"
+	fi
+
+	local count total
+	count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')${access_filter};")
+	total=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;")
+
+	# Safety cap: one run may not delete more than the configured share of a
+	# non-trivial DB unless --force (GH#38769).
+	local max_share_pct="${AIDEVOPS_MEMORY_PRUNE_MAX_SHARE_PCT:-25}"
+	local min_total="${AIDEVOPS_MEMORY_PRUNE_CAP_MIN_ENTRIES:-20}"
+	if [[ "$count" -gt 0 && "$force" != true && "$dry_run" != true && "$total" -ge "$min_total" ]] &&
+		[[ $((count * 100)) -gt $((total * max_share_pct)) ]]; then
+		log_error "Refusing to prune $count of $total entries (>${max_share_pct}% in one run); re-run with --force if intended"
+		return 1
+	fi
 
 	if [[ "$count" -eq 0 ]]; then
 		log_success "No entries to prune"
@@ -271,7 +299,7 @@ _prune_flat_threshold() {
 		db "$MEMORY_DB" <<EOF
 SELECT id, type, substr(content, 1, 50) || '...' as preview, created_at
 FROM learnings
-WHERE created_at < datetime('now', '-$older_than_days days')
+WHERE created_at < datetime('now', '-$older_than_days days')${access_filter}
 LIMIT 20;
 EOF
 		return 0
@@ -284,7 +312,7 @@ EOF
 		log_warn "Backup failed before prune -- proceeding cautiously"
 	fi
 
-	local subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')"
+	local subquery="SELECT id FROM learnings WHERE created_at < datetime('now', '-$older_than_days days')${access_filter}"
 
 	# Delete from all tables using the subquery (much faster than loop)
 	# Clean up relations first to avoid orphaned references
@@ -300,7 +328,7 @@ EOF
 	log_info "Rebuilt search index"
 
 	# Clean up old backups (t188)
-	cleanup_sqlite_backups "$MEMORY_DB" 5
+	cleanup_sqlite_backups "$MEMORY_DB" 5 learnings
 	return 0
 }
 
@@ -425,7 +453,7 @@ EOF
 	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 
 	log_success "Pruned $to_remove repetitive '$keyword' entries (kept $keep_count newest)"
-	cleanup_sqlite_backups "$MEMORY_DB" 5
+	cleanup_sqlite_backups "$MEMORY_DB" 5 learnings
 	return 0
 }
 
