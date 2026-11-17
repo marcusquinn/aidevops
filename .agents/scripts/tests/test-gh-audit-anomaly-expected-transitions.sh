@@ -103,7 +103,9 @@ output=$(GH_AUDIT_LOG_FILE="$LOG_FILE" GH_ANOMALY_STATE_FILE="${TEST_ROOT}/state
 [[ "$output" == *"| #23 |"* ]] || fail "permission block without a prior active status was hidden"
 [[ "$output" == *"| #25 |"* ]] || fail "planning transition without publication evidence was hidden"
 [[ "$output" == *"| #27 |"* ]] || fail "feedback redispatch with an additional label change was hidden"
-[[ "$output" == *"The audit log stores lengths, not content."* ]] || fail "recovery guidance overclaimed audit content"
+[[ "$output" == *"Alert Triage Contract"* ]] || fail "alert body lacks the automatic triage contract (GH#38770)"
+[[ "$output" == *$'### Files Scope\n\n- READ-ONLY: `~/.aidevops/logs/gh-audit.log`'* ]] || fail "alert body lacks canonical Files Scope (GH#38770)"
+[[ "$output" == *"<!-- gh-audit-anomaly-scanner:"* ]] || fail "alert body lacks scanner marker (GH#38770)"
 [[ "$output" != *"private/repo"* ]] || fail "private repository name leaked into the report"
 [[ "$output" != *"inaccessible/repo"* ]] || fail "unverified repository name leaked into the report"
 [[ "$output" == *"[private repository]"* ]] || fail "redacted repository placeholder was missing"
@@ -857,6 +859,44 @@ blocked_output=$(GH_AUDIT_LOG_FILE="$BLOCKED_LOG" GH_ANOMALY_STATE_FILE="${TEST_
 			[[ "$(wc -l <"$TIMELINE_CALLS" | tr -d ' ')" == 5 ]] || fail 'timeline cap not enforced'
 		fi
 	done
+)
+
+# GH#38770: audit alerts are dispatchable only by the producing runner.
+(
+	LOGFILE="${TEST_ROOT}/dedup.log"
+	ALERT_AUTHOR="runner-a"
+	ALERT_MARKER='<!-- gh-audit-anomaly-scanner:2026-01-01T00:00:00Z -->'
+	ALERT_LABELS='[{"name":"monitoring"},{"name":"auto-dispatch"}]'
+	ALERT_CREATED="2999-01-01T00:00:00Z"
+	WRITES="${TEST_ROOT}/dedup-writes"
+	: >"$WRITES"
+	gh() {
+		case "$1 $2" in
+		"api repos/example/repo/issues/7")
+			jq -cn --arg a "$ALERT_AUTHOR" --arg m "$ALERT_MARKER" --arg c "$ALERT_CREATED" --argjson l "$ALERT_LABELS" \
+				'{user:{login:$a},created_at:$c,assignees:[],body:("body " + $m),labels:$l}'
+			;;
+		"issue edit" | "issue comment") printf '%s\n' "$*" >>"$WRITES" ;;
+		*) return 1 ;;
+		esac
+		return 0
+	}
+	# shellcheck source=../pulse-dispatch-dedup-layers.sh
+	source "${SCRIPT_DIR}/../pulse-dispatch-dedup-layers.sh"
+	title="GH Audit Anomaly Alert: 1 suspicious operations detected"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-a && fail "producing runner was blocked"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-b || fail "other runner was not blocked"
+	_dedup_audit_alert_locality 7 example/repo "$title" "" || fail "unknown self_login did not fail closed"
+	_dedup_audit_alert_locality 7 example/repo "Ordinary task" runner-b && fail "ordinary issue was gated"
+	ALERT_MARKER="no marker"
+	_dedup_audit_alert_locality 7 example/repo "$title" runner-b && fail "markerless issue was gated"
+	ALERT_MARKER='<!-- gh-audit-anomaly-scanner:2026-01-01T00:00:00Z -->'
+	[[ ! -s "$WRITES" ]] || fail "fresh alert was flagged stale"
+	ALERT_CREATED="2020-01-01T00:00:00Z"
+	_dedup_audit_alert_locality 7 example/repo "$title" other-maintainer || true
+	[[ ! -s "$WRITES" ]] || fail "non-maintainer runner flagged an alert"
+	_dedup_audit_alert_locality 7 example/repo "$title" example || fail "maintainer runner did not block foreign alert"
+	grep -q 'needs-maintainer-input' "$WRITES" || fail "stale alert was not labelled needs-maintainer-input"
 )
 
 printf 'PASS: expected approval, blocked and self-reversal transitions are retained in the log but excluded from alerts\n'

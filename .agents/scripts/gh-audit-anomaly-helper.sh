@@ -42,9 +42,13 @@ readonly GH_ANOMALY_LOG_FILENAME="gh-audit.log"
 readonly GH_ANOMALY_DEFAULT_REPO="marcusquinn/aidevops"
 readonly GH_ANOMALY_NMR_LABEL="needs-maintainer-review"
 readonly GH_ANOMALY_PERMISSION_LABEL="needs-maintainer-permissions"
-# GH#34499: the evidence (gh-audit.log) exists only on the producing runner, so
-# alerts are a durable locality hold, never pulse worker candidates.
-readonly GH_ANOMALY_HOLD_LABEL="no-auto-dispatch"
+# GH#38770: alerts are auto-dispatched, but only to the producing runner (the
+# issue author), which alone holds the gh-audit.log evidence (GH#34499). The
+# pulse dedup layer enforces that locality for issues carrying the scanner marker.
+readonly GH_ANOMALY_DISPATCH_LABEL="auto-dispatch"
+readonly GH_ANOMALY_STATUS_LABEL="status:available"
+# Hours before the maintainer runner flags an unclaimed alert (GH#38770).
+readonly GH_ANOMALY_STALE_HOURS=72
 readonly GH_ANOMALY_REDACTED_REPO="[private repository]"
 # Maximum anomaly entries to include in an issue (prevents overly large issues)
 readonly GH_ANOMALY_MAX_ISSUE_ENTRIES=20
@@ -559,14 +563,21 @@ INTEGRITY
 
 ## Next Steps
 
-**Review owner:** the runner that filed this alert (the issue author). The evidence in \`gh-audit.log\` exists only on that runner, so this alert is labelled \`${GH_ANOMALY_HOLD_LABEL}\` and is never dispatched to workers.
+**Triage owner:** the runner that filed this alert (the issue author). The evidence in \`gh-audit.log\` exists only on that runner, so this alert is auto-dispatched to that runner only; other runners never claim it (GH#38770).
 
-1. Review each entry in \`~/.aidevops/logs/gh-audit.log\`, including each snapshot's \`capture_status\`.
-2. Verify the current GitHub state and cross-reference the events API:
-   \`gh api /repos/OWNER/REPO/issues/N/events --jq '[.[] | select(.event == "renamed")]'\`
-3. A \`state_capture_unavailable:*\` signal means the audit read failed; it is not evidence that content was wiped.
-4. If a destructive edit is confirmed, recover content from GitHub history or a committed backup. The audit log stores lengths, not content.
-5. See \`reference/gh-audit-log.md\` for the forensics workflow.
+The worker triages each entry automatically, following "Alert Triage Contract" in \`reference/gh-audit-log.md\`:
+
+1. Find the local log record by \`ts\` + \`repo\` + \`number\` and read \`flags\`, \`caller_*\` and \`delta\`.
+2. Check live GitHub state (issue events/timeline, protected label restored, \`approval-helper.sh verify-permissions\` / \`verify\`).
+3. Classify each entry as \`expected\` (with evidence), \`reverted\` or \`unexplained\`.
+4. All \`expected\`/\`reverted\`: close this alert with an evidence comment. Any \`unexplained\`: add \`needs-maintainer-input\` with one decision-ready comment and leave it open.
+5. A \`state_capture_unavailable:*\` signal means the audit read failed; it is not evidence that content was wiped.
+
+If the producing runner never claims the alert, the maintainer runner's pulse adds \`needs-maintainer-input\` after ${GH_ANOMALY_STALE_HOURS} hours.
+
+### Files Scope
+
+- READ-ONLY: \`~/.aidevops/logs/gh-audit.log\` (local evidence; no repository edits are needed)
 
 <!-- gh-audit-anomaly-scanner:${scan_ts} -->
 FOOTER
@@ -596,8 +607,8 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
-			--label "status:blocked" \
-			--label "$GH_ANOMALY_HOLD_LABEL" \
+			--label "$GH_ANOMALY_STATUS_LABEL" \
+			--label "$GH_ANOMALY_DISPATCH_LABEL" \
 			2>"$gh_stderr_file") || {
 			local gh_err
 			gh_err="$(tr '\n' ' ' <"$gh_stderr_file")"
@@ -613,8 +624,8 @@ _cmd_scan_file_issue() {
 			--title "$title" \
 			--body-file "$body_file" \
 			--label "monitoring" \
-			--label "status:blocked" \
-			--label "$GH_ANOMALY_HOLD_LABEL") || {
+			--label "$GH_ANOMALY_STATUS_LABEL" \
+			--label "$GH_ANOMALY_DISPATCH_LABEL") || {
 			_ga_warn "Failed to create anomaly issue on ${issue_repo}"
 			return 1
 		}
