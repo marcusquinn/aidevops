@@ -176,6 +176,27 @@ describe("aidevops_memory execution", () => {
     assert.match(result, /query is required for memory recall/);
   });
 
+  test("failed store and recall surface the helper error", async () => {
+    const failing = () => {
+      const err = new Error("Command failed");
+      err.stderr = "VAULT_LOCKED: memory requires an unlocked aidevops Vault";
+      throw err;
+    };
+    const results = await withMemoryHelper(async (scriptsDir) => {
+      const tools = createTools(scriptsDir, () => "", { memoryRun: failing });
+      return Promise.all([
+        tools.aidevops_memory.execute({ action: "store", content: "lesson" }),
+        tools.aidevops_memory.execute({ action: "recall", query: "lesson" }),
+      ]);
+    });
+
+    assert.match(results[0], /^Memory NOT stored: VAULT_LOCKED/);
+    assert.match(results[0], /aidevops vault unlock/);
+    assert.doesNotMatch(results[0], /stored successfully/);
+    assert.match(results[1], /^Memory recall failed: VAULT_LOCKED/);
+    assert.doesNotMatch(results[1], /No memories found/);
+  });
+
   test("empty store content returns a validation error", async () => {
     const result = await withMemoryHelper(async (scriptsDir) => {
       const tools = createTools(scriptsDir, () => "stored");

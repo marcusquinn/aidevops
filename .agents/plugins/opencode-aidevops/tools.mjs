@@ -107,11 +107,25 @@ function createAidevopsTool(run) {
   });
 }
 
+function memoryFailureDetail(err) {
+  const parts = [err && err.stderr, err && err.stdout, err && err.message]
+    .map((v) => (v == null ? "" : String(v).trim()))
+    .filter(Boolean);
+  const detail = parts[0] || "unknown error";
+  const hint = /VAULT_LOCKED/.test(detail) ? " — run aidevops vault unlock" : "";
+  return `${detail}${hint}`;
+}
+
 function storeMemory(scriptsDir, memoryHelper, args, run) {
   const content = args.content.trim();
   const confidence = args.confidence || "medium";
   const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
-  const result = run(cmd, 10000) || "Memory stored successfully.";
+  let result;
+  try {
+    result = run(cmd, 10000) || "Memory stored successfully.";
+  } catch (err) {
+    return `Memory NOT stored: ${memoryFailureDetail(err)}`;
+  }
   const frameworkHelper = join(scriptsDir, "framework-issue-helper.sh");
   let hint = "";
 
@@ -173,8 +187,11 @@ function createMemoryTool(scriptsDir, run) {
         const query = args.query.trim();
         const limit = String(args.limit ?? "").trim() || "5";
         const cmd = `bash "${memoryHelper}" recall --query ${shellEscape(query)} --limit ${shellEscape(limit)}`;
-        const result = run(cmd, 10000);
-        return result || "No memories found for this query.";
+        try {
+          return run(cmd, 10000) || "No memories found for this query.";
+        } catch (err) {
+          return `Memory recall failed: ${memoryFailureDetail(err)}`;
+        }
       }
 
       if (action === "store") {
@@ -244,7 +261,7 @@ export function createTools(scriptsDir, run, options = {}) {
       resolveOAuthAccount: options.imageOAuthAccountResolver,
       rotateOAuthAccount: options.imageOAuthAccountRotator,
     }),
-    aidevops_memory: createMemoryTool(scriptsDir, run),
+    aidevops_memory: createMemoryTool(scriptsDir, options.memoryRun || run),
     aidevops_pre_edit_check: createPreEditCheckTool(tool, z, scriptsDir, options.preEditTimeoutMs),
     aidevops_hook_status: createHookStatusTool(tool, z, { workerWorktree: options.workerWorktree }),
     aidevops_bounded_operation: createBoundedInteractiveOperationTool(tool, z, boundedOperationManager),
