@@ -18,7 +18,23 @@ from canonical_git_management import (
 )
 
 
+# Probe results for ONE classification only (this process, cleared per argv).
+# Never persisted: no files, env vars or cross-process sharing.
+_PROBE_MEMO: dict[tuple[str, str, tuple[str, ...]], str] = {}
+
+
+def reset_probe_memo() -> None:
+    _PROBE_MEMO.clear()
+
+
 def git_output(real_git_path: str, cwd: str, *args: str) -> str:
+    key = (real_git_path, cwd, args)
+    if key not in _PROBE_MEMO:
+        _PROBE_MEMO[key] = _git_output_uncached(real_git_path, cwd, *args)
+    return _PROBE_MEMO[key]
+
+
+def _git_output_uncached(real_git_path: str, cwd: str, *args: str) -> str:
     if not os.path.isdir(cwd):
         # Deleted/missing cwd: probe from "/" so absolute `git -C <path>` still
         # resolves; without -C, git finds no repository there (not canonical).
