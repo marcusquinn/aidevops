@@ -27,7 +27,7 @@ source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # the builder is stubbed below; the subshell contains the repo-fetch stubs.
 ranking_order=$(
 	REPOS_JSON="${TEST_ROOT}/repos.json"
-	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"priority":"tooling"}]}' >"$REPOS_JSON"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp","pulse":true,"priority":"tooling"}]}' >"$REPOS_JSON"
 	check_repo_pulse_schedule() { return 0; }
 	check_repo_pulse_interval() { return 0; }
 	update_repo_pulse_timestamp() { return 0; }
@@ -154,7 +154,7 @@ printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-ce
 	}
 	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
 	build_ranked_dispatch_candidates_json() {
-		jq -nc '[range(1;3) | {number:.,repo_slug:"o/product",repo_path:"/fixture",product_discovery_complete:false}]'
+		jq -nc '[range(1;3) | {number:.,repo_slug:"o/product",repo_path:"/tmp",product_discovery_complete:false}]'
 		return 0
 	}
 	initial=$(_dispatch_ranked_candidates_json 50 skip)
@@ -226,7 +226,7 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 	}
 	build_ranked_dispatch_candidates_json() {
 		printf 'scan\n' >>"$builds"
-		jq -nc '[range(1;4) | {number:.,repo_slug:"o/product",repo_path:"/fixture"}]'
+		jq -nc '[range(1;4) | {number:.,repo_slug:"o/product",repo_path:"/tmp"}]'
 		return 0
 	}
 	request_drain() {
@@ -239,7 +239,7 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 		local target="$1" schema="$2" age="$3" issues="$4" now=""
 		now=$(date +%s)
 		jq -nc --arg schema "$schema" --argjson captured "$((now - age))" --arg issues "$issues" \
-			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
+			'{schema:$schema,captured_at:$captured,census_seconds:300,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/tmp"}]}' >"$target"
 		return 0
 	}
 	numbers() {
@@ -314,7 +314,7 @@ printf 'PASS durable partial snapshots preserve attempts across cycles, expire w
 		now=$(date +%s)
 		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson captured "$((now - captured_age))" \
 			--argjson handed "$((now - handed_age))" --arg issues "$issues" \
-			'{schema:$schema,captured_at:$captured,handed_off_at:$handed,census_seconds:2000,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/fixture"}]}' >"$target"
+			'{schema:$schema,captured_at:$captured,handed_off_at:$handed,census_seconds:2000,candidates:[$issues | split(",")[] | {number:tonumber,repo_slug:"o/product",repo_path:"/tmp"}]}' >"$target"
 		return 0
 	}
 	_dispatch_invalidate_candidate_snapshot handoff_fixture_reset 50

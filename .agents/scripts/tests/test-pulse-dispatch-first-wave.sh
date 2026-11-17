@@ -24,7 +24,7 @@ printf '0\n' >"$CLOCK"
 : >"$EVENTS"
 : >"$LOGFILE"
 printf '2476\n' >"${HOME}/.aidevops/cache/pulse-dispatch-enumeration-seconds"
-jq -n '{initialized_repos:[range(1;41) | {slug:("owner/repo" + tostring),path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+jq -n '{initialized_repos:[range(1;41) | {slug:("owner/repo" + tostring),path:"/tmp",pulse:true}]}' >"$REPOS_JSON"
 
 # shellcheck source=../pulse-dispatch-engine.sh
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
@@ -329,7 +329,7 @@ printf 'PASS empty censuses rotate at the total deadline and repository timeout 
 		printf '[]\n'
 		return 0
 	}
-	jq -n '{initialized_repos:[{slug:"owner/big",path:"/fixture",pulse:true},{slug:"owner/small",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	jq -n '{initialized_repos:[{slug:"owner/big",path:"/tmp",pulse:true},{slug:"owner/small",path:"/tmp",pulse:true}]}' >"$REPOS_JSON"
 	rm -f "${HOME}/.aidevops/cache/pulse-census-cursor"
 	: >"$EVENTS"
 	PULSE_CENSUS_ENUMERATION_BUDGET_S=300 build_ranked_dispatch_candidates_json 50 skip >/dev/null || true
@@ -506,7 +506,7 @@ printf 'PASS capped timeouts reduce repository work and recover candidates (GH#3
 # the repository's fresh last-good candidates; other failures and expired
 # lists stay empty.
 (
-	jq -n '{initialized_repos:[{slug:"owner/small1",path:"/fixture",pulse:true},{slug:"owner/big",path:"/fixture",pulse:true},{slug:"owner/small2",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	jq -n '{initialized_repos:[{slug:"owner/small1",path:"/tmp",pulse:true},{slug:"owner/big",path:"/tmp",pulse:true},{slug:"owner/small2",path:"/tmp",pulse:true}]}' >"$REPOS_JSON"
 	budget_file=$(_dispatch_repo_enumeration_budget_file owner/big)
 	mkdir -p "${budget_file%/*}"
 	printf '60\n' >"$budget_file"
@@ -585,7 +585,7 @@ printf 'PASS slow repositories defer instead of clamped scans; timeouts reuse fr
 # max age and first waves carry nothing; product discovery stays incomplete.
 (
 	registry=$(<"$REPOS_JSON")
-	jq -n '{initialized_repos:[{slug:"owner/a",path:"/fixture",pulse:true},{slug:"owner/b",path:"/fixture",pulse:true},{slug:"owner/c",path:"/fixture",pulse:true}]}' >"$REPOS_JSON"
+	jq -n '{initialized_repos:[{slug:"owner/a",path:"/tmp",pulse:true},{slug:"owner/b",path:"/tmp",pulse:true},{slug:"owner/c",path:"/tmp",pulse:true}]}' >"$REPOS_JSON"
 	AIDEVOPS_DISPATCH_LEDGER_FILE="${TEST_ROOT}/carry-ledger.jsonl"
 	update_repo_pulse_timestamp() { printf 'stamp:%s\n' "$1" >>"$EVENTS"; return 0; }
 	_dispatch_enumerate_repo_bounded() {
@@ -643,7 +643,7 @@ printf 'PASS stopped censuses carry fresh last-good candidates of unreached repo
 # every scan to the census deadline, and drains real timed-out scans.
 (
 	registry=$(<"$REPOS_JSON")
-	jq -n '{initialized_repos:[range(1;9) | {slug:("owner/p" + tostring),path:"/fixture",pulse:true,
+	jq -n '{initialized_repos:[range(1;9) | {slug:("owner/p" + tostring),path:"/tmp",pulse:true,
 		priority:(if . == 3 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
 	_dispatch_now_ms() { printf '%s\n' "$(($(date +%s) * 1000))"; return 0; }
 	# Real process-group timeouts drain under concurrency: eight 3s adapters
@@ -766,7 +766,7 @@ printf 'PASS first-wave dispatch extends only a fresh, matching owner lease\n'
 	_PULSE_FIRST_WAVE_CANDIDATE_TARGET=21
 	PULSE_FIRST_WAVE_ENUMERATION_BUDGET_S=3600
 	jq -n '{initialized_repos:[range(1;71) | {slug:("owner/repo" + tostring),
-		path:"/fixture",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
+		path:"/tmp",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
 	printf '0\n' >"$CLOCK"
 	printf 'owner/repo70\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
 	pulse_campaign_shadow_candidates_json() {
@@ -833,7 +833,7 @@ printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor
 	: >"$stats"
 	_dispatch_stats_increment() { printf '%s\n' "$1" >>"$stats"; return 0; }
 	jq -n '{initialized_repos:[range(1;71) | {slug:("owner/repo" + tostring),
-		path:"/fixture",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
+		path:"/tmp",pulse:true,priority:(if . == 4 then "product" else "tooling" end)}]}' >"$REPOS_JSON"
 	pulse_campaign_shadow_candidates_json() {
 		local slug="$1"
 		printf 'scan:%s\n' "$slug" >>"$EVENTS"
@@ -866,7 +866,7 @@ printf 'PASS 70-repository waves retain interrupted product backlog, reuse floor
 		local extra="$1"
 		jq -nc --arg schema "$_DISPATCH_CANDIDATE_SNAPSHOT_SCHEMA" --argjson now "$now" --argjson extra "$extra" \
 			'{schema:$schema,captured_at:($now - 60),census_seconds:739,
-			candidates:([range(1;21) | {number:.,repo_slug:"owner/repo4",repo_path:"/fixture",product_discovery_complete:false}] + $extra)}' >"$snapshot"
+			candidates:([range(1;21) | {number:.,repo_slug:"owner/repo4",repo_path:"/tmp",product_discovery_complete:false}] + $extra)}' >"$snapshot"
 		jq -nc 'range(1;21) | ["owner/repo4", .]' >"${snapshot}.consumed"
 		printf 'owner/repo61\n' >"${HOME}/.aidevops/cache/pulse-first-wave-cursor"
 		: >"$EVENTS"
@@ -972,7 +972,7 @@ for ((issue = 1; issue <= 30; issue++)); do
 done
 # Exercise the real census: urgent retries fill the numerical target in the
 # first repository, but must not stop discovery of fresh work in the next one.
-jq -n '{initialized_repos:["owner/urgent","owner/small"] | map({slug:.,path:"/fixture",pulse:true})}' >"$REPOS_JSON"
+jq -n '{initialized_repos:["owner/urgent","owner/small"] | map({slug:.,path:"/tmp",pulse:true})}' >"$REPOS_JSON"
 rm -f "${HOME}/.aidevops/cache/pulse-first-wave-cursor"
 pulse_campaign_shadow_candidates_json() {
 	local slug="$1"

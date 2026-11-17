@@ -208,8 +208,8 @@ test_open_pr_backlog_is_repo_scoped_with_debt_exemption() {
 	local repos_file="${TEST_ROOT}/repos-pr-backlog.json"
 	cat >"$repos_file" <<'JSON'
 {"initialized_repos":[
-  {"slug":"owner/repo-a","path":"/tmp/repo-a","pulse":true,"priority":"tooling"},
-  {"slug":"owner/repo-b","path":"/tmp/repo-b","pulse":true,"priority":"tooling"}
+  {"slug":"owner/repo-a","path":"/tmp","pulse":true,"priority":"tooling"},
+  {"slug":"owner/repo-b","path":"/tmp","pulse":true,"priority":"tooling"}
 ]}
 JSON
 	export REPOS_JSON="$repos_file"
@@ -304,10 +304,10 @@ test_open_pr_backlog_counts_only_ready_worker_prs() {
 	local repos_file="${TEST_ROOT}/repos-pr-backlog-threshold.json"
 	cat >"$repos_file" <<'JSON'
 {"initialized_repos":[
-  {"slug":"owner/mixed","path":"/tmp/mixed","pulse":true},
-  {"slug":"owner/worker","path":"/tmp/worker","pulse":true},
-  {"slug":"owner/low-cap","path":"/tmp/low-cap","pulse":true,"dispatch_open_pr_threshold":2},
-  {"slug":"owner/disabled","path":"/tmp/disabled","pulse":true,"dispatch_open_pr_threshold":0}
+  {"slug":"owner/mixed","path":"/tmp","pulse":true},
+  {"slug":"owner/worker","path":"/tmp","pulse":true},
+  {"slug":"owner/low-cap","path":"/tmp","pulse":true,"dispatch_open_pr_threshold":2},
+  {"slug":"owner/disabled","path":"/tmp","pulse":true,"dispatch_open_pr_threshold":0}
 ]}
 JSON
 	export REPOS_JSON="$repos_file"
@@ -795,7 +795,7 @@ test_ranked_candidates_prioritise_solvable_work() {
 	cat >"$repos_file" <<'JSON'
 {
   "initialized_repos": [
-    {"slug": "owner/repo", "path": "/tmp/repo", "pulse": true, "priority": "tooling"}
+    {"slug": "owner/repo", "path": "/tmp", "pulse": true, "priority": "tooling"}
   ]
 }
 JSON
@@ -843,7 +843,7 @@ test_ranked_candidates_prioritise_low_complexity_over_research() {
 	cat >"$repos_file" <<'JSON'
 {
   "initialized_repos": [
-    {"slug": "owner/repo", "path": "/tmp/repo", "pulse": true, "priority": "tooling"}
+    {"slug": "owner/repo", "path": "/tmp", "pulse": true, "priority": "tooling"}
   ]
 }
 JSON
