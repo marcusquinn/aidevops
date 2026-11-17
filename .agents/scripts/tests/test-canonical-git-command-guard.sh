@@ -624,12 +624,21 @@ fi
 SLOW_GIT="${TEST_ROOT}/slow-git"
 printf '#!/usr/bin/env bash\nsleep 6\n' >"$SLOW_GIT"
 chmod +x "$SLOW_GIT"
-TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" 2>&1)
+TIMEOUT_OUTPUT=$(python3 "$GUARD" --cwd "$REPO" --argv-json '["add","x"]' --real-git "$SLOW_GIT" 2>&1)
 TIMEOUT_RC=$?
 if [[ "$TIMEOUT_RC" -eq 42 && "$TIMEOUT_OUTPUT" == *"native Git repository probe timed out"* && "$TIMEOUT_OUTPUT" != *"Traceback"* ]]; then
 	pass "native Git probe timeout fails closed without traceback"
 else
 	fail "native Git probe timeout is bounded (rc=$TIMEOUT_RC output=$TIMEOUT_OUTPUT)"
+fi
+
+# Read-only subcommands are allowed in every repository, so they skip the probe.
+READONLY_RC=0
+python3 "$GUARD" --cwd "$REPO" --argv-json '["status"]' --real-git "$SLOW_GIT" >/dev/null 2>&1 || READONLY_RC=$?
+if [[ "$READONLY_RC" -eq 0 ]]; then
+	pass "read-only subcommand is allowed without a repository probe"
+else
+	fail "read-only subcommand skips the repository probe (rc=$READONLY_RC)"
 fi
 
 POSITIONAL_RC=0
