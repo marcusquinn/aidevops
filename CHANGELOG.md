@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.218] - 2026-11-17
+
+### Fixed
+
+- tier-aware worker canary hard-skips when no model is selectable
+
 ## [3.39.217] - 2026-11-17
 
 ### Changed
