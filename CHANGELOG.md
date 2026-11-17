@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.223] - 2026-11-17
+
+### Changed
+
+- Performance: reuse resolved admin dir in archive restore (partial)
+- Maintenance: promote OpenCode v2 pin to 2.3.0 (#38820)
+
+### Fixed
+
+- neutralise inlined requires-* directives in consolidation task bodies (GH#38827) (#38832)
+- let starved critical stages borrow a bounded slice of the protected dispatch reserve
+- bound stale non-required check waits (#38834)
+- repair worktrees left half-deleted by interrupted cleanup before reusing them
+- Runpod cloud type, capacity retry, verified Blender bootstrap, fetch-gated pod removal
+- route hold-for-review blocked issues to needs-maintainer-input (GH#38821)
+- protect automatic pruning
+
 ## [3.39.222] - 2026-11-17
 
 ### Added
