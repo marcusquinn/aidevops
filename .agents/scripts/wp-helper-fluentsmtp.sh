@@ -30,6 +30,8 @@
 _WP_FLUENTSMTP_LIB_LOADED=1
 
 WPFS_PHP_FILE="wp-fluentsmtp.php"
+# The entry file loads its siblings from its own directory; upload them together.
+WPFS_PHP_FILES=("$WPFS_PHP_FILE" wp-fluentsmtp-store.php wp-fluentsmtp-migrate.php wp-fluentsmtp-backup.php)
 WPFS_USAGE="Usage: wp-helper.sh --fluentsmtp <site> <list | migrate --domain D --region R [--from-domain OLD] [--dry-run] --access-key-env VAR --secret-key-env VAR | test --to ADDR [--from ADDR] [--lift-http-block] | backups | undo --backup DIR> [--url URL]"
 # Parsed options (globals keep Bash 3.2 compatibility without namerefs).
 WPFS_ARGS=()
@@ -174,10 +176,15 @@ _wpfs_run_remote() {
 	remote_tmp=$(_wpcp_remote_mktemp wp-fluentsmtp) || return 1
 	trap '_wpcp_cleanup_remote "$remote_tmp"; trap - INT TERM; exit 130' INT TERM
 
-	local rc=0
-	if ! _wpcp_scp "${SCRIPT_DIR}/${WPFS_PHP_FILE}" "${WPCP_TARGET}:${remote_tmp}/${WPFS_PHP_FILE}"; then
+	local rc=0 php_file
+	for php_file in "${WPFS_PHP_FILES[@]}"; do
+		_wpcp_scp "${SCRIPT_DIR}/${php_file}" "${WPCP_TARGET}:${remote_tmp}/${php_file}" || {
+			rc=1
+			break
+		}
+	done
+	if [[ "$rc" -ne 0 ]]; then
 		print_error "Upload to the server failed"
-		rc=1
 	else
 		local -a wp_args=(eval-file "${remote_tmp}/${WPFS_PHP_FILE}" "${WPFS_ARGS[@]}")
 		wp_args+=(${WPFS_GLOBALS[@]+"${WPFS_GLOBALS[@]}"})
