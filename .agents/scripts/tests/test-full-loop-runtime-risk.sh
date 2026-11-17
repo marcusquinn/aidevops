@@ -697,6 +697,13 @@ critical_final_body=$(cd "$FINAL_REPO" && prepare_fixture_metadata "Adjust helpe
 	"runtime-verified with sensitive branch fixture")
 assert_contains "local Critical change still derives Critical" "$critical_final_body" '**Risk level:** Critical'
 
+assert_rejected "GH#38823 worker summary For #<dispatched issue> is refused" \
+	_summary_declares_partial_self 42 "Partial work. For #42: remaining items" "ok"
+assert_rejected "GH#38823 Ref #<dispatched issue> in testing is refused" \
+	_summary_declares_partial_self 42 "done" "see ref #42"
+assert_accepted "GH#38823 reference to another issue is allowed" \
+	_summary_declares_partial_self 42 "Follow-up for #43" "ok"
+
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0

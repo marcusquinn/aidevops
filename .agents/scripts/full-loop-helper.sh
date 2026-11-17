@@ -295,6 +295,12 @@ _commit_and_pr_prepare_metadata() {
 		closing_keyword="Resolves"
 	elif [[ "$origin_label" == "origin:worker" && "$completion_bookkeeping" -eq 0 ]]; then
 		closing_keyword=$(_review_repair_closing_keyword "$issue_number" "$repo") || return 1
+		# GH#38823: a worker summary declaring `For/Ref #<this issue>` contradicts
+		# the forced `Resolves`; refuse instead of silently closing the issue.
+		if [[ "$closing_keyword" != "For" ]] && ! _summary_declares_partial_self "$issue_number" "$summary_what" "$summary_testing" "${summary_decisions:-}"; then
+			print_error "Summary references 'For/Ref #${issue_number}' (partial PR) but commit-and-pr would emit 'Resolves #${issue_number}' and close the issue. Remove the self-reference if the work is complete (closure is intended), or finish the remaining criteria; unmet verification must not be lost on merge." >&2
+			return 1
+		fi
 	fi
 	local parent_for_link=0
 	if [[ "$allow_parent_close" -eq 0 ]] && _issue_has_parent_task_label "$issue_number" "$repo"; then
