@@ -55,6 +55,9 @@ _ihm_line_is_operational_hold() {
 	without_pipes="${normalized//|/}"
 	pipe_count=$((${#normalized} - ${#without_pipes}))
 	[[ "$normalized" != \|* && "$normalized" != *\| && "$pipe_count" -lt 2 ]] || return 1
+	# BSD/macOS grep -i does not fold U+017F (long s) to "s" the way the jq
+	# reducer's Unicode-aware test() does; fold it explicitly so both agree.
+	normalized="${normalized//ſ/s}"
 	printf '%s\n' "$normalized" |
 		grep -qiE '^(defer[[:space:]]+until|do[-[:space:]]+not[-[:space:]]+dispatch|on[-[:space:]]+hold|hold[[:space:]]+for|paused)([[:space:]:]|$)'
 	return $?
