@@ -296,8 +296,8 @@ def check(doc, repository):
             if name == "Dockerfile" and companion:
                 base_text, head_text = mask_image(base_text, companion, "base"), mask_image(head_text, companion, "head")
                 # An image-only change becomes identical after the exact FROM
-                # mask; other files must still have a genuine permitted change.
-                if base_text == head_text:
+                # mask. Never skip a separately opted-in ARG/checksum proof.
+                if base_text == head_text and identity is None and pins["checksum"] is None:
                     continue
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.

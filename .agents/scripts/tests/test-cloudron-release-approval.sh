@@ -1156,6 +1156,20 @@ reject("extra verifier command", lambda d: d["contents"][spec["verify_file"]].up
 reject("wrong proven constant", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(old, "v1.0.5"))), "verify constant")
 reject("unrelated ARG", lambda d: d["contents"]["Dockerfile"].update(head=encoded(docker(new).replace("UNRELATED=1", "UNRELATED=2"))), "pinned file changes")
 reject("catalog checksum remains non-routine", lambda d: d["files"].append(dict(filename="test/published-catalog-manifests.sha256",status="modified")), "outside the standing policy")
+
+def with_identity(candidate):
+    candidate["policy"].update(release_identity=dict(commit_arg="APP_COMMIT"), registry_images=[image])
+    candidate["release_proof"].update(asset=None, digests=[])
+    candidate["pin_proof"] = dict(registry={})
+
+reject("image-only change cannot skip signed commit ARG", with_identity, "pinned file changes")
+
+def with_checksum(candidate):
+    candidate["policy"]["release_checksum"] = dict(arg="APP_SHA256", asset="checksums.txt", file="app_{version}")
+    candidate["pin_proof"] = dict(checksum=dict(repository="block/buzz-app", asset="checksums.txt",
+                                               file="app_1.0.5", version="1.0.5", sha256="c" * 64))
+
+reject("image-only change cannot skip signed checksum ARG", with_checksum, "pinned file changes")
 unchanged = copy.deepcopy(doc)
 unchanged["contents"]["Dockerfile"]["base"] = encoded(docker(new))
 unchanged["companion_proof"]["old_revision"] = new
