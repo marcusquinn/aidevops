@@ -926,6 +926,9 @@ _dispatch_census_enumerate_repo() {
 	# per-issue cooldowns are recorded. Operator: re-clone or set pulse:false.
 	if [[ -n "$repo_path" && ! -d "$repo_path" ]]; then
 		echo "[pulse-wrapper] repo_path_missing slug=${repo_slug} (configured path absent; re-clone or set pulse:false in repos.json) (GH#38825)" >>"$LOGFILE"
+		# An absent path has nothing dispatchable; mark discovery complete so a
+		# product repo's held reservation is released to other repositories.
+		[[ -z "$completeness_file" ]] || printf '1\n' >"$completeness_file"
 		printf '[]\n'
 		return 0
 	fi
