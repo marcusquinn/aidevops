@@ -12,7 +12,7 @@ from worktree_archive_readiness import (
     read_admin_bytes, validate_readiness_payload,
 )
 from worktree_archive_git import (
-    auto_merge_oid as auto_merge_oid, git as git,
+    auto_merge_oid as auto_merge_oid, git as git, git_dirs as git_dirs,
     validate_auto_merge as validate_auto_merge, fetch_head_roots as fetch_head_roots,
 )
 
@@ -85,11 +85,12 @@ def validate_admin_config(root, admin):
                 raise ValueError('git_admin:location_dependent_config:' + key.decode('ascii'))
 
 
-def administration(root, allow_merge=False, *, admin=None):
-    """Read only explicitly supported per-worktree administration, never common config."""
-    if admin is None:
-        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
-    common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
+def administration(root, allow_merge=False, *, admin=None, common=None):
+    """Read only explicitly supported per-worktree administration, never common config.
+
+    Callers may pass directories they resolved earlier in the same guard pass.
+    """
+    admin, common = (admin, common) if admin and common else git_dirs(root)
     files = administration_files(admin, admin, admin.resolve() != common.resolve(), allow_merge)
     fetch_head_roots(files.get("FETCH_HEAD", ""))
     if "AUTO_MERGE" in files:

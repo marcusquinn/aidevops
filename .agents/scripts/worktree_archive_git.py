@@ -129,6 +129,14 @@ def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     ).stdout
 
 
+def git_dirs(root):
+    """Resolve (admin, common) directories in one spawn for one guard pass."""
+    # --absolute-git-dir is absolute before the --path-format switch.
+    admin, common = git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                        '--git-common-dir').rstrip(b'\n').split(b'\n')
+    return Path(os.fsdecode(admin)), Path(os.fsdecode(common))
+
+
 def auto_merge_oid(data):
     if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
         raise ValueError("git_admin:invalid_AUTO_MERGE")
@@ -175,11 +183,8 @@ def fetch_preservation(root, archive):
     admin_path = None
     if bundle.is_file():
         git(root, 'bundle', 'verify', str(bundle))
-        # One spawn for both paths; --absolute-git-dir is absolute before the format switch.
-        admin, common = git(root, 'rev-parse', '--absolute-git-dir',
-                            '--path-format=absolute', '--git-common-dir').rstrip(b'\n').split(b'\n')
-        admin_path = Path(os.fsdecode(admin))
-        if admin_path.resolve() != Path(os.fsdecode(common)).resolve():
+        admin_path, common = git_dirs(root)
+        if admin_path.resolve() != common.resolve():
             git(root, 'bundle', 'unbundle', str(bundle))
         else:
             # Standalone restores must keep non-commit AUTO_MERGE/index objects
