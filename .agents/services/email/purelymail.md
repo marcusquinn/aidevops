@@ -23,7 +23,7 @@ tools:
 - **Helper**: `purelymail-helper.sh help`. API `POST https://purelymail.com/api/v0/<endpoint>`, header `Purelymail-Api-Token` (not Bearer). Spec: `https://news.purelymail.com/api/index.html`.
 - **Token**: `aidevops secret set PURELYMAIL_API_TOKEN` (override the name with `PURELYMAIL_TOKEN_SECRET`). It is account-wide: an admin secret, never a per-mailbox one.
 - **Servers**: IMAP `imap.purelymail.com:993` TLS; SMTP `smtp.purelymail.com:465` TLS or `:587` STARTTLS; POP3 `pop3.purelymail.com:995`; ManageSieve `mailserver.purelymail.com:4190`. Username is the full address.
-- **2FA**: IMAP/SMTP need an app password; `app-password` writes it straight into a secret.
+- **2FA**: IMAP/SMTP need an app password. The account admin manages mailbox 2FA and app passwords in the portal (**Users** → mailbox); a mailbox login cannot open the portal ("this user is not an admin"). Use the portal for protocol-scoped passwords; the API (`app-password`) cannot scope them.
 - **Password reset**: `createUser` defaults `enablePasswordReset` to true. The helper always sends false and reads `recoveryEnabled` back.
 - **DNS**: Cloudflare writes use the `cf` CLI with a named token (`--cf-secret`). The helper refuses to write if any existing record conflicts and records created IDs for `dns-rollback`.
 - **Outbound app mail** (WordPress, transactional): keep it on SES (`services/email/ses.md`). Purelymail hosts mailboxes.
@@ -69,13 +69,21 @@ purelymail-helper.sh routes example.com
 
 `user-create` is idempotent. For an existing user it only enforces reset off. `route-add` makes no change when an identical rule exists. A different rule for the same alias is an error, so you delete it first with `route-delete <id> --yes`. App passwords are shown only once by Purelymail: the helper pipes the value into `aidevops secret set`, refuses an existing or unreadable secret name, and never prints it.
 
-The app-password API takes no protocol scope. For an IMAP-only consumer, such as a help desk, give it its own app password with a descriptive `--label` and delete that password when the consumer is retired.
+The app-password API (`createAppPassword`) takes only the user and an optional name: it cannot set a protocol scope, so API-made passwords work for every protocol. Choose by consumer:
+
+| Consumer | App password |
+|----------|--------------|
+| Read-only reader (help desk, ticket importer) | Portal, **IMAP** scope only |
+| Send-only service (SMTP relay, notifier) | Portal, **SMTP** scope only |
+| Full mail client | `app-password` (API) or portal with the scopes it needs |
+
+Portal path: sign in to purelymail.com as the **account admin** → **Users** → the mailbox → its security settings → create the app password with the needed scopes. Mailbox logins are refused there. The portal shows the password once: store it with `aidevops secret set NAME` (typed hidden) and never paste it into chat, argv or logs. Give each consumer its own password with a descriptive name (`--label` for the API), and delete it when the consumer is retired.
 
 ### Mailbox roles for a WordPress site
 
 | Role | Setup |
 |------|-------|
-| Public inbox (`hello@`, `support@`) | Route to a help-desk mailbox; the help desk reads it over IMAP with its own app password |
+| Public inbox (`hello@`, `support@`) | Route to a help-desk mailbox; the help desk reads it over IMAP with its own IMAP-only portal app password |
 | Alerts mailbox | Real mailbox used as WordPress `admin_email` and for monitoring alerts |
 | Role sender addresses (`noreply@`, `billing@`) | Sent by the site through SES; route replies to the help-desk mailbox with `route-add` |
 
@@ -84,7 +92,8 @@ The app-password API takes no protocol scope. For an IMAP-only consumer, such as
 Set these in the Purelymail portal; the API cannot read or change them:
 
 - **Send As**: the account default lets any user send as any address on the account. Choose "restrict" so each user keeps only the built-in own-address policy.
-- **2FA** per mailbox. Once it is on, IMAP/SMTP reject the main password (`curl: (67) Login denied`); use an app password.
+- **2FA** per mailbox, set by the account admin under **Users** → mailbox. Once it is on, IMAP/SMTP reject the main password (`curl: (67) Login denied`); use an app password.
+- **Scoped app passwords** (IMAP, SMTP, POP3, SIEVE, DAV), same admin **Users** page.
 
 ## Verification
 
@@ -92,6 +101,8 @@ Set these in the Purelymail portal; the API cannot read or change them:
 purelymail-helper.sh imap-check info@example.com MAILBOX_INFO_APP_PASSWORD
 purelymail-helper.sh auth-results info@example.com MAILBOX_INFO_APP_PASSWORD '^Subject: .*SES test' 20
 ```
+
+`imap-check` is the read-only credential test: an IMAPS login plus `EXAMINE INBOX`, which opens the mailbox without changing flags. It takes a secret *name*, so it works for portal-created passwords stored with `aidevops secret set`. The value reaches `curl` through a `-K` config stream, never argv. For an IMAP-only portal password, `imap-check` passing is the proof; an SMTP-only password correctly fails it.
 
 `auth-results` finds the newest of the last N messages whose Subject matches. It scans the headers with `prompt-guard-helper.sh` (they are third-party content), shows them through `email-test-suite-helper.sh analyze-headers`, and exits 0 only when `dkim=pass`, `spf=pass` and `dmarc=pass` all appear in the topmost `Authentication-Results` field. The receiving server prepends that field; lower ones may be sender-supplied. Check that the printed authserv-id is your receiving server. Use it as the receive side of an SES or FluentSMTP test send. Send policy and controlled test recipients: `services/email/ses.md` "Suppression and silent drops".
 

@@ -64,7 +64,7 @@ cp configs/email-providers.json.txt configs/email-providers.json
 | Method | Providers | Notes |
 |--------|-----------|-------|
 | OAuth2 | Gmail, GWS, Outlook, M365, Zoho | Gmail/GWS: required since May 2022. M365: basic auth deprecated Oct 2022 (OAuth2 via Entra ID) |
-| App passwords | Gmail, Fastmail, Purelymail, Yahoo, StartMail, iCloud | Purelymail: required for IMAP/SMTP once 2FA is on |
+| App passwords | Gmail, Fastmail, Purelymail, Yahoo, StartMail, iCloud | Purelymail: required for IMAP/SMTP once 2FA is on; the account admin creates them under **Users**, and only the portal can scope them (IMAP-only, SMTP-only). See `services/email/purelymail.md` |
 | Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho | |
 | Bridge password | Proton Mail | |
 | Service account | Google Workspace, Microsoft 365 | |
