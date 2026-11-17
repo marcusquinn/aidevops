@@ -142,6 +142,55 @@ unset PULSE_DISPATCH_CANDIDATE_SNAPSHOT_ENABLED
 )
 printf 'PASS ranked refills continue beyond 120 seconds, consume once, and re-census on exhaustion\n'
 
+# GH#38876: later rounds of a cycle reuse the full census past its base window
+# while the unconsumed tail fills the free slots; a short tail or the 0 opt-out
+# re-censuses, an unavailable re-census keeps the known tail, and the GH#38211
+# runnable gate agrees with the dispatch path.
+(
+	_PULSE_CYCLE_ID="extended-reuse"
+	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
+	unset PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S
+	_dispatch_enumeration_expected_seconds() { printf '300\n'; return 0; }
+	snapshot=$(_dispatch_candidate_snapshot_path 50)
+	census_calls="${TEST_ROOT}/extended-reuse-calls"
+	build_ranked_dispatch_candidates_json() {
+		printf 'call\n' >>"$census_calls"
+		printf '%s\n' '[{"number":9,"repo_slug":"o/r"}]'
+		return 0
+	}
+	write_aged_snapshot() {
+		local age="$1" now=""
+		now=$(date +%s)
+		jq -nc --argjson now "$now" --argjson age "$age" \
+			'{captured_at:($now-$age),census_seconds:180,candidates:[{number:1,repo_slug:"o/r"},{number:2,repo_slug:"o/r"},{number:3,repo_slug:"o/r"}]}' >"$snapshot"
+		rm -f "${snapshot}.consumed"
+		: >"$census_calls"
+		return 0
+	}
+	numbers() { jq -r '[.[].number]|join(",")' <<<"$1"; return 0; }
+	write_aged_snapshot 600
+	[[ "$(_dispatch_snapshot_runnable_count)" == "3 0:normalize" ]]
+	served=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=3 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$served")" == '1,2,3' && ! -s "$census_calls" ]]
+	write_aged_snapshot 600
+	short=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$short")" == 9 && -s "$census_calls" ]]
+	grep -q 'snapshot tail=3 below target=4' "$LOGFILE"
+	write_aged_snapshot 100
+	base=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$base")" == '1,2,3' && ! -s "$census_calls" ]]
+	write_aged_snapshot 600
+	build_ranked_dispatch_candidates_json() { printf 'call\n' >>"$census_calls"; return 1; }
+	kept=$(_PULSE_FIRST_WAVE_CANDIDATE_TARGET=4 _dispatch_ranked_candidates_json 50)
+	[[ "$(numbers "$kept")" == '1,2,3' && -s "$census_calls" ]]
+	write_aged_snapshot 600
+	if PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S=0 _dispatch_snapshot_runnable_count >/dev/null; then exit 1; fi
+	if PULSE_DISPATCH_CANDIDATE_REUSE_MIN_S=0 _PULSE_FIRST_WAVE_CANDIDATE_TARGET=3 _dispatch_ranked_candidates_json 50 >/dev/null; then exit 1; fi
+	[[ -s "$census_calls" ]]
+	_dispatch_cleanup_cycle_cache 50
+)
+printf 'PASS in-cycle census reuse extends past the base window only while its tail fills free slots (GH#38876)\n'
+
 (
 	_PULSE_FIRST_DISPATCH_WAVE=1
 	PULSE_DISPATCH_CANDIDATE_SCAN_LIMIT=50
