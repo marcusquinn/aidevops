@@ -1040,6 +1040,17 @@ _pmp_verdict_key() {
 	return "${PIPESTATUS[0]}"
 }
 
+_pmp_evaluate_pr_with_memo() {
+	local repo_slug="$1" pr_obj="$2" timing_prefix="$3" result=0
+	if _pmp_negative_verdict_hit "$repo_slug" "$pr_obj"; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_counter_seconds "${timing_prefix}memo_skips" 1
+		_pmp_add_counter_seconds _PMP_PASS_MEMO_SKIPS 1
+		return 1
+	fi
+	_pmp_evaluate_pr_with_deadline "$repo_slug" "$pr_obj" "$timing_prefix" || result=$?
+	return "$result"
+}
+
 _pmp_verdict_file() {
 	local repo_slug="$1" pr_obj="$2" number=""
 	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
