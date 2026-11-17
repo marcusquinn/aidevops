@@ -393,6 +393,9 @@ PY
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
+    # GH#38825: name a missing repo root instead of a generic invalid map.
+    if not Path(sys.argv[1]).is_dir():
+        unmet('repo_path_missing')
     root = Path(sys.argv[1]).resolve(strict=True)
     issue = json.loads(sys.argv[2])
     check_device(issue.get('body', ''))

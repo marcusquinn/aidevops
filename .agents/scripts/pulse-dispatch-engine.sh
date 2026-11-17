@@ -921,6 +921,14 @@ _dispatch_census_enumerate_repo() {
 	local repo_slug="$1" repo_path="$2" base="$3" remaining="$4" per_repo_limit="$5"
 	local normalization_mode="$6" completeness_file="$7"
 	local budget=0 started=0 rc=0 candidates="" source_limit=0 cap=0 elapsed=0 count=""
+	# GH#38825: a configured path that no longer exists defers every candidate
+	# with a misleading capability signal. Skip the repo once per pass; no
+	# per-issue cooldowns are recorded. Operator: re-clone or set pulse:false.
+	if [[ -n "$repo_path" && ! -d "$repo_path" ]]; then
+		echo "[pulse-wrapper] repo_path_missing slug=${repo_slug} (configured path absent; re-clone or set pulse:false in repos.json) (GH#38825)" >>"$LOGFILE"
+		printf '[]\n'
+		return 0
+	fi
 	source_limit=$(_dispatch_repo_enumeration_limit "$repo_slug" "$per_repo_limit")
 	cap=$(_dispatch_repo_enumeration_budget_cap "$base")
 	budget=$(_dispatch_repo_enumeration_budget "$repo_slug" "$base")
