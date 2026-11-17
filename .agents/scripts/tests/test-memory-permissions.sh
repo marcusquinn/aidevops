@@ -9,6 +9,9 @@ SCRIPTS="$SCRIPT_DIR/.."
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export AIDEVOPS_MEMORY_DIR="$TMP/mem"
+# Isolate from any real Vault so the store gate cannot return VAULT_LOCKED
+export AIDEVOPS_VAULT_DIR="$TMP/vault"
+unset AIDEVOPS_VAULT_REQUIRE
 fail=0
 
 mode_of() {
