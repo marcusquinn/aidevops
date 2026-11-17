@@ -364,13 +364,30 @@ _store_check_duplicate() {
 	normalized=$(normalize_content "$_store_content")
 	local candidates
 	candidates=$(db "$MEMORY_DB" "SELECT l.id, l.content FROM learnings l JOIN observations o ON o.observation_id = 'obs_learning_' || l.id WHERE l.type = '$_store_type' AND COALESCE(o.owner_id, '') = '$escaped_entity' AND COALESCE(o.subject_id, '') = '$escaped_entity' AND COALESCE(o.project_scope, '') = '$_store_esc_project' AND o.sensitivity = 'internal' AND o.status = 'active' AND (o.expires_at IS NULL OR o.expires_at > datetime('now'));" 2>/dev/null || true)
-	while IFS='|' read -r candidate_id candidate_content; do
-		[[ -z "$candidate_id" ]] && continue
-		if [[ "$(normalize_content "$candidate_content")" == "$normalized" ]]; then
-			printf '%s\n' "$candidate_id"
+	# One awk process for all candidates (O(1) forks, not O(rows)); the
+	# normalization mirrors normalize_content: lowercase, collapse whitespace,
+	# trim, then strip punctuation. Target is passed via ENVIRON to avoid
+	# awk -v backslash processing.
+	if [[ -n "$candidates" ]]; then
+		existing_id=$(printf '%s\n' "$candidates" | NORM_TARGET="$normalized" awk '
+			BEGIN { target = ENVIRON["NORM_TARGET"] }
+			{
+				sep = index($0, "|")
+				id = (sep > 0) ? substr($0, 1, sep - 1) : $0
+				if (id == "") next
+				content = (sep > 0) ? substr($0, sep + 1) : ""
+				content = tolower(content)
+				gsub(/[[:space:]]+/, " ", content)
+				sub(/^[[:space:]]+/, "", content)
+				sub(/[[:space:]]+$/, "", content)
+				gsub(/[[:punct:]]/, "", content)
+				if (content == target) { print id; exit }
+			}')
+		if [[ -n "$existing_id" ]]; then
+			printf '%s\n' "$existing_id"
 			return 0
 		fi
-	done <<<"$candidates"
+	fi
 
 	existing_id=$(MEMORY_SEARCH_PROJECT="$_store_project_path" \
 		MEMORY_SEARCH_ENTITY="$_store_entity_id" MEMORY_SEARCH_TYPE="$_store_type" \
