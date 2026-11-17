@@ -1123,6 +1123,12 @@ test_monitor_waits_for_release_parent_image_and_rearms_once() {
 	assert_equal 1 "$(grep -c '^CALL_RETRY$' "$log_file")" "existing target-code circuit receives one proven-source retry"
 	grep -Fq 'terminal-blocker-circuit:retry' "$log_file" && assert_equal true true "ready source retry carries standalone circuit directive" || assert_equal true false "ready source retry carries standalone circuit directive"
 	grep -Fq -- '--source-digest bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$api_log" && assert_equal true true "upstream attestation is bound to release-parent commit" || assert_equal true false "upstream attestation is bound to release-parent commit"
+	assert_monitor_bounded_wait_and_companion_pin "$home_dir" "$bin_dir" "$releases_file" "$case_root" "$config_tmp" "$log_file"
+	return 0
+}
+
+assert_monitor_bounded_wait_and_companion_pin() {
+	local home_dir="$1" bin_dir="$2" releases_file="$3" case_root="$4" config_tmp="$5" log_file="$6"
 	# Expired waits must be visible and deduplicated, without asserting readiness.
 	local overdue_log="${case_root}/overdue.log" run=0
 	for run in 1 2; do
