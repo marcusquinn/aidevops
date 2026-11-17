@@ -171,8 +171,9 @@ def fetch_preservation(root, archive):
     bundle = archive / 'commits.bundle'
     if bundle.is_file():
         git(root, 'bundle', 'verify', str(bundle))
-        admin = git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')
-        common = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').rstrip(b'\n')
+        # One spawn for both paths; --absolute-git-dir is absolute before the format switch.
+        admin, common = git(root, 'rev-parse', '--absolute-git-dir',
+                            '--path-format=absolute', '--git-common-dir').rstrip(b'\n').split(b'\n')
         if Path(os.fsdecode(admin)).resolve() != Path(os.fsdecode(common)).resolve():
             git(root, 'bundle', 'unbundle', str(bundle))
         else:
