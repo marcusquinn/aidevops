@@ -400,6 +400,36 @@ _cloudron_monitor_rearm_ready_issue() {
 	return 0
 }
 
+# Reuse the approval helper's signature, trust and freshness checks in isolation:
+# sourcing it in the monitor shell would replace main and shared globals.
+_cloudron_monitor_active_policy() {
+	local slug="$1"
+	(
+		# shellcheck source=cloudron-release-approval-helper.sh
+		source "${SCRIPT_DIR}/cloudron-release-approval-helper.sh"
+		release_policy_active "$slug"
+	) || return 1
+	return 0
+}
+
+# Print guidance only for the verified policy's file classes.
+_cloudron_monitor_policy_brief() {
+	local number="$1" policy="$2"
+	cat <<EOF
+## Standing release policy #${number}
+
+- Increment only the package patch version and update upstreamVersion; change no other manifest fields.
+- Pinned files and check files may change only by whole-token old→new version substitution. Pinned files and the companion verify file may additionally update commit/digest pins only with the proofs required by the signed policy. Check files may additionally insert only lines fully matching the policy's check_insertion_pattern; do not edit digest or commit assertions there.
+- Changelogs: additions only. Do not edit README, docs, scripts or any other file outside Files Scope, even to refresh derived values.
+- Keep the PR's closing reference to this upstream finding issue; the routine classifier requires exactly one open, trusted finding.
+EOF
+	if jq -e '.catalog_baseline.file // empty' <<<"$policy" >/dev/null; then
+		printf '\n- In `%s`, append exactly one `<base version> <sha256>` line, computed as in the repository test/package-test.sh: `jq -cS '\''.versions["<base version>"].manifest'\'' CloudronVersions.json | shasum -a 256`. Use the base package version and preserve all existing lines. Do not edit CloudronVersions.json.\n' \
+			"$(jq -r '.catalog_baseline.file' <<<"$policy")"
+	fi
+	return 0
+}
+
 # Print canonical Files Scope lines: one exact repository-relative path per
 # line with nothing after it, as required by the gh_create_issue scope gate
 # (GH#32880/GH#33243). Descriptions belong in the sibling File notes section.
@@ -452,6 +482,8 @@ _cloudron_monitor_create_issue() {
 	local repo_path="${7:-}"
 	local files_scope=""
 	local package_test_note=""
+	local active_policy="" policy_number="" policy="" policy_section=""
+	local file_notes="" release_note=""
 	local body_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 	local body_file=""
 	local issue_wrapper="${CLOUDRON_PACKAGE_ISSUE_WRAPPER:-gh_create_issue}"
@@ -462,6 +494,24 @@ _cloudron_monitor_create_issue() {
 	files_scope=$(_cloudron_monitor_files_scope "$manifest_rel" "$repo_path")
 	if [[ -n "$repo_path" && -f "${repo_path}/test/package-test.sh" ]]; then
 		package_test_note="- \`test/package-test.sh\`: version and digest assertions that must track the bump."
+	fi
+	file_notes="- \`${manifest_rel}\`: package and upstream version metadata.
+- Dockerfile: final Cloudron base image and packaged upstream artifacts.
+- \`CHANGELOG\` (Cloudron format) and/or \`CHANGELOG.md\`: package release notes before any version bump.
+${package_test_note}"
+	release_note='- Prepare and verify the release PR, then run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue.'
+	if [[ "$fingerprint" == upstream-v* || "$fingerprint" == upstream-commit-* ]]; then
+		active_policy=$(_cloudron_monitor_active_policy "$slug") || active_policy=""
+	fi
+	if [[ -n "$active_policy" ]]; then
+		IFS=$'\t' read -r policy_number policy <<<"$active_policy"
+		files_scope=$(jq -r '["CloudronManifest.json"] + (.changelog_files // []) + (.pinned_files // []) + (.check_files // []) + [.companion_image.verify_file, .catalog_baseline.file] | map(select(. != null)) | unique[] | "- `\(.)`"' <<<"$policy") || return 1
+		policy_section=$(_cloudron_monitor_policy_brief "$policy_number" "$policy") || return 1
+		file_notes='- Manifest: package patch version and upstreamVersion only.
+- Changelogs: additions only; pinned files: version tokens and policy-proven pins only.
+- Check files (including test/package-test.sh when listed): version tokens only, plus check_insertion_pattern lines; never refresh digest/commit assertions.
+- Companion verify file: only the policy-listed, proven constants; catalog baseline: append-only as specified below.'
+		release_note='- Prepare and verify the release PR, then run `cloudron-release-approval-helper.sh request <repo> <pr>`; do not merge. r924 merges and publishes automatically when the PR is a routine bump under the verified standing policy; otherwise a signed maintainer approval of the release issue is needed.'
 	fi
 	cat >"$body_file" <<EOF
 <!-- aidevops:cloudron-package-monitor ${fingerprint} -->
@@ -478,22 +528,21 @@ ${files_scope}
 
 ## File notes
 
-- \`${manifest_rel}\`: package and upstream version metadata.
-- Dockerfile: final Cloudron base image and packaged upstream artifacts.
-- \`CHANGELOG\` (Cloudron format) and/or \`CHANGELOG.md\`: package release notes before any version bump.
-${package_test_note}
+${file_notes}
 
 ## Acceptance criteria
 
 - Reproduce and assess the finding against current upstream and Cloudron packaging guidance.
 - Update package source and tests only when the finding remains actionable.
 - Run the package release preflight before proposing a tag.
-- Prepare and verify the release PR, then run \`cloudron-release-approval-helper.sh request <repo> <pr>\`; do not merge. Merge and publication happen only after signed maintainer approval of the release issue.
+${release_note}
 
 ## Verification
 
 ${verification}
 EOF
+	# Append nothing for the legacy path, preserving its exact brief bytes.
+	[[ -z "$policy_section" ]] || printf '\n%s\n' "$policy_section" >>"$body_file"
 	if "$issue_wrapper" --repo "$slug" --title "$title" --body-file "$body_file" \
 		--label "type:maintenance" --label "tier:standard" --label "auto-dispatch" >/dev/null; then
 		rm -f "$body_file"
