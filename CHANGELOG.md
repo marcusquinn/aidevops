@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.225] - 2026-11-17
+
+### Changed
+
+- Maintenance: bump @vitejs/plugin-react from 6.2.1 to 6.3.0 (#38889)
+- Documentation: Purelymail docs cover admin Users path, scoped app passwords and imap-check
+
+### Fixed
+
+- repo-sync wording and counters reflect read-only drift reporting
+- remove stray grep escapes in GH wrapper guard (GH#38871) (#38891)
+- fix onboarding-helper settings keys and silent save failures
+
 ## [3.39.224] - 2026-11-17
 
 ### Added
