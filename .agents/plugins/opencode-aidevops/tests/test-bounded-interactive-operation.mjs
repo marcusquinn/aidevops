@@ -559,6 +559,49 @@ describe("bounded interactive operations", () => {
     assert.equal(timedRestoreResult.restoration_state, "timed_out");
   });
 
+  test("restoration_on unsuccessful skips abort-only cleanup after success (GH#38704)", async () => {
+    const instance = manager();
+    const skipped = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(9)"],
+      restorationOn: "unsuccessful",
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const skippedResult = await terminal(instance, skipped.operation_id);
+    assert.equal(skippedResult.state, "succeeded");
+    assert.equal(skippedResult.restoration_on, "unsuccessful");
+    assert.equal(skippedResult.restoration_state, "not_required");
+    assert.equal(skippedResult.restoration_exit, null);
+
+    const failed = await instance.start({
+      command: [process.execPath, "-e", "process.exit(3)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(0)"],
+      restorationOn: "unsuccessful",
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const failedResult = await terminal(instance, failed.operation_id);
+    assert.equal(failedResult.state, "failed");
+    assert.equal(failedResult.restoration_state, "succeeded");
+    assert.equal(failedResult.restoration_exit, 0);
+
+    const always = await instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationCommand: [process.execPath, "-e", "process.exit(0)"],
+      budgetMs: SUCCESS_BUDGET_MS,
+      restorationBudgetMs: SUCCESS_BUDGET_MS,
+    }, owner);
+    const alwaysResult = await terminal(instance, always.operation_id);
+    assert.equal(alwaysResult.restoration_on, "always");
+    assert.equal(alwaysResult.restoration_state, "succeeded");
+
+    await assert.rejects(instance.start({
+      command: [process.execPath, "-e", "process.exit(0)"],
+      restorationOn: "success",
+    }, owner), /restoration_on must be/);
+  });
+
   test("wait-aware status wakes when restoration reaches its timeout", async () => {
     const instance = manager({ kill: () => false });
     const started = await instance.start({
