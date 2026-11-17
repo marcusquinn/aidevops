@@ -90,11 +90,11 @@ _scan_line() {
 	# GH#19857: Match raw "gh issue edit" or "gh pr edit" with --title or --body.
 	# Label-only edits (no --title/--body) are fine without the safe wrapper.
 	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+issue[[:space:]]+edit' &&
-		printf '%s\n' "$line" | grep -qE '(--title|--body|--body-file)\b'; then
+		grep -qE '(--title|--body|--body-file)\b' <<<"$line"; then
 		return 0
 	fi
 	if printf '%s\n' "$line" | grep -qE '(^|[[:space:];|`]|\$\()gh[[:space:]]+pr[[:space:]]+edit' &&
-		printf '%s\n' "$line" | grep -qE '(--title|--body|--body-file)\b'; then
+		grep -qE '(--title|--body|--body-file)\b' <<<"$line"; then
 		return 0
 	fi
 
