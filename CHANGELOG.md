@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.222] - 2026-11-17
+
+### Added
+
+- prove commit-tagged companion images
+
+### Changed
+
+- Maintenance: promote OpenCode v1 pin to 1.19.6 after passing canary (#38817)
+- Performance: single rev-parse for admin and common dir in fetch_preservation (GH#38675)
+- Performance: drop dirname forks in git shim and per-pid platform lookups in cwd capture
+
+### Fixed
+
+- create memory dir/DB/backups owner-only (700/600)
+- fetch lagging canonical tip objects so the large-file gate stops deferring
+- enrol worktree-cleanup test fixtures in the lifecycle registry (GH#38762) (#38801)
+- re-verify non-write claim verdict and surface unapplied auto-dispatch claim
+
 ## [3.39.221] - 2026-11-17
 
 ### Added
