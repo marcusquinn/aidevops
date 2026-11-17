@@ -48,6 +48,7 @@ async function startOperation(manager, args, context) {
     progressIntervalMs: Number(args.progress_interval_seconds || 900) * 1000,
     restorationBudgetMs: Number(args.restoration_budget_seconds || 60) * 1000,
     restorationCommand: args.restoration_command,
+    restorationOn: args.restoration_on,
   }, context);
   // Clamp rather than reject: the process is already running, and an error
   // here would lose its operation ID.
@@ -75,7 +76,8 @@ export function createBoundedInteractiveOperationTool(tool, z, manager) {
       "known detaching launchers such as pulse-wrapper.sh --command dispatch are rejected before spawn. " +
       "Owned descendants are drained when the command exits; post_exit_descendants_terminated=true means exit 0 is not liveness evidence for anything it launched. " +
       "Cancellation is session-owned and restoration evidence remains explicit. " +
-      "Cancel ends only the local process group: a remote command started via ssh keeps running unless ssh allocates a TTY (-tt) and the command does not ignore SIGHUP, or the restoration command kills it remotely. " +
+      "restoration_command runs after EVERY terminal path, including success, unless restoration_on is \"unsuccessful\" (skipped after success, reported not_required); abort-only cleanup (kill remote work, delete partial output) must use restoration_on \"unsuccessful\". " +
+      "Cancel ends only the local process group: a remote command started via ssh keeps running unless ssh allocates a TTY (-tt) and the command does not ignore SIGHUP, or an abort-only restoration (restoration_on \"unsuccessful\") kills it remotely. " +
       "budget_seconds defaults to 900 (also when set to 0); other values are clamped to 0.01–86400 seconds (24 hours); budget_ms reports the effective limit. " +
       "Operations do not survive plugin disposal/reload, session deletion, or host shutdown; this is not a durable scheduler. " +
       "termination_cause reports the first observed stop cause, not the identity of an external signal sender. " +
@@ -94,6 +96,7 @@ export function createBoundedInteractiveOperationTool(tool, z, manager) {
       progress_interval_seconds: z.number().optional(),
       restoration_budget_seconds: z.number().optional(),
       restoration_command: z.array(z.string()).optional(),
+      restoration_on: z.enum(["always", "unsuccessful"]).optional(),
     },
     async execute(args, context) {
       try {

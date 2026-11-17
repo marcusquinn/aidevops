@@ -94,6 +94,7 @@ export function operationReceipt(operation, now) {
       ? "pending"
       : (operation.commandStarted ? "observed" : "missing"),
     supervisor_runtime: operation.supervisorRuntime || null,
+    restoration_on: operation.restorationOn || "always",
     restoration_state: operation.restorationState,
     restoration_exit: operation.restorationExit,
     restoration_termination_cause: operation.restorationTerminationCause || null,
