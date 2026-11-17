@@ -1018,6 +1018,11 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	assert_routine not 'registry digest without tag change' "$reg_filter | $(dockerfile_head "${HEAD_DOCKERFILE/svc:3.39.114/svc:3.39.87}")" 'registry_images'
 	assert_routine not 'registry unlisted second image' "$reg_filter | .contents.Dockerfile.base = \"$(b64 "${BASE_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_OLD}"$'\n')\" | $(dockerfile_head "${HEAD_DOCKERFILE}"$'FROM other/dash:2.1.0@'"${D_NEW}"$'\n')" 'registry_images'
 	assert_routine not 'registry digest with identity asset digests only' "$reg_filter | .release_proof.digests = [\"$D_NEW\"]" 'release proof digests are invalid'
+	assert_routine not 'registry non-string image element' "$reg_filter | .policy.registry_images = [{}]" 'registry_images is invalid'
+	# A version moved into the repository path must not authorize an unrelated tag.
+	path_base=$'FROM ghcr.io/up/svc-3.39.87:2.1.0@'"${D_OLD}"$'\nARG APP_COMMIT='"${OLD_C}"$'\nARG AIDEVOPS_VERSION=3.39.87\n'
+	path_head=$'FROM ghcr.io/up/svc-3.39.114:2.1.0@'"${D_NEW}"$'\nARG APP_COMMIT='"${NEW_C}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
+	assert_routine not 'registry repository path substitution' "$reg_filter | .policy.registry_images = [\"ghcr.io/up/svc-3.39.114\"] | .pin_proof.registry = {\"ghcr.io/up/svc-3.39.114:2.1.0\":\"$D_NEW\"} | .contents.Dockerfile.base = \"$(b64 "$path_base")\" | $(dockerfile_head "$path_head")" 'registry_images'
 	assert_routine not 'registry unknown policy field' "$reg_filter | .policy.surprise = true" 'unknown field'
 	assert_routine not 'registry invalid image' "$reg_filter | .policy.registry_images = [\"evil.example/up/svc\"]" 'registry_images is invalid'
 	# Release checksum and version-substituted license URL (Headscale shape).
@@ -1052,7 +1057,7 @@ assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]
 	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
 	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
 	[[ "$pins_body" == *'"registry_images":["ghcr.io/up/svc"]'* && "$pins_body" == *'Upstream pin policy'* ]] || { printf 'FAIL pins policy content\n'; exit 1; }
-	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}'; do
+	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}' '{"upstream_repository":"up/proj","release_identity":{"commit_arg":"APP_COMMIT"}}' '{"upstream_repository":"up/proj","registry_images":[{}]}'; do
 		! release_policy_body owner/app cmd pins "$bad" >/dev/null || { printf 'FAIL pins policy accepted %s\n' "$bad"; exit 1; }
 	done
 	printf 'PASS pins policy body validation\n'

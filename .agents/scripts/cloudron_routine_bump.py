@@ -142,20 +142,26 @@ def check_upstream(doc, policy, old_up, new_up):
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
 
-def registry_pin_ok(old_ref, new_ref, digest, pins):
+def registry_pin_ok(old_ref, new_ref, digest, pins, mappings):
     """A changed digest needs a version-substituted tag the signed registry resolves to it."""
-    if old_ref == new_ref or pins["registry"] is None:
+    old_image, _, old_tag = old_ref.rpartition(":")
+    new_image, _, new_tag = new_ref.rpartition(":")
+    # aidevops:trust-boundary — only the tag may change, and only by the upstream
+    # version substitution; a changed repository path never inherits the proof.
+    if old_image != new_image or old_tag == new_tag or pins["registry"] is None:
+        return False
+    if not any(substitute_versions(old_tag, candidate) == new_tag for candidate in mappings):
         return False
     return normalize_image(new_ref) in pins["registry"] and pins["refs"].get(new_ref) == digest
 
 
-def registry_digests_ok(base_text, head_text, pins, published):
+def registry_digests_ok(base_text, head_text, pins, published, mappings):
     base_refs, head_refs = from_refs(base_text), from_refs(head_text)
     if len(base_refs) != len(head_refs):
         return False
     for (old_ref, old_digest), (new_ref, new_digest) in zip(base_refs, head_refs):
         if old_digest != new_digest and new_digest not in published:
-            require(registry_pin_ok(old_ref, new_ref, new_digest, pins),
+            require(registry_pin_ok(old_ref, new_ref, new_digest, pins, mappings),
                     "registry_images: FROM digest is not the registry digest of the new version tag")
     return True
 
@@ -194,7 +200,7 @@ def pinned_changes_ok(base_text, head_text, mappings, identity, pins):
     published = identity["digests"] if identity else set()
     changed = any(old != new and new not in published for old, new in zip(base_digests, head_digests))
     digests_ok = len(base_digests) == len(head_digests) and (
-        not changed or (pins["registry"] is not None and registry_digests_ok(base_text, head_text, pins, published)))
+        not changed or (pins["registry"] is not None and registry_digests_ok(base_text, head_text, pins, published, mappings)))
     base_body, head_body = mask_checksum(base_body, head_body, pins)
     return digests_ok and commit_arg_ok(head_body, identity) \
         and any(substitute_versions(base_body, candidate) == head_body for candidate in mappings)

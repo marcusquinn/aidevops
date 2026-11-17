@@ -78,9 +78,9 @@ def check_registry_images(policy):
     images = policy.get("registry_images")
     if images is None:
         return
-    require(isinstance(images, list) and 0 < len(images) <= 20 and len(set(images)) == len(images),
-            "policy registry_images is invalid")
+    require(isinstance(images, list) and 0 < len(images) <= 20, "policy registry_images is invalid")
     require(all(matches(REGISTRY_IMAGE, item) for item in images), "policy registry_images is invalid")
+    require(len(set(images)) == len(images), "policy registry_images is invalid")
 
 
 def check_release_checksum(policy):
@@ -116,8 +116,8 @@ def validate_pins_request(policy):
     require(isinstance(identity, dict) and "commit_arg" in identity and set(identity) <= {"commit_arg", "images_json_asset"},
             "policy release_identity is invalid")
     require(matches(ARG_NAME, identity["commit_arg"]), "policy release_identity is invalid")
-    require("images_json_asset" not in identity or matches(ASSET_NAME, identity["images_json_asset"]),
-            "policy release_identity is invalid")
+    require(matches(ASSET_NAME, identity["images_json_asset"]) if "images_json_asset" in identity
+            else "registry_images" in policy, "policy release_identity is invalid")
     require("upstream_repository" in policy, "policy release_identity is invalid")
 
 
