@@ -311,6 +311,8 @@ For reviewed field-level changes to posts and terms on live sites (titles, slugs
 
 For Fluent Boards cards (list, show, add, move, comment, tick checklist items) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
 
+For FluentSMTP Amazon SES connections (list, move to a new sending domain or region with keys in `wp-config.php`, proof send, checksummed undo), use `wp-helper.sh --fluentsmtp`: see `services/email/ses.md` "FluentSMTP".
+
 ## Security
 
 ```bash

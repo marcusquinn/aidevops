@@ -274,6 +274,47 @@ The controlled bypass proof additionally needs `ses:PutSuppressedDestination` an
 `cloudwatch:ListMetrics` for discovery). Event-destination setup is a separate
 authorized configuration change, not an implicit permission grant for the test.
 
+## FluentSMTP
+
+`wp-helper.sh --fluentsmtp <site> <action>` runs `wp-fluentsmtp.php` over WP-CLI
+(LocalWP locally, SSH sites through the change-plan transport) and reads/writes
+only through FluentSMTP's own settings functions, so DB secrets stay encrypted.
+Use it to move a site's SES connections to a new sending domain or region, or off
+database-stored keys:
+
+```bash
+wp-helper.sh --fluentsmtp <site> list            # connections, mappings, default; never key values
+wp-helper.sh --fluentsmtp <site> migrate --domain new.example --region eu-west-2 \
+  --from-domain old.example --dry-run            # plan only
+aidevops secret SITE_SES_ACCESS_KEY_ID SITE_SES_SECRET_ACCESS_KEY -- \
+  wp-helper.sh --fluentsmtp <site> migrate --domain new.example --region eu-west-2 \
+  --from-domain old.example \
+  --access-key-env SITE_SES_ACCESS_KEY_ID --secret-key-env SITE_SES_SECRET_ACCESS_KEY
+wp-helper.sh --fluentsmtp <site> test --to success@simulator.amazonses.com
+wp-helper.sh --fluentsmtp <site> backups
+wp-helper.sh --fluentsmtp <site> undo --backup <dir-from-backups>
+```
+
+- **What `migrate` changes:** each matching SES connection's sender becomes
+  `local@<domain>` under FluentSMTP's key `md5(sender)`. Additional senders on the
+  old domain, the default and the fallback connection follow it, and other
+  providers are untouched. Region is set, `key_store` becomes `wp_config` with
+  empty DB keys, and `FLUENTMAIL_AWS_ACCESS_KEY_ID`/`FLUENTMAIL_AWS_SECRET_ACCESS_KEY`
+  are written to `wp-config.php` (parse-checked, atomic rename, mode kept). A
+  sender collision or an unreplaceable existing define refuses the run.
+- **Keys:** pass variable names, never values. jq reads them from the
+  environment and they reach `wp` on stdin. Use one send-only key per site
+  ([Workload send-only policy](#workload-send-only-policy)); the constants are
+  site-wide, so every SES connection on that site shares them.
+- **Backups and undo:** every real `migrate` first saves the raw option and
+  `wp-config.php` (0600) under the WP-CLI user's `~/.aidevops-backups/fluentsmtp/`,
+  outside the webroot. `undo` restores both and verifies their SHA-256 checksums.
+- **Proof:** `test` sends one message through `fluentMailSend()` and fails with
+  SES's error text. Acceptance is not delivery, so check events or the received
+  `Authentication-Results`. Staging sites that block outbound HTTP need
+  `--lift-http-block`, which lifts the block for that process only.
+- **Multisite:** pass `--url <blog-url>` for the blog running FluentSMTP.
+
 ## Troubleshooting and compliance
 
 | Problem | Verification |
