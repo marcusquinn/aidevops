@@ -104,8 +104,12 @@ _pmp_filter_empty_merge_repos "$rows" filtered_rows
 [[ "$filtered_rows" == $'owner/full|unused\n' && "$_PMP_PREFILTER_SKIPPED_REPOS" -eq 1 ]]
 # Skipped repos advance the original walk's checkpoint, rather than making a
 # saved empty-repo checkpoint look removed and restarting from the first repo.
+cursor_cleared=0 enrichment_cleared=0
+_pmp_clear_merge_pr_cursor() { cursor_cleared=1; return 0; }
+_pmp_clear_merge_enrichment_state() { enrichment_cleared=1; return 0; }
 _pmp_skip_prefiltered_repo owner/empty "$TEST_ROOT/checkpoint"
 [[ "$(<"$TEST_ROOT/checkpoint")" == owner/empty ]]
+[[ "$cursor_cleared" -eq 1 && "$enrichment_cleared" -eq 1 ]]
 _pulse_merge_queue_priority_keys() { printf '|42|'; return 0; }
 _pmp_filter_empty_merge_repos "$rows" filtered_rows
 [[ "$filtered_rows" == "$rows"$'\n' ]]
