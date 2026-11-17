@@ -1120,6 +1120,7 @@ _pmp_stage_parse_and_validate() {
 	fi
 	if [[ "$pr_is_draft" == "$PULSE_MERGE_BOOL_TRUE" ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
+		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" draft
 		_PMP_HUMAN_GATED=1 # GH#38248
 		return 1
 	fi
@@ -1265,9 +1266,11 @@ _pmp_stage_review_and_gates() {
 	fi
 	if _pmp_review_decision_is_unknown "$pr_review"; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision unavailable after refresh (GH#26218)" >>"$LOGFILE"
+		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" review_unknown
 		return 1
 	fi
 	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable"; then
+		[[ "$pr_mergeable" != UNKNOWN ]] || _pmp_record_negative_verdict "$repo_slug" "$pr_obj" mergeable_unknown
 		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
 	fi

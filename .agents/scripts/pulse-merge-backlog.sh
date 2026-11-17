@@ -510,7 +510,7 @@ _pmp_include_queued_pr_targets() {
 	fi
 	dirty_keys=$(_pulse_merge_queue_priority_keys "$repo_slug") || dirty_keys=""
 	remaining="$dirty_keys"
-	while [[ "$remaining" =~ ^\|([1-9][0-9]*)\|(.*)$ && "$fetched" -lt "$target_limit" ]]; do
+	while [[ "$remaining" =~ ^\|([1-9][0-9]*)\|(.*)$ ]]; do
 		pr_number="${BASH_REMATCH[1]}"
 		remaining="|${BASH_REMATCH[2]}"
 		if printf '%s' "$pr_json" | jq -e --argjson pr "$pr_number" 'any(.number == $pr)' >/dev/null 2>&1; then
@@ -518,6 +518,7 @@ _pmp_include_queued_pr_targets() {
 				'map(if .number == $pr then . + {_pulseDeferredRetry:true} else . end)') || return 1
 			continue
 		fi
+		[[ "$fetched" -lt "$target_limit" ]] || continue
 		fetched=$((fetched + 1))
 		target_json=$(AIDEVOPS_GH_READ_TIMEOUT="$target_timeout" AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 AIDEVOPS_GH_REST_FIRST_READS=1 \
 			gh_pr_view "$pr_number" --repo "$repo_slug" --json "$(_pulse_merge_ready_pr_json_fields)" 2>/dev/null) || target_json=""
