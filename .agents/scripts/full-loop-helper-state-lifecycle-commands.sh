@@ -948,7 +948,12 @@ _full_loop_verify_published_release() {
 			print_error "Invalid --workflow '${workflow_file}': expected a bare *.yml/*.yaml file name or numeric workflow ID"
 			return 1
 		fi
-		workflow_runs_endpoint="repos/${repo}/actions/workflows/${workflow_file}/runs?event=${workflow_event}&status=success&per_page=100"
+		if [[ "$generated_catalog" == "$_FULL_LOOP_BOOL_TRUE" ]]; then
+			# The success/event index can lag completed runs; validate those fields below.
+			workflow_runs_endpoint="repos/${repo}/actions/workflows/${workflow_file}/runs?head_sha=${merge_commit}&per_page=100"
+		else
+			workflow_runs_endpoint="repos/${repo}/actions/workflows/${workflow_file}/runs?event=${workflow_event}&status=success&per_page=100"
+		fi
 	else
 		if [[ "$workflow_event" != "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]]; then
 			print_error "--event ${workflow_event} requires --workflow to bind publication evidence to an exact workflow"
