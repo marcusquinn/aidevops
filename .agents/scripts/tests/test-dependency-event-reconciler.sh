@@ -13,6 +13,8 @@ FAIL=0
 EDIT_COUNT=0
 REREAD_LABELS="status:blocked"
 COMMENTS='[[]]'
+EVENTS=""
+SEARCH_EXTRA_LABEL=""
 NATIVE_STATE="CLOSED"
 NATIVE_REPO="owner/repo"
 NATIVE_HAS_NEXT_PAGE=false
@@ -164,6 +166,7 @@ _der_search_issues() {
 	local query="$2"
 	local labels="status:blocked"
 	[[ "$EXPLICIT_LABEL" == "true" ]] && labels=$'status:blocked\nblocked-by:#10'
+	[[ -n "$SEARCH_EXTRA_LABEL" ]] && labels+=$'\n'"$SEARCH_EXTRA_LABEL"
 	[[ "$repo" == "owner/repo" ]] || return 1
 	[[ "$SEARCH_AMBIGUOUS" == "false" ]] || return 1
 	if [[ "$query" == *"in:title"* ]]; then
@@ -258,6 +261,9 @@ gh() {
 	"api --paginate")
 		if [[ "$*" == *"/issues?state=open"* ]]; then
 			jq -cn --arg body "$BODY20" --arg dep "$STALE_DEP_LABEL" --arg hold "$STALE_HOLD_LABEL" '[[{number:20,state:"open",title:"t20: direct",body:$body,labels:([{name:"status:blocked"}] + (if $dep == "" then [] else [{name:$dep}] end) + (if $hold == "" then [] else [{name:$hold}] end))}]]'
+		elif [[ "$*" == *"/issues/20/events"* ]]; then
+			[[ -n "$EVENTS" ]] || return 1
+			printf '%s\n' "$EVENTS"
 		else
 			printf '%s\n' "$COMMENTS"
 		fi
@@ -362,6 +368,19 @@ assert_eq 1 "$(run_reconcile)" "explanatory prose does not suppress close-event 
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n'"$TB_PROTOCOL"
 assert_eq 1 "$(run_reconcile)" "terminal-blocker protocol in the body does not suppress close-event reconciliation"
+
+# GH#38866: a terminal-blocker observation older than the conversion to
+# needs-dependency is superseded; a newer one still holds.
+TB_OLD='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=target_code_blocker"}]]'
+TB_NEW='[[{"author_association":"OWNER","created_at":"2026-11-12T10:00:00Z","body":"Terminal blocker: reason=target_code_blocker"}]]'
+CONVERT_EVENTS='[[{"event":"labeled","created_at":"2026-11-11T10:00:00Z","label":{"name":"needs-dependency"}}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_OLD" EVENTS="$CONVERT_EVENTS"
+assert_eq 1 "$(run_reconcile)" "terminal blocker older than needs-dependency conversion does not hold"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_NEW" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "terminal blocker newer than needs-dependency conversion still holds"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_OLD" EVENTS=""
+assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-blocker hold"
+SEARCH_EXTRA_LABEL="" COMMENTS='[[]]' EVENTS=""
 
 # t18662: a dependant still waiting on another open blocker must not stop the
 # close event from releasing the remaining dependants.
