@@ -79,6 +79,19 @@ _pmp_negative_verdict_hit owner/repo "$unknown"
 unknown_review=$(jq -c '.reviewDecision="UNKNOWN"' <<<"$green")
 _pmp_record_negative_verdict owner/repo "$unknown_review" review_unknown
 _pmp_negative_verdict_hit owner/repo "$unknown_review"
+for variant in 'null' 'del'; do
+	if [[ "$variant" == null ]]; then
+		null_mergeable=$(jq -c '.mergeable=null' <<<"$green")
+		null_review=$(jq -c '.reviewDecision=null' <<<"$green")
+	else
+		null_mergeable=$(jq -c 'del(.mergeable)' <<<"$green")
+		null_review=$(jq -c 'del(.reviewDecision)' <<<"$green")
+	fi
+	_pmp_record_negative_verdict owner/repo "$null_mergeable" mergeable_unknown
+	_pmp_negative_verdict_hit owner/repo "$null_mergeable"
+	_pmp_record_negative_verdict owner/repo "$null_review" review_unknown
+	_pmp_negative_verdict_hit owner/repo "$null_review"
+done
 memo_file=$(_pmp_verdict_file owner/repo "$unknown_review")
 printf 'invalid json' >"$memo_file"
 if _pmp_negative_verdict_hit owner/repo "$unknown_review"; then exit 1; fi

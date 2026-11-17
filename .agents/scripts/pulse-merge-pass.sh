@@ -1096,8 +1096,8 @@ _pmp_negative_verdict_hit() {
 	# memo must not park an apparently eligible PR. Never cache pass/eligible.
 	case "$verdict" in
 	draft) jq -e '.isDraft == true' <<<"$pr_obj" >/dev/null || return 1 ;;
-	mergeable_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '.mergeable == $unknown' <<<"$pr_obj" >/dev/null || return 1 ;;
-	review_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '.reviewDecision == $unknown' <<<"$pr_obj" >/dev/null || return 1 ;;
+	mergeable_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '((.mergeable // "") | tostring) as $m | ($m == "" or $m == $unknown)' <<<"$pr_obj" >/dev/null || return 1 ;;
+	review_unknown) jq -e --arg unknown "${PULSE_UNKNOWN_STATE:-UNKNOWN}" '((.reviewDecision // "") | tostring) as $d | ($d == "" or $d == $unknown)' <<<"$pr_obj" >/dev/null || return 1 ;;
 	*) return 1 ;;
 	esac
 	_pmp_now_epoch_into now
