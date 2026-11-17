@@ -143,6 +143,8 @@ _check_health_issue_activity_guard() {
 	local repo_path="$2"
 	local runner_user="$3"
 	local health_issue_file="$4"
+	local runner_role="${5:-}" runner_prefix="${6:-}" role_label="${7:-}"
+	local role_display="${8:-}" canonical_identity="${9:-$runner_user}" identity_aliases="${10:-$runner_user}"
 
 	local guard_pr_count guard_assigned_count guard_auto_dispatch_count guard_worker_count
 	local _guard_fields=()
@@ -178,9 +180,16 @@ _check_health_issue_activity_guard() {
 
 	_HEALTH_ISSUE_ACTIVITY_STATE="$_HEALTH_ACTIVITY_STATE_IDLE"
 	if [[ ! -f "$health_issue_file" ]]; then
-		echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
-			>>"${LOGFILE:-/dev/null}"
-		return 1
+		local existing_issue
+		existing_issue=$(_find_health_issue "$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
+			"$role_label" "$role_display" "$health_issue_file" "$canonical_identity" "$identity_aliases")
+		[[ "$existing_issue" != "$_HEALTH_QUERY_FAILED_SENTINEL" ]] || return 2
+		if [[ -z "$existing_issue" ]]; then
+			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
+				>>"${LOGFILE:-/dev/null}"
+			return 1
+		fi
+		_cache_health_issue_number "$existing_issue" "$health_issue_file"
 	fi
 
 	local refresh_state_file="${health_issue_file}.refresh-state"
@@ -410,9 +419,16 @@ _update_health_issue_for_repo() {
 
 	_record_health_repo_stage "$stage_file" "activity-guard"
 	_HEALTH_ISSUE_ACTIVITY_STATE="$_HEALTH_ACTIVITY_STATE_ACTIVE"
-	if ! _check_health_issue_activity_guard \
-		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file"; then
-		_record_health_repo_stage "$stage_file" "skipped-idle"
+	local guard_result=0
+	_check_health_issue_activity_guard \
+		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file" \
+		"$runner_role" "$runner_prefix" "$role_label" "$role_display" "$canonical_identity" "$identity_aliases" || guard_result=$?
+	if [[ "$guard_result" -ne 0 ]]; then
+		if [[ "$guard_result" -eq 2 ]]; then
+			_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
+		else
+			_record_health_repo_stage "$stage_file" "skipped-idle"
+		fi
 		return 0
 	fi
 	local activity_state="${_HEALTH_ISSUE_ACTIVITY_STATE:-$_HEALTH_ACTIVITY_STATE_ACTIVE}"
@@ -574,8 +590,13 @@ _health_repo_times() {
 # A repo attempted but never refreshed (epoch 0) qualifies at once.
 # Prints the refresh epoch on success.
 _health_repo_needs_recovery() {
-	local slug="$1" runner="$2" epoch attempted age times
+	local slug="$1" runner="$2" epoch attempted age times cache stage=""
 	[[ -n "$slug" ]] || return 1
+	cache=$(_health_schedule_cache_file "$slug" "$runner")
+	if [[ ! -f "$cache" && -f "${cache}.stage" ]]; then
+		IFS='|' read -r stage _ <"${cache}.stage" || true
+		[[ "$stage" != "skipped-idle" ]] || return 1
+	fi
 	age=$(_stats_seconds "${STATS_HEALTH_RECOVERY_AGE_SECONDS:-86400}" 86400)
 	times=$(_health_repo_times "$slug" "$runner")
 	read -r epoch attempted <<<"$times"
