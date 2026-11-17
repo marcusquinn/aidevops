@@ -89,6 +89,20 @@ command output.
 - `create_uncertain`, `wait_timeout` and `wait_interrupted` mean the resource
   **may exist and bill**: read the `id` field, check `pod list`, then delete or
   keep it deliberately. Never blindly retry a create.
+- No capacity: `pod create` returns `code: bad_request` (status 400) with
+  "There are no longer any instances available with the requested
+  specifications", and creates nothing. `bad_request` also covers invalid
+  input, so match this message as the one exception to branching on codes.
+  A short bounded retry is safe (`blender-render-helper.sh` retries 3 times,
+  every 20 s). `gpu list` showing `stockStatus: Low` still means "try"; in a
+  2026-11 test, 5 refusals came before the 6th create succeeded. Switching GPU
+  or `--cloud-type` changes the price and needs fresh approval.
+- Community cloud does not guarantee a public port 22 (`--wait` needs one), so
+  use `--wait-for running` and read results with `pod logs`, or check the
+  port mapping in `pod get` before relying on SSH.
+- `--docker-args` replaces the image's start command, which skips the
+  `runpod/*` images' `/start.sh` (it sets up sshd from `PUBLIC_KEY`). Start it
+  yourself first: `if [ -x /start.sh ]; then (/start.sh >/tmp/start.log 2>&1 &); fi; ...`.
 - `timeout` from `serverless run --wait` means the CLI stopped waiting; poll
   `serverless status` instead of resubmitting.
 - `transfer_incomplete`: rerun the same transfer command; finished files and

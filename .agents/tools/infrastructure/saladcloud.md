@@ -102,6 +102,19 @@ rejects both scope flags.
   success (the relay drops exit codes); check the output instead.
 - Logs, env vars, job input/output and transcripts can contain secrets: redact
   before quoting.
+- `pending` with `container.size: 0` means the image is not cached yet and no
+  node is allocating. `stop` and `start` are rejected in this state; only
+  `delete` works. Nothing bills until an instance runs. In a 2026-11 test, a
+  new organization's groups stayed `pending` for 7–10 minutes for about an
+  hour, while `availability` reported free nodes and the log API returned 503.
+  An hour later the same config reached `running` about 8 minutes after create.
+  Give a first deployment `--wait --timeout 15m`, and treat a longer `pending`
+  as a provider-side delay: delete and retry later rather than changing the
+  config.
+- `aidevops secret NAME -- saladcloud ... -- <command>` loses the second
+  `--`, which `container-groups create` needs before the container command.
+  Put the `saladcloud` call in a script and run
+  `aidevops secret SALAD_API_KEY -- bash script.sh`.
 
 | Policy | Commands |
 |--------|----------|
@@ -116,7 +129,13 @@ rejects both scope flags.
 Nodes are interruptible and local disk is ephemeral, so design for loss:
 
 1. Bake the pinned Blender build and `enable_gpu.py` into the image
-   (`tools/design/3d-render-backends.md`).
+   (`tools/design/3d-render-backends.md`). Render with **CUDA, not OptiX**.
+   On a 2026-11 RTX 3090 node (plain `ubuntu:24.04`,
+   `NVIDIA_DRIVER_CAPABILITIES=all`), the container had `libcuda` but no
+   `libnvoptix`. Cycles OptiX failed (`error code 7804`) and a script that
+   tolerates fallback rendered on the CPU. CUDA rendered the same frame on the
+   GPU in 1.4 s. Make GPU selection fail hard on a missing device, as the
+   helper's `enable_gpu.py` does.
 2. Keep scenes and frames in external object storage; each worker pulls its
    inputs and uploads every finished frame immediately.
 3. Feed frame ranges through a job queue (`queues`, `queues jobs create`) so a
