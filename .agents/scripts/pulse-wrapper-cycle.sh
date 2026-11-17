@@ -80,6 +80,10 @@ _pulse_unattended_git() {
 #
 # Canonical automation remains read-only: ls-remote compares the remote tip
 # without mutating the checkout, and the audited recovery helper owns repairs.
+# GH#38785: when the checkout lags, the pinned tip's objects are fetched into
+# a pulse-owned sidecar object cache (the canonical refs, HEAD, index, worktree
+# and object store stay untouched) so the large-file gate can measure pinned
+# remote blobs instead of deferring forever.
 #
 # GH#17584 context preserved: the original motivation for pulling before
 # worker dispatch (workers close issues as "Invalid — file does not exist"
@@ -160,6 +164,239 @@ _pulse_refresh_should_skip_repo() {
 	return 1
 }
 
+#######################################
+# GH#38785: Run a command with inherited repository-location variables cleared,
+# so sidecar Git calls can never be redirected into another (canonical)
+# repository or borrow foreign alternates. Subshell-scoped; caller env intact.
+# Arguments: command and its arguments (e.g. git ..., _pulse_unattended_git ...)
+# Returns: the command's exit status
+#######################################
+_pulse_git_isolated_env() {
+	local cmd_rc=0
+	(
+		unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_NAMESPACE \
+			GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
+		"$@"
+	) || cmd_rc=$?
+	return "$cmd_rc"
+}
+
+#######################################
+# GH#38785: Stable per-path key "<sanitized-basename>-<cksum>" so repositories
+# sharing a basename never share pulse state. Only the basename is readable.
+# Arguments: key_source (path whose identity is hashed), repo_path
+# Stdout: key
+# Returns: 0 resolved; 1 empty basename or hash failure
+#######################################
+_pulse_tip_object_key() {
+	local key_source="$1"
+	local repo_path="$2"
+	local hash="" safe_basename=""
+
+	safe_basename=$(basename "$repo_path")
+	safe_basename=$(printf '%s' "$safe_basename" | tr -c 'A-Za-z0-9._-' '_')
+	[[ -n "$safe_basename" ]] || return 1
+	hash=$(printf '%s' "$key_source" | cksum | awk '{print $1}') || return 1
+	[[ "$hash" =~ ^[0-9]+$ ]] || return 1
+	printf '%s-%s' "$safe_basename" "$hash"
+	return 0
+}
+
+#######################################
+# GH#38785: Path of the pulse-owned sidecar object cache for a canonical
+# checkout. The canonical Git guard forbids fetching into canonical object
+# stores, so tip objects go into a bare cache that borrows the canonical
+# objects via objects/info/alternates. Keyed by the common Git directory.
+# Arguments: repo_path
+# Stdout: cache directory path (may not exist yet)
+# Returns: 0 resolved; 1 not a Git checkout
+#######################################
+_pulse_tip_object_cache_dir() {
+	local repo_path="$1"
+	local common_dir="" key="" state_dir=""
+
+	common_dir=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	[[ -n "$common_dir" && -d "${common_dir}/objects" ]] || return 1
+	key=$(_pulse_tip_object_key "$common_dir" "$repo_path") || return 1
+	state_dir="${PULSE_TIP_OBJECTS_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
+	printf '%s/canonical-object-cache/%s.git' "$state_dir" "$key"
+	return 0
+}
+
+#######################################
+# GH#38785: Resolve the canonical origin URL for a fetch run from the sidecar
+# cache. Git resolves a relative local URL from the checkout top level, so a
+# relative path must be made absolute before running from another directory.
+# Absolute paths, scheme://, and scp-style host:path URLs pass through.
+# Arguments: repo_path, remote_url
+# Stdout: fetchable URL
+# Returns: 0 resolved; 1 relative local path that does not resolve
+#######################################
+_pulse_resolve_fetch_url() {
+	local repo_path="$1"
+	local remote_url="$2"
+	local base="" resolved=""
+
+	if [[ "$remote_url" == /* || "$remote_url" == *://* || "$remote_url" =~ ^[^/]+: ]]; then
+		printf '%s' "$remote_url"
+		return 0
+	fi
+	base=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --show-toplevel 2>/dev/null) || base="$repo_path"
+	resolved=$(cd "$base" 2>/dev/null && cd "$remote_url" 2>/dev/null && pwd -P) || return 1
+	[[ -n "$resolved" ]] || return 1
+	printf '%s' "$resolved"
+	return 0
+}
+
+#######################################
+# GH#38785: Fetch the remote default-branch tip objects for a lagging
+# canonical mirror into its sidecar cache. The canonical refs, HEAD, index,
+# worktree and object store are never written. A destination-less refspec with
+# an empty --refmap and --no-write-fetch-head stores objects only; alternates
+# make the canonical refs the negotiation base, so only the missing delta
+# transfers. Each fetch builds a fresh staging cache and swaps it in, so disk
+# use stays bounded to one delta and readers never see a partial cache.
+# Arguments: repo_path, default_branch, remote_sha (pinned by ls-remote)
+# Returns: 0 when the cache holds the pinned commit afterwards, 1 otherwise
+#######################################
+_pulse_refresh_fetch_tip_objects() {
+	local repo_path="$1"
+	local default_branch="$2"
+	local remote_sha="$3"
+	local cache_dir="" cache_parent="" common_dir="" remote_url="" staging="" previous=""
+
+	[[ -n "$repo_path" && -n "$default_branch" ]] || return 1
+	[[ "$remote_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+	cache_dir=$(_pulse_tip_object_cache_dir "$repo_path") || return 1
+	if [[ -d "$cache_dir" ]] && _pulse_git_isolated_env git -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		return 0
+	fi
+	common_dir=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	remote_url=$(_pulse_git_isolated_env git -C "$repo_path" config --get remote.origin.url 2>/dev/null) || return 1
+	[[ -n "$remote_url" ]] || return 1
+	remote_url=$(_pulse_resolve_fetch_url "$repo_path" "$remote_url") || return 1
+	cache_parent="${cache_dir%/*}"
+	mkdir -p "$cache_parent" 2>/dev/null || return 1
+	staging="${cache_dir}.staging.$$"
+	rm -rf "$staging" 2>/dev/null || return 1
+	# -C the (non-repository) cache parent so the guard never sees a canonical cwd;
+	# every sidecar Git call clears inherited repository-location variables.
+	if ! _pulse_git_isolated_env git -C "$cache_parent" init --quiet --bare "${staging##*/}" >/dev/null 2>&1 \
+		|| ! printf '%s/objects\n' "$common_dir" >"${staging}/objects/info/alternates" \
+		|| ! _pulse_git_isolated_env _pulse_unattended_git -C "$staging" -c gc.auto=0 -c maintenance.auto=false \
+			fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head \
+			--refmap= "$remote_url" "refs/heads/${default_branch}" >/dev/null 2>&1 \
+		|| ! _pulse_git_isolated_env git -C "$staging" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		rm -rf "$staging" 2>/dev/null
+		return 1
+	fi
+	previous="${cache_dir}.previous.$$"
+	if [[ -d "$cache_dir" ]] && ! mv "$cache_dir" "$previous" 2>/dev/null; then
+		rm -rf "$staging" 2>/dev/null
+		return 1
+	fi
+	if ! mv "$staging" "$cache_dir" 2>/dev/null; then
+		rm -rf "$staging" "$previous" 2>/dev/null
+		return 1
+	fi
+	rm -rf "$previous" 2>/dev/null
+	return 0
+}
+
+#######################################
+# GH#38785: Drop the sidecar cache once the canonical checkout holds the tip.
+# Arguments: repo_path
+# Returns: 0 always (best-effort cleanup of pulse-owned state)
+#######################################
+_pulse_tip_object_cache_remove() {
+	local repo_path="$1"
+	local cache_dir=""
+
+	cache_dir=$(_pulse_tip_object_cache_dir "$repo_path") || return 0
+	[[ -d "$cache_dir" ]] || return 0
+	rm -rf "$cache_dir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# GH#38785: Escalate a persistent tip-object fetch failure through the local
+# advisory channel (surfaced by the session greeting) instead of leaving the
+# large-file gate in a silent benign deferral. Clears itself on success.
+# Local-only by design: the advisory names the repo basename, never a path.
+# Arguments: repo_path, outcome ("ok" or "failed")
+# Returns: 0 always (best-effort diagnostics)
+#######################################
+_pulse_refresh_tip_objects_advisory() {
+	local repo_path="$1"
+	local outcome="$2"
+	local safe_basename="" key="" state_dir="" since_file="" advisory_dir="" advisory_file=""
+	local now_epoch=0 since_epoch=0 threshold="${PULSE_TIP_OBJECTS_ADVISORY_AFTER_SECONDS:-3600}"
+
+	# Keyed by full path so same-basename repos never clear each other's timer.
+	key=$(_pulse_tip_object_key "$repo_path" "$repo_path") || return 0
+	safe_basename="${key%-*}"
+	state_dir="${PULSE_TIP_OBJECTS_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
+	advisory_dir="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR:-${HOME}/.aidevops/advisories}"
+	since_file="${state_dir}/canonical-tip-objects-${key}.since"
+	advisory_file="${advisory_dir}/canonical-tip-objects-${key}.advisory"
+
+	if [[ "$outcome" == "ok" ]]; then
+		rm -f "$since_file" "$advisory_file" 2>/dev/null || true
+		return 0
+	fi
+	mkdir -p "$state_dir" 2>/dev/null || return 0
+	now_epoch=$(date +%s)
+	if [[ -f "$since_file" ]]; then
+		since_epoch=$(tr -cd '0-9' <"$since_file" 2>/dev/null) || since_epoch=0
+	fi
+	if [[ ! "$since_epoch" =~ ^[0-9]+$ || "$since_epoch" -le 0 ]]; then
+		printf '%s\n' "$now_epoch" >"$since_file" 2>/dev/null || true
+		return 0
+	fi
+	[[ $((now_epoch - since_epoch)) -ge "$threshold" ]] || return 0
+	mkdir -p "$advisory_dir" 2>/dev/null || return 0
+	printf '%s\n' \
+		"[CANONICAL DIAGNOSTIC] ${safe_basename}: remote tip objects unavailable; large-file gate dispatch is deferred" \
+		"" \
+		"  Pulse could not fetch the remote default-branch tip objects for this" \
+		"  canonical checkout for over ${threshold}s, so the large-file gate defers" \
+		"  matching auto-dispatch issues every cycle. Check unattended GitHub Git" \
+		"  auth (gh auth status) and network access, or synchronize the mirror:" \
+		"" \
+		"    canonical-recovery-helper.sh sync-mirror --repo <canonical-checkout> \\" \
+		"      --issue <N> --confirm SYNCHRONIZE_CANONICAL_MIRROR" \
+		"" \
+		"  Clears automatically after the next successful fetch." \
+		>"${advisory_file}.tmp.$$" 2>/dev/null || return 0
+	mv "${advisory_file}.tmp.$$" "$advisory_file" 2>/dev/null || rm -f "${advisory_file}.tmp.$$" 2>/dev/null
+	return 0
+}
+
+#######################################
+# GH#38785: Ensure the pinned remote tip commit exists locally for a lagging
+# mirror, logging fetch outcomes. Arguments: repo_path, default_branch, remote_sha
+# Returns: 0 always (best-effort; the gate fails closed on absent objects)
+#######################################
+_pulse_refresh_ensure_tip_objects() {
+	local repo_path="$1"
+	local default_branch="$2"
+	local remote_sha="$3"
+
+	if git -C "$repo_path" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		_pulse_tip_object_cache_remove "$repo_path"
+		_pulse_refresh_tip_objects_advisory "$repo_path" "ok"
+		return 0
+	fi
+	if _pulse_refresh_fetch_tip_objects "$repo_path" "$default_branch" "$remote_sha"; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: fetched remote tip objects ${remote_sha} for ${repo_path} into the pulse object cache; canonical checkout unchanged" >>"$LOGFILE"
+		_pulse_refresh_tip_objects_advisory "$repo_path" "ok"
+		return 0
+	fi
+	echo "[pulse-wrapper] _pulse_refresh_repo: remote tip objects unavailable for ${repo_path} (${remote_sha}); canonical checkout unchanged" >>"$LOGFILE"
+	_pulse_refresh_tip_objects_advisory "$repo_path" "failed"
+	return 0
+}
+
 _pulse_refresh_repo() {
 	local repo_path="$1"
 	[[ -n "$repo_path" ]] || return 0
@@ -187,8 +424,13 @@ _pulse_refresh_repo() {
 	local_sha=$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)
 	if [[ -z "$remote_sha" ]]; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: remote diagnostic failed for ${repo_path} — canonical checkout unchanged" >>"$LOGFILE"
-	elif [[ "$local_sha" != "$remote_sha" ]]; then
-		echo "[pulse-wrapper] _pulse_refresh_repo: diagnostic: ${repo_path} differs from origin/${default_branch}; canonical checkout unchanged" >>"$LOGFILE"
+	else
+		if [[ "$local_sha" != "$remote_sha" ]]; then
+			echo "[pulse-wrapper] _pulse_refresh_repo: diagnostic: ${repo_path} differs from origin/${default_branch}; canonical checkout unchanged" >>"$LOGFILE"
+		fi
+		# A current checkout already has the tip, so this only clears a stale
+		# advisory; a lagging one fetches the pinned objects (GH#38785).
+		_pulse_refresh_ensure_tip_objects "$repo_path" "$default_branch" "$remote_sha"
 	fi
 	if declare -F pulse_canonical_recover >/dev/null 2>&1; then
 		pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 || true

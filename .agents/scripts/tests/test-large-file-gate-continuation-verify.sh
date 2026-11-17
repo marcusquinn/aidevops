@@ -458,25 +458,35 @@ assert_eq "lagging mirror admits unchanged and verified-absent targets" "0" "$rc
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "missing.sh" || rc=$?
 assert_eq "lagging mirror admits a verified-absent NEW target alone" "0" "$rc"
-fixture_agents_tree=$(printf '100644 blob %s\tupstream-agent.sh\n' "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
-fixture_upstream_tree=$(printf '040000 tree %s\t.agents\n100644 blob %s\t.upstream-dot.sh\n100644 blob %s\ttarget.sh\n100644 blob %s\tupstream-new.sh\n' \
-	"$fixture_agents_tree" "$fixture_blob" "$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
+fixture_agents_tree=$(printf '100644 blob %s\tambiguous.sh\n100644 blob %s\tupstream-agent.sh\n' \
+	"$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
+fixture_upstream_tree=$(printf '040000 tree %s\t.agents\n100644 blob %s\t.upstream-dot.sh\n100644 blob %s\tambiguous.sh\n100644 blob %s\ttarget.sh\n100644 blob %s\tupstream-new.sh\n' \
+	"$fixture_agents_tree" "$fixture_blob" "$fixture_blob" "$fixture_blob" "$fixture_blob" | command git -C "$fixture_repo" mktree) || exit 1
 fixture_remote=$(printf 'upstream addition fixture\n' | env \
 	GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid \
 	GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid \
 	git -C "$fixture_repo" commit-tree "$fixture_upstream_tree" -p "$fixture_remote") || exit 1
+# GH#38785: a target added upstream is measured from its pinned blob.
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-new.sh" || rc=$?
-assert_eq "target added upstream but missing locally still defers" "1" "$rc"
+assert_eq "target added upstream but missing locally uses the pinned blob" "0" "$rc"
+_large_file_gate_collect_large_files "upstream-new.sh" "$TMP" "9994" "$_LFG_REMOTE_MEASUREMENT_SHA"
+assert_eq "upstream addition is measured from the pinned blob" "false" "$_LFG_FOUND_LARGE"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-new.sh:1-3000" || rc=$?
-assert_eq "upstream addition with a line range still defers" "1" "$rc"
+assert_eq "upstream addition with a line range uses the pinned blob" "0" "$rc"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-agent.sh" || rc=$?
-assert_eq "target added upstream under .agents still defers" "1" "$rc"
+assert_eq "target added upstream under .agents uses the pinned blob" "0" "$rc"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "upstream-dot.sh" || rc=$?
-assert_eq "target added upstream with dot prefix still defers" "1" "$rc"
+assert_eq "target added upstream with dot prefix uses the pinned blob" "0" "$rc"
+rc=0
+_large_file_gate_repo_matches_remote_default "$TMP" "ambiguous.sh" || rc=$?
+assert_eq "ambiguous upstream addition still defers" "1" "$rc"
+rc=0
+_large_file_gate_collect_large_files "ambiguous.sh" "$TMP" "9994" "$fixture_remote" || rc=$?
+assert_eq "ambiguous upstream addition measurement fails closed" "1" "$rc"
 printf 'changed target\n' >>"${TMP}/target.sh"
 rc=0
 _large_file_gate_repo_matches_remote_default "$TMP" "target.sh" || rc=$?
