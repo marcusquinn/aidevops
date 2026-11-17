@@ -893,6 +893,42 @@ _pmpc_reconcile_closed_checkpoints() {
 	return 0
 }
 
+# Revisit recent merged PRs independently of the issue traversal cursor. Repeat
+# the lookback window rather than stamping a scan complete: restore is best
+# effort and an unreadable issue or PR must be retried on a later cycle.
+_pmpc_reconcile_recent_merges() {
+	local repo_slug="$1" deadline="$2" now_epoch="" page_json="" rows="" pr=""
+	local state_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
+	local cursor="${state_dir}/${repo_slug//\//__}.merged-page" page=1 count=0 oldest=0 floor=0
+	local lookback="${PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS:-604800}"
+	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
+	[[ ! -r "$cursor" ]] || read -r page <"$cursor" || page=1
+	[[ "$page" =~ ^[1-9][0-9]{0,3}$ ]] || page=1
+	now_epoch=$(date +%s) || return 1
+	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	floor=$((now_epoch - lookback))
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
+	rows=$(printf '%s' "$page_json" | jq -r --argjson floor "$floor" '
+		if type != "array" then error("unreadable PR list") else . end
+		| "\(length) \(map(.updated_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
+		  (.[] | select((.number | type) == "number" and (.merged_at | type) == "string")
+		   | select((.merged_at | fromdateiso8601) >= $floor) | .number)
+	' 2>/dev/null) || return 1
+	read -r count oldest <<<"${rows%%$'\n'*}"
+	[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+	[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+	while read -r pr; do
+		[[ "$pr" =~ ^[0-9]+$ ]] || continue
+		now_epoch=$(date +%s) || return 1
+		[[ "$now_epoch" -lt "$deadline" ]] || return 3
+		_pm_restore_partial_continuation "$pr" "$repo_slug" "" ""
+	done <<<"$rows"
+	if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	printf '%s\n' "$page" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
+	return 0
+}
+
 # GH#38021: a worker draft checkpoint removes auto-dispatch so that no second
 # branch opens beside the draft. A canonical consolidated spec is a dispatch
 # candidate only while it carries that label (_has_consolidated_label), and the
@@ -1125,6 +1161,7 @@ _pm_reconcile_partial_continuations() {
 	[[ "$page" =~ ^[1-9][0-9]*$ ]] || page=1
 	now_epoch=$(date +%s) || return 1
 	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	_pmpc_reconcile_recent_merges "$repo_slug" "$deadline" || true
 	_pmpc_reconcile_closed_checkpoints "$repo_slug" "$deadline" "${phase}:${page}:${issues:+pending}" || true
 	while true; do
 		if [[ -z "$issues" ]]; then
