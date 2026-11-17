@@ -167,7 +167,7 @@ nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu --f
 
 ## Security
 
-Never expose model APIs without auth -- use SSH tunnels or VPN. Store keys: `aidevops secret set RUNPOD_API_KEY` / `SALAD_API_KEY` / `VASTAI_API_KEY` / `LAMBDA_API_KEY`, and inject them per command with `aidevops secret NAME -- <cli>`. Rotate SSH keys regularly; enable provider firewalls; production: HTTPS via nginx/caddy. Full setup: `tools/credentials/api-key-setup.md`.
+Never expose model APIs without auth -- use SSH tunnels or VPN. Store account-named keys (`<PROVIDER>_<ACCOUNT>_API_KEY`, see `tools/credentials/credential-inventory.md`), declare the provider default where supported (`aidevops secret default runpod|saladcloud NAME` makes `RUNPOD_API_KEY` / `SALAD_API_KEY` resolve), and inject them per command with `aidevops secret NAME -- <cli>`. Rotate SSH keys regularly; enable provider firewalls; production: HTTPS via nginx/caddy. Full setup: `tools/credentials/api-key-setup.md`.
 
 ## See Also
 

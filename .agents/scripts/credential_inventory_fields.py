@@ -35,6 +35,8 @@ DEFAULT_ENV = {
     "hetzner": "HCLOUD_TOKEN",
     "hostinger": "HOSTINGER_API_TOKEN",
     "openai": "OPENAI_API_KEY",
+    "runpod": "RUNPOD_API_KEY",
+    "saladcloud": "SALAD_API_KEY",
     "vercel": "VERCEL_TOKEN",
 }
 

@@ -2191,6 +2191,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19072 fix(logs): honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh #auto-dispatch #bug #interactive #priority:low tier:simple ref:GH#38695 logged:2026-11-16 -> [todo/tasks/t19072-brief.md]
 
+- [ ] t19073 credential registry: add runpod and saladcloud conventional defaults (RUNPOD_API_KEY, SALAD_API_KEY) #feat #interactive tier:simple assignee:marcusquinn ref:GH#38789 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19073-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
