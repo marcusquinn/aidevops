@@ -50,6 +50,8 @@ aidevops secret HOSTINGER_SSH_PASSWORD_ACCOUNT_1 -- \
 
 Only request another SSH credential when API inventory, the hosting panel, or a failed authenticated probe shows a genuinely different account/server.
 
+**Does the API have an endpoint for it?** Search the machine-readable spec rather than fetching the docs site's HTML or guessing routes. Match operation summaries and descriptions as well as paths, because a path need not name its capability (DNS records live under `/api/dns/v1/zones/{domain}`): `curl -sS https://developers.hostinger.com/openapi/openapi.json | jq -r '.paths | to_entries[] | .key as $p | .value | to_entries[] | "\(.key|ascii_upcase) \($p)  \(.value.summary // "") \(.value.description // "")" | gsub("\\s+"; " ")' | rg -i '<topic>'`. No match is not proof of absence; check the spec's tags and related sections before concluding.
+
 **Sites answer `403` (or `408`) from this machine?** Run `hostinger-helper.sh origin-block <host> --ssh <account-alias>` once before reporting an outage or retrying. Usually LiteSpeed is refusing only this machine's address on every site on the server; see "One client address refused at the origin" under LiteSpeed cache.
 
 ### hPanel cron jobs
@@ -390,6 +392,8 @@ This bypasses uninstall hooks, preserving saved data rather than asking the plug
 - **SQL queries**: `wp db query` fails with `Cannot do 'Process::run'`; use `global $wpdb;` inside `wp eval` instead. `wp db size` still works.
 
 ### Database backups without WP-CLI
+
+**Website backups are not in the API.** Checked against the OpenAPI spec on 2026-11-17: backup and snapshot endpoints exist only for VPS (`/api/vps/v1/virtual-machines/{id}/backups`, `.../snapshot`) and DNS (`/api/dns/v1/snapshots/{domain}`), not for shared or Cloud websites. To confirm or generate a website backup, the owner uses hPanel → the website's **Backups** page. Before a risky database change, an agent can take a database-only safety copy with the `mysqldump` procedure below into `~/backups/`. It cannot restore plugin, theme, upload or other website files; when a change touches files, also archive the affected paths (for example `tar -czf ~/backups/<slug>-$(date +%F).tar.gz -C ~/domains/<domain>/public_html/wp-content plugins/<slug>`) or have the owner confirm an hPanel backup first.
 
 For fleet core minor releases, use the [core-minor workflow](../../tools/wordpress/wp-cli-reference.md#core-minor-releases-across-ssh-installs).
 It calls `mysqldump` with a temporary 0600 defaults file and checks that backup
