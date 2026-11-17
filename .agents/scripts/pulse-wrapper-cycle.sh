@@ -165,6 +165,44 @@ _pulse_refresh_should_skip_repo() {
 }
 
 #######################################
+# GH#38785: Run a command with inherited repository-location variables cleared,
+# so sidecar Git calls can never be redirected into another (canonical)
+# repository or borrow foreign alternates. Subshell-scoped; caller env intact.
+# Arguments: command and its arguments (e.g. git ..., _pulse_unattended_git ...)
+# Returns: the command's exit status
+#######################################
+_pulse_git_isolated_env() {
+	local cmd_rc=0
+	(
+		unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_NAMESPACE \
+			GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
+		"$@"
+	) || cmd_rc=$?
+	return "$cmd_rc"
+}
+
+#######################################
+# GH#38785: Stable per-path key "<sanitized-basename>-<cksum>" so repositories
+# sharing a basename never share pulse state. Only the basename is readable.
+# Arguments: key_source (path whose identity is hashed), repo_path
+# Stdout: key
+# Returns: 0 resolved; 1 empty basename or hash failure
+#######################################
+_pulse_tip_object_key() {
+	local key_source="$1"
+	local repo_path="$2"
+	local hash="" safe_basename=""
+
+	safe_basename=$(basename "$repo_path")
+	safe_basename=$(printf '%s' "$safe_basename" | tr -c 'A-Za-z0-9._-' '_')
+	[[ -n "$safe_basename" ]] || return 1
+	hash=$(printf '%s' "$key_source" | cksum | awk '{print $1}') || return 1
+	[[ "$hash" =~ ^[0-9]+$ ]] || return 1
+	printf '%s-%s' "$safe_basename" "$hash"
+	return 0
+}
+
+#######################################
 # GH#38785: Path of the pulse-owned sidecar object cache for a canonical
 # checkout. The canonical Git guard forbids fetching into canonical object
 # stores, so tip objects go into a bare cache that borrows the canonical
@@ -175,16 +213,38 @@ _pulse_refresh_should_skip_repo() {
 #######################################
 _pulse_tip_object_cache_dir() {
 	local repo_path="$1"
-	local common_dir="" key="" safe_basename="" state_dir=""
+	local common_dir="" key="" state_dir=""
 
-	common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	common_dir=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
 	[[ -n "$common_dir" && -d "${common_dir}/objects" ]] || return 1
-	key=$(printf '%s' "$common_dir" | cksum | awk '{print $1}') || return 1
-	[[ "$key" =~ ^[0-9]+$ ]] || return 1
-	safe_basename=$(basename "$repo_path")
-	safe_basename=$(printf '%s' "$safe_basename" | tr -c 'A-Za-z0-9._-' '_')
+	key=$(_pulse_tip_object_key "$common_dir" "$repo_path") || return 1
 	state_dir="${PULSE_TIP_OBJECTS_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
-	printf '%s/canonical-object-cache/%s-%s.git' "$state_dir" "$safe_basename" "$key"
+	printf '%s/canonical-object-cache/%s.git' "$state_dir" "$key"
+	return 0
+}
+
+#######################################
+# GH#38785: Resolve the canonical origin URL for a fetch run from the sidecar
+# cache. Git resolves a relative local URL from the checkout top level, so a
+# relative path must be made absolute before running from another directory.
+# Absolute paths, scheme://, and scp-style host:path URLs pass through.
+# Arguments: repo_path, remote_url
+# Stdout: fetchable URL
+# Returns: 0 resolved; 1 relative local path that does not resolve
+#######################################
+_pulse_resolve_fetch_url() {
+	local repo_path="$1"
+	local remote_url="$2"
+	local base="" resolved=""
+
+	if [[ "$remote_url" == /* || "$remote_url" == *://* || "$remote_url" =~ ^[^/]+: ]]; then
+		printf '%s' "$remote_url"
+		return 0
+	fi
+	base=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --show-toplevel 2>/dev/null) || base="$repo_path"
+	resolved=$(cd "$base" 2>/dev/null && cd "$remote_url" 2>/dev/null && pwd -P) || return 1
+	[[ -n "$resolved" ]] || return 1
+	printf '%s' "$resolved"
 	return 0
 }
 
@@ -208,23 +268,25 @@ _pulse_refresh_fetch_tip_objects() {
 	[[ -n "$repo_path" && -n "$default_branch" ]] || return 1
 	[[ "$remote_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
 	cache_dir=$(_pulse_tip_object_cache_dir "$repo_path") || return 1
-	if [[ -d "$cache_dir" ]] && git -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+	if [[ -d "$cache_dir" ]] && _pulse_git_isolated_env git -C "$cache_dir" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
 		return 0
 	fi
-	common_dir=$(git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-	remote_url=$(git -C "$repo_path" config --get remote.origin.url 2>/dev/null) || return 1
+	common_dir=$(_pulse_git_isolated_env git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+	remote_url=$(_pulse_git_isolated_env git -C "$repo_path" config --get remote.origin.url 2>/dev/null) || return 1
 	[[ -n "$remote_url" ]] || return 1
+	remote_url=$(_pulse_resolve_fetch_url "$repo_path" "$remote_url") || return 1
 	cache_parent="${cache_dir%/*}"
 	mkdir -p "$cache_parent" 2>/dev/null || return 1
 	staging="${cache_dir}.staging.$$"
 	rm -rf "$staging" 2>/dev/null || return 1
-	# -C the (non-repository) cache parent so the guard never sees a canonical cwd.
-	if ! git -C "$cache_parent" init --quiet --bare "${staging##*/}" >/dev/null 2>&1 \
+	# -C the (non-repository) cache parent so the guard never sees a canonical cwd;
+	# every sidecar Git call clears inherited repository-location variables.
+	if ! _pulse_git_isolated_env git -C "$cache_parent" init --quiet --bare "${staging##*/}" >/dev/null 2>&1 \
 		|| ! printf '%s/objects\n' "$common_dir" >"${staging}/objects/info/alternates" \
-		|| ! _pulse_unattended_git -C "$staging" -c gc.auto=0 -c maintenance.auto=false \
+		|| ! _pulse_git_isolated_env _pulse_unattended_git -C "$staging" -c gc.auto=0 -c maintenance.auto=false \
 			fetch --quiet --no-tags --no-recurse-submodules --no-write-fetch-head \
 			--refmap= "$remote_url" "refs/heads/${default_branch}" >/dev/null 2>&1 \
-		|| ! git -C "$staging" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		|| ! _pulse_git_isolated_env git -C "$staging" cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
 		rm -rf "$staging" 2>/dev/null
 		return 1
 	fi
@@ -267,16 +329,16 @@ _pulse_tip_object_cache_remove() {
 _pulse_refresh_tip_objects_advisory() {
 	local repo_path="$1"
 	local outcome="$2"
-	local safe_basename="" state_dir="" since_file="" advisory_dir="" advisory_file=""
+	local safe_basename="" key="" state_dir="" since_file="" advisory_dir="" advisory_file=""
 	local now_epoch=0 since_epoch=0 threshold="${PULSE_TIP_OBJECTS_ADVISORY_AFTER_SECONDS:-3600}"
 
-	safe_basename=$(basename "$repo_path")
-	safe_basename=$(printf '%s' "$safe_basename" | tr -c 'A-Za-z0-9._-' '_')
-	[[ -n "$safe_basename" ]] || return 0
+	# Keyed by full path so same-basename repos never clear each other's timer.
+	key=$(_pulse_tip_object_key "$repo_path" "$repo_path") || return 0
+	safe_basename="${key%-*}"
 	state_dir="${PULSE_TIP_OBJECTS_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
 	advisory_dir="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR:-${HOME}/.aidevops/advisories}"
-	since_file="${state_dir}/canonical-tip-objects-${safe_basename}.since"
-	advisory_file="${advisory_dir}/canonical-tip-objects-${safe_basename}.advisory"
+	since_file="${state_dir}/canonical-tip-objects-${key}.since"
+	advisory_file="${advisory_dir}/canonical-tip-objects-${key}.advisory"
 
 	if [[ "$outcome" == "ok" ]]; then
 		rm -f "$since_file" "$advisory_file" 2>/dev/null || true

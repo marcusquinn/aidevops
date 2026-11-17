@@ -465,19 +465,24 @@ test_refresh_fetches_absent_tip_objects_without_ref_changes() {
 # of a silent benign deferral, and clears itself after recovery.
 test_tip_object_fetch_failure_escalates_to_local_advisory() {
 	local repo="${TMP}/advisory-repo"
-	local since_file="${PULSE_TIP_OBJECTS_STATE_DIR}/canonical-tip-objects-advisory-repo.since"
-	local advisory="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR}/canonical-tip-objects-advisory-repo.advisory"
+	local twin_repo="${TMP}/other-team/advisory-repo"
 	local failures=""
 	(
 		# shellcheck disable=SC1090
 		source "${WRAPPER_SCRIPT}" --self-check >/dev/null 2>&1 || true
 		PULSE_TIP_OBJECTS_ADVISORY_AFTER_SECONDS=60
+		key=$(_pulse_tip_object_key "$repo" "$repo") || exit 10
+		since_file="${PULSE_TIP_OBJECTS_STATE_DIR}/canonical-tip-objects-${key}.since"
+		advisory="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR}/canonical-tip-objects-${key}.advisory"
 		_pulse_refresh_tip_objects_advisory "$repo" "failed"
 		[[ -f "$since_file" && ! -f "$advisory" ]] || exit 11
 		printf '%s\n' "$(($(date +%s) - 120))" >"$since_file"
+		# A same-basename repo succeeding must not clear this repo's timer.
+		_pulse_refresh_tip_objects_advisory "$twin_repo" "ok"
+		[[ -f "$since_file" ]] || exit 16
 		_pulse_refresh_tip_objects_advisory "$repo" "failed"
 		[[ -f "$advisory" ]] || exit 12
-		grep -Fq 'remote tip objects unavailable' "$advisory" || exit 13
+		grep -Fq 'advisory-repo: remote tip objects unavailable' "$advisory" || exit 13
 		! grep -Fq "$TMP" "$advisory" || exit 14
 		_pulse_refresh_tip_objects_advisory "$repo" "ok"
 		[[ ! -f "$advisory" && ! -f "$since_file" ]] || exit 15
