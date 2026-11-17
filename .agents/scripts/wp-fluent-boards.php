@@ -39,6 +39,7 @@ if ( ! class_exists( 'WPFB_Error' ) ) {
 require_once __DIR__ . '/wp-fluent-boards-store.php';
 require_once __DIR__ . '/wp-fluent-boards-reader.php';
 require_once __DIR__ . '/wp-fluent-boards-writer.php';
+require_once __DIR__ . '/wp-fluent-boards-creator.php';
 
 if ( ! class_exists( 'WPFB_Cards' ) ) {
 
@@ -52,7 +53,7 @@ if ( ! class_exists( 'WPFB_Cards' ) ) {
 			'boards'  => array( 'WPFB_Reader', array() ),
 			'cards'   => array( 'WPFB_Reader', array( 'board' ) ),
 			'show'    => array( 'WPFB_Reader', array( 'card' ) ),
-			'add'     => array( 'WPFB_Writer', array( 'board', 'title' ) ),
+			'add'     => array( 'WPFB_Creator', array( 'board', 'title' ) ),
 			'move'    => array( 'WPFB_Writer', array( 'card', 'stage' ) ),
 			'comment' => array( 'WPFB_Writer', array( 'card', 'body_file' ) ),
 			'check'   => array( 'WPFB_Writer', array( 'card', 'item' ) ),
@@ -72,7 +73,8 @@ if ( ! class_exists( 'WPFB_Cards' ) ) {
 				$options = self::parse_options( $action, $args );
 				self::require_plugin();
 				$handler = self::ACTIONS[ $action ][0];
-				if ( 'WPFB_Writer' === $handler && get_current_user_id() < 1 ) {
+				// Every handler except the reader writes.
+				if ( 'WPFB_Reader' !== $handler && get_current_user_id() < 1 ) {
 					throw new WPFB_Error( 'Writes need --user=<id> so Fluent Boards attributes the change to a real account', 2 );
 				}
 				self::emit( call_user_func( array( $handler, 'action_' . $action ), $options ) );

@@ -27,7 +27,7 @@ _WP_FLUENT_BOARDS_LIB_LOADED=1
 
 WPFB_PHP_FILE="wp-fluent-boards.php"
 # The entry file loads its siblings from its own directory; upload them together.
-WPFB_PHP_FILES=("$WPFB_PHP_FILE" wp-fluent-boards-store.php wp-fluent-boards-reader.php wp-fluent-boards-writer.php)
+WPFB_PHP_FILES=("$WPFB_PHP_FILE" wp-fluent-boards-store.php wp-fluent-boards-reader.php wp-fluent-boards-writer.php wp-fluent-boards-creator.php)
 WPFB_USAGE="Usage: wp-helper.sh --fluent-boards <site> <boards | cards --board ID [--stage S] | show --card ID | add --board ID --title T [--stage S] [--body-file F] | move --card ID --stage S | comment --card ID --body-file F | check --card ID --item ID> [--url URL] [--user=<id>]"
 # Parsed options (globals keep Bash 3.2 compatibility without namerefs).
 WPFB_ARGS=()
