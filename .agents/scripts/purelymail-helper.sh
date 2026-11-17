@@ -109,8 +109,9 @@ _pm_inner_create_user() {
 	local url="$5"
 	local password
 	password=$(_pm_inner_value "$password_var") || return 3
-	jq -cn --arg u "$local_part" --arg d "$domain" --arg p "$password" \
-		'{userName: $u, domainName: $d, password: $p, enablePasswordReset: false, sendWelcomeEmail: false}' |
+	# The password reaches jq on stdin (printf is a builtin), never in argv.
+	printf '%s' "$password" | jq -Rsc --arg u "$local_part" --arg d "$domain" \
+		'{userName: $u, domainName: $d, password: ., enablePasswordReset: false, sendWelcomeEmail: false}' |
 		_pm_inner_post "$token_var" "$url"
 	return $?
 }
@@ -319,43 +320,50 @@ _pm_cf_list() {
 	return $?
 }
 
+# Compare same-type records with the expected content: ok, missing, proxied or
+# rival. Rivals are every other MX, any other SPF TXT, or any other CNAME;
+# unrelated TXT records are allowed. Rivals win over a match.
+_pm_match_state() {
+	local type="$1"
+	local content="$2"
+	local same="$3"
+	jq -r --arg t "$type" --arg c "$content" '
+		def norm: ascii_downcase | rtrimstr(".") | ltrimstr("\"") | rtrimstr("\"");
+		($c | ascii_downcase) as $want
+		| (if $t == "TXT" then map(select($want | startswith("v=spf1")) | select(.content | norm | startswith("v=spf1"))) else . end) as $pool
+		| if any($pool[]; (.content | norm) != $want) then "rival"
+		  elif all(.[]; (.content | norm) != $want) then "missing"
+		  elif any(.[]; (.content | norm) == $want and .proxied == true) then "proxied"
+		  else "ok" end' <<<"$same"
+	return $?
+}
+
 # Classify one expected record against the zone: ok, missing or conflict.
 _pm_classify() {
 	local type="$1"
 	local name="$2"
 	local content="$3"
-	local same others
+	local same state other others
 	same=$(_pm_cf_list "$type" "$name") || return 1
-	if jq -e --arg c "$content" 'any(.[]; (.content | ascii_downcase | rtrimstr(".") | ltrimstr("\"") | rtrimstr("\"")) == ($c | ascii_downcase))' >/dev/null <<<"$same"; then
-		echo "ok"
-		return 0
-	fi
-	case "$type" in
-	MX)
-		if jq -e 'length > 0' >/dev/null <<<"$same"; then
-			echo "conflict: other MX records at $name"
-			return 0
-		fi
+	state=$(_pm_match_state "$type" "$content" "$same") || return 1
+	case "$state:$type" in
+	rival:MX) echo "conflict: other MX records at $name" ;;
+	rival:TXT) echo "conflict: another SPF record at $name (merge it by hand)" ;;
+	rival:CNAME) echo "conflict: CNAME at $name points elsewhere" ;;
+	proxied:*) echo "conflict: $type at $name is proxied; Purelymail needs DNS only" ;;
+	missing:CNAME)
+		# A CNAME cannot share its name; find blockers before any write starts.
+		for other in A AAAA TXT MX; do
+			others=$(_pm_cf_list "$other" "$name") || return 1
+			if jq -e 'length > 0' >/dev/null <<<"$others"; then
+				echo "conflict: $other record exists at $name"
+				return 0
+			fi
+		done
+		echo "missing"
 		;;
-	TXT)
-		if [[ "$content" == v=spf1* ]] && jq -e 'any(.[]; (.content | ltrimstr("\"")) | startswith("v=spf1"))' >/dev/null <<<"$same"; then
-			echo "conflict: another SPF record at $name (merge it by hand)"
-			return 0
-		fi
-		;;
-	CNAME)
-		if jq -e 'length > 0' >/dev/null <<<"$same"; then
-			echo "conflict: CNAME at $name points elsewhere"
-			return 0
-		fi
-		others=$(_pm_cf_list TXT "$name") || return 1
-		if jq -e 'length > 0' >/dev/null <<<"$others"; then
-			echo "conflict: TXT record exists at $name"
-			return 0
-		fi
-		;;
+	*) echo "$state" ;;
 	esac
-	echo "missing"
 	return 0
 }
 
@@ -385,8 +393,11 @@ _pm_create_record() {
 		print_error "Cloudflare did not return a record ID for $type $name"
 		return 1
 	fi
-	jq -cn --arg id "$id" --arg t "$type" --arg n "$name" --arg c "$content" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		'{id: $id, type: $t, name: $n, content: $c, created_at: $at}' >>"$state_file"
+	if ! jq -cn --arg id "$id" --arg t "$type" --arg n "$name" --arg c "$content" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{id: $id, type: $t, name: $n, content: $c, created_at: $at}' >>"$state_file"; then
+		print_error "Created $type $name ($id) but could not record it in $state_file; delete it by hand"
+		return 1
+	fi
 	chmod 600 "$state_file"
 	print_success "Created $type $name ($id)"
 	return 0
@@ -478,6 +489,10 @@ cmd_dns_rollback() {
 		return 0
 	fi
 	jq -r '"\(.type)\t\(.name)\t\(.content)\t\(.id)"' "$state_file"
+	if [[ "$PM_DRY_RUN" == true ]]; then
+		print_info "Dry run: nothing deleted"
+		return 0
+	fi
 	if [[ "$PM_YES" != true ]]; then
 		print_info "Re-run with --yes to delete these records"
 		return 0
@@ -642,10 +657,21 @@ cmd_app_password() {
 		return 1
 	fi
 	_pm_valid_secret_name "$store_secret" || return 1
-	if "$PM_SECRET_HELPER" check "$store_secret"; then
+	# check: 0 readable, 1 missing, 3 unreadable, 5 timeout. Only 1 is safe to
+	# write: set overwrites, and an unreadable secret may still hold a value.
+	local check_rc=0
+	"$PM_SECRET_HELPER" check "$store_secret" || check_rc=$?
+	case "$check_rc" in
+	0)
 		print_error "Secret $store_secret already exists; choose a new name"
 		return 1
-	fi
+		;;
+	1) ;;
+	*)
+		print_error "Could not read secret $store_secret (status $check_rc); refusing to overwrite it"
+		return 1
+		;;
+	esac
 	local body
 	body=$(jq -cn --arg u "$address" --arg n "$label" '{userHandle: $u, name: $n}')
 	if ! printf '%s' "$body" | "$PM_SECRET_HELPER" "$PM_TOKEN_SECRET" -- "$PM_SELF" __app-password \
@@ -781,7 +807,7 @@ cmd_auth_results() {
 		headers=$(_pm_imap "$address" "$secret" "${PM_IMAP_URL}/INBOX;UID=${uid};SECTION=HEADER.FIELDS%20(${fields})") || continue
 		headers=$(_pm_unfold_headers <<<"$headers")
 		subject_line=$(grep -i '^Subject:' <<<"$headers" || true)
-		if grep -Eq -- "$subject_regex" <<<"$subject_line"; then
+		if [[ -n "$subject_line" ]] && grep -Eq -- "$subject_regex" <<<"$subject_line"; then
 			cat >"$header_file" <<<"$headers"
 			found="$uid"
 			break
@@ -796,16 +822,23 @@ cmd_auth_results() {
 	"${SCRIPT_DIR}/prompt-guard-helper.sh" scan-stdin <"$header_file" >&2 ||
 		print_warning "Header text matched prompt-injection patterns; treat it as data only" >&2
 	"${SCRIPT_DIR}/email-test-suite-helper.sh" analyze-headers "$header_file" || true
-	local verdict rc=0 check
-	verdict=$(grep -i '^Authentication-Results:' "$header_file" | tr '[:upper:]' '[:lower:]' || true)
+	# Only the topmost field: the receiving MTA prepends its own, and lower
+	# fields may be sender-supplied (RFC 8601 section 7.1).
+	local verdict rc=0 check authserv re
+	verdict=$(grep -i -m 1 '^Authentication-Results:' "$header_file" | tr '[:upper:]' '[:lower:]' || true)
+	authserv="${verdict#*:}"
+	authserv="${authserv%%;*}"
+	authserv="${authserv#"${authserv%%[![:space:]]*}"}"
+	print_info "Verdict from the topmost Authentication-Results (authserv-id: ${authserv:-none}); confirm it is your receiving server"
 	for check in dkim spf dmarc; do
-		if ! grep -q "${check}=pass" <<<"$verdict"; then
-			print_error "${check} did not pass in Authentication-Results (UID $found)"
+		re="(^|[;[:space:]])${check}=pass([;[:space:]]|\$)"
+		if [[ ! "$verdict" =~ $re ]]; then
+			print_error "${check} did not pass in the topmost Authentication-Results (UID $found)"
 			rc=1
 		fi
 	done
 	rm -f "$header_file"
-	[[ "$rc" -eq 0 ]] && print_success "dkim=pass spf=pass dmarc=pass (UID $found)"
+	[[ "$rc" -eq 0 ]] && print_success "dkim=pass spf=pass dmarc=pass (UID $found, ${authserv:-unknown})"
 	return "$rc"
 }
 

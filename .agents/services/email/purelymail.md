@@ -52,9 +52,9 @@ Records come from `purelymail.com/docs/domainDocs`:
 | CNAME | `purelymail1/2/3._domainkey` | `key1/2/3.dkimroot.purelymail.com` (DNS only, not proxied) |
 | CNAME | `_dmarc` | `dmarcroot.purelymail.com` |
 
-**Conflicts stop the run.** Existing MX records mean mail already flows somewhere. An existing SPF record must be merged by hand into one `v=spf1` record; keep the other senders, e.g. `include:amazonses.com`. A TXT record at `_dmarc` blocks the CNAME. Plan cutover and lower TTLs first. The helper never deletes records it did not create.
+**Conflicts stop the run** before any write. Any other MX record means mail already flows somewhere, even beside the Purelymail one. An existing SPF record must be merged by hand into one `v=spf1` record; keep the other senders, e.g. `include:amazonses.com`. Any A, AAAA, TXT or MX record at a CNAME name blocks the CNAME, and a matching CNAME that is proxied counts as a conflict. Plan cutover and lower TTLs first. The helper never deletes records it did not create.
 
-**Rollback:** `dns-rollback <domain> --cf-secret NAME` lists the saved IDs; add `--yes` to delete them. Saved state lives in `~/.aidevops/.agent-workspace/work/purelymail/<domain>/dns-created.jsonl` (mode 600).
+**Rollback:** `dns-rollback <domain> --cf-secret NAME` lists the saved IDs; add `--yes` to delete them (`--dry-run` always wins). Saved state lives in `~/.aidevops/.agent-workspace/work/purelymail/<domain>/dns-created.jsonl` (mode 600).
 
 ## Mailboxes and routing
 
@@ -67,7 +67,7 @@ purelymail-helper.sh route-add sales@example.com info@example.com
 purelymail-helper.sh routes example.com
 ```
 
-`user-create` is idempotent. For an existing user it only enforces reset off. `route-add` makes no change when an identical rule exists. A different rule for the same alias is an error, so you delete it first with `route-delete <id> --yes`. App passwords are shown only once by Purelymail: the helper pipes the value into `aidevops secret set`, refuses an existing secret name, and never prints it.
+`user-create` is idempotent. For an existing user it only enforces reset off. `route-add` makes no change when an identical rule exists. A different rule for the same alias is an error, so you delete it first with `route-delete <id> --yes`. App passwords are shown only once by Purelymail: the helper pipes the value into `aidevops secret set`, refuses an existing or unreadable secret name, and never prints it.
 
 The app-password API takes no protocol scope. For an IMAP-only consumer, such as a help desk, give it its own app password with a descriptive `--label` and delete that password when the consumer is retired.
 
@@ -93,7 +93,7 @@ purelymail-helper.sh imap-check info@example.com MAILBOX_INFO_APP_PASSWORD
 purelymail-helper.sh auth-results info@example.com MAILBOX_INFO_APP_PASSWORD '^Subject: .*SES test' 20
 ```
 
-`auth-results` finds the newest of the last N messages whose Subject matches. It scans the headers with `prompt-guard-helper.sh` (they are third-party content), shows them through `email-test-suite-helper.sh analyze-headers`, and exits 0 only when `dkim=pass`, `spf=pass` and `dmarc=pass` all appear. Use it as the receive side of an SES or FluentSMTP test send. Send policy and controlled test recipients: `services/email/ses.md` "Suppression and silent drops".
+`auth-results` finds the newest of the last N messages whose Subject matches. It scans the headers with `prompt-guard-helper.sh` (they are third-party content), shows them through `email-test-suite-helper.sh analyze-headers`, and exits 0 only when `dkim=pass`, `spf=pass` and `dmarc=pass` all appear in the topmost `Authentication-Results` field. The receiving server prepends that field; lower ones may be sender-supplied. Check that the printed authserv-id is your receiving server. Use it as the receive side of an SES or FluentSMTP test send. Send policy and controlled test recipients: `services/email/ses.md` "Suppression and silent drops".
 
 ## Security notes
 
