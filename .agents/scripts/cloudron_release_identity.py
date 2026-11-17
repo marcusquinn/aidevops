@@ -19,6 +19,7 @@ FROM_REF = re.compile(r"(?m)^FROM[ \t]+(?:--[^ \t]+[ \t]+)*([^ \t@]+)@(sha256:[a
 REGISTRY_IMAGE = re.compile(r"(ghcr\.io|docker\.io)(/[a-z0-9][a-z0-9._-]*){2,4}")
 CHECKSUM_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.{}-]*")
 SHA256_HEX = re.compile(r"[a-f0-9]{64}")
+PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url"}
 POLICY_KEYS = {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
     "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
@@ -69,71 +70,91 @@ def from_refs(text):
     return [(match.group(1), match.group(2)) for match in FROM_REF.finditer(text)]
 
 
+def matches(pattern, value):
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def check_registry_images(policy):
+    images = policy.get("registry_images")
+    if images is None:
+        return
+    require(isinstance(images, list) and 0 < len(images) <= 20 and len(set(images)) == len(images),
+            "policy registry_images is invalid")
+    require(all(matches(REGISTRY_IMAGE, item) for item in images), "policy registry_images is invalid")
+
+
+def check_release_checksum(policy):
+    checksum = policy.get("release_checksum")
+    if checksum is None:
+        return
+    require(isinstance(checksum, dict) and set(checksum) == {"arg", "asset", "file"},
+            "policy release_checksum is invalid")
+    for key, pattern in (("arg", ARG_NAME), ("asset", ASSET_NAME), ("file", CHECKSUM_FILE)):
+        require(matches(pattern, checksum[key]), "policy release_checksum is invalid")
+    require("{version}" in checksum["file"], "policy release_checksum is invalid")
+    require(policy.get("upstream_repository") is not None, "release_checksum needs a semver upstream repository")
+
+
 def validate_pin_fields(policy):
     """Fail closed on unknown keys and malformed opt-in pin fields of a signed policy."""
     require(isinstance(policy, dict) and set(policy) <= POLICY_KEYS, "policy contains an unknown field")
-    require("license_version_url" not in policy or policy["license_version_url"] is True,
-            "policy license_version_url is invalid")
-    images = policy.get("registry_images")
-    require(images is None or (isinstance(images, list) and 0 < len(images) <= 20 and len(set(images)) == len(images)
-                               and all(isinstance(item, str) and REGISTRY_IMAGE.fullmatch(item) is not None
-                                       for item in images)), "policy registry_images is invalid")
-    checksum = policy.get("release_checksum")
-    require(checksum is None or (
-        isinstance(checksum, dict) and set(checksum) == {"arg", "asset", "file"}
-        and isinstance(checksum["arg"], str) and ARG_NAME.fullmatch(checksum["arg"]) is not None
-        and isinstance(checksum["asset"], str) and ASSET_NAME.fullmatch(checksum["asset"]) is not None
-        and isinstance(checksum["file"], str) and CHECKSUM_FILE.fullmatch(checksum["file"]) is not None
-        and "{version}" in checksum["file"]), "policy release_checksum is invalid")
-    upstream = policy.get("upstream_repository")
-    require(upstream is None or (isinstance(upstream, str) and UPSTREAM_REPO.fullmatch(upstream) is not None),
+    require(policy.get("license_version_url", True) is True, "policy license_version_url is invalid")
+    require("upstream_repository" not in policy or matches(UPSTREAM_REPO, policy["upstream_repository"]),
             "policy upstream_repository is invalid")
-    require(checksum is None or upstream is not None, "release_checksum needs a semver upstream repository")
+    check_registry_images(policy)
+    check_release_checksum(policy)
 
 
 def validate_pins_request(policy):
     """Policy-request check for the pins mode: valid fields, at least one opt-in, optional identity shape."""
     validate_pin_fields(policy)
-    require(set(policy) <= {"upstream_repository", "release_identity", "registry_images", "release_checksum",
-                            "license_version_url"}, "pins request may only set pin fields")
+    require(set(policy) <= PIN_KEYS, "pins request may only set pin fields")
+    require(any(key in policy for key in PIN_KEYS - {"upstream_repository"}), "pins policy needs at least one pin field")
     identity = policy.get("release_identity")
-    require(identity is None or (isinstance(identity, dict) and "commit_arg" in identity
-                                 and set(identity) <= {"commit_arg", "images_json_asset"}
-                                 and ARG_NAME.fullmatch(str(identity["commit_arg"])) is not None
-                                 and ASSET_NAME.fullmatch(str(identity.get("images_json_asset", "x"))) is not None
-                                 and policy.get("upstream_repository") is not None),
+    if identity is None:
+        return
+    require(isinstance(identity, dict) and "commit_arg" in identity and set(identity) <= {"commit_arg", "images_json_asset"},
             "policy release_identity is invalid")
-    require(any(key in policy for key in ("registry_images", "release_checksum", "license_version_url", "release_identity")),
-            "pins policy needs at least one pin field")
+    require(matches(ARG_NAME, identity["commit_arg"]), "policy release_identity is invalid")
+    require("images_json_asset" not in identity or matches(ASSET_NAME, identity["images_json_asset"]),
+            "policy release_identity is invalid")
+    require("upstream_repository" in policy, "policy release_identity is invalid")
+
+
+def registry_proof(proof):
+    refs = proof.get("registry")
+    require(isinstance(refs, dict), "registry_images digest proof is invalid")
+    require(all(isinstance(key, str) and matches(IMAGE_DIGEST, value) for key, value in refs.items()),
+            "registry_images digest proof is invalid")
+    return refs
+
+
+def checksum_proof(proof, policy):
+    entry = proof.get("checksum")
+    checksum = policy["release_checksum"]
+    require(isinstance(entry, dict) and isinstance(entry.get("version"), str), "release_checksum proof mismatch")
+    require(entry.get("repository") == policy["upstream_repository"] and entry.get("asset") == checksum["asset"],
+            "release_checksum proof mismatch")
+    require(entry.get("file") == checksum["file"].replace("{version}", entry["version"])
+            and matches(SHA256_HEX, entry.get("sha256")), "release_checksum proof mismatch")
+    return entry
 
 
 def pin_policy(doc, policy):
     """Validate the opt-in registry, checksum and license-URL fields; return their proofs."""
     validate_pin_fields(policy)
-    pins = {"registry": None, "checksum": None, "license": False, "refs": {}, "sha256": None}
-    images = policy.get("registry_images")
-    checksum = policy.get("release_checksum")
-    pins["license"] = policy.get("license_version_url") is True
-    if images is None and checksum is None:
+    pins = {"registry": None, "checksum": None, "license": policy.get("license_version_url") is True,
+            "refs": {}, "sha256": None}
+    if policy.get("registry_images") is None and policy.get("release_checksum") is None:
         return pins
     require(policy.get("upstream_mode", "semver") == "semver", "pin proofs need a semver policy")
     proof = doc.get("pin_proof")
     require(isinstance(proof, dict), "pin proof is missing")
-    if images is not None:
-        refs = proof.get("registry")
-        require(isinstance(refs, dict) and all(
-            isinstance(key, str) and isinstance(value, str) and IMAGE_DIGEST.fullmatch(value) is not None
-            for key, value in refs.items()), "registry_images digest proof is invalid")
-        pins["registry"], pins["refs"] = set(images), refs
-    if checksum is not None:
-        upstream = policy["upstream_repository"]
-        entry = proof.get("checksum")
-        require(isinstance(entry, dict) and entry.get("repository") == upstream and entry.get("asset") == checksum["asset"]
-                and isinstance(entry.get("version"), str)
-                and entry.get("file") == checksum["file"].replace("{version}", entry["version"])
-                and isinstance(entry.get("sha256"), str) and SHA256_HEX.fullmatch(entry["sha256"]) is not None,
-                "release_checksum proof mismatch")
-        pins["checksum"], pins["sha256"], pins["version"] = checksum, entry["sha256"], entry["version"]
+    if policy.get("registry_images") is not None:
+        pins["registry"], pins["refs"] = set(policy["registry_images"]), registry_proof(proof)
+    if policy.get("release_checksum") is not None:
+        entry = checksum_proof(proof, policy)
+        pins.update(checksum=policy["release_checksum"], sha256=entry["sha256"], version=entry["version"])
     return pins
 
 
@@ -146,16 +167,15 @@ def release_identity(doc, policy):
     require(policy.get("upstream_mode", "semver") == "semver" and isinstance(upstream, str)
             and UPSTREAM_REPO.fullmatch(upstream) is not None, "release identity needs a semver upstream repository")
     # images_json_asset may be omitted only when registry digest proof covers the images.
-    keys = set(identity) if isinstance(identity, dict) else set()
-    require(keys == {"commit_arg", "images_json_asset"}
-            or (keys == {"commit_arg"} and policy.get("registry_images") is not None),
-            "policy release_identity is invalid")
+    require(isinstance(identity, dict), "policy release_identity is invalid")
+    allowed = [{"commit_arg", "images_json_asset"}] + ([{"commit_arg"}] if policy.get("registry_images") else [])
+    require(set(identity) in allowed, "policy release_identity is invalid")
     for key, pattern in (("commit_arg", ARG_NAME), ("images_json_asset", ASSET_NAME)):
-        require(key not in identity or (isinstance(identity[key], str) and pattern.fullmatch(identity[key]) is not None),
-                "policy release_identity is invalid")
+        require(key not in identity or matches(pattern, identity[key]), "policy release_identity is invalid")
     proof = doc.get("release_proof")
-    require(isinstance(proof, dict) and proof.get("repository") == upstream
-            and proof.get("asset") == identity.get("images_json_asset"), "release proof repository or asset mismatch")
+    require(isinstance(proof, dict), "release proof repository or asset mismatch")
+    require(proof.get("repository") == upstream and proof.get("asset") == identity.get("images_json_asset"),
+            "release proof repository or asset mismatch")
     old_commit, new_commit = proof.get("old_commit"), proof.get("new_commit")
     for value in (old_commit, new_commit):
         require(isinstance(value, str) and FULL_COMMIT.fullmatch(value) is not None,
@@ -165,9 +185,8 @@ def release_identity(doc, policy):
     require(old_commit != new_commit and proof.get("status") == "ahead" and proof.get("merge_base") == old_commit,
             "release commits must be strictly ahead")
     digests = proof.get("digests")
-    if "images_json_asset" not in identity:
-        require(digests == [], "release proof digests are invalid")
-    require(isinstance(digests, list) and len(digests) <= 200 and (digests or "images_json_asset" not in identity) and all(
-        isinstance(item, str) and IMAGE_DIGEST.fullmatch(item) is not None for item in digests),
-        "release proof digests are invalid")
+    require(isinstance(digests, list) and len(digests) <= 200, "release proof digests are invalid")
+    # Digests come from the images asset when signed; otherwise the registry proves them.
+    require(bool(digests) == ("images_json_asset" in identity), "release proof digests are invalid")
+    require(all(matches(IMAGE_DIGEST, item) for item in digests), "release proof digests are invalid")
     return {"arg": identity["commit_arg"], "commits": {old_commit: new_commit}, "digests": set(digests)}
