@@ -20,22 +20,37 @@ const inside = (child, parent) => child === parent || child.startsWith(parent + 
 class BackendError extends Error {}
 function insist(condition, reason) { if (!condition) throw new BackendError(reason); }
 
+const hostLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const decimalOnly = /^\d+(?:\.\d+)*$/;
+const reservedSuffix = /(?:^|\.)(?:localhost|local|internal|test|invalid)$/;
+
+// Named steps, not one boolean chain: each rejection must stay individually
+// readable because this decides the single hostname a worker may reach. Every
+// clause is mandatory — a hostname is accepted only if it survives all of them.
+function isProviderHostname(host) {
+  if (typeof host !== 'string' || host.length > 253) return false;
+  if (host !== host.toLowerCase()) return false;
+  // Refuse address literals, including bare-decimal forms like 2130706433.
+  if (net.isIP(host) || decimalOnly.test(host)) return false;
+  if (reservedSuffix.test(host)) return false;
+  const labels = host.split('.');
+  if (labels.length < 2) return false;
+  return labels.every(label => hostLabel.test(label));
+}
+
 export function providerHost(policy) {
   insist(policy?.schema === 'aidevops.worker-egress-policy.v1', 'policy-schema');
   for (const key of ['default_action', 'raw_ip_action', 'private_network_action', 'loopback_action']) {
     insist(policy[key] === 'deny', 'policy-must-deny');
   }
-  insist(policy.default_tier === 5 && Array.isArray(policy.rules) && policy.rules.length === 1,
-    'provider-policy-only');
+  insist(policy.default_tier === 5, 'provider-policy-only');
+  insist(Array.isArray(policy.rules) && policy.rules.length === 1, 'provider-policy-only');
   const rule = policy.rules[0];
-  insist(rule.match === 'exact' && ['allow', 'allow-log'].includes(rule.action)
-    && [1, 2, 3].includes(rule.tier), 'provider-rule');
+  insist(rule.match === 'exact', 'provider-rule');
+  insist(['allow', 'allow-log'].includes(rule.action), 'provider-rule');
+  insist([1, 2, 3].includes(rule.tier), 'provider-rule');
   const host = rule.pattern;
-  insist(typeof host === 'string' && host.length <= 253 && host === host.toLowerCase()
-    && !net.isIP(host) && !/^\d+(?:\.\d+)*$/.test(host)
-    && host.split('.').length > 1
-    && host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
-    && !/(?:^|\.)(?:localhost|local|internal|test|invalid)$/.test(host), 'provider-host');
+  insist(isProviderHostname(host), 'provider-host');
   return host;
 }
 
