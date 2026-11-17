@@ -4,13 +4,24 @@
 
 set -u
 
+# Directory of a path by parameter expansion: no dirname fork per shimmed Git call.
+shim_dirname() {
+	local path="$1"
+	case "$path" in
+	*/*) path="${path%/*}" ;;
+	*) path="." ;;
+	esac
+	printf '%s' "${path:-/}"
+	return 0
+}
+
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do
-	SCRIPT_LINK_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
+	SCRIPT_LINK_DIR="$(cd "$(shim_dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
 	SCRIPT_SOURCE=$(readlink "$SCRIPT_SOURCE") || exit 1
 	[[ "$SCRIPT_SOURCE" == /* ]] || SCRIPT_SOURCE="${SCRIPT_LINK_DIR}/${SCRIPT_SOURCE}"
 done
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
+SCRIPT_DIR="$(cd "$(shim_dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
 GUARD="${SCRIPT_DIR}/canonical-git-command-guard.py"
 REENTRY_SENTINEL="AIDEVOPS_CANONICAL_GIT_GUARD_ACTIVE"
 
