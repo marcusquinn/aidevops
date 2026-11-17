@@ -1179,7 +1179,7 @@ HYGIENE_PLIST
 }
 
 # Setup repo-sync scheduler if not already installed.
-# Keeps local git repos up to date with daily ff-only pulls.
+# Reports daily read-only remote drift; never pulls or changes checkouts.
 # Respects config: aidevops config set orchestration.repo_sync false
 setup_repo_sync() {
 	local repo_sync_script="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"

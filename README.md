@@ -137,7 +137,7 @@ Already-registered repositories in an older layout can use the guarded
 
 ```bash
 aidevops auto-update enable                                # check for updates every 10 minutes
-aidevops repo-sync enable                                  # daily git pull for repos under ~/Git
+aidevops repo-sync enable                                  # daily read-only drift report for repos under ~/Git
 aidevops config set orchestration.supervisor_pulse true    # unattended Pulse, survives reboots
 aidevops setup --scope pulse                               # install or refresh the Pulse scheduler
 aidevops pulse status                                      # consent layers, workers, repos
