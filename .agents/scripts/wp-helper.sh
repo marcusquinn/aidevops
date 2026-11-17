@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/wp-helper-change-plan.sh"
 source "${SCRIPT_DIR}/wp-helper-fluent-boards.sh"
+source "${SCRIPT_DIR}/wp-helper-fluentsmtp.sh"
 
 set -euo pipefail
 
@@ -680,7 +681,14 @@ Commands:
                                       add --board ID --title T [--stage S] [--body-file F]
                                       move --card ID --stage S | comment --card ID --body-file F
                                       check --card ID --item ID  (writes need --user)
-                                      (tools/wordpress/fluent-mcp.md "Work a setup board")
+                                                                             (tools/wordpress/fluent-mcp.md "Work a setup board")
+  --fluentsmtp <site> <action> [--url URL]
+                                       FluentSMTP Amazon SES connections (JSON output):
+                                       list | backups | undo --backup DIR
+                                       migrate --domain D --region R [--from-domain OLD]
+                                         [--dry-run] --access-key-env VAR --secret-key-env VAR
+                                       test --to ADDR [--from ADDR] [--lift-http-block]
+                                       (services/email/ses.md "FluentSMTP")
   <site> <wp-cli-command>             Run command on specific site
   help                                Show this help
 
@@ -863,6 +871,10 @@ main() {
 	--fluent-boards)
 		shift
 		cmd_fluent_boards "$@" || return $?
+		;;
+	--fluentsmtp)
+		shift
+		cmd_fluentsmtp "$@" || return $?
 		;;
 	help | --help | -h)
 		show_help
