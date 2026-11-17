@@ -275,6 +275,7 @@ _pmp_log_repo_timing_summary() {
 	# GH#38259: the slowest PR's per-stage seconds, in completion order.
 	# handle_post_merge_actions is nested inside finalize_merge.
 	local slowest_stages="${17:-}"
+	local memo_skips="${18:-0}"
 	local other_s=0
 
 	[[ "$total_s" =~ ^[0-9]+$ ]] || total_s=0
@@ -288,6 +289,6 @@ _pmp_log_repo_timing_summary() {
 	[[ -n "$slowest_pr" ]] || slowest_pr="none"
 	[[ "$slowest_stages" =~ ^[a-z_:0-9,+]+$ ]] || slowest_stages="none"
 
-	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} list_state=${list_state} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count} enrichment_s=${enrichment_s} pr_s=${pr_s} trust_gate_s=${trust_gate_s} other_s=${other_s} slowest_pr=${slowest_pr} slowest_stages=${slowest_stages}" >>"$logfile"
+	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} list_state=${list_state} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count} enrichment_s=${enrichment_s} pr_s=${pr_s} trust_gate_s=${trust_gate_s} other_s=${other_s} slowest_pr=${slowest_pr} slowest_stages=${slowest_stages} memo_skips=${memo_skips}" >>"$logfile"
 	return 0
 }
