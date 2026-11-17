@@ -1168,6 +1168,8 @@ _pmp_repo_has_queue_work() {
 _pmp_skip_prefiltered_repo() {
 	local repo_slug="$1" checkpoint_file="$2"
 	[[ $'\n'"${_PMP_PREFILTER_EMPTY_REPOS:-}" == *$'\n'"$repo_slug"$'\n'* ]] || return 1
+	_pmp_clear_merge_pr_cursor "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$repo_slug"
+	_pmp_clear_merge_enrichment_state "$repo_slug"
 	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
 	return 0
 }
