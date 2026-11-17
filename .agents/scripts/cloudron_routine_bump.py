@@ -284,7 +284,7 @@ def check(doc, repository):
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(pinned_changes_ok(base_text, head_text, pinned_mappings, identity, pins),
+            require(pinned_changes_ok(base_text, head_text, pinned_mappings, identity, pins, [{old_up: new_up}]),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),

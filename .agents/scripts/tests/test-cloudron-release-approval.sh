@@ -1011,6 +1011,9 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	POLICY_JSON=$(jq -c '. + {upstream_repository:"upstream/project",release_identity:{commit_arg:"APP_COMMIT"},registry_images:["ghcr.io/up/svc"]}' <<<"$POLICY_JSON")
 	reg_filter=".upstream_proof = null | .release_proof = {repository:\"upstream/project\",asset:null,old_commit:\"$OLD_C\",new_commit:\"$NEW_C\",status:\"ahead\",merge_base:\"$OLD_C\",digests:[]} | .pin_proof = {registry:{\"ghcr.io/up/svc:3.39.114\":\"$D_NEW\"}}"
 	assert_routine routine 'registry digest pin' "$reg_filter"
+	commit_tag_base="${BASE_DOCKERFILE/svc:3.39.87/svc:$OLD_C}"
+	commit_tag_head="${HEAD_DOCKERFILE/svc:3.39.114/svc:$NEW_C}"
+	assert_routine not 'registry commit tag outside version scope' "$reg_filter | .pin_proof.registry = {\"ghcr.io/up/svc:$NEW_C\":\"$D_NEW\"} | .contents.Dockerfile.base = \"$(b64 "$commit_tag_base")\" | $(dockerfile_head "$commit_tag_head")" 'registry_images'
 	assert_routine not 'registry digest unresolved' "$reg_filter | .pin_proof.registry = {}" 'registry_images'
 	assert_routine not 'registry digest mismatch' "$reg_filter | .pin_proof.registry[\"ghcr.io/up/svc:3.39.114\"] = \"$D_BAD\"" 'registry_images'
 	assert_routine not 'registry proof missing' "$reg_filter | del(.pin_proof)" 'pin proof is missing'
@@ -1033,6 +1036,10 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	HEAD_DOCKERFILE=$'FROM base@sha256:abc\nARG APP_SHA256='"${S_NEW}"$'\nARG AIDEVOPS_VERSION=3.39.114\n'
 	sum_filter=".pin_proof = {checksum:{repository:\"upstream/project\",asset:\"checksums.txt\",file:\"app_3.39.114_linux_amd64\",version:\"3.39.114\",sha256:\"$S_NEW\"}}"
 	assert_routine routine 'release checksum and license URL' "$sum_filter"
+	start_filter='.policy.pinned_files += ["start.sh"] | .files += [{filename:"start.sh",status:"modified"}] | .contents["start.sh"] = {base:("APP_VERSION=3.39.87\n" | @base64),head:("APP_VERSION=3.39.114\n" | @base64)}'
+	assert_routine routine 'checksum with version-only second pinned file' "$sum_filter | $start_filter"
+	assert_routine not 'checksum second pinned file tampering' "$sum_filter | $start_filter | .contents[\"start.sh\"].head = (\"APP_VERSION=3.39.114\nRUN_UNTRUSTED=1\n\" | @base64)" 'pinned file changes beyond version substitution'
+	assert_routine not 'checksum ARG removed' "$sum_filter | $(dockerfile_head $'FROM base@sha256:abc\nARG AIDEVOPS_VERSION=3.39.114\n')" 'release_checksum'
 	assert_routine not 'checksum unpublished' "$sum_filter | .pin_proof.checksum.sha256 = \"$S_BAD\"" 'release_checksum'
 	assert_routine not 'checksum wrong file' "$sum_filter | .pin_proof.checksum.file = \"app_3.39.114_linux_arm64\"" 'release_checksum proof mismatch'
 	assert_routine not 'checksum wrong asset' "$sum_filter | .pin_proof.checksum.asset = \"other.txt\"" 'release_checksum proof mismatch'
@@ -1057,7 +1064,7 @@ assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]
 	PINS_JSON='{"upstream_repository":"up/proj","registry_images":["ghcr.io/up/svc"],"release_identity":{"commit_arg":"APP_COMMIT"},"release_checksum":{"arg":"APP_SHA256","asset":"checksums.txt","file":"app_{version}_linux_amd64"},"license_version_url":true}'
 	pins_body=$(release_policy_body owner/app cmd pins "$PINS_JSON") || { printf 'FAIL pins policy body\n'; exit 1; }
 	[[ "$pins_body" == *'"registry_images":["ghcr.io/up/svc"]'* && "$pins_body" == *'Upstream pin policy'* ]] || { printf 'FAIL pins policy content\n'; exit 1; }
-	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}' '{"upstream_repository":"up/proj","release_identity":{"commit_arg":"APP_COMMIT"}}' '{"upstream_repository":"up/proj","registry_images":[{}]}'; do
+	for bad in '{"upstream_repository":"up/proj","registry_images":["evil.example/a/b"]}' '{"upstream_repository":"up/proj","license_version_url":false}' '{"upstream_repository":"up/proj","surprise":1}' '{"upstream_repository":"up/proj"}' '{"upstream_repository":"up/proj","release_identity":{"commit_arg":"APP_COMMIT"}}' '{"upstream_repository":"up/proj","registry_images":[{}]}' '{"release_identity":null}' '{"registry_images":null}' '{"release_checksum":null}' '{"license_version_url":true,"release_identity":null}'; do
 		! release_policy_body owner/app cmd pins "$bad" >/dev/null || { printf 'FAIL pins policy accepted %s\n' "$bad"; exit 1; }
 	done
 	printf 'PASS pins policy body validation\n'

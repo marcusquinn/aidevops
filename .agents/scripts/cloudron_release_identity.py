@@ -76,7 +76,7 @@ def matches(pattern, value):
 
 def check_registry_images(policy):
     images = policy.get("registry_images")
-    if images is None:
+    if "registry_images" not in policy:
         return
     require(isinstance(images, list) and 0 < len(images) <= 20, "policy registry_images is invalid")
     require(all(matches(REGISTRY_IMAGE, item) for item in images), "policy registry_images is invalid")
@@ -85,7 +85,7 @@ def check_registry_images(policy):
 
 def check_release_checksum(policy):
     checksum = policy.get("release_checksum")
-    if checksum is None:
+    if "release_checksum" not in policy:
         return
     require(isinstance(checksum, dict) and set(checksum) == {"arg", "asset", "file"},
             "policy release_checksum is invalid")
@@ -111,7 +111,7 @@ def validate_pins_request(policy):
     require(set(policy) <= PIN_KEYS, "pins request may only set pin fields")
     require(any(key in policy for key in PIN_KEYS - {"upstream_repository"}), "pins policy needs at least one pin field")
     identity = policy.get("release_identity")
-    if identity is None:
+    if "release_identity" not in policy:
         return
     require(isinstance(identity, dict) and "commit_arg" in identity and set(identity) <= {"commit_arg", "images_json_asset"},
             "policy release_identity is invalid")

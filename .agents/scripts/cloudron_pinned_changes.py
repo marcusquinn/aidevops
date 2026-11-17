@@ -41,6 +41,9 @@ def mask_checksum(base_body, head_body, pins):
     arg = pins["checksum"]["arg"]
     pattern = re.compile(r"(?m)^(ARG[ \t]+" + re.escape(arg) + r"=)([a-f0-9]{64})[ \t]*$")
     base_sums, head_sums = pattern.findall(base_body), pattern.findall(head_body)
+    # Other pinned files still undergo the exact version-substitution check.
+    if not base_sums and not head_sums:
+        return base_body, head_body
     require(len(base_sums) == 1 and len(head_sums) == 1, "release_checksum: ARG " + arg + " must appear once")
     require(head_sums[0][1] == pins["sha256"], "release_checksum: ARG " + arg + " is not the published release checksum")
     return (pattern.sub(lambda match: match.group(1) + "<sha256>", base_body),
@@ -55,7 +58,7 @@ def commit_arg_ok(head_body, identity):
     return re.search(arg_line, head_body) is not None
 
 
-def pinned_changes_ok(base_text, head_text, mappings, identity, pins):
+def pinned_changes_ok(base_text, head_text, mappings, identity, pins, version_mappings):
     if head_text == base_text:
         return False
     if identity is None and pins["registry"] is None and pins["checksum"] is None:
@@ -68,7 +71,7 @@ def pinned_changes_ok(base_text, head_text, mappings, identity, pins):
     published = identity["digests"] if identity else set()
     changed = any(old != new and new not in published for old, new in zip(base_digests, head_digests))
     digests_ok = len(base_digests) == len(head_digests) and (
-        not changed or (pins["registry"] is not None and registry_digests_ok(base_text, head_text, pins, published, mappings)))
+        not changed or (pins["registry"] is not None and registry_digests_ok(base_text, head_text, pins, published, version_mappings)))
     base_body, head_body = mask_checksum(base_body, head_body, pins)
     return digests_ok and commit_arg_ok(head_body, identity) \
         and any(substitute_versions(base_body, candidate) == head_body for candidate in mappings)
