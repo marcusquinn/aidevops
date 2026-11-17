@@ -50,6 +50,10 @@ for required_fn in _pulse_run_supervisor_phase _should_run_llm_supervisor \
 	fi
 done
 
+# GH#38779: keep the real recovery-cadence decision before the stub below
+# replaces it for the phase cases.
+eval "_real_pulse_blocker_recovery_due() $(declare -f _pulse_blocker_recovery_due | tail -n +2)"
+
 # --- stubs -----------------------------------------------------------------
 STUB_DRAIN_BUNDLE=""
 STUB_RECOVERY_DUE=1
@@ -277,6 +281,51 @@ _pulse_run_supervisor_phase
 rc=1
 [[ "$SUPERVISOR_QUEUE_ONLY" == "0" && "$SUPERVISOR_STATE_INCOMPLETE" == "1" && "$SUPERVISOR_ADMITTED" == "daily_sweep" ]] && rc=0
 check "(f) degraded 6h escape keeps full trigger set" "$rc"
+
+# --- GH#38779: recovery cadence after a failed attempt ----------------------
+RECOVERY_STUB_DIR="${TEST_ROOT}/recovery-helper"
+mkdir -p "$RECOVERY_STUB_DIR"
+printf '#!/usr/bin/env bash\nprintf "3\\n"\nexit 0\n' >"${RECOVERY_STUB_DIR}/terminal-blocker-recovery-helper.sh"
+RECOVERY_STAMP="${PULSE_DIR}/last_blocker_recovery_check_epoch"
+NOW_EPOCH=$(date +%s)
+
+# (g) a failed attempt 40 min ago, last check 40 min ago: the 30 min failure
+# retry admits recovery instead of waiting for the 3h interval.
+reset_case 60
+printf '%s\n' "$((NOW_EPOCH - 2400))" >"$RECOVERY_STAMP"
+rc=1
+SCRIPT_DIR="$RECOVERY_STUB_DIR" _real_pulse_blocker_recovery_due "$NOW_EPOCH" "$((NOW_EPOCH - 90000))" "$((NOW_EPOCH - 2400))" &&
+	[[ "$(cat "${PULSE_DIR}/llm_trigger_mode" 2>/dev/null)" == "blocker_recovery" ]] && rc=0
+check "(g) failed attempt retries recovery after the failure interval, not 3h" "$rc"
+
+# (h) after a success, the same 40 min gap still waits for the 3h interval.
+reset_case 60
+printf '%s\n' "$((NOW_EPOCH - 2400))" >"$RECOVERY_STAMP"
+rc=1
+if ! SCRIPT_DIR="$RECOVERY_STUB_DIR" _real_pulse_blocker_recovery_due "$NOW_EPOCH" "$((NOW_EPOCH - 2400))" "$((NOW_EPOCH - 2400))"; then
+	[[ "$(cat "$RECOVERY_STAMP")" == "$((NOW_EPOCH - 2400))" ]] && rc=0
+fi
+check "(h) successful attempt keeps the 3h recovery interval" "$rc"
+
+# (i) a check inside the failure cooldown leaves the stamp untouched.
+reset_case 60
+printf '%s\n' "$((NOW_EPOCH - 20000))" >"$RECOVERY_STAMP"
+rc=1
+if ! SCRIPT_DIR="$RECOVERY_STUB_DIR" _real_pulse_blocker_recovery_due "$NOW_EPOCH" "$((NOW_EPOCH - 90000))" "$((NOW_EPOCH - 600))"; then
+	[[ "$(cat "$RECOVERY_STAMP")" == "$((NOW_EPOCH - 20000))" ]] && rc=0
+fi
+check "(i) failure cooldown does not spend the recovery window" "$rc"
+
+# (j) supervisor tier fallback gate: fast rc=75 only, never pinned or long runs.
+rc=1
+if PULSE_MODEL="" _pulse_supervisor_tier_fallback_due 75 60 &&
+	! _pulse_supervisor_tier_fallback_due 75 900 &&
+	! _pulse_supervisor_tier_fallback_due 1 60 &&
+	! PULSE_MODEL="anthropic/pinned" _pulse_supervisor_tier_fallback_due 75 60 &&
+	! PULSE_SUPERVISOR_FALLBACK_TIER="" _pulse_supervisor_tier_fallback_due 75 60; then
+	rc=0
+fi
+check "(j) tier fallback only for fast rc=75 without a model pin" "$rc"
 
 printf '%s/%s tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
