@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.217] - 2026-11-17
+
+### Changed
+
+- Documentation: add Oxylabs Web API and cloro as data service options
+
+### Fixed
+
+- escalate repeated model_unavailable backoff instead of hourly re-probes
+- bound image readiness waits and resolve companion source pins
+- prevent idle dashboard recovery starvation (#38711)
+- supervisor-phase active refill wakes a fresh-budget refill-only run
+
 ## [3.39.216] - 2026-11-17
 
 ### Fixed
