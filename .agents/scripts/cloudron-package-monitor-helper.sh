@@ -212,6 +212,23 @@ _cloudron_monitor_latest_release_version() {
 	return 0
 }
 
+_cloudron_monitor_release_commit() {
+	local upstream_slug="$1" tag="$2" release_ref="" object_type="" release_sha="" depth=0
+	release_ref=$(gh api "repos/${upstream_slug}/git/ref/tags/${tag}") || return 1
+	object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
+	release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
+	while [[ "$object_type" == tag && "$depth" -lt 10 ]]; do
+		[[ "$release_sha" =~ ^[a-f0-9]{40}$ ]] || return 1
+		depth=$((depth + 1))
+		release_ref=$(gh api "repos/${upstream_slug}/git/tags/${release_sha}") || return 1
+		object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
+		release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
+	done
+	[[ "$object_type" == commit && "$release_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release tag $tag does not resolve to a commit." || return 1
+	printf '%s\n' "$release_sha"
+	return 0
+}
+
 # Some upstreams publish a desktop release before the package's source image is
 # qualified. Keep exact source verification; after 48 hours surface missing
 # qualification as a durable finding instead of silently waiting forever.
@@ -219,8 +236,8 @@ _cloudron_monitor_latest_release_version() {
 # resolve exactly one captured 40-hex revision from the release commit's tree.
 _cloudron_monitor_upstream_image_ready() {
 	local entry="$1" upstream_slug="$2" releases_json="$3" prefixes_json="$4" version="$5" source="${6:-releases}"
-	local image="" signer="" annotation="" eligibility_type="" tag="" candidate="" release_ref="" release_sha=""
-	local object_type="" commit="" source_sha="" image_ref="" manifest="" digest="" proof="" depth=0
+	local image="" signer="" annotation="" eligibility_type="" tag="" candidate="" release_sha=""
+	local commit="" source_sha="" image_ref="" manifest="" digest="" proof=""
 	local source_slug="" pin_path="" pin_regex="" pin_content="" wait_rc=3
 	image=$(jq -r '.cloudron_package.upstream_image.repository // empty' <<<"$entry") || return 1
 	signer=$(jq -r '.cloudron_package.upstream_image.signer_workflow // empty' <<<"$entry") || return 1
@@ -247,16 +264,7 @@ _cloudron_monitor_upstream_image_ready() {
 	done < <(jq -r --arg object_type "$_CLOUDRON_MONITOR_JSON_TYPE_OBJECT" \
 		--arg source "$source" --arg tags_source "$_CLOUDRON_MONITOR_SOURCE_TAGS" '.[] | select(type == $object_type and ($source == $tags_source or (.draft != true and .prerelease != true))) | (if $source == $tags_source then .name else .tag_name end) | select(type == "string")' <<<"$releases_json")
 	[[ "$candidate" == "$version" && "$tag" =~ ^[A-Za-z0-9_.-]+$ ]] || _cloudron_monitor_error "No stable tag resolves upstream v$version." || return 1
-	release_ref=$(gh api "repos/${upstream_slug}/git/ref/tags/${tag}") || return 1
-	object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
-	release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
-	while [[ "$object_type" == tag && "$depth" -lt 10 ]]; do
-		depth=$((depth + 1))
-		release_ref=$(gh api "repos/${upstream_slug}/git/tags/${release_sha}") || return 1
-		object_type=$(jq -r '.object.type // empty' <<<"$release_ref") || return 1
-		release_sha=$(jq -r '.object.sha // empty' <<<"$release_ref") || return 1
-	done
-	[[ "$object_type" == commit && "$release_sha" =~ ^[a-f0-9]{40}$ ]] || _cloudron_monitor_error "Release tag $tag does not resolve to a commit." || return 1
+	release_sha=$(_cloudron_monitor_release_commit "$upstream_slug" "$tag") || return 1
 	commit=$(gh api "repos/${upstream_slug}/commits/${release_sha}") || return 1
 	# The immutable release commit date also works for upstream_source=tags.
 	wait_rc=$(jq -er '(.commit.committer.date | fromdateiso8601) as $released |
