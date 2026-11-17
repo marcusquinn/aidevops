@@ -103,7 +103,7 @@ When a requested name is **not itself stored**, `aidevops secret NAME -- CMD`, `
 | Requested | Resolves to |
 |-----------|-------------|
 | A declared alias (`OLD_NAME`) | the credential that declares it |
-| A provider's conventional variable (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `HCLOUD_TOKEN`, `HOSTINGER_API_TOKEN`, `VERCEL_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | `defaults.<provider>` — **only when explicitly set** |
+| A provider's conventional variable (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `HCLOUD_TOKEN`, `HOSTINGER_API_TOKEN`, `VERCEL_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `RUNPOD_API_KEY`, `SALAD_API_KEY` for provider `saladcloud`) | `defaults.<provider>` — **only when explicitly set** |
 
 A stored name always wins. With no default, or `--none`, the conventional variable stays unavailable exactly as before. `run` (inject all) also adds aliases and conventional defaults for injected credentials. Without a registry file nothing changes. Inspect the mapping with `python3 ~/.aidevops/agents/scripts/credential_inventory.py injection-map`.
 

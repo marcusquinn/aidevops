@@ -38,7 +38,7 @@ changing any Serverless endpoint or Pod.
 
 ## Quick Reference
 
-- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY` (`aidevops secret set RUNPOD_API_KEY`)
+- **Auth**: `Authorization: Bearer $RUNPOD_API_KEY` (account-named key + `aidevops secret default runpod NAME`; setup: `tools/infrastructure/runpod.md`)
 - **Public Endpoint sync**: `POST https://api.runpod.ai/v2/<endpoint-id>/runsync`
   with `{"input":{...}}`
 - **Async**: `POST .../<endpoint-id>/run` returns a job ID; poll
