@@ -19,6 +19,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 WRAPPER_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper.sh"
 SHARED_CONSTANTS="${SCRIPT_DIR}/../shared-constants.sh"
+# safe_grep_count (used below) is defined in shared-constants.sh.
+# shellcheck source=../shared-constants.sh
+source "$SHARED_CONSTANTS"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -52,7 +55,7 @@ test_export_line_present_at_top_of_main() {
 	local snippet
 	snippet=$(awk '
 		/^main\(\) \{/ { in_main=1; next }
-		in_main && /^[[:space:]]*local _sc_flag=0/ { exit }
+		in_main && /^[[:space:]]*_pulse_handle_self_check[[:space:]]/ { exit }
 		in_main { print }
 	' "$WRAPPER_SCRIPT")
 	if printf '%s' "$snippet" | grep -qE '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$'; then
@@ -60,7 +63,7 @@ test_export_line_present_at_top_of_main() {
 		return 0
 	fi
 	print_result "export AIDEVOPS_HEADLESS=true present at top of main()" 1 \
-		"Expected 'export AIDEVOPS_HEADLESS=true' line between 'main() {' and 'local _sc_flag=0'. Got snippet:${snippet}"
+		"Expected 'export AIDEVOPS_HEADLESS=true' line between 'main() {' and the '_pulse_handle_self_check' call. Got snippet:${snippet}"
 	return 0
 }
 
@@ -136,7 +139,7 @@ test_export_is_inside_main_not_top_level() {
 test_export_before_self_check() {
 	local export_line sc_line
 	export_line=$(grep -nE '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT" | head -1 | cut -d: -f1)
-	sc_line=$(awk '/^main\(\) \{/{inmain=1; next} inmain && /^[[:space:]]*local _sc_flag=0/{print NR; exit}' "$WRAPPER_SCRIPT")
+	sc_line=$(awk '/^main\(\) \{/{inmain=1; next} inmain && /^[[:space:]]*_pulse_handle_self_check[[:space:]]/{print NR; exit}' "$WRAPPER_SCRIPT")
 	if [[ -z "$export_line" || -z "$sc_line" ]]; then
 		print_result "export precedes --self-check scan" 1 \
 			"Missing export_line=$export_line or sc_line=$sc_line"
