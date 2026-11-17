@@ -1,5 +1,5 @@
 ---
-description: Choose a web search, page fetch or scraping route - Linkup, Tavily, Exa, Firecrawl versus built-in webfetch, crawlers, browsers and SERP APIs
+description: Choose a web search, page fetch or scraping route - Linkup, Tavily, Exa, Firecrawl, Oxylabs Web API versus built-in webfetch, crawlers, browsers and SERP APIs
 mode: subagent
 tools:
   read: true
@@ -29,8 +29,10 @@ Pick the cheapest route that gives the evidence you need:
 | Find current facts with citations | Linkup `/search` `depth: fast` | `standard`/`deep`; Exa or Tavily if already configured |
 | Typed JSON from a known page | Linkup `/fetch` with `schema` | Crawl4AI LLM extraction; Firecrawl `/v2/scrape` JSON |
 | Crawl or map a whole site | Crawl4AI, WaterCrawl, `site-crawler-helper.sh` | Firecrawl cloud or self-hosted (AGPL) |
+| Public pages that block plain fetches (bot challenges, geo, heavy JS) | Linkup `/fetch` with `renderJs` | Oxylabs Web API `/v1/scrape` (see Other providers) |
 | Logged-in or interactive pages | `tools/browser/browser-automation.md` | Anti-detect + proxies (`tools/browser/anti-detect-browser.md`) |
-| Google rankings or SERP features | `seo/serper.md`, `seo/serpapi.md` | `seo/dataforseo.md` |
+| Google rankings or SERP features | `seo/serper.md`, `seo/serpapi.md` | `seo/dataforseo.md`; Oxylabs Google/Bing scrapers |
+| AI answers and their cited sources (ChatGPT, Gemini, AI Mode, AI Overview) | cloro (`seo/ai-visibility-monitor.md`) | Oxylabs async ChatGPT/Gemini/Perplexity scrapers |
 | Multi-source cited report | `/deep-research`, Perplexity MCP | Linkup `/research` ($0.25-2.50/task) |
 | Maps, reviews, platform data | `tools/data-extraction/outscraper.md` | `tools/data-extraction/getanyapi.md` |
 | X / social user-experience research | `x-search-research-helper.sh query "<prompt>"` | Verify cited posts independently |
@@ -87,6 +89,28 @@ variable, and map them at injection (`tools/credentials/credential-inventory.md`
 - **Firecrawl**: scraping first. Renders JavaScript, crawls recursively,
   extracts structured data and can interact with pages. The only option here
   you can self-host; the Agent and Interact features are cloud-only.
+
+### Other providers
+
+Checked 2026-11-17 against the providers' docs.
+
+- **Oxylabs Web API** ([docs](https://developers.oxylabs.io/products/web-api)):
+  `POST https://webapi.oxylabs.io/v1/search` (ranked live web results with
+  snippets) and `/v1/scrape` (a page as Markdown, HTML, JSON or screenshot,
+  with JavaScript rendering, bot-challenge handling, proxy rotation and a
+  `location` country). The docs do not name the engine behind `/search`, so
+  never report its positions as Google rankings; use its dedicated Google and
+  Bing scrapers for that. Dedicated scrapers also cover commerce sites and,
+  async only, ChatGPT, Gemini and Perplexity answers with citations.
+  Billing draws dollars from one credit balance shared by all Oxylabs products
+  at rates shown in the dashboard; the API does not return a request's cost.
+  New accounts get a one-time $5 welcome credit. Key variable:
+  `OXYLABS_WEB_API_KEY` (Bearer). Hosted MCP: `https://mcp.oxylabs.io/web-api-mcp`
+  with the key in an `Authorization` header; official skills:
+  `npx skills add oxylabs/web-api-skills`. Fits pages Linkup and plain fetches
+  cannot read; check its dashboard rates before loops.
+- **cloro**: AI-answer capture, not general search. See
+  `seo/ai-visibility-monitor.md` "Provider routes".
 
 Only Linkup has a dedicated aidevops doc. Add one for another provider only when
 there is repeated use and a gap that Linkup or the existing tools don't cover.
