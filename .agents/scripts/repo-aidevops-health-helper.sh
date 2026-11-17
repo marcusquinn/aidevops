@@ -744,7 +744,11 @@ _trust_hold_tracking_issue() {
 	blocked=$(gh api "repos/${slug}/issues/${issue_number}" \
 		--jq 'any(.labels[]?; .name == "status:blocked")' 2>/dev/null || true)
 	case "$blocked" in
-	true) return 0 ;;
+	true)
+		# Hold already applied; repair a recovery comment lost to an earlier failure.
+		_trust_post_hold_comment "$slug" "$issue_number" "$workflow" "$cause" repair
+		return 0
+		;;
 	false) ;;
 	*)
 		log_warn "trust-workflows: $slug — could not read #${issue_number} labels; hold not applied"
@@ -760,6 +764,33 @@ _trust_hold_tracking_issue() {
 		log_warn "trust-workflows: $slug — could not block #${issue_number}"
 		return 0
 	fi
+	_trust_post_hold_comment "$slug" "$issue_number" "$workflow" "$cause" new
+	log_info "trust-workflows: $slug — #${issue_number} blocked: ${cause}"
+	return 0
+}
+
+#######################################
+# Post the hold recovery comment once, identified by a stable marker.
+# Mode "repair" first checks for the marker and posts only when it is absent
+# (and only when the comment list was readable); mode "new" posts directly.
+# Args: $1 slug, $2 issue, $3 workflow, $4 cause, $5 mode (new|repair)
+#######################################
+_trust_post_hold_comment() {
+	local slug="$1"
+	local issue_number="$2"
+	local workflow="$3"
+	local cause="$4"
+	local mode="$5"
+	local marker='<!-- aidevops:trust-hold-recovery -->'
+	if [[ "$mode" == "repair" ]]; then
+		local found
+		if ! found=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments?per_page=100" \
+			--jq '.[] | select(.body | contains("aidevops:trust-hold-recovery")) | .id' 2>/dev/null); then
+			log_warn "trust-workflows: $slug — could not read #${issue_number} comments; recovery comment not verified"
+			return 0
+		fi
+		[[ -z "$found" ]] || return 0
+	fi
 	local body_file
 	body_file=$(mktemp)
 	cat >"$body_file" <<EOF
@@ -770,11 +801,12 @@ Needed: from an account with admin or maintain permission on this repository and
 \`aidevops sync-workflows --repo ${slug} --workflow ${workflow} --install-missing --apply --issue ${issue_number}\`
 
 The resulting sync PR resolves this issue when it merges.
+
+${marker}
 EOF
 	gh_issue_comment "$issue_number" --repo "$slug" --body-file "$body_file" >/dev/null 2>&1 ||
 		log_warn "trust-workflows: $slug — could not comment on #${issue_number}"
 	rm -f "$body_file"
-	log_info "trust-workflows: $slug — #${issue_number} blocked: ${cause}"
 	return 0
 }
 
@@ -954,9 +986,13 @@ _trust_sync_tracked() {
 	local sync_helper="${SCRIPT_DIR}/sync-workflows-helper.sh"
 	local sync_out sync_rc=0
 	sync_out=$("$sync_helper" --apply --install-missing --workflow "$workflow" \
-		--repo "$slug" --issue "$issue_number" 2>&1) || sync_rc=$?
-	# Result rows are TSV: slug<TAB>status<TAB>APPLIED|SKIPPED|FAILED<TAB>detail
-	if [[ "$sync_rc" -eq 0 ]] && grep -qE $'\t''APPLIED'$'\t' <<<"$sync_out"; then
+		--repo "$slug" --issue "$issue_number" --json 2>&1) || sync_rc=$?
+	# --json emits one object per result ({outcome, detail, ...}); diagnostics
+	# that are not valid JSON objects are ignored. Rows become "OUTCOME<TAB>detail".
+	local result_rows
+	result_rows=$(printf '%s\n' "$sync_out" |
+		jq -rR 'fromjson? | select(type == "object" and (.outcome | type) == "string") | "\(.outcome)\t\(.detail // "")"' 2>/dev/null || true)
+	if [[ "$sync_rc" -eq 0 ]] && grep -qE '^APPLIED'$'\t' <<<"$result_rows"; then
 		log_info "trust-workflows: $slug — $workflow sync PR opened (issue #${issue_number})"
 		echo installed-pr
 		return 0
@@ -973,13 +1009,13 @@ _trust_sync_tracked() {
 		echo failed
 		return 0
 	fi
-	if grep -qE $'\t''FAILED'$'\t' <<<"$sync_out"; then
+	if grep -qE '^FAILED'$'\t' <<<"$result_rows"; then
 		log_warn "trust-workflows: $slug — $workflow sync reported failure: $(printf '%s' "$sync_out" | tail -n 3 | tr '\n\t' '  ')"
 		echo failed
 		return 0
 	fi
 	local skip_row
-	skip_row=$(printf '%s' "$sync_out" | grep -E $'\t''SKIPPED'$'\t' | tail -n 1 || true)
+	skip_row=$(printf '%s\n' "$result_rows" | grep -E '^SKIPPED'$'\t' | tail -n 1 || true)
 	log_info "trust-workflows: $slug — $workflow sync made no PR: $(printf '%s' "$skip_row" | tr '\t' ' ')"
 	if [[ "$skip_row" == *'eligibility: insufficient-permission'* ]]; then
 		_trust_hold_tracking_issue "$slug" "$issue_number" "$workflow" permission_required \
