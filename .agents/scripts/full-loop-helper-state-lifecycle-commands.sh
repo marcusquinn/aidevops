@@ -996,19 +996,33 @@ _full_loop_verify_published_release() {
 		print_error "Release for tag ${tag_name} is a draft or does not match the tag"
 		return 1
 	}
-	_full_loop_gh_read_evidence "$workflow_runs_endpoint" || {
-		print_error "Cannot read workflow runs from ${workflow_runs_endpoint} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
-		return 1
-	}
-	workflow_runs_json="$_FULL_LOOP_GH_READ_OUT"
-	jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
-		--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
-		[.workflow_runs[]? | select(
-			.event == $workflow_event and .status == $completed and .conclusion == "success"
-			and .head_sha == $merge_commit
-			and ($workflow_event != "release" or .head_branch == $tag_name)
-		)] | length > 0
-	' <<<"$workflow_runs_json" >/dev/null || {
+	# Read subsequent 100-run pages until a match is found or results run out,
+	# so newer non-matching runs cannot hide the successful run.
+	local run_page=1 max_run_pages=10 page_endpoint="" run_count=0 run_matched=1
+	while [[ "$run_page" -le "$max_run_pages" ]]; do
+		page_endpoint="$workflow_runs_endpoint"
+		[[ "$run_page" -eq 1 ]] || page_endpoint="${workflow_runs_endpoint}&page=${run_page}"
+		_full_loop_gh_read_evidence "$page_endpoint" || {
+			print_error "Cannot read workflow runs from ${page_endpoint} after retries: ${_FULL_LOOP_GH_READ_ERROR:-no stderr}"
+			return 1
+		}
+		workflow_runs_json="$_FULL_LOOP_GH_READ_OUT"
+		if jq -e --arg tag_name "$tag_name" --arg merge_commit "$merge_commit" \
+			--arg completed "$_FULL_LOOP_PHASE_COMPLETED" --arg workflow_event "$workflow_event" '
+			[.workflow_runs[]? | select(
+				.event == $workflow_event and .status == $completed and .conclusion == "success"
+				and .head_sha == $merge_commit
+				and ($workflow_event != "release" or .head_branch == $tag_name)
+			)] | length > 0
+		' <<<"$workflow_runs_json" >/dev/null; then
+			run_matched=0
+			break
+		fi
+		run_count=$(jq -r '[.workflow_runs[]?] | length' <<<"$workflow_runs_json" 2>/dev/null || echo 0)
+		[[ "$run_count" =~ ^[0-9]+$ && "$run_count" -ge 100 ]] || break
+		run_page=$((run_page + 1))
+	done
+	[[ "$run_matched" -eq 0 ]] || {
 		print_error "No successful ${workflow_event} run${workflow_file:+ of workflow ${workflow_file}} found for ${merge_commit}"
 		if [[ -n "$workflow_file" && "$workflow_event" == "$_FULL_LOOP_WORKFLOW_EVENT_RELEASE" ]]; then
 			_full_loop_report_release_run_events "$repo" "$workflow_file" "$merge_commit" "$tag_name"

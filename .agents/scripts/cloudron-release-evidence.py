@@ -20,6 +20,7 @@ from cloudron_caller_policy import EvidenceError, MANAGED_WORKFLOW, managed_call
 
 CATALOG = "CloudronVersions.json"
 SOURCE_REF = "refs/heads/main"
+MAX_RUN_PAGES = 10
 # The Cloudron CLI inlines changelog and text references (description,
 # postInstallMessage) but keeps the binary icon reference unchanged; listings
 # use iconUrl. These keys must therefore match the source manifest verbatim.
@@ -171,8 +172,14 @@ class CatalogEvidence:
         return data, image, image_match["repository"], image_match["digest"]
 
     def invocations(self):
-        runs = self.api("actions/workflows/" + self.workflow
-                        + "/runs?head_sha=" + self.source + "&per_page=100")["workflow_runs"]
+        base = "actions/workflows/" + self.workflow + "/runs?head_sha=" + self.source + "&per_page=100"
+        runs = []
+        # A full page may hide the eligible run behind newer dispatch runs; keep reading.
+        for page in range(1, MAX_RUN_PAGES + 1):
+            batch = self.api(base if page == 1 else base + "&page=" + str(page))["workflow_runs"]
+            runs.extend(batch)
+            if len(batch) < 100:
+                break
         accepted = set()
         expected = {"status": "completed", "conclusion": "success", "event": self.event,
                     "head_sha": self.source, "head_branch": "main", "path": self.workflow_path}
