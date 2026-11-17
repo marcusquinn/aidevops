@@ -159,7 +159,7 @@ test_dirty_recovery_creates_draft_checkpoint() {
 
 	local argv=""
 	argv=$(<"${TEST_ROOT}/calls/pr-create.argv")
-	if [[ "$argv" == *"--draft"* && "$argv" == *"checkpoint: recover dirty worker worktree for #27138"* ]]; then
+	if [[ "$argv" == *"--draft"* && "$argv" == *"GH#27138: chore: recover dirty worker worktree checkpoint"* ]]; then
 		print_result "dirty recovery creates draft checkpoint PR" 0
 		return 0
 	fi

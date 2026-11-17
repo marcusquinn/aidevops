@@ -619,14 +619,20 @@ _attempt_orphan_recovery_pr() {
 	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 
 	# Build PR metadata. Non-closing issue reference by design (GH#32933).
-	local pr_title="auto-recover: orphaned worker branch"
+	# Titles must pass the full-loop squash-subject validator (GH#38781):
+	# `GH#N: ` task prefix or a Conventional Commit type. Legacy titles
+	# (`auto-recover: ...`, `checkpoint: ...`) are no longer generated.
+	local pr_title="chore: auto-recover orphaned worker branch"
 	local issue_reference_line=""
 	if [[ -n "$issue_number" ]]; then
-		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
+		pr_title="GH#${issue_number}: chore: auto-recover orphaned worker branch"
 		issue_reference_line="For #${issue_number}"
 	fi
 	if [[ "$recovery_mode" == "draft" ]]; then
-		pr_title="checkpoint: recover dirty worker worktree for #${issue_number}"
+		pr_title="chore: recover dirty worker worktree checkpoint"
+		if [[ -n "$issue_number" ]]; then
+			pr_title="GH#${issue_number}: chore: recover dirty worker worktree checkpoint"
+		fi
 	fi
 
 	local pr_body
