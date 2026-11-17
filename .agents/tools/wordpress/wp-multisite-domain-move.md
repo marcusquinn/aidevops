@@ -1,5 +1,3 @@
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 ---
 description: Move a WordPress multisite network from preview/temporary hostnames to its own domain (Hostinger shared hosting), with the folder-path and COOKIE_DOMAIN gotchas
 mode: subagent
@@ -7,6 +5,9 @@ tools:
   read: true
   bash: true
 ---
+
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
 # WordPress Multisite Domain Move
 
@@ -19,11 +20,11 @@ Generic single-site equivalents: `wp-admin.md` "Site Cloning", `wp-cli-reference
 - Everything before step 4 is read-only or reversible. Run it first and review the output.
 - Map every host explicitly (`old=new`), including mapped/template hosts and `www.`. Apply mapped/template hosts first, the network host last.
 - Never run `litespeed-purge all` on multisite; purge per blog.
-- Do not set `COOKIE_DOMAIN` (see Gotchas).
+- Do not hard-code the network domain as `COOKIE_DOMAIN`; mapped domains may need a host-only cookie override (see Gotchas).
 
 ## Steps
 
-1. **Quiesce writers.** Put the site in maintenance mode or block public/admin traffic (for example a temporary `.htaccess` allow-list for your IP, or the host's maintenance toggle), so no orders, comments or edits land after the backup. Pause any per-network cron runner (for example rename its `enabled` file so it prints "paused"), then wait for in-flight runs: `flock -w 300 <runner.lock> true`. Confirm quiescence: `curl -sI` the front end shows the maintenance/blocked response, and `wp db query "SHOW PROCESSLIST"` shows no application writes. Keep writers stopped through verification or rollback; lift only at step 10.
+1. **Quiesce writers.** Put the site in maintenance mode or block public/admin traffic (for example a temporary `.htaccess` allow-list for your IP, or the host's maintenance toggle), so no orders, comments or edits land after the backup. Pause any per-network cron runner (for example rename its `enabled` file so it prints "paused"), then wait for in-flight runs: `flock -w 300 <runner.lock> true`. Confirm quiescence: `curl -sI` the front end shows the maintenance/blocked response, and `wp db query "SHOW PROCESSLIST"` shows no application writes. Keep writers stopped through the pre-resume verification or rollback; lift only at step 10.
 2. **Back up.**
    - Build a temporary 0600 MySQL option file from `wp config get DB_HOST/DB_NAME/DB_USER/DB_PASSWORD`. This works even when WordPress cannot boot mid-change. Delete it afterwards.
    - Store the dump and tar in a private directory outside every web root (`umask 077`, directory 0700, files 0600).
@@ -49,14 +50,16 @@ Generic single-site equivalents: `wp-admin.md` "Site Cloning", `wp-cli-reference
    RewriteRule ^(.*)$ https://<new-host>/$1 [R=301,L]
    ```
 
-10. **Resume** the cron runner. It enumerates sites from the DB, so new domains need no hPanel change. Confirm the first cycle succeeds.
+10. **Verify, then resume.** Complete the non-writing checks under Verification while public/admin writes and cron remain blocked. Before any authenticated login test, cron cycle or reopening traffic (each can write), accept the post-resume rollback boundary below. Resume the cron runner and reopen traffic only after those checks pass. It enumerates sites from the DB, so new domains need no hPanel change. Confirm the first cycle and actual logins succeed.
 
-Rollback: restore the gzip dump with `wp db import` (or `mysql`) and the tarred files; pause the runner first.
+Rollback before writes resume: keep all writers blocked and restore the database and tarred files. For a dump named `network.sql.gz` in the private backup directory `$BACKUP`, run `gzip -t "$BACKUP/network.sql.gz"`, then `gzip -dk "$BACKUP/network.sql.gz"` and `wp db import "$BACKUP/network.sql"` (keep `umask 077`; do not overwrite an existing SQL file). If WP-CLI subprocesses are disabled, use `set -o pipefail; gzip -dc "$BACKUP/network.sql.gz" | mysql --defaults-extra-file=<file> <db>` with the protected option file and database from step 2. Check the import exit status before proceeding; recreate the protected option file if it was deleted. Verify the restored installation before reopening.
+
+Rollback after any writes resume: stop all writers again and take a fresh private database/files backup before further changes. **Do not restore the pre-move dump over live data**: it would erase new orders, edits, sessions or cron updates. Prefer reversing the reviewed domain/path/config changes on the current database (dry-run first) while preserving those writes. If a full restore is unavoidable, keep the site closed until an operator has reconciled/replayed all post-backup writes from the fresh backup or available database logs and verified no data is lost.
 
 ## Gotchas
 
 1. **Folder paths contain the old host.** Hostinger's folder is `~/domains/<preview-host>/public_html` and does not move with the domain. A host search-replace also rewrites absolute paths stored in the DB (observed: font-download records, SEO plugin hardening records, an AI plugin settings backup) to a non-existent `~/domains/<new-host>/...`. Fix with step 5.
-2. **`COOKIE_DOMAIN` is computed by core** for subdomain installs (`ms_cookie_constants()` sets `'.' . network domain`). `wp eval 'echo COOKIE_DOMAIN;'` prints a value even when `wp-config.php` does not define it. `wp config set COOKIE_DOMAIN` would add a hard-coded constant that blocks per-domain cookies on mapped custom domains. Check `wp config get COOKIE_DOMAIN` first; if it is not defined, leave it.
+2. **`COOKIE_DOMAIN` is computed by core** for subdomain installs (`ms_cookie_constants()` sets `'.' . network domain`). `wp eval 'echo COOKIE_DOMAIN;'` prints a value even when `wp-config.php` does not define it. That default can itself break login on unrelated mapped domains: browsers reject cookies scoped to the network domain. Check `wp config get COOKIE_DOMAIN` and any domain-mapping integration first. Where no integration already handles cookie scope, define `COOKIE_DOMAIN` as an empty string in `wp-config.php` before WordPress loads (`define('COOKIE_DOMAIN', '');`) to use host-only cookies. Do not hard-code the network domain or derive the value from an unvalidated request host. Clear stale cookies and verify an actual login, authenticated admin navigation and logout on the network host and every mapped domain; host-only cookies may require separate logins on each host.
 3. **`--skip-plugins` leaves rows holding plugin classes** (message "Skipping an uninitialized class ..."). Repeat with plugins loaded (step 6).
 4. **Domain mappings and `wp_blogs`** carry the same host; both must change together.
 5. **On-disk host strings**: local-font CSS and per-site analytics configs embed the host. Grep before and after.
@@ -64,7 +67,13 @@ Rollback: restore the gzip dump with `wp db import` (or `mysql`) and the tarred 
 
 ## Verification
 
+Before step 10, perform the following without reopening writers (use the operator allow-list for checks; keep automated jobs stopped):
+
 - Each new host returns 200 over https; each old host (and `www.`) returns 301 with path and query preserved; `/.well-known/` is not redirected.
-- 0 old-host matches outside GUIDs (dry run, plugins loaded, and file grep); 0 `domains/<new-host>` matches in plain, JSON-escaped and URL-encoded forms.
-- Login cookie domain is correct on the network host and on a mapped domain (`curl -sI` the login page and read `Set-Cookie`).
-- Cron runner cycle succeeds; `error_log` shows no new PHP errors.
+- 0 old-host matches outside GUIDs and explicitly reviewed filesystem paths (dry run, plugins loaded, and file grep). Inventory each excluded `/domains/<old-host>/...` path, including escaped/encoded forms, and separately confirm it points to the existing installation; do not exclude other matches merely because they contain the old host. Require 0 `domains/<new-host>` matches in plain, JSON-escaped and URL-encoded forms.
+- Inspect login-page `Set-Cookie` scope on the network host and every mapped domain; this header check alone does not prove authentication works. `error_log` shows no new PHP errors.
+
+At step 10, after accepting the post-resume rollback boundary:
+
+- Complete an actual login, authenticated admin navigation and logout on the network host and every mapped domain; check for cookie rejection or redirect loops.
+- Cron runner cycle succeeds; `error_log` still shows no new PHP errors. Any failure now uses the post-resume rollback path, never a blind restore of the pre-move dump.
