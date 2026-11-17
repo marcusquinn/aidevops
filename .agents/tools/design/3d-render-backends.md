@@ -180,8 +180,13 @@ Pod lifecycle:
 
 GPU fallback lists: one approved budget can cover several GPU/cloud options tried in
 order (for example RTX 4090 community, then A40 secure, then RTX 4090 secure).
-Give each option its own `--deadline-minutes` from its expected speed, so every
-option's worst case fits the cap. Re-run `submit` per option; a refusal creates nothing.
+Give each option its own `--deadline-minutes` from its expected speed, and set its
+`--budget-usd` to the approved cap minus any spend already incurred, so the total
+cannot exceed the cap. Before trying the next option, check `jobs.tsv` and
+`status --live`: with several workers, a refusal can follow pods that were already
+created and are billing. Fetch their frames, or accept the loss with
+`teardown --live --force-discard`, and tear them down first. A single-worker refusal
+creates nothing.
 
 `stage` copies without owner or group (`rsync -rtL`). SECURE pods mount `/workspace`
 on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23). `-L` sends symlinked

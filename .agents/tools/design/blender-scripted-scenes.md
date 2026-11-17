@@ -24,8 +24,9 @@ mechanics: `tools/design/3d-render-backends.md`.
 
 ## Build contract
 
-- Build from empty: `Blender -b --factory-startup -P build_scene.py -- out.blend`.
-  In the script, call `bpy.ops.wm.read_factory_settings(use_empty=True)` and read
+- Build from empty: `blender -b --factory-startup -P build_scene.py -- out.blend`
+  (on macOS without `blender` on PATH, use
+  `/Applications/Blender.app/Contents/MacOS/Blender`). In the script, call `bpy.ops.wm.read_factory_settings(use_empty=True)` and read
   arguments after `--` from `sys.argv`.
 - No external files: procedural node textures, or images packed into the `.blend`.
 - No Python drivers, and no unbaked physics, particles or Geometry Nodes
@@ -73,9 +74,9 @@ Deformation patterns that worked:
   planned for 6.0). They are harmless in 5.3.
 - Socket names change between versions (Principled `Subsurface Weight`,
   `Coat Weight`; Mix node data types). List them with a short probe run:
-  `Blender -b --factory-startup --python-expr "<print node inputs>"`.
+  `blender -b --factory-startup --python-expr "<print node inputs>"`.
 - Check a built file the way a remote worker opens it:
-  `Blender -b -Y scene.blend --python-expr "<print engine, resolution, samples, output, range, camera, len(bpy.data.images), len(bpy.data.libraries)>"`.
+  `blender -b -Y scene.blend --python-expr "<print engine, resolution, samples, output, range, camera, len(bpy.data.images), len(bpy.data.libraries)>"`.
 
 ## Preview and review loop
 
