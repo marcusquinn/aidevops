@@ -132,7 +132,7 @@ _resolve_health_runner_user() {
 }
 
 #######################################
-# Activity guard — returns 0 to proceed, 1 to skip.
+# Activity guard — returns 0 to proceed, 1 to skip, 2 on lookup failure.
 # Active repositories refresh on the hourly stats cadence. Idle repositories
 # publish their transition to idle immediately, then refresh every hour by
 # default. This keeps the dashboard closely aligned with the local heartbeat
@@ -223,6 +223,16 @@ _check_health_issue_activity_guard() {
 	echo "[stats] Health issue: deferring unchanged idle dashboard for ${repo_slug} (operator=${runner_user} issue=#${dashboard_issue} reason=idle-refresh-interval interval=${idle_interval}s)" \
 		>>"${LOGFILE:-/dev/null}"
 	return 1
+}
+
+_record_health_activity_guard_result() {
+	local result="$1" stage_file="$2"
+	if [[ "$result" -eq 2 ]]; then
+		_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
+	else
+		_record_health_repo_stage "$stage_file" "skipped-idle"
+	fi
+	return 0
 }
 
 #######################################
@@ -424,11 +434,7 @@ _update_health_issue_for_repo() {
 		"$repo_slug" "$repo_path" "$runner_user" "$health_issue_file" \
 		"$runner_role" "$runner_prefix" "$role_label" "$role_display" "$canonical_identity" "$identity_aliases" || guard_result=$?
 	if [[ "$guard_result" -ne 0 ]]; then
-		if [[ "$guard_result" -eq 2 ]]; then
-			_record_health_repo_stage "$stage_file" "deferred-issue-resolution"
-		else
-			_record_health_repo_stage "$stage_file" "skipped-idle"
-		fi
+		_record_health_activity_guard_result "$guard_result" "$stage_file"
 		return 0
 	fi
 	local activity_state="${_HEALTH_ISSUE_ACTIVITY_STATE:-$_HEALTH_ACTIVITY_STATE_ACTIVE}"
