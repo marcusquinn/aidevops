@@ -44,6 +44,7 @@ from cloudron_release_identity import (
     release_identity, require, substitute_versions,
 )
 from cloudron_pinned_changes import pinned_changes_ok
+from cloudron_companion_image import companion_proof, mask_image, validate_companion
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
@@ -228,6 +229,9 @@ def check(doc, repository):
     classes = {key: policy_paths(policy, key) for key in POLICY_FILE_CLASSES}
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
+    companion_spec = validate_companion(policy) if "companion_image" in policy else None
+    verify_file = companion_spec["verify_file"] if companion_spec else None
+    require(verify_file not in changelogs | pinned, "companion_image: verify file overlaps build or changelog files")
     check_pattern = insertion_pattern(policy)
 
     files = doc.get("files")
@@ -240,7 +244,7 @@ def check(doc, repository):
         # introduce new build inputs; only in-place edits of named files qualify.
         require(entry.get("status") == "modified" and "previous_filename" not in entry,
                 name + ": only in-place modifications qualify")
-        require(name == MANIFEST or name in changelogs | pinned | checks, name + ": outside the standing policy")
+        require(name in (MANIFEST, verify_file) or name in changelogs | pinned | checks, name + ": outside the standing policy")
         names.append(name)
     require(len(set(names)) == len(names), "duplicate changed file entries")
     require(MANIFEST in names, "the manifest must change")
@@ -257,6 +261,7 @@ def check(doc, repository):
     check_upstream(doc, policy, old_up, new_up)
     pins = pin_policy(doc, policy)
     identity = release_identity(doc, policy)
+    companion = companion_proof(doc, policy, contents, file_text, new_up)
     require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
             "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
@@ -277,6 +282,10 @@ def check(doc, repository):
     changelog_changed = False
     for entry in files:
         name = entry["filename"]
+        if name == verify_file:
+            # Checked byte-for-byte outside the six proven readonly constants,
+            # even when the signed generic check-file class also names it.
+            continue
         if name in changelogs:
             additions, deletions = entry.get("additions"), entry.get("deletions")
             require(isinstance(additions, int) and isinstance(deletions, int) and additions > 0 and deletions == 0,
@@ -284,6 +293,12 @@ def check(doc, repository):
             changelog_changed = True
         elif name in pinned:
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
+            if name == "Dockerfile" and companion:
+                base_text, head_text = mask_image(base_text, companion, "base"), mask_image(head_text, companion, "head")
+                # An image-only change becomes identical after the exact FROM
+                # mask; other files must still have a genuine permitted change.
+                if base_text == head_text:
+                    continue
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
             require(pinned_changes_ok((base_text, head_text), identity, pins, (pinned_mappings, [{old_up: new_up}])),

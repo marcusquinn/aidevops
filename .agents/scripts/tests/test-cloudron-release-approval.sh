@@ -1055,6 +1055,194 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 assert_routine not 'Buzz main-build cannot use a tag finding' "$(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28-main.2cd40ba"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\"" 'base upstreamVersion must be X.Y.Z'
 assert_routine routine 'Buzz after signed strict-tag migration' "del(.files[3,4]) | $(manifest_base '{"version":"0.1.43","upstreamVersion":"0.5.28"}') | $(manifest_head '{"version":"0.1.44","upstreamVersion":"0.5.29"}') | .finding_upstream = \"0.5.29\""
 
+# GH#38807: exercise the real predicate and collector without network or package
+# execution. Verified gh results are trusted caller input, never PR contents.
+python3 - "$SOURCE_DIR" <<'PY'
+import base64
+import copy
+import hashlib
+import json
+import subprocess
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import cloudron_companion_image as companion
+from cloudron_routine_bump import check, NotRoutine, validate_pins_request
+
+old, new, pin, floor = (char * 40 for char in "1234")
+digest, platform = ("sha256:" + char * 64 for char in "ab")
+image = "ghcr.io/block/buzz"
+spec = dict(image=image, source_repository="block/buzz", source_branch="main", tag_prefix="sha-",
+            platform="linux/amd64", pin_file="src-tauri/Cargo.toml",
+            pin_pattern=r'^buzz-audio-client = .*rev = "([0-9a-f]{40})"', floor_revisions=[floor],
+            verify_file="test/verify-buzz-image.sh",
+            verify_constants=dict(BUZZ_APP_RELEASE="release_tag", BUZZ_APP_RELAY_REVISION="pin",
+                                  BUZZ_REVISION="image_revision", BUZZ_IMAGE="image_ref",
+                                  BUZZ_INDEX_DIGEST="index_digest", BUZZ_AMD64_DIGEST="platform_digest"))
+policy = dict(schema=1, kind="cloudron-standing-upstream-release", repository="owner/app",
+              changelog_files=["CHANGELOG"], pinned_files=["Dockerfile"], check_files=[],
+              upstream_repository="block/buzz-app", companion_image=spec)
+validate_pins_request({key: policy[key] for key in ("upstream_repository", "companion_image")})
+
+def ancestry(commit):
+    return dict(status="ahead", merge_base_commit=dict(sha=commit))
+
+def attestation(subject=digest, revision=new):
+    cert = dict(issuer="https://token.actions.githubusercontent.com",
+                sourceRepositoryURI="https://github.com/block/buzz", sourceRepositoryDigest=revision,
+                sourceRepositoryRef="refs/heads/main", buildSignerDigest=revision,
+                buildSignerURI="https://github.com/block/buzz/.github/workflows/build.yml@refs/heads/main")
+    return [dict(verificationResult=dict(signature=dict(certificate=cert), statement=dict(
+        predicateType="https://slsa.dev/provenance/v1", subject=[dict(name=image, digest=dict(sha256=subject[7:]))])))]
+
+def encoded(text):
+    return base64.b64encode(text.encode()).decode()
+
+def contents(base, head):
+    return dict(base=encoded(base), head=encoded(head))
+
+def docker(revision):
+    return "FROM --platform=linux/amd64 " + image + ":sha-" + revision[:7] + "@" + digest + "\nARG UNRELATED=1\n"
+
+def verify(revision, release):
+    values = dict(release_tag=release, pin=pin, image_revision=revision,
+                  image_ref=image + ":sha-" + revision[:7],
+                  index_digest=digest, platform_digest=platform)
+    return "#!/bin/bash\n" + "".join('readonly ' + name + '="' + values[key] + '"\n'
+                                   for name, key in spec["verify_constants"].items()) + 'readonly BUZZ_NIP_CL_REVISION="' + floor + '"\nexit 0\n'
+
+proof = dict(release_tag="v1.0.5", release_commit=new, pin_text='buzz-audio-client = { rev = "' + pin + '" }',
+             source_repository="block/buzz", image_revision=new, old_revision=old, branch=ancestry(new),
+             ancestors={commit: ancestry(commit) for commit in (pin, floor, old)},
+             index_digest=digest, platform_digest=platform, label_revision=new, attestations=attestation())
+doc = dict(policy=policy, finding_upstream="1.0.5", companion_proof=proof,
+           release_proof=dict(repository="block/buzz-app", old_commit=old, new_commit=new, status="ahead", merge_base=old),
+           files=[dict(filename=name, status="modified", additions=1, deletions=0)
+                  for name in ("CloudronManifest.json", "Dockerfile", "CHANGELOG", spec["verify_file"])],
+           contents={"CloudronManifest.json": contents('{"version":"0.1.1","upstreamVersion":"1.0.4"}',
+                                                     '{"version":"0.1.2","upstreamVersion":"1.0.5"}'),
+                     "Dockerfile": contents(docker(old), docker(new)),
+                     spec["verify_file"]: contents(verify(old, "v1.0.4"), verify(new, "v1.0.5"))})
+assert check(doc, "owner/app")
+print("PASS companion: synthetic Buzz 1.0.4 -> 1.0.5")
+
+def reject(label, mutate, reason):
+    candidate = copy.deepcopy(doc)
+    mutate(candidate)
+    try:
+        check(candidate, "owner/app")
+    except NotRoutine as error:
+        assert reason in str(error), (label, str(error))
+    else:
+        raise AssertionError("accepted " + label)
+    print("PASS companion rejection: " + label)
+
+for key, label in ((pin, "release pin"), (floor, "floor"), (old, "old image")):
+    reject(label, lambda d, key=key: d["companion_proof"]["ancestors"][key].update(status="behind"), "is not an ancestor")
+reject("image off main", lambda d: d["companion_proof"]["branch"].update(status="diverged"), "image on source branch")
+reject("registry digest", lambda d: d["companion_proof"].update(index_digest=platform), "registry digest mismatch")
+reject("label mismatch", lambda d: d["companion_proof"].update(label_revision=old), "config revision label")
+reject("missing attestation", lambda d: d["companion_proof"].update(attestations=[]), "verified attestation")
+reject("unverified bundle", lambda d: d["companion_proof"].update(attestations=[{"bundle":attestation()}]), "verified attestation")
+reject("wrong artifact", lambda d: d["companion_proof"].update(attestations=attestation("sha256:" + "c" * 64)), "verified attestation")
+reject("wrong attestation source", lambda d: d["companion_proof"].update(attestations=attestation(revision=old)), "verified attestation")
+reject("wrong signer branch", lambda d: d["companion_proof"]["attestations"][0]["verificationResult"]["signature"]["certificate"].update(buildSignerURI="https://github.com/block/buzz/.github/workflows/build.yml@refs/heads/other"), "verified attestation")
+reject("preview", lambda d: d["contents"]["CloudronManifest.json"].update(head=encoded('{"version":"0.1.2","upstreamVersion":"1.0.5-preview.2"}')), "must be X.Y.Z")
+reject("duplicate upstream pin", lambda d: d["companion_proof"].update(pin_text=proof["pin_text"] + "\n" + proof["pin_text"]), "exactly one upstream pin")
+reject("release downgrade", lambda d: d["release_proof"].update(status="behind"), "strictly ahead")
+reject("changed floor constant", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(new, "v1.0.5").replace(floor, old))), "extra verify_file edit")
+reject("extra verifier command", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(new, "v1.0.5") + "id\n")), "extra verify_file edit")
+reject("wrong proven constant", lambda d: d["contents"][spec["verify_file"]].update(head=encoded(verify(old, "v1.0.5"))), "verify constant")
+reject("unrelated ARG", lambda d: d["contents"]["Dockerfile"].update(head=encoded(docker(new).replace("UNRELATED=1", "UNRELATED=2"))), "pinned file changes")
+reject("catalog checksum remains non-routine", lambda d: d["files"].append(dict(filename="test/published-catalog-manifests.sha256",status="modified")), "outside the standing policy")
+unchanged = copy.deepcopy(doc)
+unchanged["contents"]["Dockerfile"]["base"] = encoded(docker(new))
+unchanged["companion_proof"]["old_revision"] = new
+unchanged["companion_proof"]["ancestors"][new] = dict(status="identical",merge_base_commit=dict(sha=new))
+unchanged["files"] = [entry for entry in unchanged["files"] if entry["filename"] != "Dockerfile"]
+assert check(unchanged, "owner/app")
+platform_attestation = copy.deepcopy(doc)
+platform_attestation["companion_proof"]["attestations"] = attestation(platform)
+assert check(platform_attestation, "owner/app")
+print("PASS companion: unchanged image and platform attestation")
+
+# Collector integration: stub process and registry boundaries, not the collector.
+calls = []
+def process(args, **kwargs):
+    calls.append(args)
+    if args[:2] == ("gh", "api"):
+        endpoint = args[2]
+        assert endpoint.startswith(("repos/block/buzz/", "repos/block/buzz-app/")), endpoint
+        if "/contents/" in endpoint:
+            assert endpoint.endswith("?ref=" + new)
+            value = dict(content=encoded(proof["pin_text"]))
+        elif "/compare/" in endpoint:
+            value = ancestry(endpoint.split("/compare/")[1].split("...")[0])
+        elif "/git/ref/" in endpoint:
+            value = dict(object=dict(sha=new))
+        else:
+            value = dict(sha=old if endpoint.endswith(old[:7]) else new)
+    elif args[:3] == ("gh", "attestation", "verify"):
+        value = attestation()
+    else:
+        value = dict(token="anonymous-test-token")
+    return subprocess.CompletedProcess(args, 0, stdout=json.dumps(value), stderr="")
+
+def registry(spec_arg, token, kind, object_digest):
+    assert spec_arg == spec and token == "anonymous-test-token"
+    return {digest:dict(manifests=[dict(platform=dict(os="linux",architecture="amd64"),digest=platform)]),
+            platform:dict(config=dict(digest="sha256:" + "c" * 64)),
+            "sha256:" + "c" * 64:dict(config=dict(Labels={"org.opencontainers.image.revision":new}))}[object_digest]
+
+with patch.object(companion.subprocess, "run", side_effect=process), patch.object(companion, "registry_json", side_effect=registry):
+    collected = companion.collect(doc, digest)
+    assert check(dict(doc, companion_proof=collected), "owner/app")
+    assert any(args[:3] == ("gh", "attestation", "verify") for args in calls)
+print("PASS companion: signed-source collector integration")
+
+def failed_verifier(args, **kwargs):
+    if args[:3] == ("gh", "attestation", "verify"):
+        # Even plausible JSON must not be consumed after failed verification.
+        return subprocess.CompletedProcess(args, 1, stdout=json.dumps(attestation()), stderr="unverified")
+    return process(args, **kwargs)
+
+with patch.object(companion.subprocess, "run", side_effect=failed_verifier), patch.object(companion, "registry_json", side_effect=registry):
+    try:
+        companion.collect(doc, digest)
+    except NotRoutine as error:
+        assert "missing verified attestation" in str(error)
+    else:
+        raise AssertionError("accepted failed gh signature verification")
+
+def duplicate_platform(spec_arg, token, kind, object_digest):
+    value = registry(spec_arg, token, kind, object_digest)
+    if object_digest == digest:
+        value["manifests"] *= 2
+    return value
+
+with patch.object(companion.subprocess, "run", side_effect=process), patch.object(companion, "registry_json", side_effect=duplicate_platform):
+    try:
+        companion.collect(doc, digest)
+    except NotRoutine as error:
+        assert "expected one platform manifest" in str(error)
+    else:
+        raise AssertionError("accepted ambiguous platform")
+
+payload = b'{"config":{"Labels":{}}}'
+object_digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+with patch.object(companion.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=payload)) as curl:
+    assert companion.registry_json(spec, "anonymous-test-token", "blobs", object_digest) == json.loads(payload)
+    assert "-fsSL" in curl.call_args.args[0]  # GHCR blobs may redirect to content storage.
+    try:
+        companion.registry_json(spec, "anonymous-test-token", "blobs", digest)
+    except NotRoutine as error:
+        assert "registry object digest mismatch" in str(error)
+    else:
+        raise AssertionError("accepted registry body with a different digest")
+print("PASS companion: failed signatures, ambiguous platforms and content-addressed registry reads")
+PY
+
 # GH#37697: release_policy_authorizes plumbing against stubbed GitHub reads.
 (
 	# shellcheck source=../cloudron-release-approval-helper.sh

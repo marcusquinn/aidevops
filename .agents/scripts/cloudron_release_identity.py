@@ -19,11 +19,11 @@ FROM_REF = re.compile(r"(?m)^FROM[ \t]+(?:--[^ \t]+[ \t]+)*([^ \t@]+)@(sha256:[a
 REGISTRY_IMAGE = re.compile(r"(ghcr\.io|docker\.io)(/[a-z0-9][a-z0-9._-]*){2,4}")
 CHECKSUM_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.{}-]*")
 SHA256_HEX = re.compile(r"[a-f0-9]{64}")
-PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url"}
+PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url", "companion_image"}
 POLICY_KEYS = {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
     "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
-    "license_version_url",
+    "license_version_url", "companion_image",
 }
 
 
@@ -103,6 +103,9 @@ def validate_pin_fields(policy):
             "policy upstream_repository is invalid")
     check_registry_images(policy)
     check_release_checksum(policy)
+    if "companion_image" in policy:
+        from cloudron_companion_image import validate_companion
+        validate_companion(policy)
 
 
 def validate_pins_request(policy):
