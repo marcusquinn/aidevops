@@ -9,7 +9,8 @@
  * Each matching connection's sender becomes local@DOMAIN under FluentSMTP's
  * key md5(sender); mappings and the default/fallback references follow it.
  * key_store becomes wp_config with empty DB keys, and the two FLUENTMAIL_AWS_*
- * constants are written into wp-config.php after a backup (WPFS_Backup).
+ * constants are written into wp-config.php (WPFS_Config) after a backup
+ * (WPFS_Backup).
  *
  * @package aidevops
  */
@@ -20,12 +21,6 @@ if ( ! class_exists( 'WPFS_Migrate' ) ) {
 	 * Plan and apply a migration.
 	 */
 	final class WPFS_Migrate {
-
-		const MARKER  = '/* aidevops: FluentSMTP SES keys (wp-helper.sh --fluentsmtp) */';
-		const ANCHORS = array(
-			'/^.*That\'s all, stop editing.*$/m',
-			'/^[ \t]*require_once\s*\(?\s*ABSPATH\s*\.\s*[\'"]wp-settings\.php[\'"].*$/m',
-		);
 
 		/**
 		 * Dry run, or back up and apply.
@@ -44,7 +39,7 @@ if ( ! class_exists( 'WPFS_Migrate' ) ) {
 				);
 			}
 			// Build the new wp-config.php first so a refusal leaves nothing behind.
-			$config = self::config_with_keys( (string) file_get_contents( $config_path ), self::read_keys() );
+			$config = WPFS_Config::with_keys( (string) file_get_contents( $config_path ), WPFS_Config::read_keys() );
 			$backup = WPFS_Backup::create( $config_path );
 			fwrite( STDERR, 'BACKUP: ' . $backup . "\n" );
 			WPFS_Store::replace_php_file( $config_path, $config, fileperms( $config_path ) & 0777 );
@@ -73,28 +68,6 @@ if ( ! class_exists( 'WPFS_Migrate' ) ) {
 				$rows[] = $row;
 			}
 			return $rows;
-		}
-
-		/**
-		 * Read and validate the two keys from STDIN.
-		 *
-		 * @return array access_key, secret_key.
-		 * @throws WPFS_Error When the input is missing or malformed.
-		 */
-		private static function read_keys() {
-			$input  = stream_get_contents( STDIN, 8192 );
-			$keys   = is_string( $input ) ? json_decode( $input, true ) : null;
-			$keys   = is_array( $keys ) ? $keys : array();
-			$access = WPFS_Store::field( $keys, 'access_key' );
-			$secret = WPFS_Store::field( $keys, 'secret_key' );
-			// FluentSMTP has no session-token field, so only long-term (AKIA) keys can work.
-			if ( ! preg_match( '/^AKIA[A-Z0-9]{16}$/', $access ) ) {
-				throw new WPFS_Error( 'migrate needs a long-term AWS access key ID (AKIA...) as "access_key" in the STDIN JSON', 2 );
-			}
-			if ( ! preg_match( '#^[A-Za-z0-9/+]{40}$#', $secret ) ) {
-				throw new WPFS_Error( 'migrate needs a 40-character AWS secret access key as "secret_key" in the STDIN JSON', 2 );
-			}
-			return array( $access, $secret );
 		}
 
 		/**
@@ -134,8 +107,8 @@ if ( ! class_exists( 'WPFS_Migrate' ) ) {
 				'domain' => $options['domain'],
 				'from'   => $from,
 			);
-			$settings['mappings']    = array_merge( self::remap_mappings( WPFS_Store::section( $settings, 'mappings' ), $renames, $scope ), self::primary_mappings( $plan ) );
-			$settings['misc']        = self::remap_misc( WPFS_Store::section( $settings, 'misc' ), $renames );
+			$settings['mappings']    = WPFS_Remap::mappings( WPFS_Store::section( $settings, 'mappings' ), $renames, $scope, $plan );
+			$settings['misc']        = WPFS_Remap::misc( WPFS_Store::section( $settings, 'misc' ), $renames );
 			return array( $settings, $plan );
 		}
 
@@ -213,109 +186,6 @@ if ( ! class_exists( 'WPFS_Migrate' ) ) {
 			$provider['secret_key']          = '';
 			$connection['provider_settings'] = $provider;
 			return $connection;
-		}
-
-		/**
-		 * Mappings with moved connections' senders on the new domain and key.
-		 *
-		 * @param array $mappings Sender => key.
-		 * @param array $renames  Old key => new key.
-		 * @param array $scope    domain (new), from (source domain or '').
-		 * @return array
-		 */
-		private static function remap_mappings( array $mappings, array $renames, array $scope ) {
-			$remapped = array();
-			foreach ( $mappings as $email => $key ) {
-				if ( isset( $renames[ $key ] ) ) {
-					$email = self::moved_sender( (string) $email, $scope );
-					$key   = $renames[ $key ];
-				}
-				$remapped[ $email ] = $key;
-			}
-			return $remapped;
-		}
-
-		/**
-		 * Every moved connection's primary sender maps to its new key.
-		 *
-		 * @param array $plan Plan rows.
-		 * @return array Sender => key.
-		 */
-		private static function primary_mappings( array $plan ) {
-			return array_combine( array_column( $plan, 'to' ), array_column( $plan, 'key' ) );
-		}
-
-		/**
-		 * An additional sender on the source domain moves; others stay.
-		 *
-		 * @param string $email Mapped sender.
-		 * @param array  $scope domain (new), from (source domain or '').
-		 * @return string
-		 */
-		private static function moved_sender( $email, array $scope ) {
-			$old = WPFS_Store::domain_of( $email );
-			if ( '' === $old || ( '' !== $scope['from'] && $old !== $scope['from'] ) ) {
-				return $email;
-			}
-			return WPFS_Store::with_domain( $email, $scope['domain'] );
-		}
-
-		/**
-		 * Default and fallback references follow renamed connections.
-		 *
-		 * @param array $misc    Misc settings.
-		 * @param array $renames Old key => new key.
-		 * @return array
-		 */
-		private static function remap_misc( array $misc, array $renames ) {
-			foreach ( array( 'default_connection', 'fallback_connection' ) as $ref ) {
-				$key = WPFS_Store::field( $misc, $ref );
-				if ( isset( $renames[ $key ] ) ) {
-					$misc[ $ref ] = $renames[ $key ];
-				}
-			}
-			return $misc;
-		}
-
-		/**
-		 * wp-config.php content with the two constants set before the anchor.
-		 *
-		 * @param string $config Current content.
-		 * @param array  $keys   access_key, secret_key.
-		 * @return string
-		 * @throws WPFS_Error Without an insertion point.
-		 */
-		private static function config_with_keys( $config, array $keys ) {
-			$config = self::without_keys( $config );
-			// phpcs:disable WordPress.PHP.DevelopmentFunctions -- var_export() emits safe PHP literals.
-			$block = self::MARKER . "\n"
-				. 'define( ' . var_export( WPFS_Store::CONST_ACCESS, true ) . ', ' . var_export( $keys[0], true ) . " );\n"
-				. 'define( ' . var_export( WPFS_Store::CONST_SECRET, true ) . ', ' . var_export( $keys[1], true ) . " );\n\n";
-			// phpcs:enable
-			foreach ( self::ANCHORS as $anchor ) {
-				if ( preg_match( $anchor, $config, $match, PREG_OFFSET_CAPTURE ) ) {
-					return substr_replace( $config, $block, $match[0][1], 0 );
-				}
-			}
-			throw new WPFS_Error( 'No insertion point in wp-config.php ("stop editing" comment or wp-settings.php require)', 1 );
-		}
-
-		/**
-		 * Remove our marker and single-line defines of the two constants.
-		 *
-		 * @param string $config wp-config.php content.
-		 * @return string
-		 * @throws WPFS_Error When another form of the defines remains.
-		 */
-		private static function without_keys( $config ) {
-			$names  = preg_quote( WPFS_Store::CONST_ACCESS, '/' ) . '|' . preg_quote( WPFS_Store::CONST_SECRET, '/' );
-			$config = preg_replace( '/^[ \t]*' . preg_quote( self::MARKER, '/' ) . '[ \t]*\R/m', '', $config );
-			$config = preg_replace( '/^[ \t]*define\(\s*[\'"](?:' . $names . ')[\'"]\s*,.*\);[ \t]*\R/m', '', $config );
-			if ( preg_match( '/' . $names . '/', $config ) ) {
-				// PHP keeps the first define, so a leftover would silently win over ours.
-				throw new WPFS_Error( 'wp-config.php defines the FLUENTMAIL_AWS_* constants in a form this tool cannot replace; edit them by hand', 1 );
-			}
-			return $config;
 		}
 	}
 }

@@ -31,7 +31,8 @@ _WP_FLUENTSMTP_LIB_LOADED=1
 
 WPFS_PHP_FILE="wp-fluentsmtp.php"
 # The entry file loads its siblings from its own directory; upload them together.
-WPFS_PHP_FILES=("$WPFS_PHP_FILE" wp-fluentsmtp-store.php wp-fluentsmtp-migrate.php wp-fluentsmtp-backup.php)
+WPFS_PHP_FILES=("$WPFS_PHP_FILE" wp-fluentsmtp-store.php wp-fluentsmtp-config.php wp-fluentsmtp-remap.php
+	wp-fluentsmtp-migrate.php wp-fluentsmtp-backup.php)
 WPFS_USAGE="Usage: wp-helper.sh --fluentsmtp <site> <list | migrate --domain D --region R [--from-domain OLD] [--dry-run] --access-key-env VAR --secret-key-env VAR | test --to ADDR [--from ADDR] [--lift-http-block] | backups | undo --backup DIR> [--url URL]"
 # Parsed options (globals keep Bash 3.2 compatibility without namerefs).
 WPFS_ARGS=()

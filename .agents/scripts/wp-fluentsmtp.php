@@ -13,7 +13,8 @@
  *   wp eval-file wp-fluentsmtp.php undo backup=DIR
  *
  * migrate reads {"access_key": ..., "secret_key": ...} JSON on STDIN, never argv
- * (wp-fluentsmtp-migrate.php); backups and undo live in wp-fluentsmtp-backup.php.
+ * (wp-fluentsmtp-migrate.php, with -config.php and -remap.php); backups and undo
+ * live in wp-fluentsmtp-backup.php.
  * Key values are never printed. Upload this file with its siblings.
  *
  * Prints JSON. Exit codes: 0 done, 1 refused or not confirmed, 2 usage error
@@ -28,6 +29,8 @@ if ( ! defined( 'ABSPATH' ) || ! class_exists( 'WP_CLI' ) ) {
 }
 
 require_once __DIR__ . '/wp-fluentsmtp-store.php';
+require_once __DIR__ . '/wp-fluentsmtp-config.php';
+require_once __DIR__ . '/wp-fluentsmtp-remap.php';
 require_once __DIR__ . '/wp-fluentsmtp-migrate.php';
 require_once __DIR__ . '/wp-fluentsmtp-backup.php';
 
