@@ -147,6 +147,20 @@ def validate_pins_request(policy):
     require("upstream_repository" in policy, "policy release_identity is invalid")
 
 
+def check_catalog_baseline(doc, path, version, file_text):
+    """Accept exactly one append backed by the caller's trusted catalog proof."""
+    proof = doc.get("catalog_baseline_proof")
+    require(isinstance(proof, dict), "catalog_baseline: missing proof")
+    require(proof.get("version") == version, "catalog_baseline: proof version mismatch")
+    digest = proof.get("sha256")
+    require(isinstance(digest, str) and SHA256_HEX.fullmatch(digest), "catalog_baseline: invalid proof digest")
+    base = file_text(doc.get("contents"), path, "base")
+    head = file_text(doc.get("contents"), path, "head")
+    # aidevops:trust-boundary — no substitution, normalization or PR-derived digest.
+    require(not base or base.endswith("\n"), "catalog_baseline: base lacks trailing newline")
+    require(head == base + version + " " + digest + "\n", "catalog_baseline: expected exactly one verified appended line")
+
+
 def registry_proof(proof):
     refs = proof.get("registry")
     require(isinstance(refs, dict), "registry_images digest proof is invalid")

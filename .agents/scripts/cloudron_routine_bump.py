@@ -40,7 +40,7 @@ import sys
 
 from cloudron_release_identity import (
     COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
-    pin_policy, validate_pins_request, catalog_baseline_file, SHA256_HEX,
+    pin_policy, validate_pins_request, catalog_baseline_file, check_catalog_baseline,
     release_identity, require, substitute_versions,
 )
 from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
@@ -220,20 +220,6 @@ def check_manifest_fields(base_manifest, head_manifest, identity, pins):
             "is outside the permitted substitution")
 
 
-def check_catalog_baseline(doc, path, version):
-    """Accept exactly one append backed by the caller's trusted catalog proof."""
-    proof = doc.get("catalog_baseline_proof")
-    require(isinstance(proof, dict), "catalog_baseline: missing proof")
-    require(proof.get("version") == version, "catalog_baseline: proof version mismatch")
-    digest = proof.get("sha256")
-    require(isinstance(digest, str) and SHA256_HEX.fullmatch(digest), "catalog_baseline: invalid proof digest")
-    base = file_text(doc.get("contents"), path, "base")
-    head = file_text(doc.get("contents"), path, "head")
-    # aidevops:trust-boundary — no substitution, normalization or PR-derived digest.
-    require(not base or base.endswith("\n"), "catalog_baseline: base lacks trailing newline")
-    require(head == base + version + " " + digest + "\n", "catalog_baseline: expected exactly one verified appended line")
-
-
 def check(doc, repository):
     require(isinstance(doc, dict), "input must be an object")
     policy = doc.get("policy")
@@ -273,7 +259,7 @@ def check(doc, repository):
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
     if baseline_file in names:
-        check_catalog_baseline(doc, baseline_file, old_version)
+        check_catalog_baseline(doc, baseline_file, old_version, file_text)
     check_upstream(doc, policy, old_up, new_up)
     pins = pin_policy(doc, policy)
     identity = release_identity(doc, policy)
