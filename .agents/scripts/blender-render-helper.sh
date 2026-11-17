@@ -711,6 +711,44 @@ _brh_verify_packaged_files() {
 	return 0
 }
 
+# Creates one worker pod and records its id in jobs.tsv (live). An uncertain
+# create is recorded too, so teardown can find a pod that may bill.
+_brh_create_worker() {
+	local job_dir="$1"
+	local idx="$2"
+	local s="$3"
+	local e="$4"
+	local name="$5"
+	local gpu_type="$6"
+	local image="$7"
+	local volume="$8"
+	local remote_cmd="$9"
+	local cloud_type="${10}"
+	local pod_out="" pod_id="" create_rc=0
+	pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd" "$cloud_type")" || create_rc=$?
+	if [[ "$create_rc" -ne 0 ]]; then
+		pod_id="$(printf '%s\n' "$pod_out" | sed -n '/^UNCERTAIN_POD_ID=/{s///p;q;}')"
+		if [[ "$BRH_LIVE" -eq 1 && -n "$pod_id" ]]; then
+			printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
+			print_error "Pod ${pod_id} may exist and bill (recorded in ${job_dir}/jobs.tsv). Stopping: check runpodctl pod list, then teardown or keep it deliberately"
+		fi
+		if [[ "$BRH_LIVE" -eq 1 && -s "${job_dir}/jobs.tsv" ]]; then
+			print_error "Earlier workers in ${job_dir}/jobs.tsv are running and billing: stage/fetch them, or run teardown --live"
+		fi
+		return 1
+	fi
+	printf '%s\n' "$pod_out"
+	if [[ "$BRH_LIVE" -eq 1 ]]; then
+		pod_id="$(printf '%s\n' "$pod_out" | jq -r 'first(.id // empty)' 2>/dev/null)"
+		if [[ -z "$pod_id" ]]; then
+			print_error "Could not read the pod id (.id) from runpodctl JSON output; run pod list and teardown manually"
+			return 1
+		fi
+		printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
+	fi
+	return 0
+}
+
 _brh_submit() {
 	_brh_reset_opts
 	_brh_parse "--manifest --workers --gpu-rate --budget-usd --deadline-minutes --approve-contract --gpu-type --cloud-type --image --volume-gb --overhead-minutes --fetch-minutes --storage-usd" "$@" || return 1
@@ -788,33 +826,12 @@ _brh_submit() {
 	job_dir="$(cd "$(dirname "$BRH_O_MANIFEST")" && pwd)" || return 1
 	local blend_base=""
 	blend_base="$(basename "$blend")"
-	local idx="" s="" e="" remote_cmd="" name="" pod_out="" pod_id="" create_rc=0
+	local idx="" s="" e="" remote_cmd="" name=""
 	while read -r idx s e; do
 		remote_cmd="$(_brh_render_command "$s" "$e" "$BRH_O_DEADLINE_MINUTES" "$engine" "$blend_base" "$fetch_minutes")"
 		name="blender-render-${idx}-$(printf '%s' "$token" | cut -c9-14)"
 		printf '# worker %s: frames %s-%s\n' "$idx" "$s" "$e"
-		create_rc=0
-		pod_out="$(_brh_provider_call create "$name" "$gpu_type" "$image" "$volume" "$remote_cmd" "$cloud_type")" || create_rc=$?
-		if [[ "$create_rc" -ne 0 ]]; then
-			pod_id="$(printf '%s\n' "$pod_out" | sed -n '/^UNCERTAIN_POD_ID=/{s///p;q;}')"
-			if [[ "$BRH_LIVE" -eq 1 && -n "$pod_id" ]]; then
-				printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
-				print_error "Pod ${pod_id} may exist and bill (recorded in ${job_dir}/jobs.tsv). Stopping: check runpodctl pod list, then teardown or keep it deliberately"
-			fi
-			if [[ "$BRH_LIVE" -eq 1 && -s "${job_dir}/jobs.tsv" ]]; then
-				print_error "Earlier workers in ${job_dir}/jobs.tsv are running and billing: stage/fetch them, or run teardown --live"
-			fi
-			return 1
-		fi
-		printf '%s\n' "$pod_out"
-		if [[ "$BRH_LIVE" -eq 1 ]]; then
-			pod_id="$(printf '%s\n' "$pod_out" | jq -r 'first(.id // empty)' 2>/dev/null)"
-			if [[ -z "$pod_id" ]]; then
-				print_error "Could not read the pod id (.id) from runpodctl JSON output; run pod list and teardown manually"
-				return 1
-			fi
-			printf '%s\t%s\t%s\t%s\n' "$idx" "$s" "$e" "$pod_id" >>"${job_dir}/jobs.tsv"
-		fi
+		_brh_create_worker "$job_dir" "$idx" "$s" "$e" "$name" "$gpu_type" "$image" "$volume" "$remote_cmd" "$cloud_type" || return 1
 	done < <(_brh_split_ranges "$frames" "$workers")
 	if [[ "$BRH_LIVE" -eq 1 ]]; then
 		print_info "Pod ids recorded in ${job_dir}/jobs.tsv. Pods wait for staging: run stage per pod (host/port from status), then fetch and teardown."
