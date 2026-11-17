@@ -359,14 +359,15 @@ _pmpc_other_open_pr_owns_issue() {
 # issue URL). GitHub closes those targets on merge, so such a PR completes
 # work rather than delivering a partial.
 # Args: $1=PR number, $2=repo slug, $3=optional PR body (skips live read)
-# Returns: 0 when a closing reference exists or the body is unreadable (fail
-#          closed), 1 when the body has none
+# Returns: 0 when a closing reference exists or unreadable, 1 when absent.
+# Sets _PMPC_BODY_STATUS to distinguish unreadable from a real closing reference.
 #######################################
 _pmpc_pr_body_has_closing_ref() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local supplied_body="${3-}"
 	local pr_body="" verdict=""
+	_PMPC_BODY_STATUS=unreadable
 	if [[ "$#" -ge 3 ]]; then
 		pr_body="$supplied_body"
 	else
@@ -374,6 +375,7 @@ _pmpc_pr_body_has_closing_ref() {
 	fi
 	verdict=$(printf '%s' "$pr_body" | jq -Rrs --arg pattern "$_PMPC_CLOSING_REF_PATTERN" \
 		'test($pattern; "i")' 2>/dev/null) || return 0
+	_PMPC_BODY_STATUS=readable
 	[[ "$verdict" == "false" ]] && return 1
 	return 0
 }
@@ -557,7 +559,7 @@ _pm_restore_partial_continuation() {
 	local pr_labels="${4:-}"
 	local expected_target="${5:-}"
 	local closing="" target="" issue_api="" issue_json="" scope="" comments_json=""
-	local runner_login="" pr_author="" assignees="" parent_has_dispatch=0
+	local runner_login="" pr_author="" assignees="" parent_has_dispatch=0 body_rc=0
 
 	[[ -z "$linked_issue" && "$pr_number" =~ ^[0-9]+$ && "$repo_slug" == */* ]] || return 0
 	if [[ -z "$pr_labels" ]]; then
@@ -578,8 +580,13 @@ _pm_restore_partial_continuation() {
 		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — it closes #${closing} (GH#38869)" >>"$LOGFILE"
 		return 0
 	fi
-	if _pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug"; then
-		echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue or is unreadable (GH#34312)" >>"$LOGFILE"
+	_pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug" || body_rc=$?
+	if [[ "$body_rc" -ne 1 ]]; then
+		if [[ "$_PMPC_BODY_STATUS" == unreadable ]]; then
+			echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body unreadable (GH#38885)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Deterministic merge: no partial continuation for PR #${pr_number} — body closes an issue (GH#34312)" >>"$LOGFILE"
+		fi
 		return 0
 	fi
 	target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit 2>/dev/null) || target=""
