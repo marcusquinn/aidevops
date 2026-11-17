@@ -143,8 +143,10 @@ def prepare_incremental_restore(archive, target):
 def restore_administration(root, archive):
     state = load_administration(archive)
     # Clone fetches branch tips only. Import all preservation tips explicitly.
-    fetch_preservation(root, archive)
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    # Reuse the directory fetch_preservation just resolved; nothing between the two moves it.
+    admin = fetch_preservation(root, archive)
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     head = bytes.fromhex(state["files"]["HEAD"])
     if head.startswith(b"ref: "):
         branch = os.fsdecode(head[5:].strip())
