@@ -1008,7 +1008,8 @@ jobs:
     - name: Python 3.9 annotation compatibility (GH#34098)
       # Blocking: macOS /usr/bin/python3 is 3.9, which evaluates `X | None`
       # signature/module/class annotations at import time and crashes unless the
-      # module uses `from __future__ import annotations`. Static AST check.
+      # module uses `from __future__ import annotations`, and lacks 3.10+ typing
+      # names such as TypeGuard (GH#38706). Static AST check.
       run: |
         source .agents/scripts/lint-file-discovery.sh
         lint_python_files
@@ -1017,7 +1018,7 @@ jobs:
           exit 0
         fi
         if ! echo "$LINT_PY_FILES" | xargs python3 .agents/scripts/python-annotation-compat-check.py; then
-          echo "::error::Runtime PEP 604 union annotations break Python 3.9 imports; add 'from __future__ import annotations'"
+          echo "::error::Runtime PEP 604 unions or 3.10+ typing imports break Python 3.9 imports; follow the per-line fix hints above"
           exit 1
         fi
         echo "Python 3.9 annotations: compatible"
