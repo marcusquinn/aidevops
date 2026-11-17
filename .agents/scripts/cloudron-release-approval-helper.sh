@@ -295,6 +295,10 @@ release_policy_body() {
 			# shellcheck disable=SC2016 # Markdown backticks are literal.
 			printf 'Companion image policy: stable v-prefixed upstream tags must prove strict forward ancestry. The signed image commit tag must be on the signed source branch and contain the release pin, every floor revision and the old image revision. The registry must prove the index, unique platform digest and full revision label, with cryptographically verified source-repository branch-workflow provenance. Only the proven FROM reference and listed readonly verifier constants may change; `image_ref` is the tagged image without its separately proven digest. All other verifier bytes, including floor constants, remain fixed. Catalog checksum changes remain non-routine.\n\n'
 		fi
+		if jq -e '.catalog_baseline != null' <<<"$upstream" >/dev/null; then
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'Catalog baseline policy: as the sole exception to the default catalog checksum exclusion, the signed `catalog_baseline.file` may append exactly one `<base package version> <sha256>` line and newline, preserving all existing bytes. The digest must be independently computed from the published base-version manifest in the catalog at the PR merge base using `jq -cS` plus its terminating newline. No PR-provided checksum is trusted. An unchanged baseline requires no proof.\n\n'
+		fi
 		;;
 	*) return 1 ;;
 	esac
@@ -525,6 +529,21 @@ release_companion_proof() {
 	return 0
 }
 
+# Derive the checksum exclusively from the catalog at the immutable merge base.
+release_catalog_baseline_proof() {
+	local repo="$1" merge_base="$2" contents="$3" catalog='' version='' digest=''
+	local manifest_path='CloudronManifest.json'
+	version=$(jq -er --arg path "$manifest_path" '.[$path].base | @base64d | fromjson | .version | strings' <<<"$contents") || return 1
+	catalog=$(release_raw_contents "$repo" CloudronVersions.json "$merge_base") || return 1
+	catalog=$(jq -en --arg catalog "$catalog" '$catalog | @base64d | fromjson') || return 1
+	jq -e --arg version "$version" '.versions[$version] | .publishState == "published" and (.manifest | type == "object")' <<<"$catalog" >/dev/null || return 1
+	#aidevops:trust-boundary — jq supplies the canonical manifest's terminating LF.
+	digest=$(jq -cS --arg version "$version" '.versions[$version].manifest' <<<"$catalog" | shasum -a 256) || return 1
+	digest="${digest%% *}"
+	jq -cn --arg version "$version" --arg sha256 "$digest" '{version:$version,sha256:$sha256}' || return 1
+	return 0
+}
+
 # Print the policy issue number when the signed standing policy authorizes the
 # open PR $2 at exact head $3 as a routine upstream bump. Any error fails closed.
 release_policy_authorizes() {
@@ -532,7 +551,7 @@ release_policy_authorizes() {
 	local active='' number='' policy='' snapshot='' view='' finding='' fingerprint='' compare='' merge_base=''
 	local files='' contents='{}' path='' base_content='' head_content='' document='' verdict='' rc=0
 	local finding_state='' main_sha='' mode='' finding_number='' upstream_proof='null' finding_version='' release_proof='null' pin_proof='null'
-	local companion_proof='null'
+	local companion_proof='null' catalog_baseline_proof='null'
 	active=$(release_policy_active "$repo") || return 1
 	IFS=$'\t' read -r number policy <<<"$active"
 	snapshot=$(release_pr "$repo" "$pr" 2>/dev/null) || return 1
@@ -572,7 +591,7 @@ release_policy_authorizes() {
 		head_content=$(release_raw_contents "$repo" "$path" "$head") || return 1
 		contents=$(jq -c --arg path "$path" --arg base "$base_content" --arg head "$head_content" \
 			'. + {($path): {base: $base, head: $head}}' <<<"$contents") || return 1
-	done < <(jq -r --argjson policy "$policy" '[.[].filename | select(. == "CloudronManifest.json" or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))]
+	done < <(jq -r --argjson policy "$policy" '[.[].filename | select(. == "CloudronManifest.json" or . == $policy.catalog_baseline.file or (. as $name | (($policy.pinned_files // []) + ($policy.check_files // [])) | index($name) != null))]
 		+ (if $policy.companion_image != null then ["Dockerfile", $policy.companion_image.verify_file] else [] end) | unique[]' <<<"$files")
 	if [[ "$mode" == commits ]]; then
 		upstream_proof=$(release_commit_proof "$repo" "$policy" "$finding_version" "$contents" "$finding_number") || return 1
@@ -586,8 +605,11 @@ release_policy_authorizes() {
 	if [[ "$mode" == semver ]] && jq -e 'has("companion_image")' <<<"$policy" >/dev/null; then
 		companion_proof=$(release_companion_proof "$policy" "$contents" "$release_proof") || return 1
 	fi
-	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" --argjson companion "$companion_proof" \
-		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, companion_proof:$companion, files: $files, contents: $contents}') || return 1
+	if jq -e --argjson policy "$policy" 'any(.[]; .filename == $policy.catalog_baseline.file)' <<<"$files" >/dev/null; then
+		catalog_baseline_proof=$(release_catalog_baseline_proof "$repo" "$merge_base" "$contents") || return 1
+	fi
+	document=$(jq -cn --argjson policy "$policy" --arg finding "$finding_version" --argjson files "$files" --argjson contents "$contents" --argjson proof "$upstream_proof" --argjson release "$release_proof" --argjson pin "$pin_proof" --argjson companion "$companion_proof" --argjson baseline "$catalog_baseline_proof" \
+		'{policy: $policy, finding_upstream: $finding, upstream_proof: $proof, release_proof: $release, pin_proof: $pin, companion_proof:$companion, catalog_baseline_proof:$baseline, files: $files, contents: $contents}') || return 1
 	verdict=$(printf '%s\n' "$document" | python3 "${SCRIPT_DIR}/cloudron_routine_bump.py" --repository "$repo") || rc=$?
 	if [[ "$rc" -ne 0 || "$verdict" != ROUTINE_BUMP ]]; then
 		printf '%s PR #%s: standing policy #%s does not apply (%s)\n' "$repo" "$pr" "$number" "${verdict:-predicate error}" >&2

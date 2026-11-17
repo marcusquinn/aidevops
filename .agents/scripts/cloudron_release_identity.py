@@ -19,11 +19,11 @@ FROM_REF = re.compile(r"(?m)^FROM[ \t]+(?:--[^ \t]+[ \t]+)*([^ \t@]+)@(sha256:[a
 REGISTRY_IMAGE = re.compile(r"(ghcr\.io|docker\.io)(/[a-z0-9][a-z0-9._-]*){2,4}")
 CHECKSUM_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.{}-]*")
 SHA256_HEX = re.compile(r"[a-f0-9]{64}")
-PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url", "companion_image"}
+PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "release_checksum", "license_version_url", "companion_image", "catalog_baseline"}
 POLICY_KEYS = {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
     "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
-    "license_version_url", "companion_image",
+    "license_version_url", "companion_image", "catalog_baseline",
 }
 
 
@@ -95,6 +95,25 @@ def check_release_checksum(policy):
     require(policy.get("upstream_repository") is not None, "release_checksum needs a semver upstream repository")
 
 
+def catalog_baseline_file(policy):
+    """Validate the signed, disjoint repository-relative baseline path."""
+    if "catalog_baseline" not in policy:
+        return None
+    spec = policy["catalog_baseline"]
+    require(isinstance(spec, dict) and set(spec) == {"file"}, "catalog_baseline: invalid policy")
+    path = spec["file"]
+    require(isinstance(path, str) and re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", path)
+            and ".." not in path.split("/"), "catalog_baseline: invalid path")
+    reserved = {"CloudronManifest.json", "CloudronVersions.json"}
+    for key in ("changelog_files", "pinned_files", "check_files"):
+        reserved.update(policy.get(key, []))
+    companion = policy.get("companion_image")
+    if isinstance(companion, dict):
+        reserved.update(("Dockerfile", companion.get("verify_file")))
+    require(path not in reserved, "catalog_baseline: policy file classes overlap")
+    return path
+
+
 def validate_pin_fields(policy):
     """Fail closed on unknown keys and malformed opt-in pin fields of a signed policy."""
     require(isinstance(policy, dict) and set(policy) <= POLICY_KEYS, "policy contains an unknown field")
@@ -103,6 +122,7 @@ def validate_pin_fields(policy):
             "policy upstream_repository is invalid")
     check_registry_images(policy)
     check_release_checksum(policy)
+    catalog_baseline_file(policy)
     if "companion_image" in policy:
         from cloudron_companion_image import validate_companion
         validate_companion(policy)
@@ -112,6 +132,9 @@ def validate_pins_request(policy):
     """Policy-request check for the pins mode: valid fields, at least one opt-in, optional identity shape."""
     validate_pin_fields(policy)
     require(set(policy) <= PIN_KEYS, "pins request may only set pin fields")
+    # The helper merges pins into these fixed default file classes before signing.
+    catalog_baseline_file(dict(changelog_files=["CHANGELOG", "CHANGELOG.md"],
+                               pinned_files=["Dockerfile"], check_files=["test/package-test.sh"], **policy))
     require(any(key in policy for key in PIN_KEYS - {"upstream_repository"}), "pins policy needs at least one pin field")
     identity = policy.get("release_identity")
     if "release_identity" not in policy:
