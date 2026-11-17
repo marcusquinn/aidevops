@@ -88,6 +88,8 @@ at request time. Interactive diagnostics: `model-availability-helper.sh check`.
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
 4. **Result**: dispatch selects the first healthy allowed candidate; availability failures move right within the same tier
 
+A custom table is merged per key: omitted tiers and the `providers` section inherit from the framework table, so an override needs only the keys it changes. Do not copy the whole framework table; the copy drifts when provider endpoints change.
+
 Optional worker-only balancing: set `"round_robin": true` on an individual tier
 in `custom/configs/model-routing-table.json` to rotate independent worker
 selections across distinct healthy providers. The default is `false` (priority

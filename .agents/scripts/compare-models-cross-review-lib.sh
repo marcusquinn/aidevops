@@ -95,6 +95,12 @@ _cross_review_models_for_tier() {
 	fi
 
 	models=$(jq -r --arg tier "$tier" '.tiers[$tier].models[]?' "$table_path" 2>/dev/null) || return 1
+	# Per-tier inheritance: a custom table omitting this tier falls back to the framework table.
+	# Only when the models key is absent (explicit empty arrays are kept); -ef matches equivalent paths.
+	if [[ -z "$models" && "$table_path" -ef "$custom_table" && -r "$default_table" ]] &&
+		! jq -e --arg tier "$tier" '.tiers[$tier] | has("models")' "$table_path" >/dev/null 2>&1; then
+		models=$(jq -r --arg tier "$tier" '.tiers[$tier].models[]?' "$default_table" 2>/dev/null) || return 1
+	fi
 	while IFS= read -r model; do
 		[[ -z "$model" ]] && continue
 		_cross_review_model_key "$model" >/dev/null || return 1
