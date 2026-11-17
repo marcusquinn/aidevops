@@ -187,7 +187,7 @@ get_secret_value() {
 		# \" -> " and \\ -> \ (order matters: unescape \" before \\).
 		# Trailing whitespace/CR after the closing quote is dropped first so the
 		# quote still matches, as the shell does when sourcing the line (GH#38844).
-		value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+		value=$(grep -m1 "^export ${name}=" "$cred_file" 2>/dev/null | sed 's/^export [^=]*=//' | sed 's/[[:space:]]*$//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
 		if [[ -n "$value" ]]; then
 			echo "$value"
 			return 0
