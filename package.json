@@ -57,8 +57,7 @@
   "dependencies": {
     "elysia": "1.4.31",
     "file-type": "21.3.4",
-    "hono": "4.13.16",
-    "picomatch": "^4.0.7"
+    "hono": "4.13.16"
   },
   "devDependencies": {
     "@secretlint/secretlint-rule-preset-recommend": "13.1.0",
