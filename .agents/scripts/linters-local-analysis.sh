@@ -1022,7 +1022,7 @@ check_python_annotation_compat() {
 		return 0
 	fi
 	printf '%s\n' "$output"
-	print_error "Python 3.9 annotations: runtime PEP 604 unions found (see above)"
+	print_error "Python 3.9 annotations: runtime PEP 604 unions or 3.10+ typing imports found (see above)"
 	return 1
 }
 

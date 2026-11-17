@@ -5,7 +5,9 @@ the legacy lifecycle. See [DESIGN.md](DESIGN.md) for the full architecture.
 
 ## Process observation
 
-Python 3.10+; standard library only. No installation, daemon, database or scheduler
+Python 3.9+ at runtime (the framework floor: macOS `/usr/bin/python3`; static checks
+target 3.10, so keep 3.10+ `typing` names under `TYPE_CHECKING`, GH#38706); standard
+library only. No installation, daemon, database or scheduler
 is needed for this slice. No command changes worktrees, ownership, legacy state,
 or processes. Python bytecode writes can be disabled with `-B` as below.
 
