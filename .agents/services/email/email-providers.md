@@ -136,7 +136,8 @@ The domain registration and DNS **can remain at Cloudflare or any other registra
 
 - **Cloudflare**: set the CNAMEs to **DNS only** (grey cloud) and enter the short host name, because Cloudflare appends the zone. DKIM must be CNAME; publishing it as TXT breaks signing.
 - **Verify**: hPanel > Emails > Mailboxes > Domain settings > **Check status**. Propagation can take 12-24 h.
-- **Also sending via SES**: SPF needs both includes (see `services/email/ses.md`).
+- **Existing records**: switching inbound mail means replacing the old provider's MX records, not adding to them (a lower-priority-number old MX stays preferred). Keep one SPF record per host: merge the Hostinger include into any existing `v=spf1` record rather than adding a second. Keep an existing `_dmarc` policy; add the example only when none exists.
+- **Also sending via SES**: the apex SPF record needs only the Hostinger include unless SES uses the apex as its envelope sender; a custom MAIL FROM subdomain carries its own MX and SPF records (see `services/email/ses.md`).
 - **Client settings**: IMAP `imap.hostinger.com:993` TLS, SMTP `smtp.hostinger.com:465` TLS, POP3 `pop.hostinger.com:995` TLS (IMAP preferred). Username is the full address; use an app password when 2FA is on.
 - **Pricing**: plans are prepaid, the headline price is a long-term (48-month) rate, and renewal is typically several times the intro price. Compare renewal price per mailbox, not intro price; check current renewal pricing. Contrast: Purelymail has a flat annual price with unlimited domains/users (`services/email/purelymail.md`).
 - **Privacy**: rated C because the privacy policy describes marketing analysis and ad-platform targeting; it does not state that mailbox content is scanned. Operator: Hostinger International Ltd (Cyprus).
