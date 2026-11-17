@@ -213,9 +213,11 @@ run_cmd_with_timeout() {
 _pulse_dispatch_lease_active() {
 	local owner="" heartbeat="" now="" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	[[ "${PULSE_ELASTIC_DISPATCH_ENABLED:-1}" == 1 && -n "${LOCKDIR:-}" ]] || return 1
-	read -r owner <"${LOCKDIR}/pid" 2>/dev/null || return 1
+	# Silence stderr before opening: after lock release (supervisor phase) the
+	# lock files are absent and `<file 2>/dev/null` would still log the error.
+	read -r owner 2>/dev/null <"${LOCKDIR}/pid" || return 1
 	[[ "$owner" == "$$" ]] && kill -0 "$owner" 2>/dev/null || return 1
-	read -r heartbeat <"${LOCKDIR}/supervisor_heartbeat_epoch" 2>/dev/null || return 1
+	read -r heartbeat 2>/dev/null <"${LOCKDIR}/supervisor_heartbeat_epoch" || return 1
 	[[ "$heartbeat" =~ ^[1-9][0-9]*$ && "$ceiling" =~ ^[1-9][0-9]*$ ]] || return 1
 	now=$(date +%s) || return 1
 	((heartbeat <= now && now - heartbeat <= ceiling)) || return 1
