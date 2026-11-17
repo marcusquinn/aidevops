@@ -170,6 +170,26 @@ def mask_image(text, companion, side):
     return pattern.sub(lambda match: match[1] + "companion:<proven>", text, count=1)
 
 
+def companion_verify_file(policy, protected):
+    if "companion_image" not in policy:
+        return None
+    path = validate_companion(policy)["verify_file"]
+    require(path not in protected, "companion_image: verify file overlaps build or changelog files")
+    return path
+
+
+def companion_pinned_changes_ok(named_texts, companion, identity, pins, mapping_sets):
+    from cloudron_pinned_changes import pinned_changes_ok
+    name, base_text, head_text = named_texts
+    if name == "Dockerfile" and companion:
+        base_text, head_text = mask_image(base_text, companion, "base"), mask_image(head_text, companion, "head")
+        # An image-only change becomes identical after the exact FROM mask.
+        # Never skip a separately opted-in ARG/checksum proof.
+        if base_text == head_text and identity is None and pins["checksum"] is None:
+            return True
+    return pinned_changes_ok((base_text, head_text), identity, pins, mapping_sets)
+
+
 def run_json(*args):
     require(args[0] in ("gh", "curl"), "companion_image: unsupported proof command")
     executable = shutil.which(args[0])

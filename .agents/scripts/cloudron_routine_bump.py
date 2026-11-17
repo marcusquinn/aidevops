@@ -43,8 +43,7 @@ from cloudron_release_identity import (
     pin_policy, validate_pins_request,
     release_identity, require, substitute_versions,
 )
-from cloudron_pinned_changes import pinned_changes_ok
-from cloudron_companion_image import companion_proof, mask_image, validate_companion
+from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
@@ -229,9 +228,9 @@ def check(doc, repository):
     classes = {key: policy_paths(policy, key) for key in POLICY_FILE_CLASSES}
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
-    companion_spec = validate_companion(policy) if "companion_image" in policy else None
-    verify_file = companion_spec["verify_file"] if companion_spec else None
-    require(verify_file not in changelogs | pinned, "companion_image: verify file overlaps build or changelog files")
+    verify_file = companion_verify_file(policy, changelogs | pinned)
+    # Companion verification is byte-exact, never generic version substitution.
+    checks = checks - {verify_file}
     check_pattern = insertion_pattern(policy)
 
     files = doc.get("files")
@@ -282,10 +281,6 @@ def check(doc, repository):
     changelog_changed = False
     for entry in files:
         name = entry["filename"]
-        if name == verify_file:
-            # Checked byte-for-byte outside the six proven readonly constants,
-            # even when the signed generic check-file class also names it.
-            continue
         if name in changelogs:
             additions, deletions = entry.get("additions"), entry.get("deletions")
             require(isinstance(additions, int) and isinstance(deletions, int) and additions > 0 and deletions == 0,
@@ -293,15 +288,10 @@ def check(doc, repository):
             changelog_changed = True
         elif name in pinned:
             base_text, head_text = file_text(contents, name, "base"), file_text(contents, name, "head")
-            if name == "Dockerfile" and companion:
-                base_text, head_text = mask_image(base_text, companion, "base"), mask_image(head_text, companion, "head")
-                # An image-only change becomes identical after the exact FROM
-                # mask. Never skip a separately opted-in ARG/checksum proof.
-                if base_text == head_text and identity is None and pins["checksum"] is None:
-                    continue
             # aidevops:trust-boundary — shipped build inputs may change only by
             # replacing the old upstream version with the new one.
-            require(pinned_changes_ok((base_text, head_text), identity, pins, (pinned_mappings, [{old_up: new_up}])),
+            require(companion_pinned_changes_ok((name, base_text, head_text), companion, identity, pins,
+                                                 (pinned_mappings, [{old_up: new_up}])),
                     name + ": pinned file changes beyond version substitution")
         elif name in checks:
             check_file_changes(name, file_text(contents, name, "base"), file_text(contents, name, "head"),
