@@ -368,6 +368,10 @@ EOF
 		echo "BRH_FAIL blender download ${url}"
 		return 1
 	fi
+	if ! command -v sha256sum >/dev/null 2>&1; then
+		echo "BRH_FAIL sha256sum not found in the image (coreutils required to verify Blender)"
+		return 1
+	fi
 	if ! echo "${bsha}  ${tarball}.tar.xz" | sha256sum -c - >/dev/null; then
 		echo "BRH_FAIL blender sha256 mismatch for ${tarball}.tar.xz"
 		return 1
