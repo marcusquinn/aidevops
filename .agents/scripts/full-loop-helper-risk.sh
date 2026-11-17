@@ -71,9 +71,25 @@ _runtime_risk_rank() {
 	return 0
 }
 
+# App-test definitions in catalog repos (GH#38640): only the root-anchored
+# blueprints/<app>/test.yml form. A global test.yml basename would also match
+# test-environment config, and repo-declared globs would let a change downgrade
+# its own risk, so neither is accepted here.
+_runtime_path_is_app_test_definition() {
+	local path="$1"
+	local rest="${path#blueprints/}"
+	[[ "$rest" != "$path" ]] || return 1
+	case "$rest" in
+	*/*/*) return 1 ;;
+	?*/test.yml | ?*/test.yaml) return 0 ;;
+	esac
+	return 1
+}
+
 # Low-risk paths are the non-runtime categories listed in full-loop.md.
 _runtime_path_is_low() {
 	local path="$1"
+	_runtime_path_is_app_test_definition "$path" && return 0
 	case "$path" in
 	*.md | *.mdx | *.rst | *.adoc | docs/*.txt | */docs/*.txt | README | README.* | */README | */README.* | CHANGELOG* | */CHANGELOG* | LICENSE | LICENSE.* | */LICENSE | */LICENSE.* | \
 		*.d.ts | *.d.mts | *.d.cts | *.pyi | */tests/* | */test/* | */__tests__/* | \
