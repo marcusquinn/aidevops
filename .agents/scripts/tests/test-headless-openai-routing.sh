@@ -41,7 +41,8 @@ setup_test_env() {
 	mkdir -p "${HOME}/.local/share/opencode" "${HOME}/.aidevops/logs"
 	export OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 	unset OPENAI_API_KEY ANTHROPIC_API_KEY
-	printf '{"openai":{"type":"oauth","access":"test-openai-access"},"anthropic":{"type":"oauth","access":"test-anthropic-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	# API-key OpenAI auth: the ChatGPT OAuth denylist (GH#38901) does not apply.
+	printf '{"openai":{"type":"api","key":"test-openai-key"},"anthropic":{"type":"oauth","access":"test-anthropic-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	return 0
 }
 
@@ -95,6 +96,24 @@ test_openai_allowlist_selects_thinking_tier_model() {
 	return 0
 }
 
+# GH#38901: under ChatGPT OAuth, worker selection skips models the routing
+# table lists in chatgpt_oauth_restrictions.openai_unsupported, matching the
+# dispatch-side resolver, instead of spending an attempt on a known rejection.
+test_chatgpt_oauth_skips_unsupported_models() {
+	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	local standard="" thinking="" thinking_status=0
+	standard=$(select_model standard)
+	thinking=$(select_model thinking 2>/dev/null) || thinking_status=$?
+	printf '{"openai":{"type":"api","key":"test-openai-key"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	if [[ "$standard" == "openai/gpt-6.1-terra" && -z "$thinking" && "$thinking_status" -eq 75 ]]; then
+		print_result "ChatGPT OAuth skips denylisted OpenAI models" 0
+		return 0
+	fi
+	print_result "ChatGPT OAuth skips denylisted OpenAI models" 1 \
+		"standard=${standard:-<empty>} thinking=${thinking:-<empty>} thinking_status=${thinking_status}"
+	return 0
+}
+
 test_openai_allowlist_requires_openai_auth_entry() {
 	printf '{"anthropic":{"type":"oauth","access":"test-anthropic-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	local selected=""
@@ -145,7 +164,8 @@ test_entitlement_rejections_classify_as_model_unavailable() {
 }
 
 test_entitlement_backoff_is_model_scoped() {
-	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	# API-key auth keeps Sol eligible, so only the learned backoff can skip it.
+	printf '{"openai":{"type":"api","key":"test-openai-key"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	local status="" standard="" simple=""
 	bash "$HELPER_SCRIPT" backoff set openai/gpt-6.1-sol model_unavailable 3600
 	status=$(bash "$HELPER_SCRIPT" backoff status)
@@ -163,12 +183,12 @@ test_entitlement_backoff_is_model_scoped() {
 }
 
 test_entitlement_backoff_clears_on_auth_change() {
-	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	printf '{"openai":{"type":"api","key":"test-openai-key"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	local before="" after=""
 	bash "$HELPER_SCRIPT" backoff set openai/gpt-6.1-sol model_unavailable 3600
 	before=$(select_model standard)
-	# A re-login (new token) changes the auth signature and clears the record.
-	printf '{"openai":{"type":"oauth","access":"test-openai-access-relogin"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	# A re-login (new credential) changes the auth signature and clears the record.
+	printf '{"openai":{"type":"api","key":"test-openai-key-relogin"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	# The signature uses whole-second mtime; force a distinct one so a rewrite in
 	# the same second cannot leave the signature unchanged (flaky on fast runs).
 	touch -d '2 minutes' "${HOME}/.local/share/opencode/auth.json" 2>/dev/null ||
@@ -187,6 +207,7 @@ main_test() {
 	test_openai_allowlist_selects_standard_tier_model
 	test_openai_allowlist_selects_simple_tier_model
 	test_openai_allowlist_selects_thinking_tier_model
+	test_chatgpt_oauth_skips_unsupported_models
 	test_openai_allowlist_requires_openai_auth_entry
 	test_standard_alternatives_are_scoped
 	test_entitlement_rejections_classify_as_model_unavailable

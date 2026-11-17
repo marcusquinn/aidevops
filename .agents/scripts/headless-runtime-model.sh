@@ -86,9 +86,45 @@ _tier_has_allowlisted_candidates() {
 	return 1
 }
 
+# GH#38901: print OpenAI model IDs that ChatGPT OAuth (Codex) auth rejects, one
+# per line, only when OpenCode records OpenAI auth as OAuth. Mirrors
+# model-availability-probe-lib.sh _chatgpt_oauth_denylist_check so worker
+# same-tier fallback skips the models dispatch-time resolution already skips.
+# The first routing table that defines the list wins (custom, then framework).
+_headless_chatgpt_oauth_unsupported_ids() {
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	local table=""
+	[[ -f "$auth_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+	jq -e '.openai.type == "oauth"' "$auth_file" >/dev/null 2>&1 || return 0
+	for table in "$(model_routing_table_path 2>/dev/null)" "$(model_routing_framework_table_path 2>/dev/null)"; do
+		[[ -n "$table" && -r "$table" ]] || continue
+		if jq -e '(.chatgpt_oauth_restrictions.openai_unsupported | type) == "array"' "$table" >/dev/null 2>&1; then
+			jq -r '.chatgpt_oauth_restrictions.openai_unsupported[] | strings' "$table" 2>/dev/null || true
+			return 0
+		fi
+	done
+	return 0
+}
+
+# Return success when model_id matches a denied ID exactly or as a dated
+# snapshot (<id>-YYYY-MM-DD).
+_headless_model_id_denied() {
+	local model_id="$1"
+	local denied_ids="$2"
+	local denied="" snapshot_pattern=""
+	while IFS= read -r denied; do
+		[[ -n "$denied" ]] || continue
+		[[ "$model_id" != "$denied" ]] || return 0
+		snapshot_pattern="^${denied//./\\.}-[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+		[[ ! "$model_id" =~ $snapshot_pattern ]] || return 0
+	done <<<"$denied_ids"
+	return 1
+}
+
 # Derive the headless model list from the routing table (GH#17769).
 # Flow: routing table standard tier -> optional provider allowlist -> providers with
-# usable auth at dispatch time. This eliminates AIDEVOPS_HEADLESS_MODELS as a
+# usable auth at dispatch time -> ChatGPT OAuth denylist (GH#38901). This eliminates AIDEVOPS_HEADLESS_MODELS as a
 # user-configurable env var while allowing temporary provider pinning via
 # AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
 get_configured_models() {
@@ -97,6 +133,7 @@ get_configured_models() {
 	tier_name=$(_normalize_headless_tier "$requested_tier")
 	local -a models=()
 	local provider model
+	local oauth_denied_ids="" oauth_denied_loaded=false
 
 	# Backward compatibility: if legacy env var is still set, log deprecation
 	# warning but respect it as an override for one release cycle.
@@ -127,6 +164,15 @@ get_configured_models() {
 			fi
 			if ! provider_oauth_pool_available "$provider"; then
 				continue
+			fi
+			if [[ "$provider" == "openai" ]]; then
+				if [[ "$oauth_denied_loaded" == false ]]; then
+					oauth_denied_ids=$(_headless_chatgpt_oauth_unsupported_ids)
+					oauth_denied_loaded=true
+				fi
+				if [[ -n "$oauth_denied_ids" ]] && _headless_model_id_denied "${model#*/}" "$oauth_denied_ids"; then
+					continue
+				fi
 			fi
 
 			models+=("$model")
