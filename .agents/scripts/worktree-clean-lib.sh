@@ -1936,6 +1936,13 @@ _clean_capacity_checkpoint() {
 	local wt_path="$1"
 	[[ "${_WT_CLEAN_CAPACITY_MODE:-false}" == true ]] || return 0
 	[[ "$capacity_attempted" -lt 20 ]] || return 1
+	# t19076 (GH#38818): stop before the caller's hard timeout instead of being
+	# killed inside `git worktree remove`, which left half-deleted trees.
+	local deadline="${AIDEVOPS_WORKTREE_CLEAN_DEADLINE_EPOCH:-}"
+	if [[ "$deadline" =~ ^[0-9]{9,11}$ ]] && [[ "$(date +%s)" -ge "$deadline" ]]; then
+		echo "Capacity pass: deadline reached; no further removals this pass" >&2
+		return 1
+	fi
 	# Write ahead so a slow/interrupted removal cannot starve later trees.
 	printf '%s\n' "$wt_path" >"$_WT_CLEAN_CAPACITY_CURSOR" || return 1
 	capacity_attempted=$((capacity_attempted + 1))
