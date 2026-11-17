@@ -32,8 +32,8 @@ RECOVERABLE_FALLBACK_SOURCE="${TEST_ROOT}/recoverable-fallback-source"
 RECOVERABLE_FALLBACK_HOME="${TEST_ROOT}/recoverable-fallback-home"
 RECOVERABLE_FALLBACK_BIN="${TEST_ROOT}/recoverable-fallback-bin"
 SHIM_BIN="${TEST_ROOT}/bin"
-TEST_PATH="${SHIM_BIN}:/usr/bin:/bin:/usr/sbin:/sbin"
-FAILING_GIT="${TEST_ROOT}/failing-git"
+TEST_BASH_DIR=$(dirname "$(command -p -v bash)")
+TEST_PATH="${SHIM_BIN}:${TEST_BASH_DIR}:/usr/bin:/bin:/usr/sbin:/sbin"
 QUERY_FAILING_GIT="${TEST_ROOT}/query-failing-git"
 MALFORMED_QUERY_GIT="${TEST_ROOT}/malformed-query-git"
 ALIAS_QUERY_GIT="${TEST_ROOT}/alias-query-git"
@@ -61,19 +61,47 @@ mkdir -p "$REPO" "$SHIM_BIN"
 # repository registry. Keep this fixture explicitly managed so the direct-prune
 # assertion does not depend on the developer's personal repos.json.
 printf '{}\n' >"${REPO}/.aidevops.json"
+# An unregistered .aidevops.json marker inside a temp root is deliberately
+# exempt from the canonical guard (and mktemp roots are temp roots on CI), so
+# register the fixture through an isolated repository registry instead.
+# The lifecycle executor reads "$HOME/.config/aidevops/repos.json" for the
+# fixture HOME used by the helper invocations below.
+AIDEVOPS_REPOS_FILE="${TEST_ROOT}/home/.config/aidevops/repos.json"
+mkdir -p "${AIDEVOPS_REPOS_FILE%/*}"
+printf '{"initialized_repos":[{"slug":"testowner/testrepo","path":"%s"}]}\n' "$REPO" >"$AIDEVOPS_REPOS_FILE"
+export AIDEVOPS_REPOS_FILE
+# Registry-driven retirement reads the repository config under $HOME.
+export HOME="${TEST_ROOT}/home"
 printf 'seed\n' >"${REPO}/README.md"
 "$TEST_NATIVE_GIT" -C "$REPO" add README.md
 "$TEST_NATIVE_GIT" -C "$REPO" commit -q -m seed
-"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/prune-test "$LINKED"
-"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/prune-failure "$FAILED_LINKED"
-"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-success "$RECOVERABLE_LINKED"
+# Registry-authorised retirement (GH#38667) refuses trees the lifecycle registry
+# did not enrol, so the removed fixture is created through the registry path.
+AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/lifecycle-state"
+export AIDEVOPS_LIFECYCLE_STATE_DIR
+# Args: $1=worktree path, $2=new branch name.
+create_enrolled_worktree() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local creator_pid=""
+	# Short-lived creator: retirement waits for the creating caller to exit.
+	sleep 2 &
+	creator_pid=$!
+	python3 "${SCRIPT_DIR}/../worker-lifecycle/worker-registry.py" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
+		create-worktree --repo "$REPO" --path "$wt_path" --ref HEAD --pid "$creator_pid" \
+		--session-id fixture-creator --initialize -- -b "$wt_branch" >/dev/null
+	wait "$creator_pid" || true
+	return 0
+}
+create_enrolled_worktree "$LINKED" feature/prune-test
+create_enrolled_worktree "$RECOVERABLE_LINKED" feature/recoverable-success
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-missing "$RECOVERABLE_MISSING_LINKED"
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-move-failure "$MOVE_FAILED_LINKED"
-"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-prune-failure "$PRUNE_FAILED_LINKED"
+create_enrolled_worktree "$PRUNE_FAILED_LINKED" feature/recoverable-prune-failure
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-remove-failure "$REMOVE_FAILED_LINKED"
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-dirty "$DIRTY_LINKED"
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-ownership "$OWNERSHIP_LINKED"
-"$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-integration "$INTEGRATION_LINKED"
+create_enrolled_worktree "$INTEGRATION_LINKED" feature/recoverable-integration
 "$TEST_NATIVE_GIT" -C "$REPO" worktree add -q -b feature/recoverable-home-archive "$RECOVERABLE_FALLBACK_SOURCE"
 ln -s "$GIT_SHIM" "${SHIM_BIN}/git"
 
@@ -99,34 +127,12 @@ fi
 
 printf 'PASS worktree-helper prunes metadata with canonical Git shim active\n'
 
-cat >"$FAILING_GIT" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$*" == *"worktree prune"* ]]; then
-	exit 1
-fi
-if [[ "$*" == *"worktree list --porcelain -z"* ]]; then
-	"$TEST_NATIVE_GIT" "$@" || exit 1
-	printf 'worktree %s\n\n' "${FAILED_LINKED_FOR_TEST:?}"
-	exit 0
-fi
-exec "$TEST_NATIVE_GIT" "$@"
-EOF
-chmod +x "$FAILING_GIT"
-
-if output=$(
-	cd "$REPO" || exit 1
-	HOME="${TEST_ROOT}/home" PATH="$TEST_PATH" AIDEVOPS_REAL_GIT_BIN="$FAILING_GIT" \
-		FAILED_LINKED_FOR_TEST="$FAILED_LINKED" \
-		bash "${SCRIPT_DIR}/worktree-helper.sh" remove "$FAILED_LINKED" 2>&1
-); then
-	printf 'FAIL worktree-helper reported success when metadata prune failed\n'
-	exit 1
-fi
-if [[ "$output" != *"Partial cleanup:"* || "$output" != *"Recovery:"* ]]; then
-	printf 'FAIL prune failure omitted partial-cleanup recovery guidance: %s\n' "$output"
-	exit 1
-fi
-printf 'PASS worktree-helper returns partial-cleanup guidance when metadata prune fails\n'
+# SKIP: `worktree-helper.sh remove` retires through the lifecycle registry
+# (GH#38667) and never runs the archive-first `worktree prune` step, so a prune
+# failure cannot be injected through that command any more. The partial-cleanup
+# contract stays covered below by the direct prune_missing_worktree_metadata
+# and _clean_remove_classified_worktree prune-failure cases.
+printf 'SKIP worktree-helper prune-failure guidance: remove is registry-driven (GH#38667); covered by direct prune cases below\n'
 
 cat >"$QUERY_FAILING_GIT" <<'EOF'
 #!/usr/bin/env bash
@@ -363,6 +369,13 @@ if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree 
 fi
 printf 'PASS absent recoverable source continues through verified metadata pruning\n'
 
+# Registry retirement (GH#38667) keeps its recovery archives under the
+# lifecycle archive root, not the legacy trash root.
+count_registry_archives() {
+	find "${HOME}/.aidevops/recovery/archives" -name untracked-files.txt 2>/dev/null | wc -l | tr -d ' '
+	return 0
+}
+archives_before_recoverable=$(count_registry_archives)
 recovery_output=$(
 	cd "$REPO" || exit 1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$RECOVERABLE_TRASH" \
@@ -381,8 +394,8 @@ if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree 
 	printf 'FAIL recoverable cleanup left exact Git worktree metadata registered\n'
 	exit 1
 fi
-compgen -G "${RECOVERABLE_TRASH}/*/recoverable-linked" >/dev/null || {
-	printf 'FAIL recoverable cleanup did not preserve candidate files in trash\n'
+[[ "$(count_registry_archives)" -gt "$archives_before_recoverable" ]] || {
+	printf 'FAIL recoverable cleanup did not preserve a registry recovery archive\n'
 	exit 1
 }
 printf 'PASS degraded cleanup emits completion only after archive retention and exact metadata absence\n'
@@ -398,7 +411,8 @@ fi
 	printf 'FAIL recoverable archive preparation removed the registered source\n'
 	exit 1
 }
-[[ -d "$_WT_CLEAN_RECOVERABLE_ARCHIVE_PATH" && -e "$_WT_CLEAN_RECOVERABLE_ARCHIVE_PATH/.git" ]] || {
+# Recoverable archives are compact git-only captures with a manifest.
+[[ -d "$_WT_CLEAN_RECOVERABLE_ARCHIVE_PATH" && -f "$_WT_CLEAN_RECOVERABLE_ARCHIVE_PATH/manifest.json" ]] || {
 	printf 'FAIL recoverable cleanup did not create a complete home trash archive\n'
 	exit 1
 }
@@ -425,6 +439,7 @@ fi
 printf 'PASS recoverable archive failure remains fail-closed with zero completion events\n'
 
 prune_failure_output=""
+archives_before_prune_failure=$(count_registry_archives)
 if prune_failure_output=$(
 	cd "$REPO" || exit 1
 	prune_missing_worktree_metadata() {
@@ -448,13 +463,18 @@ if "$TEST_NATIVE_GIT" -C "$REPO" worktree list --porcelain | grep -Fx "worktree 
 	printf 'FAIL native Git removal left stale metadata before verification failed\n'
 	exit 1
 fi
-compgen -G "${RECOVERABLE_TRASH}/aidevops-worktree-cleanup-*/prune-failed-linked" >/dev/null || {
+[[ "$(count_registry_archives)" -gt "$archives_before_prune_failure" ]] || {
 	printf 'FAIL metadata verification failure lost the recoverable archive\n'
 	exit 1
 }
 printf 'PASS metadata verification failure retains its archive and emits zero completion events\n'
 
 remove_failure_output=""
+count_producer_archives() {
+	find "$RECOVERABLE_TRASH" -name manifest.json 2>/dev/null | wc -l | tr -d ' '
+	return 0
+}
+producer_archives_before_remove_failure=$(count_producer_archives)
 if remove_failure_output=$(
 	cd "$REPO" || exit 1
 	remove_archived_worktree_path() {
@@ -476,7 +496,7 @@ printf '%s\n' "$remove_failure_metadata" | grep -Fqx "worktree $REMOVE_FAILED_LI
 	printf 'FAIL native removal failure pruned exact metadata\n'
 	exit 1
 }
-compgen -G "${RECOVERABLE_TRASH}/aidevops-worktree-cleanup-*/remove-failed-linked" >/dev/null || {
+[[ "$(count_producer_archives)" -gt "$producer_archives_before_remove_failure" ]] || {
 	printf 'FAIL native removal failure lost its completed archive\n'
 	exit 1
 }
