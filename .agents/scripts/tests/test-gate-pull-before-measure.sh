@@ -429,7 +429,8 @@ test_refresh_fetches_absent_tip_objects_without_ref_changes() {
 		local probe_rc=0
 		git -C "$sandbox" fetch aidevops-guard-probe-missing >/dev/null 2>&1 || probe_rc=$?
 		printf 'guard-probe-rc=%s\n' "$probe_rc" >>"$LOGFILE"
-		declare -A _PULSE_REFRESHED_THIS_CYCLE=()
+		# The sourced wrapper declares the associative sentinel; reset it only.
+		_PULSE_REFRESHED_THIS_CYCLE=()
 		_pulse_refresh_repo "$sandbox" 2>>"$LOGFILE"
 		_large_file_gate_issue_labels() { printf ''; return 0; }
 		_large_file_gate_issue_title() { printf 'Issue 9998'; return 0; }
