@@ -67,7 +67,11 @@ def git_index_state(path, head=None, dirs=None):
         raise ValueError("index has skip-worktree/assume-unchanged entries")
     # Index-only metadata reads, not a working-tree scan or restore verification.
     options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
-    if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
+    visible = git(root, "diff", *options, "--ita-visible-in-index")
+    # An empty visible view does not prove equality: an intent-to-add entry for
+    # a file that HEAD holds as an empty blob is visible-empty but invisible-deleted.
+    invisible = git(root, "diff", *options, "--ita-invisible-in-index")
+    if visible != invisible:
         raise ValueError("intent-to-add index entries cannot be represented by two patches")
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
