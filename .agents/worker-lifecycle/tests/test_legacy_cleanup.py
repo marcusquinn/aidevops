@@ -119,12 +119,14 @@ class LegacyProcContract(unittest.TestCase):
                 self.assertEqual(counts["skipped_nondumpable"], 1)
 
     def test_newer_daemon_with_unproven_parent_fails_closed(self):
-        for parent_name, parent_uid in (("bash", 0), ("sshd", os.geteuid())):
+        unprivileged = 4242
+        for parent_name, parent_uid in (("bash", 0), ("sshd", unprivileged)):
             with self.subTest(parent=parent_name, uid=parent_uid):
-                self.write_parent(parent_name, parent_uid)
-                self.write_daemon("sshd-session")
-                with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
-                    self.census()
+                with patch.object(legacy_proc.os, "geteuid", return_value=unprivileged):
+                    self.write_parent(parent_name, parent_uid)
+                    self.write_daemon("sshd-session")
+                    with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                        self.census()
 
     def test_missing_clock_and_worktree_evidence_fail_closed(self):
         for path in (self.task / "stat", self.proc / "stat", self.target / ".git"):

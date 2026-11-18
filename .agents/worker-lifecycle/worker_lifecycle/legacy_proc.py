@@ -11,7 +11,7 @@ import platform
 
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
-from .protected_proc import ProcessCensusUnavailable, require_protected_references
+from .protected_proc import OPT_IN, ProcessCensusUnavailable, require_protected_references
 
 
 NON_HOLDER_DAEMONS = frozenset({
@@ -111,7 +111,10 @@ def _is_root_sshd_session(fields, proc):
     parent = fields.get("PPid", "").strip()
     if not parent.isdecimal() or int(parent) <= 1:
         return False
-    parent_fields = _status_fields(proc / parent / "status")
+    try:
+        parent_fields = _status_fields(proc / parent / "status")
+    except OSError:
+        return False  # Unproven parent: fall through to the age check.
     uids = parent_fields.get("Uid", "").split()
     return (parent_fields.get("Name", "").strip() in _SSHD_NAMES and len(uids) == 4
             and set(uids) == {"0"})
@@ -124,6 +127,12 @@ def require_predating_daemon(path, task, proc):
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
         if _is_root_sshd_session(fields, proc):
+            # Policy: with protected inspection opted in, descriptor evidence is
+            # required (a root parent may pass an inherited -E log fd into the
+            # worktree). Without it the exemption applies so default
+            # configurations are not blocked by unrelated logins.
+            if os.environ.get(OPT_IN) == "1":
+                require_protected_references(path, task, proc)
             counts = _observations.get()
             if counts is not None:
                 counts["skipped_nondumpable"] += 1
