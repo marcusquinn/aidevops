@@ -390,8 +390,13 @@ jobs:
   # contracts and must remain a required main-branch status check. A reusable
   # workflow permission widening can otherwise break mutable @main callers
   # even though this job reports the incompatible ceiling after the PR lands.
-  framework-validation:
-    name: Framework Validation
+  # GH#38925: Framework Validation's independent step groups run as parallel
+  # shards; the `framework-validation` job below keeps the required context
+  # name and passes only when every shard passes. Serially the job took ~731s
+  # and was the last required check on most PRs. Shard names must never equal
+  # a required context.
+  framework-validation-core:
+    name: Framework Validation (core)
     needs: detect-scope
     if: needs.detect-scope.outputs.substantive == 'true'
     runs-on: ubuntu-latest
@@ -537,42 +542,6 @@ jobs:
         bash .agents/scripts/tests/test-vault-security-suite.sh
         echo "Vault security validation suite passed"
 
-    - name: Profile README Boundary Guard
-      run: |
-        echo "Running profile README boundary regression guard..."
-        bash .agents/scripts/tests/test-profile-readme-boundary.sh
-        echo "Profile README boundary guard passed"
-
-    - name: Profile README Contributions Fail-Closed Guard
-      run: |
-        echo "Running profile README contributions fail-closed regression guard..."
-        # The real /proc census fails closed on unreadable same-UID tasks, so
-        # run outside the runner UID (see Worker Lifecycle contract step).
-        sudo useradd --create-home --shell /bin/bash profile-contract
-        dir="$GITHUB_WORKSPACE"
-        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
-        # Fixture cleanup needs a registered managed-run owner, which needs the
-        # user's systemd manager AND the separate D-Bus user-session socket.
-        # Linger starts the manager but does not provide/activate the bus units.
-        sudo apt-get update -qq
-        sudo apt-get install -y dbus-user-session
-        sudo loginctl enable-linger profile-contract
-        uid="$(id -u profile-contract)"
-        sudo systemctl start "user@${uid}.service"
-        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
-          systemctl --user start dbus.socket
-        for _ in $(seq 1 30); do
-          sudo test -S "/run/user/$uid/bus" && break
-          sleep 1
-        done
-        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
-        sudo -H -u profile-contract env PATH="$PATH" \
-          XDG_RUNTIME_DIR="/run/user/$uid" \
-          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
-          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
-          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
-        echo "Profile README contributions fail-closed guard passed"
-
     - name: Stats Functions Characterization (t2044)
       run: |
         echo "Running stats-functions.sh characterization tests..."
@@ -608,13 +577,120 @@ jobs:
         bash .agents/scripts/tests/test-pulse-merge-phantom-pending-checks.sh
         echo "Approve collaborator author guard test passed"
 
+    - name: Bash Expansion Pattern Guard (GH#19966)
+      run: |
+        # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
+        # expansion (default="{") and appends the trailing "}" as a literal,
+        # corrupting non-empty args with a spurious trailing }. Use the
+        # explicit-fallback idiom instead: "${2:-}" then [[ -n "$x" ]] || x="{}".
+        echo "Checking for buggy \${N:-{}} bash parameter expansion pattern..."
+        if rg -n '\$\{[0-9]+:-\{\}\}' .agents/scripts/ --type sh \
+             --glob '!.agents/scripts/tests/**' 2>/dev/null; then
+          echo ""
+          echo "ERROR: Found \${N:-{}} expansion(s) above. Replace with the"
+          echo "       explicit-fallback idiom (GH#19966):"
+          echo "         local x=\"\${N:-}\""
+          echo "         [[ -n \"\$x\" ]] || x=\"{}\""
+          exit 1
+        fi
+        echo "No \${N:-{}} expansion patterns found."
+        echo "Delta prefetch regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
+        echo "Delta prefetch regression tests passed"
+
+    - name: Worker Count and Capacity Tests (GH#21873)
+      run: |
+        # Regression guard for list_dispatchable_issue_candidates,
+        # count_runnable_candidates, count_queued_without_worker, and
+        # related capacity/governor functions in pulse-capacity.sh.
+        # Catches the gh_issue_list/gh_pr_list mock bypass via timeout (GH#21873)
+        # and the statusCheckRollup → REST check-runs migration (GH#21799).
+        echo "Running pulse worker count / capacity regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
+        # GH#35537 owner directive: worker admission is RAM-only. Fails if
+        # admission reads CPU load, CPU idle or core counts.
+        bash .agents/scripts/tests/test-pulse-ram-admission.sh
+        echo "Worker count / capacity regression tests passed"
+
+  framework-validation-profile-boundary:
+    name: Framework Validation (profile boundary)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
+    - name: Profile README Boundary Guard
+      run: |
+        echo "Running profile README boundary regression guard..."
+        bash .agents/scripts/tests/test-profile-readme-boundary.sh
+        echo "Profile README boundary guard passed"
+
+  framework-validation-profile-contributions:
+    name: Framework Validation (profile contributions)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
+    - name: Profile README Contributions Fail-Closed Guard
+      run: |
+        echo "Running profile README contributions fail-closed regression guard..."
+        # The real /proc census fails closed on unreadable same-UID tasks, so
+        # run outside the runner UID (see Worker Lifecycle contract step).
+        sudo useradd --create-home --shell /bin/bash profile-contract
+        dir="$GITHUB_WORKSPACE"
+        while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+        # Fixture cleanup needs a registered managed-run owner, which needs the
+        # user's systemd manager AND the separate D-Bus user-session socket.
+        # Linger starts the manager but does not provide/activate the bus units.
+        sudo apt-get update -qq
+        sudo apt-get install -y dbus-user-session
+        sudo loginctl enable-linger profile-contract
+        uid="$(id -u profile-contract)"
+        sudo systemctl start "user@${uid}.service"
+        sudo -H -u profile-contract env XDG_RUNTIME_DIR="/run/user/$uid" \
+          systemctl --user start dbus.socket
+        for _ in $(seq 1 30); do
+          sudo test -S "/run/user/$uid/bus" && break
+          sleep 1
+        done
+        sudo test -S "/run/user/$uid/bus" || { echo "::error::user session bus unavailable for profile-contract"; exit 1; }
+        sudo -H -u profile-contract env PATH="$PATH" \
+          XDG_RUNTIME_DIR="/run/user/$uid" \
+          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' \
+          bash "$GITHUB_WORKSPACE/.agents/scripts/tests/test-profile-readme-contributions-fail-closed.sh"
+        echo "Profile README contributions fail-closed guard passed"
+
+  framework-validation-pulse-merge:
+    name: Framework Validation (pulse-merge suites)
+    needs: detect-scope
+    if: needs.detect-scope.outputs.substantive == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 0
+
     - name: Pulse-merge Regression Suites (GH#35943)
       timeout-minutes: 20
       run: |
-        # GH#35943: CI ran only the three pulse-merge suites above, so the rest
-        # drifted behind merged production changes unseen. Run every suite
-        # (globbed, so new suites join automatically) in parallel; any failure
-        # fails this required job.
+        # GH#35943: CI ran only the three pulse-merge suites in the core shard,
+        # so the rest drifted behind merged production changes unseen. Run every
+        # suite (globbed, so new suites join automatically) in parallel; any
+        # failure fails the required Framework Validation aggregator.
         set -euo pipefail
         log_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/pulse-merge-suites.XXXXXX")
         export LOG_DIR="$log_dir"
@@ -680,40 +756,39 @@ jobs:
         fi
         [[ "$failed" -eq 0 && "$pipe_rc" -eq 0 ]]
 
-    - name: Bash Expansion Pattern Guard (GH#19966)
-      run: |
-        # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
-        # expansion (default="{") and appends the trailing "}" as a literal,
-        # corrupting non-empty args with a spurious trailing }. Use the
-        # explicit-fallback idiom instead: "${2:-}" then [[ -n "$x" ]] || x="{}".
-        echo "Checking for buggy \${N:-{}} bash parameter expansion pattern..."
-        if rg -n '\$\{[0-9]+:-\{\}\}' .agents/scripts/ --type sh \
-             --glob '!.agents/scripts/tests/**' 2>/dev/null; then
-          echo ""
-          echo "ERROR: Found \${N:-{}} expansion(s) above. Replace with the"
-          echo "       explicit-fallback idiom (GH#19966):"
-          echo "         local x=\"\${N:-}\""
-          echo "         [[ -n \"\$x\" ]] || x=\"{}\""
-          exit 1
-        fi
-        echo "No \${N:-{}} expansion patterns found."
-        echo "Delta prefetch regression tests..."
-        bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
-        echo "Delta prefetch regression tests passed"
+  # IMPORTANT: `Framework Validation` is a required status check on main.
+  # This aggregator owns that context: it passes only when every shard passed,
+  # and is skipped (like the former single job) on version/docs-only PRs.
+  # `!cancelled()` makes it report failure, not skip, when a shard fails.
+  framework-validation:
+    name: Framework Validation
+    needs:
+      - detect-scope
+      - framework-validation-core
+      - framework-validation-profile-boundary
+      - framework-validation-profile-contributions
+      - framework-validation-pulse-merge
+    if: ${{ !cancelled() && needs.detect-scope.outputs.substantive == 'true' }}
+    runs-on: ubuntu-latest
 
-    - name: Worker Count and Capacity Tests (GH#21873)
+    steps:
+    - name: Require every Framework Validation shard to pass
+      env:
+        CORE: ${{ needs.framework-validation-core.result }}
+        PROFILE_BOUNDARY: ${{ needs.framework-validation-profile-boundary.result }}
+        PROFILE_CONTRIBUTIONS: ${{ needs.framework-validation-profile-contributions.result }}
+        PULSE_MERGE: ${{ needs.framework-validation-pulse-merge.result }}
       run: |
-        # Regression guard for list_dispatchable_issue_candidates,
-        # count_runnable_candidates, count_queued_without_worker, and
-        # related capacity/governor functions in pulse-capacity.sh.
-        # Catches the gh_issue_list/gh_pr_list mock bypass via timeout (GH#21873)
-        # and the statusCheckRollup → REST check-runs migration (GH#21799).
-        echo "Running pulse worker count / capacity regression tests..."
-        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
-        # GH#35537 owner directive: worker admission is RAM-only. Fails if
-        # admission reads CPU load, CPU idle or core counts.
-        bash .agents/scripts/tests/test-pulse-ram-admission.sh
-        echo "Worker count / capacity regression tests passed"
+        failed=0
+        for shard in CORE PROFILE_BOUNDARY PROFILE_CONTRIBUTIONS PULSE_MERGE; do
+          result="${!shard}"
+          echo "${shard}: ${result}"
+          if [ "$result" != "success" ]; then
+            echo "::error title=Framework Validation shard::${shard} finished ${result}"
+            failed=1
+          fi
+        done
+        exit "$failed"
 
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
