@@ -176,6 +176,7 @@ cleanup_worktrees() {
 	printf 'CLEANUP\n' >>"${lifecycle_file}"
 	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
 	printf '%s\n' "\${1:-unset}" >>"${TEST_DIR}/cleanup-budget"
+	[[ ! -f "${TEST_DIR}/mock-cleanup-events" ]] || cat "${TEST_DIR}/mock-cleanup-events" >>"\$LOGFILE"
 	return 0
 }
 STUB
@@ -695,11 +696,56 @@ test_archive_outcome_summary_is_logged() {
 
 	MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=3 MOCK_ARCHIVED_COUNT=2 \
 		MOCK_ARCHIVE_FAILED_COUNT=1 run_helper_in_isolation || true
-	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
+	if grep -q 'outcome=success removed=3 archived=2 archive_failed=1 refused=0 skip_reasons=none' "$cleanup_log" 2>/dev/null; then
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 0
 	else
 		print_result "archive-summary: async cleanup reports archive/delete outcomes and skip reasons" 1 \
 			"structured archive outcome summary missing"
+	fi
+	return 0
+}
+
+# GH#39034: every refusal reason is counted once per worktree, a degraded event
+# without a final skip still counts, a later removal clears earlier skips, and
+# a pass that only refuses is no-progress rather than success.
+test_refusal_summary_counts_reasons_and_no_progress() {
+	local cleanup_log="${TEST_DIR}/.aidevops/logs/cleanup_worktrees.log"
+	local events="${TEST_DIR}/mock-cleanup-events"
+	local ts="[2026-11-18T00:00:00Z] [worktree-helper.sh]"
+	local summary=""
+	rm -f "$cleanup_log"
+	printf '%s\n' \
+		"${ts} worktree-degraded: /wt/a — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-skipped: /wt/a — degraded-cwd-pr-proof-required — mode=skipped — branch=a" \
+		"${ts} worktree-degraded: /wt/b — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-degraded: /wt/c — cwd-visibility-degraded — mode=recoverable-required" \
+		"${ts} worktree-skipped: /wt/d — open-pr — mode=skipped" \
+		"${ts} worktree-skipped: /wt/e — grace-period — mode=skipped" \
+		"${ts} worktree-skipped: /wt/e — grace-period — mode=skipped" \
+		>"$events"
+	MOCK_CLEANUP_EXIT=0 run_helper_in_isolation || true
+	summary=$(grep -F '[cleanup-worktrees-async] outcome=' "$cleanup_log" 2>/dev/null | tail -n 1) || summary=""
+	if [[ "$summary" == *"outcome=no-progress removed=0 archived=0 archive_failed=0 refused=5 skip_reasons=cwd-visibility-degraded:2,degraded-cwd-pr-proof-required:1,grace-period:1,open-pr:1" ]]; then
+		print_result "refusal-summary: counts reasons per worktree and reports no-progress" 0
+	else
+		print_result "refusal-summary: counts reasons per worktree and reports no-progress" 1 \
+			"unexpected summary: ${summary:-<missing>}"
+	fi
+
+	rm -f "$cleanup_log"
+	printf '%s\n' \
+		"${ts} worktree-skipped: /wt/a — open-pr — mode=skipped" \
+		"${ts} worktree-removed: /wt/a — branch-merged — mode=permanent" \
+		"${ts} worktree-skipped: /wt/b — owned-skip — mode=skipped" \
+		>"$events"
+	CLEANUP_WORKTREES_ASYNC_CADENCE_MIN=0 MOCK_CLEANUP_EXIT=0 MOCK_REMOVED_COUNT=1 run_helper_in_isolation || true
+	summary=$(grep -F '[cleanup-worktrees-async] outcome=' "$cleanup_log" 2>/dev/null | tail -n 1) || summary=""
+	rm -f "$events"
+	if [[ "$summary" == *"outcome=success removed=1 archived=0 archive_failed=0 refused=1 skip_reasons=owned-skip:1" ]]; then
+		print_result "refusal-summary: removal clears earlier skips and progress stays success" 0
+	else
+		print_result "refusal-summary: removal clears earlier skips and progress stays success" 1 \
+			"unexpected summary: ${summary:-<missing>}"
 	fi
 	return 0
 }
@@ -1021,6 +1067,10 @@ main() {
 	teardown
 	setup
 	test_archive_outcome_summary_is_logged
+
+	teardown
+	setup
+	test_refusal_summary_counts_reasons_and_no_progress
 
 	local test_case
 	for test_case in test_missing_metadata_prune_runs_after_success \

@@ -4,12 +4,48 @@
 """Unprivileged procfs evidence, collected once without per-PID subprocesses.
 
 No process names are exemptions. Unknown same-user evidence remains degraded.
+A denied same-user process is excluded only when every one of its threads passes
+the lease census attestation (GH#38428), so the removal guard, the maintenance
+boundary and the census agree on the same task (GH#39034). Attestation queries
+PID 1 once per user-manager candidate; it never runs per-PID subprocesses.
 This module observes processes; it neither manages tasks nor authorizes removal.
 """
 
 import os
 from pathlib import Path
 import sys
+
+import worktree_process_attestation as attestation
+from worktree_process_census import require_proc_visibility
+
+
+def attestation_enabled(proc_root: Path) -> bool:
+    """Census preconditions: Linux, the attestation root, unfiltered same-namespace proc.
+
+    The non-root and initial-user-namespace checks run per task inside
+    attestation.session_class. Any failed precondition disables attestation, so
+    every denied same-user process stays denied.
+    """
+    if sys.platform != "linux" or Path(proc_root) != attestation.PROC:
+        return False
+    try:
+        require_proc_visibility()
+    except (OSError, ValueError, IndexError):
+        return False
+    return True
+
+
+def process_is_attested(process: Path) -> bool:
+    """True only when every thread is an attested privileged-session task.
+
+    Uses exactly the census predicate; an empty, unreadable or partly
+    unattested thread list leaves the process denied.
+    """
+    try:
+        tasks = list((process / "task").iterdir())
+    except OSError:
+        return False
+    return bool(tasks) and all(attestation.session_class(task) for task in tasks)
 
 
 def denied_process_is_irrelevant(process: Path, uid: int) -> bool:
@@ -42,6 +78,7 @@ def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
     paths: list[str] = []
     denied: list[Path] = []
     uid = os.getuid()
+    attest = attestation_enabled(proc_root)
     with os.scandir(proc_root) as entries:
         for entry in entries:
             if not entry.name.isascii() or not entry.name.isdigit():
@@ -50,7 +87,8 @@ def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
             try:
                 target = os.readlink(process / "cwd")
             except OSError:
-                if not denied_process_is_irrelevant(process, uid):
+                if not denied_process_is_irrelevant(process, uid) and not (
+                        attest and process_is_attested(process)):
                     denied.append(process)
                 continue
             # The shell consumer uses a line protocol. Do not let unusual names
@@ -70,7 +108,7 @@ def diagnostic_name(process: Path) -> str:
     return "".join(char for char in name if 32 <= ord(char) < 127)[:32] or "unknown"
 
 
-def cwd_map_line(entry: os.DirEntry) -> str:
+def cwd_map_line(entry: os.DirEntry, attest: bool = False) -> str:
     """Classify one process: `R<TAB>pid<TAB>cwd`, `S<TAB>pid` (provably irrelevant), else `F<TAB>pid`.
 
     Every failed or unusual read is `F` so the shell caller applies its full
@@ -80,8 +118,11 @@ def cwd_map_line(entry: os.DirEntry) -> str:
         target = os.readlink(os.path.join(entry.path, "cwd"))
     except OSError:
         # Same rule as the shell consumer: only vanished, zombie and provably
-        # foreign-UID processes are skipped; the rest stay F.
-        irrelevant = denied_process_is_irrelevant(Path(entry.path), os.getuid())
+        # foreign-UID processes are skipped, plus (GH#39034) processes the
+        # census attestation proves are privileged-session tasks; the rest stay F.
+        process = Path(entry.path)
+        irrelevant = denied_process_is_irrelevant(process, os.getuid()) or (
+            attest and process_is_attested(process))
         return f"{'S' if irrelevant else 'F'}\t{entry.name}"
     if not target or any(ord(char) < 32 or ord(char) == 127 for char in target):
         return f"F\t{entry.name}"
@@ -90,10 +131,11 @@ def cwd_map_line(entry: os.DirEntry) -> str:
 
 def cwd_map(proc_root: Path) -> int:
     """Print one classified line per process, replacing a readlink fork each."""
+    attest = attestation_enabled(proc_root)
     with os.scandir(proc_root) as entries:
         for entry in entries:
             if entry.name.isascii() and entry.name.isdigit():
-                print(cwd_map_line(entry))
+                print(cwd_map_line(entry, attest))
     return 0
 
 

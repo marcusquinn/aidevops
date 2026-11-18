@@ -655,7 +655,8 @@ test_degraded_visibility_preserves_positive_candidate_match() {
 	fi
 	[[ "$guard_status" -eq 1 ]] || rc=1
 	[[ "${WORKTREE_REMOVAL_GUARD_REASON:-}" == "active-cwd" ]] || rc=1
-	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-degraded.*cwd-visibility-degraded.*mode=recoverable-required" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cwd-visibility-degraded" && rc=1
 	assert_file_contains "$log_file" "worktree-skipped.*active-cwd.*mode=skipped" || rc=1
 	print_result "degraded_visibility_preserves_positive_candidate_match" "$rc" \
 		"Expected unrelated denial to be recoverable-only and readable candidate CWD to hard-block"

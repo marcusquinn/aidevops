@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import worktree_census_resolution as resolution
 import worktree_process_attestation as attestation
 import worktree_process_census as census
+import worktree_process_proc as proc_observer
 
 
 class ProcessCensusTests(unittest.TestCase):
@@ -191,7 +192,7 @@ class ProcessCensusTests(unittest.TestCase):
         self.assertFalse(quiescence.empty_census(sample, "boot"))
 
 
-class SessionAttestationTests(unittest.TestCase):
+class ModelledSessionProc(unittest.TestCase):
     """Modelled kernel facts for GH#38428: only unforgeable facts attest a task."""
 
     # A fixed unprivileged census user keeps the model host-independent (root CI too).
@@ -256,6 +257,10 @@ class SessionAttestationTests(unittest.TestCase):
 
     def attest(self, pid):
         return attestation.attested_session_class(self.proc / str(pid) / "task" / str(pid))
+
+
+class SessionAttestationTests(ModelledSessionProc):
+    """The census predicate itself."""
 
     def test_reported_session_tasks_are_attested(self):
         self.assertEqual(self.attest(91), "user-manager")
@@ -359,6 +364,54 @@ class SessionAttestationTests(unittest.TestCase):
         self.assertEqual(dict(result["uncertain_classes"]), {"nondumpable": 1})
         self.assertEqual(dict(result["excluded_nondumpable_classes"]),
                          {"pam-session-keeper": 1, "privsep-session": 1, "user-manager": 1})
+
+
+class ObserverAttestationTests(ModelledSessionProc):
+    """GH#39034: the removal-guard observer shares the census attestation."""
+
+    def observe(self, enabled=True):
+        """Run both observer entry points over the modelled proc (no cwd links)."""
+        with patch.object(proc_observer, "attestation_enabled", return_value=enabled):
+            _, denied = proc_observer.collect(self.proc)
+            with os.scandir(self.proc) as entries:
+                lines = sorted(proc_observer.cwd_map_line(entry, enabled) for entry in entries
+                               if entry.name.isdigit())
+        return sorted(int(process.name) for process in denied), lines
+
+    def test_attested_session_tasks_are_excluded_and_others_stay_denied(self):
+        # An unattested gpg-agent-like orphan and a forged re-parented "systemd"
+        # chain (lookalike manager PID 1 did not start, plus its first child).
+        self.task(138, name="gpg-agent", ppid=1, flags=0x400140, start=2000)
+        self.task(95, name="systemd", ppid=1, flags=0x400100, start=1000, caps="800000000",
+                  cgroup=self.MANAGER_CGROUP, children="96")
+        self.task(96, name="(sd-pam)", ppid=95, flags=0x400140, start=1001)
+        denied, lines = self.observe()
+        self.assertEqual(denied, [95, 96, 138])
+        self.assertEqual(lines, ["F\t138", "F\t95", "F\t96", "S\t1", "S\t117",
+                                 "S\t128", "S\t91", "S\t92"])
+
+    def test_disabled_attestation_or_unattested_thread_keeps_tasks_denied(self):
+        denied, lines = self.observe(enabled=False)
+        self.assertEqual(denied, [91, 92, 128])
+        self.assertIn("F\t91", lines)
+        # A second, unattested thread (e.g. an exec'd task) denies the process.
+        thread = self.proc / "128" / "task" / "130"
+        thread.mkdir()
+        (thread / "stat").write_text("130 (sshd) S 117 0 0 0 0 4194560 " + "0 " * 12 + "1600\n")
+        (thread / "status").write_text((self.proc / "128" / "status").read_text())
+        denied, _ = self.observe()
+        self.assertEqual(denied, [128])
+
+    def test_attestation_requires_the_attestation_root_and_proc_visibility(self):
+        with patch.object(proc_observer.sys, "platform", "linux"):
+            with patch.object(proc_observer, "require_proc_visibility"):
+                self.assertTrue(proc_observer.attestation_enabled(self.proc))
+                self.assertFalse(proc_observer.attestation_enabled(self.proc / "other"))
+            with patch.object(proc_observer, "require_proc_visibility",
+                              side_effect=ValueError("filtered proc mount")):
+                self.assertFalse(proc_observer.attestation_enabled(self.proc))
+        with patch.object(proc_observer.sys, "platform", "darwin"):
+            self.assertFalse(proc_observer.attestation_enabled(self.proc))
 
 
 class PrivilegedCensusTests(unittest.TestCase):
