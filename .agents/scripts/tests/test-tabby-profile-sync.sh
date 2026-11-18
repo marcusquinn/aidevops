@@ -228,6 +228,7 @@ assert repaired == config, repaired
 _info "Test 10: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
+export AIDEVOPS_GIT_WORKSPACE_ROOT="${tmp_root}"
 repo_path="${tmp_root}/aidevops"
 mkdir -p "${repo_path}"
 repos_json="${tmp_root}/repos.json"
@@ -394,7 +395,9 @@ bootstrap_env="${bootstrap_home}/tabby-python"
 bootstrap_receipt="${tmp_root}/bootstrap-receipt"
 bootstrap_config="${tmp_root}/bootstrap-config.yaml"
 real_python=$(command -v python3)
-mkdir -p "${bootstrap_home}/.config/aidevops" "${bootstrap_bin}"
+mkdir -p "${bootstrap_home}/.config/aidevops" "${bootstrap_bin}" "${bootstrap_env}/bin"
+printf '#!/bin/sh\nexit 1\n' >"${bootstrap_env}/bin/python3"
+chmod +x "${bootstrap_env}/bin/python3"
 cp "${repos_json}" "${bootstrap_home}/.config/aidevops/repos.json"
 printf 'version: 8\nprofiles: []\n  - name: broken\ngroups: []\n' >"${bootstrap_config}"
 cat >"${tmp_root}/venv-python" <<'SH'
@@ -411,6 +414,7 @@ if [[ "${1:-}" == "-c" && "${2:-}" == "import yaml" ]]; then
 	exit 1
 fi
 if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+	[[ " $* " == *" --clear "* ]] || exit 1
 	env_path="${@: -1}"
 	mkdir -p "${env_path}/bin"
 	cp "${TABBY_TEST_VENV_PYTHON_STUB}" "${env_path}/bin/python3"

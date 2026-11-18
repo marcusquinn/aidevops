@@ -11,6 +11,7 @@ leakage (the string-heuristic failing on names with dots like
 
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -341,73 +342,37 @@ class TestGetReposExcludesWorktrees(unittest.TestCase):
 
 
 class TestGetProfileTargets(unittest.TestCase):
-    """Detected workspaces augment, but do not pollute, repos.json targets."""
+    """Only registered paths strictly inside the trusted workspace are targets."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name).resolve()
+        self.workspace = self.root / "Git"
+        self.workspace.mkdir()
         self.repos_json = self.root / "repos.json"
         self.repos_json.write_text('{"initialized_repos": []}')
+        self.env = mock.patch.dict(os.environ, {"HOME": str(self.root), "AIDEVOPS_GIT_WORKSPACE_ROOT": str(self.workspace)})
+        self.env.start()
+        self.addCleanup(self.env.stop)
 
-    def test_existing_buzz_workspace_is_included(self):
+    def test_existing_buzz_workspace_is_not_included(self):
         buzz_path = self.root / ".buzz"
         buzz_path.mkdir()
+        self.assertEqual(tabby_profile_sync.get_profile_targets(str(self.repos_json)), [])
 
-        targets = tabby_profile_sync.get_profile_targets(
-            str(self.repos_json), home=str(self.root)
-        )
-
-        self.assertEqual(
-            targets,
-            [
-                {
-                    "path": str(buzz_path),
-                    "name": "Buzz",
-                    "repo": {
-                        "path": str(buzz_path),
-                        "profile_kind": "buzz-workspace",
-                    },
-                }
-            ],
-        )
-
-    def test_missing_buzz_workspace_is_not_included(self):
-        targets = tabby_profile_sync.get_profile_targets(
-            str(self.repos_json), home=str(self.root)
-        )
-
-        self.assertEqual(targets, [])
-
-    def test_buzz_target_builds_opencode_profile_at_workspace(self):
-        buzz_path = self.root / ".buzz"
-        buzz_path.mkdir()
-        targets = tabby_profile_sync.get_profile_targets(
-            str(self.repos_json), home=str(self.root)
-        )
-
-        profiles = tabby_profile_sync.build_new_profiles(
-            targets, existing_cwds=set(), group_id="group-1"
-        )
-
-        self.assertEqual(len(profiles), 1)
-        profile = profiles[0][1]
-        self.assertIn("  - name: Buzz", profile)
-        self.assertIn(f"      cwd: {buzz_path}", profile)
-        self.assertIn("        - 'exec aidevops opencode --tabby-shell'", profile)
-
-    def test_registered_buzz_path_is_not_duplicated(self):
-        buzz_path = self.root / ".buzz"
-        buzz_path.mkdir()
-        self.repos_json.write_text(
-            '{{"initialized_repos": [{{"path": "{}"}}]}}'.format(buzz_path)
-        )
-
-        targets = tabby_profile_sync.get_profile_targets(
-            str(self.repos_json), home=str(self.root)
-        )
-
-        self.assertEqual([target["path"] for target in targets], [str(buzz_path)])
+    def test_paths_override_and_symlinked_root(self):
+        repo = self.workspace / "repo"
+        repo.mkdir()
+        alias = self.root / "alias"
+        alias.symlink_to(self.workspace, target_is_directory=True)
+        self.repos_json.write_text(json.dumps({"initialized_repos": [
+            {"path": "~/Git/repo"}, {"path": str(repo)},
+            {"path": str(self.root)}, {"path": str(self.workspace)},
+        ]}))
+        with mock.patch.dict(os.environ, {"AIDEVOPS_GIT_WORKSPACE_ROOT": str(alias)}):
+            targets = tabby_profile_sync.get_profile_targets(str(self.repos_json))
+        self.assertEqual([target["path"] for target in targets], [str(repo), str(repo)])
 
 
 class TestManagedProfileReconciliation(unittest.TestCase):
@@ -419,6 +384,9 @@ class TestManagedProfileReconciliation(unittest.TestCase):
         self.root = Path(self._tmp.name).resolve()
         self.existing = self.root / "existing"
         self.existing.mkdir()
+        self.env = mock.patch.dict(os.environ, {"HOME": str(self.root.parent), "AIDEVOPS_GIT_WORKSPACE_ROOT": str(self.root)})
+        self.env.start()
+        self.addCleanup(self.env.stop)
 
     def _profile(self, name, cwd, profile_id=None, launch=None):
         profile_id = profile_id or (
@@ -512,6 +480,41 @@ class TestManagedProfileReconciliation(unittest.TestCase):
         plan = tabby_profile_sync.plan_profile_reconciliation(config, set())
 
         self.assertEqual(plan.removals, [])
+
+    def test_sync_removes_only_managed_buzz_and_preserves_outside_profiles(self):
+        home = self.root.parent / (self.root.name + "-home")
+        home.mkdir()
+        self.addCleanup(home.rmdir)
+        buzz = home / ".buzz"
+        repos_json = self.root / "repos.json"
+        config_path = self.root / "config.yaml"
+        repos_json.write_text(json.dumps({"initialized_repos": [{"path": str(home)}]}))
+        config_path.write_text(self._config(
+            self._profile("Buzz", buzz)
+            + self._profile("custom", home, profile_id="user-profile", launch="custom")
+            + self._profile("outside-managed", home / "missing")
+        ))
+        args = tabby_profile_sync.argparse.Namespace(repos_json=str(repos_json), tabby_config=str(config_path))
+        with mock.patch.dict(os.environ, {"HOME": str(home)}), mock.patch.object(
+            tabby_profile_sync, "resolve_login_shell", return_value="/bin/sh"
+        ), redirect_stdout(io.StringIO()):
+            tabby_profile_sync.sync_profiles(args)
+        result = config_path.read_text()
+        self.assertNotIn("name: Buzz", result)
+        self.assertIn("name: custom", result)
+        self.assertIn("name: outside-managed", result)
+
+    def test_status_counts_outside_and_lists_user_profiles(self):
+        repos_json = self.root / "repos.json"
+        config_path = self.root / "config.yaml"
+        outside = self.root.parent / "outside"
+        repos_json.write_text(json.dumps({"initialized_repos": [{"path": str(outside)}]}))
+        config_path.write_text(self._config(self._profile("custom", outside, profile_id="user", launch="custom")))
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["sync", "--repos-json", str(repos_json), "--tabby-config", str(config_path), "--status-only"]), redirect_stdout(output):
+            tabby_profile_sync.main()
+        self.assertIn("Registered repos outside Git workspace: 1", output.getvalue())
+        self.assertIn("outside Git workspace (user-owned, preserved)", output.getvalue())
 
     def test_status_reports_pending_reconciliation_without_mutation(self):
         missing = self.root / "missing"

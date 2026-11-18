@@ -462,7 +462,8 @@ def plan_profile_reconciliation(
 def get_profile_targets(repos_json_path: str) -> list[dict]:
     """Return available registered repositories inside the trusted workspace."""
     root = workspace_root()
-    return [repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)]
+    return [repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)
+            and normalize_cwd(repo["path"]) != normalize_cwd("~/.buzz")]
 
 
 def _optional_line(value: object, line: str) -> str:
