@@ -25,11 +25,6 @@ import uuid
 from pathlib import Path
 from typing import NamedTuple
 
-from canonical_write_policy_paths import (
-    canonical_git_workspace_root,
-    git_workspace_root_from_environment,
-    is_within_workspace,
-)
 from tabby_appearance_css import apply_managed_css_for_sync
 from tabby_colour_utils import generate_tab_colour, find_closest_scheme
 from tabby_profile_repair import (
@@ -50,6 +45,13 @@ from tabby_profile_validation import (
     report_profile_command_issues,
 )
 from tabby_shell_resolver import ShellResolutionError, resolve_login_shell
+from tabby_workspace_scope import (
+    eligible_path,
+    is_buzz_path,
+    is_preserved_outside,
+    normalize_cwd,
+    workspace_root,
+)
 from tabby_yaml_recovery import load_yaml_for_sync
 from tabby_yaml_helpers import (
     _parse_block_scalar,
@@ -269,22 +271,6 @@ def get_registered_paths(repos_json_path: str) -> set[str]:
     }
 
 
-def normalize_cwd(path: str) -> str:
-    """Normalize a profile cwd for conservative equality checks."""
-    return os.path.normcase(os.path.realpath(os.path.expanduser(path)))
-
-
-def workspace_root() -> str:
-    """Resolve the same trusted root used by the canonical write policy."""
-    return canonical_git_workspace_root(git_workspace_root_from_environment())
-
-
-def eligible_path(path: str, root: str) -> bool:
-    """Require a resolved path strictly beneath the trusted root."""
-    resolved = normalize_cwd(path)
-    return bool(root) and resolved != normalize_cwd(root) and is_within_workspace(resolved, root)
-
-
 def _has_managed_profile_id(profile: dict) -> bool:
     """Return True only for IDs emitted by :func:`build_profile_yaml`."""
     profile_id = profile.get("id")
@@ -426,7 +412,7 @@ def _reconciliation_category(
 
     cwd = profile["options"]["cwd"]
     normalized = normalize_cwd(cwd)
-    if normalized == normalize_cwd("~/.buzz"):
+    if is_buzz_path(cwd):
         return "stale"
     if eligible_path(cwd, workspace_root()):
         return _inside_root_category(cwd, normalized, registered_paths, seen_cwds)
@@ -468,21 +454,18 @@ def plan_profile_reconciliation(
 def get_profile_targets(repos_json_path: str) -> list[dict]:
     """Return unique available repositories inside the trusted workspace."""
     root = workspace_root()
-    buzz = normalize_cwd("~/.buzz")
     seen: set[str] = set()
     targets = []
     for repo in get_repos(repos_json_path):
         normalized = normalize_cwd(repo["path"])
-        if eligible_path(repo["path"], root) and normalized != buzz and normalized not in seen:
+        if (
+            eligible_path(repo["path"], root)
+            and not is_buzz_path(repo["path"])
+            and normalized not in seen
+        ):
             seen.add(normalized)
             targets.append(repo)
     return targets
-
-
-def _is_preserved_outside_managed(profile: dict, root: str) -> bool:
-    """Managed profile outside the workspace (not Buzz) is preserved as user-owned."""
-    cwd = profile["options"]["cwd"]
-    return not eligible_path(cwd, root) and normalize_cwd(cwd) != normalize_cwd("~/.buzz")
 
 
 def outside_workspace_summary(
@@ -498,7 +481,7 @@ def outside_workspace_summary(
         (block.data.get("options") if isinstance(block.data.get("options"), dict) else {}).get("cwd")
         for block in extract_profile_blocks(config_text)
         if not is_aidevops_managed_profile(block.data, group_id)
-        or _is_preserved_outside_managed(block.data, root)
+        or is_preserved_outside(block.data["options"]["cwd"], root)
     )
     return outside_count, tuple(
         cwd for cwd in cwds if isinstance(cwd, str) and not eligible_path(cwd, root)
