@@ -120,10 +120,11 @@ _serve_is_rfc1918() {
 	[[ "$host" =~ ^${octet}\.${octet}\.${octet}\.${octet}$ ]] || return 1
 	local o1="${BASH_REMATCH[1]}"
 	local o2="${BASH_REMATCH[2]}"
-	if [[ "$o1" -eq 10 ]] || { [[ "$o1" -eq 192 ]] && [[ "$o2" -eq 168 ]]; } ||
-		{ [[ "$o1" -eq 172 ]] && [[ "$o2" -ge 16 ]] && [[ "$o2" -le 31 ]]; }; then
-		return 0
-	fi
+	case "$o1" in
+	10) return 0 ;;
+	192) [[ "$o2" -eq 168 ]] && return 0 ;;
+	172) [[ "$o2" -ge 16 && "$o2" -le 31 ]] && return 0 ;;
+	esac
 	return 1
 }
 
@@ -136,8 +137,8 @@ _serve_private_health_url() {
 	local host="${parsed% *}"
 	[[ "${parsed##* }" == "$port" ]] || return 1
 	_serve_is_rfc1918 "$host" || return 1
-	_serve_ip_is_local "$host"
-	return $?
+	_serve_ip_is_local "$host" || return 1
+	return 0
 }
 
 _serve_validate_args() {
