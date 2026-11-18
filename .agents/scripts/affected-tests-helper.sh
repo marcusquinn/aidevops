@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Select affected shell suites and distinguish regressions from inherited failures.
+# Select affected shell suites and distinguish regressions from inherited or flaky failures.
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
@@ -32,9 +32,13 @@ parser.add_argument("--max", type=int, default=30)
 parser.add_argument("--jobs", type=int, default=4)
 parser.add_argument("--timeout", type=int, default=240)
 parser.add_argument("--compare-base", action="store_true")
+parser.add_argument("--retries", type=int, default=2,
+                    help="reruns for a would-be regression before it counts; 0 disables")
 args = parser.parse_args()
 if min(args.max, args.jobs, args.timeout) < 1:
     parser.error("--max, --jobs and --timeout must be positive")
+if args.retries < 0:
+    parser.error("--retries must be zero or positive")
 
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 os.chdir(root)
@@ -127,6 +131,19 @@ if failed and args.compare_base:
             subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], check=True)
         shutil.rmtree(temporary)
 
+# GH#38964: a would-be regression that passes on a head rerun is timing-dependent
+# (e.g. SIGPIPE under pipefail), not caused by the change. Timeouts and
+# pre-existing failures are not rerun: they are the expensive cases.
+attempts = {suite: [head[suite]] for suite in ordered}
+pending = [s for s in ordered if head[s] not in (0, 124) and base.get(s) in (None, 0)]
+for _ in range(args.retries):
+    if not pending:
+        break
+    rerun = run_all(root, pending)
+    for suite in pending:
+        attempts[suite].append(rerun[suite])
+    pending = [s for s in pending if rerun[s] != 0]
+
 print("suite\trc_head\trc_base\tclass")
 regression = False
 for suite in ordered:
@@ -136,9 +153,12 @@ for suite in ordered:
         classification = "pass"
     elif baseline is not None and baseline != 0:
         classification = "pre-existing"
+    elif 0 in attempts[suite][1:]:
+        classification = "flaky"
     else:
         classification = "regression"
         regression = True
-    print("%s\t%s\t%s\t%s" % (suite, rc, baseline if baseline is not None else "-", classification))
+    rc_text = ",".join("-" if value is None else str(value) for value in attempts[suite])
+    print("%s\t%s\t%s\t%s" % (suite, rc_text, baseline if baseline is not None else "-", classification))
 sys.exit(1 if regression else 0)
 PY
