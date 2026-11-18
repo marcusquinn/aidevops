@@ -51,9 +51,12 @@ from tabby_workspace_scope import (
     inside_root_category,
     is_preserved_outside,
     normalize_cwd,
+    outside_summary,
     report_outside_workspace_repos,
     workspace_root,
 )
+from tabby_managed_profile import is_aidevops_managed_profile
+from tabby_cwd_retarget import retarget_profile_cwds  # noqa: F401 (re-exported)
 from tabby_yaml_recovery import load_yaml_for_sync
 from tabby_yaml_helpers import (
     _parse_block_scalar,
@@ -273,137 +276,6 @@ def get_registered_paths(repos_json_path: str) -> set[str]:
     }
 
 
-def _has_managed_profile_id(profile: dict) -> bool:
-    """Return True only for IDs emitted by :func:`build_profile_yaml`."""
-    profile_id = profile.get("id")
-    if not isinstance(profile_id, str):
-        return False
-    try:
-        uuid.UUID(profile_id.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        return False
-    return profile_id.startswith("local:custom:")
-
-
-def _has_managed_launch(options: dict) -> bool:
-    """Return True for current and historical aidevops OpenCode launch forms."""
-    args = options.get("args")
-    managed_args = (
-        ["-l", "-c", TABBY_OPENCODE_LAUNCH],
-        ["-l", "-c", "aidevops opencode; exec zsh"],
-        ["-l", "-c", LEGACY_TABBY_OPENCODE_LAUNCH],
-        ["-l", "-i", "-c", "opencode"],
-    )
-    command = options.get("command")
-    managed_commands = (
-        TABBY_COMMAND_FIELD_OPENCODE,
-        LEGACY_TABBY_COMMAND_FIELD_OPENCODE,
-        "/bin/zsh -l -c 'aidevops opencode; exec zsh'",
-    )
-    return any((args in managed_args, command in managed_commands))
-
-
-def is_aidevops_managed_profile(profile: dict, projects_group_id: str | None) -> bool:
-    """Identify a generated profile without claiming custom OpenCode profiles."""
-    options = profile.get("options")
-    if not isinstance(options, dict):
-        return False
-    return all(
-        (
-            projects_group_id,
-            profile.get("group") == projects_group_id,
-            profile.get("type") == "local",
-            isinstance(options.get("cwd"), str),
-            _has_managed_profile_id(profile),
-            _has_managed_launch(options),
-        )
-    )
-
-
-def _retarget_block_cwd(
-    lines: list[str],
-    index: int,
-    match: re.Match[str],
-    raw_value: str,
-    path_mappings: dict[str, str],
-) -> tuple[int, bool]:
-    """Retarget one block-scalar cwd and return the next line index."""
-    parent_indent = len(match.group("indent"))
-    value, next_index = _parse_block_scalar(
-        [line.rstrip("\r\n") for line in lines],
-        index + 1,
-        parent_indent,
-        raw_value[0],
-    )
-    replacement = path_mappings.get(value)
-    if not replacement:
-        return next_index, False
-
-    lines[index] = (
-        f"{match.group('indent')}cwd: {replacement}"
-        f"{match.group('newline') or ''}"
-    )
-    del lines[index + 1 : next_index]
-    return index + 1, True
-
-
-def _retarget_inline_cwd(
-    match: re.Match[str], raw_value: str, path_mappings: dict[str, str]
-) -> str | None:
-    """Render a retargeted inline cwd line, preserving matching quotes."""
-    quoted_value = re.fullmatch(r"(?P<quote>['\"])(?P<value>.*)(?P=quote)", raw_value)
-    quote = quoted_value.group("quote") if quoted_value else ""
-    value = quoted_value.group("value") if quoted_value else raw_value
-    replacement = path_mappings.get(value)
-    if not replacement:
-        return None
-
-    rendered = f"{quote}{replacement}{quote}" if quote else replacement
-    return (
-        f"{match.group('indent')}cwd: {rendered}"
-        f"{match.group('newline') or ''}"
-    )
-
-
-def _retarget_cwd_line(
-    lines: list[str],
-    index: int,
-    cwd_pattern: re.Pattern[str],
-    path_mappings: dict[str, str],
-) -> tuple[int, bool]:
-    """Retarget the cwd at one line and return the next index and change flag."""
-    match = cwd_pattern.match(lines[index])
-    if not match:
-        return index + 1, False
-    raw_value = match.group("value").strip()
-    if raw_value.startswith((">", "|")):
-        return _retarget_block_cwd(lines, index, match, raw_value, path_mappings)
-    retargeted_line = _retarget_inline_cwd(match, raw_value, path_mappings)
-    if not retargeted_line:
-        return index + 1, False
-    lines[index] = retargeted_line
-    return index + 1, True
-
-
-def retarget_profile_cwds(
-    config_text: str, path_mappings: dict[str, str]
-) -> tuple[str, int]:
-    """Retarget exact profile cwd scalars without changing unrelated bytes."""
-    validate_yaml_document(config_text)
-    lines = config_text.splitlines(keepends=True)
-    changed = 0
-    index = 0
-    cwd_pattern = re.compile(r"^(?P<indent>\s+)cwd:\s*(?P<value>.*?)(?P<newline>\r?\n)?$")
-    while index < len(lines):
-        index, was_retargeted = _retarget_cwd_line(
-            lines, index, cwd_pattern, path_mappings
-        )
-        changed += was_retargeted
-    updated = "".join(lines)
-    validate_yaml_document(updated)
-    return updated, changed
-
-
 def _reconciliation_category(
     block, projects_group_id: str | None, registered_paths: set[str], seen_cwds: set[str]
 ) -> str | None:
@@ -462,18 +334,15 @@ def outside_workspace_summary(
     """Count registered repos outside the root and list user-owned profile cwds."""
     root = workspace_root()
     group_id = extract_group_id(config_text)
-    outside_count = sum(
-        not eligible_path(path, root) for path in get_registered_paths(repos_json_path)
-    )
-    cwds = (
-        (block.data.get("options") if isinstance(block.data.get("options"), dict) else {}).get("cwd")
-        for block in extract_profile_blocks(config_text)
-        if not is_aidevops_managed_profile(block.data, group_id)
-        or is_preserved_outside(block.data["options"]["cwd"], root)
-    )
-    return outside_count, tuple(
-        cwd for cwd in cwds if isinstance(cwd, str) and not eligible_path(cwd, root)
-    )
+    cwds = []
+    for block in extract_profile_blocks(config_text):
+        options = block.data.get("options")
+        cwd = options.get("cwd") if isinstance(options, dict) else None
+        if not is_aidevops_managed_profile(block.data, group_id) or (
+            isinstance(cwd, str) and is_preserved_outside(cwd, root)
+        ):
+            cwds.append(cwd)
+    return outside_summary(get_registered_paths(repos_json_path), cwds)
 
 
 def _optional_line(value: object, line: str) -> str:

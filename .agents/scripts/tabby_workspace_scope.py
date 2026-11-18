@@ -54,6 +54,18 @@ def inside_root_category(
     return category
 
 
+def outside_summary(
+    registered_paths: set[str], profile_cwds: list[object]
+) -> tuple[int, tuple[str, ...]]:
+    """Count registered repos outside the root and list outside profile cwds."""
+    root = workspace_root()
+    outside_count = sum(not eligible_path(path, root) for path in registered_paths)
+    outside_cwds = tuple(
+        cwd for cwd in profile_cwds if isinstance(cwd, str) and not eligible_path(cwd, root)
+    )
+    return outside_count, outside_cwds
+
+
 def report_outside_workspace_repos(paths: set[str]) -> None:
     """Report registered repos skipped because they are outside the Git workspace."""
     root = workspace_root()
