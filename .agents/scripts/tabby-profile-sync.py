@@ -59,6 +59,10 @@ from tabby_yaml_helpers import (
 )
 
 
+LEGACY_BUZZ_PROFILE_NAME = "Buzz"
+BUZZ_PROFILE_NAME = "Buzz agent sessions (not a repo)"
+
+
 class ProfileAppearance(NamedTuple):
     """Colour settings used to render one generated Tabby profile."""
 
@@ -439,6 +443,42 @@ def plan_profile_reconciliation(
     return ProfileReconciliation(stale, duplicates)
 
 
+def rename_legacy_buzz_profiles(config_text: str, buzz_path: str) -> tuple[str, int]:
+    """Rename managed profiles still called ``Buzz`` at the workspace cwd.
+
+    Profiles with any other name (user-renamed) are left untouched.
+    """
+    projects_group_id = extract_group_id(config_text)
+    target = normalize_cwd(buzz_path)
+    lines = config_text.splitlines(keepends=True)
+    renamed = 0
+    name_pattern = re.compile(
+        r"^(?P<lead>\s*(?:-\s+)?name:\s*)(?P<value>.*?)(?P<nl>\r?\n)?$"
+    )
+    for block in extract_profile_blocks(config_text):
+        profile = block.data
+        options = profile.get("options")
+        cwd = options.get("cwd") if isinstance(options, dict) else None
+        if not isinstance(cwd, str) or normalize_cwd(cwd) != target:
+            continue
+        if profile.get("name") != LEGACY_BUZZ_PROFILE_NAME:
+            continue
+        if not is_aidevops_managed_profile(profile, projects_group_id):
+            continue
+        for index in range(block.start, block.end):
+            match = name_pattern.match(lines[index])
+            if match and match.group("value").strip("'\" ") == LEGACY_BUZZ_PROFILE_NAME:
+                lines[index] = (
+                    f"{match.group('lead')}{BUZZ_PROFILE_NAME}{match.group('nl') or ''}"
+                )
+                renamed += 1
+                break
+    updated = "".join(lines)
+    if renamed:
+        validate_yaml_document(updated)
+    return updated, renamed
+
+
 def get_profile_targets(
     repos_json_path: str, home: Optional[str] = None
 ) -> list[dict]:
@@ -463,7 +503,7 @@ def get_profile_targets(
         targets.append(
             {
                 "path": buzz_path,
-                "name": "Buzz",
+                "name": BUZZ_PROFILE_NAME,
                 "repo": {"path": buzz_path, "profile_kind": "buzz-workspace"},
             }
         )
@@ -570,6 +610,11 @@ def sync_profiles(args: argparse.Namespace) -> None:
     config_text, repaired_legacy_yaml = load_yaml_for_sync(args.tabby_config)
     if repaired_legacy_yaml:
         print("Repaired legacy Tabby profiles YAML corruption.")
+    config_text, renamed_buzz = rename_legacy_buzz_profiles(
+        config_text, os.path.join(os.path.expanduser("~"), ".buzz")
+    )
+    if renamed_buzz:
+        print(f"Renamed {renamed_buzz} legacy Buzz workspace profile(s).")
     existing_cwds = extract_existing_cwds(config_text)
 
     # Preserve custom profiles byte-for-byte, but make their invalid runtime
@@ -589,6 +634,7 @@ def sync_profiles(args: argparse.Namespace) -> None:
     existing_cwds = extract_existing_cwds(config_text)
     config_text, group_id = ensure_group(config_text)
     config_text, css_changed = apply_managed_css_for_sync(config_text)
+    css_changed = css_changed or bool(renamed_buzz)
     new_profiles = build_new_profiles(repos, existing_cwds, group_id, shell_path)
 
     if not new_profiles:

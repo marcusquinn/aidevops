@@ -8,10 +8,18 @@ see [Remote Tabby sessions](../tools/terminal/remote-sessions.md). Session lease
 are separate from profile reconciliation and do not change `tabby status`.
 
 Use `.agents/scripts/tabby-profile-sync.py` to generate aidevops project profiles
-from `repos.json`. When `~/.buzz` exists, setup/update also generates a `Buzz`
-profile rooted there so OpenCode opens the Buzz-scoped session namespace. The
-profile is omitted when Buzz has not created that workspace, and an existing
-profile with the same working directory remains user-owned and unchanged.
+from `repos.json`. When `~/.buzz` exists, setup/update also generates a
+`Buzz agent sessions (not a repo)` profile rooted there so OpenCode opens the
+Buzz-scoped session namespace. The name makes clear the workspace is not a Git
+repo, so it is not mistaken for a repo profile such as `cloudron-buzz-app`.
+The profile is omitted when Buzz has not created that workspace. A managed
+profile still named exactly `Buzz` at that working directory is renamed on sync;
+any other existing profile with the same working directory (for example a
+user-renamed one) remains user-owned and unchanged.
+
+OpenCode sessions started outside `AIDEVOPS_GIT_WORKSPACE_ROOT` (default
+`~/Git`), such as the Buzz workspace, show one warning toast and a short system
+note that the session cannot edit repo worktrees; read-only work stays allowed.
 
 `tabby-helper.sh status` reports pending reconciliation without changing the
 configuration. `tabby-helper.sh sync`, including the setup/update path, removes

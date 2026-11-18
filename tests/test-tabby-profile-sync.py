@@ -363,7 +363,7 @@ class TestGetProfileTargets(unittest.TestCase):
             [
                 {
                     "path": str(buzz_path),
-                    "name": "Buzz",
+                    "name": "Buzz agent sessions (not a repo)",
                     "repo": {
                         "path": str(buzz_path),
                         "profile_kind": "buzz-workspace",
@@ -392,7 +392,7 @@ class TestGetProfileTargets(unittest.TestCase):
 
         self.assertEqual(len(profiles), 1)
         profile = profiles[0][1]
-        self.assertIn("  - name: Buzz", profile)
+        self.assertIn("  - name: Buzz agent sessions (not a repo)", profile)
         self.assertIn(f"      cwd: {buzz_path}", profile)
         self.assertIn("        - 'exec aidevops opencode --tabby-shell'", profile)
 
@@ -408,6 +408,43 @@ class TestGetProfileTargets(unittest.TestCase):
         )
 
         self.assertEqual([target["path"] for target in targets], [str(buzz_path)])
+
+    def _legacy_config(self, name, buzz_path):
+        profile = tabby_profile_sync.build_profile_yaml(
+            name="Buzz",
+            cwd=str(buzz_path),
+            appearance=tabby_profile_sync.ProfileAppearance(
+                "#112233", tabby_profile_sync.find_closest_scheme("#112233")
+            ),
+            group_id="group-1",
+            shell_path="/bin/sh",
+        ).replace("  - name: Buzz", f"  - name: {name}", 1)
+        return f"groups:\n  - id: group-1\n    name: Projects\nprofiles:\n{profile}\n"
+
+    def test_legacy_managed_buzz_profile_is_renamed(self):
+        buzz_path = self.root / ".buzz"
+        buzz_path.mkdir()
+        config = self._legacy_config("Buzz", buzz_path)
+
+        updated, count = tabby_profile_sync.rename_legacy_buzz_profiles(
+            config, str(buzz_path)
+        )
+
+        self.assertEqual(count, 1)
+        self.assertIn("  - name: Buzz agent sessions (not a repo)", updated)
+        self.assertNotIn("  - name: Buzz\n", updated)
+
+    def test_user_renamed_buzz_profile_is_preserved(self):
+        buzz_path = self.root / ".buzz"
+        buzz_path.mkdir()
+        config = self._legacy_config("My Buzz", buzz_path)
+
+        updated, count = tabby_profile_sync.rename_legacy_buzz_profiles(
+            config, str(buzz_path)
+        )
+
+        self.assertEqual(count, 0)
+        self.assertEqual(updated, config)
 
 
 class TestManagedProfileReconciliation(unittest.TestCase):

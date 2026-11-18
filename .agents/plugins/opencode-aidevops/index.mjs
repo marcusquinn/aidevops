@@ -111,6 +111,7 @@ import {
   recordSubagentOutcome,
 } from "./observability.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
+import { createWorkspaceNotice } from "./workspace-notice.mjs";
 import { createRootSessionGreetingGate, openCodeV1SessionLookup } from "./root-session-greeting-gate.mjs";
 import {
   createPoolAuthHook,
@@ -610,6 +611,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // to TTSR enforcement. Failures here are logged but never block the
   // request — the underlying provider call will surface a clearer error
   // if the proxy is genuinely unreachable.
+  const workspaceNotice = createWorkspaceNotice({ client, directory, isHeadless });
   const systemTransformHook = async (input, output) => {
     instructionReminders.rememberSystem(input?.sessionID, output?.system);
     const providerID = input?.model?.providerID;
@@ -624,6 +626,7 @@ export async function AidevopsPlugin({ directory, client }) {
       }
     }
     await ttsrSystemTransformHook(input, output);
+    await workspaceNotice(output);
     if (isRemoteInteractiveConversation(conversation)) {
       appendConversationSystemContext(output, conversation);
     }
