@@ -1534,7 +1534,7 @@ else: sys.exit(1)
                 encoding="utf-8",
             )
             bytecode_path = Path(importlib.util.cache_from_source(str(core_path)))
-            bytecode_path.parent.mkdir()
+            bytecode_path.parent.mkdir(parents=True, exist_ok=True)
             py_compile.compile(
                 str(malicious_source),
                 cfile=str(bytecode_path),
