@@ -428,17 +428,23 @@ def _reconciliation_category(
     normalized = normalize_cwd(cwd)
     if normalized == normalize_cwd("~/.buzz"):
         return "stale"
-    if not eligible_path(cwd, workspace_root()):
-        return None
+    if eligible_path(cwd, workspace_root()):
+        return _inside_root_category(cwd, normalized, registered_paths, seen_cwds)
+    return None
+
+
+def _inside_root_category(
+    cwd: str, normalized: str, registered_paths: set[str], seen_cwds: set[str]
+) -> str | None:
+    """Classify a managed profile whose cwd is inside the Git workspace."""
     cwd_is_known = any(
         (os.path.isdir(os.path.expanduser(cwd)), normalized in registered_paths)
     )
-    if not cwd_is_known:
-        return "stale"
-    if normalized in seen_cwds:
-        return "duplicate"
-    seen_cwds.add(normalized)
-    return None
+    category = ("duplicate", "stale")[not cwd_is_known]
+    if cwd_is_known and normalized not in seen_cwds:
+        seen_cwds.add(normalized)
+        category = None
+    return category
 
 
 def plan_profile_reconciliation(
@@ -462,8 +468,28 @@ def plan_profile_reconciliation(
 def get_profile_targets(repos_json_path: str) -> list[dict]:
     """Return available registered repositories inside the trusted workspace."""
     root = workspace_root()
-    return [repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)
-            and normalize_cwd(repo["path"]) != normalize_cwd("~/.buzz")]
+    return [
+        repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)
+    ]
+
+
+def outside_workspace_summary(
+    repos_json_path: str, config_text: str
+) -> tuple[int, tuple[str, ...]]:
+    """Count registered repos outside the root and list user-owned profile cwds."""
+    root = workspace_root()
+    group_id = extract_group_id(config_text)
+    outside_count = sum(
+        not eligible_path(path, root) for path in get_registered_paths(repos_json_path)
+    )
+    cwds = (
+        (block.data.get("options") if isinstance(block.data.get("options"), dict) else {}).get("cwd")
+        for block in extract_profile_blocks(config_text)
+        if not is_aidevops_managed_profile(block.data, group_id)
+    )
+    return outside_count, tuple(
+        cwd for cwd in cwds if isinstance(cwd, str) and not eligible_path(cwd, root)
+    )
 
 
 def _optional_line(value: object, line: str) -> str:
@@ -617,18 +643,8 @@ def main() -> None:
         reconciliation = plan_profile_reconciliation(
             config_text, get_registered_paths(args.repos_json)
         )
-        root = workspace_root()
-        outside_count = sum(not eligible_path(path, root) for path in get_registered_paths(args.repos_json))
-        group_id = extract_group_id(config_text)
-        outside_profiles = tuple(
-            block.data["options"]["cwd"]
-            for block in extract_profile_blocks(config_text)
-            if isinstance(block.data.get("options"), dict)
-            and isinstance(block.data["options"].get("cwd"), str)
-            and not eligible_path(block.data["options"]["cwd"], root)
-            and not is_aidevops_managed_profile(block.data, group_id)
-        )
-        show_status(repos, existing_cwds, reconciliation, outside_count, outside_profiles)
+        outside = outside_workspace_summary(args.repos_json, config_text)
+        show_status(repos, existing_cwds, reconciliation, *outside)
         has_validation_issues = (
             report_profile_arg_type_issues(config_text)
             or report_profile_command_issues(config_text)
