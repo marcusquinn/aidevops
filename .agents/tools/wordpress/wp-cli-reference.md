@@ -393,9 +393,12 @@ Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-fluent-b
 ```bash
 T="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
 mkdir -p "$T"
-export FX="$(mktemp -d "$T/wp-fixture.XXXXXX")"   # unique per run, safe for parallel sessions
+FX="$(mktemp -d "$T/wp-fixture.XXXXXX")" || { echo "fixture creation failed" >&2; exit 1; }   # unique per run; stop on failure
+export FX
 ORIG_DIR="$PWD"
 mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache"
+export WP_CLI_CONFIG_PATH="$FX/wp-cli.yml"   # ignore ~/.wp-cli/config.yml (it could point at a real site)
+: > "$WP_CLI_CONFIG_PATH"
 export WP_CLI_CACHE_DIR="$FX/wpcache"   # keep the core download cache inside the fixture
 export TMPDIR="$FX/tmp"                 # simulated remote temp dirs stay inside the fixture
 ```
@@ -467,13 +470,12 @@ SH
 chmod +x "$FX/bin/ssh" "$FX/bin/scp"
 ```
 
-The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting and that the remote temp directory (`mktemp -d`, under `$TMPDIR`) is removed. `list` sends no keys on stdin; to check stdin key delivery, run a key-bearing operation of the payload under test with dummy keys only (never real credentials) and confirm the fixture site receives them.
+The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Keep `AIDEVOPS_TEMP_DIR` free of spaces too: `_wpcp_remote_mktemp` rejects remote paths containing them. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting and that the remote temp directory (`mktemp -d`, under `$TMPDIR`) is removed. `list` sends no keys on stdin; to check stdin key delivery, run a key-bearing operation of the payload under test with dummy keys only (never real credentials) and confirm the fixture site receives them.
 
 ### 5. Destroy
 
 ```bash
-cd "$ORIG_DIR" && rm -rf "$FX"
-unset FX TMPDIR WP_CLI_CACHE_DIR
+cd "$ORIG_DIR" && rm -rf "$FX" && unset FX TMPDIR WP_CLI_CACHE_DIR WP_CLI_CONFIG_PATH
 ```
 
 Restore `PATH` (or close the shell) to drop the shims.

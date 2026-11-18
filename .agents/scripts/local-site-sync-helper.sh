@@ -83,16 +83,14 @@ lssh_write_stamp() {
 	local synced_at=""
 	synced_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')"
 
-	cat >"$stamp_file" <<EOF
-{
-  "src": "${src}",
-  "branch": "${branch}",
-  "head_sha": "${head_sha}",
-  "dirty": ${dirty},
-  "session_id": "${AIDEVOPS_SESSION_ID:-${LSSH_SESSION_ID:-unknown}}",
-  "synced_at": "${synced_at}"
-}
-EOF
+	local session_id="${AIDEVOPS_SESSION_ID:-${LSSH_SESSION_ID:-unknown}}"
+	if ! command -v jq >/dev/null 2>&1; then
+		log_error "jq is required to write the sync stamp"
+		return 1
+	fi
+	jq -n --arg src "$src" --arg branch "$branch" --arg head_sha "$head_sha" \
+		--argjson dirty "$dirty" --arg session_id "$session_id" --arg synced_at "$synced_at" \
+		'{src:$src, branch:$branch, head_sha:$head_sha, dirty:$dirty, session_id:$session_id, synced_at:$synced_at}' >"$stamp_file"
 	return 0
 }
 
@@ -197,6 +195,11 @@ lssh_cmd_sync() {
 		dirty_flag=false
 	fi
 
+	# Record the source worktree's branch (not the default branch), captured with the SHA; detached HEAD is "detached@<sha>".
+	local src_branch=""
+	src_branch="$(git -C "$src" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+	[[ -n "$src_branch" ]] || src_branch="detached@${head_sha}"
+
 	git -C "$src" fetch origin "$default_branch" --quiet 2>/dev/null || log_warn "could not fetch origin/${default_branch}; freshness check uses last known state"
 
 	if [[ "$force" != true ]]; then
@@ -238,10 +241,11 @@ lssh_cmd_sync() {
 	log_info "syncing ${src_slash} -> ${dest_slash}"
 	rsync "${rsync_args[@]}" "$src_slash" "$dest_slash"
 
-	# Record the source worktree's branch (not the default branch); detached HEAD is "detached@<sha>".
-	local src_branch=""
-	src_branch="$(git -C "$src" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-	[[ -n "$src_branch" ]] || src_branch="detached@${head_sha}"
+	local post_sha=""
+	post_sha="$(git -C "$src" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+	if [[ "$post_sha" != "$head_sha" ]]; then
+		log_warn "source HEAD changed during sync (${head_sha} -> ${post_sha}); stamp records the pre-sync state"
+	fi
 	lssh_write_stamp "$stamp_file" "$src" "$src_branch" "$head_sha" "$dirty_flag"
 	log_success "synced. stamp written: $stamp_file"
 	lssh_print_stamp "$stamp_file" || true
