@@ -63,6 +63,11 @@ DENIED_NAMES = frozenset(
     "id_ed25519 id_rsa kubeconfig".split()
 )
 DENIED_SUFFIXES = frozenset(".jks .key .keystore .p12 .pem .pfx".split())
+_ANCHORED_OPEN_SUPPORTED = (
+    hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
+    and os.open in os.supports_dir_fd and os.stat in os.supports_dir_fd
+    and os.stat in os.supports_follow_symlinks
+)
 
 
 def _root_controlled(path: str, *, directory: bool) -> bool:
@@ -1071,10 +1076,77 @@ def manifest_scope_id(
     return hashlib.sha256(scope).hexdigest()
 
 
-def secure_source_content(path: str) -> tuple[bytes, str]:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+def _open_anchored(path: str) -> tuple[int, int, str]:
+    """Open an absolute path one component at a time from ``/``.
+
+    #aidevops:trust-boundary — every directory is opened relative to the
+    already-held parent descriptor with O_NOFOLLOW, so no component (not only
+    the leaf) is resolved through a symlink and the opened file is the one the
+    walk reached. Returns ``(file_descriptor, parent_descriptor, leaf_name)``;
+    the caller closes both descriptors.
+    """
+    _require_source(_ANCHORED_OPEN_SUPPORTED, "this platform cannot open source paths safely")
+    _require_source(os.path.isabs(path), "source path must be absolute")
+    parts = Path(path).parts[1:]
+    _require_source(bool(parts) and not any(part in ("", ".", "..") for part in parts),
+                    "source path is not canonical")
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | cloexec
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | cloexec
+    parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY | cloexec)
     try:
-        descriptor = os.open(path, flags)
+        for part in parts[:-1]:
+            child = os.open(part, directory_flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        return os.open(parts[-1], file_flags, dir_fd=parent), parent, parts[-1]
+    except BaseException:
+        os.close(parent)
+        raise
+
+
+def _source_owner_requirement() -> int | None:
+    """Owner a source file must have when the broker reads it with root privileges.
+
+    #aidevops:trust-boundary — as root, only read files owned by the
+    authenticated non-root requester, so an approved read never exceeds what
+    that user could already read. Unprivileged callers read with their own
+    credentials and need no extra owner rule.
+    """
+    if os.geteuid() != 0:
+        return None
+    uid, _home = real_user()
+    return uid if uid > 0 else None
+
+
+def _file_identity(metadata: os.stat_result) -> dict[str, int]:
+    return {"device": metadata.st_dev, "inode": metadata.st_ino}
+
+
+def secure_source_read(path: str) -> tuple[bytes, str, dict[str, int]]:
+    """Read a source file through an anchored walk; return content, digest and identity."""
+    return _secure_read(path, _source_owner_requirement())
+
+
+def secure_source_content(path: str) -> tuple[bytes, str]:
+    content, digest, _identity = secure_source_read(path)
+    return content, digest
+
+
+def secure_state_content(path: str) -> tuple[bytes, str]:
+    """Read a broker-owned file below the root-controlled state directory.
+
+    Callers verify trusted ownership first. Platform aliases above the state
+    directory (for example ``/var/run`` -> ``/run``) are root-owned, so resolve
+    them before the same anchored, no-symlink read used for sources.
+    """
+    content, digest, _identity = _secure_read(os.path.realpath(path), None)
+    return content, digest
+
+
+def _secure_read(path: str, required_owner: int | None) -> tuple[bytes, str, dict[str, int]]:
+    try:
+        descriptor, parent, name = _open_anchored(path)
     except OSError as exc:
         raise SourceAccessError("source path could not be opened safely") from exc
     digest = hashlib.sha256()
@@ -1087,6 +1159,10 @@ def secure_source_content(path: str) -> tuple[bytes, str]:
             "hard-linked or non-regular source files cannot be approved",
         )
         _require_source(
+            required_owner is None or opened_stat.st_uid == required_owner,
+            "source file is not owned by the requesting user",
+        )
+        _require_source(
             opened_stat.st_size <= MAX_SOURCE_BYTES,
             "source file exceeds the approval size limit",
         )
@@ -1095,6 +1171,9 @@ def secure_source_content(path: str) -> tuple[bytes, str]:
             _require_source(total <= MAX_SOURCE_BYTES, "source file exceeds the approval size limit")
             content.extend(chunk)
             digest.update(chunk)
+        # The leaf under the held parent and the full path must both still name
+        # the opened file; any concurrent rename fails closed.
+        anchored_stat = os.stat(name, dir_fd=parent, follow_symlinks=False)
         current_stat = os.lstat(path)
         final_stat = os.fstat(descriptor)
         identity_fields = (
@@ -1102,9 +1181,11 @@ def secure_source_content(path: str) -> tuple[bytes, str]:
             "st_size", "st_mtime_ns", "st_ctime_ns",
         )
         _require_source(
-            stat.S_ISREG(current_stat.st_mode)
-            and current_stat.st_dev == opened_stat.st_dev
-            and current_stat.st_ino == opened_stat.st_ino
+            all(
+                stat.S_ISREG(observed.st_mode)
+                and _file_identity(observed) == _file_identity(opened_stat)
+                for observed in (anchored_stat, current_stat)
+            )
             and all(getattr(final_stat, field) == getattr(opened_stat, field) for field in identity_fields),
             "source path changed during approval",
         )
@@ -1112,7 +1193,8 @@ def secure_source_content(path: str) -> tuple[bytes, str]:
         raise SourceAccessError("source path changed during approval") from exc
     finally:
         os.close(descriptor)
-    return bytes(content), digest.hexdigest()
+        os.close(parent)
+    return bytes(content), digest.hexdigest(), _file_identity(opened_stat)
 
 
 def require_source_only_content(content: bytes) -> None:
@@ -1421,8 +1503,8 @@ def _proposal_source_snapshot(spec: ManifestRequestSpec) -> dict[str, Any]:
     total_bytes = 0
     for path, _root, relative in sorted(identities):
         before = _proposal_file_identity(Path(path))
-        content, digest = secure_source_content(path)
-        _require_source(before == _proposal_file_identity(Path(path)), "proposal source was replaced")
+        content, digest, opened = secure_source_read(path)
+        _require_source(before == opened == _proposal_file_identity(Path(path)), "proposal source was replaced")
         total_bytes += len(content)
         _require_source(total_bytes <= MAX_SOURCE_BYTES, "proposal exceeds the total source size limit")
         entries.append({"path": path, "relative_path": relative, "content_sha256": digest,

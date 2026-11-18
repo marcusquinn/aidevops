@@ -187,8 +187,8 @@ class SourceAccessHelperTests(unittest.TestCase):
         os.mkfifo(fifo, 0o600)
         real_open = os.open
         # Force the fixture nonblocking even before the fix, so the regression cannot hang.
-        with mock.patch.object(core.os, "open", side_effect=lambda path, flags: real_open(
-                path, flags | os.O_NONBLOCK)) as opened:
+        with mock.patch.object(core.os, "open", side_effect=lambda path, flags, *args, **kwargs: real_open(
+                path, flags | os.O_NONBLOCK, *args, **kwargs)) as opened:
             with self.assertRaisesRegex(HELPER.SourceAccessError, "non-regular"):
                 core.secure_source_content(str(fifo))
         self.assertTrue(opened.call_args.args[1] & os.O_NONBLOCK)
