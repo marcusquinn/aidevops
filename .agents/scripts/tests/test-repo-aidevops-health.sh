@@ -292,8 +292,12 @@ jq -n --arg path "$TEST_ROOT/onboard" --arg recent "$(date -u '+%Y-%m-%dT%H:%M:%
 	 {slug:"org/clean",path:$path,initialized:$recent,pulse:true},
 	 {slug:"org/clean-routines",path:$path,initialized:$recent,pulse:true,purpose:"routines"},
 	 {slug:"org/clean-profile",path:$path,initialized:$recent,pulse:true,priority:"profile"},
+	 {slug:"org/clean-init",path:$path,initialized:$recent,pulse:true,features:["planning"]},
+	 {slug:"org/clean-saved",path:$path,initialized:$recent,pulse:true,features:["planning"]},
 	 {slug:"org/unknown",path:$path,initialized:$recent,pulse:true}]}' >"$CONFIG_FILE"
 rm "$TEST_ROOT/onboard/.aidevops.json"
+mkdir -p "$HOME/.config/aidevops/project-config-backups"
+printf '{}\n' >"$HOME/.config/aidevops/project-config-backups/org--clean-saved.json"
 printf 'previous\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory"
 _check_onboarding_gaps 1
 assert_equal "onboarding dry run writes nothing" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-recent.advisory" && printf yes || printf no)" "no"
@@ -307,6 +311,8 @@ assert_equal "unknown GitHub state preserves advisory" "$(<"$HOME/.aidevops/advi
 assert_equal "routines repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-routines.advisory" && printf yes || printf no)" "no"
 assert_equal "profile repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-profile.advisory" && printf yes || printf no)" "no"
 assert_equal "ordinary repository without config is flagged" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory" && printf yes || printf no)" "yes"
+assert_contains "initialized repository without config names restore, not init" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-clean-init.advisory")" "aidevops project-config restore org/clean-init"
+assert_contains "repository with a saved init copy names the pending restore" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-clean-saved.advisory")" "aidevops update then restores the saved copy"
 printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
 printf 'stale\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory"
 _check_onboarding_gaps 0

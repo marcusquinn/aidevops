@@ -24,6 +24,15 @@ they need no `.aidevops.json`. The Pulse and label steps still apply.
    result through a PR. It registers the repository, writes `.aidevops.json`,
    syncs the canonical GitHub labels, installs the metrics workflow and
    assesses security posture. Read its warnings; each one names its manual fix.
+
+   `.aidevops.json` is ignored local metadata, so init in a linked worktree
+   also saves a copy under `~/.config/aidevops/project-config-backups/`. After
+   the PR merges and the canonical checkout has the `.gitignore` rule,
+   `aidevops update` writes that copy to the canonical checkout. For a
+   registered repository whose config is missing and has no saved copy, do not
+   re-run init: it can re-scaffold files the bootstrap PR removed. Merge a PR
+   that adds `.aidevops.json` to the root `.gitignore` if it is not listed,
+   then run `aidevops project-config restore <slug>`.
 2. **Automation:** check the registry entry:
 
    ```bash

@@ -200,5 +200,60 @@ assert_equal "linked-worktree migration removes config from index" "" "$("$TEST_
 assert_equal "linked-worktree migration stages only the config deletion" "D  .aidevops.json" "$("$TEST_NATIVE_GIT" -C "$linked_repo" status --porcelain)"
 assert_equal "linked-worktree migration leaves canonical checkout clean" "" "$("$TEST_NATIVE_GIT" -C "$tracked_repo" status --porcelain)"
 
+# GH#39023: init in a linked worktree saves its ignored config; update writes it
+# to the canonical checkout only once that checkout's .gitignore ignores it.
+# shellcheck source=../aidevops-cli/aidevops-init-lib.sh
+source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
+init_repo="${TEST_ROOT}/init-canonical"
+init_linked="${TEST_ROOT}/init-linked"
+mkdir -p "$init_repo"
+"$TEST_NATIVE_GIT" -C "$init_repo" init -q -b main
+"$TEST_NATIVE_GIT" -C "$init_repo" config user.email test@example.invalid
+"$TEST_NATIVE_GIT" -C "$init_repo" config user.name Test
+"$TEST_NATIVE_GIT" -C "$init_repo" config commit.gpgsign false
+"$TEST_NATIVE_GIT" -C "$init_repo" remote add origin https://github.com/example/init-backup.git
+printf 'fixture\n' >"$init_repo/README.md"
+"$TEST_NATIVE_GIT" -C "$init_repo" add README.md
+"$TEST_NATIVE_GIT" -C "$init_repo" commit -qm fixture
+init_repo="$(cd "$init_repo" && pwd -P)"
+"$TEST_NATIVE_GIT" -C "$init_repo" worktree add -q -b chore/aidevops-init "$init_linked"
+printf '%s\n' '{"version":"9.9.13","features":{"planning":true},"local_option":"kept"}' >"$init_linked/.aidevops.json"
+jq --arg path "$init_repo" '.initialized_repos += [{path: $path, slug: "example/init-backup", version: "9.9.13", features: ["planning"], init_scope: "minimal"}]' "$REPOS_FILE" >"${REPOS_FILE}.next"
+mv "${REPOS_FILE}.next" "$REPOS_FILE"
+init_backup="${HOME}/.config/aidevops/project-config-backups/example--init-backup.json"
+project_root="$init_linked"
+_init_save_config_backup
+assert_equal "linked-worktree init saves a byte-identical config copy" "true" "$(cmp -s "$init_linked/.aidevops.json" "$init_backup" && printf true || printf false)"
+assert_equal "saved config copy is owner-only" "600" "$(stat -c '%a' "$init_backup" 2>/dev/null || stat -f '%Lp' "$init_backup")"
+
+_update_sync_projects false 9.9.13
+assert_equal "update writes nothing before the canonical ignore rule exists" "false" "$(test -e "$init_repo/.aidevops.json" && printf true || printf false)"
+assert_equal "update keeps the saved copy until it can be restored" "true" "$(test -f "$init_backup" && printf true || printf false)"
+
+# Simulate the merged bootstrap PR that adds the ignore rule.
+printf '%s\n' '.aidevops.json' >"$init_repo/.gitignore"
+"$TEST_NATIVE_GIT" -C "$init_repo" add .gitignore
+"$TEST_NATIVE_GIT" -C "$init_repo" commit -qm "chore: initialize aidevops"
+chmod 644 "$init_backup"
+_update_sync_projects false 9.9.13
+assert_equal "update refuses a saved copy that is not owner-only" "false" "$(test -e "$init_repo/.aidevops.json" && printf true || printf false)"
+chmod 600 "$init_backup"
+"$TEST_NATIVE_GIT" -C "$init_repo" worktree remove --force "$init_linked"
+_update_sync_projects false 9.9.13
+assert_equal "update restores the init output byte-identically" '{"version":"9.9.13","features":{"planning":true},"local_option":"kept"}' "$(cat "$init_repo/.aidevops.json" 2>/dev/null)"
+assert_equal "restored config is ignored and the canonical checkout stays clean" "" "$("$TEST_NATIVE_GIT" -C "$init_repo" status --porcelain)"
+assert_equal "restored saved copy is removed" "false" "$(test -e "$init_backup" && printf true || printf false)"
+
+printf '%s\n' '{"version":"0.0.0","features":{}}' >"$init_backup"
+chmod 600 "$init_backup"
+_update_sync_projects false 9.9.13
+assert_equal "existing canonical config is never overwritten" "kept" "$(jq -r '.local_option' "$init_repo/.aidevops.json")"
+assert_equal "redundant saved copy is removed when canonical config exists" "false" "$(test -e "$init_backup" && printf true || printf false)"
+
+orphan_backup="${HOME}/.config/aidevops/project-config-backups/example--unregistered.json"
+printf '%s\n' '{"version":"0.0.0","features":{}}' >"$orphan_backup"
+_update_sync_projects false 9.9.13
+assert_equal "saved copy for an unregistered repository is pruned" "false" "$(test -e "$orphan_backup" && printf true || printf false)"
+
 printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 [[ "$failed" -eq 0 ]]
