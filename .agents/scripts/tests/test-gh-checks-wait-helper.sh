@@ -80,6 +80,7 @@ run_fixture_wait() {
 		AIDEVOPS_GH_CHECKS_TEST_REQUIRED_CONTEXTS="$required_contexts" \
 		AIDEVOPS_GH_CHECKS_TEST_HEAD="${AIDEVOPS_GH_CHECKS_TEST_HEAD_OVERRIDE-fixture-head}" \
 		AIDEVOPS_GH_CHECKS_TEST_DRAFT="${AIDEVOPS_GH_CHECKS_TEST_DRAFT_OVERRIDE-false}" \
+		AIDEVOPS_GH_CHECKS_TEST_PR_STATE="${AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE-OPEN}" \
 		"$HELPER" wait 123 --repo example/repo --initial-interval 1 --max-interval 4 "$@"
 	return $?
 }
@@ -153,6 +154,21 @@ all_checks_output=$(run_fixture_wait "$all_checks_dir" --all)
 assert_contains "all-check mode observes pending optional checks" "Preview: pending" "$all_checks_output"
 assert_contains "all-check mode waits for the transition" "+ Preview: pending -> pass" "$all_checks_output"
 assert_contains "all-check mode reports scoped terminal success" "PASS: all checks completed" "$all_checks_output"
+
+# GH#39075: a PR merged by native auto-merge stops the wait even while an
+# optional context is still pending (no timeout wait).
+merged_dir="${TMPDIR_TEST}/merged-pending"
+write_fixture "$merged_dir" 1 '[{"name":"Complexity Analysis","workflow":"CI","state":"PENDING","bucket":"pending","link":""}]'
+set +e
+merged_output=$(AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE=$'MERGED\t2026-11-18T21:03:39Z' run_fixture_wait "$merged_dir" --all --timeout 1800 2>&1)
+merged_rc=$?
+closed_output=$(AIDEVOPS_GH_CHECKS_TEST_PR_STATE_OVERRIDE=$'CLOSED\t' run_fixture_wait "$merged_dir" --all --timeout 1800 2>&1)
+closed_rc=$?
+set -e
+assert_eq "merged PR with pending optional check exits 0" "0" "$merged_rc"
+assert_contains "merged PR prints terminal line" "MERGED: PR #123 merged at 2026-11-18T21:03:39Z; check wait not required" "$merged_output"
+assert_eq "closed unmerged PR exits non-zero" "1" "$closed_rc"
+assert_contains "closed PR prints clear message" "CLOSED: PR #123 was closed without merging" "$closed_output"
 
 all_empty_output=$(run_fixture_wait "$empty_dir" --all)
 assert_contains "empty all-check selection is explicit terminal success" "PASS: verified no checks reported" "$all_empty_output"
