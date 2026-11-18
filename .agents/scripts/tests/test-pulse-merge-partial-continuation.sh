@@ -663,17 +663,20 @@ test_ambiguous_reference_verdict_reason() {
 	local verdict=""
 	verdict=$(
 		_PULSE_MERGE_PROCESS_WORKER_BRIEFED_LOADED=""
+		# Use the same explicit-reference parser as the production merge path.
+		# shellcheck source=../gh-closing-reference-lib.sh
+		source "${MODULE_FILE%/*}/gh-closing-reference-lib.sh"
 		# shellcheck source=../pulse-merge-process-worker-briefed.sh
 		source "${MODULE_FILE%/*}/pulse-merge-process-worker-briefed.sh"
 		gh_pr_view() {
-			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false,"headRefOid":"abc","body":"Ref #21729 (child of #19530)."}'
+			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false,"headRefOid":"abc","body":"Ref #21729\nRef #19530"}'
 			return 0
 		}
 		_pulse_is_trusted_issue_sync_pr() { return 1; }
 		_extract_pr_work_issue() { return 2; }
 		worker_briefed_trust_verdict 900 "$SLUG" || true
 	)
-	if [[ "$verdict" == deny:*"ambiguous explicit issue references"*"#21729, #19530"* && "$verdict" != *"trust metadata unavailable"* ]]; then
+	if [[ "$verdict" == deny:*"ambiguous explicit issue references"*"#19530, #21729"* && "$verdict" != *"trust metadata unavailable"* ]]; then
 		pass "ambiguous explicit refs: specific deny reason"
 	else
 		fail "ambiguous explicit refs: specific deny reason" "got: $verdict"
