@@ -1068,12 +1068,9 @@ main() {
 	setup
 	test_archive_outcome_summary_is_logged
 
-	teardown
-	setup
-	test_refusal_summary_counts_reasons_and_no_progress
-
 	local test_case
-	for test_case in test_missing_metadata_prune_runs_after_success \
+	for test_case in test_refusal_summary_counts_reasons_and_no_progress \
+		test_missing_metadata_prune_runs_after_success \
 		test_missing_metadata_prune_runs_when_cleanup_skipped \
 		test_compact_retention_policy test_compact_retention_defaults_config_and_failure \
 		test_lifecycle_only_never_expires_recovery test_capacity_mode_is_scoped_and_locked \
