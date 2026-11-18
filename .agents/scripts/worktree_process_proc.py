@@ -73,6 +73,13 @@ def denied_process_is_irrelevant(process: Path, uid: int) -> bool:
     )
 
 
+def denied_process_is_excluded(process: Path, uid: int, attest: bool) -> bool:
+    """Irrelevant (vanished, zombie, foreign) or, with attestation on, attested (GH#39034)."""
+    if denied_process_is_irrelevant(process, uid):
+        return True
+    return attest and process_is_attested(process)
+
+
 def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
     """Return readable CWDs and unresolved processes, never converting denials to absence."""
     paths: list[str] = []
@@ -87,8 +94,7 @@ def collect(proc_root: Path) -> tuple[list[str], list[Path]]:
             try:
                 target = os.readlink(process / "cwd")
             except OSError:
-                if not denied_process_is_irrelevant(process, uid) and not (
-                        attest and process_is_attested(process)):
+                if not denied_process_is_excluded(process, uid, attest):
                     denied.append(process)
                 continue
             # The shell consumer uses a line protocol. Do not let unusual names
@@ -120,9 +126,7 @@ def cwd_map_line(entry: os.DirEntry, attest: bool = False) -> str:
         # Same rule as the shell consumer: only vanished, zombie and provably
         # foreign-UID processes are skipped, plus (GH#39034) processes the
         # census attestation proves are privileged-session tasks; the rest stay F.
-        process = Path(entry.path)
-        irrelevant = denied_process_is_irrelevant(process, os.getuid()) or (
-            attest and process_is_attested(process))
+        irrelevant = denied_process_is_excluded(Path(entry.path), os.getuid(), attest)
         return f"{'S' if irrelevant else 'F'}\t{entry.name}"
     if not target or any(ord(char) < 32 or ord(char) == 127 for char in target):
         return f"F\t{entry.name}"
