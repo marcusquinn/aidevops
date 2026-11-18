@@ -1265,6 +1265,40 @@ _action_ciw_single() {
 }
 
 #######################################
+# Assignees left over from the lifecycle before the latest reopen (GH#39030).
+# GitHub keeps assignees across close/reopen, but a finished lifecycle's
+# assignee holds no claim; left on a healed status:available issue it demotes
+# the issue behind all fresh work (GH#38333 lane) for as long as fresh work
+# exists. An assignment at or after the latest reopen is deliberate and kept.
+# Args: $1=slug, $2=issue_num, $3=REST issue JSON (for current assignees)
+# Stdout: comma-joined logins to remove; empty when never reopened, nothing is
+#         stale, or the event evidence is incomplete (then keep everyone)
+# Returns: 0 always
+#######################################
+_pir_prior_lifecycle_assignees() {
+	local slug="$1" issue_num="$2" issue_json="$3"
+	local current="" events=""
+	current=$(printf '%s' "$issue_json" | jq -r '[.assignees[]?.login // empty] | join(",")' 2>/dev/null) || return 0
+	[[ -n "$current" ]] || return 0
+	events=$(gh api --paginate "repos/${slug}/issues/${issue_num}/events?per_page=100" \
+		--jq '.[] | [.event, (.created_at // "missing"), (.assignee.login // "")] | @tsv' \
+		2>/dev/null) || return 0
+	printf '%s' "$events" | jq -Rrs --arg current "$current" --arg iso "$_PIR_ISO_UTC_RE" \
+		--arg reopen_event reopened --arg assign_event assigned '
+		[split("\n")[] | select(length > 0) | split("\t")
+			| select(.[0] == $reopen_event or .[0] == $assign_event)] as $rows
+		| if any($rows[]; (.[1] // "") | test($iso) | not) then empty
+		  else ([$rows[] | select(.[0] == $reopen_event) | .[1]] | max) as $reopen
+		  | if $reopen == null then empty
+		    else [$rows[] | select(.[0] == $assign_event and .[1] >= $reopen) | .[2]] as $kept
+		    | [$current | split(",")[] | select(. as $login | $kept | index($login) | not)]
+		    | join(",")
+		    end
+		  end' 2>/dev/null || return 0
+	return 0
+}
+
+#######################################
 # Stage 2 action: reconcile a status:done issue.
 # (Per-issue body of reconcile_stale_done_issues — no slug loop.)
 #
@@ -1275,6 +1309,7 @@ _action_ciw_single() {
 _action_rsd_single() {
 	local slug="$1" issue_num="$2" issue_title="$3"
 	local issue_json="" comments_json="" restored_status="available" issue_api=""
+	local stale_assignees="" removed_note=""
 	printf -v issue_api 'repos/%s/issues/%s' "$slug" "$issue_num"
 	# GH#33374: open + done is invalid, not permission to close. Closing-intent
 	# reconciliation remains in stage 3; this stage only repairs the projection.
@@ -1290,9 +1325,19 @@ _action_rsd_single() {
 	if printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "status:blocked")' >/dev/null 2>&1; then
 		restored_status="blocked"
 	fi
-	set_issue_status "$issue_num" "$slug" "$restored_status" >/dev/null 2>&1 || return 1
-	printf '[pulse-wrapper] Reconcile done: healed open + status:done #%s in %s to status:%s (%s)\n' \
-		"$issue_num" "$slug" "$restored_status" "$issue_title" >>"$LOGFILE"
+	# GH#39030: an available heal also drops the closed lifecycle's assignees.
+	# Cleanup never blocks the heal: a failed combined edit heals status alone.
+	if [[ "$restored_status" == "available" ]]; then
+		stale_assignees=$(_pir_prior_lifecycle_assignees "$slug" "$issue_num" "$issue_json")
+	fi
+	if [[ -n "$stale_assignees" ]] &&
+		set_issue_status "$issue_num" "$slug" "$restored_status" --remove-assignee "$stale_assignees" >/dev/null 2>&1; then
+		removed_note="; removed prior-lifecycle assignees ${stale_assignees} (GH#39030)"
+	else
+		set_issue_status "$issue_num" "$slug" "$restored_status" >/dev/null 2>&1 || return 1
+	fi
+	printf '[pulse-wrapper] Reconcile done: healed open + status:done #%s in %s to status:%s (%s)%s\n' \
+		"$issue_num" "$slug" "$restored_status" "$issue_title" "$removed_note" >>"$LOGFILE"
 	return 2
 }
 
