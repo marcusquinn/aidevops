@@ -391,8 +391,13 @@ wp option update rank_math_sitemap_last_modified $(date +%s)
 Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
 
 ```bash
-export FX="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/wp-fixture"
-mkdir -p "$FX/site" "$FX/home" "$FX/bin"
+T="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+mkdir -p "$T"
+export FX="$(mktemp -d "$T/wp-fixture.XXXXXX")"   # unique per run, safe for parallel sessions
+ORIG_DIR="$PWD"
+mkdir -p "$FX/site" "$FX/home" "$FX/bin" "$FX/tmp" "$FX/wpcache"
+export WP_CLI_CACHE_DIR="$FX/wpcache"   # keep the core download cache inside the fixture
+export TMPDIR="$FX/tmp"                 # simulated remote temp dirs stay inside the fixture
 ```
 
 ### 1. WP-CLI with enough memory
@@ -416,6 +421,9 @@ mkdir "$FX/sqlite" && tar -xzf "$FX/sqlite.tgz" -C "$FX/sqlite" --strip-componen
 P=wp-content/mu-plugins/sqlite-database-integration
 mkdir -p "$P" wp-content/database
 cp -R "$FX/sqlite/packages/plugin-sqlite-database-integration/." "$P/"
+# wp-includes/database is a relative symlink to the mysql-on-sqlite package; replace it with the driver files
+rm -rf "$P/wp-includes/database"
+cp -R "$FX/sqlite/packages/mysql-on-sqlite/src" "$P/wp-includes/database"
 sed -e "s#{SQLITE_IMPLEMENTATION_FOLDER_PATH}#$PWD/$P#g" \
     -e 's#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g' \
     "$P/db.copy" > wp-content/db.php
@@ -425,7 +433,7 @@ wp core install --url=http://localhost --title=Fixture --admin_user=admin \
 wp plugin install fluent-smtp --activate   # any wordpress.org plugin
 ```
 
-If the monorepo layout has moved, `ls "$FX/sqlite/packages"` and locate `db.copy`.
+If the monorepo layout has moved, `ls "$FX/sqlite/packages"` and locate `db.copy` and the `mysql-on-sqlite` driver (`database/version.php` must exist under `$P/wp-includes/`).
 
 ### 3. Isolate the site registry
 
@@ -459,12 +467,15 @@ SH
 chmod +x "$FX/bin/ssh" "$FX/bin/scp"
 ```
 
-The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting, stdin key delivery and that the remote temp directory (`mktemp -d`) is removed.
+The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting and that the remote temp directory (`mktemp -d`, under `$TMPDIR`) is removed. `list` sends no keys on stdin; to check stdin key delivery, run a key-bearing operation of the payload under test with dummy keys only (never real credentials) and confirm the fixture site receives them.
 
 ### 5. Destroy
 
 ```bash
-rm -rf "$FX"
+cd "$ORIG_DIR" && rm -rf "$FX"
+unset FX TMPDIR WP_CLI_CACHE_DIR
 ```
+
+Restore `PATH` (or close the shell) to drop the shims.
 
 Confirm nothing remains outside `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.
