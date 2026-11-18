@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 
+from .legacy_proc_clock import is_root_sshd_session, require_older_than_tree, status_fields
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
 from .protected_proc import OPT_IN, ProcessCensusUnavailable, require_protected_references
@@ -92,58 +93,13 @@ def require_idle_reference(path, reference):
         raise ValueError("live-process-reference")
 
 
-_SSHD_NAMES = frozenset({"sshd", "sshd-session"})
-
-
-def _status_fields(status_file):
-    text = status_file.read_text(encoding="utf-8")
-    return dict(line.split(":", 1) for line in text.splitlines() if ":" in line)
-
-
-def _is_root_sshd_session(fields, proc):
-    """GH#38997: an unprivileged sshd session forked by the root sshd listener.
-
-    A same-UID process cannot reparent under a root-owned sshd, and sshd never
-    changes into a worktree, so a login newer than the tree is not a holder.
-    """
-    if fields.get("Name", "").strip() not in _SSHD_NAMES:
-        return False
-    parent = fields.get("PPid", "").strip()
-    if not parent.isdecimal() or int(parent) <= 1:
-        return False
-    try:
-        parent_fields = _status_fields(proc / parent / "status")
-    except OSError:
-        return False  # Unproven parent: fall through to the age check.
-    uids = parent_fields.get("Uid", "").split()
-    return (parent_fields.get("Name", "").strip() in _SSHD_NAMES and len(uids) == 4
-            and set(uids) == {"0"})
-
-
-def _require_older_than_tree(path, task, proc):
-    # comm may contain spaces and parentheses; field 3 follows the last ')'.
-    stat = (task / "stat").read_text(encoding="utf-8")
-    ticks = int(stat.rsplit(")", 1)[1].split()[19])
-    boot = next(line.split()[1] for line in (proc / "stat").read_text(
-        encoding="utf-8").splitlines() if line.startswith("btime "))
-    boot_time = int(boot)
-    frequency = os.sysconf("SC_CLK_TCK")
-    if ticks < 0 or boot_time <= 0 or frequency <= 0:
-        raise ValueError("invalid-process-clock")
-    # btime is second-granularity and starttime is tick-granularity. Use an
-    # upper bound so rounding cannot exempt a task created after the tree.
-    latest_start = boot_time + 1 + (ticks + 1) / frequency
-    if latest_start >= (path / ".git").stat().st_ctime:
-        raise ValueError("daemon-not-older")
-
-
 def require_predating_daemon(path, task, proc):
     """Only exempt known non-holders proven older than this worktree's .git."""
     try:
-        fields = _status_fields(task / "status")
+        fields = status_fields(task / "status")
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
-        if _is_root_sshd_session(fields, proc):
+        if is_root_sshd_session(fields, proc):
             # Policy: with protected inspection opted in, descriptor evidence is
             # required (a root parent may pass an inherited -E log fd into the
             # worktree). Without it the exemption applies so default
@@ -151,7 +107,7 @@ def require_predating_daemon(path, task, proc):
             if os.environ.get(OPT_IN) == "1":
                 require_protected_references(path, task, proc)
         else:
-            _require_older_than_tree(path, task, proc)
+            require_older_than_tree(path, task, proc)
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
     counts = _observations.get()
