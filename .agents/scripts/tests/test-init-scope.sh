@@ -487,7 +487,13 @@ test_repo_metrics_init_hook() {
 	print_result "cmd_init resolves repo-metrics-helper path" "$rc"
 
 	if [[ "$init_tail" == *"$expected_generate"* && "$init_tail" == *"$expected_output_dir"* ]]; then rc=0; else rc=1; fi
-	print_result "cmd_init generates local repo metrics" "$rc"
+	print_result "metrics helper generates local repo metrics" "$rc"
+
+	# Call site only (exclude the helper definition) with project-root argument.
+	local init_call_site
+	init_call_site=$(sed -n '/local _metrics_helper=/,/Run security posture assessment/p' "$AIDEVOPS_INIT_LIB")
+	if [[ "$init_call_site" == *'_init_generate_repo_metrics "$_metrics_helper" "$project_root"'* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init calls metrics helper with project root" "$rc"
 
 	if [[ "$init_tail" == *'Skipping GitHub repo metrics refresh workflow for local-only repo'* ]]; then rc=0; else rc=1; fi
 	print_result "cmd_init skips metrics workflow for local-only repos" "$rc"
