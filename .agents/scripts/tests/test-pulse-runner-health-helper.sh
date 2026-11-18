@@ -505,6 +505,93 @@ else
 fi
 _teardown_sandbox
 
+# --- GH#38977: capability burst + self-probe ---
+# Fixed clock: 2026-11-18T08:30:00Z == 1794990600. Blockers carry a sentinel
+# detail field and one malformed line; only metadata may be consumed.
+_rh_burst_setup() {
+	local issues="$1"
+	_setup_sandbox
+	export RUNNER_HEALTH_TEST_NOW="2026-11-18T08:30:00Z"
+	export AIDEVOPS_WORKER_BLOCKER_LOG_FILE="$SANDBOX/blockers.jsonl"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"$SANDBOX/probe-fail"
+	printf '#!/usr/bin/env bash\nprintf "4999\\n"\n' >"$SANDBOX/probe-pass"
+	chmod +x "$SANDBOX/probe-fail" "$SANDBOX/probe-pass"
+	local n="" ts=1794990000
+	printf '{not json\n' >"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
+	for n in $issues; do
+		printf '{"event":"terminal_blocker_captured","reason":"runner_capability_unmet","ts":%s,"repo_slug":"owner/repo","issue_number":%s,"detail":"PRIVATE-SENTINEL"}\n' \
+			"$ts" "$n" >>"$AIDEVOPS_WORKER_BLOCKER_LOG_FILE"
+		ts=$((ts + 60))
+	done
+	return 0
+}
+
+_rh_burst_teardown() {
+	unset RUNNER_HEALTH_TEST_NOW AIDEVOPS_WORKER_BLOCKER_LOG_FILE RUNNER_HEALTH_PROBE_CMD AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX
+	_teardown_sandbox
+	return 0
+}
+
+_rh_burst_setup "11 12 13"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+reason=$(jq -r '.circuit_breaker.reason // empty' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || true)
+if [[ "$rc" -eq 0 && "$reason" == "capability_burst probe=probe_cmd distinct_issues=3 "* ]] &&
+	! grep -q 'PRIVATE-SENTINEL' "$RUNNER_HEALTH_STATE_FILE"; then
+	print_result "capability burst on 3 issues + failing probe trips the breaker" "PASS"
+else
+	print_result "capability burst on 3 issues + failing probe trips the breaker" "FAIL" "rc=$rc reason=$reason"
+fi
+# Self-heal: before the probe interval the trip holds; after it a passing
+# re-probe resumes, and the already-probed burst does not re-trip.
+rc_hold=0
+RUNNER_HEALTH_TEST_NOW="2026-11-18T08:35:00Z" RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc_hold=$?
+rc_heal=0
+RUNNER_HEALTH_TEST_NOW="2026-11-18T08:41:00Z" RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc_heal=$?
+rc_again=0
+# Probe due and burst still in a widened window: only the probed-evidence
+# marker prevents a re-trip on the same blockers.
+AIDEVOPS_RUNNER_CAPABILITY_BURST_WINDOW_SECS=7200 RUNNER_HEALTH_TEST_NOW="2026-11-18T08:52:00Z" \
+	RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc_again=$?
+if [[ "$rc_hold" -eq 0 && "$rc_heal" -eq 1 && "$rc_again" -eq 1 ]]; then
+	print_result "capability trip self-heals once a re-probe passes after the interval" "PASS"
+else
+	print_result "capability trip self-heals once a re-probe passes after the interval" "FAIL" \
+		"hold=$rc_hold heal=$rc_heal again=$rc_again"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 12 13"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-pass" _h is-paused || rc=$?
+audit=$(jq -r '[.last_outcomes[] | select(.signal == "capability_burst_probe_passed")] | length' "$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || echo 0)
+if [[ "$rc" -eq 1 && "$audit" == "1" ]]; then
+	print_result "capability burst + passing probe stays closed and records an audit entry" "PASS"
+else
+	print_result "capability burst + passing probe stays closed and records an audit entry" "FAIL" "rc=$rc audit=$audit"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 11 12"
+rc=0
+RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RUNNER_HEALTH_STATE_FILE" ]]; then
+	print_result "repeat blocks on the same issue are not a capability burst" "PASS"
+else
+	print_result "repeat blocks on the same issue are not a capability burst" "FAIL" "rc=$rc"
+fi
+_rh_burst_teardown
+
+_rh_burst_setup "11 12 13"
+rc=0
+AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 RUNNER_HEALTH_PROBE_CMD="$SANDBOX/probe-fail" _h is-paused || rc=$?
+if [[ "$rc" -eq 1 && ! -f "$RUNNER_HEALTH_STATE_FILE" ]]; then
+	print_result "AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 disables the capability rule" "PASS"
+else
+	print_result "AIDEVOPS_RUNNER_CAPABILITY_BURST_MAX=0 disables the capability rule" "FAIL" "rc=$rc"
+fi
+_rh_burst_teardown
+
 echo ""
 echo "Tests run: $TESTS_RUN, failed: $TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] && exit 0 || exit 1
