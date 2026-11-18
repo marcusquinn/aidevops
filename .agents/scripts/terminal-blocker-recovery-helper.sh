@@ -1554,6 +1554,70 @@ _tbr_pending_discovery_stages() {
 	return 0
 }
 
+# Scan one queue tier for tbr_pending; runs inside its scope (mode, entry_mode,
+# cursor_name, count, incomplete, observed, self_resolved). Resume in sorted
+# order, then wrap. Advance only the scan cursor, never queue ownership or
+# decisions, even when a stage times out.
+# Returns 0 when scanned, 3 when the queue budget or identity stopped the
+# pass (incomplete is set), 2 when a cursor could not be written.
+_tbr_pending_scan_tier() {
+	local tier="$1"
+	local tier_cursor_name="$cursor_name" cursor="" file="" pass=0 decided=0 rc=0 saved="" before="" hold=0
+	[[ "$tier" -eq 0 ]] || tier_cursor_name="${cursor_name}_decided"
+	[[ ! -f "${TBR_ROOT}/${tier_cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${tier_cursor_name}" || true
+	# GH#39006: --count only probes for the trigger. It shares this cursor
+	# with the supervisor's pending pass, so it stops the cursor just before
+	# the first entry it counts; that pass then starts with that entry.
+	saved="$cursor"
+	for pass in 1 2; do
+		for file in "${TBR_ROOT}"/queue/*.json; do
+			[[ -f "$file" ]] || continue
+			decided=0
+			_tbr_entry_decided "$file" && decided=1
+			[[ "$decided" -eq "$tier" ]] || continue
+			if [[ "$pass" -eq 1 ]]; then
+				[[ "${file##*/}" > "$cursor" ]] || continue
+			else
+				[[ "${file##*/}" > "$cursor" ]] && continue
+			fi
+			if [[ "$SECONDS" -ge "$TBR_QUEUE_DEADLINE" ]]; then
+				printf 'blocker-recovery: incomplete stage=queue reason=budget_exhausted\n' >&2
+				incomplete=1
+				return 3
+			fi
+			# GH#33025: resolve once, only when work exists, so this runner's own
+			# collaborator-authored circuits stay recognised during recovery.
+			if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+				TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || {
+					incomplete=1
+					return 3
+				}
+				export TERMINAL_BLOCKER_SELF_LOGIN
+			fi
+			self_resolved=1
+			if [[ "$hold" -eq 0 ]]; then
+				before="$saved"
+				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
+				saved="${file##*/}"
+			fi
+			observed+="${file##*/};"
+			rc=0
+			if [[ "$mode" == "--count" ]]; then
+				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
+				if [[ "$rc" -eq 0 && "$hold" -eq 0 ]]; then
+					_tbr_restore_cursor "$tier_cursor_name" "$before" || return 2
+					hold=1
+				fi
+			else
+				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" || rc=$?
+			fi
+			[[ "$rc" -ne 0 ]] || count=$((count + 1))
+			[[ "$rc" -lt 2 ]] || incomplete=1
+		done
+	done
+	return 0
+}
+
 tbr_pending() {
 	local mode="${1:-}"
 	local cursor_name=pending_cursor entry_mode=""
@@ -1562,7 +1626,7 @@ tbr_pending() {
 		entry_mode=rearm
 	fi
 	_tbr_init_dirs || return 1
-	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" cursor="" file="" pass=0 count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
+	local TBR_DEADLINE="" TBR_QUEUE_DEADLINE="" TBR_SEED_DEADLINE="" file="" count=0 self_resolved=0 rc=0 incomplete=0 reserve=0 unclassified_reserve=0 observed=";"
 	_tbr_start_budget || return 2
 	# Retire stale fixtures before any identity/API call, including entries past
 	# the remote scan budget. Never retire evidence on an unreadable registry.
@@ -1590,65 +1654,12 @@ tbr_pending() {
 	fi
 	# GH#38692: tier 0 = entries without a standing human_decision, tier 1 =
 	# decided ones; each tier rotates with its own cursor.
-	local tier=0 tier_cursor_name="" decided=0 saved="" before="" hold=0
+	local tier=0 scan_rc=0
 	for tier in 0 1; do
-	tier_cursor_name="$cursor_name"
-	[[ "$tier" -eq 0 ]] || tier_cursor_name="${cursor_name}_decided"
-	cursor=""
-	[[ ! -f "${TBR_ROOT}/${tier_cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${tier_cursor_name}" || true
-	# GH#39006: --count only probes for the trigger. It shares this cursor
-	# with the supervisor's pending pass, so it stops the cursor just before
-	# the first entry it counts; that pass then starts with that entry.
-	saved="$cursor"
-	hold=0
-	# Resume in sorted order, then wrap. Advance only the scan cursor, never
-	# queue ownership or decisions, even when a stage times out.
-	for pass in 1 2; do
-		for file in "${TBR_ROOT}"/queue/*.json; do
-			[[ -f "$file" ]] || continue
-			decided=0
-			_tbr_entry_decided "$file" && decided=1
-			[[ "$decided" -eq "$tier" ]] || continue
-			if [[ "$pass" -eq 1 ]]; then
-				[[ "${file##*/}" > "$cursor" ]] || continue
-			else
-				[[ "${file##*/}" > "$cursor" ]] && continue
-			fi
-			if [[ "$SECONDS" -ge "$TBR_QUEUE_DEADLINE" ]]; then
-				printf 'blocker-recovery: incomplete stage=queue reason=budget_exhausted\n' >&2
-				incomplete=1
-				break 3
-			fi
-			# GH#33025: resolve once, only when work exists, so this runner's own
-			# collaborator-authored circuits stay recognised during recovery.
-			if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
-				TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || {
-					incomplete=1
-					break 3
-				}
-				export TERMINAL_BLOCKER_SELF_LOGIN
-			fi
-			self_resolved=1
-			if [[ "$hold" -eq 0 ]]; then
-				before="$saved"
-				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
-				saved="${file##*/}"
-			fi
-			observed+="${file##*/};"
-			rc=0
-			if [[ "$mode" == "--count" ]]; then
-				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
-				if [[ "$rc" -eq 0 && "$hold" -eq 0 ]]; then
-					_tbr_restore_cursor "$tier_cursor_name" "$before" || return 2
-					hold=1
-				fi
-			else
-				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" || rc=$?
-			fi
-			[[ "$rc" -ne 0 ]] || count=$((count + 1))
-			[[ "$rc" -lt 2 ]] || incomplete=1
-		done
-	done
+		scan_rc=0
+		_tbr_pending_scan_tier "$tier" || scan_rc=$?
+		[[ "$scan_rc" -ne 2 ]] || return 2
+		[[ "$scan_rc" -eq 0 ]] || break
 	done
 	# Existing ownership is observed before potentially slow remote discovery.
 	# Seed has its own stage cap and cannot consume more than the overall budget.
