@@ -69,7 +69,9 @@ def restore_auto_merge(root, archive):
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
     if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
         return
-    fetch_preservation(root, archive)
+    # Reuse the admin dir fetch_preservation resolved (None only without a bundle).
+    admin = fetch_preservation(root, archive)
     oid = verify_auto_merge(root, archive, manifest)
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     (admin / 'AUTO_MERGE').write_text(oid + '\n', encoding='ascii')
