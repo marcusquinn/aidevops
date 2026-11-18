@@ -62,12 +62,11 @@ def verify_imported_base(root, base, run_git):
 def index_roots(root):
     """Include staged and resolve-undo objects, excluding null object IDs."""
     roots = set()
-    for inventory in ('--stage', '--resolve-undo'):
-        for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
-            if entry:
-                oid = entry.split(b"\t", 1)[0].split()[1]
-                if set(oid) != {48}:
-                    roots.add(oid.decode("ascii"))
+    for entry in git(root, "ls-files", "--stage", "--resolve-undo", "-z").split(b"\0"):
+        if entry:
+            oid = entry.split(b"\t", 1)[0].split()[1]
+            if set(oid) != {48}:
+                roots.add(oid.decode("ascii"))
     return roots
 
 
