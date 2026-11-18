@@ -32,6 +32,7 @@ _shim_is_aidevops_gh() {
 		*/aidevops/.agents/scripts/gh | \
 		*/.agents/scripts/gh | \
 		*/.agents/scripts/safe-bin/gh | \
+		*/agents/scripts/gh-shim/gh | \
 		*/agents/scripts/gh) return 0 ;;
 	esac
 	return 1

@@ -157,6 +157,20 @@ else
 	fail "concurrent fixture produced an unexpected native invocation count"
 fi
 
+mkdir -p "$TMP/runtime-bundles/b/agents/scripts/gh-shim"
+cp "$SHIM" "$TMP/runtime-bundles/b/agents/scripts/gh-shim/gh"
+for module in gh-native-transport-lib.sh gh-api-guards-lib.sh gh-write-policy-lib.sh gh-closing-reference-lib.sh; do
+	cp "${REPO_DIR}/.agents/scripts/${module}" "$TMP/runtime-bundles/b/agents/scripts/gh-shim/${module}"
+done
+chmod +x "$TMP/runtime-bundles/b/agents/scripts/gh-shim/gh"
+: >"$TMP/native.log"
+if NATIVE_GH_LOG="$TMP/native.log" PATH="$TMP/runtime-bundles/old/agents/scripts:$TMP/home/.aidevops/agents/scripts:$TMP/runtime-bundles/b/agents/scripts/gh-shim:$TMP/native-linux:${TEST_SYS_PATH}" \
+	"$TMP/runtime-bundles/old/agents/scripts/gh" --version && grep -Fxq -- "--version" "$TMP/native.log"; then
+	pass "runtime-bundle gh-shim generation is skipped in favour of native gh"
+else
+	fail "runtime-bundle gh-shim generation was selected or native gh not reached"
+fi
+
 printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]] || exit 1
 exit 0
