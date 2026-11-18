@@ -427,7 +427,7 @@ class TestGetProfileTargets(unittest.TestCase):
         config = self._legacy_config("Buzz", buzz_path)
 
         updated, count = tabby_profile_sync.rename_legacy_buzz_profiles(
-            config, str(buzz_path)
+            config, str(buzz_path), tabby_profile_sync.is_aidevops_managed_profile
         )
 
         self.assertEqual(count, 1)
@@ -440,7 +440,7 @@ class TestGetProfileTargets(unittest.TestCase):
         config = self._legacy_config("My Buzz", buzz_path)
 
         updated, count = tabby_profile_sync.rename_legacy_buzz_profiles(
-            config, str(buzz_path)
+            config, str(buzz_path), tabby_profile_sync.is_aidevops_managed_profile
         )
 
         self.assertEqual(count, 0)
