@@ -279,12 +279,15 @@ health_url_status() {
 		lsof() { return 0; }
 		# shellcheck source=/dev/null
 		source "$SERVE_LIB"
-		AIDEVOPS_LOCALDEV_LOCAL_ADDRS="10.80.0.1 127.0.0.1" _serve_validate_args 3102 5 1 "$url"
+		_serve_local_addrs() { printf '%s\n' 10.80.0.1 127.0.0.1; }
+		_serve_validate_args 3102 5 1 "$url"
 	) >/dev/null 2>&1 || status=$?
 	return "$status"
 }
 health_url_status "http://10.80.0.1:3102/api/health"
 assert_status "private local interface health URL accepted" 0 "$?"
+health_url_status "http://10.80.0.1:3102?ready=1"
+assert_status "private health URL with query and no path accepted" 0 "$?"
 health_url_status "http://10.80.0.2:3102/"
 assert_status "private non-local address health URL rejected" 1 "$?"
 health_url_status "http://10.80.0.1:3103/"
