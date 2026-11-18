@@ -579,6 +579,57 @@ assert_eq "refresh: failed edit logs one warning" "1" \
 STUB_EDIT_RC=0
 
 ######################################################################
+# Part 7: Files Scope paths missing from the default branch (GH#38978)
+#
+# _brief_files_scope_missing_paths warns at authoring time about literal
+# scope paths absent from the default branch unless declared `NEW:`.
+######################################################################
+
+printf '\n%s\n\n' '--- Part 7: Missing Files Scope paths (GH#38978) ---'
+
+SCOPE_REPO="${REFRESH_TMP}/scope-repo"
+mkdir -p "${SCOPE_REPO}/.agents/scripts"
+printf 'x\n' >"${SCOPE_REPO}/.agents/scripts/exists.sh"
+git -C "$SCOPE_REPO" init -q
+git -C "$SCOPE_REPO" add -A
+git -C "$SCOPE_REPO" -c user.name=t -c user.email=t@example.invalid commit -q -m init
+
+MISSING_BODY=$'## What\n\nx\n\n### Files Scope\n\n- `.agents/scripts/exists.sh`\n- `.agents/scripts/does-not-exist.sh`\n- `.agents/scripts/does-not-exist.sh`\n\n## Why\n\ny\n'
+assert_eq "missing-scope: one line for the one missing file" ".agents/scripts/does-not-exist.sh" \
+	"$(_brief_files_scope_missing_paths "$MISSING_BODY" "$SCOPE_REPO")"
+
+DECLARED_BODY="${MISSING_BODY}"$'\n### Files to Modify\n\n- NEW: `.agents/scripts/does-not-exist.sh` — new helper\n'
+assert_eq "missing-scope: NEW: declaration under Files to Modify silences it" "" \
+	"$(_brief_files_scope_missing_paths "$DECLARED_BODY" "$SCOPE_REPO")"
+
+GLOB_BODY=$'### Files Scope\n\n- `.agents/scripts/*.sh`\n'
+glob_rc=0
+glob_out=$(_brief_files_scope_missing_paths "$GLOB_BODY" "$SCOPE_REPO") || glob_rc=$?
+assert_eq "missing-scope: glob entries print nothing" "0:" "${glob_rc}:${glob_out}"
+
+nongit_rc=0
+nongit_out=$(_brief_files_scope_missing_paths "$MISSING_BODY" "${REFRESH_TMP}/not-a-repo") || nongit_rc=$?
+assert_eq "missing-scope: non-git repo_path prints nothing and returns 0" "0:" "${nongit_rc}:${nongit_out}"
+
+# claim-task-id.sh: the warning never changes the interactive scope gate's status.
+CLAIM_SCRIPT="${SCRIPT_DIR_TEST}/../claim-task-id.sh"
+claim_rc=0
+claim_err=$(
+	SCRIPT_DIR="${SCRIPT_DIR_TEST}/.."
+	# shellcheck source=../shared-constants.sh
+	source "${SCRIPT_DIR}/shared-constants.sh"
+	eval "$(sed -n '/^_warn_interactive_scope_missing_paths() {/,/^}/p;/^_validate_interactive_dispatch_scope() {/,/^}/p' "$CLAIM_SCRIPT")"
+	detect_session_origin() { printf 'interactive\n'; }
+	NO_ISSUE=false DRY_RUN=false TASK_BRIEF_FILE="" TASK_LABELS="auto-dispatch"
+	TASK_DESCRIPTION="$MISSING_BODY" REPO_PATH="$SCOPE_REPO"
+	_validate_interactive_dispatch_scope 2>&1 >/dev/null
+) || claim_rc=$?
+assert_eq "missing-scope: claim-task-id scope gate still exits 0" "0" "$claim_rc"
+# shellcheck disable=SC2016 # literal Markdown backticks in the expected hint
+assert_contains "missing-scope: claim-task-id warns with the path and NEW: hint" "$claim_err" \
+	'declare `NEW: .agents/scripts/does-not-exist.sh` under ### Files to Modify'
+
+######################################################################
 # Summary
 ######################################################################
 
