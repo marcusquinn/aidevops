@@ -1656,14 +1656,14 @@ _ddh_main_issue_command() {
 #aidevops:trust-boundary
 _ddh_release_stale_recovery() {
 	local issue_number="$1" repo_slug="$2" reason="$3"
-	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
-	[[ ${#reason} -le 160 && "$reason" =~ ^[a-zA-Z0-9\ ,._:-]+$ ]] || return 1
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ && "$repo_slug" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || { printf '%s\n' 'release-stale-recovery: invalid issue number or repository slug' >&2; return 1; }
+	[[ ${#reason} -le 160 && "$reason" =~ ^[a-zA-Z0-9\ ,._:-]+$ ]] || { printf '%s\n' 'release-stale-recovery: reason must be <=160 chars of [A-Za-z0-9 ,._:-]' >&2; return 1; }
 	local login="" permission="" issue_json="" comments="" release_state=""
-	login=$(gh api user --jq '.login' 2>/dev/null) || return 1
-	[[ "$login" =~ ^[a-zA-Z0-9-]+$ ]] || return 1
-	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || return 1
-	case "$permission" in admin | maintain) ;; *) return 1 ;; esac
-	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	login=$(gh api user --jq '.login' 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to retrieve caller login' >&2; return 1; }
+	[[ "$login" =~ ^[a-zA-Z0-9-]+$ ]] || { printf '%s\n' 'release-stale-recovery: invalid caller login' >&2; return 1; }
+	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" --jq '.permission' 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to retrieve caller permission' >&2; return 1; }
+	case "$permission" in admin | maintain) ;; *) printf '%s\n' 'release-stale-recovery: caller lacks admin/maintain permission' >&2; return 1 ;; esac
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to retrieve issue' >&2; return 1; }
 	printf '%s' "$issue_json" | jq -e '
 		.state == "open"
 		and ([.labels[].name | select(startswith("status:"))]
@@ -1675,8 +1675,8 @@ _ddh_release_stale_recovery() {
 			and . != "parent-task"
 		))
 		and ([.assignees[]] | length == 0) and (.pull_request == null)
-	' >/dev/null || return 1
-	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
+	' >/dev/null || { printf '%s\n' 'release-stale-recovery: issue must be open, unassigned, not a PR, have exactly one blocked or available status, and have no independent hold labels' >&2; return 1; }
+	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to retrieve issue comments' >&2; return 1; }
 	release_state=$(printf '%s' "$comments" | jq -r --arg login "$login" --arg owner OWNER --arg member MEMBER '
 		[.[][] | select((.body // "")
 			| test("<!-- stale-recovery-tick:escalated|<!-- stale-recovery-release:verified -->"))]
@@ -1688,14 +1688,14 @@ _ddh_release_stale_recovery() {
 			and (.author_association | IN($owner, $member))
 			and .user.login == $login then "retry"
 		  else "invalid" end
-	' 2>/dev/null) || return 1
-	[[ "$release_state" == escalated || "$release_state" == retry ]] || return 1
+	' 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to parse release state' >&2; return 1; }
+	[[ "$release_state" == escalated || "$release_state" == retry ]] || { printf '%s\n' 'release-stale-recovery: no current escalation marker or same-maintainer retry found' >&2; return 1; }
 	# Do not turn a newer independent circuit breaker into a dispatchable issue.
 	printf '%s' "$comments" | jq -e '
 		[.[][] | select((.body // "")
 			| test("cost-circuit-breaker:fired|worker-recovery-loop:blocked|dispatch-circuit-breaker:worker_recovery_loop"))]
 		| length == 0
-	' >/dev/null || return 1
+	' >/dev/null || { printf '%s\n' 'release-stale-recovery: independent circuit breaker found or comments invalid' >&2; return 1; }
 	# Commit the reset event first. If the label transition failed, a verified
 	# same-maintainer marker allows an idempotent retry without another comment.
 	if [[ "$release_state" == escalated ]]; then
@@ -1705,16 +1705,16 @@ _ddh_release_stale_recovery() {
 Stale-recovery dispatch hold reviewed and released by maintainer ${login}.
 Reason: ${reason}
 Other independent dispatch and review gates remain in force.
-<!-- ops:end -->" >/dev/null || return 1
+<!-- ops:end -->" >/dev/null || { printf '%s\n' 'release-stale-recovery: unable to record release marker' >&2; return 1; }
 	fi
-	set_issue_status "$issue_number" "$repo_slug" available --add-label auto-dispatch || return 1
-	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 1
+	set_issue_status "$issue_number" "$repo_slug" available --add-label auto-dispatch || { printf '%s\n' 'release-stale-recovery: unable to update issue status' >&2; return 1; }
+	issue_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || { printf '%s\n' 'release-stale-recovery: unable to retrieve issue after status update' >&2; return 1; }
 	printf '%s' "$issue_json" | jq -e '
 		.state == "open"
 		and ([.labels[].name] | index("status:available") != null)
 		and ([.labels[].name] | index("status:blocked") == null)
 		and ([.labels[].name] | index("auto-dispatch") != null)
-	' >/dev/null || return 1
+	' >/dev/null || { printf '%s\n' 'release-stale-recovery: updated issue is not open and available with auto-dispatch' >&2; return 1; }
 	printf 'STALE_RECOVERY_RELEASED: issue #%s in %s\n' "$issue_number" "$repo_slug"
 	return 0
 }
