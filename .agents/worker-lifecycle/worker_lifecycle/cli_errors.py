@@ -12,7 +12,7 @@ from .storage import StoreCapacity, StoreConflict
 # Allowlisted, path-free fields copied from a failed helper; never its stderr text.
 _HELPER_FIELDS = (
     ("command", "helper"), ("reason", "helper_reason"),
-    ("stderr_class", "helper_stderr_class"),
+    ("stderr_class", "helper_stderr_class"), ("returncode", "helper_returncode"),
 )
 
 

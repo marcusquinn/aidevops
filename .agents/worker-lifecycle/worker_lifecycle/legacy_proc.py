@@ -92,13 +92,42 @@ def require_idle_reference(path, reference):
         raise ValueError("live-process-reference")
 
 
+_SSHD_NAMES = frozenset({"sshd", "sshd-session"})
+
+
+def _status_fields(status_file):
+    text = status_file.read_text(encoding="utf-8")
+    return dict(line.split(":", 1) for line in text.splitlines() if ":" in line)
+
+
+def _is_root_sshd_session(fields, proc):
+    """GH#38997: an unprivileged sshd session forked by the root sshd listener.
+
+    A same-UID process cannot reparent under a root-owned sshd, and sshd never
+    changes into a worktree, so a login newer than the tree is not a holder.
+    """
+    if fields.get("Name", "").strip() not in _SSHD_NAMES:
+        return False
+    parent = fields.get("PPid", "").strip()
+    if not parent.isdecimal() or int(parent) <= 1:
+        return False
+    parent_fields = _status_fields(proc / parent / "status")
+    uids = parent_fields.get("Uid", "").split()
+    return (parent_fields.get("Name", "").strip() in _SSHD_NAMES and len(uids) == 4
+            and set(uids) == {"0"})
+
+
 def require_predating_daemon(path, task, proc):
     """Only exempt known non-holders proven older than this worktree's .git."""
     try:
-        status = (task / "status").read_text(encoding="utf-8")
-        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        fields = _status_fields(task / "status")
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
+        if _is_root_sshd_session(fields, proc):
+            counts = _observations.get()
+            if counts is not None:
+                counts["skipped_nondumpable"] += 1
+            return
         # comm may contain spaces and parentheses; field 3 follows the last ')'.
         stat = (task / "stat").read_text(encoding="utf-8")
         ticks = int(stat.rsplit(")", 1)[1].split()[19])

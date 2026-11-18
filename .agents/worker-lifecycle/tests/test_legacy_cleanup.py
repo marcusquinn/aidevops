@@ -93,6 +93,39 @@ class LegacyProcContract(unittest.TestCase):
                             self.census(denied)
                     self.assertEqual(counts["skipped_nondumpable"], 0)
 
+    def write_parent(self, name, uid):
+        parent = self.proc / "77"
+        (parent / "task" / "77").mkdir(parents=True, exist_ok=True)
+        status = f"Name:\t{name}\nState:\tS\nUid:\t{uid} {uid} {uid} {uid}\n"
+        (parent / "status").write_text(status)
+        (parent / "task" / "77" / "status").write_text(status)
+        # Foreign-owned parents are skipped; own-UID ones are checked normally.
+        if not (parent / "task" / "77" / "cwd").is_symlink():
+            (parent / "task" / "77" / "cwd").symlink_to(self.root, target_is_directory=True)
+        (parent / "task" / "77" / "fd").mkdir(exist_ok=True)
+
+    def write_daemon(self, name):
+        self.write_task(name=name, ticks="200000")
+        (self.task / "status").write_text((self.task / "status").read_text() + "PPid:\t77\n")
+
+    def test_newer_sshd_session_under_root_sshd_is_not_a_holder(self):
+        # GH#38997: a login newer than the worktree must not block retirement.
+        self.write_parent("sshd", 0)
+        for name in ("sshd", "sshd-session"):
+            with self.subTest(name=name):
+                self.write_daemon(name)
+                with legacy_proc.collect_proc_observations() as counts:
+                    self.census()
+                self.assertEqual(counts["skipped_nondumpable"], 1)
+
+    def test_newer_daemon_with_unproven_parent_fails_closed(self):
+        for parent_name, parent_uid in (("bash", 0), ("sshd", os.geteuid())):
+            with self.subTest(parent=parent_name, uid=parent_uid):
+                self.write_parent(parent_name, parent_uid)
+                self.write_daemon("sshd-session")
+                with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                    self.census()
+
     def test_missing_clock_and_worktree_evidence_fail_closed(self):
         for path in (self.task / "stat", self.proc / "stat", self.target / ".git"):
             with self.subTest(path=path):

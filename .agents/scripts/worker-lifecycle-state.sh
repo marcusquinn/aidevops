@@ -225,7 +225,14 @@ _worker_lifecycle_report_refusal() {
 	# condition. Keep the error primary; a live registry owner is only context.
 	if [[ -z "$detail" && "$reason" =~ ^[A-Z][A-Za-z0-9]*(Error|Exception|Conflict|Expired)$ ]]; then
 		owner=$(_worker_lifecycle_owner_summary "$worktree") || owner=""
-		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s%s rc=%s\n' "$reason" "${owner:+ $owner}" "$rc" >&2
+		# GH#38997: name the failing helper/Git subcommand, its exit code and stderr class.
+		local helper=""
+		helper=$(jq -r '[(if .helper then "helper=" + (.helper | gsub("[^A-Za-z0-9 _.:-]"; "") | gsub(" "; "_")) else empty end),
+			(if .helper_returncode != null then "helper_rc=" + (.helper_returncode | tostring) else empty end),
+			(if .helper_reason then "helper_reason=" + (.helper_reason | tostring) else empty end),
+			(if .helper_stderr_class then "helper_stderr_class=" + (.helper_stderr_class | tostring) else empty end)]
+			| join(" ")' 2>/dev/null <<<"$result") || helper=""
+		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s%s%s rc=%s\n' "$reason" "${helper:+ $helper}" "${owner:+ $owner}" "$rc" >&2
 		if [[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]]; then
 			printf '[worker-lifecycle] next: unexpected registry failure with no named condition; inspect worktree-helper.sh registry list and worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
 		fi

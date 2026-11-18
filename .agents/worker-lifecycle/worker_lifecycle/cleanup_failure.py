@@ -43,6 +43,30 @@ def archive_failure_code(stderr_text: str) -> str | None:
     return match[1] if match else None
 
 
+_GIT_SUBCOMMANDS = frozenset({
+    "worktree", "branch", "update-ref", "symbolic-ref", "rev-parse", "status", "fetch",
+    "for-each-ref", "merge-base", "rev-list", "config", "checkout", "reset", "clean",
+    "gc", "prune", "remote", "show-ref", "cat-file", "ls-files", "diff", "log",
+})
+
+
+def _git_subcommand(command: "list | tuple") -> str | None:
+    """Allowlisted `git <sub> [worktree-sub]` name from argv, skipping -C/-c options."""
+    if not command or not isinstance(command[0], str) or Path(command[0]).name != "git":
+        return None
+    args = [str(a) for a in command[1:]]
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        index += 2 if args[index] in {"-C", "-c", "--git-dir", "--work-tree"} else 1
+    if index >= len(args) or args[index] not in _GIT_SUBCOMMANDS:
+        return None
+    name = args[index]
+    if name == "worktree" and index + 1 < len(args) and re.fullmatch(
+            r"add|move|remove|prune|repair|list|lock|unlock", args[index + 1]):
+        name += " " + args[index + 1]
+    return name
+
+
 def command_failure(
     error: "subprocess.CalledProcessError | subprocess.TimeoutExpired",
 ) -> dict:
@@ -55,13 +79,18 @@ def command_failure(
     command = error.cmd
     if not isinstance(command, (list, tuple)) or len(command) < 3:
         return details
-    if (not isinstance(command[1], str)
+    git_sub = _git_subcommand(command)
+    if git_sub:
+        # GH#38997: name the failing Git subcommand; never its arguments or paths.
+        details.update(operation=git_sub, command="git " + git_sub)
+    elif (not isinstance(command[1], str)
             or Path(command[1]).name != "worktree-archive-helper.sh"
             or command[2] not in {"archive", "verify-local", "verify-local-recorded",
                                   "source-matches"}):
         return details
-    details.update(operation=command[2], archive_failure=True,
-                   command="worktree-archive-helper.sh " + command[2])
+    else:
+        details.update(operation=command[2], archive_failure=True,
+                       command="worktree-archive-helper.sh " + command[2])
     # Only the helper's namespaced validation code and a fixed stderr class are
     # useful here. Drop paths, descriptions and all other stderr (which may
     # contain sensitive Git URLs); free text is never copied.
@@ -69,7 +98,7 @@ def command_failure(
     text = stderr[-8192:]
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
-    code = archive_failure_code(text)
+    code = None if git_sub else archive_failure_code(text)
     if code:
         details["reason"] = code
     for label, pattern in _STDERR_CLASSES:
