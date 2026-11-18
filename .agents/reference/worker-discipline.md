@@ -414,9 +414,8 @@ exactly one outcome and record it with `record`:
   `gh-write-helper.sh issue status <N> --repo <owner/repo> available` and
   post one receipt naming the evidence read. Never release when a trusted
   OWNER/MEMBER comment made after the label states a hold that still applies.
-- **Only a person can resolve it**: name the smallest input and its owner on
-  the issue once, with `wake: human_decision`, using the canonical public ask
-  described below.
+- **Only a person can resolve it**: post the canonical public ask below once,
+  with `wake: human_decision`.
 
 Unclassified-hold handling never removes `hold-for-review`, `needs-maintainer-review`,
 `needs-maintainer-permissions`, `no-auto-dispatch` or `parent-task`; issues
@@ -441,8 +440,7 @@ skips issues that also carry `needs-maintainer-review`,
     `hold-for-review`, and set `status:available` when nothing else blocks.
   - **Retire**: close as not planned, citing the reply.
   - **Keep holding**: record it; post nothing new.
-  - **Question or ambiguous**: answer from the evidence, or name the one
-    missing input once using the canonical public ask below.
+  - **Question or ambiguous**: answer from evidence or post the canonical ask below once.
   - **Not a decision** (a script's notice posted with the maintainer's
     token): record it and post nothing.
 
