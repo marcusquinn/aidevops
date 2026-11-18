@@ -2219,9 +2219,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19099 fix(brief-scope): warn at interactive filing when a Files Scope path is missing from the default branch and not declared NEW #auto-dispatch #bug #priority:medium #fix-the-fixer ref:GH#38978 pr:#38991 completed:2026-11-18
 
-- [ ] t19100 fix(tests): restore test-pre-dispatch-validator-large-file.sh fixtures that predate the Files Scope gate #auto-dispatch #bug #priority:medium ref:GH#38990
+- [x] t19100 fix(tests): restore test-pre-dispatch-validator-large-file.sh fixtures that predate the Files Scope gate #auto-dispatch #bug #priority:medium ref:GH#38990 pr:#38992 completed:2026-11-18
 
 - [x] t19102 docs(release-sweep): claim session-filed auto-dispatch issues with --implementing so the claim is not silently skipped #auto-dispatch #bug #documentation #priority:medium ref:GH#38993 pr:#38995 completed:2026-11-18
+
+- [ ] t19103 fix(recovery): pending --count must not advance the supervisor's pending cursor past actionable entries #auto-dispatch #bug #priority:high ref:GH#39006
 
 ## In Progress
 
