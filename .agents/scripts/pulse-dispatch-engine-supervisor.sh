@@ -134,17 +134,24 @@ _pulse_rearm_blocker_holds() {
 # cadence), unless cached API pressure says to wait. The full-interval stamp
 # is untouched, and the deadline holds whatever interval is in force later.
 # A failed or truncated write reads as 0: no early probe, the safe default.
-# Args: now_epoch interval due_file
+# GH#39012: only the helper's queue-side markers (queue, identity or entry
+# stage incomplete) mean queue work is unread. A finished queue pass with only
+# discovery incomplete (seed, holds, unclassified; the seed rarely finishes in
+# one call) keeps the full interval, so a persistent discovery failure cannot
+# repeat the probe every partial interval. No readable stderr: no early probe.
+# Args: now_epoch interval due_file err_file
 #######################################
 _pulse_blocker_partial_reprobe() {
 	local now_epoch="$1"
 	local interval="$2"
 	local due_file="$3"
+	local err_file="$4"
 	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}"
 	[[ "$partial" =~ ^[0-9]+$ ]] || return 0
 	# Decimal, so a leading zero (0600) is not read as octal.
 	partial=$((10#$partial))
 	[[ "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
+	grep -Eq 'blocker-recovery: incomplete stage=(queue|identity|entry)( |$)' "$err_file" 2>/dev/null || return 0
 	! _pulse_blocker_api_pressure_active || return 0
 	printf '%s\n' "$((now_epoch + partial))" >"$due_file" 2>/dev/null || return 0
 	echo "[pulse-wrapper] LLM supervisor: blocker recovery probe found 0 pending (partial scan); re-probe in ${partial}s (GH#39008)" >>"$LOGFILE"
@@ -171,6 +178,8 @@ _pulse_blocker_recovery_due() {
 	local retry_interval="${PULSE_LLM_FAILURE_RETRY_INTERVAL:-1800}"
 	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
 	local partial_due_file="${PULSE_DIR}/last_blocker_recovery_partial_due_epoch"
+	# GH#39012: the last probe's stage markers, kept for diagnosis.
+	local probe_err="${PULSE_DIR}/last_blocker_recovery_probe.err"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
 	local last_check=0 partial_due=0 pending=0 pending_rc=0 scan_note=""
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
@@ -187,6 +196,9 @@ _pulse_blocker_recovery_due() {
 	if [[ $((now_epoch - last_check)) -lt "$interval" ]]; then
 		partial_due=$(_pulse_read_epoch_file "$partial_due_file")
 		[[ "$partial_due" -gt "$last_check" && "$now_epoch" -ge "$partial_due" ]] || return 1
+		# GH#39012: pressure can start after the deadline was saved. Keep the
+		# deadline so the early probe runs once pressure clears.
+		! _pulse_blocker_api_pressure_active || return 1
 	fi
 	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
 		return 1
@@ -197,14 +209,14 @@ _pulse_blocker_recovery_due() {
 	# count (helper contract). The bounded seed spans every pulse repo and
 	# rarely finishes in one call, so discarding that count kept this trigger
 	# from ever firing. Any other failure means nothing is known to be pending.
-	pending=$(bash "$helper" pending --count 2>/dev/null) || pending_rc=$?
+	pending=$(bash "$helper" pending --count 2>"$probe_err") || pending_rc=$?
 	case "$pending_rc" in
 	0) ;;
 	2) scan_note=" (partial scan)" ;;
 	*) pending=0 ;;
 	esac
 	if [[ "$pending_rc" -eq 2 && "$pending" == 0 ]]; then
-		_pulse_blocker_partial_reprobe "$now_epoch" "$interval" "$partial_due_file"
+		_pulse_blocker_partial_reprobe "$now_epoch" "$interval" "$partial_due_file" "$probe_err"
 		return 1
 	fi
 	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
