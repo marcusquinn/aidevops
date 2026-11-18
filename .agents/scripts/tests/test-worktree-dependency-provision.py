@@ -131,6 +131,33 @@ _dlw_restore_worktree_deps "$2" "$3"
         self.assertTrue((self.wt / "node_modules" / "example" / "index.js").exists())
         self.assertFalse((self.wt / "node_modules" / "example_tmp_123").exists())
 
+    def test_root_markers_and_tool_caches_are_skipped(self):
+        skipped = (".metadata_never_index", ".DS_Store", ".vite", ".vite-temp", ".cache")
+        for manager in ("npm", "pnpm"):
+            if manager == "pnpm":
+                self.make_pnpm()
+            with self.subTest(manager=manager):
+                for name in skipped[:2]:
+                    (self.modules / name).write_bytes(b"")
+                for name in skipped[2:]:
+                    (self.modules / name / "deps").mkdir(parents=True, exist_ok=True)
+                    (self.modules / name / "deps" / "chunk.js").write_text("fixture only")
+                self.run_restore()
+                self.assertTrue((self.wt / "node_modules" / "example" / "index.js").exists())
+                for name in skipped:
+                    self.assertFalse(os.path.lexists(self.wt / "node_modules" / name))
+                shutil.rmtree(self.wt / "node_modules")
+        # Allowlisted names with another type are still unrecorded package roots.
+        shutil.rmtree(self.modules / ".cache")
+        (self.modules / ".cache").symlink_to(".pnpm")
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+        (self.modules / ".cache").unlink()
+        (self.modules / ".metadata_never_index").unlink()
+        (self.modules / ".metadata_never_index").mkdir()
+        self.run_restore()
+        self.assertFalse((self.wt / "node_modules").exists())
+
     def test_dangling_bin_link_is_copied_as_is(self):
         bin_dir = self.modules / "example" / "node_modules" / ".bin"
         bin_dir.mkdir(parents=True)
