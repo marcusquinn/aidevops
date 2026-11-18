@@ -678,6 +678,39 @@ read_draft_state() {
 	return $?
 }
 
+# Prints "STATE<TAB>mergedAt" (e.g. "MERGED\t2026-...Z"); empty on read failure.
+read_pr_lifecycle() {
+	local pr_number="$1"
+	local repo="$2"
+	if [[ -n "${AIDEVOPS_GH_CHECKS_TEST_PR_STATE+x}" ]]; then
+		printf '%s\n' "$AIDEVOPS_GH_CHECKS_TEST_PR_STATE"
+		return 0
+	fi
+	gh pr view "$pr_number" --repo "$repo" --json state,mergedAt --jq '[.state // "", .mergedAt // ""] | @tsv' 2>/dev/null
+	return $?
+}
+
+# Returns 0 (merged, exit 0 for caller), 1 (closed unmerged), 3 (open/unknown: keep polling).
+# Native auto-merge can merge while optional contexts are still non-terminal.
+check_pr_still_open() {
+	local pr_number="$1"
+	local repo="$2"
+	local lifecycle="" pr_state="" merged_at=""
+	lifecycle=$(read_pr_lifecycle "$pr_number" "$repo" 2>/dev/null || true)
+	IFS=$'\t' read -r pr_state merged_at <<<"$lifecycle"
+	case "$pr_state" in
+	MERGED)
+		printf 'MERGED: PR #%s merged at %s; check wait not required\n' "$pr_number" "${merged_at:-unknown time}"
+		return 0
+		;;
+	CLOSED)
+		printf 'CLOSED: PR #%s was closed without merging; check wait stopped\n' "$pr_number" >&2
+		return 1
+		;;
+	esac
+	return 3
+}
+
 note_if_draft() {
 	local pr_number="$1"
 	local repo="$2"
@@ -832,6 +865,9 @@ wait_for_checks() {
 	while true; do
 		poll_number=$((poll_number + 1))
 		write_runtime_heartbeat
+		local lifecycle_rc=0
+		check_pr_still_open "$pr_number" "$repo" || lifecycle_rc=$?
+		[[ "$lifecycle_rc" -eq 3 ]] || return "$lifecycle_rc"
 		local raw="" fetch_rc=0 fetch_diagnostic="" fetch_diagnostic_file="" current="" now_epoch="" elapsed=0 changed=0 classification="" final_head="" state_summary=""
 		local missing_contexts="" zero_job_detail=""
 		fetch_diagnostic_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-checks-wait-fetch.XXXXXX") || return 2
