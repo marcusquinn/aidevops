@@ -63,7 +63,7 @@ def supported_state(root, preserve_git_admin=False, include_ignored=False):
 
 
 def supported_administration(root, admin, common=None):
-    if auto_merge(root) is not None:
+    if auto_merge(root, admin) is not None:
         raise ValueError('AUTO_MERGE requires the unified metadata preservation path')
     if common is None:
         common = git_dirs(root)[1]
