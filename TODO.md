@@ -2203,6 +2203,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19087 perf(ci): run Framework Validation step groups as parallel shards behind the required aggregator #auto-dispatch #feat #performance tier:standard assignee:marcusquinn ref:GH#38925 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19087-brief.md]
 
+- [ ] t19088 fix(release): resolve squash commits with a missing GitHub PR association via verified subject hint #auto-dispatch #bug #priority:high tier:standard assignee:marcusquinn ref:GH#38932 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19088-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
