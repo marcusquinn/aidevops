@@ -136,6 +136,7 @@ SYSTEM_LABELS=(
 	"hold-for-review|${LABEL_COLOR_ATTENTION}|Opt-out: block issue auto-dispatch or PR auto-merge for maintainer review"
 	"do-not-close|EDEDED|Opt-out: never auto-close this PR in pulse sweeps"
 	"allow-auto-merge|0E8A16|Allow approved automation to merge after required checks pass"
+	"needs-source-access|${LABEL_COLOR_ATTENTION}|Blocked: a required external source refuses access; needs a permitted capture, an alternative source, or host recovery"
 	"needs-credentials|${LABEL_COLOR_ATTENTION}|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"

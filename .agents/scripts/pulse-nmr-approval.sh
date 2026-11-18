@@ -1583,7 +1583,7 @@ _nmr_issue_label_state() {
 			($statuses[0] // $no_status),
 			(any($labels[];
 				. == "hold-for-review" or . == "no-auto-dispatch" or
-				. == "needs-credentials" or . == "needs-maintainer-permissions")),
+				. == "needs-credentials" or . == "needs-source-access" or . == "needs-maintainer-permissions")),
 			(any($labels[];
 				. == "parent-task" or . == "meta" or . == "persistent" or
 				. == "supervisor" or . == "contributor" or . == "quality-review" or

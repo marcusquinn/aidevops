@@ -613,6 +613,7 @@ ensure_status_labels_exist() {
 #######################################
 [[ -n "${BLOCKED_NEEDS_AI_RECOVERY+x}" ]] || BLOCKED_NEEDS_AI_RECOVERY="needs-ai-recovery"
 [[ -n "${BLOCKED_NEEDS_DEPENDENCY+x}" ]] || BLOCKED_NEEDS_DEPENDENCY="needs-dependency"
+[[ -n "${BLOCKED_NEEDS_SOURCE_ACCESS+x}" ]] || BLOCKED_NEEDS_SOURCE_ACCESS="needs-source-access"
 [[ -n "${BLOCKED_NEEDS_MAINTAINER_INPUT+x}" ]] || BLOCKED_NEEDS_MAINTAINER_INPUT="needs-maintainer-input"
 [[ -n "${BLOCKED_NEEDS_CREDENTIALS+x}" ]] || BLOCKED_NEEDS_CREDENTIALS="needs-credentials"
 _blocked_companion_contract() {
@@ -620,13 +621,14 @@ _blocked_companion_contract() {
 	printf '%s\t%s\t%s\n' \
 		"$BLOCKED_NEEDS_AI_RECOVERY" "$attention" "Blocked: AI recovery pending; the recovery supervisor solves or releases it, no human action needed" \
 		"$BLOCKED_NEEDS_DEPENDENCY" "$attention" "Blocked: waits on a linked open issue; solve that first, unblocks when it closes" \
+		"$BLOCKED_NEEDS_SOURCE_ACCESS" "$attention" "Blocked: a required external source refuses access; needs a permitted capture, an alternative source, or host recovery" \
 		"$BLOCKED_NEEDS_MAINTAINER_INPUT" "$attention" "Blocked: owner decision or input that AI cannot supply; the issue names the exact ask" \
 		"$BLOCKED_NEEDS_CREDENTIALS" "$attention" "Opt-out: block auto-dispatch — requires credentials or account access"
 	return 0
 }
 
 # Companions owned by the blocked state (removed on every exit from blocked).
-BLOCKED_OWNED_COMPANION_LABELS=("$BLOCKED_NEEDS_AI_RECOVERY" "$BLOCKED_NEEDS_DEPENDENCY" "$BLOCKED_NEEDS_MAINTAINER_INPUT")
+BLOCKED_OWNED_COMPANION_LABELS=("$BLOCKED_NEEDS_AI_RECOVERY" "$BLOCKED_NEEDS_DEPENDENCY" "$BLOCKED_NEEDS_MAINTAINER_INPUT" "$BLOCKED_NEEDS_SOURCE_ACCESS")
 
 #######################################
 # Print the needs-* companion label for a blocker reason class.
@@ -651,7 +653,10 @@ blocked_needs_label_for_reason() {
 	input_required | permission_required | maintainer_input | spend_decision)
 		printf '%s\n' "$BLOCKED_NEEDS_MAINTAINER_INPUT"
 		;;
-	source_access_blocked | credentials | missing_secret)
+	source_access_blocked)
+		printf '%s\n' "$BLOCKED_NEEDS_SOURCE_ACCESS"
+		;;
+	credentials | missing_secret)
 		printf '%s\n' "$BLOCKED_NEEDS_CREDENTIALS"
 		;;
 	external_trigger_pending | dependency)
@@ -685,6 +690,9 @@ blocked_companion_guidance() {
 	needs-credentials)
 		# shellcheck disable=SC2016 # literal Markdown backticks
 		printf '%s\n' 'Needed: credentials or account access. Owner: maintainer. Route: provision on a runner with `aidevops secret set NAME` (never in issues or comments), then post the retry directive. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.'
+		;;
+	needs-source-access)
+		printf '%s\n' 'Needed: a permitted capture, an alternative official source, or the host recovering. Owner: access owner. Route: provide the source through an approved channel or confirm the canonical site in the issue; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.'
 		;;
 	needs-maintainer-permissions)
 		printf '%s\n' 'Needed: a scoped maintainer permission grant. Owner: maintainer. Route: approve the recorded permission request through the approval flow. Afterwards the grant verification removes status:blocked and this label.'

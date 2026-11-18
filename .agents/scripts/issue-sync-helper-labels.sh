@@ -220,7 +220,7 @@ _is_protected_label() {
 	persistent | needs-maintainer-review | needs-maintainer-permissions | not-planned | duplicate | wontfix | \
 		already-fixed | "good first issue" | "help wanted" | \
 	parent-task | meta | auto-dispatch | publication:pending | no-auto-dispatch | no-takeover | \
-		hold-for-review | needs-credentials | \
+		hold-for-review | needs-credentials | needs-source-access | \
 		consolidation-in-progress | coderabbit-nits-ok | ratchet-bump | \
 		new-file-smell-ok)
 		return 0
