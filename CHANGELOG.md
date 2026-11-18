@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.227] - 2026-11-18
+
+### Added
+
+- cross-repo maintainer decision queue and /decisions command (t19090)
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md (#38958)
+- Documentation: Docker-free disposable WordPress fixture recipe (GH#38882) (#38938)
+- Maintenance: sync GitHub issue refs to TODO.md (#38949)
+
+### Fixed
+
+- rerun head-only suite failures and classify passing reruns as flaky, not regression
+- remove SIGPIPE-prone early-exit pipes from test-enrich-dedup-guard.sh
+- a re-armed permission_required hold gives other runners the first claim
+- permission_required holds publish the named ask as input_required
+- make WIP commit guidance commitlint-aware
+- re-verify non-write permission for every interactive claim (GH#38946)
+- set up finalized snapshot fixture before launch-confirmed assertion (GH#38943) (#38945)
+- tolerate JSON spacing in stale reservation status check (GH#38940) (#38941)
+- reconcile verifies tag provenance with the origin/main verifier
+
 ## [3.39.226] - 2026-11-18
 
 ### Added
