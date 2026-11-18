@@ -48,6 +48,16 @@ readonly EXCLUSION_LABELS=(
 	"consolidation-task"
 	"routine-tracking"
 	"no-auto-dispatch"
+	# Blocked companion labels (reference/dispatch-blockers.md, GH#38360): a
+	# status-less issue carrying one has lost status:blocked; never release it.
+	"needs-maintainer-input"
+	"needs-dependency"
+	"needs-credentials"
+	"needs-maintainer-permissions"
+	"needs-ai-recovery"
+	# Review holds
+	"hold-for-review"
+	"needs-maintainer-review"
 )
 
 # All known status:* labels (used to detect absence via --search exclusions)
