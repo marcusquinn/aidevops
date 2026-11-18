@@ -363,7 +363,7 @@ release_policy_active() {
 # Exact bytes (base64) of a file at a commit; empty or non-base64 fails.
 release_raw_contents() {
 	local repo="$1" path="$2" sha="$3" content=""
-	content=$(gh api "repos/${repo}/contents/${path}?ref=${sha}" --jq 'select(.type == "file" and .encoding == "base64") | .content') || return 1
+	content=$(gh api "repos/${repo}/contents/${path}?ref=${sha}" --jq 'select(.type == "file" and .encoding == "base64") | .content | gsub("\\s"; "")') || return 1
 	[[ -n "$content" ]] || return 1
 	printf '%s\n' "$content"
 	return 0
