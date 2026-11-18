@@ -25,8 +25,10 @@ fi
 # gh >= 2.105 enters agent mode when any of these variables is non-empty
 # (cli/cli internal/agents/detect.go at v2.105.0): it appends `gh event listen`
 # hints to stderr and prints full help on flag errors. aidevops parses gh output,
-# so native gh children must not inherit them (GH#38966). Value-only signals
-# (TERM_PROGRAM=kiro, a /.pi/agent PATH segment) are not aidevops runtimes.
+# so native gh children must not inherit them (GH#38966). Of the value-only
+# signals, TERM_PROGRAM is hidden only when it is `kiro` (other terminals keep
+# it); a /.pi/agent PATH segment is out of scope because rewriting PATH would
+# change command resolution for every child, and Pi is not an aidevops runtime.
 _SHIM_AGENT_DETECTION_VARS=(AI_AGENT AGENT CODEX_SANDBOX CODEX_CI CODEX_THREAD_ID
 	GEMINI_CLI COPILOT_CLI OPENCODE ANTIGRAVITY_AGENT AUGMENT_AGENT REPL_ID
 	CLAUDE_CODE_IS_COWORK CLAUDECODE CLAUDE_CODE CURSOR_TRACE_ID CURSOR_AGENT
@@ -43,6 +45,10 @@ _shim_hide_agent_env() {
 		export -n "${var_name?}"
 		_SHIM_HIDDEN_AGENT_VARS+=("$var_name")
 	done
+	if [[ "${TERM_PROGRAM:-}" == "kiro" ]]; then
+		export -n TERM_PROGRAM
+		_SHIM_HIDDEN_AGENT_VARS+=(TERM_PROGRAM)
+	fi
 	return 0
 }
 

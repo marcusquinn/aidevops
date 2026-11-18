@@ -648,12 +648,12 @@ mkdir -p "$agent_env_dir/bin"
 cp -R "$TMP/scripts" "$agent_env_dir/scripts"
 cat >"$agent_env_dir/bin/gh" <<EOF
 #!/usr/bin/env bash
-printf '%s:%s OPENCODE=%s CLAUDECODE=%s\n' "\${1:-}" "\${2:-}" "\${OPENCODE-<unset>}" "\${CLAUDECODE-<unset>}" >>"$agent_env_dir/native.log"
+printf '%s:%s OPENCODE=%s CLAUDECODE=%s TERM_PROGRAM=%s\n' "\${1:-}" "\${2:-}" "\${OPENCODE-<unset>}" "\${CLAUDECODE-<unset>}" "\${TERM_PROGRAM-<unset>}" >>"$agent_env_dir/native.log"
 exec "$TMP/bin/gh" "\$@"
 EOF
 cat >"$agent_env_dir/scripts/gh-signature-helper.sh" <<EOF
 #!/usr/bin/env bash
-printf 'OPENCODE=%s CLAUDECODE=%s\n' "\${OPENCODE-<unset>}" "\${CLAUDECODE-<unset>}" >>"$agent_env_dir/sig.log"
+printf 'OPENCODE=%s CLAUDECODE=%s TERM_PROGRAM=%s\n' "\${OPENCODE-<unset>}" "\${CLAUDECODE-<unset>}" "\${TERM_PROGRAM-<unset>}" >>"$agent_env_dir/sig.log"
 printf '\n\n<!-- aidevops:sig -->\n---\nstub footer\n'
 EOF
 chmod +x "$agent_env_dir/bin/gh" "$agent_env_dir/scripts/gh-signature-helper.sh"
@@ -662,13 +662,17 @@ _agent_env_run() {
 	: >"$agent_env_dir/native.log"
 	: >"$agent_env_dir/sig.log"
 	_reset_log
-	PATH="$agent_env_dir/bin:$PATH" OPENCODE=1 CLAUDECODE=1 "$agent_env_dir/scripts/gh" "$@" >/dev/null 2>"$agent_env_dir/err.log"
+	PATH="$agent_env_dir/bin:$PATH" OPENCODE=1 CLAUDECODE=1 TERM_PROGRAM=kiro \
+		"$agent_env_dir/scripts/gh" "$@" >/dev/null 2>"$agent_env_dir/err.log"
 	return $?
 }
 
+# Every native child must see each detection variable unset, not merely
+# changed: an empty OPENCODE would still be inherited.
 _agent_env_native_clean() {
 	local label="$1"
-	if [[ -s "$agent_env_dir/native.log" ]] && ! grep -Eq 'OPENCODE=1|CLAUDECODE=1' "$agent_env_dir/native.log"; then
+	if [[ -s "$agent_env_dir/native.log" ]] &&
+		! grep -Evq ' OPENCODE=<unset> CLAUDECODE=<unset> TERM_PROGRAM=<unset>$' "$agent_env_dir/native.log"; then
 		_pass "$label: native gh sees no agent variables"
 	else
 		_fail "$label: native gh sees no agent variables" "native: $(cat "$agent_env_dir/native.log") err: $(cat "$agent_env_dir/err.log")"
@@ -685,10 +689,18 @@ _agent_env_native_clean "auth passthrough"
 
 _agent_env_run issue comment 999 --repo owner/repo --body "agent env"
 _agent_env_native_clean "signed write"
-if grep -Fxq 'OPENCODE=1 CLAUDECODE=1' "$agent_env_dir/sig.log" && grep -q '<!-- aidevops:sig -->' "$STUB_GH_LOG"; then
+if grep -Fxq 'OPENCODE=1 CLAUDECODE=1 TERM_PROGRAM=kiro' "$agent_env_dir/sig.log" && grep -q '<!-- aidevops:sig -->' "$STUB_GH_LOG"; then
 	_pass "signed write: signature helper still sees agent variables"
 else
 	_fail "signed write: signature helper still sees agent variables" "sig: $(cat "$agent_env_dir/sig.log") argv: $(_read_argv)"
+fi
+
+: >"$agent_env_dir/native.log"
+PATH="$agent_env_dir/bin:$PATH" OPENCODE=1 TERM_PROGRAM=iTerm.app "$agent_env_dir/scripts/gh" api /user >/dev/null 2>&1
+if grep -q '^api:/user OPENCODE=<unset> CLAUDECODE=<unset> TERM_PROGRAM=iTerm.app$' "$agent_env_dir/native.log"; then
+	_pass "non-agent TERM_PROGRAM reaches native gh unchanged"
+else
+	_fail "non-agent TERM_PROGRAM reaches native gh unchanged" "native: $(cat "$agent_env_dir/native.log")"
 fi
 
 : >"$agent_env_dir/native.log"
