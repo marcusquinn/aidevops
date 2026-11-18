@@ -16,6 +16,10 @@ Third-party upstreams you only mirror: register them with
 `aidevops repos add <path> --sync-only` (`reference/repos-json-fields.md`) and
 stop there.
 
+Routines repositories (`init-routines`, registry `purpose: "routines"`) and
+profile repositories (`priority: "profile"`) are purpose-built: skip step 1,
+they need no `.aidevops.json`. The Pulse and label steps still apply.
+
 1. **Initialize:** run `aidevops init` in a linked worktree and merge the
    result through a PR. It registers the repository, writes `.aidevops.json`,
    syncs the canonical GitHub labels, installs the metrics workflow and

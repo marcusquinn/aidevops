@@ -1645,6 +1645,7 @@ _setup_run_noninteractive_migrations() {
 	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches
 	_time_step "cleanup_legacy_aidevops_temp_artifacts" cleanup_legacy_aidevops_temp_artifacts
 	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
+	_time_step "migrate_routines_repo_purpose_marker" migrate_routines_repo_purpose_marker
 	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	_time_step "cleanup_legacy_dashboard_launchagent" cleanup_legacy_dashboard_launchagent
 	_time_step "cleanup_legacy_agents_md_templates" cleanup_legacy_agents_md_templates
@@ -1797,6 +1798,7 @@ _setup_run_interactive_silent_migrations() {
 	cleanup_stale_health_issue_caches
 	cleanup_legacy_aidevops_temp_artifacts
 	cleanup_worktree_entries_in_repos_json
+	migrate_routines_repo_purpose_marker
 	_cleanup_legacy_model_config
 	cleanup_legacy_dashboard_launchagent
 	cleanup_legacy_agents_md_templates

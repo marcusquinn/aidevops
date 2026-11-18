@@ -37,6 +37,7 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 GIT_PARENT="${HOME}/Git"
+ROUTINES_REPO_PURPOSE="routines"
 DRY_RUN=false
 ROUTINES_SCAFFOLD_COMMIT_MESSAGE="chore: scaffold aidevops-routines repo"
 # SCRIPT_DIR: resolve from BASH_SOURCE when available, fall back to deployed path
@@ -473,6 +474,7 @@ register_repo() {
 		  "slug": $slug,
 		  "pulse": true,
 		  "priority": "tooling",
+		  "purpose": $purpose,
 		  "local_only": true,
 		  "maintainer": $maintainer,
 		  "initialized": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -483,14 +485,17 @@ register_repo() {
 		  "slug": $slug,
 		  "pulse": true,
 		  "priority": "tooling",
+		  "purpose": $purpose,
 		  "maintainer": $maintainer,
 		  "initialized": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
 		}]'
 	fi
 
+	# GH#39025: purpose marks the repo as config-less for the onboarding audit.
 	jq --arg path "$repo_path" \
 		--arg slug "$slug" \
 		--arg maintainer "$maintainer" \
+		--arg purpose "$ROUTINES_REPO_PURPOSE" \
 		"$jq_filter" "$REPOS_JSON" >"$tmp_json"
 
 	if jq empty "$tmp_json" 2>/dev/null; then
