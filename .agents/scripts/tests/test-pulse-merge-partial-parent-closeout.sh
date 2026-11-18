@@ -107,6 +107,7 @@ define_functions_under_test() {
 		/^_pm_extract_partial_parent_reference\(\) \{/,/^}$/ { print }
 		/^_pm_issue_needs_partial_closeout\(\) \{/,/^}$/ { print }
 		/^_pm_unmet_acceptance_criteria\(\) \{/,/^}$/ { print }
+		/^_pm_worker_declared_completion\(\) \{/,/^}$/ { print }
 		/^_pm_handle_partial_parent_closeout\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT" "${SCRIPT_DIR}/../pulse-merge-issue-closeout.sh")
@@ -211,6 +212,33 @@ Umbrella lifecycle parent.
 		"For/Ref broad parent: records no-close rule"
 	assert_api_issue_fetch_count "1" \
 		"For/Ref broad parent: fetches issue body and labels once"
+	return 0
+}
+
+test_worker_completion_declaration_skips_partial_closeout() {
+	: >"$GH_COMMENT_LOG"
+	: >"$LOGFILE"
+	export TEST_PR_BODY="For #23932"
+	export TEST_ISSUE_LABELS="enhancement"
+	export TEST_ISSUE_BODY="## Acceptance Criteria
+
+- [ ] First
+- [ ] Second"
+	export TEST_EXISTING_COMMENTS='[{"author_association":"MEMBER","body":"Data PR: #23936 (Resolves this issue). Unfinished rows: none"}]'
+
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Ledger done."
+
+	assert_comment_contains "COMPLETION_CHECK:PR#23936" \
+		"worker declared completion: posts completion check"
+	assert_no_partial_closeout_comment \
+		"worker declared completion: no partial closeout"
+
+	: >"$GH_COMMENT_LOG"
+	export TEST_EXISTING_COMMENTS='[{"author_association":"MEMBER","body":"Data PR: #23936 (Resolves this issue). Unfinished rows: 3"}]'
+	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Ledger partial."
+	assert_comment_contains "PARTIAL_PARENT_CLOSEOUT:PR#23936" \
+		"unfinished rows listed: partial closeout still posted"
+	export TEST_EXISTING_COMMENTS="[]"
 	return 0
 }
 
@@ -376,6 +404,7 @@ main() {
 	fi
 
 	test_for_reference_posts_partial_closeout
+	test_worker_completion_declaration_skips_partial_closeout
 	test_alternate_checklist_bullets_detect_parent_and_followups
 	test_primary_linked_issue_skips_partial_closeout
 	test_leaf_reference_without_broad_signal_skips_comment
