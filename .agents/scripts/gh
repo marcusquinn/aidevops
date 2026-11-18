@@ -157,6 +157,11 @@ if [[ "${AIDEVOPS_GH_SHIM_DISABLE:-0}" == "1" ]]; then
 	exec "$_real_gh" "$@"
 fi
 
+# GH#38966: no native gh child below may see agent-detection variables, or gh
+# >= 2.105 corrupts captured output with agent-mode hints. Runtime-detecting
+# children re-export them via _shim_with_agent_env.
+_shim_hide_agent_env
+
 # -----------------------------------------------------------------------------
 # Source instrumentation helper for gh_record_call (GH#21857 — full visibility).
 # Load once here rather than lazily inside _shim_rest_rewrite_read so ALL gh
@@ -1096,7 +1101,7 @@ unset _GH_PR_IDENTITY_ORIGIN
 if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" != "pr:merge" &&
 	$_body_idx -ge 0 && -n "$_body_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' <<<"$_body_val"; then
-		_sig_footer=$("$SIG_HELPER" footer --body "$_body_val" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_body_val" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			_new_body="${_body_val}${_sig_footer}"
 			if [[ "$_sig_footer" == *'<!-- aidevops:origin:'* ]]; then
@@ -1119,7 +1124,7 @@ fi
 # failed. This mirrors --body signing while preserving every close-only flag.
 if [[ $_comment_idx -ge 0 && -n "$_comment_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' <<<"$_comment_val"; then
-		_sig_footer=$("$SIG_HELPER" footer --body "$_comment_val" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_comment_val" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			_new_comment="${_comment_val}${_sig_footer}"
 			if [[ $_comment_eq -eq 1 ]]; then
@@ -1140,7 +1145,7 @@ if [[ "${_modified_args[0]:-}:${_modified_args[1]:-}" != "pr:merge" &&
 	$_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; then
 	if ! grep -Fqx '<!-- aidevops:sig -->' "$_body_file_val" 2>/dev/null; then
 		_file_content=$(<"$_body_file_val") || _file_content=""
-		_sig_footer=$("$SIG_HELPER" footer --body "$_file_content" 2>/dev/null || echo "")
+		_sig_footer=$(_shim_sig_helper_footer --body "$_file_content" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
 			# Build augmented body in a temp file we own — never mutate the source.
 			_tmp_body_file=$(mktemp -t aidevops-gh-shim-body.XXXXXX 2>/dev/null) || _tmp_body_file=""
