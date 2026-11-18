@@ -552,6 +552,29 @@ _prrts_preserve_dirty_existing_worktree() {
 	return 0
 }
 
+# t19114: a checkpoint continuation worker commits locally and pushes once at
+# the end. If it exits before that push, its clean worktree is the verified PR
+# head plus unpushed commits. Its prompt says to keep and verify those commits on
+# resume, and its non-force push still fast-forwards the unchanged remote head,
+# so resume in place instead of refusing as diverged. Ordinary review repair has
+# no resume contract (no linked issue) and keeps the refusal.
+_prrts_resume_ahead_continuation_worktree() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local worktree_path="$3"
+	local head_oid="$4"
+	local actual_head="$5"
+	local linked_issue="" ahead_count=""
+
+	linked_issue=$(_prrts_repair_linked_issue "$pr_number") || linked_issue=""
+	[[ -n "$linked_issue" && -n "$actual_head" && "$actual_head" != "$head_oid" ]] || return 1
+	git -C "$worktree_path" merge-base --is-ancestor "$head_oid" "$actual_head" >/dev/null 2>&1 || return 1
+	ahead_count=$(git -C "$worktree_path" rev-list --count "${head_oid}..${actual_head}" 2>/dev/null) || ahead_count=""
+	[[ "$ahead_count" =~ ^[1-9][0-9]*$ ]] || return 1
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} resuming exclusively claimed checkpoint continuation worktree with ${ahead_count} unpushed commit(s) on verified PR head ${head_oid} (HEAD=${actual_head}, issue #${linked_issue})"
+	return 0
+}
+
 _prrts_reconcile_existing_worktree_head() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -589,6 +612,9 @@ _prrts_reconcile_existing_worktree_head() {
 	if [[ -n "$status_output" || "$current_branch" != "$head_ref" ]]; then
 		PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_changed_during_reconcile"
 		return 1
+	fi
+	if _prrts_resume_ahead_continuation_worktree "$repo_slug" "$pr_number" "$worktree_path" "$head_oid" "$actual_head"; then
+		return 0
 	fi
 	if ! git -C "$worktree_path" merge-base --is-ancestor "$actual_head" "$head_oid" >/dev/null 2>&1; then
 		PRRTS_WORKTREE_FAILURE_REASON="existing_review_worktree_diverged"
