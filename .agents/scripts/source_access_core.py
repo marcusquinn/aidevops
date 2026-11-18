@@ -63,11 +63,13 @@ DENIED_NAMES = frozenset(
     "id_ed25519 id_rsa kubeconfig".split()
 )
 DENIED_SUFFIXES = frozenset(".jks .key .keystore .p12 .pem .pfx".split())
-_ANCHORED_OPEN_SUPPORTED = (
-    hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
-    and os.open in os.supports_dir_fd and os.stat in os.supports_dir_fd
-    and os.stat in os.supports_follow_symlinks
-)
+_ANCHORED_OPEN_SUPPORTED = all((
+    hasattr(os, "O_NOFOLLOW"),
+    hasattr(os, "O_DIRECTORY"),
+    os.open in os.supports_dir_fd,
+    os.stat in os.supports_dir_fd,
+    os.stat in os.supports_follow_symlinks,
+))
 
 
 def _root_controlled(path: str, *, directory: bool) -> bool:
@@ -1182,15 +1184,14 @@ def _secure_read(path: str, required_owner: int | None) -> tuple[bytes, str, dic
             "st_dev", "st_ino", "st_mode", "st_nlink", "st_uid",
             "st_size", "st_mtime_ns", "st_ctime_ns",
         )
-        _require_source(
-            all(
-                stat.S_ISREG(observed.st_mode)
-                and _file_identity(observed) == _file_identity(opened_stat)
-                for observed in (anchored_stat, current_stat)
-            )
-            and all(getattr(final_stat, field) == getattr(opened_stat, field) for field in identity_fields),
-            "source path changed during approval",
+        opened_identity = _file_identity(opened_stat)
+        same_file = all(
+            stat.S_ISREG(observed.st_mode) and _file_identity(observed) == opened_identity
+            for observed in (anchored_stat, current_stat)
         )
+        unchanged = all(getattr(final_stat, field) == getattr(opened_stat, field) for field in identity_fields)
+        _require_source(same_file, "source path changed during approval")
+        _require_source(unchanged, "source path changed during approval")
     except OSError as exc:
         raise SourceAccessError("source path changed during approval") from exc
     finally:
