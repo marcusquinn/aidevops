@@ -81,7 +81,7 @@ _worktree_release_vacant_path() {
 	'') printf 'Stale reservation check unavailable: %s\n' "$path" >&2 ;;
 	*)
 		# Tolerate any JSON spacing around the colon.
-		if [[ "$result" =~ \"status\":[[:space:]]*\"([a-z-]+)\" ]]; then
+		if [[ "$result" =~ \"status\"[[:space:]]*:[[:space:]]*\"([a-z-]+)\" ]]; then
 			case "${BASH_REMATCH[1]}" in
 			no-reservation | source-absent-reconciled) ;;
 			*) printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2 ;;
