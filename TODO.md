@@ -2207,11 +2207,21 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19091 fix(terminal-blocker): permission_required holds publish the named ask as input_required #bug #framework #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38951 pr:#38955 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19091-brief.md] completed:2026-11-18
 
-- [ ] t19092 fix(terminal-blocker): a re-armed permission_required hold gives other runners the first claim #auto-dispatch #bug #framework #priority:high tier:standard assignee:marcusquinn ref:GH#38957 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19092-brief.md]
+- [x] t19092 fix(terminal-blocker): a re-armed permission_required hold gives other runners the first claim #auto-dispatch #bug #framework #priority:high tier:standard assignee:marcusquinn ref:GH#38957 pr:#38960 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19092-brief.md] completed:2026-11-18
 
-- [ ] t19093 fix(tests): remove SIGPIPE-prone early-exit pipes from test-enrich-dedup-guard.sh #bug #framework #interactive tier:simple assignee:marcusquinn ref:GH#38962 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19093-brief.md]
+- [x] t19093 fix(tests): remove SIGPIPE-prone early-exit pipes from test-enrich-dedup-guard.sh #bug #framework #interactive tier:simple assignee:marcusquinn ref:GH#38962 pr:#38963 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19093-brief.md] completed:2026-11-18
 
-- [ ] t19094 fix(affected-tests): rerun head-only suite failures and classify passing reruns as flaky, not regression #auto-dispatch #bug #framework ref:GH#38964
+- [x] t19094 fix(affected-tests): rerun head-only suite failures and classify passing reruns as flaky, not regression #auto-dispatch #bug #framework ref:GH#38964 pr:#38965 completed:2026-11-18
+
+- [x] t19095 fix(gh-wrappers): strip agent-detection env from scripted gh calls so gh 2.105 event-listen hints cannot corrupt captured JSON or flood helper output #auto-dispatch #bug #priority:high ref:GH#38966 pr:#38983 completed:2026-11-18
+
+- [x] t19098 fix(runner-health): pause a runner on a burst of fast runner_capability_unmet exits confirmed by a self-probe #auto-dispatch #bug #priority:high #fix-the-fixer ref:GH#38977 pr:#38987 completed:2026-11-18
+
+- [x] t19099 fix(brief-scope): warn at interactive filing when a Files Scope path is missing from the default branch and not declared NEW #auto-dispatch #bug #priority:medium #fix-the-fixer ref:GH#38978 pr:#38991 completed:2026-11-18
+
+- [ ] t19100 fix(tests): restore test-pre-dispatch-validator-large-file.sh fixtures that predate the Files Scope gate #auto-dispatch #bug #priority:medium ref:GH#38990
+
+- [x] t19102 docs(release-sweep): claim session-filed auto-dispatch issues with --implementing so the claim is not silently skipped #auto-dispatch #bug #documentation #priority:medium ref:GH#38993 pr:#38995 completed:2026-11-18
 
 ## In Progress
 
