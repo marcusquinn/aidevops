@@ -92,6 +92,19 @@ _pulse_degraded_prefetch_supervisor_escape_due() {
 }
 
 #######################################
+# Cached API-pressure state for blocker-recovery cadence: the GraphQL circuit
+# breaker or the secondary-rate-limit cooldown. Never probes the API itself.
+# Returns: 0 when either is active, 1 otherwise
+#######################################
+_pulse_blocker_api_pressure_active() {
+	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # GH#36026: release positively re-armed queued holds independently of LLM
 # scheduling. Use cached API-pressure state only; never probe to bypass a fuse.
 #######################################
@@ -103,10 +116,7 @@ _pulse_rearm_blocker_holds() {
 	local last_check=0 rc=0
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 0
 	[[ -f "$helper" ]] || return 0
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
-	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
-		return 0
-	fi
+	! _pulse_blocker_api_pressure_active || return 0
 	last_check=$(_pulse_read_epoch_file "$stamp")
 	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 0
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
@@ -114,6 +124,25 @@ _pulse_rearm_blocker_holds() {
 	# budget and saves an independent cursor on partial passes.
 	bash "$helper" rearm >>"$LOGFILE" 2>&1 || rc=$?
 	[[ "$rc" -eq 0 ]] || printf '[pulse-wrapper] Blocker rearm pass incomplete (rc=%s)\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#39008: a partial zero-count probe shows only that its bounded window had
+# nothing; the rest of the queue is unread. Make the next probe due after the
+# shorter partial interval (default: the rearm cadence) instead of the full
+# one, unless cached API pressure says to wait.
+# Args: now_epoch interval stamp
+#######################################
+_pulse_blocker_partial_reprobe() {
+	local now_epoch="$1"
+	local interval="$2"
+	local stamp="$3"
+	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}"
+	[[ "$partial" =~ ^[0-9]+$ && "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
+	! _pulse_blocker_api_pressure_active || return 0
+	printf '%s\n' "$((now_epoch - interval + partial))" >"$stamp" 2>/dev/null || return 0
+	echo "[pulse-wrapper] LLM supervisor: blocker recovery probe found 0 pending (partial scan); re-probe in ${partial}s (GH#39008)" >>"$LOGFILE"
 	return 0
 }
 
@@ -161,6 +190,10 @@ _pulse_blocker_recovery_due() {
 	2) scan_note=" (partial scan)" ;;
 	*) pending=0 ;;
 	esac
+	if [[ "$pending_rc" -eq 2 && "$pending" == 0 ]]; then
+		_pulse_blocker_partial_reprobe "$now_epoch" "$interval" "$stamp"
+		return 1
+	fi
 	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
 	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
