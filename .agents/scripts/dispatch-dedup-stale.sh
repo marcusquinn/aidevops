@@ -561,7 +561,7 @@ Previously assigned to: ${stale_assignees}
 Reason for latest stale: ${reason}
 Recovery count: ${_prior_ticks} (threshold: ${_threshold})
 
-Marked \`status:blocked\`. Review worker logs, salvageable branches and linked PRs first. Once the root cause is addressed and no worker owns the issue, a maintainer can run \`dispatch-dedup-helper.sh release-stale-recovery ${issue_number} ${repo_slug} 'reviewed reason'\`. The command records an audit marker and restores dispatch eligibility; it does not clear independent security/review holds or replace cryptographic approval.
+Marked \`status:blocked\`. Review worker logs, salvageable branches and linked PRs first. Once the root cause is addressed and no worker owns the issue, a maintainer can run \`dispatch-dedup-helper.sh release-stale-recovery ${issue_number} ${repo_slug} 'reviewed reason'\`. The reason must be nonempty, at most 160 characters, and use only letters, digits, spaces, comma, period, underscore, colon, or hyphen. The command records an audit marker and restores dispatch eligibility; it does not clear independent security/review holds or replace cryptographic approval.
 
 _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._
 <!-- ops:end -->" \
