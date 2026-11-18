@@ -27,8 +27,9 @@ name is withheld.
   filings in the same session (median close 1.1h). They solve work they have
   just discovered, while its context is loaded. They are not competing with
   workers for the existing backlog.
-- Worker dispatch latency is not the bottleneck: on 2026-11-18 a new framework
-  issue was worker-dispatched about 90s after filing.
+- One new framework issue was worker-dispatched about 90s after filing on
+  2026-11-18. This is a single observation, not a dispatch-latency distribution
+  for the wider backlog.
 
 ## Where interactive sessions really rescued work
 
@@ -65,11 +66,20 @@ are external or data-trigger holds that recovery comments already explain.
 1. There is no evidence that interactive full-loop out-solves workers. Its edge
    is per-issue latency for freshly discovered work, which is the intended role
    of interactive sessions: seeding and decomposing needs.
-2. Most of the user time spent in slow interactive solves is the trust gate on
-   repeat external reporters. That is a policy decision (trust boundary), not a
-   worker-capability gap. Options: grant the reporter write access, add an
-   issue-only trusted-reporter allowlist to the triage gate (PR trust
-   unchanged), or keep per-issue review.
+2. The largest single cause among the delayed interactive solves (7 of 16) is
+   the trust gate on external reporters. User time per cause was not
+   measured, so this is a count of delayed issues, not a share of user time.
+   It is a policy decision (trust boundary), not a worker-capability gap. Two
+   gates hold these issues: the creation-time triage gate and the dispatch
+   gate `_check_external_issue_author_gate`
+   (`.agents/scripts/pulse-dispatch-commit-gates.sh`). The dispatch gate allows
+   only write-authorized authors or a verified cryptographic approval. The
+   existing `triage_known_contributors` setting
+   (`.agents/configs/aidevops-config.schema.json`) gives advisory review
+   priority only and grants no implementation authority. Options: grant the
+   reporter write access (both gates pass), add a new issue-only dispatch-trust
+   setting that both gates honour (a new trust-boundary contract; PR and merge
+   trust unchanged), or keep per-issue approval.
 3. Do not add more pulse ordering complexity for the blocked backlog. It is
    bounded by worker capacity and by external data triggers.
 
