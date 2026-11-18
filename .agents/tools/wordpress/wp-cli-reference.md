@@ -385,3 +385,86 @@ wp option update blogname "New Site Title"
 wp rewrite structure && wp rewrite flush
 wp option update rank_math_sitemap_last_modified $(date +%s)
 ```
+
+## Disposable Docker-free fixture
+
+Runtime-verify `wp-helper.sh` WP-CLI payloads (`wp-fluentsmtp.php`, `wp-fluent-boards*.php`, `wp-change-plan*.php`) without Docker or MySQL. The Docker + MariaDB stack in `wp-plugin-release.md` (`plugin-check`) does not exercise `wp-helper.sh` transports. Keep every file under one fixture directory and delete it afterwards.
+
+```bash
+export FX="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/wp-fixture"
+mkdir -p "$FX/site" "$FX/home" "$FX/bin"
+```
+
+### 1. WP-CLI with enough memory
+
+Homebrew wp-cli on PHP 8.5 dies in `wp core download` at the 128 MB default `memory_limit`, and the Homebrew launcher ignores `WP_CLI_PHP_ARGS`. Put a `wp` shim first on `PATH`. Find the real script with `wp --info` (WP-CLI binary / PHP binary lines):
+
+```bash
+printf '#!/bin/sh\nexec php -d memory_limit=1G "%s" "$@"\n' "<real wp script or phar>" > "$FX/bin/wp"
+chmod +x "$FX/bin/wp"
+export PATH="$FX/bin:$PATH"
+```
+
+### 2. SQLite instead of MySQL
+
+`wp plugin install` cannot fetch the SQLite plugin before a database exists, and `WordPress/sqlite-database-integration` is a monorepo, so build the `db.php` drop-in from `packages/plugin-sqlite-database-integration/db.copy`:
+
+```bash
+cd "$FX/site" && wp core download
+gh api repos/WordPress/sqlite-database-integration/tarball/HEAD > "$FX/sqlite.tgz"
+mkdir "$FX/sqlite" && tar -xzf "$FX/sqlite.tgz" -C "$FX/sqlite" --strip-components=1
+P=wp-content/mu-plugins/sqlite-database-integration
+mkdir -p "$P" wp-content/database
+cp -R "$FX/sqlite/packages/plugin-sqlite-database-integration/." "$P/"
+sed -e "s#{SQLITE_IMPLEMENTATION_FOLDER_PATH}#$PWD/$P#g" \
+    -e 's#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g' \
+    "$P/db.copy" > wp-content/db.php
+wp config create --skip-check --dbname=wp --dbuser=x --dbpass=x
+wp core install --url=http://localhost --title=Fixture --admin_user=admin \
+  --admin_email=a@example.com --skip-email
+wp plugin install fluent-smtp --activate   # any wordpress.org plugin
+```
+
+If the monorepo layout has moved, `ls "$FX/sqlite/packages"` and locate `db.copy`.
+
+### 3. Isolate the site registry
+
+`wp-helper.sh` derives every config and payload-backup path from `HOME`. Run it with `HOME="$FX/home"` so the real registry is untouched. Register the fixture in `$FX/home/.config/aidevops/wordpress-sites.json` (format: `configs/wordpress-sites.json.txt`; confirm the directory via `WP_CONFIG_DIR` in `scripts/wp-helper.sh`), then:
+
+```bash
+HOME="$FX/home" wp-helper.sh --fluentsmtp <fixture-site> list
+```
+
+### 4. SSH transport without sshd
+
+Register a second site of an SSH type (`hetzner`, `cloudways`) with `ssh_host: localhost`, `ssh_user: fixture` and `wp_path` set to `$FX/site`. Put `ssh` and `scp` shims in `$FX/bin` (already first on `PATH`). The argv shapes come from `_wpcp_prepare_ssh`, `_wpcp_ssh` and `_wpcp_scp` in `scripts/wp-helper-change-plan.sh`:
+
+- `ssh [-n] -p PORT [-i KEY] user@host "<command>"`: run the last argument as a local command, keeping stdin.
+- `scp -q -P PORT [-i KEY] SRC DEST`: skip flags and their values, strip a `host:` prefix from `SRC` or `DEST`, then `cp`.
+
+```bash
+printf '#!/bin/sh\nfor a; do c="$a"; done\nexec sh -c "$c"\n' > "$FX/bin/ssh"
+cat > "$FX/bin/scp" <<'SH'
+#!/bin/sh
+src=""; dest=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -P|-i|-o) shift 2 ;;
+    -*) shift ;;
+    *) [ -z "$src" ] && src="${1#*:}" || dest="${1#*:}"; shift ;;
+  esac
+done
+exec cp -p "$src" "$dest"
+SH
+chmod +x "$FX/bin/ssh" "$FX/bin/scp"
+```
+
+The `scp` shim strips `host:` from every path, so keep the fixture path free of `:`. Re-run the same `wp-helper.sh` command through the SSH site and check upload, quoting, stdin key delivery and that the remote temp directory (`mktemp -d`) is removed.
+
+### 5. Destroy
+
+```bash
+rm -rf "$FX"
+```
+
+Confirm nothing remains outside `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.
