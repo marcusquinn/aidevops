@@ -1,0 +1,31 @@
+object 93f354840df469c46c528d927a3ca9e352edfe22
+type commit
+tag v3.39.228
+tagger marcusquinn <6428977+marcusquinn@users.noreply.github.com> 1794998030 +0000
+
+Release v3.39.228 - AI DevOps Framework
+
+Aidevops-Version: 3.39.228
+Aidevops-Source-PR: 38998
+Aidevops-Source-Merge: 47b2106de6ce54ea6f137acd0c11dcbc4cb8185f
+Aidevops-Snapshot-Base: af52c181a241b4388eaf1833b0af60beea06a09d
+Aidevops-Aggregated-Source: 38967@ab4d641c6b3d38d2a6ca06667108cae0a7bf2917
+Aidevops-Aggregated-Source: 38968@559a3f4162d430b6323337f79954690e2c58a4a0
+Aidevops-Aggregated-Source: 38970@e75b2d32f48820ebee957f2917f51097cb832a21
+Aidevops-Aggregated-Source: 38972@ff276716db1d6a384df63cea02ce573680c3c9ed
+Aidevops-Aggregated-Source: 38974@faa5de8a796c21b3c3a6df181547d516c867b3bf
+Aidevops-Aggregated-Source: 38975@768f9599a23a403c01a606d8cb5b883632cecb60
+Aidevops-Aggregated-Source: 38983@03169aa65193cee2f19d071f31f4eae3a0c2a632
+Aidevops-Aggregated-Source: 38984@2f9072e86a286b2e014abcc75b07bb60d71d9b32
+Aidevops-Aggregated-Source: 38987@eea37d05800663ace917d1836baceeeefeb6c343
+Aidevops-Aggregated-Source: 38989@a8c9a6fe8f22cf7bfdd29af212443ec59b011564
+Aidevops-Aggregated-Source: 38991@bb3fd1800986183ae34c32f30b50cb9b6b0426d7
+Aidevops-Aggregated-Source: 38992@50bf595cbc4919a1f4eca8ca0c251d7a8adaec1c
+Aidevops-Aggregated-Source: 38995@1c435b9359cdb00ac385f7b929d50edb0de38dff
+Aidevops-Aggregated-Source: 38998@47b2106de6ce54ea6f137acd0c11dcbc4cb8185f
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg5IliwL42sBxfqQz9UN/AwvOgBI
+tXO/S10O+PgxbPV78AAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+AAAAQAbUKxeCeTqh6gmdg8wxRzcB31Ks5cHoMnAYZ6QcTRIijVn2jYUNTmdKV9SdosQaNy
+NEaTe56kIYHkTgbOgCcQs=
+-----END SSH SIGNATURE-----
