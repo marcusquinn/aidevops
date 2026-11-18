@@ -222,23 +222,27 @@ async function replyPermissionRequest(client, request, response) {
   }
 }
 
+// Requests a headless worker may allow once, checked after impossible reads.
+// Returns the post-allow audit hook for an allowed request, otherwise null.
+function onceAllowance(context, request) {
+  if (isDesignedPollDoomLoop(request)) return () => recordDesignedPollAllow(context, request, sanitizePermissionText);
+  if (isManagedToolOutputRead(context.toolCalls, request, context.dataHome)) return () => {};
+  if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN)) return () => recordReadOnlyRootAllow(context, request);
+  return null;
+}
+
 async function handlePermissionEvent(context, input) {
-  const { client, isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
+  const { client, isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
-  if (isDesignedPollDoomLoop(request) && await replyPermissionRequest(client, request, "once")) {
-    recordDesignedPollAllow(context, request, sanitizePermissionText);
-    return;
-  }
   if (impossibleExternalRead(context, request)) {
     await replyPermissionRequest(client, request, "reject");
     return;
   }
-  if (isManagedToolOutputRead(toolCalls, request, dataHome)
-    && await replyPermissionRequest(client, request, "once")) return;
-  if (isReadOnlyRootRead(context, request, FORBIDDEN_PATTERN) && await replyPermissionRequest(client, request, "once")) {
-    recordReadOnlyRootAllow(context, request);
+  const recordAllow = onceAllowance(context, request);
+  if (recordAllow && await replyPermissionRequest(client, request, "once")) {
+    recordAllow();
     return;
   }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, request);
@@ -246,26 +250,18 @@ async function handlePermissionEvent(context, input) {
 }
 
 function handlePermissionAsk(context, input, output) {
-  const { isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
+  const { isHeadless, toolCalls, loggedEvents, home, blockerLogPath } = context;
   if (!isHeadless()) return;
-  if (isDesignedPollDoomLoop(input)) {
-    output.status = "allow";
-    recordDesignedPollAllow(context, input, sanitizePermissionText);
-    return;
-  }
   const impossible = impossibleExternalRead(context, input);
   if (impossible) {
     output.status = "deny";
     output.message = impossible;
     return;
   }
-  if (isManagedToolOutputRead(toolCalls, input, dataHome)) {
+  const recordAllow = onceAllowance(context, input);
+  if (recordAllow) {
     output.status = "allow";
-    return;
-  }
-  if (isReadOnlyRootRead(context, input, FORBIDDEN_PATTERN)) {
-    output.status = "allow";
-    recordReadOnlyRootAllow(context, input);
+    recordAllow();
     return;
   }
   capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, input || {});
