@@ -367,7 +367,7 @@ class TestGetProfileTargets(unittest.TestCase):
         alias = self.root / "alias"
         alias.symlink_to(self.workspace, target_is_directory=True)
         self.repos_json.write_text(json.dumps({"initialized_repos": [
-            {"path": "~/Git/repo"}, {"path": str(repo)},
+            {"path": str(Path("~") / self.workspace.name / repo.name)}, {"path": str(repo)},
             {"path": str(self.root)}, {"path": str(self.workspace)},
         ]}))
         with mock.patch.dict(os.environ, {"AIDEVOPS_GIT_WORKSPACE_ROOT": str(alias)}):
