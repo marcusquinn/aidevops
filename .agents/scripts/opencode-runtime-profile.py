@@ -7,7 +7,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- fixed `--version` argv probe only, never a shell
 import sys
 from pathlib import Path
 
@@ -73,7 +73,7 @@ def installed_profile(document, binary=None):
     if not binary:
         return ''
     try:
-        result = subprocess.run([binary, '--version'], capture_output=True, text=True,
+        result = subprocess.run([binary, '--version'], capture_output=True, text=True,  # nosec B603
                                 timeout=5, check=False)
     except (OSError, subprocess.SubprocessError):
         return ''

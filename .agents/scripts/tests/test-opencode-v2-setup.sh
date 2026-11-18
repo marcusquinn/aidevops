@@ -106,6 +106,13 @@ SHIM
 		printf 'global OpenCode 2 received the isolated V2 shim\n' >&2
 		exit 1
 	fi
+	# The isolated opencode2 shim exports the V2 profile with a private
+	# OPENCODE_CONFIG; that is not an explicit choice, so setup run from such a
+	# session still detects the global OpenCode 2 and skips the V1 rollback.
+	PATH="$SANDBOX/bin:$PATH" AIDEVOPS_INSTALL_OPENCODE2_PREVIEW=0 AIDEVOPS_OPENCODE_PROFILE=v2 \
+		OPENCODE_CONFIG="$SANDBOX/isolated-opencode.json" setup_opencode_runtimes
+	[[ ! -e "$SANDBOX/unexpected-v1-heal" ]]
+	[[ "$("$HOME/.local/bin/opencode" --version)" == "opencode v2.3.0" ]]
 	cat >"$SANDBOX/bin/opencode" <<'SHIM'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && printf '1.18.29\n'

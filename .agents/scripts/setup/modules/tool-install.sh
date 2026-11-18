@@ -1615,11 +1615,30 @@ _setup_opencode_global_v2_cli() {
 	return 0
 }
 
+# GH#38922: AIDEVOPS_OPENCODE_PROFILE is an explicit choice for the shared
+# runtime unless the isolated opencode2 shim exported it together with an
+# OPENCODE_CONFIG that targets another file. Mirrors shared_config_profile()
+# in opencode-runtime-profile.py, so setup inside such a session still detects
+# a global OpenCode 2 instead of running the V1 rollback against it.
+_setup_opencode_profile_override_is_explicit() {
+	[[ -n "${AIDEVOPS_OPENCODE_PROFILE:-}" ]] || return 1
+	local session_config="${OPENCODE_CONFIG:-}"
+	[[ -n "$session_config" ]] || return 0
+	session_config="${session_config/#\~/$HOME}"
+	local shared_config="${HOME}/.config/opencode/opencode.json"
+	if [[ "$session_config" == "$shared_config" || "$session_config" -ef "$shared_config" ]]; then
+		return 0
+	fi
+	print_info "Ignoring AIDEVOPS_OPENCODE_PROFILE=${AIDEVOPS_OPENCODE_PROFILE} from isolated runtime session (OPENCODE_CONFIG targets another file)"
+	return 1
+}
+
 setup_opencode_runtimes() {
 	local selected_profile=""
 	selected_profile=$(_setup_opencode_profile_id) || return 1
 
-	if [[ -z "${AIDEVOPS_OPENCODE_PROFILE:-}" && "$(_setup_opencode_installed_global_profile)" == "v2" ]]; then
+	if ! _setup_opencode_profile_override_is_explicit &&
+		[[ "$(_setup_opencode_installed_global_profile)" == "v2" ]]; then
 		_setup_opencode_global_v2_cli || return $?
 		if ! _setup_opencode_v2_preview_enabled; then
 			return 0
