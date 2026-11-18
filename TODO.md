@@ -2223,7 +2223,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19102 docs(release-sweep): claim session-filed auto-dispatch issues with --implementing so the claim is not silently skipped #auto-dispatch #bug #documentation #priority:medium ref:GH#38993 pr:#38995 completed:2026-11-18
 
-- [ ] t19103 fix(recovery): pending --count must not advance the supervisor's pending cursor past actionable entries #auto-dispatch #bug #priority:high ref:GH#39006
+- [x] t19103 fix(recovery): pending --count must not advance the supervisor's pending cursor past actionable entries #auto-dispatch #bug #priority:high ref:GH#39006 pr:#39007 completed:2026-11-18
+
+- [ ] t19104 fix(pulse): re-probe blocker recovery soon after a partial zero-count scan instead of waiting the full 3h interval #auto-dispatch #bug #priority:high ref:GH#39008
 
 ## In Progress
 

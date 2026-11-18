@@ -92,6 +92,19 @@ _pulse_degraded_prefetch_supervisor_escape_due() {
 }
 
 #######################################
+# Cached API-pressure state for blocker-recovery cadence: the GraphQL circuit
+# breaker or the secondary-rate-limit cooldown. Never probes the API itself.
+# Returns: 0 when either is active, 1 otherwise
+#######################################
+_pulse_blocker_api_pressure_active() {
+	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
+	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # GH#36026: release positively re-armed queued holds independently of LLM
 # scheduling. Use cached API-pressure state only; never probe to bypass a fuse.
 #######################################
@@ -103,10 +116,7 @@ _pulse_rearm_blocker_holds() {
 	local last_check=0 rc=0
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 0
 	[[ -f "$helper" ]] || return 0
-	[[ ! -f "${_CIRCUIT_BREAKER_STATE_FILE:-${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state}" ]] || return 0
-	if declare -F _gh_secondary_cooldown_active >/dev/null 2>&1 && _gh_secondary_cooldown_active; then
-		return 0
-	fi
+	! _pulse_blocker_api_pressure_active || return 0
 	last_check=$(_pulse_read_epoch_file "$stamp")
 	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 0
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
@@ -114,6 +124,30 @@ _pulse_rearm_blocker_holds() {
 	# budget and saves an independent cursor on partial passes.
 	bash "$helper" rearm >>"$LOGFILE" 2>&1 || rc=$?
 	[[ "$rc" -eq 0 ]] || printf '[pulse-wrapper] Blocker rearm pass incomplete (rc=%s)\n' "$rc" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#39008: a partial zero-count probe shows only that its bounded window had
+# nothing; the rest of the queue is unread. Record an absolute deadline for
+# the next probe after the shorter partial interval (default: the rearm
+# cadence), unless cached API pressure says to wait. The full-interval stamp
+# is untouched, and the deadline holds whatever interval is in force later.
+# A failed or truncated write reads as 0: no early probe, the safe default.
+# Args: now_epoch interval due_file
+#######################################
+_pulse_blocker_partial_reprobe() {
+	local now_epoch="$1"
+	local interval="$2"
+	local due_file="$3"
+	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}"
+	[[ "$partial" =~ ^[0-9]+$ ]] || return 0
+	# Decimal, so a leading zero (0600) is not read as octal.
+	partial=$((10#$partial))
+	[[ "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
+	! _pulse_blocker_api_pressure_active || return 0
+	printf '%s\n' "$((now_epoch + partial))" >"$due_file" 2>/dev/null || return 0
+	echo "[pulse-wrapper] LLM supervisor: blocker recovery probe found 0 pending (partial scan); re-probe in ${partial}s (GH#39008)" >>"$LOGFILE"
 	return 0
 }
 
@@ -136,8 +170,9 @@ _pulse_blocker_recovery_due() {
 	local interval="${PULSE_LLM_RECOVERY_INTERVAL:-10800}"
 	local retry_interval="${PULSE_LLM_FAILURE_RETRY_INTERVAL:-1800}"
 	local stamp="${PULSE_DIR}/last_blocker_recovery_check_epoch"
+	local partial_due_file="${PULSE_DIR}/last_blocker_recovery_partial_due_epoch"
 	local helper="${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/terminal-blocker-recovery-helper.sh"
-	local last_check=0 pending=0 pending_rc=0 scan_note=""
+	local last_check=0 partial_due=0 pending=0 pending_rc=0 scan_note=""
 	[[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] || return 1
 	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
 	if [[ "$last_attempt_epoch" -gt "$last_success_epoch" && "$retry_interval" -lt "$interval" ]]; then
@@ -146,11 +181,18 @@ _pulse_blocker_recovery_due() {
 	[[ -f "$helper" ]] || return 1
 	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
 	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
-	[[ $((now_epoch - last_check)) -ge "$interval" ]] || return 1
+	# GH#39008: a partial zero-count probe's deadline also makes it due. It is
+	# written as stamp + partial interval, so a deadline not after the stamp
+	# (truncated write, or one left by a failed removal) is ignored.
+	if [[ $((now_epoch - last_check)) -lt "$interval" ]]; then
+		partial_due=$(_pulse_read_epoch_file "$partial_due_file")
+		[[ "$partial_due" -gt "$last_check" && "$now_epoch" -ge "$partial_due" ]] || return 1
+	fi
 	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
 		return 1
 	fi
 	printf '%s\n' "$now_epoch" >"$stamp" 2>/dev/null || return 1
+	rm -f "$partial_due_file" 2>/dev/null || true
 	# GH#35945: exit 2 is an incomplete scan whose stdout is still the partial
 	# count (helper contract). The bounded seed spans every pulse repo and
 	# rarely finishes in one call, so discarding that count kept this trigger
@@ -161,6 +203,10 @@ _pulse_blocker_recovery_due() {
 	2) scan_note=" (partial scan)" ;;
 	*) pending=0 ;;
 	esac
+	if [[ "$pending_rc" -eq 2 && "$pending" == 0 ]]; then
+		_pulse_blocker_partial_reprobe "$now_epoch" "$interval" "$partial_due_file"
+		return 1
+	fi
 	[[ "$pending" =~ ^[0-9]+$ && "$pending" -gt 0 ]] || return 1
 	echo "[pulse-wrapper] LLM supervisor: ${pending} terminal-blocker recovery entr$([[ "$pending" -eq 1 ]] && printf 'y' || printf 'ies') pending${scan_note} (t18514)" >>"$LOGFILE"
 	_pulse_write_trigger_mode "blocker_recovery" || return 1
