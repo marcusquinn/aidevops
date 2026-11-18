@@ -93,6 +93,11 @@ one window old. `terminal-blocker-recovery-helper.sh` then projects
 rearm receipt binds the event and window index, so it releases at most once per
 window. Re-arming grants nothing: a worker that meets the real guard again must
 run `worker-permission-helper.sh request`, and that request keeps the hold.
+After a re-arm, the login that released the hold skips the issue for
+`AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS` (default 3600; 0 disables), so a peer
+gets the first claim (GH#38957). Dedup logs
+`TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE retry_after=<epoch>`. A peer either
+completes the task or adds the second-runner evidence for the fleet hold.
 
 ### Dispatch claim comment states
 
