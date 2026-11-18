@@ -468,9 +468,18 @@ def plan_profile_reconciliation(
 def get_profile_targets(repos_json_path: str) -> list[dict]:
     """Return available registered repositories inside the trusted workspace."""
     root = workspace_root()
+    buzz = normalize_cwd("~/.buzz")
     return [
-        repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)
+        repo
+        for repo in get_repos(repos_json_path)
+        if eligible_path(repo["path"], root) and normalize_cwd(repo["path"]) != buzz
     ]
+
+
+def _is_preserved_outside_managed(profile: dict, root: str) -> bool:
+    """Managed profile outside the workspace (not Buzz) is preserved as user-owned."""
+    cwd = profile["options"]["cwd"]
+    return not eligible_path(cwd, root) and normalize_cwd(cwd) != normalize_cwd("~/.buzz")
 
 
 def outside_workspace_summary(
@@ -486,6 +495,7 @@ def outside_workspace_summary(
         (block.data.get("options") if isinstance(block.data.get("options"), dict) else {}).get("cwd")
         for block in extract_profile_blocks(config_text)
         if not is_aidevops_managed_profile(block.data, group_id)
+        or _is_preserved_outside_managed(block.data, root)
     )
     return outside_count, tuple(
         cwd for cwd in cwds if isinstance(cwd, str) and not eligible_path(cwd, root)
