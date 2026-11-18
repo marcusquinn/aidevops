@@ -2237,6 +2237,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19114 fix(checkpoints): resume a continuation review worktree that is only ahead of the PR head with unpushed commits #bug #priority:high #interactive tier:standard -> [todo/tasks/t19114-brief.md] ref:GH#39069
 
+- [ ] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
