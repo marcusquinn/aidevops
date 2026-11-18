@@ -2205,7 +2205,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19088 fix(release): resolve squash commits with a missing GitHub PR association via verified subject hint #auto-dispatch #bug #priority:high tier:standard assignee:marcusquinn ref:GH#38932 pr:#38934 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19088-brief.md] completed:2026-11-18
 
-- [ ] t19091 fix(terminal-blocker): permission_required holds publish the named ask as input_required #bug #framework #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38951 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19091-brief.md]
+- [x] t19091 fix(terminal-blocker): permission_required holds publish the named ask as input_required #bug #framework #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38951 pr:#38955 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19091-brief.md] completed:2026-11-18
 
 ## In Progress
 
