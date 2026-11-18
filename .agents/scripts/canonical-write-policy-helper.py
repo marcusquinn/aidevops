@@ -37,15 +37,26 @@ from canonical_write_policy_paths import (
 POLICY_VERSION = "canonical-write-policy-v2"
 
 
+SESSION_OUTSIDE_WORKSPACE_ACTION = "run_session_inside_git_workspace"
+SESSION_OUTSIDE_WORKSPACE_REASON = (
+    "cross-repository linked worktree access is limited to the "
+    "trusted Git workspace"
+)
+
+
 def _write_action(
     decision: str,
     cross_repository_target: bool,
     symlink_workspace_escape: bool,
+    session_outside_workspace: bool = False,
 ) -> str:
     if decision != "deny":
         return "none"
     if symlink_workspace_escape:
         return "use_direct_sanctioned_outside_path"
+    if cross_repository_target and session_outside_workspace:
+        # The worktree already exists; only the session location is wrong.
+        return SESSION_OUTSIDE_WORKSPACE_ACTION
     if cross_repository_target:
         return "use_linked_worktree_under_git_workspace"
     return "create_or_use_linked_worktree"
@@ -97,10 +108,7 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         and _repository_within_workspace(target, workspace_root)
     ):
         decision = "deny"
-        reason = (
-            "cross-repository linked worktree access is limited to the "
-            "trusted Git workspace"
-        )
+        reason = SESSION_OUTSIDE_WORKSPACE_REASON
     else:
         decision = "allow"
         reason = (
@@ -120,8 +128,46 @@ def check_write(cwd: str, file_path: str) -> dict[str, Any]:
         "decision": decision,
         "reason": reason,
         "action": _write_action(
-            decision, cross_repository_target, symlink_workspace_escape
+            decision,
+            cross_repository_target,
+            symlink_workspace_escape,
+            not context_within_workspace,
         ),
+        "context": asdict(context),
+        "target": asdict(target),
+    }
+
+
+def check_session(cwd: str, target_path: str) -> dict[str, Any]:
+    """Deny early when the session location cannot edit a cross-repo target.
+
+    Mirrors the direct-write boundary in check_write without needing the
+    target worktree to exist yet; a non-Git target is not subject to it.
+    """
+    context = classify_location(cwd)
+    target = classify_location(target_path)
+    workspace_root = _canonical_git_workspace_root(
+        git_workspace_root_from_environment()
+    )
+    cross_repository_target = target.inside_git and (
+        not context.inside_git or target.common_dir != context.common_dir
+    )
+    context_within_workspace = (
+        _repository_within_workspace(context, workspace_root)
+        if context.inside_git
+        else _is_within_workspace(cwd, workspace_root)
+    )
+    denied = cross_repository_target and not context_within_workspace
+    return {
+        "policy": POLICY_VERSION,
+        "git_workspace_root": workspace_root,
+        "decision": "deny" if denied else "allow",
+        "reason": (
+            SESSION_OUTSIDE_WORKSPACE_REASON
+            if denied
+            else "session location permits the target"
+        ),
+        "action": SESSION_OUTSIDE_WORKSPACE_ACTION if denied else "none",
         "context": asdict(context),
         "target": asdict(target),
     }
@@ -193,6 +239,11 @@ def main() -> int:
     write_parser.add_argument("--path", default="")
     write_parser.add_argument("--field", default="")
 
+    session_parser = subparsers.add_parser("check-session")
+    session_parser.add_argument("--cwd", default=os.getcwd())
+    session_parser.add_argument("--target", required=True)
+    session_parser.add_argument("--field", default="")
+
     patch_parser = subparsers.add_parser("check-patch")
     patch_parser.add_argument("--cwd", default=os.getcwd())
     patch_parser.add_argument("--field", default="")
@@ -209,6 +260,9 @@ def main() -> int:
         return 2 if result.classification == "unknown" else 0
     if args.command == "check-write":
         _emit(check_write(args.cwd, args.path), args.field)
+        return 0
+    if args.command == "check-session":
+        _emit(check_session(args.cwd, args.target), args.field)
         return 0
     if args.command == "check-patch":
         _emit(check_patch(args.cwd, sys.stdin.read()), args.field)

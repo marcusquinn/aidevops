@@ -788,6 +788,20 @@ if [[ "$worktree_classification" != "linked" ]]; then
 	exit 1
 fi
 
+# Session-location gate: direct writes into a cross-repository linked worktree
+# are denied when the session project directory is outside the trusted Git
+# workspace. Report it now instead of at the first Edit/Write.
+session_project_dir="${AIDEVOPS_SESSION_PROJECT_DIR:-}"
+if [[ -n "$session_project_dir" ]]; then
+	session_decision=$(python3 "$canonical_policy_helper" check-session --cwd "$session_project_dir" --target "$PWD" --field decision 2>/dev/null || echo "error")
+	if [[ "$session_decision" != "allow" ]]; then
+		echo -e "${RED}BLOCKED${NC}: this session's project directory is outside the trusted Git workspace; direct writes to this worktree will be denied"
+		echo "ACTION_REQUIRED=run_session_inside_git_workspace"
+		echo "HINT: the worktree already exists; restart the session from inside the Git workspace (the repository or its worktree)"
+		exit 1
+	fi
+fi
+
 # Detached HEAD is valid only inside a linked worktree (for isolated releases).
 current_branch=$(git branch --show-current 2>/dev/null || echo "")
 if [[ -z "$current_branch" ]]; then
