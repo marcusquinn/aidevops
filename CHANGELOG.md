@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.232] - 2026-11-18
+
+### Added
+
+- add Linux procfs runtime-evidence harness (GH#39057) (#39059)
+
+### Fixed
+
+- a trusted terminal-blocker re-arm releases a blocked worker draft
+- detect_weaknesses reads DataForSEO envelope organic rows
+- repair test-init-scope macOS path and metrics hook match (GH#39071) (#39073)
+- prioritise failure records and retain the full validator log
+- stop gh-checks-wait polling once PR is merged or closed (GH#39075) (#39078)
+- restrict profiles to Git workspace and heal venv (#39047)
+
 ## [3.39.231] - 2026-11-18
 
 ### Fixed
