@@ -79,6 +79,46 @@ _serve_parse_args() {
 	return 0
 }
 
+# Succeeds when $1 is an IPv4 address configured on a local interface.
+# AIDEVOPS_LOCALDEV_LOCAL_ADDRS (space-separated) overrides detection for tests.
+_serve_ip_is_local() {
+	local ip="$1"
+	local addrs=""
+	if [[ -n "${AIDEVOPS_LOCALDEV_LOCAL_ADDRS+x}" ]]; then
+		addrs="$AIDEVOPS_LOCALDEV_LOCAL_ADDRS"
+	elif command -v ifconfig >/dev/null 2>&1; then
+		addrs="$(ifconfig 2>/dev/null | awk '$1 == "inet" {print $2}')"
+	elif command -v ip >/dev/null 2>&1; then
+		addrs="$(ip -4 -o addr show 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4}')"
+	fi
+	local addr
+	for addr in $addrs; do
+		[[ "$addr" == "$ip" ]] && return 0
+	done
+	return 1
+}
+
+# Succeeds when $1 is http://<RFC1918 IPv4 on a local interface>:<port>[/...].
+_serve_private_health_url() {
+	local url="$1"
+	local port="$2"
+	local rest="${url#http://}"
+	[[ "$rest" == "$url" ]] && return 1
+	local hostport="${rest%%/*}"
+	[[ "$hostport" == "${hostport%:*}:${port}" ]] || return 1
+	local host="${hostport%:*}"
+	local octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+	[[ "$host" =~ ^${octet}\.${octet}\.${octet}\.${octet}$ ]] || return 1
+	local o1="${BASH_REMATCH[1]}"
+	local o2="${BASH_REMATCH[2]}"
+	if [[ "$o1" -eq 10 ]] || { [[ "$o1" -eq 192 ]] && [[ "$o2" -eq 168 ]]; } ||
+		{ [[ "$o1" -eq 172 ]] && [[ "$o2" -ge 16 ]] && [[ "$o2" -le 31 ]]; }; then
+		_serve_ip_is_local "$host"
+		return $?
+	fi
+	return 1
+}
+
 _serve_validate_args() {
 	local port="$1"
 	local startup_timeout="$2"
@@ -104,7 +144,7 @@ _serve_validate_args() {
 		print_error "curl is required when --health-url is supplied"
 		return 1
 	fi
-	if [[ -n "$health_url" ]]; then
+	if [[ -n "$health_url" ]] && ! _serve_private_health_url "$health_url" "$port"; then
 		case "$health_url" in
 		"http://127.0.0.1:${port}" | "http://127.0.0.1:${port}/"* | \
 			"http://localhost:${port}" | "http://localhost:${port}/"* | \
