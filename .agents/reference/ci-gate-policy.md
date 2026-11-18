@@ -121,7 +121,8 @@ run those directly too, without `-k` (they do not provide unittest filtering).
    signal.
 5. Convert advisory E2E, visual, performance, and flaky integration findings
    into follow-up tasks with worker-ready evidence instead of blocking unrelated
-   develop PRs or spawning duplicate worker attempts.
+   develop PRs or spawning duplicate worker attempts. To reproduce a flaky test,
+   run `test-load-repro-helper.sh run --runs N --concurrency P -- <cmd>`.
 6. If an E2E failure is required by branch protection, fix or explicitly
    quarantine the failing path before merge; do not bypass production/release
    gates silently.
