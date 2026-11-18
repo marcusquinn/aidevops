@@ -40,6 +40,23 @@ _onboarding_configless() {
 	return $?
 }
 
+# GH#39023: re-running init can re-scaffold files the bootstrap PR removed, so
+# recommend it only when the registry holds no evidence of a previous init.
+_onboarding_config_gap() {
+	local entry="$1" slug="$2" path="$3" backup=""
+	if declare -F _project_config_backup_file >/dev/null; then
+		backup=$(_project_config_backup_file "$slug") || backup=""
+	fi
+	if [[ -n "$backup" && -f "$backup" ]]; then
+		printf '%s' "Missing local config: merge the aidevops init PR; aidevops update then restores the saved copy\n"
+	elif jq -e '(.features | type == "array") and (.features | length > 0)' >/dev/null 2>&1 <<<"$entry"; then
+		printf '%s' "Missing local config: aidevops project-config restore $slug\n"
+	else
+		printf '%s' "Missing config: run aidevops init in $path\n"
+	fi
+	return 0
+}
+
 _onboarding_one() {
 	local entry="$1" mode="$2" dry="$3" now="$4" days="$5"
 	local slug path pulse initialized epoch recent=0 blocked=0 issues label gaps=""
@@ -67,7 +84,7 @@ _onboarding_one() {
 	label=$(_onboarding_label "$slug")
 	if [[ "$label" == unknown ]]; then _ONBOARD_UNKNOWN=$((_ONBOARD_UNKNOWN + 1)); return 0; fi
 	if [[ "$pulse" != true && ( "$recent" == 1 || "$blocked" == 1 ) ]]; then gaps+="Pulse off: aidevops repos pulse on $slug\n"; fi
-	if [[ ! -f "$path/.aidevops.json" ]] && ! _onboarding_configless "$entry"; then gaps+="Missing config: run aidevops init in $path\n"; fi
+	if [[ ! -f "$path/.aidevops.json" ]] && ! _onboarding_configless "$entry"; then gaps+=$(_onboarding_config_gap "$entry" "$slug" "$path"); fi
 	if [[ "$label" == missing ]]; then gaps+="Missing label: label-sync-helper.sh sync --repo $slug\n"; fi
 	if [[ -n "$gaps" ]]; then _ONBOARD_ADVISORIES=$((_ONBOARD_ADVISORIES + 1)); else _ONBOARD_CLEAN=$((_ONBOARD_CLEAN + 1)); fi
 	if [[ "$mode" == report || "$mode" == all ]]; then

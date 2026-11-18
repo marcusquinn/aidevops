@@ -1811,8 +1811,33 @@ _init_security_and_registration() {
 		fi
 	fi
 	register_repo "$register_path" "$aidevops_version" "$features_list"
+	_init_save_config_backup
 
 	_init_commit_files || return 1
+	return 0
+}
+
+# GH#39023: the ignored config written in a linked worktree is lost when that
+# worktree is removed. Save a copy, after the last init write to the config, so
+# `aidevops update` can restore it once the bootstrap PR adds the ignore rule.
+_init_save_config_backup() {
+	[[ "${config_migration_deferred:-false}" != "true" ]] || return 0
+	_project_config_is_linked_worktree "$project_root" || return 0
+	local canonical="" slug=""
+	canonical=$(resolve_canonical_repo_path "$project_root")
+	canonical=$(cd "$canonical" 2>/dev/null && pwd -P) || canonical=""
+	if [[ -n "$canonical" ]] && command -v jq >/dev/null 2>&1; then
+		slug=$(jq -r --arg path "$canonical" '.initialized_repos[]? | select(.path == $path) | .slug // empty' "$REPOS_FILE" 2>/dev/null | head -n 1)
+	fi
+	if [[ -z "$slug" ]]; then
+		print_warning ".aidevops.json exists only in this worktree; copy it to the canonical checkout after the PR merges"
+		return 0
+	fi
+	if _project_config_save_init_backup "$project_root" "$slug"; then
+		print_info "Saved a copy of .aidevops.json; aidevops update restores it in the canonical checkout after this PR merges"
+	else
+		print_warning "Could not save a copy of .aidevops.json; after the PR merges, run: aidevops project-config restore $slug"
+	fi
 	return 0
 }
 

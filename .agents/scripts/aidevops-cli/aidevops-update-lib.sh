@@ -138,6 +138,9 @@ _update_sync_projects() {
 		print_info "Project sync skipped (--skip-project-sync)"
 		return 0
 	fi
+	# GH#39023: restore configs saved by init in linked worktrees before the
+	# version sync below reads each canonical .aidevops.json.
+	_project_config_materialise_init_backups "$REPOS_FILE" "$AGENTS_DIR/scripts/project-config-restore-helper.sh" || true
 	local repos_needing_upgrade=()
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" ]] && continue

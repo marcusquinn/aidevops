@@ -7,9 +7,10 @@ set -euo pipefail
 umask 077
 
 usage() {
-	printf '%s\n' 'Usage: aidevops project-config restore <registered-slug> [--backup FILE] [--apply]' \
+	printf '%s\n' 'Usage: aidevops project-config restore <registered-slug> [--backup FILE | --init-backup] [--apply]' \
 		'       aidevops project-config set validator_timeout_seconds <positive-integer>' \
 		'Preview by default. --apply requires an attached terminal and typing the registered path.' \
+		'--init-backup restores the copy saved by aidevops init in a linked worktree; it needs no terminal.' \
 		'Without a backup, only explicitly enabled registry features and a valid init_scope are recovered.'
 	return 0
 }
@@ -27,10 +28,11 @@ shift
 [[ $# -gt 0 && "$1" != -* ]] || { usage; exit 2; }
 selector="$1"
 shift
-backup="" apply=false
+backup="" apply=false init_backup=false
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--backup) [[ $# -ge 2 && -z "$backup" ]] || exit 2; backup="$2"; shift 2 ;;
+	--backup) [[ $# -ge 2 && -z "$backup" && "$init_backup" == false ]] || exit 2; backup="$2"; shift 2 ;;
+	--init-backup) [[ -z "$backup" && "$init_backup" == false ]] || exit 2; init_backup=true; shift ;;
 	--apply) apply=true; shift ;;
 	*) usage; exit 2 ;;
 	esac
@@ -88,11 +90,27 @@ fi
 	! grep -Eq '^!/?\.aidevops\.json$' "$repo/.gitignore" || { printf 'Explicit safe .gitignore rule required\n' >&2; exit 1; }
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
+if [[ "$init_backup" == true ]]; then
+	# shellcheck source=aidevops-cli/aidevops-project-config-lib.sh
+	source "$script_dir/aidevops-cli/aidevops-project-config-lib.sh"
+	backup=$(_project_config_backup_file "$selector") || { printf 'Slug has no init backup path\n' >&2; exit 1; }
+	[[ -d "${backup%/*}" && ! -L "${backup%/*}" && -O "${backup%/*}" ]] || { printf 'Missing or unsafe init backup directory\n' >&2; exit 1; }
+	[[ -f "$backup" && ! -L "$backup" && -O "$backup" ]] || { printf 'Missing or unsafe init backup\n' >&2; exit 1; }
+	mode=$(stat -c '%a' "$backup" 2>/dev/null) || mode=""
+	if [[ ! "$mode" =~ ^[0-7]+$ ]]; then
+		mode=$(stat -f '%Lp' "$backup" 2>/dev/null) || mode=""
+	fi
+	[[ "$mode" == 600 ]] || { printf 'Init backup must be mode 600\n' >&2; exit 1; }
+fi
 if [[ -n "$backup" ]]; then
 	[[ -f "$backup" && ! -L "$backup" ]] || { printf 'Unsafe backup\n' >&2; exit 1; }
 	jq -e 'type == "object" and (.version | type == "string") and (.features | type == "object")' "$backup" >/dev/null || { printf 'Invalid backup schema\n' >&2; exit 1; }
 	backup_digest=$(cksum <"$backup") || exit 1
-	printf 'Source: verified JSON backup %s (verify provenance and local-only settings before applying)\n' "$backup"
+	if [[ "$init_backup" == true ]]; then
+		printf 'Source: config saved by aidevops init %s\n' "$backup"
+	else
+		printf 'Source: verified JSON backup %s (verify provenance and local-only settings before applying)\n' "$backup"
+	fi
 	jq '{version, init_scope, features, plugins: (if has("plugins") then "present (details redacted)" else "unknown" end), counter_branch: (if has("counter_branch") then "present (redacted)" else "unknown" end)}' "$backup"
 else
 	# Only names explicitly present in the registration can be restored as true.
@@ -112,10 +130,16 @@ else
 fi
 printf 'Destination: %s\n' "$target"
 [[ "$apply" == true ]] || { printf 'Preview only. Review local-only fields before running --apply.\n'; exit 0; }
-[[ -t 0 && -t 1 ]] || { printf 'An attached terminal is required for local metadata repair\n' >&2; exit 1; }
-printf 'Type the exact destination to confirm: '
-IFS= read -r confirmation
-[[ "$confirmation" == "$target" ]] || { printf 'Confirmation mismatch\n' >&2; exit 1; }
+# GH#39023 boundary: --init-backup copies the framework's own init output from
+# the user-owned, mode-600 framework backup path, not a reconstruction or an
+# operator-chosen file, so `aidevops update` may apply it without a terminal.
+# Every other guard below, including the atomic no-clobber link, still applies.
+if [[ "$init_backup" != true ]]; then
+	[[ -t 0 && -t 1 ]] || { printf 'An attached terminal is required for local metadata repair\n' >&2; exit 1; }
+	printf 'Type the exact destination to confirm: '
+	IFS= read -r confirmation
+	[[ "$confirmation" == "$target" ]] || { printf 'Confirmation mismatch\n' >&2; exit 1; }
+fi
 [[ "$registry_digest" == "$(cksum <"$registry")" ]] || { printf 'Registry changed during confirmation\n' >&2; exit 1; }
 if [[ -n "$backup" ]]; then
 	[[ -f "$backup" && ! -L "$backup" && "$backup_digest" == "$(cksum <"$backup")" ]] || { printf 'Backup changed during confirmation\n' >&2; exit 1; }
@@ -132,7 +156,11 @@ fi
 ! git -C "$repo" ls-files --error-unmatch -- .aidevops.json >/dev/null 2>&1 || exit 1
 tmp=$(mktemp "${repo}/.aidevops.json.restore.XXXXXX") || exit 1
 trap 'rm -f "$tmp"' EXIT
-if [[ -n "$backup" ]]; then
+if [[ "$init_backup" == true ]]; then
+	# Byte-identical init output; the digest proves it is the validated copy.
+	cat "$backup" >"$tmp"
+	[[ "$(cksum <"$tmp")" == "$backup_digest" ]] || { printf 'Backup changed during restore\n' >&2; exit 1; }
+elif [[ -n "$backup" ]]; then
 	# Preserve the backed-up JSON and local options, not an init-derived default.
 	jq . "$backup" >"$tmp"
 else
@@ -140,7 +168,8 @@ else
 fi
 chmod 600 "$tmp"
 ln "$tmp" "$target" || { printf 'Target appeared during restore; left unchanged\n' >&2; exit 1; }
-if [[ "$(git -C "$repo" status --short --ignored -- .aidevops.json)" != '!! .aidevops.json' ]]; then
+# No optional index lock: this can now run unattended beside other Git users.
+if [[ "$(git --no-optional-locks -C "$repo" status --short --ignored -- .aidevops.json)" != '!! .aidevops.json' ]]; then
 	[[ "$target" -ef "$tmp" ]] && rm -f "$target"
 	printf 'Git does not ignore the restored config; rolled back\n' >&2
 	exit 1

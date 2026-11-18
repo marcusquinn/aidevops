@@ -18,7 +18,7 @@ _AIDEVOPS_HELP_LIB_LOADED=1
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
-	echo "  project-config restore <slug> [--backup FILE] [--apply]  Restore missing ignored local config only"
+	echo "  project-config restore <slug> [--backup FILE | --init-backup] [--apply]  Restore missing ignored local config only"
 	echo "  project-config set validator_timeout_seconds <n>  Set an audited, ignored canonical timeout from any worktree"
 	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, source-access, hooks, tabby, pulse, gui-desktop, ai-session, full)"
 	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
