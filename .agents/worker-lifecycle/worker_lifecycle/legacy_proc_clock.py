@@ -11,7 +11,7 @@ def status_fields(status_file):
     return dict(line.split(":", 1) for line in text.splitlines() if ":" in line)
 
 
-def is_root_sshd_session(fields, proc):
+def is_root_sshd_session(fields, task, proc):
     """GH#38997: an unprivileged sshd session forked by the root sshd listener.
 
     A same-UID process cannot reparent under a root-owned sshd, and sshd never
@@ -24,6 +24,8 @@ def is_root_sshd_session(fields, proc):
         return False
     try:
         parent_fields = status_fields(proc / parent / "status")
+        if status_fields(task / "status").get("PPid", "").strip() != parent:
+            return False
     except OSError:
         return False  # Unproven parent: fall through to the age check.
     uids = parent_fields.get("Uid", "").split()

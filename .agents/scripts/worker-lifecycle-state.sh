@@ -244,6 +244,7 @@ _worker_lifecycle_report_refusal() {
 		(if .process_observation then "process_observation=" + (.process_observation | tojson) else empty end),
 		(if .helper then "helper=" + (.helper | tostring | gsub("[^A-Za-z0-9 _.:-]"; "") | gsub(" "; "_")) else empty end),
 		(if .helper_returncode != null then "helper_rc=" + (.helper_returncode | tostring) else empty end),
+		(if .helper_stderr_class then "helper_stderr_class=" + (.helper_stderr_class | tostring) else empty end),
 		(if .filesystem_path then "path=" + (.filesystem_path | tostring) else empty end)]
 		| join(" ")' 2>/dev/null <<<"$result") || summary=""
 	printf '[worker-lifecycle] retirement-refused %s rc=%s\n' "${summary:-status=unparseable}" "$rc" >&2

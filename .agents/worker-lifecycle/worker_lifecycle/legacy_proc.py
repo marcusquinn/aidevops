@@ -99,17 +99,14 @@ def require_predating_daemon(path, task, proc):
         fields = status_fields(task / "status")
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
-        if is_root_sshd_session(fields, proc):
-            # Policy: with protected inspection opted in, descriptor evidence is
-            # required (a root parent may pass an inherited -E log fd into the
-            # worktree). Without it the exemption applies so default
-            # configurations are not blocked by unrelated logins.
-            if os.environ.get(OPT_IN) == "1":
-                require_protected_references(path, task, proc)
-        else:
+        root_session = is_root_sshd_session(fields, task, proc)
+        if not root_session:
             require_older_than_tree(path, task, proc)
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
+    # A root parent may pass a worktree log fd into the session.
+    if root_session and os.environ.get(OPT_IN) == "1":
+        require_protected_references(path, task, proc)
     counts = _observations.get()
     if counts is not None:
         counts["skipped_nondumpable"] += 1
@@ -138,7 +135,12 @@ def inspect_proc_references(path, task, proc):
     except PermissionError:
         try:
             require_predating_daemon(path, task, proc)
+        except ProcessCensusUnavailable as unavailable:
+            unavailable.observation.update({"stage": stage, "daemon_cause": "daemon-evidence-unavailable"})
+            raise
         except ValueError as error:
+            if str(error) == "live-process-reference":
+                raise
             cause = str(error.__cause__)
             if cause not in {"unknown-daemon", "daemon-not-older", "invalid-process-clock"}:
                 cause = "daemon-evidence-unavailable"

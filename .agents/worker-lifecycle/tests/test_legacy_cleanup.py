@@ -114,9 +114,40 @@ class LegacyProcContract(unittest.TestCase):
         for name in ("sshd", "sshd-session"):
             with self.subTest(name=name):
                 self.write_daemon(name)
-                with legacy_proc.collect_proc_observations() as counts:
+                with patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "0"}), \
+                        legacy_proc.collect_proc_observations() as counts:
                     self.census()
                 self.assertEqual(counts["skipped_nondumpable"], 1)
+
+    def test_parent_change_rejects_newer_session(self):
+        self.write_parent("sshd", 0)
+        self.write_daemon("sshd-session")
+        read = Path.read_text
+        def changed(path, *args, **kwargs):
+            text = read(path, *args, **kwargs)
+            if path == self.proc / "77" / "status":
+                (self.task / "status").write_text(
+                    read(self.task / "status").replace("PPid:\t77", "PPid:\t1"))
+            return text
+        with patch.object(Path, "read_text", changed), \
+                patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "0"}):
+            with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
+                self.census()
+
+    def test_root_session_protected_inspection_runs_once(self):
+        self.write_parent("sshd", 0)
+        self.write_daemon("sshd-session")
+        for result in (None, ValueError("live-process-reference"),
+                       legacy_proc.ProcessCensusUnavailable(123, 123, "references", "timeout")):
+            with self.subTest(result=result), \
+                    patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "1"}), \
+                    patch.object(legacy_proc, "require_protected_references", side_effect=result) as inspect:
+                if result is None:
+                    self.census()
+                else:
+                    with self.assertRaisesRegex(ValueError, str(result)):
+                        self.census()
+                self.assertEqual(inspect.call_count, 1)
 
     def test_newer_daemon_with_unproven_parent_fails_closed(self):
         unprivileged = 4242
