@@ -287,4 +287,32 @@ AIDEVOPS_OPENCODE_V2_STATE_HOME="$service_state" _restart_opencode_v2_service_af
 [[ ! -s "$restart_log" ]] || { printf 'V2 service restarted when it must be skipped\n' >&2; exit 1; }
 set -e
 
+# A validated native executable at its own launcher path is backed up to a
+# framework-owned path and wrapped, instead of failing the stage.
+_native_case() {
+	local profile="$1" name="$2" version="$3" help_text="$4" case_home="$SANDBOX/native-$2"
+	mkdir -p "$case_home/.local/bin"
+	cat >"$case_home/.local/bin/$name" <<SHIM
+#!/usr/bin/env bash
+[[ "\${1:-}" == "--version" ]] && printf '$version\n'
+[[ "\${1:-}" == "--help" ]] && printf '$help_text\n'
+exit 0
+SHIM
+	chmod +x "$case_home/.local/bin/$name"
+	(
+		export HOME="$case_home"
+		export AIDEVOPS_OPENCODE_PROFILE="$profile"
+		# Model "no other opencode installed" regardless of the host PATH.
+		_setup_find_valid_opencode_binary() { return 1; }
+		stable=$(_setup_ensure_opencode_stable_shim "$HOME/.local/bin/$name")
+		[[ "$stable" == "$HOME/.local/bin/$name" ]]
+		[[ "$("$stable" --version)" == "$version" ]]
+		[[ -x "$HOME/.aidevops/opencode-native/$name" ]]
+		grep -Fq "opencode-native/$name" "$stable"
+	) || { printf 'native %s executable at launcher path was not accepted\n' "$name" >&2; exit 1; }
+	return 0
+}
+_native_case v2 opencode2 'opencode v2.3.0' $'OpenCode command line interface\nrun  Run OpenCode with a message'
+_native_case v1 opencode '1.18.29' 'opencode run [message]'
+
 printf 'OpenCode V2 setup tests passed\n'

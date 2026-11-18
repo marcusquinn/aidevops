@@ -1133,6 +1133,31 @@ EOF
 	return 0
 }
 
+_setup_back_up_native_opencode() {
+	local native_path="$1"
+	local binary_name="$2"
+	local backing_dir="${HOME}/.aidevops/opencode-native"
+	local backing_path="${backing_dir}/${binary_name}"
+	local temp_path="${backing_path}.tmp.$$"
+
+	mkdir -p "$backing_dir" 2>/dev/null || return 1
+	cp -L "$native_path" "$temp_path" 2>/dev/null || return 1
+	chmod +x "$temp_path" 2>/dev/null || {
+		rm -f "$temp_path" 2>/dev/null || true
+		return 1
+	}
+	_setup_validate_opencode_binary "$temp_path" || {
+		rm -f "$temp_path" 2>/dev/null || true
+		return 1
+	}
+	mv -f "$temp_path" "$backing_path" 2>/dev/null || {
+		rm -f "$temp_path" 2>/dev/null || true
+		return 1
+	}
+	printf '%s\n' "$backing_path"
+	return 0
+}
+
 _setup_ensure_opencode_stable_shim() {
 	local real_bin="${1:-}"
 	local shim_dir="${HOME}/.local/bin"
@@ -1154,8 +1179,15 @@ _setup_ensure_opencode_stable_shim() {
 		existing_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
 		if [[ -n "$existing_target" ]] && _setup_validate_opencode_binary "$existing_target"; then
 			resolved_bin="$existing_target"
+		elif resolved_bin=$(_setup_find_valid_opencode_binary 2>/dev/null); then
+			:
+		elif _setup_validate_opencode_binary "$shim_path"; then
+			# Native executable sits at its own launcher path: copy it to a
+			# framework-owned backing path first. The original stays in place
+			# until the validated launcher atomically replaces it below.
+			resolved_bin=$(_setup_back_up_native_opencode "$shim_path" "$binary_name") || return 1
 		else
-			resolved_bin=$(_setup_find_valid_opencode_binary) || return 1
+			return 1
 		fi
 	fi
 	_setup_opencode_target_is_safe "$resolved_bin" "$shim_path" || {
