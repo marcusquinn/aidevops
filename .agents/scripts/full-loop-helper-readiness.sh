@@ -35,6 +35,9 @@ fi
 source "${_FULL_LOOP_COMMIT_DIR}/review-thread-gate-lib.sh"
 
 _FULL_LOOP_BLOCKER_REVIEW_BOT="review-bot"
+# jq definition shared by both required-check sources: a required context
+# with no reported run at the PR head is pending, never absent (GH#38914).
+_FULL_LOOP_MISSING_CHECK_JQ='def missing_check: {name: ., state: "MISSING", bucket: "pending"};'
 
 # --- Pre-Merge Gate ---
 
@@ -109,7 +112,7 @@ _full_loop_required_checks_from_check_runs() {
 	runs=$(gh api --paginate "repos/${repo}/commits/${head_sha}/check-runs?per_page=100" \
 		--jq '.check_runs[] | {id,name,status,conclusion,head_sha}' 2>/dev/null) || return 1
 	contexts_json=$(printf '%s\n' "$contexts" | jq -R -s -c 'split("\n") | map(select(length > 0))') || return 1
-	printf '%s\n' "$runs" | jq -s -c --arg head "$head_sha" --argjson contexts "$contexts_json" '
+	printf '%s\n' "$runs" | jq -s -c --arg head "$head_sha" --argjson contexts "$contexts_json" "${_FULL_LOOP_MISSING_CHECK_JQ}"'
 		def classify:
 			if .status != "completed" then {state: "IN_PROGRESS", bucket: "pending"}
 			elif .conclusion == "success" then {state: "SUCCESS", bucket: "pass"}
@@ -119,7 +122,7 @@ _full_loop_required_checks_from_check_runs() {
 		[.[] | select(.head_sha == $head)] as $runs
 		| [$contexts[] as $c
 			| ([$runs[] | select(.name == $c)] | sort_by(.id) | last) as $r
-			| if $r == null then {name: $c, state: "MISSING", bucket: "pending"}
+			| if $r == null then ($c | missing_check)
 			  else ({name: $c} + ($r | classify)) end]'
 	return $?
 }
@@ -218,7 +221,39 @@ _full_loop_query_required_checks() {
 		'type == "array" and length >= $minimum' >/dev/null 2>&1; then
 		return 1
 	fi
+	if [[ "$required_contexts_rc" -eq 0 && -n "$required_contexts" ]]; then
+		required_checks=$(_full_loop_add_unreported_required_checks "$required_checks" "$required_contexts") || return 1
+	fi
 	FULL_LOOP_REQUIRED_CHECKS_JSON="$required_checks"
+	return 0
+}
+
+#######################################
+# GH#38914: a fresh head's rollup lists only contexts whose jobs exist, so a
+# later required job (needs:, a gate workflow) is absent, not pending. Append
+# each absent required context as pending, as the exact-head check-run path
+# does, instead of granting terminal-success to the reported subset.
+# Args: $1=required checks JSON array, $2=newline-delimited required contexts
+# Output: JSON array with unreported contexts appended as pending
+# Returns: 0=built, 1=parse failure
+#######################################
+_full_loop_add_unreported_required_checks() {
+	local required_checks="$1"
+	local required_contexts="$2"
+	local missing_json="" missing_names=""
+
+	missing_json=$(printf '%s' "$required_checks" | jq -c --arg contexts "$required_contexts" '
+		(map(.name)) as $names
+		| [$contexts | split("\n")[] | select(length > 0)
+			| select(. as $c | any($names[]; . == $c) | not)]') || return 1
+	if [[ "$missing_json" == "[]" ]]; then
+		printf '%s\n' "$required_checks"
+		return 0
+	fi
+	missing_names=$(printf '%s' "$missing_json" | jq -r 'join(", ")') || missing_names=""
+	print_info "Required contexts not yet reported at the PR head: ${missing_names}" >&2
+	printf '%s' "$required_checks" | jq -c --argjson missing "$missing_json" \
+		"${_FULL_LOOP_MISSING_CHECK_JQ}"' . + [$missing[] | missing_check]' || return 1
 	return 0
 }
 
