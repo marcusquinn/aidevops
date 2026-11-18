@@ -148,6 +148,27 @@ lssh_cmd_status() {
 	return $?
 }
 
+# Fetch the default branch and refuse unless HEAD contains it (unless forced).
+lssh_check_freshness() {
+	local src="$1"
+	local default_branch="$2"
+	local force="$3"
+
+	git -C "$src" fetch origin "$default_branch" --quiet 2>/dev/null || log_warn "could not fetch origin/${default_branch}; freshness check uses last known state"
+
+	[[ "$force" != true ]] || return 0
+	if git -C "$src" rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
+		if ! git -C "$src" merge-base --is-ancestor "origin/${default_branch}" HEAD; then
+			log_error "refusing to sync: HEAD does not contain origin/${default_branch}"
+			log_error "merge the default branch into this worktree first, or re-run with --force"
+			return 1
+		fi
+	else
+		log_warn "origin/${default_branch} not available locally; skipping freshness check (re-fetch or use --force)"
+	fi
+	return 0
+}
+
 lssh_cmd_sync() {
 	local src="" dest="" exclude_from="" force=false
 	while [[ $# -gt 0 ]]; do
@@ -200,19 +221,7 @@ lssh_cmd_sync() {
 	src_branch="$(git -C "$src" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 	[[ -n "$src_branch" ]] || src_branch="detached@${head_sha}"
 
-	git -C "$src" fetch origin "$default_branch" --quiet 2>/dev/null || log_warn "could not fetch origin/${default_branch}; freshness check uses last known state"
-
-	if [[ "$force" != true ]]; then
-		if git -C "$src" rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
-			if ! git -C "$src" merge-base --is-ancestor "origin/${default_branch}" HEAD; then
-				log_error "refusing to sync: HEAD does not contain origin/${default_branch}"
-				log_error "merge the default branch into this worktree first, or re-run with --force"
-				return 1
-			fi
-		else
-			log_warn "origin/${default_branch} not available locally; skipping freshness check (re-fetch or use --force)"
-		fi
-	fi
+	lssh_check_freshness "$src" "$default_branch" "$force" || return 1
 
 	local stamp_file
 	stamp_file="$(lssh_stamp_path "$dest")"
