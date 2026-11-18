@@ -48,8 +48,10 @@ from tabby_shell_resolver import ShellResolutionError, resolve_login_shell
 from tabby_workspace_scope import (
     eligible_path,
     is_buzz_path,
+    inside_root_category,
     is_preserved_outside,
     normalize_cwd,
+    report_outside_workspace_repos,
     workspace_root,
 )
 from tabby_yaml_recovery import load_yaml_for_sync
@@ -415,22 +417,8 @@ def _reconciliation_category(
     if is_buzz_path(cwd):
         return "stale"
     if eligible_path(cwd, workspace_root()):
-        return _inside_root_category(cwd, normalized, registered_paths, seen_cwds)
+        return inside_root_category(cwd, normalized, registered_paths, seen_cwds)
     return None
-
-
-def _inside_root_category(
-    cwd: str, normalized: str, registered_paths: set[str], seen_cwds: set[str]
-) -> str | None:
-    """Classify a managed profile whose cwd is inside the Git workspace."""
-    cwd_is_known = any(
-        (os.path.isdir(os.path.expanduser(cwd)), normalized in registered_paths)
-    )
-    category = ("duplicate", "stale")[not cwd_is_known]
-    if cwd_is_known and normalized not in seen_cwds:
-        seen_cwds.add(normalized)
-        category = None
-    return category
 
 
 def plan_profile_reconciliation(
@@ -578,19 +566,11 @@ def _save_reconciled_config(
     return True
 
 
-def _report_outside_workspace_repos(repos_json_path: str) -> None:
-    """Report registered repos skipped because they are outside the Git workspace."""
-    root = workspace_root()
-    for path in sorted(get_registered_paths(repos_json_path)):
-        if not eligible_path(path, root):
-            print(f"Skipped {path}: outside Git workspace (no profile created)")
-
-
 def sync_profiles(args: argparse.Namespace) -> None:
     """Perform the profile sync: discover new repos and insert their profiles."""
     shell_path = resolve_login_shell()
     repos = get_profile_targets(args.repos_json)
-    _report_outside_workspace_repos(args.repos_json)
+    report_outside_workspace_repos(get_registered_paths(args.repos_json))
     config_text, repaired_legacy_yaml = load_yaml_for_sync(args.tabby_config)
     if repaired_legacy_yaml:
         print("Repaired legacy Tabby profiles YAML corruption.")

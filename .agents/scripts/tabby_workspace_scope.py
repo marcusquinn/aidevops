@@ -37,3 +37,26 @@ def is_buzz_path(path: str) -> bool:
 def is_preserved_outside(path: str, root: str) -> bool:
     """Outside the workspace and not Buzz: treated as user-owned."""
     return not eligible_path(path, root) and not is_buzz_path(path)
+
+
+def inside_root_category(
+    cwd: str, normalized: str, registered_paths: set[str], seen_cwds: set[str]
+) -> str | None:
+    """Classify a managed profile whose cwd is inside the Git workspace."""
+    cwd_is_known = os.path.isdir(os.path.expanduser(cwd)) or normalized in registered_paths
+    category = None
+    if not cwd_is_known:
+        category = "stale"
+    elif normalized in seen_cwds:
+        category = "duplicate"
+    else:
+        seen_cwds.add(normalized)
+    return category
+
+
+def report_outside_workspace_repos(paths: set[str]) -> None:
+    """Report registered repos skipped because they are outside the Git workspace."""
+    root = workspace_root()
+    for path in sorted(paths):
+        if not eligible_path(path, root):
+            print(f"Skipped {path}: outside Git workspace (no profile created)")
