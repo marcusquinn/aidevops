@@ -140,7 +140,9 @@ Implementation boundaries:
 - `scripts/worktree-process-policy.sh`: platform selection and inspector policy.
 - `scripts/worktree-process-providers.sh`: shared procfs/lsof observation adapters.
 - `scripts/worktree_process_proc.py`: Linux procfs collector using only Python
-  stdlib, without per-process subprocesses; initially selected only on NixOS.
+  stdlib, without per-process subprocesses; its `paths` scan is selected only on
+  NixOS, its `cwdmap` serves the shared procfs loop, and both share the census
+  attestation of privileged-session tasks (see the census section below).
 - `scripts/audit-worktree-removal-helper.sh`: identity, ownership and removal guards.
 
 Providers retain the existing stdout and exit-status contract: readable CWDs,
@@ -321,6 +323,18 @@ user namespace, never attests a task:
 Process names alone never grant an exclusion: renamed, exec'd, re-parented or late
 look-alikes stay `nondumpable` uncertain. Agents such as `ssh-agent` and `gpg-agent`
 run user-controllable code, so only the root census below can clear them.
+
+The removal guard and maintenance observer (`worktree_process_proc.py`, both
+`cwdmap` and `paths`/`denied`) apply the same predicate (GH#39034): a denied
+same-user process is excluded only when every thread attests, with the same
+non-root, initial-namespace, PID-namespace and `hidepid` preconditions. A failed
+precondition disables attestation, so denied processes stay degraded.
+`python3 .agents/scripts/worktree_process_proc.py denied` lists only unattested
+processes. A degraded guard result logs `worktree-degraded: … — cwd-visibility-degraded
+— mode=recoverable-required`; only a final refusal logs `worktree-skipped`. The async
+summary reports `refused=N skip_reasons=<reason:count,…>` (top five per worktree)
+and `outcome=no-progress` when a pass refused candidates and removed or archived
+none; the finished-worktree reclaim line adds `reasons=`.
 
 With the reviewed inspector installed as above and
 `AIDEVOPS_PROTECTED_PROC_INSPECTION=1` set, any remaining uncertainty triggers one
