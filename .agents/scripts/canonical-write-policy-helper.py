@@ -52,14 +52,20 @@ def _write_action(
 ) -> str:
     if decision != "deny":
         return "none"
-    if symlink_workspace_escape:
-        return "use_direct_sanctioned_outside_path"
-    if cross_repository_target and session_outside_workspace:
-        # The worktree already exists; only the session location is wrong.
-        return SESSION_OUTSIDE_WORKSPACE_ACTION
-    if cross_repository_target:
-        return "use_linked_worktree_under_git_workspace"
-    return "create_or_use_linked_worktree"
+    # First matching rule wins. When the session location is the problem, the
+    # worktree already exists, so the remedy is to relocate the session.
+    candidates = (
+        (symlink_workspace_escape, "use_direct_sanctioned_outside_path"),
+        (
+            cross_repository_target and session_outside_workspace,
+            SESSION_OUTSIDE_WORKSPACE_ACTION,
+        ),
+        (cross_repository_target, "use_linked_worktree_under_git_workspace"),
+    )
+    return next(
+        (action for matched, action in candidates if matched),
+        "create_or_use_linked_worktree",
+    )
 
 
 def check_write(cwd: str, file_path: str) -> dict[str, Any]:
