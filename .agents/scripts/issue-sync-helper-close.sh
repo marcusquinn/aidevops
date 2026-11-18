@@ -659,14 +659,19 @@ cmd_close() {
 		local issue_num="${mapped#*|}"
 		local ref
 		ref=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-		if [[ "$DRY_RUN" != "true" ]]; then
-			if [[ -n "$ref" && "$ref" != "$issue_num" ]]; then
-				fix_gh_ref_in_todo "$task_id" "$ref" "$issue_num" "$todo_file"
-				ref_fixed=$((ref_fixed + 1))
-			elif [[ -z "$ref" ]]; then
-				add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file"
-				ref_fixed=$((ref_fixed + 1))
-			fi
+		# GH#38921: the row's own ref is authoritative, as in single-task mode.
+		# An open issue that matched only by a leading task ID in its title,
+		# while the row references a different issue, is a title collision
+		# (e.g. "t2449 merge verdict ..." naming an old task as its topic):
+		# closing it or repointing the historical row falsifies live work.
+		if [[ -n "$ref" && "$ref" != "$issue_num" ]]; then
+			print_warning "$task_id: task-ID title collision — row references #$ref; open #$issue_num left untouched"
+			skipped=$((skipped + 1))
+			continue
+		fi
+		if [[ "$DRY_RUN" != "true" && -z "$ref" ]]; then
+			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file"
+			ref_fixed=$((ref_fixed + 1))
 		fi
 		if _do_close "$task_id" "$issue_num" "$todo_file" "$repo"; then closed=$((closed + 1)); else skipped=$((skipped + 1)); fi
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[(x|-)\] t[0-9]+' || true)
