@@ -64,46 +64,124 @@ _run_agent_discovery_python() {
 # Phase 2a: Agent Generation -- Per-Runtime Adapters
 # =============================================================================
 
-# User-owned block markers for ~/.config/<runtime>/AGENTS.md. Content between
-# these markers belongs to the user and survives every regeneration (setup.sh,
-# auto-update). Everything outside them is framework-managed and rewritten on
-# each run, so local rules added anywhere else are lost on the next update.
-AGENTS_MD_USER_BLOCK_START='<!-- aidevops:user-rules:start -->'
-AGENTS_MD_USER_BLOCK_END='<!-- aidevops:user-rules:end -->'
+# Framework-managed block markers for ~/.config/<runtime>/AGENTS.md (GH#38952).
+# Following the aidevops marker convention (badges, project-operations-context),
+# the markers delimit the framework-owned region; everything outside them
+# belongs to the user and survives every regeneration (setup.sh, auto-update).
+AGENTS_MD_MANAGED_START='<!-- aidevops:runtime-agents:start -->'
+AGENTS_MD_MANAGED_END='<!-- aidevops:runtime-agents:end -->'
 
-# Print the first complete user block (markers included) from an AGENTS.md.
-# Prints nothing when the file is missing or the block is absent/unterminated.
+# Classify the managed block in an existing AGENTS.md (CRLF tolerant).
 # Arguments:
 #   $1 - path to an existing AGENTS.md
+# Outputs: "one" (exactly one ordered start/end pair), "absent" (no markers,
+#          i.e. a legacy unmarked file) or "malformed" (anything else)
 # Returns: 0 always
-_agents_md_extract_user_block() {
+_agents_md_managed_state() {
 	local agents_md="$1"
-	[[ -f "$agents_md" ]] || return 0
-	awk -v start="$AGENTS_MD_USER_BLOCK_START" -v end="$AGENTS_MD_USER_BLOCK_END" '
+	awk -v start="$AGENTS_MD_MANAGED_START" -v end="$AGENTS_MD_MANAGED_END" '
 		{ sub(/\r$/, "") }
-		!inblock && $0 == start { inblock = 1 }
-		inblock { buf = buf $0 "\n" }
-		inblock && $0 == end { printf "%s", buf; exit }
+		$0 == start { starts++; if (!start_line) start_line = NR }
+		$0 == end { ends++; if (!end_line) end_line = NR }
+		END {
+			if (starts == 0 && ends == 0) print "absent"
+			else if (starts == 1 && ends == 1 && start_line < end_line) print "one"
+			else print "malformed"
+		}
 	' "$agents_md"
 	return 0
 }
 
-# Prepend a preserved user block to a freshly generated AGENTS.md.
-# Rewrites the file in place (keeps symlinks and permissions intact).
+# Copy an AGENTS.md whose content is about to be replaced to a timestamped
+# backup (GH#32592 pattern), then warn with the backup path.
 # Arguments:
-#   $1 - path to the generated AGENTS.md
-#   $2 - user block text (markers included)
-# Returns: 0 on success, 1 on failure
-_agents_md_prepend_user_block() {
+#   $1 - path to the existing AGENTS.md
+#   $2 - runtime_id (backup label)
+#   $3 - reason shown in the warning
+# Returns: 0 on success, 1 if the backup could not be written (caller must not overwrite)
+_agents_md_backup_before_rewrite() {
 	local agents_md="$1"
-	local user_block="$2"
-	local tmp_file
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-agents-md.XXXXXX") || return 1
-	if ! { printf '%s\n\n' "$user_block" && cat "$agents_md"; } >"$tmp_file"; then
-		rm -f "$tmp_file"
-		return 1
+	local runtime_id="$2"
+	local reason="$3"
+	local backup_dir="${HOME}/.aidevops/config-backups/migrations/runtime-agents-md"
+	local stamp backup_file n=1
+	stamp=$(date -u +%Y%m%d%H%M%S)
+	backup_file="${backup_dir}/${stamp}-${runtime_id}-AGENTS.md"
+	# Never overwrite an earlier backup taken in the same second.
+	while [[ -e "$backup_file" ]]; do
+		backup_file="${backup_dir}/${stamp}.${n}-${runtime_id}-AGENTS.md"
+		n=$((n + 1))
+	done
+	mkdir -p "$backup_dir" || return 1
+	# Read through any symlink so the backup holds the user's content.
+	cat "$agents_md" >"$backup_file" || return 1
+	if command -v print_warning >/dev/null 2>&1; then
+		print_warning "${reason}: backed up ${agents_md} to ${backup_file}"
+	else
+		printf '[WARN] %s: backed up %s to %s\n' "$reason" "$agents_md" "$backup_file" >&2
 	fi
-	cat "$tmp_file" >"$agents_md"
+	return 0
+}
+
+# Write the rendered managed block into AGENTS.md, keeping user content.
+# - Missing file: write the block.
+# - Exactly one managed block: replace only that block, keep the bytes outside it.
+# - Legacy unmarked file: back up unless it equals the old unwrapped template,
+#   then write the block (user lines are never guessed).
+# - Malformed markers: back up, then write the block. Never silently delete.
+# The final write is in place, so symlinks and permissions survive.
+# Arguments:
+#   $1 - path to AGENTS.md
+#   $2 - path to the rendered managed block (markers included)
+#   $3 - path to the rendered template body without markers (legacy comparison)
+#   $4 - runtime_id (backup label)
+# Returns: 0 on success, 1 on failure
+_agents_md_write_managed_block() {
+	local agents_md="$1"
+	local block_file="$2"
+	local legacy_body_file="$3"
+	local runtime_id="$4"
+	local state tmp_file
+
+	if [[ ! -e "$agents_md" ]]; then
+		cat "$block_file" >"$agents_md" || return 1
+		return 0
+	fi
+
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-agents-md.XXXXXX") || return 1
+	state=$(_agents_md_managed_state "$agents_md")
+	case "$state" in
+	one)
+		if ! awk -v start="$AGENTS_MD_MANAGED_START" -v end="$AGENTS_MD_MANAGED_END" -v block="$block_file" '
+			{ line = $0; sub(/\r$/, "", line) }
+			!inside && line == start {
+				inside = 1
+				while ((getline replacement < block) > 0) print replacement
+				close(block)
+				next
+			}
+			inside && line == end { inside = 0; next }
+			!inside { print }
+		' "$agents_md" >"$tmp_file"; then
+			rm -f "$tmp_file"
+			return 1
+		fi
+		;;
+	absent | malformed)
+		if [[ "$state" == "malformed" ]]; then
+			_agents_md_backup_before_rewrite "$agents_md" "$runtime_id" \
+				"Malformed aidevops managed block in AGENTS.md" || { rm -f "$tmp_file"; return 1; }
+		elif ! cmp -s "$agents_md" "$legacy_body_file"; then
+			_agents_md_backup_before_rewrite "$agents_md" "$runtime_id" \
+				"AGENTS.md now keeps your content outside the aidevops managed block; review and re-add local rules outside it" || { rm -f "$tmp_file"; return 1; }
+		fi
+		cat "$block_file" >"$tmp_file" || { rm -f "$tmp_file"; return 1; }
+		;;
+	esac
+
+	if ! cmp -s "$tmp_file" "$agents_md"; then
+		cat "$tmp_file" >"$agents_md" || { rm -f "$tmp_file"; return 1; }
+	fi
 	rm -f "$tmp_file"
 	return 0
 }
@@ -154,12 +232,17 @@ _generate_greeting_agents_md() {
 
 	mkdir -p "$config_dir"
 
-	# Capture the user-owned block before the framework section is rewritten.
+	# GH#38952: render the template once, wrap it in the managed block, and
+	# replace only that block so user content outside the markers survives.
 	local agents_md="$config_dir/AGENTS.md"
-	local user_block
-	user_block=$(_agents_md_extract_user_block "$agents_md")
+	local body_file block_file
+	body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-agents-body.XXXXXX") || return 1
+	block_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-agents-block.XXXXXX") || {
+		rm -f "$body_file"
+		return 1
+	}
 
-	cat >"$agents_md" <<EOF
+	cat >"$body_file" <<EOF
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 **Runtime**: You are running in ${display_name}. Global config: \`${global_config_path}\`.
@@ -194,9 +277,18 @@ If the user later asks about aidevops updates, direct them to run \`aidevops upd
 
 Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
 EOF
-	if [[ -n "$user_block" ]]; then
-		_agents_md_prepend_user_block "$agents_md" "$user_block" || return 1
+	{
+		printf '%s\n' "$AGENTS_MD_MANAGED_START" \
+			'<!-- Managed by aidevops: this block is regenerated on every update. Add your own rules above or below the markers; content outside them is preserved. -->' \
+			''
+		cat "$body_file"
+		printf '%s\n' "$AGENTS_MD_MANAGED_END"
+	} >"$block_file"
+	if ! _agents_md_write_managed_block "$agents_md" "$block_file" "$body_file" "$runtime_id"; then
+		rm -f "$body_file" "$block_file"
+		return 1
 	fi
+	rm -f "$body_file" "$block_file"
 	print_success "Updated ${config_dir}/AGENTS.md with ${display_name} greeting template (t2766)"
 	return 0
 }
