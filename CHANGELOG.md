@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.226] - 2026-11-18
+
+### Added
+
+- generate policy-aware upstream briefs (#38907)
+
+### Changed
+
+- Documentation: add Hostinger Email to email provider docs (#38903)
+
+### Fixed
+
+- resolve squash commits with a missing GitHub PR association via verified subject hint
+- validate brief scope before readiness verdict (#38927)
+- bulk close skips task-ID title collisions instead of falsely completing open issues
+- report ambiguous explicit issue refs in merge verdict (t2449) (#38917)
+- treat unreported required contexts as pending before merge
+- apply the ChatGPT OAuth model denylist to worker same-tier fallback
+- document scoped picomatch audit exception (#38897)
+- inherit providers per key from framework routing table (GH#38872) (#38890)
+
 ## [3.39.225] - 2026-11-17
 
 ### Changed
