@@ -1033,7 +1033,7 @@ _pm_close_superseded_duplicate_pr_if_issue_solved() {
 	if _gh_with_timeout write gh pr close "$pr_number" --repo "$repo_slug" \
 		--comment "Closing as superseded: linked issue #${linked_issue} is already closed by merged PR #${superseding_pr}. This worker PR uses a closing keyword for the same issue, so merging it would duplicate an already-terminal fix.
 
-Intentional follow-ups should use For #${linked_issue} / Ref #${linked_issue} or an explicit follow-up/protection label instead of a closing keyword.
+Intentional follow-ups should use an explicit follow-up/protection label; For #${linked_issue} / Ref #${linked_issue} require an open issue.
 
 _Closed by deterministic merge pass (GH#24399)._" 2>/dev/null; then
 		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
