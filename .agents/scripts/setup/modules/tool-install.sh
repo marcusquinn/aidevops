@@ -1615,6 +1615,15 @@ _setup_opencode_global_v2_cli() {
 	return 0
 }
 
+# Print os.path.realpath(os.path.expanduser(path)), as shared_config_profile()
+# computes it. Returns 1 when python3 is unavailable.
+_setup_opencode_config_realpath() {
+	local config_path="$1"
+	python3 -c 'import os, sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' \
+		"$config_path" 2>/dev/null || return 1
+	return 0
+}
+
 # GH#38922: AIDEVOPS_OPENCODE_PROFILE is an explicit choice for the shared
 # runtime unless the isolated opencode2 shim exported it together with an
 # OPENCODE_CONFIG that targets another file. Mirrors shared_config_profile()
@@ -1624,8 +1633,16 @@ _setup_opencode_profile_override_is_explicit() {
 	[[ -n "${AIDEVOPS_OPENCODE_PROFILE:-}" ]] || return 1
 	local session_config="${OPENCODE_CONFIG:-}"
 	[[ -n "$session_config" ]] || return 0
-	session_config="${session_config/#\~/$HOME}"
 	local shared_config="${HOME}/.config/opencode/opencode.json"
+	local session_real="" shared_real=""
+	# Same normalization as the Python mirror; realpath also resolves a config
+	# file that does not exist yet, which `-ef` cannot compare.
+	session_real=$(_setup_opencode_config_realpath "$session_config") || session_real=""
+	shared_real=$(_setup_opencode_config_realpath "$shared_config") || shared_real=""
+	if [[ -n "$session_real" && "$session_real" == "$shared_real" ]]; then
+		return 0
+	fi
+	session_config="${session_config/#\~/$HOME}"
 	if [[ "$session_config" == "$shared_config" || "$session_config" -ef "$shared_config" ]]; then
 		return 0
 	fi

@@ -113,6 +113,18 @@ SHIM
 		OPENCODE_CONFIG="$SANDBOX/isolated-opencode.json" setup_opencode_runtimes
 	[[ ! -e "$SANDBOX/unexpected-v1-heal" ]]
 	[[ "$("$HOME/.local/bin/opencode" --version)" == "opencode v2.3.0" ]]
+	# A non-canonical spelling of the shared config that does not exist yet is
+	# still the shared config, so an explicit V1 stays explicit (realpath parity
+	# with shared_config_profile()).
+	[[ ! -e "$HOME/.config/opencode/opencode.json" ]] || mv "$HOME/.config/opencode/opencode.json" "$SANDBOX/shared-config.bak"
+	AIDEVOPS_OPENCODE_PROFILE=v1 OPENCODE_CONFIG="$HOME/.config/opencode/./opencode.json" \
+		_setup_opencode_profile_override_is_explicit
+	if AIDEVOPS_OPENCODE_PROFILE=v1 OPENCODE_CONFIG="$SANDBOX/isolated-opencode.json" \
+		_setup_opencode_profile_override_is_explicit; then
+		printf 'isolated OPENCODE_CONFIG was treated as an explicit shared profile\n' >&2
+		exit 1
+	fi
+	[[ ! -e "$SANDBOX/shared-config.bak" ]] || mv "$SANDBOX/shared-config.bak" "$HOME/.config/opencode/opencode.json"
 	cat >"$SANDBOX/bin/opencode" <<'SHIM'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && printf '1.18.29\n'
