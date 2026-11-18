@@ -16,6 +16,9 @@ shopt -s inherit_errexit 2>/dev/null || true
 _TOOL_INSTALL_LOADED=1
 
 _tool_install_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# GH#38922: setup runs the OpenCode CLI stage before deploying agents, so the
+# deployed runtime-profile helper can predate the installed-major detector.
+_SETUP_OPENCODE_PROFILE_HELPER="${_tool_install_dir}/../../opencode-runtime-profile.py"
 _file_discovery_readiness_lib="${_tool_install_dir}/../../file-discovery-readiness.sh"
 _rtk_readiness_lib="${_tool_install_dir}/../../rtk-readiness.sh"
 if [[ -f "$_file_discovery_readiness_lib" ]]; then
@@ -706,6 +709,12 @@ _setup_opencode_profile_id() {
 _setup_opencode_profile_value() {
 	local field="$1"
 	local profile="${2:-$(_setup_opencode_profile_id)}"
+	# GH#38922: a global OpenCode 2 owns the plain `opencode` name, so its
+	# shim, candidate search and receipts use that name, not `opencode2`.
+	if [[ "$field" == "binary" && "$profile" == "v2" && "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" == "1" ]]; then
+		printf 'opencode\n'
+		return 0
+	fi
 	if command -v aidevops_opencode_profile_value >/dev/null 2>&1; then
 		aidevops_opencode_profile_value "$field" "$profile"
 		return $?
@@ -1250,7 +1259,7 @@ _setup_find_valid_opencode_binary() {
 	local path_dirs=() path_candidates=()
 
 	managed_shim_target=$(_setup_opencode_managed_shim_target "$shim_path" 2>/dev/null || true)
-	if [[ "$(_setup_opencode_profile_id)" == "v2" ]]; then
+	if [[ "$(_setup_opencode_profile_id)" == "v2" && "${AIDEVOPS_OPENCODE_GLOBAL_V2:-0}" != "1" ]]; then
 		isolated_install_bin=$(_setup_opencode_v2_install_binary 2>/dev/null || true)
 	fi
 	# command -v only sees the first launcher. Inspect every absolute PATH
@@ -1581,9 +1590,44 @@ _setup_opencode_v2_preview_enabled() {
 	return 0
 }
 
+# GH#38922: print the profile of the installed global `opencode` (v1, v2 or
+# empty when missing/unparseable) through the shared runtime-profile detector.
+_setup_opencode_installed_global_profile() {
+	local helper="${_SETUP_OPENCODE_PROFILE_HELPER:-}"
+	[[ -f "$helper" ]] || helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+	[[ -f "$helper" ]] || return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 "$helper" installed 2>/dev/null || true
+	return 0
+}
+
+# GH#38922: a global OpenCode 2 is the primary runtime. Validate and record it
+# under the global-V2 pairing; never heal it to V1 or reinstall over it.
+_setup_opencode_global_v2_cli() {
+	local current_bin=""
+	current_bin=$(command -v opencode 2>/dev/null || printf '')
+	if AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 _setup_validate_opencode_binary "$current_bin"; then
+		AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 _setup_record_current_opencode_binary "$current_bin"
+		return $?
+	fi
+	print_warning "Global OpenCode 2 binary '${current_bin:-opencode}' failed validation; leaving it unchanged"
+	print_info "Roll back explicitly with AIDEVOPS_OPENCODE_PROFILE=v1 if V1 is intended"
+	return 0
+}
+
 setup_opencode_runtimes() {
 	local selected_profile=""
 	selected_profile=$(_setup_opencode_profile_id) || return 1
+
+	if [[ -z "${AIDEVOPS_OPENCODE_PROFILE:-}" && "$(_setup_opencode_installed_global_profile)" == "v2" ]]; then
+		_setup_opencode_global_v2_cli || return $?
+		if ! _setup_opencode_v2_preview_enabled; then
+			return 0
+		fi
+		AIDEVOPS_OPENCODE_PROFILE=v2 AIDEVOPS_OPENCODE_PRESERVE_PRIMARY_RECEIPT=1 \
+			setup_opencode_cli || print_warning "OpenCode V2 preview setup encountered issues; global OpenCode 2 remains available"
+		return 0
+	fi
 
 	if [[ "$selected_profile" == "v2" ]]; then
 		AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OPENCODE_PRESERVE_PRIMARY_RECEIPT=1 \

@@ -127,5 +127,24 @@ if bash -c '
 	exit 1
 fi
 
+# GH#38922: the verifier checks the keys of the profile that config generation
+# selected. With a global OpenCode 2 and no override, V2 keys are the contract.
+unset AIDEVOPS_OPENCODE_PROFILE OPENCODE_CONFIG
+ln -s "$REPO_ROOT/.agents/scripts/opencode-runtime-profile.py" "$AGENTS_DIR/scripts/opencode-runtime-profile.py"
+mkdir -p "$TEST_ROOT/global-v2"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "opencode v2.3.0\n"' >"$TEST_ROOT/global-v2/opencode"
+chmod +x "$TEST_ROOT/global-v2/opencode"
+PATH="$TEST_ROOT/global-v2:$PATH"
+printf '%s\n' '{"update":"disable","agents":{}}' >"$TEST_HOME/.config/opencode/opencode.json"
+if ! _opencode_managed_config_matches_source || ! _opencode_agent_output_matches_source; then
+	printf '%s\n' 'FAIL: valid OpenCode 2 config failed parity verification' >&2
+	exit 1
+fi
+printf '%s\n' '{"autoupdate":false,"agent":{}}' >"$TEST_HOME/.config/opencode/opencode.json"
+if _opencode_managed_config_matches_source; then
+	printf '%s\n' 'FAIL: V1 update key passed parity verification for a global OpenCode 2' >&2
+	exit 1
+fi
+
 printf '%s\n' 'PASS: runtime reconciliation detects drift, repairs output, and propagates failures'
 exit 0

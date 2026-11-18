@@ -50,6 +50,34 @@ cat >"$SANDBOX/bin/opencode2" <<'SHIM'
 printf '2.0.3\n'
 SHIM
 chmod +x "$SANDBOX/bin/npm" "$SANDBOX/bin/opencode2"
+
+# GH#38922: one installed-major detector for every setup/config path.
+fake_version_bin() {
+	local name="$1"
+	local output="$2"
+	printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "$output" >"$SANDBOX/bin/$name"
+	chmod +x "$SANDBOX/bin/$name"
+	printf '%s\n' "$SANDBOX/bin/$name"
+	return 0
+}
+assert_eq "installed: real V2 output" "v2" "$(python3 "$HELPER" installed "$(fake_version_bin oc-v2 'opencode v2.3.0')")"
+assert_eq "installed: bare V2 output" "v2" "$(python3 "$HELPER" installed "$(fake_version_bin oc-v2-bare '2.3.0')")"
+assert_eq "installed: V1 output" "v1" "$(python3 "$HELPER" installed "$(fake_version_bin oc-v1 '1.19.6')")"
+assert_eq "installed: newer major uses newest contract" "v2" "$(python3 "$HELPER" installed "$(fake_version_bin oc-v9 'opencode v9.0.0')")"
+assert_eq "installed: shadowing Claude CLI" "" "$(python3 "$HELPER" installed "$(fake_version_bin oc-claude '2.1.0 (Claude Code)')")"
+assert_eq "installed: unparseable output" "" "$(python3 "$HELPER" installed "$(fake_version_bin oc-bad 'nonsense')")"
+assert_eq "installed: missing binary" "" "$(python3 "$HELPER" installed "$SANDBOX/bin/absent")"
+mkdir -p "$SANDBOX/global-v2" "$SANDBOX/global-v1"
+ln -s "$SANDBOX/bin/oc-v2" "$SANDBOX/global-v2/opencode"
+ln -s "$SANDBOX/bin/oc-v1" "$SANDBOX/global-v1/opencode"
+assert_eq "shared: installed V2 without override" "v2" \
+	"$(env -u AIDEVOPS_OPENCODE_PROFILE -u OPENCODE_CONFIG PATH="$SANDBOX/global-v2:$PATH" python3 "$HELPER" shared)"
+assert_eq "shared: explicit V1 rollback wins" "v1" \
+	"$(env -u OPENCODE_CONFIG AIDEVOPS_OPENCODE_PROFILE=v1 PATH="$SANDBOX/global-v2:$PATH" python3 "$HELPER" shared)"
+assert_eq "shared: isolated V2 session override ignored" "v1" \
+	"$(AIDEVOPS_OPENCODE_PROFILE=v2 OPENCODE_CONFIG="$SANDBOX/isolated.json" PATH="$SANDBOX/global-v1:$PATH" \
+		python3 "$HELPER" shared 2>/dev/null)"
+
 status_json=$(PATH="$SANDBOX/bin:$PATH" AIDEVOPS_AGENTS_DIR="$REPO_ROOT/.agents" \
 	AIDEVOPS_OPENCODE_PROFILE=v2 "$REPO_ROOT/.agents/scripts/opencode-pin-canary.sh" status --json)
 assert_eq "V2 canary profile" "v2" "$(jq -r '.profile' <<<"$status_json")"
@@ -63,9 +91,10 @@ unset AIDEVOPS_OPENCODE_V2_ROOT AIDEVOPS_OPENCODE_V2_CONFIG_HOME AIDEVOPS_OPENCO
 export PATH="$SANDBOX/bin:$PATH"
 mkdir -p "$HOME/.config/opencode/plugins" "$HOME/.aidevops/agents/plugins/opencode-aidevops/v2-plugin"
 touch "$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+# The real OpenCode 2 binary prints `opencode vX.Y.Z` (GH#38922).
 cat >"$SANDBOX/bin/opencode" <<'SHIM'
 #!/usr/bin/env bash
-printf '%s\n' "${TEST_OPENCODE_VERSION:-2.2.6}"
+printf '%s\n' "${TEST_OPENCODE_VERSION:-opencode v2.2.6}"
 SHIM
 chmod +x "$SANDBOX/bin/opencode"
 print_info() { return 0; }

@@ -6,8 +6,14 @@
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+# GH#38922: OpenCode 2 prints `opencode v2.3.0`; V1 prints a bare `1.19.6`.
+# A word boundary cannot separate `v` from the major, so accept the prefix.
+VERSION_PATTERN = re.compile(r'(?<![\w.])[vV]?(\d+)\.\d+\.\d+')
 
 
 def profile_document():
@@ -43,6 +49,61 @@ def profile_for_version(document, version):
     return profile_id if profile_id in document['profiles'] else selected_id(document)
 
 
+def profile_for_major(document, major):
+    """Map an OpenCode major to a known profile; newer majors use the newest contract."""
+    known = {
+        profile['major']: profile_id
+        for profile_id, profile in document['profiles'].items()
+        if isinstance(profile.get('major'), int)
+    }
+    if major in known:
+        return known[major]
+    if known and major > max(known):
+        return known[max(known)]
+    return ''
+
+
+def installed_profile(document, binary=None):
+    """Return the profile of the installed global OpenCode binary, or '' if unknown.
+
+    This is the single installed-major detector shared by plugin setup, binary
+    validation, agent config generation and the config verifier (GH#38922).
+    """
+    binary = binary or shutil.which('opencode')
+    if not binary:
+        return ''
+    try:
+        result = subprocess.run([binary, '--version'], capture_output=True, text=True,
+                                timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    output = f'{result.stdout}\n{result.stderr}'
+    # t2891: a Claude CLI shadowing the `opencode` name is not an OpenCode major.
+    if '(Claude Code)' in output:
+        return ''
+    match = VERSION_PATTERN.search(output)
+    return profile_for_major(document, int(match.group(1))) if match else ''
+
+
+def shared_config_profile(document):
+    """Return the profile that governs the shared ~/.config/opencode config.
+
+    An explicit AIDEVOPS_OPENCODE_PROFILE wins, except when it comes from an
+    isolated runtime session whose OPENCODE_CONFIG targets another file. Then
+    the installed global `opencode` decides, and the document default last.
+    """
+    override = os.environ.get('AIDEVOPS_OPENCODE_PROFILE')
+    if override:
+        session_config = os.environ.get('OPENCODE_CONFIG')
+        shared_config = os.path.expanduser('~/.config/opencode/opencode.json')
+        if not session_config or os.path.realpath(os.path.expanduser(session_config)) == os.path.realpath(
+                shared_config):
+            return override
+        print(f'  Ignoring AIDEVOPS_OPENCODE_PROFILE={override} from isolated runtime session '
+              f'(OPENCODE_CONFIG targets another file)', file=sys.stderr)
+    return installed_profile(document) or document['default']
+
+
 def main(argv):
     document = profile_document()
     command = argv[1] if len(argv) > 1 else 'selected'
@@ -51,6 +112,12 @@ def main(argv):
         return
     if command == 'detect' and len(argv) == 3:
         print(profile_for_version(document, argv[2]))
+        return
+    if command == 'installed' and len(argv) in (2, 3):
+        print(installed_profile(document, argv[2] if len(argv) == 3 else None))
+        return
+    if command == 'shared' and len(argv) == 2:
+        print(shared_config_profile(document))
         return
     if command == 'selected':
         profile_id = selected_id(document)
@@ -61,7 +128,8 @@ def main(argv):
     elif command == 'get' and len(argv) == 4:
         profile_id, field = argv[2], argv[3]
     else:
-        raise SystemExit('Usage: opencode-runtime-profile.py default | selected [FIELD] | detect VERSION | get PROFILE FIELD')
+        raise SystemExit('Usage: opencode-runtime-profile.py default | selected [FIELD] | detect VERSION | '
+                         'installed [BINARY] | shared | get PROFILE FIELD')
     try:
         value = document['profiles'][profile_id][field]
     except KeyError as error:

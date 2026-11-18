@@ -80,6 +80,17 @@ EOF
 	mkdir -p "$TEST_DIR/claude-home/.claude"
 	echo '{}' >"$TEST_DIR/claude-home/.claude/settings.json"
 
+	# GH#38922: without an override, agent-discovery probes the global
+	# `opencode`. Keep that probe hermetic instead of reading the host binary.
+	mkdir -p "$TEST_DIR/bin"
+	cat >"$TEST_DIR/bin/opencode" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${TEST_OPENCODE_VERSION:-1.19.6}"
+EOF
+	chmod +x "$TEST_DIR/bin/opencode"
+	export PATH="$TEST_DIR/bin:$PATH"
+	unset AIDEVOPS_OPENCODE_PROFILE OPENCODE_CONFIG
+
 	return 0
 }
 
@@ -252,6 +263,39 @@ PY
 	return 0
 }
 
+test_opencode_installed_v2_without_override() {
+	local fake_home="$TEST_DIR/fake-home"
+	local config_path="$fake_home/.config/opencode/opencode.json"
+	local label="installed OpenCode 2 selects V2 config without override"
+	local output
+
+	run_discovery_script "$SCRIPTS_DIR/agent-discovery.py" dummy opencode-json >/dev/null 2>&1 || true
+	printf '%s\n' '{"autoupdate": false, "plugin": ["file:///example/plugin.mjs"]}' >"$config_path"
+	if ! output=$(HOME="$fake_home" TEST_OPENCODE_VERSION='opencode v2.0.3' \
+		python3 "$SCRIPTS_DIR/agent-discovery.py" dummy opencode-json 2>&1); then
+		print_result "$label" 1 "$output"
+		return 0
+	fi
+	if python3 - "$config_path" <<'PY'; then
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+for legacy_key in ("autoupdate", "agent", "plugin"):
+    assert legacy_key not in config, legacy_key
+assert config["update"] == "disable"
+assert isinstance(config["agents"], dict)
+assert config["plugins"][-1].endswith("/v2-plugin")
+PY
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "V2 config assertions failed"
+	fi
+	return 0
+}
+
 test_opencode_agent_discovery_runs() {
 	local output
 	if output=$(run_discovery_script \
@@ -401,6 +445,7 @@ main() {
 	test_agent_discovery_runs
 	test_opencode_config_persists_managed_directory_permissions
 	test_opencode_v2_config_and_v1_rollback
+	test_opencode_installed_v2_without_override
 	test_opencode_agent_discovery_runs
 	test_opencode_agent_discovery_cli_is_non_mutating
 	test_missing_subagent_warning
