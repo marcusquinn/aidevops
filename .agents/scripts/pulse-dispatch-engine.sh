@@ -1276,25 +1276,52 @@ _dispatch_order_idle_borrowing_candidates() {
 # its live gates and claimed ones are attempted once fresh work is exhausted.
 # No claimed candidate, or any jq failure, returns the input byte-for-byte.
 #
+# GH#39030: an assignee alone is not a claim when dedup would treat it as
+# passive (_has_active_claim + _is_assigned_compute_blocking): only self, repo
+# owner or repo maintainer, no active status label, no interactive hold. Such
+# candidates pass the assignee gate cheaply, so they stay in the fresh lane;
+# reopened issues healed with a stale maintainer assignee were starving there.
+# An unreadable maintainer map keeps the stricter owner/self-only rule.
+#
 # Arguments:
 #   $1 - ranked candidate JSON array
 # Returns: reordered JSON array
 #######################################
 _dispatch_order_claim_state_candidates() {
-	local candidates_json="$1" result="" demoted="" ordered=""
-	if ! result=$(jq -c '
+	local candidates_json="$1" result="" demoted="" kept="" ordered="" maintainers="{}"
+	if [[ -n "${REPOS_JSON:-}" && -f "$REPOS_JSON" ]]; then
+		maintainers=$(jq -c '[.initialized_repos[]? | select((.slug // "") != "" and (.maintainer // "") != "")
+			| {key: .slug, value: .maintainer}] | from_entries' "$REPOS_JSON" 2>/dev/null) || maintainers="{}"
+		[[ -n "$maintainers" ]] || maintainers="{}"
+	fi
+	if ! result=$(jq -c --arg self "${_DISPATCH_SELF_LOGIN:-}" --argjson maintainers "$maintainers" '
+		def label_names: (.labels // []) | map(.name? // .);
+		def assigned: (.assignees // []) | length > 0;
+		def passive_assignees:
+			(.repo_slug // "") as $slug |
+			([($slug | split("/")[0]), ($maintainers[$slug] // ""), $self] | map(select(. != ""))) as $passive |
+			label_names as $labels |
+			(any($labels[]; . == "status:queued" or . == "status:in-progress" or . == "status:in-review" or . == "status:claimed") | not) and
+			((($labels | index("origin:interactive")) != null and ($labels | index("auto-dispatch")) == null) | not) and
+			all((.assignees // [])[] | (.login? // .); . as $login | ($passive | index($login)) != null);
 		def claimed:
-			((.assignees // []) | length > 0) or
-			(((.labels // []) | map(.name? // .)) as $labels |
-				any($labels[]; . == "status:in-progress" or . == "status:in-review" or . == "status:claimed"));
+			(assigned and (passive_assignees | not)) or
+			(label_names | any(.[]; . == "status:in-progress" or . == "status:in-review" or . == "status:claimed"));
 		([.[] | select(claimed)] | length),
+		([.[] | select(assigned and (claimed | not))] | length),
 		([.[] | select(claimed | not)] + [.[] | select(claimed)])
-	' <<<"$candidates_json" 2>/dev/null) || ! { IFS= read -r demoted && IFS= read -r ordered; } <<<"$result" ||
-		[[ ! "$demoted" =~ ^[1-9][0-9]*$ || -z "$ordered" ]]; then
+	' <<<"$candidates_json" 2>/dev/null) ||
+		! { IFS= read -r demoted && IFS= read -r kept && IFS= read -r ordered; } <<<"$result" ||
+		[[ ! "$demoted" =~ ^[0-9]+$ || ! "$kept" =~ ^[0-9]+$ || -z "$ordered" ]] ||
+		[[ "$demoted" == 0 && "$kept" == 0 ]]; then
 		printf '%s\n' "$candidates_json"
 		return 0
 	fi
-	echo "[pulse-wrapper] Dispatch_max: fresh-first lane — ${demoted} claimed candidate(s) (assignee or in-progress/in-review/claimed) ordered after unclaimed work (GH#38333)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Dispatch_max: fresh-first lane — ${demoted} claimed candidate(s) (non-passive assignee or in-progress/in-review/claimed) ordered after unclaimed work; ${kept} passive-assignee candidate(s) kept fresh (GH#38333/GH#39030)" >>"$LOGFILE"
+	if [[ "$demoted" == 0 ]]; then
+		printf '%s\n' "$candidates_json"
+		return 0
+	fi
 	if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
 		_dispatch_stats_increment "dispatch_candidate_claimed_demoted"
 	fi
