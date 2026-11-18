@@ -26,26 +26,30 @@ _RS_HOST=""
 _RS_USER=""
 _RS_PROVIDER="anthropic"
 _RS_EMAIL=""
+# Optional seat selector (GH#38959): orgId prefix or org name, for an email
+# that holds several seats (e.g. Team + Personal). Empty keeps legacy behaviour.
+_RS_ORG=""
 _RS_REMOTE_HELPER=".aidevops/agents/scripts/oauth-pool-helper.sh"
 _RS_LABEL="sh.aidevops.oauth-pool-remote-sync"
 
 # Local single-entry op: _rs_local_op <get|put|fingerprint> (stdin forwarded).
 _rs_local_op() {
 	local op="$1"
-	POOL_FILE_PATH="$POOL_FILE" PROVIDER="$_RS_PROVIDER" EMAIL="$_RS_EMAIL" \
+	POOL_FILE_PATH="$POOL_FILE" PROVIDER="$_RS_PROVIDER" EMAIL="$_RS_EMAIL" ORG="$_RS_ORG" \
 		python3 "$POOL_OPS" "entry-${op}"
 	return $?
 }
 
-# Internal subcommand run on the remote side: entry <get|put|fingerprint> PROVIDER EMAIL
+# Internal subcommand run on the remote side: entry <get|put|fingerprint> PROVIDER EMAIL [ORG]
 cmd_entry() {
 	local op="${1:-}"
 	_RS_PROVIDER="${2:-}"
 	_RS_EMAIL="${3:-}"
+	_RS_ORG="${4:-}"
 	case "$op" in
 	get | put | fingerprint) ;;
 	*)
-		print_error "Usage: entry <get|put|fingerprint> <provider> <email>"
+		print_error "Usage: entry <get|put|fingerprint> <provider> <email> [org]"
 		return 1
 		;;
 	esac
@@ -78,6 +82,10 @@ _rs_parse_args() {
 			_RS_EMAIL="${2:-}"
 			shift 2 || return 1
 			;;
+		--org)
+			_RS_ORG="${2:-}"
+			shift 2 || return 1
+			;;
 		--remote-helper)
 			_RS_REMOTE_HELPER="${2:-}"
 			shift 2 || return 1
@@ -101,6 +109,13 @@ _rs_parse_args() {
 		print_error "Invalid --host/--remote-user"
 		return 1
 	fi
+	# Org names may hold spaces/apostrophes ("...'s Organization"); reject shell
+	# and XML metacharacters. An orgId prefix is the most robust selector.
+	local org_re="^[A-Za-z0-9 ._@:'-]*$"
+	if [[ ! "$_RS_ORG" =~ $org_re ]]; then
+		print_error "Invalid --org (use an orgId prefix or a plain org name)"
+		return 1
+	fi
 	return 0
 }
 
@@ -121,6 +136,11 @@ _rs_remote() {
 	local inner
 	# shellcheck disable=SC2016  # $HOME must expand on the remote side
 	inner=$(printf 'exec "$HOME"/%q entry %q %q %q' "$_RS_REMOTE_HELPER" "$op" "$_RS_PROVIDER" "$_RS_EMAIL")
+	# Append the org only when set, so single-seat syncs keep working against
+	# remote helpers that predate seat identity.
+	if [[ -n "$_RS_ORG" ]]; then
+		inner="${inner} $(printf '%q' "$_RS_ORG")"
+	fi
 	local cmd
 	if [[ -n "$_RS_USER" ]]; then
 		cmd=$(printf 'sudo -n -u %q sh -c %q' "$_RS_USER" "$inner")
@@ -144,6 +164,15 @@ _rs_sync() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$tmp_back'" RETURN
 
+	# Refuse up front when the email holds several local seats and --org does
+	# not pick one; otherwise the pipeline would misreport an ssh failure.
+	local seat_rc=0
+	_rs_local_op fingerprint >/dev/null || seat_rc=$?
+	if [[ "$seat_rc" -eq 2 ]]; then
+		print_error "remote-sync: ${_RS_EMAIL} has several ${_RS_PROVIDER} seats; pass --org <orgId-prefix|org name>"
+		return 1
+	fi
+
 	if ! _rs_local_op get | _rs_remote put >"$tmp_back"; then
 		print_error "remote-sync: remote put failed (check ssh/sudo access)"
 		return 1
@@ -153,7 +182,7 @@ _rs_sync() {
 		print_error "remote-sync: local put failed"
 		return 1
 	}
-	print_success "remote-sync ${_RS_PROVIDER}/${_RS_EMAIL} <-> ${_RS_HOST}: local ${back_status}"
+	print_success "remote-sync ${_RS_PROVIDER}/${_RS_EMAIL}${_RS_ORG:+ [${_RS_ORG}]} <-> ${_RS_HOST}: local ${back_status}"
 	return 0
 }
 
@@ -174,6 +203,12 @@ _rs_status() {
 _rs_slug() {
 	# Hash separate fields to retain punctuation/boundaries without exceeding
 	# scheduler filename limits. Empty user (SSH login) is not sudo user "self".
+	# The org is hashed only when set, so existing installs keep their slug.
+	if [[ -n "$_RS_ORG" ]]; then
+		python3 -c 'import hashlib, json, sys; print(hashlib.sha256(json.dumps(sys.argv[1:]).encode()).hexdigest())' \
+			"$_RS_HOST" "$_RS_USER" "$_RS_PROVIDER" "$_RS_EMAIL" "$_RS_ORG"
+		return $?
+	fi
 	python3 -c 'import hashlib, json, sys; print(hashlib.sha256(json.dumps(sys.argv[1:]).encode()).hexdigest())' \
 		"$_RS_HOST" "$_RS_USER" "$_RS_PROVIDER" "$_RS_EMAIL"
 	return $?
@@ -183,6 +218,9 @@ _rs_sync_command_line() {
 	local self="${SCRIPT_DIR}/oauth-pool-helper.sh"
 	printf '%q remote-sync sync --host %q --provider %q --email %q' \
 		"$self" "$_RS_HOST" "$_RS_PROVIDER" "$_RS_EMAIL"
+	if [[ -n "$_RS_ORG" ]]; then
+		printf ' --org %q' "$_RS_ORG"
+	fi
 	if [[ -n "$_RS_USER" ]]; then
 		printf ' --remote-user %q' "$_RS_USER"
 	fi
@@ -306,7 +344,7 @@ cmd_remote_sync() {
 	case "$sub" in
 	sync | status | install | enable | disable) ;;
 	*)
-		print_error "Usage: remote-sync <install|sync|status|enable|disable> --host H [--remote-user U] --provider P --email E"
+		print_error "Usage: remote-sync <install|sync|status|enable|disable> --host H [--remote-user U] --provider P --email E [--org O]"
 		return 1
 		;;
 	esac

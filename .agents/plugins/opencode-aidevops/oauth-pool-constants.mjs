@@ -36,6 +36,10 @@ export const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/to
 export const ANTHROPIC_OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 export const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
 export const ANTHROPIC_OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+// Profile endpoint the Claude CLI reads after token exchange (see the alignment
+// note in oauth-pool-add.sh). Used only to resolve a seat's organization when
+// the token response omits it (GH#38959).
+export const ANTHROPIC_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 
 // ---------------------------------------------------------------------------
 // OpenAI OAuth constants (t1548)

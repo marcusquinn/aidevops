@@ -8,17 +8,94 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from urllib.request import Request, urlopen
+
+# Same endpoint as ANTHROPIC_PROFILE_URL in oauth-pool-constants.mjs.
+ANTHROPIC_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+
+
+def _org_fields(d: object) -> tuple[str, str]:
+    """(orgId, orgName) from an Anthropic token/profile ``organization`` object.
+
+    Mirrors extractAnthropicOrg() in oauth-pool-anthropic-org.mjs (GH#38959).
+    Newlines are stripped so the line-oriented output stays aligned.
+    """
+    org = d.get('organization') if isinstance(d, dict) else None
+    if not isinstance(org, dict) or not isinstance(org.get('uuid'), str):
+        return '', ''
+    org_id = org['uuid'].strip()
+    if not org_id:
+        return '', ''
+    name = org.get('name') if isinstance(org.get('name'), str) else ''
+    return org_id, ' '.join(name.split())
+
 
 def cmd_extract_token_fields() -> None:
+    """Print access, refresh, expires_in, orgId, orgName (one per line)."""
     try:
         d = json.load(sys.stdin)
+        org_id, org_name = _org_fields(d)
         print(d.get('access_token', ''))
         print(d.get('refresh_token', ''))
         print(d.get('expires_in', 3600))
+        print(org_id)
+        print(org_name)
     except Exception:
         print('')
         print('')
         print(3600)
+        print('')
+        print('')
+
+
+def _fetch_profile_org(token: str, ua: str) -> tuple[str, str]:
+    """(orgId, orgName) from the Anthropic profile endpoint; ('', '') on any
+    failure. Mirrors fetchAnthropicOrg(); the token never leaves this process."""
+    if not token:
+        return '', ''
+    req = Request(ANTHROPIC_PROFILE_URL, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("User-Agent", ua or "aidevops")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            return _org_fields(json.load(resp))
+    except Exception:
+        return '', ''
+
+
+def cmd_anthropic_profile_org() -> None:
+    """anthropic-profile-org: print orgId and orgName for a grant's token.
+
+    Env: TOKEN, UA. Used when the token response carried no organization.
+    """
+    org_id, org_name = _fetch_profile_org(os.environ.get('TOKEN', ''), os.environ.get('UA', ''))
+    print(org_id)
+    print(org_name)
+
+
+def cmd_legacy_seat_org() -> None:
+    """legacy-seat-org: print orgId and orgName of EMAIL's single legacy seat.
+
+    Stdin: pool JSON. Env: EMAIL, UA. Resolves only when exactly one anthropic
+    seat for EMAIL has no orgId and its own access token is unexpired; it never
+    refreshes, so enrolling one seat cannot mutate another. Mirrors
+    resolveLegacySeatOrg() in oauth-pool-anthropic-org.mjs. Empty lines when
+    unresolved, so upsert falls back to update-in-place with a warning.
+    """
+    org_id, org_name = '', ''
+    try:
+        pool = json.load(sys.stdin)
+        email = os.environ.get('EMAIL', '')
+        seats = [a for a in pool.get('anthropic', []) if isinstance(a, dict)
+                 and a.get('email') == email and not a.get('orgId')]
+        now_ms = int(time.time() * 1000)
+        if len(seats) == 1 and seats[0].get('access') and (seats[0].get('expires') or 0) > now_ms:
+            org_id, org_name = _fetch_profile_org(seats[0]['access'], os.environ.get('UA', ''))
+    except Exception:
+        org_id, org_name = '', ''
+    print(org_id)
+    print(org_name)
 
 def cmd_extract_token_error() -> None:
     try:

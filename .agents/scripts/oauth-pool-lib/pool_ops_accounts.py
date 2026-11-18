@@ -15,11 +15,28 @@ import json
 import os
 import sys
 
+from ._common import pool_account_label, select_seat
+from ._seat_upsert import (
+    apply_grant_identity,
+    print_ambiguous,
+    report_upsert_note,
+    select_or_report,
+    upsert_target,
+)
+
 
 def cmd_upsert() -> None:
     """upsert: Upsert an account into the pool.
 
-    Env: PROVIDER, EMAIL, ACCESS, REFRESH, EXPIRES, NOW_ISO, ACCOUNT_ID
+    Env: PROVIDER, EMAIL, ACCESS, REFRESH, EXPIRES, NOW_ISO, ACCOUNT_ID,
+    ORG_ID, ORG_NAME (optional Anthropic organization; GH#38959),
+    LEGACY_ORG_ID, LEGACY_ORG_NAME (optional org resolved for the email's
+    single legacy no-org seat, so a different-org grant adds a seat)
+
+    Identity is email + optional orgId: the same seat is updated, a new org
+    for the same email adds a seat. A grant without org for an email with
+    several seats is refused (exit 3, nothing on stdout) so the caller never
+    saves a guessed overwrite.
     """
     pool = json.load(sys.stdin)
     provider = os.environ["PROVIDER"]
@@ -29,26 +46,30 @@ def cmd_upsert() -> None:
     expires = int(os.environ["EXPIRES"])
     now_iso = os.environ["NOW_ISO"]
     account_id = os.environ.get("ACCOUNT_ID", "")
+    org_id = os.environ.get("ORG_ID", "").strip()
+    org_name = os.environ.get("ORG_NAME", "").strip()
 
     if provider not in pool:
         pool[provider] = []
 
-    found = False
-    for account in pool[provider]:
-        if account.get("email") == email:
-            account["access"] = access
-            account["refresh"] = refresh
-            account["expires"] = expires
-            account["lastUsed"] = now_iso
-            account["status"] = "active"
-            account["cooldownUntil"] = None
-            if account_id:
-                account["accountId"] = account_id
-            found = True
-            break
+    legacy_org = (os.environ.get("LEGACY_ORG_ID", "").strip(),
+                  os.environ.get("LEGACY_ORG_NAME", "").strip())
+    idx, note = upsert_target(pool[provider], email, org_id, legacy_org)
+    if note == "ambiguous":
+        print(f"ERROR: {email} has several {provider} seats and this grant carries no "
+              "organization, so the target seat is unknown. Nothing was saved.", file=sys.stderr)
+        sys.exit(3)
 
-    if not found:
-        entry = {
+    if idx >= 0:
+        account = pool[provider][idx]
+        account["access"] = access
+        account["refresh"] = refresh
+        account["expires"] = expires
+        account["lastUsed"] = now_iso
+        account["status"] = "active"
+        account["cooldownUntil"] = None
+    else:
+        account = {
             "email": email,
             "access": access,
             "refresh": refresh,
@@ -58,17 +79,17 @@ def cmd_upsert() -> None:
             "status": "active",
             "cooldownUntil": None,
         }
-        if account_id:
-            entry["accountId"] = account_id
-        pool[provider].append(entry)
+        pool[provider].append(account)
+    apply_grant_identity(account, account_id, org_id, org_name)
+    report_upsert_note(note, email, account)
 
     json.dump(pool, sys.stdout, indent=2)
 
 
 def cmd_set_priority() -> None:
-    """set-priority: Set priority on an account.
+    """set-priority: Set priority on one seat.
 
-    Env: PROVIDER, EMAIL, PRIORITY
+    Env: PROVIDER, EMAIL, PRIORITY, ORG (optional orgId prefix or org name)
     """
     pool = json.load(sys.stdin)
     provider = os.environ["PROVIDER"]
@@ -76,9 +97,8 @@ def cmd_set_priority() -> None:
     priority = int(os.environ["PRIORITY"])
 
     accounts = pool.get(provider, [])
-    idx = next((i for i, a in enumerate(accounts) if a.get("email") == email), -1)
+    idx = select_or_report(accounts, email, os.environ.get("ORG", ""))
     if idx < 0:
-        print("ERROR:not_found")
         sys.exit(0)
 
     if priority == 0:
@@ -89,9 +109,11 @@ def cmd_set_priority() -> None:
 
 
 def cmd_remove_account() -> None:
-    """remove-account: Remove an account from pool.
+    """remove-account: Remove one seat from the pool.
 
-    Env: PROVIDER, EMAIL
+    Env: PROVIDER, EMAIL, ORG (optional orgId prefix or org name)
+    Exit 1 when not found; exit 2 with the ambiguity protocol on stdout when
+    the email has several seats and ORG does not pick one.
     """
     pool = json.load(sys.stdin)
     provider = os.environ["PROVIDER"]
@@ -101,21 +123,22 @@ def cmd_remove_account() -> None:
         print(json.dumps(pool, indent=2))
         sys.exit(1)
 
-    original_count = len(pool[provider])
-    pool[provider] = [a for a in pool[provider] if a.get("email") != email]
-    new_count = len(pool[provider])
-
-    if original_count == new_count:
+    idx, error, seats = select_seat(pool[provider], email, os.environ.get("ORG", ""))
+    if error == "ambiguous":
+        print_ambiguous(seats)
+        sys.exit(2)
+    if idx < 0:
         print(json.dumps(pool, indent=2))
         sys.exit(1)
 
+    del pool[provider][idx]
     json.dump(pool, sys.stdout, indent=2)
 
 
 def cmd_assign_pending() -> None:
-    """assign-pending: Assign pending token to account.
+    """assign-pending: Assign pending token to one seat.
 
-    Env: PROVIDER, EMAIL
+    Env: PROVIDER, EMAIL, ORG (optional orgId prefix or org name)
     """
     pool = json.load(sys.stdin)
     provider = os.environ["PROVIDER"]
@@ -128,9 +151,8 @@ def cmd_assign_pending() -> None:
         sys.exit(0)
 
     accounts = pool.get(provider, [])
-    idx = next((i for i, a in enumerate(accounts) if a.get("email") == email), -1)
+    idx = select_or_report(accounts, email, os.environ.get("ORG", ""))
     if idx < 0:
-        print("ERROR:not_found")
         sys.exit(0)
 
     accounts[idx]["refresh"] = pending.get("refresh", accounts[idx].get("refresh", ""))
@@ -164,18 +186,24 @@ def cmd_list_pending() -> None:
     pool = json.load(sys.stdin)
     provider = os.environ["PROVIDER"]
     for i, a in enumerate(pool.get(provider, []), 1):
-        print(f'  {i}. {a["email"]}')
+        print(f'  {i}. {pool_account_label(a)}')
 
 
 def cmd_import_check() -> None:
-    """import-check: Check if email exists in pool.
+    """import-check: Check whether the Claude CLI login already has a seat.
 
-    Env: EMAIL
+    Env: EMAIL, ORG_ID (optional; the CLI login's organization). With ORG_ID,
+    only that seat or an email-only legacy seat (org unknown) counts, so a
+    different organization's seat on the same email can still be imported
+    (GH#38959).
     """
     pool = json.load(sys.stdin)
     email = os.environ["EMAIL"]
+    org_id = os.environ.get("ORG_ID", "").strip()
     for acc in pool.get("anthropic", []):
-        if acc.get("email") == email:
+        if acc.get("email") != email:
+            continue
+        if not org_id or not acc.get("orgId") or acc.get("orgId") == org_id:
             print("yes")
             sys.exit(0)
     print("no")
@@ -244,7 +272,7 @@ def cmd_list_accounts() -> None:
     prov = os.environ["PROVIDER"]
     for i, a in enumerate(pool.get(prov, []), 1):
         status = a.get("status", "unknown")
-        email = a.get("email", "unknown")
+        label = pool_account_label(a)
         priority = a.get("priority")
         priority_str = f" priority:{priority}" if priority is not None else ""
-        print(f"  {i}. {email} [{status}]{priority_str}")
+        print(f"  {i}. {label} [{status}]{priority_str}")

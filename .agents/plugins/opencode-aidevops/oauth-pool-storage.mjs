@@ -30,10 +30,97 @@ import { POOL_FILE, POOL_LOCK_FILE } from "./oauth-pool-constants.mjs";
  * @property {"active"|"idle"|"rate-limited"|"auth-error"} status
  * @property {number|null} cooldownUntil
  * @property {string} [accountId]
+ * @property {string} [orgId] Anthropic organization UUID; part of the identity key
+ * @property {string} [orgName] Anthropic organization name; display only
  * @property {number} [priority]
  * @property {number} [authRefreshFailures]
  * @property {number} [authRefreshLastFailureAt]
  */
+
+// ---------------------------------------------------------------------------
+// Account identity (GH#38959)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable pool identity: email plus the optional Anthropic organization UUID,
+ * so one login email can hold separate seats (e.g. a Team org and a Personal
+ * plan). Entries without orgId keep the legacy email-only key, so single-seat
+ * pools behave exactly as before. The key embeds the org UUID: log
+ * poolAccountLabel(), never the key.
+ * @param {{email?: string, orgId?: string}|null|undefined} account
+ * @returns {string}
+ */
+export function poolAccountKey(account) {
+  const email = account?.email || "";
+  return account?.orgId ? `${email}#${account.orgId}` : email;
+}
+
+/**
+ * Human-readable seat label: "email", "email [Org name]" or
+ * "email [org:1234abcd]" when only the UUID is known.
+ * @param {{email?: string, orgId?: string, orgName?: string}|null|undefined} account
+ * @returns {string}
+ */
+export function poolAccountLabel(account) {
+  const email = account?.email || "unknown";
+  if (account?.orgName) return `${email} [${account.orgName}]`;
+  if (account?.orgId) return `${email} [org:${String(account.orgId).slice(0, 8)}]`;
+  return email;
+}
+
+function seatIndicesForEmail(accounts, email) {
+  const indices = [];
+  accounts.forEach((account, idx) => { if (account?.email === email) indices.push(idx); });
+  return indices;
+}
+
+/**
+ * Resolve an account reference to its index. A ref is an account object
+ * (matched by key) or a string key. Legacy refs (a plain email, or an object
+ * read before its orgId was backfilled) still resolve while that email
+ * identifies exactly one seat; an ambiguous email matches nothing.
+ * @param {PoolAccount[]} accounts
+ * @param {string|{email?: string, orgId?: string}} ref
+ * @returns {number}
+ */
+export function findAccountIndex(accounts, ref) {
+  if (!ref || !Array.isArray(accounts)) return -1;
+  const key = typeof ref === "string" ? ref : poolAccountKey(ref);
+  const exact = accounts.findIndex((account) => poolAccountKey(account) === key);
+  if (exact >= 0) return exact;
+  const email = typeof ref === "string" ? ref : (ref.orgId ? "" : ref.email);
+  const seats = email ? seatIndicesForEmail(accounts, email) : [];
+  return seats.length === 1 ? seats[0] : -1;
+}
+
+/**
+ * True when an org selector picks the account: a case-insensitive orgId
+ * prefix or exact orgName. An empty selector matches every account.
+ * @param {PoolAccount} account
+ * @param {string|undefined} org
+ */
+export function accountMatchesOrg(account, org) {
+  const needle = String(org || "").trim().toLowerCase();
+  if (!needle) return true;
+  return String(account?.orgId || "").toLowerCase().startsWith(needle) ||
+    String(account?.orgName || "").toLowerCase() === needle;
+}
+
+/**
+ * Select one seat by email plus an optional org selector. Used by user-facing
+ * actions (remove, set-priority, assign-pending) so a shared email never
+ * silently acts on the wrong seat.
+ * @param {PoolAccount[]} accounts
+ * @param {string} email
+ * @param {string} [org]
+ * @returns {{account: PoolAccount|null, error: ""|"not_found"|"ambiguous", candidates: PoolAccount[]}}
+ */
+export function selectSeat(accounts, email, org) {
+  const candidates = (accounts || []).filter((account) => account?.email === email);
+  const matches = candidates.filter((account) => accountMatchesOrg(account, org));
+  if (matches.length === 1) return { account: matches[0], error: "", candidates };
+  return { account: null, error: matches.length === 0 ? "not_found" : "ambiguous", candidates };
+}
 
 /**
  * Load the pool file. Returns empty pool if file doesn't exist.
@@ -256,13 +343,84 @@ export function getAccounts(provider) {
 }
 
 /**
+ * Decide which existing row a new grant replaces (GH#38959).
+ *
+ * - Same key (email + orgId) → replace that seat only.
+ * - Grant with orgId and exactly one legacy same-email row (no orgId):
+ *   if `legacyOrg` resolved to a different org, record it on the legacy row
+ *   and add a new seat; otherwise update the legacy row in place (today's
+ *   behaviour) and backfill the grant's orgId.
+ * - Grant without orgId → today's email match, refused when it is ambiguous.
+ * @returns {{idx: number, note?: "split"|"unresolved", ambiguous?: boolean, legacy?: PoolAccount}}
+ */
+function findUpsertTarget(accounts, account, legacyOrg) {
+  const key = poolAccountKey(account);
+  const exact = accounts.findIndex((candidate) => poolAccountKey(candidate) === key);
+  if (exact >= 0) return { idx: exact };
+  const seats = seatIndicesForEmail(accounts, account.email);
+  return account.orgId
+    ? legacySeatTarget(accounts, seats, account, legacyOrg)
+    : emailOnlyTarget(seats);
+}
+
+/** Grant without orgId: the email's only seat; several seats is ambiguous. */
+function emailOnlyTarget(seats) {
+  if (seats.length > 1) return { idx: -1, ambiguous: true };
+  return { idx: seats.length === 1 ? seats[0] : -1 };
+}
+
+/** Grant with orgId: split from or update the email's single legacy seat. */
+function legacySeatTarget(accounts, seats, account, legacyOrg) {
+  const legacySeats = seats.filter((idx) => !accounts[idx].orgId);
+  if (legacySeats.length !== 1) return { idx: -1 };
+  const legacy = accounts[legacySeats[0]];
+  if (legacyOrg?.orgId && legacyOrg.orgId !== account.orgId) {
+    legacy.orgId = legacyOrg.orgId;
+    if (legacyOrg.orgName) legacy.orgName = legacyOrg.orgName;
+    return { idx: -1, note: "split", legacy };
+  }
+  return { idx: legacySeats[0], note: legacyOrg?.orgId ? undefined : "unresolved" };
+}
+
+/**
+ * A grant without org that updates an org-tagged seat keeps that seat's org,
+ * so the update never changes the seat's identity. Mirrors Python cmd_upsert,
+ * which updates the row in place (GH#38959).
+ */
+function retainSeatOrg(existing, account) {
+  if (account.orgId || !existing?.orgId) return;
+  account.orgId = existing.orgId;
+  if (existing.orgName) account.orgName = existing.orgName;
+}
+
+function logUpsertNote(target, account) {
+  const label = poolAccountLabel(account);
+  if (target.note === "split") {
+    console.error(
+      `[aidevops] OAuth pool: added a separate seat ${label}; the existing seat is now recorded as ${poolAccountLabel(target.legacy)}.`,
+    );
+  } else if (target.note === "unresolved") {
+    console.error(
+      [
+        `[aidevops] OAuth pool: ${account.email} had one seat with no recorded organization, so it was updated in place and now holds ${label}.`,
+        "If that seat belonged to a different organization (e.g. Team vs Personal), re-add it now; it will be stored as a separate seat.",
+      ].join(" "),
+    );
+  }
+}
+
+/**
  * Add or update an account in the pool.
- * If an account with the same email exists, it is updated (not duplicated).
+ * Identity is poolAccountKey(): the same email + orgId updates that seat; a
+ * different orgId for the same email adds a separate seat (GH#38959).
  * @param {string} provider
  * @param {PoolAccount} account
+ * @param {{legacyOrg?: {orgId: string, orgName?: string}|null}} [options]
+ *   legacyOrg: the organization resolved for the single legacy (no orgId)
+ *   row of this email, or null when it could not be resolved
  * @returns {boolean}
  */
-export function upsertAccount(provider, account) {
+export function upsertAccount(provider, account, options = {}) {
   return withPoolLock(() => {
     const pool = loadPool();
     if (!pool[provider]) pool[provider] = [];
@@ -284,13 +442,25 @@ export function upsertAccount(provider, account) {
       }
     }
 
-    const idx = pool[provider].findIndex((a) => a.email === account.email);
-    if (idx >= 0) {
-      pool[provider][idx] = account;
+    const target = findUpsertTarget(pool[provider], account, options.legacyOrg);
+    if (target.ambiguous) {
+      console.error(
+        [
+          `[aidevops] OAuth pool: REFUSED to save a grant for ${account.email}: that email has several seats`,
+          "and the grant carries no organization, so the target seat is unknown.",
+          "Use assign-pending with the email and org to choose the seat.",
+        ].join(" "),
+      );
+      return false;
+    }
+    if (target.idx >= 0) {
+      retainSeatOrg(pool[provider][target.idx], account);
+      pool[provider][target.idx] = account;
     } else {
       pool[provider].push(account);
     }
     savePool(pool);
+    logUpsertNote(target, account);
     return true;
   });
 }
@@ -328,12 +498,12 @@ export function getPendingToken(provider) {
 }
 
 /**
- * Assign a pending token to an existing account by email.
+ * Assign a pending token to an existing account.
  * @param {string} provider
- * @param {string} email
+ * @param {string|PoolAccount} ref account object, key, or unambiguous email
  * @returns {boolean}
  */
-export function assignPendingToken(provider, email) {
+export function assignPendingToken(provider, ref) {
   return withPoolLock(() => {
     const pool = loadPool();
     const pendingKey = `_pending_${provider}`;
@@ -341,7 +511,7 @@ export function assignPendingToken(provider, email) {
     if (!pending) return false;
 
     if (!pool[provider]) pool[provider] = [];
-    const idx = pool[provider].findIndex((a) => a.email === email);
+    const idx = findAccountIndex(pool[provider], ref);
     if (idx < 0) return false;
 
     const updates = {
@@ -359,24 +529,24 @@ export function assignPendingToken(provider, email) {
 
     delete pool[pendingKey];
     savePool(pool);
-    console.error(`[aidevops] OAuth pool: assigned pending token to ${email}`);
+    console.error(`[aidevops] OAuth pool: assigned pending token to ${poolAccountLabel(pool[provider][idx])}`);
     return true;
   });
 }
 
 /**
- * Remove an account from the pool by email.
+ * Remove one account (seat) from the pool.
  * @param {string} provider
- * @param {string} email
+ * @param {string|PoolAccount} ref account object, key, or unambiguous email
  * @returns {boolean}
  */
-export function removeAccount(provider, email) {
+export function removeAccount(provider, ref) {
   return withPoolLock(() => {
     const pool = loadPool();
     if (!pool[provider]) return false;
-    const before = pool[provider].length;
-    pool[provider] = pool[provider].filter((a) => a.email !== email);
-    if (pool[provider].length === before) return false;
+    const idx = findAccountIndex(pool[provider], ref);
+    if (idx < 0) return false;
+    pool[provider].splice(idx, 1);
     savePool(pool);
     return true;
   });
@@ -385,16 +555,16 @@ export function removeAccount(provider, email) {
 /**
  * Update an account's status and cooldown in the pool.
  * @param {string} provider
- * @param {string} email
+ * @param {string|PoolAccount} ref account object, key, or unambiguous email
  * @param {Partial<PoolAccount>} patch
  */
-export function patchAccount(provider, email, patch) {
+export function patchAccount(provider, ref, patch) {
   withPoolLock(() => {
     const pool = loadPool();
     if (!pool[provider]) return;
-    const account = pool[provider].find((a) => a.email === email);
-    if (!account) return;
-    Object.assign(account, patch);
+    const idx = findAccountIndex(pool[provider], ref);
+    if (idx < 0) return;
+    Object.assign(pool[provider][idx], patch);
     savePool(pool);
   });
 }

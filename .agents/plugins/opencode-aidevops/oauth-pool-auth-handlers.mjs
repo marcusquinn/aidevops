@@ -17,6 +17,7 @@ import {
   GOOGLE_CLIENT_ID, GOOGLE_REDIRECT_URI,
   OPENAI_CLIENT_ID, OPENAI_ISSUER, OPENAI_REDIRECT_URI,
 } from "./oauth-pool-constants.mjs";
+import { resolveAnthropicSeat } from "./oauth-pool-anthropic-org.mjs";
 
 import {
   ANTHROPIC_USER_AGENT, OPENCODE_USER_AGENT,
@@ -82,9 +83,13 @@ export async function handleAnthropicCallback(code, pkce, expectedState, email, 
   if (resolvedEmail === "unknown" && json.access_token) {
     resolvedEmail = (await resolveAnthropicEmail(json.access_token)) || "unknown";
   }
+  // Seat identity (GH#38959): the org makes Team and Personal grants on one
+  // email separate pool entries.
+  const { extras, upsertOptions } = await resolveAnthropicSeat(json, resolvedEmail);
   return saveAccountAndInject({
     provider: "anthropic", client, email: resolvedEmail,
     tokenData: { refresh: json.refresh_token, access: json.access_token, expires: Date.now() + json.expires_in * 1000 },
+    extras, upsertOptions,
     envKey: "ANTHROPIC_API_KEY", authId: "anthropic", injectFn: injectPoolToken,
   });
 }

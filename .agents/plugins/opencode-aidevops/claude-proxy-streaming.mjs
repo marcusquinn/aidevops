@@ -119,7 +119,7 @@ function commitBufferedEvents(session) {
 function handleProbeEvent(session, event) {
   const rl = detectRateLimitStream(event);
   if (rl.rateLimited) {
-    markAccountRateLimited(session.account.email, rl.resetsAt);
+    markAccountRateLimited(session.account, rl.resetsAt);
     session.rateLimitBailed = true;
     session.child.kill("SIGTERM");
     session.resolve("rate_limited");
@@ -196,7 +196,7 @@ function emitStopChunkIfNeeded(session) {
 
 function logStreamComplete(session, exitCode) {
   console.error(
-    `[aidevops] Claude proxy: stream complete model=${session.model} account=${session.account.email} exitCode=${exitCode} textChunks=${session.textChunkCount} textChars=${session.textCharCount} stderr=${JSON.stringify(session.stderrText.trim().slice(0, 300))}`,
+    `[aidevops] Claude proxy: stream complete model=${session.model} account=${session.account.label} exitCode=${exitCode} textChunks=${session.textChunkCount} textChars=${session.textCharCount} stderr=${JSON.stringify(session.stderrText.trim().slice(0, 300))}`,
   );
 }
 
@@ -207,7 +207,7 @@ function onStreamClose(session, exitCode) {
   // account attempt — do NOT write to it or close it.
   if (session.rateLimitBailed) {
     console.error(
-      `[aidevops] Claude proxy: killed rate-limited child account=${session.account.email} exitCode=${exitCode}`,
+      `[aidevops] Claude proxy: killed rate-limited child account=${session.account.label} exitCode=${exitCode}`,
     );
     return;
   }
@@ -300,10 +300,10 @@ function emitAllAccountsRateLimited(controller, encoder, completionId, created, 
 async function iterateAccounts(streamCtx, accounts) {
   for (const account of accounts) {
     if (streamCtx.abortRef.cancelled) return; // client already bailed
-    console.error(`[aidevops] Claude proxy: trying account ${account.email} (stream mode)`);
+    console.error(`[aidevops] Claude proxy: trying account ${account.label} (stream mode)`);
     const result = await tryStreamWithAccount(streamCtx, account);
     if (result === "rate_limited") {
-      console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
+      console.error(`[aidevops] Claude proxy: account ${account.label} rate-limited, trying next...`);
       continue;
     }
     return; // stream completed (done or error already handled)

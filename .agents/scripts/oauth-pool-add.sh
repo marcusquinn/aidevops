@@ -103,13 +103,28 @@ _add_save_to_pool() {
 	local expires_ms="$5"
 	local now_iso="$6"
 	local account_id="${7:-}"
-	local pool count
+	local org_id="${8:-}"
+	local org_name="${9:-}"
+	local legacy_org_id="${10:-}"
+	local legacy_org_name="${11:-}"
+	local pool count label="$email"
 	pool=$(load_pool)
-	pool=$(printf '%s' "$pool" | pool_upsert_account "$provider" "$email" \
-		"$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id")
+	# Upsert refuses (non-zero, empty stdout) when a grant cannot be matched to
+	# one seat; never save in that case or the pool would be truncated.
+	if ! pool=$(printf '%s' "$pool" | pool_upsert_account "$provider" "$email" \
+		"$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id" \
+		"$org_id" "$org_name" "$legacy_org_id" "$legacy_org_name") || [[ -z "$pool" ]]; then
+		print_error "Account not saved: ${email} could not be matched to a single ${provider} seat"
+		return 1
+	fi
 	save_pool "$pool"
 	count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
-	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
+	if [[ -n "$org_name" ]]; then
+		label="${email} [${org_name}]"
+	elif [[ -n "$org_id" ]]; then
+		label="${email} [org:${org_id:0:8}]"
+	fi
+	print_success "Added ${label} to ${provider} pool (${count} account(s) total)"
 	return 0
 }
 
@@ -169,7 +184,7 @@ _cmd_add_openai_device() {
 	fi
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	_add_save_to_pool "openai" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id"
+	_add_save_to_pool "openai" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id" || return 1
 	print_info "OpenAI account added via device flow. Restart OpenCode to use the pool token."
 	return 0
 }
@@ -331,7 +346,7 @@ _cmd_add_exchange_and_save() {
 		return 1
 	fi
 
-	# Extract tokens (three lines: access, refresh, expires_in)
+	# Extract tokens (five lines: access, refresh, expires_in, orgId, orgName)
 	local token_fields access_token refresh_token expires_in
 	token_fields=$(printf '%s' "$body" | _extract_token_fields)
 	access_token=$(printf '%s\n' "$token_fields" | sed -n '1p')
@@ -343,21 +358,36 @@ _cmd_add_exchange_and_save() {
 		return 1
 	fi
 
-	# Alignment note: after token exchange, Claude CLI fetches the user profile
-	# via GET https://api.anthropic.com/api/oauth/profile (Bearer token auth) to
-	# determine subscription type (pro/max/team/enterprise) and rate limit tier.
-	# We skip this — pool rotation doesn't need subscription info. But if
-	# debugging auth issues, this endpoint is useful for verifying the token
-	# grants the expected access level.
-	# DIAGNOSTIC: curl -s -H "Authorization: Bearer $access_token" \
-	#   -H "Content-Type: application/json" \
-	#   https://api.anthropic.com/api/oauth/profile
+	# Seat identity (GH#38959): each Anthropic grant is org-scoped. Prefer the
+	# token response's organization; fall back to the profile endpoint
+	# (GET https://api.anthropic.com/api/oauth/profile). With an org, also
+	# resolve the org of this email's single legacy no-org seat so a different
+	# org (Team vs Personal) adds a seat instead of overwriting it.
+	local org_id="" org_name="" legacy_org_id="" legacy_org_name=""
+	if [[ "$provider" == "anthropic" ]]; then
+		local org_fields
+		org_id=$(printf '%s\n' "$token_fields" | sed -n '4p')
+		org_name=$(printf '%s\n' "$token_fields" | sed -n '5p')
+		if [[ -z "$org_id" ]]; then
+			org_fields=$(TOKEN="$access_token" UA="$ua_header" python3 "$POOL_OPS" anthropic-profile-org 2>/dev/null) || org_fields=""
+			org_id=$(printf '%s\n' "$org_fields" | sed -n '1p')
+			org_name=$(printf '%s\n' "$org_fields" | sed -n '2p')
+		fi
+		if [[ -n "$org_id" ]]; then
+			org_fields=$(load_pool | EMAIL="$email" UA="$ua_header" python3 "$POOL_OPS" legacy-seat-org 2>/dev/null) || org_fields=""
+			legacy_org_id=$(printf '%s\n' "$org_fields" | sed -n '1p')
+			legacy_org_name=$(printf '%s\n' "$org_fields" | sed -n '2p')
+		else
+			print_warning "Could not determine the organization for this grant; it is stored under the email only."
+		fi
+	fi
 
 	local now_ms expires_ms now_iso
 	now_ms=$(get_now_ms)
 	expires_ms=$((now_ms + expires_in * 1000))
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-	_add_save_to_pool "$provider" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
+	_add_save_to_pool "$provider" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso" "" \
+		"$org_id" "$org_name" "$legacy_org_id" "$legacy_org_name" || return 1
 	return 0
 }
 
@@ -739,7 +769,7 @@ cmd_add_google() {
 	now_ms=$(get_now_ms)
 	expires_ms=$((now_ms + expires_in * 1000))
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-	_add_save_to_pool "google" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
+	_add_save_to_pool "google" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso" || return 1
 	print_info "Token injected as GOOGLE_OAUTH_ACCESS_TOKEN for Gemini CLI / Vertex AI."
 	print_info "Restart OpenCode to use the new token."
 	return 0

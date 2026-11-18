@@ -80,7 +80,8 @@ test("offline shell command passes through symlink deployment and preserves sent
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(result.stdout, /OFFLINE \/ SIMULATED/);
   assert.match(result.stdout, /not live end-to-end failover/);
-  assert.equal(result.stdout.match(/^PASS .*:/gm)?.length, 18);
+  // 18 distinct-email assertions plus the same 18 for same-email seats (GH#38959).
+  assert.equal(result.stdout.match(/^PASS .*:/gm)?.length, 36);
   assert.match(result.stdout, /PASS overall/);
   // Check metadata before reading again, so the assertion itself cannot hide access.
   for (const [index, path] of [f.pool, f.auth].entries()) {
