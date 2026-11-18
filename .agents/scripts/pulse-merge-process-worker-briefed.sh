@@ -654,7 +654,7 @@ worker_briefed_trust_verdict() {
 		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || extract_rc=$?
 		if [[ "$extract_rc" -ne 0 ]]; then
 			if [[ "$extract_rc" -eq 2 ]]; then
-				ambiguous_refs=$(printf '%s\n' "$pr_body" | grep -iE '^[[:space:]]*(for|ref)[:[:space:]]+#[0-9]' | grep -oE '#[0-9]+' | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g') || ambiguous_refs=""
+				ambiguous_refs=$(_gh_pr_body_explicit_issues "$pr_body" | grep -E "^[0-9]+$" | sed "s/^/#/" | paste -sd, - | sed "s/,/, /g") || ambiguous_refs=""
 				WORKER_BRIEFED_TRUST_REASON="ambiguous explicit issue references in PR body${ambiguous_refs:+ (${ambiguous_refs})}; keep exactly one For/Ref/Resolves target and cite parents by task id, not #NNN (t2449)"
 			fi
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
