@@ -1673,9 +1673,7 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "$DLW_STAGE_CANARY_PREFLIGHT" "$_ds_t0"
 
-	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
-		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
-	fi
+	_dlw_claim_slot_and_lock "$issue_number" "$repo_slug" "$self_login" || return $?
 	local worker_pid attempt_id="" attempt_started_at="" prelaunch_deadline=0
 	_ds_t0=$(_ds_now_ns)
 	_dlw_begin_prelaunch "$issue_number" "$repo_slug" "$session_key" "$worker_log" || return $?

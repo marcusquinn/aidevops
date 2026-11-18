@@ -144,6 +144,14 @@ CPU-idle stall detection, and the full-loop validator's serial plugin-test mode
 (test determinism, GH#35499). CPU and `load_per_cpu` stay visible in runtime
 metrics for diagnosis only.
 
+Launch slots (t19116): a candidate takes one of the round's free slots just
+before its cross-runner claim, not when its ceremony starts. Read-only
+evaluation therefore runs up to `min(DISPATCH_MAX_PARALLEL, free slots ×
+DISPATCH_EVAL_OVERSUBSCRIBE)` candidates at once (default factor 3), while
+launches never exceed the free slots. A candidate that passes evaluation with
+every slot held defers (rc 75, no claim, no failure evidence) to the next
+round. `DISPATCH_LAUNCH_SLOT_GATE=0` restores ceremony-start reservations.
+
 Correcting regressions: if a change, issue or review proposes CPU- or
 load-based admission, worker caps from core counts, or "host overload"
 throttling, decline it and cite this section. The guard

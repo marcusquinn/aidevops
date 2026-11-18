@@ -73,6 +73,17 @@ _dispatch_graphql_budget_allows_next() {
 	return 0
 }
 
+# t19116: every production launch passes _dlw_claim_slot_and_lock before its
+# first claim write. Stubs that simulate a launch model that point here.
+# Args: candidate JSON. Returns: 0 slot held, 75 deferred (all slots held).
+_test_claim_launch_slot() {
+	local candidate_json="$1" issue="" repo=""
+	issue=$(jq -r '.number // 0' <<<"$candidate_json")
+	repo=$(jq -r '.repo_slug // ""' <<<"$candidate_json")
+	_dispatch_launch_slot_acquire "$issue" "$repo" && return 0
+	return 75
+}
+
 # =============================================================================
 # Test 1: _dispatch_max_compute_parallel honours DISPATCH_MAX_PARALLEL
 # =============================================================================
@@ -94,14 +105,20 @@ test_compute_max_parallel_default() {
 }
 
 test_compute_max_parallel_default_caps_at_slots() {
+	# t19116: evaluations oversubscribe slots (2 x 3 = 6); the legacy opt-out
+	# restores the slot clamp.
 	unset DISPATCH_MAX_PARALLEL || true
 	rm -f "$_DISPATCH_THROTTLE_FILE"
-	local result
-	result=$(_dispatch_max_compute_parallel 3)
-	if [[ "$result" == "3" ]]; then
-		print_result "compute_max_parallel: default caps at effective_slots (3)" 0
+	local gated legacy one_slot
+	gated=$(_dispatch_max_compute_parallel 1)
+	one_slot="$gated"
+	gated=$(_dispatch_max_compute_parallel 2)
+	legacy=$(DISPATCH_LAUNCH_SLOT_GATE=0 _dispatch_max_compute_parallel 3)
+	if [[ "$one_slot" == "3" && "$gated" == "6" && "$legacy" == "3" ]]; then
+		print_result "compute_max_parallel: default oversubscribes slots x3, legacy caps at slots" 0
 	else
-		print_result "compute_max_parallel: default caps at effective_slots (3)" 1 "got=${result}"
+		print_result "compute_max_parallel: default oversubscribes slots x3, legacy caps at slots" 1 \
+			"one_slot=${one_slot} gated=${gated} legacy=${legacy}"
 	fi
 	return 0
 }
@@ -122,12 +139,16 @@ test_compute_max_parallel_override() {
 test_compute_max_parallel_caps_at_slots() {
 	export DISPATCH_MAX_PARALLEL=10
 	rm -f "$_DISPATCH_THROTTLE_FILE"
-	local result
-	result=$(_dispatch_max_compute_parallel 3)
-	if [[ "$result" == "3" ]]; then
-		print_result "compute_max_parallel: caps at effective_slots (3)" 0
+	local gated legacy forced factor
+	gated=$(_dispatch_max_compute_parallel 3)
+	factor=$(DISPATCH_EVAL_OVERSUBSCRIBE=2 _dispatch_max_compute_parallel 3)
+	legacy=$(DISPATCH_LAUNCH_SLOT_GATE=0 _dispatch_max_compute_parallel 3)
+	forced=$(_DISPATCH_FORCE_FLOOR=1 _dispatch_max_compute_parallel 1)
+	if [[ "$gated" == "9" && "$factor" == "6" && "$legacy" == "3" && "$forced" == "1" ]]; then
+		print_result "compute_max_parallel: caps at slots x oversubscribe; legacy and forced floor keep slot cap" 0
 	else
-		print_result "compute_max_parallel: caps at effective_slots (3)" 1 "got=${result}"
+		print_result "compute_max_parallel: caps at slots x oversubscribe; legacy and forced floor keep slot cap" 1 \
+			"gated=${gated} factor=${factor} legacy=${legacy} forced=${forced}"
 	fi
 	return 0
 }
@@ -450,10 +471,12 @@ EOF
 }
 
 test_parallel_loop_respects_budget() {
-	# Stub: every candidate succeeds
+	local gate="${1:-1}"
+	# Stub: every candidate succeeds after passing the claim point.
 	# shellcheck disable=SC2317  # called via name resolution from loop
 	_dispatch_process_candidate() {
 		sleep 0.02
+		_test_claim_launch_slot "$1" || return $?
 		return 0
 	}
 
@@ -470,17 +493,17 @@ test_parallel_loop_respects_budget() {
 	rm -f "$STOP_FLAG"
 	# effective_slots=4, max_parallel=4 — should stop after 4 successes
 	local result
-	result=$(_dispatch_max_loop "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
+	result=$(DISPATCH_LAUNCH_SLOT_GATE="$gate" _dispatch_max_loop "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
 	local s
 	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
 	rm -f "$candidate_file" "$outcomes_file"
 
-	# Pending ceremonies reserve capacity, so a successful four-slot wave launches
-	# exactly four workers rather than overshooting while outcomes are in flight.
+	# Legacy pending ceremonies reserve capacity; the t19116 gate bounds the
+	# claim point instead. Either way a four-slot wave launches exactly four.
 	if [[ "$s" == "4" ]]; then
-		print_result "parallel_loop: respects effective_slots=4 budget (got s=${s})" 0
+		print_result "parallel_loop: respects effective_slots=4 budget gate=${gate} (got s=${s})" 0
 	else
-		print_result "parallel_loop: respects effective_slots=4 budget" 1 "got s=${s}"
+		print_result "parallel_loop: respects effective_slots=4 budget gate=${gate}" 1 "got s=${s}"
 	fi
 	# Result first field should match s
 	local result_dispatched
@@ -566,6 +589,133 @@ EOF
 		print_result "parallel_loop: all rejected candidates finish without spinning" 1 \
 			"result=${result} failures=${failures}"
 	fi
+	return 0
+}
+
+# t19116: a one-slot round evaluates candidates concurrently, launches exactly
+# one, and defers the rest at the claim point without failure evidence.
+test_parallel_loop_launch_slot_gate_one_slot() {
+	local activity="${TEST_ROOT}/launch-slot-gate.activity"
+	: >"$activity"
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		printf 'start\n' >>"$activity"
+		sleep 0.1
+		printf 'end\n' >>"$activity"
+		_test_claim_launch_slot "$1" || return $?
+		return 0
+	}
+
+	local candidate_file outcomes_file result successes failures slot_defers peak
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 820 821 822 823 824; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	: >"$outcomes_file"
+	rm -f "$STOP_FLAG"
+	result=$(_dispatch_max_loop "$candidate_file" 1 1 "test_user" 3 "$outcomes_file")
+	successes=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	failures=$(_dispatch_max_count_outcomes "$outcomes_file" "fail")
+	slot_defers=$(grep -c '^defer|.*|rc=75|reason=launch_slot_full|' "$outcomes_file" || true)
+	peak=$(awk '$0=="start" { n++; if(n>peak) peak=n } $0=="end" { n-- } END { print peak+0 }' "$activity")
+	rm -f "$candidate_file" "$outcomes_file" "$activity"
+
+	if [[ "${result%% *}" == "1" && "$successes" == "1" && "$failures" == "0" && "$slot_defers" -ge 1 && "$peak" -ge 2 ]]; then
+		print_result "launch_slot_gate: one slot evaluates concurrently, launches one, defers the rest" 0
+	else
+		print_result "launch_slot_gate: one slot evaluates concurrently, launches one, defers the rest" 1 \
+			"result=${result} successes=${successes} failures=${failures} slot_defers=${slot_defers} peak=${peak}"
+	fi
+	return 0
+}
+
+# t19116: a holder whose claim fails after taking the slot releases it, so a
+# later candidate in the same round can still launch.
+test_parallel_loop_launch_slot_failed_holder_releases() {
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		local issue_num
+		issue_num=$(jq -r '.number // 0' <<<"$1")
+		if [[ "$issue_num" == "830" ]]; then
+			sleep 0.02
+			_test_claim_launch_slot "$1" || return $?
+			return 2
+		fi
+		sleep 0.2
+		_test_claim_launch_slot "$1" || return $?
+		return 0
+	}
+
+	local candidate_file outcomes_file successes failures
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 830 831; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	: >"$outcomes_file"
+	rm -f "$STOP_FLAG"
+	_dispatch_max_loop "$candidate_file" 1 1 "test_user" 3 "$outcomes_file" >/dev/null
+	successes=$(grep -c '^success|831|' "$outcomes_file" || true)
+	failures=$(grep -c '^fail|830|rc=2|' "$outcomes_file" || true)
+	rm -f "$candidate_file" "$outcomes_file"
+
+	if [[ "$successes" == "1" && "$failures" == "1" ]]; then
+		print_result "launch_slot_gate: failed holder releases its slot to a later candidate" 0
+	else
+		print_result "launch_slot_gate: failed holder releases its slot to a later candidate" 1 \
+			"successes=${successes} failures=${failures}"
+	fi
+	return 0
+}
+
+# t19116: the production claim point defers without a claim when every slot is
+# held, claims when one is free, and returns 2 when the claim itself fails.
+test_claim_slot_and_lock_contract() {
+	local rc=0
+	(
+		local _DISPATCH_LAUNCH_SLOT_DIR="" claims=0 result=0
+		# shellcheck source=../pulse-dispatch-worker-gates.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-worker-gates.sh" || exit 1
+		# shellcheck disable=SC2317  # stage timing used by _dlw_pre_runtime_failure
+		_ds_now_ns() { printf '0\n'; }
+		# shellcheck disable=SC2317  # stage timing used by _dlw_pre_runtime_failure
+		_ds_record() { return 0; }
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+		# shellcheck disable=SC2317  # called by _dlw_claim_slot_and_lock
+		_dlw_claim_lock_after_canary() { claims=$((claims + 1)); return 0; }
+		_dlw_claim_slot_and_lock 1 o/r me || exit 1
+		_dlw_claim_slot_and_lock 2 o/r me || result=$?
+		[[ "$result" -eq 75 && "$claims" -eq 1 ]] || exit 1
+		_dispatch_launch_slot_deferred 2 o/r || exit 1
+		grep -q 'deferring #2 (o/r) — every launch slot this round is held' "$LOGFILE" || exit 1
+		_dispatch_launch_slot_settle 1 o/r 2
+		_dlw_claim_slot_and_lock 3 o/r me || exit 1
+		[[ "$claims" -eq 2 && "$(_dispatch_launch_slots_taken)" == 1 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+		# shellcheck disable=SC2317  # called by _dlw_claim_slot_and_lock
+		_dlw_claim_lock_after_canary() { return 1; }
+		result=0
+		_dlw_claim_slot_and_lock 4 o/r me || result=$?
+		[[ "$result" -eq 2 ]] || exit 1
+		_dispatch_launch_slot_settle 4 o/r "$result"
+		[[ "$(_dispatch_launch_slots_taken)" == 0 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		# A launch that bypassed the claim point consumes budget as overflow.
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 2) || exit 1
+		_dispatch_launch_slot_settle 9 o/r 0
+		_dispatch_launch_slot_acquire 10 o/r || exit 1
+		_dispatch_launch_slot_acquire 11 o/r && exit 1
+		[[ "$(_dispatch_launch_slots_taken)" == 2 ]] || exit 1
+		rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		# Without a loop-owned directory, acquire never blocks (serial/direct).
+		_DISPATCH_LAUNCH_SLOT_DIR=""
+		_dlw_claim_lock_after_canary() { return 0; }
+		_dlw_claim_slot_and_lock 5 o/r me || exit 1
+		exit 0
+	) || rc=1
+	print_result "claim_slot_and_lock: defers without claim, claims free slot, claim failure returns 2" "$rc"
 	return 0
 }
 
@@ -1250,7 +1400,10 @@ test_priority_reservations() {
 		fi
 		_DISPATCH_CANDIDATE_ELIGIBILITY="$outcome"
 		printf 'end\n' >>"$ACTIVITY"
-		[[ "$outcome" == success ]] && return 0
+		if [[ "$outcome" == success ]]; then
+			_test_claim_launch_slot "$candidate_json" || return $?
+			return 0
+		fi
 		return 1
 	}
 	[[ "$mode" != incomplete ]] || complete=false
@@ -1679,9 +1832,13 @@ test_aggregate_outcomes_basic
 test_aggregate_outcomes_invalidates_canary_cache
 test_aggregate_outcomes_clears_throttle_on_success
 test_parallel_loop_end_to_end
-test_parallel_loop_respects_budget
+test_parallel_loop_respects_budget 1
+test_parallel_loop_respects_budget 0
 test_parallel_loop_refills_rejected_reservation
 test_parallel_loop_all_rejections_finish
+test_parallel_loop_launch_slot_gate_one_slot
+test_parallel_loop_launch_slot_failed_holder_releases
+test_claim_slot_and_lock_contract
 test_parallel_loop_stop_flag_aborts
 test_parallel_loop_graphql_budget_aborts
 test_parallel_loop_rest_budget_aborts

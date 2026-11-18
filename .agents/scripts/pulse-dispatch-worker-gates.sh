@@ -335,6 +335,31 @@ _dlw_claim_lock_after_canary() {
 	return 0
 }
 
+#######################################
+# t19116: take this round's launch slot immediately before the first
+# persistent claim write, then claim. With every slot held, defer with the
+# GH#34428 rc: no claim, fast-fail, backoff or negative cache is recorded, and
+# _release_dispatch_claim_on_abort is a no-op because no claim exists yet.
+# A failed claim returns 2 and the parallel loop releases the slot.
+# Args: issue number, repo slug, self login
+# Returns: 0 claimed, 75 deferred (slot full), 2 claim failed
+#######################################
+_dlw_claim_slot_and_lock() {
+	local issue_number="$1" repo_slug="$2" self_login="$3"
+	if declare -F _dispatch_launch_slot_acquire >/dev/null 2>&1 &&
+		! _dispatch_launch_slot_acquire "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Dispatch_max: deferring #${issue_number} (${repo_slug}) — every launch slot this round is held; no claim written, retry next round (t19116)" >>"$LOGFILE"
+		if declare -F _dispatch_stats_increment >/dev/null 2>&1; then
+			_dispatch_stats_increment "dispatch_candidate_deferred_launch_slot"
+		fi
+		return "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}"
+	fi
+	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
+		_dlw_pre_runtime_failure "$issue_number" "$repo_slug" "claim_lock_failed" 2 || return $?
+	fi
+	return 0
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
