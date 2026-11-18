@@ -203,6 +203,7 @@ test_infer_init_scope() {
 	# A linked worktree must look up the canonical registration, not its own path.
 	local main_dir="$TEST_ROOT/canonical-repo" linked_dir="$TEST_ROOT/linked-repo"
 	mkdir -p "$main_dir"
+	main_dir=$(cd "$main_dir" && pwd -P)
 	git -C "$main_dir" init --quiet
 	git -C "$main_dir" -c user.name=Test -c user.email=test@example.invalid commit --quiet --allow-empty -m initial
 	git -C "$main_dir" worktree add --quiet -b linked "$linked_dir"
@@ -474,19 +475,26 @@ test_repo_metrics_init_hook() {
 	echo "=== Testing repo metrics init hook ==="
 
 	local init_tail
-	init_tail=$(sed -n '/local _metrics_helper=/,/Run security posture assessment/p' "$AIDEVOPS_INIT_LIB")
+	init_tail=$(sed -n '/^_init_generate_repo_metrics() {/,/^}/p; /local _metrics_helper=/,/Run security posture assessment/p' "$AIDEVOPS_INIT_LIB")
 	local init_files
 	init_files=$(sed -n '/local init_files=()/,/local committed=false/p' "$AIDEVOPS_INIT_LIB")
 	local rc expected_metrics_helper expected_generate expected_output_dir
 	expected_metrics_helper="local _metrics_helper=\"\$AGENTS_DIR/scripts/repo-metrics-helper.sh\""
 	expected_generate="bash \"\$_metrics_helper\" generate"
-	expected_output_dir="--output-dir \"\$project_root/docs/metrics\""
+	expected_output_dir="--output-dir \"\$_project_root/docs/metrics\""
 
 	if [[ "$init_tail" == *"$expected_metrics_helper"* ]]; then rc=0; else rc=1; fi
 	print_result "cmd_init resolves repo-metrics-helper path" "$rc"
 
 	if [[ "$init_tail" == *"$expected_generate"* && "$init_tail" == *"$expected_output_dir"* ]]; then rc=0; else rc=1; fi
-	print_result "cmd_init generates local repo metrics" "$rc"
+	print_result "metrics helper generates local repo metrics" "$rc"
+
+	# Call site only (exclude the helper definition) with project-root argument.
+	local init_call_site
+	init_call_site=$(sed -n '/local _metrics_helper=/,/Run security posture assessment/p' "$AIDEVOPS_INIT_LIB")
+	local expected_call="_init_generate_repo_metrics \"\$_metrics_helper\" \"\$project_root\""
+	if [[ "$init_call_site" == *"$expected_call"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init calls metrics helper with project root" "$rc"
 
 	if [[ "$init_tail" == *'Skipping GitHub repo metrics refresh workflow for local-only repo'* ]]; then rc=0; else rc=1; fi
 	print_result "cmd_init skips metrics workflow for local-only repos" "$rc"
