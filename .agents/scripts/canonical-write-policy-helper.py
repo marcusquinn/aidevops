@@ -264,14 +264,13 @@ def main() -> int:
         payload = {"policy": POLICY_VERSION, **asdict(result)}
         _emit(payload, args.field)
         return 2 if result.classification == "unknown" else 0
-    if args.command == "check-write":
-        _emit(check_write(args.cwd, args.path), args.field)
-        return 0
-    if args.command == "check-session":
-        _emit(check_session(args.cwd, args.target), args.field)
-        return 0
-    if args.command == "check-patch":
-        _emit(check_patch(args.cwd, sys.stdin.read()), args.field)
+    decisions = {
+        "check-write": lambda: check_write(args.cwd, args.path),
+        "check-session": lambda: check_session(args.cwd, args.target),
+        "check-patch": lambda: check_patch(args.cwd, sys.stdin.read()),
+    }
+    if args.command in decisions:
+        _emit(decisions[args.command](), args.field)
         return 0
     try:
         payload = resolve_canonical_branch(args.cwd)
