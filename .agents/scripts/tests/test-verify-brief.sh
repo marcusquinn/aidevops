@@ -433,6 +433,8 @@ Concurrent readers require complete records.
 ## How
 ### Files to Modify
 - EDIT: `state.sh`
+### Files Scope
+- state.sh
 ### Complete Write Surface
 - **Callers/readers:** `reader.sh` consumes every state record
 - **Writers/mutation paths:** `state.sh` is the writer found by search
@@ -495,6 +497,8 @@ Legacy task.
 Legacy reason.
 ## How
 Legacy steps.
+### Files Scope
+- state.sh
 ## Acceptance
 Legacy completion.
 BRIEF
@@ -505,6 +509,25 @@ if [[ $rc -eq 0 && "$output" == *"SCHEMA=legacy"* ]]; then
 	pass "F3 unmarked historical brief remains legacy-compatible"
 else
 	fail "F3 historical brief compatibility" "expected rc=0 legacy, got rc=$rc; output: $output"
+fi
+
+cat >"$TMP/brief-missing-scope.md" <<'BRIEF'
+## Task
+Legacy task.
+## Why
+Legacy reason.
+## How
+Legacy steps.
+## Acceptance
+Legacy completion.
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-missing-scope.md" 2>&1)
+rc=$?
+if [[ $rc -ne 0 && "$output" == *"### Files Scope"* && "$output" != *"WORKER_READY=true"* ]]; then
+	pass "F4 missing scope is rejected without a ready verdict"
+else
+	fail "F4 missing scope rejection" "expected non-zero and recovery hint, got rc=$rc; output: $output"
 fi
 
 # =============================================================================
