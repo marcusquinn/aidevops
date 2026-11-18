@@ -120,6 +120,23 @@ def _is_root_sshd_session(fields, proc):
             and set(uids) == {"0"})
 
 
+def _require_older_than_tree(path, task, proc):
+    # comm may contain spaces and parentheses; field 3 follows the last ')'.
+    stat = (task / "stat").read_text(encoding="utf-8")
+    ticks = int(stat.rsplit(")", 1)[1].split()[19])
+    boot = next(line.split()[1] for line in (proc / "stat").read_text(
+        encoding="utf-8").splitlines() if line.startswith("btime "))
+    boot_time = int(boot)
+    frequency = os.sysconf("SC_CLK_TCK")
+    if ticks < 0 or boot_time <= 0 or frequency <= 0:
+        raise ValueError("invalid-process-clock")
+    # btime is second-granularity and starttime is tick-granularity. Use an
+    # upper bound so rounding cannot exempt a task created after the tree.
+    latest_start = boot_time + 1 + (ticks + 1) / frequency
+    if latest_start >= (path / ".git").stat().st_ctime:
+        raise ValueError("daemon-not-older")
+
+
 def require_predating_daemon(path, task, proc):
     """Only exempt known non-holders proven older than this worktree's .git."""
     try:
@@ -133,24 +150,8 @@ def require_predating_daemon(path, task, proc):
             # configurations are not blocked by unrelated logins.
             if os.environ.get(OPT_IN) == "1":
                 require_protected_references(path, task, proc)
-            counts = _observations.get()
-            if counts is not None:
-                counts["skipped_nondumpable"] += 1
-            return
-        # comm may contain spaces and parentheses; field 3 follows the last ')'.
-        stat = (task / "stat").read_text(encoding="utf-8")
-        ticks = int(stat.rsplit(")", 1)[1].split()[19])
-        boot = next(line.split()[1] for line in (proc / "stat").read_text(
-            encoding="utf-8").splitlines() if line.startswith("btime "))
-        boot_time = int(boot)
-        frequency = os.sysconf("SC_CLK_TCK")
-        if ticks < 0 or boot_time <= 0 or frequency <= 0:
-            raise ValueError("invalid-process-clock")
-        # btime is second-granularity and starttime is tick-granularity. Use an
-        # upper bound so rounding cannot exempt a task created after the tree.
-        latest_start = boot_time + 1 + (ticks + 1) / frequency
-        if latest_start >= (path / ".git").stat().st_ctime:
-            raise ValueError("daemon-not-older")
+        else:
+            _require_older_than_tree(path, task, proc)
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
     counts = _observations.get()
