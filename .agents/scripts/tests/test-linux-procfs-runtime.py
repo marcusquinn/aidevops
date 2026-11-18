@@ -5,7 +5,8 @@
 
 import importlib.util
 from pathlib import Path
-import subprocess
+import shutil
+import subprocess  # nosec B404 - needed to exercise the local shell entry point
 import unittest
 from unittest.mock import patch
 
@@ -30,8 +31,10 @@ class RuntimeEvidenceTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["extra_groups"], [])
 
     def test_invalid_uid_fails_before_docker(self):
-        result = subprocess.run(
-            ["bash", str(SCRIPTS / "linux-procfs-runtime-check.sh"), "--uid", "0"],
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash, "bash is required to run the harness")
+        result = subprocess.run(  # nosec B603 - fixed local script and arguments
+            [bash, str(SCRIPTS / "linux-procfs-runtime-check.sh"), "--uid", "0"],
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 1)
