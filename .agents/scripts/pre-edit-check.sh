@@ -757,15 +757,16 @@ fi
 
 # Resolve structural worktree identity before branch handling or ownership.
 canonical_policy_helper="${SCRIPT_DIR}/canonical-write-policy-helper.py"
+policy_repair_action="ACTION_REQUIRED=repair_canonical_write_policy"
 if [[ ! -f "$canonical_policy_helper" ]]; then
 	echo -e "${RED}BLOCKED${NC}: canonical-write policy helper is unavailable"
-	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	echo "$policy_repair_action"
 	exit 1
 fi
 worktree_classification=""
 if ! worktree_classification=$(python3 "$canonical_policy_helper" classify --cwd "$PWD" --field classification 2>/dev/null); then
 	echo -e "${RED}BLOCKED${NC}: Git worktree identity could not be classified safely"
-	echo "ACTION_REQUIRED=repair_canonical_write_policy"
+	echo "$policy_repair_action"
 	exit 1
 fi
 
@@ -793,7 +794,14 @@ fi
 # workspace. Report it now instead of at the first Edit/Write.
 session_project_dir="${AIDEVOPS_SESSION_PROJECT_DIR:-}"
 if [[ -n "$session_project_dir" ]]; then
-	session_decision=$(python3 "$canonical_policy_helper" check-session --cwd "$session_project_dir" --target "$PWD" --field decision 2>/dev/null || echo "error")
+	if ! session_decision=$(python3 "$canonical_policy_helper" check-session --cwd "$session_project_dir" --target "$PWD" --field decision); then
+		session_decision="error"
+	fi
+	if [[ "$session_decision" == "error" ]]; then
+		echo -e "${RED}BLOCKED${NC}: session workspace policy check failed"
+		echo "$policy_repair_action"
+		exit 1
+	fi
 	if [[ "$session_decision" != "allow" ]]; then
 		echo -e "${RED}BLOCKED${NC}: this session's project directory is outside the trusted Git workspace; direct writes to this worktree will be denied"
 		echo "ACTION_REQUIRED=run_session_inside_git_workspace"
