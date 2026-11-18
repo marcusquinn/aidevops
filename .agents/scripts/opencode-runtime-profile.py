@@ -104,42 +104,49 @@ def shared_config_profile(document):
     return installed_profile(document) or document['default']
 
 
+def format_value(value):
+    """Render a profile field for shell consumers."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(',', ':'))
+    return value
+
+
+def profile_field(document, profile_id, field):
+    try:
+        return format_value(document['profiles'][profile_id][field])
+    except KeyError as error:
+        raise SystemExit(f'Unknown OpenCode profile field: {error.args[0]}') from error
+
+
+def selected_command(document, args):
+    profile_id = selected_id(document)
+    return profile_field(document, profile_id, args[0]) if args else profile_id
+
+
+USAGE = ('Usage: opencode-runtime-profile.py default | selected [FIELD] | detect VERSION | '
+         'installed [BINARY] | shared | get PROFILE FIELD')
+
+# command -> (accepted argument counts, or None for any; handler(document, args))
+COMMANDS = {
+    'default': (None, lambda document, _args: document['default']),
+    'selected': (None, selected_command),
+    'detect': ((1,), lambda document, args: profile_for_version(document, args[0])),
+    'installed': ((0, 1), lambda document, args: installed_profile(document, args[0] if args else None)),
+    'shared': ((0,), lambda document, _args: shared_config_profile(document)),
+    'get': ((2,), lambda document, args: profile_field(document, args[0], args[1])),
+}
+
+
 def main(argv):
     document = profile_document()
     command = argv[1] if len(argv) > 1 else 'selected'
-    if command == 'default':
-        print(document['default'])
-        return
-    if command == 'detect' and len(argv) == 3:
-        print(profile_for_version(document, argv[2]))
-        return
-    if command == 'installed' and len(argv) in (2, 3):
-        print(installed_profile(document, argv[2] if len(argv) == 3 else None))
-        return
-    if command == 'shared' and len(argv) == 2:
-        print(shared_config_profile(document))
-        return
-    if command == 'selected':
-        profile_id = selected_id(document)
-        if len(argv) == 2:
-            print(profile_id)
-            return
-        field = argv[2]
-    elif command == 'get' and len(argv) == 4:
-        profile_id, field = argv[2], argv[3]
-    else:
-        raise SystemExit('Usage: opencode-runtime-profile.py default | selected [FIELD] | detect VERSION | '
-                         'installed [BINARY] | shared | get PROFILE FIELD')
-    try:
-        value = document['profiles'][profile_id][field]
-    except KeyError as error:
-        raise SystemExit(f'Unknown OpenCode profile field: {error.args[0]}') from error
-    if isinstance(value, bool):
-        print('true' if value else 'false')
-    elif isinstance(value, (dict, list)):
-        print(json.dumps(value, separators=(',', ':')))
-    else:
-        print(value)
+    args = argv[2:]
+    arities, handler = COMMANDS.get(command, ((), None))
+    if handler is None or (arities is not None and len(args) not in arities):
+        raise SystemExit(USAGE)
+    print(handler(document, args))
 
 
 if __name__ == '__main__':
