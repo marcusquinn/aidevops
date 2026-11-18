@@ -599,10 +599,14 @@ cmd_pre_merge_gate() {
 	FULL_LOOP_PR_FAILURE_EVIDENCE=""
 	if ! _full_loop_verify_pr_readiness "$pr_number" "$repo"; then
 		# Diagnostic only: never turn a failed authority check into merge readiness.
+		# The gate reports as its commit-status context, its job name or its
+		# workflow check name; mirrors pulse-merge-required-checks.sh (GH#39064).
 		if [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-failure" ]] &&
 			printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -e '
+				["maintainer-gate", "Maintainer Review & Assignee Gate",
+					"gate / Maintainer Review & Assignee Gate"] as $authority |
 				type == "array" and length > 0 and
-				all(.[]; .name == "gate / Maintainer Review & Assignee Gate")
+				all(.[]; .name as $name | any($authority[]; . == $name))
 			' >/dev/null 2>&1; then
 			_full_loop_report_external_authority_preflight "$pr_number" "$repo" 1 || true
 		fi
