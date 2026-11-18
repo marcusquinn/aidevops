@@ -974,10 +974,29 @@ test_pre_merge_authority_check_failure() {
 			"rc=$actual_rc output=$output"
 	fi
 
+	# GH#39064: branch protection reports the gate as its commit-status context.
 	local failure_evidence=""
+	for failure_evidence in \
+		'[{"name":"maintainer-gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"Maintainer Review & Assignee Gate","state":"FAILURE","bucket":"fail"}]' \
+		'[{"name":"maintainer-gate"},{"name":"gate / Maintainer Review & Assignee Gate"}]'; do
+		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
+		actual_rc=0
+		output=$(cmd_pre_merge_gate 900 owner/repo 2>&1) || actual_rc=$?
+		if [[ "$actual_rc" -eq 1 ]] &&
+			grep -qF 'sudo aidevops approve batch issue:42 pr:900 owner/repo' <<<"$output"; then
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 0
+		else
+			print_result "maintainer-gate alias failure reports approval: $failure_evidence" 1 \
+				"rc=$actual_rc output=$output"
+		fi
+	done
+
 	for failure_evidence in \
 		'[{"name":"lint","state":"FAILURE","bucket":"fail"}]' \
 		'[{"name":"gate / Maintainer Review & Assignee Gate"},{"name":"lint"}]' \
+		'[{"name":"maintainer-gate"},{"name":"lint"}]' \
+		'[{"name":null}]' \
 		'[]' 'not-json'; do
 		FIXTURE_FAILURE_EVIDENCE="$failure_evidence"
 		actual_rc=0
