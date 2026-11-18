@@ -559,6 +559,19 @@ if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
 else
 	print_result "Maintainer release resets only prior ticks" 1
 fi
+# Merged-PR progress marker restarts the count at 1 (tick, progress, next tick = 2 < escalation of old 3).
+ticks='[[{"created_at":"2026-01-01T00:00:01Z","body":"<!-- stale-recovery-tick:1 -->"},{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:1 -->\n<!-- stale-recovery-progress:merged-pr -->"}]]'
+if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
+	print_result "Merged-PR progress marker restarts tick count" 0
+else
+	print_result "Merged-PR progress marker restarts tick count" 1
+fi
+merged_pr=$(gh() { printf '%s' '[{"number":7,"body":"For #42","mergedAt":"2026-01-01T00:30:00Z"},{"number":8,"body":"For #421","mergedAt":"2026-01-01T00:40:00Z"}]'; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z")
+if [[ "$merged_pr" == 7 ]]; then
+	print_result "Merged PR referencing issue after tick is found" 0
+else
+	print_result "Merged PR referencing issue after tick is found" 1 "(got '$merged_pr')"
+fi
 
 for initial_state in blocked available; do
 	release_result=$(GH_TEST_STATE="$initial_state" bash -c '

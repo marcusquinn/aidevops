@@ -138,6 +138,7 @@ _stale_recovery_count_ticks_from_pages() {
 	local prior_ticks
 	prior_ticks=$(printf '%s' "$comments_pages" | jq \
 		--arg release_marker '<!-- stale-recovery-release:verified -->' \
+		--arg progress_marker '<!-- stale-recovery-progress:merged-pr -->' \
 		'([.[] | .[]?] | sort_by(.created_at, .id))
 		| reduce .[] as $comment (0;
 			if (($comment.body // "")
@@ -148,6 +149,8 @@ _stale_recovery_count_ticks_from_pages() {
 					"MEMBER"
 				)) then 0
 			elif (($comment.body // "")
+				| contains($progress_marker)) then 1
+			elif (($comment.body // "")
 				| test("<!-- stale-recovery-tick:[1-9]"))
 				and ((($comment.body // "")
 				| contains("reset")) | not) then . + 1
@@ -155,6 +158,43 @@ _stale_recovery_count_ticks_from_pages() {
 		2>/dev/null) || prior_ticks=0
 	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
 	printf '%s' "$prior_ticks"
+	return 0
+}
+
+#######################################
+# Find the latest stale-recovery tick timestamp in slurped GitHub comments.
+# Args: $1 = slurped comments pages JSON
+# Output: ISO timestamp or empty
+#######################################
+_stale_recovery_latest_tick_ts_from_pages() {
+	local comments_pages="$1"
+	printf '%s' "$comments_pages" | jq -r '
+		[.[] | .[]? | select(.body // "" | test("<!-- stale-recovery-tick:[1-9]"))]
+		| sort_by(.created_at) | last | .created_at // empty
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Find a merged PR referencing the issue (For/Ref/Resolves #N) merged after
+# a timestamp. A merged partial PR is productive progress, not a no-PR stall,
+# so it must break the consecutive stale-recovery count. Fails open (empty).
+# Args: $1 = issue number, $2 = repo slug, $3 = ISO timestamp lower bound
+# Output: merged PR number or empty
+#######################################
+_stale_recovery_find_merged_pr_since() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local since_ts="$3"
+	[[ -n "$since_ts" ]] || return 0
+	gh pr list --repo "$repo_slug" --state merged --limit 50 \
+		--search "${issue_number} in:body" \
+		--json number,body,mergedAt 2>/dev/null | jq -r \
+		--arg n "$issue_number" --arg since "$since_ts" '
+		[.[]? | select((.mergedAt // "") > $since)
+			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve)\\s+([a-z0-9_.-]+/[a-z0-9_.-]+)?#" + $n + "\\b"))]
+		| sort_by(.mergedAt) | last | .number // empty
+	' 2>/dev/null || true
 	return 0
 }
 
@@ -774,7 +814,9 @@ _stale_recovery_apply() {
 		--body "$(aidevops_ops_marker stale-recovery-tick)"$'\n'"<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 <!-- stale-recovery-tick:${recovery_tick:-1} -->
-**Stale assignment recovered** (GH#15060)
+${_STALE_RECOVERY_MERGED_PR:+<!-- stale-recovery-progress:merged-pr -->
+Merged PR #${_STALE_RECOVERY_MERGED_PR} since the previous tick counts as progress; consecutive count restarted.
+}**Stale assignment recovered** (GH#15060)
 
 Previously assigned to: ${stale_assignees}
 Reason: ${reason}
@@ -870,6 +912,15 @@ _recover_stale_assignment() {
 		printf 'STALE_PROGRESS_PRESERVED: issue #%s in %s — open PR #%s is durable progress\n' \
 			"$issue_number" "$repo_slug" "$_open_pr_number"
 		return 0
+	fi
+	_STALE_RECOVERY_MERGED_PR=""
+	if [[ "$_prior_ticks" -gt 0 ]]; then
+		local _last_tick_ts
+		_last_tick_ts=$(_stale_recovery_latest_tick_ts_from_pages "$_comments_pages")
+		_STALE_RECOVERY_MERGED_PR=$(_stale_recovery_find_merged_pr_since "$issue_number" "$repo_slug" "$_last_tick_ts")
+		[[ "$_STALE_RECOVERY_MERGED_PR" =~ ^[0-9]+$ ]] || _STALE_RECOVERY_MERGED_PR=""
+		# Merged partial PR since the previous tick = progress: restart the count.
+		[[ -z "$_STALE_RECOVERY_MERGED_PR" ]] || _prior_ticks=0
 	fi
 	_next_tick=$((_prior_ticks + 1))
 	if [[ "$_next_tick" -ge "$_threshold" ]]; then
