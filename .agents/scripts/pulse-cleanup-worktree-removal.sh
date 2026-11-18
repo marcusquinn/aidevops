@@ -62,7 +62,7 @@ _cleanup_reclaim_finished_worktrees() {
 	local state_dir="$1"
 	local python="$2"
 	local budget="$3"
-	local result="" removed="" refused="" failed="" reclaimed="" deferred="" resume="" archived=0
+	local result="" removed="" refused="" failed="" reclaimed="" deferred="" resume="" archived=0 reasons=""
 	# Owners come from the lifecycle registry, never a host process scan.
 	if ! result=$("$python" -E -s -B "${_PULSE_CLEANUP_SCRIPT_DIR}/../worker-lifecycle/worktree-reclaim.py" \
 		--state-dir "$state_dir" --apply --budget-seconds "$budget" 2>>"$LOGFILE"); then
@@ -77,10 +77,14 @@ _cleanup_reclaim_finished_worktrees() {
 	deferred=$(jq -r '.quarantine_deferred // 0' <<<"$result") || deferred=0
 	resume=$(jq -r '.resume_after // ""' <<<"$result") || resume=""
 	archived=$(jq -er '(.archived // 0) | numbers' <<<"$result") || archived=0
+	# Top-5 refusal reasons, so refused=N explains itself (GH#39034).
+	reasons=$(jq -r '[(.results // [])[] | select(.decision == "refuse") | (.reason // "unknown" | tostring)]
+		| group_by(.) | map({reason: .[0], count: length}) | sort_by(-.count, .reason) | .[:5]
+		| map("\(.reason | gsub("[[:space:],:]"; "_")):\(.count)") | join(",")' <<<"$result") || reasons=""
 	CLEANUP_WORKTREES_REMOVED_COUNT=$((CLEANUP_WORKTREES_REMOVED_COUNT + removed))
 	CLEANUP_WORKTREES_ARCHIVED_COUNT=$((CLEANUP_WORKTREES_ARCHIVED_COUNT + archived))
-	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s archived=%s refused=%s failed=%s deferred=%s resume_after=%s reclaimed_mib=%s\n' \
-		"$removed" "$archived" "$refused" "$failed" "$deferred" "${resume:-none}" "$reclaimed" >>"$LOGFILE"
+	printf '[pulse-wrapper] Finished-worktree reclaim: removed=%s archived=%s refused=%s failed=%s deferred=%s resume_after=%s reclaimed_mib=%s reasons=%s\n' \
+		"$removed" "$archived" "$refused" "$failed" "$deferred" "${resume:-none}" "$reclaimed" "${reasons:-none}" >>"$LOGFILE"
 	return 0
 }
 

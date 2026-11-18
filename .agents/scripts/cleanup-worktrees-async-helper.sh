@@ -177,26 +177,71 @@ _rotate_log_if_oversize() {
 	return 0
 }
 
+# Summarise refusals logged during this pass (GH#39034). A refused worktree is
+# one with a worktree-skipped or worktree-degraded event and no removal event;
+# its reason is the last final skip, else its degraded reason (some callers
+# return a degraded guard result without logging a final skip).
+# Args: $1 = log line count before the pass
+# Output: "<refused-count> <reason:count,... top 5 | none>"
 _skip_reason_summary() {
 	local first_line="$1"
-	local owned_skip=0
-	local parent_runtime_active=0
+	local summary=""
 
 	[[ "$first_line" =~ ^[0-9]+$ ]] || first_line=0
-	read -r owned_skip parent_runtime_active < <(
+	summary=$(
 		awk -v first_line="$first_line" '
-			NR > first_line && /worktree-skipped:.*— owned-skip —/ { owned_skip++ }
-			NR > first_line && /worktree-skipped:.*— parent-runtime-active —/ { parent_runtime_active++ }
-			END { printf "%d %d\\n", owned_skip, parent_runtime_active }
+			NR > first_line {
+				pos = index($0, "] worktree-")
+				if (pos == 0) next
+				rest = substr($0, pos + 11)
+				colon = index(rest, ": ")
+				if (colon == 0) next
+				event = substr(rest, 1, colon - 1)
+				rest = substr(rest, colon + 2)
+				sep = index(rest, " — ")
+				if (sep == 0) next
+				path = substr(rest, 1, sep - 1)
+				rest = substr(rest, sep + length(" — "))
+				sep = index(rest, " — ")
+				reason = sep ? substr(rest, 1, sep - 1) : rest
+				if (event == "removed" || event == "fixture-removed") {
+					removed[path] = 1
+				} else if (event == "skipped") {
+					final[path] = reason
+					seen[path] = 1
+				} else if (event == "degraded") {
+					if (!(path in degraded)) degraded[path] = reason
+					seen[path] = 1
+				}
+			}
+			END {
+				refused = 0
+				for (path in seen) {
+					if (path in removed) continue
+					r = (path in final) ? final[path] : degraded[path]
+					counts[r]++
+					refused++
+				}
+				out = ""
+				for (i = 0; i < 5; i++) {
+					best = ""
+					bestn = 0
+					for (r in counts) {
+						if (counts[r] > bestn || (counts[r] == bestn && r < best)) {
+							best = r
+							bestn = counts[r]
+						}
+					}
+					if (bestn == 0) break
+					out = out (out == "" ? "" : ",") best ":" bestn
+					delete counts[best]
+				}
+				printf "%d %s\n", refused, (out == "" ? "none" : out)
+			}
 		' "$LOGFILE" 2>/dev/null
-	)
-	[[ "$owned_skip" =~ ^[0-9]+$ ]] || owned_skip=0
-	[[ "$parent_runtime_active" =~ ^[0-9]+$ ]] || parent_runtime_active=0
-	if [[ "$owned_skip" -eq 0 && "$parent_runtime_active" -eq 0 ]]; then
-		printf '%s\n' "none"
-	else
-		printf 'owned-skip:%s,parent-runtime-active:%s\n' "$owned_skip" "$parent_runtime_active"
-	fi
+	) || summary=""
+	[[ "$summary" =~ ^[0-9]+\ [^[:space:]]+$ ]] || summary="0 unavailable"
+	printf '%s\n' "$summary"
 	return 0
 }
 
@@ -659,8 +704,16 @@ _run_cleanup_pass() {
 	[[ "$removed_count" =~ ^[0-9]+$ ]] || removed_count=0
 	[[ "$archived_count" =~ ^[0-9]+$ ]] || archived_count=0
 	[[ "$archive_failed_count" =~ ^[0-9]+$ ]] || archive_failed_count=0
-	skip_reasons=$(_skip_reason_summary "$log_first_line") || skip_reasons="unavailable"
-	printf '%s\n' "[cleanup-worktrees-async] outcome=${outcome} removed=${removed_count} archived=${archived_count} archive_failed=${archive_failed_count} skip_reasons=${skip_reasons}" >>"$LOGFILE"
+	local refusal_summary="" refused_count=0
+	refusal_summary=$(_skip_reason_summary "$log_first_line") || refusal_summary="0 unavailable"
+	refused_count="${refusal_summary%% *}"
+	skip_reasons="${refusal_summary#* }"
+	[[ "$refused_count" =~ ^[0-9]+$ ]] || refused_count=0
+	# A pass that refused candidates and removed nothing is not plain success.
+	if [[ "$outcome" == "success" && "$refused_count" -gt 0 && "$removed_count" -eq 0 && "$archived_count" -eq 0 ]]; then
+		outcome="no-progress"
+	fi
+	printf '%s\n' "[cleanup-worktrees-async] outcome=${outcome} removed=${removed_count} archived=${archived_count} archive_failed=${archive_failed_count} refused=${refused_count} skip_reasons=${skip_reasons}" >>"$LOGFILE"
 
 	return 0
 }

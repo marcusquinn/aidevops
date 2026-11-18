@@ -150,6 +150,16 @@ assert "listing 403 exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
 "$HELPER" status --repo 'bad slug' >/dev/null 2>&1
 assert "invalid slug exits 2" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
 
+# --all-managed must skip contributed repositories (no admin rights) but still check owned ones.
+rm -f "$fx/FORBIDDEN"
+printf '%s' '{"initialized_repos":[{"slug":"o/none"},{"slug":"o/priv","private":true},{"slug":"x/contrib","contributed":true}]}' >"$TMP/repos.json"
+AIDEVOPS_REPOS_JSON="$TMP/repos.json" "$HELPER" status --all-managed >"$TMP/out" 2>&1
+assert "all-managed skips contributed repo (exit 0)" "$?"
+assert "all-managed does not list contributed repo" "$(grep -q 'x/contrib' "$TMP/out" && echo 1 || echo 0)"
+printf '%s' '{"initialized_repos":[{"slug":"o/none"},{"slug":"o/missing"}]}' >"$TMP/repos2.json"
+AIDEVOPS_REPOS_JSON="$TMP/repos2.json" "$HELPER" status --all-managed >/dev/null 2>&1
+assert "all-managed still fails on owned repo API error" "$([[ $? -eq 2 ]] && echo 0 || echo 1)"
+
 if [[ "$FAILS" -ne 0 ]]; then
 	printf '%s failure(s)\n' "$FAILS"
 	exit 1

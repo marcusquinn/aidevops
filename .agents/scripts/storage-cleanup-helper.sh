@@ -272,7 +272,7 @@ _sc_dry_run_store() {
 	case "$store" in
 	tmp) _sc_preview_tmp || rc=$? ;;
 	worktrees)
-		printf 'Linked worktrees: %s under %s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)"
+		printf 'Linked worktrees: %s under %s%s\n' "$(_sc_worktree_count)" "$(aidevops_worktree_base_dir_configured)" "$(_sc_last_worktree_refusals)"
 		printf 'Apply removes only worktrees whose branches are merged or closed; dirty work is archived first.\n'
 		;;
 	artefacts) _sc_preview_artefacts || rc=$? ;;
@@ -293,6 +293,22 @@ _sc_dry_run_store() {
 	*) return 1 ;;
 	esac
 	return "$rc"
+}
+
+# Refusals from the last async cleanup pass (GH#39034), as a suffix for the
+# "Linked worktrees" line: " (last pass: refused=N skip_reasons=...)" or empty.
+_sc_last_worktree_refusals() {
+	local log="${AIDEVOPS_LOG_DIR:-${HOME}/.aidevops/logs}/cleanup_worktrees.log" line="" refused="" reasons=""
+	[[ -f "$log" ]] || return 0
+	line=$(grep -F '[cleanup-worktrees-async] outcome=' "$log" 2>/dev/null | tail -n 1) || line=""
+	[[ "$line" == *" refused="* ]] || return 0
+	refused="${line##* refused=}"
+	refused="${refused%% *}"
+	[[ "$refused" =~ ^[0-9]+$ ]] || return 0
+	reasons="${line##* skip_reasons=}"
+	[[ "$reasons" != "$line" ]] || reasons="unavailable"
+	printf ' (last pass: refused=%s skip_reasons=%s)' "$refused" "$reasons"
+	return 0
 }
 
 _sc_last_worktree_outcome() {

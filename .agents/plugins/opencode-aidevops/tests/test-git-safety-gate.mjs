@@ -591,6 +591,20 @@ test("allows cross-repository linked writes only inside the trusted Git workspac
       "a non-repository session root outside the trusted workspace must remain blocked",
     );
     assert.throws(
+      () => checkCanonicalWriteSafetyGate("", scriptsDir, outsideRoot, workspaceRootPatch),
+      /ACTION_REQUIRED=run_session_inside_git_workspace/,
+      "an outside session must be told to restart inside the Git workspace, not to create a worktree",
+    );
+    const sessionProbe = (cwd, target) => JSON.parse(execFileSync(
+      "python3",
+      [join(scriptsDir, "canonical-write-policy-helper.py"), "check-session", "--cwd", cwd, "--target", target],
+      { encoding: "utf8" },
+    ));
+    assert.equal(sessionProbe(outsideRoot, foreignRepo).decision, "deny");
+    assert.equal(sessionProbe(outsideRoot, foreignRepo).action, "run_session_inside_git_workspace");
+    assert.equal(sessionProbe(root, foreignRepo).decision, "allow");
+    assert.equal(sessionProbe(linked, foreignLinked).decision, "allow");
+    assert.throws(
       () => checkCanonicalWriteSafetyGate(join(outsideLinked, "README.md"), scriptsDir, linked),
       /limited to the trusted Git workspace/,
     );

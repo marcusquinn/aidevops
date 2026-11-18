@@ -17,6 +17,8 @@
 # Event types (use the constants below to avoid repeated literal violations):
 #   _WTAR_REMOVED          "removed"        — worktree was actually removed
 #   _WTAR_SKIPPED          "skipped"        — removal was blocked
+#   _WTAR_DEGRADED         "degraded"       — CWD visibility degraded; the caller's
+#                                             recoverable fallback decides next
 #   _WTAR_FIXTURE_REMOVED  "fixture-removed" — removed during test teardown
 #
 # Reason values (non-exhaustive — free-form, kept short):
@@ -52,6 +54,7 @@ _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED=1
 # =============================================================================
 _WTAR_REMOVED="removed"
 _WTAR_SKIPPED="skipped"
+_WTAR_DEGRADED="degraded"
 _WTAR_FIXTURE_REMOVED="fixture-removed"
 _WTAR_MODE_SKIPPED="skipped"
 _WTAR_BOOL_TRUE="true"
@@ -771,7 +774,9 @@ _worktree_guard_degraded_cwd() {
 	fi
 	WORKTREE_REMOVAL_GUARD_VISIBILITY="$_WT_CWD_VISIBILITY_DEGRADED"
 	WORKTREE_REMOVAL_GUARD_REASON="$_WT_CWD_REASON_DEGRADED"
-	log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
+	# Not a refusal yet (GH#39034): the caller may still take the recoverable
+	# fallback; only its final refusal logs worktree-skipped.
+	log_worktree_removal_event "$_WTAR_DEGRADED" "$caller" "$wt_path" "$_WT_CWD_REASON_DEGRADED" "recoverable-required"
 	return "$_WT_CWD_CAPTURE_DEGRADED_RC"
 }
 

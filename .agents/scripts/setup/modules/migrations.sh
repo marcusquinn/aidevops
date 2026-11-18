@@ -1110,6 +1110,44 @@ cleanup_worktree_entries_in_repos_json() {
 	return 0
 }
 
+# GH#39025: mark existing init-routines registrations with purpose "routines"
+# so the onboarding audit stops asking for `aidevops init` in them. Matches only
+# repos without project config whose routines/core files carry the generated
+# header that init-routines-helper.sh writes (source: core-routines.sh).
+migrate_routines_repo_purpose_marker() {
+	local flag_file="${HOME}/.aidevops/logs/.migrated-routines-purpose-gh39025"
+	[[ -f "$flag_file" ]] && return 0
+
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	[[ -f "$repos_json" ]] || return 0
+	command -v jq &>/dev/null || return 0
+
+	local paths=() path
+	while IFS= read -r path; do
+		[[ -n "$path" && -d "$path/routines/core" && ! -e "$path/.aidevops.json" ]] || continue
+		grep -rqsF -- 'scripts/routines/core-routines.sh' "$path/routines/core" && paths+=("$path")
+	done < <(jq -r '.initialized_repos[]? | select((.purpose // "") == "") | .path // empty' "$repos_json" 2>/dev/null)
+
+	if [[ ${#paths[@]} -gt 0 ]]; then
+		local paths_json temp_file
+		paths_json=$(printf '%s\n' "${paths[@]}" | jq -R . | jq -s .) || return 0
+		temp_file=$(mktemp "${repos_json}.XXXXXX") || return 0
+		if jq --argjson routines "$paths_json" \
+			'.initialized_repos |= map(if (.path as $p | $routines | index($p)) then . + {purpose: "routines"} else . end)' \
+			"$repos_json" >"$temp_file" && jq empty "$temp_file" 2>/dev/null; then
+			mv "$temp_file" "$repos_json"
+			print_info "Marked ${#paths[@]} routines repository registration(s) with purpose \"routines\" (GH#39025)"
+		else
+			rm -f "$temp_file"
+			return 0
+		fi
+	fi
+
+	mkdir -p "$(dirname "$flag_file")"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$flag_file"
+	return 0
+}
+
 cleanup_stale_health_issue_caches() {
 	local flag_file="${HOME}/.aidevops/logs/.migrated-health-issue-caches-t1929"
 	[[ -f "$flag_file" ]] && return 0

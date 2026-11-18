@@ -13,6 +13,19 @@ from _worktree_dependency_identity import Rejected, contained_path, object_json,
 
 
 STALE_STAGING = re.compile(r"^.+_tmp_\d+$")
+# Non-module entries that macOS and build tools create at the dependency root
+# (GH#39037). They are skipped, never copied, so a worker cannot resolve them; any
+# other unrecorded entry, or one of these names with another type, still rejects.
+SKIPPED_ROOT_FILES = {".metadata_never_index", ".DS_Store"}
+SKIPPED_ROOT_DIRECTORIES = {".vite", ".vite-temp", ".cache"}
+
+
+def skipped_root_entry(rel, mode):
+    if len(rel.parts) != 1:
+        return False
+    if stat.S_ISDIR(mode):
+        return bool(STALE_STAGING.match(rel.name)) or rel.name in SKIPPED_ROOT_DIRECTORIES
+    return stat.S_ISREG(mode) and rel.name in SKIPPED_ROOT_FILES
 
 
 def safe_entry_name(name):
@@ -72,9 +85,9 @@ class Snapshot:
                 self.visit(fd, relative / entry.name, output, entry.stat(follow_symlinks=False), depth)
 
     def visit(self, fd, rel, output, info, depth):
-        if len(rel.parts) == 1 and STALE_STAGING.match(rel.name) and stat.S_ISDIR(info.st_mode):
-            # Interrupted pnpm staging directory: neither counted, copied nor inventoried,
-            # so the source and staged snapshots keep identical digests and counts.
+        if skipped_root_entry(rel, info.st_mode):
+            # Interrupted pnpm staging directories and root markers/caches: neither counted,
+            # copied nor inventoried, so source and staged snapshots keep identical digests.
             return
         self.count += 1
         if self.count > self.max_entries:

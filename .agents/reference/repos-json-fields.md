@@ -22,6 +22,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
 | `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |
 | `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
+| `purpose` | string | Optional purpose-built repository marker. `"routines"` = created by `init-routines`; like `priority: "profile"`, it needs no `.aidevops.json`, so the onboarding audit skips the Missing-config gap and `project-config restore` refuses it. |
 | `features` | array | Enabled registration capabilities. `"code-quality"` activates lint policy migration and repo-verify hook rollout unless `.aidevops.json` explicitly opts out. |
 
 ### GitHub Actions availability

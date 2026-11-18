@@ -216,7 +216,7 @@ _pmp_sort_prs_by_backlog_priority() {
 	counted_keys=$(_pmp_guardrail_counted_pr_keys "$repo_slug")
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" category="" priority="" retry_priority=1 guardrail_priority=1 dirty_priority=1 pr_number=""
+		local pr_obj="" category="" priority="" retry_priority=1 guardrail_priority=1 dirty_priority=1 pr_number="" negative_priority=0
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		priority=$(_pmp_backlog_priority "$category")
@@ -225,16 +225,21 @@ _pmp_sort_prs_by_backlog_priority() {
 		# only; the evaluator still re-reads and enforces every gate.
 		printf '%s' "$pr_obj" | jq -e '._pulseDeferredRetry == true and (.isDraft // false) != true
 			and (any((.labels // [])[]; (.name? // .) == "hold-for-review") | not)' >/dev/null 2>&1 && retry_priority=0
+		# GH#39019: a cached unchanged no-op verdict sorts after every PR without
+		# one, so a blocked PR cannot exhaust the pass budget before clean work.
+		if declare -F _pmu_pr_has_negative_verdict >/dev/null 2>&1 && _pmu_pr_has_negative_verdict "$repo_slug" "$pr_obj"; then
+			negative_priority=1
+		fi
 		if [[ -n "$dirty_keys" || -n "$counted_keys" ]]; then
 			pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
 			[[ -n "$dirty_keys" && "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
 			_pmp_guardrail_counted_actionable "$counted_keys" "$pr_number" "$category" && guardrail_priority=0
 		fi
-		printf '%d\t%d\t%03d\t%d\t%06d\t%s\n' "$retry_priority" "$guardrail_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
+		printf '%d\t%d\t%d\t%03d\t%d\t%06d\t%s\n' "$negative_priority" "$retry_priority" "$guardrail_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
 		i=$((i + 1))
 	done
 
-	LC_ALL=C sort "$_tmp_lines" | cut -f6- | jq -s '.'
+	LC_ALL=C sort "$_tmp_lines" | cut -f7- | jq -s '.'
 	rm -f "$_tmp_lines"
 	return 0
 }

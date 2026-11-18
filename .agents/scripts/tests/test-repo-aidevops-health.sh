@@ -290,6 +290,8 @@ jq -n --arg path "$TEST_ROOT/onboard" --arg recent "$(date -u '+%Y-%m-%dT%H:%M:%
 	 {slug:"org/old",path:$path,initialized:"2000-01-01T00:00:00Z",pulse:false},
 	 {slug:"org/blocked",path:$path,pulse:false},
 	 {slug:"org/clean",path:$path,initialized:$recent,pulse:true},
+	 {slug:"org/clean-routines",path:$path,initialized:$recent,pulse:true,purpose:"routines"},
+	 {slug:"org/clean-profile",path:$path,initialized:$recent,pulse:true,priority:"profile"},
 	 {slug:"org/unknown",path:$path,initialized:$recent,pulse:true}]}' >"$CONFIG_FILE"
 rm "$TEST_ROOT/onboard/.aidevops.json"
 printf 'previous\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory"
@@ -302,6 +304,9 @@ assert_contains "recent repository records label gap" "$(<"$HOME/.aidevops/advis
 assert_equal "old unblocked repository has no advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-old.advisory" && printf yes || printf no)" "no"
 assert_equal "old blocked repository has advisory" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-blocked.advisory" && printf yes || printf no)" "yes"
 assert_equal "unknown GitHub state preserves advisory" "$(<"$HOME/.aidevops/advisories/repo-onboarding-org-unknown.advisory")" "previous"
+assert_equal "routines repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-routines.advisory" && printf yes || printf no)" "no"
+assert_equal "profile repository without config is clean" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean-profile.advisory" && printf yes || printf no)" "no"
+assert_equal "ordinary repository without config is flagged" "$(test -e "$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory" && printf yes || printf no)" "yes"
 printf '{}\n' >"$TEST_ROOT/onboard/.aidevops.json"
 printf 'stale\n' >"$HOME/.aidevops/advisories/repo-onboarding-org-clean.advisory"
 _check_onboarding_gaps 0

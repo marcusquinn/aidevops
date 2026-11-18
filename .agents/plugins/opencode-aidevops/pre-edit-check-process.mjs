@@ -59,7 +59,12 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
     const child = spawn("bash", [script, ...args], {
       cwd,
       detached: true,
-      env: { ...process.env, ...sessionEnv },
+      env: {
+        ...process.env,
+        ...sessionEnv,
+        // The plugin's project directory, not the target workdir, decides direct-write policy.
+        AIDEVOPS_SESSION_PROJECT_DIR: String(context?.directory || process.env.AIDEVOPS_SESSION_PROJECT_DIR || process.cwd()),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

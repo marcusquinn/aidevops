@@ -11,7 +11,8 @@
 #
 # Dependencies:
 #   - shared-constants.sh (log_info, log_warn, log_error)
-#   - sips or magick for image operations
+#   - sips or magick to resize oversized screenshots (dimensions fall back to
+#     the PNG header via POSIX od when neither tool is installed)
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -98,6 +99,28 @@ resolve_max_image_dim() {
 	return 0
 }
 
+# Read PNG dimensions from the IHDR chunk with POSIX od (GH#39031), so measuring
+# a screenshot never needs a resize tool.
+# Args: $1 = image path
+# Output: "width height"; returns 1 for a non-PNG or malformed header.
+_png_header_dimensions() {
+	local image_path="$1"
+	local signature="" chunk_type="" header_bytes=""
+	local -a bytes=()
+
+	[[ -f "$image_path" ]] || return 1
+	signature=$(od -An -tx1 -N8 "$image_path" 2>/dev/null | tr -d ' \n') || return 1
+	[[ "$signature" == "89504e470d0a1a0a" ]] || return 1
+	chunk_type=$(od -An -tx1 -j12 -N4 "$image_path" 2>/dev/null | tr -d ' \n') || return 1
+	[[ "$chunk_type" == "49484452" ]] || return 1
+	header_bytes=$(od -An -tu1 -j16 -N8 "$image_path" 2>/dev/null | tr '\n' ' ') || return 1
+	read -r -a bytes <<<"$header_bytes"
+	[[ "${#bytes[@]}" -eq 8 ]] || return 1
+
+	echo "$(((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3])) $(((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]))"
+	return 0
+}
+
 # Get image dimensions as "widthxheight".
 # Args: $1 = image path
 # Output: widthxheight
@@ -121,7 +144,10 @@ get_image_dimensions() {
 		width="${identify_output%% *}"
 		height="${identify_output##* }"
 	else
-		return 1
+		local header_output
+		header_output=$(_png_header_dimensions "$image_path") || return 1
+		width="${header_output%% *}"
+		height="${header_output##* }"
 	fi
 
 	if [[ -z "$width" || -z "$height" || ! "$width" =~ ^[0-9]+$ || ! "$height" =~ ^[0-9]+$ ]]; then
@@ -160,11 +186,8 @@ enforce_screenshot_size_guardrails() {
 	local resized_count=0
 	local hard_limit_violations=0
 
-	if ! command -v sips &>/dev/null && ! command -v magick &>/dev/null; then
-		log_error "No supported image tool found for guardrails (need sips or magick)"
-		return 1
-	fi
-
+	# A resize tool is required only for an image that actually needs resizing
+	# (GH#39031); get_image_dimensions measures PNGs without one.
 	local image_found=0
 	for image_path in "$output_dir"/*.png; do
 		if [[ ! -f "$image_path" ]]; then
@@ -183,6 +206,10 @@ enforce_screenshot_size_guardrails() {
 		local height="${dimensions##*x}"
 
 		if [[ "$width" -gt "$max_dim" || "$height" -gt "$max_dim" ]]; then
+			if ! command -v sips &>/dev/null && ! command -v magick &>/dev/null; then
+				log_error "Screenshot exceeds ${max_dim}px and resizing needs sips or magick: ${image_path} (${width}x${height})"
+				return 1
+			fi
 			if ! resize_image_to_max_dim "$image_path" "$max_dim"; then
 				log_error "Failed to resize screenshot: ${image_path}"
 				return 1
@@ -457,10 +484,23 @@ function watchPage(page) {
   return watch;
 }
 
+// Page part of the filename (GH#39031): [A-Za-z0-9._-] only and at most 80
+// characters. Plain paths keep their historical name; any replaced character
+// or truncation appends a short hash of the full path so names stay distinct.
+// The import stays after run(): the URL generator test evaluates the prefix
+// before run() in a bare vm context, and ESM hoists import declarations.
+import { createHash } from 'node:crypto';
+function fileStem(pagePath) {
+  const stem = pagePath.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^_/, '') || 'index';
+  const historical = pagePath.replace(/\//g, '_').replace(/^_/, '') || 'index';
+  if (stem === historical && stem.length <= 80) return stem;
+  return `${stem.slice(0, 80)}-${createHash('sha256').update(pagePath).digest('hex').slice(0, 8)}`;
+}
+
 // Filename: [label-]page-viewport[-scheme]-WxH.png. Measure after capture so it cannot change the image.
 async function capturePage(page, watch, vp, scheme, pagePath, measureSource) {
   const url = resolvePageUrl(baseUrl, pagePath, pagesDefault);
-  const safeName = pagePath.replace(/\//g, '_').replace(/^_/, '') || 'index';
+  const safeName = fileStem(pagePath);
   const parts = [label, safeName, vp.name, scheme, `${vp.width}x${vp.height}`].filter(Boolean);
   const filepath = `${outputDir}/${parts.join('-')}.png`;
   const result = { page: pagePath, viewport: vp.name, file: filepath, status: 'ok' };

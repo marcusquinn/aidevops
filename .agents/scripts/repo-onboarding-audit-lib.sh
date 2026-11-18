@@ -32,6 +32,14 @@ _onboarding_write() {
 	return 0
 }
 
+# GH#39025: routines and profile repositories are purpose-built and intentionally
+# have no project config. Only the Missing-config gap is skipped for them.
+_onboarding_configless() {
+	local entry="$1"
+	jq -e '.priority == "profile" or .purpose == "routines"' >/dev/null 2>&1 <<<"$entry"
+	return $?
+}
+
 _onboarding_one() {
 	local entry="$1" mode="$2" dry="$3" now="$4" days="$5"
 	local slug path pulse initialized epoch recent=0 blocked=0 issues label gaps=""
@@ -59,7 +67,7 @@ _onboarding_one() {
 	label=$(_onboarding_label "$slug")
 	if [[ "$label" == unknown ]]; then _ONBOARD_UNKNOWN=$((_ONBOARD_UNKNOWN + 1)); return 0; fi
 	if [[ "$pulse" != true && ( "$recent" == 1 || "$blocked" == 1 ) ]]; then gaps+="Pulse off: aidevops repos pulse on $slug\n"; fi
-	if [[ ! -f "$path/.aidevops.json" ]]; then gaps+="Missing config: run aidevops init in $path\n"; fi
+	if [[ ! -f "$path/.aidevops.json" ]] && ! _onboarding_configless "$entry"; then gaps+="Missing config: run aidevops init in $path\n"; fi
 	if [[ "$label" == missing ]]; then gaps+="Missing label: label-sync-helper.sh sync --repo $slug\n"; fi
 	if [[ -n "$gaps" ]]; then _ONBOARD_ADVISORIES=$((_ONBOARD_ADVISORIES + 1)); else _ONBOARD_CLEAN=$((_ONBOARD_CLEAN + 1)); fi
 	if [[ "$mode" == report || "$mode" == all ]]; then

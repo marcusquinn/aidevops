@@ -41,6 +41,11 @@ registry="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 [[ -f "$registry" && ! -L "$registry" ]] || { printf 'Missing or unsafe registry\n' >&2; exit 1; }
 count=$(jq -er --arg slug "$selector" '[.initialized_repos[]? | select(.slug == $slug)] | length' "$registry") || exit 1
 [[ "$count" == 1 ]] || { printf 'Expected exactly one registered slug\n' >&2; exit 1; }
+# GH#39025: routines and profile repositories intentionally have no project config.
+if jq -e --arg slug "$selector" '.initialized_repos[] | select(.slug == $slug) | .priority == "profile" or .purpose == "routines"' "$registry" >/dev/null; then
+	printf '%s intentionally has no project config (routines or profile repository)\n' "$selector" >&2
+	exit 1
+fi
 repo=$(jq -er --arg slug "$selector" '.initialized_repos[] | select(.slug == $slug) | .path | select(type == "string" and length > 0)' "$registry") || exit 1
 registry_digest=$(cksum <"$registry") || exit 1
 [[ "$repo" == /* && -d "$repo" && ! -L "$repo" ]] || { printf 'Unsafe registered path\n' >&2; exit 1; }
