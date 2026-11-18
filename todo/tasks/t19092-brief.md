@@ -17,9 +17,9 @@ The cause of the runner-A denials stays in that runner's private telemetry. Rero
 - `EDIT: .agents/scripts/terminal-blocker-circuit.sh`: add `terminal_blocker_permission_peer_preference_active comments_json`. It returns 0 (and prints `TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE retry_after=<epoch>`) when all of these hold:
   - the newest trusted hold event (observation or circuit marker) carries the `permission_required` fingerprint. Selection is shared with `terminal_blocker_permission_rearm_after` through `_terminal_blocker_newest_permission_event`;
   - its author is this runner's login (`_terminal_blocker_self_login`);
-  - a trusted `<!-- aidevops:terminal-blocker-rearmed key=` receipt follows it;
+  - a `<!-- aidevops:terminal-blocker-rearmed key=` receipt follows it, authored by an OWNER/MEMBER/COLLABORATOR or this login (the set recovery accepts for replay suppression in `_tbr_project_rearm`);
   - no trusted retry directive follows the hold event;
-  - now is before receipt time + `AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS` (default 3600; 0 disables; a non-numeric value uses the default).
+  - now is before receipt time + `AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS` (default 3600; 0 disables; read as base 10; a non-numeric value uses the default).
 
   Otherwise, including unreadable evidence, it returns 1. It only defers this runner, never grants anything, and adds no comments or labels.
 - `EDIT: .agents/scripts/dispatch-dedup-helper.sh`: `has_dispatch_comment` calls the gate right after `terminal_blocker_circuit_active`. It does not go inside `terminal_blocker_circuit_active`, because `terminal-blocker-recovery-helper.sh` also calls that function and must not treat a dispatch-only deferral as an active hold.

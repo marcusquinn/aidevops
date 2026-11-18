@@ -23,6 +23,9 @@ _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
 _TBC_SOURCE_ACCESS='source_access_blocked'
 _TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
+# Trusted comment authors, also for evidence that can only keep or defer a hold
+# (a permission request, a GH#38957 re-arm receipt); clearing stays authoritative.
+_TBC_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
 # GH#34846: classes whose first-observation hold re-arms on a changed task
 # revision or a trusted retry. Most track only the brief (plus linked
 # dependencies), never default-branch HEAD, so unrelated merges cannot churn
@@ -557,8 +560,8 @@ terminal_blocker_fetch_trusted_comments() {
 	local raw=""
 	[[ "$self_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || self_login=""
 	raw=$(terminal_blocker_fetch_comments "$repo_slug" "$issue_number") || return 1
-	printf '%s' "$raw" | jq -c --arg self "$self_login" '
-		def trusted: . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+	printf '%s' "$raw" | jq -c --arg self "$self_login" --argjson trusted_set "$_TBC_TRUSTED_ASSOCIATIONS" '
+		def trusted: . as $a | $trusted_set | index($a) != null;
 		[(if type == "array" and ((.[0]? | type) == "array") then .[] else . end)[]
 		| {id: .id, author: (.user.login // ""), body: (.body // ""), created_at: .created_at,
 		   author_association: (.author_association // "")}
@@ -805,9 +808,8 @@ terminal_blocker_permission_request_evidenced() {
 	[[ "$labelled" == false ]] || return 0
 	self_login=$(_terminal_blocker_self_login)
 	request=$(jq -c --arg marker "$_TBC_PERMISSION_REQUEST_MARKER" --arg self "$self_login" \
-		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		[.[] | select(((.author_association // "") as $a | ($authoritative + ["COLLABORATOR"]) | index($a) != null)
-			or ($self != "" and (.author // .user.login // "") == $self))
+		--argjson trusted "$_TBC_TRUSTED_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($trusted; $self))
 		| select(valid_time) | select((.body // "") | ltrimstr("\n") | startswith($marker))]
 		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
 	' <<<"$comments_json" 2>/dev/null) || return 0
@@ -991,6 +993,7 @@ terminal_blocker_permission_peer_preference_active() {
 	self_login=$(_terminal_blocker_self_login)
 	[[ -n "$self_login" ]] || return 1
 	[[ "$grace" =~ ^[0-9]{1,6}$ ]] || grace="$_TBC_PERMISSION_PEER_GRACE_DEFAULT"
+	grace=$((10#$grace))
 	[[ "$grace" -gt 0 ]] || return 1
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
 	evidence=$(_terminal_blocker_newest_permission_event "$comments_json") || return 1
@@ -998,9 +1001,11 @@ terminal_blocker_permission_peer_preference_active() {
 	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || return 1
 	_terminal_blocker_retry_after "$retry" "$evidence" && return 1
 	# The newest trusted re-arm receipt after this hold event starts the grace.
+	# A collaborator receipt counts, as in recovery's replay suppression
+	# (_tbr_project_rearm): it only defers.
 	receipt_at=$(jq -r --argjson event "$evidence" --arg marker "$_TBC_REARM_RECEIPT_MARKER" --arg self "$self_login" \
-		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
-		[.[] | select(hold_evidence($authoritative; $self)) | select((.body // "") | contains($marker))
+		--argjson trusted "$_TBC_TRUSTED_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($trusted; $self)) | select((.body // "") | contains($marker))
 		| select(retry_after($event)) | try (.created_at | fromdateiso8601 | floor) catch empty] | max // empty
 	' <<<"$comments_json" 2>/dev/null) || return 1
 	[[ "$receipt_at" =~ ^[0-9]+$ ]] || return 1
