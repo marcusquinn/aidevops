@@ -16,6 +16,14 @@ oauth-pool-helper.sh remote-sync enable|disable --host ...
 required). The remote host needs aidevops deployed (`~/.aidevops/agents/scripts/oauth-pool-helper.sh`;
 override with `--remote-helper`).
 
+`--org <orgId-prefix|org name>` selects one seat when the email holds several
+(e.g. Claude Team + Personal, GH#38959). Without it, a multi-seat email is
+refused (`ambiguous-seat`, exit 2) rather than syncing the wrong seat. The org
+is passed to the remote and added to the scheduler slug only when it is set, so
+existing single-seat installs keep their units and work with older remote
+helpers. An org-tagged entry merges into its exact seat, or upgrades the
+email's single legacy seat that has no org.
+
 ## Rotation hazard (why not rsync)
 
 - Refresh tokens rotate: `pool_ops_refresh.py` stores the new `refresh_token`,

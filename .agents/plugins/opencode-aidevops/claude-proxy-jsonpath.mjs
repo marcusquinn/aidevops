@@ -94,7 +94,7 @@ async function runClaudeJsonWithAccount(body, directory, account, abortSignal) {
   // Check for rate limit in JSON response
   const rateLimitResult = detectRateLimitJson(parsed);
   if (rateLimitResult !== undefined) {
-    markAccountRateLimited(account.email, rateLimitResult);
+    markAccountRateLimited(account, rateLimitResult);
     return { rateLimited: true };
   }
 
@@ -124,12 +124,12 @@ export async function runClaudeJson(body, directory, abortSignal) {
 
   for (const account of accountsWithFallback) {
     if (abortSignal && abortSignal.aborted) throw new Error("Request aborted by client");
-    console.error(`[aidevops] Claude proxy: trying account ${account.email} (json mode)`);
+    console.error(`[aidevops] Claude proxy: trying account ${account.label} (json mode)`);
     const result = await runClaudeJsonWithAccount(body, directory, account, abortSignal);
     if (!result.rateLimited) {
       return result;
     }
-    console.error(`[aidevops] Claude proxy: account ${account.email} rate-limited, trying next...`);
+    console.error(`[aidevops] Claude proxy: account ${account.label} rate-limited, trying next...`);
   }
 
   throw new Error("All Anthropic OAuth pool accounts and native CLI auth are rate-limited");

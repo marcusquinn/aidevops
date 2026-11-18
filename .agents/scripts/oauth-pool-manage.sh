@@ -42,6 +42,86 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Seat selection (GH#38959): one email can hold several seats, e.g. a Claude
+# Team and a Personal seat. Actions take an optional trailing
+# `--org <orgId-prefix|org name>` and refuse when the email is ambiguous.
+# ---------------------------------------------------------------------------
+
+# Parse trailing seat-selector args; prints the selector (empty when absent).
+# Usage: org=$(_pool_org_from_args "$@") || return 1
+_pool_org_from_args() {
+	local org=""
+	local seen="false"
+	local want_value="false"
+	local arg
+	for arg in "$@"; do
+		if [[ "$want_value" == "true" ]]; then
+			org="$arg"
+			want_value="false"
+			continue
+		fi
+		case "$arg" in
+		--org)
+			seen="true"
+			want_value="true"
+			;;
+		--org=*)
+			seen="true"
+			org="${arg#--org=}"
+			;;
+		*)
+			print_error "Unexpected argument: ${arg}"
+			return 1
+			;;
+		esac
+	done
+	if [[ "$seen" == "true" && -z "$org" ]]; then
+		print_error "--org requires a value (orgId prefix or org name)"
+		return 1
+	fi
+	printf '%s' "$org"
+	return 0
+}
+
+# Report a seat-selection error from pool_ops output (ERROR:ambiguous lists
+# candidate seat labels on following lines). Returns 0 when it reported one.
+_pool_report_seat_error() {
+	local output="$1"
+	local provider="$2"
+	local email="$3"
+	local org="$4"
+	case "$output" in
+	ERROR:ambiguous*)
+		print_error "${email} has several ${provider} seats; choose one with --org <orgId-prefix|org name>:"
+		printf '%s\n' "$output" | sed '1d' >&2
+		return 0
+		;;
+	ERROR:not_found*)
+		if [[ -n "$org" ]]; then
+			print_error "No ${provider} seat for ${email} matches --org ${org}"
+		else
+			print_error "Account ${email} not found in ${provider} pool"
+		fi
+		print_info "Run 'oauth-pool-helper.sh list ${provider}' to see existing accounts"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# Display name for a selected seat in success messages.
+_pool_seat_display() {
+	local email="$1"
+	local org="$2"
+	if [[ -n "$org" ]]; then
+		printf '%s (org: %s)' "$email" "$org"
+	else
+		printf '%s' "$email"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Check accounts — helpers
 # ---------------------------------------------------------------------------
 
@@ -227,22 +307,30 @@ cmd_remove() {
 	local email="${2:-}"
 
 	if [[ -z "$provider" || -z "$email" ]]; then
-		print_error "Usage: oauth-pool-helper.sh remove <provider> <email>"
+		print_error "Usage: oauth-pool-helper.sh remove <provider> <email> [--org <orgId-prefix|org name>]"
 		return 1
 	fi
+	shift 2
+	local org
+	org=$(_pool_org_from_args "$@") || return 1
 
 	local pool
 	pool=$(load_pool)
 
-	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" \
-		python3 "$POOL_OPS" remove-account) || {
-		print_error "Account ${email} not found in ${provider} pool"
+	local new_pool rc=0
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" ORG="$org" \
+		python3 "$POOL_OPS" remove-account) || rc=$?
+	if [[ "$rc" -eq 2 ]]; then
+		_pool_report_seat_error "$new_pool" "$provider" "$email" "$org"
 		return 1
-	}
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		_pool_report_seat_error "ERROR:not_found" "$provider" "$email" "$org"
+		return 1
+	fi
 
 	save_pool "$new_pool"
-	print_success "Removed ${email} from ${provider} pool"
+	print_success "Removed $(_pool_seat_display "$email" "$org") from ${provider} pool"
 	return 0
 }
 
@@ -572,11 +660,14 @@ cmd_set_priority() {
 	local priority="${3:-}"
 
 	if [[ -z "$provider" || -z "$email" || -z "$priority" ]]; then
-		print_error "Usage: oauth-pool-helper.sh set-priority <provider> <email> <N>"
+		print_error "Usage: oauth-pool-helper.sh set-priority <provider> <email> <N> [--org <orgId-prefix|org name>]"
 		print_info "  N is an integer; higher values are preferred during rotation."
 		print_info "  Example: oauth-pool-helper.sh set-priority anthropic work@example.com 10"
 		return 1
 	fi
+	shift 3
+	local org
+	org=$(_pool_org_from_args "$@") || return 1
 
 	case "$provider" in
 	anthropic | openai | cursor | google) ;;
@@ -595,22 +686,24 @@ cmd_set_priority() {
 	pool=$(load_pool)
 
 	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" \
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" ORG="$org" \
 		python3 "$POOL_OPS" set-priority 2>/dev/null)
 
-	case "$new_pool" in
-	ERROR:not_found)
-		print_error "Account ${email} not found in ${provider} pool"
-		print_info "Run 'oauth-pool-helper.sh list ${provider}' to see existing accounts"
+	if _pool_report_seat_error "$new_pool" "$provider" "$email" "$org"; then
 		return 1
-		;;
-	esac
+	fi
+	if [[ -z "$new_pool" ]]; then
+		print_error "set-priority failed; pool left unchanged"
+		return 1
+	fi
 
 	save_pool "$new_pool"
+	local seat
+	seat=$(_pool_seat_display "$email" "$org")
 	if [[ "$priority" == "0" ]]; then
-		print_success "Cleared priority for ${email} in ${provider} pool (defaults to 0)"
+		print_success "Cleared priority for ${seat} in ${provider} pool (defaults to 0)"
 	else
-		print_success "Set priority ${priority} for ${email} in ${provider} pool"
+		print_success "Set priority ${priority} for ${seat} in ${provider} pool"
 	fi
 	print_info "Higher priority accounts are preferred during rotation."
 	return 0
@@ -748,6 +841,11 @@ cmd_status() {
 cmd_assign_pending() {
 	local provider="${1:-anthropic}"
 	local email="${2:-}"
+	local org=""
+	if [[ $# -gt 2 ]]; then
+		shift 2
+		org=$(_pool_org_from_args "$@") || return 1
+	fi
 
 	case "$provider" in
 	anthropic | openai | cursor | google) ;;
@@ -780,12 +878,12 @@ cmd_assign_pending() {
 		print_info "Existing accounts to assign to:"
 		printf '%s' "$pool" | PROVIDER="$provider" python3 "$POOL_OPS" list-pending 2>/dev/null
 		echo ""
-		echo "Usage: aidevops model-accounts-pool assign-pending ${provider} <email>"
+		echo "Usage: aidevops model-accounts-pool assign-pending ${provider} <email> [--org <orgId-prefix|org name>]"
 		return 0
 	fi
 
 	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" \
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" ORG="$org" \
 		python3 "$POOL_OPS" assign-pending 2>/dev/null)
 
 	case "$new_pool" in
@@ -793,15 +891,17 @@ cmd_assign_pending() {
 		print_error "No pending token for ${provider}"
 		return 1
 		;;
-	ERROR:not_found)
-		print_error "Account ${email} not found in ${provider} pool"
-		print_info "Run 'aidevops model-accounts-pool list' to see existing accounts"
-		return 1
-		;;
 	esac
+	if _pool_report_seat_error "$new_pool" "$provider" "$email" "$org"; then
+		return 1
+	fi
+	if [[ -z "$new_pool" ]]; then
+		print_error "assign-pending failed; pool left unchanged"
+		return 1
+	fi
 
 	save_pool "$new_pool"
-	print_success "Assigned pending token to ${email} in ${provider} pool — account is now active."
+	print_success "Assigned pending token to $(_pool_seat_display "$email" "$org") in ${provider} pool — account is now active."
 	print_info "Restart OpenCode to pick up the new credentials."
 	return 0
 }
@@ -835,10 +935,11 @@ cmd_import() {
 	}
 
 	# Parse auth status (use env vars to avoid secrets on argv)
-	local logged_in email sub_type
+	local logged_in email sub_type cli_org_id
 	logged_in=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('loggedIn', False))" 2>/dev/null)
 	email=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('email', ''))" 2>/dev/null)
 	sub_type=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subscriptionType', ''))" 2>/dev/null)
+	cli_org_id=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('orgId') or '')" 2>/dev/null)
 
 	if [[ "$logged_in" != "True" ]]; then
 		print_error "Claude CLI is not logged in"
@@ -867,11 +968,12 @@ cmd_import() {
 	local pool
 	pool=$(load_pool)
 	local already_exists
-	already_exists=$(printf '%s' "$pool" | EMAIL="$email" python3 "$POOL_OPS" import-check 2>/dev/null)
+	already_exists=$(printf '%s' "$pool" | EMAIL="$email" ORG_ID="$cli_org_id" python3 "$POOL_OPS" import-check 2>/dev/null)
 
 	if [[ "$already_exists" == "yes" ]]; then
 		print_info "Account ${email} already exists in the Anthropic pool"
 		print_info "Use 'oauth-pool-helper.sh check anthropic' to verify token health"
+		print_info "To add another organization's seat for this email (e.g. Team + Personal): oauth-pool-helper.sh add anthropic"
 		return 0
 	fi
 
