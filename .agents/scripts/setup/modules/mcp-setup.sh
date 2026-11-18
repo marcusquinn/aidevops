@@ -14,6 +14,9 @@ shopt -s inherit_errexit 2>/dev/null || true
 # shellcheck source=../_opencode_config_paths.sh
 source "${BASH_SOURCE[0]%/*}/../_opencode_config_paths.sh"
 
+# GH#38922: prefer the runtime-profile helper from this source tree.
+_SETUP_MCP_OPENCODE_PROFILE_HELPER="${BASH_SOURCE[0]%/*}/../../opencode-runtime-profile.py"
+
 _SETUP_GOOGLE_ANALYTICS_MCP_KEY="google-analytics-mcp"
 _SETUP_GOOGLE_ANALYTICS_MCP_LABEL="Google Analytics MCP"
 
@@ -1003,25 +1006,17 @@ setup_opencode_runtime_plugins() {
 		selected_profile=$(aidevops_opencode_profile_id)
 	fi
 	if [[ -z "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
-		local binary="" major="" helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
-		binary=$(command -v opencode 2>/dev/null || true)
-		if [[ -n "$binary" && -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
-			major=$(python3 -c 'import re, subprocess, sys
-try:
-    out = subprocess.check_output([sys.argv[1], "--version"], stderr=subprocess.DEVNULL, timeout=5, text=True)
-    match = re.search(r"\b(\d+)\.\d+\.\d+", out)
-    print(int(match.group(1)) if match else "")
-except (OSError, subprocess.SubprocessError):
-    pass' "$binary")
+		local installed="" helper="${_SETUP_MCP_OPENCODE_PROFILE_HELPER:-}"
+		[[ -f "$helper" ]] || helper="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}/scripts/opencode-runtime-profile.py"
+		if [[ -f "$helper" ]] && command -v python3 >/dev/null 2>&1; then
+			# GH#38922: the shared detector accepts `opencode v2.3.0` and bare `1.19.6`.
+			installed=$(python3 "$helper" installed 2>/dev/null || true)
 		fi
-		if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 2 )); then
-			selected_profile=$(python3 "$helper" detect 2.0.0 2>/dev/null || printf 'v1')
-			if [[ "$selected_profile" == "v2" ]]; then
-				AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins || return $?
-				setup_opencode_v2_preview_plugins
-				return $?
-			fi
-		elif [[ -z "$major" ]]; then
+		if [[ "$installed" == "v2" ]]; then
+			AIDEVOPS_OPENCODE_GLOBAL_V2=1 AIDEVOPS_OPENCODE_PROFILE=v2 setup_opencode_plugins || return $?
+			setup_opencode_v2_preview_plugins
+			return $?
+		elif [[ -z "$installed" ]]; then
 			print_info "OpenCode version unavailable or unparseable; using V1 plugin contract"
 			AIDEVOPS_OPENCODE_SKIP_VERSION_GUIDANCE=1 AIDEVOPS_OPENCODE_PROFILE=v1 setup_opencode_plugins || return $?
 			setup_opencode_v2_preview_plugins
