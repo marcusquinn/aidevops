@@ -36,19 +36,24 @@ def archive_policies(manifest):
     return capture_policy, policy
 
 
-def git_index_state(path, head=None):
-    root = Path(path).resolve(strict=True)
-    # One spawn for admin, common and lock paths; --absolute-git-dir is absolute before the format switch.
+def index_dirs(root):
+    """Resolve (admin, common, index.lock) in one spawn for one capture pass."""
+    # --absolute-git-dir is absolute before the --path-format switch.
     admin_raw, common_raw, lock = (os.fsdecode(line) for line in git(
         root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute', '--git-common-dir',
         '--git-path', 'index.lock').rstrip(b'\n').split(b'\n'))
+    return Path(admin_raw), Path(common_raw), lock
+
+
+def git_index_state(path, head=None, dirs=None):
+    root = Path(path).resolve(strict=True)
+    # A caller may pass directories it resolved moments earlier in the same pass.
+    admin, common, lock = dirs if dirs is not None else index_dirs(root)
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
     from worktree_archive_state import merge_pending, merge_state
-    # Share reads only within this capture; subsequent snapshots start fresh.
-    admin, common = Path(admin_raw), Path(common_raw)
     if merge_pending(root, admin=admin):
-        state = merge_state(root)
+        state = merge_state(root, admin, common)
         return {'head': state['head'], 'merge': state}
     index = git(root, "ls-files", "--stage", "-z")
     entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]

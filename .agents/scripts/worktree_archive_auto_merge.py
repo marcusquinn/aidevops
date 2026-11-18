@@ -14,8 +14,11 @@ from worktree_archive_git import (
 )
 
 
-def auto_merge(root):
-    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
+def auto_merge(root, admin=None):
+    # A caller that resolved the admin directory in the same pass may share it.
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    path = Path(admin) / "AUTO_MERGE"
     if not os.path.lexists(path):
         return None
     validate_admin_entry(path, "AUTO_MERGE")

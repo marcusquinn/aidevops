@@ -10,7 +10,7 @@ from pathlib import Path
 import stat
 
 from worktree_archive_administration import administration
-from worktree_archive_git import capture_bundle, git
+from worktree_archive_git import capture_bundle, git, git_dirs
 from worktree_archive_merge_index import merge_entries, merge_path, validate_merge_index, validate_merge_working
 from worktree_archive_merge_objects import MERGE_FILES, merge_oid, merge_roots, validate_merge_metadata, verify_merge_objects
 
@@ -32,8 +32,8 @@ def validate_merge(state):
     return state
 
 
-def supported_merge_administration(root):
-    state = administration(root, allow_merge=True)
+def supported_merge_administration(root, admin=None, common=None):
+    state = administration(root, allow_merge=True, admin=admin, common=common)
     if state['refs'] or 'SQUASH_MSG' in state['files'] or 'config.worktree' in state['files']:
         raise ValueError('merge:unsupported_private_state')
     if git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false':
@@ -89,9 +89,9 @@ def merge_working_file(root, path):
         os.close(parent)
 
 
-def merge_state(root):
+def merge_state(root, admin=None, common=None):
     """Capture a supported merge structurally; never copy a raw index or reflog."""
-    state = supported_merge_administration(root)
+    state = supported_merge_administration(root, admin, common)
     supported_merge_index(root)
     entries = merge_entries(root, '--stage')
     undo = merge_entries(root, '--resolve-undo')
@@ -117,9 +117,10 @@ def load_merge(archive, manifest):
 
 
 def capture_merge(root, archive):
-    if not merge_pending(root):
+    admin, common = git_dirs(root)  # One spawn shared by the pending check and the capture.
+    if not merge_pending(root, admin=admin):
         return
-    state = merge_state(root)
+    state = merge_state(root, admin, common)
     # Full closure is intentional: MERGE_HEAD/ORIG_HEAD need not be ancestors of
     # HEAD or of the shared base. This bundle is independent of the source.
     capture_bundle(root, archive, merge_roots(state), '')
