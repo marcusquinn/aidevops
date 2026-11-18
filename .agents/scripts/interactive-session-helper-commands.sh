@@ -53,7 +53,7 @@ _isc_state_permission_gate() {
 		_isc_warn "$action: #$issue in $slug not applied — collaborator permission lookup failed (${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown}); retry the $action"
 		return 1
 	fi
-	_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+	_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator (http=${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unknown})"
 	[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
 	return 1
 }
@@ -432,9 +432,10 @@ _isc_resolve_claim_user() {
 		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
 		"" \
 		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims") || resolve_rc=$?
-	# GH#38798: an implementing claim re-verifies a confirmed non-write verdict
-	# once with a fresh request before accepting it.
-	if [[ "$resolve_rc" -eq 1 && "$implementing" -eq 1 ]]; then
+	# GH#38798/GH#38946: every claim re-verifies a confirmed non-write verdict
+	# once with a fresh request before accepting it, so a stale or
+	# cross-credential memo entry cannot skip a repository admin.
+	if [[ "$resolve_rc" -eq 1 ]]; then
 		local recheck_user=""
 		recheck_user=$(_isc_current_user)
 		if _isc_fresh_permission_confirms_write "$slug" "$recheck_user"; then
@@ -444,7 +445,7 @@ _isc_resolve_claim_user() {
 		fi
 		# An auto-dispatch label implies we are maintainers on this repo, so an
 		# unapplied implementing claim must not look like a benign external skip.
-		if _isc_has_label "$issue" "$slug" "auto-dispatch"; then
+		if [[ "$implementing" -eq 1 ]] && _isc_has_label "$issue" "$slug" "auto-dispatch"; then
 			_isc_warn "claim NOT applied for #$issue in $slug; a worker may pick it up. Re-run: interactive-session-helper.sh claim $issue $slug --implementing"
 			return 75
 		fi

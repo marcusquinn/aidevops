@@ -1442,6 +1442,20 @@ else
 	print_result "GH#38798: none then admin re-check applies implementing claim" 1 "(rc=$recheck_rc, out=${recheck_out:0:300})"
 fi
 
+# GH#38946: the same fresh re-check applies to a plain (non --implementing)
+# claim, so a stale non-write verdict cannot skip a repository admin.
+printf 'none\nadmin\n' >"$seq_file"
+: >"$STUB_LOG"
+plain_recheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61006 recheck/plain --worktree /tmp/recheck-wt 2>&1)
+plain_recheck_rc=$?
+if [[ "$plain_recheck_rc" -eq 0 && "$plain_recheck_out" == *"fresh permission re-check confirmed"* ]] &&
+	grep -q 'issue edit 61006\|issue comment 61006' "$STUB_LOG"; then
+	print_result "GH#38946: none then admin re-check applies plain claim" 0
+else
+	print_result "GH#38946: none then admin re-check applies plain claim" 1 "(rc=$plain_recheck_rc, out=${plain_recheck_out:0:300})"
+fi
+
 printf 'none\nnone\n' >"$seq_file"
 : >"$STUB_LOG"
 norecheck_out=$(STUB_PERMISSION_SEQ_FILE="$seq_file" STUB_ISSUE_HAS_AUTO_DISPATCH=1 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
