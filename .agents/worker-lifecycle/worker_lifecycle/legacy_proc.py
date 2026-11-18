@@ -9,9 +9,12 @@ import os
 from pathlib import Path
 import platform
 
+from .legacy_proc_clock import is_root_sshd_session, require_older_than_tree, status_fields
+from .legacy_proc_denied import inspect_denied_references
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
-from .protected_proc import ProcessCensusUnavailable, require_protected_references
+from .protected_proc import OPT_IN, require_protected_references
+from .protected_proc import ProcessCensusUnavailable as ProcessCensusUnavailable
 
 
 NON_HOLDER_DAEMONS = frozenset({
@@ -95,26 +98,17 @@ def require_idle_reference(path, reference):
 def require_predating_daemon(path, task, proc):
     """Only exempt known non-holders proven older than this worktree's .git."""
     try:
-        status = (task / "status").read_text(encoding="utf-8")
-        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        fields = status_fields(task / "status")
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
-        # comm may contain spaces and parentheses; field 3 follows the last ')'.
-        stat = (task / "stat").read_text(encoding="utf-8")
-        ticks = int(stat.rsplit(")", 1)[1].split()[19])
-        boot = next(line.split()[1] for line in (proc / "stat").read_text(
-            encoding="utf-8").splitlines() if line.startswith("btime "))
-        boot_time = int(boot)
-        frequency = os.sysconf("SC_CLK_TCK")
-        if ticks < 0 or boot_time <= 0 or frequency <= 0:
-            raise ValueError("invalid-process-clock")
-        # btime is second-granularity and starttime is tick-granularity. Use an
-        # upper bound so rounding cannot exempt a task created after the tree.
-        latest_start = boot_time + 1 + (ticks + 1) / frequency
-        if latest_start >= (path / ".git").stat().st_ctime:
-            raise ValueError("daemon-not-older")
+        root_session = is_root_sshd_session(fields, task, proc)
+        if not root_session:
+            require_older_than_tree(path, task, proc)
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
+    # A root parent may pass a worktree log fd into the session.
+    if root_session and os.environ.get(OPT_IN) == "1":
+        require_protected_references(path, task, proc)
     counts = _observations.get()
     if counts is not None:
         counts["skipped_nondumpable"] += 1
@@ -141,14 +135,5 @@ def inspect_proc_references(path, task, proc):
             except _VANISHED:
                 continue  # An independently closed descriptor grants no authority.
     except PermissionError:
-        try:
-            require_predating_daemon(path, task, proc)
-        except ValueError as error:
-            cause = str(error.__cause__)
-            if cause not in {"unknown-daemon", "daemon-not-older", "invalid-process-clock"}:
-                cause = "daemon-evidence-unavailable"
-            try:
-                require_protected_references(path, task, proc)
-            except ProcessCensusUnavailable as unavailable:
-                unavailable.observation.update({"stage": stage, "daemon_cause": cause})
-                raise unavailable from error
+        inspect_denied_references(path, task, proc, stage,
+                                  (require_predating_daemon, require_protected_references))
