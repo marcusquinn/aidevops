@@ -65,5 +65,5 @@ confirm the item moved to `answered`.
 
 ## Verification references
 
-- `.agents/reference/worker-discipline.md` "Terminal-blocker recovery"
+- `.agents/reference/worker-integration-recovery.md` "Terminal-blocker recovery"
 - `.agents/scripts/terminal-blocker-circuit.sh` (retry directive, maintainer input)
