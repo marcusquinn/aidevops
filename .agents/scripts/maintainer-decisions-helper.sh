@@ -68,6 +68,21 @@ def text: .body // "";
 def automation: text | test("aidevops:origin:worker|<!-- ops:start|aidevops:terminal-blocker-|<!-- dispatch-|aidevops:ops |aidevops:dispatch |(?m)^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) ");
 def first_capture($re; $name): [text | capture($re)? | .[$name]] | first // "";
 def clean: gsub("[[:cntrl:]]"; " ") | gsub("\\s+"; " ") | ltrimstr(" ") | .[0:300];
+def visible_lines:
+	text | split("\n") | reduce .[] as $line ({fence: null, lines: []};
+		($line | capture("^\\s*(?<marker>`{3,}|~{3,})")? // null) as $f
+		| if $f != null and .fence == null then .fence = $f.marker
+		  elif $f != null and .fence != null and ($f.marker[0:1] == .fence[0:1]) and ($f.marker | length) >= (.fence | length) then .fence = null
+		  elif .fence == null then .lines += [$line] else . end) | .lines;
+def supervisor_ask:
+	visible_lines as $lines
+	| [range(0; $lines | length) as $i
+		| ($lines[$i] | capture("(?i)^\\s*(?:[-*]\\s+)?\\*\\*(?:Still needed|Smallest (?:human )?input(?: needed)?|Missing input)(?: \\((?:owner: [^)]*|reply with one)\\))?[.:]?\\*\\*(?: \\(owner: [^)]*\\))?[,:.]?\\s*(?<q>.*)$")? // null) as $m
+		| select($m != null and ($lines[$i] | test("(?i)owner: [a-z]+|Smallest input \\(reply with one\\)")))
+		| ($m.q | clean) as $q
+		| if $q == "" or ($q | test("(?i)^(either of|pick one|choose one|reply with one)[.:]?$")) then
+			([$lines[$i+1:$i+4][] | select(test("^\\s*(?:[-*]\\s+|[0-9]+[.)]\\s+)")) | sub("^\\s*(?:[-*]\\s+|[0-9]+[.)]\\s+)"; "")] | join("; ") | clean)
+		  else $q end] | first // "";
 def days($t): if $t == null or $t == "" then null
 	else ((($now | tonumber) - ($t | fromdateiso8601)) / 86400 | floor) end;
 [.labels[]?.name] as $labels
@@ -76,9 +91,9 @@ def days($t): if $t == null or $t == "" then null
 	t: .createdAt, by: .author.login, src: "worker",
 	reason: first_capture("Terminal blocker: reason=(?<r>[a-z_]+)"; "r"),
 	q: (first_capture("(?m)^(?:Input requested|Trigger awaited): (?<q>[^\\n]+)$"; "q") | clean)}] as $holds
-| [$c[] | select(text | test("\\*\\*Still needed \\(owner: [a-z]+\\)\\*\\*")) | {
+| [$c[] | (supervisor_ask) as $ask | select($ask != "") | {
 	t: .createdAt, by: .author.login, src: "supervisor", reason: "",
-	q: (first_capture("\\*\\*Still needed \\(owner: [a-z]+\\)\\*\\*:? *(?<q>[^\\n]+)"; "q") | clean)}] as $asks
+	q: $ask, recommendation: ([visible_lines[] | capture("(?i)^\\s*(?:[-*]\\s+)?\\*\\*Recommended path:[*][*]\\s*(?<r>.*)$")? | .r | clean] | first // null)}] as $asks
 | ([$c[] | select(text | test("<!-- aidevops:recovery-policy:[a-z_]+:")) | {
 	t: .createdAt, action: first_capture("<!-- aidevops:recovery-policy:(?<a>[a-z_]+):"; "a")}] | max_by(.t)) as $park
 | ([$c[] | select(authoritative) | select(
@@ -104,6 +119,7 @@ def days($t): if $t == null or $t == "" then null
 	repo: $repo, number: .number, url: .url, title: (.title | clean), kind: $kind,
 	reason: ($anchor.reason // ""),
 	question: (($question.q // "") | if . == "" then null else . end),
+	recommendation: ($question.recommendation // null),
 	asked_at: ($anchor.t // null), asked_by: ($anchor.by // null), asked_src: ($anchor.src // null),
 	answered_at: ($answer.t // null), answered_by: ($answer.by // null),
 	replied_at: ($fresh_reply.t // null), reply_excerpt: ($fresh_reply.excerpt // null),
