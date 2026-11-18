@@ -52,6 +52,9 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 MD_REPOS_JSON="${MAINTAINER_DECISIONS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 MD_HOLD_LABELS="needs-maintainer-input,needs-maintainer-permissions,needs-credentials"
+# Holds a supervisor may state with a canonical public ask; searched too, but
+# kept only when a trusted comment carries that ask (see MD_CLASSIFY_JQ).
+MD_ASK_LABELS='hold-for-review "status:blocked"'
 MD_SEARCH_PAGES=10
 MD_FORMAT="tsv"
 MD_REPO=""
@@ -68,6 +71,25 @@ def text: .body // "";
 def automation: text | test("aidevops:origin:worker|<!-- ops:start|aidevops:terminal-blocker-|<!-- dispatch-|aidevops:ops |aidevops:dispatch |(?m)^(DISPATCH_CLAIM|DISPATCH_LEASE|CLAIM_RELEASED) ");
 def first_capture($re; $name): [text | capture($re)? | .[$name]] | first // "";
 def clean: gsub("[[:cntrl:]]"; " ") | gsub("\\s+"; " ") | ltrimstr(" ") | .[0:300];
+def visible_lines:
+	text | split("\n") | reduce .[] as $line ({fence: null, lines: []};
+		($line | capture("^\\s*(?<marker>`{3,}|~{3,})(?<info>.*)$")? // null) as $f
+		| (($f != null) and (($f.marker[0:1] == "~") or (($f.info | contains("`")) | not))) as $opens
+		| (($f != null) and ($f.info | test("^[ \\t]*$"))) as $blank
+		| if .fence == null then (if $opens then .fence = $f.marker else .lines += [$line] end)
+		  elif $f != null and $blank and ($f.marker[0:1] == .fence[0:1]) and ($f.marker | length) >= (.fence | length) then .fence = null
+		  else . end) | .lines;
+# Every recognised request anchor in a comment; "" when it carries no question.
+def supervisor_asks:
+	visible_lines as $lines
+	| [range(0; $lines | length) as $i
+		| ([($lines[$i] | capture("(?i)^\\s*(?:[-*]\\s+)?\\*\\*(?:Still needed|Smallest (?:human )?input(?: needed)?|Missing input)(?: \\((?:owner: [^)]*|reply with one)\\))?[.:]?\\*\\*(?: \\(owner: [^)]*\\))?[,:.]?\\s*(?<q>.*)$")?),
+			($lines[$i] | capture("(?i)\\*\\*Still needed \\(owner: [a-z]+\\)\\*\\*:?\\s*(?<q>.*)$")?)] | first // null) as $m
+		| select($m != null and ($lines[$i] | test("(?i)owner: [a-z]+|Smallest input \\(reply with one\\)")))
+		| ($m.q | clean) as $q
+		| if $q == "" or ($q | test("(?i)^(either of|pick one|choose one|reply with one)[.:]?$")) then
+			([$lines[$i+1:$i+4][] | select(test("^\\s*(?:[-*]\\s+|[0-9]+[.)]\\s+)")) | sub("^\\s*(?:[-*]\\s+|[0-9]+[.)]\\s+)"; "")] | join("; ") | clean)
+		  else $q end];
 def days($t): if $t == null or $t == "" then null
 	else ((($now | tonumber) - ($t | fromdateiso8601)) / 86400 | floor) end;
 [.labels[]?.name] as $labels
@@ -76,9 +98,9 @@ def days($t): if $t == null or $t == "" then null
 	t: .createdAt, by: .author.login, src: "worker",
 	reason: first_capture("Terminal blocker: reason=(?<r>[a-z_]+)"; "r"),
 	q: (first_capture("(?m)^(?:Input requested|Trigger awaited): (?<q>[^\\n]+)$"; "q") | clean)}] as $holds
-| [$c[] | select(text | test("\\*\\*Still needed \\(owner: [a-z]+\\)\\*\\*")) | {
+| [$c[] | (supervisor_asks) as $cands | select($cands | length > 0) | {
 	t: .createdAt, by: .author.login, src: "supervisor", reason: "",
-	q: (first_capture("\\*\\*Still needed \\(owner: [a-z]+\\)\\*\\*:? *(?<q>[^\\n]+)"; "q") | clean)}] as $asks
+	q: ([$cands[] | select(. != "")] | first // ""), recommendation: ([visible_lines[] | capture("(?i)^\\s*(?:[-*]\\s+)?\\*\\*Recommended path:[*][*]\\s*(?<r>.*)$")? | .r | clean] | first // null)}] as $asks
 | ([$c[] | select(text | test("<!-- aidevops:recovery-policy:[a-z_]+:")) | {
 	t: .createdAt, action: first_capture("<!-- aidevops:recovery-policy:(?<a>[a-z_]+):"; "a")}] | max_by(.t)) as $park
 | ([$c[] | select(authoritative) | select(
@@ -100,16 +122,19 @@ def days($t): if $t == null or $t == "" then null
 	elif $fresh_reply != null then "replied"
 	elif $question != null then ($label_kind // "decide")
 	else ($label_kind // "no-question") end) as $kind
+| [$labels[] | select(IN("needs-maintainer-input", "needs-maintainer-permissions", "needs-credentials", "hold-for-review", "status:blocked"))] as $hold_labels
+| select(($hold_labels | any(startswith("needs-"))) or ($asks | length) > 0)
 | {
 	repo: $repo, number: .number, url: .url, title: (.title | clean), kind: $kind,
 	reason: ($anchor.reason // ""),
 	question: (($question.q // "") | if . == "" then null else . end),
+	recommendation: ($question.recommendation // null),
 	asked_at: ($anchor.t // null), asked_by: ($anchor.by // null), asked_src: ($anchor.src // null),
 	answered_at: ($answer.t // null), answered_by: ($answer.by // null),
 	replied_at: ($fresh_reply.t // null), reply_excerpt: ($fresh_reply.excerpt // null),
 	park_action: ($park.action // null),
 	age_days: days($anchor.t // $park.t // .createdAt),
-	hold_labels: [$labels[] | select(IN("needs-maintainer-input", "needs-maintainer-permissions", "needs-credentials", "hold-for-review", "status:blocked"))]
+	hold_labels: $hold_labels
 }
 '
 
@@ -136,7 +161,8 @@ _md_usage() {
 Usage: $(basename "$0") list [--repo owner/repo] [--format tsv|json|md] [--max N]
 
 Read-only cross-repo maintainer decision queue for managed pulse repos.
-Lists open issues labelled ${MD_HOLD_LABELS//,/, }.
+Lists open issues labelled ${MD_HOLD_LABELS//,/, }, plus hold-for-review and
+status:blocked issues only when a trusted comment carries a canonical ask.
 
 Options:
   --repo owner/repo   Limit to one repository
@@ -165,7 +191,22 @@ _md_managed_slugs() {
 _md_search_scope() {
 	local scope="$1"
 	local slugs_json="$2"
-	local query="is:open is:issue label:${MD_HOLD_LABELS} -label:parent-task ${scope}"
+	local label=""
+	local status=0
+	_md_search_query "is:open is:issue label:${MD_HOLD_LABELS} -label:parent-task ${scope}" "$slugs_json" || status=1
+	# One query per ask label: quoted label names cannot join a comma list safely.
+	for label in $MD_ASK_LABELS; do
+		_md_search_query "is:open is:issue label:${label} -label:parent-task ${scope}" "$slugs_json" || status=1
+	done
+	return "$status"
+}
+
+# Prints "owner/repo<TAB>number" for every page of one search query.
+# Args: full search query, managed slugs JSON array
+_md_search_query() {
+	local query="$1"
+	local slugs_json="$2"
+	local scope="$query"
 	local page=1
 	local page_json=""
 	local count=0
@@ -242,6 +283,7 @@ _md_render() {
 	md)
 		jq -r "${MD_ORDER_JQ}"' as $all
 			| def line: "\(.repo)#\(.number) (\(.age_days // "-")d\(if (.reason // "") != "" then ", " + .reason else "" end)): \(.question // .title)"
+				+ (if .recommendation != null then "\n   queue recommendation: \(.recommendation)" else "" end)
 				+ (if .reply_excerpt != null then "\n   reply: \(.reply_excerpt)" else "" end)
 				+ "\n   \(.url // "")";
 			"# Maintainer decision queue",
