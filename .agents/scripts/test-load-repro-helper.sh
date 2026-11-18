@@ -51,9 +51,12 @@ _trl_loadavg() {
 # Internal: run one command, log output, record exit code.
 _trl_run_one() {
 	local round_dir="$1"
-	local idx="$2"
-	shift 2
+	# Args: round_dir, command..., idx. xargs appends idx last so literal
+	# braces in the command are never substituted.
+	local idx="${!#}"
 	local rc=0
+	shift 1
+	set -- "${@:1:$(($# - 1))}"
 	"$@" >"${round_dir}/run-${idx}.log" 2>&1 || rc=$?
 	printf '%s\n' "$rc" >"${round_dir}/run-${idx}.rc"
 	return 0
@@ -77,15 +80,25 @@ _trl_headline() {
 
 _trl_summarize_failures() {
 	local base_dir="$1"
+	local runs="$2"
+	local rounds="$3"
 	local pairs="${base_dir}/failures.tsv"
-	local rc_file="" log_file="" rc=""
+	local rc_file="" log_file="" rc="" round=1 idx=1
 	: >"$pairs"
-	for rc_file in "$base_dir"/round-*/run-*.rc; do
-		[[ -f "$rc_file" ]] || continue
-		rc=$(cat "$rc_file" 2>/dev/null) || rc=1
-		[[ "$rc" == "0" ]] && continue
-		log_file="${rc_file%.rc}.log"
-		printf '%s\t%s\n' "$(_trl_headline "$log_file")" "$log_file" >>"$pairs"
+	while [[ "$round" -le "$rounds" ]]; do
+		idx=1
+		while [[ "$idx" -le "$runs" ]]; do
+			rc_file="${base_dir}/round-${round}/run-${idx}.rc"
+			log_file="${base_dir}/round-${round}/run-${idx}.log"
+			rc=1
+			[[ -f "$rc_file" ]] && { rc=$(cat "$rc_file" 2>/dev/null) || rc=1; }
+			if [[ "$rc" != "0" ]]; then
+				[[ -f "$log_file" ]] || : >"$log_file"
+				printf '%s\t%s\n' "$(_trl_headline "$log_file")" "$log_file" >>"$pairs"
+			fi
+			idx=$((idx + 1))
+		done
+		round=$((round + 1))
 	done
 	[[ -s "$pairs" ]] || return 0
 	printf '\nFailures grouped by first error headline:\n'
@@ -114,7 +127,7 @@ _trl_run_rounds() {
 		round_dir="${base_dir}/round-${round}"
 		mkdir -p "$round_dir" || return 1
 		load_before=$(_trl_loadavg)
-		seq 1 "$runs" | xargs -P "$concurrency" -I{} bash "$self" _run-one "$round_dir" {} "$@" || true
+		seq 1 "$runs" | xargs -n 1 -P "$concurrency" bash "$self" _run-one "$round_dir" "$@" || true
 		load_after=$(_trl_loadavg)
 		pass=0
 		fail=0
@@ -130,7 +143,7 @@ _trl_run_rounds() {
 			"$round" "$rounds" "$pass" "$runs" "$fail" "$load_before" "$load_after"
 		round=$((round + 1))
 	done
-	_trl_summarize_failures "$base_dir"
+	_trl_summarize_failures "$base_dir" "$runs" "$rounds"
 	if [[ "$total_fail" -gt 0 ]]; then
 		printf '\nResult: %s failing run(s) of %s\n' "$total_fail" "$((runs * rounds))"
 		return 1
@@ -170,6 +183,10 @@ _trl_cmd_run() {
 		_trl_usage >&2
 		return 2
 	fi
+	# Force base 10: leading zeros would otherwise be parsed as octal.
+	runs=$((10#$runs))
+	concurrency=$((10#$concurrency))
+	rounds=$((10#$rounds))
 	_trl_run_rounds "$runs" "$concurrency" "$rounds" "$@"
 	return $?
 }
