@@ -134,6 +134,17 @@ class LegacyProcContract(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "proc-observation-unavailable"):
                 self.census()
 
+    def test_predating_root_session_skips_protected_inspection(self):
+        self.write_parent("sshd", 0)
+        self.write_task(name="sshd-session", ticks="100")
+        (self.task / "status").write_text((self.task / "status").read_text() + "PPid:\t77\n")
+        with patch.dict(os.environ, {"AIDEVOPS_PROTECTED_PROC_INSPECTION": "1"}), \
+                patch.object(legacy_proc, "require_protected_references") as inspect, \
+                legacy_proc.collect_proc_observations() as counts:
+            self.census()
+        inspect.assert_not_called()
+        self.assertEqual(counts["skipped_nondumpable"], 1)
+
     def test_root_session_protected_inspection_runs_once(self):
         self.write_parent("sshd", 0)
         self.write_daemon("sshd-session")

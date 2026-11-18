@@ -323,10 +323,9 @@ _psh_find_merged_closer_for_closed_issue() {
 	[[ "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
 	[[ -n "$owner" && -n "$name" ]] || return 1
 
-	# `closedByPullRequestsReferences` is GraphQL-only. Keep the supersession
-	# trust gate on one fixed, response-metered request instead of opaque native
-	# issue/PR views. Reject truncated connections and mismatched repositories so
-	# an incomplete snapshot can never authorize closing a worker PR.
+	# A closing reference is not proof it caused the latest closure: an issue can
+	# be reopened and later closed manually. Only the latest closure event's
+	# actual merged PR authorizes destructive duplicate cleanup.
 	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub.
 	response=$(AIDEVOPS_GH_GRAPHQL_COST_FROM_RESPONSE=1 \
 		AIDEVOPS_GH_ROUTE_DECISION="pulse-supersession-closing-pr-exact-cost" \
@@ -336,9 +335,8 @@ _psh_find_merged_closer_for_closed_issue() {
 				nameWithOwner
 				issue(number: $number) {
 					state
-					closedByPullRequestsReferences(first: 100) {
-						nodes { number state mergedAt repository { nameWithOwner } }
-						pageInfo { hasNextPage }
+					timelineItems(last: 1, itemTypes: [CLOSED_EVENT, REOPENED_EVENT]) {
+						nodes { __typename ... on ClosedEvent { closer { __typename ... on PullRequest { number state mergedAt repository { nameWithOwner } } } } }
 					}
 				}
 			}
@@ -352,10 +350,13 @@ _psh_find_merged_closer_for_closed_issue() {
 		| select(($repository.nameWithOwner | ascii_downcase) == ($repo | ascii_downcase))
 		| $repository.issue as $issue
 		| select($issue != null and $issue.state == "CLOSED")
-		| $issue.closedByPullRequestsReferences
-		| select(.pageInfo.hasNextPage == false)
-		| [.nodes[]?
+		| $issue.timelineItems.nodes
+		| [.[]?
+			| select(.__typename == "ClosedEvent")
+			| .closer
 			| select(
+				.__typename == "PullRequest"
+				and
 				(.repository.nameWithOwner | ascii_downcase) == ($repo | ascii_downcase)
 				and (.number | tostring) != $current_pr
 				and .state == "MERGED"

@@ -234,7 +234,11 @@ _worker_lifecycle_report_refusal() {
 			| join(" ")' 2>/dev/null <<<"$result") || helper=""
 		printf '[worker-lifecycle] retirement-refused status=unavailable detail=unexpected-error error=%s%s%s rc=%s\n' "$reason" "${helper:+ $helper}" "${owner:+ $owner}" "$rc" >&2
 		if [[ "${WORKER_LIFECYCLE_EXPLAIN_REFUSAL:-0}" == 1 ]]; then
-			printf '[worker-lifecycle] next: unexpected registry failure with no named condition; inspect worktree-helper.sh registry list and worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
+			if [[ -n "$helper" ]]; then
+				printf '[worker-lifecycle] next: inspect the helper fields above for the failure.\n' >&2
+			else
+				printf '[worker-lifecycle] next: unexpected registry failure with no named condition; inspect worktree-helper.sh registry list and worker-lifecycle/CLEANUP.md "Registry-driven cleanup pass".\n' >&2
+			fi
 		fi
 		return 0
 	fi

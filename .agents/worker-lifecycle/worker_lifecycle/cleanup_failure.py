@@ -77,13 +77,13 @@ def command_failure(
     else:
         details["timeout_seconds"] = error.timeout
     command = error.cmd
-    if not isinstance(command, (list, tuple)) or len(command) < 3:
+    if not isinstance(command, (list, tuple)) or not command:
         return details
     git_sub = _git_subcommand(command)
     if git_sub:
         # GH#38997: name the failing Git subcommand; never its arguments or paths.
         details.update(operation=git_sub, command="git " + git_sub)
-    elif (not isinstance(command[1], str)
+    elif (len(command) < 3 or not isinstance(command[1], str)
             or Path(command[1]).name != "worktree-archive-helper.sh"
             or command[2] not in {"archive", "verify-local", "verify-local-recorded",
                                   "source-matches"}):

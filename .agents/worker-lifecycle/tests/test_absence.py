@@ -204,6 +204,13 @@ class AbsenceContract(unittest.TestCase):
         self.assertTrue((self.target / "work.txt").exists())
 
 class FailureDiagnostics(unittest.TestCase):
+    def test_two_element_git_failure_has_sanitized_diagnostics(self):
+        error = subprocess.CalledProcessError(1, ["git", "status"], stderr=b"fatal: Permission denied")
+        report = _failure_details(error)
+        self.assertEqual(report["operation"], "status")
+        self.assertEqual(report["command"], "git status")
+        self.assertEqual(report["stderr_class"], "permission-denied")
+
     def test_archive_validation_code_without_raw_arguments_or_stderr(self):
         error = subprocess.CalledProcessError(
             1, ["bash", "/helper/worktree-archive-helper.sh", "archive", "private-argument"],
