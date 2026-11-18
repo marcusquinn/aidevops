@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.230] - 2026-11-18
+
+### Changed
+
+- Tests: point canary rotation test at headless-runtime-canary.sh (#39058)
+- Tests: create bytecode parent dirs in source-access bootstrap fixture (GH#39051) (#39052)
+
+### Fixed
+
+- sort cached negative-verdict PRs after clean work (GH#39019) (#39053)
+- skip contributed repos in event-policy --all-managed (t19112) (#39046)
+
 ## [3.39.229] - 2026-11-18
 
 ### Changed
