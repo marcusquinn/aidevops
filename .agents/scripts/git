@@ -16,6 +16,11 @@ shim_dirname() {
 }
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+if [[ -L "$SCRIPT_SOURCE" ]]; then
+	# One readlink spawn for the whole symlink chain; hop loop below is the fallback.
+	SCRIPT_RESOLVED=$(command -p readlink -f -- "$SCRIPT_SOURCE" 2>/dev/null) || SCRIPT_RESOLVED=""
+	[[ "$SCRIPT_RESOLVED" == /* && -f "$SCRIPT_RESOLVED" ]] && SCRIPT_SOURCE="$SCRIPT_RESOLVED"
+fi
 while [[ -L "$SCRIPT_SOURCE" ]]; do
 	SCRIPT_LINK_DIR="$(cd "$(shim_dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
 	SCRIPT_SOURCE=$(readlink "$SCRIPT_SOURCE") || exit 1
