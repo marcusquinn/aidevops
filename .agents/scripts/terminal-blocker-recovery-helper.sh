@@ -42,7 +42,7 @@
 # Usage:
 #   terminal-blocker-recovery-helper.sh enqueue <owner/repo> <issue> [reason] [local|policy_remote|remote_observation|unclassified_hold]
 #   terminal-blocker-recovery-helper.sh seed [--force]
-#   terminal-blocker-recovery-helper.sh pending [--count]
+#   terminal-blocker-recovery-helper.sh pending [--count]   # --count leaves the cursor before the first counted entry
 #   terminal-blocker-recovery-helper.sh rearm   # discovery + queued holds; no LLM work, seed, unclassified or holds stage
 #   terminal-blocker-recovery-helper.sh discover   # discovery stage only
 #   terminal-blocker-recovery-helper.sh unclassified   # unclassified-hold stage only
@@ -207,6 +207,18 @@ _tbr_save_cursor() {
 	local name="$1" value="$2"
 	printf '%s\n' "$value" >"${TBR_ROOT}/${name}.tmp.$$" || return 1
 	mv -f "${TBR_ROOT}/${name}.tmp.$$" "${TBR_ROOT}/${name}" || return 1
+	return 0
+}
+
+# Put a scan cursor back to an earlier value; an empty value means "start of
+# queue", which is the same as no cursor file.
+_tbr_restore_cursor() {
+	local name="$1" value="$2"
+	if [[ -z "$value" ]]; then
+		rm -f "${TBR_ROOT}/${name}" || return 1
+		return 0
+	fi
+	_tbr_save_cursor "$name" "$value" || return 1
 	return 0
 }
 
@@ -1578,12 +1590,17 @@ tbr_pending() {
 	fi
 	# GH#38692: tier 0 = entries without a standing human_decision, tier 1 =
 	# decided ones; each tier rotates with its own cursor.
-	local tier=0 tier_cursor_name="" decided=0
+	local tier=0 tier_cursor_name="" decided=0 saved="" before="" hold=0
 	for tier in 0 1; do
 	tier_cursor_name="$cursor_name"
 	[[ "$tier" -eq 0 ]] || tier_cursor_name="${cursor_name}_decided"
 	cursor=""
 	[[ ! -f "${TBR_ROOT}/${tier_cursor_name}" ]] || read -r cursor <"${TBR_ROOT}/${tier_cursor_name}" || true
+	# GH#39006: --count only probes for the trigger. It shares this cursor
+	# with the supervisor's pending pass, so it stops the cursor just before
+	# the first entry it counts; that pass then starts with that entry.
+	saved="$cursor"
+	hold=0
 	# Resume in sorted order, then wrap. Advance only the scan cursor, never
 	# queue ownership or decisions, even when a stage times out.
 	for pass in 1 2; do
@@ -1612,11 +1629,19 @@ tbr_pending() {
 				export TERMINAL_BLOCKER_SELF_LOGIN
 			fi
 			self_resolved=1
-			_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
+			if [[ "$hold" -eq 0 ]]; then
+				before="$saved"
+				_tbr_save_cursor "$tier_cursor_name" "${file##*/}" || return 2
+				saved="${file##*/}"
+			fi
 			observed+="${file##*/};"
 			rc=0
 			if [[ "$mode" == "--count" ]]; then
 				_tbr_run_stage entry _tbr_check_entry "$file" >/dev/null || rc=$?
+				if [[ "$rc" -eq 0 && "$hold" -eq 0 ]]; then
+					_tbr_restore_cursor "$tier_cursor_name" "$before" || return 2
+					hold=1
+				fi
 			else
 				_tbr_run_stage entry _tbr_check_entry "$file" "$entry_mode" || rc=$?
 			fi
