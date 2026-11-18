@@ -79,6 +79,68 @@ _serve_parse_args() {
 	return 0
 }
 
+# Prints IPv4 addresses configured on local interfaces, one per line.
+# Tests stub this function; there is no environment override.
+_serve_local_addrs() {
+	if command -v ip >/dev/null 2>&1; then
+		ip -4 -o addr show 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4}'
+	elif command -v ifconfig >/dev/null 2>&1; then
+		# Handles both "inet 10.0.0.1" and legacy "inet addr:10.0.0.1".
+		ifconfig 2>/dev/null | awk '$1 == "inet" {sub(/^addr:/, "", $2); print $2}'
+	fi
+	return 0
+}
+
+# Succeeds when $1 is an IPv4 address configured on a local interface.
+_serve_ip_is_local() {
+	local ip="$1"
+	local addr
+	while IFS= read -r addr; do
+		[[ "$addr" == "$ip" ]] && return 0
+	done < <(_serve_local_addrs)
+	return 1
+}
+
+# Prints "<host> <port>" from an http:// URL; the authority ends at the
+# first '/', '?' or '#'. Fails for other schemes or IPv6 literals.
+_serve_url_host_port() {
+	local url="$1"
+	local rest="${url#http://}"
+	[[ "$rest" == "$url" ]] && return 1
+	local hostport="${rest%%[/?#]*}"
+	[[ "$hostport" == *:* && "$hostport" != *'['* ]] || return 1
+	printf '%s %s\n' "${hostport%:*}" "${hostport##*:}"
+	return 0
+}
+
+# Succeeds when $1 is an RFC1918 IPv4 address.
+_serve_is_rfc1918() {
+	local host="$1"
+	local octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+	[[ "$host" =~ ^${octet}\.${octet}\.${octet}\.${octet}$ ]] || return 1
+	local o1="${BASH_REMATCH[1]}"
+	local o2="${BASH_REMATCH[2]}"
+	case "$o1" in
+	10) return 0 ;;
+	192) [[ "$o2" -eq 168 ]] && return 0 ;;
+	172) [[ "$o2" -ge 16 && "$o2" -le 31 ]] && return 0 ;;
+	esac
+	return 1
+}
+
+# Succeeds when $1 is http://<RFC1918 IPv4 on a local interface>:<port>[/?#...].
+_serve_private_health_url() {
+	local url="$1"
+	local port="$2"
+	local parsed=""
+	parsed="$(_serve_url_host_port "$url")" || return 1
+	local host="${parsed% *}"
+	[[ "${parsed##* }" == "$port" ]] || return 1
+	_serve_is_rfc1918 "$host" || return 1
+	_serve_ip_is_local "$host" || return 1
+	return 0
+}
+
 _serve_validate_args() {
 	local port="$1"
 	local startup_timeout="$2"
@@ -104,7 +166,7 @@ _serve_validate_args() {
 		print_error "curl is required when --health-url is supplied"
 		return 1
 	fi
-	if [[ -n "$health_url" ]]; then
+	if [[ -n "$health_url" ]] && ! _serve_private_health_url "$health_url" "$port"; then
 		case "$health_url" in
 		"http://127.0.0.1:${port}" | "http://127.0.0.1:${port}/"* | \
 			"http://localhost:${port}" | "http://localhost:${port}/"* | \
@@ -198,7 +260,19 @@ _serve_validate_owners() {
 _serve_health_ready() {
 	local health_url="$1"
 	[[ -z "$health_url" ]] && return 0
-	curl --fail --silent --output /dev/null --noproxy '*' --connect-timeout 2 --max-time 5 "$health_url"
+	local parsed=""
+	local host=""
+	local -a bind_args=()
+	if parsed="$(_serve_url_host_port "$health_url")"; then
+		host="${parsed% *}"
+		if _serve_is_rfc1918 "$host"; then
+			# Re-check locality and bind the source address so the probe fails
+			# instead of reaching another host if the address is removed.
+			_serve_ip_is_local "$host" || return 1
+			bind_args=(--interface "$host")
+		fi
+	fi
+	curl --fail --silent --output /dev/null --noproxy '*' --connect-timeout 2 --max-time 5 ${bind_args[@]+"${bind_args[@]}"} "$health_url"
 	return $?
 }
 
