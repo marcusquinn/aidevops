@@ -582,7 +582,13 @@ archive_worktree() {
 	fi
 	validate_branch "$base_branch" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
-	git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { die "not a Git worktree: $worktree"; return 1; }
+	# One spawn answers both the work-tree check and the common dir (used once, for the manifest).
+	local inside_probe="" inside_state=""
+	inside_probe=$(git -C "$worktree" rev-parse --is-inside-work-tree --path-format=absolute --git-common-dir 2>/dev/null) || inside_probe=""
+	inside_state=${inside_probe%%$'\n'*}
+	[[ "$inside_state" =~ ^true$ ]] || { die "not a Git worktree: $worktree"; return 1; }
+	git_common_dir=${inside_probe#*$'\n'}
+	[[ -n "$git_common_dir" && "$git_common_dir" != "$inside_probe" ]] || { die "cannot resolve git common dir: $worktree"; return 1; }
 	worktree=$(cd "$worktree" && pwd -P) || return 1
 	fingerprint_before=$(source_fingerprint "$worktree" 0 0 1) || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
@@ -598,7 +604,6 @@ archive_worktree() {
 		remote_state="bundled"
 	fi
 	dirty_state="clean"
-	git_common_dir=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git -C "$worktree" rev-parse --git-common-dir) || return 1
 	timestamp=$(timestamp_utc)
 	created_at=$(iso_utc)
 	repo_path="${repo//\//__}"
