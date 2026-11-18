@@ -111,7 +111,11 @@ def require_predating_daemon(path, task, proc):
             predates_tree = False
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
-    # A root parent may pass a worktree log fd into the session.
+    # A root parent may pass a worktree log fd into the session. GH#39013 records
+    # the decision: a root sshd session proven older than .git is skipped even under
+    # the opt-in. Residual risk, accepted: age bounds start time, not later opens
+    # (unreadable cwd skips the fd scan), and .git ctime is the only portable
+    # creation proxy, so later .git changes can make it advance.
     if root_session and not predates_tree and os.environ.get(OPT_IN) == "1":
         require_protected_references(path, task, proc)
     counts = _observations.get()
