@@ -595,10 +595,19 @@ def _save_reconciled_config(
     return True
 
 
+def _report_outside_workspace_repos(repos_json_path: str) -> None:
+    """Report registered repos skipped because they are outside the Git workspace."""
+    root = workspace_root()
+    for path in sorted(get_registered_paths(repos_json_path)):
+        if not eligible_path(path, root):
+            print(f"Skipped {path}: outside Git workspace (no profile created)")
+
+
 def sync_profiles(args: argparse.Namespace) -> None:
     """Perform the profile sync: discover new repos and insert their profiles."""
     shell_path = resolve_login_shell()
     repos = get_profile_targets(args.repos_json)
+    _report_outside_workspace_repos(args.repos_json)
     config_text, repaired_legacy_yaml = load_yaml_for_sync(args.tabby_config)
     if repaired_legacy_yaml:
         print("Repaired legacy Tabby profiles YAML corruption.")
