@@ -1030,6 +1030,12 @@ has_dispatch_comment() {
 		"${ISSUE_META_JSON:-}" "$repo_slug" "$issue_number" "${DISPATCH_REPO_PATH:-}"; then
 		return 0
 	fi
+	# GH#38957: after a permission_required re-arm, the releasing login yields
+	# first claim to peers for a bounded grace period. Dispatch only: recovery
+	# also calls terminal_blocker_circuit_active and must not see it as a hold.
+	if TERMINAL_BLOCKER_SELF_LOGIN="$self_login" terminal_blocker_permission_peer_preference_active "$comments_json"; then
+		return 0
+	fi
 
 	# t3194: Opportunistic peer-quarantine event detection — extracted to
 	# _dd_opportunistic_peer_scan to keep this function below the

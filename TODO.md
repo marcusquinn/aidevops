@@ -2207,6 +2207,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19091 fix(terminal-blocker): permission_required holds publish the named ask as input_required #bug #framework #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38951 pr:#38955 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19091-brief.md] completed:2026-11-18
 
+- [ ] t19092 fix(terminal-blocker): a re-armed permission_required hold gives other runners the first claim #auto-dispatch #bug #framework #priority:high tier:standard assignee:marcusquinn ref:GH#38957 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19092-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

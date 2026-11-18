@@ -23,6 +23,9 @@ _TBC_RUNNER_CAPABILITY='runner_capability_unmet'
 _TBC_SOURCE_ACCESS='source_access_blocked'
 _TBC_RUNNER_RECOVERY_OWNER='runner-recovery'
 _TBC_AUTHORITATIVE_ASSOCIATIONS='["OWNER","MEMBER"]'
+# Trusted comment authors, also for evidence that can only keep or defer a hold
+# (a permission request, a GH#38957 re-arm receipt); clearing stays authoritative.
+_TBC_TRUSTED_ASSOCIATIONS='["OWNER","MEMBER","COLLABORATOR"]'
 # GH#34846: classes whose first-observation hold re-arms on a changed task
 # revision or a trusted retry. Most track only the brief (plus linked
 # dependencies), never default-branch HEAD, so unrelated merges cannot churn
@@ -50,6 +53,9 @@ _TBC_PERMISSION_WITHDRAWAL_MARKER='<!-- aidevops-signed-permission-withdrawal --
 # GH#36342: a window re-arm receipt records the brief it released against, so
 # a later brief revision can wake a spent permission window once more.
 _TBC_PERMISSION_BRIEF_MARKER='aidevops:terminal-blocker-rearm-brief'
+# GH#38957: after a re-arm receipt, the releasing login yields first claim.
+_TBC_REARM_RECEIPT_MARKER='<!-- aidevops:terminal-blocker-rearmed key='
+_TBC_PERMISSION_PEER_GRACE_DEFAULT=3600
 
 # IDs break same-second ties only when both are positive, exact JSON integers.
 # Legacy/malformed IDs never let a tied retry clear evidence. For selection,
@@ -554,8 +560,8 @@ terminal_blocker_fetch_trusted_comments() {
 	local raw=""
 	[[ "$self_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || self_login=""
 	raw=$(terminal_blocker_fetch_comments "$repo_slug" "$issue_number") || return 1
-	printf '%s' "$raw" | jq -c --arg self "$self_login" '
-		def trusted: . == "OWNER" or . == "MEMBER" or . == "COLLABORATOR";
+	printf '%s' "$raw" | jq -c --arg self "$self_login" --argjson trusted_set "$_TBC_TRUSTED_ASSOCIATIONS" '
+		def trusted: . as $a | $trusted_set | index($a) != null;
 		[(if type == "array" and ((.[0]? | type) == "array") then .[] else . end)[]
 		| {id: .id, author: (.user.login // ""), body: (.body // ""), created_at: .created_at,
 		   author_association: (.author_association // "")}
@@ -802,9 +808,8 @@ terminal_blocker_permission_request_evidenced() {
 	[[ "$labelled" == false ]] || return 0
 	self_login=$(_terminal_blocker_self_login)
 	request=$(jq -c --arg marker "$_TBC_PERMISSION_REQUEST_MARKER" --arg self "$self_login" \
-		--argjson authoritative "$_TBC_AUTHORITATIVE_ASSOCIATIONS" "${_TBC_ORDER_JQ}"'
-		[.[] | select(((.author_association // "") as $a | ($authoritative + ["COLLABORATOR"]) | index($a) != null)
-			or ($self != "" and (.author // .user.login // "") == $self))
+		--argjson trusted "$_TBC_TRUSTED_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($trusted; $self))
 		| select(valid_time) | select((.body // "") | ltrimstr("\n") | startswith($marker))]
 		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty
 	' <<<"$comments_json" 2>/dev/null) || return 0
@@ -925,6 +930,27 @@ terminal_blocker_permission_window_expired() {
 	return 0
 }
 
+# Print the newest trusted hold event (observation or circuit marker) when it
+# carries the permission_required fingerprint; return 1 otherwise.
+# Args: comments_json
+_terminal_blocker_newest_permission_event() {
+	local comments_json="$1"
+	local observation=""
+	local circuit=""
+	local event=""
+	local fingerprint=""
+	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || return 1
+	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=") || return 1
+	event=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
+		"${_TBC_ORDER_JQ}"'[$observation, $circuit] | map(select(. != null))
+		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty' 2>/dev/null) || return 1
+	[[ -n "$event" ]] || return 1
+	fingerprint=$(jq -r '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=[a-f0-9]{24} blocker=(?<f>[a-f0-9]{24}) -->").f' <<<"$event" 2>/dev/null) || return 1
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBC_PERMISSION_REQUIRED" ]] || return 1
+	printf '%s\n' "$event"
+	return 0
+}
+
 # Next epoch at which the newest unevidenced permission_required hold event
 # crosses a window boundary, so mechanical recovery can skip unchanged issue
 # snapshots until then. Prints nothing (returns 1) when not applicable.
@@ -932,17 +958,10 @@ terminal_blocker_permission_window_expired() {
 terminal_blocker_permission_rearm_after() {
 	local comments_json="$1"
 	local issue_json="$2"
-	local fingerprint="" evidence="" observation="" circuit="" observed="" window=""
+	local evidence="" observed="" window=""
 	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
 	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
-	observation=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_OBSERVATION_MARKER revision=") || return 1
-	circuit=$(_terminal_blocker_latest_marker "$comments_json" "$_TBC_CIRCUIT_MARKER revision=") || return 1
-	evidence=$(jq -nc --argjson observation "${observation:-null}" --argjson circuit "${circuit:-null}" \
-		"${_TBC_ORDER_JQ}"'[$observation, $circuit] | map(select(. != null))
-		| sort_by(.created_at, (comment_id // 9007199254740992), .body) | last // empty' 2>/dev/null) || return 1
-	[[ -n "$evidence" ]] || return 1
-	fingerprint=$(jq -r '.body | capture("<!-- aidevops:terminal-blocker-(?:observation|circuit) revision=[a-f0-9]{24} blocker=(?<f>[a-f0-9]{24}) -->").f' <<<"$evidence" 2>/dev/null) || return 1
-	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBC_PERMISSION_REQUIRED" ]] || return 1
+	evidence=$(_terminal_blocker_newest_permission_event "$comments_json") || return 1
 	terminal_blocker_permission_request_evidenced "$comments_json" "$issue_json" && return 1
 	# A spent window has no time-based wake; issue edits/comments advance updated_at.
 	terminal_blocker_permission_window_spent "$comments_json" "$issue_json" "$evidence" && return 1
@@ -950,6 +969,48 @@ terminal_blocker_permission_rearm_after() {
 	[[ "$observed" =~ ^[0-9]+$ && "$observed" -gt 0 && "$observed" -le "$now_epoch" ]] || return 1
 	window=$(_terminal_blocker_permission_window_seconds)
 	printf '%s\n' "$((observed + ((now_epoch - observed) / window + 1) * window))"
+	return 0
+}
+
+# GH#38957 #aidevops:trust-boundary — after a permission_required hold re-arms,
+# the login that released it defers to other runners for a bounded grace
+# period. Its own repeat attempt usually reproduces the denial and spends the
+# window (GH#36342); a peer either completes the task or adds the two-runner
+# evidence the fleet hold needs (GH#35788). Dispatch-only: it grants nothing,
+# never defers another login, and writes no comments or labels.
+# Returns 0 (prints TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE) while the
+# deferral applies; 1 otherwise, including unreadable evidence, so failure
+# keeps today's behaviour. A grace of 0 disables it.
+# Args: comments_json
+terminal_blocker_permission_peer_preference_active() {
+	local comments_json="$1"
+	local grace="${AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS:-}"
+	local now_epoch="${TERMINAL_BLOCKER_NOW_EPOCH:-}"
+	local self_login=""
+	local evidence=""
+	local retry=""
+	local receipt_at=""
+	self_login=$(_terminal_blocker_self_login)
+	[[ -n "$self_login" ]] || return 1
+	[[ "$grace" =~ ^[0-9]{1,6}$ ]] || grace="$_TBC_PERMISSION_PEER_GRACE_DEFAULT"
+	grace=$((10#$grace))
+	[[ "$grace" -gt 0 ]] || return 1
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=$(date -u '+%s')
+	evidence=$(_terminal_blocker_newest_permission_event "$comments_json") || return 1
+	[[ "$(jq -r '.author // .user.login // ""' <<<"$evidence" 2>/dev/null)" == "$self_login" ]] || return 1
+	retry=$(_terminal_blocker_latest_retry_comment "$comments_json") || return 1
+	_terminal_blocker_retry_after "$retry" "$evidence" && return 1
+	# The newest trusted re-arm receipt after this hold event starts the grace.
+	# A collaborator receipt counts, as in recovery's replay suppression
+	# (_tbr_project_rearm): it only defers.
+	receipt_at=$(jq -r --argjson event "$evidence" --arg marker "$_TBC_REARM_RECEIPT_MARKER" --arg self "$self_login" \
+		--argjson trusted "$_TBC_TRUSTED_ASSOCIATIONS" "${_TBC_ORDER_JQ}${_TBC_HOLD_EVIDENCE_JQ}"'
+		[.[] | select(hold_evidence($trusted; $self)) | select((.body // "") | contains($marker))
+		| select(retry_after($event)) | try (.created_at | fromdateiso8601 | floor) catch empty] | max // empty
+	' <<<"$comments_json" 2>/dev/null) || return 1
+	[[ "$receipt_at" =~ ^[0-9]+$ ]] || return 1
+	[[ "$now_epoch" -lt "$((receipt_at + grace))" ]] || return 1
+	printf 'TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE retry_after=%s\n' "$((receipt_at + grace))"
 	return 0
 }
 
