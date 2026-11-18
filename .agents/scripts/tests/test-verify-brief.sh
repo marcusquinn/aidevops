@@ -530,6 +530,48 @@ else
 	fail "F4 missing scope rejection" "expected non-zero and recovery hint, got rc=$rc; output: $output"
 fi
 
+cat >"$TMP/brief-legacy-declaration.md" <<'BRIEF'
+## Task
+Legacy task.
+## Why
+Legacy reason.
+## How
+### Files to Modify
+- EDIT: `state.sh`
+## Acceptance
+Legacy completion.
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-legacy-declaration.md" 2>&1)
+rc=$?
+if [[ $rc -eq 0 && "$output" == *"WORKER_READY=true"* ]]; then
+	pass "F5 valid legacy declaration passes readiness without canonical scope"
+else
+	fail "F5 legacy declaration acceptance" "expected rc=0, got rc=$rc; output: $output"
+fi
+
+cat >"$TMP/brief-legacy-invalid-scope.md" <<'BRIEF'
+## Task
+Legacy task.
+## Why
+Legacy reason.
+## How
+### Files to Modify
+- EDIT: `state.sh`
+### Files Scope
+- ../unsafe.sh
+## Acceptance
+Legacy completion.
+BRIEF
+
+output=$(bash "$VB_HELPER" check-readiness "$TMP/brief-legacy-invalid-scope.md" 2>&1)
+rc=$?
+if [[ $rc -ne 0 && "$output" != *"WORKER_READY=true"* ]]; then
+	pass "F6 invalid existing scope cannot be bypassed by a declaration"
+else
+	fail "F6 invalid scope rejection" "expected non-zero, got rc=$rc; output: $output"
+fi
+
 # =============================================================================
 # Class G: transport-cause terms use portable token boundaries (GH#28677)
 # =============================================================================

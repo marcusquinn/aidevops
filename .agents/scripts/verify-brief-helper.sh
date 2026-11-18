@@ -398,6 +398,7 @@ _cmd_check_readiness() {
 	local helper_path=""
 	local body=""
 	local readiness_output=""
+	local scope_body=""
 
 	if [[ -z "$brief_path" || ! -f "$brief_path" ]]; then
 		_log "ERROR" "File not found: ${brief_path:-<missing>}"
@@ -415,7 +416,9 @@ _cmd_check_readiness() {
 		printf '%s\n' "$readiness_output"
 		return 1
 	fi
-	if ! bash "$helper_path" scope-check "$body" >&2; then
+	# Normalize only in memory: existing malformed scope still fails closed.
+	if ! scope_body=$(bash "$helper_path" scope-normalize "$body") ||
+		! bash "$helper_path" scope-check "$scope_body" >&2; then
 		_log "ERROR" "Recovery: under '### Files Scope', list one bare '- path/to/file' (or '- \`path\`') bullet per line, with no notes."
 		return 1
 	fi
