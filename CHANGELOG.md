@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.229] - 2026-11-18
+
+### Changed
+
+- Refactor: split worker-discipline integration recovery into chapter file (GH#39024) (#39026)
+- Maintenance: sync GitHub issue refs to TODO.md (#39022)
+- GH#35043 GH#38701: feat(sandbox): opt-in SRT egress prototype, qualified on NixOS (#38859)
+- Maintenance: add interactive-vs-worker throughput research note (2026-11-18)
+
+### Fixed
+
+- report outside-workspace sessions early with run_session_inside_git_workspace (GH#39033) (#39036)
+- fix browser-qa screenshot without sips/magick and with long page URLs
+- skip Spotlight marker and tool-cache entries at node_modules root instead of rejecting the restore
+- exempt routines and profile repos from Missing-config onboarding audit
+- drop prior-lifecycle assignees on reopen heal and keep passive assignees fresh
+- strip whitespace from base64 contents for jq 1.8 (GH#39029) (#39032)
+- reserve a queue share for decided holds so replies, policy changes and retries can wake them
+- early blocker re-probe rechecks API pressure and follows only queue-side partial scans
+- override zod to 4.6.6 in worker-egress-srt (GH#39020) (#39021)
+- verify actual issue closure before superseding PR (#39018)
+- restore age-first checks and diagnostics (#39015)
+- re-probe blocker recovery after a partial zero-count scan instead of waiting the full interval
+- name failing Git subcommand in retirement refusals and exempt root-forked sshd sessions (#38999)
+- pending --count leaves the supervisor cursor before the first counted entry
+- skip issues with blocked companion or hold labels
+- refuse orchestrator overwrite in runtime bundle with different VERSION (#38996)
+- restart stale-recovery tick count when partial PRs merged between ticks (#38986)
+
 ## [3.39.228] - 2026-11-18
 
 ### Changed
