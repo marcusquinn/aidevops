@@ -181,10 +181,12 @@ _pulse_blocker_recovery_due() {
 	[[ -f "$helper" ]] || return 1
 	[[ -f "$stamp" ]] && read -r last_check <"$stamp"
 	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
-	# GH#39008: a partial zero-count probe's deadline also makes it due.
+	# GH#39008: a partial zero-count probe's deadline also makes it due. It is
+	# written as stamp + partial interval, so a deadline not after the stamp
+	# (truncated write, or one left by a failed removal) is ignored.
 	if [[ $((now_epoch - last_check)) -lt "$interval" ]]; then
 		partial_due=$(_pulse_read_epoch_file "$partial_due_file")
-		[[ "$partial_due" -gt 0 && "$now_epoch" -ge "$partial_due" ]] || return 1
+		[[ "$partial_due" -gt "$last_check" && "$now_epoch" -ge "$partial_due" ]] || return 1
 	fi
 	if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_success_epoch" "$last_attempt_epoch"; then
 		return 1
