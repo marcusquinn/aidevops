@@ -320,6 +320,14 @@ it the evidence stays `unknown`. Its revision tracks the brief and
 dependencies: supplying the input in the issue body re-arms dispatch. It adds
 no label or review gate beyond the blocked-exit hold below.
 
+Maintainers answer pending owner decisions in one place:
+`maintainer-decisions-helper.sh list` (or `/decisions`) is a read-only queue across managed
+repos. It shows the newest `Input requested:` or supervisor `Still needed` question per
+hold, and separates holds that are already answered, replied to (an unmarked owner
+comment that may be app automation), policy-parked, or question-less (the last is an
+AI-side gap that the recovery supervisor must fill). Answers posted by `/decisions`
+carry `<!-- aidevops:maintainer-decision -->`.
+
 Blocked-exit labels (GH#34775, GH#34846): the runtime releases a known-class
 `BLOCKED` exit as `status:blocked`, and the release comment's `Projected
 state:` names that label. Runner-local classes (`runner_capability_unmet`
