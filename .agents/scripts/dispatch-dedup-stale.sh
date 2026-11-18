@@ -149,7 +149,9 @@ _stale_recovery_count_ticks_from_pages() {
 					"MEMBER"
 				)) then 0
 			elif (($comment.body // "")
-				| contains($progress_marker)) then 1
+				| contains($progress_marker))
+				and (($comment.body // "")
+				| test("<!-- stale-recovery-tick:[1-9]")) then 1
 			elif (($comment.body // "")
 				| test("<!-- stale-recovery-tick:[1-9]"))
 				and ((($comment.body // "")
@@ -178,23 +180,30 @@ _stale_recovery_latest_tick_ts_from_pages() {
 #######################################
 # Find a merged PR referencing the issue (For/Ref/Resolves #N) merged after
 # a timestamp. A merged partial PR is productive progress, not a no-PR stall,
-# so it must break the consecutive stale-recovery count. Fails open (empty).
+# so it must break the consecutive stale-recovery count.
 # Args: $1 = issue number, $2 = repo slug, $3 = ISO timestamp lower bound
 # Output: merged PR number or empty
+# Returns: 1 when the lookup failed or hit the result cap (incomplete), so the
+#   caller must not escalate on it; 0 on a complete search (match or none).
 #######################################
 _stale_recovery_find_merged_pr_since() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local since_ts="$3"
+	local _limit=100 _json="" _count="" _slug_lc=""
 	[[ -n "$since_ts" ]] || return 0
-	gh pr list --repo "$repo_slug" --state merged --limit 50 \
-		--search "${issue_number} in:body" \
-		--json number,body,mergedAt 2>/dev/null | jq -r \
-		--arg n "$issue_number" --arg since "$since_ts" '
+	_slug_lc=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
+	_json=$(gh pr list --repo "$repo_slug" --state merged --limit "$_limit" \
+		--search "${issue_number} in:body merged:>=${since_ts}" \
+		--json number,body,mergedAt 2>/dev/null) || return 1
+	_count=$(printf '%s' "$_json" | jq -er 'length' 2>/dev/null) || return 1
+	[[ "$_count" -lt "$_limit" ]] || return 1
+	printf '%s' "$_json" | jq -r \
+		--arg n "$issue_number" --arg since "$since_ts" --arg slug "$_slug_lc" '
 		[.[]? | select((.mergedAt // "") > $since)
-			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve)\\s+([a-z0-9_.-]+/[a-z0-9_.-]+)?#" + $n + "\\b"))]
+			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve)\\s+(" + ($slug | gsub("[.]"; "[.]")) + ")?#" + $n + "\\b"))]
 		| sort_by(.mergedAt) | last | .number // empty
-	' 2>/dev/null || true
+	' 2>/dev/null || return 1
 	return 0
 }
 
@@ -917,7 +926,11 @@ _recover_stale_assignment() {
 	if [[ "$_prior_ticks" -gt 0 ]]; then
 		local _last_tick_ts
 		_last_tick_ts=$(_stale_recovery_latest_tick_ts_from_pages "$_comments_pages")
-		_STALE_RECOVERY_MERGED_PR=$(_stale_recovery_find_merged_pr_since "$issue_number" "$repo_slug" "$_last_tick_ts")
+		if ! _STALE_RECOVERY_MERGED_PR=$(_stale_recovery_find_merged_pr_since "$issue_number" "$repo_slug" "$_last_tick_ts"); then
+			printf 'STALE_RECOVERY_UNCERTAIN: issue #%s in %s — merged PR lookup incomplete; preserving assignment\n' \
+				"$issue_number" "$repo_slug"
+			return 1
+		fi
 		[[ "$_STALE_RECOVERY_MERGED_PR" =~ ^[0-9]+$ ]] || _STALE_RECOVERY_MERGED_PR=""
 		# Merged partial PR since the previous tick = progress: restart the count.
 		[[ -z "$_STALE_RECOVERY_MERGED_PR" ]] || _prior_ticks=0
