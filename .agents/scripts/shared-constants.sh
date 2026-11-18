@@ -1302,49 +1302,6 @@ if [[ -r "${_shared_constants_dir}/secret-resolver.sh" ]]; then
 	# shellcheck source=secret-resolver.sh
 	source "${_shared_constants_dir}/secret-resolver.sh"
 fi
-
-# Agent-detection variables read by gh >= 2.105.0 (cli/cli internal/agents/detect.go
-# at v2.105.0). When any is set gh writes an agent-only `gh event listen` hint to
-# stderr and prints full help on flag errors, corrupting captured `2>&1` JSON.
-# Scripted gh calls must look like non-agent callers, so these are stripped from
-# the gh child process ONLY (never unset in the helper's own environment: runtime
-# detection in gh-signature-helper-*, pre-edit-check.sh, terminal-title-helper.sh
-# etc. still needs them). Single source of truth; also exported for gh-shim/gh.
-AIDEVOPS_GH_AGENT_ENV_VARS="AI_AGENT AGENT CODEX_SANDBOX CODEX_CI CODEX_THREAD_ID GEMINI_CLI COPILOT_CLI OPENCODE ANTIGRAVITY_AGENT AUGMENT_AGENT CLAUDE_CODE_IS_COWORK CLAUDECODE CLAUDE_CODE CURSOR_TRACE_ID CURSOR_AGENT CURSOR_EXTENSION_HOST_ROLE GOOSE_PROVIDER"
-export AIDEVOPS_GH_AGENT_ENV_VARS
-
-# Populate the global array _AIDEVOPS_GH_ENV_UNSET_ARGS with `env -u VAR ...`
-# arguments (without the leading `env`). Bash 3.2 compatible (no namerefs).
-# Usage: _aidevops_gh_env_unset_args; env "${_AIDEVOPS_GH_ENV_UNSET_ARGS[@]}" gh ...
-_aidevops_gh_env_unset_args() {
-	local var=""
-	_AIDEVOPS_GH_ENV_UNSET_ARGS=()
-	for var in $AIDEVOPS_GH_AGENT_ENV_VARS; do
-		_AIDEVOPS_GH_ENV_UNSET_ARGS+=("-u" "$var")
-	done
-	return 0
-}
-
-# Central mechanism for direct `gh` calls: prepend a PATH shim directory whose
-# `gh` strips the agent variables then execs the real gh. Unlike a `gh()` shell
-# function it keeps `declare -f gh` false (test-stub detection in
-# _gh_with_timeout), keeps `command -v gh` honest when gh is absent (shim is only
-# added when a real gh exists), and does not conflict with tests defining gh().
-if [[ -z "${AIDEVOPS_GH_SHIM_DISABLE:-}" && -x "${_shared_constants_dir}/gh-shim/gh" ]]; then
-	_gh_shim_dir="$(cd "${_shared_constants_dir}/gh-shim" 2>/dev/null && pwd)" || _gh_shim_dir=""
-	if [[ -n "$_gh_shim_dir" ]]; then
-		case ":${PATH}:" in
-		*":${_gh_shim_dir}:"*) ;;
-		*)
-			if command -v gh >/dev/null 2>&1; then
-				PATH="${_gh_shim_dir}:${PATH}"
-				export PATH
-			fi
-			;;
-		esac
-	fi
-	unset _gh_shim_dir
-fi
 unset _shared_constants_dir
 
 # =============================================================================
