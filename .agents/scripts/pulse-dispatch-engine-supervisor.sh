@@ -138,10 +138,18 @@ _pulse_blocker_partial_reprobe() {
 	local now_epoch="$1"
 	local interval="$2"
 	local stamp="$3"
-	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}"
-	[[ "$partial" =~ ^[0-9]+$ && "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
+	local partial="${PULSE_LLM_RECOVERY_PARTIAL_PROBE_INTERVAL:-600}" tmp=""
+	[[ "$partial" =~ ^[0-9]+$ ]] || return 0
+	# Decimal, so a leading zero (0600) is not read as octal.
+	partial=$((10#$partial))
+	[[ "$partial" -gt 0 && "$partial" -lt "$interval" ]] || return 0
 	! _pulse_blocker_api_pressure_active || return 0
-	printf '%s\n' "$((now_epoch - interval + partial))" >"$stamp" 2>/dev/null || return 0
+	# Replace the stamp atomically: a failed write keeps the full-interval stamp.
+	tmp="${stamp}.tmp.$$"
+	if ! printf '%s\n' "$((now_epoch - interval + partial))" >"$tmp" 2>/dev/null || ! mv -f "$tmp" "$stamp" 2>/dev/null; then
+		rm -f "$tmp"
+		return 0
+	fi
 	echo "[pulse-wrapper] LLM supervisor: blocker recovery probe found 0 pending (partial scan); re-probe in ${partial}s (GH#39008)" >>"$LOGFILE"
 	return 0
 }
