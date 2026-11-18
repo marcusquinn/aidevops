@@ -671,7 +671,6 @@ test_ambiguous_reference_verdict_reason() {
 		}
 		_pulse_is_trusted_issue_sync_pr() { return 1; }
 		_extract_pr_work_issue() { return 2; }
-		_gh_pr_body_explicit_issues() { printf '21729\n19530\n'; return 0; }
 		worker_briefed_trust_verdict 900 "$SLUG" || true
 	)
 	if [[ "$verdict" == deny:*"ambiguous explicit issue references"*"#21729, #19530"* && "$verdict" != *"trust metadata unavailable"* ]]; then
