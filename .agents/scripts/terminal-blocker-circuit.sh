@@ -196,11 +196,8 @@ _terminal_blocker_input_owner() {
 # Optional $3 is the anchored line pattern that classified the exit as BLOCKED
 # (headless-runtime-model.sh). Judging the final part with that same pattern
 # stops a classified exit such as "**BLOCKED — ...**" losing its evidence.
-_terminal_blocker_capture_json() {
-	local output_file="$1"
-	local live_blocked="${2:-false}"
-	local blocked_line_pattern="${3:-}"
-	python3 - "$output_file" "$live_blocked" "$blocked_line_pattern" <<'PY'
+# The program is read once at source time, outside the function body.
+IFS= read -r -d '' _TBC_CAPTURE_PY <<'PY' || true
 import json
 import re
 import sys
@@ -253,7 +250,7 @@ reasons = re.findall(r"^TERMINAL_BLOCKER_REASON=(.*)$", candidate, re.M)
 allowed = {'missing_files_scope', 'files_scope_excluded', 'target_code_blocker', 'external_trigger_pending', 'permission_required', 'source_access_blocked', 'push_policy_timeout', 'network_policy_timeout', 'runner_capability_unmet'}
 input_owners = {'user', 'contributor', 'maintainer', 'admin'}
 reason = reasons[0] if len(reasons) == 1 else 'unknown'
-def emit(value):
+def emit(value, ask_owner=''):
     # Only explicit name declarations from final assistant text, never values
     # or tool output. Bounded and validated before any public projection.
     declarations = re.findall(r'^TERMINAL_BLOCKER_MISSING_SECRETS=([A-Z0-9_, ]+)$', candidate, re.M)
@@ -270,11 +267,14 @@ def emit(value):
         found = re.findall(r'^TERMINAL_BLOCKER_' + name + r'=(.*)$', candidate, re.M)
         line = found[0] if eligible and len(found) == 1 else ''
         return line if 0 < len(line) <= 500 else ''
-    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons),
-                     'question': public_line('QUESTION', value.startswith('input_required:')),
+    print(json.dumps({'reason': value, 'explicit_reason': bool(reasons), 'ask_owner': ask_owner,
+                     'question': public_line('QUESTION', value.startswith('input_required:') or bool(ask_owner)),
                      'trigger': public_line('TRIGGER', value == 'external_trigger_pending'),
                      'missing_secrets': sorted(set(names)), 'rejected_secrets': sorted(set(rejected_names)),
                       'detail': candidate[:16000], 'detail_truncated': len(candidate) > 16000}))
+
+owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
+owner = owners[0] if len(owners) == 1 and owners[0] in input_owners else ''
 
 if reason == 'verification_environment_missing_prerequisites':
     # GH#35037: exact legacy spelling, not a prose/substring classifier.
@@ -288,12 +288,44 @@ elif reason == 'affected_host_reproduction_unavailable':
 elif reason == 'input_required':
     # GH#33332: the hold must name exactly one accountable role; otherwise the
     # evidence stays unclassified and retryable.
-    owners = re.findall(r"^TERMINAL_BLOCKER_INPUT_OWNER=(.*)$", candidate, re.M)
-    emit('input_required:' + owners[0] if len(owners) == 1 and owners[0] in input_owners else 'unknown')
+    emit('input_required:' + owner if owner else 'unknown')
+elif reason == 'permission_required' and owner:
+    # GH#38951: candidate ask only. terminal_blocker_capture_output reclassifies
+    # to input_required:<owner> only when the publication validator accepts it.
+    emit(reason, owner)
 else:
     emit(reason if reason in allowed else 'unknown')
 PY
+_terminal_blocker_capture_json() {
+	local output_file="$1"
+	local live_blocked="${2:-false}"
+	local blocked_line_pattern="${3:-}"
+	python3 -c "$_TBC_CAPTURE_PY" "$output_file" "$live_blocked" "$blocked_line_pattern"
 	return $?
+}
+
+# GH#38951: a permission that one named person grants by answering in the
+# issue is an owner decision, published through the input hold whose release
+# envelope every runner version accepts; the runtime guard still verifies any
+# grant. Reclassify only when the publication validator accepts the exact
+# question, so the hold never changes class without publishing its ask.
+# Prints the capture class: input_required:<owner> or permission_required.
+_terminal_blocker_permission_ask_class() {
+	local captured="$1"
+	local ask_owner="" question="" published=""
+	ask_owner=$(jq -r '.ask_owner // ""' <<<"$captured") || return 1
+	question=$(jq -r '.question // ""' <<<"$captured") || return 1
+	case "$ask_owner" in
+	user | contributor | maintainer | admin)
+		published=$(_terminal_blocker_public_line "$question") || published=""
+		;;
+	esac
+	if [[ -n "$published" ]]; then
+		printf 'input_required:%s\n' "$ask_owner"
+	else
+		printf '%s\n' "$_TBC_PERMISSION_REQUIRED"
+	fi
+	return 0
 }
 
 terminal_blocker_capture_output() {
@@ -318,6 +350,10 @@ terminal_blocker_capture_output() {
 	AIDEVOPS_TERMINAL_BLOCKER_QUESTION=$(jq -r '.question // ""' <<<"$captured") || return 1
 	AIDEVOPS_TERMINAL_BLOCKER_TRIGGER=$(jq -r '.trigger // ""' <<<"$captured") || return 1
 	[[ -n "$normalized" ]] || return 1
+	if [[ "$normalized" == "$_TBC_PERMISSION_REQUIRED" ]]; then
+		normalized=$(_terminal_blocker_permission_ask_class "$captured") || return 1
+		[[ "$normalized" == input_required:* ]] || AIDEVOPS_TERMINAL_BLOCKER_QUESTION=""
+	fi
 	# Do not infer a missing heading from words such as "Files Scope excludes".
 	# Verify the structural condition independently against the issue itself.
 	# Access denials keep their evidenced class; a scope edit cannot grant access.

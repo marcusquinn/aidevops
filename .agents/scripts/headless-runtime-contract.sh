@@ -205,6 +205,10 @@ Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
 Brief edits and unrelated merges cannot resolve this class; an explicit trusted
 retry only schedules verification and never grants source or secret access.
+When one named person can grant or approve it by answering in the issue (an
+approval, authorization or sign-off), also emit TERMINAL_BLOCKER_INPUT_OWNER and
+TERMINAL_BLOCKER_QUESTION as for input_required; the hold then publishes that
+ask. A hold with no public ask leaves nobody able to act (GH#38951).
 Only when a specific value, target, credential or decision is required, absent
 from the brief, repository, linked issues and your tools, and cannot be derived
 or safely chosen within delegated authority, use both lines:
