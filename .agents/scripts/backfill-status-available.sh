@@ -53,6 +53,7 @@ readonly EXCLUSION_LABELS=(
 	"needs-maintainer-input"
 	"needs-dependency"
 	"needs-credentials"
+	"needs-source-access"
 	"needs-maintainer-permissions"
 	"needs-ai-recovery"
 	# Review holds

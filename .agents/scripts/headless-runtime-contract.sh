@@ -180,6 +180,9 @@ and re-arms on a brief or linked dependency change or trusted retry, not unrelat
 default-branch commits. Never use it for missing local credentials or runner-local
 account failures (runner_capability_unmet), or permission guards
 (permission_required). Do not bypass access controls or retry denied reads.
+A redirect to a working page is not an access refusal: when the open question is
+one a named person can answer (programme identity, retirement, the canonical
+site), use input_required with its owner and question instead.
 A tool absent from PATH is not yet proof it is uninstalled (GH#34110). First
 check only what the repository declares: `.aidevops.json` `.verify` commands and
 a worktree-local `.venv/bin/<tool>`; never scan host directories or install.

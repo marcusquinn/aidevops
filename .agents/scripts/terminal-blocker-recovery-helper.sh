@@ -105,7 +105,7 @@ _TBR_OTHER_HOLDS_JQ='def other_holds($blocked): [.[] | select(. == "needs-mainta
 # GH#38360: a companion that already names a human or dependency owner makes a
 # hold classified; only bare or needs-ai-recovery holds enter unclassified intake.
 _TBR_CLASSIFIED_COMPANION_JQ='def classified_companion: any(.[]; . == "needs-maintainer-input" or
-	. == "needs-credentials" or . == "needs-dependency");'
+	. == "needs-credentials" or . == "needs-source-access" or . == "needs-dependency");'
 # Shape predicates for listing/comment validation.
 _TBR_SHAPE_JQ='def arr: type == ([] | type); def bool: type == (true | type);'
 # Evaluated-issue memory older than this is pruned after a complete pass.
@@ -1304,6 +1304,8 @@ _tbr_project_rearm() {
 		local -a release_args=()
 		printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "needs-credentials")' >/dev/null &&
 			release_args+=(--remove-label needs-credentials)
+		printf '%s' "$issue_json" | jq -e 'any(.labels[]; .name == "needs-source-access")' >/dev/null &&
+			release_args+=(--remove-label needs-source-access)
 		set_issue_status "$issue" "$repo" available ${release_args[@]+"${release_args[@]}"} >/dev/null 2>&1 || return 2
 	fi
 	_tbr_post_rearm_receipt "$repo" "$issue" "$receipt" "$extra" || return 2

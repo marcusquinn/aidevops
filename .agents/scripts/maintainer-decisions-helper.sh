@@ -51,7 +51,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 MD_REPOS_JSON="${MAINTAINER_DECISIONS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-MD_HOLD_LABELS="needs-maintainer-input,needs-maintainer-permissions,needs-credentials"
+MD_HOLD_LABELS="needs-maintainer-input,needs-maintainer-permissions,needs-credentials,needs-source-access"
 # Holds a supervisor may state with a canonical public ask; searched too, but
 # kept only when a trusted comment carries that ask (see MD_CLASSIFY_JQ).
 MD_ASK_LABELS='hold-for-review "status:blocked"'
@@ -122,7 +122,7 @@ def days($t): if $t == null or $t == "" then null
 	elif $fresh_reply != null then "replied"
 	elif $question != null then ($label_kind // "decide")
 	else ($label_kind // "no-question") end) as $kind
-| [$labels[] | select(IN("needs-maintainer-input", "needs-maintainer-permissions", "needs-credentials", "hold-for-review", "status:blocked"))] as $hold_labels
+| [$labels[] | select(IN("needs-maintainer-input", "needs-maintainer-permissions", "needs-credentials", "needs-source-access", "hold-for-review", "status:blocked"))] as $hold_labels
 | select(($hold_labels | any(startswith("needs-"))) or ($asks | length) > 0)
 | {
 	repo: $repo, number: .number, url: .url, title: (.title | clean), kind: $kind,
