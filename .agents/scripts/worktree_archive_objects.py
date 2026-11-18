@@ -37,8 +37,9 @@ def dependency_commit(manifest):
 
 def require_independent_base_receiver(root, common, run_git):
     """Refuse shared stores and alternates before any base-object import."""
-    admin = run_git(root, 'rev-parse', '--absolute-git-dir').strip()
-    receiver = run_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+    # One spawn resolves both; --absolute-git-dir is absolute before the --path-format switch.
+    admin, receiver = run_git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                              '--git-common-dir').rstrip(b'\n').split(b'\n')
     receiver_path = Path(os.fsdecode(receiver)).resolve()
     if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
             or os.path.lexists(receiver_path / 'objects/info/alternates')):
