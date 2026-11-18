@@ -421,7 +421,7 @@ _policy_managed_public_slugs() {
 		return 1
 	fi
 	jq -r '(.initialized_repos // .repos // [])[]
-		| select((.slug // "") != "" and (.local_only // false) != true and (.private // false) != true)
+		| select((.slug // "") != "" and (.local_only // false) != true and (.private // false) != true and (.contributed // false) != true)
 		| .slug' "$repos_json"
 	return $?
 }
