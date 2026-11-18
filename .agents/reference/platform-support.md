@@ -115,6 +115,11 @@ This covers command discovery, not full packaging compatibility: downloaded FHS
 binaries may still need native packages, and the model-replay `bwrap` sandbox
 still looks for `bwrap` in fixed locations.
 
+The separate opt-in [SRT egress prototype](worker-egress-srt.md) accepts explicit
+tool paths for Linux/NixOS and implements a stricter macOS Seatbelt path. It is
+synthetic qualification tooling, not a default backend or verified three-platform
+security boundary; that reference records AppArmor prerequisites and open gates.
+
 ## Native Windows Support Posture
 
 Native Windows remains outside full aidevops platform support. The only native Windows path currently documented is `/optimise-windows-indexing-backups`, a limited experimental local-ops command that audits Windows Search, File History/Windows Backup, OneDrive, and backup-client churn with dry-run recommendations by default.

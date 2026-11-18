@@ -1201,7 +1201,7 @@ _sandbox_build_env_args() {
 # Output: absolute executable path. Returns 1 when no usable backend is set.
 _sandbox_resolve_egress_backend() {
 	local configured_backend="${AIDEVOPS_WORKER_EGRESS_BACKEND:-}"
-	[[ -n "$configured_backend" && "$configured_backend" == /* && -x "$configured_backend" ]] || return 1
+	[[ -n "$configured_backend" && "$configured_backend" == /* && -f "$configured_backend" && -x "$configured_backend" ]] || return 1
 	printf '%s' "$configured_backend"
 	return 0
 }
