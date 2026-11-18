@@ -559,6 +559,46 @@ if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
 else
 	print_result "Maintainer release resets only prior ticks" 1
 fi
+# Merged-PR progress marker restarts the count at 1 (tick, progress, next tick = 2 < escalation of old 3).
+ticks='[[{"created_at":"2026-01-01T00:00:01Z","body":"<!-- stale-recovery-tick:1 -->"},{"created_at":"2026-01-01T00:00:02Z","body":"<!-- stale-recovery-tick:1 -->\n<!-- stale-recovery-progress:merged-pr -->"}]]'
+if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
+	print_result "Merged-PR progress marker restarts tick count" 0
+else
+	print_result "Merged-PR progress marker restarts tick count" 1
+fi
+if merged_pr=$(gh() { printf '%s' '[{"number":7,"body":"Resolves: o/r#42","mergedAt":"2026-01-01T00:30:00Z"},{"number":8,"body":"Resolves: #421","mergedAt":"2026-01-01T00:40:00Z"},{"number":9,"body":"Resolves: x/y#42","mergedAt":"2026-01-01T00:50:00Z"}]'; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z") && [[ "$merged_pr" == 7 ]]; then
+	print_result "Merged PR referencing issue after tick is found" 0
+else
+	print_result "Merged PR referencing issue after tick is found" 1 "(got '$merged_pr')"
+fi
+
+ticks='[[{"created_at":"2026-01-01T00:00:10Z","body":"<!-- stale-recovery-tick:1 -->\n<!-- stale-recovery-checked-through:2026-01-01T00:00:05Z -->"}]]'
+if [[ "$(_stale_recovery_latest_tick_ts_from_pages "$ticks")" == "2026-01-01T00:00:05Z" ]]; then
+	print_result "Tick retains the pre-search progress cutoff" 0
+else
+	print_result "Tick retains the pre-search progress cutoff" 1
+fi
+ticks='[[{"created_at":"2026-01-01T00:00:10Z","body":"<!-- stale-recovery-tick:1 -->"}]]'
+if [[ "$(_stale_recovery_latest_tick_ts_from_pages "$ticks")" == "2026-01-01T00:00:10Z" ]]; then
+	print_result "Legacy tick falls back to comment timestamp" 0
+else
+	print_result "Legacy tick falls back to comment timestamp" 1
+fi
+if merged_pr=$(gh() { jq -n '[range(0;101) | {number: ., body: (if . == 100 then "For #42" else "other" end), mergedAt: "2026-01-01T00:30:00Z"}]'; return 0; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z") && [[ "$merged_pr" == 100 ]]; then
+	print_result "Merged search checks results beyond the first page" 0
+else
+	print_result "Merged search checks results beyond the first page" 1
+fi
+if (gh() { jq -n '[range(0;1000) | {number: ., body: "other", mergedAt: "2026-01-01T00:30:00Z"}]'; return 0; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z"); then
+	print_result "Capped merged search without a match fails closed" 1
+else
+	print_result "Capped merged search without a match fails closed" 0
+fi
+if result=$(_stale_recovery_final_evidence_recheck() { return 0; }; _stale_recovery_find_merged_pr_since() { printf 7; return 0; }; set_issue_status() { printf MUTATED; return 0; }; _stale_recovery_escalate 42 o/r runner stale 2 2 dispatch 2026-01-01T00:00:00Z) && [[ "$result" == *STALE_PROGRESS_PRESERVED* && "$result" != *MUTATED* ]]; then
+	print_result "Final merged progress recheck prevents escalation" 0
+else
+	print_result "Final merged progress recheck prevents escalation" 1 "$result"
+fi
 
 for initial_state in blocked available; do
 	release_result=$(GH_TEST_STATE="$initial_state" bash -c '
