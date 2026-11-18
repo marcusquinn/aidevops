@@ -33,7 +33,7 @@ fi
 # shellcheck source=runtime-env.sh
 AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY=1 source "${SCRIPT_DIR}/runtime-env.sh" || exit 126
 
-REAL_GIT=$(aidevops_resolve_native_git) || {
+REAL_GIT=$(aidevops_resolve_native_git "$SCRIPT_SOURCE") || {
 	printf 'BLOCKED: canonical Git guard could not resolve the real git binary\n' >&2
 	exit 127
 }

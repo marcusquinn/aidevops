@@ -63,6 +63,7 @@ reset_case() {
 	TEST_TARGET="501"
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
+	TEST_CLOSING_950=""
 	TEST_PR_LABELS="origin:worker,tier:standard"
 	TEST_PR_JSON=$(pr_json true runner1)
 	TEST_PR_RC=0
@@ -97,6 +98,8 @@ reset_case() {
 	TEST_CLOSED_PRS='[]'
 	TEST_CLOSED_PRS_P2='[]'
 	TEST_CLOSED_P2_RC=0
+	PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS=999999999
+	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page"
 	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
 	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
 	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
@@ -176,6 +179,10 @@ _pm_issue_api() {
 _extract_linked_issue() {
 	printf '%s\n' "closing-read" >>"$API_LOG"
 	[[ "$TEST_CLOSING_RC" -eq 0 ]] || return "$TEST_CLOSING_RC"
+	if [[ "${1:-}" == "950" ]]; then
+		printf '%s' "${TEST_CLOSING_950:-}"
+		return 0
+	fi
 	printf '%s' "$TEST_CLOSING"
 	return 0
 }
@@ -650,6 +657,33 @@ test_ambiguous_reference_is_noop() {
 	return 0
 }
 
+# t2449: ambiguous explicit references must produce a specific deny reason,
+# not the generic "trust metadata unavailable" text.
+test_ambiguous_reference_verdict_reason() {
+	local verdict=""
+	verdict=$(
+		_PULSE_MERGE_PROCESS_WORKER_BRIEFED_LOADED=""
+		# Use the same explicit-reference parser as the production merge path.
+		# shellcheck source=../gh-closing-reference-lib.sh
+		source "${MODULE_FILE%/*}/gh-closing-reference-lib.sh"
+		# shellcheck source=../pulse-merge-process-worker-briefed.sh
+		source "${MODULE_FILE%/*}/pulse-merge-process-worker-briefed.sh"
+		gh_pr_view() {
+			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false,"headRefOid":"abc","body":"Ref #21729\nRef #19530"}'
+			return 0
+		}
+		_pulse_is_trusted_issue_sync_pr() { return 1; }
+		_extract_pr_work_issue() { return 2; }
+		worker_briefed_trust_verdict 900 "$SLUG" || true
+	)
+	if [[ "$verdict" == deny:*"ambiguous explicit issue references"*"#19530, #21729"* && "$verdict" != *"trust metadata unavailable"* ]]; then
+		pass "ambiguous explicit refs: specific deny reason"
+	else
+		fail "ambiguous explicit refs: specific deny reason" "got: $verdict"
+	fi
+	return 0
+}
+
 test_corroborated_partial_target() {
 	local body="" title=""
 	for title in 't501: partial delivery' 'GH#501: partial delivery'; do
@@ -769,6 +803,7 @@ test_unparsed_closing_reference_is_noop() {
 		TEST_PR_BODY="$body"
 		_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
 		assert_no_write "PR body closes [${body//$'\n'/ }]: no write"
+		assert_log_contains "body closes an issue" "closing body logged distinctly"
 		if grep -Fq "issues/501" "$API_LOG"; then
 			fail "PR body closes [${body//$'\n'/ }]: no issue lookups" "$(tr '\n' ' ' <"$API_LOG")"
 		else
@@ -784,7 +819,19 @@ test_unparsed_closing_reference_is_noop() {
 	TEST_PR_BODY_RC=1
 	_pm_restore_partial_continuation 900 "$SLUG" "" "origin:worker"
 	assert_no_write "PR body read failure: no write"
-	assert_log_contains "body closes an issue or is unreadable" "closing-reference skip is logged"
+	assert_log_contains "body unreadable" "unreadable body is logged distinctly"
+	return 0
+}
+
+test_recent_merged_scan_outside_traversal() {
+	reset_case
+	mkdir -p "$PULSE_PARTIAL_RECONCILE_STATE_DIR"
+	printf 'a9\n' >"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo"
+	TEST_REVIEW_ISSUES='[]'
+	TEST_CLOSED_PRS='[{"number":900,"merged_at":"2026-10-10T12:00:00Z","updated_at":"2026-10-10T12:00:00Z"}]'
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"recent merged PR restores outside the in-review traversal window"
 	return 0
 }
 
@@ -1103,6 +1150,21 @@ test_multi_page_traversal() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
 		"periodic pass selects newest merged PR, not last timeline entry"
+	# GH#38869: newest merged PR closes a sibling issue; older partial restores.
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:950,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-11T12:00:00Z"}}}}]')
+	TEST_CLOSING_950="777"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"periodic pass skips newest PR closing a sibling issue and restores"
+	# Contrast: the newest PR closes this issue itself, so no restore.
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:950,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-11T12:00:00Z"}}}}]')
+	TEST_CLOSING_950="501"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "periodic pass does not restore when newest PR closes the issue"
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:in-review,parent-task' runner1)
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
@@ -1205,10 +1267,10 @@ test_closed_checkpoint_dispatch_recovery() {
 	assert_status_call "501 ${SLUG} available --add-label auto-dispatch" \
 		"closed checkpoint draft restores auto-dispatch for any origin"
 	assert_comment_contains "kind=closed-checkpoint-dispatch-recovery pr=905 " "closed checkpoint restore records audit"
-	if grep -Fq 'pulls/904' "$API_LOG" || grep -Fq 'pulls/906' "$API_LOG"; then
-		fail "closed checkpoint scan reads only unmerged worker branches"
+	if grep -Fq 'pulls/906' "$API_LOG"; then
+		fail "closed scans skip unmerged non-worker branches"
 	else
-		pass "closed checkpoint scan reads only unmerged worker branches"
+		pass "closed scans skip unmerged non-worker branches"
 	fi
 
 	closed_checkpoint_case 'status:in-review,origin:interactive' runner1
@@ -1497,6 +1559,7 @@ main() {
 	test_closing_target_is_noop
 	test_non_worker_pr_is_noop
 	test_ambiguous_reference_is_noop
+	test_ambiguous_reference_verdict_reason
 	test_corroborated_partial_target
 	test_uncorroborated_partial_target_is_noop
 	test_unconfirmed_merge_keeps_review
@@ -1516,6 +1579,7 @@ main() {
 	test_unreadable_reread_skips_retry
 	test_qualified_open_pr_reference_keeps_review
 	test_unparsed_closing_reference_is_noop
+	test_recent_merged_scan_outside_traversal
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_multi_page_traversal

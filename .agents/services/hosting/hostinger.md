@@ -27,6 +27,7 @@ tools:
 - **SSH**: Port 65002, key auth (recommended) or password auth; framework prefers key when `ssh_identity_file` is configured
 - **Credential scope**: Hostinger SSH access is hosting-account scoped, not domain scoped; inventory and group sites before requesting credentials
 - **Client accounts**: hPanel Account sharing (hPanel only, no API; the agency token does not reach the client's plan) → `hostinger-client-access.md`
+- **Email**: Hostinger Email works with the domain and DNS kept at Cloudflare or elsewhere → `services/email/email-providers.md` "Hostinger Email"
 - **Panel**: Custom hPanel
 - **No MCP required** — uses curl for API, ssh for key auth or sshpass for password auth
 

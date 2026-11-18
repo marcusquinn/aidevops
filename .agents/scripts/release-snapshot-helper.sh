@@ -131,6 +131,41 @@ _release_snapshot_gh_read() {
 	return 1
 }
 
+# GH#38932: GitHub can permanently omit a squash merge's commit-to-PR
+# association (REST commits/{sha}/pulls and GraphQL associatedPullRequests both
+# empty hours later), which blocked every snapshot release containing it.
+# The subject's PR number is only a hint: a hinted PR is accepted solely when
+# its own GitHub record names this exact commit as its merge commit on the
+# release branch. A direct push cannot borrow a PR this way, because that PR
+# records a different merge commit. Read failures and two distinct verified
+# hints fail closed. Prints {pr,merge}.
+# Args: $1=repo $2=branch $3=commit
+_release_snapshot_hinted_record() {
+	local repo="$1"
+	local branch="$2"
+	local commit="$3"
+	local subject=""
+	local hint=""
+	local pr_json=""
+	local found=""
+	subject=$(git log -1 --format=%s "$commit") || return 1
+	while IFS= read -r hint; do
+		[[ "$hint" =~ ^[1-9][0-9]{0,9}$ ]] || continue
+		[[ "$hint" != "$found" ]] || continue
+		pr_json=$(_release_snapshot_gh_read "hinted source PR #${hint} in ${repo}" 'type == "object"' -- \
+			pr view "$hint" --repo "$repo" --json state,mergedAt,mergeCommit,baseRefName) || return 1
+		#aidevops:trust-boundary
+		jq -e --arg sha "$commit" --arg branch "$branch" '
+			.state == "MERGED" and .mergedAt != null and .baseRefName == $branch
+			and .mergeCommit.oid == $sha' <<<"$pr_json" >/dev/null || continue
+		[[ -z "$found" ]] || return 1
+		found="$hint"
+	done < <(printf '%s\n' "$subject" | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+')
+	[[ -n "$found" ]] || return 1
+	jq -cn --argjson pr "$found" --arg merge "$commit" '{pr:$pr,merge:$merge}'
+	return $?
+}
+
 release_snapshot_sources() {
 	local repo="$1"
 	local branch="$2"
@@ -139,6 +174,8 @@ release_snapshot_sources() {
 	local commits=""
 	local commit=""
 	local records=""
+	local matched=""
+	local matched_count=""
 	local record=""
 	local merge_sha=""
 	local pr_number=""
@@ -156,14 +193,29 @@ release_snapshot_sources() {
 		records=$(_release_snapshot_gh_read "pull requests for commit ${commit} in ${repo}" 'type == "array"' -- \
 			api --paginate --slurp "repos/${repo}/commits/${commit}/pulls?per_page=100") || return 1
 		#aidevops:trust-boundary
-		record=$(jq -ce --arg repo "$repo" --arg branch "$branch" '
+		matched=$(jq -ce --arg repo "$repo" --arg branch "$branch" '
 			flatten | [.[] | select(.merged_at != null and .state == "closed"
 				and .base.repo.full_name == $repo and .base.ref == $branch
 				and (.merge_commit_sha | type) == "string")]
-			| if length == 1 then .[0] else error("ambiguous or unmerged snapshot commit") end
-			| {pr:.number,merge:.merge_commit_sha}
-			| select((.pr | type) == "number" and .pr > 0 and (.pr | floor) == .pr)
+			| map({pr:.number,merge:.merge_commit_sha})
 		' <<<"$records") || return 1
+		matched_count=$(jq -r 'length' <<<"$matched") || return 1
+		case "$matched_count" in
+		1)
+			record=$(jq -ce '.[0]
+				| select((.pr | type) == "number" and .pr > 0 and (.pr | floor) == .pr)' <<<"$matched") || return 1
+			;;
+		0)
+			record=$(_release_snapshot_hinted_record "$repo" "$branch" "$commit") || {
+				printf 'release-snapshot: commit %s has no merged PR association and no verified subject PR hint\n' "$commit" >&2
+				return 1
+			}
+			;;
+		*)
+			printf 'release-snapshot: commit %s is associated with %s merged PRs; ambiguous\n' "$commit" "$matched_count" >&2
+			return 1
+			;;
+		esac
 		merge_sha=$(jq -er '.merge | select(test("^[0-9a-f]{40}$"))' <<<"$record") || return 1
 		pr_number=$(jq -er '.pr' <<<"$record") || return 1
 		git merge-base --is-ancestor "$commit" "$merge_sha" || return 1

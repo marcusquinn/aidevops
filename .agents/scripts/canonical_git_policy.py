@@ -19,6 +19,7 @@ from canonical_git_readonly import CANONICAL_CHECKS
 from canonical_git_repository import git_output as _git_output
 from canonical_git_repository import is_canonical as _is_canonical
 from canonical_git_repository import real_git as real_git
+from canonical_git_repository import reset_probe_memo
 from canonical_git_snapshot import is_isolated_opencode_snapshot
 
 BLOCK_EXIT = 42
@@ -290,6 +291,7 @@ def classify_git_argv(
     argv: list[str], cwd: str, real_git_path: str, check_unresolved: bool = False
 ) -> tuple[bool, str]:
     """Classify one Git argv vector against canonical-worktree policy."""
+    reset_probe_memo()  # probe results never span argv vectors
     prefix, effective_cwd, subcommand, args = split_invocation(argv, cwd)
     repo_values = repository_values(prefix)
     if check_unresolved and any(

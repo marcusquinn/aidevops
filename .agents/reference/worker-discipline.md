@@ -320,6 +320,11 @@ it the evidence stays `unknown`. Its revision tracks the brief and
 dependencies: supplying the input in the issue body re-arms dispatch. It adds
 no label or review gate beyond the blocked-exit hold below.
 
+Maintainers answer owner decisions in one place: `/decisions`
+(`maintainer-decisions-helper.sh list`, read-only, all managed repos) shows each hold's
+newest question and kind (kinds: helper header). Question-less holds are AI-side gaps.
+Answers it posts carry `<!-- aidevops:maintainer-decision -->`.
+
 Blocked-exit labels (GH#34775, GH#34846): the runtime releases a known-class
 `BLOCKED` exit as `status:blocked`, and the release comment's `Projected
 state:` names that label. Runner-local classes (`runner_capability_unmet`

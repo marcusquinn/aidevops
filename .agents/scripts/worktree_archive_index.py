@@ -36,16 +36,24 @@ def archive_policies(manifest):
     return capture_policy, policy
 
 
-def git_index_state(path, head=None):
+def index_dirs(root):
+    """Resolve (admin, common, index.lock) in one spawn for one capture pass."""
+    # --absolute-git-dir is absolute before the --path-format switch.
+    admin_raw, common_raw, lock = (os.fsdecode(line) for line in git(
+        root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute', '--git-common-dir',
+        '--git-path', 'index.lock').rstrip(b'\n').split(b'\n'))
+    return Path(admin_raw), Path(common_raw), lock
+
+
+def git_index_state(path, head=None, dirs=None):
     root = Path(path).resolve(strict=True)
-    lock = os.fsdecode(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index.lock').rstrip(b'\n'))
+    # A caller may pass directories it resolved moments earlier in the same pass.
+    admin, common, lock = dirs if dirs is not None else index_dirs(root)
     if os.path.lexists(lock):
         raise ValueError('git_admin:index_locked:index.lock')
     from worktree_archive_state import merge_pending, merge_state
-    # Share reads only within this capture; subsequent snapshots start fresh.
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     if merge_pending(root, admin=admin):
-        state = merge_state(root)
+        state = merge_state(root, admin, common)
         return {'head': state['head'], 'merge': state}
     index = git(root, "ls-files", "--stage", "-z")
     entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
@@ -59,12 +67,16 @@ def git_index_state(path, head=None):
         raise ValueError("index has skip-worktree/assume-unchanged entries")
     # Index-only metadata reads, not a working-tree scan or restore verification.
     options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
-    if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
+    visible = git(root, "diff", *options, "--ita-visible-in-index")
+    # An empty visible view does not prove equality: an intent-to-add entry for
+    # a file that HEAD holds as an empty blob is visible-empty but invisible-deleted.
+    invisible = git(root, "diff", *options, "--ita-invisible-in-index")
+    if visible != invisible:
         raise ValueError("intent-to-add index entries cannot be represented by two patches")
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
-    state = administration(root, admin=admin)
+    state = administration(root, admin=admin, common=common)
     if state['files'].get('config.worktree'):
         # GH#36883: only known runtime-local keys are preserved (as bytes, never
         # restored); unknown, mixed or comment-only configuration is refused.

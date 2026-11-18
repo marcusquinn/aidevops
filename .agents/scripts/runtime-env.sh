@@ -274,6 +274,7 @@ aidevops_is_git_shim() {
 # intentionally lead PATH. Follow symlinks and reject every deployed/source
 # copy of the shim. AIDEVOPS_REAL_GIT_BIN (operator override) wins.
 aidevops_resolve_native_git() {
+	local known_shim="${1:-}" # optional calling shim file; matched by inode, no readlink spawn
 	local candidate=""
 	local override="${AIDEVOPS_REAL_GIT_BIN:-${AIDEVOPS_REAL_GIT:-}}"
 	if [[ -n "$override" ]]; then
@@ -286,6 +287,7 @@ aidevops_resolve_native_git() {
 	fi
 	while IFS= read -r candidate; do
 		[[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || continue
+		[[ -n "$known_shim" && "$candidate" -ef "$known_shim" ]] && continue
 		aidevops_is_git_shim "$candidate" && continue
 		printf '%s' "$candidate"
 		return 0
@@ -297,6 +299,6 @@ aidevops_resolve_native_git() {
 [[ "${AIDEVOPS_RUNTIME_ENV_LIBRARY_ONLY:-0}" != 1 ]] || return 0
 PATH=$(aidevops_runtime_path "${PATH:-}")
 export PATH
-AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git) || return 1
+AIDEVOPS_REAL_GIT_BIN=$(aidevops_resolve_native_git "") || return 1
 export AIDEVOPS_REAL_GIT_BIN
 return 0

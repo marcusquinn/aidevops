@@ -101,7 +101,7 @@ Worktree edit verification (GH#22816):
 After any file edit in the pre-created linked worktree, verify the worktree path still exists and the change is visible before claiming success or pushing. Minimum evidence: git status --short --branch from $WORKER_WORKTREE_PATH plus a diff/stat or commit containing the edited files. If the worktree or edits disappeared, reconstruct from available evidence before reporting completion.
 
 Incremental WIP commits (GH#23677):
-- Make a local WIP commit as soon as the first meaningful edit is coherent, then after each logical change. Use conventional WIP subjects such as `wip: preserve cleanup safety` until the final squash/PR commit.
+- Make a local WIP commit as soon as the first meaningful edit is coherent, then after each logical change. Use conventional WIP subjects such as `wip: preserve cleanup safety` (if the repo's commitlint `type-enum` rejects `wip`, use `chore: wip preserve cleanup safety`) until the final squash/PR commit.
 - Do not leave valuable work only as dirty files while continuing to explore. A first WIP commit makes the worktree cleanup-visible as active real work even before a PR exists, and gives the runtime/watchdog a reachable commit to push or recover.
 - If a commit hook blocks a WIP commit, fix the issue when practical; otherwise preserve the diff with a clear BLOCKED outcome rather than resetting or continuing with unprotected dirty state.
 EOF
@@ -205,6 +205,10 @@ Preserve the protected blocker dossier and human-owned recovery action. Do not
 retry the denied read or regenerate a request to produce another permission event.
 Brief edits and unrelated merges cannot resolve this class; an explicit trusted
 retry only schedules verification and never grants source or secret access.
+When one named person can grant or approve it by answering in the issue (an
+approval, authorization or sign-off), also emit TERMINAL_BLOCKER_INPUT_OWNER and
+TERMINAL_BLOCKER_QUESTION as for input_required; the hold then publishes that
+ask. A hold with no public ask leaves nobody able to act (GH#38951).
 Only when a specific value, target, credential or decision is required, absent
 from the brief, repository, linked issues and your tools, and cannot be derived
 or safely chosen within delegated authority, use both lines:

@@ -687,6 +687,65 @@ test_monitor_scopes_package_tests_when_present() {
 	return 0
 }
 
+test_monitor_policy_briefs() {
+	local home_dir="${TEST_ROOT}/policy-home" repo_dir="${TEST_ROOT}/policy-package"
+	local bin_dir="${TEST_ROOT}/policy-bin" log_file="" scenario="" scope=""
+	local expected_scope="- \`CHANGELOG\`
+- \`CloudronManifest.json\`
+- \`Dockerfile.cloudron\`
+- \`test/baseline.sha256\`
+- \`test/package-test.sh\`
+- \`test/verify-buzz-image.sh\`"
+	write_fake_commands "$bin_dir"
+	write_fixture "$home_dir" "$repo_dir"
+	mkdir -p "${repo_dir}/test"
+	printf '# Version assertions\n' >"${repo_dir}/test/package-test.sh"
+	for scenario in verified license identity invalid_identity unavailable compatibility; do
+		log_file="${TEST_ROOT}/policy-${scenario}.log"
+		(
+			export HOME="$home_dir" PATH="${bin_dir}:$PATH" MONITOR_TEST_LOG="$log_file"
+			export CLOUDRON_PACKAGE_ISSUE_WRAPPER="${bin_dir}/gh_create_issue"
+			# shellcheck source=../cloudron-package-monitor-helper.sh
+			source "$HELPER"
+			# Mock only the verified lookup boundary; signature/freshness behavior
+			# remains owned by test-cloudron-release-approval.sh.
+			_cloudron_monitor_active_policy() {
+				[[ "$scenario" != unavailable ]] || return 1
+				local license_flag=""
+				[[ "$scenario" != license ]] || license_flag=',"license_version_url":true'
+				[[ "$scenario" != identity ]] || license_flag=',"release_identity":{"commit_arg":"COMMIT"}'
+				[[ "$scenario" != invalid_identity ]] || license_flag=',"release_identity":false'
+				printf '138\t{"changelog_files":["CHANGELOG"],"pinned_files":["Dockerfile.cloudron"],"check_files":["test/package-test.sh"],"companion_image":{"verify_file":"test/verify-buzz-image.sh"},"catalog_baseline":{"file":"test/baseline.sha256"}%s}\n' "$license_flag"
+				return 0
+			}
+			fingerprint="upstream-v1.10.0"
+			[[ "$scenario" != compatibility ]] || fingerprint="compatibility-base-6.0.1"
+			_cloudron_monitor_create_issue exampleorg/example-package 'Update upstream' "$fingerprint" 'New upstream' 'Run preflight' CloudronManifest.json "$repo_dir"
+		) >/dev/null
+		if [[ "$scenario" == verified ]]; then
+			scope=$(awk '/^## Files Scope$/{capture=1;next} /^## /{capture=0} capture && /^- /{print}' "$log_file")
+			assert_equal "$expected_scope" "$scope" 'policy brief lists exactly all policy file classes'
+			assert_equal 1 "$(grep -c '^## Standing release policy #138$' "$log_file" || true)" 'policy brief links verified standing policy'
+			assert_equal 1 "$(grep -c 'version tokens only' "$log_file" || true)" 'policy checks use version tokens only'
+			assert_equal 1 "$(grep -c 'r924 merges and publishes automatically' "$log_file" || true)" 'routine publication replaces per-release signature requirement'
+			assert_equal 1 "$(grep -Fc 'jq -cS '\''.versions["<base version>"].manifest'\'' CloudronVersions.json | shasum -a 256' "$log_file" || true)" 'baseline guidance preserves exact canonical manifest hash command'
+			assert_equal 1 "$(grep -c 'closing reference to this upstream finding' "$log_file" || true)" 'policy brief preserves finding closure reference'
+			assert_equal 1 "$(grep -c 'Do not edit README, docs' "$log_file" || true)" 'policy brief excludes unrelated files'
+			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'policy without license permission keeps manifest restriction'
+		elif [[ "$scenario" == license || "$scenario" == identity ]]; then
+			assert_equal 1 "$(grep -c 'additionally update upstreamLicense.url' "$log_file" || true)" 'license-permitting policy allows license URL update'
+			assert_equal 0 "$(grep -c 'Increment only the package patch' "$log_file" || true)" 'permitted brief drops blanket manifest prohibition'
+		elif [[ "$scenario" == invalid_identity ]]; then
+			assert_equal 0 "$(grep -c 'upstreamLicense.url' "$log_file" || true)" 'non-object identity keeps manifest restriction'
+		else
+			assert_equal 0 "$(grep -c 'Standing release policy' "$log_file" || true)" "${scenario}: no policy guidance"
+			assert_equal 1 "$(grep -c 'version and digest assertions that must track the bump' "$log_file" || true)" "${scenario}: legacy test note retained"
+			assert_equal 1 "$(grep -c 'only after signed maintainer approval' "$log_file" || true)" "${scenario}: legacy release boundary retained"
+		fi
+	done
+	return 0
+}
+
 test_monitor_uses_remote_manifest_and_fails_closed() {
 	local home_dir="${TEST_ROOT}/remote-home"
 	local repo_dir="${TEST_ROOT}/remote-package"
@@ -1407,6 +1466,7 @@ main() {
 	test_monitor_reports_stranded_upstream_findings
 	test_monitor_supersedes_only_idle_upstream_findings
 	test_monitor_scopes_package_tests_when_present
+	test_monitor_policy_briefs
 	test_monitor_uses_remote_manifest_and_fails_closed
 	test_monitor_rejects_invalid_release_timeout
 	test_monitor_selects_configured_stream

@@ -93,6 +93,11 @@ one window old. `terminal-blocker-recovery-helper.sh` then projects
 rearm receipt binds the event and window index, so it releases at most once per
 window. Re-arming grants nothing: a worker that meets the real guard again must
 run `worker-permission-helper.sh request`, and that request keeps the hold.
+After a re-arm, the login that released the hold skips the issue for
+`AIDEVOPS_PERMISSION_PEER_GRACE_SECONDS` (default 3600; 0 disables), so a peer
+gets the first claim (GH#38957). Dedup logs
+`TERMINAL_BLOCKER_PERMISSION_PEER_PREFERENCE retry_after=<epoch>`. A peer either
+completes the task or adds the second-runner evidence for the fleet hold.
 
 ### Dispatch claim comment states
 
@@ -129,6 +134,11 @@ without a new denied tool call. Its known-blocker circuit is bound to the issue,
 not unrelated code/brief edits or dependency API availability. Resolve the
 human-owned prerequisite before explicitly retrying; scheduling consent never
 grants source access, and the original guard must verify the exact context.
+When the same final message also carries exactly one valid
+`TERMINAL_BLOCKER_INPUT_OWNER` and one `TERMINAL_BLOCKER_QUESTION`, the
+capture records `input_required:<owner>` instead (GH#38951): one named person
+can answer it in the issue, so the release publishes `Input requested:` and the
+`/decisions` queue lists it. A bare denial with no ask keeps its class.
 
 An `external_trigger_pending` report may add one final-message
 `TERMINAL_BLOCKER_TRIGGER=<event, owner or date>` line (GH#38353); AI triage of

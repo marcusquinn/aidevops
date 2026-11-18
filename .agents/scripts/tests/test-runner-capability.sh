@@ -207,6 +207,14 @@ _hrff_handle_terminal_blocker_release 1 owner/repo receipt
     check('class tools combine with brief tools', issue,
           {'publish': {'tools': ['definitely-not-installed-xyz']}}, False,
           'tool_missing name=definitely-not-installed-xyz')
+    # GH#38825: a missing repo root is named, not reported as invalid_requirements.
+    missing = subprocess.run(['bash', '-c',
+        'source "$1/runner-capability-helper.sh"; runner_capability_check "$2" "$3"',
+        'fixture', str(scripts), str(root / 'no-such-repo'), json.dumps(issue)],
+        env=env, capture_output=True, text=True)
+    assert missing.returncode != 0 and missing.stdout == 'runner_capability_unmet reason=repo_path_missing\n', missing
+    passed += 1
+    print('PASS missing repo root reports repo_path_missing')
     # GH#37638: requires-loopback-health probes a fixed 127.0.0.1 port only.
     import http.server
     import threading

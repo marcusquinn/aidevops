@@ -103,6 +103,35 @@ if release_snapshot_sources test/repo main "$LATER" "$SNAPSHOT" 2>/dev/null; the
 fi
 printf 'PASS: API uncertainty, foreign base and rewritten ancestry rejected\n'
 
+# GH#38932: GitHub returned no association for a merged squash commit. Its
+# subject's PR hint resolves it only when that PR records this exact merge
+# commit; a direct push reusing the hint stays rejected. HEAD does not move.
+_gh_base=$(declare -f gh)
+HINT_TREE=$(git rev-parse "${BASE}^{tree}")
+HINTED=$(git commit-tree "$HINT_TREE" -p "$BASE" -m 'fix: hinted squash merge (#7)')
+FORGED=$(git commit-tree "$HINT_TREE" -p "$HINTED" -m 'chore: direct push claiming (#7)')
+gh() {
+	if [[ "$1" == pr ]]; then
+		[[ "$3" == 7 ]] || return 1
+		jq -cn --arg sha "$HINTED" '{state:"MERGED",mergedAt:"2026-11-18T00:00:00Z",baseRefName:"main",mergeCommit:{oid:$sha}}'
+		return $?
+	fi
+	printf '[[]]\n'
+	return 0
+}
+hinted=$(release_snapshot_sources test/repo main "$BASE" "$HINTED")
+[[ "$hinted" == "$(jq -cn --arg sha "$HINTED" '[{pr:7,merge:$sha}]')" ]]
+if release_snapshot_sources test/repo main "$HINTED" "$FORGED" 2>/dev/null; then
+	printf 'FAIL: forged subject PR hint on a direct push accepted\n' >&2
+	exit 1
+fi
+if release_snapshot_sources test/repo main "$BASE" "$FORGED" 2>/dev/null; then
+	printf 'FAIL: range containing a forged subject PR hint accepted\n' >&2
+	exit 1
+fi
+eval "$_gh_base"
+printf 'PASS: missing association resolves only through a verified subject PR hint\n'
+
 # Transient reads retry (bounded); auth failures do not. Count gh calls via file.
 export RELEASE_SNAPSHOT_RETRY_UNIT=0
 _gh_real=$(declare -f gh)

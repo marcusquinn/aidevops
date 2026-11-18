@@ -112,6 +112,12 @@ def unmet(reason=''):
     print('runner_capability_unmet' + (f' reason={reason}' if reason else ''))
     raise SystemExit(1)
 
+def resolve_root(path):
+    # GH#38825: name a missing repo root instead of a generic invalid map.
+    if not Path(path).is_dir():
+        unmet('repo_path_missing')
+    return Path(path).resolve(strict=True)
+
 def check_rejections(names):
     rejection = runpy.run_path(str(Path(sys.argv[5]).parent / 'runner-secret-rejection.py'))
     rejected_name = rejection['process_names']('check', sorted(names))
@@ -393,7 +399,7 @@ PY
 _runner_capability_python_requirements() {
 	cat <<'PY'
 try:
-    root = Path(sys.argv[1]).resolve(strict=True)
+    root = resolve_root(sys.argv[1])
     issue = json.loads(sys.argv[2])
     check_device(issue.get('body', ''))
     requirements = class_requirements(root, issue)

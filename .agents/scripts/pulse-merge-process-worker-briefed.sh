@@ -650,10 +650,16 @@ worker_briefed_trust_verdict() {
 		pr_body=$(jq -r '.body' <<<"$pr_meta") || return 1
 		WORKER_BRIEFED_BODY="$pr_body"
 		WORKER_BRIEFED_BODY_AVAILABLE=1
-		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || {
+		local extract_rc=0 ambiguous_refs=""
+		linked_issue=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body") || extract_rc=$?
+		if [[ "$extract_rc" -ne 0 ]]; then
+			if [[ "$extract_rc" -eq 2 ]]; then
+				ambiguous_refs=$(_gh_pr_body_explicit_issues "$pr_body" | grep -E "^[0-9]+$" | sed "s/^/#/" | paste -sd, - | sed "s/,/, /g") || ambiguous_refs=""
+				WORKER_BRIEFED_TRUST_REASON="ambiguous explicit issue references in PR body${ambiguous_refs:+ (${ambiguous_refs})}; keep exactly one For/Ref/Resolves target and cite parents by task id, not #NNN (t2449)"
+			fi
 			printf 'deny:%s\n' "$WORKER_BRIEFED_TRUST_REASON"
 			return 1
-		}
+		fi
 	fi
 	if _worker_briefed_trust_check "$pr_number" "$repo_slug" "$labels_str" "$is_draft" "$linked_issue" "${6:-}" "${7:-}"; then
 		printf 'allow\n'

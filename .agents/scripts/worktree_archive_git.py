@@ -129,6 +129,14 @@ def git(root, *args, data=None, timeout=DEFAULT_TIMEOUT):
     ).stdout
 
 
+def git_dirs(root):
+    """Resolve (admin, common) directories in one spawn for one guard pass."""
+    # --absolute-git-dir is absolute before the --path-format switch.
+    admin, common = git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                        '--git-common-dir').rstrip(b'\n').split(b'\n')
+    return Path(os.fsdecode(admin)), Path(os.fsdecode(common))
+
+
 def auto_merge_oid(data):
     if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
         raise ValueError("git_admin:invalid_AUTO_MERGE")
@@ -149,14 +157,18 @@ def capture_bundle(root, archive, roots, base):
     # tip. All writes go to scratch; the source object database is read-only.
     with tempfile.TemporaryDirectory(prefix=".admin-bundle-", dir=archive.parent) as temporary:
         scratch = Path(temporary)
-        object_format = git(root, 'rev-parse', '--show-object-format').strip().decode('ascii')
+        # One spawn resolves object format, objects path and HEAD (output order follows arguments).
+        object_format_raw, objects, head_raw = git(
+            root, 'rev-parse', '--show-object-format', '--path-format=absolute',
+            '--git-path', 'objects', 'HEAD').rstrip(b'\n').split(b'\n')
+        object_format = object_format_raw.decode('ascii')
+        head = head_raw.decode('ascii')
         git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
-        objects = git(root, "rev-parse", "--path-format=absolute", "--git-path", "objects").rstrip(b"\n")
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
         updates = ''.join(f'update refs/archive/{number} {oid}\n'
                           for number, oid in enumerate(roots))
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
-        git(scratch, "update-ref", "refs/heads/archive-head", git(root, "rev-parse", "HEAD").strip().decode("ascii"))
+        git(scratch, "update-ref", "refs/heads/archive-head", head)
         git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
         exclusions = (f'^{base}',) if base else ()
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
@@ -175,11 +187,8 @@ def fetch_preservation(root, archive):
     admin_path = None
     if bundle.is_file():
         git(root, 'bundle', 'verify', str(bundle))
-        # One spawn for both paths; --absolute-git-dir is absolute before the format switch.
-        admin, common = git(root, 'rev-parse', '--absolute-git-dir',
-                            '--path-format=absolute', '--git-common-dir').rstrip(b'\n').split(b'\n')
-        admin_path = Path(os.fsdecode(admin))
-        if admin_path.resolve() != Path(os.fsdecode(common)).resolve():
+        admin_path, common = git_dirs(root)
+        if admin_path.resolve() != common.resolve():
             git(root, 'bundle', 'unbundle', str(bundle))
         else:
             # Standalone restores must keep non-commit AUTO_MERGE/index objects

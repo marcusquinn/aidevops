@@ -66,7 +66,9 @@ Safety:
   - Pods start the image's /start.sh (sshd) when present, wait for staged
     inputs (run stage per pod), render under the deadline timeout, enforce the
     pinned Blender version, then wait up to --fetch-minutes for fetch to
-    release them before removing themselves.
+    release them before trying to delete themselves. A pod can end up
+    EXITED rather than deleted (it may still bill storage), so always run
+    teardown --live after fetch.
   - A Runpod "no longer any instances available" refusal creates nothing; it
     is retried BRH_CAPACITY_RETRIES times (default 3) every
     BRH_CAPACITY_RETRY_SECS (default 20). Other create errors stop at once.
@@ -683,7 +685,7 @@ _brh_contract_text() {
 	local msha="" bsha=""
 	msha="$(_brh_sha256 "$manifest")"
 	bsha="$(_brh_manifest_get "$manifest" blender_sha256)"
-	printf 'provider=runpod\nblender=%s\nblender_install=%s\nengine=%s\ndevice=%s\nsamples=%s\nresolution=%s\nframes=%s\nmanifest_sha256=%s\nimage=%s\ngpu=%s\ncloud_type=%s\nrate_usd_hr=%s (quoted for this cloud type; verify in status)\nstorage_gb=%s\nstorage_usd=%s\nworkers_min=0\nworkers_max=%s\nidle_timeout=0 (self-removes after fetch or fetch window)\ndeadline_minutes=%s\nfetch_minutes=%s\noverhead_minutes=%s\nbudget_usd=%s\n' \
+	printf 'provider=runpod\nblender=%s\nblender_install=%s\nengine=%s\ndevice=%s\nsamples=%s\nresolution=%s\nframes=%s\nmanifest_sha256=%s\nimage=%s\ngpu=%s\ncloud_type=%s\nrate_usd_hr=%s (quoted for this cloud type; verify in status)\nstorage_gb=%s\nstorage_usd=%s\nworkers_min=0\nworkers_max=%s\nidle_timeout=0 (stops after fetch or fetch window; teardown removes it)\ndeadline_minutes=%s\nfetch_minutes=%s\noverhead_minutes=%s\nbudget_usd=%s\n' \
 		"$(_brh_manifest_get "$manifest" blender_version)" \
 		"$([[ -n "$bsha" && "$bsha" != "image" ]] && printf 'official linux-x64, sha256 %s' "$bsha" || printf 'image PATH')" \
 		"$(_brh_manifest_get "$manifest" engine)" \
@@ -872,15 +874,20 @@ _brh_stage() {
 	fi
 	local ssh_cmd="ssh -p ${BRH_O_PORT} -o StrictHostKeyChecking=accept-new"
 	local dest="root@${BRH_O_HOST}"
+	# Not -a: SECURE pods mount /workspace on MooseFS (FUSE), where rsync's
+	# chown fails (exit 23) and would abort staging. Owner/perms are not needed.
+	# -L copies symlinked inputs as their (hashed) target contents; without -a's
+	# --links, rsync would otherwise skip them as non-regular files.
+	local -a sync=(rsync -rtLv --no-owner --no-group -e "$ssh_cmd")
 	local path="" want=""
 	while read -r want path; do
 		[[ -n "$path" ]] || continue
-		_brh_exec rsync -av -e "$ssh_cmd" "$path" "${dest}:${BRH_REMOTE_DIR}/$(basename "$path")" || return 1
+		_brh_exec "${sync[@]}" "$path" "${dest}:${BRH_REMOTE_DIR}/$(basename "$path")" || return 1
 	done < <(
 		printf '%s %s\n' "x" "$(_brh_manifest_get "$manifest" blend)"
 		sed -n 's/^.*"path": "\(.*\)", "sha256": "\([0-9a-f]*\)"}.*$/\2 \1/p' "$manifest"
 	)
-	_brh_exec rsync -av -e "$ssh_cmd" "${BRH_O_JOB}/enable_gpu.py" "${BRH_O_JOB}/scene_overrides.py" "${BRH_O_JOB}/render_worker.sh" "${dest}:${BRH_REMOTE_DIR}/" || return 1
+	_brh_exec "${sync[@]}" "${BRH_O_JOB}/enable_gpu.py" "${BRH_O_JOB}/scene_overrides.py" "${BRH_O_JOB}/render_worker.sh" "${dest}:${BRH_REMOTE_DIR}/" || return 1
 	_brh_exec ssh -p "$BRH_O_PORT" -o StrictHostKeyChecking=accept-new "$dest" "touch ${BRH_REMOTE_DIR}/.staged" || return 1
 	return 0
 }
@@ -936,7 +943,7 @@ _brh_fetch() {
 	mkdir -p "${BRH_O_JOB}/frames"
 	local dest="root@${BRH_O_HOST}"
 	# Check the pod finished before copying, so a complete copy can release it:
-	# the pod waits (up to --fetch-minutes) for .fetched before removing itself.
+	# the pod waits (up to --fetch-minutes) for .fetched before trying to delete itself.
 	local rendered=0
 	local release_pod="touch ${BRH_REMOTE_DIR}/.fetched"
 	if [[ "$BRH_LIVE" -eq 1 ]]; then
@@ -955,9 +962,9 @@ _brh_fetch() {
 	fi
 	if [[ "$rendered" -eq 1 ]]; then
 		if _brh_remote "$BRH_O_PORT" "$dest" "$release_pod"; then
-			print_info "Pod render was complete before this copy; released it (it removes itself now)"
+			print_info "Pod render was complete before this copy; released it. Run teardown --live to remove it (a stopped pod can still bill storage)"
 		else
-			print_warning "Could not release the pod (.fetched); it removes itself when its fetch window ends"
+			print_warning "Could not release the pod (.fetched); it stops when its fetch window ends. Run teardown --live to remove it"
 		fi
 	else
 		print_warning "Pod has not finished rendering; this copy may be partial. Re-run fetch after BRH_RESULT appears in status."

@@ -320,7 +320,20 @@ _pulse_setup_refill_only_mode() {
 	return 0
 }
 
+#######################################
+# GH#38908: a refill-only run's full census (often 100-200 candidates) goes
+# to the next dispatch process instead of being orphaned under its pid key.
+# Runs while this process still holds the instance lock. Idempotent.
+#######################################
+_pulse_event_refill_hand_off_census() {
+	if declare -F _dispatch_cleanup_cycle_cache >/dev/null 2>&1; then
+		_dispatch_cleanup_cycle_cache || true
+	fi
+	return 0
+}
+
 _pulse_event_refill_cleanup() {
+	_pulse_event_refill_hand_off_census
 	if declare -F release_instance_lock >/dev/null 2>&1; then
 		release_instance_lock || true
 	fi
@@ -725,6 +738,7 @@ _pulse_run_refill_only() {
 		_pulse_event_refill_record_cooldown "$_PULSE_EVENT_REFILL_LAST_OUTCOME"
 		;;
 	esac
+	_pulse_event_refill_hand_off_census
 	release_instance_lock
 	return 0
 }

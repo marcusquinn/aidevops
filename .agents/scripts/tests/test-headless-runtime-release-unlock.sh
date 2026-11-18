@@ -723,6 +723,12 @@ fi
 	_hrw_finish_success_run issue-12345 ""
 	[[ "$released_reason" == worker_complete ]]
 	_run_metric_session_id=""
+	# Finalized isolated-DB snapshot: matching start stamps satisfy the guard.
+	AIDEVOPS_HEADLESS_AUTH_ISOLATION=1
+	_WORKER_ISOLATED_DB_PATH=""
+	_WORKER_START_EPOCH_MS=123
+	_WORKER_ATTEMPT_ACTIVITY_START_MS=123
+	_WORKER_ATTEMPT_ACTIVITY_COUNT=1
 	_hrff_worker_session_count() { printf '1\n'; return 0; }
 	_hrw_runtime_launch_confirmed
 	printf 'PASS no-launch success and failure are infrastructure outcomes; launched success completes\n'

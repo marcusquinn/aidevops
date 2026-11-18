@@ -14,8 +14,11 @@ from worktree_archive_git import (
 )
 
 
-def auto_merge(root):
-    path = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n"))) / "AUTO_MERGE"
+def auto_merge(root, admin=None):
+    # A caller that resolved the admin directory in the same pass may share it.
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    path = Path(admin) / "AUTO_MERGE"
     if not os.path.lexists(path):
         return None
     validate_admin_entry(path, "AUTO_MERGE")
@@ -66,7 +69,9 @@ def restore_auto_merge(root, archive):
     manifest = json.loads((archive / 'manifest.json').read_text(encoding='utf-8'))
     if manifest.get('source_fingerprint', {}).get('auto_merge') is None:
         return
-    fetch_preservation(root, archive)
+    # Reuse the admin dir fetch_preservation resolved (None only without a bundle).
+    admin = fetch_preservation(root, archive)
     oid = verify_auto_merge(root, archive, manifest)
-    admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
+    if admin is None:
+        admin = Path(os.fsdecode(git(root, 'rev-parse', '--absolute-git-dir').rstrip(b'\n')))
     (admin / 'AUTO_MERGE').write_text(oid + '\n', encoding='ascii')

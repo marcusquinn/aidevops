@@ -10,6 +10,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.226] - 2026-11-18
+
+### Added
+
+- generate policy-aware upstream briefs (#38907)
+
+### Changed
+
+- Documentation: add Hostinger Email to email provider docs (#38903)
+
+### Fixed
+
+- resolve squash commits with a missing GitHub PR association via verified subject hint
+- validate brief scope before readiness verdict (#38927)
+- bulk close skips task-ID title collisions instead of falsely completing open issues
+- report ambiguous explicit issue refs in merge verdict (t2449) (#38917)
+- treat unreported required contexts as pending before merge
+- apply the ChatGPT OAuth model denylist to worker same-tier fallback
+- document scoped picomatch audit exception (#38897)
+- inherit providers per key from framework routing table (GH#38872) (#38890)
+
+## [3.39.225] - 2026-11-17
+
+### Changed
+
+- Maintenance: bump @vitejs/plugin-react from 6.2.1 to 6.3.0 (#38889)
+- Documentation: Purelymail docs cover admin Users path, scoped app passwords and imap-check
+
+### Fixed
+
+- repo-sync wording and counters reflect read-only drift reporting
+- remove stray grep escapes in GH wrapper guard (GH#38871) (#38891)
+- fix onboarding-helper settings keys and silent save failures
+
+## [3.39.224] - 2026-11-17
+
+### Added
+
+- verify catalog-baseline appends
+
+### Changed
+
+- Maintenance: bump hono from 4.13.16 to 4.13.17 (Supersedes #38836)
+- Maintenance: bump vite from 8.3.5 to 8.3.7 (#38860)
+- Maintenance: bump elysia from 1.4.30 to 1.4.31 (Supersedes #38838)
+- Maintenance: bump actions group (codeql-action v4.39.3, opencode v2.2.7)
+
+### Fixed
+
+- release needs-dependency issues past superseded terminal-blocker comments (#38870)
+- skip sibling-closing PRs in partial-continuation revisit (#38873)
+- stage without chown on Runpod SECURE MooseFS; require teardown after fetch
+- cheap macOS descendant snapshot + close two cleanup identity gaps
+- report repo_path_missing for pulse repos with absent local path (GH#38825) (#38830)
+- strip trailing whitespace in secret-helper credentials.sh fallback (GH#38844) (#38852)
+- refuse worker summary For/Ref #N self-reference that would emit Resolves (GH#38823) (#38829)
+
 ## [3.39.223] - 2026-11-17
 
 ### Changed

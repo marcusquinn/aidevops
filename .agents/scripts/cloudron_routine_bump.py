@@ -40,7 +40,7 @@ import sys
 
 from cloudron_release_identity import (
     COMMIT_VERSION, FULL_COMMIT, UPSTREAM_REPO, NotRoutine,
-    pin_policy, validate_pins_request,
+    pin_policy, validate_pins_request, catalog_baseline_file, check_catalog_baseline,
     release_identity, require, substitute_versions,
 )
 from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
@@ -229,6 +229,7 @@ def check(doc, repository):
     changelogs, pinned, checks = (classes[key] for key in POLICY_FILE_CLASSES)
     require(not (changelogs & pinned or changelogs & checks or pinned & checks), "policy file classes overlap")
     verify_file = companion_verify_file(policy, changelogs | pinned)
+    baseline_file = catalog_baseline_file(policy)
     # Companion verification is byte-exact, never generic version substitution.
     checks = checks - {verify_file}
     check_pattern = insertion_pattern(policy)
@@ -243,7 +244,7 @@ def check(doc, repository):
         # introduce new build inputs; only in-place edits of named files qualify.
         require(entry.get("status") == "modified" and "previous_filename" not in entry,
                 name + ": only in-place modifications qualify")
-        require(name in (MANIFEST, verify_file) or name in changelogs | pinned | checks, name + ": outside the standing policy")
+        require(name in (MANIFEST, verify_file, baseline_file) or name in changelogs | pinned | checks, name + ": outside the standing policy")
         names.append(name)
     require(len(set(names)) == len(names), "duplicate changed file entries")
     require(MANIFEST in names, "the manifest must change")
@@ -257,6 +258,8 @@ def check(doc, repository):
     old_tuple = version_tuple(old_version, PACKAGE_VERSION, "base package version")
     new_tuple = version_tuple(new_version, PACKAGE_VERSION, "head package version")
     require(new_tuple == (old_tuple[0], old_tuple[1], old_tuple[2] + 1), "package version must be a patch increment")
+    if baseline_file in names:
+        check_catalog_baseline(doc, baseline_file, old_version, file_text)
     check_upstream(doc, policy, old_up, new_up)
     pins = pin_policy(doc, policy)
     identity = release_identity(doc, policy)

@@ -2179,7 +2179,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19069 fix(setup): a service PATH generator change regenerates installed scheduler plists #interactive #bug #framework tier:simple assignee:marcusquinn ref:GH#38661 pr:#38663 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19069-brief.md] completed:2026-11-16
 
-- [ ] t19071 fix(pulse): fix-the-fixer detector caches verdicts so hourly runs progress within the 60s stage bound #interactive #bug #framework tier:standard assignee:marcusquinn ref:GH#38673 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19071-brief.md]
+- [x] t19071 fix(pulse): fix-the-fixer detector caches verdicts so hourly runs progress within the 60s stage bound #interactive #bug #framework tier:standard assignee:marcusquinn ref:GH#38673 pr:#38678 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19071-brief.md] completed:2026-11-18
 
 - [x] t19060 fix(gh-transport): unbounded binding growth pins every host to conservative GitHub quota #auto-dispatch #priority:high ref:GH#38619 pr:#38628 completed:2026-11-16
 
@@ -2189,11 +2189,29 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19064 perf(pulse): let an admitted dispatch round finish under a bounded cooperative-drain grace #auto-dispatch #performance tier:thinking assignee:marcusquinn ref:GH#38633 pr:#38635 logged:2026-11-16 started:2026-11-16 -> [todo/tasks/t19064-brief.md] completed:2026-11-16
 
-- [ ] t19072 fix(logs): honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh #auto-dispatch #bug #interactive #priority:low tier:simple ref:GH#38695 logged:2026-11-16 -> [todo/tasks/t19072-brief.md]
+- [x] t19072 fix(logs): honour AIDEVOPS_WORKER_BLOCKER_LOG_FILE in worker-activity-helper.sh #auto-dispatch #bug #interactive #priority:low tier:simple ref:GH#38695 pr:#38698 logged:2026-11-16 -> [todo/tasks/t19072-brief.md] completed:2026-11-18
 
-- [ ] t19073 credential registry: add runpod and saladcloud conventional defaults (RUNPOD_API_KEY, SALAD_API_KEY) #feat #interactive tier:simple assignee:marcusquinn ref:GH#38789 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19073-brief.md]
+- [x] t19073 credential registry: add runpod and saladcloud conventional defaults (RUNPOD_API_KEY, SALAD_API_KEY) #feat #interactive tier:simple assignee:marcusquinn ref:GH#38789 pr:#38790 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19073-brief.md] completed:2026-11-18
 
-- [ ] t19075 perf(pulse): park 403-undeletable ghost runs so the stale-queued watchdog stops re-probing them every scan #feat #performance #interactive tier:standard assignee:marcusquinn ref:GH#38810 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19075-brief.md]
+- [x] t19075 perf(pulse): park 403-undeletable ghost runs so the stale-queued watchdog stops re-probing them every scan #feat #performance #interactive tier:standard assignee:marcusquinn ref:GH#38810 pr:#38814 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19075-brief.md] completed:2026-11-18
+
+- [x] t19082 fix(headless): apply the ChatGPT OAuth model denylist to worker same-tier fallback #bug #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38901 pr:#38905 logged:2026-11-17 started:2026-11-17 -> [todo/tasks/t19082-brief.md] completed:2026-11-18
+
+- [x] t19084 fix(full-loop): treat unreported required contexts as pending before merge, not terminal-success #auto-dispatch #bug ref:GH#38914 pr:#38920 completed:2026-11-18
+
+- [x] t19085 issue-sync bulk close falsely completes open issues whose title starts with an old task ID #auto-dispatch #bug ref:GH#38921 -> [todo/tasks/t19085-brief.md] pr:#38923 completed:2026-11-18
+
+- [x] t19087 perf(ci): run Framework Validation step groups as parallel shards behind the required aggregator #auto-dispatch #feat #performance tier:standard assignee:marcusquinn ref:GH#38925 pr:#38929 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19087-brief.md] completed:2026-11-18
+
+- [x] t19088 fix(release): resolve squash commits with a missing GitHub PR association via verified subject hint #auto-dispatch #bug #priority:high tier:standard assignee:marcusquinn ref:GH#38932 pr:#38934 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19088-brief.md] completed:2026-11-18
+
+- [x] t19091 fix(terminal-blocker): permission_required holds publish the named ask as input_required #bug #framework #priority:high #interactive tier:standard assignee:marcusquinn ref:GH#38951 pr:#38955 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19091-brief.md] completed:2026-11-18
+
+- [ ] t19092 fix(terminal-blocker): a re-armed permission_required hold gives other runners the first claim #auto-dispatch #bug #framework #priority:high tier:standard assignee:marcusquinn ref:GH#38957 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19092-brief.md]
+
+- [ ] t19093 fix(tests): remove SIGPIPE-prone early-exit pipes from test-enrich-dedup-guard.sh #bug #framework #interactive tier:simple assignee:marcusquinn ref:GH#38962 logged:2026-11-18 started:2026-11-18 -> [todo/tasks/t19093-brief.md]
+
+- [ ] t19094 fix(affected-tests): rerun head-only suite failures and classify passing reruns as flaky, not regression #auto-dispatch #bug #framework ref:GH#38964
 
 ## In Progress
 

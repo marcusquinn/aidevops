@@ -81,6 +81,7 @@ import {
 import { createOutputSandboxReader, createOutputSandboxRecorder } from "./bounded-operation-output.mjs";
 import { createRoutingFeedbackHandler } from "./routing-feedback-handler.mjs";
 import { createSessionBoundaryAdvisory } from "./session-boundary-advisory.mjs";
+import { createVersionDriftNotice } from "./deployed-version.mjs";
 import { createProviderErrorHandler } from "./provider-error-diagnostics.mjs";
 import { createObjectiveReceiptTool } from "./objective-receipt-tool.mjs";
 import {
@@ -682,6 +683,7 @@ export async function AidevopsPlugin({ directory, client }) {
     isHeadless,
     hasCompetingToast: (sessionID) => routingFeedbackHandler.hasPending(sessionID),
   });
+  const versionDriftNotice = createVersionDriftNotice({ client, isHeadless });
   const providerErrorHandler = createProviderErrorHandler({
     client,
     isHeadless,
@@ -785,6 +787,7 @@ export async function AidevopsPlugin({ directory, client }) {
 
     // Quality hooks
     "tool.execute.before": async (input, output) => {
+      await versionDriftNotice();
       await playwriterSelectionGuard(input, output);
       enforceManagedMcpArtifactPath(input, output, mcpRuntime.workspaces);
       nativeFocusGuard.beforeTool(input, output);

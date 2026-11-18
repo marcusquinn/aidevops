@@ -3,10 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 """Check whether a worktree's Git state is supported by archival."""
 
-import os
-from pathlib import Path
-
-from worktree_archive_administration import administration, git
+from worktree_archive_administration import administration, git, git_dirs
 from worktree_archive_auto_merge import auto_merge as auto_merge
 from worktree_archive_history import supported_history as supported_history
 from worktree_archive_merge_capture import (
@@ -40,15 +37,15 @@ def inventories(root, include_ignored=False, *, index=None):
 
 
 def supported_state(root, preserve_git_admin=False, include_ignored=False):
-    admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
+    admin, common = git_dirs(root)
     if preserve_git_admin:
-        administration(root)
+        administration(root, admin=admin, common=common)
     pending = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
                "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG", "index.lock", "config.worktree", "SQUASH_MSG")
     if not preserve_git_admin and any((admin / name).exists() for name in pending):
         raise ValueError("unfinished Git operation is not supported for automatic archival")
     if not preserve_git_admin:
-        supported_administration(root, admin)
+        supported_administration(root, admin, common)
     if git(root, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise ValueError("shallow history is not self-contained")
     if not include_ignored and git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"):
@@ -58,17 +55,21 @@ def supported_state(root, preserve_git_admin=False, include_ignored=False):
         raise ValueError("special index flags or unmerged entries are unsupported")
     # ls-files --stage cannot distinguish intent-to-add from a staged empty blob.
     visible = git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-visible-in-index")
-    invisible = git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-invisible-in-index")
+    # The invisible view only hides entries: an empty visible view proves equality,
+    # so the second spawn is needed only when something is staged.
+    invisible = (git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-invisible-in-index")
+                 if visible else visible)
     if visible != invisible and not preserve_git_admin:
         raise ValueError("intent-to-add index entries require separate preservation")
     if not preserve_git_admin:
         supported_history(root, admin)
 
 
-def supported_administration(root, admin):
-    if auto_merge(root) is not None:
+def supported_administration(root, admin, common=None):
+    if auto_merge(root, admin) is not None:
         raise ValueError('AUTO_MERGE requires the unified metadata preservation path')
-    common = Path(os.fsdecode(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").rstrip(b"\n")))
+    if common is None:
+        common = git_dirs(root)[1]
     if admin.resolve() == common.resolve():
         # Independent restores are full repositories. Managed source enrollment
         # separately refuses canonical repositories; only linked admin is removed.

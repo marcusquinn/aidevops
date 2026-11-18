@@ -37,8 +37,9 @@ def dependency_commit(manifest):
 
 def require_independent_base_receiver(root, common, run_git):
     """Refuse shared stores and alternates before any base-object import."""
-    admin = run_git(root, 'rev-parse', '--absolute-git-dir').strip()
-    receiver = run_git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()
+    # One spawn resolves both; --absolute-git-dir is absolute before the --path-format switch.
+    admin, receiver = run_git(root, 'rev-parse', '--absolute-git-dir', '--path-format=absolute',
+                              '--git-common-dir').rstrip(b'\n').split(b'\n')
     receiver_path = Path(os.fsdecode(receiver)).resolve()
     if (Path(os.fsdecode(admin)).resolve() != receiver_path or receiver_path == common.resolve()
             or os.path.lexists(receiver_path / 'objects/info/alternates')):
@@ -61,12 +62,11 @@ def verify_imported_base(root, base, run_git):
 def index_roots(root):
     """Include staged and resolve-undo objects, excluding null object IDs."""
     roots = set()
-    for inventory in ('--stage', '--resolve-undo'):
-        for entry in git(root, "ls-files", inventory, "-z").split(b"\0"):
-            if entry:
-                oid = entry.split(b"\t", 1)[0].split()[1]
-                if set(oid) != {48}:
-                    roots.add(oid.decode("ascii"))
+    for entry in git(root, "ls-files", "--stage", "--resolve-undo", "-z").split(b"\0"):
+        if entry:
+            oid = entry.split(b"\t", 1)[0].split()[1]
+            if set(oid) != {48}:
+                roots.add(oid.decode("ascii"))
     return roots
 
 
@@ -95,7 +95,12 @@ def administration_roots(root, state, include_index=True):
 def bundle_roots(root, state):
     """Add index dependencies only when the required history does not cover them."""
     history = administration_roots(root, state, include_index=False)
-    extra = set(administration_roots(root, state)) - set(history)
+    # The administration roots have already been read and validated in this
+    # pass. Only the index adds roots; do not resolve HEAD a second time.
+    extra = index_roots(root) - set(history)
+    for oid in extra:
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid):
+            raise ValueError("git_admin:invalid_object_id")
     if extra:
         reachable = git(root, 'rev-list', '--objects', '--no-object-names', '--stdin',
                         data=('\n'.join(history) + '\n').encode('ascii'))

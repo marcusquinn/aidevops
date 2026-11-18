@@ -574,3 +574,58 @@ if (
 	exit 1
 fi
 printf 'PASS textual and reconstructed provenance disagreement remains fail closed\n'
+
+# t19089: the verifier comes from a detached origin/main control worktree, not
+# the deployed runtime copy, so a release fixing the verifier can reconcile itself.
+(
+	vp_source="${TEST_ROOT}/verifier-source"
+	vp_clone="${TEST_ROOT}/verifier-clone"
+	vp_deployed="${TEST_ROOT}/verifier-deployed"
+	vp_tagtree="${TEST_ROOT}/verifier-tagtree"
+	git init -q -b main "$vp_source"
+	git -C "$vp_source" config user.name Test
+	git -C "$vp_source" config user.email test@example.invalid
+	mkdir -p "$vp_source/.agents/scripts" "$vp_deployed" "$vp_tagtree" "${TEST_ROOT}/verifier-wt"
+	printf '#!/usr/bin/env bash\nprintf "origin-main\\n" >"%s/used"\nexit 0\n' "$TEST_ROOT" \
+		>"$vp_source/.agents/scripts/release-provenance-helper.sh"
+	chmod +x "$vp_source/.agents/scripts/release-provenance-helper.sh"
+	git -C "$vp_source" add .
+	git -C "$vp_source" -c commit.gpgsign=false commit -q -m verifier
+	# The fixture clone's origin/main is the reviewed control revision.
+	git clone -q "$vp_source" "$vp_clone"
+	printf '#!/usr/bin/env bash\nprintf "deployed\\n" >"%s/used"\nexit 1\n' "$TEST_ROOT" \
+		>"$vp_deployed/release-provenance-helper.sh"
+	chmod +x "$vp_deployed/release-provenance-helper.sh"
+
+	REPO_ROOT="$vp_clone"
+	SCRIPT_DIR="$vp_deployed"
+	AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/verifier-wt"
+	# Keep registry and lifecycle writes of the real creator inside the fixture.
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/verifier-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/verifier-lifecycle"
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	mkdir -p "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+	# A narrowed fetch mapping must not hide an advanced remote main.
+	git -C "$vp_clone" config remote.origin.fetch '+refs/heads/other:refs/remotes/origin/other'
+	git -C "$vp_source" -c commit.gpgsign=false commit -q --allow-empty -m advance
+	_FULL_LOOP_RELEASE_PATH="$vp_tagtree"
+	_full_loop_release_prepare_tag_worktree() { return 0; }
+	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL origin/main verifier rejected' >&2; exit 1; }
+	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL deployed verifier was used' >&2; exit 1; }
+	[[ "$(git -C "$vp_clone" rev-parse refs/remotes/origin/main)" == "$(git -C "$vp_source" rev-parse HEAD)" ]] ||
+		{ echo 'FAIL origin/main was not refreshed under a narrowed fetch mapping' >&2; exit 1; }
+	# A second call reuses or recreates the control tree and still verifies.
+	rm -f "${TEST_ROOT}/used"
+	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL repeat verification rejected' >&2; exit 1; }
+	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL repeat used deployed verifier' >&2; exit 1; }
+
+	# Without a reachable origin the deployed copy is the logged fallback.
+	rm -f "${TEST_ROOT}/used"
+	git -C "$vp_clone" remote set-url origin "${TEST_ROOT}/missing.git"
+	if _full_loop_release_verify_tag_provenance test/repo v1.2.3 2>"${TEST_ROOT}/verifier-fallback.log"; then echo 'FAIL failing fallback verifier passed' >&2; exit 1; fi
+	[[ "$(<"${TEST_ROOT}/used")" == deployed ]] || { echo 'FAIL fallback did not use deployed verifier' >&2; exit 1; }
+	grep -q 'source=deployed-runtime' "${TEST_ROOT}/verifier-fallback.log" || { echo 'FAIL fallback source not logged' >&2; exit 1; }
+)
+printf 'PASS reconcile verifies tag provenance with the origin/main verifier, falling back to the deployed copy only when unavailable\n'

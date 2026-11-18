@@ -71,12 +71,18 @@ if [[ "${1:-}" == "api" && "${2:-}" == *"/protection/required_status_checks" ]];
 		printf '%s\n' 'gh: HTTP 404: Not Found' >&2
 		exit 1
 	fi
+	if [[ "${GH_TEST_MODE:-pass}" == "missing-required" ]]; then
+		printf '%s\n' '{"contexts":["required-ci","late-gate"]}'
+		exit 0
+	fi
 	printf '%s\n' '{"contexts":["required-ci"]}'
 	exit 0
 fi
 if [[ "${1:-}" == "api" && "${2:-}" == "repos/testorg/testrepo/branches/main" ]]; then
 	if [[ "${GH_TEST_MODE:-pass}" == "no-required" ]]; then
 		printf '%s\n' '{"protected":false}'
+	elif [[ "${GH_TEST_MODE:-pass}" == "missing-required" ]]; then
+		printf '%s\n' '{"protected":true,"protection":{"required_status_checks":{"contexts":["required-ci","late-gate"]}}}'
 	else
 		printf '%s\n' '{"protected":true,"protection":{"required_status_checks":{"contexts":["required-ci"]}}}'
 	fi
@@ -352,6 +358,19 @@ if [[ "$pending_rc" -ne 0 && "$pending_output" == *"CHECK_STATUS=pending"* &&
 	printf 'PASS skipped checks do not turn pending checks into terminal failures\n'
 else
 	printf 'FAIL mixed skipped/pending evidence lost its classification: rc=%s output=%s\n' "$pending_rc" "$pending_output"
+	exit 1
+fi
+
+# GH#38914: a required context whose job has not been created yet is absent
+# from a non-empty rollup. The passing subset must not grant readiness.
+missing_rc=0
+missing_output=$(run_gate missing-required visible 2>&1) || missing_rc=$?
+if [[ "$missing_rc" -ne 0 && "$missing_output" == *"CHECK_STATUS=pending"* &&
+	"$missing_output" == *"not yet reported at the PR head: late-gate"* &&
+	"$missing_output" == *"no repair action is eligible"* ]]; then
+	printf 'PASS unreported required contexts keep readiness pending\n'
+else
+	printf 'FAIL unreported required context granted readiness: rc=%s output=%s\n' "$missing_rc" "$missing_output"
 	exit 1
 fi
 

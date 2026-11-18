@@ -174,8 +174,23 @@ Pod lifecycle:
 - Under the deadline `timeout`, it runs `render_worker.sh`, which installs and
   verifies Blender when packaged with a SHA256, checks the pin and renders.
 - It then writes `.rendered` and waits up to `--fetch-minutes`.
-- A `fetch` that starts after `.rendered` releases the pod, which then removes
-  itself.
+- A `fetch` that starts after `.rendered` releases the pod, which then tries to
+  delete itself. In every 2026-11-17 live run the pod ended `EXITED` but not
+  deleted, and a stopped pod can still bill storage, so always run `teardown --live`.
+
+GPU fallback lists: one approved budget can cover several GPU/cloud options tried in
+order (for example RTX 4090 community, then A40 secure, then RTX 4090 secure).
+Give each option its own `--deadline-minutes` from its expected speed, and set its
+`--budget-usd` to the approved cap minus any spend already incurred, so the total
+cannot exceed the cap. Before trying the next option, check `jobs.tsv` and
+`status --live`: with several workers, a refusal can follow pods that were already
+created and are billing. Fetch their frames, or accept the loss with
+`teardown --live --force-discard`, and tear them down first. A single-worker refusal
+creates nothing.
+
+`stage` copies without owner or group (`rsync -rtL`). SECURE pods mount `/workspace`
+on MooseFS (FUSE), where `rsync -a` fails to `chown` (exit 23). `-L` sends symlinked
+inputs as their target contents.
 
 `status --live` prints each pod's `BRH_STAGE`/`BRH_GPU`/`BRH_RESULT`/`BRH_FAIL` log
 lines, so progress needs no SSH. Community pods do not guarantee a public port 22,
@@ -192,10 +207,28 @@ account and spend approval and is operator-owned.
 Measured on 2026-11-17 (smoke scene, 960×540, 128 samples):
 - Runpod RTX 4090 community: Blender 5.3.0 download, checksum and extract in 120 s,
   then OptiX render in 1.7 s, for about $0.02 in total.
+- Runpod A40 secure ($0.59/hr), full helper flow (`submit` → `stage` → `fetch` →
+  `teardown`): created on the 3rd capacity attempt (RTX 4090 and 3090 were refused
+  on both tiers); Blender 5.3.0 verified in 85 s; OptiX render at 64 samples in
+  under 2 s; pod lived about 4 minutes, roughly $0.04.
 - SaladCloud RTX 3090 low priority: Blender installed in 30 s; CUDA render in 1.4 s
   (OptiX is unavailable there, see `tools/infrastructure/saladcloud.md`).
 - Local M3 Max Metal: 1.8 s warm, but 280 s on the first run, which compiles the
   Metal kernels.
+
+Measured on 2026-11-17 (animated sunflower scenes, 120 frames, 1920×1080, 128 samples,
+OIDN, Runpod A40 secure at $0.59/hr; RTX 4090 community was refused on every attempt):
+- Simple scene (142 objects): 10 s/frame on the A40 against 8.1 s on an M3 Max;
+  21 minutes of rendering, $0.22 in total.
+- Richer scene (about 110k triangles, translucent petals, depth of field): 8.1 s/frame
+  warm on the A40, against a 20-31 s cold single frame on the M3 Max; 16 minutes of
+  rendering, $0.21 in total.
+- After `fetch` released each pod, SSH was refused within a minute, so pod internals
+  (for example whether the image has `runpodctl` for self-delete) must be checked
+  before `fetch`.
+- So one A40 is about as fast as an M3 Max for these scenes. It pays off by running
+  in parallel or by freeing the Mac. Prefer an RTX 4090/5090 when capacity allows.
+  Estimate from warm timing (`tools/design/blender-scripted-scenes.md`).
 
 Image hashes vary between runs and devices, so compare renders by eye or with a
 tolerance, not by hash.
@@ -230,5 +263,6 @@ tolerance, not by hash.
 
 - `tools/design/creative-execution.md` — local vs remote execution requirements
 - `tools/design/blender.md` — Blender Lab MCP and scene inspection
+- `tools/design/blender-scripted-scenes.md` — script-built scenes, loops, warm timing, delegated modelling
 - `tools/infrastructure/cloud-gpu.md` — providers, provisioning, billable deployment contract
 - `workflows/creative-production.md` — brief, quality mode and acceptance checks

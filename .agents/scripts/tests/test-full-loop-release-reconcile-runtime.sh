@@ -75,8 +75,15 @@ _full_loop_release_prepare_tag_worktree() {
 	_FULL_LOOP_RELEASE_PATH="${TEST_ROOT}/tag-checkout"
 	return 0
 }
-if ! _full_loop_release_verify_tag_provenance test/repo v1.2.3 ||
-	! _full_loop_release_verify_protected_source_provenance test/repo v1.2.3 ||
+# No control repository: the verifier falls back to the deployed runtime stub
+# (the origin/main selection is covered in the discovery fragment).
+saved_repo_root="$REPO_ROOT"
+REPO_ROOT=""
+verify_fixture_rc=0
+{ _full_loop_release_verify_tag_provenance test/repo v1.2.3 &&
+	_full_loop_release_verify_protected_source_provenance test/repo v1.2.3; } 2>/dev/null || verify_fixture_rc=$?
+REPO_ROOT="$saved_repo_root"
+if [[ "$verify_fixture_rc" -ne 0 ]] ||
 	! grep -qx "cwd=${TEST_ROOT}/tag-checkout" "$FAKE_VERIFY_LOG" ||
 	! grep -qx 'args=verify --tag v1.2.3 --repo test/repo' "$FAKE_VERIFY_LOG" ||
 	! grep -qx 'args=verify-local-source --tag v1.2.3 --repo test/repo' "$FAKE_VERIFY_LOG"; then

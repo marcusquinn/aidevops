@@ -467,9 +467,9 @@ unset -f _pm_reconcile_partial_continuations
 		_pulse_stale_blocked_sweep_repo owner/one "$repo_deadline" "$sweep_deadline" 1800 1000 || SWEEP_RC=$?
 		return 0
 	}
-	# Minimum share: the stale pass keeps its 5s; each later pass gets 5s more.
+	# Partial continuation reserves a larger slice than the 5s draft pass.
 	run_sweep_repo 1005 1045
-	[[ "$STALE_DL" == 1005 && "$PASSES" == "dc:5 pc:5 " && "$SWEEP_RC" == 3 ]] || {
+	[[ "$STALE_DL" == 1005 && "$PASSES" == "dc:5 pc:15 " && "$SWEEP_RC" == 3 ]] || {
 		printf 'FAIL: later passes inherited the expired stale share: stale=%s passes=%s rc=%s\n' "$STALE_DL" "$PASSES" "$SWEEP_RC"
 		exit 1
 	}
@@ -477,10 +477,9 @@ unset -f _pm_reconcile_partial_continuations
 		printf 'FAIL: completed later passes were not stamped, or the partial stale pass was\n'
 		exit 1
 	}
-	# Weighted share reaching the sweep deadline: the stale pass leaves 5s per
-	# due pass, and draft-checkpoint leaves partial-continuation its 5s.
+	# Weighted share reaching the sweep deadline leaves 5s and 15s respectively.
 	run_sweep_repo 1045 1045
-	[[ "$STALE_DL" == 1035 && "$PASSES" == "dc:5 pc:9 " ]] || {
+	[[ "$STALE_DL" == 1025 && "$PASSES" == "dc:5 pc:19 " ]] || {
 		printf 'FAIL: weighted stale share left no time for later passes: stale=%s passes=%s\n' "$STALE_DL" "$PASSES"
 		exit 1
 	}
@@ -502,11 +501,11 @@ unset -f _pm_reconcile_partial_continuations
 		return 0
 	}
 	# GH#38039: a stale pass that overruns to its hard stop still leaves the
-	# later passes' reserve (sweep 1045 less 2 x 5s = 1035), so the optional
+	# later passes' reserve (sweep 1045 less 5s and 15s = 1025), so the optional
 	# passes run with a non-expired deadline instead of deferring every sweep.
 	STALE_END="stop"
 	run_sweep_repo 1005 1045
-	[[ "$STALE_STOP" == 1035 && "$PASSES" == "dc:5 pc:5 " && ! -f "$STAMP_DIR/owner__one" ]] || {
+	[[ "$STALE_STOP" == 1025 && "$PASSES" == "dc:5 pc:15 " && ! -f "$STAMP_DIR/owner__one" ]] || {
 		printf 'FAIL: overrunning stale pass consumed the later passes reserve: stop=%s passes=%s\n' "$STALE_STOP" "$PASSES"
 		exit 1
 	}
