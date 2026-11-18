@@ -78,11 +78,15 @@ _worktree_release_vacant_path() {
 	result=$("$python" -E -s -B "${helper_dir}/../worker-lifecycle/worker-registry.py" \
 		--state-dir "$state_dir" release-vacant-path --path "$path" 2>/dev/null) || result=""
 	case "$result" in
-	*'"status": "no-reservation"'* | *'"status": "source-absent-reconciled"'*) ;;
 	'') printf 'Stale reservation check unavailable: %s\n' "$path" >&2 ;;
 	*)
-		[[ "$result" =~ \"status\":\ \"([a-z-]+)\" ]] &&
-			printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2
+		# Tolerate any JSON spacing around the colon.
+		if [[ "$result" =~ \"status\":[[:space:]]*\"([a-z-]+)\" ]]; then
+			case "${BASH_REMATCH[1]}" in
+			no-reservation | source-absent-reconciled) ;;
+			*) printf 'Stale path reservation retained (%s): %s\n' "${BASH_REMATCH[1]}" "$path" >&2 ;;
+			esac
+		fi
 		;;
 	esac
 	return 0
