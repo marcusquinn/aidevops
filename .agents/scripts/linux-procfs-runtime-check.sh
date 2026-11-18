@@ -47,10 +47,12 @@ run_report() {
 	local extra=()
 	[[ "$forged" == "1" ]] && extra+=(--forged)
 	printf '# %s: %s\n' "$label" "$dir"
-	docker run --rm --init \
-		-v "${dir}:/scripts:ro" \
-		-v "${SCRIPT_DIR}/linux-procfs-runtime-fixture.py:/fixture.py:ro" \
+	local cname="procfs-check-${label}-$$"
+	docker run --rm --init --name "$cname" --pids-limit 512 \
+		--mount "type=bind,source=${dir},target=/scripts,readonly" \
+		--mount "type=bind,source=${SCRIPT_DIR}/linux-procfs-runtime-fixture.py,target=/fixture.py,readonly" \
 		"$IMAGE" sh -c "$BOOTSTRAP" sh "$uid" ${extra[@]+"${extra[@]}"} || {
+		docker rm -f "$cname" >/dev/null 2>&1 || true
 		die "container run failed for ${label}"
 		return 2
 	}

@@ -342,7 +342,7 @@ Procfs observer changes (`worktree_process_proc.py`, `worktree_process_attestati
 the lease census) need Linux runtime evidence. From any host with Docker run
 `linux-procfs-runtime-check.sh --base <base-scripts-dir> [--forged]`. It starts a stock
 Debian container, builds fixtures (root `sshd` parent with a setuid privsep child that
-never execs, an unattested non-dumpable `gpg-agent`, optionally a re-parented forged
-chain), runs `denied`, `paths` and `cwdmap /proc` as UID 1000, and prints pid-normalised
+never execs, an unattested non-dumpable `gpg-agent`, optionally a forged `sshd`-named process under a non-`sshd` parent),
+runs `denied`, `paths` and `cwdmap /proc` as UID 1000, and prints pid-normalised
 base and head reports plus a diff to paste into `--testing`. It exits 1 with a clear
 message when Docker is unavailable.

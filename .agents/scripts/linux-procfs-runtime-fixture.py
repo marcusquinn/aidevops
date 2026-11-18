@@ -9,13 +9,14 @@ Fixtures (names are set with PR_SET_NAME so reports can be pid-normalised):
   sshd-priv      privsep child: setuid to UID without exec (kernel clears dumpable)
   gpg-agent      unattested non-dumpable process of UID
   forged-parent  (--forged) non-sshd parent of a forged sshd-named process
-  forged         (--forged) sshd-named process of UID re-parented under forged-parent
+  forged         (--forged) sshd-named process of UID forked directly by forged-parent (not re-parented)
 Prints a stable report: per observer mode, lines with pids replaced by fixture names.
 """
 
 import contextlib
 import ctypes
 import os
+import select
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 import time
@@ -44,54 +45,83 @@ class Ready:
     def write(self, pid: int) -> None:
         os.write(self.w, f"{pid}\n".encode())
 
-    def read(self) -> int:
+    def read(self, timeout: float = 15.0) -> int:
+        if not select.select([self.r], [], [], timeout)[0]:
+            raise TimeoutError("fixture child did not report ready")
         return int(os.read(self.r, 32).split()[0])
 
 
 def idle() -> None:
-    time.sleep(60)
+    time.sleep(120)
     os._exit(0)
+
+
+def child(body) -> int:
+    """Fork; the child runs body() and always exits, never unwinding into the caller."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            body()
+        finally:
+            os._exit(1)
+    return pid
 
 
 def privsep(uid: int, names: dict) -> None:
     ready = Ready()
-    parent = os.fork()
-    if parent == 0:
-        set_name("sshd")
-        if os.fork() == 0:
-            set_name("sshd-priv")
-            drop(uid)  # no exec: dumpable stays cleared by the kernel
-            ready.write(os.getpid())
-            idle()
+    parent_ready = Ready()
+
+    def inner() -> None:
+        set_name("sshd-priv")
+        drop(uid)  # no exec: dumpable stays cleared by the kernel
+        ready.write(os.getpid())
         idle()
+
+    def outer() -> None:
+        set_name("sshd")
+        parent_ready.write(os.getpid())
+        child(inner)
+        idle()
+
+    parent = child(outer)
     names[parent] = "sshd"
+    parent_ready.read()
     names[ready.read()] = "sshd-priv"
 
 
 def unattested(uid: int, names: dict) -> None:
     ready = Ready()
-    if os.fork() == 0:
+
+    def body() -> None:
         set_name("gpg-agent")
         drop(uid)
         LIBC.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
         ready.write(os.getpid())
         idle()
-    pid = ready.read()
-    names[pid] = "gpg-agent"
+
+    child(body)
+    names[ready.read()] = "gpg-agent"
 
 
 def forged(uid: int, names: dict) -> None:
     ready = Ready()
-    holder = os.fork()
-    if holder == 0:
-        set_name("bash")
-        if os.fork() == 0:
-            set_name("sshd")
-            drop(uid)
-            ready.write(os.getpid())
-            idle()
+    parent_ready = Ready()
+
+    def inner() -> None:
+        set_name("sshd")
+        drop(uid)
+        ready.write(os.getpid())
         idle()
+
+    def outer() -> None:
+        set_name("bash")
+        parent_ready.write(os.getpid())
+        child(inner)
+        idle()
+
+    holder = child(outer)
     names[holder] = "forged-parent"
+    parent_ready.read()
     names[ready.read()] = "forged"
 
 
@@ -124,7 +154,6 @@ def main(arguments: list) -> int:
     unattested(uid, names)
     if "--forged" in arguments:
         forged(uid, names)
-    time.sleep(0.5)
     for mode in (["denied"], ["paths"], ["cwdmap", "/proc"]):
         print(f"## {' '.join(mode)} (uid {uid})")
         for line in observe(scripts, uid, mode, names):
