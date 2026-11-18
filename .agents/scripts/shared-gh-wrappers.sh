@@ -404,11 +404,6 @@ _gh_cooldown_context_from_args() {
 _gh_run_bounded_command() {
 	local secs="$1"
 	shift
-	# t19095: gh child must not see agent-detection vars (gh >= 2.105 hints).
-	if [[ "${1:-}" == "gh" ]] && declare -f _aidevops_gh_env_unset_args >/dev/null 2>&1; then
-		_aidevops_gh_env_unset_args
-		set -- env "${_AIDEVOPS_GH_ENV_UNSET_ARGS[@]}" "$@"
-	fi
 	if command -v timeout_sec >/dev/null 2>&1; then
 		timeout_sec "$secs" "$@"
 		return $?
