@@ -10,7 +10,8 @@ const workflow = readFileSync(new URL('../../../.github/workflows/code-quality.y
 const selectors = [...workflow.matchAll(/^    runs-on: (.+)$/gm)].map((match) => match[1]);
 
 test('Code Quality stays hosted regardless of event or CI_RUNNER configuration', () => {
-  assert.equal(selectors.length, 13);
+  // GH#38925: Framework Validation runs as four shards plus its aggregator.
+  assert.equal(selectors.length, 17);
   for (const selector of selectors) {
     assert.ok(['ubuntu-latest', 'ubuntu-22.04', '${{ matrix.os }}'].includes(selector), selector);
   }
