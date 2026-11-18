@@ -42,29 +42,17 @@ detect_weaknesses() {
 	local weaknesses=()
 	local weakness_count=0
 
-	# Parse SERP results and detect weaknesses
-	# This is a simplified version - full implementation would analyze each result
-
-	# Check for low domain scores
-	local low_ds_count
-	low_ds_count=$(echo "$serp_data" | jq "[.items[]? | select(.main_domain_rank <= $THRESHOLD_LOW_DS)] | length" 2>/dev/null || echo "0")
-	if [[ "$low_ds_count" -gt 0 ]]; then
-		weaknesses+=("Low DS ($low_ds_count)")
-		weakness_count=$((weakness_count + low_ds_count))
-	fi
-
-	# Check for no backlinks
-	local no_backlinks_count
-	no_backlinks_count=$(echo "$serp_data" | jq '[.items[]? | select(.backlinks_count == 0)] | length' 2>/dev/null || echo "0")
-	if [[ "$no_backlinks_count" -gt 0 ]]; then
-		weaknesses+=("No Backlinks ($no_backlinks_count)")
-		weakness_count=$((weakness_count + no_backlinks_count))
-	fi
+	# serp_data is the raw DataForSEO serp/google/organic/live/regular envelope:
+	# {"tasks":[{"result":[{"items":[...]}]}]}. Only "organic" rows are analysed.
+	# That endpoint returns no domain-rank or backlink fields (organic rows carry
+	# type, rank_group, rank_absolute, page, domain, title, description, url,
+	# breadcrumb), so low-DS and no-backlink checks cannot be made from this data.
+	local organic_sel='.tasks[0].result[0].items[]? | select(.type == "organic")'
 
 	# Check for non-HTTPS
 	# SONAR: Detecting insecure URLs for security audit, not using them
 	local non_https_count
-	non_https_count=$(echo "$serp_data" | jq '[.items[]? | select(.url | startswith("http://"))] | length' 2>/dev/null || echo "0")
+	non_https_count=$(echo "$serp_data" | jq "[${organic_sel} | select((.url // \"\") | startswith(\"http://\"))] | length" 2>/dev/null || echo "0")
 	if [[ "$non_https_count" -gt 0 ]]; then
 		weaknesses+=("Non-HTTPS ($non_https_count)")
 		weakness_count=$((weakness_count + non_https_count))
@@ -72,7 +60,7 @@ detect_weaknesses() {
 
 	# Check for UGC-heavy results
 	local ugc_count
-	ugc_count=$(echo "$serp_data" | jq '[.items[]? | select(.domain | test("reddit|quora|stackoverflow|forum"; "i"))] | length' 2>/dev/null || echo "0")
+	ugc_count=$(echo "$serp_data" | jq "[${organic_sel} | select((.domain // \"\") | test(\"reddit|quora|stackoverflow|forum\"; \"i\"))] | length" 2>/dev/null || echo "0")
 	if [[ "$ugc_count" -ge "$THRESHOLD_UGC_HEAVY" ]]; then
 		weaknesses+=("UGC-Heavy ($ugc_count)")
 		weakness_count=$((weakness_count + 1))
@@ -589,15 +577,10 @@ _extended_research_full_serp() {
 			local weakness_list
 			weakness_list=$(echo "$weakness_result" | cut -d'|' -f2)
 
-			# Get domain score from first result
-			local domain_score
-			domain_score=$(echo "$serp_data" | jq -r '.tasks[0].result[0].items[0].main_domain_rank // 0' 2>/dev/null || echo "0")
-			local page_score
-			page_score=$(echo "$serp_data" | jq -r '.tasks[0].result[0].items[0].page_rank // 0' 2>/dev/null || echo "0")
-
-			# Normalize scores to 0-100
-			domain_score=$(echo "scale=0; $domain_score / 10" | bc 2>/dev/null || echo "0")
-			page_score=$(echo "scale=0; $page_score / 10" | bc 2>/dev/null || echo "0")
+			# serp/google/organic/live/regular returns no rank or backlink metrics
+			# (checked against DataForSEO docs), so scores are 0 = unavailable.
+			local domain_score=0
+			local page_score=0
 
 			# Calculate keyword score
 			local serp_features
