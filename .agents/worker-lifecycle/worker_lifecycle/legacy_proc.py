@@ -10,9 +10,11 @@ from pathlib import Path
 import platform
 
 from .legacy_proc_clock import is_root_sshd_session, require_older_than_tree, status_fields
+from .legacy_proc_denied import inspect_denied_references
 from .legacy_proc_macos import require_idle_macos
 from .process import ProcessIdentity
-from .protected_proc import OPT_IN, ProcessCensusUnavailable, require_protected_references
+from .protected_proc import OPT_IN, require_protected_references
+from .protected_proc import ProcessCensusUnavailable as ProcessCensusUnavailable
 
 
 NON_HOLDER_DAEMONS = frozenset({
@@ -133,19 +135,5 @@ def inspect_proc_references(path, task, proc):
             except _VANISHED:
                 continue  # An independently closed descriptor grants no authority.
     except PermissionError:
-        try:
-            require_predating_daemon(path, task, proc)
-        except ProcessCensusUnavailable as unavailable:
-            unavailable.observation.update({"stage": stage, "daemon_cause": "daemon-evidence-unavailable"})
-            raise
-        except ValueError as error:
-            if str(error) == "live-process-reference":
-                raise
-            cause = str(error.__cause__)
-            if cause not in {"unknown-daemon", "daemon-not-older", "invalid-process-clock"}:
-                cause = "daemon-evidence-unavailable"
-            try:
-                require_protected_references(path, task, proc)
-            except ProcessCensusUnavailable as unavailable:
-                unavailable.observation.update({"stage": stage, "daemon_cause": cause})
-                raise unavailable from error
+        inspect_denied_references(path, task, proc, stage,
+                                  (require_predating_daemon, require_protected_references))

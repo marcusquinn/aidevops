@@ -17,7 +17,8 @@ REGISTRY_SOURCES = ("__init__.py", "process.py", "runtime.py", "linux.py", "maco
                     "retirement.py", "retirement_locks.py", "retirement_proof.py", "recovery.py", "absence.py",
                     "cleanup.py", "bundle.py",
                     "cleanup_failure.py", "cleanup_quarantine.py", "pull_requests.py",
-                    "pull_requests_graphql.py", "refusal.py", "legacy_proc.py", "legacy_proc_macos.py", "protected_proc.py", "interrupted_removal.py",
+                    "pull_requests_graphql.py", "refusal.py", "legacy_proc.py", "legacy_proc_clock.py", "legacy_proc_denied.py",
+                    "legacy_proc_macos.py", "protected_proc.py", "interrupted_removal.py",
                     "retirement_fence.py", "foreign_git.py", "foreign_proof.py",
                     "foreign_retirement.py", "never_owned.py",
                     # Reclaim's never-owned authorization and its readers (GH#38405).
