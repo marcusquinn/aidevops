@@ -73,4 +73,12 @@ fi
 # 4. Explicit operator override still wins.
 AIDEVOPS_REAL_GIT_BIN="$native_git"
 [[ "$(aidevops_resolve_native_git)" == "$native_git" ]] || fail "override ignored"
+# 5. Multi-hop symlink chains resolve to the physical file (readlink -f fast path).
+PATH="$original_path"
+mkdir -p "$workspace/chain"
+ln -s "$SCRIPT_DIR/git" "$workspace/chain/hop2"
+ln -s "$workspace/chain/hop2" "$workspace/chain/hop1"
+resolved=$(aidevops_physical_path "$workspace/chain/hop1") || fail "symlink chain not resolved"
+[[ "$resolved" == "$(readlink -f "$SCRIPT_DIR/git")" ]] || fail "symlink chain resolved wrongly: $resolved"
+
 printf 'PASS: PATH-only resolution, inherited-before-system order, shim skip, trusted lookup, override\n'

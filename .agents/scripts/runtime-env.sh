@@ -236,6 +236,15 @@ aidevops_physical_path() {
 	local uid=""
 	local mode=""
 	[[ -n "$candidate" && "$candidate" == /* ]] || return 1
+	if [[ "$trusted" != 1 && -L "$candidate" ]]; then
+		# One readlink spawn for the whole chain; the hop loop remains the fallback.
+		link=$(command -p readlink -f -- "$candidate" 2>/dev/null) || link=""
+		if [[ "$link" == /* && -f "$link" ]]; then
+			printf '%s' "$link"
+			return 0
+		fi
+		link=""
+	fi
 	while :; do
 		if [[ "$trusted" == 1 ]]; then
 			aidevops_dir_chain_is_trusted "${candidate%/*}/" || return 1
