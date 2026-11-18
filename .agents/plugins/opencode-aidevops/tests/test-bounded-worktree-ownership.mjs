@@ -30,7 +30,8 @@ function fixture(t) {
     WORKTREE_REGISTRY_DIR: join(root, "legacy"),
     WORKTREE_REGISTRY_DB: join(root, "legacy", "registry.db"),
     AIDEVOPS_PRIVATE_WORKLOAD: "0", AIDEVOPS_LIFECYCLE_DISABLED: "0",
-    FULL_LOOP_HEADLESS: "false", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+    FULL_LOOP_HEADLESS: "false", AIDEVOPS_GIT_WORKSPACE_ROOT: root, AIDEVOPS_SESSION_PROJECT_DIR: root,
+    GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
   };
   for (const key of Object.keys(env)) {
     if (["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].includes(key)) continue;

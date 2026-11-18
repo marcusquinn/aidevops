@@ -135,8 +135,11 @@ export function checkCanonicalWriteSafetyGate(
     throw new Error("BLOCKED: canonical-write policy returned malformed output");
   }
   if (result.decision !== "allow") {
+    const action = result.action === "run_session_inside_git_workspace"
+      ? "run_session_inside_git_workspace (the linked worktree already exists; restart the session from inside the Git workspace, the repository or its worktree)"
+      : "create_or_use_linked_worktree";
     throw new Error(
-      `BLOCKED by canonical write policy: ${result.reason || "invalid policy response"}. ACTION_REQUIRED=create_or_use_linked_worktree`,
+      `BLOCKED by canonical write policy: ${result.reason || "invalid policy response"}. ACTION_REQUIRED=${action}`,
     );
   }
 }
