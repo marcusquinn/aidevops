@@ -63,7 +63,7 @@ export function runPreEditCheck(script, args, cwd, timeoutMs, context) {
         ...process.env,
         ...sessionEnv,
         // The plugin's project directory, not the target workdir, decides direct-write policy.
-        AIDEVOPS_SESSION_PROJECT_DIR: String(context?.directory || process.cwd()),
+        AIDEVOPS_SESSION_PROJECT_DIR: String(context?.directory || process.env.AIDEVOPS_SESSION_PROJECT_DIR || process.cwd()),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
