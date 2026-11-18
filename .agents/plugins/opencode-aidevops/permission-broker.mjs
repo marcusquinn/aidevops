@@ -9,6 +9,7 @@ import { recordPermissionBlocker } from "./permission-broker-blocker-log.mjs";
 import { isManagedToolOutputRead } from "./permission-broker-tool-output.mjs";
 import { impossibleExternalRead as classifyImpossibleRead, rejectImpossibleToolRead } from "./permission-broker-read-target.mjs";
 import { isReadOnlyRootRead, resolvedRiskTargets } from "./permission-broker-read-only-root.mjs";
+import { isDesignedPollDoomLoop } from "./permission-broker-designed-poll.mjs";
 
 const REQUEST_SCHEMA = "aidevops-permission-capture/v1";
 const MAX_PATTERN_LENGTH = 500;
@@ -145,6 +146,30 @@ function recordReadOnlyRootAllow(context, raw) {
   });
 }
 
+// GH#39048: one non-blocking event per polled operation, not per poll.
+function recordDesignedPollAllow(context, raw) {
+  const tool = sanitizePermissionText(raw?.metadata?.tool || "", { home: context.home, maxLength: 100 });
+  const operation = sanitizePermissionText(String(raw?.metadata?.input?.operation_id || ""), { home: context.home, maxLength: 100 });
+  const key = `${raw?.sessionID || ""}\n${tool}\n${operation}`;
+  recordPermissionBlocker({
+    loggedEvents: context.loggedEvents,
+    home: context.home,
+    blockerLogPath: context.blockerLogPath,
+    capture: null,
+    request: {
+      request_id: `designed-poll-${createHash("sha256").update(key).digest("hex").slice(0, 16)}`,
+      permission: "doom_loop",
+      tool,
+      risk: { level: "low", grantable: true },
+    },
+    event: "permission_designed_poll_allowed",
+    reason: "designed_poll",
+    detail: `Auto-allowed repeated read-only ${String(raw?.metadata?.input?.action || "").slice(0, 20)} poll of ${operation || "a bounded operation"}`,
+    status: "allowed",
+    blocking: false,
+  });
+}
+
 function capturePermissionRequest(toolCalls, loggedEvents, home, blockerLogPath, raw) {
   const requestFile = process.env.AIDEVOPS_PERMISSION_REQUEST_FILE || "";
   const callID = raw?.tool?.callID || raw?.callID || "";
@@ -226,6 +251,10 @@ async function handlePermissionEvent(context, input) {
   const event = input?.event;
   if (!isHeadless() || event?.type !== "permission.asked") return;
   const request = event.properties || {};
+  if (isDesignedPollDoomLoop(request) && await replyPermissionRequest(client, request, "once")) {
+    recordDesignedPollAllow(context, request);
+    return;
+  }
   if (impossibleExternalRead(context, request)) {
     await replyPermissionRequest(client, request, "reject");
     return;
@@ -243,6 +272,11 @@ async function handlePermissionEvent(context, input) {
 function handlePermissionAsk(context, input, output) {
   const { isHeadless, toolCalls, loggedEvents, home, dataHome, blockerLogPath } = context;
   if (!isHeadless()) return;
+  if (isDesignedPollDoomLoop(input)) {
+    output.status = "allow";
+    recordDesignedPollAllow(context, input);
+    return;
+  }
   const impossible = impossibleExternalRead(context, input);
   if (impossible) {
     output.status = "deny";
