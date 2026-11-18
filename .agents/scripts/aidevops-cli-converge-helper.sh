@@ -375,6 +375,28 @@ _cli_verify() {
 	return 0
 }
 
+# Bundles are immutable: an orchestrator from another version would split it
+# from its sourced modules. Returns 0 when the target lives in a runtime bundle
+# whose VERSION differs from the source checkout's VERSION.
+_cli_bundle_version_mismatch() {
+	local source_file="$1"
+	local target_file="$2"
+	local target_dir="${target_file%/*}"
+	local source_dir="${source_file%/*}"
+	local bundle_version=""
+	local source_version=""
+
+	case "$target_file" in
+	*/runtime-bundles/*/agents/*) ;;
+	*) return 1 ;;
+	esac
+	[[ -r "$target_dir/VERSION" && -r "$source_dir/VERSION" ]] || return 1
+	bundle_version=$(<"$target_dir/VERSION")
+	source_version=$(<"$source_dir/VERSION")
+	[[ "$bundle_version" != "$source_version" ]] && return 0
+	return 1
+}
+
 _cli_converge_locked() {
 	local source_file="$1"
 	local orchestrator_source="$2"
@@ -385,7 +407,9 @@ _cli_converge_locked() {
 	local global_dir="${global_target%/*}"
 	local non_interactive="${AIDEVOPS_CLI_NON_INTERACTIVE:-true}"
 
-	if ! _cli_files_match "$orchestrator_source" "$orchestrator_target"; then
+	if _cli_bundle_version_mismatch "$orchestrator_source" "$orchestrator_target"; then
+		_cli_log warning "Refusing to overwrite $orchestrator_target: runtime bundle VERSION differs from the source checkout. Run 'AIDEVOPS_PREFER_LOCAL=1 aidevops update' to deploy a coherent bundle."
+	elif ! _cli_files_match "$orchestrator_source" "$orchestrator_target"; then
 		_cli_install_atomic "$orchestrator_source" "$orchestrator_target" || return 1
 		_cli_log success "Installed deployed CLI orchestrator at $orchestrator_target"
 	else
