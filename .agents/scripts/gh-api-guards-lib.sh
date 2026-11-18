@@ -146,12 +146,23 @@ _shim_body_is_ops_audit() {
 	return 1
 }
 
+# The signature helper detects the runtime from agent variables that the shim
+# hides from native gh children (GH#38966); restore them for this child only.
+_shim_sig_helper_footer() {
+	if declare -F _shim_with_agent_env >/dev/null 2>&1; then
+		_shim_with_agent_env "$SIG_HELPER" footer "$@"
+	else
+		"$SIG_HELPER" footer "$@"
+	fi
+	return $?
+}
+
 _shim_sig_footer_for_body() {
 	local body="${1:-}"
 	if _shim_body_is_ops_audit "$body"; then
-		"$SIG_HELPER" footer --body "$body" --no-session 2>/dev/null
+		_shim_sig_helper_footer --body "$body" --no-session 2>/dev/null
 	else
-		"$SIG_HELPER" footer --body "$body" 2>/dev/null
+		_shim_sig_helper_footer --body "$body" 2>/dev/null
 	fi
 	return $?
 }
