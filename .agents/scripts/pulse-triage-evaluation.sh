@@ -1213,6 +1213,7 @@ _consolidation_filter_substantive_comments() {
 			+ "|^(<!-- ops:start[^>]*-->\\s*)?Dispatching worker"
 			+ "|^<!-- (aidevops-interactive-claim/v1|nmr-hold|aidevops-signed|ops:start|provenance:start)"
 			+ "|^<!-- WORKER_SUPERSEDED"
+			+ "|^<!-- (COMPLETION_CHECK|PARTIAL_PARENT_CLOSEOUT):PR#"
 			+ "|^<!-- stale-recovery-tick"
 			+ "|^<!-- cost-circuit-breaker:fired"
 			+ "|^<!-- triage-escalation"
