@@ -600,10 +600,22 @@ printf 'PASS textual and reconstructed provenance disagreement remains fail clos
 	REPO_ROOT="$vp_clone"
 	SCRIPT_DIR="$vp_deployed"
 	AIDEVOPS_WORKTREE_BASE_DIR="${TEST_ROOT}/verifier-wt"
+	# Keep registry and lifecycle writes of the real creator inside the fixture.
+	export WORKTREE_REGISTRY_DIR="${TEST_ROOT}/verifier-registry"
+	export WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_ROOT}/verifier-lifecycle"
+	export AIDEVOPS_LIFECYCLE_DISABLED=1
+	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	mkdir -p "$WORKTREE_REGISTRY_DIR" "$AIDEVOPS_LIFECYCLE_STATE_DIR"
+	# A narrowed fetch mapping must not hide an advanced remote main.
+	git -C "$vp_clone" config remote.origin.fetch '+refs/heads/other:refs/remotes/origin/other'
+	git -C "$vp_source" -c commit.gpgsign=false commit -q --allow-empty -m advance
 	_FULL_LOOP_RELEASE_PATH="$vp_tagtree"
 	_full_loop_release_prepare_tag_worktree() { return 0; }
 	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL origin/main verifier rejected' >&2; exit 1; }
 	[[ "$(<"${TEST_ROOT}/used")" == origin-main ]] || { echo 'FAIL deployed verifier was used' >&2; exit 1; }
+	[[ "$(git -C "$vp_clone" rev-parse refs/remotes/origin/main)" == "$(git -C "$vp_source" rev-parse HEAD)" ]] ||
+		{ echo 'FAIL origin/main was not refreshed under a narrowed fetch mapping' >&2; exit 1; }
 	# A second call reuses or recreates the control tree and still verifies.
 	rm -f "${TEST_ROOT}/used"
 	_full_loop_release_verify_tag_provenance test/repo v1.2.3 2>/dev/null || { echo 'FAIL repeat verification rejected' >&2; exit 1; }

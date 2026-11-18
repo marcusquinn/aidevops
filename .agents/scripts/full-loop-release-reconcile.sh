@@ -125,7 +125,7 @@ _full_loop_release_select_verifier() {
 	# tree that lifecycle ownership kept past this process.
 	tree_path="${worktree_base}/aidevops-release-control-verifier-$$"
 	if [[ -n "${REPO_ROOT:-}" && -d "$worktree_base" ]] &&
-		git -C "$REPO_ROOT" fetch origin main --quiet 2>/dev/null &&
+		git -C "$REPO_ROOT" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
 		main_commit=$(git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
 		[[ "$main_commit" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] &&
 		_full_loop_release_place_verifier_tree "$tree_path" "$main_commit"; then
