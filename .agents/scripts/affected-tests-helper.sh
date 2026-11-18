@@ -133,7 +133,8 @@ if failed and args.compare_base:
 
 # GH#38964: a would-be regression that passes on a head rerun is timing-dependent
 # (e.g. SIGPIPE under pipefail), not caused by the change. Timeouts and
-# pre-existing failures are not rerun: they are the expensive cases.
+# pre-existing failures are not rerun, and a rerun that times out stops the
+# retries: they are the expensive cases.
 attempts = {suite: [head[suite]] for suite in ordered}
 pending = [s for s in ordered if head[s] not in (0, 124) and base.get(s) in (None, 0)]
 for _ in range(args.retries):
@@ -142,7 +143,7 @@ for _ in range(args.retries):
     rerun = run_all(root, pending)
     for suite in pending:
         attempts[suite].append(rerun[suite])
-    pending = [s for s in pending if rerun[s] != 0]
+    pending = [s for s in pending if rerun[s] not in (0, 124)]
 
 print("suite\trc_head\trc_base\tclass")
 regression = False
