@@ -283,7 +283,7 @@ _run_scoped_node_checks() {
 			return 1
 		elif [[ "$command_rc" -ne 0 ]]; then
 			print_error "[validators] CHECK FAILED (exit ${command_rc}): $pm run $script_name ($scope_label)"
-			tail -20 "${snapshot_dir}/command-${check_index}.log" >&2
+			_validator_print_failure_log "${snapshot_dir}/command-${check_index}.log"
 			return 1
 		fi
 	done
@@ -292,6 +292,37 @@ _run_scoped_node_checks() {
 		print_error "[validators] configure lint, typecheck, or a check-only format script in ${package_json}"
 		return 1
 	fi
+	return 0
+}
+
+# The snapshot directory is deleted after a failure, and Node's test runner
+# prints a failing file's assertion above its summary, so `tail -20` alone can
+# leave only "test failed" (GH#39068). Retain the full log, then print failure
+# records before the tail.
+_validator_print_failure_log() {
+	local log_file="$1"
+	local keep_dir="${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/validator-logs"
+	local kept_log="" excerpt=""
+	if mkdir -p "$keep_dir" 2>/dev/null && kept_log=$(mktemp "${keep_dir}/check-failed.XXXXXX" 2>/dev/null); then
+		if cp "$log_file" "$kept_log" 2>/dev/null; then
+			print_error "[validators] full log retained: ${kept_log}"
+		else
+			rm -f "$kept_log"
+		fi
+	fi
+	# Failure records first, so handled "Error:" lines from passing tests cannot
+	# consume the match limit; wide context keeps a TAP error block. awk caps the
+	# output without closing the pipe early under pipefail.
+	excerpt=$(grep -n -E -m 8 -A 20 '^[[:space:]]*(not ok [0-9]+|AssertionError( \[[A-Z_]+\])?:)|failing tests:' "$log_file" 2>/dev/null | awk 'NR <= 120') || excerpt=""
+	if [[ -z "$excerpt" ]]; then
+		excerpt=$(grep -n -E -m 8 -A 6 '^[[:space:]]*[A-Za-z]*Error( \[[A-Z_]+\])?:' "$log_file" 2>/dev/null | awk 'NR <= 60') || excerpt=""
+	fi
+	if [[ -n "$excerpt" ]]; then
+		print_error "[validators] failure details (error headlines with line numbers):"
+		printf '%s\n' "$excerpt" >&2
+		print_error "[validators] log tail:"
+	fi
+	tail -20 "$log_file" >&2
 	return 0
 }
 
