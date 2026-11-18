@@ -102,12 +102,17 @@ def require_predating_daemon(path, task, proc):
         if fields.get("Name", "").strip() not in NON_HOLDER_DAEMONS:
             raise ValueError("unknown-daemon")
         root_session = is_root_sshd_session(fields, task, proc)
-        if not root_session:
+        try:
             require_older_than_tree(path, task, proc)
+            predates_tree = True
+        except (OSError, ValueError, IndexError, StopIteration):
+            if not root_session:
+                raise
+            predates_tree = False
     except (OSError, ValueError, IndexError, StopIteration) as error:
         raise ValueError("proc-observation-unavailable") from error
     # A root parent may pass a worktree log fd into the session.
-    if root_session and os.environ.get(OPT_IN) == "1":
+    if root_session and not predates_tree and os.environ.get(OPT_IN) == "1":
         require_protected_references(path, task, proc)
     counts = _observations.get()
     if counts is not None:
