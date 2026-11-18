@@ -142,7 +142,7 @@ for runtime in opencode claude-code; do
 	_generate_greeting_agents_md "$runtime" "$dir"
 	_generate_greeting_agents_md "$runtime" "$dir"
 	[[ "$(backup_count "$runtime")" -eq 1 ]] || fail "$runtime: edited legacy file not backed up exactly once"
-	backup=$(find "$BACKUP_DIR" -type f -name "*-${runtime}-AGENTS.md" | head -n 1)
+	backup=$(find "$BACKUP_DIR" -type f -name "*-${runtime}-AGENTS.md" -print -quit)
 	grep -qxF 'my legacy rule' "$backup" || fail "$runtime: backup lost the legacy rule"
 	[[ "$(count_exact "$START" "$file")" -eq 1 ]] || fail "$runtime: edited legacy file not wrapped"
 
