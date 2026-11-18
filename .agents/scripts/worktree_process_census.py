@@ -81,6 +81,7 @@ def _record(result, key, kind, count=1):
 
 
 def _unreadable_task(task, result):
+    """Classify a task whose CWD is unreadable: attested session helper or uncertain."""
     attested = session_class(task)
     if attested:
         _record(result, "excluded_nondumpable", attested)
