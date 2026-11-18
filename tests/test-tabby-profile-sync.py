@@ -368,11 +368,12 @@ class TestGetProfileTargets(unittest.TestCase):
         alias.symlink_to(self.workspace, target_is_directory=True)
         self.repos_json.write_text(json.dumps({"initialized_repos": [
             {"path": str(Path("~") / self.workspace.name / repo.name)}, {"path": str(repo)},
+            {"path": str(alias / repo.name)},
             {"path": str(self.root)}, {"path": str(self.workspace)},
         ]}))
         with mock.patch.dict(os.environ, {"AIDEVOPS_GIT_WORKSPACE_ROOT": str(alias)}):
             targets = tabby_profile_sync.get_profile_targets(str(self.repos_json))
-        self.assertEqual([target["path"] for target in targets], [str(repo), str(repo)])
+        self.assertEqual([target["path"] for target in targets], [str(repo)])
 
 
 class TestManagedProfileReconciliation(unittest.TestCase):
