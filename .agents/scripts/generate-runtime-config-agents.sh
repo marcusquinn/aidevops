@@ -64,6 +64,50 @@ _run_agent_discovery_python() {
 # Phase 2a: Agent Generation -- Per-Runtime Adapters
 # =============================================================================
 
+# User-owned block markers for ~/.config/<runtime>/AGENTS.md. Content between
+# these markers belongs to the user and survives every regeneration (setup.sh,
+# auto-update). Everything outside them is framework-managed and rewritten on
+# each run, so local rules added anywhere else are lost on the next update.
+AGENTS_MD_USER_BLOCK_START='<!-- aidevops:user-rules:start -->'
+AGENTS_MD_USER_BLOCK_END='<!-- aidevops:user-rules:end -->'
+
+# Print the first complete user block (markers included) from an AGENTS.md.
+# Prints nothing when the file is missing or the block is absent/unterminated.
+# Arguments:
+#   $1 - path to an existing AGENTS.md
+# Returns: 0 always
+_agents_md_extract_user_block() {
+	local agents_md="$1"
+	[[ -f "$agents_md" ]] || return 0
+	awk -v start="$AGENTS_MD_USER_BLOCK_START" -v end="$AGENTS_MD_USER_BLOCK_END" '
+		{ sub(/\r$/, "") }
+		!inblock && $0 == start { inblock = 1 }
+		inblock { buf = buf $0 "\n" }
+		inblock && $0 == end { printf "%s", buf; exit }
+	' "$agents_md"
+	return 0
+}
+
+# Prepend a preserved user block to a freshly generated AGENTS.md.
+# Rewrites the file in place (keeps symlinks and permissions intact).
+# Arguments:
+#   $1 - path to the generated AGENTS.md
+#   $2 - user block text (markers included)
+# Returns: 0 on success, 1 on failure
+_agents_md_prepend_user_block() {
+	local agents_md="$1"
+	local user_block="$2"
+	local tmp_file
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-agents-md.XXXXXX") || return 1
+	if ! { printf '%s\n\n' "$user_block" && cat "$agents_md"; } >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	cat "$tmp_file" >"$agents_md"
+	rm -f "$tmp_file"
+	return 0
+}
+
 # Shared helper: write ~/.config/<runtime>/AGENTS.md with the authoritative
 # plugin-injection precedence and cache/VERSION greeting fallback.
 # The greeting-fallback markers must match GREETING_FALLBACK_START/END in
@@ -110,7 +154,12 @@ _generate_greeting_agents_md() {
 
 	mkdir -p "$config_dir"
 
-	cat >"$config_dir/AGENTS.md" <<EOF
+	# Capture the user-owned block before the framework section is rewritten.
+	local agents_md="$config_dir/AGENTS.md"
+	local user_block
+	user_block=$(_agents_md_extract_user_block "$agents_md")
+
+	cat >"$agents_md" <<EOF
 Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 
 **Runtime**: You are running in ${display_name}. Global config: \`${global_config_path}\`.
@@ -145,6 +194,9 @@ If the user later asks about aidevops updates, direct them to run \`aidevops upd
 
 Only for agents with Edit/Write/Bash tools. See ~/.aidevops/agents/AGENTS.md for workflow.
 EOF
+	if [[ -n "$user_block" ]]; then
+		_agents_md_prepend_user_block "$agents_md" "$user_block" || return 1
+	fi
 	print_success "Updated ${config_dir}/AGENTS.md with ${display_name} greeting template (t2766)"
 	return 0
 }
