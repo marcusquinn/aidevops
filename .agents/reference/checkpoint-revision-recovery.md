@@ -21,6 +21,15 @@ The default is off, preserving attention-only behaviour. No issue body, model ou
 - **Escalation:** an allowlisted escalation, malformed response, non-high confidence, timeout or missing inference prerequisite produces one `DECISION_ESCALATION` audit record with class, reason and options, never an approval or label change. Existing decision records and authenticated, unedited escalation records suppress repeat processing.
 - **Bounds:** native atomic audit refs under `refs/aidevops/checkpoint-decisions/ISSUE/` reserve each PR/head/finding and at most two attempt slots per issue across runners. These are not branches, tags, labels or dispatch authority. Reservations persist after crashes or ambiguous publication failures; a consumed reservation proves neither a successful decision nor continuation authority.
 
+### Re-armed blocked checkpoints (t19115)
+
+A terminal-blocker re-arm answers the blocker that the checkpoint's release recorded. `blocked-attention` checks for one before it uses unknown triage and publishes the approval itself. This is on by default; set `"auto_continue_rearmed": false` under a repository's `checkpoint_policy` to keep attention-only behaviour.
+
+- **Evidence:** the newest unedited `terminal-blocker-rearmed` receipt posted after the blocked release must carry `reason=trusted_retry` or `reason=revision_changed`. Permission-window and lifecycle re-arms never qualify. A `trusted_retry` also needs an unedited OWNER/MEMBER `terminal-blocker-circuit:retry` directive between the release and the receipt.
+- **Authority:** the publisher, checkpoint runner and receipt poster need current write permission. So does the retry author or, for a revision, the issue author: only the author or a write collaborator can edit an issue body.
+- **Gates:** the issue must be open, unassigned, auto-dispatchable and without holds. The worker draft must be eligible, and the `approval-template` line must bind the current head and complete brief SHA. `dispatch-approved` keeps every continuation gate.
+- **Bounds:** a native ref `refs/aidevops/checkpoint-rearm/ISSUE/RECEIPT` makes publication at-most-once per receipt across runners. A failed publication after the reservation leaves the attention record. A continuation that blocks again creates a newer release, so only a newer re-arm can approve it again.
+
 ### Unknown-blocker triage (GH#36525)
 
 Before publishing an unclassified blocked release, the runner performs one bounded (45-second, simple-tier) inference over the protected final report and logs its sanitized outcome. Tool output and public PR prose are not evidence. Explicit classes win; inferred external triggers require a named event, owner or date quoted from the report.
@@ -255,7 +264,6 @@ releasing runner, not an unrelated owner; the exact PR-author binding stays when
 ### Diagnostics and history edge cases
 
 Read-only diagnostics requiring newer tooling, intervening released attempts, expired claims (GH#35331), unlaunched approved attempts (GH#37669), releases with no open episode (GH#36593), terminal lease with a missing release, expired ready leases (GH#36544), released ready attempts with a missing terminal lease, blocked-before-ready claims (GH#35683), and stale resets/attempt rebinds (GH#36005) are detailed in `checkpoint-revision-recovery-history.md`. Approval generation, `approval-template` rejection diagnostics and all fences described above still apply.
-
 
 ## Ownership guarantees
 

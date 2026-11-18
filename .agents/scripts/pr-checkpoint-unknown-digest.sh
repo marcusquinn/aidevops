@@ -53,12 +53,22 @@ _pcc_unknown_pending_work() {
 # Shared by opt-in checkpoint policies. Extra actors are checked by the decision
 # resolver (issue author and finding poster); unknown triage retains its policy.
 _pcc_policy_permissions() {
-	local repo="$1" policy="$2" runner="$3" configured_by='' login='' actor='' permission=''
+	local repo="$1" policy="$2" runner="$3" configured_by='' login=''
 	shift 3
 	configured_by=$(jq -er '.configured_by' <<<"$policy") || return 1
 	login=$(gh api user --jq '.login') || return 1
 	# #aidevops:trust-boundary — every policy/publication/evidence actor needs write.
-	for actor in "$configured_by" "$login" "$runner" "$@"; do
+	_pcc_logins_have_write "$repo" "$configured_by" "$login" "$runner" "$@"
+	return $?
+}
+
+# Args: repo, then one or more logins. Returns 0 only when every login is safe
+# and currently holds admin, maintain or write permission on the repository.
+_pcc_logins_have_write() {
+	local repo="$1" actor='' permission=''
+	shift
+	[[ "$#" -gt 0 ]] || return 1
+	for actor in "$@"; do
 		_pcc_login_is_safe "$actor" || return 1
 		permission=$(gh api "repos/${repo}/collaborators/${actor}/permission" --jq '.permission') || return 1
 		case "$permission" in admin | maintain | write) ;; *) return 1 ;; esac

@@ -305,6 +305,111 @@ else
 	print_result "unknown pending policy routes off-policy digest and guarded approval; holds, owner, moved head and permissions reject" 1
 fi
 
+# t19115: comments for a blocked release (20), an optional maintainer retry (25)
+# and a terminal-blocker re-arm receipt. Args: reason receipt_id poster [retry_association]
+rearm_fixture_comments() {
+	local reason="$1" receipt_id="$2" poster="$3" association="${4:-OWNER}"
+	jq -nc --arg reason "$reason" --argjson receipt "$receipt_id" --arg poster "$poster" --arg association "$association" '
+		[{id:20,user:{login:"worker-bot"},author_association:"MEMBER",body:"CLAIM_RELEASED reason=blocked runner=worker-bot"},
+		 {id:25,user:{login:"maintainer"},author_association:$association,body:"terminal-blocker-circuit:retry"},
+		 {id:$receipt,user:{login:$poster},author_association:"MEMBER",
+		  body:("<!-- aidevops:terminal-blocker-rearmed key=0123456789abcdef01234567 -->\n<!-- aidevops:terminal-blocker-rearm-reason reason="+$reason+" observed_rev=a current_rev=b -->")}] |
+		map(. + {created_at:"2026-11-16T17:00:00Z"})'
+	return 0
+}
+
+test_rearmed_checkpoint_route() (
+	local root="${TEST_ROOT}/rearmed-route" head="1111111111111111111111111111111111111111"
+	local metadata="" body_hash="" status=0 denied_actor="nobody" template_head="" existing_approval=false comments=""
+	mkdir -p "$root"
+	local SCRIPT_DIR="$root" AIDEVOPS_REPOS_JSON="${root}/repos.json"
+	export STUB_APPROVAL_FILE="${root}/approval"
+	# shellcheck disable=SC2016 # Expand in the generated fixture, not its writer.
+	printf '%s\n' '#!/usr/bin/env bash' 'cat >>"$STUB_APPROVAL_FILE"' >"${root}/gh-write-helper.sh"
+	chmod +x "${root}/gh-write-helper.sh"
+	printf '{"initialized_repos":[]}\n' >"$AIDEVOPS_REPOS_JSON"
+	metadata=$(valid_issue_json '[{"name":"auto-dispatch"},{"name":"status:available"}]' |
+		jq '.assignees=[] | .user={login:"issue-author"} | .body="### Files Scope\n- helper.sh"')
+	body_hash=$(jq -r '.body' <<<"$metadata" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()[:-1]).hexdigest())')
+	template_head="$head"
+	gh() {
+		local command="$*" ref=''
+		case "$command" in
+		'api repos/owner/repo/issues/123') printf '%s\n' "$metadata" ;;
+		pr\ view*) valid_pr_json ;;
+		'api user --jq .login') printf 'maintainer\n' ;;
+		api\ repos/owner/repo/collaborators/*)
+			if [[ "$command" == *"/${denied_actor}/"* ]]; then printf 'read\n'; else printf 'write\n'; fi ;;
+		'api repos/owner/repo/git/refs --method POST'*)
+			ref="${command#*ref=}"; ref="${ref%% *}"; mkdir "${root}/${ref//\//_}" 2>/dev/null ;;
+		*) return 1 ;;
+		esac
+		return $?
+	}
+	_pcc_approval_template() {
+		printf 'CHECKPOINT_CONTINUATION_APPROVED {"head":"%s","brief_sha256":"%s","release_id":20}\n' "$template_head" "$body_hash"
+		return 0
+	}
+	_pr_checkpoint_revised_target() { [[ "$existing_approval" == true ]]; }
+	approvals() { [[ -f "$STUB_APPROVAL_FILE" ]] && grep -c '^CHECKPOINT_CONTINUATION_APPROVED ' "$STUB_APPROVAL_FILE" || printf '0\n'; }
+	route() { _pcc_rearmed_checkpoint_route owner/repo 123 42 "$head" worker-bot 20 attempt:old "$1"; }
+
+	# A maintainer retry publishes exactly once without any checkpoint policy.
+	comments=$(rearm_fixture_comments trusted_retry 30 fleet-runner)
+	[[ "$(route "$comments")" == "REARMED_CHECKPOINT_APPROVED pr=42 head=${head} release=20 reason=trusted_retry receipt=30" ]] || status=1
+	[[ "$(approvals)" -eq 1 ]] || status=1
+	# Another runner loses the atomic reservation; a valid approval short-circuits.
+	if route "$comments" >/dev/null; then status=1; fi
+	existing_approval=true
+	route "$comments" >/dev/null || status=1
+	existing_approval=false
+	[[ "$(approvals)" -eq 1 ]] || status=1
+	# A brief revision by a write-authorised issue author publishes too.
+	route "$(rearm_fixture_comments revision_changed 31 fleet-runner)" >/dev/null || status=1
+	[[ "$(approvals)" -eq 2 ]] || status=1
+
+	# Every rejection below leaves the approval count unchanged.
+	denied_actor="issue-author"
+	if route "$(rearm_fixture_comments revision_changed 32 fleet-runner)" >/dev/null; then status=1; fi
+	denied_actor="fleet-runner"
+	if route "$(rearm_fixture_comments trusted_retry 33 fleet-runner)" >/dev/null; then status=1; fi
+	denied_actor="maintainer"
+	if route "$(rearm_fixture_comments trusted_retry 34 fleet-runner)" >/dev/null; then status=1; fi
+	denied_actor="nobody"
+	if route "$(rearm_fixture_comments trusted_retry 35 fleet-runner COLLABORATOR)" >/dev/null; then status=1; fi
+	if route "$(rearm_fixture_comments trusted_retry 36 fleet-runner | jq '(.[] | select(.id == 25)) |= . + {updated_at:"2026-11-16T18:00:00Z"}')" >/dev/null; then status=1; fi
+	if route "$(rearm_fixture_comments trusted_retry 15 fleet-runner)" >/dev/null; then status=1; fi
+	if route "$(rearm_fixture_comments unevidenced_permission_window 37 fleet-runner)" >/dev/null; then status=1; fi
+	if route "$(rearm_fixture_comments lifecycle_recovered 38 fleet-runner)" >/dev/null; then status=1; fi
+	if route "$(rearm_fixture_comments trusted_retry 39 fleet-runner | jq '(.[] | select(.id == 39)) |= . + {updated_at:"2026-11-16T18:00:00Z"}')" >/dev/null; then status=1; fi
+	template_head="2222222222222222222222222222222222222222"
+	if route "$(rearm_fixture_comments trusted_retry 40 fleet-runner)" >/dev/null; then status=1; fi
+	template_head="$head"
+	metadata=$(jq '.assignees=[{login:"new-owner"}]' <<<"$metadata")
+	if route "$(rearm_fixture_comments trusted_retry 41 fleet-runner)" >/dev/null; then status=1; fi
+	metadata=$(jq '.assignees=[] | .labels += [{name:"hold-for-review"}]' <<<"$metadata")
+	if route "$(rearm_fixture_comments trusted_retry 42 fleet-runner)" >/dev/null; then status=1; fi
+	metadata=$(jq '.labels=[{name:"auto-dispatch"},{name:"status:available"}]' <<<"$metadata")
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","checkpoint_policy":{"auto_continue_rearmed":false}}]}' >"$AIDEVOPS_REPOS_JSON"
+	if route "$(rearm_fixture_comments trusted_retry 43 fleet-runner)" >/dev/null; then status=1; fi
+	printf '{"initialized_repos":[]}\n' >"$AIDEVOPS_REPOS_JSON"
+	[[ "$(approvals)" -eq 2 ]] || status=1
+
+	# The policy route prefers the re-arm over release-time unknown triage.
+	_pcc_resolve_decision() { return 1; }
+	_pcc_unknown_pending_work() { : >"${root}/unknown-called"; return 0; }
+	_pcc_policy_route owner/repo 123 42 "$head" worker-bot 20 attempt:old "$(rearm_fixture_comments trusted_retry 44 fleet-runner)" >/dev/null || status=1
+	[[ "$(approvals)" -eq 3 && ! -e "${root}/unknown-called" ]] || status=1
+	_pcc_policy_route owner/repo 123 42 "$head" worker-bot 20 attempt:old "$(rearm_fixture_comments lifecycle_recovered 45 fleet-runner)" >/dev/null || status=1
+	[[ -e "${root}/unknown-called" && "$(approvals)" -eq 3 ]] || status=1
+	return "$status"
+)
+if test_rearmed_checkpoint_route; then
+	print_result "t19115 re-armed checkpoint: trusted retry and trusted revision publish one approval; untrusted, stale, edited, held, moved and opted-out receipts reject" 0
+else
+	print_result "t19115 re-armed checkpoint: trusted retry and trusted revision publish one approval; untrusted, stale, edited, held, moved and opted-out receipts reject" 1
+fi
+
 test_unknown_daily_digest() (
 	local root="${TEST_ROOT}/daily-digest" head="1111111111111111111111111111111111111111" first='' second=''
 	mkdir -p "$root"

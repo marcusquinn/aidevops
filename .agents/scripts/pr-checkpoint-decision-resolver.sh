@@ -6,8 +6,99 @@
 _pcc_policy_route() {
 	local repo="$1" issue="$2" pr="$3" head="$4" runner="$5" release="$6" attempt="$7" comments="$8"
 	_pcc_resolve_decision "$repo" "$issue" "$pr" "$head" "$runner" "$release" "$attempt" "$comments" && return 0
+	# A trusted re-arm is newer evidence than the release-time unknown triage.
+	_pcc_rearmed_checkpoint_route "$repo" "$issue" "$pr" "$head" "$runner" "$release" "$attempt" "$comments" && return 0
 	_pcc_unknown_pending_work "$repo" "$issue" "$pr" "$head" "$runner" "$release" "$attempt" "$comments"
 	return $?
+}
+
+# t19115 (GH#39077): newest unedited terminal-blocker re-arm receipt posted
+# after the blocked release. Prints {id,login,reason}; 1 when none.
+_pcc_rearmed_receipt() {
+	local comments="$1" release="$2"
+	jq -cer --argjson release "$release" '
+		[flatten[] | select(.id > $release and (.updated_at // .created_at) == .created_at) |
+			(.body // "") as $body |
+			select($body | split("\n") | any(startswith("<!-- aidevops:terminal-blocker-rearmed key="))) |
+			($body | capture("(?m)^<!-- aidevops:terminal-blocker-rearm-reason reason=(?<r>[a-z_]+) ") | .r) as $reason |
+			{id, login: (.user.login // ""), reason: $reason}] |
+		sort_by(.id) | last | select(. != null)' <<<"$comments"
+	return $?
+}
+
+# Author of the newest maintainer retry directive between the release and the
+# receipt, matching the terminal-blocker retry contract (OWNER/MEMBER, unedited,
+# exact marker line, not a circuit record). 1 when none.
+_pcc_rearmed_retry_author() {
+	local comments="$1" release="$2" receipt_id="$3"
+	jq -er --argjson release "$release" --argjson receipt "$receipt_id" '
+		[flatten[] | select(.id > $release and .id < $receipt and (.updated_at // .created_at) == .created_at) |
+			select((.author_association // "") | IN("OWNER", "MEMBER")) |
+			select((.body // "") | test("(?m)^terminal-blocker-circuit:retry[ \\t]*\\r?$")) |
+			select((.body // "") | contains("aidevops:terminal-blocker-circuit") | not)] |
+		sort_by(.id) | last | .user.login // empty' <<<"$comments"
+	return $?
+}
+
+# t19115 (GH#39077): terminal-blocker recovery re-arms a held issue for a
+# maintainer retry (trusted_retry) or a revision after the blocker
+# (revision_changed), but a worker draft still held the issue until someone
+# copied an approval line, so the strongest available signal was ignored.
+# Publish that revision-bound approval once per receipt. A permission-window or
+# lifecycle re-arm is not evidence that the blocker was addressed and never
+# qualifies. Opt out per repo with checkpoint_policy.auto_continue_rearmed=false.
+# Returns 0 only when an approval is published or already valid.
+_pcc_rearmed_checkpoint_route() {
+	local repo="$1" issue="$2" pr="$3" head="$4" runner="$5" release="$6" attempt="$7" comments="$8"
+	local registry="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local receipt='' receipt_id='' poster='' reason='' retry_author='' issue_json='' author=''
+	local login='' pr_json='' brief='' approval=''
+	if jq -e --arg repo "$repo" 'any(.initialized_repos[]?; .slug == $repo and
+		.checkpoint_policy.auto_continue_rearmed == false)' "$registry" >/dev/null 2>&1; then
+		return 1
+	fi
+	receipt=$(_pcc_rearmed_receipt "$comments" "$release") || return 1
+	IFS=$'\t' read -r receipt_id poster reason <<<"$(jq -r '[.id, .login, .reason] | @tsv' <<<"$receipt")"
+	[[ "$receipt_id" =~ ^[1-9][0-9]*$ ]] || return 1
+	local -a actors=("$poster")
+	case "$reason" in
+	trusted_retry)
+		retry_author=$(_pcc_rearmed_retry_author "$comments" "$release" "$receipt_id") || return 1
+		actors+=("$retry_author")
+		;;
+	revision_changed) ;;
+	*) return 1 ;;
+	esac
+	issue_json=$(gh api "repos/${repo}/issues/${issue}") || return 1
+	_pcc_decision_issue_eligible "$issue_json" || return 1
+	if [[ "$reason" == revision_changed ]]; then
+		# #aidevops:trust-boundary — only the author or a write collaborator can
+		# edit an issue body, so a write-authorised author makes every revision
+		# trusted. An outside author's brief edit never publishes approval.
+		author=$(jq -er '.user.login' <<<"$issue_json") || return 1
+		actors+=("$author")
+	fi
+	login=$(gh api user --jq '.login') || return 1
+	# #aidevops:trust-boundary — publisher, checkpoint runner, receipt poster and
+	# the retry author or brief author all need current write permission.
+	_pcc_logins_have_write "$repo" "$login" "$runner" "${actors[@]}" || return 1
+	pr_json=$(gh pr view "$pr" --repo "$repo" --json number,state,isDraft,isCrossRepository,labels,headRefName,headRefOid,author,body,closingIssuesReferences) || return 1
+	_pr_checkpoint_pr_metadata_is_eligible "$pr_json" "$repo" "$pr" "$issue" "$head" "" "$runner" || return 1
+	brief=$(python3 -c 'import hashlib,json,sys; print(hashlib.sha256(json.load(sys.stdin)["body"].encode()).hexdigest())' <<<"$issue_json") || return 1
+	approval=$(_pcc_approval_template "$repo" "$pr" "$issue" "$release" "$attempt") || return 1
+	jq -e --arg head "$head" --arg brief "$brief" '.head == $head and .brief_sha256 == $brief' \
+		<<<"${approval#CHECKPOINT_CONTINUATION_APPROVED }" >/dev/null || return 1
+	if _pr_checkpoint_revised_target "$repo" "$pr_json" "$issue_json" "$comments" "" >/dev/null 2>&1; then
+		return 0
+	fi
+	# Two runners publishing would make the approval ambiguous and unusable.
+	# Native ref creation is atomic: only its creator publishes for this receipt.
+	# A failed publication after the reservation leaves the attention path.
+	_pcc_create_audit_ref "$repo" "refs/aidevops/checkpoint-rearm/${issue}/${receipt_id}" "$head" || return 1
+	_pcc_publish_policy_approval "$repo" "$issue" "$pr_json" "$issue_json" "$comments" "$approval" || return 1
+	printf 'REARMED_CHECKPOINT_APPROVED pr=%s head=%s release=%s reason=%s receipt=%s\n' \
+		"$pr" "$head" "$release" "$reason" "$receipt_id"
+	return 0
 }
 
 _pcc_decision_issue_eligible() {
@@ -25,17 +116,24 @@ _pcc_decision_issue_eligible() {
 _pcc_decision_reserve() {
 	local repo="$1" issue="$2" pr="$3" head="$4" finding="$5" slot=''
 	local prefix="refs/aidevops/checkpoint-decisions/${issue}"
-	gh api "repos/${repo}/git/refs" --method POST -f ref="${prefix}/findings/${pr}-${head}-${finding}" -f sha="$head" >/dev/null 2>&1 || return 1
+	_pcc_create_audit_ref "$repo" "${prefix}/findings/${pr}-${head}-${finding}" "$head" || return 1
 	for slot in 1 2; do
 		if gh api "repos/${repo}/git/ref/aidevops/checkpoint-decisions/${issue}/slots/${slot}" >/dev/null 2>&1; then
 			continue
 		fi
 		# A failed create might have committed server-side. Never advance to the
 		# next slot after it, even when a subsequent GET could find the ref.
-		gh api "repos/${repo}/git/refs" --method POST -f ref="${prefix}/slots/${slot}" -f sha="$head" >/dev/null 2>&1 || return 1
+		_pcc_create_audit_ref "$repo" "${prefix}/slots/${slot}" "$head" || return 1
 		return 0
 	done
 	return 1
+}
+
+# Atomic native ref creation. Returns 1 when the ref exists or creation failed.
+_pcc_create_audit_ref() {
+	local repo="$1" ref="$2" sha="$3"
+	gh api "repos/${repo}/git/refs" --method POST -f ref="$ref" -f sha="$sha" >/dev/null 2>&1
+	return $?
 }
 
 _pcc_decision_infer() {
