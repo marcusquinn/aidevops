@@ -12,15 +12,15 @@ Evidence from one runner on 2026-11-18:
 
 ## How
 
-- EDIT `.agents/scripts/pr-checkpoint-decision-resolver.sh`: add a third step to `_pcc_policy_route`, after `_pcc_resolve_decision` and `_pcc_unknown_pending_work`. Call a new `_pcc_rearmed_checkpoint_route` with the same arguments. It returns 0 only after it publishes an approval or adds a digest entry.
-- NEW function `_pcc_rearmed_checkpoint_route`, in the same file or `pr-checkpoint-unknown-digest.sh` to keep files small. Model it on `_pcc_unknown_pending_work`:
-  1. Find the newest unedited comment, created after the blocked release `$release`, that contains both `<!-- aidevops:terminal-blocker-rearmed key=` and `<!-- aidevops:terminal-blocker-rearm-reason reason=(trusted_retry|revision_changed) `. Exclude `unevidenced_permission_window` and `lifecycle_recovered`. Neither shows that the blocker was addressed.
-  2. #aidevops:trust-boundary: require the receipt poster to have current `admin|maintain|write` permission (`repos/{repo}/collaborators/{login}/permission`), as `_pcc_decision_recorded` does. For `trusted_retry`, also require the newest retry directive comment (`_terminal_blocker_latest_retry_comment` semantics: OWNER/MEMBER, unedited) to be newer than `$release`.
+- EDIT `.agents/scripts/pr-checkpoint-decision-resolver.sh`: in `_pcc_policy_route`, call a new `_pcc_rearmed_checkpoint_route` after `_pcc_resolve_decision` and before `_pcc_unknown_pending_work`. A trusted re-arm is newer evidence than the release-time triage. The new route returns 0 only when an approval is published or already valid.
+- NEW function `_pcc_rearmed_checkpoint_route` in the same file, modelled on `_pcc_unknown_pending_work`:
+  1. Find the newest unedited comment, created after the blocked release `$release`, that contains both `<!-- aidevops:terminal-blocker-rearmed key=` and a `terminal-blocker-rearm-reason` line with `reason=trusted_retry` or `reason=revision_changed`. Exclude `unevidenced_permission_window` and `lifecycle_recovered`. Neither shows that the blocker was addressed.
+  2. #aidevops:trust-boundary: the receipt poster, the publishing login and the checkpoint runner need current `admin|maintain|write` permission. For `trusted_retry`, also require an unedited OWNER/MEMBER `terminal-blocker-circuit:retry` directive between the release and the receipt, posted by a login with write permission. For `revision_changed`, require the issue author to have write permission: only the author or a write collaborator can edit an issue body, so every revision is then trusted.
   3. Run the same gates as `_pcc_unknown_pending_work`: `_pr_checkpoint_pr_metadata_is_eligible`, then open/unassigned/`auto-dispatch`/no protective hold on the issue. Generate the template with `_pcc_approval_template` and check that its `head` and `brief_sha256` match the current head and brief.
-  4. Publish through `_pcc_publish_policy_approval` when the repo has `checkpoint_policy.auto_continue_unknown_pending_work == true` and `_pcc_policy_permissions` passes. Do the same for `trusted_retry` when only the publishing login and the retry author pass the permission check: the maintainer directive is the authority. Print `REARMED_CHECKPOINT_APPROVED pr=… head=… release=… reason=…`.
-  5. Otherwise (`revision_changed` with no policy) return 1 and keep today's attention behaviour. Do not touch `_pcc_unknown_digest`: its snapshot reads only `status:blocked` issues that carry the triage marker, and widening it is separate work.
-- EDIT `.agents/reference/checkpoint-revision-recovery.md`, policy section: add one short paragraph on the re-armed route and its gates.
-- EDIT `.agents/scripts/tests/test-pr-checkpoint-continuation-dispatch.sh`: extend the existing policy cases (pattern near the `CHECKPOINT_UNKNOWN_TRIAGE` fixture) with a `trusted_retry` re-arm that publishes without policy and a `revision_changed` re-arm that publishes only with policy. Add a receipt from a non-write login, one older than the release, and an `unevidenced_permission_window` receipt; none of these publish.
+  4. Reserve `refs/aidevops/checkpoint-rearm/<issue>/<receipt>` atomically: two runners publishing would leave an ambiguous approval. Then publish through `_pcc_publish_policy_approval` and print `REARMED_CHECKPOINT_APPROVED pr=… head=… release=… reason=… receipt=…`.
+  5. On by default, matching the re-arm's own trust decision. A repo opts out with `checkpoint_policy.auto_continue_rearmed: false`. Do not touch `_pcc_unknown_digest`.
+- EDIT `.agents/reference/checkpoint-revision-recovery.md`: add a short "Re-armed blocked checkpoints" subsection covering the evidence, authority, gates and bounds.
+- EDIT `.agents/scripts/tests/test-pr-checkpoint-continuation-dispatch.sh`, following the `test_unknown_pending_policy` pattern. Cover `trusted_retry` and trusted `revision_changed` publishing exactly once, and a lost reservation not republishing. None of these may publish: a receipt from a non-write poster, a non-write retry or issue author, a COLLABORATOR or edited retry, an older or edited receipt, permission-window and lifecycle reasons, an assigned or held issue, a moved head, or an opted-out repo.
 
 ### Files Scope
 
@@ -33,8 +33,8 @@ Evidence from one runner on 2026-11-18:
 ## Acceptance Criteria
 
 - [ ] A blocked worker draft whose issue has a newer, write-authorised `trusted_retry` re-arm receipt and a validating template gets exactly one `CHECKPOINT_CONTINUATION_APPROVED` line through `gh-write-helper.sh`, with or without checkpoint policy. The next dispatch round continues the exact head through `dispatch-approved`.
-- [ ] A `revision_changed` re-arm publishes only when the repo has `auto_continue_unknown_pending_work`; without it the existing attention hold is unchanged.
-- [ ] No approval is published for: a receipt from a login without write permission; a receipt older than the blocked release; `unevidenced_permission_window` or `lifecycle_recovered` reasons; an assigned or held issue; or a template whose head or brief no longer matches.
+- [ ] A `revision_changed` re-arm publishes the same way when the issue author has write permission; with an outside author it never publishes.
+- [ ] No approval is published for: a receipt, retry or brief from a login without write permission; a receipt older than the blocked release; `unevidenced_permission_window` or `lifecycle_recovered` reasons; an assigned or held issue; a template whose head or brief no longer matches; or a repo with `auto_continue_rearmed: false`.
 - [ ] Existing checkpoint suites pass: `test-pr-checkpoint-continuation-dispatch.sh` and `test-pr-checkpoint-continuation-helper.sh`. ShellCheck is clean on the edited files.
 
 ## Verification
