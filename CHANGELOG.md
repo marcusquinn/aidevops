@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.228] - 2026-11-18
+
+### Changed
+
+- Maintenance: batch planning updates — record t19092-t19102 refs, PRs and completion
+
+### Fixed
+
+- add Files Scope to large-file validator fixtures (t19100) (#38992)
+- allow private-interface --health-url in localdev serve (#38984)
+- warn at interactive filing when a Files Scope path is missing from the default branch and not declared NEW
+- pause a runner on a runner_capability_unmet burst confirmed by a self-probe
+- hide agent-detection env from native gh children
+- skip gh-shim generations when resolving native gh (GH#38988)
+- explain stale recovery release failures (#38970)
+- recognize supervisor input requests (#38974)
+- completion check instead of partial closeout when worker declared completion (GH#38971)
+- strip agent-detection env from scripted gh calls
+
 ## [3.39.227] - 2026-11-18
 
 ### Added
