@@ -90,31 +90,94 @@ _full_loop_release_tag_body() {
 	return $?
 }
 
+_FULL_LOOP_RELEASE_VERIFIER=""
+_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+
+# Create the verifier tree at the commit, or re-point a clean retained one.
+# Args: $1=tree path, $2=origin/main commit
+_full_loop_release_place_verifier_tree() {
+	local tree_path="$1"
+	local main_commit="$2"
+
+	if [[ -e "$tree_path" ]]; then
+		_full_loop_release_repoint_tag_worktree "$REPO_ROOT" "$tree_path" "$main_commit"
+		return $?
+	fi
+	worktree_create_registered "$REPO_ROOT" "$tree_path" "$main_commit" --detach >/dev/null 2>&1
+	return $?
+}
+
+#aidevops:trust-boundary
+# Select the provenance verifier from a detached worktree at exactly the freshly
+# fetched origin/main, as release-run-new does, so a release that fixes the
+# verifier can reconcile itself. The verifier is never taken from the tag being
+# verified (the artifact must not vouch for itself). Falls back to the deployed
+# runtime copy only when no control worktree can be prepared, and says so.
+# Sets _FULL_LOOP_RELEASE_VERIFIER; _FULL_LOOP_RELEASE_VERIFIER_TREE is set only
+# when a worktree needs removal afterwards.
+_full_loop_release_select_verifier() {
+	local worktree_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME}/Git/_worktrees}"
+	local tree_path="" main_commit="" checkout_commit=""
+
+	_FULL_LOOP_RELEASE_VERIFIER=""
+	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+	# The release-control name lets the existing stale-control reaper retire a
+	# tree that lifecycle ownership kept past this process.
+	tree_path="${worktree_base}/aidevops-release-control-verifier-$$"
+	if [[ -n "${REPO_ROOT:-}" && -d "$worktree_base" ]] &&
+		git -C "$REPO_ROOT" fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>/dev/null &&
+		main_commit=$(git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null) &&
+		[[ "$main_commit" =~ $_FULL_LOOP_RELEASE_SHA_REGEX ]] &&
+		_full_loop_release_place_verifier_tree "$tree_path" "$main_commit"; then
+		checkout_commit=$(git -C "$tree_path" rev-parse HEAD 2>/dev/null || true)
+		if [[ "$checkout_commit" == "$main_commit" && -f "$tree_path/.git" &&
+			-x "$tree_path/.agents/scripts/release-provenance-helper.sh" ]]; then
+			_FULL_LOOP_RELEASE_VERIFIER="$tree_path/.agents/scripts/release-provenance-helper.sh"
+			_FULL_LOOP_RELEASE_VERIFIER_TREE="$tree_path"
+			printf 'release:verifier source=origin/main commit=%s\n' "$main_commit" >&2
+			return 0
+		fi
+		_full_loop_release_remove_worktree "$tree_path" release-verifier-unverified >/dev/null 2>&1 || true
+	fi
+	printf 'release:verifier source=deployed-runtime (origin/main control worktree unavailable)\n' >&2
+	[[ -x "${SCRIPT_DIR}/release-provenance-helper.sh" ]] || return 1
+	_FULL_LOOP_RELEASE_VERIFIER="${SCRIPT_DIR}/release-provenance-helper.sh"
+	return 0
+}
+
+# Args: $1=verifier subcommand, $2=repo slug, $3=version tag
+_full_loop_release_run_verifier() {
+	local subcommand="$1"
+	local repo="$2"
+	local tag_name="$3"
+	local verify_rc=0
+
+	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
+	_full_loop_release_select_verifier || return 1
+	(
+		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
+		bash "$_FULL_LOOP_RELEASE_VERIFIER" "$subcommand" --tag "$tag_name" --repo "$repo" >/dev/null
+	) || verify_rc=$?
+	if [[ -n "$_FULL_LOOP_RELEASE_VERIFIER_TREE" ]]; then
+		_full_loop_release_remove_worktree "$_FULL_LOOP_RELEASE_VERIFIER_TREE" release-verifier-done >/dev/null 2>&1 || true
+	fi
+	_FULL_LOOP_RELEASE_VERIFIER_TREE=""
+	return "$verify_rc"
+}
+
 _full_loop_release_verify_tag_provenance() {
 	local repo="$1"
 	local tag_name="$2"
-	local verifier="${SCRIPT_DIR}/release-provenance-helper.sh"
 
-	[[ -x "$verifier" ]] || return 1
-	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
-	(
-		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
-		bash "$verifier" verify --tag "$tag_name" --repo "$repo" >/dev/null
-	)
+	_full_loop_release_run_verifier verify "$repo" "$tag_name"
 	return $?
 }
 
 _full_loop_release_verify_protected_source_provenance() {
 	local repo="$1"
 	local tag_name="$2"
-	local verifier="${SCRIPT_DIR}/release-provenance-helper.sh"
 
-	[[ -x "$verifier" ]] || return 1
-	_full_loop_release_prepare_tag_worktree "$tag_name" || return 1
-	(
-		cd "$_FULL_LOOP_RELEASE_PATH" || exit 1
-		bash "$verifier" verify-local-source --tag "$tag_name" --repo "$repo" >/dev/null
-	)
+	_full_loop_release_run_verifier verify-local-source "$repo" "$tag_name"
 	return $?
 }
 
