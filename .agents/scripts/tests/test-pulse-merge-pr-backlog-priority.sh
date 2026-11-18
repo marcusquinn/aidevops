@@ -145,6 +145,15 @@ assert_eq "2b: dirty hints break ties without overriding readiness priorities" \
 	"6,1,3,2,4,5" "$sorted_numbers"
 unset -f _pulse_merge_queue_priority_keys
 
+# GH#39019: a cached unchanged no-op verdict sorts after clean PRs; a changed head clears it.
+export PULSE_MERGE_UNCHANGED_STATE_DIR="$TEST_TMPDIR/unchanged-state"
+_pmu_record_pr_evaluation owner/repo "$merge_ready_pr" 1
+assert_eq "2e: cached negative verdict sorts a blocked PR after an unevaluated merge-ready PR" \
+	"6,3,1" "$(_pmp_sort_prs_by_backlog_priority "[$merge_ready_pr,$second_ready,$small_fix_pr]" owner/repo | jq -r '[.[].number] | join(",")')"
+changed_ready=$(printf '%s' "$merge_ready_pr" | jq -c '.statusCheckRollup = [{"status":"COMPLETED","conclusion":"SUCCESS","name":"new"}]')
+assert_eq "2f: changed PR state discards the cached negative verdict" \
+	"1,6,3" "$(_pmp_sort_prs_by_backlog_priority "[$changed_ready,$second_ready,$small_fix_pr]" owner/repo | jq -r '[.[].number] | join(",")')"
+
 _pulse_merge_queue_priority_keys() { printf '|99|'; return 0; }
 gh_pr_view() {
 	local pr_number="$1"

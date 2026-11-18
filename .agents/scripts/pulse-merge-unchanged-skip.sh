@@ -105,6 +105,26 @@ _pmu_should_skip_pr() {
 	return 0
 }
 
+# GH#39019: true when a prior authoritative evaluation of this PR was a no-op
+# (not merge-ready) and its state fingerprint is unchanged. Ordering signal
+# only: the PR is still evaluated, after PRs without a cached negative verdict,
+# so one blocked PR cannot consume the pass budget ahead of clean work.
+# Args: $1=repo slug, $2=enriched PR object
+_pmu_pr_has_negative_verdict() {
+	local repo_slug="$1" pr_obj="$2"
+	local evidence_key="" pr_array="" state_file="" streak=""
+	local current_fp="" stored_fp=""
+	evidence_key=$(_pmu_pr_evidence_key "$repo_slug" "$pr_obj") || return 1
+	state_file=$(_pmu_state_file "$evidence_key") || return 1
+	[[ -f "$state_file" && ! -L "$state_file" ]] || return 1
+	IFS=$'\t' read -r stored_fp streak _ <"$state_file" || return 1
+	[[ "$streak" =~ ^[1-9][0-9]*$ && -n "$stored_fp" ]] || return 1
+	pr_array=$(jq -cn --argjson pr "$pr_obj" '[$pr]') || return 1
+	current_fp=$(_pmu_fingerprint "$pr_array") || return 1
+	[[ "$current_fp" == "$stored_fp" ]] || return 1
+	return 0
+}
+
 _pmu_record_pr_evaluation() {
 	local repo_slug="$1" pr_obj="$2" result_code="$3" evidence_key="" pr_number=""
 	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty') || return 0
