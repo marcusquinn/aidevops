@@ -13,9 +13,10 @@ Fixtures (names are set with PR_SET_NAME so reports can be pid-normalised):
 Prints a stable report: per observer mode, lines with pids replaced by fixture names.
 """
 
+import contextlib
 import ctypes
 import os
-import subprocess
+import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 import time
 
@@ -96,8 +97,14 @@ def forged(uid: int, names: dict) -> None:
 
 def observe(scripts: str, uid: int, mode: list, names: dict) -> list:
     command = ["python3", os.path.join(scripts, "worktree_process_proc.py")] + mode
-    result = subprocess.run(
-        command, capture_output=True, text=True, preexec_fn=lambda: drop(uid), check=False
+    result = subprocess.run(  # nosec B603 - fixed argv, no shell
+        command,
+        capture_output=True,
+        text=True,
+        user=uid,
+        group=uid,
+        extra_groups=[],
+        check=False,
     )
     lines = []
     for raw in result.stdout.splitlines():
@@ -123,10 +130,8 @@ def main(arguments: list) -> int:
         for line in observe(scripts, uid, mode, names):
             print(line)
     for pid in list(names):
-        try:
+        with contextlib.suppress(OSError):
             os.kill(pid, 9)
-        except OSError:
-            pass
     return 0
 
 
