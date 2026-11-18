@@ -893,7 +893,7 @@ class _BundleApproval:
                                           f'{row["approval_id"]}.json'), "bundle is revoked")
             receipt_path = directory / "receipt.json"
             self.check(_trusted_file(receipt_path, self.config.trust_uid), "stored bundle receipt is unsafe")
-            content, _digest = secure_state_content(str(receipt_path))
+            content, _digest = secure_state_content(str(receipt_path), self.config.trust_uid)
             self.check(len(content) <= 1024 * 1024, "stored bundle receipt exceeds the limit")
             receipt = json.loads(content.decode("utf-8"))
             self.check(receipt.get("schema") == SCHEMA_BOUND_RECEIPT and receipt.get("payload") == payload
@@ -901,7 +901,7 @@ class _BundleApproval:
             self.check(_verify_signature(self.config, payload, receipt["signature"]), "stored bundle signature is invalid")
             for entry in payload["entries"]:
                 self.check(_trusted_file(Path(entry["snapshot_path"]), self.config.trust_uid), "stored snapshot is unsafe")
-                _content, digest = secure_state_content(entry["snapshot_path"])
+                _content, digest = secure_state_content(entry["snapshot_path"], self.config.trust_uid)
                 self.check(digest == entry["content_sha256"], "stored snapshot was changed")
             row["state"] = "SOURCE_COMMITTED"
             self._write_locked(row)

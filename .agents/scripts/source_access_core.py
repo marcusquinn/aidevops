@@ -1116,7 +1116,8 @@ def _source_owner_requirement() -> int | None:
     if os.geteuid() != 0:
         return None
     uid, _home = real_user()
-    return uid if uid > 0 else None
+    _require_source(uid > 0, "privileged source reads require an authenticated non-root requester")
+    return uid
 
 
 def _file_identity(metadata: os.stat_result) -> dict[str, int]:
@@ -1133,14 +1134,15 @@ def secure_source_content(path: str) -> tuple[bytes, str]:
     return content, digest
 
 
-def secure_state_content(path: str) -> tuple[bytes, str]:
+def secure_state_content(path: str, owner_uid: int) -> tuple[bytes, str]:
     """Read a broker-owned file below the root-controlled state directory.
 
-    Callers verify trusted ownership first. Platform aliases above the state
-    directory (for example ``/var/run`` -> ``/run``) are root-owned, so resolve
-    them before the same anchored, no-symlink read used for sources.
+    Platform aliases above the state directory (for example ``/var/run`` ->
+    ``/run``) are root-owned, so resolve them before the same anchored,
+    no-symlink read used for sources; the opened file must be owned by the
+    broker trust owner.
     """
-    content, digest, _identity = _secure_read(os.path.realpath(path), None)
+    content, digest, _identity = _secure_read(os.path.realpath(path), owner_uid)
     return content, digest
 
 
@@ -1160,7 +1162,7 @@ def _secure_read(path: str, required_owner: int | None) -> tuple[bytes, str, dic
         )
         _require_source(
             required_owner is None or opened_stat.st_uid == required_owner,
-            "source file is not owned by the requesting user",
+            "file owner does not match the requesting user or broker owner",
         )
         _require_source(
             opened_stat.st_size <= MAX_SOURCE_BYTES,
@@ -1192,8 +1194,10 @@ def _secure_read(path: str, required_owner: int | None) -> tuple[bytes, str, dic
     except OSError as exc:
         raise SourceAccessError("source path changed during approval") from exc
     finally:
-        os.close(descriptor)
-        os.close(parent)
+        try:
+            os.close(descriptor)
+        finally:
+            os.close(parent)
     return bytes(content), digest.hexdigest(), _file_identity(opened_stat)
 
 
