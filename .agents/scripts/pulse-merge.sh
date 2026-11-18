@@ -1764,6 +1764,8 @@ _drop_closing_pull_request_refs() {
 # not fall back. Otherwise require one distinct local For/Ref or title identity.
 # Mode explicit accepts standalone declarations, or a title corroborated by a
 # visible For/Ref when no closing or explicit target exists.
+# Returns 2 (not 1) when explicit issue references are ambiguous, so callers can
+# report a specific reason instead of a generic metadata failure (t2449).
 # Args: $1=PR number, $2=repo slug, $3=mode, $4=optional fetched body
 #######################################
 _extract_pr_work_issue() {
@@ -1792,7 +1794,7 @@ _extract_pr_work_issue() {
 		explicit_issues=$(_gh_pr_body_explicit_issues "$pr_body") || return 1
 		if [[ "$explicit_issues" == *$'\n'* || "$explicit_issues" == "ambiguous" ]]; then
 			echo "[pulse-wrapper] _extract_pr_work_issue: PR #${pr_number} in ${repo_slug} has ambiguous explicit issue identities — no merge association" >>"$LOGFILE"
-			return 1
+			return 2
 		fi
 		# aidevops:trust-boundary: never infer from the title alone or fall back
 		# after ambiguous closing/explicit metadata or a closing body reference.

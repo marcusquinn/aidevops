@@ -657,6 +657,33 @@ test_ambiguous_reference_is_noop() {
 	return 0
 }
 
+# t2449: ambiguous explicit references must produce a specific deny reason,
+# not the generic "trust metadata unavailable" text.
+test_ambiguous_reference_verdict_reason() {
+	local verdict=""
+	verdict=$(
+		_PULSE_MERGE_PROCESS_WORKER_BRIEFED_LOADED=""
+		# Use the same explicit-reference parser as the production merge path.
+		# shellcheck source=../gh-closing-reference-lib.sh
+		source "${MODULE_FILE%/*}/gh-closing-reference-lib.sh"
+		# shellcheck source=../pulse-merge-process-worker-briefed.sh
+		source "${MODULE_FILE%/*}/pulse-merge-process-worker-briefed.sh"
+		gh_pr_view() {
+			printf '%s' '{"labels":[{"name":"origin:worker"}],"isDraft":false,"headRefOid":"abc","body":"Ref #21729\nRef #19530"}'
+			return 0
+		}
+		_pulse_is_trusted_issue_sync_pr() { return 1; }
+		_extract_pr_work_issue() { return 2; }
+		worker_briefed_trust_verdict 900 "$SLUG" || true
+	)
+	if [[ "$verdict" == deny:*"ambiguous explicit issue references"*"#19530, #21729"* && "$verdict" != *"trust metadata unavailable"* ]]; then
+		pass "ambiguous explicit refs: specific deny reason"
+	else
+		fail "ambiguous explicit refs: specific deny reason" "got: $verdict"
+	fi
+	return 0
+}
+
 test_corroborated_partial_target() {
 	local body="" title=""
 	for title in 't501: partial delivery' 'GH#501: partial delivery'; do
@@ -1532,6 +1559,7 @@ main() {
 	test_closing_target_is_noop
 	test_non_worker_pr_is_noop
 	test_ambiguous_reference_is_noop
+	test_ambiguous_reference_verdict_reason
 	test_corroborated_partial_target
 	test_uncorroborated_partial_target_is_noop
 	test_unconfirmed_merge_keeps_review
