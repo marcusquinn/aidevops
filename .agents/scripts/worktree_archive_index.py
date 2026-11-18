@@ -67,7 +67,11 @@ def git_index_state(path, head=None, dirs=None):
         raise ValueError("index has skip-worktree/assume-unchanged entries")
     # Index-only metadata reads, not a working-tree scan or restore verification.
     options = ("--cached", "--raw", "-z", "--no-ext-diff", "--no-color")
-    if git(root, "diff", *options, "--ita-visible-in-index") != git(root, "diff", *options, "--ita-invisible-in-index"):
+    visible = git(root, "diff", *options, "--ita-visible-in-index")
+    # The invisible view only hides entries, so an empty visible view proves
+    # equality without a second Git process. This is local to this guard pass.
+    invisible = git(root, "diff", *options, "--ita-invisible-in-index") if visible else visible
+    if visible != invisible:
         raise ValueError("intent-to-add index entries cannot be represented by two patches")
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
