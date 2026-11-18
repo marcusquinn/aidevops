@@ -190,20 +190,21 @@ _stale_recovery_find_merged_pr_since() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local since_ts="$3"
-	local _limit=100 _json="" _count="" _slug_lc=""
+	local _limit=100 _json="" _count="" _slug_lc="" _match=""
 	[[ -n "$since_ts" ]] || return 0
 	_slug_lc=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
 	_json=$(gh pr list --repo "$repo_slug" --state merged --limit "$_limit" \
 		--search "${issue_number} in:body merged:>=${since_ts}" \
 		--json number,body,mergedAt 2>/dev/null) || return 1
 	_count=$(printf '%s' "$_json" | jq -er 'length' 2>/dev/null) || return 1
-	[[ "$_count" -lt "$_limit" ]] || return 1
-	printf '%s' "$_json" | jq -r \
+	_match=$(printf '%s' "$_json" | jq -r \
 		--arg n "$issue_number" --arg since "$since_ts" --arg slug "$_slug_lc" '
 		[.[]? | select((.mergedAt // "") > $since)
-			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve)\\s+(" + ($slug | gsub("[.]"; "[.]")) + ")?#" + $n + "\\b"))]
+			| select(.body // "" | ascii_downcase | test("\\b(for|ref|refs|resolves|closes|fixes|close|fix|resolve):?\\s+(" + ($slug | gsub("[.]"; "[.]")) + ")?#" + $n + "\\b"))]
 		| sort_by(.mergedAt) | last | .number // empty
-	' 2>/dev/null || return 1
+	' 2>/dev/null) || return 1
+	[[ -n "$_match" || "$_count" -lt "$_limit" ]] || return 1
+	printf '%s' "$_match"
 	return 0
 }
 

@@ -566,8 +566,7 @@ if [[ "$(_stale_recovery_count_ticks_from_pages "$ticks")" == 1 ]]; then
 else
 	print_result "Merged-PR progress marker restarts tick count" 1
 fi
-merged_pr=$(gh() { printf '%s' '[{"number":7,"body":"For o/r#42","mergedAt":"2026-01-01T00:30:00Z"},{"number":8,"body":"For #421","mergedAt":"2026-01-01T00:40:00Z"},{"number":9,"body":"For x/y#42","mergedAt":"2026-01-01T00:50:00Z"}]'; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z")
-if [[ "$merged_pr" == 7 ]]; then
+if merged_pr=$(gh() { printf '%s' '[{"number":7,"body":"Resolves: o/r#42","mergedAt":"2026-01-01T00:30:00Z"},{"number":8,"body":"Resolves: #421","mergedAt":"2026-01-01T00:40:00Z"},{"number":9,"body":"Resolves: x/y#42","mergedAt":"2026-01-01T00:50:00Z"}]'; }; _stale_recovery_find_merged_pr_since 42 o/r "2026-01-01T00:00:00Z") && [[ "$merged_pr" == 7 ]]; then
 	print_result "Merged PR referencing issue after tick is found" 0
 else
 	print_result "Merged PR referencing issue after tick is found" 1 "(got '$merged_pr')"
