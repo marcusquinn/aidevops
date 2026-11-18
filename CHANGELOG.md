@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.231] - 2026-11-18
+
+### Fixed
+
+- resume a continuation review worktree that is only ahead of the PR head
+- preserve init project config written from a linked worktree
+- key OAuth pool seats by email + Anthropic org (Team + Personal on one email)
+- allow designed bounded-operation polls through OpenCode doom_loop
+- pre-merge-gate prints the approval command when the NMR hold reports as maintainer-gate
+- accept native OpenCode executable at its own launcher path (GH#39062) (#39063)
+
 ## [3.39.230] - 2026-11-18
 
 ### Changed
