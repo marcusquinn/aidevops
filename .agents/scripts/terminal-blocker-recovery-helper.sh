@@ -1563,9 +1563,9 @@ _tbr_pending_discovery_stages() {
 # then decision wakes) keep the prepass at a constant process count: on a
 # 129-entry queue they take ~40ms where per-entry reads took ~1.5s, which the
 # old per-tier scan repeated on every traversal. An unreadable file falls back
-# to the per-entry check, never to a guessed tier. Below four seconds a quarter
-# rounds to nothing, so tier 0 keeps the whole window. Runs inside the scope of
-# _tbr_pending_scan_queue (decided_set, tier0_deadline).
+# to the per-entry check, never to a guessed tier. Runs inside the scope of
+# _tbr_pending_scan_queue (decided_set, tier0_deadline); returns 1 when the
+# full-window marker cannot be cleared.
 _tbr_pending_classify() {
 	local file="" share=0 ids="" wakes="" decided_paths=";" i=0
 	local name repo issue
@@ -1606,8 +1606,28 @@ _tbr_pending_classify() {
 		fi
 	fi
 	[[ "$decided_set" != ";" ]] || return 0
-	share=$(((TBR_QUEUE_DEADLINE - SECONDS) / 4))
-	[[ "$share" -ge 1 ]] || return 0
+	_tbr_pending_reserve || return 1
+	return 0
+}
+
+# Set tier0_deadline for a run with decided entries (scope as above). Each tier
+# gets at least one second once two remain; a lone second goes to tier 0. A
+# tier-0 entry cut short by the reservation last run parked the rotation just
+# before itself, and this run gives tier 0 the whole window so that entry can
+# finish (an entry needing more than the tier-0 share would otherwise time out
+# on every run). A --count probe only reads the marker, leaving it for the
+# pending pass that acts on the entry.
+_tbr_pending_reserve() {
+	local marker="${TBR_ROOT}/${cursor_name}_full_window" remaining=0 share=0
+	if [[ -f "$marker" ]]; then
+		[[ "$mode" == --count ]] || rm -f "$marker" || return 1
+		printf 'blocker-recovery: queue tier=0 full window (entry cut short by the decided-tier share last run)\n' >&2
+		return 0
+	fi
+	remaining=$((TBR_QUEUE_DEADLINE - SECONDS))
+	[[ "$remaining" -ge 2 ]] || return 0
+	share=$((remaining / 4))
+	[[ "$share" -ge 1 ]] || share=1
 	tier0_deadline=$((TBR_QUEUE_DEADLINE - share))
 	return 0
 }
@@ -1703,8 +1723,29 @@ _tbr_pending_scan_tier() {
 			fi
 			[[ "$rc" -ne 0 ]] || count=$((count + 1))
 			[[ "$rc" -lt 2 ]] || incomplete=1
+			# GH#39010: the reservation, not the queue window, cut this entry short.
+			if [[ "$rc" -ge 2 && "$deadline" -lt "$queue_deadline" && "$SECONDS" -ge "$deadline" ]]; then
+				_tbr_pending_park "$tier_cursor_name" "$before" "$hold" "$name" || return 2
+				_tbr_pending_tier_stop "$deadline" "$queue_deadline"
+				return $?
+			fi
 		done
 	done
+	return 0
+}
+
+# Park the tier-0 rotation just before an entry the reservation cut short and
+# mark the next run for the whole window (see _tbr_pending_reserve). A held
+# --count cursor already sits before an earlier counted entry; leave it. Runs
+# inside _tbr_pending_scan_queue's scope (parked); returns 1 on a write failure.
+_tbr_pending_park() {
+	local tier_cursor_name="$1" before="$2" hold="$3" name="$4"
+	if [[ "$hold" -eq 0 ]]; then
+		_tbr_restore_cursor "$tier_cursor_name" "$before" || return 1
+	fi
+	_tbr_save_cursor "${cursor_name}_full_window" "$name" || return 1
+	parked=1
+	printf 'blocker-recovery: queue tier=0 parked entry=%s for a full window next run\n' "$name" >&2
 	return 0
 }
 
@@ -1713,11 +1754,12 @@ _tbr_pending_scan_tier() {
 # stops at its share and tier 1 finishes early, tier 0 resumes in the time
 # left, so the reservation never idles. A --count probe that already counted
 # a tier-0 entry does not resume: its cursor stays held at that entry
-# (GH#39006). Runs inside tbr_pending's scope; returns 1 when a cursor could
-# not be written.
+# (GH#39006). Nor does a run that parked a cut-short entry: resuming would
+# move the cursor past it. Runs inside tbr_pending's scope; returns 1 when a
+# cursor or marker could not be written.
 _tbr_pending_scan_queue() {
-	local tier=0 scan_rc=0 tier0_rc=0 count_before="$count" tier0_counted=0 decided_set=";" tier0_deadline=""
-	_tbr_pending_classify
+	local tier=0 scan_rc=0 tier0_rc=0 count_before="$count" tier0_counted=0 decided_set=";" tier0_deadline="" parked=0
+	_tbr_pending_classify || return 1
 	for tier in 0 1; do
 		scan_rc=0
 		_tbr_pending_scan_tier "$tier" || scan_rc=$?
@@ -1728,7 +1770,7 @@ _tbr_pending_scan_queue() {
 		fi
 		[[ "$scan_rc" -eq 0 || "$scan_rc" -eq 4 ]] || return 0
 	done
-	[[ "$tier0_rc" -eq 4 && "$SECONDS" -lt "$TBR_QUEUE_DEADLINE" ]] || return 0
+	[[ "$tier0_rc" -eq 4 && "$parked" -eq 0 && "$SECONDS" -lt "$TBR_QUEUE_DEADLINE" ]] || return 0
 	[[ "$mode" != --count || "$tier0_counted" -eq 0 ]] || return 0
 	tier0_deadline="$TBR_QUEUE_DEADLINE"
 	scan_rc=0
