@@ -3,14 +3,14 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # tabby-helper.sh — Generate and sync Tabby terminal profiles
 #
-# Creates a profile for each repo in repos.json and detected workspaces with:
+# Creates profiles for registered repos strictly inside the Git workspace with:
 # - Unique bright tab colour (dark-mode friendly)
 # - Matching built-in colour scheme (closest hue match)
 # - Direct OpenCode launch that leaves a shell open after exit
 # - Grouped under "Projects"
 #
 # Usage:
-#   tabby-helper.sh sync          # Sync profiles and detected workspaces (default)
+#   tabby-helper.sh sync          # Sync Git workspace repo profiles (default)
 #   tabby-helper.sh status        # Show current profile status
 #   tabby-helper.sh zshrc         # Deprecated no-op (TABBY_AUTORUN is unused)
 #   tabby-helper.sh fix-shell     # Ensure default local profile uses /bin/zsh (macOS)
@@ -87,7 +87,7 @@ _bootstrap_tabby_python() {
 	fi
 
 	_info "Preparing isolated Tabby Python environment..." >&2
-	if ! (umask 077 && mkdir -p "${TABBY_PYTHON_ENV%/*}" && "$system_python" -m venv --copies "$TABBY_PYTHON_ENV"); then
+	if ! (umask 077 && mkdir -p "${TABBY_PYTHON_ENV%/*}" && "$system_python" -m venv --copies --clear "$TABBY_PYTHON_ENV"); then
 		_error "Could not create the isolated Tabby Python environment; Tabby profiles were not modified" >&2
 		return 1
 	fi
@@ -122,7 +122,7 @@ cmd_sync() {
 	local python_bin
 	python_bin=$(_ensure_tabby_python) || return 1
 
-	_info "Syncing Tabby profiles from repos.json and detected workspaces..."
+	_info "Syncing Tabby profiles for repos inside the Git workspace..."
 
 	# Retain the existing single-backup behavior instead of accumulating a
 	# separate copy on every optional update.

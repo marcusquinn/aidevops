@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """
-Sync Tabby terminal profiles from aidevops repos.json and detected workspaces.
+Sync Tabby terminal profiles from repos.json inside the Git workspace.
 
-Creates a profile for each registered repo and an optional Buzz workspace with:
+Creates a profile for each eligible registered repo with:
 - Unique bright tab colour (dark-mode friendly)
 - Matching built-in Tabby colour scheme (closest hue)
 - Direct OpenCode launch that leaves a shell open after exit
@@ -23,8 +23,13 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
+from canonical_write_policy_paths import (
+    canonical_git_workspace_root,
+    git_workspace_root_from_environment,
+    is_within_workspace,
+)
 from tabby_appearance_css import apply_managed_css_for_sync
 from tabby_colour_utils import generate_tab_colour, find_closest_scheme
 from tabby_profile_repair import (
@@ -269,6 +274,17 @@ def normalize_cwd(path: str) -> str:
     return os.path.normcase(os.path.realpath(os.path.expanduser(path)))
 
 
+def workspace_root() -> str:
+    """Resolve the same trusted root used by the canonical write policy."""
+    return canonical_git_workspace_root(git_workspace_root_from_environment())
+
+
+def eligible_path(path: str, root: str) -> bool:
+    """Require a resolved path strictly beneath the trusted root."""
+    resolved = normalize_cwd(path)
+    return bool(root) and resolved != normalize_cwd(root) and is_within_workspace(resolved, root)
+
+
 def _has_managed_profile_id(profile: dict) -> bool:
     """Return True only for IDs emitted by :func:`build_profile_yaml`."""
     profile_id = profile.get("id")
@@ -410,6 +426,10 @@ def _reconciliation_category(
 
     cwd = profile["options"]["cwd"]
     normalized = normalize_cwd(cwd)
+    if normalized == normalize_cwd("~/.buzz"):
+        return "stale"
+    if not eligible_path(cwd, workspace_root()):
+        return None
     cwd_is_known = any(
         (os.path.isdir(os.path.expanduser(cwd)), normalized in registered_paths)
     )
@@ -439,35 +459,10 @@ def plan_profile_reconciliation(
     return ProfileReconciliation(stale, duplicates)
 
 
-def get_profile_targets(
-    repos_json_path: str, home: Optional[str] = None
-) -> list[dict]:
-    """Return registered repositories plus detected special workspaces.
-
-    Buzz-backed OpenCode sessions are scoped to ``~/.buzz``. Include that
-    workspace only when it exists, preserving the normal no-unused-profile
-    behavior for users who do not have Buzz installed.
-    """
-    targets = get_repos(repos_json_path)
-    home_path = (
-        os.path.expanduser(home) if home is not None else os.path.expanduser("~")
-    )
-    buzz_path = os.path.join(home_path, ".buzz")
-    should_add_buzz = all(
-        (
-            os.path.isdir(buzz_path),
-            all(target["path"] != buzz_path for target in targets),
-        )
-    )
-    if should_add_buzz:
-        targets.append(
-            {
-                "path": buzz_path,
-                "name": "Buzz",
-                "repo": {"path": buzz_path, "profile_kind": "buzz-workspace"},
-            }
-        )
-    return targets
+def get_profile_targets(repos_json_path: str) -> list[dict]:
+    """Return available registered repositories inside the trusted workspace."""
+    root = workspace_root()
+    return [repo for repo in get_repos(repos_json_path) if eligible_path(repo["path"], root)]
 
 
 def _optional_line(value: object, line: str) -> str:
@@ -476,17 +471,14 @@ def _optional_line(value: object, line: str) -> str:
 
 
 def show_status(
-    repos: list[dict], existing_cwds: set[str], reconciliation: ProfileReconciliation
+    repos: list[dict], existing_cwds: set[str], reconciliation: ProfileReconciliation,
+    outside_count: int = 0, outside_profiles: tuple[str, ...] = (),
 ) -> None:
     """Print status of profile targets vs existing Tabby profiles."""
-    workspace_count = sum(
-        repo["repo"].get("profile_kind") == "buzz-workspace" for repo in repos
-    )
-    print(f"Repos in repos.json: {len(repos) - workspace_count}")
-    print(
-        _optional_line(workspace_count, f"Detected workspaces: {workspace_count}"),
-        end="",
-    )
+    print(f"Repos in repos.json: {len(repos)}")
+    print(f"Registered repos outside Git workspace: {outside_count}")
+    for cwd in outside_profiles:
+        print(f"  {cwd}: outside Git workspace (user-owned, preserved)")
     has_profile = sum(repo["path"] in existing_cwds for repo in repos)
     for repo in repos:
         labels = ("new]   ", "exists]")
@@ -610,7 +602,7 @@ def sync_profiles(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Sync Tabby profiles from repos.json and detected workspaces"
+        description="Sync Tabby profiles from repos.json inside the Git workspace"
     )
     parser.add_argument("--repos-json", required=True, help="Path to repos.json")
     parser.add_argument("--tabby-config", required=True, help="Path to Tabby config.yaml")
@@ -624,7 +616,18 @@ def main() -> None:
         reconciliation = plan_profile_reconciliation(
             config_text, get_registered_paths(args.repos_json)
         )
-        show_status(repos, existing_cwds, reconciliation)
+        root = workspace_root()
+        outside_count = sum(not eligible_path(path, root) for path in get_registered_paths(args.repos_json))
+        group_id = extract_group_id(config_text)
+        outside_profiles = tuple(
+            block.data["options"]["cwd"]
+            for block in extract_profile_blocks(config_text)
+            if isinstance(block.data.get("options"), dict)
+            and isinstance(block.data["options"].get("cwd"), str)
+            and not eligible_path(block.data["options"]["cwd"], root)
+            and not is_aidevops_managed_profile(block.data, group_id)
+        )
+        show_status(repos, existing_cwds, reconciliation, outside_count, outside_profiles)
         has_validation_issues = (
             report_profile_arg_type_issues(config_text)
             or report_profile_command_issues(config_text)

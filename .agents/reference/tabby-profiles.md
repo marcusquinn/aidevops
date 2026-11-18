@@ -7,15 +7,14 @@ For live multi-host tmux tabs, use `aidevops tabby sessions new|restore|list|doc
 see [Remote Tabby sessions](../tools/terminal/remote-sessions.md). Session leases
 are separate from profile reconciliation and do not change `tabby status`.
 
-Use `.agents/scripts/tabby-profile-sync.py` to generate aidevops project profiles
-from `repos.json`. When `~/.buzz` exists, setup/update also generates a `Buzz`
-profile rooted there so OpenCode opens the Buzz-scoped session namespace. The
-profile is omitted when Buzz has not created that workspace, and an existing
-profile with the same working directory remains user-owned and unchanged.
+Use `.agents/scripts/tabby-profile-sync.py` to generate project profiles from
+`repos.json` only for paths strictly inside the resolved Git workspace root
+(`~/Git`, or `AIDEVOPS_GIT_WORKSPACE_ROOT`). Existing user-owned profiles outside
+that root are preserved; the obsolete managed Buzz workspace profile is removed.
 
 `tabby-helper.sh status` reports pending reconciliation without changing the
 configuration. `tabby-helper.sh sync`, including the setup/update path, removes
-only profiles confidently identified as aidevops-generated when their cwd is
+only profiles confidently identified as aidevops-generated inside the root when their cwd is
 both missing and unregistered, or when a later managed profile duplicates an
 earlier managed profile's normalized cwd. It preserves custom profiles,
 custom/managed same-cwd pairs, existing unregistered profiles, and missing paths
