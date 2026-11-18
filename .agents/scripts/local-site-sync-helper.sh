@@ -238,7 +238,11 @@ lssh_cmd_sync() {
 	log_info "syncing ${src_slash} -> ${dest_slash}"
 	rsync "${rsync_args[@]}" "$src_slash" "$dest_slash"
 
-	lssh_write_stamp "$stamp_file" "$src" "$default_branch" "$head_sha" "$dirty_flag"
+	# Record the source worktree's branch (not the default branch); detached HEAD is "detached@<sha>".
+	local src_branch=""
+	src_branch="$(git -C "$src" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+	[[ -n "$src_branch" ]] || src_branch="detached@${head_sha}"
+	lssh_write_stamp "$stamp_file" "$src" "$src_branch" "$head_sha" "$dirty_flag"
 	log_success "synced. stamp written: $stamp_file"
 	lssh_print_stamp "$stamp_file" || true
 	return 0
