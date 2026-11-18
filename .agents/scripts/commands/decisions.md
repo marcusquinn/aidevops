@@ -25,8 +25,8 @@ list, never by opening issues. AI does the reading, recommends, and writes.
    ~/.aidevops/agents/scripts/maintainer-decisions-helper.sh list --format md $ARGUMENTS
    ```
 
-   Use `--format json` when you need fields such as `reply_excerpt` or
-   `hold_labels`. The queue covers managed pulse repos in `repos.json`.
+   Also run it with `--format json`: the Markdown view omits `recommendation`,
+   `reply_excerpt` and `hold_labels`, which later steps need. The queue covers managed pulse repos in `repos.json`.
 
 2. For each `decide`, `permission`, and `credentials` item, read only the hold
    comment and the context it cites (`gh issue view <N> --repo <slug> --comments`),
