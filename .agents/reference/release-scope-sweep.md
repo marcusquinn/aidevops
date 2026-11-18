@@ -29,9 +29,11 @@ and worker shares the account. Review-followup issues generated from this
 session's own PRs also count.
 
 Classify immediately. Claim an eligible issue in the same turn with
-`interactive-session-helper.sh claim <N> <owner/repo>` so pulse does not
-dispatch a duplicate worker, and keep `auto-dispatch` so a claim released
-unfinished resumes automatically. Leave an ineligible issue unclaimed for pulse.
+`interactive-session-helper.sh claim <N> <owner/repo> --implementing` so pulse
+does not dispatch a duplicate worker, and keep `auto-dispatch` so a claim
+released unfinished resumes automatically. Without `--implementing` the helper
+skips `auto-dispatch` issues with only a warning and exits 0, and pulse can
+dispatch a worker within minutes. Leave an ineligible issue unclaimed for pulse.
 
 ## Eligibility
 
