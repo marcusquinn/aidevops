@@ -78,12 +78,14 @@ class ProducerCases:
         self.git(target, 'init', '-q')
         # One deadline covers all inspection/authorization/import/verification
         # subprocesses, rather than renewing a full budget for each command.
+        # The receiver check is one spawn (#38930), so the expired deadline
+        # stops the graph inspection before it starts.
         with patch.dict(os.environ, self.env, clear=True), patch.object(snapshot_engine, 'time') as clock, \
                 patch.object(snapshot_engine, 'git', wraps=snapshot_engine.git) as commands:
-            clock.monotonic.side_effect = [0, 100, 200, 301]
+            clock.monotonic.side_effect = [0, 100, 301]
             with self.assertRaisesRegex(ValueError, 'producer:base-import-timeout'):
                 snapshot_engine.seed_base(target, manifest)
-        self.assertEqual([call.kwargs['timeout'] for call in commands.call_args_list], [200, 100])
+        self.assertEqual([call.kwargs['timeout'] for call in commands.call_args_list], [200])
 
     def test_tracked_permissions_follow_git_model(self):
         self.env.pop("AIDEVOPS_WORKTREE_RECOVERY_POLICY", None)
