@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.239] - 2026-11-19
+
+### Changed
+
+- Maintenance: guard worker PR base branch (explicit base, stacked-parent validation, retarget fallbacks)
+- Maintenance: sync GitHub issue refs to TODO.md (#39090)
+
+### Fixed
+
+- steer to sectioned writes after finish=length responses (#39154)
+- isolate configured browser executable cases (#39175)
+
 ## [3.39.238] - 2026-11-19
 
 ### Added
