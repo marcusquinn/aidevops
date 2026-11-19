@@ -283,13 +283,19 @@ release_policy_body() {
 		'{schema:1,kind:$kind,repository:$repo,changelog_files:["CHANGELOG","CHANGELOG.md"],pinned_files:["Dockerfile"],check_files:["test/package-test.sh"],check_insertion_pattern:$insertion}') || return 1
 	case "$mode" in
 	semver) [[ -z "$upstream" ]] || return 1 ;;
-	commits)
+	commits | commits-license-url)
 		[[ "$upstream" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || return 1
 		policy=$(jq -c --arg upstream "$upstream" '. + {upstream_mode:"commits",upstream_repository:$upstream}' <<<"$policy") || return 1
 		# This additional signed text replaces the semver boundary only for an
 		# explicit commit policy. Legacy semver bodies remain byte-for-byte stable.
 		# shellcheck disable=SC2016 # Markdown backticks are literal.
 		printf 'Commit policy: upstream `%s`; SHA prefixes of 7–40 hex characters must resolve to the exact open trusted finding commit in this upstream. GitHub compare must prove strict forward ancestry (ahead); commits have no major boundary. All other routine-bump rules below still apply; the same-major version clause is replaced by this ancestry rule. A new signature is required for this mode.\n\n' "$upstream"
+		if [[ "$mode" == commits-license-url ]]; then
+			policy=$(jq -c '. + {license_commit_url:true}' <<<"$policy") || return 1
+			# Conditional text keeps every pre-existing signed commit policy body stable.
+			# shellcheck disable=SC2016 # Markdown backticks are literal.
+			printf 'License commit URL: `upstreamLicense.url` may differ only by the proven full-SHA substitution (old upstream commit to new upstream commit); every other `upstreamLicense` field stays unchanged. A new signature is required for this mode.\n\n'
+		fi
 		;;
 	release-identity)
 		# upstream is "owner/repo:COMMIT_ARG:images-asset"; the signature covers all three.
@@ -1395,7 +1401,7 @@ main() {
 		release_request "$arg2" "$arg3" || return $?
 		;;
 	policy-request)
-		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
+		[[ $# -eq 2 || ( $# -eq 4 && ( "$arg3" == commits || "$arg3" == commits-license-url || "$arg3" == release-identity || "$arg3" == pins ) ) ]] || return 1
 		release_policy_request "$arg2" "${arg3:-semver}" "$arg4" || return 1
 		;;
 	process)
@@ -1426,7 +1432,7 @@ main() {
 		release_process "$apply" "$repo_filter" "$issue_filter" || return 1
 		;;
 	help | --help | -h)
-		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
+		printf 'Usage: cloudron-release-approval-helper.sh request <repo> <pr> | policy-request <repo> [commits <upstream-owner/repo> | commits-license-url <upstream-owner/repo> | release-identity <upstream-owner/repo:COMMIT_ARG:images-asset> | pins <json: upstream_repository, registry_images, release_checksum, license_version_url, release_identity>] | merge-guard <repo> <pr> <head> | process [--repo owner/repo] [--issue N] [--apply]\n'
 		;;
 	*) return 1 ;;
 	esac

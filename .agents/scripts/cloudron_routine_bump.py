@@ -197,7 +197,7 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, allow_nan=False)
 
 
-def check_manifest_fields(base_manifest, head_manifest, identity, pins):
+def check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license=None):
     """Keep non-version fields fixed unless a signed proof permits the license URL."""
     old_up, new_up = base_manifest.get("upstreamVersion"), head_manifest.get("upstreamVersion")
     # Without a signed release identity or license_version_url the policy permits
@@ -211,6 +211,9 @@ def check_manifest_fields(base_manifest, head_manifest, identity, pins):
         license_mappings += [{old_up: new_up}]
         if identity:
             license_mappings += [{**identity["commits"], **{old_up: new_up}}]
+    if commit_license:
+        # Signed commits-mode opt-in: only the proven full-SHA substitution.
+        license_mappings += [commit_license, {**commit_license, **{old_up: new_up}}]
     exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
     unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),
@@ -267,7 +270,11 @@ def check(doc, repository):
     require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
             "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    check_manifest_fields(base_manifest, head_manifest, identity, pins)
+    commit_license = None
+    if policy.get("license_commit_url") is True:
+        proof = doc["upstream_proof"]  # check_upstream proved it for commits mode
+        commit_license = {proof["base"]: proof["head"]}
+    check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license)
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
