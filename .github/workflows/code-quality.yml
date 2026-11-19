@@ -50,9 +50,14 @@ jobs:
           fi
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           set +e
-          .agents/scripts/affected-tests-helper.sh run --base "origin/${BASE_REF}" --compare-base 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          result=$?
+          links="${RUNNER_TEMP}/inherited-red-links.md"
+          AFFECTED_TESTS_LINKS_FILE="$links" .agents/scripts/affected-tests-helper.sh run --base "origin/${BASE_REF}" --compare-base 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          result=${PIPESTATUS[0]}
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Tracking links render as real Markdown outside the fenced report.
+          if [[ -s "$links" ]]; then
+            { echo; echo '**Inherited red (tracked):**'; cat "$links"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit "$result"
 
   # GH#33197: scope-gate heavy full-repository jobs so version/docs-only PRs
