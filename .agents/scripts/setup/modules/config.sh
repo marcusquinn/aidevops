@@ -258,11 +258,39 @@ update_codex_config() {
 	return 0
 }
 
+# GH#39110: print the first Python that can parse TOML (tomllib on 3.11+, or
+# tomli). macOS stock /usr/bin/python3 is 3.9 without tomli, so bare python3
+# aborted setup before the scheduler stages ran.
+_codex_toml_python() {
+	local -a candidates=()
+	local candidate=""
+	if declare -F find_python3 >/dev/null 2>&1; then
+		candidate=$(find_python3 2>/dev/null || true)
+		[[ -n "$candidate" ]] && candidates+=("$candidate")
+	fi
+	candidates+=(python3.13 python3.12 python3.11 python3)
+	for candidate in "${candidates[@]}"; do
+		command -v "$candidate" >/dev/null 2>&1 || continue
+		if "$candidate" -c 'import tomllib' >/dev/null 2>&1 ||
+			"$candidate" -c 'import tomli' >/dev/null 2>&1; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # Reconcile known defaults and migrations while preserving custom TOML settings.
+# A missing TOML parser skips this optional migration with a remedy instead of
+# failing setup; real migration errors still return 1.
 _deploy_codex_mcps() {
-	local helper_dir
+	local helper_dir toml_python=""
 	helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || return 1
-	python3 "$helper_dir/codex-mcp-config.py" || return 1
+	if ! toml_python=$(_codex_toml_python); then
+		print_warning "Codex MCP config skipped: needs Python 3.11+ or tomli (run: python3 -m pip install --user tomli, or install Python 3.11+)"
+		return 0
+	fi
+	"$toml_python" "$helper_dir/codex-mcp-config.py" || return 1
 	return 0
 }
 

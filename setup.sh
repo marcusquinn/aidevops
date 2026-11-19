@@ -1720,7 +1720,9 @@ _setup_run_non_interactive() {
 	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded || true
 	_time_step "update_opencode_config" _setup_run_noncritical_stage_bounded "OpenCode config update" "${AIDEVOPS_UPDATE_OPENCODE_CONFIG_TIMEOUT:-60}" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
-	_time_step "update_codex_config" update_codex_config
+	# GH#39110: one optional runtime's config must not abort later stages.
+	_time_step "update_codex_config" update_codex_config ||
+		print_warning "Codex configuration update failed (non-critical); continuing setup"
 	_time_step "update_cursor_config" update_cursor_config
 	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
 	_setup_run_noninteractive_optional_tools
@@ -1897,7 +1899,9 @@ _setup_run_interactive() {
 	# Run AFTER OpenCode config so Claude Code gets equivalent setup
 	confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
 	# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
-	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
+	if confirm_step "Update Codex configuration (MCPs, instructions)"; then
+		update_codex_config || print_warning "Codex configuration update failed (non-critical); continuing setup"
+	fi
 	confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
 	# Deploy slash commands to the other installed runtimes (Codex, Cursor,
 	# Droid, Gemini CLI, Continue, Kiro, Kimi, Qwen) via the unified generator.
