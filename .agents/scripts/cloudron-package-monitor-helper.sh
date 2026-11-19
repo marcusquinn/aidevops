@@ -416,7 +416,7 @@ _cloudron_monitor_active_policy() {
 # (mirrors check_manifest_fields in cloudron_routine_bump.py).
 _cloudron_monitor_policy_allows_license_url() {
 	local policy="$1"
-	jq -e '(.license_version_url == true) or ([.release_identity | objects] | length > 0)' <<<"$policy" >/dev/null
+	jq -e '(.license_version_url == true) or (.license_commit_url == true) or ([.release_identity | objects] | length > 0)' <<<"$policy" >/dev/null
 	return $?
 }
 
