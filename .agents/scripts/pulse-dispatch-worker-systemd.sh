@@ -273,6 +273,31 @@ _dlw_systemd_user_service_available() {
 	return 0
 }
 
+#######################################
+# Cycle-level dispatch gate (GH#39118). Return 1 when the selected worker
+# backend is systemd but its user manager is unreachable (for example a pulse
+# started without XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS), so callers skip
+# claiming issues this cycle instead of failing every launch. Detached
+# fallback stays suppressed on purpose. Return 0 otherwise (including
+# detached/launchd backends, which are unchanged). The skip line is logged
+# once per pulse process; the marker holds that pid because dispatch_max
+# runs in command-substitution subshells that cannot share variables.
+#######################################
+_dlw_cycle_dispatch_backend_gate() {
+	local backend=""
+	backend=$(_dlw_select_worker_backend 2>/dev/null) || return 0
+	[[ "$backend" == "systemd" ]] || return 0
+	_dlw_systemd_user_service_available && return 0
+	local marker="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/.systemd-dispatch-skip-logged"
+	local logged_pid=""
+	[[ -f "$marker" ]] && logged_pid=$(<"$marker")
+	if [[ "$logged_pid" != "$$" ]]; then
+		echo "[pulse] dispatch skipped this cycle: systemd worker backend unavailable (reason=${_DLW_SYSTEMD_UNAVAILABLE_REASON:-unknown}); detached fallback suppressed" >>"${LOGFILE:-/dev/null}"
+		printf '%s\n' "$$" >"$marker" 2>/dev/null || true
+	fi
+	return 1
+}
+
 # Reduce probe stderr to one bounded, log-safe token: first line only, home
 # directory masked, characters outside a conservative set replaced, and at
 # most 160 characters. Empty input prints "none".

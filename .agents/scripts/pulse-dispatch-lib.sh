@@ -966,6 +966,10 @@ _dispatch_compute_capacity() {
 		echo "[pulse-wrapper] Dispatch_max skipped: cooperative drain requested; activated bundle ${drain_bundle} starts next cycle (GH#37907)" >>"$LOGFILE"
 		return 1
 	fi
+	# GH#39118: no claims when the selected systemd worker backend is down.
+	if declare -F _dlw_cycle_dispatch_backend_gate >/dev/null 2>&1 && ! _dlw_cycle_dispatch_backend_gate; then
+		return 1
+	fi
 	if ! _dispatch_rest_core_progress_allows_next "dispatch_capacity"; then
 		echo "[pulse-wrapper] Dispatch_max skipped: REST-core launch headroom is unavailable" >>"$LOGFILE"
 		return 1

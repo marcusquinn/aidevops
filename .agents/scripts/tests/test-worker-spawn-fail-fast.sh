@@ -217,6 +217,32 @@ else
 		"rc=$RUN_RC line='$unavailable_line'"
 fi
 
+# --- GH#39118: cycle-level gate skips dispatch once when the probe fails ---
+export PULSE_DIR="${TMP}/pulse-dir"
+mkdir -p "$PULSE_DIR"
+: >"$LOGFILE"
+STUB_MODE=systemd_probe_fail
+gate_rc=0
+AIDEVOPS_WORKER_BACKEND=systemd _dlw_cycle_dispatch_backend_gate || gate_rc=$?
+AIDEVOPS_WORKER_BACKEND=systemd _dlw_cycle_dispatch_backend_gate >/dev/null || true
+skip_lines=$(grep -c 'dispatch skipped this cycle: systemd worker backend unavailable (reason=manager_probe_failed' "$LOGFILE" || true)
+if [[ "$gate_rc" -eq 1 && "$skip_lines" -eq 1 ]] && ! grep -q 'worker spawn failed' "$LOGFILE"; then
+	pass "failed probe skips dispatch for the cycle with a single log line"
+else
+	fail "failed probe skips dispatch for the cycle with a single log line" "rc=$gate_rc lines=$skip_lines"
+fi
+
+_dlw_systemd_user_service_available() {
+	return 0
+}
+gate_rc=0
+AIDEVOPS_WORKER_BACKEND=systemd _dlw_cycle_dispatch_backend_gate || gate_rc=$?
+if [[ "$gate_rc" -eq 0 ]]; then
+	pass "working systemd backend leaves dispatch unchanged"
+else
+	fail "working systemd backend leaves dispatch unchanged" "rc=$gate_rc"
+fi
+
 printf '\n%s\n' "--- Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ---"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1
 exit 0
