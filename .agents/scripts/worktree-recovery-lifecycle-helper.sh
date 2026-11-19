@@ -546,7 +546,6 @@ _worktree_recovery_plan_worktree_reference_state() {
 	local identity_json="$1"
 	local archive_path="" source_path="" listing=""
 	local branch=""
-	local line=""
 
 	archive_path=$(printf '%s\n' "$identity_json" | jq -r '.archive_path') || return 1
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
@@ -555,6 +554,18 @@ _worktree_recovery_plan_worktree_reference_state() {
 		printf '%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"
 		return 0
 	fi
+	_worktree_recovery_plan_worktree_listing_state "$listing" "$source_path" "$branch"
+	return $?
+}
+
+# Classify one source path and branch against an already captured
+# `git worktree list --porcelain` listing.
+_worktree_recovery_plan_worktree_listing_state() {
+	local listing="$1"
+	local source_path="$2"
+	local branch="$3"
+	local line=""
+
 	while IFS= read -r line; do
 		case "$line" in
 		"worktree $source_path" | "branch $branch")
@@ -631,13 +642,21 @@ _worktree_recovery_plan_claim_state() {
 _worktree_recovery_plan_process_state() {
 	local identity_json="$1"
 	local operation="${2:-}"
+	local given_snapshot="${3:-}"
+	local given_snapshot_rc="${4:-}"
 	local source_path="" archive_path="" bucket_path="" snapshot="" source_inode=""
 	local snapshot_rc=0
 
 	source_path=$(printf '%s\n' "$identity_json" | jq -r '.source_path') || return 1
 	archive_path=$(printf '%s\n' "$identity_json" | jq -r '.archive_path') || return 1
 	bucket_path=$(printf '%s\n' "$identity_json" | jq -r '.bucket_path') || return 1
-	if snapshot=$(capture_worktree_process_cwds); then
+	if [[ -n "$given_snapshot_rc" ]]; then
+		# Caller-captured snapshot and its exit status: one observation may
+		# answer several identities checked at the same point in a guard.
+		[[ "$given_snapshot_rc" =~ ^[0-9]+$ ]] || return 1
+		snapshot="$given_snapshot"
+		snapshot_rc="$given_snapshot_rc"
+	elif snapshot=$(capture_worktree_process_cwds); then
 		snapshot_rc=0
 	else
 		snapshot_rc=$?
