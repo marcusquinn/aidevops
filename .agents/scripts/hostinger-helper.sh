@@ -920,15 +920,32 @@ _sds_subdomain_names() {
     return 0
 }
 
+# Print the current SSL status (or "unknown" when unreadable).
+_sds_ssl_state() {
+    local username="$1"
+    local fqdn="$2"
+    local response state
+    response=$(api_call GET "api/hosting/v1/accounts/$username/websites/$fqdn/ssl/status") || response=""
+    state=$(printf '%s' "$response" | jq -r '.status // .data.status // "unknown"' 2>/dev/null) || state="unknown"
+    printf '%s\n' "$state"
+    return 0
+}
+
+# Print the restore command for a kept checkpoint.
+_sds_restore_hint() {
+    local snapshot="$1"
+    print_info "Restore: $0 subdomain-ssl --restore $snapshot --zone-token-secret $SDS_CF_SECRET" >&2
+    return 0
+}
+
 _sds_poll_ssl() {
     local username="$1"
     local fqdn="$2"
     local attempts="${HOSTINGER_SDS_POLL_ATTEMPTS:-15}"
     local interval="${HOSTINGER_SDS_POLL_INTERVAL:-60}"
-    local attempt state response
+    local attempt state
     for ((attempt = 1; attempt <= attempts; attempt++)); do
-        response=$(api_call GET "api/hosting/v1/accounts/$username/websites/$fqdn/ssl/status") || response=""
-        state=$(printf '%s' "$response" | jq -r '.status // .data.status // "unknown"' 2>/dev/null) || state="unknown"
+        state=$(_sds_ssl_state "$username" "$fqdn")
         printf 'ssl-status %s (check %s/%s)\n' "$state" "$attempt" "$attempts"
         if [[ "$state" == "active" ]]; then
             return 0
@@ -1130,15 +1147,27 @@ _sds_finish() {
     local fqdn="$2"
     local origin_ip="$3"
     local snapshot="$4"
+    local initial_state
 
+    # A `failed` installation has given up; only ssl/setup restarts it. Other
+    # states (installing, waiting_for_retry) make ssl/setup return 422, so skip.
+    initial_state=$(_sds_ssl_state "$username" "$fqdn")
+    if [[ "$initial_state" == "failed" ]]; then
+        printf 'ssl-status failed; requesting new SSL installation\n'
+        if ! api_call POST "api/hosting/v1/accounts/$username/websites/$fqdn/ssl/setup" >/dev/null; then
+            print_error "SSL setup request failed; checkpoint kept (record still DNS-only)" >&2
+            _sds_restore_hint "$snapshot"
+            return 1
+        fi
+    fi
     if ! _sds_poll_ssl "$username" "$fqdn"; then
         print_error "SSL not active in time; checkpoint kept (record still DNS-only)" >&2
-        print_info "Restore: $0 subdomain-ssl --restore $snapshot --zone-token-secret $SDS_CF_SECRET" >&2
+        _sds_restore_hint "$snapshot"
         return 1
     fi
     if ! _sds_verify_origin "$origin_ip" "$fqdn"; then
         print_error "Origin certificate did not verify for $fqdn; checkpoint kept" >&2
-        print_info "Restore: $0 subdomain-ssl --restore $snapshot --zone-token-secret $SDS_CF_SECRET" >&2
+        _sds_restore_hint "$snapshot"
         return 1
     fi
     printf 'origin certificate verified\n'
