@@ -1008,9 +1008,8 @@ _sds_run() {
     local apply="$3"
     local name="${fqdn%%.*}"
     local apex="${fqdn#*.}"
-    local username zone origin_ip existing count snapshot temp_id body shape
+    local username zone origin_ip existing count snapshot shape
     local exists_sub=0
-    local comment="aidevops hostinger subdomain-ssl recovery"
 
     username=$(_sds_resolve_username "$apex") || return 1
     if _sds_subdomain_names "$username" "$apex" | grep -qxF -e "$name" -e "$fqdn"; then
@@ -1050,6 +1049,23 @@ _sds_run() {
         printf 'subdomain added\n'
     fi
 
+    snapshot=$(_sds_swap_record "$fqdn" "$zone" "$origin_ip" "$count" "$existing") || return 1
+    printf 'DNS-only record in place; snapshot: %s\n' "$snapshot"
+    _sds_finish "$username" "$fqdn" "$origin_ip" "$snapshot"
+    return $?
+}
+
+# Save the current record (0600 snapshot), then make it a DNS-only A record to the
+# origin. Prints only the snapshot path.
+_sds_swap_record() {
+    local fqdn="$1"
+    local zone="$2"
+    local origin_ip="$3"
+    local count="$4"
+    local existing="$5"
+    local comment="aidevops hostinger subdomain-ssl recovery"
+    local body temp_id snapshot
+
     body=$(jq -cn --arg n "$fqdn" --arg ip "$origin_ip" --arg c "$comment" \
         '{type: "A", name: $n, content: $ip, proxied: false, ttl: 60, comment: $c}') || return 1
     umask 077
@@ -1066,7 +1082,16 @@ _sds_run() {
             '{zone: $z, fqdn: $f, temp_id: $t, original: null}' >"$snapshot" || return 1
     fi
     chmod 600 "$snapshot" || true
-    printf 'DNS-only record in place; snapshot: %s\n' "$snapshot"
+    printf '%s\n' "$snapshot"
+    return 0
+}
+
+# Wait for the certificate, verify the origin, restore the record, check HTTPS.
+_sds_finish() {
+    local username="$1"
+    local fqdn="$2"
+    local origin_ip="$3"
+    local snapshot="$4"
 
     if ! _sds_poll_ssl "$username" "$fqdn"; then
         print_error "SSL not active in time; checkpoint kept (record still DNS-only)" >&2
