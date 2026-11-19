@@ -410,17 +410,11 @@ _kick_pulse_after_permission_approval() {
 	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
 	[[ -x "$pulse_wrapper" ]] || return 0
 	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
-	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
-		(
-			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
-			disown 2>/dev/null || true
-		) 2>/dev/null
-	else
-		(
-			nohup "$pulse_wrapper" >>"$kick_log" 2>&1 </dev/null &
-			disown 2>/dev/null || true
-		) 2>/dev/null
-	fi
+	# GH#39028: a full pulse may dispatch workers, so prefer the scheduler-managed
+	# unit (correct session env, no competing lock holder); the fallback spawn
+	# still carries the real user's session bus under sudo.
+	_approval_start_managed_pulse && return 0
+	_approval_spawn_user_pulse "$pulse_wrapper" "$kick_log"
 	return 0
 }
 
