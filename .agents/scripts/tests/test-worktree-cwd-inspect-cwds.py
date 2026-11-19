@@ -9,7 +9,8 @@ from unittest import mock
 
 INSPECTOR_PATH = pathlib.Path(__file__).resolve().parents[1] / "worktree-cwd-inspect.py"
 SPEC = importlib.util.spec_from_file_location("worktree_cwd_inspect", INSPECTOR_PATH)
-assert SPEC is not None and SPEC.loader is not None
+if SPEC is None or SPEC.loader is None:
+    raise ImportError(f"cannot load {INSPECTOR_PATH}")
 inspector = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(inspector)
 

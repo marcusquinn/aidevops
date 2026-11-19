@@ -220,6 +220,7 @@ def bounded_report(deadline: int, build) -> int:
 
 
 def json_text(report: dict) -> str:
+    """Stable JSON for the --references and --census reports."""
     return json.dumps(report, sort_keys=True)
 
 
