@@ -561,6 +561,7 @@ main() {
 	test_db_seed_failure_starts_fresh_opencode_session
 	test_provider_sessions_scope_issue_keys_by_repo_slug
 	test_provider_sessions_keep_pulse_unscoped
+	test_terminal_delivery_release_clears_persisted_session
 	run_blocked_completion_tests
 	test_capability_escalation_ladder_is_bounded_and_exact
 	run_post_pr_handoff_signal_tests

@@ -780,6 +780,17 @@ _release_dispatch_claim() {
 	local session_key="$1" reason="${2:-worker_failed}" rc=0
 	local issue_number="" repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
 
+	# GH#38982: once a delivery is complete or merged, resuming its finished
+	# conversation exits with no progress. Clear it before projection so the
+	# next continuation starts fresh from the brief; interruptions keep resume.
+	case "$(_hrff_verified_release_reason "$reason")" in
+	worker_complete | worker_merged_partial | worker_merged_partial_no_progress)
+		if [[ "$session_key" == issue-* ]] && declare -F clear_session_id_all_providers >/dev/null 2>&1; then
+			clear_session_id_all_providers "$session_key" ||
+				print_warning "[lifecycle] session_clear_failed session=${session_key} reason=${reason}"
+		fi
+		;;
+	esac
 	_hrff_release_dispatch_claim_attempt "$@" || rc=$?
 	issue_number=$(_hrff_release_issue_number "$session_key")
 	if [[ "$rc" -eq 0 ]]; then
