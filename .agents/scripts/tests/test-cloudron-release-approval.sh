@@ -590,6 +590,16 @@ printf 'PASS half-hour approval routine registered\n'
 	export SCENARIO=scope_denied
 	if main process --repo owner/app --issue 12 --apply; then exit 1; fi
 	printf 'PASS scoped processing retains registration, maintenance and authority gates\n'
+	# GH#39145: no registered package is a no-op; an unreadable registry still fails.
+	unset SCENARIO
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/plain"},{"slug":"owner/disabled","app_type":"cloudron-package","maintenance":false}]}' >"$REPOS_FILE"
+	: >"${TEST_ROOT}/calls"
+	main process --apply
+	[[ ! -s "${TEST_ROOT}/calls" ]]
+	printf '%s\n' '{}' >"$REPOS_FILE"
+	if main process --apply; then exit 1; fi
+	[[ ! -s "${TEST_ROOT}/calls" ]]
+	printf 'PASS empty registry is a no-op; malformed registry still fails\n'
 )
 
 # GH#36268: held worker PRs get their deferred approval request, and older
