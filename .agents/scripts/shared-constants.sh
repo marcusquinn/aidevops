@@ -428,7 +428,7 @@ aidevops_opencode_upgrade_command() {
 		'f_stable=$(brew info --json=v2 "$f_name" 2>/dev/null | jq -r ".formulae[0].versions.stable // empty" 2>/dev/null); f_major="${f_stable%%.*}"; ' \
 		'if [[ -n "'"${profile_major}"'" && "$f_major" =~ ^[0-9]+$ && "$f_major" != "'"${profile_major}"'" ]]; then ' \
 		'printf "%s\\n" "'"${AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE}"'" >&2; exit 1; fi; ' \
-		'brew upgrade opencode || brew reinstall opencode; exit $? ;; ' \
+		'HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade opencode || HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall opencode; exit $? ;; ' \
 		'bun) bun install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'npm) npm install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'*) printf "OpenCode binary not found for repair\\n" >&2; exit 1 ;; ' \
