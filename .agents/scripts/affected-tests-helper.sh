@@ -27,8 +27,8 @@ signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 
 parser = argparse.ArgumentParser(description="Run suites referencing changed scripts")
-parser.add_argument("command", choices=("list", "run"))
-parser.add_argument("--base", required=True)
+parser.add_argument("command", choices=("list", "run", "all"))
+parser.add_argument("--base")
 parser.add_argument("--max", type=int, default=30)
 parser.add_argument("--jobs", type=int, default=4)
 parser.add_argument("--timeout", type=int, default=240)
@@ -40,6 +40,8 @@ parser.add_argument("--compare-base", action="store_true")
 parser.add_argument("--retries", type=int, default=2,
                     help="reruns for a would-be regression before it counts; 0 disables")
 args = parser.parse_args()
+if args.command != "all" and not args.base:
+    parser.error("--base is required for list and run")
 if min(args.max, args.jobs, args.timeout) < 1:
     parser.error("--max, --jobs and --timeout must be positive")
 if args.max_hops < 0:
@@ -49,11 +51,13 @@ if args.retries < 0:
 
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 os.chdir(root)
-merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
-# Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
-changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
-changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
+changed = []
+if args.command != "all":
+    merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
+    # Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
+    changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
+    changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))
 test_bytes = {str(t.relative_to(root)): t.read_bytes() for t in tests}
 source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
@@ -144,6 +148,13 @@ for suite in sorted(selected):
     for target in (roots or {suite}):
         resolved[target] = min(distance[suite], resolved.get(target, distance[suite]))
 ordered = sorted(resolved, key=lambda suite: (resolved[suite], suite))
+if args.command == "all":
+    # t19150: scheduled main-health mode: every root suite, no cap, no base comparison.
+    # Sourced-only modules are skipped; their root suites exercise them.
+    ordered = [str(t.relative_to(root)) for t in tests if str(t.relative_to(root)) not in sourcers]
+    args.max = max(args.max, len(ordered))
+    args.compare_base = False
+    resolved = {suite: (False, 0, 0) for suite in ordered}
 omitted = ordered[args.max:]
 overflow = len(omitted)
 ordered = ordered[:args.max]
@@ -253,5 +264,20 @@ for suite in ordered:
         regression = True
     rc_text = ",".join("-" if value is None else str(value) for value in attempts[suite])
     print("%s\t%s\t%s\t%s" % (suite, rc_text, baseline if baseline is not None else "-", classification))
+    if classification == "pre-existing":
+        # t19150: point reviewers at the tracking issue for inherited red.
+        title = "red-main: %s" % Path(suite).name
+        link = "search open issues for '%s'" % title
+        if shutil.which("gh") and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+            jq = r'.[] | select(.title == "%s") | "#\(.number)"' % title
+            try:
+                found = subprocess.run("gh issue list".split() + ["--state", "open", "--search", '"%s" in:title' % title,
+                                        "--json", "number,title", "--jq", jq],
+                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout.split()
+                if found:
+                    link = "tracked by " + found[0]
+            except (subprocess.SubprocessError, OSError):
+                pass
+        print("  inherited red %s: %s" % (suite, link), file=sys.stderr)
 sys.exit(1 if regression else 0)
 PY
