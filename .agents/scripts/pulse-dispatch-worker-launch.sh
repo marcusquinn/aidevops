@@ -909,6 +909,28 @@ _dlw_prepare_opencode_db() {
 	return 0
 }
 
+#######################################
+# Print the worker's settled PGID (GH#39194). `setsid cmd &` forks first and
+# calls setsid() only after exec, so an immediate read returns the pulse PGID.
+# Re-read up to 25 x 0.02s until PGID == PID; empty output = child exited.
+# Pattern: sandbox-exec-helper.sh _sandbox_await_child_pgid (GH#38858).
+# Arguments: $1 - worker PID
+# Stdout: last PGID read (empty if the process is gone)
+#######################################
+_dlw_await_worker_pgid() {
+	local aw_pid="$1"
+	local aw_attempt=0 aw_pgid=""
+
+	while ((aw_attempt < 25)); do
+		aw_pgid=$(ps -o pgid= -p "$aw_pid" 2>/dev/null | tr -d ' ')
+		[[ -n "$aw_pgid" && "$aw_pgid" != "$aw_pid" ]] || break
+		sleep 0.02
+		aw_attempt=$((aw_attempt + 1))
+	done
+	printf '%s' "$aw_pgid"
+	return 0
+}
+
 # Execute a worker command via the selected systemd or detached backend,
 # detaching it from the pulse's process group (t2757) and, on
 # systemd, from the pulse oneshot cgroup (GH#23073). Without this, workers
@@ -923,7 +945,6 @@ _dlw_prepare_opencode_db() {
 #   $2 - issue_number (for log messages)
 #   $3... - the worker command to execute
 # Stdout: worker PID
-#######################################
 _dlw_exec_detached() {
 	local worker_log="$1"
 	local issue_number="$2"
@@ -971,13 +992,18 @@ _dlw_exec_detached() {
 	if [[ -z "${worker_pid:-}" ]] && command -v setsid >/dev/null 2>&1; then
 		setsid nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
-		# Log the detached PGID for diagnostics (should differ from pulse PGID)
+		# Log the settled PGID (GH#39194): an immediate read races setsid().
 		local worker_pgid="" pulse_pgid=""
-		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ')
-		[[ -n "$worker_pgid" ]] || worker_pgid="$_DLW_UNKNOWN_VALUE"
+		worker_pgid=$(_dlw_await_worker_pgid "$worker_pid")
 		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
 		[[ -n "$pulse_pgid" ]] || pulse_pgid="$_DLW_UNKNOWN_VALUE"
-		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
+		if [[ -z "$worker_pgid" ]]; then
+			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid exited before PGID could be read (pulse PGID=$pulse_pgid)" >>"$LOGFILE"
+		elif [[ "$worker_pgid" == "$worker_pid" ]]; then
+			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
+		else
+			echo "[dispatch_worker_launch] WARN: Issue #${issue_number}: worker PID=$worker_pid still in PGID=$worker_pgid (pulse PGID=$pulse_pgid) after setsid; isolation unconfirmed (GH#21102)" >>"$LOGFILE"
+		fi
 	elif [[ -z "${worker_pid:-}" ]]; then
 		echo "[dispatch_worker_launch] ERROR: setsid missing — worker isolation broken; worker shares pulse PGID and will be killed on next pulse restart. Run: aidevops update (GH#21102)" >>"$LOGFILE"
 		nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
