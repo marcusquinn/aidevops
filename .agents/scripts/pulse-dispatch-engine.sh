@@ -1476,6 +1476,12 @@ _dispatch_execute_candidate_loop() {
 	local active_count="$4"
 	local login="$5"
 	local loop_output="" outcomes_file="" product_reserved=0 product_complete=false
+	# t19122: only a parallel max-path round absorbs mid-round worker exits;
+	# floor, throttle and serial rounds keep their fixed launch count.
+	local _DISPATCH_ROUND_TOPUP_ALLOWED=0
+	if [[ "$_dispatch_path" == "max" ]] && ((_dispatch_max_parallel > 1)); then
+		_DISPATCH_ROUND_TOPUP_ALLOWED=1
+	fi
 	product_reserved=$(_dispatch_product_reservation_slots "$worker_limit" "$active_count" "$_effective_slots")
 	product_complete=$(jq -r 'all(.[]; .product_discovery_complete == true)' <<<"$ranked_candidates")
 	if ((product_reserved > 0)); then
@@ -1523,6 +1529,11 @@ _dispatch_execute_candidate_loop() {
 dispatch_max() {
 	local _PULSE_ELASTIC_DISPATCH=1
 	local dependency_normalization_mode="${1:-normalize}"
+	# t19122: a worker exit recorded after this capacity read may top up the
+	# round's budget (pulse-dispatch-lib-capacity.sh _dispatch_round_topup_due).
+	local _DISPATCH_ROUND_TOPUP_STARTED_AT="" _DISPATCH_ROUND_TOPUP_CHECKED_AT=""
+	_DISPATCH_ROUND_TOPUP_STARTED_AT=$(date +%s)
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT="$_DISPATCH_ROUND_TOPUP_STARTED_AT"
 	local capacity_line
 	capacity_line=$(_dispatch_compute_capacity) || {
 		echo 0

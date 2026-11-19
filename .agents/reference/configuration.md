@@ -152,6 +152,14 @@ launches never exceed the free slots. A candidate that passes evaluation with
 every slot held defers (rc 75, no claim, no failure evidence) to the next
 round. `DISPATCH_LAUNCH_SLOT_GATE=0` restores ceremony-start reservations.
 
+In-round top-up (t19122): a parallel round that has spent its slot budget
+re-reads capacity when a worker-exit refill trigger is newer than its last
+capacity read, and raises its budget to launched plus newly free slots. Held
+product reservations and a concurrent pool's share stay excluded; floor,
+throttle and serial rounds never top up. `DISPATCH_ROUND_TOPUP=0` disables it;
+`DISPATCH_ROUND_TOPUP_MAX_ROUND_S` (default 1800) ends absorption in long
+rounds so a fresh census runs.
+
 Correcting regressions: if a change, issue or review proposes CPU- or
 load-based admission, worker caps from core counts, or "host overload"
 throttling, decline it and cite this section. The guard

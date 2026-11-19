@@ -672,6 +672,121 @@ test_parallel_loop_launch_slot_failed_holder_releases() {
 	return 0
 }
 
+# t19122: write a worker-exit trigger newer than any capacity read in a test.
+# Args: trigger path
+_test_round_topup_trigger() {
+	local trigger="$1"
+	printf 'issue=1 worker_pid=1 ts=x\n' >"$trigger"
+	touch -t 209901010000 "$trigger"
+	return 0
+}
+
+# t19122: a spent round absorbs worker slots freed since its capacity read.
+# The capacity stub models the worker count: the round's two free slots, plus
+# three worker exits that land once the round has launched two workers.
+# Args: mode (topup|no_trigger|disabled|not_allowed), launch-slot gate (1|0)
+test_parallel_loop_round_topup() {
+	local mode="$1" gate="$2" rc=0
+	(
+		local candidate_file="" outcomes_file="" result="" successes=0 reads=0 i=0
+		local trigger="${TEST_ROOT}/topup-${mode}-${gate}.trigger" calls="${TEST_ROOT}/topup-${mode}-${gate}.calls"
+		candidate_file=$(mktemp)
+		outcomes_file=$(mktemp)
+		: >"$calls"
+		: >"$LOGFILE"
+		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		rm -f "$trigger" "$STOP_FLAG"
+		[[ "$mode" == no_trigger ]] || _test_round_topup_trigger "$trigger"
+		local _DISPATCH_ROUND_TOPUP_ALLOWED=1
+		[[ "$mode" != not_allowed ]] || _DISPATCH_ROUND_TOPUP_ALLOWED=0
+		[[ "$mode" != disabled ]] || export DISPATCH_ROUND_TOPUP=0
+		# shellcheck disable=SC2317 # called via name resolution from the loop
+		_dispatch_compute_capacity() {
+			local launched=0 exited=0
+			printf 'read\n' >>"$calls"
+			launched=$(_dispatch_max_count_outcomes "$outcomes_file")
+			((launched < 2)) || exited=3
+			printf '20 %d %d\n' "$((18 + launched - exited))" "$((2 - launched + exited))"
+			return 0
+		}
+		# shellcheck disable=SC2317 # called via name resolution from the loop
+		_dispatch_process_candidate() {
+			sleep 0.05
+			_test_claim_launch_slot "$1" || return $?
+			return 0
+		}
+		for i in 840 841 842 843 844 845 846 847; do
+			printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+		done >"$candidate_file"
+		: >"$outcomes_file"
+		result=$(DISPATCH_LAUNCH_SLOT_GATE="$gate" _dispatch_max_loop "$candidate_file" 2 2 "test_user" 2 "$outcomes_file")
+		successes=$(_dispatch_max_count_outcomes "$outcomes_file")
+		reads=$(wc -l <"$calls" | tr -d ' ')
+		rm -f "$candidate_file" "$outcomes_file" "$trigger" "$calls"
+		if [[ "$mode" == topup ]]; then
+			[[ "$successes" == 5 && "${result%% *}" == 5 ]] || exit 1
+			grep -q 'in-round top-up (parallel) — budget 2 -> 5' "$LOGFILE" || exit 1
+		else
+			[[ "$successes" == 2 && "${result%% *}" == 2 && "$reads" == 0 ]] || exit 1
+		fi
+		exit 0
+	) || rc=1
+	print_result "round_topup: ${mode} gate=${gate} (budget 2, 3 slots freed mid-round)" "$rc"
+	return 0
+}
+
+# t19122: under a product reservation the unreserved pool and the phase
+# transitions absorb freed slots, but never the held product slots.
+# Args: mode (topup|no_trigger)
+test_priority_round_topup_keeps_hold() {
+	local mode="$1" rc=0
+	(
+		local candidate_file="" outcomes="" result="" total=0 i=0
+		local trigger="${TEST_ROOT}/priority-topup-${mode}.trigger" launches="${TEST_ROOT}/priority-topup-${mode}.launches"
+		candidate_file=$(mktemp)
+		outcomes=$(mktemp)
+		: >"$launches"
+		: >"$LOGFILE"
+		export PULSE_EVENT_REFILL_TRIGGER_FILE="$trigger"
+		rm -f "$trigger" "$STOP_FLAG"
+		[[ "$mode" == no_trigger ]] || _test_round_topup_trigger "$trigger"
+		local _DISPATCH_ROUND_TOPUP_ALLOWED=1
+		# The four-slot round budget, plus two worker exits that land once the
+		# unreserved pool has spent its two slots.
+		# shellcheck disable=SC2317 # called via name resolution from the loops
+		_dispatch_compute_capacity() {
+			local launched=0 exited=0
+			launched=$(wc -l <"$launches" | tr -d ' ')
+			((launched < 2)) || exited=2
+			printf '20 %d %d\n' "$((16 + launched - exited))" "$((4 - launched + exited))"
+			return 0
+		}
+		# shellcheck disable=SC2317 # called via name resolution from the loops
+		_dispatch_process_candidate() {
+			_DISPATCH_CANDIDATE_ELIGIBILITY=eligible
+			sleep 0.02
+			_test_claim_launch_slot "$1" || return $?
+			printf 'launch\n' >>"$launches"
+			return 0
+		}
+		for i in 1 2 3 4 5 6 7 8; do
+			printf '{"number":%d,"repo_slug":"o/tooling","repo_priority":"tooling","labels":[]}\n' "$i"
+		done >"$candidate_file"
+		: >"$outcomes"
+		# Two product slots stay held: product discovery is incomplete.
+		result=$(_dispatch_priority_loop "$candidate_file" 4 test_user 2 "$outcomes" 2 false)
+		total=$(_dispatch_max_count_outcomes "$outcomes")
+		rm -f "$candidate_file" "$outcomes" "$trigger" "$launches"
+		local expected=2
+		[[ "$mode" == no_trigger ]] || expected=4
+		[[ "$total" == "$expected" && "${result%% *}" == "$expected" ]] || exit 1
+		grep -q "PRIORITY_RESERVATION requested=2 product_launched=0 held=2 discovery_complete=false launched=${expected}" "$LOGFILE" || exit 1
+		exit 0
+	) || rc=1
+	print_result "round_topup: priority ${mode} launches only past the held product slots" "$rc"
+	return 0
+}
+
 # t19116: the production claim point defers without a claim when every slot is
 # held, claims when one is free, and returns 2 when the claim itself fails.
 test_claim_slot_and_lock_contract() {
@@ -1899,6 +2014,13 @@ test_parallel_loop_refills_rejected_reservation
 test_parallel_loop_all_rejections_finish
 test_parallel_loop_launch_slot_gate_one_slot
 test_parallel_loop_launch_slot_failed_holder_releases
+test_parallel_loop_round_topup topup 1
+test_parallel_loop_round_topup topup 0
+test_parallel_loop_round_topup no_trigger 1
+test_parallel_loop_round_topup disabled 1
+test_parallel_loop_round_topup not_allowed 1
+test_priority_round_topup_keeps_hold topup
+test_priority_round_topup_keeps_hold no_trigger
 test_claim_slot_and_lock_contract
 test_spawn_candidate_unknown_launch_state_keeps_slot
 test_parallel_loop_stop_flag_aborts
