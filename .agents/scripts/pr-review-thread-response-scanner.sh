@@ -1054,9 +1054,9 @@ _prrts_upstream_title() {
 	local thread_id="$3"
 	local finding_text="$4"
 	local file="" defect="" suffix=""
-	file="$(printf '%s\n' "$finding_text" | sed -n 's/^[[:space:]]*Files:[[:space:]]*//p' | head -n 1 |
+	file="$(printf '%s\n' "$finding_text" | sed 's/^[[:space:]]*Files:[[:space:]]*//;t found;d;:found;q' |
 		sed -E 's/[,;[:space:]].*$//' | tr -d '`<>\r')"
-	defect="$(printf '%s\n' "$finding_text" | sed -n 's/^[[:space:]]*Defect:[[:space:]]*//p' | head -n 1 |
+	defect="$(printf '%s\n' "$finding_text" | sed 's/^[[:space:]]*Defect:[[:space:]]*//;t found;d;:found;q' |
 		tr -d '`<>\r' | sed -E 's/[;:]([[:space:]].*)?$//; s/\.([[:space:]].*)?$//; s/[;][[:space:]].*$//')"
 	if [[ "${#defect}" -gt 60 ]]; then
 		defect="${defect:0:60}"
