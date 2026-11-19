@@ -2290,9 +2290,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19155 ci: run test-browser-qa-helper.sh in required Framework Validation (core) shard #auto-dispatch #feat tier:simple -> [todo/tasks/t19155-brief.md] ref:GH#39234 logged:2026-11-19
 
-- [ ] t19156 fix(ci): affected-tests-helper ignores .mjs/.cjs/.js/.ts script changes, so JS runtime regressions never select their shell suites #auto-dispatch #bug tier:simple -> [todo/tasks/t19156-brief.md] ref:GH#39235 logged:2026-11-19
+- [x] t19156 fix(ci): affected-tests-helper ignores .mjs/.cjs/.js/.ts script changes, so JS runtime regressions never select their shell suites #auto-dispatch #bug tier:simple -> [todo/tasks/t19156-brief.md] ref:GH#39235 logged:2026-11-19 pr:#39241 completed:2026-11-19
 
-- [ ] t19158 perf(gh-transport): replay counted-list page frames (total_count) so unchanged check-run and status reads cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19158-brief.md] ref:GH#39244
+- [x] t19158 perf(gh-transport): replay counted-list page frames (total_count) so unchanged check-run and status reads cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19158-brief.md] ref:GH#39244 pr:#39245 completed:2026-11-19
 
 ## In Progress
 
