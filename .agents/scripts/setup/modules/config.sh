@@ -294,6 +294,13 @@ _deploy_codex_mcps() {
 	return 0
 }
 
+# GH#39110: one optional runtime's config must not abort later setup stages.
+update_codex_config_noncritical() {
+	update_codex_config && return 0
+	print_warning "Codex configuration update failed (non-critical); continuing setup"
+	return 0
+}
+
 update_cursor_config() {
 	# Only run if Cursor is installed or config dir exists
 	if [[ ! -d "$HOME/.cursor" ]] && ! command -v cursor >/dev/null 2>&1 && ! command -v agent >/dev/null 2>&1; then
