@@ -196,6 +196,7 @@ _parse_commit_and_pr_args() {
 			index=$((index + 1))
 			;;
 		--keep-issue-open) keep_issue_open=1; index=$((index + 1)) ;; # GH#36598
+		--ready) create_ready=1; index=$((index + 1)) ;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
@@ -1635,7 +1636,11 @@ _create_pr() {
 		rm -f "$body_file"
 		return 1
 	}
-	pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	if [[ "${create_ready:-0}" -eq 1 ]]; then
+		pr_url=$(AIDEVOPS_PR_CREATE_READY=1 "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	else
+		pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	fi
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then

@@ -80,7 +80,8 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase] [--base <branch>]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--ready] [--skip-hooks] [--no-rebase] [--base <branch>]
+# --ready: create the PR non-draft (verified implementation intent); default interactive PRs are draft.
 # --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
 #   (branch must exist on origin, differ from the current branch, and be an open PR head;
 #   workers fail closed otherwise). Default: pr_base_branch config, else the remote default (GH#39167).
@@ -105,7 +106,7 @@ cmd_commit_and_pr() {
 	local completion_bookkeeping=0 bookkeeping_proof_pr="" bookkeeping_task_id=""
 	local replacement_pr="" replacement_reason=""
 	local -a extra_labels=()
-	local allow_parent_close=0 keep_issue_open=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
+	local allow_parent_close=0 keep_issue_open=0 create_ready=0 skip_hooks=0 skip_rebase=0 stack_base_arg=""
 
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
