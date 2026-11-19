@@ -209,11 +209,16 @@ AI brief owner:
    `permission_required` stays for runtime tool-permission denials. Without a
    published permission request it re-arms once per backoff window, but only
    until that re-arm repeats the same result; then a trusted retry, a new
-   OWNER/MEMBER comment or a brief revision wakes it (GH#36342).
+   OWNER/MEMBER comment or a brief revision wakes it (GH#36342). A recorded
+   `human_decision` suspends that window re-arm until a plain OWNER/MEMBER
+   reply, a brief revision, a trusted retry or a recovery-policy change
+   (GH#39232); do not add `no-auto-dispatch` to stop the loop.
 6. Record exactly one decision per entry: `terminal-blocker-recovery-helper.sh
    record <repo> <issue>` with stdin `{"wake","next_action","evidence"}`
    (`wake`: `brief_revision`, `environment_fix`, `owner_change`,
-   `dependency_change` or `human_decision`). A decision suppresses
+   `dependency_change` or `human_decision`). `integration-recovery-helper.sh
+   decision` answers integration-recovery requests only and is not read here.
+   A decision suppresses
    re-assessment for 24h; unchanged blockers are not retried blindly. A plain
    OWNER/MEMBER reply newer than a `human_decision` (no signature footer or
    automation marker) ends that suppression on the next supervisor pass, so
