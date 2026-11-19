@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.237] - 2026-11-19
+
+### Added
+
+- capture anthropic usage headers on built-in provider path
+- add --sudo-session fixture to linux-procfs-runtime-check.sh (#39134)
+
+### Fixed
+
+- r924 no-op when no cloudron-package repos are registered
+- routine-log-helper persists multi-line issue_number
+- create resync PRs ready with allow-auto-merge
+- preserve core routine enabled state across TODO.md regeneration
+
 ## [3.39.236] - 2026-11-19
 
 ### Added
