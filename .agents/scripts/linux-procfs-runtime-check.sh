@@ -61,7 +61,9 @@ done
 [ -S "$bus_path" ] || { echo "session bus socket was not created" >&2; exit 3; }
 chown alice "$bus_path"
 LOG=/var/tmp/kick-recorder.log
-mkdir -p /opt/rec/bin "/home/alice/.aidevops/agents/scripts"
+user_home="$(getent passwd alice | cut -d: -f6)"
+agents_dir="${user_home}/.aidevops/agents/scripts"
+mkdir -p /opt/rec/bin "$agents_dir"
 cat >/opt/rec/record.sh <<'REC'
 #!/bin/sh
 LOG=/var/tmp/kick-recorder.log
@@ -72,10 +74,10 @@ tag="${1}"
 	printf '%s:   DBUS_SESSION_BUS_ADDRESS=%s\n' "$tag" "${DBUS_SESSION_BUS_ADDRESS-<unset>}"
 } >>"$LOG"
 REC
-printf '#!/bin/sh\nexec /opt/rec/record.sh pulse "$*"\n' >/home/alice/.aidevops/agents/scripts/pulse-wrapper.sh
+printf '#!/bin/sh\nexec /opt/rec/record.sh pulse "$*"\n' >"${agents_dir}/pulse-wrapper.sh"
 printf '#!/bin/sh\n/opt/rec/record.sh systemctl "$*"\nexit 0\n' >/opt/rec/bin/systemctl
-chmod 755 /opt/rec/record.sh /opt/rec/bin/systemctl /home/alice/.aidevops/agents/scripts/pulse-wrapper.sh
-chown -R alice "/home/alice/.aidevops"
+chmod 755 /opt/rec/record.sh /opt/rec/bin/systemctl "${agents_dir}/pulse-wrapper.sh"
+chown -R alice "${user_home}/.aidevops"
 run_case() {
 	local name="$1" fn="$2" pfx="$3" waited
 	: >"$LOG"
