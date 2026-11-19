@@ -105,7 +105,10 @@ gate require a request-specific signed decision. There is no unsigned supersessi
 or automatic expiry path, because unsigned expiry would let a worker abandon a
 permission wall and be relaunched under an implied grant. To decline a request,
 for example when its session has ended, the maintainer runs
-`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`.
+`sudo aidevops approve permissions issue <N> <slug> --request perm-<id> --withdraw`
+(on a Linux user-local install, the printed form names the launcher, such as
+`sudo ~/.local/bin/aidevops ...`, because sudo's `secure_path` omits it; see
+`reference/auto-merge.md` "Linux launcher path").
 That signs a capability-free decision bound to the request digest, revokes any
 local grant for that request, and clears the label. `verify-permissions` then
 returns `WITHDRAWN`, which never counts as `VERIFIED`, and dispatch resumes

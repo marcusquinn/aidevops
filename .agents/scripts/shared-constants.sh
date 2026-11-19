@@ -1724,6 +1724,10 @@ _source_shared_module_with_retry "${_SC_SELF%/*}/shared-todo-commit.sh"
 # shellcheck source=./shared-temp-workspace.sh
 _source_shared_module_with_retry "${_SC_SELF%/*}/shared-temp-workspace.sh"
 
+# Pasteable `sudo aidevops approve` prefix for Linux secure_path (GH#39027).
+# shellcheck source=./shared-approval-cli.sh
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-approval-cli.sh"
+
 # =============================================================================
 # Worktree Ownership Registry (t189) — extracted module
 # =============================================================================

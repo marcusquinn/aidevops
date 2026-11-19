@@ -43,6 +43,13 @@ _PULSE_MERGE_PROCESS_WORKER_BRIEFED_LOADED=1
 # Defensive default for standalone sourcing (test harnesses)
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # --- Functions ---
 
 #######################################
@@ -609,7 +616,7 @@ _worker_briefed_record_bot_decision() {
 		'.[][] | select((.body // "") | contains($marker)) | .user.login // empty' <<<"$comments")
 	body_file=$(mktemp "${TMPDIR:-/tmp}/worker-briefed-decision.XXXXXX") || return 1
 	printf '%s\n\n%s\n' "$marker" \
-		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`sudo aidevops approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
+		"Automated merge is blocked by the linked-issue trust gate (t2449/t3052). This workflow-bot issue has no verified maintainer approval or applicable scoped trust exception. Next action (maintainer): run \`$(approval_cli_prefix) approve issue ${issue_number}\` for ${repo_slug}. The next merge pass verifies the signature; all CI, review and hold gates still apply. Reference: pulse-merge-process-worker-briefed.sh, worker_briefed_trust_verdict." >"$body_file"
 	gh_issue_comment "$issue_number" --repo "$repo_slug" --body-file "$body_file" >/dev/null || rc=$?
 	rm -f "$body_file"
 	return "$rc"

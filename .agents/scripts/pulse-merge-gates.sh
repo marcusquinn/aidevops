@@ -48,6 +48,12 @@ _PULSE_MERGE_GATES_LOADED=1
 source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/trusted-dependabot-lib.sh"
 # shellcheck source=./shared-gh-commit-cache.sh
 source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-gh-commit-cache.sh"
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "${_PULSE_MERGE_DIR:-${BASH_SOURCE[0]%/*}}/shared-approval-cli.sh"
+fi
 
 # --- Functions ---
 
@@ -360,7 +366,7 @@ check_external_contributor_pr() {
 
 External contributor PRs have two requirements before they can merge:
 1. A linked issue (\`Resolves #NNN\` in the PR body, or \`GH#NNN:\` prefix in the title)
-2. Cryptographic approval on that linked issue (\`sudo aidevops approve issue NNN ${repo_slug}\`)
+2. Cryptographic approval on that linked issue (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)
 
 ---
 **To approve or decline**, comment on this PR:
@@ -376,7 +382,7 @@ External contributor PRs have two requirements before they can merge:
 		linked_for_check=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_for_check=""
 		if [[ -z "$linked_for_check" ]]; then
 		gh_pr_comment "$pr_number" --repo "$repo_slug" \
-				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`sudo aidevops approve issue NNN ${repo_slug}\`)." || true
+				--body "**Missing linked issue.** This PR has no linked issue. External contributor PRs require a linked issue before they can be considered for merge. Add \`Resolves #NNN\` to the PR body (or use \`GH#NNN:\` in the title), then ensure that issue has been cryptographically approved by a maintainer (\`$(approval_cli_prefix) approve issue NNN ${repo_slug}\`)." || true
 			echo "[pulse-wrapper] check_external_contributor_pr: PR #$pr_number in $repo_slug has no linked issue — posted missing-linked-issue comment" >>"$LOGFILE"
 		fi
 	fi

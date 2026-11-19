@@ -33,7 +33,7 @@ ARCHIVE_SOURCES = (
     "native_git.py", "runtime-env.sh", "shared-constants.sh",
     "portable-stat.sh", "managed-label-provisioning-lib.sh",
     "shared-gh-wrappers.sh", "shared-todo-commit.sh", "shared-temp-workspace.sh",
-    "shared-model-tier.sh", "shared-feature-toggles.sh",
+    "shared-approval-cli.sh", "shared-model-tier.sh", "shared-feature-toggles.sh",
     "shared-gh-wrappers-session.sh", "shared-gh-wrappers-create.sh",
     "shared-gh-wrappers-safe-edit.sh", "shared-gh-wrappers-status.sh",
     "shared-gh-wrappers-checks.sh", "privacy-guard-helper.sh",

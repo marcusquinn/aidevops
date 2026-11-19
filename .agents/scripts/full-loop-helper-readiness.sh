@@ -31,6 +31,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$_FULL_LOOP_COMMIT_DIR"
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # shellcheck source=./review-thread-gate-lib.sh
 source "${_FULL_LOOP_COMMIT_DIR}/review-thread-gate-lib.sh"
 
@@ -694,7 +701,7 @@ _full_loop_report_external_authority_preflight() {
 		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${approval_targets}"
 		print_error "External/fork PR #${pr_number} has missing cryptographic development authority"
 		print_info "After finalizing all approval-bound PR metadata, run this one command:"
-		printf 'sudo aidevops approve batch %s %s\n' "$approval_targets" "$repo"
+		printf '%s approve batch %s %s\n' "$(approval_cli_prefix)" "$approval_targets" "$repo"
 		return 1
 	fi
 
