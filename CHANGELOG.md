@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.243] - 2026-11-19
+
+### Added
+
+- issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker pointers
+
+### Changed
+
+- Maintenance: mark t19161 complete (pr:#39259 completed:2026-11-19) (#39262)
+- Maintenance: mark t19159 complete (pr:#39252 completed:2026-11-19) (#39256)
+- Maintenance: recover dirty worker worktree checkpoint (#39252)
+- Maintenance: add t19159 and t19161 backup entries (GH#39251, GH#39257)
+
+### Fixed
+
+- privacy pre-scan passes the hook's public head and target
+- partial-continuation revisit walks past merged PRs that target a different issue
+
 ## [3.39.242] - 2026-11-19
 
 ### Changed
