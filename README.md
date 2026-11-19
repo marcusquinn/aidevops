@@ -76,6 +76,14 @@ methods: [Installation](#installation). Check the result with
 `aidevops status`; `aidevops doctor --fix` resolves duplicate installs and PATH
 conflicts.
 
+**OpenCode version:** aidevops supports OpenCode 1 as the stable default.
+OpenCode 2 is a preview. Setup installs it as a separate `opencode2` command,
+so you can try it without replacing `opencode`. Don't install OpenCode with
+`brew install opencode`, because Homebrew's formula now installs OpenCode 2.
+`aidevops opencode-runtime status` shows which version `opencode` runs.
+`aidevops opencode-runtime use-stable` switches an OpenCode 2 install back to
+OpenCode 1 and keeps a backup of your OpenCode data.
+
 ### 2. Open Tabby and start OpenCode
 
 ```bash

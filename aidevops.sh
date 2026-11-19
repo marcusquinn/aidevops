@@ -1687,12 +1687,13 @@ _main_dispatch_sync() {
 	return $?
 }
 
-# OpenCode database, desktop, sandbox and session-bus commands.
+# OpenCode database, desktop, sandbox, runtime-switch and session-bus commands.
 _main_dispatch_opencode_tools() {
 	local command="$1"
 	shift
 	case "$command" in
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode-runtime | oc-runtime) _dispatch_helper "opencode-runtime-switch-helper.sh" "opencode-runtime-switch-helper.sh" "$@" ;;
 	opencode-desktop | oc-desktop) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" desktop "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	sessions | session-bus) _dispatch_helper "session-bus-helper.sh" "session-bus-helper.sh" "$@" ;;
@@ -1745,7 +1746,7 @@ _main_dispatch() {
 	cleanup) _main_dispatch_cleanup "$@" ;;
 	client-format) _cmd_client_format "$@" ;;
 	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
-	opencode-db | oc-db | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
+	opencode-db | oc-db | opencode-runtime | oc-runtime | opencode-desktop | oc-desktop | opencode-sandbox | oc-sandbox | sessions | session-bus) _main_dispatch_opencode_tools "$command" "$@" ;;
 	opencode | oc | codex | claude | claude-code | cursor | cursor-agent | droid | gemini | gemini-cli | continue | cn | kilo | kiro | kiro-cli | aider | amp | kimi | qwen | windsurf)
 		_dispatch_helper "runtime-launcher-helper.sh" "runtime-launcher-helper.sh" "$command" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;

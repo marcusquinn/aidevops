@@ -58,6 +58,7 @@ _help_commands() {
 	echo "                              Use <runtime> --help or --list-agents for launch options"
 	echo "  opencode-desktop   Launch/install OpenCode Desktop with aidevops DB isolation"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
+	echo "  opencode-runtime   Show the global OpenCode version; use-stable switches OpenCode 2 back to 1"
 	echo "  sessions [cmd]     Live OpenCode sessions: list/show/send/ask/inbox/outbox/prune (bare: list)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) (alias: cb)"
