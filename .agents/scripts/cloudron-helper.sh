@@ -601,12 +601,14 @@ MODE="${1:-status}"
 shift || true
 MARKER=""
 FORCE=0
+SCHEDULED=0
 WANT_MARKER=0
 for arg in "$@"; do
   if [ "$WANT_MARKER" = 1 ]; then MARKER="$arg"; WANT_MARKER=0; continue; fi
   case "$arg" in
   --patched-marker) WANT_MARKER=1 ;;
   --force) FORCE=1 ;;
+  --scheduled) SCHEDULED=1 ;;
   esac
 done
 umask 077
@@ -705,7 +707,7 @@ retry_reload() {
 }
 
 install_cron() {
-  printf "*/2 * * * * root %s apply >/dev/null 2>&1\n" "$SELF" >"$CRON" || return 1
+  printf "*/2 * * * * root %s apply --scheduled >/dev/null 2>&1\n" "$SELF" >"$CRON" || return 1
   chmod 644 "$CRON"
   return 0
 }
@@ -732,8 +734,10 @@ rollback() {
 }
 
 do_apply() {
-  local files f
+  local files f left
   take_lock 0 || return 0
+  # Scheduled runs re-check the cron under the lock so a concurrent revert wins.
+  if [ "$SCHEDULED" = 1 ] && [ ! -f "$CRON" ]; then return 0; fi
   if patched; then return 0; fi
   retry_reload || { log "pending reload still failing"; return 1; }
   files=$(conf_files "$PATTERN") || { log "config scan failed; not editing"; return 1; }
@@ -745,6 +749,12 @@ do_apply() {
   for f in $files; do
     rewrite_file "$f" || { rollback; return 1; }
   done
+  left=$(conf_files "$PATTERN") || left="scan-failed"
+  if [ -n "$left" ]; then
+    log "active http2 directives remain or scan failed; restoring"
+    rollback
+    return 1
+  fi
   if nginx -t >/dev/null 2>&1; then
     if systemctl reload nginx; then
       log "http2 disabled in $(echo "$files" | wc -l) file(s); nginx reloaded"
@@ -794,8 +804,9 @@ do_revert() {
 
 do_status() {
   local pid exe nb=unknown
-  echo "h2_on_files=$(conf_files "$PATTERN" | wc -l)"
-  echo "h2_off_files=$(conf_files "http2[[:space:]]+off[[:space:]]*;" | wc -l)"
+  local on off
+  if on=$(conf_files "$PATTERN"); then echo "h2_on_files=$(echo "$on" | grep -c .)"; else echo "h2_on_files=scan-failed"; fi
+  if off=$(conf_files "http2[[:space:]]+off[[:space:]]*;"); then echo "h2_off_files=$(echo "$off" | grep -c .)"; else echo "h2_off_files=scan-failed"; fi
   echo "legacy_listen_recorded=$([ -f "$RECORD" ] && wc -l <"$RECORD" || echo 0)"
   if [ -f "$CRON" ]; then echo "cron=present"; else echo "cron=absent"; fi
   if [ -f "$SCTP_CONF" ]; then echo "sctp_blocked=yes"; else echo "sctp_blocked=no"; fi
