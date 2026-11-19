@@ -70,7 +70,9 @@ export function addIssueWatch(root, ref, record, { fresh = false, now = Date.now
   assertWatcher(record);
   const item = parseIssueRef(ref, record.repo);
   const file = watchFile(root, record.session_id, item.key);
-  const existing = readJson(file);
+  // An expired or malformed record not yet pruned is a new watch: new start, cap applies.
+  const found = readJson(file);
+  const existing = liveWatch(found, record.session_id, `${item.key}.json`, now) ? found : null;
   if (!existing && sessionIssueWatches(root, record.session_id, now).length >= ISSUE_WATCH_LIMITS.perSession) {
     throw new Error(`at most ${ISSUE_WATCH_LIMITS.perSession} issue watches per session; stop one with --off first`);
   }
@@ -103,6 +105,8 @@ function validWatch(record, sessionID, name) {
   return Number.isSafeInteger(record.number) && record.number > 0;
 }
 
+const liveWatch = (record, sessionID, name, now) => validWatch(record, sessionID, name) && record.expires_ms > now;
+
 /** One session's live watches; expired or malformed records are removed. */
 export function sessionIssueWatches(root, sessionID, now = Date.now()) {
   if (!isSafeId(sessionID)) return [];
@@ -110,7 +114,7 @@ export function sessionIssueWatches(root, sessionID, now = Date.now()) {
   const watches = [];
   for (const name of listDir(dir).filter((file) => WATCH_FILE.test(file))) {
     const record = readJson(join(dir, name));
-    if (validWatch(record, sessionID, name) && record.expires_ms > now) watches.push(record);
+    if (liveWatch(record, sessionID, name, now)) watches.push(record);
     else rmSync(join(dir, name), { force: true });
   }
   return watches.sort((left, right) => left.created_ms - right.created_ms);

@@ -234,7 +234,8 @@ They are advisory: GitHub stays the record and decides ownership.
 
 - **Watch:** `watch-issue owner/repo#N` (tool action, or the CLI from an
   OpenCode session's shell; `#N` uses the session's repo) subscribes the
-  caller's root session for 7 days; repeating it extends the 7 days. `--off`
+  caller's root session for 7 days; repeating it extends the 7 days, and after
+  expiry it starts a new watch with a new baseline. `--off`
   (tool `text: "off"`) stops it. At most 50 per session. Headless, read-only
   and presence-less sessions are refused: workers read their issue on GitHub.
 - **Automatic:** `claim-task-id.sh` run from an OpenCode session watches each
@@ -246,17 +247,21 @@ They are advisory: GitHub stays the record and decides ownership.
   closed/merged/reopened, and new comments since the watch began that are not
   from bots and carry no `<!-- ops:start` audit marker. The first check of a
   watch is the baseline. For a `--new` watch, `status:queued` or
-  `status:in-progress` labels, closure and their assignees already present at
-  that first check count as new, so a fast pickup is still reported.
+  `status:in-progress` labels, closure and every assignee already present at
+  that first check count as new, so a fast pickup is still reported; without
+  those, assignees other than the item's author count as new, and the author's
+  own creation-time self-assignment does not.
 - **Messages:** one `info` message from `cli:pulse` per session per pass, up to
-  6 items, each with labels, logins, comment IDs and times plus the
-  `gh issue|pr view N --repo R --comments` read. Titles and comment bodies are
-  never copied. It never wakes a session. Items beyond 6, a failed send or a
-  deferred read keep their state and go in a later pass. An item GitHub
-  reports as not found is reported once and then no longer read.
+  6 complete items within the 2,000-character limit, each with labels, logins,
+  comment IDs and times plus the `gh issue|pr view N --repo R --comments`
+  read. Titles and comment bodies are never copied. It never wakes a session.
+  Items that do not fit, a failed send or a deferred read keep their state and
+  go in a later pass. An item GitHub reports as not found is reported once and
+  then no longer read.
 - **Cost:** shares the relay interval and budget gate. One issue listing
   (`since=`) per repo with due watches, one baseline issue read per new watch,
-  and one comments read only when a comment count rose.
+  and, only when a comment count rose, up to 3 comment pages (100 each) since
+  the previous check.
 - **State:** `issue-watch/<session>/<owner>@<repo>@<n>.json` on the bus; the
   relay keeps detection state in `worker-bus-relay/watch/<session>/`. Both end
   with the watch or the session's presence. `worker-bus-relay-helper.sh status`

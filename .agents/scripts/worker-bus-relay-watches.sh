@@ -13,8 +13,9 @@
 # titles or comment bodies.
 #
 # GitHub cost per interval: one issue-list call (`since=`) per repo with due
-# watches, one issue read for a watch first seen outside that listing, and one
-# comments read only when an item's comment count rose. Every read goes
+# watches, one issue read for a watch first seen outside that listing, and up to
+# RELAY_WATCH_COMMENT_PAGES comment pages only when an item's comment count
+# rose. Every read goes
 # through _relay_get (stop flag, breaker, REST-core deferrable gate).
 # Docs: reference/session-bus.md "Issue watches".
 
@@ -22,13 +23,19 @@
 # names only, sanitised; maintainers own label creation).
 RELAY_WATCH_LABELS_RE='^(status:[a-z-]+|hold-for-review|needs-maintainer-review)$'
 # A fresh watch (the session just created the item) reports a worker pickup or
-# closure that beat the first pass: these dispatch labels and the assignees then
-# count as new.
+# closure that beat the first pass: these dispatch labels, and every assignee
+# then, count as new. Without them, any assignee other than the item's author
+# is new; the author's own creation-time self-assignment (claim-task-id.sh
+# assigns non-auto-dispatch issues to their creator) is not.
 # Creation labels vary (status:available default, explicit status:*, publication
-# holds), so everything else seen first is the baseline.
+# holds), so other labels seen first are the baseline.
 RELAY_WATCH_PICKUP_LABELS='["status:queued","status:in-progress"]'
-# Items listed per message; the rest keep their state and go in the next pass.
+# Items listed per message, within the bus text limit; the rest keep their state
+# and go in the next pass.
 RELAY_WATCH_PER_MESSAGE=6
+RELAY_WATCH_MESSAGE_CHARS=1990
+# Comment pages (RELAY_PAGE each) read per item per pass.
+RELAY_WATCH_COMMENT_PAGES=3
 
 _relay_watch_state_file() {
 	local subscriber="$1"
@@ -73,6 +80,8 @@ _relay_watch_prune_state() {
 }
 
 # Watches due for a check, each joined with its state (first sight: baseline null).
+# State from an earlier watch on the same item (ended, then re-added before the
+# prune) has another start time and is ignored.
 _relay_watch_due() {
 	local watches_file="$1"
 	local now="$2"
@@ -89,11 +98,12 @@ _relay_watch_due() {
 		[[ -f "$file" ]] && state=$(jq -c '.' "$file" 2>/dev/null || printf 'null')
 		jq -c --argjson state "$state" --argjson now "$now" --argjson interval "$RELAY_MIN_INTERVAL" '
 			. as $w
+			| (($w.created_ms // 0) / 1000 | floor) as $created
 			| {watch: $w, state: ({
 				v: 1, subscriber: $w.subscriber, key: $w.key, repo: $w.repo, number: $w.number,
-				created: (($w.created_ms // 0) / 1000 | floor), checked: 0, baseline: null,
+				created: $created, checked: 0, baseline: null,
 				comments_seen: -1, last_comment_id: 0
-			} + (if ($state.key // "") == $w.key then $state else {} end))}
+			} + (if ($state.key // "") == $w.key and ($state.created // -1) == $created then $state else {} end))}
 			| select(.state.gone != true and $now - .state.checked >= $interval)' <<<"$watch" >>"$output" 2>/dev/null || true
 	done < <(jq -c '.[]?' "$watches_file" 2>/dev/null)
 	return 0
@@ -127,18 +137,21 @@ _relay_watch_diff() {
 		--argjson last "$last_id" --argjson now "$now" --arg re "$RELAY_WATCH_LABELS_RE" \
 		--argjson pickup "$RELAY_WATCH_PICKUP_LABELS" '
 		def clean: gsub("[^A-Za-z0-9:_.-]"; "");
+		def login: (.login // "") | gsub("[^A-Za-z0-9-]"; "");
 		def changes($added; $removed): [($added[] | "+" + .), ($removed[] | "-" + .)] | join(" ");
 		"open" as $open | "closed" as $closed
 		| . as $i
 		| ($i.pull_request != null) as $pr
 		| {labels: ([$i.labels[]? | (.name // "") | clean | select(test($re))] | unique),
-			assignees: ([$i.assignees[]? | (.login // "") | gsub("[^A-Za-z0-9-]"; "") | select(. != "")] | unique),
+			assignees: ([$i.assignees[]? | login | select(. != "")] | unique),
 			state: ($i.state // $open)} as $cur
 		| [$cur.labels[] | select(IN($pickup[]))] as $picked
+		| ($i.user // {} | login) as $author
 		| (if $e.state.baseline != null then $e.state.baseline
 			elif $e.watch.fresh == true then
-				($cur | .state = $open
-					| if ($picked | length) > 0 or $cur.state == $closed then .labels -= $picked | .assignees = [] else . end)
+				($cur | .state = $open | .labels -= $picked
+					| .assignees = (if ($picked | length) > 0 or $cur.state == $closed then []
+						else [.assignees[] | select(. == $author)] end))
 			else $cur end) as $old
 		| ($cur.labels - $old.labels) as $la | ($old.labels - $cur.labels) as $lr
 		| ($cur.assignees - $old.assignees) as $aa | ($old.assignees - $cur.assignees) as $ar
@@ -167,6 +180,33 @@ _relay_watch_diff() {
 				end),
 			state: ($e.state + {checked: $now, baseline: $cur, comments_seen: $count, last_comment_id: $last})
 		}' "$issue_file"
+	return 0
+}
+
+# Comments updated since $3 (epoch seconds) into $4, following pagination for up
+# to RELAY_WATCH_COMMENT_PAGES pages. Returns 1 when a read fails, so the
+# caller keeps its state and retries the whole window.
+_relay_watch_fetch_comments() {
+	local repo="$1"
+	local issue_number="$2"
+	local since="$3"
+	local output="$4"
+	local since_iso page=1 page_file count
+	since_iso=$(jq -rn --argjson s "$since" '$s | todateiso8601') || return 1
+	printf '[]\n' >"$output" || return 1
+	while [[ "$page" -le "$RELAY_WATCH_COMMENT_PAGES" ]]; do
+		page_file="${output%.json}-page${page}.json"
+		_relay_get "repos/${repo}/issues/${issue_number}/comments?since=${since_iso}&per_page=${RELAY_PAGE}&page=${page}" \
+			"$page_file" "watch-comments" || return 1
+		count=$(jq 'if type == "array" then length else -1 end' "$page_file" 2>/dev/null || printf '%s' "-1")
+		[[ "$count" =~ ^[0-9]+$ ]] || return 1
+		if ! jq -s '.[0] + .[1]' "$output" "$page_file" >"${output}.tmp" 2>/dev/null || ! mv -f "${output}.tmp" "$output"; then
+			return 1
+		fi
+		[[ "$count" -lt "$RELAY_PAGE" ]] && return 0
+		page=$((page + 1))
+	done
+	_relay_log "watch comments ${repo}#${issue_number}: over ${RELAY_WATCH_COMMENT_PAGES} pages since the last check; later comments are not listed"
 	return 0
 }
 
@@ -205,28 +245,35 @@ _relay_watch_one() {
 		return 0
 	fi
 
-	local count seen last_id updated comments='[]'
+	local count seen last_id updated comments='[]' retry_comments=0
 	count=$(jq -r '.comments // 0' "$issue_file")
 	seen=$(jq -r '.state.comments_seen' <<<"$entry")
 	last_id=$(jq -r '.state.last_comment_id' <<<"$entry")
 	updated=$(jq -r '(.updated_at // "1970-01-01T00:00:00Z") | fromdateiso8601' "$issue_file" 2>/dev/null || printf '0')
 	local new_last="$last_id"
 	if [[ "$count" != "$seen" && "$count" -gt 0 && "$updated" -ge "$created" ]]; then
-		local comments_file="${work}/watch-comments-${subscriber}-${key}.json" since_iso
-		since_iso=$(jq -rn --argjson s "$created" '$s | todateiso8601')
-		if _relay_get "repos/${repo}/issues/${issue_number}/comments?since=${since_iso}&per_page=${RELAY_PAGE}" "$comments_file" "watch-comments"; then
+		local comments_file="${work}/watch-comments-${subscriber}-${key}.json" comments_since
+		# Comments since the previous check (with slack), or since the watch began.
+		comments_since=$(jq -r '.state | if .checked > 0 then ([.created, .checked - 60] | max) else .created end' <<<"$entry")
+		if _relay_watch_fetch_comments "$repo" "$issue_number" "$comments_since" "$comments_file"; then
 			comments=$(_relay_watch_comments "$comments_file" "$last_id" "$created")
 			[[ -n "$comments" ]] || comments='[]'
 			new_last=$(jq -r --argjson last "$last_id" '[.[]?.id | numbers] + [$last] | max' "$comments_file")
 		else
 			_relay_log "watch comments ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE}); will retry"
 			count="$seen"
+			retry_comments=1
 		fi
 	fi
 
 	local result line
 	result=$(_relay_watch_diff "$entry" "$issue_file" "$comments" "$count" "$new_last" "$now") || return 0
 	[[ -n "$result" ]] || return 0
+	if [[ "$retry_comments" -eq 1 ]]; then
+		# Keep the previous check time, so the next listing (since = checked - 60)
+		# still includes this item and the comments read is retried.
+		result=$(jq -c --argjson e "$entry" '.state.checked = $e.state.checked' <<<"$result") || return 0
+	fi
 	line=$(jq -r '.line' <<<"$result")
 	if [[ -z "$line" ]]; then
 		_relay_watch_write_state "$(jq -c '.state' <<<"$result")" || true
@@ -236,31 +283,42 @@ _relay_watch_one() {
 	return 0
 }
 
-# One message per subscriber. Only the items it lists advance their state; on a
-# failed send nothing is written, so the next run reads from the old `since`.
+# One message per subscriber, holding only complete pointers that fit the bus
+# text limit. Only the items it lists advance their state; on a failed send
+# nothing is written, so the next run reads from the old `since`.
 _relay_watch_send() {
 	local batch="$1"
 	local work="$2"
-	local subscriber text_file total
+	local subscriber text_file plan_file listed
 	subscriber=$(basename "$batch" .jsonl)
 	subscriber="${subscriber#watch-batch-}"
 	text_file="${work}/watch-message-${subscriber}.txt"
-	total=$(jq -s 'length' "$batch")
-	jq -rs --argjson max "$RELAY_WATCH_PER_MESSAGE" '
-		(["Issue watch: changes on items this session watches (from any runner):"]
-			+ [.[:$max][] | .line]
-			+ (if length > $max then ["- \(length - $max) more changed item(s) follow in the next relay pass."] else [] end)
-			+ ["These are pointers; verify them on GitHub, which stays the record. Stop one with: aidevops sessions watch-issue <owner/repo#N> --off"])
-		| join("\n") | .[0:1990]' "$batch" >"$text_file" || return 0
+	plan_file="${work}/watch-plan-${subscriber}.json"
+	jq -s --argjson max "$RELAY_WATCH_PER_MESSAGE" --argjson chars "$RELAY_WATCH_MESSAGE_CHARS" '
+		"Issue watch: changes on items this session watches (from any runner):" as $head
+		| "These are pointers; verify them on GitHub, which stays the record. Stop one with: aidevops sessions watch-issue <owner/repo#N> --off" as $foot
+		| [.[].line] as $lines
+		# Reserve room for the header, footer and the "more follow" line.
+		| ($chars - ($head | length) - ($foot | length) - 80) as $budget
+		| (reduce $lines[:$max][] as $line ({n: 0, used: 0, open: true};
+			if .open and .used + ($line | length) + 1 <= $budget then .n += 1 | .used += ($line | length) + 1
+			else .open = false end)) as $fit
+		| ([$fit.n, 1] | max) as $n
+		| {listed: $n, text: ([$head] + $lines[:$n]
+			+ (if ($lines | length) > $n then ["- \(($lines | length) - $n) more changed item(s) follow in the next relay pass."] else [] end)
+			+ [$foot] | join("\n") | .[0:$chars])}' "$batch" >"$plan_file" 2>/dev/null || return 0
+	listed=$(jq -r '.listed' "$plan_file")
+	[[ "$listed" =~ ^[0-9]+$ ]] || return 0
+	jq -r '.text' "$plan_file" >"$text_file" || return 0
 	if ! _relay_bus send "$subscriber" --sender "$RELAY_SENDER" --text-file "$text_file" >/dev/null 2>&1; then
 		_relay_log "watch notice to ${subscriber} failed; will retry"
 		return 0
 	fi
-	_relay_log "watch notice to ${subscriber}: items=$((total < RELAY_WATCH_PER_MESSAGE ? total : RELAY_WATCH_PER_MESSAGE))"
+	_relay_log "watch notice to ${subscriber}: items=${listed}"
 	local state
 	while IFS= read -r state; do
 		[[ -n "$state" ]] && { _relay_watch_write_state "$state" || true; }
-	done < <(jq -c --argjson max "$RELAY_WATCH_PER_MESSAGE" -s '.[:$max][] | .state' "$batch")
+	done < <(jq -c --argjson n "$listed" -s '.[:$n][] | .state' "$batch")
 	return 0
 }
 

@@ -20,6 +20,7 @@ function selfRecord(root, env) {
 
 export function watchIssueCommand({ root, options, out, env }) {
   const target = options.positional[1];
+  if (!target) throw new Error("watch-issue needs owner/repo#N or #N (list watches with: aidevops sessions watches)");
   const self = selfRecord(root, env);
   const defaultRepo = options.repo || self.repo;
   if (options.off) {
