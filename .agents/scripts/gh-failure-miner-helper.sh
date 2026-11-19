@@ -649,6 +649,16 @@ filter_failed_check_runs() {
 	return 0
 }
 
+# True when a signature came from a real log fetch. job_not_started (0-step jobs)
+# and billing annotation detection short-circuit before fetching logs (GH#18978).
+signature_consumed_log_fetch() {
+	local signature="$1"
+	if [[ "$signature" == "job_not_started" ]] || [[ "$signature" == "infra:billing_annotation" ]]; then
+		return 1
+	fi
+	return 0
+}
+
 process_failed_runs() {
 	local failed_runs_json="$1"
 	local repo_slug="$2" source_kind="$3" source_ref="$4" source_url="$5"
@@ -689,7 +699,7 @@ process_failed_runs() {
 		# no gh run view call) both short-circuit before fetching any logs — counting them
 		# exhausts the budget for genuine failures in other PRs. (GH#18978)
 		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
-			[[ "$signature" != "job_not_started" ]] && [[ "$signature" != "infra:billing_annotation" ]]; then
+			signature_consumed_log_fetch "$signature"; then
 			run_logs_checked=$((run_logs_checked + 1))
 		fi
 
@@ -725,6 +735,88 @@ process_failed_runs() {
 			"$run_affected_paths" "$run_annotations" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
+	done
+
+	printf '%s' "$run_logs_checked"
+	return 0
+}
+
+# Select failed post-merge / repo-level workflow runs that are still current.
+# Input: Actions runs API payload ({workflow_runs:[...]}) and the default branch.
+# Only events with no open PR to repair are kept (push on the default branch,
+# schedule, workflow_dispatch, issues, pull_request_target). A workflow+event
+# group counts only when its newest completed run also failed, so recovered
+# failures never cluster (GH#30197 rule, GH#39228).
+select_current_workflow_failures_json() {
+	local runs_json="$1"
+	local default_branch="$2"
+	printf '%s\n' "$runs_json" | jq -c --arg default_branch "$default_branch" --argjson failing '["failure", "timed_out", "startup_failure"]' '
+		[(.workflow_runs // [])[]
+			| select(.status == "completed")
+			| select(
+				(.event == "push" and .head_branch == $default_branch)
+				or (.event as $e | ["schedule", "workflow_dispatch", "issues", "pull_request_target"] | index($e))
+			)
+			| select(.conclusion as $c | ($failing + ["success"]) | index($c))
+		]
+		| group_by([(.workflow_id | tostring), .event])
+		| map(sort_by(.created_at) | reverse)
+		| map(select(.[0].conclusion as $c | $failing | index($c)))
+		| map(.[] | select(.conclusion as $c | $failing | index($c)))
+	'
+	return 0
+}
+
+# Emit workflow-run events for one repo. Prints the updated run_logs_checked count.
+emit_workflow_run_events() {
+	local repo_slug="$1" since_iso="$2" include_logs="$3"
+	local run_logs_checked="$4" max_run_logs="$5" event_file="$6"
+
+	local default_branch runs_json failed_json
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null || printf '')
+	if [[ -z "$default_branch" ]]; then
+		printf '%s' "$run_logs_checked"
+		return 0
+	fi
+	# NOSONAR - $since_iso is output of date(1); $repo_slug is a validated owner/repo slug
+	runs_json=$(gh api "repos/${repo_slug}/actions/runs?created=%3E%3D${since_iso}&per_page=100" 2>/dev/null || printf '{}')
+	failed_json=$(select_current_workflow_failures_json "$runs_json" "$default_branch" 2>/dev/null || printf '[]')
+
+	local count index=0
+	count=$(printf '%s\n' "$failed_json" | jq "$JQ_COUNT")
+	while [[ "$index" -lt "$count" ]]; do
+		local run_json
+		run_json=$(printf '%s\n' "$failed_json" | jq -c ".[${index}]")
+		index=$((index + 1))
+
+		local run_id name event conclusion html_url completed_at head_sha
+		run_id=$(printf '%s\n' "$run_json" | jq -r '.id // empty')
+		name=$(printf '%s\n' "$run_json" | jq -r '.name // "unknown-workflow"')
+		event=$(printf '%s\n' "$run_json" | jq -r '.event // "none"')
+		conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // "none"')
+		html_url=$(printf '%s\n' "$run_json" | jq -r '.html_url // empty')
+		completed_at=$(printf '%s\n' "$run_json" | jq -r '.updated_at // empty')
+		head_sha=$(printf '%s\n' "$run_json" | jq -r '.head_sha // empty')
+		[[ -n "$run_id" ]] || continue
+
+		local signature
+		signature=$(resolve_check_signature '{}' "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
+		if [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]] &&
+			signature_consumed_log_fetch "$signature"; then
+			run_logs_checked=$((run_logs_checked + 1))
+		fi
+
+		local is_infra="false" infra_reason=""
+		if [[ "$signature" == infra:* ]]; then
+			is_infra="true"
+			infra_reason="${signature#infra:}"
+		fi
+
+		emit_event_json "$repo_slug" "workflow" "${event}:${run_id}" "$html_url" \
+			"" "$head_sha" "$name" "$conclusion" \
+			"$run_id" "$html_url" "$html_url" "$completed_at" \
+			"$signature" "" "$is_infra" "$infra_reason" \
+			"[]" "[]" >>"$event_file"
 	done
 
 	printf '%s' "$run_logs_checked"
@@ -804,6 +896,17 @@ extract_failed_events_json() {
 
 		index=$((index + 1))
 	done
+
+	# Post-merge and repo-level workflow runs have no open PR, so the notification
+	# path above drops them. Mine them from the Actions runs API (GH#39228).
+	if [[ -n "$allowlist_csv" ]]; then
+		local workflow_repo
+		while IFS= read -r workflow_repo; do
+			[[ -n "$workflow_repo" ]] || continue
+			run_logs_checked=$(emit_workflow_run_events "$workflow_repo" "$since_iso" \
+				"$include_logs" "$run_logs_checked" "$max_run_logs" "$event_file")
+		done < <(printf '%s\n' "$allowlist_csv" | tr ',' '\n')
+	fi
 
 	if [[ ! -s "$event_file" ]]; then
 		printf '%s\n' '[]'
