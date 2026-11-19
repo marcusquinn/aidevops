@@ -327,19 +327,25 @@ _validator_print_failure_log() {
 }
 
 # Only the full-loop plugin gate adapts to host load; direct npm/CI runs keep
-# Node's default concurrency. Serial execution also makes any reported failure
-# reproducible without competing test files (GH#35499). Never extend budgets.
+# Node's default concurrency. Reduce contention at moderate load and serialize
+# at high load (GH#35499, GH#39133). Never extend budgets.
 _validator_plugin_test_concurrency() {
 	local concurrency=""
+	if [[ -n "${AIDEVOPS_PLUGIN_TEST_CONCURRENCY+x}" ]]; then
+		print_info "[validators] using caller-set plugin test concurrency: ${AIDEVOPS_PLUGIN_TEST_CONCURRENCY}"
+		return 0
+	fi
 	concurrency=$(node -e '
 		const os = require("node:os");
 		const cpus = typeof os.availableParallelism === "function"
 			? os.availableParallelism() : Math.max(1, os.cpus().length);
-		if (os.loadavg()[0] / cpus > 4) process.stdout.write("1");
+		const load = os.loadavg()[0] / cpus;
+		if (load > 4) process.stdout.write("1");
+		else if (load > 1.5) process.stdout.write(String(Math.max(2, Math.floor(cpus / 4))));
 	') || concurrency=1
-	if [[ "$concurrency" == "1" ]]; then
-		export AIDEVOPS_PLUGIN_TEST_CONCURRENCY=1
-		print_info "[validators] busy host or unavailable load probe: running plugin tests serially"
+	if [[ -n "$concurrency" ]]; then
+		export AIDEVOPS_PLUGIN_TEST_CONCURRENCY="$concurrency"
+		print_info "[validators] running plugin tests with concurrency ${concurrency} (host load or unavailable load probe)"
 	fi
 	return 0
 }
