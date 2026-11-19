@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.244] - 2026-11-19
+
+### Changed
+
+- Documentation: Hostinger + Ultimate Multisite subdomain SSL without a Cloudflare wildcard
+- one-command switch from a global OpenCode 2 back to stable OpenCode 1
+- Maintenance: mark t19167 complete (pr:#39277 completed:2026-11-19) (#39273)
+- Maintenance: sync ref:GH#39266 to TODO.md (#39264)
+
+### Fixed
+
+- check queued holds with a fresh retry or reply before the rearm rotation
+- refuse PR comment that would stale a verified approval
+- pin brew metadata between major guard and upgrade (#39278)
+- resolve OpenCode profile via profile document (GH#39276)
+- show holds the recovery supervisor recorded as needing a human
+- reject malformed refs before ranking and capping
+
 ## [3.39.243] - 2026-11-19
 
 ### Added
