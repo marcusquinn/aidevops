@@ -2227,17 +2227,17 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19104 fix(pulse): re-probe blocker recovery soon after a partial zero-count scan instead of waiting the full 3h interval #auto-dispatch #bug #priority:high ref:GH#39008 pr:#39009 completed:2026-11-18
 
-- [ ] t19105 fix(recovery): reserve queue budget for decided holds so replies, policy changes and retries can wake them #auto-dispatch #bug #priority:high ref:GH#39010 -> [todo/tasks/t19105-brief.md]
+- [x] t19105 fix(recovery): reserve queue budget for decided holds so replies, policy changes and retries can wake them #auto-dispatch #bug #priority:high ref:GH#39010 -> [todo/tasks/t19105-brief.md] pr:#39011 completed:2026-11-18
 
-- [ ] t19110 fix(pulse): reopened issues keep prior-lifecycle assignees and starve behind fresh work #bug #priority:high #interactive tier:standard ref:GH#39030 -> [todo/tasks/t19110-brief.md]
+- [x] t19110 fix(pulse): reopened issues keep prior-lifecycle assignees and starve behind fresh work #bug #priority:high #interactive tier:standard ref:GH#39030 -> [todo/tasks/t19110-brief.md] pr:#39035 completed:2026-11-18
 
-- [ ] t19111 fix(worktree-deps): skip Spotlight marker and tool-cache entries at node_modules root instead of rejecting the restore #auto-dispatch #bug ref:GH#39037 -> [todo/tasks/t19111-brief.md]
+- [x] t19111 fix(worktree-deps): skip Spotlight marker and tool-cache entries at node_modules root instead of rejecting the restore #auto-dispatch #bug ref:GH#39037 -> [todo/tasks/t19111-brief.md] pr:#39040 completed:2026-11-18
 
-- [ ] t19113 fix(permission-broker): allow designed bounded-operation status polls through OpenCode doom_loop instead of killing headless workers #auto-dispatch #bug ref:GH#39048 -> [todo/tasks/t19113-brief.md]
+- [x] t19113 fix(permission-broker): allow designed bounded-operation status polls through OpenCode doom_loop instead of killing headless workers #auto-dispatch #bug ref:GH#39048 -> [todo/tasks/t19113-brief.md] pr:#39061 completed:2026-11-18
 
-- [ ] t19114 fix(checkpoints): resume a continuation review worktree that is only ahead of the PR head with unpushed commits #bug #priority:high #interactive tier:standard -> [todo/tasks/t19114-brief.md] ref:GH#39069
+- [x] t19114 fix(checkpoints): resume a continuation review worktree that is only ahead of the PR head with unpushed commits #bug #priority:high #interactive tier:standard -> [todo/tasks/t19114-brief.md] ref:GH#39069 pr:#39074 completed:2026-11-18
 
-- [ ] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md]
+- [x] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md] pr:#39082 completed:2026-11-18
 
 - [ ] t19119 pulse: Bash 3.2-safe tracked-PID capacity waits in the parallel dispatch loop #auto-dispatch #bug ref:GH#39103
 
