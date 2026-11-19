@@ -98,7 +98,9 @@ complete. Parent: #P → New: #N` on the task, then closes it as completed. Keep
 clean non-default worktree, no commits ahead of the live default, no divergent
 pushed branch and no branch PR. Emit `FULL_LOOP_COMPLETE`. The classifier
 `_hrw_consolidation_terminal_complete` in `scripts/headless-runtime-worker.sh`
-checks these predicates; classification itself grants no write authority.
+checks only the task, receipt, closures, successor, labels and branch predicates;
+it does NOT verify parent comments or dependency repoints. Verify those handoffs
+yourself before emitting the marker; classification grants no write authority.
 
 ## Worker scope enforcement (t1894)
 
