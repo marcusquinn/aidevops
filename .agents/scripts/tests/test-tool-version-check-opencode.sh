@@ -377,6 +377,39 @@ tap_npm_json=$(PATH="$tap_path" "$TOOL_VERSION_CHECK" --category npm --json)
 assert_eq "brew-owned OpenCode excluded from npm category" "0" "$(printf '%s\n' "$tap_npm_json" | grep -c '"name": "OpenCode"' || true)"
 assert_eq "brew-owned OpenCode triggers no npm install" "" "$(cat "$SANDBOX/routine-freshness/calls")"
 
+printf 'Test 3f: Homebrew OpenCode 1.x is held when the formula ships OpenCode 2 (GH#39271)\n'
+held_root="$SANDBOX/held-brew"
+mkdir -p "$held_root/Cellar/opencode/1.19.6/bin" "$held_root/opt" "$held_root/brew-bin" "$held_root/local-bin"
+write_executable "$held_root/Cellar/opencode/1.19.6/bin/opencode" '#!/usr/bin/env bash
+printf "1.19.6\n"'
+ln -s "../Cellar/opencode/1.19.6" "$held_root/opt/opencode"
+write_managed_shim "$held_root/local-bin/opencode" "$held_root/Cellar/opencode/1.19.6/bin/opencode"
+# shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
+write_executable "$held_root/brew-bin/brew" '#!/usr/bin/env bash
+printf "brew %s\n" "$*" >>"'"$held_root"'/calls"
+case "$*" in
+"list --versions opencode") printf "opencode 1.19.6\n" ;;
+"--prefix opencode") printf "%s\n" "'"$held_root"'/opt/opencode" ;;
+"list --formula --full-name") printf "jq\nopencode\n" ;;
+"info --json=v2 opencode") printf "{\"formulae\":[{\"versions\":{\"stable\":\"2.3.2\"}}]}\n" ;;
+*) exit 1 ;;
+esac'
+: >"$held_root/calls"
+held_path="$held_root/local-bin:$held_root/brew-bin:$SANDBOX/routine-freshness/bin:$SYSTEM_PATH"
+held_rc=0
+held_out=$(PATH="$held_path" "$TOOL_VERSION_CHECK" --category brew --update --quiet 2>&1) || held_rc=$?
+assert_eq "held OpenCode update run exits 0" "0" "$held_rc"
+assert_eq "held OpenCode runs no brew upgrade or reinstall" "0" "$(grep -cE '^brew (upgrade|reinstall)' "$held_root/calls" || true)"
+assert_eq "held OpenCode reports the npm migration line" "1" "$([[ "$held_out" == *"brew uninstall opencode && npm install -g opencode-ai@latest"* && "$held_out" == *"held"* ]] && printf '1\n' || printf '0\n')"
+held_json=$(PATH="$held_path" "$TOOL_VERSION_CHECK" --category brew --json | grep '"name": "OpenCode"' || true)
+assert_eq "held OpenCode JSON has held_major, empty update_cmd and hold_reason" "1" "$([[ "$held_json" == *'"status": "held_major", "update_cmd": ""'* && "$held_json" == *'"hold_reason"'* ]] && printf '1\n' || printf '0\n')"
+: >"$held_root/calls"
+held_cmd=$(PATH="$held_path" bash -c 'source "$1"; aidevops_opencode_upgrade_command latest' _ "$REPO_ROOT/.agents/scripts/shared-constants.sh" 2>/dev/null || true)
+held_cmd_rc=0
+PATH="$held_path" bash -c "$held_cmd" >/dev/null 2>&1 || held_cmd_rc=$?
+assert_eq "upgrade command refuses a cross-major brew upgrade" "1" "$held_cmd_rc"
+assert_eq "refused upgrade command ran no brew upgrade" "0" "$(grep -cE '^brew (upgrade|reinstall)' "$held_root/calls" || true)"
+
 printf 'Test 4: headless guard provisions an isolated pin without changing newer general install\n'
 mkdir -p "$SANDBOX/version-guard/runtime" "$SANDBOX/version-guard/bin" "$SANDBOX/version-guard/state"
 # shellcheck disable=SC2016 # Fixture receives the exported newer_general_version.
