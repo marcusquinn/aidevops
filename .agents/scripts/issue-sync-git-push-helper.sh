@@ -95,23 +95,25 @@ issue_sync_changed_reference_numbers() {
 # GH#39217: the origin:worker identity guard (_gh_validate_pr_worker_identity)
 # requires exactly one standalone primary `For #N`. Prefer the canonical task
 # issue (`ref:GH#N`), then any `GH#N`; never a `pr:#N` unless nothing else is
-# changed. The first occurrence wins so the latest publication intent leads.
+# changed. The first positive occurrence wins so the latest publication intent
+# leads; `#0` is skipped because the identity guard only accepts `#[1-9]...`.
 issue_sync_primary_issue_number() {
 	local changed_text="$1"
 	local reference_numbers="$2"
-	local matches=""
+	local candidate=""
 	local pattern=""
-	for pattern in 'ref:GH#[0-9]+' 'GH#[0-9]+'; do
-		matches=$(grep -oE "$pattern" <<<"$changed_text" || true)
-		[[ -n "$matches" ]] || continue
-		matches="${matches%%$'\n'*}"
-		printf '%s\n' "${matches##*#}"
+	for pattern in 'ref:GH#[1-9][0-9]*' 'GH#[1-9][0-9]*'; do
+		candidate=$(grep -oE "$pattern" <<<"$changed_text" | head -n 1 || true)
+		[[ -n "$candidate" ]] || continue
+		printf '%s\n' "${candidate##*#}"
 		return 0
 	done
-	matches="${reference_numbers%%$'\n'*}"
-	[[ "$matches" =~ ^[0-9]+$ ]] || return 1
-	printf '%s\n' "$matches"
-	return 0
+	while IFS= read -r candidate; do
+		[[ "$candidate" =~ ^[1-9][0-9]*$ ]] || continue
+		printf '%s\n' "$candidate"
+		return 0
+	done <<<"$reference_numbers"
+	return 1
 }
 
 issue_sync_pr_linkage() {
