@@ -716,6 +716,7 @@ run_normalize_with_kill_in() {
 		}
 		_normalize_reassign_self() { record_pass reassign_self; return 0; }
 		_normalize_unassign_stale() { record_pass unassign_stale; return 0; }
+		_normalize_unassign_available_stale() { record_pass unassign_available_stale; return 0; }
 		_normalize_unassign_stampless_interactive() { record_pass unassign_stampless_interactive; return 0; }
 		_normalize_label_invariants() { record_pass label_invariants; return 0; }
 		normalize_active_issue_assignments
@@ -726,7 +727,7 @@ run_normalize_with_kill_in() {
 run_normalize_with_kill_in reassign_self
 run_normalize_with_kill_in unassign_stale
 run_normalize_with_kill_in none
-EXPECTED_PASS_LOG="reassign_self | unassign_stale | unassign_stampless_interactive label_invariants reassign_self unassign_stale | "
+EXPECTED_PASS_LOG="reassign_self | unassign_stale | unassign_available_stale unassign_stampless_interactive label_invariants reassign_self unassign_stale | "
 if [[ "$(cat "$PASS_LOG" 2>/dev/null)" == "$EXPECTED_PASS_LOG" ]]; then
 	print_result "normalize passes rotate after a stage timeout instead of starving later passes" 0
 else
