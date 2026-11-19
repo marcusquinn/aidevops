@@ -209,6 +209,11 @@ _pr_handoff_state_is_completion_candidate() {
 	[[ "$pr_state" == "ready" || "$pr_state" == "merged" ]]
 }
 
+# GH#39205: the deterministic merge closeout (pulse-merge-pr-closeout.sh,
+# _pm_upsert_pr_closing_comment) rewrites the worker's MERGE_SUMMARY singleton
+# in place under its own per-PR marker and strips the summary marker. That
+# closeout marker is the post-merge form of the same summary; without it every
+# pulse-merged worker PR read back as merged_missing_summary (a false failure).
 _pr_handoff_has_merge_summary() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -218,7 +223,10 @@ _pr_handoff_has_merge_summary() {
 	comments_json=$(gh api --paginate --slurp \
 		"repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null) || return 1
 	summary_count=$(printf '%s' "$comments_json" | jq -r \
-		'[.[][] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null) || return 1
+		--arg summary_marker '<!-- MERGE_SUMMARY -->' \
+		--arg closeout_marker "<!-- PULSE_MERGE_CLOSEOUT:PR#${pr_number} -->" \
+		'[.[][] | (.body // "") | select(contains($summary_marker) or contains($closeout_marker))] | length' \
+		2>/dev/null) || return 1
 	[[ "$summary_count" =~ ^[0-9]+$ && "$summary_count" -gt 0 ]]
 }
 
