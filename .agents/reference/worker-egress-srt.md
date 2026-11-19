@@ -27,12 +27,15 @@ that package directory. Run `npm audit --omit=dev` there, not at the repo root.
 Node >=22.12 is required. The package includes architecture-specific static
 seccomp helpers; no local build or install scripts are needed.
 
-**Known dependency finding, 2026-11-16:** npm audit reports high-severity
-GHSA-mrhx-c7xc-m3w5 (Zod collection-validation memory exhaustion) through
-`zod@3.25.76`; no compatible automatic fix is reported. SRT imports `zod/v3`.
-Do not suppress the advisory or blindly override to Zod 4. The adapter bounds
-configuration files to 32 KiB and path lists to 64, but this is not a completed
-reachability/remediation review of SRT. This remains a production-release blocker.
+**Dependency finding, 2026-11-16, resolved by override:** npm audit reported
+high-severity GHSA-mrhx-c7xc-m3w5 (Zod collection-validation memory exhaustion)
+through `zod@3.25.76`. GH#39020 (#39021) pinned `overrides: { zod: "4.6.6" }`,
+and `npm audit --omit=dev` now reports 0 vulnerabilities. SRT imports `zod/v3`,
+which loaded through Zod 4's compatibility subpath during real probes on macOS
+(2026-11-19). **Remaining risk:** that compatibility layer has only been
+exercised by synthetic probes, not by real workloads. Do not suppress advisories
+and re-audit at every SRT bump. The adapter bounds configuration files to 32 KiB
+and path lists to 64, but this is not a completed reachability review of SRT.
 
 ## Operator-owned filesystem envelope
 
@@ -100,7 +103,7 @@ credential rewriting. It is not a ready-to-use model-client launch command.
 | Ubuntu/Linux x64 | Explicit bwrap/socat, namespaces, shipped seccomp helper, strict host-side proxy | Real synthetic checks run on Ubuntu 24.04.5, bwrap 0.9.0; see below |
 | NixOS x64 | Same Linux backend; tools resolved to explicit immutable store paths, no `/usr/bin/bwrap` assumption | Real synthetic checks run on NixOS 26.05, kernel 6.18.60, bubblewrap 0.12.0, socat 1.8.1.3, no AppArmor profile needed; see below |
 | NixOS arm64 | Same Linux backend | No host execution yet; do not infer from x64 |
-| macOS x64/arm64 | SRT Seatbelt profile with explicit Mach-service allows removed, IPC grants narrowed, no Apple Events / local binding / weaker isolation | Profile-shape unit checks only; no macOS host execution yet; DNS/process-tree qualification remains open |
+| macOS x64/arm64 | SRT Seatbelt profile with explicit Mach-service allows removed, IPC grants narrowed, no Apple Events / local binding / weaker isolation | macOS arm64: real synthetic check run 2026-11-19 (macOS 26.6.2, SRT 0.0.83, 13/13 canaries true); readiness hold `macos-dns-and-ipc-qualification-pending` retained. macOS x64: profile-shape unit checks only, no host execution. DNS/IPC review and process-tree qualification remain open; not qualified |
 
 ### Ubuntu / other Linux
 
@@ -165,6 +168,49 @@ Even if its limited canaries pass, the macOS adapter currently returns
 environment-variable bypass. The implementation path is prepared; usable macOS
 containment is **not delivered** until review and actual host verification close
 that gate. The macOS test expects this specific hold, not an arbitrary failure.
+
+**macOS arm64 real synthetic check, 2026-11-19:** macOS 26.6.2, SRT 0.0.83,
+13 of 13 canaries true. The backend still returned the deliberate
+`macos-dns-and-ipc-qualification-pending` hold (`ready: false`). arm64 is
+evidenced; x64 is not. The DNS and inherited-IPC review is still open, so this
+does not qualify macOS.
+
+**Homebrew closure guidance.** Homebrew `bash`, `python3` and `rg` need their
+dependent kegs in `read`. For Python this includes the `lib-dynload`
+dependencies (openssl, mpdecimal, sqlite, xz, zstd), because the proxy canary
+needs `_ssl`.
+
+dyld loads libraries through `/opt/homebrew/opt/<keg>` symlinks.
+`loadEnvelope()` realpaths every `read` entry
+(`.agents/scripts/worker-egress-srt/backend.mjs:97`), and SRT re-allows
+`file-read-metadata` only for directories
+(`node_modules/@anthropic-ai/sandbox-runtime/dist/sandbox/macos-sandbox-utils.js:667`).
+Together these deny each link node unless the real directory
+`/opt/homebrew/opt` is granted. That grant exposes link names and targets only,
+not keg contents. It discloses which packages are installed, so it needs review
+approval before any real use.
+
+Without the closure the probe fails with `primitive-check-failed` and **no**
+recorded checks, because the backend deliberately withholds sandbox stderr. This
+is easy to misread as a sandbox defect. Shape used on 2026-11-19 (12 kegs plus
+the link directory; versions are placeholders):
+
+```bash
+AIDEVOPS_SRT_TEST_READ='[
+  "/opt/homebrew/Cellar/bash/<version>",
+  "/opt/homebrew/Cellar/python@<version>/<version>",
+  "/opt/homebrew/Cellar/ripgrep/<version>",
+  "/opt/homebrew/Cellar/openssl@<version>/<version>",
+  "/opt/homebrew/Cellar/mpdecimal/<version>",
+  "/opt/homebrew/Cellar/sqlite/<version>",
+  "/opt/homebrew/Cellar/xz/<version>",
+  "/opt/homebrew/Cellar/zstd/<version>",
+  "/opt/homebrew/Cellar/<other-dependent-keg>/<version>",
+  "/opt/homebrew/Cellar/<other-dependent-keg>/<version>",
+  "/opt/homebrew/Cellar/<other-dependent-keg>/<version>",
+  "/opt/homebrew/Cellar/<other-dependent-keg>/<version>",
+  "/opt/homebrew/opt"
+]'
 
 ## Checks and scope of a readiness result
 
@@ -231,8 +277,8 @@ the DNS and inherited-Mach-IPC boundary is reviewed, so a passing macOS canary
 run would not qualify the platform either. Qualifying NixOS x64 does not qualify
 NixOS arm64.
 
-Still required: actual macOS runtime evidence; NixOS arm64 evidence; macOS DNS
-and inherited-IPC review; the dependency-advisory disposition; proxy resolved-address/redirect and
+Still required: macOS x64 evidence; NixOS arm64 evidence; macOS DNS
+and inherited-IPC review; proxy resolved-address/redirect and
 protocol bypass qualification; independent review of filesystem composition;
 hostile descendant cancellation/timeout verification on each platform; separately
 reviewed provider endpoint/method probe; minimal credential handling and an
