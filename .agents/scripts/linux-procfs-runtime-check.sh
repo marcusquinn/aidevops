@@ -29,6 +29,7 @@ BOOTSTRAP='command -v python3 >/dev/null 2>&1 || { apt-get update -qq >/dev/null
 # Container-side script for --sudo-session (runs as root; $1 = uid, tree at /tree).
 # Recorder log is world-writable because the kicked process runs as the real user.
 read -r -d '' SUDO_SESSION_SCRIPT <<'SUDO_SESSION_EOF' || true
+set -euo pipefail
 uid="${1}"
 run_dir="/run/user/${uid}"
 bus_path="${run_dir}/bus"
@@ -44,7 +45,7 @@ if [ -n "$need" ]; then
 	}
 fi
 useradd -m -u "$uid" -s /bin/bash alice
-printf 'alice ALL=(ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/alice
+printf 'Defaults:alice !secure_path\nalice ALL=(ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/alice
 chmod 440 /etc/sudoers.d/alice
 mkdir -p "$run_dir"
 chown alice "$run_dir"
@@ -60,13 +61,12 @@ for _ in $(seq 1 50); do
 done
 [ -S "$bus_path" ] || { echo "session bus socket was not created" >&2; exit 3; }
 chown alice "$bus_path"
-LOG=/var/tmp/kick-recorder.log
 user_home="$(getent passwd alice | cut -d: -f6)"
 agents_dir="${user_home}/.aidevops/agents/scripts"
 mkdir -p /opt/rec/bin "$agents_dir"
 cat >/opt/rec/record.sh <<'REC'
 #!/bin/sh
-LOG=/var/tmp/kick-recorder.log
+LOG="$(cat /opt/rec/logpath)"
 tag="${1}"
 {
 	printf '%s: user=%s args=[%s]\n' "$tag" "$(id -un)" "${2}"
@@ -78,10 +78,16 @@ printf '#!/bin/sh\nexec /opt/rec/record.sh pulse "$*"\n' >"${agents_dir}/pulse-w
 printf '#!/bin/sh\n/opt/rec/record.sh systemctl "$*"\nexit 0\n' >/opt/rec/bin/systemctl
 chmod 755 /opt/rec/record.sh /opt/rec/bin/systemctl "${agents_dir}/pulse-wrapper.sh"
 chown -R alice "${user_home}/.aidevops"
+case_n=0
 run_case() {
 	local name="$1" fn="$2" pfx="$3" waited
+	# Per-case log: a late kick from an earlier case cannot pollute later output.
+	case_n=$((case_n + 1))
+	LOG="/var/tmp/kick-recorder-${case_n}.log"
 	: >"$LOG"
 	chmod 666 "$LOG"
+	printf '%s\n' "$LOG" >/opt/rec/logpath
+	chmod 644 /opt/rec/logpath
 	printf 'export PATH="%s:$PATH"\nsource /tree/.agents/scripts/approval-helper.sh\n%s\n' "$pfx" "$fn" >/opt/rec/case.sh
 	chmod 644 /opt/rec/case.sh
 	printf '## case: %s\n' "$name"
@@ -93,6 +99,8 @@ run_case() {
 	done
 	sleep 0.5
 	if [ -s "$LOG" ]; then cat "$LOG"; else printf '(no kick observed)\n'; fi
+	# Drain: stop any kick still running so it cannot record into the next case.
+	pkill -KILL -u alice || true
 }
 printf 'fixture: sudo user=alice uid=%s bus=%s\n' "$uid" "$bus_path"
 run_case "permission kick, spawn fallback" "_kick_pulse_after_permission_approval" "/usr/bin"
