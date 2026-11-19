@@ -2314,7 +2314,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19167 fix(decisions): holds the recovery supervisor marked as needing a human never reach /decisions #bug ref:GH#39275 pr:#39277 completed:2026-11-19
 
-- [ ] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md]
+- [x] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md] pr:#39286 completed:2026-11-19
 
 - [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
 
