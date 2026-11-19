@@ -51,30 +51,26 @@ if args.retries < 0:
 
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 os.chdir(root)
-changed = []
-if args.command != "all":
-    merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
-    # Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
-    changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
-    changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
+if args.command == "all":
+    args.base = "HEAD"  # t19150: no base comparison; keeps the git calls below unchanged
+merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
+# Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
+changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
+changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
+if args.command == "all":
+    changed = []
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))
 test_bytes = {str(t.relative_to(root)): t.read_bytes() for t in tests}
 source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
 script_token = re.compile(r"[A-Za-z0-9_.-]+\.sh")
-
-
-def read_lines(path):
-    return path.read_text(errors="replace").splitlines()
-
-
 # GH#39221: reverse sourcing graph over production scripts (sourced -> sourcers),
 # so a changed shared library also selects suites naming its transitive consumers.
 scripts = [p for p in sorted(root.glob(".agents/scripts/*.sh")) if p.is_file()]
 script_names = {p.name for p in scripts}
 consumers = {}
 for script in scripts:
-    for line in read_lines(script):
+    for line in script.read_text(errors="replace").splitlines():
         match = source_line.match(line)
         if match:
             for token in set(script_token.findall(match.group(1))):
@@ -126,7 +122,7 @@ selected = set(distance)
 sourcers = {}
 for test in tests:
     rel = str(test.relative_to(root))
-    for line in read_lines(test):
+    for line in test.read_text(errors="replace").splitlines():
         match = source_line.match(line)
         if not match:
             continue
@@ -161,7 +157,7 @@ if args.command == "all":
     # Dual-use suites (sourced AND runnable: top-level main/exit or a BASH_SOURCE guard) stay.
     standalone = re.compile(r"^(?:main\b|exit\b)|BASH_SOURCE\[0\]", re.M)
     ordered = [str(t.relative_to(root)) for t in tests
-               if str(t.relative_to(root)) not in sourcers or standalone.search("\n".join(read_lines(t)))]
+               if str(t.relative_to(root)) not in sourcers or standalone.search("\n".join(t.read_text(errors="replace").splitlines()))]
     args.max = max(args.max, len(ordered))
     args.compare_base = False
     resolved = {suite: (False, 0, 0) for suite in ordered}
