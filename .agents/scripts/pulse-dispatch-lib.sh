@@ -1172,6 +1172,9 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
+		# t19116: a timed-out candidate may already have launched. Report the
+		# raw state so its launch slot stays held (block reporting returns 1).
+		[[ "$dispatch_rc" -ne 124 ]] || _DISPATCH_SETTLE_RC=124
 		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return $?
@@ -1185,6 +1188,9 @@ _dispatch_process_candidate() {
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+		# t19116: a submitted launch (e.g. an unconfirmed systemd unit) can still
+		# start, so its launch state is unknown and the slot stays held this round.
+		_DISPATCH_SETTLE_RC=124
 		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_stats_increment "dispatch_worker_launch_failed"
 		_dispatch_record_launch_failure
@@ -1826,10 +1832,11 @@ _dispatch_max_spawn_candidate() {
 	local self_login="$2"
 	local available_slots="$3"
 	local outcomes_file="$4"
-	local _rc=0 _DISPATCH_DEFER_REASON=""
+	local _rc=0 _DISPATCH_DEFER_REASON="" _DISPATCH_SETTLE_RC=""
 
 	_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
-	_dispatch_settle_candidate_launch_slot "$candidate_json" "$_rc"
+	# t19116: an unknown launch state (124) overrides the reported result.
+	_dispatch_settle_candidate_launch_slot "$candidate_json" "${_DISPATCH_SETTLE_RC:-$_rc}"
 	_dispatch_record_candidate_outcome "$candidate_json" "$_rc" "$outcomes_file"
 	return $?
 }

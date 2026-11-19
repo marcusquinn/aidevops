@@ -719,6 +719,64 @@ test_claim_slot_and_lock_contract() {
 	return 0
 }
 
+# t19116: through the real _dispatch_process_candidate and block reporting
+# (which returns 1 for every non-deferral), a timeout or a failed launch
+# validation leaves the launch state unknown and keeps the slot held; a
+# confirmed pre-spawn failure releases it.
+test_spawn_candidate_unknown_launch_state_keeps_slot() {
+	local rc=0
+	(
+		unset _PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED
+		# shellcheck source=../pulse-dispatch-lib.sh
+		source "${SCRIPT_DIR}/pulse-dispatch-lib.sh" || exit 1
+		TEST_DISPATCH_RC=0
+		TEST_LAUNCH_RC=0
+		# shellcheck disable=SC2317  # stubs called by the real candidate path
+		{
+			_dispatch_prefilter_owned_candidate() { return 1; }
+			_dispatch_skip_for_sealed_generation() { return 1; }
+			_dispatch_skip_for_capability_cooldown() { return 1; }
+			_dispatch_skip_for_footprint_defer() { return 1; }
+			_dispatch_should_skip_candidate() { return 1; }
+			pulse_dispatch_debug_log() { return 0; }
+			resolve_dispatch_model_for_labels() { return 0; }
+			_dispatch_concurrency_caps_allow() { return 0; }
+			_pulse_refresh_repo() { return 0; }
+			_dispatch_attempt_recency_stamp() { return 0; }
+			_dispatch_attempt_recency_clear() { return 0; }
+			_dispatch_release_attempt_reservations() { return 0; }
+			_dispatch_record_nonzero_dispatch_result() { return 0; }
+			_dispatch_cache_confirmed_block() { return 0; }
+			_dispatch_stats_increment() { return 0; }
+			_dispatch_record_launch_failure() { return 0; }
+			_dispatch_with_timeout() {
+				_dispatch_launch_slot_acquire "$1" "$2" || return 75
+				return "$TEST_DISPATCH_RC"
+			}
+			check_worker_launch() { return "$TEST_LAUNCH_RC"; }
+		}
+		local outcomes candidate case_spec dispatch_rc launch_rc expected_taken
+		outcomes=$(mktemp) || exit 1
+		candidate='{"number":840,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}'
+		for case_spec in "124 0 1" "0 1 1" "2 0 0" "0 0 1"; do
+			read -r dispatch_rc launch_rc expected_taken <<<"$case_spec"
+			TEST_DISPATCH_RC="$dispatch_rc"
+			TEST_LAUNCH_RC="$launch_rc"
+			_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init 1) || exit 1
+			_dispatch_max_spawn_candidate "$candidate" me 1 "$outcomes" >/dev/null 2>&1
+			[[ "$(_dispatch_launch_slots_taken)" == "$expected_taken" ]] || {
+				printf 'case=%s taken=%s\n' "$case_spec" "$(_dispatch_launch_slots_taken)" >&2
+				exit 1
+			}
+			rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
+		done
+		rm -f "$outcomes"
+		exit 0
+	) || rc=1
+	print_result "spawn_candidate: timeout or failed launch validation keeps the slot; pre-spawn failure releases it" "$rc"
+	return 0
+}
+
 test_parallel_loop_stop_flag_aborts() {
 	# Stub: pre-create the STOP flag so the first candidate aborts the loop
 	# shellcheck disable=SC2317  # called via name resolution from loop
@@ -1839,6 +1897,7 @@ test_parallel_loop_all_rejections_finish
 test_parallel_loop_launch_slot_gate_one_slot
 test_parallel_loop_launch_slot_failed_holder_releases
 test_claim_slot_and_lock_contract
+test_spawn_candidate_unknown_launch_state_keeps_slot
 test_parallel_loop_stop_flag_aborts
 test_parallel_loop_graphql_budget_aborts
 test_parallel_loop_rest_budget_aborts

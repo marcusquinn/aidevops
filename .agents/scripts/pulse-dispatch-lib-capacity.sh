@@ -1739,8 +1739,9 @@ _dispatch_launch_slot_acquire() {
 	return 1
 }
 
-# Keep the slot for a launch (rc 0) or an unknown launch state (rc 124, the
-# per-candidate timeout kill); release it otherwise. A success that never
+# Keep the slot for a launch (rc 0) or an unknown launch state (rc 124: the
+# per-candidate timeout kill, or failed launch validation after a submitted
+# spawn, reported via _DISPATCH_SETTLE_RC); release it otherwise. A success that never
 # acquired (a launch path outside _dlw_claim_slot_and_lock) still takes an
 # overflow slot, so the loop stops instead of launching past the budget.
 # Args: issue number, repo slug, candidate return code
