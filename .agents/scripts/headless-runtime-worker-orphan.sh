@@ -22,6 +22,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Placeholder for manual-recovery comments when the shared PR-base resolver
+# cannot name a base: an explicit marker, never a guessed `main` (GH#39167).
+_HRW_ORPHAN_UNRESOLVED_BASE="<pr-base-branch>"
+
 # =============================================================================
 # Orphan handling
 # =============================================================================
@@ -96,11 +100,14 @@ _handle_worker_branch_orphan() {
 	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
 	local ahead_count=0
 	local base_branch=""
-	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+	# The shared resolver fails closed (returns 1) when no base is known
+	# (GH#39167); under errexit a bare assignment would abort claim release and
+	# the ops comment (GH#39209). The count is diagnostic only.
+	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir") || base_branch=""
 	local rev_output=""
 	# Fallback to master only when the primary ref is MISSING (non-zero exit),
 	# not when the count happens to be zero (worker exited on default branch).
-	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..HEAD" 2>/dev/null); then
+	if [[ -n "$base_branch" ]] && rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..HEAD" 2>/dev/null); then
 		ahead_count=$rev_output
 	else
 		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || echo 0)
@@ -126,7 +133,8 @@ _handle_worker_branch_orphan() {
 			local _orphan_key="${repo_slug}#${issue_number}#${branch_name}#worker_branch_orphan"
 			local _orphan_base_branch="main"
 			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
-				_orphan_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+				_orphan_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir") ||
+					_orphan_base_branch="$_HRW_ORPHAN_UNRESOLVED_BASE"
 			fi
 			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
 			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually against the configured PR base branch:\n\n```\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
@@ -169,9 +177,9 @@ _handle_worker_local_branch_unpushed() {
 	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
 	local ahead_count=0
 	local base_branch=""
-	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir") || base_branch=""
 	local rev_output=""
-	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..${head_ref}" 2>/dev/null); then
+	if [[ -n "$base_branch" ]] && rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..${head_ref}" 2>/dev/null); then
 		ahead_count=$rev_output
 	else
 		local fallback_base_ref="origin/""master"
@@ -198,7 +206,8 @@ _handle_worker_local_branch_unpushed() {
 			local _local_base_branch="main"
 			local _local_head_ref="HE""AD"
 			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
-				_local_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+				_local_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir") ||
+					_local_base_branch="$_HRW_ORPHAN_UNRESOLVED_BASE"
 			fi
 			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
 			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-local-branch-unpushed:key=%s -->\nWORKER_LOCAL_BRANCH_UNPUSHED branch=%s session=%s ts=%s\n\nThis worker committed local changes on branch `%s`, but no remote branch or PR could be confirmed and automatic recovery failed. To recover, inspect the worker worktree, push the local branch, then open a PR manually against the configured PR base branch:\n\n```\ngit -C %s push origin %s:%s\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \

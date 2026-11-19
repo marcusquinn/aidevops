@@ -357,12 +357,16 @@ runtime_temp_test_mode() {
 
 test_runtime_temp_files_bypass_group_writable_workspace() {
 	local workspace_root="${HOME}/.aidevops/.agent-workspace"
-	local detail=""
+	local detail="" prior_mode="" status=0
 	mkdir -p "${workspace_root}/tmp"
+	prior_mode=$(runtime_temp_test_mode "$workspace_root")
 	chmod 775 "$workspace_root"
 	chmod 700 "${workspace_root}/tmp"
 
-	if detail=$(
+	# GH#39209: restore the fixture workspace mode before returning. A leaked
+	# group-writable workspace makes worker-lifecycle admission reject every
+	# later launch in this suite (filesystem-path-externally-writable, exit 75).
+	detail=$(
 		unset AIDEVOPS_SENSITIVE_TEMP_DIR
 		export AIDEVOPS_TEMP_DIR="${workspace_root}/tmp"
 		local temp_file="" sensitive_root=""
@@ -374,7 +378,10 @@ test_runtime_temp_files_bypass_group_writable_workspace() {
 		[[ "$(runtime_temp_test_mode "$temp_file")" == "600" ]] || exit 5
 		rm -f "$temp_file"
 		printf 'root=%s workspace_mode=%s\n' "$sensitive_root" "$(runtime_temp_test_mode "$workspace_root")"
-	); then
+	) || status=$?
+	chmod "$prior_mode" "$workspace_root"
+
+	if [[ "$status" -eq 0 ]]; then
 		print_result "runtime temp creation bypasses a group-writable aidevops workspace" 0
 		return 0
 	fi
