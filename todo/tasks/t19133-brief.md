@@ -21,7 +21,7 @@
 
 ## What
 
-A deferrable stage starved longer than `AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S` (default 14400s; 0 disables) may borrow the same capped dispatch-reserve slice (GH#38840) that starved critical stages already use.
+A deferrable stage starved longer than `AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S` (default 7200s, twice the critical bound; 0 disables) may borrow the same capped dispatch-reserve slice (GH#38840) that starved critical stages already use. A deferrable stage that has never started measures the bound from its first deferral (a `<stage>.first_deferral` marker, cleared on start), so a fresh or wiped state dir cannot let every deferrable stage take the slice at once.
 
 ## Why
 
@@ -31,8 +31,8 @@ Retained `pulse.log` from 2026-11-13T02:59Z (6 days): `dirty_pr_sweep` has 0 `St
 
 ### Files to Modify
 
-- `EDIT: .agents/scripts/pulse-watchdog.sh` — `_pulse_stage_reserve_borrow_budget` admits `deferrable` and prints `<borrow> <bound>`; `_pulse_stage_starvation_fuse` takes the bound as an optional 5th argument; `_pulse_stage_cycle_timeout` passes both.
-- `EDIT: .agents/scripts/tests/test-pulse-dispatch-engine-stage-wiring.sh` — `assert_stage_reserve_borrow_contract` covers the deferrable bound, its 0 override and a borrowed grant.
+- `EDIT: .agents/scripts/pulse-watchdog.sh` — `_pulse_stage_reserve_borrow_budget` admits `deferrable` and prints `<borrow> <bound>` (critical: `<borrow>`); `_pulse_stage_starvation_fuse` takes the deferrable bound as an optional 5th argument and anchors never-started deferrable stages at their first deferral; `_pulse_stage_note_start` clears that marker; `_pulse_stage_cycle_timeout` splits the helper output with `read`.
+- `EDIT: .agents/scripts/tests/test-pulse-dispatch-engine-stage-wiring.sh` — `assert_stage_reserve_borrow_contract` covers progress refusal, first-deferral anchoring and marker cleanup, the deferrable bound, its 0 override and borrowed grants.
 
 ### Hazards
 
@@ -43,7 +43,8 @@ Retained `pulse.log` from 2026-11-13T02:59Z (6 days): `dirty_pr_sweep` has 0 `St
 
 - [x] `bash .agents/scripts/tests/test-pulse-dispatch-engine-stage-wiring.sh` passes (99/0); without the watchdog change the borrow contract fails.
 - [x] ShellCheck clean on both files.
-- [ ] After deploy, `rg 'Stage start: dirty_pr_sweep' ~/.aidevops/logs/pulse.log` shows a start within a few cycles and `dirty-pr-sweep-last-run` is refreshed.
+- [x] Independent review: the never-started bypass it found is fixed by first-deferral anchoring.
+- [ ] After deploy, `rg 'Stage start: dirty_pr_sweep' ~/.aidevops/logs/pulse.log` shows a start within about 2h of the first deferral, and `dirty-pr-sweep-last-run` is refreshed.
 
 ## Relevant Files
 
