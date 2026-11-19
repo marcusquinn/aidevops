@@ -26,8 +26,19 @@ export function flushTransportOnExit(transport) {
   const proc = transport.proc;
   transport.proc = null;
   if (proc) {
-    try { proc.stdin.end(); } catch { /* already dead */ }
+    if (transport.processing && transport.inflightSql && !transport.inflightFlushed) {
+      // The write has not fully reached the child (e.g. larger than pipe
+      // capacity): exit would drop its unflushed suffix, including the
+      // terminator, so the statement cannot have executed. Kill the child and
+      // replay it once synchronously.
+      try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+      pending.unshift(transport.inflightSql);
+    } else {
+      try { proc.stdin.end(); } catch { /* already dead */ }
+    }
   }
+  transport.inflightSql = null;
+  transport.inflightFlushed = true;
   if (pending.length > 0) {
     try {
       execFileSync("sqlite3", ["-cmd", `.timeout ${EXIT_FLUSH_TIMEOUT_MS}`, transport.dbPath], {

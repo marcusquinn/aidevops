@@ -36,6 +36,8 @@ export function transportFor(path) {
       queue: [],
       processing: false,
       currentCallback: null,
+      inflightSql: null,
+      inflightFlushed: true,
       stdoutBuffer: "",
       owners: 0,
       closeWhenIdle: false,
@@ -189,8 +191,12 @@ export function drainQueue(transport) {
   transport.processing = true;
   const { sql, callback } = transport.queue.shift();
   transport.currentCallback = callback;
+  transport.inflightSql = sql;
+  transport.inflightFlushed = false;
   try {
-    transport.proc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`);
+    transport.proc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`, () => {
+      if (transport.inflightSql === sql) transport.inflightFlushed = true;
+    });
   } catch (error) {
     finishCurrent(transport, error, "");
     drainQueue(transport);
