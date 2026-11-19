@@ -693,6 +693,89 @@ _worker_briefed_permanent_block_file() {
 }
 
 #######################################
+# Close a PR whose only issue link is non-closing (For/Ref) to an issue closed
+# as completed, when merging it can never add value (GH#39213):
+#   1. zero diff at the pinned head (main already has the change), or
+#   2. stale planning row: every file is TODO.md or todo/**/*.md, nothing is
+#      deleted, and the diff adds open task rows only for that issue's task.
+# Fail closed: any API error, non-completed close, moved head, truncated or
+# non-planning diff returns 1 and leaves the PR to the GH#38496 label path.
+#
+#aidevops:trust-boundary — closes only on head-bound evidence read twice.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=linked issue number
+# Returns: 0=PR closed, 1=not retired
+#######################################
+_worker_briefed_retire_stale_non_closing_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local issue_tsv state state_reason closed_at title task_id
+	local head_before head_after head_now files_json file_count paths path pr_api files_api
+	local verdict evidence added_rows bad_rows
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ && -n "$repo_slug" ]] || return 1
+	pr_api="repos/${repo_slug}/pulls"
+	pr_api+="/${pr_number}"
+	files_api="${pr_api}/files?per_page=100"
+	issue_tsv=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+		--jq '[.state, (.state_reason // ""), (.closed_at // ""), (.title // "")] | @tsv' 2>/dev/null) || return 1
+	IFS=$'\t' read -r state state_reason closed_at title <<<"$issue_tsv"
+	[[ "$state" == "closed" && "$state_reason" == "completed" ]] || return 1
+
+	head_before=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_before" =~ ^[0-9a-f]{40}$ ]] || return 1
+	if [[ -n "${WORKER_BRIEFED_EXPECTED_HEAD:-}" && "$head_before" != "$WORKER_BRIEFED_EXPECTED_HEAD" ]]; then
+		return 1
+	fi
+	files_json=$(gh api "${files_api}" 2>/dev/null) || return 1
+	head_after=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_after" == "$head_before" ]] || return 1
+	file_count=$(printf '%s' "$files_json" | jq -r 'arrays | length' 2>/dev/null) || return 1
+	[[ "$file_count" =~ ^[0-9]+$ ]] || return 1
+
+	if [[ "$file_count" -eq 0 ]]; then
+		verdict="empty-diff"
+		evidence="the pull request files list is empty at head ${head_before:0:12}, so the default branch already contains this change"
+	else
+		[[ "$file_count" -le "$_PM_PLANNING_CHECKPOINT_MAX_FILES" ]] || return 1
+		paths=$(printf '%s' "$files_json" | jq -r '.[] | (.filename // ""), (.previous_filename // empty)' 2>/dev/null) || return 1
+		while IFS= read -r path; do
+			case "$path" in
+			TODO.md | todo/*.md) ;;
+			*) return 1 ;;
+			esac
+		done <<<"$paths"
+		# Planning rows must be pure additions with an inline patch.
+		printf '%s' "$files_json" | jq -e 'all(.[]; (.deletions // 0) == 0 and ((.patch // "") != "") and (.status == "added" or .status == "modified"))' >/dev/null 2>&1 || return 1
+		task_id=$(printf '%s' "$title" | sed -nE 's/^(t[0-9]+)[: ].*/\1/p')
+		[[ -n "$task_id" ]] || return 1
+		added_rows=$(printf '%s' "$files_json" | jq -r '.[].patch' 2>/dev/null | grep -E '^\+[[:space:]]*- \[ \] ') || return 1
+		[[ -n "$added_rows" ]] || return 1
+		bad_rows=$(printf '%s\n' "$added_rows" | grep -Ev "(^|[^A-Za-z0-9])(${task_id}|GH#${linked_issue}|#${linked_issue})([^0-9]|$)") || true
+		[[ -z "$bad_rows" ]] || return 1
+		verdict="stale-planning-row"
+		evidence="every changed file is TODO.md or todo markdown and the diff only adds open task rows for ${task_id} (issue #${linked_issue}), which already finished"
+	fi
+
+	# Re-read the head immediately before closing; a push in between keeps it open.
+	head_now=$(gh api "${pr_api}" --jq '.head.sha // ""' 2>/dev/null) || return 1
+	[[ "$head_now" == "$head_before" ]] || return 1
+
+	if gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing (${verdict}): this PR references issue #${linked_issue} with a non-closing keyword (For/Ref), and that issue closed as completed at ${closed_at}. Evidence: ${evidence}. Merging would not add anything the default branch needs. Reopen and relink with \`Resolves #${linked_issue}\` if this was closed in error.
+
+_Closed by deterministic merge pass stale non-closing PR retirement (GH#39213)._" \
+		>/dev/null 2>&1; then
+		if declare -F _pulse_merge_invalidate_pr_list_cache >/dev/null 2>&1; then
+			_pulse_merge_invalidate_pr_list_cache "$repo_slug" "closed stale non-closing PR #${pr_number}"
+		fi
+		echo "[pulse-merge] worker-briefed: closed PR #${pr_number} in ${repo_slug} (${verdict}) non-closing reference to completed issue #${linked_issue} at head ${head_before:0:12} (GH#39213)" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Post one idempotent PR comment and add a discoverable label for a PR whose
 # non-closing reference points at a not-open issue. Comment is keyed by marker
 # and deduped against existing PR comments; it never grants merge authority.
@@ -708,6 +791,11 @@ _worker_briefed_flag_not_open_reference() {
 	local reason="" existing="" body_file=""
 	[[ "${DRY_RUN:-0}" != "1" ]] || return 0
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ ]] || return 0
+	# Retire PRs that can never land (empty diff, stale planning row) instead
+	# of labelling them forever; any other shape falls through (GH#39213).
+	if _worker_briefed_retire_stale_non_closing_pr "$pr_number" "$repo_slug" "$linked_issue"; then
+		return 0
+	fi
 	existing=$(gh api --paginate --slurp "repos/${repo_slug}/issues/${pr_number}/comments?per_page=100" 2>/dev/null |
 		jq -r --arg m "$marker" '.[][] | select((.body // "") | contains($m)) | .id' 2>/dev/null) || existing=""
 	if [[ -n "$existing" ]]; then
