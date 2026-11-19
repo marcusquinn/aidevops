@@ -69,7 +69,7 @@ issue_sync_pr_commit_message() {
 	return 0
 }
 
-issue_sync_changed_reference_numbers() {
+issue_sync_changed_text() {
 	local base_file="$1"
 	local candidate_file="$2"
 	local commit_msg="$3"
@@ -79,24 +79,46 @@ issue_sync_changed_reference_numbers() {
 	if [[ "$diff_rc" -ne 0 && "$diff_rc" -ne 1 ]]; then
 		return 1
 	fi
-	{
-		printf '%s\n' "$commit_msg"
-		printf '%s\n' "$diff_output"
-	} | grep -oE '(ref:GH#|pr:#|GH#|PR[[:space:]]+#[0-9]+)[0-9]*' |
+	printf '%s\n%s\n' "$commit_msg" "$diff_output"
+	return 0
+}
+
+issue_sync_changed_reference_numbers() {
+	local changed_text="$1"
+	printf '%s\n' "$changed_text" |
+		grep -oE '(ref:GH#|pr:#|GH#|PR[[:space:]]+#[0-9]+)[0-9]*' |
 		grep -oE '[0-9]+' |
 		sort -nu || true
 	return 0
 }
 
+# GH#39217: the origin:worker identity guard (_gh_validate_pr_worker_identity)
+# requires exactly one standalone primary `For #N`. Prefer the canonical task
+# issue (`ref:GH#N`), then any `GH#N`; never a `pr:#N` unless nothing else is
+# changed. The first occurrence wins so the latest publication intent leads.
+issue_sync_primary_issue_number() {
+	local changed_text="$1"
+	local reference_numbers="$2"
+	local matches=""
+	local pattern=""
+	for pattern in 'ref:GH#[0-9]+' 'GH#[0-9]+'; do
+		matches=$(grep -oE "$pattern" <<<"$changed_text" || true)
+		[[ -n "$matches" ]] || continue
+		matches="${matches%%$'\n'*}"
+		printf '%s\n' "${matches##*#}"
+		return 0
+	done
+	matches="${reference_numbers%%$'\n'*}"
+	[[ "$matches" =~ ^[0-9]+$ ]] || return 1
+	printf '%s\n' "$matches"
+	return 0
+}
+
 issue_sync_pr_linkage() {
-	local base_file="$1"
-	local candidate_file="$2"
-	local commit_msg="$3"
-	local reference_numbers=""
+	local reference_numbers="$1"
 	local reference_number=""
 	local linkage=""
 	local count=0
-	reference_numbers=$(issue_sync_changed_reference_numbers "$base_file" "$candidate_file" "$commit_msg") || return 1
 	while IFS= read -r reference_number; do
 		[[ "$reference_number" =~ ^[0-9]+$ ]] || continue
 		linkage="${linkage}- Ref #${reference_number}"$'\n'
@@ -116,8 +138,21 @@ issue_sync_planning_pr_body() {
 	local commit_msg="$2"
 	local base_file="$3"
 	local candidate_file="$4"
+	local changed_text=""
+	local reference_numbers=""
+	local primary_issue=""
 	local linkage=""
-	linkage=$(issue_sync_pr_linkage "$base_file" "$candidate_file" "$commit_msg") || return 1
+	changed_text=$(issue_sync_changed_text "$base_file" "$candidate_file" "$commit_msg") || return 1
+	reference_numbers=$(issue_sync_changed_reference_numbers "$changed_text") || return 1
+	linkage=$(issue_sync_pr_linkage "$reference_numbers") || return 1
+	primary_issue=$(issue_sync_primary_issue_number "$changed_text" "$reference_numbers") || {
+		echo "::error::Cannot derive a primary issue identity for the TODO.md publication"
+		return 1
+	}
+	# The standalone non-closing `For #N` is the one worker identity the
+	# origin:worker PR guard accepts; the cumulative references stay under the
+	# secondary "Related issues" heading (same shape as GH#37222). Pulse never
+	# closes issues from TODO projection PRs (_pm_pr_body_is_todo_projection).
 	cat <<EOF
 ${ISSUE_SYNC_PR_MARKER}
 ## Issue-sync TODO publication
@@ -127,7 +162,9 @@ ${ISSUE_SYNC_PR_MARKER}
 - Rebases the projection onto current \`${default_branch}\` while preserving unrelated TODO changes already queued in this PR.
 - Latest publication intent: \`${commit_msg}\`.
 
-## Linkage
+For #${primary_issue}
+
+## Related issues
 
 ${linkage}
 ## Merge behaviour
