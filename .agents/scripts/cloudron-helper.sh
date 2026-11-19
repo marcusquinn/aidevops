@@ -616,6 +616,7 @@ if [ -n "$MARKER" ]; then
 elif [ -s "$MARKER_FILE" ]; then
   MARKER=$(sed -n 1p "$MARKER_FILE")
 fi
+# shell-portability: ignore next
 REAL=$(readlink -f /etc/nginx)
 
 log() { logger -t aidevops-nginx-http2 -- "$*"; echo "$*"; return 0; }
@@ -628,12 +629,13 @@ patched() {
 conf_files() { local pat="$1"; grep -rlE --include="*.conf" "$pat" "$REAL" 2>/dev/null; return 0; }
 
 backup() {
-  local ts tarball
+  local ts tarball listing
   ts=$(date +%Y%m%d%H%M%S)
   tarball="$STATE/nginx-$ts.tgz"
   tar -C "$(dirname "$REAL")" -czf "$tarball" "$(basename "$REAL")" || return 1
   chmod 600 "$tarball"
-  tar -tzf "$tarball" | grep -q "applications/.*\.conf" || log "warning: backup has no applications/*.conf"
+  listing=$(tar -tzf "$tarball")
+  case "$listing" in *applications/*.conf*) ;; *) log "warning: backup has no applications/*.conf" ;; esac
   ls -1t "$STATE"/nginx-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
   echo "$tarball" >"$STATE/last-backup"
   return 0
@@ -703,7 +705,7 @@ do_status() {
   echo "legacy_listen_recorded=$(wc -l <"$RECORD" 2>/dev/null || echo 0)"
   if [ -f "$CRON" ]; then echo "cron=present"; else echo "cron=absent"; fi
   if [ -f "$SCTP_CONF" ]; then echo "sctp_blocked=yes"; else echo "sctp_blocked=no"; fi
-  if lsmod | grep -q "^sctp "; then echo "sctp_loaded=yes"; else echo "sctp_loaded=no"; fi
+  if grep -q "^sctp " /proc/modules; then echo "sctp_loaded=yes"; else echo "sctp_loaded=no"; fi
   pid=$(cat /run/nginx.pid 2>/dev/null)
   if [ -n "$pid" ]; then
     exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
