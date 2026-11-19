@@ -42,6 +42,22 @@ relative to the staging root (never its contents), so the primary can remove or
 re-stage it. Write, edit, patch, Bash, nested-task, and permission-escalation
 capabilities remain unavailable.
 
+## Cross-repository research
+
+`research-only` cannot read registered repositories or linked worktrees
+outside the session root; this is intentional (GH#28703) and must not be
+widened per repository. For read-only discovery in another repository:
+
+1. Search it directly from the primary session (`rg`/`git -C <repo> grep`,
+   then targeted Read).
+2. To delegate bounded analysis, stage regular files or a
+   `review-evidence-helper.sh bundle` output into a task child here and pass
+   that path, or pass excerpts to `ai-research` via `files`.
+3. For a whole-repository audit, run it from a session rooted in that
+   repository.
+
+Do not substitute `general` or `explore`; they are not fail-closed.
+
 ## Independent code review
 
 Linked worktrees are outside staging. For a closeout review, write the review
