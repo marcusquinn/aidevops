@@ -234,8 +234,9 @@ Do not propose this installation when the operator has no privilege authority:
 
    With no argument list, both sudo.ws and sudo-rs allow any arguments; the
    executable is the argument validator. Legacy mode requires exactly one
-   `[1-9][0-9]*` PID; the separately enabled reference mode below takes
-   `--references PID CANDIDATE`. Both refuse cross-user process reads. Do not add an
+   `[1-9][0-9]*` PID; `--cwds PID...` applies that same per-PID read to up to
+   4096 distinct PIDs in one call; the separately enabled reference mode below takes
+   `--references PID CANDIDATE`. All refuse cross-user process reads. Do not add an
    argument pattern such as `[1-9]*`: sudo-rs (the default `sudo` on Ubuntu
    25.10+ and 26.04 LTS) rejects wildcards in command arguments and ignores
    the whole line, and sudo.ws wildcards match more than digits anyway (GH#34621).
@@ -259,6 +260,18 @@ process cannot be proved foreign or zombie. Uninstalled, rejected, timed-out,
 or empty privileged reads retain `cwd-visibility-degraded`. No global `/proc`
 permission or ptrace setting changes are needed. Revoke the sudoers rule and
 remove the installed copy when privileged inspection is no longer needed.
+
+Each capture pass first sends every remaining PID in one `--cwds` call
+(GH#38918). Each PID gets the legacy checks and the legacy output, and a
+refused or failed read is an opaque `F` line with no reason. The child arms a
+five-second deadline and prints only a completed response, bounded by a
+versioned header and a count trailer; the caller bounds the sudo wait to six
+seconds and accepts the response only when every PID appears once, in order.
+An installed copy older than this mode refuses `--cwds`. Any refused,
+timed-out or malformed batch falls back to one legacy call per PID, so results
+are unchanged until the operator reviews and reinstalls the inspector. On a
+Linux fixture with 106 protected same-user processes, one pass dropped from
+106 sudo calls (about 3.9 s) to one (about 0.4 s).
 
 ### Registry full-reference inspection (separate opt-in)
 

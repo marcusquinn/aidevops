@@ -27,12 +27,12 @@ _worktree_proc_cwd_map() {
 	python3 "$(dirname "${BASH_SOURCE[0]}")/worktree_process_proc.py" cwdmap "$proc_root" 2>/dev/null
 }
 
-# Read one cwd link. Prints the target and returns 0 when captured, 1 when the
-# entry is harmless to skip, or 2 when visibility is degraded.
-_worktree_read_proc_cwd_link() {
-	local proc_root="$1"
-	local cwd_link="$2"
-	local current_uid="$3"
+# Unprivileged phase of one cwd link read. Prints the target and returns 0 when
+# captured, 1 when the entry is harmless to skip, or 3 when only the optional
+# privileged inspector can still resolve it.
+_worktree_read_proc_cwd_link_unprivileged() {
+	local cwd_link="$1"
+	local current_uid="$2"
 	local cwd_target=""
 	local proc_dir=""
 
@@ -51,15 +51,94 @@ _worktree_read_proc_cwd_link() {
 	proc_dir="${cwd_link%/cwd}"
 	_worktree_proc_entry_is_zombie "$proc_dir" && return 1
 	_worktree_proc_entry_is_provably_foreign_uid "$proc_dir" "$current_uid" && return 1
-	# The optional inspector is governed separately from evidence collection.
-	if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "$proc_dir"); then
+	return 3
+}
+
+# Final phase for a link the inspector did not resolve: a vanished process is
+# harmless (1); anything still present keeps visibility degraded (2).
+_worktree_proc_cwd_link_unresolved() {
+	local cwd_link="$1"
+	[[ -L "$cwd_link" || -e "$cwd_link" ]] || return 1
+	return 2
+}
+
+# Resolve every link the unprivileged phase left for the inspector. One batched
+# inspector call answers all of them when the installed copy supports it
+# (GH#38918); otherwise each link takes the unchanged per-PID path. Prints
+# captured targets and returns 0 when every link resolved or was skippable,
+# 2 when any remained degraded. Sets _WT_PRIV_CAPTURED to the captured count.
+_worktree_resolve_privileged_cwd_links() {
+	local proc_root="$1"
+	shift
+	local cwd_link=""
+	local proc_dir=""
+	local batch=""
+	local line=""
+	local kind=""
+	local target=""
+	local index=0
+	local rc=0
+	local degraded=0
+	local -a links=("$@")
+	local -a pids=()
+	local -a kinds=()
+	local -a targets=()
+
+	_WT_PRIV_CAPTURED=0
+	for cwd_link in "$@"; do
+		proc_dir="${cwd_link%/cwd}"
+		pids+=("${proc_dir##*/}")
+	done
+	# The helper validated header, order, PIDs and trailer before printing.
+	if batch=$(_worktree_privileged_read_cwds "$proc_root" "${pids[@]}"); then
+		while IFS= read -r line; do
+			[[ -n "$line" ]] || continue
+			kind="${line%%$'\t'*}"
+			target=""
+			if [[ "$kind" == R ]]; then
+				target="${line#*$'\t'}"
+				target="${target#*$'\t'}"
+			fi
+			kinds+=("$kind")
+			targets+=("$target")
+		done <<<"$batch"
+	fi
+	for cwd_link in "${links[@]}"; do
+		rc=0
+		if [[ "${#kinds[@]}" -eq "${#links[@]}" ]]; then
+			if [[ "${kinds[$index]}" == R && "${targets[$index]}" == /* ]]; then
+				printf '%s\n' "${targets[$index]}"
+			else
+				_worktree_proc_cwd_link_unresolved "$cwd_link" || rc=$?
+			fi
+		else
+			# Older inspector or refused batch: keep the per-PID behaviour.
+			_worktree_read_proc_cwd_link_privileged "$proc_root" "$cwd_link" || rc=$?
+		fi
+		case "$rc" in
+		0) _WT_PRIV_CAPTURED=$((_WT_PRIV_CAPTURED + 1)) ;;
+		2) degraded=1 ;;
+		esac
+		index=$((index + 1))
+	done
+	[[ "$degraded" -eq 0 ]] || return 2
+	return 0
+}
+
+# Per-PID privileged phase for one link already classified as needing it.
+_worktree_read_proc_cwd_link_privileged() {
+	local proc_root="$1"
+	local cwd_link="$2"
+	local cwd_target=""
+
+	if cwd_target=$(_worktree_privileged_read_cwd "$proc_root" "${cwd_link%/cwd}"); then
 		if [[ "$cwd_target" == /* && "$cwd_target" != *$'\n'* ]]; then
 			printf '%s\n' "$cwd_target"
 			return 0
 		fi
 	fi
-	[[ -L "$cwd_link" || -e "$cwd_link" ]] || return 1
-	return 2
+	_worktree_proc_cwd_link_unresolved "$cwd_link"
+	return $?
 }
 
 # One platform lookup per pass; cleared on every exit so no verdict outlives it.
@@ -81,6 +160,9 @@ _capture_worktree_proc_cwds_pass() {
 	local rc=0
 	local cwd_map="" map_kind="" map_pid="" map_target=""
 	local -a cwd_links=()
+	local -a privileged_links=()
+	# Dynamically scoped: set by _worktree_resolve_privileged_cwd_links.
+	local _WT_PRIV_CAPTURED=0
 
 	current_uid=$(id -u 2>/dev/null) || current_uid=""
 
@@ -99,12 +181,18 @@ _capture_worktree_proc_cwds_pass() {
 
 	for cwd_link in ${cwd_links[@]+"${cwd_links[@]}"}; do
 		rc=0
-		_worktree_read_proc_cwd_link "$proc_root" "$cwd_link" "$current_uid" || rc=$?
+		_worktree_read_proc_cwd_link_unprivileged "$cwd_link" "$current_uid" || rc=$?
 		case "$rc" in
 		0) captured_count=$((captured_count + 1)) ;;
-		2) visibility_degraded=1 ;;
+		3) privileged_links+=("$cwd_link") ;;
 		esac
 	done
+	if [[ "${#privileged_links[@]}" -gt 0 ]]; then
+		rc=0
+		_worktree_resolve_privileged_cwd_links "$proc_root" "${privileged_links[@]}" || rc=$?
+		captured_count=$((captured_count + _WT_PRIV_CAPTURED))
+		[[ "$rc" -eq 0 ]] || visibility_degraded=1
+	fi
 	if [[ "$visibility_degraded" -eq 1 ]]; then
 		return "$_WT_CWD_CAPTURE_DEGRADED_RC"
 	fi
