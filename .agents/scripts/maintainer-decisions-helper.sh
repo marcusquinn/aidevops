@@ -307,7 +307,9 @@ _md_render() {
 # --max exhaust the alphabetically first repo, so other repos' holds were never
 # classified or shown.
 _md_interleave_refs() {
-	awk -F'\t' 'NF >= 2 && $2 ~ /^[0-9]+$/ && !seen[$0]++' |
+	# Malformed lines are dropped here, before ranking, so they never take a
+	# --max slot that _md_list would later skip.
+	awk -F'\t' 'NF == 2 && $1 ~ /^[^\/[:space:]]+\/[^\/[:space:]]+$/ && $2 ~ /^[0-9]+$/ && !seen[$0]++' |
 		sort -t $'\t' -k1,1 -k2,2n |
 		awk -F'\t' '{ print (++rank[$1]) "\t" $0 }' |
 		sort -t $'\t' -k1,1n -k2,2 |
