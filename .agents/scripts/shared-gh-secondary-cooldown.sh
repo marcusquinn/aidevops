@@ -969,6 +969,21 @@ _gh_secondary_cooldown_active() {
 	return 0
 }
 
+# Print the boot epoch from macOS/BSD `sysctl -n kern.boottime` text, shaped
+# "{ sec = N, usec = M } <date>". Anchor on the leading sec field: the old
+# greedy sed `.*sec = ` matched inside "usec" and returned microseconds
+# (GH#39187). Shell builtins only, so callers pay no extra exec.
+_gh_secondary_kern_boottime_sec() {
+	local boottime="${1:-}"
+	local boot_ts=""
+	if [[ "$boottime" =~ ^\{[[:space:]]*sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+		boot_ts="${BASH_REMATCH[1]:-${match[1]:-}}"
+	fi
+	[[ "$boot_ts" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$boot_ts"
+	return 0
+}
+
 _gh_secondary_system_boot_ts() {
 	local boot_ts=""
 	local stat_line=""
@@ -988,16 +1003,8 @@ _gh_secondary_system_boot_ts() {
 		fi
 	fi
 	if command -v sysctl >/dev/null 2>&1; then
-		# "{ sec = N, usec = M } <date>": anchor on the leading sec field. The
-		# old greedy sed matched the trailing usec value instead.
 		boottime=$(sysctl -n kern.boottime 2>/dev/null) || boottime=""
-		if [[ "$boottime" =~ ^\{[[:space:]]*sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
-			boot_ts="${BASH_REMATCH[1]:-${match[1]:-}}"
-		fi
-		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
-			printf '%s' "$boot_ts"
-			return 0
-		fi
+		_gh_secondary_kern_boottime_sec "$boottime" && return 0
 	fi
 	return 1
 }
