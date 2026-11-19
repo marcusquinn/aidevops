@@ -1574,6 +1574,20 @@ _create_or_continue_pr() {
 	return $?
 }
 
+# GH#39167: print the explicit base for PR creation and log its source; gh's
+# implicit default ignored pr_base_branch and silently targeted the default.
+# Returns 1 (no --base) only when no base resolves at all.
+_explicit_pr_create_base() {
+	local pr_base=""
+	pr_base=$(_resolve_pr_base_branch origin) || return 1
+	[[ -n "$pr_base" ]] || return 1
+	local pr_base_source="${FULL_LOOP_PR_BASE_SOURCE:-origin-head}"
+	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_base_source="--base stacked parent"
+	print_info "PR base: ${pr_base} (source: ${pr_base_source})"
+	printf '%s\n' "$pr_base"
+	return 0
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -1611,16 +1625,8 @@ _create_pr() {
 	fi
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body-file "$body_file")
 	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
-	# GH#39167: always pass an explicit base; gh's implicit default ignored
-	# pr_base_branch and silently targeted the repository default.
 	local pr_base=""
-	pr_base=$(_resolve_pr_base_branch origin) || pr_base=""
-	if [[ -n "$pr_base" ]]; then
-		pr_cmd+=(--base "$pr_base")
-		local pr_base_source="${FULL_LOOP_PR_BASE_SOURCE:-origin-head}"
-		[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_base_source="--base stacked parent"
-		print_info "PR base: ${pr_base} (source: ${pr_base_source})"
-	fi
+	pr_base=$(_explicit_pr_create_base) && pr_cmd+=(--base "$pr_base")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
