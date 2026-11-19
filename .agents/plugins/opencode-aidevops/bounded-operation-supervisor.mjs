@@ -85,8 +85,8 @@ function createTerminator(tracker, killGraceMs, reportContainment, reportTermina
     signalNested("SIGKILL");
     reportContainment().finally(() => {
       // The command's exit was already observed: a post-exit drain never
-      // signals our own group (GH#39251); a takeover supersedes it.
-      if (postExit || state.postExit) return;
+      // signals our own group (GH#39251); takeover timers are non-postExit.
+      if (postExit) return;
       if (!signalOwnGroup("SIGKILL")) process.exit(1);
     });
   };
@@ -124,11 +124,10 @@ function survivorSnapshot(snapshot, exitedCommand) {
 // marked descendant is never missed between periodic scans (GH#34324).
 function ownedTreeDrained(tracker, terminator, terminateSurvivors, exitedCommand) {
   let snapshot = survivorSnapshot(tracker.track(), exitedCommand);
-  if (!snapshot) return false;
-  if (tracker.ownGroupMembers(snapshot) === 1 && tracker.nestedTargets(snapshot).length === 0) {
+  if (snapshot && tracker.ownGroupMembers(snapshot) === 1 && tracker.nestedTargets(snapshot).length === 0) {
     snapshot = survivorSnapshot(tracker.track(MARKER_SCAN), exitedCommand);
-    if (!snapshot) return false;
   }
+  if (!snapshot) return false;
   const nested = tracker.nestedTargets(snapshot);
   if (nested.length || tracker.ownGroupMembers(snapshot) > 1) terminateSurvivors();
   // The main command is already gone: do not spend its TERM grace waiting on
