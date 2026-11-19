@@ -1392,6 +1392,11 @@ test_route_upstream_creates_once_and_reuses() {
 	else
 		print_result "route-upstream creates one issue and reuses it on repeat" 1 "first=${first}, second=${second}, log=$(<"$UPSTREAM_ISSUE_LOG"), scanner=$(tr '\n' ';' <"$LOGFILE")"
 	fi
+	if grep -Fq -- '--title fix(core/x.php): y (review finding on owner/repo#1)' "$UPSTREAM_ISSUE_LOG"; then
+		print_result "route-upstream title names the file and defect" 0
+	else
+		print_result "route-upstream title names the file and defect" 1 "log=$(<"$UPSTREAM_ISSUE_LOG")"
+	fi
 	local other=""
 	other="$($SCANNER route-upstream owner/repo 1 THREAD1 org/other "$details" 2>/dev/null)" || other=""
 	if [[ "$other" == "https://github.com/org/other/issues/77" && "$(wc -l <"$UPSTREAM_ISSUE_LOG" | tr -d ' ')" == "2" ]]; then
