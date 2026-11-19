@@ -946,7 +946,7 @@ _sds_verify_origin() {
     command -v timeout >/dev/null 2>&1 || timeout_cmd="gtimeout"
     output=$("$timeout_cmd" 30 openssl s_client -connect "$ip:443" -servername "$fqdn" \
         -verify_hostname "$fqdn" -verify_return_error </dev/null 2>&1) || return 1
-    printf '%s' "$output" | grep -q 'Verification: OK' || return 1
+    [[ "$output" == *'Verification: OK'* ]] || return 1
     return 0
 }
 
@@ -978,7 +978,7 @@ _sds_audit() {
     while IFS= read -r domain; do
         [[ -n "$domain" && "$domain" == *".$apex" ]] || continue
         name="${domain%".$apex"}"
-        if ! printf '%s\n' "$names" | grep -qxF -e "$name" -e "$domain"; then
+        if ! grep -qxF -e "$name" -e "$domain" <<<"$names"; then
             printf 'missing-subdomain %s\n' "$domain"
             findings=$((findings + 1))
         fi
@@ -1021,12 +1021,15 @@ _sds_run() {
         print_error "Missing dependency: timeout (GNU coreutils; gtimeout on macOS via brew install coreutils)" >&2
         return 1
     fi
-    if [[ "$apply" == "1" ]] && ! { openssl s_client -help 2>&1 | grep -q -e '-verify_hostname'; }; then
+    local ssl_help="" existing_names
+    [[ "$apply" == "1" ]] && ssl_help=$(openssl s_client -help 2>&1 || true)
+    if [[ "$apply" == "1" && "$ssl_help" != *'-verify_hostname'* ]]; then
         print_error "Missing dependency: openssl with s_client -verify_hostname support (OpenSSL 1.1+; LibreSSL may lack it)" >&2
         return 1
     fi
     username=$(_sds_resolve_username "$apex") || return 1
-    if _sds_subdomain_names "$username" "$apex" | grep -qxF -e "$name" -e "$fqdn"; then
+    existing_names=$(_sds_subdomain_names "$username" "$apex") || return 1
+    if grep -qxF -e "$name" -e "$fqdn" <<<"$existing_names"; then
         exists_sub=1
     fi
     zone=$(_sds_cf_checked GET "zones?name=$apex" | jq -er '.result[0].id') || {
