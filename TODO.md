@@ -2322,6 +2322,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304
 
+- [ ] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 logged:2026-11-19 -> [todo/tasks/t19173-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
