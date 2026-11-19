@@ -76,10 +76,12 @@ ubiquitous |= {n for n, c in consumers.items() if len(c) > args.ubiquity * len(s
 
 def sourcer_distances(name):
     seen, frontier, hop = {name: 0}, [name], 0
-    while frontier and hop < args.max_hops and name not in ubiquitous:
+    while frontier and hop < args.max_hops:
         hop += 1
         nxt = []
         for current in frontier:
+            if current in ubiquitous:
+                continue
             for parent in sorted(consumers.get(current, ())):
                 if parent not in seen:
                     seen[parent] = hop
