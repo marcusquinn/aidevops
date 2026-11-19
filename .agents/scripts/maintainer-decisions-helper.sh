@@ -37,11 +37,18 @@
 # aidevops signature or automation marker is only a reply: the same login can
 # post typed answers and third-party automation.
 #
+# Requests also include this runner's recorded recovery decisions: a
+# human_decision written by terminal-blocker-recovery-helper.sh record counts
+# as a request dated when it was recorded, with its next_action as the
+# question, even when the issue's labels name an AI or dependency owner.
+#
 # Usage:
 #   maintainer-decisions-helper.sh list [--repo owner/repo] [--format tsv|json|md] [--max N]
 #
 # Env:
 #   MAINTAINER_DECISIONS_REPOS_JSON  repos.json path (default ~/.config/aidevops/repos.json)
+#   AIDEVOPS_BLOCKER_RECOVERY_DIR    recovery queue root holding decisions/
+#                                    (default ~/.aidevops/.agent-workspace/terminal-blocker-recovery)
 
 set -euo pipefail
 
@@ -51,6 +58,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 MD_REPOS_JSON="${MAINTAINER_DECISIONS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+MD_RECOVERY_DIR="${AIDEVOPS_BLOCKER_RECOVERY_DIR:-${HOME}/.aidevops/.agent-workspace/terminal-blocker-recovery}"
 MD_HOLD_LABELS="needs-maintainer-input,needs-maintainer-permissions,needs-credentials,needs-source-access"
 # Holds a supervisor may state with a canonical public ask; searched too, but
 # kept only when a trusted comment carries that ask (see MD_CLASSIFY_JQ).
@@ -109,7 +117,9 @@ def days($t): if $t == null or $t == "" then null
 	| {t: .createdAt, by: .author.login}] | max_by(.t)) as $answer
 | ([$c[] | select(authoritative) | select(((text | test("aidevops:sig")) | not) and (automation | not))
 	| {t: .createdAt, by: .author.login, excerpt: (text | clean | .[0:200])}] | max_by(.t)) as $reply
-| (($holds + $asks) | sort_by(.t)) as $requests
+| (if $local == null then [] else [{t: $local.t, by: $local.by, src: "recovery_record", reason: "",
+	q: ($local.q | clean), recommendation: null}] end) as $recorded
+| (($holds + $asks + $recorded) | sort_by(.t)) as $requests
 | ($requests | last) as $anchor
 | ([$requests[] | select(.q != "" and ($answer == null or .t > $answer.t))] | last) as $question
 | (if $anchor != null and $reply != null and $reply.t > $anchor.t then $reply else null end) as $fresh_reply
@@ -123,7 +133,7 @@ def days($t): if $t == null or $t == "" then null
 	elif $question != null then ($label_kind // "decide")
 	else ($label_kind // "no-question") end) as $kind
 | [$labels[] | select(IN("needs-maintainer-input", "needs-maintainer-permissions", "needs-credentials", "needs-source-access", "hold-for-review", "status:blocked"))] as $hold_labels
-| select(($hold_labels | any(startswith("needs-"))) or ($asks | length) > 0)
+| select(($hold_labels | any(startswith("needs-"))) or ($asks | length) > 0 or ($recorded | length) > 0)
 | {
 	repo: $repo, number: .number, url: .url, title: (.title | clean), kind: $kind,
 	reason: ($anchor.reason // ""),
@@ -256,6 +266,29 @@ _md_error_record() {
 	return 0
 }
 
+# Prints this runner's recorded human_decision for an issue as
+# {t, by, q} JSON, or null. The record is written by
+# terminal-blocker-recovery-helper.sh record (key owner--repo--N).
+# GH#39275: the supervisor may record a human decision without posting a
+# canonical public ask (for example when an older, uncanonical comment already
+# names the input), so without this the hold never reached /decisions.
+# Display only: a record is evidence, never authority. #aidevops:trust-boundary
+# Args: repo, number
+_md_recorded_decision() {
+	local repo="$1"
+	local number="$2"
+	local file="${MD_RECOVERY_DIR}/decisions/${repo//\//--}--${number}.json"
+	local out=""
+	if [[ -f "$file" ]] && out=$(jq -c 'if .wake == "human_decision" and (.recorded_epoch | type) == "number"
+		then {t: (.recorded_epoch | floor | todateiso8601), by: (.actor // "recovery-supervisor"), q: (.next_action // "")}
+		else null end' "$file" 2>/dev/null) && [[ -n "$out" ]]; then
+		printf '%s\n' "$out"
+		return 0
+	fi
+	printf 'null\n'
+	return 0
+}
+
 # Prints one classified JSON record for an issue ref (error record on failure).
 # Args: repo, number, now epoch
 _md_classify_issue() {
@@ -263,11 +296,13 @@ _md_classify_issue() {
 	local number="$2"
 	local now="$3"
 	local issue_json=""
+	local recorded=""
 	if ! issue_json=$(gh issue view "$number" --repo "$repo" --json number,title,url,createdAt,labels,comments 2>/dev/null); then
 		_md_error_record "$repo" "$number" "issue read failed"
 		return 0
 	fi
-	jq -c --arg repo "$repo" --arg now "$now" "$MD_CLASSIFY_JQ" <<<"$issue_json" ||
+	recorded=$(_md_recorded_decision "$repo" "$number")
+	jq -c --arg repo "$repo" --arg now "$now" --argjson local "$recorded" "$MD_CLASSIFY_JQ" <<<"$issue_json" ||
 		_md_error_record "$repo" "$number" "classification failed"
 	return 0
 }
