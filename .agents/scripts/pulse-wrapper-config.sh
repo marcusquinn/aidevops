@@ -424,7 +424,18 @@ PULSE_EVENT_REFILL_TRIGGER_FILE="${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_P
 PULSE_EVENT_REFILL_HELPER="${PULSE_EVENT_REFILL_HELPER:-${SCRIPT_DIR}/pulse-event-refill.sh}"
 PULSE_EVENT_REFILL_WRAPPER="${PULSE_EVENT_REFILL_WRAPPER:-${SCRIPT_DIR}/pulse-wrapper.sh}"
 export AIDEVOPS_PULSE_EVENT_REFILL_ENABLED PULSE_EVENT_REFILL_TRIGGER_FILE
-OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencode")}"
+# GH#39095: resolve the binary for the active OpenCode profile. Under
+# AIDEVOPS_OPENCODE_PROFILE=v2 workers must run the isolated `opencode2`
+# runtime; a hardcoded `command -v opencode` picked whichever `opencode` came
+# first on the launchd PATH (possibly a V1 install), and because launchd
+# exports OPENCODE_BIN the wrong binary reached every worker launch.
+_pulse_opencode_binary=""
+if declare -F aidevops_opencode_profile_value >/dev/null 2>&1; then
+	_pulse_opencode_binary=$(aidevops_opencode_profile_value binary 2>/dev/null) || _pulse_opencode_binary=""
+fi
+_pulse_opencode_binary="${_pulse_opencode_binary:-opencode}"
+OPENCODE_BIN="${OPENCODE_BIN:-$(command -v "$_pulse_opencode_binary" 2>/dev/null || echo "$_pulse_opencode_binary")}"
+unset _pulse_opencode_binary
 # PULSE_DIR: working directory for the supervisor pulse session.
 # Defaults to a neutral workspace path so pulse sessions are not associated
 # with any specific managed repo in the host app's session database.
