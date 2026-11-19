@@ -86,6 +86,39 @@ def _is_immediately_available(account: dict, current_key: str, now_ms: int) -> b
     return not cd or cd <= now_ms
 
 
+USAGE_REMAINING_FLOOR_PCT = 5
+USAGE_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000
+
+
+def _to_ms(value: object) -> int:
+    try:
+        n = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if n != n or n <= 0:
+        return 0
+    return int(n * 1000) if n < 1e12 else int(n)
+
+
+def _reset_sort_key(account: dict, now_ms: int) -> tuple[int, int]:
+    """Reset-aware ordering key (t19125); mirrors oauth-pool-ordering.mjs.
+
+    ``(0, resetAt)`` for a seat with a future reset, fresh data and quota above
+    the floor (earliest deadline first); ``(1, 0)`` otherwise, so seats without
+    data keep the caller's LRU tiebreak.
+    """
+    reset = _to_ms(account.get("usageResetAt"))
+    if not reset or reset <= now_ms:
+        return (1, 0)
+    observed = _to_ms(account.get("usageObservedAt"))
+    if observed and now_ms - observed > USAGE_MAX_AGE_MS:
+        return (1, 0)
+    pct = account.get("usageRemainingPct")
+    if isinstance(pct, (int, float)) and not isinstance(pct, bool) and pct <= USAGE_REMAINING_FLOOR_PCT:
+        return (1, 0)
+    return (0, reset)
+
+
 def _select_rotation_candidate(
     accounts: list[dict],
     current_key: str,
@@ -96,11 +129,14 @@ def _select_rotation_candidate(
     Returns ``(next_account, all_rate_limited)``. When all accounts are
     rate-limited (Tier 2), ``all_rate_limited`` is True and the candidate
     is the one with the *shortest* cooldown remaining. Otherwise (Tier 1),
-    candidates are sorted by ``(-priority, lastUsed)``.
+    candidates are sorted by ``(-priority, reset group, reset, lastUsed)``;
+    seats with no usable reset data fall back to ``(-priority, lastUsed)``.
     """
     candidates = [a for a in accounts if _is_immediately_available(a, current_key, now_ms)]
     if candidates:
-        candidates.sort(key=lambda a: (-(a.get("priority") or 0), a.get("lastUsed", "")))
+        candidates.sort(
+            key=lambda a: (-(a.get("priority") or 0), *_reset_sort_key(a, now_ms), a.get("lastUsed", ""))
+        )
         return candidates[0], False
 
     fallback = sorted(accounts, key=lambda a: a.get("cooldownUntil") or 0)

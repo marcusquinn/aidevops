@@ -17,7 +17,10 @@
  * lifetime cooldown bookkeeping that all callers share.
  */
 
-import { ensureValidToken, getAccounts, poolAccountKey, poolAccountLabel } from "./oauth-pool.mjs";
+import {
+  ensureValidToken, getAccounts, patchAccount, poolAccountKey, poolAccountLabel,
+} from "./oauth-pool.mjs";
+import { compareByReset, shouldReplaceUsage, usagePatchFromRateLimitInfo } from "./oauth-pool-ordering.mjs";
 
 /** Default cooldown (ms) before retrying a rate-limited account. */
 const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -37,6 +40,8 @@ function sortAccountsByPriority(accounts) {
     const pa = Number(a?.priority || 0);
     const pb = Number(b?.priority || 0);
     if (pa !== pb) return pb - pa;
+    const byReset = compareByReset(a, b);
+    if (byReset !== 0) return byReset;
     return poolAccountKey(a).localeCompare(poolAccountKey(b));
   });
 }
@@ -120,6 +125,25 @@ export function buildChildEnvWithToken(token) {
  */
 export function getNativeCliFallback() {
   return { email: "native-cli-auth", key: "native-cli-auth", label: "native-cli-auth", token: null };
+}
+
+/**
+ * Persist the usage window carried by a stream `rate_limit_event` onto the
+ * seat (t19125) so rotation can prefer the soonest-resetting seat. Best-effort:
+ * never throws, never logs tokens or headers.
+ * @param {{key: string}|null|undefined} account - entry from getAvailableAccounts()
+ * @param {object} event - parsed stream event
+ */
+export function recordAccountUsage(account, event) {
+  if (!account?.key || event?.type !== "rate_limit_event") return;
+  try {
+    const patch = usagePatchFromRateLimitInfo(event.rate_limit_info);
+    if (!patch) return;
+    const current = getAccounts("anthropic").find((a) => poolAccountKey(a) === account.key);
+    if (current && shouldReplaceUsage(current, patch)) patchAccount("anthropic", account.key, patch);
+  } catch {
+    /* usage capture must never block the request path */
+  }
 }
 
 /**

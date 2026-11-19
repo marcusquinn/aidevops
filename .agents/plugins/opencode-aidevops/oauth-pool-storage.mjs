@@ -35,6 +35,10 @@ import { POOL_FILE, POOL_LOCK_FILE } from "./oauth-pool-constants.mjs";
  * @property {number} [priority]
  * @property {number} [authRefreshFailures]
  * @property {number} [authRefreshLastFailureAt]
+ * @property {number} [usageResetAt] Epoch ms the observed usage window resets (t19125); absent = unknown
+ * @property {number|null} [usageRemainingPct] Remaining quota 0-100, or null when not reported
+ * @property {string|null} [usageWindow] Window type from rate_limit_info (e.g. seven_day, five_hour)
+ * @property {number} [usageObservedAt] Epoch ms of the observation; stale data is treated as unknown
  */
 
 // ---------------------------------------------------------------------------

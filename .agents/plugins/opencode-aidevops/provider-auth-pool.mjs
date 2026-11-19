@@ -6,6 +6,7 @@
 import {
   ensureValidToken, getAccounts, patchAccount, findAccountIndex, poolAccountKey, poolAccountLabel,
 } from "./oauth-pool.mjs";
+import { compareByReset } from "./oauth-pool-ordering.mjs";
 
 /** Priority order for account status during pool rotation (lower = tried first). */
 export const STATUS_ORDER = { active: 0, idle: 1, "rate-limited": 2, "auth-error": 3 };
@@ -42,6 +43,10 @@ export function compareAccountPriority(a, b) {
   const aOrder = STATUS_ORDER[a.status] ?? 99;
   const bOrder = STATUS_ORDER[b.status] ?? 99;
   if (aOrder !== bOrder) return aOrder - bOrder;
+  const byPriority = (b.priority || 0) - (a.priority || 0);
+  if (byPriority !== 0) return byPriority;
+  const byReset = compareByReset(a, b);
+  if (byReset !== 0) return byReset;
   return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
 }
 
@@ -64,7 +69,13 @@ export function getAvailableAlternates(accounts, currentKey) {
   const now = Date.now();
   return [...accounts]
     .filter((a) => isEligibleAlternate(a, currentKey, now))
-    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+    .sort((a, b) => {
+      const byPriority = (b.priority || 0) - (a.priority || 0);
+      if (byPriority !== 0) return byPriority;
+      const byReset = compareByReset(a, b, now);
+      if (byReset !== 0) return byReset;
+      return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
+    });
 }
 
 /**
