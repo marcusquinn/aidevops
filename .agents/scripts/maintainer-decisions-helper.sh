@@ -334,7 +334,7 @@ _md_list() {
 	while IFS=$'\t' read -r repo number; do
 		[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || continue
 		_md_classify_issue "$repo" "$number" "$now" >>"$records"
-	done < <(printf '%s\n' "$refs" | head -n "$MD_MAX")
+	done < <(printf '%s\n' "$refs" | awk -v max="$MD_MAX" 'NR <= max')
 	jq -s '.' "$records" | _md_render
 	rm -f "$records"
 	return 0
