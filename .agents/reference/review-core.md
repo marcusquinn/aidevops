@@ -144,9 +144,9 @@ crash, or concrete security exposure are the only automatic critical exceptions.
 - Medium-risk changes: advisory closeout review when it reduces uncertainty.
 - High/critical changes: independent review in addition to required tests.
   In OpenCode a sandboxed reviewer cannot read a linked worktree: write the
-  bundle (`review-evidence-helper.sh bundle local|branch --output FILE`) into a
-  task child of research staging and pass that exact path
-  (`reference/research-staging.md`). A plain `git diff origin/main...HEAD`
+  bundle with `review-evidence-helper.sh bundle local|branch --stage <task>`
+  (writes `research-staging/<task>/bundle.md` and prints the path) and pass that
+  exact path (`reference/research-staging.md`). A plain `git diff origin/main...HEAD`
   omits uncommitted work, so use it only when every change is committed. A
   refusal names the blocking staged entry; remove or re-stage it rather than
   dropping review.
