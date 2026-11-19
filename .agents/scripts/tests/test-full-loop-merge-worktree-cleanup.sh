@@ -145,7 +145,13 @@ gh() {
 		fi
 		# GH#36174 merge-time closure check reads body plus parsed references.
 		if [[ "$args" == *"body,closingIssuesReferences"* ]]; then
-			printf '%s\n' '{"body":"Resolves #42","closingIssuesReferences":[{"number":42}]}'
+			printf '%s\n' '{"body":"Resolves #42","closingIssuesReferences":[{"number":42,"repository":{"owner":{"login":"example"},"name":"repo"}}]}'
+			return 0
+		fi
+		# t2449 worker-briefed trust verdict reads labels, draft state, head and body.
+		if [[ "$args" == *"labels,isDraft,headRefOid,body"* ]]; then
+			jq -cn --arg head_oid "$GH_PR_HEAD_OID" \
+				'{labels:[],isDraft:false,headRefOid:$head_oid,body:"Resolves #42"}'
 			return 0
 		fi
 		if [[ "$args" == *"body"* ]]; then
@@ -313,6 +319,17 @@ GIT
 exit 1
 TRASH
 	chmod +x "${TEST_ROOT}/bin/trash"
+	# parent-task-keyword-guard.sh runs as a subprocess, so the in-process gh()
+	# fixture is invisible to it; answer its label lookup without the network.
+	cat >"${TEST_ROOT}/bin/gh" <<'GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+	printf '%s\n' '{"labels":[]}'
+	exit 0
+fi
+exit 1
+GH
+	chmod +x "${TEST_ROOT}/bin/gh"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 
 	local canonical_repo="${TEST_ROOT}/repo"
