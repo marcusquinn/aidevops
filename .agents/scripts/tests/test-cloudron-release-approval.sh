@@ -964,6 +964,8 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	semver_head=$(jq -c '.upstreamVersion = "3.39.114"' <<<"$HEAD_MANIFEST")
 	assert_routine not 'commit license URL opt-in needs commits mode' "$license_filter | .policy.upstream_mode = \"semver\" | .finding_upstream = \"3.39.114\" | $(manifest_base "$semver_base") | $(manifest_head "$semver_head")" 'license_commit_url needs a commits policy'
 	assert_routine not 'commit license URL abbreviated head is rejected' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/abcdef1}")" 'manifest changes beyond'
+	assert_routine routine 'commit license URL opt-in accepts an unchanged license' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"$OLD_UPSTREAM"}")"
+	assert_routine not 'commit license absent vs null' "$license_filter | $(manifest_base "$(jq -c 'del(.upstreamLicense)' <<<"$BASE_MANIFEST")") | $(manifest_head "$(jq -c '.upstreamLicense = null' <<<"$HEAD_MANIFEST")")" 'manifest changes beyond'
 	# Coincident keys: full old SHA in the Dockerfile may become the short new version.
 	collision_base=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = $sha' <<<"$BASE_MANIFEST")
 	collision_head=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = "abcdef1" | .upstreamLicense.url |= sub("[0-9a-f]{40}"; $sha)' <<<"$HEAD_MANIFEST")

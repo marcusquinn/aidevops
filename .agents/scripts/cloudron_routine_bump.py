@@ -145,7 +145,13 @@ def check_upstream(doc, policy, old_up, new_up):
 
 def license_changes_ok(base_manifest, head_manifest, mappings):
     """upstreamLicense may differ only by the proven release-commit or version substitution."""
+    # An absent field is not the same as null: presence must match.
+    if ("upstreamLicense" in base_manifest) != ("upstreamLicense" in head_manifest):
+        return False
     base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
+    # A permitted substitution is optional: an exactly unchanged license is fine.
+    if canonical(base) == canonical(head):
+        return True
     if not isinstance(base, dict) or not isinstance(head, dict):
         return canonical(base) == canonical(head)
     url_base, url_head = base.get("url"), head.get("url")
