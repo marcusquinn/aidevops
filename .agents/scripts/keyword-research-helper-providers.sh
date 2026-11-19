@@ -180,6 +180,14 @@ dataforseo_serp_organic() {
 	local location_code="$2"
 	local language_code="$3"
 
+	# resolve_goto_urls: real URLs instead of google.com/goto wrappers (no charge).
+	# resolve_poisoned_results: replaces poisoned organic rows; bills one extra SERP
+	# page per task. Default on; set DATAFORSEO_RESOLVE_POISONED=false to opt out.
+	local resolve_poisoned="true"
+	if [[ "${DATAFORSEO_RESOLVE_POISONED:-true}" == "false" ]]; then
+		resolve_poisoned="false"
+	fi
+
 	local data
 	data=$(
 		cat <<EOF
@@ -189,7 +197,9 @@ dataforseo_serp_organic() {
     "language_code": "$language_code",
     "device": "desktop",
     "os": "windows",
-    "depth": 10
+    "depth": 10,
+    "resolve_goto_urls": true,
+    "resolve_poisoned_results": $resolve_poisoned
 }]
 EOF
 	)
@@ -353,7 +363,8 @@ serp_organic_normalized() {
 	"dataforseo")
 		response=$(dataforseo_serp_organic "$keyword" "$location_code" "$language_code") || return 1
 		jq --argjson n "$depth" '[.tasks[0].result[0].items[]? | select(.type == "organic")
-			| {provider: "dataforseo", position: .rank_group, url: .url, title: .title}] | .[:$n]' \
+			| {provider: "dataforseo", position: .rank_group, url: .url, title: .title}
+			+ (if ((.checks // []) | index("from_web")) then {restored: true} else {} end)] | .[:$n]' \
 			<<<"$response" 2>/dev/null || echo "[]"
 		;;
 	"serper")

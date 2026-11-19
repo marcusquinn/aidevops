@@ -85,8 +85,17 @@ All examples assume `DFS_AUTH` from the injected shell above. Each live call is 
 curl -s -X POST "https://api.dataforseo.com/v3/serp/google/organic/live/advanced" \
   -H "Authorization: Basic $DFS_AUTH" \
   -H "Content-Type: application/json" \
-  -d '[{"keyword": "your keyword", "location_code": 2840, "language_code": "en"}]'
+  -d '[{"keyword": "your keyword", "location_code": 2840, "language_code": "en", "depth": 10, "resolve_goto_urls": true, "resolve_poisoned_results": true}]'
 ```
+
+#### Poisoned SERPs and wrapped links
+
+- **Poisoned pages**: Google returns altered result pages to automated requests, replacing legitimate organic listings. This causes false ranking drops. `resolve_poisoned_results` cross-checks organic results against Google's Web mode and replaces affected rows; replaced rows carry `from_web` in their `checks` array.
+- **Charge**: it adds one extra SERP page to every task, poisoned or not (live, normal priority, depth 10: $0.002 becomes $0.004). Billing is per 10 results, so do not request depth you do not read.
+- **Limits**: cannot be combined with `udm=web` or `udm=14`. Only organic rows are replaced; People Also Ask and AI Overview come from the original page.
+- **Wrapped links**: since about 2026-11-03 Google often returns organic links as `https://google.com/goto?url=<token>` with `domain: google.com`. `resolve_goto_urls` returns the real address at no extra charge (adds up to 40 s; max turnaround 260 s).
+- **Framework helper**: `keyword-research-helper.sh serp-compare` sends both flags for DataForSEO and marks replaced rows `restored: true`. Opt out of the poisoned-results check (and its extra charge) with `DATAFORSEO_RESOLVE_POISONED=false`.
+- Parameters: <https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/>.
 
 ### Keyword Data
 
