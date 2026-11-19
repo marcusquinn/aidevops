@@ -1411,7 +1411,20 @@ CANARY_SATURATION_PERCENT="${CANARY_SATURATION_PERCENT:-98}"
 CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
 _headless_opencode_profile_is_v2() {
-	[[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]
+	# Explicit env wins; otherwise resolve through the profile document (same
+	# resolver as setup/Pulse). Cached per shell process, never exported.
+	if [[ -n "${AIDEVOPS_OPENCODE_PROFILE:-}" ]]; then
+		[[ "$AIDEVOPS_OPENCODE_PROFILE" == "v2" ]] && return 0
+		return 1
+	fi
+	if [[ -z "${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-}" ]]; then
+		if declare -F aidevops_opencode_profile_id >/dev/null 2>&1; then
+			_HEADLESS_OPENCODE_DEFAULT_PROFILE=$(aidevops_opencode_profile_id 2>/dev/null) || _HEADLESS_OPENCODE_DEFAULT_PROFILE="v1"
+		fi
+		_HEADLESS_OPENCODE_DEFAULT_PROFILE="${_HEADLESS_OPENCODE_DEFAULT_PROFILE:-v1}"
+	fi
+	[[ "$_HEADLESS_OPENCODE_DEFAULT_PROFILE" == "v2" ]] && return 0
+	return 1
 }
 
 _headless_opencode_binary_name() {
