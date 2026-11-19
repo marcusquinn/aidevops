@@ -104,6 +104,69 @@ export function shouldReplaceUsage(account, patch, now = Date.now()) {
   return toMs(patch.usageObservedAt) >= toMs(account?.usageObservedAt);
 }
 
+/** Unchanged observations newer than this are not rewritten (limits pool-lock churn). */
+export const USAGE_REWRITE_INTERVAL_MS = 10 * 60 * 1000;
+
+const UNIFIED_HEADER_PREFIX = "anthropic-ratelimit-unified-";
+
+/** Header-name window segments, weekly first, mapped to `rateLimitType` names. */
+const HEADER_WINDOWS = [["7d", "seven_day"], ["5h", "five_hour"]];
+
+function headerNumber(headers, name) {
+  const raw = headers.get(UNIFIED_HEADER_PREFIX + name);
+  if (raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Build a `rate_limit_info`-shaped object from Anthropic response headers
+ * (t19127). Names verified against the installed Claude CLI and a live OAuth
+ * response: `anthropic-ratelimit-unified-{7d,5h}-{reset,utilization,status}`
+ * (reset in epoch seconds, utilization a 0-1 fraction), with the aggregate
+ * `anthropic-ratelimit-unified-{reset,status,representative-claim}` fallback.
+ * Reads only those headers. Returns null when none are present.
+ * @param {Headers|undefined|null} headers
+ */
+export function rateLimitInfoFromHeaders(headers) {
+  if (!headers || typeof headers.get !== "function") return null;
+  for (const [segment, window] of HEADER_WINDOWS) {
+    const resetsAt = headerNumber(headers, `${segment}-reset`);
+    if (resetsAt === undefined) continue;
+    return {
+      status: headers.get(`${UNIFIED_HEADER_PREFIX}${segment}-status`) || undefined,
+      resetsAt,
+      rateLimitType: window,
+      utilization: headerNumber(headers, `${segment}-utilization`),
+    };
+  }
+  const resetsAt = headerNumber(headers, "reset");
+  if (resetsAt === undefined) return null;
+  return {
+    status: headers.get(`${UNIFIED_HEADER_PREFIX}status`) || undefined,
+    resetsAt,
+    rateLimitType: headers.get(`${UNIFIED_HEADER_PREFIX}representative-claim`) || undefined,
+  };
+}
+
+/**
+ * Return the usage patch to persist for a seat from response headers, or null
+ * when there is nothing new: no headers, an observation that should not
+ * replace the stored one, or an unchanged reading written recently.
+ * @param {object} account - stored pool entry
+ * @param {Headers|undefined|null} headers
+ * @param {number} [now]
+ */
+export function usageUpdateFromHeaders(account, headers, now = Date.now()) {
+  const patch = usagePatchFromRateLimitInfo(rateLimitInfoFromHeaders(headers), now);
+  if (!patch || !shouldReplaceUsage(account, patch, now)) return null;
+  const unchanged = toMs(account?.usageResetAt) === patch.usageResetAt &&
+    account?.usageRemainingPct === patch.usageRemainingPct &&
+    account?.usageWindow === patch.usageWindow;
+  if (unchanged && now - toMs(account?.usageObservedAt) < USAGE_REWRITE_INTERVAL_MS) return null;
+  return patch;
+}
+
 /** Human-readable usage summary for `model-accounts-pool list`. */
 export function describeUsage(account, now = Date.now()) {
   const reset = toMs(account?.usageResetAt);
