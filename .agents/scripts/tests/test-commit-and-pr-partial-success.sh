@@ -123,6 +123,8 @@ _SOURCING_FOR_TEST=1
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 # shellcheck disable=SC2312
+eval "$(sed -n '/^_run_pr_create_cmd() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
 eval "$(sed -n '/^_explicit_pr_create_base() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
