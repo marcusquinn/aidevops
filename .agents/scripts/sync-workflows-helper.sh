@@ -455,7 +455,9 @@ Options:
                     CURRENT callers whose pin differs, e.g. to bump @v3.9.0
                     after an upgrade. Without this, existing pins (@v3.9.0,
                     @<sha>) are preserved.
-  --ref REF         Explicit @ref for new installs (default: @main).
+  --ref REF         Explicit @ref for new installs (default: the latest release
+                    SHA with its tag as a comment, unless repos.json configures
+                    workflow_reusable_ref).
   --pin-floating    Migrate only existing loc-badge @main callers to the latest
                     release SHA. Requires --workflow loc-badge. Preserves real
                     pins and registry workflow_reusable_ref overrides.
@@ -690,14 +692,17 @@ _workflow_reusable_ref_for_slug() {
 
 # _sync_target_ref_for_slug <slug> — the "@ref" a sync writes for this repo:
 # an explicit --ref wins, otherwise the repos.json/default reusable ref.
+# Fresh installs of any managed caller (and --pin-floating loc-badge
+# migrations) without a configured ref pin the latest release SHA, so repos
+# enforcing hash-pinned actions do not fail on a new @main caller (GH#39085).
 _sync_target_ref_for_slug() {
 	local _slug="$1"
 	local _status="${2:-}" _workflow_name="${3:-}"
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
-	elif [[ ( "$_status" == "NO-WORKFLOW" || "${_OPT_PIN_FLOATING:-0}" -eq 1 ) && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" &&
-		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
+	elif [[ ( "$_status" == "NO-WORKFLOW" || ( "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" ) ) &&
+		-n "$_workflow_name" && -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
 		local _repo
 		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
 		_ref=$(workflow_release_ref "$_repo") || return 1
