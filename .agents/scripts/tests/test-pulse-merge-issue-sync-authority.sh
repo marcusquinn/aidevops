@@ -23,7 +23,8 @@ WORKER_BRIEFED_CALLS="${TEST_ROOT}/worker-briefed-calls.log"
 DEPENDABOT_ROUTE_CALLS="${TEST_ROOT}/dependabot-route-calls.log"
 PULSE_UNKNOWN_STATE="UNKNOWN"
 PULSE_REVIEW_EVIDENCE_SCHEMA="aidevops.review-gate-evidence/v1"
-export LOGFILE AGENTS_DIR
+AIDEVOPS_TEMP_DIR="${TEST_ROOT}/tmp"
+export LOGFILE AGENTS_DIR AIDEVOPS_TEMP_DIR
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p "${AGENTS_DIR}/scripts"
@@ -51,6 +52,8 @@ gate_src=$(awk '
 	/^_pm_gate_review_mode\(\) \{/,/^}$/ { print }
 	/^_pm_gate_author_trust\(\) \{/,/^}$/ { print }
 	/^_pm_gate_route_ineligible_author\(\) \{/,/^}$/ { print }
+	/^_pm_gate_route_configured_dependency_bot\(\) \{/,/^}$/ { print }
+	/^_pm_log_once_per_head\(\) \{/,/^}$/ { print }
 	/^_pm_gate_repository_and_issue\(\) \{/,/^}$/ { print }
 	/^_pm_gate_origin_authority\(\) \{/,/^}$/ { print }
 	/^_pm_gate_review_bot\(\) \{/,/^}$/ { print }
@@ -78,6 +81,7 @@ _is_collaborator_author() {
 _is_trusted_dependabot_update_pr() { [[ "$FIXTURE_DEPENDABOT_TRUSTED" -eq 1 ]]; }
 _pulse_route_dependabot_pr_to_worker_issue() {
 	printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" >>"$DEPENDABOT_ROUTE_CALLS"
+	[[ "${FIXTURE_ROUTE_RC:-1}" -eq 0 ]] && return 0
 	return 1
 }
 _has_maintainer_crypto_approval() { [[ "$FIXTURE_CRYPTO_APPROVED" -eq 1 ]]; }
@@ -258,6 +262,60 @@ else
 	print_result "unverified Dependabot remains eligible for defect repair intake" 1 \
 		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
 fi
+
+# GH#39280: a configured Renovate App with a terminal required-check failure
+# routes to intake instead of the collaborator skip; it never passes the gate.
+_trusted_dependency_bot_for_author() {
+	[[ "$1" == "app/acme-renovate" && "$2" == "owner/repo" ]] || return 1
+	printf 'acme-renovate\n'
+	return 0
+}
+FIXTURE_TERMINAL_RC=0
+_check_required_checks_has_terminal_failure() {
+	[[ "$FIXTURE_TERMINAL_RC" -eq 0 ]] && return 0
+	return 1
+}
+FIXTURE_ROUTE_RC=0
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current app/acme-renovate)
+if [[ "$result" -eq 1 ]] &&
+	grep -qF "950 owner/repo app/acme-renovate head-current terminal-ci-failure" "$DEPENDABOT_ROUTE_CALLS" &&
+	grep -qF "configured dependency bot acme-renovate PR has terminal CI failures; routed to worker intake" "$LOGFILE" &&
+	! grep -qF "is not a collaborator" "$LOGFILE"; then
+	print_result "configured Renovate terminal failure routes to worker intake" 0
+else
+	print_result "configured Renovate terminal failure routes to worker intake" 1 \
+		"rc=${result} route=$(cat "$DEPENDABOT_ROUTE_CALLS") log=$(cat "$LOGFILE")"
+fi
+
+FIXTURE_TERMINAL_RC=1
+: >"$DEPENDABOT_ROUTE_CALLS"
+: >"$LOGFILE"
+result=$(run_gate head-current app/acme-renovate)
+result_repeat=$(run_gate head-current app/acme-renovate)
+wait_lines=$(grep -cF "configured dependency bot acme-renovate remains external" "$LOGFILE") || wait_lines=0
+if [[ "$result" -eq 1 && "$result_repeat" -eq 1 && "$wait_lines" -eq 1 && ! -s "$DEPENDABOT_ROUTE_CALLS" ]]; then
+	print_result "configured Renovate without terminal failure waits, logged once per head" 0
+else
+	print_result "configured Renovate without terminal failure waits, logged once per head" 1 \
+		"rc=${result}/${result_repeat} lines=${wait_lines} route=$(cat "$DEPENDABOT_ROUTE_CALLS")"
+fi
+
+FIXTURE_ROUTE_RC=1
+# Every fixture shares PR 950/head-current; clear the earlier Actions case marker.
+rm -rf "${AIDEVOPS_TEMP_DIR}/pulse-merge-log-once"
+: >"$LOGFILE"
+result=$(run_gate head-current app/other-renovate)
+result_repeat=$(run_gate head-current app/other-renovate)
+skip_lines=$(grep -cF "author app/other-renovate is not a collaborator; bot is not listed" "$LOGFILE") || skip_lines=0
+if [[ "$result" -eq 1 && "$result_repeat" -eq 1 && "$skip_lines" -eq 1 ]]; then
+	print_result "unconfigured bot keeps the skip, logged once per head" 0
+else
+	print_result "unconfigured bot keeps the skip, logged once per head" 1 \
+		"rc=${result}/${result_repeat} lines=${skip_lines} log=$(cat "$LOGFILE")"
+fi
+unset -f _trusted_dependency_bot_for_author _check_required_checks_has_terminal_failure
 
 # GH#34731: exercise the real permission helpers, not the collaborator stub.
 # A bot must reach lifecycle reconciliation even when the user API would fail.

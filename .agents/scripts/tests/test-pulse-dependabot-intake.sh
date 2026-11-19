@@ -428,6 +428,63 @@ test_rejects_unverified_author() {
 	return $?
 }
 
+# GH#39280 stubs: the real resolver and exact-head verifier live in
+# trusted-dependabot-lib.sh and are covered by test-pulse-merge-trusted-dependabot.sh.
+_trusted_dependency_bot_for_author() {
+	[[ "$1" == "app/acme-renovate" && "$2" == "owner/repo" ]] || return 1
+	printf 'acme-renovate\n'
+	return 0
+}
+
+_is_authentic_dependency_bot_pr() {
+	if [[ "$AUTHENTIC" -eq 1 && "$1" == "30038" && "$2" == "owner/repo" &&
+		"$3" == "app/acme-renovate" && "$4" == "head-current" && "$5" == "acme-renovate" ]]; then
+		_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON=""
+		return 0
+	fi
+	_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON="$AUTH_FAILURE_REASON"
+	return 1
+}
+
+test_configured_dependency_bot_routes_only_repairs() {
+	local route_rc=0
+
+	rm -f "${TEST_ROOT}/create-args" "${TEST_ROOT}/created-body" "${TEST_ROOT}/pr-edit-args"
+	OPEN_ISSUES_JSON="[]"
+	CLOSED_ISSUES_JSON="[]"
+	AUTHENTIC=1
+	PR_LABELS=""
+	LABEL_SNAPSHOT=$'origin:worker\ndependencies\nauto-dispatch\ntier:standard'
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "policy-ineligible" || route_rc=$?
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	printf 'PASS configured dependency bot gets no policy or approval intake\n'
+	route_rc=0
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/other-renovate" "head-current" "terminal-ci-failure" || route_rc=$?
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" ]] || return 1
+	printf 'PASS unconfigured dependency bot is not routed\n'
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "terminal-ci-failure" || return 1
+	assert_file_contains "configured dependency bot intake names the bot" \
+		"${TEST_ROOT}/create-args" "Dependency bot acme-renovate PR #30038 requires worker resolution"
+	assert_file_contains "configured dependency bot intake records exact-head proof" \
+		"${TEST_ROOT}/created-body" "live Dependency bot acme-renovate Bot identity"
+	assert_file_contains "configured dependency bot intake routes terminal CI" \
+		"${TEST_ROOT}/created-body" "**terminal-ci-failure**"
+	rm -f "${TEST_ROOT}/create-args"
+	route_rc=0
+	AUTHENTIC=0
+	AUTH_FAILURE_REASON="commit-author-mismatch"
+	_pulse_route_dependabot_pr_to_worker_issue \
+		"30038" "owner/repo" "app/acme-renovate" "head-current" "merge-conflict" || route_rc=$?
+	AUTHENTIC=1
+	AUTH_FAILURE_REASON="snapshot-unavailable"
+	[[ "$route_rc" -eq 1 && ! -e "${TEST_ROOT}/create-args" && ! -e "${TEST_ROOT}/pr-edit-args" ]] || return 1
+	printf 'PASS modified configured-bot branch fails closed without writes\n'
+	return 0
+}
+
 test_classifies_human_modified_bot_branch() {
 	local route_rc=0
 
@@ -850,6 +907,7 @@ main() {
 	test_rejects_unverified_author
 	printf 'PASS unverified authors fail closed\n'
 	test_classifies_human_modified_bot_branch
+	test_configured_dependency_bot_routes_only_repairs
 	test_preserves_explicit_maintainer_hold
 	test_closes_policy_held_source_after_verified_replacement
 	test_policy_only_replacement_preserves_source
