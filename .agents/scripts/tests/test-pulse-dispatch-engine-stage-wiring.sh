@@ -930,10 +930,12 @@ assert_stage_starvation_fuse_contract() {
 
 # GH#38840: while the main-dispatch reserve is protected, a starved critical
 # stage borrows from AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S less this cycle's
-# fuse spend; deferrable stages, a missing classifier and 0 still defer.
+# fuse spend; a missing classifier, progress stages and 0 still defer.
+# GH#39179: a deferrable stage borrows only past its longer bound, measured from
+# its first deferral when it never started; its 0 override defers.
 assert_stage_reserve_borrow_contract() {
 	local test_root="" actual=""
-	local expected="unclassified:124;deferrable:124;off:124;borrowed:0;capped:124;"
+	local expected="unclassified:124;progress:124;deferrable_new:124;marked:1;deferrable:124;deferrable_off:124;off:124;borrowed:0;deferrable_starved:0;deferrable_marked:0;unmarked:1;capped:124;"
 	test_root=$(mktemp -d "${AIDEVOPS_TEMP_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/pulse-stage-borrow-XXXXXX") || return 1
 	TESTS_RUN=$((TESTS_RUN + 1))
 	actual=$(
@@ -941,6 +943,8 @@ assert_stage_reserve_borrow_contract() {
 			LOGFILE="$test_root/stages.log" EVENTS="$test_root/events"
 			LOCKDIR="$test_root/lock" STOP_FLAG="$test_root/stop" AIDEVOPS_PULSE_STAGE_STATE_DIR="$test_root/state"
 			PULSE_START_EPOCH=1000 PULSE_STALE_THRESHOLD=1800 PULSE_LOCK_MAX_AGE_S=1800 _PULSE_MAIN_DISPATCH_RESERVE_S=1293
+			# Critical stages starve after 600s, deferrable stages after 2400s.
+			AIDEVOPS_PULSE_STAGE_STARVATION_S=600 AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S=2400
 			mkdir -p "$LOCKDIR" "$AIDEVOPS_PULSE_STAGE_STATE_DIR"
 			printf '%s\n' "$$" >"$LOCKDIR/pid"
 			# Cycle clock past budget at 3000; 1610s of lease after the
@@ -959,23 +963,42 @@ assert_stage_reserve_borrow_contract() {
 			# No case statement: Bash 3.2 cannot parse one inside $( ).
 			_pulse_stage_priority_class() {
 				local class=critical
-				[[ "$1" != build_dependency_graph_cache ]] || class=deferrable
+				[[ "$1" != build_dependency_graph_cache && "$1" != dirty_pr_sweep ]] || class=deferrable
+				[[ "$1" != deterministic_merge_pass ]] || class=progress
 				printf '%s\n' "$class"
 				return 0
 			}
+			printf 'progress:%s;' "$(fuse_rc deterministic_merge_pass)"
+			# A never-started deferrable stage defers and anchors its bound at
+			# this first deferral instead of borrowing at once.
+			printf 'deferrable_new:%s;' "$(fuse_rc dirty_pr_sweep)"
+			[[ "$(<"$AIDEVOPS_PULSE_STAGE_STATE_DIR/dirty_pr_sweep.first_deferral")" == 3000 ]] && printf 'marked:1;'
+			# 2000s since the last start: starved for a critical stage, not yet
+			# for a deferrable one.
+			printf '1000\n' >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/build_dependency_graph_cache.start"
 			printf 'deferrable:%s;' "$(fuse_rc build_dependency_graph_cache)"
+			printf '400\n' >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/build_dependency_graph_cache.start"
+			printf 'deferrable_off:%s;' "$(AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S=0 fuse_rc build_dependency_graph_cache)"
 			printf 'off:%s;' "$(AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S=0 fuse_rc preflight_capacity)"
 			printf 'borrowed:%s;' "$(fuse_rc preflight_capacity)"
+			# 2600s past its last start, the deferrable stage borrows too.
+			printf 'deferrable_starved:%s;' "$(fuse_rc build_dependency_graph_cache)"
+			# 2600s past its first deferral it borrows; the start clears the marker.
+			printf '400\n' >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/dirty_pr_sweep.first_deferral"
+			printf 'deferrable_marked:%s;' "$(fuse_rc dirty_pr_sweep)"
+			[[ ! -e "$AIDEVOPS_PULSE_STAGE_STATE_DIR/dirty_pr_sweep.first_deferral" ]] && printf 'unmarked:1;'
 			# 110 of the 120s borrow is spent: 10s is below the 15s floor.
 			printf '%s 1000 110\n' "$$" >"$AIDEVOPS_PULSE_STAGE_STATE_DIR/fuse-cycle"
 			printf 'capped:%s;' "$(fuse_rc reap_zombie_workers)"
 		)
 	)
-	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "preflight_capacity " ]] &&
+	if [[ "$actual" == "$expected" && "$(tr '\n' ' ' <"$test_root/events")" == "preflight_capacity build_dependency_graph_cache dirty_pr_sweep " ]] &&
 		grep -q 'Stage starvation fuse: preflight_capacity last_start_age=never timeout=80s fuse_spent=40s reserve_borrow=120s' "$test_root/stages.log" &&
+		grep -q 'Stage starvation fuse: build_dependency_graph_cache last_start_age=2600s timeout=80s fuse_spent=40s reserve_borrow=120s' "$test_root/stages.log" &&
+		grep -q 'Stage starvation fuse: dirty_pr_sweep last_start_age=2600s timeout=80s fuse_spent=40s reserve_borrow=120s' "$test_root/stages.log" &&
 		grep -q 'Stage start: preflight_capacity (timeout 80s)' "$test_root/stages.log" &&
 		grep -q 'Stage deferred: reap_zombie_workers cycle budget exhausted' "$test_root/stages.log"; then
-		echo "${TEST_GREEN}PASS${TEST_NC}: starved critical stages borrow a capped slice of the protected dispatch reserve (GH#38840)"
+		echo "${TEST_GREEN}PASS${TEST_NC}: starved critical and long-starved deferrable stages borrow a capped slice of the protected dispatch reserve (GH#38840, GH#39179)"
 	else
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 		echo "${TEST_RED}FAIL${TEST_NC}: starved critical stages borrow a capped slice of the protected dispatch reserve (${actual:-none})"
