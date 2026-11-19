@@ -279,21 +279,25 @@ _pmp_consolidate_duplicate_pr_groups() {
 	[[ "$pr_count" -gt 1 ]] || return 0
 	[[ "${PULSE_MERGE_CONSOLIDATE_DUPLICATE_PRS:-true}" == "true" ]] || return 0
 
-	local group_file
+	local group_file candidate_file
 	group_file=$(mktemp 2>/dev/null) || group_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-groups-$$.tmp"
+	candidate_file=$(mktemp 2>/dev/null) || candidate_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-candidates-$$.tmp"
 	: >"$group_file"
+	: >"$candidate_file"
 
+	# Phase 1 (GH#39351): collect worker-owned PRs by linked issue without
+	# scoring. A score reads REST required checks (about 6 s per PR) and only
+	# matters for an issue with two or more open worker PRs; scoring every
+	# singleton used most of each large repo's merge-pass slice.
 	local pr_number="" created_at="" labels_csv="" mergeable="UNKNOWN" review="$_PMDC_REVIEW_NONE" is_draft="false" pr_obj="" linked_issue="" score=0
 	while IFS=$'\t' read -r pr_number created_at labels_csv mergeable review is_draft pr_obj; do
 		linked_issue=""
-		score=0
 		[[ -n "$pr_obj" ]] || continue
 		_pmp_pr_is_worker_owned_for_consolidation "$pr_obj" "$labels_csv" || continue
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
 		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
 		[[ "$linked_issue" =~ ^[0-9]+$ ]] || continue
-		score=$(_pmp_pr_consolidation_health_score "$repo_slug" "$pr_obj" "$pr_number" "$mergeable" "$review" "$is_draft") || score=0
-		printf '%s|%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$score" "$created_at" "$is_draft" >>"$group_file"
+		printf '%s|%s|%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$created_at" "$is_draft" "$mergeable" "$review" >>"$candidate_file"
 	done < <(printf '%s' "$pr_json" | jq -r '.[] | [
 		(.number // "" | tostring),
 		(.createdAt // ""),
@@ -304,12 +308,25 @@ _pmp_consolidate_duplicate_pr_groups() {
 		(. | tojson)
 	] | @tsv' 2>/dev/null)
 
+	# Phase 2: score only members of duplicated issues. Singleton groups never
+	# reach a decision (_pmp_consolidate_duplicate_pr_group needs two rows), so
+	# leaving them unscored keeps every consolidation outcome unchanged.
+	local duplicate_issues="" candidate_issue=""
+	duplicate_issues=$(cut -d'|' -f1 "$candidate_file" | sort | uniq -d)
+	if [[ -n "$duplicate_issues" ]]; then
+		while IFS='|' read -r candidate_issue pr_number created_at is_draft mergeable review; do
+			[[ $'\n'"${duplicate_issues}"$'\n' == *$'\n'"${candidate_issue}"$'\n'* ]] || continue
+			score=$(_pmp_pr_consolidation_health_score "$repo_slug" "" "$pr_number" "$mergeable" "$review" "$is_draft") || score=0
+			printf '%s|%s|%s|%s|%s\n' "$candidate_issue" "$pr_number" "$score" "$created_at" "$is_draft" >>"$group_file"
+		done <"$candidate_file"
+	fi
+
 	local issue_number
 	while IFS= read -r issue_number; do
 		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 		_pmp_consolidate_duplicate_pr_group "$repo_slug" "$issue_number" "$group_file"
 	done < <(cut -d'|' -f1 "$group_file" | sort -u)
 
-	rm -f "$group_file" 2>/dev/null || true
+	rm -f "$group_file" "$candidate_file" 2>/dev/null || true
 	return 0
 }
