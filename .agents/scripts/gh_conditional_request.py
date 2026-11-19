@@ -11,7 +11,8 @@ Explicit pagination pages (GH#39233) add `--include` only so the page loop can
 read `Link`; the loop marks them with PAGE_FRAME_ENV and their whole frame may
 be stored. A 304 carries no `Link` and a list ETag tracks the page body, so an
 unchanged *full* final page cannot reveal a newly appended page: only frames
-that link onward, or final raw arrays with room left, may answer a 304.
+that link onward, final raw arrays with room left, or counted lists whose
+`total_count` tracks every item (GH#39244) may answer a 304.
 """
 
 from __future__ import annotations
@@ -102,8 +103,18 @@ def _links_onward(header_frame: bytes) -> bool:
     return False
 
 
+def _counted(page) -> bool:
+    count = page.get("total_count") if isinstance(page, dict) else None
+    return isinstance(count, int) and not isinstance(count, bool)
+
+
 def _final_page_has_room(args: list[str], body: bytes) -> bool:
-    """Return True for an unfiltered final raw array page shorter than its page size."""
+    """Return True for an unfiltered final page that would change if an item were appended.
+
+    A raw array qualifies when shorter than its page size. A counted list
+    (`{"total_count": N, ...}`) always qualifies: any added or removed item
+    changes `total_count`, so the body and its ETag change on every page.
+    """
     try:
         endpoint, options = _request_options(args[1:])
     except (ValueError, StopIteration):
@@ -118,15 +129,16 @@ def _final_page_has_room(args: list[str], body: bytes) -> bool:
         items = json.loads(body)
     except ValueError:
         return False
-    return isinstance(items, list) and len(items) < min(int(sizes[0]), _MAX_PER_PAGE)
+    return _counted(items) or (isinstance(items, list) and len(items) < min(int(sizes[0]), _MAX_PER_PAGE))
 
 
 def page_frame_replayable(args: list[str], header_frame: bytes, body: bytes) -> bool:
     """Return True when a stored page frame stays exact for a later 304.
 
     A frame that links onward is exact: every later page is requested and
-    validated on its own. A final page is exact only with room left, because
-    anything appended would then change this page's body and ETag.
+    validated on its own. A final page is exact only when anything appended
+    would change this page's body and ETag: a raw array with room left, or a
+    counted list whose `total_count` would change.
     """
     return _links_onward(header_frame) or _final_page_has_room(args, body)
 
