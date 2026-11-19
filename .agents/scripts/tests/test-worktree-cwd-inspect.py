@@ -311,6 +311,45 @@ class InspectCwdTests(unittest.TestCase):
                 self.assertEqual(result, 1 if error else 0)
                 self.assertEqual(output.getvalue(), "" if error else '{"status": "clear"}\n')
 
+    def test_cwds_mode_applies_legacy_read_per_pid_and_hides_failures(self):
+        def legacy(pid, uid):
+            self.assertEqual(uid, 1002)
+            if pid == "7":
+                raise PermissionError("private detail must not escape")
+            if pid == "8":
+                return "/srv/worktrees/\udcff"  # undecodable byte via surrogateescape
+            return f"/srv/worktrees/wt-{pid}"
+
+        with mock.patch.object(inspector, "legacy_cwd", side_effect=legacy):
+            report = inspector.cwds_report(["5", "7", "8", "9"], 1002)
+        self.assertEqual(report.splitlines(), [
+            "aidevops-cwd-inspect\tcwds\t1\t4", "R\t5\t/srv/worktrees/wt-5",
+            "F\t7", "F\t8", "R\t9\t/srv/worktrees/wt-9", "end\t4"])
+
+    def test_cwds_mode_rejects_invalid_duplicate_empty_or_oversized_requests(self):
+        for pids in ([], ["0"], ["5", "5"], ["5", "x"], ["-1"],
+                     [str(n) for n in range(1, inspector.CWDS_MAX_PIDS + 2)]):
+            with self.subTest(count=len(pids)):
+                with self.assertRaises(ValueError):
+                    inspector.cwds_report(pids, 1002)
+
+    def test_cwds_mode_is_self_bounded_and_prints_only_completed_reports(self):
+        for error in (None, ValueError("invalid batch request")):
+            with self.subTest(error=error is not None):
+                output = io.StringIO()
+                with (mock.patch.object(inspector.os, "geteuid", return_value=0),
+                      mock.patch.dict(inspector.os.environ, {"SUDO_UID": "1002"}),
+                      mock.patch.object(inspector.sys, "argv", ["inspector", "--cwds", "5", "9"]),
+                      mock.patch.object(inspector, "cwds_report", return_value="report", side_effect=error) as report,
+                      mock.patch.object(inspector.signal, "signal"),
+                      mock.patch.object(inspector.signal, "alarm") as alarm,
+                      contextlib.redirect_stdout(output)):
+                    result = inspector.main()
+                report.assert_called_once_with(["5", "9"], 1002)
+                self.assertEqual(alarm.call_args_list, [mock.call(5), mock.call(0)])
+                self.assertEqual(result, 1 if error else 0)
+                self.assertEqual(output.getvalue(), "" if error else "report\n")
+
     def test_census_mode_is_self_bounded_and_rejects_extra_arguments(self):
         for argv, expected in ((["inspector", "--census", "/candidate"], 0),
                                (["inspector", "--census", "/candidate", "extra"], 1)):

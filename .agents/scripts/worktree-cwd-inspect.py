@@ -3,6 +3,7 @@
 
 Install a root-owned copy with a single-executable sudoers rule. Never run
 this from a writable worktree through sudo. Legacy output is a CWD path;
+--cwds applies that same per-PID read to several PIDs in one call;
 --references (one PID) and --census (all invoker tasks, counts only) emit
 bound census evidence, never deletion authority.
 
@@ -214,6 +215,60 @@ def bounded_report(deadline: int, build) -> int:
     return 0
 
 
+def legacy_cwd(pid: str, invoker_uid: int) -> str:
+    """One same-user process CWD: stable identity, safe absolute path, else ValueError/OSError."""
+    if not re.fullmatch(r"[1-9][0-9]*", pid):
+        raise ValueError("invalid inspector arguments")
+    proc_dir = f"/proc/{pid}"
+    before = os.stat(proc_dir, follow_symlinks=False)
+    if not owned_by_invoker(pid, invoker_uid):
+        raise ValueError("process owner does not match the invoking user")
+    cwd = os.readlink(f"{proc_dir}/cwd")
+    after = os.stat(proc_dir, follow_symlinks=False)
+    if (before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid)
+            or not cwd.startswith("/") or not safe_text(cwd)):
+        raise ValueError("process changed or its CWD is not a safe absolute path")
+    return cwd
+
+
+CWDS_MAX_PIDS = 4096
+
+
+def cwds_report(pids: list, invoker_uid: int) -> str:
+    """Apply the legacy single-PID read to each PID in one invocation (GH#38918).
+
+    Discloses nothing beyond legacy mode: an `R` line carries exactly what
+    `<pid>` mode would print, and any refused or failed read is an opaque `F`.
+    The header and trailer let the caller reject an incomplete response.
+    """
+    if (not 1 <= len(pids) <= CWDS_MAX_PIDS or len(set(pids)) != len(pids)
+            or not all(re.fullmatch(r"[1-9][0-9]*", pid) for pid in pids)):
+        raise ValueError("invalid batch request")
+    lines = [f"aidevops-cwd-inspect\tcwds\t1\t{len(pids)}"]
+    for pid in pids:
+        try:
+            cwd = legacy_cwd(pid, invoker_uid)
+            # A CWD that cannot be printed fails only its own PID, not the batch.
+            cwd.encode("utf-8")
+            lines.append(f"R\t{pid}\t{cwd}")
+        except (OSError, ValueError, IndexError):
+            lines.append(f"F\t{pid}")
+    lines.append(f"end\t{len(pids)}")
+    return "\n".join(lines)
+
+
+def bounded_text(deadline: int, build) -> int:
+    """Build under the child's own deadline; print only a completed response."""
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    signal.alarm(deadline)
+    try:
+        text = build()
+    finally:
+        signal.alarm(0)
+    print(text)
+    return 0
+
+
 def main() -> int:
     try:
         sudo_uid = os.environ.get("SUDO_UID", "")
@@ -223,19 +278,11 @@ def main() -> int:
             return bounded_report(2, lambda: reference_report(sys.argv[2], sys.argv[3], int(sudo_uid)))
         if len(sys.argv) == 3 and sys.argv[1] == "--census":
             return bounded_report(5, lambda: census_report(sys.argv[2], int(sudo_uid)))
-        if len(sys.argv) != 2 or not re.fullmatch(r"[1-9][0-9]*", sys.argv[1]):
+        if len(sys.argv) >= 3 and sys.argv[1] == "--cwds":
+            return bounded_text(5, lambda: cwds_report(sys.argv[2:], int(sudo_uid)))
+        if len(sys.argv) != 2:
             raise ValueError("invalid inspector arguments")
-        pid = sys.argv[1]
-        proc_dir = f"/proc/{pid}"
-        invoker_uid = int(sudo_uid)
-        before = os.stat(proc_dir, follow_symlinks=False)
-        if not owned_by_invoker(pid, invoker_uid):
-            raise ValueError("process owner does not match the invoking user")
-        cwd = os.readlink(f"{proc_dir}/cwd")
-        after = os.stat(proc_dir, follow_symlinks=False)
-        if (before.st_ino != after.st_ino or not owned_by_invoker(pid, invoker_uid)
-                or not cwd.startswith("/") or not safe_text(cwd)):
-            raise ValueError("process changed or its CWD is not a safe absolute path")
+        cwd = legacy_cwd(sys.argv[1], int(sudo_uid))
     except (OSError, ValueError, IndexError):
         return 1
     print(cwd)
