@@ -236,12 +236,23 @@ fi
 WORKFLOW="${TEST_SCRIPT_DIR}/../../../.github/workflows/loc-badge-reusable.yml"
 python3 - "$WORKFLOW" "${TEST_TMP}/resolve-ref.sh" <<'PY'
 import pathlib
+import re
 import sys
-import yaml
 
-workflow = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
-step = next(s for s in workflow["jobs"]["generate"]["steps"] if s.get("id") == "helper-ref")
-pathlib.Path(sys.argv[2]).write_text(step["run"])
+# Standard library only (PyYAML is not guaranteed on every host): extract the
+# literal `run: |` block of the step with `id: helper-ref`.
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+start = next(i for i, line in enumerate(lines) if re.match(r"\s*id:\s*helper-ref\s*$", line))
+run_idx = next(i for i in range(start, len(lines)) if re.match(r"\s*run:\s*\|\s*$", lines[i]))
+run_indent = len(lines[run_idx]) - len(lines[run_idx].lstrip())
+body = []
+for line in lines[run_idx + 1:]:
+    if line.strip() and len(line) - len(line.lstrip()) <= run_indent:
+        break
+    body.append(line)
+block_indent = min(len(l) - len(l.lstrip()) for l in body if l.strip())
+script = "\n".join(l[block_indent:] for l in body).rstrip("\n") + "\n"
+pathlib.Path(sys.argv[2]).write_text(script)
 PY
 gh() {
 	printf '%s\n' "$RESOLVER_RESPONSE"

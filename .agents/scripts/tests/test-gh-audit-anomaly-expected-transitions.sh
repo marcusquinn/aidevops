@@ -460,7 +460,11 @@ STACK_DIR="${TEST_ROOT}/stack/agents/scripts"
 mkdir -p "$STACK_DIR"
 cat >"${STACK_DIR}/pulse-nmr-approval.sh" <<'EOF'
 _nmr_edit_issue_labels() {
-	protected_label_edit "$@"
+	local issue_num="$1"
+	local slug="$2"
+	shift 2
+	# Mirror pulse-nmr-approval.sh: protected_label_edit takes a decision arg.
+	protected_label_edit "$issue_num" "$slug" "normalization; association=COLLABORATOR; authority=repo-write" "$@"
 	return $?
 }
 EOF
@@ -470,17 +474,27 @@ _nmr_edit_issue_labels() {
 	return $?
 }
 _protected_label_raw_edit() {
-	gh_issue_edit_safe "$@"
+	local number="$1" repo="$2"
+	shift 2
+	gh_issue_edit_safe "$number" --repo "$repo" "$@"
 	return $?
 }
 EOF
-_STACK_PHASE="before"
+# The wrapper reads state inside $(...), so the before/after toggle must live
+# in a file: a shell variable set in the command-substitution subshell is lost.
+_STACK_PHASE_FILE="${TEST_ROOT}/stack-phase"
+printf 'before\n' >"$_STACK_PHASE_FILE"
+# Keep the real reader so later sections (the real CLI handoff) are not served
+# this stack-only stub; the wrapper include guard prevents re-sourcing it.
+_REAL_FETCH_ISSUE_STATE_DEF=$(declare -f _gh_audit_fetch_issue_state_json)
 _gh_audit_fetch_issue_state_json() {
-	if [[ "$_STACK_PHASE" == "before" ]]; then
-		_STACK_PHASE="after"
+	local phase
+	phase=$(<"$_STACK_PHASE_FILE")
+	if [[ "$phase" == "before" ]]; then
+		printf 'after\n' >"$_STACK_PHASE_FILE"
 		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review","needs-maintainer-review"]}'
 	else
-		_STACK_PHASE="before"
+		printf 'before\n' >"$_STACK_PHASE_FILE"
 		printf '%s\n' '{"capture_status":"ok","title_len":1,"body_len":1,"labels":["hold-for-review"]}'
 	fi
 	return 0
@@ -488,13 +502,20 @@ _gh_audit_fetch_issue_state_json() {
 _gh_wrapper_enter_cleanup_scope() { return 0; }
 gh_record_call() { return 0; }
 _gh_guard_public_write_args() { return 0; }
+export PROTECTED_LABEL_FLAP_STATE_DIR="${TEST_ROOT}/protected-label-flap"
 gh() {
 	local command="$1"
 	local resource="${2:-}"
 	[[ "$command" == "issue" ]] && return 0
 	[[ "$command" == "api" ]] || return 1
+	# The guard's flap detection reads paginated comments and timeline (--slurp
+	# wrapped); a fresh issue has no history.
+	if [[ "$*" == *"--slurp"* && ( "$*" == *"/comments?"* || "$*" == *"/timeline?"* ) ]]; then
+		printf '%s\n' '[[]]'
+		return 0
+	fi
 	case "$resource" in
-	repos/example/repo/issues/25 | repos/example/repo/issues/26)
+	repos/example/repo/issues/125 | repos/example/repo/issues/126)
 		printf '%s\n' '{"user":{"login":"trusted-author","type":"User"},"author_association":"COLLABORATOR","labels":[{"name":"hold-for-review"}]}'
 		;;
 	user) printf '%s\n' "$CURRENT_ACTOR" ;;
@@ -507,8 +528,9 @@ CURRENT_ACTOR="trusted-runner"
 source "${SCRIPT_DIR}/../protected-label-guard.sh"
 # shellcheck source=/dev/null
 source "${STACK_DIR}/pulse-nmr-approval.sh"
-_nmr_edit_issue_labels 25 example/repo --remove-label needs-maintainer-review
-jq -e -s 'map(select(.number == 25 and .caller_function == "_nmr_edit_issue_labels"))
+printf 'before\n' >"$_STACK_PHASE_FILE"
+_nmr_edit_issue_labels 125 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 125 and .caller_function == "_nmr_edit_issue_labels"))
 	| length == 1 and (.[0].caller_script | endswith("/pulse-nmr-approval.sh"))
 	and .[0].flags.trusted_author_nmr_verified == "v1-current-state"' "$PROOF_LOG" >/dev/null ||
 	fail "real-stack NMR edit did not record the logical caller with verified proof"
@@ -516,12 +538,19 @@ jq -e -s 'map(select(.number == 25 and .caller_function == "_nmr_edit_issue_labe
 # function defined outside the guard file, must not acquire the flag.
 # shellcheck source=/dev/null
 source "${STACK_DIR}/other-script.sh"
-_nmr_edit_issue_labels 26 example/repo --remove-label needs-maintainer-review
-jq -e -s 'map(select(.number == 26))[-1]
+printf 'before\n' >"$_STACK_PHASE_FILE"
+_nmr_edit_issue_labels 126 example/repo --remove-label needs-maintainer-review
+jq -e -s 'map(select(.number == 126))[-1]
 	| (.caller_script | endswith("/other-script.sh")) and .flags == {}' "$PROOF_LOG" >/dev/null ||
 	fail "non-framework script acquired trusted NMR proof through a lookalike guard function"
 unset CURRENT_ACTOR
 unset GH_AUDIT_LOG_FILE
+# Restore the real state reader replaced for the stack-only scenario above.
+if [[ -n "$_REAL_FETCH_ISSUE_STATE_DEF" ]]; then
+	eval "$_REAL_FETCH_ISSUE_STATE_DEF"
+else
+	unset -f _gh_audit_fetch_issue_state_json
+fi
 
 gh() {
 	local command="$1"
@@ -652,7 +681,7 @@ jq -e '.capture_status == "ok" and .title_len == 21 and .body_len == 14 and .lab
 	<<<"$native_fallback_issue" >/dev/null || fail "issue audit capture did not fall back after the REST-capable wrapper failed"
 jq -e '.capture_status == "ok" and .title_len == 18 and .body_len == 14 and .labels == ["monitoring"]' \
 	<<<"$native_fallback_pr" >/dev/null || fail "PR audit capture did not fall back after the REST-capable wrapper failed"
-grep -Fqx 'read|gh issue view 8 --repo example/repo --json title,body,labels' "$GH_TIMEOUT_TRACE" ||
+grep -Fqx 'read|gh issue view 8 --repo example/repo --json title,body,labels,assignees' "$GH_TIMEOUT_TRACE" ||
 	fail "native issue audit fallback bypassed _gh_with_timeout"
 grep -Fqx 'read|gh pr view 9 --repo example/repo --json title,body,labels' "$GH_TIMEOUT_TRACE" ||
 	fail "native PR audit fallback bypassed _gh_with_timeout"
