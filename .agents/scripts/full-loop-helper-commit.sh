@@ -196,6 +196,7 @@ _parse_commit_and_pr_args() {
 			index=$((index + 1))
 			;;
 		--keep-issue-open) keep_issue_open=1; index=$((index + 1)) ;; # GH#36598
+		--ready) create_ready=1; index=$((index + 1)) ;;
 		--skip-hooks)
 			# Pass --no-verify to git push. Use for doc-only PRs when hooks
 			# have been manually verified clean. See GH#20138.
@@ -1588,6 +1589,38 @@ _explicit_pr_create_base() {
 	return 0
 }
 
+# GH#39210: run the PR create command; --ready scopes AIDEVOPS_PR_CREATE_READY=1
+# to this single call (never exported).
+_run_pr_create_cmd() {
+	local ready="$1"
+	shift
+	if [[ "$ready" -eq 1 ]]; then
+		AIDEVOPS_PR_CREATE_READY=1 "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
+# Verify the final pushed head (post commit/rebase/push) before opening
+# non-draft; on mismatch or lookup failure keep the draft default.
+# Args: $1=requested ready (0|1) $2=head branch. Prints effective ready (0|1).
+_effective_pr_ready() {
+	local ready="$1"
+	local head_branch="$2"
+	if [[ "$ready" -eq 1 && -n "$head_branch" ]]; then
+		local local_head="" remote_head=""
+		local_head=$(git rev-parse HEAD 2>/dev/null || true)
+		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | sed -n 1p || true)
+		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
+			print_warning "Pushed head does not match local HEAD; creating PR as draft" >&2
+			ready=0
+		fi
+	fi
+	printf '%s\n' "$ready"
+	return 0
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -1596,15 +1629,9 @@ _create_pr() {
 
 	print_info "Creating PR..."
 	local pr_url="" pr_error="" rc=0
-	# t2115/t3088: gh_create_pr auto-appends origin label and signature footer.
-	# Previously we passed --label "$origin_label" here too, with the comment
-	# "GitHub deduplicates". That claim is FALSE for non-identical labels: when
-	# this caller's $origin_label disagreed with gh_create_pr's session-detected
-	# label (env-var divergence — see full-loop-helper.sh t3088 fix), GitHub
-	# applied BOTH labels, producing the t2200 mutual-exclusion violation.
-	# Canonical failure: PR #21825. Origin label is now injected at creation by
-	# gh_create_pr, via session_origin_label(), then reconciled below after the
-	# PR number is known to cover partial-success recovery gaps (GH#26045).
+	# t2115/t3088: gh_create_pr injects the origin label and signature footer;
+	# passing --label "$origin_label" too applied both labels (t2200, PR #21825).
+	# The label is reconciled below once the PR number is known (GH#26045).
 	# GH#33381: pass the exact pushed head instead of letting gh infer it from
 	# ambient checkout state (wrong after a replacement branch, or in linked
 	# worktrees backed by a bare common directory).
@@ -1635,7 +1662,7 @@ _create_pr() {
 		rm -f "$body_file"
 		return 1
 	}
-	pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	pr_url=$(_run_pr_create_cmd "$(_effective_pr_ready "${create_ready:-0}" "$head_branch")" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
