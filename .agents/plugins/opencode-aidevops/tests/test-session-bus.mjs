@@ -22,6 +22,7 @@ import { getSessionBusState } from "../compaction.mjs";
 import { messageRows, rootSessionID } from "../tui-messages.mjs";
 import { chatTrust, setChatWake, chatWakeEnabled } from "../session-bus-chat-trust.mjs";
 import * as releaseWatch from "../session-bus-release.mjs";
+import * as issueWatch from "../session-bus-issue-watch.mjs";
 import { listDir } from "../session-bus-files.mjs";
 import {
   KEEPALIVE_TEXT, isKeepaliveMessage, keepaliveActive, keepalivePass, readKeepalive, setKeepalive,
@@ -925,6 +926,66 @@ test("release watches fan out one non-waking info notice per event and dead-exec
   releaseWatch.addReleaseWatch(root, "owner/repo", { session_id: "ses_goneR1", handle: "gone" });
   store.pruneBus(root);
   assert.deepEqual(listDir(join(root, "release-watch", "owner@repo")).filter((name) => name.endsWith(".json")), []);
+});
+
+// t19157/GH#39240: issue watches for interactive sessions, read by the pulse relay.
+test("issue watches are per interactive session, bounded, listed for the relay and end with presence (t19157)", async () => {
+  assert.deepEqual(issueWatch.parseIssueRef("Owner/Repo#12"), { repo: "Owner/Repo", number: 12, key: "owner@repo@12" });
+  assert.equal(issueWatch.parseIssueRef("#7", "owner/repo").key, "owner@repo@7");
+  for (const bad of ["../x#1", "owner/repo#0", "owner/repo#1/../2", "#3", "owner/..#4"]) {
+    assert.throws(() => issueWatch.parseIssueRef(bad), /owner\/repo#N|positive whole number/, bad);
+  }
+
+  livePresence("ses_watchI1", { handle: "repo-iw" });
+  livePresence("ses_workerI1", { kind: "headless", handle: "worker-iw" });
+  const output = [];
+  const out = { write: (text) => output.push(text) };
+  const env = { AIDEVOPS_OPENCODE_SESSION_ID: "ses_watchI1" };
+  cliMain(["watch-issue", "#5"], { env, out, root });
+  assert.match(output.join(""), /Watching owner\/repo#5 until/);
+  cliMain(["watch-issue", "other/repo#9", "--new"], { env, out, root });
+  assert.throws(() => cliMain(["watch-issue", "#5"], { env: { AIDEVOPS_OPENCODE_SESSION_ID: "ses_workerI1" }, out, root }), /interactive sessions/);
+  assert.throws(() => cliMain(["watch-issue", "#5"], { env: { AIDEVOPS_OPENCODE_SESSION_ID: "ses_nopres" }, out, root }), /no live presence/);
+
+  output.length = 0;
+  cliMain(["watches", "--all", "--json"], { env: {}, out, root });
+  const all = JSON.parse(output.join(""));
+  assert.deepEqual(all.map((watch) => [watch.subscriber, watch.repo, watch.number, watch.fresh]),
+    [["ses_watchI1", "owner/repo", 5, false], ["ses_watchI1", "other/repo", 9, true]]);
+  // Re-watching refreshes expiry and keeps the original start and fresh flag.
+  const again = issueWatch.addIssueWatch(root, "other/repo#9", store.readPresence(root).find((record) => record.session_id === "ses_watchI1"), { now: all[1].created_ms + 1000 });
+  assert.equal(again.created_ms, all[1].created_ms);
+  assert.equal(again.fresh, true);
+
+  const fakeTool = (definition) => definition;
+  fakeTool.schema = fakeSchema;
+  const bus = busFor(fakeClient({ ses_toolI1: { id: "ses_toolI1", title: "", directory: root } }));
+  await bus.handleEvent({ event: { type: "session.created", properties: { info: { id: "ses_toolI1", title: "", directory: root } } } });
+  const sessionsTool = createSessionBusTool(fakeTool, bus);
+  assert.match(await sessionsTool.execute({ action: "watch-issue", to: "owner/repo#11" }, { sessionID: "ses_toolI1" }), /Pointers never wake/);
+  assert.match(await sessionsTool.execute({ action: "watch-issue" }, { sessionID: "ses_toolI1" }), /owner\/repo#11 until/);
+  assert.match(await sessionsTool.execute({ action: "watch-issue", to: "owner/repo#11", text: "off" }, { sessionID: "ses_toolI1" }), /Stopped watching/);
+  assert.equal(await sessionsTool.execute({ action: "watch-issue" }, { sessionID: "ses_toolI1" }), "No issue watches.");
+
+  // A local `who` miss on an issue points at the GitHub read for other runners.
+  assert.match(await sessionsTool.execute({ action: "who", to: "#424242" }, { sessionID: "ses_toolI1" }), /other runners[\s\S]*gh issue view 424242/);
+  assert.equal(store.crossRunnerHint(["owner/repo"]), "");
+
+  // Per-session cap.
+  const watcher = store.readPresence(root).find((record) => record.session_id === "ses_watchI1");
+  for (let number = 100; issueWatch.sessionIssueWatches(root, "ses_watchI1").length < issueWatch.ISSUE_WATCH_LIMITS.perSession; number += 1) {
+    issueWatch.addIssueWatch(root, `owner/repo#${number}`, watcher);
+  }
+  assert.throws(() => issueWatch.addIssueWatch(root, "owner/repo#99999", watcher), /at most 50/);
+
+  output.length = 0;
+  cliMain(["watch-issue", "#5", "--off"], { env, out, root });
+  assert.match(output.join(""), /Stopped watching #5/);
+
+  // Watches end with their session's presence.
+  store.removePresence(root, "ses_watchI1");
+  store.pruneBus(root);
+  assert.deepEqual(listDir(join(root, "issue-watch")), []);
 });
 
 // t19047/GH#38552: opt-in mission keepalive.
