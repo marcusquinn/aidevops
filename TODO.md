@@ -2328,6 +2328,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19181 docs(worker-egress-srt): record macOS arm64 real-check evidence, Homebrew closure requirement, and resolved zod advisory #auto-dispatch #documentation ref:GH#39340
 
+- [ ] t19183 fix(oauth-pool): share one runtime pool resolver and usability rule between model availability and headless auth #bug #auto-dispatch tier:standard ~1h20m blocked-by:GH#39095 ref:GH#39352 logged:2026-11-19 -> [todo/tasks/t19183-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
