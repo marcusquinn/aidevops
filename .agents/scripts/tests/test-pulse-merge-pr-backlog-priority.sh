@@ -173,6 +173,14 @@ printf '%s\n' 'owner/repo|33|sha33' >"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-serv
 assert_eq "2i: the cursor's resume PR and heads served this walk are not promoted" "41,31,32,33" "$(ci_sort)"
 rm -f "$PULSE_MERGE_PR_CURSOR_FILE" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
 assert_eq "2j: PULSE_MERGE_CI_REPAIR_LANE_LIMIT=0 disables the lane" "41,31,32,33" "$(PULSE_MERGE_CI_REPAIR_LANE_LIMIT=0 ci_sort)"
+printf '%s\n' 'owner/repo|33|sha33' >"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+assert_eq "2k: stale served records are ignored before a fresh walk" "32*,33*,41,31" "$(ci_sort)"
+rm -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+mkdir -p "$AIDEVOPS_CI_REPAIR_STATE_DIR/owner_repo-32-sha32-legacy"
+assert_eq "2l: a legacy CI-repair lease for the current head excludes the PR" "33*,41,31,32" "$(ci_sort)"
+_pmp_record_lane_served owner/repo "$(printf '%s' "$ci_ready" | jq -c '. + {_pulseCiRepairLane:true}')"
+assert_eq "2m: an evaluated lane item is recorded even when no longer failing" "owner/repo|41|sha41" "$(cat "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served")"
+rm -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served"
 unset -f ci_sort
 unset AIDEVOPS_CI_REPAIR_STATE_DIR PULSE_MERGE_PR_CURSOR_FILE
 

@@ -215,12 +215,13 @@ _pmp_ci_repair_repo_hash() {
 # GH#39281: true when a small-fix-needed PR may join the CI-repair lane: its
 # current head has no CI-repair lease (the `<repo_hash>-<pr>-<head>` directory
 # _dispatch_ci_repair_session claims, whether active or exhausted) and this
-# cursor walk has not already evaluated it failing at that head
-# (`<cursor file>.lane-ci-served`). The caller checks the bucket.
-# Args: $1 - repo slug, $2 - PR object
+# cursor walk has not already evaluated it at that head
+# (`<cursor file>.lane-ci-served`). The records are read only while a walk is
+# active ($3=1): before a fresh walk they are stale. The caller checks the bucket.
+# Args: $1 - repo slug, $2 - PR object, $3 - 1 when a cursor walk is active
 #######################################
 _pmp_ci_repair_lane_eligible() {
-	local repo_slug="$1" pr_obj="$2"
+	local repo_slug="$1" pr_obj="$2" walk_active="${3:-0}"
 	local number_head="" pr_number="" head_sha="" repo_hash=""
 	local served_file="${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-ci-served"
 	local state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
@@ -229,23 +230,27 @@ _pmp_ci_repair_lane_eligible() {
 	pr_number="${number_head%%|*}"
 	head_sha="${number_head#*|}"
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$head_sha" =~ ^[0-9A-Za-z]+$ ]] || return 1
-	if [[ -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" && -f "$served_file" ]] &&
+	if [[ "$walk_active" == "1" && -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" && -f "$served_file" ]] &&
 		grep -Fxq -- "${repo_slug}|${pr_number}|${head_sha}" "$served_file" 2>/dev/null; then
 		return 1
 	fi
 	repo_hash=$(_pmp_ci_repair_repo_hash "$repo_slug") || return 1
 	[[ -e "${state_root}/${repo_hash}-${pr_number}-${head_sha}" ]] && return 1
+	# Legacy `<slug>-<pr>-<head>-*` leases also mean this head already had a repair.
+	local legacy_dir="" legacy_key=""
+	legacy_key=$(printf '%s-%s-%s' "$repo_slug" "$pr_number" "$head_sha" | tr '/:' '__')
+	for legacy_dir in "${state_root}/${legacy_key}-"*; do
+		[[ -d "$legacy_dir" ]] && return 1
+	done
 	return 0
 }
 
-# GH#39281: PR number the repo's durable cursor resumes at (empty if none).
-_pmp_cursor_next_pr_for_repo() {
-	local repo_slug="$1" cursor_line=""
+# GH#39281: the repo's durable cursor line (empty when no walk is active).
+_pmp_cursor_line_for_repo() {
+	local repo_slug="$1"
 	[[ -n "$repo_slug" && -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 0
 	declare -F _pmp_merge_pr_cursor_line_for_repo >/dev/null 2>&1 || return 0
-	cursor_line=$(_pmp_merge_pr_cursor_line_for_repo "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug")
-	[[ -n "$cursor_line" ]] || return 0
-	printf '%s' "${cursor_line##*|}"
+	_pmp_merge_pr_cursor_line_for_repo "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug"
 	return 0
 }
 
@@ -279,9 +284,16 @@ _pmp_sort_prs_by_backlog_priority() {
 	local _tmp_lines=""
 	_tmp_lines=$(mktemp)
 	local dirty_keys="" counted_keys="" ci_limit="${PULSE_MERGE_CI_REPAIR_LANE_LIMIT:-2}" ci_promoted="" ci_count=0 cursor_next=""
+	local cursor_line="" walk_active=0
 	[[ "$ci_limit" =~ ^[0-9]+$ ]] || ci_limit=2
 	[[ -n "$repo_slug" ]] || ci_limit=0
-	[[ "$ci_limit" -eq 0 ]] || cursor_next=$(_pmp_cursor_next_pr_for_repo "$repo_slug")
+	if [[ "$ci_limit" -gt 0 ]]; then
+		cursor_line=$(_pmp_cursor_line_for_repo "$repo_slug")
+		if [[ -n "$cursor_line" ]]; then
+			walk_active=1
+			cursor_next="${cursor_line##*|}"
+		fi
+	fi
 	if declare -F _pulse_merge_queue_priority_keys >/dev/null 2>&1; then
 		dirty_keys=$(_pulse_merge_queue_priority_keys "$repo_slug")
 	fi
@@ -309,7 +321,7 @@ _pmp_sort_prs_by_backlog_priority() {
 		fi
 		# GH#39281: bounded CI-repair lane ahead of merge-ready work.
 		if [[ "$category" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" && "$negative_priority" -eq 0 && "$ci_count" -lt "$ci_limit" &&
-			"$pr_number" != "$cursor_next" ]] && _pmp_ci_repair_lane_eligible "$repo_slug" "$pr_obj"; then
+			"$pr_number" != "$cursor_next" ]] && _pmp_ci_repair_lane_eligible "$repo_slug" "$pr_obj" "$walk_active"; then
 			local lane_obj=""
 			lane_obj=$(printf '%s' "$pr_obj" | jq -c '. + {_pulseCiRepairLane:true}' 2>/dev/null) || lane_obj=""
 			if [[ -n "$lane_obj" ]]; then
@@ -768,18 +780,22 @@ _pmp_lane_pr_key() {
 # Args: $1=repo slug, $2=authoritative PR object the evaluator received.
 # Only a merge-ready classification counts: a PR blocked on pending checks
 # stays eligible for the lane once they pass at the same head. GH#39281: a
-# small-fix-needed classification goes to `.lane-ci-served`, so a PR whose
-# repair route deferred is not promoted again at that head during this walk.
+# small-fix-needed classification, or any CI-repair lane item whatever its
+# authoritative state, goes to `.lane-ci-served`, so neither a deferred repair
+# route nor a stale advisory failure promotes the PR again at that head
+# during this walk.
 _pmp_record_lane_served() {
-	local repo_slug="$1" pr_obj="$2" key="" record=""
+	local repo_slug="$1" pr_obj="$2" key="" backlog_state=""
 	[[ -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 0
-	case "$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")" in
-	"$_PMP_BACKLOG_MERGE_READY") record="lane-served" ;;
-	"$_PMP_BACKLOG_SMALL_FIX_NEEDED") record="lane-ci-served" ;;
-	*) return 0 ;;
-	esac
 	key=$(_pmp_lane_pr_key "$repo_slug" "$pr_obj") || return 0
-	printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.${record}" 2>/dev/null || true
+	backlog_state=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
+	if [[ "$backlog_state" == "$_PMP_BACKLOG_MERGE_READY" ]]; then
+		printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" 2>/dev/null || true
+	fi
+	if [[ "$backlog_state" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" ]] ||
+		printf '%s' "$pr_obj" | jq -e '._pulseCiRepairLane == true' >/dev/null 2>&1; then
+		printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -971,18 +987,29 @@ _pmp_resume_cursor_with_priority_lane() {
 		ci_commas="${ci_lane//[^,]/}"
 		ci_moved=$((${#ci_commas} + 1))
 	fi
-	_pmp_collect_merge_lane "$repo_slug" "$start_index" "$ci_lane" merge_lane merge_moved merge_counted || return 0
+	# A failed reorder leaves promoted items before the cursor for this pass
+	# only; the next pass's sort flags them again. Log it so it is not silent.
+	local lane_fail="[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} skipped at index=${start_index}"
+	if ! _pmp_collect_merge_lane "$repo_slug" "$start_index" "$ci_lane" merge_lane merge_moved merge_counted; then
+		echo "${lane_fail}: merge-lane collection failed (GH#39281)" >>"$LOGFILE"
+		return 0
+	fi
 	total=$((ci_moved + merge_moved))
 	[[ "$total" -gt 0 ]] || return 0
 	last_pr=$(_pmp_pr_number_at_index "$pr_json" "$((start_index - 1))") || last_pr=""
 	item_pr=$(_pmp_pr_number_at_index "$pr_json" "$start_index") || item_pr=""
-	[[ -n "$item_pr" ]] || return 0
-	reordered=$(printf '%s' "$pr_json" | jq -c --argjson start "$start_index" --argjson ci "[${ci_lane}]" --argjson lane "[${merge_lane}]" '
-		. as $all
-		| ($ci + $lane) as $moved
-		| [range(0; $start) | select(. as $i | $moved | any(.[]; . == $i) | not) | $all[.]]
-			+ [$all[$start]] + [$ci[] | $all[.]] + [$lane[] | $all[.]] + $all[($start + 1):]' 2>/dev/null) || return 0
-	[[ -n "$reordered" ]] || return 0
+	reordered=""
+	if [[ -n "$item_pr" ]]; then
+		reordered=$(printf '%s' "$pr_json" | jq -c --argjson start "$start_index" --argjson ci "[${ci_lane}]" --argjson lane "[${merge_lane}]" '
+			. as $all
+			| ($ci + $lane) as $moved
+			| [range(0; $start) | select(. as $i | $moved | any(.[]; . == $i) | not) | $all[.]]
+				+ [$all[$start]] + [$ci[] | $all[.]] + [$lane[] | $all[.]] + $all[($start + 1):]' 2>/dev/null) || reordered=""
+	fi
+	if [[ -z "$reordered" ]]; then
+		echo "${lane_fail}: reorder failed for ${total} lane PR(s) (GH#39281)" >>"$LOGFILE"
+		return 0
+	fi
 	pr_json="$reordered"
 	_PMP_RESUME_LANE_START=$((start_index - total))
 	_PMP_RESUME_LANE_END="$start_index"
