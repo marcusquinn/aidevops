@@ -186,11 +186,85 @@ _pmp_guardrail_counted_actionable() {
 }
 
 #######################################
+# GH#39281: repo digest used by CI-repair lease keys. Delegates to
+# _ci_repair_hash_text when the feedback library is loaded and otherwise
+# computes the same SHA-256 digest. Fails closed when no digest tool exists.
+# Args: $1 - repo slug
+# Stdout: 64-character hex digest
+#######################################
+_pmp_ci_repair_repo_hash() {
+	local repo_slug="$1"
+	local digest=""
+	if declare -F _ci_repair_hash_text >/dev/null 2>&1; then
+		_ci_repair_hash_text "$repo_slug" || return 1
+		return 0
+	fi
+	if command -v sha256sum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$repo_slug" | sha256sum 2>/dev/null | cut -d ' ' -f 1) || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		digest=$(printf '%s' "$repo_slug" | shasum -a 256 2>/dev/null | cut -d ' ' -f 1) || return 1
+	else
+		return 1
+	fi
+	[[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+	printf '%s' "$digest"
+	return 0
+}
+
+#######################################
+# GH#39281: true when a small-fix-needed PR may join the CI-repair lane: its
+# current head has no CI-repair lease (the `<repo_hash>-<pr>-<head>` directory
+# _dispatch_ci_repair_session claims, whether active or exhausted) and this
+# cursor walk has not already evaluated it at that head
+# (`<cursor file>.lane-ci-served`). The records are read only while a walk is
+# active ($3=1): before a fresh walk they are stale. The caller checks the bucket.
+# Args: $1 - repo slug, $2 - PR object, $3 - 1 when a cursor walk is active
+#######################################
+_pmp_ci_repair_lane_eligible() {
+	local repo_slug="$1" pr_obj="$2" walk_active="${3:-0}"
+	local number_head="" pr_number="" head_sha="" repo_hash=""
+	local served_file="${PULSE_MERGE_PR_CURSOR_FILE:-}.lane-ci-served"
+	local state_root="${AIDEVOPS_CI_REPAIR_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/ci-pr-repair}"
+	[[ "$repo_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+	number_head=$(printf '%s' "$pr_obj" | jq -r '"\(.number // "")|\(.headRefOid // "")"' 2>/dev/null) || return 1
+	pr_number="${number_head%%|*}"
+	head_sha="${number_head#*|}"
+	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$head_sha" =~ ^[0-9A-Za-z]+$ ]] || return 1
+	if [[ "$walk_active" == "1" && -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" && -f "$served_file" ]] &&
+		grep -Fxq -- "${repo_slug}|${pr_number}|${head_sha}" "$served_file" 2>/dev/null; then
+		return 1
+	fi
+	repo_hash=$(_pmp_ci_repair_repo_hash "$repo_slug") || return 1
+	[[ -e "${state_root}/${repo_hash}-${pr_number}-${head_sha}" ]] && return 1
+	# Legacy `<slug>-<pr>-<head>-*` leases also mean this head already had a repair.
+	local legacy_dir="" legacy_key=""
+	legacy_key=$(printf '%s-%s-%s' "$repo_slug" "$pr_number" "$head_sha" | tr '/:' '__')
+	for legacy_dir in "${state_root}/${legacy_key}-"*; do
+		[[ -d "$legacy_dir" ]] && return 1
+	done
+	return 0
+}
+
+# GH#39281: the repo's durable cursor line (empty when no walk is active).
+_pmp_cursor_line_for_repo() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" && -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 0
+	declare -F _pmp_merge_pr_cursor_line_for_repo >/dev/null 2>&1 || return 0
+	_pmp_merge_pr_cursor_line_for_repo "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug"
+	return 0
+}
+
+#######################################
 # Sort a PR JSON array by backlog attention priority, preserving original
 # order inside each category. Emits a JSON array. GH#38508: while the
 # dispatch PR backlog guardrail is active for the repo, the worker PRs it
 # counted (actionable buckets only) sort first, so the backlog that suppresses
-# dispatch drains first. Ordering only; every merge gate still runs.
+# dispatch drains first. GH#39281: up to PULSE_MERGE_CI_REPAIR_LANE_LIMIT
+# (default 2; 0 disables) lane-eligible small-fix-needed PRs sort ahead of
+# merge-ready work and carry `_pulseCiRepairLane`, so a resumed walk can move
+# them behind its resume item. The cursor's resume PR is never promoted: it
+# runs first anyway, and promoting it would restart the walk. Ordering only;
+# every merge gate still runs.
 #
 # Args:
 #   $1 - JSON array of PR objects
@@ -209,7 +283,17 @@ _pmp_sort_prs_by_backlog_priority() {
 
 	local _tmp_lines=""
 	_tmp_lines=$(mktemp)
-	local dirty_keys="" counted_keys=""
+	local dirty_keys="" counted_keys="" ci_limit="${PULSE_MERGE_CI_REPAIR_LANE_LIMIT:-2}" ci_promoted="" ci_count=0 cursor_next=""
+	local cursor_line="" walk_active=0
+	[[ "$ci_limit" =~ ^[0-9]+$ ]] || ci_limit=2
+	[[ -n "$repo_slug" ]] || ci_limit=0
+	if [[ "$ci_limit" -gt 0 ]]; then
+		cursor_line=$(_pmp_cursor_line_for_repo "$repo_slug")
+		if [[ -n "$cursor_line" ]]; then
+			walk_active=1
+			cursor_next="${cursor_line##*|}"
+		fi
+	fi
 	if declare -F _pulse_merge_queue_priority_keys >/dev/null 2>&1; then
 		dirty_keys=$(_pulse_merge_queue_priority_keys "$repo_slug")
 	fi
@@ -230,10 +314,22 @@ _pmp_sort_prs_by_backlog_priority() {
 		if declare -F _pmu_pr_has_negative_verdict >/dev/null 2>&1 && _pmu_pr_has_negative_verdict "$repo_slug" "$pr_obj"; then
 			negative_priority=1
 		fi
-		if [[ -n "$dirty_keys" || -n "$counted_keys" ]]; then
+		if [[ -n "$dirty_keys" || -n "$counted_keys" || "$category" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" ]]; then
 			pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
 			[[ -n "$dirty_keys" && "$pr_number" =~ ^[1-9][0-9]*$ && "$dirty_keys" == *"|${pr_number}|"* ]] && dirty_priority=0
 			_pmp_guardrail_counted_actionable "$counted_keys" "$pr_number" "$category" && guardrail_priority=0
+		fi
+		# GH#39281: bounded CI-repair lane ahead of merge-ready work.
+		if [[ "$category" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" && "$negative_priority" -eq 0 && "$ci_count" -lt "$ci_limit" &&
+			"$pr_number" != "$cursor_next" ]] && _pmp_ci_repair_lane_eligible "$repo_slug" "$pr_obj" "$walk_active"; then
+			local lane_obj=""
+			lane_obj=$(printf '%s' "$pr_obj" | jq -c '. + {_pulseCiRepairLane:true}' 2>/dev/null) || lane_obj=""
+			if [[ -n "$lane_obj" ]]; then
+				pr_obj="$lane_obj"
+				priority=5
+				ci_count=$((ci_count + 1))
+				ci_promoted="${ci_promoted}${ci_promoted:+,}#${pr_number}"
+			fi
 		fi
 		printf '%d\t%d\t%d\t%03d\t%d\t%06d\t%s\n' "$negative_priority" "$retry_priority" "$guardrail_priority" "$priority" "$dirty_priority" "$i" "$pr_obj" >>"$_tmp_lines"
 		i=$((i + 1))
@@ -241,6 +337,9 @@ _pmp_sort_prs_by_backlog_priority() {
 
 	LC_ALL=C sort "$_tmp_lines" | cut -f7- | jq -s '.'
 	rm -f "$_tmp_lines"
+	if [[ -n "$ci_promoted" ]]; then
+		echo "[pulse-wrapper] Merge pass: CI-repair lane for ${repo_slug} promoted ${ci_count} small-fix-needed PR(s) ahead of merge-ready work: ${ci_promoted} (GH#39281)" >>"${LOGFILE:-/dev/null}"
+	fi
 	return 0
 }
 
@@ -680,13 +779,23 @@ _pmp_lane_pr_key() {
 
 # Args: $1=repo slug, $2=authoritative PR object the evaluator received.
 # Only a merge-ready classification counts: a PR blocked on pending checks
-# stays eligible for the lane once they pass at the same head.
+# stays eligible for the lane once they pass at the same head. GH#39281: a
+# small-fix-needed classification, or any CI-repair lane item whatever its
+# authoritative state, goes to `.lane-ci-served`, so neither a deferred repair
+# route nor a stale advisory failure promotes the PR again at that head
+# during this walk.
 _pmp_record_lane_served() {
-	local repo_slug="$1" pr_obj="$2" key=""
+	local repo_slug="$1" pr_obj="$2" key="" backlog_state=""
 	[[ -n "${PULSE_MERGE_PR_CURSOR_FILE:-}" ]] || return 0
-	[[ "$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")" == "$_PMP_BACKLOG_MERGE_READY" ]] || return 0
 	key=$(_pmp_lane_pr_key "$repo_slug" "$pr_obj") || return 0
-	printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" 2>/dev/null || true
+	backlog_state=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
+	if [[ "$backlog_state" == "$_PMP_BACKLOG_MERGE_READY" ]]; then
+		printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" 2>/dev/null || true
+	fi
+	if [[ "$backlog_state" == "$_PMP_BACKLOG_SMALL_FIX_NEEDED" ]] ||
+		printf '%s' "$pr_obj" | jq -e '._pulseCiRepairLane == true' >/dev/null 2>&1; then
+		printf '%s\n' "$key" >>"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -770,50 +879,42 @@ _pmp_refresh_lane_candidate() {
 }
 
 #######################################
-# GH#38248: resolve the caller's resume index, then move up to
-# PULSE_MERGE_RESUME_PRIORITY_LIMIT (default 2; 0 disables) lane candidates
-# from before the cursor to just ahead of it. A candidate is a PR this walk
-# has not evaluated merge-ready at its head that classifies merge-ready now,
-# after up to PULSE_MERGE_RESUME_REFRESH_LIMIT (default 2) bounded refreshes.
-# Work that became merge-ready after the walk passed it is evaluated now
-# instead of after the walk wraps. The original resume item keeps its index
-# (_PMP_RESUME_LANE_END) and predecessor (_PMP_RESUME_LANE_LAST_PR) so durable
-# cursor writes never rewind the walk. Ordering only: every gate still runs.
-# GH#38508: while the dispatch PR backlog guardrail is active for the repo,
+# GH#38248/GH#38508: collect merge-lane candidates before the cursor. Moves
+# up to PULSE_MERGE_RESUME_PRIORITY_LIMIT (default 2; 0 disables) PRs this
+# walk has not evaluated merge-ready at their head that classify merge-ready
+# now, after up to PULSE_MERGE_RESUME_REFRESH_LIMIT (default 2) bounded
+# refreshes. While the dispatch PR backlog guardrail is active for the repo,
 # the PRs it counted get the larger budgets from _pmp_guardrail_lane_limits
 # and a shorter refresh age, so worker PRs that went CLEAN after a `not ready`
 # visit drain within one resume instead of one revolution later.
-# Uses the caller's dynamically scoped pr_json, pr_count, _PMP_RESUME_LANE_END
-# and _PMP_RESUME_LANE_LAST_PR.
-# Args: $1=repo slug, $2=start index output var
+# Uses (and refreshes entries in) the caller's dynamically scoped pr_json.
+# Args: $1=repo slug, $2=resume index, $3=comma-separated indices to skip,
+#       $4=lane indices output var, $5=moved count output var,
+#       $6=guardrail-counted moved output var
 #######################################
-_pmp_resume_cursor_with_priority_lane() {
-	local repo_slug="$1" start_var="$2"
-	# Not named start_index: the resume helper's own local would shadow it.
-	local lane_resume_index=0 limit="${PULSE_MERGE_RESUME_PRIORITY_LIMIT:-2}" idx=0 moved=0 lane="" reordered=""
-	local refresh_limit="${PULSE_MERGE_RESUME_REFRESH_LIMIT:-2}" refreshes=0 refresh_rc=0 candidate_obj=""
+_pmp_collect_merge_lane() {
+	local repo_slug="$1" start_index="$2" skip_indices="$3" lane_var="$4" moved_var="$5" counted_var="$6"
+	local limit="${PULSE_MERGE_RESUME_PRIORITY_LIMIT:-2}" refresh_limit="${PULSE_MERGE_RESUME_REFRESH_LIMIT:-2}"
+	local idx=0 moved=0 lane="" refreshes=0 refresh_rc=0 candidate_obj=""
 	local counted_keys="" counted_limit=0 counted_refresh_limit=0 counted_moved=0 cand_number="" cand_counted=0
 	local cand_limit=0 cand_refresh_limit=0
 	# Read by _pmp_refresh_lane_candidate through dynamic scope.
 	local _PMP_LANE_REFRESH_MIN_AGE=""
-	[[ "$start_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-	_PMP_RESUME_LANE_END=0
-	_PMP_RESUME_LANE_LAST_PR=""
-	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" lane_resume_index || lane_resume_index=0
-	[[ "$lane_resume_index" =~ ^[0-9]+$ ]] || lane_resume_index=0
-	printf -v "$start_var" '%s' "$lane_resume_index"
-	if [[ "$lane_resume_index" -eq 0 ]]; then
-		# A fresh walk starts with empty records (covers pruned cursors).
-		_pmp_clear_merge_lane_records "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$repo_slug"
-		return 0
-	fi
+	[[ "$lane_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$moved_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$counted_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	printf -v "$lane_var" '%s' ""
+	printf -v "$moved_var" '%s' 0
+	printf -v "$counted_var" '%s' 0
+	[[ "$start_index" =~ ^[0-9]+$ ]] || return 0
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=2
 	[[ "$refresh_limit" =~ ^[0-9]+$ ]] || refresh_limit=2
 	[[ "$limit" -gt 0 ]] || return 0
 	counted_keys=$(_pmp_guardrail_counted_pr_keys "$repo_slug")
 	_pmp_guardrail_lane_limits "$counted_keys" "$limit" "$refresh_limit" counted_limit counted_refresh_limit || return 0
-	local start_index="$lane_resume_index"
 	while [[ "$idx" -lt "$start_index" && "$moved" -lt "$counted_limit" ]]; do
+		if [[ ",${skip_indices}," == *",${idx},"* ]]; then
+			idx=$((idx + 1))
+			continue
+		fi
 		candidate_obj=$(_pmp_pr_object_at_index "$pr_json" "$idx")
 		cand_number=$(_pmp_pr_number_at_index "$pr_json" "$idx") || cand_number=""
 		cand_counted=0 cand_limit="$limit" cand_refresh_limit="$refresh_limit" _PMP_LANE_REFRESH_MIN_AGE=""
@@ -835,17 +936,87 @@ _pmp_resume_cursor_with_priority_lane() {
 		fi
 		idx=$((idx + 1))
 	done
-	[[ "$moved" -gt 0 ]] || return 0
-	_PMP_RESUME_LANE_LAST_PR=$(_pmp_pr_number_at_index "$pr_json" "$((start_index - 1))") || _PMP_RESUME_LANE_LAST_PR=""
-	reordered=$(printf '%s' "$pr_json" | jq -c --argjson start "$start_index" --argjson lane "[${lane}]" '
-		. as $all
-		| [range(0; $start) | select(. as $i | $lane | any(.[]; . == $i) | not) | $all[.]]
-			+ [$lane[] | $all[.]] + $all[$start:]' 2>/dev/null) || return 0
-	[[ -n "$reordered" ]] || return 0
+	printf -v "$lane_var" '%s' "$lane"
+	printf -v "$moved_var" '%s' "$moved"
+	printf -v "$counted_var" '%s' "$counted_moved"
+	return 0
+}
+
+#######################################
+# GH#38248/GH#39281: resolve the caller's resume index, then evaluate the
+# resume item first and the promoted lane items right after it:
+#   [0..start) minus lanes + [resume item] + CI-repair lane + merge lane + (start..]
+# Running the resume item first guarantees the cursor advances on every
+# resume, even when slow lane items use up the slice (GH#39281). The
+# CI-repair lane is every PR before the cursor that the backlog sort marked
+# `_pulseCiRepairLane` (already bounded by PULSE_MERGE_CI_REPAIR_LANE_LIMIT);
+# the merge lane comes from _pmp_collect_merge_lane. The lane bounds
+# (_PMP_RESUME_LANE_START = resume item index, _PMP_RESUME_LANE_END = last
+# lane index), the resume PR (_PMP_RESUME_LANE_ITEM_PR) and its original
+# predecessor (_PMP_RESUME_LANE_LAST_PR) let durable cursor writes skip
+# unprocessed lane items, which a later resume promotes again, without ever
+# rewinding the walk. Ordering only: every gate still runs.
+# Uses the caller's dynamically scoped pr_json, pr_count and _PMP_RESUME_LANE_*.
+# Args: $1=repo slug, $2=start index output var
+#######################################
+_pmp_resume_cursor_with_priority_lane() {
+	local repo_slug="$1" start_var="$2"
+	# Not named start_index: the resume helper's own local would shadow it.
+	# Output names differ from _pmp_collect_merge_lane's locals, which would
+	# otherwise capture its printf -v writes.
+	local lane_resume_index=0 merge_lane="" ci_lane="" ci_commas="" merge_moved=0 ci_moved=0 merge_counted=0 total=0
+	local reordered="" item_pr="" last_pr=""
+	[[ "$start_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_PMP_RESUME_LANE_START=0
+	_PMP_RESUME_LANE_END=0
+	_PMP_RESUME_LANE_LAST_PR=""
+	_PMP_RESUME_LANE_ITEM_PR=""
+	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" lane_resume_index || lane_resume_index=0
+	[[ "$lane_resume_index" =~ ^[0-9]+$ ]] || lane_resume_index=0
+	printf -v "$start_var" '%s' "$lane_resume_index"
+	if [[ "$lane_resume_index" -eq 0 ]]; then
+		# A fresh walk starts with empty records (covers pruned cursors).
+		_pmp_clear_merge_lane_records "${PULSE_MERGE_PR_CURSOR_FILE:-}" "$repo_slug"
+		return 0
+	fi
+	local start_index="$lane_resume_index"
+	ci_lane=$(printf '%s' "$pr_json" | jq -r --argjson start "$start_index" \
+		'[to_entries[] | select(.key < $start and (.value._pulseCiRepairLane // false) == true) | .key | tostring] | join(",")' 2>/dev/null) || ci_lane=""
+	[[ "$ci_lane" =~ ^[0-9]+(,[0-9]+)*$ ]] || ci_lane=""
+	if [[ -n "$ci_lane" ]]; then
+		ci_commas="${ci_lane//[^,]/}"
+		ci_moved=$((${#ci_commas} + 1))
+	fi
+	# A failed reorder leaves promoted items before the cursor for this pass
+	# only; the next pass's sort flags them again. Log it so it is not silent.
+	local lane_fail="[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} skipped at index=${start_index}"
+	if ! _pmp_collect_merge_lane "$repo_slug" "$start_index" "$ci_lane" merge_lane merge_moved merge_counted; then
+		echo "${lane_fail}: merge-lane collection failed (GH#39281)" >>"$LOGFILE"
+		return 0
+	fi
+	total=$((ci_moved + merge_moved))
+	[[ "$total" -gt 0 ]] || return 0
+	last_pr=$(_pmp_pr_number_at_index "$pr_json" "$((start_index - 1))") || last_pr=""
+	item_pr=$(_pmp_pr_number_at_index "$pr_json" "$start_index") || item_pr=""
+	reordered=""
+	if [[ -n "$item_pr" ]]; then
+		reordered=$(printf '%s' "$pr_json" | jq -c --argjson start "$start_index" --argjson ci "[${ci_lane}]" --argjson lane "[${merge_lane}]" '
+			. as $all
+			| ($ci + $lane) as $moved
+			| [range(0; $start) | select(. as $i | $moved | any(.[]; . == $i) | not) | $all[.]]
+				+ [$all[$start]] + [$ci[] | $all[.]] + [$lane[] | $all[.]] + $all[($start + 1):]' 2>/dev/null) || reordered=""
+	fi
+	if [[ -z "$reordered" ]]; then
+		echo "${lane_fail}: reorder failed for ${total} lane PR(s) (GH#39281)" >>"$LOGFILE"
+		return 0
+	fi
 	pr_json="$reordered"
+	_PMP_RESUME_LANE_START=$((start_index - total))
 	_PMP_RESUME_LANE_END="$start_index"
-	printf -v "$start_var" '%s' "$((start_index - moved))"
-	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${moved} merge-ready PR(s) ahead of cursor index=${start_index} guardrail_counted=${counted_moved} (GH#38248, GH#38508)" >>"$LOGFILE"
+	_PMP_RESUME_LANE_LAST_PR="$last_pr"
+	_PMP_RESUME_LANE_ITEM_PR="$item_pr"
+	printf -v "$start_var" '%s' "$_PMP_RESUME_LANE_START"
+	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${merge_moved} merge-ready PR(s) and ${ci_moved} CI-repair PR(s) behind resume item index=${start_index} next_pr=${item_pr} guardrail_counted=${merge_counted} (GH#38248, GH#38508, GH#39281)" >>"$LOGFILE"
 	return 0
 }
 
@@ -878,26 +1049,28 @@ _pmp_guardrail_lane_limits() {
 
 # GH#38248: after the PR at next_index-1 was evaluated, record the
 # authoritative object it received in the walk's lane record, then compute the
-# durable cursor. While lane items run, cursor writes keep the original resume
-# item and its original predecessor, so a pause, crash, or removed resume item
-# cannot rewind the walk past already-processed PRs.
+# durable cursor. GH#39281: the resume item runs before the lane items, so once
+# it or any lane item has been evaluated the cursor persists the first tail PR
+# with the resume PR as its predecessor. Unprocessed lane items sit before
+# that cursor and are promoted again by a later resume, so a pause, crash, or
+# removed item can neither rewind the walk nor re-run the resume item.
 # Args: $1=repo slug, $2=next index, $3=index output var, $4=next-PR output var,
 #       $5=evaluated PR object, $6=last-PR output var (optional),
 #       $7=number of the PR just evaluated (the default last PR)
-# Uses the caller's dynamically scoped pr_json, _PMP_RESUME_LANE_END and
-# _PMP_RESUME_LANE_LAST_PR.
+# Uses the caller's dynamically scoped pr_json and _PMP_RESUME_LANE_*.
 _pmp_lane_clamped_cursor() {
 	local repo_slug="$1" next_index="$2" index_var="$3" next_pr_var="$4" evaluated_obj="${5:-}" last_pr_var="${6:-}"
-	local write_last="${7:-}" lane_end="${_PMP_RESUME_LANE_END:-0}" next_pr=""
+	local write_last="${7:-}" lane_start="${_PMP_RESUME_LANE_START:-0}" lane_end="${_PMP_RESUME_LANE_END:-0}" next_pr=""
 	[[ "$index_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "$next_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ -z "$last_pr_var" || "$last_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	[[ "$next_index" =~ ^[0-9]+$ ]] || next_index=0
 	[[ -n "$evaluated_obj" ]] && _pmp_record_lane_served "$repo_slug" "$evaluated_obj"
+	[[ "$lane_start" =~ ^[0-9]+$ ]] || lane_start=0
 	[[ "$lane_end" =~ ^[0-9]+$ ]] || lane_end=0
-	if [[ "$lane_end" -gt 0 && "$next_index" -le "$lane_end" ]]; then
-		# The PR just evaluated was a lane item.
-		next_index="$lane_end"
-		write_last="${_PMP_RESUME_LANE_LAST_PR:-}"
+	if [[ "$lane_end" -gt 0 && "$next_index" -gt "$lane_start" && "$next_index" -le $((lane_end + 1)) ]]; then
+		# The PR just evaluated was the resume item or a lane item.
+		next_index=$((lane_end + 1))
+		write_last="${_PMP_RESUME_LANE_ITEM_PR:-$write_last}"
 	fi
 	[[ -z "$last_pr_var" ]] || printf -v "$last_pr_var" '%s' "$write_last"
 	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$next_index") || next_pr=""

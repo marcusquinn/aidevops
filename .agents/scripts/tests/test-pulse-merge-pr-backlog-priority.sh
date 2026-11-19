@@ -154,6 +154,36 @@ changed_ready=$(printf '%s' "$merge_ready_pr" | jq -c '.statusCheckRollup = [{"s
 assert_eq "2f: changed PR state discards the cached negative verdict" \
 	"1,6,3" "$(_pmp_sort_prs_by_backlog_priority "[$changed_ready,$second_ready,$small_fix_pr]" owner/repo | jq -r '[.[].number] | join(",")')"
 
+# GH#39281: bounded CI-repair lane. Up to PULSE_MERGE_CI_REPAIR_LANE_LIMIT
+# failing PRs without a CI-repair lease for their head sort ahead of
+# merge-ready work; the cursor's resume PR and served heads are not promoted.
+export AIDEVOPS_CI_REPAIR_STATE_DIR="$TEST_TMPDIR/ci-pr-repair"
+export PULSE_MERGE_PR_CURSOR_FILE="$TEST_TMPDIR/pr-cursor"
+ci_ready=$(printf '%s' "$merge_ready_pr" | jq -c '.number = 41 | .headRefOid = "sha41"')
+ci_fix_a=$(printf '%s' "$small_fix_pr" | jq -c '.number = 31 | .headRefOid = "sha31"')
+ci_fix_b=$(printf '%s' "$small_fix_pr" | jq -c '.number = 32 | .headRefOid = "sha32"')
+ci_fix_c=$(printf '%s' "$small_fix_pr" | jq -c '.number = 33 | .headRefOid = "sha33"')
+ci_input="[$ci_ready,$ci_fix_a,$ci_fix_b,$ci_fix_c]"
+ci_sort() { _pmp_sort_prs_by_backlog_priority "$ci_input" owner/repo | jq -r '[.[] | "\(.number)\(if ._pulseCiRepairLane then "*" else "" end)"] | join(",")'; }
+assert_eq "2g: CI-repair lane promotes up to two leaseless failing PRs ahead of merge-ready work" "31*,32*,41,33" "$(ci_sort)"
+mkdir -p "$AIDEVOPS_CI_REPAIR_STATE_DIR/$(_pmp_ci_repair_repo_hash owner/repo)-31-sha31"
+assert_eq "2h: a CI-repair lease for the current head excludes the PR" "32*,33*,41,31" "$(ci_sort)"
+printf '%s\n' 'owner/repo|3|41|32' >"$PULSE_MERGE_PR_CURSOR_FILE"
+printf '%s\n' 'owner/repo|33|sha33' >"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+assert_eq "2i: the cursor's resume PR and heads served this walk are not promoted" "41,31,32,33" "$(ci_sort)"
+rm -f "$PULSE_MERGE_PR_CURSOR_FILE" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+assert_eq "2j: PULSE_MERGE_CI_REPAIR_LANE_LIMIT=0 disables the lane" "41,31,32,33" "$(PULSE_MERGE_CI_REPAIR_LANE_LIMIT=0 ci_sort)"
+printf '%s\n' 'owner/repo|33|sha33' >"${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+assert_eq "2k: stale served records are ignored before a fresh walk" "32*,33*,41,31" "$(ci_sort)"
+rm -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served"
+mkdir -p "$AIDEVOPS_CI_REPAIR_STATE_DIR/owner_repo-32-sha32-legacy"
+assert_eq "2l: a legacy CI-repair lease for the current head excludes the PR" "33*,41,31,32" "$(ci_sort)"
+_pmp_record_lane_served owner/repo "$(printf '%s' "$ci_ready" | jq -c '. + {_pulseCiRepairLane:true}')"
+assert_eq "2m: an evaluated lane item is recorded even when no longer failing" "owner/repo|41|sha41" "$(cat "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served")"
+rm -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served"
+unset -f ci_sort
+unset AIDEVOPS_CI_REPAIR_STATE_DIR PULSE_MERGE_PR_CURSOR_FILE
+
 _pulse_merge_queue_priority_keys() { printf '|99|'; return 0; }
 gh_pr_view() {
 	local pr_number="$1"

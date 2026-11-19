@@ -94,15 +94,15 @@ _pmp_rewrite_merge_pr_cursor_file() {
 	return 0
 }
 
-# GH#38248: the walk's resume-lane records end with its cursor. Clears every
-# repo's records, or only one repo's lines when $2 is given.
+# GH#38248/GH#39281: the walk's resume-lane records end with its cursor.
+# Clears every repo's records, or only one repo's lines when $2 is given.
 _pmp_clear_merge_lane_records() {
 	local cursor_file="$1"
 	local repo_slug="${2:-}"
 	local record=""
 
 	[[ -n "$cursor_file" ]] || return 0
-	for record in "${cursor_file}.lane-served" "${cursor_file}.lane-refreshed"; do
+	for record in "${cursor_file}.lane-served" "${cursor_file}.lane-refreshed" "${cursor_file}.lane-ci-served"; do
 		[[ -f "$record" ]] || continue
 		if [[ -n "$repo_slug" ]]; then
 			_pmp_rewrite_merge_pr_cursor_file "$record" "$repo_slug"
@@ -440,13 +440,27 @@ _pmp_pause_merge_pr_cursor() {
 	local next_pr="" last_pr=""
 	local cursor_file="${PULSE_MERGE_PR_CURSOR_FILE:-}"
 	local logfile="${LOGFILE:-/dev/null}"
-	local lane_end="${_PMP_RESUME_LANE_END:-0}"
+	local lane_start="${_PMP_RESUME_LANE_START:-0}" lane_end="${_PMP_RESUME_LANE_END:-0}" lane_item_pr=""
 
-	# GH#38248: unprocessed resume-lane items sit before the original resume
-	# item; persisting that item keeps the walk from rewinding.
-	[[ "$lane_end" =~ ^[0-9]+$ && "$cursor_index" =~ ^[0-9]+$ && "$cursor_index" -lt "$lane_end" ]] && cursor_index="$lane_end"
-	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$cursor_index") || next_pr=""
-	_pmp_read_merge_pr_cursor_last "$cursor_file" "$repo_slug" last_pr || last_pr=""
+	# GH#38248/GH#39281: the resume item runs first, then the lane items.
+	# Before it runs, persist the resume item with its original predecessor;
+	# after it ran, persist the first tail PR so unprocessed lane items are
+	# promoted again by a later resume. Neither choice rewinds the walk.
+	if [[ "$lane_start" =~ ^[0-9]+$ && "$lane_end" =~ ^[0-9]+$ && "$cursor_index" =~ ^[0-9]+$ && "$lane_end" -gt 0 ]]; then
+		if [[ "$cursor_index" -le "$lane_start" && -n "${_PMP_RESUME_LANE_ITEM_PR:-}" ]]; then
+			cursor_index="$lane_end"
+			lane_item_pr="$_PMP_RESUME_LANE_ITEM_PR"
+		elif [[ "$cursor_index" -gt "$lane_start" && "$cursor_index" -le "$lane_end" ]]; then
+			cursor_index=$((lane_end + 1))
+		fi
+	fi
+	if [[ -n "$lane_item_pr" ]]; then
+		next_pr="$lane_item_pr"
+		last_pr="${_PMP_RESUME_LANE_LAST_PR:-}"
+	else
+		next_pr=$(_pmp_pr_number_at_index "$pr_json" "$cursor_index") || next_pr=""
+		_pmp_read_merge_pr_cursor_last "$cursor_file" "$repo_slug" last_pr || last_pr=""
+	fi
 	_pmp_write_merge_pr_cursor "$cursor_file" "$repo_slug" "$cursor_index" "$last_pr" "$next_pr"
 	case "$pause_reason" in
 	budget)
