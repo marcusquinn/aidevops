@@ -595,7 +595,7 @@ RECORD="$STATE/legacy-listen-files.txt"
 MARKER_FILE="$STATE/patched-marker"
 CRON=/etc/cron.d/aidevops-nginx-http2
 SELF=/usr/local/sbin/aidevops-nginx-http2
-SCTP_CONF=/etc/modprobe.d/disable-sctp.conf
+SCTP_CONF=/etc/modprobe.d/aidevops-nginx-http2-sctp.conf
 PATTERN="http2[[:space:]]+on[[:space:]]*;|listen[^;]*[[:space:]]http2"
 MODE="${1:-status}"
 shift || true
@@ -610,11 +610,18 @@ for arg in "$@"; do
   esac
 done
 umask 077
-mkdir -p "$STATE"
-if [ -n "$MARKER" ]; then
-  printf "%s\n" "$MARKER" >"$MARKER_FILE"
-elif [ -s "$MARKER_FILE" ]; then
+if [ -z "$MARKER" ] && [ -s "$MARKER_FILE" ]; then
   MARKER=$(sed -n 1p "$MARKER_FILE")
+fi
+if [ -n "$MARKER" ] && [[ ! "$MARKER" =~ ^CVE-[0-9]{4}-[0-9]{4,}$ ]]; then
+  echo "invalid CVE marker" >&2
+  exit 1
+fi
+if [ "$MODE" != status ]; then
+  mkdir -p "$STATE" || exit 1
+  if [ -n "$MARKER" ]; then
+    printf "%s\n" "$MARKER" >"$MARKER_FILE" || exit 1
+  fi
 fi
 # shell-portability: ignore next
 REAL=$(readlink -f /etc/nginx)
@@ -623,7 +630,7 @@ log() { logger -t aidevops-nginx-http2 -- "$*"; echo "$*"; return 0; }
 
 patched() {
   [ -n "$MARKER" ] || return 1
-  zgrep -q -- "$MARKER" /usr/share/doc/nginx-common/changelog.Debian.gz 2>/dev/null
+  zgrep -Eq -- "(^|[^[:alnum:]_-])${MARKER}([^[:alnum:]_-]|$)" /usr/share/doc/nginx-common/changelog.Debian.gz 2>/dev/null
 }
 
 conf_files() { local pat="$1"; grep -rlE --include="*.conf" "$pat" "$REAL" 2>/dev/null; return 0; }
@@ -763,7 +770,7 @@ nginx_http2() {
 		*) print_error "Unknown nginx-http2 option: $opt"; return 1 ;;
 		esac
 	done
-	if [[ -n "$marker" && ! "$marker" =~ ^[A-Za-z0-9._-]+$ ]]; then
+	if [[ -n "$marker" && ! "$marker" =~ ^CVE-[0-9]{4}-[0-9]{4,}$ ]]; then
 		print_error "Invalid --patched-marker value"
 		return 1
 	fi
