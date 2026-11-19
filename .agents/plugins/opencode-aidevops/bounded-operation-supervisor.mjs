@@ -81,27 +81,25 @@ function createTerminator(tracker, killGraceMs, reportContainment, reportTermina
     const snapshot = tracker.track(MARKER_SCAN);
     signalEach(tracker.nestedTargets(snapshot), signal, snapshot?.entries);
   };
+  const escalate = (postExit) => {
+    signalNested("SIGKILL");
+    reportContainment().finally(() => {
+      // The command's exit was already observed: a post-exit drain never
+      // signals our own group (GH#39251); a takeover supersedes it.
+      if (postExit || state.postExit) return;
+      if (!signalOwnGroup("SIGKILL")) process.exit(1);
+    });
+  };
   state.terminate = (cause) => {
-    // Post-exit cleanup is a drain, not a kill of the supervisor: a budget,
-    // cancel or signal request may still take over and escalate fully.
-    if (state.terminating && !(state.postExit && cause !== "post_exit_cleanup")) return;
     const postExit = cause === "post_exit_cleanup";
+    // Post-exit cleanup is a drain: a budget, cancel or signal may take over.
+    if (state.terminating && !(state.postExit && !postExit)) return;
     state.terminating = true;
     state.postExit = postExit;
     reportTermination(cause);
     signalNested("SIGTERM");
-    // The command's exit was already observed. Never signal our own group:
-    // under host load the drain can outlast killGraceMs, and the self-SIGKILL
-    // replaced the command's exit 0 with a signal exit (GH#39251). The drain
-    // loop kills surviving group members individually and keeps this process.
     if (!postExit) signalOwnGroup("SIGTERM");
-    setTimeout(() => {
-      signalNested("SIGKILL");
-      reportContainment().finally(() => {
-        if (state.postExit !== postExit || postExit) return;
-        if (!signalOwnGroup("SIGKILL")) process.exit(1);
-      });
-    }, killGraceMs).unref();
+    setTimeout(() => escalate(postExit), killGraceMs).unref();
   };
   return state;
 }
