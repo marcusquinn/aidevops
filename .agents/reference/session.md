@@ -264,6 +264,8 @@ can follow them without knowing where the setting lives:
    worktree and changes under **Left to capture**, and keep **Close** at
    `Not yet`. Do not rely on an earlier status snapshot.
 3. Confirm each discovered defect, follow-up, or deferred objective has an issue/TODO.
+   Time-dependent checks ("verify again tomorrow") also get a scheduled recheck
+   job, not a user reminder: `reference/routines.md` "Follow-ups and later checks".
    With release intent still unspent, first solve eligible same-repo issues the
    session filed (`reference/release-scope-sweep.md`).
 4. Route reusable lessons: shared framework lessons to the narrowest doc or
