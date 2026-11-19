@@ -49,6 +49,37 @@ if args.max_hops < 0:
 if args.retries < 0:
     parser.error("--retries must be zero or positive")
 
+def find_tracking_issue(title):
+    """Return (number, url) of an open red-main issue, or None."""
+    gh_path = shutil.which("gh")
+    if not (gh_path and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))):
+        return None
+    jq = r'.[] | select(.title == "%s") | "\(.number) \(.url)"' % title
+    gh_args = [gh_path] + "issue list --state open --search".split() + ['"%s" in:title' % title,
+               "--json", "number,title,url", "--jq", jq]
+    try:
+        # Fixed argv, absolute gh path, no shell; title derives from a repo suite filename.
+        out = subprocess.run(gh_args, text=True, stdout=subprocess.PIPE,  # nosec B603
+                             stderr=subprocess.DEVNULL, timeout=30).stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return (out[0], out[1]) if len(out) >= 2 else None
+
+
+def report_inherited_red(suite):
+    """t19150: point reviewers at the tracking issue for inherited red."""
+    title = "red-main: %s" % Path(suite).name
+    link = "search open issues for '%s'" % title
+    found = find_tracking_issue(title)
+    if found:
+        link = "tracked by #%s" % found[0]
+        links_file = os.environ.get("AFFECTED_TESTS_LINKS_FILE")
+        if links_file:
+            with open(links_file, "a") as handle:
+                handle.write("- `%s` is red on base: [#%s](%s)\n" % (Path(suite).name, found[0], found[1]))
+    print("  inherited red %s: %s" % (suite, link), file=sys.stderr)
+
+
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 os.chdir(root)
 if args.command == "all":
@@ -271,27 +302,6 @@ for suite in ordered:
     rc_text = ",".join("-" if value is None else str(value) for value in attempts[suite])
     print("%s\t%s\t%s\t%s" % (suite, rc_text, baseline if baseline is not None else "-", classification))
     if classification == "pre-existing":
-        # t19150: point reviewers at the tracking issue for inherited red.
-        title = "red-main: %s" % Path(suite).name
-        link = "search open issues for '%s'" % title
-        gh_path = shutil.which("gh")
-        if gh_path and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
-            jq = r'.[] | select(.title == "%s") | "\(.number) \(.url)"' % title
-            gh_args = [gh_path] + "issue list --state open --search".split() + ['"%s" in:title' % title,
-                       "--json", "number,title,url", "--jq", jq]
-            try:
-                # Fixed argv, absolute gh path, no shell; title derives from a repo suite filename.
-                found = subprocess.run(  # nosec B603
-                    gh_args, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout.split()
-                if len(found) >= 2:
-                    link = "tracked by #%s" % found[0]
-                    # Markdown link for the caller to render outside the fenced report.
-                    links_file = os.environ.get("AFFECTED_TESTS_LINKS_FILE")
-                    if links_file:
-                        with open(links_file, "a") as handle:
-                            handle.write("- `%s` is red on base: [#%s](%s)\n" % (Path(suite).name, found[0], found[1]))
-            except (subprocess.SubprocessError, OSError):
-                pass
-        print("  inherited red %s: %s" % (suite, link), file=sys.stderr)
+        report_inherited_red(suite)
 sys.exit(1 if regression else 0)
 PY
