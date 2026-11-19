@@ -2306,7 +2306,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19163 fix(decisions): the --max cap fills up on the first repo alphabetically and hides every other repo's holds #bug #interactive ref:GH#39266 logged:2026-11-19 -> [todo/tasks/t19163-brief.md] pr:#39267 completed:2026-11-19
 
+- [x] t19164 fix(headless): resolve the OpenCode runtime profile through the profile document, not only AIDEVOPS_OPENCODE_PROFILE #auto-dispatch #bug ref:GH#39276 logged:2026-11-19 pr:#39279 completed:2026-11-19
+
+- [x] t19165 fix(gh-write): refuse an interactive PR comment that would stale a verified PR approval #auto-dispatch #bug ref:GH#39269 logged:2026-11-19 pr:#39274 completed:2026-11-19
+
+- [x] t19166 fix(tool-version-check): never let a Homebrew upgrade move an OpenCode 1.x install to OpenCode 2 #auto-dispatch #bug ref:GH#39271 logged:2026-11-19 pr:#39278 completed:2026-11-19
+
 - [x] t19167 fix(decisions): holds the recovery supervisor marked as needing a human never reach /decisions #bug ref:GH#39275 pr:#39277 completed:2026-11-19
+
+- [ ] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md]
 
 - [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
 
