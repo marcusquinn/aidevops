@@ -1839,10 +1839,12 @@ _dispatch_max_spawn_candidate() {
 # Args: candidate JSON, candidate return code
 _dispatch_settle_candidate_launch_slot() {
 	local candidate_json="$1" result_code="$2"
-	local issue repo fields
 	[[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]] || return 0
-	fields=$(jq -r "$_DISPATCH_CANDIDATE_IDENTITY_JQ" <<<"$candidate_json" 2>/dev/null) || return 0
-	IFS=$'\t' read -r issue repo <<<"$fields"
+	local identity
+	identity=$(jq -r "$_DISPATCH_CANDIDATE_IDENTITY_JQ" <<<"$candidate_json" 2>/dev/null) || return 0
+	local issue
+	local repo
+	IFS=$'\t' read -r issue repo <<<"$identity"
 	_dispatch_launch_slot_settle "$issue" "$repo" "$result_code"
 	if [[ "$result_code" -eq "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}" ]] &&
 		_dispatch_launch_slot_deferred "$issue" "$repo"; then
