@@ -388,19 +388,47 @@ aidevops_claude_code_install_owner() {
 	return 0
 }
 
+# GH#39271: Homebrew-core ships OpenCode 2; the aidevops v1 profile never
+# follows it automatically. One migration line, shared by every reporter.
+AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD="brew uninstall opencode && npm install -g opencode-ai@latest"
+AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE="Held: Homebrew now ships OpenCode 2 (preview in aidevops). To stay on stable OpenCode 1, run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}"
+
+# Print the major version (digits) of a profile's tested OpenCode version.
+aidevops_opencode_profile_major() {
+	local profile="${1:-$(aidevops_opencode_profile_id)}"
+	local tested="" semver=""
+	tested=$(aidevops_opencode_profile_value testedVersion "$profile" 2>/dev/null) || tested=""
+	semver=$(aidevops_parse_semver "$tested" 2>/dev/null) || semver=""
+	if [[ -n "$semver" ]]; then
+		printf '%s\n' "${semver%%.*}"
+	elif [[ "$profile" == v2 ]]; then
+		printf '2\n'
+	else
+		printf '1\n'
+	fi
+	return 0
+}
+
 # Print the self-contained repair payload: brew upgrade for a verified
 # Homebrew-owned binary, otherwise bun/npm install of the requested version.
 aidevops_opencode_upgrade_command() {
 	local pkg_version="$1"
 	local profile="${2:-$(aidevops_opencode_profile_id)}"
-	local package owner_payload
+	local package owner_payload profile_major
 	package=$(aidevops_opencode_profile_value package "$profile") || return 1
 	owner_payload=$(aidevops_opencode_owner_payload "$profile") || return 1
+	profile_major=$(aidevops_opencode_profile_major "$profile") || profile_major=""
 
+	# GH#39271: a Homebrew upgrade must never cross the profile's major version.
+	# Unknown formula versions (brew info failed) fall through to today's path.
 	# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
 	printf '%s' "$owner_payload" \
 		'case "$r_owner" in ' \
-		'brew) brew upgrade opencode || brew reinstall opencode; exit $? ;; ' \
+		'brew) f_name=$(brew list --formula --full-name 2>/dev/null | grep -E "(^|/)opencode$" | sed -n 1p); [[ -n "$f_name" ]] || f_name=opencode; ' \
+		'f_stable=$(brew info --json=v2 "$f_name" 2>/dev/null | jq -r ".formulae[0].versions.stable // empty" 2>/dev/null); f_major="${f_stable%%.*}"; ' \
+		'if [[ -n "'"${profile_major}"'" && "$f_major" =~ ^[0-9]+$ && "$f_major" != "'"${profile_major}"'" ]]; then ' \
+		'printf "%s\\n" "'"${AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE}"'" >&2; exit 1; fi; ' \
+		'brew upgrade opencode || brew reinstall opencode; exit $? ;; ' \
 		'bun) bun install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'npm) npm install -g '"${package}"'@'"${pkg_version}"' ;; ' \
 		'*) printf "OpenCode binary not found for repair\\n" >&2; exit 1 ;; ' \

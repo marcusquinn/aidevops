@@ -294,6 +294,7 @@ fi
 OUTDATED_COUNT=0
 INSTALLED_COUNT=0
 EXTERNALLY_MANAGED_COUNT=0
+HELD_MAJOR_COUNT=0
 NOT_INSTALLED_COUNT=0
 TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
@@ -866,7 +867,7 @@ _print_tool_status() {
 	local icon="$5"
 	local color="$6"
 
-	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" && "$status" != "externally_managed" ]]; then
+	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" && "$status" != "externally_managed" && "$status" != "held_major" ]]; then
 		return 0
 	fi
 
@@ -874,6 +875,10 @@ _print_tool_status() {
 	externally_managed)
 		echo -e "${color}${icon}  $name: $installed (Nix-managed; automatic update skipped)${NC}"
 		echo "   Update through the Nix configuration or profile that owns this tool (NixOS, Home Manager, or nix profile)."
+		;;
+	held_major)
+		echo -e "${color}${icon}  $name: $installed (held: Homebrew now ships OpenCode 2 (preview in aidevops); formula latest $latest)${NC}"
+		echo "   Move to the stable npm channel: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}"
 		;;
 	not_installed)
 		echo -e "${color}${icon}  $name: not installed${NC}"
@@ -921,6 +926,21 @@ _tool_is_nix_managed() {
 		return 0
 	fi
 	return 1
+}
+
+# GH#39271: Homebrew-core OpenCode now ships major 2. Return 0 (held) when
+# the selected profile is v1, both versions parse, and their majors differ.
+# Never queue a cross-major brew upgrade.
+# Args: installed latest
+_opencode_brew_major_held() {
+	local installed="$1"
+	local latest="$2"
+	local installed_semver="" latest_semver=""
+	[[ "$(aidevops_opencode_profile_id 2>/dev/null || true)" == v1 ]] || return 1
+	installed_semver=$(aidevops_parse_semver "$installed" 2>/dev/null) || return 1
+	latest_semver=$(aidevops_parse_semver "$latest" 2>/dev/null) || return 1
+	[[ "${installed_semver%%.*}" != "${latest_semver%%.*}" ]] || return 1
+	return 0
 }
 
 # Check a single tool
@@ -983,7 +1003,19 @@ check_tool() {
 			installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
 		fi
 	fi
-	_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
+	local hold_json=""
+	if [[ "$category" == brew && "$cmd" == opencode && "$installed" != "not installed" ]] &&
+		_opencode_brew_major_held "$installed" "$latest"; then
+		# Held, not outdated: never queued, never a failure (auto-update must not retry).
+		status="held_major"
+		icon="⏸"
+		color="$YELLOW"
+		update_cmd=""
+		((++HELD_MAJOR_COUNT))
+		hold_json=", \"hold_reason\": \"Homebrew now ships OpenCode 2 (preview in aidevops); run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}\""
+	else
+		_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
+	fi
 	if [[ "$channel_current" == true && "$status" == up_to_date ]]; then status=channel_current; fi
 	# A package already at the approved target with a stale CLI --version is
 	# a mismatch, not a reason to reinstall the same package on every pass.
@@ -1009,7 +1041,7 @@ check_tool() {
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		_PW_EXTRA_JSON=""
+		_PW_EXTRA_JSON="$hold_json"
 		[[ "$pkg" == playwriter ]] && _playwriter_version_policy_note "$(_playwriter_approved_version)"
 		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd" "$_PW_EXTRA_JSON"
 	elif [[ "$pkg" == playwriter ]]; then
@@ -1083,7 +1115,8 @@ _output_json_results() {
 	echo "    \"not_installed\": $NOT_INSTALLED_COUNT,"
 	echo "    \"timeout\": $TIMEOUT_COUNT,"
 	echo "    \"unknown\": $UNKNOWN_COUNT,"
-	echo "    \"externally_managed\": $EXTERNALLY_MANAGED_COUNT"
+	echo "    \"externally_managed\": $EXTERNALLY_MANAGED_COUNT,"
+	echo "    \"held_major\": $HELD_MAJOR_COUNT"
 	echo "  },"
 	echo "  \"tools\": ["
 	local first=true
@@ -1209,6 +1242,9 @@ _output_summary_and_updates() {
 		echo "  Not installed: $NOT_INSTALLED_COUNT"
 		if [[ $EXTERNALLY_MANAGED_COUNT -gt 0 ]]; then
 			echo "  Externally managed (Nix; skipped): $EXTERNALLY_MANAGED_COUNT"
+		fi
+		if [[ $HELD_MAJOR_COUNT -gt 0 ]]; then
+			echo "  Held (major version change; not upgraded): $HELD_MAJOR_COUNT"
 		fi
 		if [[ $TIMEOUT_COUNT -gt 0 ]]; then
 			echo "  Timeout (version check hung): $TIMEOUT_COUNT"
