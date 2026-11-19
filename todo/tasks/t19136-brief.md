@@ -11,7 +11,7 @@
 
 - **Created:** 2026-11-19
 - **Created by:** AI DevOps interactive session (found while implementing GH#39187)
-- **Conversation context:** `sysctl -n kern.boottime` prints `{ sec = 1794166500, usec = 274703 } <date>`. The greedy sed `.*sec = ([0-9]+).*` matches the *last* `sec = `, which is inside `usec`, so it returns the microseconds (274703) instead of the boot epoch. GH#39187 fixes this in `_gh_secondary_system_boot_ts`; the Pulse dispatch fallback still has the same pipeline.
+- **Conversation context:** `sysctl -n kern.boottime` prints `{ sec = 1794166500, usec = 274703 } <date>`. The greedy sed `.*sec = ([0-9]+).*` matches the *last* `sec =` (followed by a space), which is inside `usec`, so it returns the microseconds (274703) instead of the boot epoch. GH#39187 fixes this in `_gh_secondary_system_boot_ts`; the Pulse dispatch fallback still has the same pipeline.
 
 ## What
 

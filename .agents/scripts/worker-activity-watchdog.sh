@@ -41,6 +41,10 @@
 #                             defer the kill until the hard backstop.
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
+#   --worker-db PATH          Worker's isolated OpenCode DB (optional). A part
+#                             updated within WORKER_DB_ACTIVITY_WINDOW_SECONDS
+#                             (default 120) defers a stall as live tool output
+#                             (GH#39197). Env fallback: WORKER_ACTIVITY_DB.
 #   --hard-kill-seconds SECS  Total elapsed seconds before a confirmed output
 #                             stall escalates to forced hard-kill (default: 1500
 #                             = 25 min). Output growth resets stall detection and
@@ -100,6 +104,13 @@ HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
 # defers the stall kill — the worker is alive but doing non-output work
 # (API roundtrip, shellcheck, file read). Default 2% matches PULSE_IDLE_CPU_THRESHOLD.
 STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"
+# GH#39197: OpenCode `run --format json` emits a tool event only when the tool
+# part completes, but rewrites the running part in the worker's isolated DB as
+# the tool's output streams. A recent part update is therefore live work that
+# the output file cannot show (long tests, lock waits, builds that print).
+WORKER_DB="${WORKER_ACTIVITY_DB:-}"
+DB_ACTIVITY_WINDOW="${WORKER_DB_ACTIVITY_WINDOW_SECONDS:-120}"
+_MONITOR_DB_ACTIVITY_AGE=""
 # t3056: Lifecycle log for structured kill-reason telemetry. Aggregatable
 # across all workers. Default: pulse-dispatch.log (same file the pulse reads).
 LIFECYCLE_LOG="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
@@ -150,6 +161,11 @@ _parse_args() {
 			POLL_INTERVAL="$2"
 			shift 2
 			;;
+		--worker-db)
+			local _worker_db_arg="$2"
+			WORKER_DB="$_worker_db_arg"
+			shift 2
+			;;
 		--hard-kill-seconds)
 			# t2956: assign via `local` so the bare-positional ratchet
 			# (linters-local.sh::_ratchet_count_bare_positional) excludes
@@ -186,6 +202,7 @@ _parse_args() {
 	[[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || POLL_INTERVAL=10
 	# t2956: HARD_KILL_SECONDS=0 disables the hard-kill branch (allowed).
 	[[ "$HARD_KILL_SECONDS" =~ ^[0-9]+$ ]] || HARD_KILL_SECONDS=1500
+	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ ]] || DB_ACTIVITY_WINDOW=120
 	[[ "$WORKER_PID" =~ ^[0-9]+$ ]] || {
 		echo "Error: --worker-pid must be numeric" >&2
 		return 1
@@ -431,6 +448,32 @@ _watchdog_tree_network_active() {
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# GH#39197: return whether the worker's isolated OpenCode DB shows a part
+# updated within DB_ACTIVITY_WINDOW seconds (see WORKER_DB above). Parts left
+# "running" by a killed earlier attempt never update, so they do not count.
+# Fails open: no DB, no sqlite3, a locked or malformed DB all return 1 and the
+# existing liveness checks decide.
+# Sets _MONITOR_DB_ACTIVITY_AGE (seconds since the newest part update) on 0.
+# Returns: 0 when a part was updated within the window, 1 otherwise
+#######################################
+_watchdog_db_part_activity() {
+	_MONITOR_DB_ACTIVITY_AGE=""
+	[[ -n "$WORKER_DB" && -r "$WORKER_DB" ]] || return 1
+	[[ "$DB_ACTIVITY_WINDOW" =~ ^[0-9]+$ && "$DB_ACTIVITY_WINDOW" -gt 0 ]] || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	local newest="" now_s="" age=0
+	newest=$(sqlite3 -readonly -cmd ".timeout 2000" "$WORKER_DB" \
+		"SELECT max(time_updated) FROM part;" 2>/dev/null) || return 1
+	[[ "$newest" =~ ^[0-9]+$ ]] || return 1
+	now_s=$(date +%s)
+	age=$((now_s - newest / 1000))
+	[[ "$age" -lt 0 ]] && age=0
+	[[ "$age" -le "$DB_ACTIVITY_WINDOW" ]] || return 1
+	_MONITOR_DB_ACTIVITY_AGE="$age"
+	return 0
 }
 
 #######################################
@@ -748,7 +791,8 @@ _monitor_defer_stall() {
 	local lifecycle_event=""
 	# Legacy variable names for structural regression tests:
 	# deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-	# Expected labels: reason=ci_wait reason=network_active reason=cpu_active.
+	# Expected labels: reason=ci_wait reason=tool_output_active
+	# reason=network_active reason=cpu_active.
 	_MONITOR_DEFERRED_STALL_SECONDS=$((_MONITOR_DEFERRED_STALL_SECONDS + _MONITOR_STALL_SECONDS))
 	_MONITOR_LAST_DEFER_EPOCH=$(date +%s)
 	_MONITOR_LAST_DEFER_REASON="$reason"
@@ -799,6 +843,8 @@ _monitor_enforce_hard_kill() {
 	_MONITOR_CAP_LIVENESS="none_observed"
 	if _output_has_ci_wait; then
 		_MONITOR_CAP_LIVENESS="ci_wait"
+	elif _watchdog_db_part_activity; then
+		_MONITOR_CAP_LIVENESS="tool_output_active"
 	elif _watchdog_tree_network_active "$WORKER_PID"; then
 		_MONITOR_CAP_LIVENESS="network_active"
 	else
@@ -846,6 +892,12 @@ _monitor_handle_confirmed_stall() {
 
 	if _output_has_ci_wait; then
 		_monitor_defer_stall "ci_wait" ""
+		return 0
+	fi
+
+	# GH#39197: cheaper than the lsof probe and exact for streaming tools.
+	if _watchdog_db_part_activity; then
+		_monitor_defer_stall "tool_output_active" "signal=worker_db_part_update age=${_MONITOR_DB_ACTIVITY_AGE}s "
 		return 0
 	fi
 

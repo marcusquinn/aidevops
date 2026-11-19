@@ -427,6 +427,7 @@ _invoke_opencode_start_monitors() {
 			--exit-code-file "$exit_code_file" --session-key "${_invoke_session_key:-}" \
 			--repo-slug "${DISPATCH_REPO_SLUG:-}" --worktree-path "${_WORKER_WORKTREE_PATH:-}" \
 			--stall-timeout "$stall_timeout" --phase1-timeout "$phase1_timeout" \
+			--worker-db "${_WORKER_ISOLATED_DB_PATH:-}" \
 			</dev/null >/dev/null 2>&1 &
 		watchdog_pid=$!
 		print_info "[lifecycle] activity_watchdog_started pid=$watchdog_pid worker=$worker_pid stall_timeout=${stall_timeout}s phase1=${phase1_timeout}s hard_kill=${hard_kill_seconds}s events=${exit_code_file}.watchdog_events lifecycle_log=${lifecycle_log}"
