@@ -1199,6 +1199,41 @@ subdomain_ssl_command() {
     return "$status"
 }
 
+hostinger_help() {
+    echo "Hostinger Helper Script"
+    echo "Usage: $0 [command] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  list              - List all configured sites"
+    echo "  connect [site]    - Connect to site directory via SSH"
+    echo "  exec [site] [cmd] - Execute command on site"
+    echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
+    echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
+    echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
+    echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
+    echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
+    echo "  subdomain-ssl NAME.APEX --zone-token-secret SECRET [--apply] - SSL for a new multisite child behind Cloudflare ('subdomain-ssl help')"
+    echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
+    echo "  origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]"
+    echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
+    echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
+    echo "  help                 - $HELP_SHOW_MESSAGE"
+    echo ""
+    echo "API token (api, ssl-status, wordpress-detect, fleet inventory, cron):"
+    echo "  aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
+    echo "  aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
+    echo "  HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN $0 api ...  # second login"
+    echo ""
+    echo "Examples:"
+    echo "  $0 list"
+    echo "  $0 connect example.com"
+    echo "  $0 exec example.com 'ls -la'"
+    echo "  $0 api api/hosting/v1/websites"
+    echo "  $0 origin-block www.example.com --ssh hostinger --wait 900"
+    echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
+    return 0
+}
+
 main() {
     # Assign positional parameters to local variables
     local command="${1:-help}"
@@ -1263,37 +1298,7 @@ main() {
         return $?
         ;;
     "help"|"-h"|"--help"|"")
-        echo "Hostinger Helper Script"
-        echo "Usage: $0 [command] [options]"
-        echo ""
-        echo "Commands:"
-        echo "  list              - List all configured sites"
-        echo "  connect [site]    - Connect to site directory via SSH"
-        echo "  exec [site] [cmd] - Execute command on site"
-        echo "  api [METHOD] ENDPOINT [JSON] - Hostinger API call (token from secret store)"
-        echo "  ssl-status DOMAIN - Read-only SSL status (resolves hosting username)"
-        echo "  wordpress-detect DOMAIN - Scan account for WordPress; bounded installation lookup"
-        echo "  fleet [cmd]       - Read-only fleet inventory, plan and drift ('fleet help')"
-        echo "  cron [cmd]        - hPanel cron list/create/delete/output via API ('cron help')"
-        echo "  subdomain-ssl NAME.APEX --zone-token-secret SECRET [--apply] - SSL for a new multisite child behind Cloudflare ('subdomain-ssl help')"
-        echo "  image-libs --ssh ALIAS [--vendor] - Read-only Ghostscript/ImageMagick releases, policy and workers"
-        echo "  origin-block HOST [--ssh ALIAS] [--wait SECONDS] [--interval SECONDS]"
-        echo "                    - Is LiteSpeed refusing this address (403/reCAPTCHA/408) or is the site down?"
-        echo "                      Exit 0 ok, 10 refused-client, 11 refused-origin, 12 site-error, 13 inconclusive"
-        echo "  help                 - $HELP_SHOW_MESSAGE"
-        echo ""
-        echo "API token (api, ssl-status, wordpress-detect, fleet inventory, cron):"
-        echo "  aidevops secret set HOSTINGER_<ACCOUNT>_API_TOKEN --provider hostinger --account REF"
-        echo "  aidevops secret default hostinger HOSTINGER_<ACCOUNT>_API_TOKEN"
-        echo "  HOSTINGER_SECRET_NAME=HOSTINGER_<OTHER>_API_TOKEN $0 api ...  # second login"
-        echo ""
-        echo "Examples:"
-        echo "  $0 list"
-        echo "  $0 connect example.com"
-        echo "  $0 exec example.com 'ls -la'"
-        echo "  $0 api api/hosting/v1/websites"
-        echo "  $0 origin-block www.example.com --ssh hostinger --wait 900"
-        echo "  $0 api PATCH api/hosting/v1/accounts/USER/websites/DOMAIN/php/version '{\"version\":\"8.5\"}'"
+        hostinger_help
         ;;
     *)
         print_error "$ERROR_UNKNOWN_COMMAND $command"
