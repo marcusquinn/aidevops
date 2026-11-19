@@ -1729,6 +1729,8 @@ _dispatch_max_prefilter_cached_block() {
 	fields=$(jq -r "$_DISPATCH_CANDIDATE_IDENTITY_JQ" <<<"$candidate_json" 2>/dev/null) || return 1
 	IFS=$'\t' read -r issue repo <<<"$fields"
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle block:${reason} (no wave slot spent)" >>"$LOGFILE"
+	# t19178: age the exclusion (maintainer-gate reasons are ignored by the helper).
+	bash "${_PULSE_DISPATCH_LIB_DIR}/dispatch-exclusion-age-helper.sh" note "$repo" "$issue" "cross_cycle_${reason//[^a-z_]/_}" >/dev/null 2>&1 || true
 	_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
 	_DISPATCH_CANDIDATE_ELIGIBILITY="$_DISPATCH_ELIGIBILITY_INELIGIBLE"
 	_dispatch_record_candidate_outcome "$candidate_json" 1 "$outcomes_file" || true

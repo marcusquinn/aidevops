@@ -313,7 +313,7 @@ tbr_enqueue() {
 	# GH#38311: answered_hold / unexplained_hold mark hold-for-review issues;
 	# public evidence only, and this helper never removes the hold.
 	case "$intake" in
-	policy_remote | remote_observation | unclassified_hold | answered_hold | unexplained_hold) ;;
+	policy_remote | remote_observation | unclassified_hold | answered_hold | unexplained_hold | persistent_exclusion) ;;
 	*) intake="local" ;;
 	esac
 	_tbr_init_dirs || return 1
@@ -1504,7 +1504,7 @@ _tbr_check_entry() {
 	# releases an unclassified or hold-for-review intake; only the supervisor
 	# pass re-checks them.
 	case "$intake" in
-	unclassified_hold | answered_hold | unexplained_hold) [[ "$mode" != rearm ]] || return 1 ;;
+	unclassified_hold | answered_hold | unexplained_hold | persistent_exclusion) [[ "$mode" != rearm ]] || return 1 ;;
 	esac
 	if [[ "$intake" == policy_remote ]]; then
 		_tbr_check_entry_policy "$file" "$repo" "$issue" "$key" || return $?
@@ -1518,14 +1518,9 @@ _tbr_check_entry() {
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
 	fi
-	if [[ "$intake" == unclassified_hold ]]; then
-		_tbr_check_unclassified_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at"
-		return $?
-	fi
-	if [[ "$intake" == answered_hold || "$intake" == unexplained_hold ]]; then
-		_tbr_check_hold_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$opened_at" "$intake"
-		return $?
-	fi
+	local intake_rc=0
+	_tbr_check_intake_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at" "$intake" || intake_rc=$?
+	[[ "$intake_rc" -eq 3 ]] || return "$intake_rc"
 	# shellcheck source=terminal-blocker-circuit.sh
 	source "${_TBR_SCRIPT_DIR}/terminal-blocker-circuit.sh" || return 1
 	updated_at=$(printf '%s' "$issue_json" | jq -r '.updated_at // ""')

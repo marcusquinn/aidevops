@@ -298,3 +298,54 @@ _tbr_check_hold_entry() {
 	_tbr_print_entry "$repo" "$issue" unknown "$opened_at" "$intake" "$issue_json" "$extra"
 	return $?
 }
+
+#######################################
+# t19178: re-check a persistent_exclusion entry (supervisor pass only). A
+# deterministic dispatch filter has skipped this auto-dispatch issue for longer
+# than AIDEVOPS_DISPATCH_EXCLUSION_ESCALATE_SECONDS. Retires the entry and its
+# decision (no GitHub write) once the filter stopped skipping it or the issue
+# lost auto-dispatch; otherwise prints public evidence unless a recorded
+# decision stands. Returns 0 when printed, 1 otherwise, 2 on unreadable labels.
+# Args: file repo issue key issue_json reason opened_at
+#######################################
+_tbr_check_exclusion_entry() {
+	local file="$1" repo="$2" issue="$3" key="$4" issue_json="$5" reason="$6" opened_at="$7"
+	local has_label=""
+	# arrays yields nothing for a malformed labels value: unreadable, keep the entry.
+	has_label=$(jq -r '(.labels // []) | arrays | map(.name? // .) | index("auto-dispatch") != null' \
+		<<<"$issue_json" 2>/dev/null) || return 2
+	[[ -n "$has_label" ]] || return 2
+	if [[ "$has_label" != true ]] ||
+		! bash "${_TBR_SCRIPT_DIR}/dispatch-exclusion-age-helper.sh" active "$repo" "$issue" >/dev/null 2>&1; then
+		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
+		return 1
+	fi
+	_tbr_decision_active "$key" && return 1
+	_tbr_print_entry "$repo" "$issue" "$reason" "$opened_at" persistent_exclusion "$issue_json"
+	return $?
+}
+
+#######################################
+# Route one open entry of a supervisor-only intake to its checker. Returns the
+# checker's status, or 3 when the intake has no dedicated checker (the caller
+# continues with the circuit path).
+# Args: file repo issue key issue_json reason opened_at intake
+#######################################
+_tbr_check_intake_entry() {
+	local file="$1" repo="$2" issue="$3" key="$4" issue_json="$5" reason="$6" opened_at="$7" intake="$8"
+	case "$intake" in
+	unclassified_hold)
+		_tbr_check_unclassified_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at"
+		return $?
+		;;
+	answered_hold | unexplained_hold)
+		_tbr_check_hold_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$opened_at" "$intake"
+		return $?
+		;;
+	persistent_exclusion)
+		_tbr_check_exclusion_entry "$file" "$repo" "$issue" "$key" "$issue_json" "$reason" "$opened_at"
+		return $?
+		;;
+	esac
+	return 3
+}

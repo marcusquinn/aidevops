@@ -1650,6 +1650,9 @@ _dispatch_filter_consolidated_candidates() {
 		skipped="${skipped:+${skipped},}${issue}"
 		if ! jq -e --arg label "$auto_label" "$_DISPATCH_HAS_LABEL_JQ" <<<"$candidate" >/dev/null 2>&1; then
 			stranded+=("$issue")
+		else
+			# t19178: age auto-dispatch exclusions so persistent ones reach the AI brief owner.
+			bash "${_PULSE_DISPATCH_LIB_DIR:-${SCRIPT_DIR:-.}}/dispatch-exclusion-age-helper.sh" note "$repo_slug" "$issue" consolidated >/dev/null 2>&1 || true
 		fi
 	done < <(jq -c --arg label consolidated ".[]? | select(${_DISPATCH_HAS_LABEL_JQ})" <<<"$candidates_json" 2>/dev/null)
 	if [[ -z "$skipped" ]]; then
