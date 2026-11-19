@@ -710,9 +710,10 @@ _worker_briefed_retire_stale_non_closing_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
-	local issue_tsv state state_reason closed_at title task_id
-	local head_before head_after head_now files_json file_count paths path pr_api files_api
-	local verdict evidence added_rows bad_rows
+	local title="" issue_tsv="" state="" state_reason="" closed_at="" task_id=""
+	local file_count="" head_before="" head_after="" head_now="" files_json=""
+	local path="" paths="" pr_api="" files_api=""
+	local verdict="" evidence="" added_rows="" bad_rows=""
 	[[ "$pr_number" =~ ^[1-9][0-9]*$ && "$linked_issue" =~ ^[1-9][0-9]*$ && -n "$repo_slug" ]] || return 1
 	pr_api="repos/${repo_slug}/pulls"
 	pr_api+="/${pr_number}"
