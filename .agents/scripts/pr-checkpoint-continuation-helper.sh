@@ -74,7 +74,7 @@ _PCC_STALL_FUSE_MARKER="aidevops:stalled-checkpoint-fuse"
 # reasons get one attention record (_pcc_completed_attention). A `blocked`
 # release is excluded unless its recovery line names the runner-local
 # capability class (GH#34758): that needs only a capable runner.
-_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_not_launched|worker_failed|worker_claim_ready_transition_failed|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
+_PCC_STALL_RELEASE_PATTERN='^(orphaned_terminal_lease|no_activity|wall_clock_stale|stale_assignment_reset|worker_ownership_lost|worker_draft_checkpoint|worker_noop_zero_output|worker_incomplete_exit|worker_not_launched|worker_failed|worker_claim_ready_transition_failed|temp_dir_recovery|capability_limit|clean|worker_complete|watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$'
 # GH#38131: count non-progress releases toward the original per-PR fuse.
 # A separate total-release ceiling bounds even steadily advancing drafts.
 _PCC_MAX_PR_RELEASES="${AIDEVOPS_PCC_MAX_PR_RELEASES:-6}"
@@ -138,7 +138,7 @@ _PCC_JQ_RELEASE_DEFS='
 	def validator_stall: release_reason as $r
 		| ($r | IN("no_activity", "wall_clock_stale", "stale_assignment_reset", "worker_ownership_lost",
 			"worker_noop_zero_output", "worker_incomplete_exit", "worker_failed",
-			"worker_claim_ready_transition_failed"))
+			"worker_claim_ready_transition_failed", "temp_dir_recovery"))
 		or ($r | test("^(?!(push|network)_policy_timeout$)(watchdog_kill:[A-Za-z0-9_.:-]+|[a-z0-9_]*_stall|[a-z0-9_]*timeout[a-z0-9_]*)$"));
 	def coordination_line: claim_line or
 		startswith("DISPATCH_LEASE ") or is_release or
