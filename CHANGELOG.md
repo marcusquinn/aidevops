@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.236] - 2026-11-19
+
+### Added
+
+- check platform-fix regression evidence before push and accept --regression-evidence
+- reset-aware oauth pool ordering (#39143)
+
+### Fixed
+
+- graduate plugin validator concurrency under load (#39135)
+- signed license_commit_url opt-in for commits-mode standing policy (GH#39115)
+
 ## [3.39.235] - 2026-11-19
 
 ### Added
