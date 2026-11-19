@@ -42,26 +42,28 @@ assert_contains() {
 }
 
 main() {
+	# GH#39027: prompts render their prefix via approval_cli_prefix, so match
+	# the repo-qualified command tail.
 	assert_contains \
 		"quality feedback approval prompt includes repo slug" \
 		"${REPO_ROOT}/.agents/scripts/quality-feedback-issues-lib.sh" \
-		"sudo aidevops approve issue \${issue_num} \${repo_slug}"
+		"\${approve_cli} approve issue \${issue_num} \${repo_slug}"
 	assert_contains \
 		"quality feedback issue body includes current repo slug" \
 		"${REPO_ROOT}/.agents/scripts/quality-feedback-issues-lib.sh" \
-		"sudo aidevops approve issue <number> \${repo_slug}"
+		"\$(approval_cli_prefix) approve issue <number> \${repo_slug}"
 	assert_contains \
 		"pulse NMR circuit-breaker log includes repo slug" \
 		"${REPO_ROOT}/.agents/scripts/pulse-nmr-approval.sh" \
-		"sudo aidevops approve issue \${issue_num} \${slug}"
+		"\$(approval_cli_prefix) approve issue \${issue_num} \${slug}"
 	assert_contains \
 		"external contributor PR prompt includes repo slug" \
 		"${REPO_ROOT}/.agents/scripts/pulse-merge-gates.sh" \
-		"sudo aidevops approve issue NNN \${repo_slug}"
+		"\$(approval_cli_prefix) approve issue NNN \${repo_slug}"
 	assert_contains \
 		"labelless external issue prompt includes concrete repo slug" \
 		"${REPO_ROOT}/.agents/scripts/pulse-issue-reconcile.sh" \
-		"sudo aidevops approve issue \${issue_num} \${slug}"
+		"\$(approval_cli_prefix) approve issue \${issue_num} \${slug}"
 	assert_contains \
 		"knowledge review template uses promotion after review" \
 		"${REPO_ROOT}/.agents/templates/knowledge-review-nmr-body.md" \
@@ -73,7 +75,7 @@ main() {
 	assert_contains \
 		"approval setup output recommends explicit repo slug" \
 		"${REPO_ROOT}/.agents/scripts/approval-helper.sh" \
-		"sudo aidevops approve issue <number> <owner/repo>"
+		"\${approve_cli} approve issue <number> <owner/repo>"
 
 	printf '\n%d tests run, %d failures\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

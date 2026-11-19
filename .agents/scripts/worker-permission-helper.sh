@@ -336,22 +336,24 @@ permission_approval_text() {
 	local capture_file="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local approve_cli
+	approve_cli=$(approval_cli_prefix)
 	if [[ "$(permission_blocker_capability_json "$capture_file" | jq -r '.grantable')" == "$PERMISSION_BLOCKER_TRUE" ]]; then
 		printf '%s\n' "Review the exact scope above, then run:
 
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID
 
 This signs only the listed capabilities for this issue. It does not approve the issue scope, clear needs-maintainer-review, or authorize merge/release.
 
 To decline instead (for example, the requesting session has ended), sign a withdrawal that grants nothing and lets dispatch resume without this capability:
 
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
 	else
 		printf '%s\n' "permission_non_grantable: this request cannot be represented as a scoped maintainer grant. For task denials, the owning agent's static subagent allowlist/routing must be corrected; signing a permission grant cannot override it. Other non-grantable capabilities require an authorized alternative, not a signature.
 
 If this request holds dispatch, release it with a signed withdrawal that grants nothing:
 
-    sudo aidevops approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
+    ${approve_cli} approve permissions issue ${issue_number} ${repo_slug} --request REQUEST_ID --withdraw"
 	fi
 	return 0
 }

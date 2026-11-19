@@ -10,6 +10,13 @@ _PULSE_DEPENDABOT_INTAKE_LOADED=1
 
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 _pulse_dependabot_intake_marker() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -407,7 +414,7 @@ _pulse_dependabot_intake_body() {
 		reference_guidance="Follow the trusted boundary in \`.agents/scripts/trusted-dependabot-lib.sh\` and the repair-routing pattern in \`.agents/scripts/pulse-merge-process.sh::_route_pr_to_fix_worker\`."
 	fi
 	if [[ "$reason" == "approval-required" ]]; then
-		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`sudo aidevops approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff. Pulse closes the bot PR as superseded after the replacement merges. Never manufacture approval or weaken the approval gate."
+		approval_guidance="The dependency allowlist and security checks passed; only current-head maintainer crypto-approval is missing. Do not change the allowlist to resolve this gate. Valid resolutions: an authorized maintainer runs \`$(approval_cli_prefix) approve pr ${pr_number} ${repo_slug}\`, or deliver a maintainer-authored replacement PR with the identical diff. Pulse closes the bot PR as superseded after the replacement merges. Never manufacture approval or weaken the approval gate."
 		policy_guidance=""
 	fi
 

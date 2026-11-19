@@ -19,6 +19,13 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _permission_lib_path
 fi
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 readonly PERMISSION_REQUEST_MARKER="<!-- aidevops-permission-request -->"
 readonly PERMISSION_GRANT_MARKER="<!-- aidevops-signed-permission-grant -->"
 readonly PERMISSION_REQUEST_SCHEMA="aidevops-permission-request/v1"
@@ -677,7 +684,8 @@ cmd_permissions() {
 		*) _print_error "Unknown permissions option: $arg"; return 1 ;;
 		esac
 	done
-	local usage="Usage: sudo aidevops approve permissions issue|pr <number> [owner/repo] --request perm-<id> [--withdraw]"
+	local usage
+	usage="Usage: $(approval_cli_prefix) approve permissions issue|pr <number> [owner/repo] --request perm-<id> [--withdraw]"
 	[[ "$target_type" == "$_PERMISSION_TARGET_ISSUE" || "$target_type" == "pr" ]] || { _print_error "$usage"; return 1; }
 	_require_number_arg "$target_number" "$target_type" "$usage" || return 1
 	[[ "$request_id" =~ ^perm-[0-9a-f]{16}$ ]] || { _print_error "$usage"; return 1; }
@@ -742,7 +750,7 @@ cmd_permissions() {
 # =============================================================================
 
 _permissions_batch_usage() {
-	printf '%s\n' "Usage: sudo aidevops approve permissions batch --withdraw [--all-blocked] [issue|pr:<number>:perm-<id> ...] [owner/repo]"
+	printf 'Usage: %s approve permissions batch --withdraw [--all-blocked] [issue|pr:<number>:perm-<id> ...] [owner/repo]\n' "$(approval_cli_prefix)"
 	return 0
 }
 

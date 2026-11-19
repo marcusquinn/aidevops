@@ -11,6 +11,13 @@
 [[ -n "${_PULSE_DIAGNOSE_ISSUE_LOADED:-}" ]] && return 0
 _PULSE_DIAGNOSE_ISSUE_LOADED=1
 
+# GH#39027: printed approval commands need approval_cli_prefix even when this
+# module is sourced without shared-constants.sh.
+if ! declare -F approval_cli_prefix >/dev/null 2>&1; then
+	# shellcheck source=./shared-approval-cli.sh
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-approval-cli.sh"
+fi
+
 # Summarise terminal prelaunch failures that never reached runtime metrics.
 # Args: $1=issue_log_lines
 # Outputs compact JSON with a total and reason counts.
@@ -214,7 +221,7 @@ _issue_permission_hold_json() {
 	[[ -n "$issue_json" ]] || issue_json='{}'
 	[[ -n "$comments_json" ]] || comments_json='[]'
 	printf '%s\n%s\n' "$issue_json" "$comments_json" |
-		jq -sc --arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" '
+		jq -sc --arg number "$issue_number" --arg repo "$repo_slug" --argjson now "$(date +%s)" --arg approve_cli "$(approval_cli_prefix)" '
 		def trusted: (.author_association // "") as $a | ["OWNER", "MEMBER", "COLLABORATOR"] | index($a) != null;
 		def epoch: (.created_at // "") | (try fromdateiso8601 catch null);
 		.[0] as $issue | .[1] as $comments
@@ -242,8 +249,8 @@ _issue_permission_hold_json() {
 					elif (($decision.body // "") | contains("<!-- aidevops-signed-permission-withdrawal -->")) then "withdrawal"
 					else "grant" end),
 				owner_session_terminal: $released,
-				grant_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
-				withdraw_command: ("sudo aidevops approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
+				grant_command: ($approve_cli + " approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>")),
+				withdraw_command: ($approve_cli + " approve permissions issue " + $number + " " + $repo + " --request " + ($rid // "perm-<id>") + " --withdraw")
 			}
 		end' 2>/dev/null || _issue_permission_hold_fallback_json "$issue_json"
 	return 0

@@ -238,6 +238,7 @@ _collect_report_json() {
 		--argjson api "$api_budget" \
 		--argjson queue "$queue" \
 		--argjson delivery "$delivery" \
+		--arg approve_cli "$(approval_cli_prefix)" \
 		-f "$REPORT_FILTER" |
 		jq --argjson underfill "$underfill" --argjson detector "$detector_status" '
 			.current_state.underfill_attribution = $underfill

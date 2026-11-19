@@ -125,6 +125,9 @@ load_functions() {
 	extract_readiness_function _full_loop_report_external_authority_preflight
 	# shellcheck source=/dev/null
 	source "$EXTRACTED"
+	# GH#39027: extracted readiness output renders its prefix via approval_cli_prefix.
+	# shellcheck source=../shared-approval-cli.sh
+	source "${SCRIPT_DIR}/../shared-approval-cli.sh"
 	# Unregistered fixture repos: the Cloudron release gate makes no API calls.
 	export AIDEVOPS_REPOS_FILE="${TEST_ROOT}/no-repos.json"
 	# shellcheck source=../cloudron-release-merge-guard-lib.sh

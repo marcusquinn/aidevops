@@ -310,7 +310,7 @@ end) as $max_workers |
           ("last_observed_at=" + (($current.permission_holds.last_observed_at // "unknown") | tostring)),
           "issue_identity=redacted; see pulse.log DISPATCH_BLOCK_REASON reason=needs_maintainer_permissions|permission_grant_unverified"
         ];
-        "Run pulse-diagnose-helper.sh issue <N> --repo <owner/repo> for each held issue. It names the request, its age, whether the owning session ended, and both signed exits: grant (sudo aidevops approve permissions ... --request perm-<id>) or withdraw (same command with --withdraw), which grants nothing and resumes dispatch. Requests never expire unsigned.";
+        ("Run pulse-diagnose-helper.sh issue <N> --repo <owner/repo> for each held issue. It names the request, its age, whether the owning session ended, and both signed exits: grant (" + ($ARGS.named.approve_cli // "sudo aidevops") + " approve permissions ... --request perm-<id>) or withdraw (same command with --withdraw), which grants nothing and resumes dispatch. Requests never expire unsigned.");
         false
       )
     else empty end,
