@@ -1611,7 +1611,7 @@ _effective_pr_ready() {
 	if [[ "$ready" -eq 1 && -n "$head_branch" ]]; then
 		local local_head="" remote_head=""
 		local_head=$(git rev-parse HEAD 2>/dev/null || true)
-		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | head -n 1 || true)
+		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | sed -n 1p || true)
 		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
 			print_warning "Pushed head does not match local HEAD; creating PR as draft" >&2
 			ready=0
