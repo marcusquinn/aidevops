@@ -43,7 +43,10 @@ export function whoCommand({ root, options, out, err, env }) {
   const scope = { selfID: envSessionID(env), cwd: process.cwd(), repo: options.repo };
   const records = store.sortPresence(store.matchAnySessions(store.readPresence(root, { sweep: true }), targets, scope));
   if (options.json) return print(out, records, true);
-  if (records.length === 0) return print(err, `No other live session is working on ${targets.join(", ")}.`, false);
+  if (records.length === 0) {
+    const hint = store.crossRunnerHint(targets, options.repo);
+    return print(err, `No other live session is working on ${targets.join(", ")}.${hint ? ` ${hint}` : ""}`, false);
+  }
   return print(out, records.map((record) => store.formatWhoRow(record)).join("\n"), false);
 }
 

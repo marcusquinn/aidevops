@@ -100,6 +100,8 @@ export const outboxDir = (root, app) => join(root, "outbox", app);
 // t18896: release watches are keyed by repository, unlike subs/ (keyed by the watched session).
 export const releaseWatchDir = (root, repoKey) => join(root, "release-watch", repoKey);
 export const releaseNoticeDir = (root, repoKey) => join(releaseWatchDir(root, repoKey), "notices");
+// t19157: issue watches are keyed by the watching session (one file per watched item).
+export const issueWatchDir = (root, sessionID) => join(root, "issue-watch", sessionID);
 export const bindingsDir = (root) => join(root, "bindings");
 
 // ---------------------------------------------------------------------------
@@ -159,9 +161,23 @@ function pruneReleaseWatches(root, now, cutoff) {
   }
 }
 
+// t19157: an issue watch ends when it expires (7 days) or its session has no presence.
+function pruneIssueWatches(root, now) {
+  for (const sessionID of listDir(join(root, "issue-watch"))) {
+    const dir = issueWatchDir(root, sessionID);
+    const live = isSafeId(sessionID) && readJson(join(presenceDir(root), `${sessionID}.json`)) !== null;
+    for (const name of listDir(dir)) {
+      const file = join(dir, name);
+      if (name.endsWith(".tmp")) pruneTemp(file);
+      else if (!live || !(readJson(file)?.expires_ms > now)) rmSync(file, { force: true });
+    }
+    if (listDir(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Remove messages past retention from every inbox, delivered/ and sent/
- * directory, old overlap markers, release watches and stale chat-wake
+ * directory, old overlap markers, release and issue watches and stale chat-wake
  * settings. Returns the number of messages and markers removed. Callers use
  * pruneBus from session-bus-store.mjs, which also prunes t18892 bindings.
  */
@@ -190,5 +206,6 @@ export function pruneBusFiles(root, now = Date.now()) {
     if (expired && !readJson(join(presenceDir(root), name))) rmSync(file, { force: true });
   }
   pruneReleaseWatches(root, now, cutoff);
+  pruneIssueWatches(root, now);
   return removed.count;
 }

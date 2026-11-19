@@ -17,13 +17,14 @@ Tool `aidevops_sessions` (interactive TUI, `serve` and ACP processes only):
 | --- | --- | --- |
 | `list` | — | Up to 20 live sessions: handle, repo, branch, issue/PR, busy/idle, current task. Same-repo sessions first. |
 | `show` | `to` | One session in detail. |
-| `who` | `to` | Every other live session (interactive or pulse worker) on an issue, PR, repo, worktree or file path. Never fails on several matches. |
+| `who` | `to` | Every other live session (interactive or pulse worker) on an issue, PR, repo, worktree or file path. Never fails on several matches. A miss on `#N`/`PR#N` names the GitHub read that shows a claim from another runner. |
 | `send` | `to`, `text` | Info message. Delivered at the recipient's next tool result, or at its next turn if it is idle. Never wakes it. |
 | `ask` | `to`, `text`, optional `wait_seconds` (1–120) | Question. Wakes an idle recipient. The reply arrives in the asking session, or in this call's result when `wait_seconds` is set. |
 | `reply` | `re`, `text` | Answer an `ask` this session received (`re` = its message ID). |
 | `inbox` | — | Claims pending messages now, then lists unanswered asks and recent traffic. |
 | `notify-when-idle` | `to` | One idle notice when a busy session next goes idle. |
 | `watch-release` | `to` (`owner/repo`), optional `text: "off"` | Release-lane notices for 7 days; see [Release notices](#release-notices-t18896). |
+| `watch-issue` | `to` (`owner/repo#N` or `#N`), optional `text: "off"`; no `to` lists watches | Progress pointers on an issue or PR from any runner for 7 days; see [Issue watches](#issue-watches-t19157). |
 | `chat-wake` | `text: "on"` or `"off"` | Persist owner-chat wake opt-in for this caller's root session only; `to` is rejected. |
 | `keepalive` | `text: "on"` or `"off"`, optional `hours` (1–72, default 24) | Opt this caller's root session in or out of idle wakes; see [Mission keepalive](#mission-keepalive-t19047). `to` is rejected. |
 
@@ -60,6 +61,8 @@ aidevops sessions inbox [<session-id>]        # read-only view
 aidevops sessions outbox cli [--ack <msg-id>] # replies to asks sent from a shell
 aidevops sessions prune                       # dead presence, messages older than 7 days, stale bindings
 aidevops sessions watch-release owner/repo [--off]  # from an OpenCode session's shell; release-lane notices
+aidevops sessions watch-issue owner/repo#N [--new] [--off]  # from an OpenCode session's shell; issue watch
+aidevops sessions watches [--all] [--json]    # this session's issue watches (--all: every session's)
 aidevops sessions bind <app> <channel> <target> [--actor <id>] [--server <url>]
 aidevops sessions unbind <app> <channel>
 aidevops sessions bindings [--app <app>] [--json]
@@ -222,6 +225,53 @@ next run. The sender rate limit (10 per minute) bounds bursts.
   workers in `status` show that it runs.
 - Disable: `AIDEVOPS_WORKER_BUS_RELAY=0`.
 
+## Issue watches (t19157)
+
+The bus is local to one machine. An interactive session that files a
+worker-ready issue cannot see a worker on another runner pick it up, block or
+finish (GH#39240). Issue watches carry that progress back over the same relay.
+They are advisory: GitHub stays the record and decides ownership.
+
+- **Watch:** `watch-issue owner/repo#N` (tool action, or the CLI from an
+  OpenCode session's shell; `#N` uses the session's repo) subscribes the
+  caller's root session for 7 days; repeating it extends the 7 days. `--off`
+  (tool `text: "off"`) stops it. At most 50 per session. Headless, read-only
+  and presence-less sessions are refused: workers read their issue on GitHub.
+- **Automatic:** `claim-task-id.sh` run from an OpenCode session watches each
+  GitHub issue it creates as `--new` (5-second budget, silent, never fails
+  the claim). Outside a live interactive session it does nothing.
+- **Relay pass:** each `worker-bus-relay-helper.sh relay` run, after the worker
+  pass, diffs every due watch against its state: `status:*`,
+  `hold-for-review` and `needs-maintainer-review` labels, assignees,
+  closed/merged/reopened, and new comments since the watch began that are not
+  from bots and carry no `<!-- ops:start` audit marker. The first check of a
+  watch is the baseline. For a `--new` watch, `status:queued` or
+  `status:in-progress` labels, closure and their assignees already present at
+  that first check count as new, so a fast pickup is still reported.
+- **Messages:** one `info` message from `cli:pulse` per session per pass, up to
+  6 items, each with labels, logins, comment IDs and times plus the
+  `gh issue|pr view N --repo R --comments` read. Titles and comment bodies are
+  never copied. It never wakes a session. Items beyond 6, a failed send or a
+  deferred read keep their state and go in a later pass.
+- **Cost:** shares the relay interval and budget gate. One issue listing
+  (`since=`) per repo with due watches, one baseline issue read per new watch,
+  and one comments read only when a comment count rose.
+- **State:** `issue-watch/<session>/<owner>@<repo>@<n>.json` on the bus; the
+  relay keeps detection state in `worker-bus-relay/watch/<session>/`. Both end
+  with the watch or the session's presence. `worker-bus-relay-helper.sh status`
+  lists checked watches.
+
+### Worker pointers
+
+A worker cannot open a conversation, so it flags cross-session facts where
+watchers look: a comment on its own issue (dependency, overlap, blocker or
+outcome) reaches every session watching that issue at the next pass. When
+`aidevops sessions who '#M' --repo owner/repo` shows a live local session on
+the other item, the worker also sends that session one line:
+`aidevops sessions send <handle> "<repo>#N (worker): depends on #M — …"`.
+Pointers carry facts, never requests for authority. Rules:
+`scripts/commands/full-loop.md` "Headless Dispatch Rules".
+
 ## Mission keepalive (t19047)
 
 An owner who makes an interactive session a long-running unattended mission has
@@ -259,7 +309,9 @@ ownership.
 
 - **`who`:** `who` matches an issue (`#N`, per repo with `--repo`), `PR#N`,
   repo slug or name, or a path inside a session's worktree (relative paths
-  resolve from the caller's directory). The caller is excluded.
+  resolve from the caller's directory). The caller is excluded. Workers on
+  other runners are not on the bus; a miss on `#N` or `PR#N` prints the
+  `gh issue|pr view` read that shows their assignee and status labels.
 - **Pre-work and claim:** `prework-discovery-helper.sh` adds a `### Live
   sessions` warning for sessions on the task's issue numbers or files, then
   lists other live sessions in the repo. `interactive-session-helper.sh claim`
@@ -336,6 +388,7 @@ Root: `~/.aidevops/.agent-workspace/state/session-bus/` (override `AIDEVOPS_SESS
 | `keepalive/<session>.json` | Mission keepalive opt-in (t19047), default off; pruned after expiry once presence is gone. |
 | `overlaps/<hash>.json` | One marker per sent overlap notice (sender, recipient, shared key); pruned after 7 days. |
 | `release-watch/<owner@repo>/<session>.json` | Release-lane watch per root session, keyed by repo (unlike `subs/`); removed on expiry (7 days) or when presence is gone. `notices/` holds sent-once markers, pruned after 7 days. |
+| `issue-watch/<session>/<owner@repo@n>.json` | Issue/PR watch (t19157) per root session; removed on expiry (7 days), `--off`, or when presence is gone. |
 | `bindings/<app>/<channel>.json` | Chat channel → session binding (t18892). Pruned when the session has had no presence, no pending message and no delivered message for the retention period; a rebind that races the prune is kept. |
 
 Liveness is checked by pid plus process start time, so a reused pid does not keep a dead session listed. If `ps` cannot read the start time, a record with a live pid is kept rather than deleted.
@@ -344,5 +397,6 @@ Liveness is checked by pid plus process start time, so a reused pid does not kee
 
 - A session is missing from `list`: it runs an older plugin (restart it after `aidevops update`), or it is a read-only record (`list --all`). Workers dispatched before an update stay read-only until they exit.
 - A worker never got a relay message: check `worker-bus-relay-helper.sh status`, then `[worker-bus-relay]` and `REST-core deferrable unit blocked` lines in `~/.aidevops/logs/pulse.log`.
+- An issue watch sent nothing: `aidevops sessions watches` in that session's shell shows the watch; `worker-bus-relay-helper.sh status` shows its last check and baseline. Changes present at the first check are the baseline, not news.
 - An ask did not wake an idle session: check its wake budget (6 per hour) and the message's hop count; it is delivered at the next turn instead. After a failed wake (`session-bus wake:` on stderr), the next attempt waits 30 seconds, doubling up to 15 minutes until a wake succeeds.
 - Compaction keeps open asks: the compaction context lists asks this session still has to answer and asks it is waiting on.

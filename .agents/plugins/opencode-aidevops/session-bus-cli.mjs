@@ -14,6 +14,7 @@ import * as store from "./session-bus-store.mjs";
 import { chatWakeCommand } from "./session-bus-chat-trust.mjs";
 import { keepaliveCommand } from "./session-bus-keepalive-cli.mjs";
 import { notifyReleaseCommand, watchReleaseCommand } from "./session-bus-cli-release.mjs";
+import { watchesCommand, watchIssueCommand } from "./session-bus-cli-watch.mjs";
 import { DEFAULT_SERVER } from "./session-bus-launch.mjs";
 import { bindCommand, bindingsCommand, launchSessionCommand, unbindCommand } from "./session-bus-cli-bindings.mjs";
 import {
@@ -47,6 +48,10 @@ const USAGE = `Usage: aidevops sessions <command> [options]
   notify-release --repo <owner/repo> --source-pr <n> --event published|superseded|failed|executor-dead
                  [--tag <v>] [--receipt <r>] [--executor-state <s>] [--recovery <cmd>] [--owner-session <id>] [--marker <m>]
                                      Release-lane notice to watchers and the lane owner session (never wakes)
+  watch-issue <owner/repo#N|#N> [--repo <slug>] [--new] [--off]
+                                     This session gets a batched info pointer when the issue/PR's status, assignees,
+                                     state or comments change (7 days; --new: the session just created it)
+  watches [--all] [--json]           This session's issue watches (--all: every session's, for the relay)
   bind <app> <channel> <target>      Bind a chat channel to a session [--actor <id>] [--server <url>] [--json]
   unbind <app> <channel>             Remove a channel binding
   bindings [--app <app>] [--json]    Channel bindings and whether each bound session is live
@@ -62,7 +67,10 @@ Message text: positional words, --text-file <path>, or - for stdin (max ${store.
 Targets: session ID, @id (from the session title), handle, #issue, PR#n, repo, worktree path, or channel:<app>:<channel>.
 Exit codes: 0 ok, 1 error, 2 ask --wait timeout, 3 bound session not live, 4 launch created a session but did not finish.`;
 
-const BOOLEAN_FLAGS = { "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "--dry-run": "dryRun", "-h": "help", "--help": "help" };
+const BOOLEAN_FLAGS = {
+  "--json": "json", "--all": "all", "--redact": "redact", "--off": "off", "--dry-run": "dryRun", "--new": "fresh",
+  "-h": "help", "--help": "help",
+};
 const VALUE_FLAGS = {
   "--text-file": "textFile", "--origin": "origin", "--actor": "actor", "--ack": "ack", "--wait": "wait", "--sender": "sender",
   "--repo": "repo", "--hours": "hours",
@@ -112,6 +120,8 @@ const COMMANDS = {
   prune: pruneCommand,
   "watch-release": watchReleaseCommand,
   "notify-release": notifyReleaseCommand,
+  "watch-issue": watchIssueCommand,
+  watches: watchesCommand,
   bind: bindCommand,
   unbind: unbindCommand,
   bindings: bindingsCommand,

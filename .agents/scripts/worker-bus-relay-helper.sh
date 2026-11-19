@@ -8,6 +8,8 @@
 # status:claimed. Messages are pointers (comment IDs and the gh command that
 # reads them); the worker verifies on GitHub, which stays the record. The
 # relay never writes to GitHub.
+# t19157: the same run then relays issue watches the other way, to interactive
+# sessions (worker-bus-relay-watches.sh).
 #
 # Usage: worker-bus-relay-helper.sh relay | status | help
 #
@@ -35,6 +37,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 export PATH="${SCRIPT_DIR}:${PATH}"
 # shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
+# t19157: issue-watch pass for interactive sessions (uses the helpers below).
+# shellcheck source=./worker-bus-relay-watches.sh
+source "${SCRIPT_DIR}/worker-bus-relay-watches.sh"
 
 RELAY_STATE_DIR="${WORKER_BUS_RELAY_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/state/worker-bus-relay}"
 RELAY_MIN_INTERVAL="${WORKER_BUS_RELAY_MIN_INTERVAL:-120}"
@@ -60,7 +65,8 @@ _relay_usage() {
 		"Usage: worker-bus-relay-helper.sh relay | status | help" \
 		"" \
 		"  relay   Check each live pulse worker's issue and send it one pointer message" \
-		"          for new maintainer comments, closure, hold-for-review or status:claimed." \
+		"          for new maintainer comments, closure, hold-for-review or status:claimed;" \
+		"          then send each interactive session one pointer for its changed issue watches." \
 		"  status  Show the relay state for live and recent workers." \
 		"" \
 		"Disable with AIDEVOPS_WORKER_BUS_RELAY=0. Docs: reference/session-bus.md."
@@ -377,9 +383,10 @@ _relay_worker() {
 		local text_file="${work}/message-${session_id}.txt"
 		printf '%s\n' "$text" >"$text_file"
 		if ! _relay_bus send "$session_id" --sender "$RELAY_SENDER" --text-file "$text_file" >/dev/null 2>&1; then
-			# Keep the detection state, so the next run detects and retries.
+			# Keep the whole state, check time included: the next listing then
+			# starts before this change, so the run detects and retries it.
+			# (Advancing only `checked` hid the change from a short listing.)
 			_relay_log "send to ${session_id} (${repo}#${issue_number}) failed; will retry"
-			_relay_write_state "$session_id" "$(jq -c --argjson now "$now" '.checked = $now' <<<"$state")" || true
 			return 0
 		fi
 		_relay_log "sent ${repo}#${issue_number} to ${session_id}: comments=$(jq 'length' <<<"$comments") closed=${closed} labels=${added}"
@@ -464,6 +471,7 @@ cmd_relay() {
 			_relay_repo "$repo" "${work}/due.jsonl" "$work" "$now" || true
 		done < <(jq -rs '[.[].state.repo] | unique | .[]' "${work}/due.jsonl" 2>/dev/null)
 	fi
+	_relay_watches "$work" "$now" || true
 	rm -rf "$work"
 	return 0
 }
@@ -479,6 +487,14 @@ cmd_status() {
 		jq -r '"\(.session_id) \(.repo)#\(.issue) checked=\(.checked) comments_seen=\(.comments_seen) last_comment=\(.last_comment_id) closed_sent=\(.closed_sent) labels_sent=\(.labels_sent | join(","))"' "$file" 2>/dev/null || true
 	done
 	[[ "$found" -eq 1 ]] || printf 'No tracked workers.\n'
+	printf 'Issue watches (relay state):\n'
+	found=0
+	for file in "$RELAY_STATE_DIR"/watch/*/*.json; do
+		[[ -f "$file" ]] || continue
+		found=1
+		jq -r '"\(.subscriber) \(.repo)#\(.number) checked=\(.checked) labels=\((.baseline.labels // []) | join(",")) assignees=\((.baseline.assignees // []) | join(",")) state=\(.baseline.state // "unseen") comments_seen=\(.comments_seen)"' "$file" 2>/dev/null || true
+	done
+	[[ "$found" -eq 1 ]] || printf 'No checked issue watches.\n'
 	printf 'Mission keepalive (dry run, nothing sent):\n'
 	_relay_bus keepalive status 2>/dev/null || printf 'unavailable\n'
 	return 0
