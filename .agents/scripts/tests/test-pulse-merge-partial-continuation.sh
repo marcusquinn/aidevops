@@ -64,6 +64,10 @@ reset_case() {
 	TEST_CLOSING=""
 	TEST_CLOSING_RC=0
 	TEST_CLOSING_950=""
+	TEST_TARGET_960="777"
+	TEST_PR_BODY_960_RC=0
+	TEST_PR_TITLE_960="t777: other work"
+	unset PULSE_PARTIAL_REVISIT_MAX_PRS
 	TEST_PR_LABELS="origin:worker,tier:standard"
 	TEST_PR_JSON=$(pr_json true runner1)
 	TEST_PR_RC=0
@@ -193,6 +197,11 @@ _extract_pr_work_issue() {
 		printf '502'
 		return 0
 	fi
+	# GH#39254: PR 960 is a merged non-closing `For #777` PR mentioning #501.
+	if [[ "$pr_number" == "960" ]]; then
+		printf '%s' "$TEST_TARGET_960"
+		return 0
+	fi
 	[[ -n "$TEST_TARGET" ]] || return 1
 	printf '%s' "$TEST_TARGET"
 	return 0
@@ -206,6 +215,10 @@ gh_pr_view() {
 	fi
 	if [[ "$args" == *"--json title"* ]]; then
 		[[ "$TEST_PR_TITLE_RC" -eq 0 ]] || return "$TEST_PR_TITLE_RC"
+		if [[ "$args" == "960 "* ]]; then
+			printf '%s' "$TEST_PR_TITLE_960"
+			return 0
+		fi
 		printf '%s' "$TEST_PR_TITLE"
 		return 0
 	fi
@@ -215,6 +228,11 @@ gh_pr_view() {
 		[[ "$TEST_PR_BODY_RC" -eq 0 ]] || return "$TEST_PR_BODY_RC"
 		if [[ "$args" == "902 "* ]]; then
 			printf 'For #502'
+			return 0
+		fi
+		if [[ "$args" == "960 "* ]]; then
+			[[ "$TEST_PR_BODY_960_RC" -eq 0 ]] || return "$TEST_PR_BODY_960_RC"
+			printf 'For #777\n\nResults continuation #501 remains open.'
 			return 0
 		fi
 		printf '%s\n' "$TEST_PR_BODY"
@@ -1165,11 +1183,54 @@ test_multi_page_traversal() {
 	TEST_CLOSING_950="501"
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_no_write "periodic pass does not restore when newest PR closes the issue"
+	test_revisit_skips_other_target_prs
 	reset_case
 	TEST_ISSUE_JSON=$(issue_json 'status:in-review,parent-task' runner1)
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_status_call "501 ${SLUG} available --remove-assignee runner1" \
 		"periodic parent tracker: releases runner without auto-dispatch"
+	return 0
+}
+
+# GH#39254: a newer merged PR that only mentions the issue (For #777, or no
+# target) is skipped so the older partial is revisited; a PR that may own the
+# issue, or whose metadata is unreadable, still ends the walk without a write.
+# Args: $1=PR 960 explicit target, $2=PR 960 title
+revisit_with_newer_960() {
+	local target="$1" title="$2"
+	reset_case
+	TEST_REVIEW_ISSUES='[{"number":501}]'
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c '.[0] += [{event:"cross-referenced",source:{issue:{number:960,repository_url:"https://api.github.com/repos/owner/repo",pull_request:{merged_at:"2026-10-11T12:00:00Z"}}}}]')
+	TEST_TARGET_960="$target"
+	TEST_PR_TITLE_960="$title"
+	return 0
+}
+
+test_revisit_skips_other_target_prs() {
+	local target=""
+	for target in 777 ""; do
+		revisit_with_newer_960 "$target" "t777: other work"
+		_pm_reconcile_partial_continuations "$SLUG" 2000000060
+		assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+			"revisit skips newer PR targeting [${target:-none}] and restores from the older partial"
+		assert_log_contains "skipped merged PR #960 in #501 revisit — it targets another issue or none (GH#39254)" \
+			"revisit logs the skipped other-target PR [${target:-none}]"
+	done
+	revisit_with_newer_960 501 "t777: other work"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "newer PR explicitly targeting the issue ends the walk (guard decides)"
+	revisit_with_newer_960 777 "t501: continuation"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "newer PR whose title names the issue ends the walk (guard decides)"
+	revisit_with_newer_960 777 "t777: other work"
+	TEST_PR_BODY_960_RC=1
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "newer PR with an unreadable body ends the walk without a write"
+	revisit_with_newer_960 777 "t777: other work"
+	PULSE_PARTIAL_REVISIT_MAX_PRS=1
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "walk cap stops before the older partial"
+	assert_log_contains "stopped #501 revisit after 1 merged PRs" "walk cap is logged"
 	return 0
 }
 

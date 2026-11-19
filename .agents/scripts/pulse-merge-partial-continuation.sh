@@ -1063,15 +1063,49 @@ _pmpc_list_candidates() {
 	return 0
 }
 
+# GH#39254: decide whether a merged PR in an issue's timeline can own that
+# issue's in-review state. A cross-reference only proves a mention; a PR whose
+# closing or explicit For/Ref target is another issue (or absent) must not end
+# the revisit walk before an older partial that does target the issue.
+# Mirrors the guard's resolution: closing target, then explicit target, then a
+# title target corroborated by the body. Uncertainty hands the PR to the guard.
+# Args: $1=PR number, $2=repo slug, $3=issue number
+# Stdout: the sibling issue a closing PR closes (empty otherwise)
+# Returns: 0 when the PR closes or targets the issue, or its metadata is
+#          unreadable or ambiguous (the guard decides); 1 when it provably
+#          closes or targets another issue, or no issue at all (skip)
+_pmpc_pr_may_own_issue() {
+	local pr_number="$1" repo_slug="$2" issue_num="$3"
+	local pr_body="" closing="" pr_title="" body_rc=0 work_target=""
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 0
+	closing=$(_extract_linked_issue "$pr_number" "$repo_slug" "$pr_body" 2>/dev/null) || return 0
+	if [[ -n "$closing" ]]; then
+		[[ "$closing" == "$issue_num" ]] && return 0
+		printf '%s' "$closing"
+		return 1
+	fi
+	# Closing forms the shared parser skips (owner/repo#N, URL) may close this issue.
+	_pmpc_pr_body_has_closing_ref "$pr_number" "$repo_slug" "$pr_body" || body_rc=$?
+	[[ "$body_rc" -eq 1 ]] || return 0
+	work_target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body" 2>/dev/null) || return 0
+	[[ "$work_target" == "$issue_num" ]] && return 0
+	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 0
+	[[ "$pr_title" =~ ^(t|GH#)${issue_num}([^[:alnum:]_]|$) ]] && return 0
+	return 1
+}
+
 # Revisit one in-review issue: walk its merged cross-referenced PRs newest
 # first and let the merge-time guard decide. Timeline cross-references carry
-# merged_at. A PR closing a different (sibling) issue is skipped so it cannot
-# hide an older eligible partial; the first PR that closes this issue stops the
-# walk with no restore, and the first non-closing PR goes to the guard.
+# merged_at but only prove a mention. A PR that closes or targets a different
+# issue, or none (GH#38869, GH#39254), is skipped so it cannot hide an older
+# eligible partial; the first PR that may own this issue goes to the guard and
+# ends the walk. At most PULSE_PARTIAL_REVISIT_MAX_PRS PRs are examined.
 # Args: $1=repo slug, $2=issue number
 # Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
 _pmpc_revisit_in_review_issue() {
-	local repo_slug="$1" issue_num="$2" timeline="" pr_numbers="" pr_number="" closing=""
+	local repo_slug="$1" issue_num="$2" timeline="" pr_numbers="" pr_number="" sibling=""
+	local max_prs="${PULSE_PARTIAL_REVISIT_MAX_PRS:-10}" walked=0
+	[[ "$max_prs" =~ ^[1-9][0-9]{0,2}$ ]] || max_prs=10
 	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
 	pr_numbers=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
 		if type != "array" then error("unreadable timeline")
@@ -1084,9 +1118,17 @@ _pmpc_revisit_in_review_issue() {
 	' 2>/dev/null) || return 1
 	while IFS= read -r pr_number; do
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-		closing=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || return 0
-		if [[ -n "$closing" && "$closing" != "$issue_num" ]]; then
-			echo "[pulse-wrapper] Deterministic merge: skipped merged PR #${pr_number} in #${issue_num} revisit — it closes sibling issue #${closing} (GH#38869)" >>"$LOGFILE"
+		if [[ "$walked" -ge "$max_prs" ]]; then
+			echo "[pulse-wrapper] Deterministic merge: stopped #${issue_num} revisit after ${walked} merged PRs that target other issues (GH#39254)" >>"$LOGFILE"
+			return 0
+		fi
+		walked=$((walked + 1))
+		if ! sibling=$(_pmpc_pr_may_own_issue "$pr_number" "$repo_slug" "$issue_num"); then
+			if [[ -n "$sibling" ]]; then
+				echo "[pulse-wrapper] Deterministic merge: skipped merged PR #${pr_number} in #${issue_num} revisit — it closes sibling issue #${sibling} (GH#38869)" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Deterministic merge: skipped merged PR #${pr_number} in #${issue_num} revisit — it targets another issue or none (GH#39254)" >>"$LOGFILE"
+			fi
 			continue
 		fi
 		# The merge-time guard re-reads all current issue/PR/comment metadata
