@@ -1354,7 +1354,13 @@ release_process() {
 	if [[ -n "$repo_filter" ]]; then
 		repos="$repo_filter"
 	else
-		repos=$(jq -er '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		# GH#39145: no registered package is a no-op, not a failure; a missing or
+		# malformed registry still fails because jq errors on it.
+		repos=$(jq -r '[.initialized_repos[] | select(.app_type == "cloudron-package" and .maintenance != false) | .slug] | unique | .[]' "$REPOS_FILE") || return 1
+		if [[ -z "$repos" ]]; then
+			printf 'INFO: No registered cloudron-package repositories; nothing to process.\n' >&2
+			return 0
+		fi
 	fi
 	while IFS= read -r repo; do
 		release_authority "$repo" || {

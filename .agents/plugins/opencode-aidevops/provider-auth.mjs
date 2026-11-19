@@ -35,6 +35,24 @@ import {
   recoverFromExhaustion, refreshSessionOwnAccount,
 } from "./provider-auth-pool-recovery.mjs";
 import { buildRequestHeaders, transformRequestBody, addBetaQueryParam, transformResponseStream } from "./provider-auth-request.mjs";
+import { usageUpdateFromHeaders } from "./oauth-pool-ordering.mjs";
+
+/**
+ * Persist the seat's usage window from Anthropic rate-limit response headers
+ * (t19127) so reset-aware ordering works on the built-in provider path.
+ * Best-effort: never throws, never reads the body, logs nothing.
+ * @param {string|null} seatKey @param {Response} response
+ */
+function recordSeatUsage(seatKey, response) {
+  if (!seatKey || !response?.headers) return;
+  try {
+    const account = getAccounts("anthropic").find((a) => poolAccountKey(a) === seatKey);
+    const patch = account ? usageUpdateFromHeaders(account, response.headers) : null;
+    if (patch) patchAccount("anthropic", account, patch);
+  } catch {
+    /* usage capture must never block the request path */
+  }
+}
 
 /**
  * Apply a recovered token to headers/env and retry the request.
@@ -329,6 +347,7 @@ async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAc
       accessToken, sessionAccountKey: currentKey, requestCtx: ctx, triedKeys,
     }));
   }
+  recordSeatUsage(currentKey, response);
   return { response: transformResponseStream(response), sessionAccountKey: currentKey };
 }
 

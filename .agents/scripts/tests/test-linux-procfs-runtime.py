@@ -7,6 +7,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 - needed to exercise the local shell entry point
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -39,6 +40,17 @@ class RuntimeEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("--uid must be a positive integer", result.stderr)
+
+    def test_sudo_session_rejects_missing_repository_before_docker(self):
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash, "bash is required to run the harness")
+        with tempfile.TemporaryDirectory() as tree:
+            result = subprocess.run(  # nosec B603 - fixed local script and arguments
+                [bash, str(SCRIPTS / "linux-procfs-runtime-check.sh"), "--sudo-session", "--head", tree],
+                capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("missing .agents/scripts/approval-helper.sh", result.stderr)
 
 
 if __name__ == "__main__":

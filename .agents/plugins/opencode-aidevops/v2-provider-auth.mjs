@@ -20,6 +20,7 @@ import {
   parseRetryAfterMs,
   transformOpenAIRequestBody,
 } from "./openai-provider-auth.mjs";
+import { usageUpdateFromHeaders } from "./oauth-pool-ordering.mjs";
 
 const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai"]);
 const DEFAULT_COOLDOWN_MS = 300_000;
@@ -122,6 +123,21 @@ function createHttpRequestHook(runtime) {
   };
 }
 
+/**
+ * Persist the Anthropic seat's usage window from response headers (t19127).
+ * Best-effort: never throws, never reads the body.
+ */
+function recordAnthropicUsage(runtime, account, response) {
+  try {
+    const key = poolAccountKey(account);
+    const stored = runtime.listAccounts("anthropic").find((a) => poolAccountKey(a) === key) || account;
+    const patch = usageUpdateFromHeaders(stored, response?.headers);
+    if (patch) runtime.updateAccount("anthropic", key, patch);
+  } catch {
+    /* usage capture must never block the response path */
+  }
+}
+
 function createHttpResponseHook(runtime) {
   return async function httpResponse(event) {
     const provider = event.model?.providerID;
@@ -130,6 +146,7 @@ function createHttpResponseHook(runtime) {
     const account = runtime.requestAccounts.get(event.request);
     if (!account) return;
     runtime.requestAccounts.delete(event.request);
+    if (provider === "anthropic") recordAnthropicUsage(runtime, account, event.response);
     const usageLimited = provider === "openai"
       ? await isOpenAIUsageLimitResponse(event.response)
       : event.response.status === 429;
