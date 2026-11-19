@@ -272,8 +272,8 @@ applied_workflow=$("$real_git" --git-dir="$apply_bare" show \
 	'chore/test-issue-first:.github/workflows/linked-issue-check.yml')
 applied_contributing=$("$real_git" --git-dir="$apply_bare" show \
 	'chore/test-issue-first:CONTRIBUTING.md')
-assert_contains "apply-mode installs linked-issue caller" "$applied_workflow" \
-	'linked-issue-check-reusable.yml@main'
+assert_contains "apply-mode installs SHA-pinned linked-issue caller (GH#39085)" "$applied_workflow" \
+	'linked-issue-check-reusable.yml@0123456789abcdef0123456789abcdef01234567 # v3.39.45'
 assert_contains "apply-mode preserves repository guidance" "$applied_contributing" \
 	'Preserve this repository-specific guidance.'
 assert_contains "apply-mode installs managed policy block" "$applied_contributing" \
