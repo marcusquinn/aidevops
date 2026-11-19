@@ -942,7 +942,9 @@ _sds_verify_origin() {
     local ip="$1"
     local fqdn="$2"
     local output
-    output=$(timeout 30 openssl s_client -connect "$ip:443" -servername "$fqdn" \
+    local timeout_cmd="timeout"
+    command -v timeout >/dev/null 2>&1 || timeout_cmd="gtimeout"
+    output=$("$timeout_cmd" 30 openssl s_client -connect "$ip:443" -servername "$fqdn" \
         -verify_hostname "$fqdn" -verify_return_error </dev/null 2>&1) || return 1
     printf '%s' "$output" | grep -q 'Verification: OK' || return 1
     return 0
@@ -1010,8 +1012,15 @@ _sds_run() {
     local name="${fqdn%%.*}"
     local apex="${fqdn#*.}"
     local username zone origin_ip existing count snapshot shape
-    local exists_sub=0
+    local exists_sub=0 wildcard_count
+    # Bound every Hostinger request (adds --fail so HTTP errors are failures);
+    # exported so it survives secret-store re-execution.
+    local -x HOSTINGER_API_BOUNDED=1
 
+    if [[ "$apply" == "1" ]] && ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+        print_error "Missing dependency: timeout (GNU coreutils; gtimeout on macOS via brew install coreutils)" >&2
+        return 1
+    fi
     username=$(_sds_resolve_username "$apex") || return 1
     if _sds_subdomain_names "$username" "$apex" | grep -qxF -e "$name" -e "$fqdn"; then
         exists_sub=1
@@ -1030,7 +1039,14 @@ _sds_run() {
         print_error "More than one DNS record exists for $fqdn; resolve manually first" >&2
         return 1
     fi
-    shape="none (wildcard or absent)"
+    shape="none (wildcard)"
+    if ((count == 0)); then
+        wildcard_count=$(_sds_cf_checked GET "zones/$zone/dns_records?name=%2A.$apex" | jq '.result | length') || return 1
+        if ((wildcard_count == 0)); then
+            print_error "No DNS record for $fqdn and no wildcard in $apex; create the proxied record first so it has a route after restore" >&2
+            return 1
+        fi
+    fi
     if ((count == 1)); then
         shape=$(printf '%s' "$existing" | jq -r '.result[0] | .type + (if .proxied then " proxied" else "" end)') || return 1
     fi
@@ -1071,16 +1087,30 @@ _sds_swap_record() {
         '{type: "A", name: $n, content: $ip, proxied: false, ttl: 60, comment: $c}') || return 1
     umask 077
     mkdir -p "$SDS_WORK_DIR" || return 1
-    snapshot="$SDS_WORK_DIR/${fqdn}-$(date -u +%Y%m%dT%H%M%SZ).json"
+    if ((count == 1)) && [[ "$(printf '%s' "$existing" | jq -r '.result[0].comment // ""')" == "$comment" ]]; then
+        print_error "$fqdn already has an unfinished subdomain-ssl recovery record; run --restore with the original snapshot first" >&2
+        return 1
+    fi
+    snapshot="$SDS_WORK_DIR/${fqdn}-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
     if ((count == 1)); then
         temp_id=$(printf '%s' "$existing" | jq -er '.result[0].id') || return 1
-        printf '%s' "$existing" | jq --arg z "$zone" --arg f "$fqdn" --arg t "$temp_id" \
-            '{zone: $z, fqdn: $f, temp_id: $t, original: .result[0]}' >"$snapshot" || return 1
+        # Journal first (noclobber = exclusive create), then mutate.
+        (set -C; printf '%s' "$existing" | jq --arg z "$zone" --arg f "$fqdn" --arg t "$temp_id" \
+            '{zone: $z, fqdn: $f, temp_id: $t, original: .result[0]}' >"$snapshot") || return 1
         _sds_cf_record PUT "$zone" "$temp_id" "$body" >/dev/null || return 1
     else
-        temp_id=$(_sds_cf_checked POST "zones/$zone/dns_records" "$body" | jq -er '.result.id') || return 1
-        jq -n --arg z "$zone" --arg f "$fqdn" --arg t "$temp_id" \
-            '{zone: $z, fqdn: $f, temp_id: $t, original: null}' >"$snapshot" || return 1
+        (set -C; jq -n --arg z "$zone" --arg f "$fqdn" \
+            '{zone: $z, fqdn: $f, temp_id: null, original: null, pending: true}' >"$snapshot") || return 1
+        temp_id=$(_sds_cf_checked POST "zones/$zone/dns_records" "$body" | jq -er '.result.id') || {
+            print_error "Record creation outcome unknown; check Cloudflare for a record named $fqdn with comment '$comment' and delete it. Journal: $snapshot" >&2
+            return 1
+        }
+        if ! jq --arg t "$temp_id" '.temp_id = $t | del(.pending)' "$snapshot" >"$snapshot.tmp" || ! mv "$snapshot.tmp" "$snapshot"; then
+            rm -f "$snapshot.tmp"
+            _sds_cf_record DELETE "$zone" "$temp_id" >/dev/null ||
+                print_error "Could not finalise journal; delete record id $temp_id in zone $zone manually" >&2
+            return 1
+        fi
     fi
     chmod 600 "$snapshot" || true
     printf '%s\n' "$snapshot"
