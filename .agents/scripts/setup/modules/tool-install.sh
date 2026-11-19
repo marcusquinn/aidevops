@@ -691,7 +691,7 @@ _setup_opencode_homebrew_owner_action() {
 		stable_version=$(brew info --json=v2 opencode 2>/dev/null | jq -r '.formulae[0].versions.stable // empty' 2>/dev/null || true)
 		stable_major="${stable_version%%.*}"
 		if [[ "$stable_major" =~ ^[0-9]+$ && "$stable_major" != "1" ]]; then
-			printf '%s\n' "${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD:-brew uninstall opencode && npm install -g opencode-ai@latest}"
+			printf '%s\n' "${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD:-command -v npm >/dev/null && brew uninstall opencode && npm install -g opencode-ai@latest}"
 		else
 			printf '%s\n' "brew reinstall opencode"
 		fi

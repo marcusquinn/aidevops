@@ -390,7 +390,7 @@ aidevops_claude_code_install_owner() {
 
 # GH#39271: Homebrew-core ships OpenCode 2; the aidevops v1 profile never
 # follows it automatically. One migration line, shared by every reporter.
-AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD="brew uninstall opencode && npm install -g opencode-ai@latest"
+AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD="command -v npm >/dev/null && brew uninstall opencode && npm install -g opencode-ai@latest"
 AIDEVOPS_OPENCODE_BREW_HOLD_MESSAGE="Held: Homebrew now ships OpenCode 2 (preview in aidevops). To stay on stable OpenCode 1, run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}"
 
 # Print the major version (digits) of a profile's tested OpenCode version.
