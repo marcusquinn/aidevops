@@ -211,6 +211,15 @@ test_enabled_action_loads_pinned() {
 	status=1
 	printf '%s' "$LOAD_OUT" | jq -e '.actions | has("session_cap_split") or has("brief_authority") | not' >/dev/null && status=0
 	print_result "actions not listed in the policy are not returned (not authorized)" "$status"
+
+	# t19120: scope_acceptance loads only with its own never-accept boundary.
+	FIX_DOC=$(_policy_doc '{"scope_acceptance": {"conditions":["paths exhausted, partial PR merged"],"excluded_asks":["publication","record merge"],"issue_template":"t","labels":["accepted-with-holds"]}}')
+	_load
+	status=1
+	[[ "$LOAD_RC" -eq 0 ]] &&
+		printf '%s' "$LOAD_OUT" | jq -e '(.actions | keys) == ["scope_acceptance"] and
+			.actions.scope_acceptance.excluded_asks == ["publication","record merge"]' >/dev/null && status=0
+	print_result "enabled scope_acceptance with excluded_asks loads" "$status"
 	return 0
 }
 
@@ -241,6 +250,11 @@ mixed-case protected label|{"brief_authority": {"conditions":["x"],"issue_templa
 mixed-case protected prefix|{"brief_authority": {"conditions":["x"],"issue_template":"t","labels":["Status:Available"]}}
 missing conditions|{"brief_authority": {"conditions":[],"issue_template":"t","labels":["auto-dispatch"]}}
 split without session budget|{"session_cap_split": {"conditions":["x"],"issue_template":"t","labels":["auto-dispatch"],"split_pattern":"p"}}
+scope_acceptance without excluded_asks|{"scope_acceptance": {"conditions":["x"],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with empty excluded_asks|{"scope_acceptance": {"conditions":["x"],"excluded_asks":[],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with blank excluded ask|{"scope_acceptance": {"conditions":["x"],"excluded_asks":[" "],"issue_template":"t","labels":["accepted-with-holds"]}}
+scope_acceptance with protected label|{"scope_acceptance": {"conditions":["x"],"excluded_asks":["publication"],"issue_template":"t","labels":["Status:Done"]}}
+scope_acceptance without template|{"scope_acceptance": {"conditions":["x"],"excluded_asks":["publication"],"labels":["accepted-with-holds"]}}
 invalid JSON|{"outlier_hold": 
 EOF
 
@@ -453,8 +467,9 @@ test_policy_change_ends_decision_suppression() {
 test_supervisor_prompt_contract() {
 	local cycle="${SCRIPT_DIR}/pulse-wrapper-cycle.sh" status=0 needle=""
 	for needle in 'recovery-policy-helper.sh <repo>' 'reference/recovery-policy.md' \
-		'outlier_hold, session_cap_split, brief_authority' 'Exit 3 or 1 means no policy authority' \
-		'intake policy_remote' 'wake=human_decision' 'wake=dependency_change' 'wake=brief_revision'; do
+		'outlier_hold, session_cap_split, brief_authority, scope_acceptance' 'Exit 3 or 1 means no policy authority' \
+		'intake policy_remote' 'wake=human_decision' 'scope acceptances with wake=dependency_change' 'wake=brief_revision' \
+		'Policy never grants credentials, permissions, spending, data imports, record merges or publication.'; do
 		grep -qF -- "$needle" "$cycle" || status=1
 	done
 	print_result "supervisor prompt loads policy, limits authority to enabled actions, maps wakes" "$status"
