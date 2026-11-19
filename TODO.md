@@ -2296,6 +2296,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19157 feat(session-bus): issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker dependency pointers #feat #interactive tier:standard -> [todo/tasks/t19157-brief.md] ref:GH#39240 assignee:marcusquinn logged:2026-11-19 started:2026-11-19
 
+- [ ] t19159 fix(bounded-operation): completion-mode drain test reports failed under host load (GH#33747 test) #auto-dispatch #bug tier:standard ref:GH#39251 logged:2026-11-19
+
+- [ ] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
