@@ -24,9 +24,12 @@ SERVICE_HELPER="${SCRIPT_DIR}/opencode-service-helper.py"
 SERVICE_CONFIG="${HOME}/.config/aidevops/opencode-service.json"
 WORK_DIR="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"
 CONFIG_DIR="${HOME}/.config/opencode"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+# The PID keeps recovery paths unique even for two runs in the same second.
+STAMP="$(date +%Y%m%d-%H%M%S)-$$"
 SWITCH_BACKUP_SUFFIX=".v2-backup-${STAMP}"
-UNDO_SCRIPT="${HOME}/.aidevops/opencode-use-stable/undo-${STAMP}.sh"
+SWITCH_STATE_DIR="${HOME}/.aidevops/opencode-use-stable"
+SWITCH_LOCK_DIR="${SWITCH_STATE_DIR}/.lock"
+UNDO_SCRIPT="${SWITCH_STATE_DIR}/undo-${STAMP}.sh"
 USE_STABLE_CMD="aidevops opencode-runtime use-stable"
 
 # An aidevops-launched session points XDG_DATA_HOME at a per-project folder;
@@ -52,6 +55,7 @@ UNDO_LINES=""
 MOVED_COUNT=0
 V2_REMOVED=0
 PLAN_STEP=0
+INTERRUPTED=0
 
 _usage() {
 	cat <<EOF
@@ -153,7 +157,8 @@ _load_state() {
 # the default folder plus the fixed-depth aidevops isolated folders
 # (<work>/opencode-interactive|opencode-server/<id>/opencode). Symlinks are
 # skipped, as in opencode-db-inventory-lib.sh. One python pass keeps large
-# session inventories fast; unreadable databases are reported, not guessed.
+# session inventories fast. An unreadable database fails the whole inventory
+# (exit 3): guessing could leave an OpenCode 2 database where OpenCode 1 runs.
 _v2_data_dirs() {
 	python3 - "$DATA_DIR" "$WORK_DIR" <<'PY'
 import glob, os, pathlib, sqlite3, sys
@@ -162,6 +167,7 @@ default_dir, work_dir = sys.argv[1], sys.argv[2]
 candidates = [default_dir]
 for kind in ("opencode-interactive", "opencode-server"):
     candidates += sorted(glob.glob(os.path.join(glob.escape(work_dir), kind, "*", "opencode")))
+unreadable = 0
 for data_dir in candidates:
     db = os.path.join(data_dir, "opencode.db")
     if os.path.islink(data_dir) or os.path.islink(db) or not os.path.isfile(db):
@@ -172,16 +178,21 @@ for data_dir in candidates:
         con.close()
     except sqlite3.Error as error:
         print(f"Could not read {db}: {error}", file=sys.stderr)
+        unreadable += 1
         continue
     if found:
         print(data_dir)
+sys.exit(3 if unreadable else 0)
 PY
 	return $?
 }
 
 _collect_backup_targets() {
 	local found=""
-	found=$(_v2_data_dirs || true)
+	found=$(_v2_data_dirs) || {
+		printf 'Could not check every OpenCode data folder for OpenCode 2 data (see above). Nothing changed.\n' >&2
+		return 1
+	}
 	if [[ "$GLOBAL_PROFILE" == "v2" && -d "$DATA_DIR" ]] && ! grep -Fxq -- "$DATA_DIR" <<<"$found"; then
 		found="${DATA_DIR}"$'\n'"${found}"
 	fi
@@ -321,10 +332,57 @@ _step_done() {
 }
 
 # Undo runs in reverse order, so each completed step prepends its inverse.
+# The script is rewritten after every step, so an interrupted or failed run
+# still leaves a usable undo for whatever already changed.
 _add_undo() {
 	local line="$1"
 	UNDO_LINES="${line}"$'\n'"${UNDO_LINES}"
+	_write_undo_script || printf 'Could not update %s\n' "$UNDO_SCRIPT" >&2
 	return 0
+}
+
+# One switch at a time: mkdir is atomic. A lock left by a dead run is reclaimed.
+_acquire_lock() {
+	local holder=""
+	mkdir -p "$SWITCH_STATE_DIR" || return 1
+	if ! mkdir "$SWITCH_LOCK_DIR" 2>/dev/null; then
+		holder=$(cat "${SWITCH_LOCK_DIR}/pid" 2>/dev/null || true)
+		if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+			printf 'Another %s is running (PID %s). Wait for it to finish.\n' "$USE_STABLE_CMD" "$holder" >&2
+			return 1
+		fi
+		rm -rf "$SWITCH_LOCK_DIR"
+		mkdir "$SWITCH_LOCK_DIR" 2>/dev/null || {
+			printf 'Another %s just started. Wait for it to finish.\n' "$USE_STABLE_CMD" >&2
+			return 1
+		}
+	fi
+	printf '%s\n' "$$" >"${SWITCH_LOCK_DIR}/pid" || true
+	trap '_release_lock' EXIT
+	return 0
+}
+
+_release_lock() {
+	rm -rf "$SWITCH_LOCK_DIR" 2>/dev/null || true
+	return 0
+}
+
+# A signal only sets a flag, so the running step finishes and records its
+# undo line before the switch stops at the next checkpoint.
+_on_signal() {
+	INTERRUPTED=1
+	return 0
+}
+
+_checkpoint() {
+	[[ "$INTERRUPTED" == "1" ]] || return 0
+	printf '\n[INTERRUPTED] Stopped part-way.\n' >&2
+	if [[ -n "$UNDO_LINES" ]]; then
+		printf 'To put everything back, close OpenCode and run:\n  bash %q\n' "$UNDO_SCRIPT" >&2
+	else
+		printf 'Nothing had changed yet.\n' >&2
+	fi
+	exit 130
 }
 
 _write_undo_script() {
@@ -350,6 +408,8 @@ _stop_service() {
 }
 
 # A rename under an open database risks a torn copy, so require it closed.
+# Returns 0 when a database is open, 1 when all are closed, 2 when no tool
+# (lsof or pgrep) can tell; the caller refuses both 0 and 2.
 _data_dirs_in_use() {
 	local dir="" pids=""
 	local dbs=()
@@ -359,18 +419,19 @@ _data_dirs_in_use() {
 	[[ ${#dbs[@]} -gt 0 ]] || return 1
 	if command -v lsof >/dev/null 2>&1; then
 		pids=$(lsof -t -- "${dbs[@]}" 2>/dev/null || true)
-		[[ -n "$pids" ]]
-		return $?
+		[[ -n "$pids" ]] && return 0
+		return 1
 	fi
-	command -v pgrep >/dev/null 2>&1 || return 1
-	pgrep -x opencode >/dev/null 2>&1
-	return $?
+	command -v pgrep >/dev/null 2>&1 || return 2
+	pgrep -x opencode >/dev/null 2>&1 && return 0
+	return 1
 }
 
 _backup_config() {
 	local name=""
 	for name in opencode.json opencode.jsonc; do
 		[[ -f "${CONFIG_DIR}/${name}" ]] || continue
+		[[ ! -e "${CONFIG_DIR}/${name}${SWITCH_BACKUP_SUFFIX}" ]] || return 1
 		cp -p "${CONFIG_DIR}/${name}" "${CONFIG_DIR}/${name}${SWITCH_BACKUP_SUFFIX}" || return 1
 		_add_undo "$(printf 'cp -p %q %q' "${CONFIG_DIR}/${name}${SWITCH_BACKUP_SUFFIX}" "${CONFIG_DIR}/${name}")"
 	done
@@ -380,8 +441,14 @@ _backup_config() {
 _backup_one_dir() {
 	local dir="$1"
 	local backup="${dir}${SWITCH_BACKUP_SUFFIX}" name=""
+	if [[ -e "$backup" ]]; then
+		printf 'Backup path already exists: %s\n' "$backup" >&2
+		return 1
+	fi
 	mv "$dir" "$backup" || return 1
-	_add_undo "$(printf 'mv %q %q && mv %q %q' "$dir" "${dir}.v1-${STAMP}" "$backup" "$dir")"
+	# Keep any OpenCode 1 data created since as *.v1-<stamp>; the replacement
+	# folder may be missing if the run stopped right after the rename.
+	_add_undo "$(printf 'if [ -e %q ]; then mv %q %q; fi; mv %q %q' "$dir" "$dir" "${dir}.v1-${STAMP}" "$backup" "$dir")"
 	mkdir -p "$dir" || return 1
 	chmod 700 "$dir" 2>/dev/null || true
 	for name in auth.json mcp-auth.json; do
@@ -399,6 +466,7 @@ _backup_data_dirs() {
 	while IFS= read -r dir; do
 		[[ -n "$dir" ]] || continue
 		_backup_one_dir "$dir" || return 1
+		_checkpoint
 	done <<<"$BACKUP_TARGETS"
 	[[ "$MOVED_COUNT" -eq 0 ]] || _step_done "Renamed ${MOVED_COUNT} OpenCode 2 data folder(s) to *${SWITCH_BACKUP_SUFFIX}"
 	return 0
@@ -516,16 +584,27 @@ _preflight_refusals() {
 
 _run_switch() {
 	local version="$1" installer="$2"
+	local in_use=1
+	trap '_on_signal' INT TERM HUP
 	_stop_service || { _report_failure "Stopping the managed OpenCode service failed" "$version" "$installer"; return 1; }
-	if _data_dirs_in_use; then
+	if _data_dirs_in_use; then in_use=0; else in_use=$?; fi
+	if [[ "$in_use" -eq 0 ]]; then
 		_report_failure "OpenCode still has a database open; close every OpenCode window and rerun" "$version" "$installer"
 		return 1
 	fi
+	if [[ "$in_use" -eq 2 ]]; then
+		_report_failure "Cannot check whether OpenCode is still running (neither lsof nor pgrep is available)" "$version" "$installer"
+		return 1
+	fi
+	_checkpoint
 	_backup_data_dirs || { _report_failure "Backing up OpenCode data failed" "$version" "$installer"; return 1; }
+	_checkpoint
 	if [[ "$GLOBAL_PROFILE" == "v2" ]]; then
 		_remove_v2 || { _report_failure "Removing OpenCode 2 failed" "$version" "$installer"; return 1; }
+		_checkpoint
 	fi
 	_install_v1 "$version" "$installer" || { _report_failure "Installing OpenCode ${version} failed" "$version" "$installer"; return 1; }
+	_checkpoint
 	_run_setup || { _report_failure "aidevops setup failed" "$version" "$installer"; return 1; }
 	_verify_stable || { _report_failure "Version check failed" "$version" "$installer"; return 1; }
 	_finish_success
@@ -556,6 +635,9 @@ cmd_use_stable() {
 		*) printf 'Unknown option: %s\n' "$arg" >&2; _usage >&2; return 1 ;;
 		esac
 	done
+	if [[ "$dry_run" != "1" ]]; then
+		_acquire_lock || return 1
+	fi
 	_load_state
 	if [[ "$GLOBAL_PROFILE" == "v1" ]]; then
 		printf 'Already stable: %s is OpenCode %s. Nothing changed.\n' "$GLOBAL_PATH" "$GLOBAL_VERSION"
@@ -565,7 +647,7 @@ cmd_use_stable() {
 	version=$(_profile_helper get v1 testedVersion || printf '%s' "$OPENCODE_PLUGIN_TESTED_VERSION")
 	_switch_supported "$version" || return 1
 	installer=$(_v1_installer) || { printf 'npm or bun is required to install OpenCode 1. Install Node.js first.\n' >&2; return 1; }
-	_collect_backup_targets
+	_collect_backup_targets || return 1
 	_print_plan "$version" "$installer"
 	[[ "$dry_run" == "1" ]] && { printf 'Dry run: nothing changed.\n'; return 0; }
 	if [[ "$assume_yes" != "1" ]]; then
