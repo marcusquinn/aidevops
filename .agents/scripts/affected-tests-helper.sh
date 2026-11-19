@@ -98,7 +98,9 @@ for name in changed:
     if path.parent == Path(".agents/scripts/tests") and path.name.startswith("test-") and path.suffix == ".sh":
         if (root / path).is_file():
             select(str(path), (False, 0, 0))
-    elif path.suffix in (".sh", ".py") and "tests" not in path.parts:
+    # GH#39235: JS/TS runtimes (e.g. playwright-runtime.mjs) are exercised by
+    # shell suites that name them; select those suites like .py (name match, hop 0).
+    elif path.suffix in (".sh", ".py", ".mjs", ".cjs", ".js", ".ts") and "tests" not in path.parts:
         if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in script_names:
             related = sourcer_distances(path.name)
         else:
