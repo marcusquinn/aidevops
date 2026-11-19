@@ -192,6 +192,40 @@ const EVENT_REDUCERS = new Map([
   ["permission.replied", replyPermission],
 ]);
 
+// GH#39151: OpenCode ends a response with finish "length" when it hits the
+// request output cap; the in-flight tool call is aborted and nothing is saved.
+export const OUTPUT_LIMIT_NOTE =
+  "Your previous response hit the 32K output-token limit and its tool call was discarded; " +
+  "nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends).";
+
+/**
+ * One-shot per-session notice. observe() flags a session when an assistant
+ * message finishes with "length"; take() returns the note once and clears it.
+ */
+export function createOutputLimitNotice() {
+  const pending = new Set();
+  const seen = new Set();
+  return {
+    observe(event) {
+      if (event?.type !== "message.updated") return;
+      const info = event.properties?.info || {};
+      if (info.role !== "assistant" || info.finish !== "length") return;
+      const sessionID = String(info.sessionID || "");
+      const key = `${sessionID}:${info.id || ""}`;
+      if (!sessionID || seen.has(key)) return;
+      seen.add(key);
+      capSet(seen, MAX_TRACKED_IDS * 4);
+      pending.add(sessionID);
+      capSet(pending, MAX_TRACKED_IDS);
+    },
+    take(sessionID) {
+      const id = String(sessionID || "");
+      if (!id || !pending.delete(id)) return "";
+      return OUTPUT_LIMIT_NOTE;
+    },
+  };
+}
+
 // Session metadata changes are not model or tool activity.
 const NON_ACTIVITY_EVENTS = new Set(["session.created", "session.updated", "session.idle"]);
 
