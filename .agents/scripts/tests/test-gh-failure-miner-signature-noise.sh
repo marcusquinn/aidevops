@@ -84,6 +84,14 @@ gh() {
 		printf '%s\n' '{"jobs":[{"id":91958107008,"conclusion":"failure","check_run_url":"https://api.github.com/repos/marcusquinn/aidevops/check-runs/91958107008","steps":[{"name":"Enforce gate","conclusion":"failure"}]}]}'
 		return 0
 	fi
+	if [[ "$first" == "api" && "$second" == "repos/marcusquinn/aidevops" ]]; then
+		printf '%s\n' 'main'
+		return 0
+	fi
+	if [[ "$first" == "api" && "$second" == "repos/marcusquinn/aidevops/actions/runs?created="* ]]; then
+		printf '%s\n' "${GH_RUNS_JSON:-{\}}"
+		return 0
+	fi
 	if [[ "$first" == "run" && "$second" == "view" ]]; then
 		if [[ "${GH_LOG_SCENARIO:-}" == "unstructured_echoed_runner_guard" ]]; then
 			printf '%s\n' 'sync / Sync Issue Hygiene on PR Merge	UNKNOWN STEP	2026-08-04T20:48:14.7114649Z ^[[36;1m  echo "::error::Runner Git binary is unavailable before guard activation"^[[0m'
@@ -195,6 +203,33 @@ assert_equals "infrastructure title names events rather than checks" "Infrastruc
 strong_single_events='[{"repo":"marcusquinn/aidevops","source_kind":"pr","source_ref":"3","source_url":"https://example.invalid/pull/3","check_name":"CI","conclusion":"failure","signature":"infra:billing_annotation","is_infra":true,"infra_reason":"billing_annotation"}]'
 strong_single_cluster=$(build_infra_advisory_cluster "$strong_single_events" "marcusquinn/aidevops" "2")
 assert_equals "structured billing annotation remains sufficient evidence" "billing_annotation" "$(printf '%s\n' "$strong_single_cluster" | jq -r '.infra_reasons[0]')"
+
+wf_failed='{"workflow_runs":[
+  {"id":3,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"x"},
+  {"id":2,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T02:00:00Z","head_branch":"x"},
+  {"id":1,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"failure","created_at":"2026-11-19T01:00:00Z","head_branch":"x"},
+  {"id":4,"workflow_id":8,"name":"CI","event":"pull_request","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"x"},
+  {"id":5,"workflow_id":9,"name":"Build","event":"push","status":"completed","conclusion":"failure","created_at":"2026-11-19T03:00:00Z","head_branch":"feature"}
+]}'
+wf_selected=$(select_current_workflow_failures_json "$wf_failed" "main")
+assert_equals "GH#39228 three failed pull_request_target runs of one workflow are selected" "3" "$(printf '%s\n' "$wf_selected" | jq 'length')"
+assert_equals "GH#39228 pull_request and non-default push runs are excluded" "1" "$(printf '%s\n' "$wf_selected" | jq '[.[].workflow_id] | unique | length')"
+
+wf_recovered=$(printf '%s\n' "$wf_failed" | jq -c '.workflow_runs += [{"id":6,"workflow_id":7,"name":"Issue Sync","event":"pull_request_target","status":"completed","conclusion":"success","created_at":"2026-11-19T04:00:00Z","head_branch":"x"}]')
+wf_selected=$(select_current_workflow_failures_json "$wf_recovered" "main")
+assert_equals "GH#39228 newest successful run suppresses recovered workflow" "0" "$(printf '%s\n' "$wf_selected" | jq 'length')"
+
+GH_RUNS_JSON="$wf_failed"
+GH_LOG_SCENARIO="echoed_runner_guard"
+e2e_events=$(extract_failed_events_json "48" "100" "marcusquinn/aidevops" "true" "8" "false")
+e2e_clusters=$(build_repo_clusters_json "$e2e_events")
+assert_equals "GH#39228 end-to-end report yields one workflow cluster" "1" "$(printf '%s\n' "$e2e_clusters" | jq 'length')"
+assert_equals "GH#39228 cluster counts every failed run" "3" "$(printf '%s\n' "$e2e_clusters" | jq '.[0].count')"
+assert_equals "GH#39228 cluster is named for the workflow" "Issue Sync" "$(printf '%s\n' "$e2e_clusters" | jq -r '.[0].check_name')"
+GH_RUNS_JSON="$wf_recovered"
+e2e_events=$(extract_failed_events_json "48" "100" "marcusquinn/aidevops" "true" "8" "false")
+assert_equals "GH#39228 end-to-end report is empty once newest run succeeded" "0" "$(printf '%s\n' "$e2e_events" | jq 'length')"
+unset GH_RUNS_JSON GH_LOG_SCENARIO
 
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
