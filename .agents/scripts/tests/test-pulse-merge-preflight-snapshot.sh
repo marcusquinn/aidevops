@@ -790,9 +790,12 @@ test_qlty_credit_snapshot() {
 assert_stale_pending_checks() {
 	local checks='[{"name":"required-a","family":"required-a","source":"check_run","status":"completed","conclusion":"success"},{"name":"CodeFactor","family":"CodeFactor","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
 	local pending_required='[{"name":"required-a","family":"required-a","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
+	# GH#39166: a path-filtered (skipped) required context still counts as passing.
+	local skipped_required='[{"name":"required-a","family":"required-a","source":"check_run","status":"completed","conclusion":"skipped"},{"name":"CodeFactor","family":"CodeFactor","source":"check_run","status":"in_progress","conclusion":"","observed_at":"2026-01-01T00:00:00Z"}]'
 	local result=0
 	PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS=300
 	_pmrc_snapshot_checks_acceptable owner/repo 7 "$checks" required-a '' sha-reviewed || result=1
+	_pmrc_snapshot_checks_acceptable owner/repo 7 "$skipped_required" required-a '' sha-reviewed || result=1
 	if [[ "$result" -eq 0 ]] && grep -q "IGNORED stale non-required pending check 'CodeFactor' (age=600s)" "$LOGFILE" &&
 		! _pmrc_snapshot_checks_acceptable owner/repo 7 "$pending_required" required-a '' sha-reviewed; then
 		printf 'PASS stale non-required run ignored only when required checks pass\n'
