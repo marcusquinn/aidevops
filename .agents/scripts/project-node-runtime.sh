@@ -74,10 +74,29 @@ except ValueError:
 	return $?
 }
 
+# Callers prepend the selected bin to the whole worker PATH, so a Node found in
+# a shared multi-tool directory (/usr/local/bin, /opt/homebrew/bin) must not
+# reorder git, gh, python or jq (GH#39156). Print a private directory that
+# links only the Node toolchain from that directory instead.
+_project_node_private_bin() {
+	local node_path="$1" version="$2" source_dir="${1%/*}" key="" link_dir="" tool=""
+	key=$(printf '%s' "$node_path" | cksum | awk '{print $1}') || return 1
+	link_dir="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}/project-node/${version#v}-${key}/bin"
+	mkdir -p "$link_dir" || return 1
+	for tool in node npm npx corepack; do
+		[[ -e "$source_dir/$tool" ]] || continue
+		[[ -L "$link_dir/$tool" && "$(readlink "$link_dir/$tool")" == "$source_dir/$tool" ]] && continue
+		ln -sfn "$source_dir/$tool" "$link_dir/$tool" || return 1
+	done
+	[[ -x "$link_dir/node" ]] || return 1
+	printf '%s\n' "$link_dir"
+	return 0
+}
+
 # Prints selected bin path. Caller exports PATH in its own process/subshell.
 _project_node_bin() {
 	local root="$1" scope="${2:-.}" requirements="" preferred="" found="" line="" candidate="" version="" bin="" current=""
-	local pass="" wanted=""
+	local pass="" wanted="" shared_dirs=" "
 	local -a candidates=()
 	for candidate in "$root" "$root/$scope"; do
 		found=$(_project_node_requirement "$candidate") || return 1
@@ -100,9 +119,12 @@ _project_node_bin() {
 	candidates+=("$HOME"/.volta/tools/image/node/*/bin/node)
 	candidates+=("${MISE_DATA_DIR:-$HOME/.local/share/mise}"/installs/node/*/bin/node)
 	# Homebrew prefixes: macOS arm64/x86_64 and Linux; overridable for hermetic tests.
+	# Versioned and unversioned kegs are node-only directories. <prefix>/bin also
+	# covers the nodejs.org installer (/usr/local/bin) but is shared (GH#39156).
 	local brew_prefix=""
 	for brew_prefix in ${AIDEVOPS_NODE_BREW_PREFIXES:-/opt/homebrew /usr/local ${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}}; do
-		candidates+=("$brew_prefix"/opt/node@*/bin/node)
+		candidates+=("$brew_prefix"/opt/node@*/bin/node "$brew_prefix"/opt/node/bin/node "$brew_prefix"/bin/node)
+		shared_dirs="${shared_dirs}${brew_prefix}/bin "
 	done
 	candidates+=("${N_PREFIX:-/usr/local}"/n/versions/node/*/bin/node "$HOME"/n/versions/node/*/bin/node)
 	[[ -n "$nullglob_before" ]] || shopt -u nullglob
@@ -117,18 +139,22 @@ _project_node_bin() {
 			[[ -x "$candidate" ]] || continue
 			version=$("$candidate" --version 2>/dev/null) || continue
 			_project_node_satisfies "$version" "$wanted" || continue
+			bin="${candidate%/*}"
+			# Never return a shared multi-tool bin; skip it if linking fails.
+			if [[ "$candidate" != "$current" && "$shared_dirs" == *" ${bin} "* ]]; then
+				bin=$(_project_node_private_bin "$candidate" "$version") || continue
+			fi
 			if [[ "$pass" == hard && -n "$preferred" ]]; then
 				printf 'WARNING: project pins node %s; using installed %s, which satisfies "%s". Install the pinned version to match exactly.\n' \
 					"${preferred//$'\n'/ and }" "$version" "${requirements//$'\n'/ and }" >&2
 			fi
 			# Preserve package-manager shims when the active runtime already matches.
 			[[ "$candidate" == "$current" ]] && return 0
-			bin="${candidate%/*}"
 			printf '%s\n' "$bin"
 			return 0
 		done
 	done
 	version=$(node --version 2>/dev/null || printf unknown)
-	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node@<major>, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2
+	printf 'ENVIRONMENT FAILURE: node %s does not satisfy engines "%s" (root/scope requirements; a numeric version-file pin requires its major). Install a matching Node or select it with fnm, nvm, volta, mise, Homebrew node or node@<major>, the nodejs.org installer, or n; then rerun.\n' "$version" "${requirements//$'\n'/ and }" >&2
 	return 1
 }
