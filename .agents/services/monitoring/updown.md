@@ -26,12 +26,14 @@ tools:
 - **Helper**: `updown-helper.sh` — `list`, `json`, `add`, `update`, `delete`, `metrics`, `recipients`, `status-page list|add|update|delete`. Full flags: `updown-helper.sh help`.
 - **Credentials**: `aidevops secret set UPDOWN_API_KEY` (the read-write key from updown.io settings). The helper sends it as an `X-API-KEY` header on curl's stdin, never in arguments or URLs.
 - **Defaults**: new checks are private and hourly. Public visibility comes from the site's status page, which lists private checks too.
-- **Not in the API**: a status page's custom domain. Enter it in the updown.io UI; the helper cannot set it.
+- **Not in the API**: a status page's custom domain and account settings, including domain-expiration reminders (off by default). Set them in the updown.io UI; the helper cannot.
 - **Use instead**: error tracking → `services/monitoring/sentry.md`; LLM traces → `services/monitoring/langwatch.md`.
 
 <!-- AI-CONTEXT-END -->
 
 ## Set up a site
+
+Once per account: in the updown.io account settings, enable domain-expiration reminders. updown collects expiry dates for every check but leaves these reminders off by default, and the API cannot change account settings.
 
 ```bash
 # 1. Create the check: private, hourly. Prints the check token.
@@ -48,7 +50,7 @@ updown-helper.sh status-page add --name "Example status" --check <check-token>
 Then:
 
 1. On updown.io, open the status page's settings and enter `status.example.com` as its custom domain.
-2. At the site's DNS host, add `status` `CNAME` `page.updown.io` (DNS only; see [DNS](#dns)). updown issues the page's TLS certificate (Let's Encrypt or ZeroSSL) once the record resolves. After changing an existing record, wait out its TTL.
+2. At the site's DNS host, add every record the custom-domain screen lists: `status` `CNAME` `page.updown.io` (DNS only; see [DNS](#dns)), plus any TXT record shown there. The helper creates no DNS records. updown issues the page's TLS certificate (Let's Encrypt or ZeroSSL) once the records resolve. After changing an existing record, wait out its TTL.
 3. Verify: `dig +short CNAME status.example.com` returns `page.updown.io.`, and `curl -sSI https://status.example.com/` returns `200` with a valid certificate.
 4. Link the status page from the site, for example in the footer.
 

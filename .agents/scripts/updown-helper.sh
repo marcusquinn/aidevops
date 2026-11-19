@@ -566,8 +566,10 @@ print_status_page_next_steps() {
 	echo "Next steps (the updown API cannot set a custom domain, so this helper does not):"
 	echo "  1. On updown.io, open this status page's settings and enter the site's status"
 	echo "     hostname, for example status.example.com, as its custom domain."
-	echo "  2. At the site's DNS host, add: CNAME status -> $STATUS_PAGE_CNAME_TARGET"
-	echo "     In Cloudflare set it to DNS only. Proxied setups: services/monitoring/updown.md"
+	echo "  2. At the site's DNS host, add every record updown's custom-domain screen lists:"
+	echo "     CNAME status -> $STATUS_PAGE_CNAME_TARGET, plus any TXT record shown there."
+	echo "     This helper creates no DNS records. In Cloudflare set the CNAME to DNS only."
+	echo "     Proxied setups: services/monitoring/updown.md"
 	return 0
 }
 
@@ -713,8 +715,10 @@ Status pages:
   status-page delete <token>    Delete a status page
 
   The updown API cannot set a status page's custom domain. After 'status-page add',
-  enter status.<domain> as the page's custom domain on updown.io, then add the DNS
-  record CNAME status -> $STATUS_PAGE_CNAME_TARGET (Cloudflare: DNS only).
+  enter status.<domain> as the page's custom domain on updown.io, then add every
+  DNS record that screen lists: CNAME status -> $STATUS_PAGE_CNAME_TARGET
+  (Cloudflare: DNS only), plus any TXT record shown there. This helper creates
+  no DNS records.
 
   help                          Show this help message
 EOF
