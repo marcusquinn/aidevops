@@ -217,6 +217,14 @@ class PageFrameGovernorTest(GovernorFixture):
         _second, meta = self.page()
         self.assertEqual((self.last_validators(), self.entries(), meta["status"]), ([], [], 200))
 
+    def test_full_final_counted_page_replays(self):
+        # GH#39244: an appended check run changes total_count, so the body
+        # and ETag of this full final page change too.
+        self.serve(200, 'W/"c1"', '{"total_count":2,"check_runs":[{"id":1},{"id":2}]}')
+        first, _ = self.page()
+        second, meta = self.page()
+        self.assertEqual((meta["status"], second.stdout), (304, first.stdout))
+
     def test_page_that_links_onward_replays_its_link(self):
         self.serve(200, 'W/"p3"', '[{"id":1},{"id":2}]', link=NEXT)
         self.page()
@@ -269,6 +277,19 @@ class EligibilityAndPruneTest(unittest.TestCase):
         self.assertTrue(replayable("repos/o/r/issues/1/comments", 3, link=last_only))
         self.assertFalse(page_frame_replayable(["api", "repos/o/r/issues/1", "--include"],
                                                b"HTTP/2.0 200 OK\r\n\r\n", b'{"id":1}'))
+
+    def test_counted_list_replay_rules(self):
+        def counted(body, *extra):
+            return page_frame_replayable(["api", "repos/o/r/commits/s/check-runs?per_page=1", *extra, "--include"],
+                                         b"HTTP/2.0 200 OK\r\n\r\n", body.encode())
+
+        self.assertTrue(counted('{"total_count":1,"check_runs":[{"id":1}]}'), "full counted final page")
+        self.assertTrue(counted('{"total_count":0,"statuses":[],"state":"pending"}'))
+        self.assertFalse(counted('{"total_count":true,"check_runs":[{"id":1}]}'), "bool is not a count")
+        self.assertFalse(counted('{"total_count":"1","check_runs":[{"id":1}]}'))
+        self.assertFalse(counted('{"check_runs":[{"id":1}]}'))
+        self.assertFalse(counted('{"total_count":1,"check_runs":[{"id":1}]}', "--jq", ".check_runs"),
+                         "filtered stdout cannot show total_count")
 
     def test_prune_removes_only_stale_entries(self):
         with tempfile.TemporaryDirectory() as temp:
