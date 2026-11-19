@@ -99,18 +99,20 @@ test_openai_allowlist_selects_thinking_tier_model() {
 # GH#38901: under ChatGPT OAuth, worker selection skips models the routing
 # table lists in chatgpt_oauth_restrictions.openai_unsupported, matching the
 # dispatch-side resolver, instead of spending an attempt on a known rejection.
+# GH#39200: gpt-6.1-terra joined gpt-6.1-sol on the list, so neither the
+# standard nor the thinking tier has an OpenAI candidate under OAuth.
 test_chatgpt_oauth_skips_unsupported_models() {
 	printf '{"openai":{"type":"oauth","access":"test-openai-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	local standard="" thinking="" thinking_status=0
-	standard=$(select_model standard)
+	local standard="" standard_status=0 thinking="" thinking_status=0
+	standard=$(select_model standard 2>/dev/null) || standard_status=$?
 	thinking=$(select_model thinking 2>/dev/null) || thinking_status=$?
 	printf '{"openai":{"type":"api","key":"test-openai-key"}}\n' >"${HOME}/.local/share/opencode/auth.json"
-	if [[ "$standard" == "openai/gpt-6.1-terra" && -z "$thinking" && "$thinking_status" -eq 75 ]]; then
+	if [[ -z "$standard" && "$standard_status" -eq 75 && -z "$thinking" && "$thinking_status" -eq 75 ]]; then
 		print_result "ChatGPT OAuth skips denylisted OpenAI models" 0
 		return 0
 	fi
 	print_result "ChatGPT OAuth skips denylisted OpenAI models" 1 \
-		"standard=${standard:-<empty>} thinking=${thinking:-<empty>} thinking_status=${thinking_status}"
+		"standard=${standard:-<empty>} standard_status=${standard_status} thinking=${thinking:-<empty>} thinking_status=${thinking_status}"
 	return 0
 }
 
