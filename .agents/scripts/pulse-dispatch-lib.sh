@@ -1095,6 +1095,20 @@ _dispatch_release_footprint_reservation() {
 	return 0
 }
 
+# Record a launch that failed validation after dispatch_with_dedup returned 0.
+# t19116: a submitted launch (e.g. an unconfirmed systemd unit) can still start,
+# so its launch state is unknown and the slot stays held this round.
+# Args: issue, repo slug, attempt epoch, validation rc
+_dispatch_launch_validation_failed() {
+	local issue_number="$1" repo_slug="$2" attempt_epoch="$3" launch_rc="$4"
+	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+	_DISPATCH_SETTLE_RC=124
+	_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
+	_dispatch_stats_increment "dispatch_worker_launch_failed"
+	_dispatch_record_launch_failure
+	return 0
+}
+
 #######################################
 # Run triage under one cumulative Pulse-cycle budget, refreshing stale triage
 # state at bounded intervals while unspent attempts remain. Typed outcomes never
@@ -1172,8 +1186,7 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
-		# t19116: a timed-out candidate may already have launched. Report the
-		# raw state so its launch slot stays held (block reporting returns 1).
+		# t19116: a timed-out candidate may have launched; keep its slot held.
 		[[ "$dispatch_rc" -ne 124 ]] || _DISPATCH_SETTLE_RC=124
 		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
@@ -1187,13 +1200,7 @@ _dispatch_process_candidate() {
 	local launch_rc=0
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
-		# t19116: a submitted launch (e.g. an unconfirmed systemd unit) can still
-		# start, so its launch state is unknown and the slot stays held this round.
-		_DISPATCH_SETTLE_RC=124
-		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
-		_dispatch_stats_increment "dispatch_worker_launch_failed"
-		_dispatch_record_launch_failure
+		_dispatch_launch_validation_failed "$issue_number" "$repo_slug" "$attempt_epoch" "$launch_rc"
 		return 1
 	fi
 	_dispatch_stats_increment "dispatch_worker_spawned"
