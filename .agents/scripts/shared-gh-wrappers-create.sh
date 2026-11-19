@@ -1197,9 +1197,8 @@ _gh_create_pr_origin_is_exact() {
 }
 
 #######################################
-# Resolve the wrapper-derived origin label args for gh_create_pr.
-# t3088: defence-in-depth — only auto-inject the session origin label when the
-# caller has NOT already specified one (dual-origin-label bug, PR #21825).
+# Resolve the wrapper-derived origin label args for gh_create_pr (t3088 rule:
+# none when the caller already supplied an origin label).
 # GH#39054: match gh_create_issue — when the derived label is confirmed absent
 # and cannot be provisioned (no upstream write authority), create without it
 # and defer provenance to repository triage instead of failing the create.
@@ -1322,7 +1321,11 @@ gh_create_pr() {
 	local is_help=0
 	_gh_wrapper_args_have_flag "--help" "$@" && is_help=1
 
-	# t3088/GH#39054: derived session origin only when the caller supplied none.
+	# t3088: defence-in-depth — only auto-inject the session origin label when
+	# the caller has NOT already specified one. Prevents the dual-origin-label
+	# bug (t2200 violation) where a caller's --label "origin:X" plus the
+	# wrapper's --label "$session_origin_label" produces two distinct origin
+	# labels on the resulting PR. Canonical failure: PR #21825.
 	_gh_create_pr_prepare_origin_args "$@"
 	local -a _origin_label_args=(${_GH_CREATE_PR_ORIGIN_ARGS[@]+"${_GH_CREATE_PR_ORIGIN_ARGS[@]}"})
 	local origin_deferred="$_GH_CREATE_PR_ORIGIN_DEFERRED"
