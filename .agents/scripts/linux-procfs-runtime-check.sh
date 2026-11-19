@@ -61,6 +61,7 @@ for _ in $(seq 1 50); do
 done
 [ -S "$bus_path" ] || { echo "session bus socket was not created" >&2; exit 3; }
 chown alice "$bus_path"
+command -v getent >/dev/null 2>&1 || { echo "container bootstrap failed: getent is required" >&2; exit 3; }
 user_home="$(getent passwd alice | cut -d: -f6)"
 agents_dir="${user_home}/.aidevops/agents/scripts"
 mkdir -p /opt/rec/bin "$agents_dir"
