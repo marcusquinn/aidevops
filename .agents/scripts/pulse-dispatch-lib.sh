@@ -1530,9 +1530,10 @@ _dispatch_floor_resume_parallel() {
 # subshell on completion. POSIX O_APPEND guarantees atomic short-line writes
 # (lines are <100 bytes, well under PIPE_BUF=512 on macOS / 4096 on Linux).
 #
-# Concurrency cap is enforced via `wait -n` (bash 4.3+). A modern bash is
-# guaranteed at runtime by setup.sh's bash-upgrade-helper.sh + the
-# shared-constants.sh re-exec guard.
+# Concurrency cap is enforced by polling tracked child PIDs (`jobs -r -p`,
+# `wait <pid>` on finished children, short sleep). This is Bash 3.2-safe: the
+# pulse may run under macOS /bin/bash when no modern bash is installed, where
+# the Bash 4.3+ wait-for-any-child builtin option always fails.
 #
 # Each candidate's outcome line format:
 #   success|<issue>           — dispatched + launch validated
@@ -1691,36 +1692,54 @@ _dispatch_max_prefilter_cached_block() {
 #######################################
 _dispatch_max_wait_for_reservation() {
 	local target_array_name="$1"
+	local before=0 after=0
 
-	if ! wait -n 2>/dev/null; then
-		echo "[pulse-wrapper] Dispatch_max: wait -n found no children while reconciling reservations" >>"$LOGFILE"
+	eval "before=\${#${target_array_name}[@]}"
+	if ((before == 0)); then
+		echo "[pulse-wrapper] Dispatch_max: no tracked children while reconciling reservations" >>"$LOGFILE"
+		return 0
 	fi
-	_dispatch_max_refresh_pids "$target_array_name"
+	while :; do
+		_dispatch_max_refresh_pids "$target_array_name"
+		eval "after=\${#${target_array_name}[@]}"
+		((after < before)) && break
+		sleep 0.2 2>/dev/null || sleep 1
+	done
 	return 0
 }
 
 #######################################
 # Refresh an array variable of tracked PIDs by removing children that already
-# finished.
+# finished. Bash 3.2-safe: a PID is live only if it is a running background job
+# of this shell (`jobs -r -p`). Finished children are reaped with `wait <pid>`
+# (returns immediately); PIDs that are not our children (GH#21729 PID reuse)
+# are dropped. Must run in the dispatch shell, not a command substitution.
 #
 # Arguments:
 #   $1 - nameref-style array variable name
 #######################################
 _dispatch_max_refresh_pids() {
 	local target_array_name="$1"
-	local pid
+	local pid running=""
 	local _alive_pids=()
 	local _current_pids=()
 	eval "_current_pids=(\"\${${target_array_name}[@]+\${${target_array_name}[@]}}\")"
-	while IFS= read -r pid; do
-		[[ -n "$pid" ]] && _alive_pids+=("$pid")
-	done < <(_dispatch_max_reap_pids "${_current_pids[@]+${_current_pids[@]}}")
+	running=" $(jobs -r -p 2>/dev/null | tr '\n' ' ') "
+	for pid in "${_current_pids[@]+${_current_pids[@]}}"; do
+		[[ -n "$pid" ]] || continue
+		if [[ "$running" == *" ${pid} "* ]]; then
+			_alive_pids+=("$pid")
+		else
+			wait "$pid" 2>/dev/null || true
+		fi
+	done
 	eval "${target_array_name}=(\"\${_alive_pids[@]+\${_alive_pids[@]}}\")"
 	return 0
 }
 
 #######################################
 # Wait until tracked PIDs fall below the parallel dispatch concurrency cap.
+# Live PIDs are never discarded; only finished or non-child PIDs are removed.
 #
 # Arguments:
 #   $1 - nameref-style array variable name
@@ -1736,15 +1755,7 @@ _dispatch_max_wait_for_capacity() {
 		_dispatch_max_refresh_pids "$target_array_name"
 		eval "current_count=\${#${target_array_name}[@]}"
 		((current_count >= max_parallel)) || break
-
-		# GH#21729: if wait -n fails, remaining PIDs are stale (PID reuse: kill
-		# -0 succeeds for another process, but it is not this shell's child).
-		if ! wait -n 2>/dev/null; then
-			echo "[pulse-wrapper] Dispatch_max: wait -n found no children, purging ${current_count} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
-			eval "${target_array_name}=()"
-			sleep 1
-		fi
-		eval "current_count=\${#${target_array_name}[@]}"
+		sleep 0.2 2>/dev/null || sleep 1
 	done
 	return 0
 }

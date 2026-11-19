@@ -309,21 +309,24 @@ test_owner_capture_contract() {
 test_parallel_wait_failure_contract() {
 	local rc=0
 	(
-		local pids=(99999999) refreshed=0
-		wait() { return 127; }
-		sleep() { return 0; }
-		_dispatch_max_refresh_pids() {
-			refreshed=$((refreshed + 1))
-			return 0
-		}
+		local pids=(99999999) live
+		# Stale non-child PID is dropped without blocking (GH#21729).
 		_dispatch_max_wait_for_capacity pids 1
-		[[ "${#pids[@]}" == 0 && "$refreshed" -gt 0 ]] || exit 1
-		refreshed=0
+		[[ "${#pids[@]}" == 0 ]] || exit 1
+		pids=(99999999)
 		_dispatch_max_wait_for_reservation pids
-		[[ "$refreshed" == 1 ]] || exit 1
 		_dispatch_max_wait_tracked_pids 99999999 || exit 1
+		# Live children are retained and bound the cap (no wait -n needed).
+		sleep 2 &
+		live=$!
+		pids=("$live")
+		_dispatch_max_refresh_pids pids
+		[[ "${#pids[@]}" == 1 ]] || exit 1
+		kill "$live" 2>/dev/null
+		_dispatch_max_wait_for_capacity pids 1
+		[[ "${#pids[@]}" == 0 ]] || exit 1
 	) || rc=1
-	print_result "parallel_waits: capacity failure purges, reservation reconciles and final drain suppresses stale child" "$rc"
+	print_result "parallel_waits: stale PIDs dropped, live children retained, capacity wait polls without wait -n" "$rc"
 	return 0
 }
 
