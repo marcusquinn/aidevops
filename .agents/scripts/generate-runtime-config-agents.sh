@@ -105,16 +105,20 @@ _agents_md_backup_before_rewrite() {
 	local reason="$3"
 	local backup_dir="${HOME}/.aidevops/config-backups/migrations/runtime-agents-md"
 	local stamp backup_file n=1
+	mkdir -p "$backup_dir" || return 1
 	stamp=$(date -u +%Y%m%d%H%M%S)
 	backup_file="${backup_dir}/${stamp}-${runtime_id}-AGENTS.md"
-	# Never overwrite an earlier backup taken in the same second.
-	while [[ -e "$backup_file" ]]; do
+	# Reserve the name exclusively (noclobber create) so concurrent
+	# regenerations never share, and so never overwrite, a backup file.
+	while ! (set -C && : >"$backup_file") 2>/dev/null; do
+		# A failure that is not a name collision (e.g. permissions) is fatal.
+		[[ -e "$backup_file" ]] || return 1
+		[[ "$n" -lt 1000 ]] || return 1
 		backup_file="${backup_dir}/${stamp}.${n}-${runtime_id}-AGENTS.md"
 		n=$((n + 1))
 	done
-	mkdir -p "$backup_dir" || return 1
 	# Read through any symlink so the backup holds the user's content.
-	cat "$agents_md" >"$backup_file" || return 1
+	cat "$agents_md" >|"$backup_file" || return 1
 	if command -v print_warning >/dev/null 2>&1; then
 		print_warning "${reason}: backed up ${agents_md} to ${backup_file}"
 	else
@@ -141,7 +145,7 @@ _agents_md_write_managed_block() {
 	local block_file="$2"
 	local legacy_body_file="$3"
 	local runtime_id="$4"
-	local state tmp_file
+	local state tmp_file final_nl=1
 
 	if [[ ! -e "$agents_md" ]]; then
 		cat "$block_file" >"$agents_md" || return 1
@@ -152,16 +156,28 @@ _agents_md_write_managed_block() {
 	state=$(_agents_md_managed_state "$agents_md")
 	case "$state" in
 	one)
-		if ! awk -v start="$AGENTS_MD_MANAGED_START" -v end="$AGENTS_MD_MANAGED_END" -v block="$block_file" '
+		# awk print always appends a newline; keep an unterminated user
+		# suffix byte-identical by emitting one line behind and omitting
+		# the final terminator when the original file had none.
+		if [[ -n "$(tail -c 1 "$agents_md")" ]]; then final_nl=0; fi
+		if ! awk -v start="$AGENTS_MD_MANAGED_START" -v end="$AGENTS_MD_MANAGED_END" \
+			-v block="$block_file" -v final_nl="$final_nl" '
+			function emit(s) { if (have) printf "%s\n", pending; pending = s; have = 1 }
 			{ line = $0; sub(/\r$/, "", line) }
 			!inside && line == start {
 				inside = 1
-				while ((getline replacement < block) > 0) print replacement
+				while ((getline replacement < block) > 0) emit(replacement)
 				close(block)
+				last_user = 0
 				next
 			}
 			inside && line == end { inside = 0; next }
-			!inside { print }
+			!inside { emit($0); last_user = 1 }
+			END {
+				if (!have) exit
+				if (last_user && final_nl == 0) printf "%s", pending
+				else printf "%s\n", pending
+			}
 		' "$agents_md" >"$tmp_file"; then
 			rm -f "$tmp_file"
 			return 1

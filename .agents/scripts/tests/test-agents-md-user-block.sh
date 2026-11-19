@@ -164,7 +164,14 @@ for runtime in opencode claude-code; do
 	[[ "$(head -n 2 "$file" | od -c)" == "$crlf_before" ]] || fail "$runtime: CRLF user content changed"
 	[[ "$(count_exact "$START" "$file")" -eq 1 ]] || fail "$runtime: CRLF file block duplicated"
 
-	# 9. Symlinked AGENTS.md is updated in place, not replaced.
+	# 9. An unterminated user suffix keeps its exact bytes (no added newline).
+	printf 'unterminated tail' >>"$file"
+	cp "$file" "${file}.before"
+	_generate_greeting_agents_md "$runtime" "$dir"
+	cmp -s "$file" "${file}.before" || fail "$runtime: unterminated suffix bytes changed"
+	rm -f "${file}.before"
+
+	# 10. Symlinked AGENTS.md is updated in place, not replaced.
 	target="${TMP_DIR}/${runtime}-target.md"
 	{
 		printf 'linked rule\n\n'
