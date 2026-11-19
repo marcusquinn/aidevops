@@ -69,6 +69,7 @@ import { createSessionContinuationGuard } from "./session-continuation-guard.mjs
 import { createSessionRecoveryMarkerHandler } from "./session-recovery-marker.mjs";
 import { createSessionStallRecovery } from "./session-stall-recovery.mjs";
 import { createSessionTurnDiagnostics } from "./session-turn-diagnostics.mjs";
+import { createOutputLimitNotice } from "./session-turn-state.mjs";
 import { stampCommandPrompt } from "./tui-prompts.mjs";
 import { installDbActivityHeartbeat } from "./db-activity-heartbeat.mjs";
 import { createSessionBusHooks, remoteBusContext } from "./session-bus-plugin.mjs";
@@ -568,6 +569,7 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // Duplicate AGENTS.md Read reminders (GH#32444); OpenCode 1 only.
   const instructionReminders = createInstructionReminderCompactor();
+  const outputLimitNotice = createOutputLimitNotice();
 
   // TTSR hooks
   const {
@@ -612,6 +614,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // if the proxy is genuinely unreachable.
   const systemTransformHook = async (input, output) => {
     instructionReminders.rememberSystem(input?.sessionID, output?.system);
+    // GH#39151: one-shot steering after a finish=length (output-limit) response.
+    outputLimitNotice.inject(input?.sessionID, output?.system);
     const providerID = input?.model?.providerID;
     if (providerID && !isHeadless()) {
       const starter = proxyStarters[providerID];
@@ -833,6 +837,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // LLM observability + session-start toast greeting (t2724).
     // Both run on every event; greeting self-gates to session.created.
     event: async (input) => {
+      outputLimitNotice.observeSafe(input?.event, (err) => debugEventError("output limit notice", err));
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),

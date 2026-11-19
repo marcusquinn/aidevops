@@ -425,6 +425,11 @@ _handle_cmd_run_continuation_attempt() {
 		# unconditional "implement and create a PR" made handed-off workers
 		# repeat unchanged reports until the continuation budget ran out.
 		prompt="Continue through to completion. This is a headless session — no user is present and no user input is available to assist. Your previous turn ended without a recognised terminal state. Check git status, your todo list and your PR. If work remains, implement it, commit, push, and create or update the PR. After PR creation, you MUST post the MERGE_SUMMARY comment (full-loop step 4.2.1) — the merge pass needs it for closing comments. Then continue through review, merge, and closing comments. If your PR already exists (open or merged) and only CI, review, merge or work outside this attempt remains, that is a handoff, not unfinished work. End with exactly one terminal marker alone on its own line: FULL_LOOP_COMPLETE, POST_PR_HANDOFF, or BLOCKED: <reason> with evidence."
+		# GH#39151: a final finish=length is an output_clamp, not a generic stop.
+		if _session_hit_output_clamp "${_run_metric_session_id:-}"; then
+			print_warning "output_clamp detected (finish=length) — adding sectioned-write instruction"
+			prompt="${_HEADLESS_OUTPUT_CLAMP_INSTRUCTION} ${prompt}"
+		fi
 		_cmd_run_disposition="$_CMD_RUN_DISPOSITION_CONTINUE"
 		return 0
 	fi

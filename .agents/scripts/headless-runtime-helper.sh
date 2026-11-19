@@ -483,6 +483,38 @@ _t3077_write_preflight_sentinel() {
 }
 
 #######################################
+# GH#39151: sectioned-write steering shared by resume prompts. OpenCode caps
+# each response at 32K output tokens; a finish of "length" aborts the in-flight
+# tool call, so nothing is written and a generic resume repeats the failure.
+#######################################
+_HEADLESS_OUTPUT_CLAMP_INSTRUCTION="Your previous response hit the 32K output-token limit and its tool call was discarded; nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends)."
+
+#######################################
+# Succeed when the session's last assistant message finished with "length".
+#
+# Args:
+#   $1 - OpenCode session id
+# Reads the worker-isolated DB when present, then the shared DB.
+# Returns: 0 when the last assistant finish is length, 1 otherwise or on
+#          missing sqlite3/DB/session (fail-open: no steering added).
+#######################################
+_session_hit_output_clamp() {
+	local session_id="$1"
+	local db_path="" finish="" json_finish="\$.finish" json_role="\$.role"
+	[[ "$session_id" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+	command -v sqlite3 >/dev/null 2>&1 || return 1
+	for db_path in "${_WORKER_ISOLATED_DB_PATH:-}" "${HOME}/.local/share/opencode/opencode.db"; do
+		[[ -n "$db_path" && -f "$db_path" ]] || continue
+		finish=$(sqlite3 -readonly -cmd ".timeout 5000" "$db_path" \
+			"SELECT json_extract(data, '${json_finish}') FROM message WHERE session_id='${session_id}' AND json_extract(data, '${json_role}')='assistant' ORDER BY time_created DESC, id DESC LIMIT 1" 2>/dev/null) || finish=""
+		[[ -n "$finish" ]] || continue
+		[[ "$finish" == "length" ]] && return 0
+		return 1
+	done
+	return 1
+}
+
+#######################################
 # Derive structured, secret-free worker failure evidence fields.
 #
 # Args:
@@ -519,6 +551,10 @@ _derive_worker_failure_evidence() {
 	premature_exit)
 		launch_failure_cause="model_stopped_before_completion"
 		next_action="resume_session_with_completion_contract"
+		if _session_hit_output_clamp "${_run_metric_session_id:-}"; then
+			launch_failure_cause="output_clamp"
+			next_action="resume_session_with_sectioned_writes"
+		fi
 		;;
 	watchdog_stall_continue | service_interruption_continue | service_interruption_exhausted | signal_killed_continue)
 		launch_failure_cause="mid_session_interruption"
