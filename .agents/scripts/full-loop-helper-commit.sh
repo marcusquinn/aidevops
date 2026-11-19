@@ -1645,11 +1645,24 @@ _create_pr() {
 		pr_cmd+=(--label "$lbl")
 	done
 
+	# Verify the final pushed head (post commit/rebase/push) before opening
+	# non-draft; on mismatch or lookup failure keep the draft default.
+	local effective_ready="${create_ready:-0}"
+	if [[ "$effective_ready" -eq 1 && -n "$head_branch" ]]; then
+		local local_head="" remote_head=""
+		local_head=$(git rev-parse HEAD 2>/dev/null || true)
+		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | head -n 1 || true)
+		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
+			print_warning "Pushed head does not match local HEAD; creating PR as draft"
+			effective_ready=0
+		fi
+	fi
+
 	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || {
 		rm -f "$body_file"
 		return 1
 	}
-	pr_url=$(_run_pr_create_cmd "${create_ready:-0}" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	pr_url=$(_run_pr_create_cmd "$effective_ready" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
