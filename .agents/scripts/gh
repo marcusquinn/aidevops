@@ -98,13 +98,37 @@ if [[ "${AIDEVOPS_GH_SHIM_TIMING:-0}" == 1 ]]; then
 else
 	_shim_timing() { return 0; }
 fi
+# Every gh call starts here, so derive parents by parameter expansion rather
+# than dirname/basename execs (GH#39187). Script paths never end in '/'.
+_shim_source_parent() {
+	local source_path="$1"
+	if [[ "$source_path" != */* ]]; then
+		_SHIM_PARENT="."
+	else
+		_SHIM_PARENT="${source_path%/*}"
+		[[ -n "$_SHIM_PARENT" ]] || _SHIM_PARENT="/"
+	fi
+	return 0
+}
 while [[ -L "$_SHIM_SOURCE" ]]; do
-	_SHIM_LINK_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || exit 127
+	_shim_source_parent "$_SHIM_SOURCE"
+	_SHIM_LINK_DIR="$(cd "$_SHIM_PARENT" 2>/dev/null && pwd)" || exit 127
 	_SHIM_SOURCE=$(readlink "$_SHIM_SOURCE") || exit 127
 	[[ "$_SHIM_SOURCE" == /* ]] || _SHIM_SOURCE="${_SHIM_LINK_DIR}/${_SHIM_SOURCE}"
 done
-_SHIM_DIR="$(cd "$(dirname "$_SHIM_SOURCE")" 2>/dev/null && pwd)" || _SHIM_DIR=""
-_SHIM_SOURCE="${_SHIM_DIR}/$(basename "$_SHIM_SOURCE")"
+_shim_source_parent "$_SHIM_SOURCE"
+# An absolute parent without '.', '..' or '//' segments is already the logical
+# path `cd && pwd` would print, so only other shapes pay for the subshell.
+case "$_SHIM_PARENT" in
+/ | *//* | */./* | */../* | */. | */.. | [!/]*)
+	_SHIM_DIR="$(cd "$_SHIM_PARENT" 2>/dev/null && pwd)" || _SHIM_DIR=""
+	;;
+*)
+	_SHIM_DIR="$_SHIM_PARENT"
+	[[ -d "$_SHIM_DIR" ]] || _SHIM_DIR=""
+	;;
+esac
+_SHIM_SOURCE="${_SHIM_DIR}/${_SHIM_SOURCE##*/}"
 _shim_timing path_resolution
 
 # Select credentials before any quota probe, translation or native transport.

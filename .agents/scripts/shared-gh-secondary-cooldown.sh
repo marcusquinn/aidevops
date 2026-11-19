@@ -30,11 +30,16 @@ _GH_SECONDARY_READ_OP="read"
 _GH_SECONDARY_COOLDOWN_ACTION_CREATED="created"
 _GH_SECONDARY_COOLDOWN_UNKNOWN="unknown"
 _GH_SECONDARY_COOLDOWN_GRAPHQL="graphql"
+# ERE fragment for the numeric expiry key, shared by the jq-free state readers.
+_GH_SECONDARY_EXPIRES_KEY_RE='"expires_at"[[:space:]]*:[[:space:]]*'
 
 # The wrappers already resolved their own directory; standalone sourcing must
 # resolve this file under both bash and zsh (where BASH_SOURCE is empty).
 _gh_secondary_lib_dir="${_SHARED_GH_WRAPPERS_DIR:-}"
-if [[ -z "$_gh_secondary_lib_dir" && -n "${BASH_SOURCE[0]:-}" ]]; then
+if [[ -z "$_gh_secondary_lib_dir" && "${BASH_SOURCE[0]:-}" == /*/* ]]; then
+	# Absolute source path (the gh shim's case): no cd/dirname forks (GH#39187).
+	_gh_secondary_lib_dir="${BASH_SOURCE[0]%/*}"
+elif [[ -z "$_gh_secondary_lib_dir" && -n "${BASH_SOURCE[0]:-}" ]]; then
 	_gh_secondary_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 elif [[ -z "$_gh_secondary_lib_dir" && -n "${ZSH_VERSION:-}" ]]; then
 	_gh_secondary_lib_self="$0"
@@ -45,6 +50,14 @@ fi
 source "${_gh_secondary_lib_dir}/shared-gh-primary-cooldown.sh"
 
 _gh_secondary_cooldown_now() {
+	local now=""
+	# Bash 4.2+ builtin clock: every gh preflight reads the clock several times
+	# and a date exec each time was measurable (GH#39187). Bash 3.2 and zsh
+	# reject the %(...)T format and keep the date fallback.
+	if [[ -n "${BASH_VERSION:-}" ]] && printf -v now '%(%s)T' -1 2>/dev/null && [[ "$now" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$now"
+		return 0
+	fi
 	date +%s
 	return 0
 }
@@ -921,14 +934,28 @@ _gh_secondary_cooldown_record_response_if_needed() {
 }
 
 _gh_secondary_cooldown_expires_at() {
-	local file=""
-	file="$(_gh_secondary_cooldown_file)"
+	local file="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}"
+	local state=""
+	local state_re=""
 	[[ -f "$file" ]] || return 1
+	# Fast path for the documents both state writers emit (compact or jq
+	# pretty-printed): reason, first_seen, then numeric top-level expires_at,
+	# all before any nested object. Every preflight reads this file twice, so
+	# skipping the jq exec matters (GH#39187). Any other shape uses jq.
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		IFS= read -r -d '' state <"$file" 2>/dev/null || true
+		state_re='^\{[[:space:]]*"reason"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"[[:space:]]*,[[:space:]]*"first_seen"[[:space:]]*:[[:space:]]*[0-9]+[[:space:]]*,[[:space:]]*'
+		state_re="${state_re}${_GH_SECONDARY_EXPIRES_KEY_RE}([0-9]+)[[:space:]]*[,}]"
+		if [[ "$state" =~ $state_re ]]; then
+			printf '%s\n' "${BASH_REMATCH[2]}"
+			return 0
+		fi
+	fi
 	if command -v jq >/dev/null 2>&1; then
 		jq -r '.expires_at // 0' "$file" 2>/dev/null
 		return 0
 	fi
-	sed -nE 's/.*"expires_at"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$file" | sed -n '1p'
+	sed -nE "s/.*${_GH_SECONDARY_EXPIRES_KEY_RE}([0-9]+).*/\\1/p" "$file" | sed -n '1p'
 	return 0
 }
 
@@ -944,15 +971,29 @@ _gh_secondary_cooldown_active() {
 
 _gh_secondary_system_boot_ts() {
 	local boot_ts=""
+	local stat_line=""
+	local boottime=""
+	# Parse with shell builtins: this runs on every read preflight, and the old
+	# sed pipelines cost two or three execs per gh call (GH#39187).
 	if [[ -r /proc/stat ]]; then
-		boot_ts=$(sed -nE 's/^btime[[:space:]]+([0-9]+).*/\1/p' /proc/stat 2>/dev/null | sed -n '1p')
+		while IFS= read -r stat_line || [[ -n "$stat_line" ]]; do
+			if [[ "$stat_line" =~ ^btime[[:space:]]+([0-9]+) ]]; then
+				boot_ts="${BASH_REMATCH[1]:-${match[1]:-}}"
+				break
+			fi
+		done </proc/stat 2>/dev/null
 		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
 			printf '%s' "$boot_ts"
 			return 0
 		fi
 	fi
 	if command -v sysctl >/dev/null 2>&1; then
-		boot_ts=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/.*sec = ([0-9]+).*/\1/p' | sed -n '1p')
+		# "{ sec = N, usec = M } <date>": anchor on the leading sec field. The
+		# old greedy sed matched the trailing usec value instead.
+		boottime=$(sysctl -n kern.boottime 2>/dev/null) || boottime=""
+		if [[ "$boottime" =~ ^\{[[:space:]]*sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+			boot_ts="${BASH_REMATCH[1]:-${match[1]:-}}"
+		fi
 		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
 			printf '%s' "$boot_ts"
 			return 0
@@ -965,8 +1006,13 @@ _gh_secondary_read_ramp_phase() {
 	local now=""
 	local boot_ts=""
 	local expires=""
+	local boot_secs="${AIDEVOPS_GH_READ_RAMP_BOOT_SECS:-}"
 	now="$(_gh_secondary_cooldown_now)"
-	boot_ts="$(_gh_secondary_system_boot_ts 2>/dev/null || true)"
+	# A zero, unset or invalid boot window can never match, so skip the
+	# boot-time probe and its sysctl exec on every read preflight (GH#39187).
+	if [[ "$boot_secs" =~ ^[0-9]+$ && ! "$boot_secs" =~ ^0+$ ]]; then
+		boot_ts="$(_gh_secondary_system_boot_ts 2>/dev/null || true)"
+	fi
 	if [[ "$boot_ts" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_RAMP_BOOT_SECS" =~ ^[0-9]+$ ]]; then
 		if [[ "$now" -ge "$boot_ts" && $((now - boot_ts)) -lt "$AIDEVOPS_GH_READ_RAMP_BOOT_SECS" ]]; then
 			printf 'boot'
