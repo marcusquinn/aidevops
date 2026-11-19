@@ -12,6 +12,7 @@ import argparse
 import concurrent.futures
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -58,10 +59,48 @@ for name in changed:
         for test in tests:
             if path.name.encode() in test.read_bytes():
                 selected.add(str(test.relative_to(root)))
-ordered = sorted(selected)
-overflow = max(0, len(ordered) - args.max)
+# Sourced-only modules define functions and exit 0 when run alone (a vacuous pass).
+# Replace each selected module with the root suite(s) that transitively source it.
+source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
+sourcers = {}
+for test in tests:
+    rel = str(test.relative_to(root))
+    for line in test.read_text(errors="replace").splitlines():
+        match = source_line.match(line)
+        if not match:
+            continue
+        for other in tests:
+            if other != test and other.name in match.group(1):
+                sourcers.setdefault(str(other.relative_to(root)), set()).add(rel)
+
+def resolve_roots(module):
+    roots, visited, stack = set(), {module}, [module]
+    while stack:
+        for parent in sorted(sourcers.get(stack.pop(), ())):
+            if parent in visited:
+                continue
+            visited.add(parent)
+            if parent in sourcers:
+                stack.append(parent)
+            else:
+                roots.add(parent)
+    return roots
+
+resolved = set()
+for suite in sorted(selected):
+    roots = resolve_roots(suite) if suite in sourcers else set()
+    if roots:
+        print("module %s -> %s" % (suite, ", ".join(sorted(roots))), file=sys.stderr)
+        resolved |= roots
+    else:
+        resolved.add(suite)
+ordered = sorted(resolved)
+omitted = ordered[args.max:]
+overflow = len(omitted)
 ordered = ordered[:args.max]
 print("Affected suites: %d selected, %d omitted by cap" % (len(ordered), overflow), file=sys.stderr)
+if omitted:
+    print("omitted by cap: %s" % ", ".join(omitted), file=sys.stderr)
 if args.command == "list":
     print("\n".join(ordered)) if ordered else None
     sys.exit(0)
