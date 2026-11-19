@@ -26,6 +26,7 @@ tools:
 - **REST**: `/wp-json/wu/v2/<object>` (same objects). Enabled under Ultimate Multisite → Settings → API & Webhooks (`enable_api`). Authenticate with HTTP Basic, using the API key as the user and the API secret as the password. The endpoint also accepts `api_key`/`api_secret` query parameters; never use those, because they end up in access logs.
 - **Settings**: network option `wp-ultimo_v2_settings` (currency, gateways, invoices, API). Read it with `wp eval`, never print key or secret values.
 - **Order delivery** (below) joins Ultimate Multisite with `fluent-mcp.md` (Fluent Support tickets, Fluent Boards cards), `../../services/crm/fluentcrm.md` (customer email), `../../services/payments/stripe.md` (charges, refunds, disputes) and `mainwp.md` (fleet upkeep).
+- **Subdomain DNS on Cloudflare**: per-site records through the core integration, no wildcard; origin SSL on Hostinger stays an aidevops step (section "Subdomain networks behind Cloudflare").
 - **Network add-ons**: networks often add delivery, billing or support behaviour. Read the network's own repo `AGENTS.md` or docs for its commands before acting, and list the network's WP-CLI commands with `wp help --url=<main site>`.
 
 <!-- AI-CONTEXT-END -->
@@ -88,6 +89,19 @@ Before the first real order, run the whole loop once in test mode. Check that th
 - Support: Fluent Support mailbox read over IMAP from the operator's own mailbox (`fluent-mcp.md` rule 7). Customer sites' "contact support" goes to the operator, not to a previous owner of a cloned network.
 - Email: transactional mail through the site's SMTP plugin; test the order, payment and password emails.
 - Upkeep: backups, one updater (host-managed or WordPress's), uptime alerts (`../../services/hosting/hostinger.md`, `mainwp.md`).
+- Subdomain network behind Cloudflare: per-site DNS records instead of a wildcard (next section).
+
+## Subdomain networks behind Cloudflare
+
+Observed **2026-11-19** with Ultimate Multisite 2.18.0 on Hostinger. A proxied `*.<apex>` wildcard lets any invented hostname reach the origin. The core Cloudflare integration can instead add a proxied record for each new site and remove it when the site is deleted. No add-on is needed.
+
+1. **Back up the zone's DNS** (`GET /zones/<id>/dns_records`, saved privately), then add a proxied `CNAME <name> → @` for every existing child site. List them with `wp site list --field=domain --url="$URL"`.
+2. **Token**: create a Cloudflare API token limited to that one zone, with Zone Read and DNS Edit. Set `WU_CLOUDFLARE_API_KEY` and `WU_CLOUDFLARE_ZONE_ID` in `wp-config.php` after `define('SUNRISE', true);` (`WU_CLOUDFLARE_SAAS_ZONE_ID` is only for Cloudflare for SaaS custom hostnames). Edit a copy, run `php -l` on it, then replace the live file: an anchor of only `define('SUNRISE'` split that line and broke the site. Confirm the integration's connection test passes (`test_connection()`) and the zone can be read.
+3. **No `www` per site**: set `auto_create_www_subdomain` to `main_only`. Universal SSL covers one level, so `www.<site>.<apex>` fails at the edge; mapped custom domains still get `www`.
+4. **Networks whose domain starts with `www.`** (`DOMAIN_CURRENT_SITE` = `www.<apex>`): up to 2.18.0, `on_add_subdomain()` and `on_remove_subdomain()` compare the new site's host with `www.<apex>`, so `<site>.<apex>` never matches and nothing is created or logged. Fix proposed upstream in [Ultimate-Multisite/ultimate-multisite#2122](https://github.com/Ultimate-Multisite/ultimate-multisite/pull/2122). Until a release includes it, an mu-plugin can drop the leading `www.` from `$current_site->domain` only while the `wu_add_subdomain` and `wu_remove_subdomain` actions run (strip at priority 9, restore at 11; the integration hooks at 10). It does nothing on a network without `www.`. Remove it once the fix ships.
+5. **Test with a throwaway site.** The record is added by the queued `wu_add_subdomain` action, which ran from site cron within 5 minutes. Read the `integration-cloudflare` log for `Added sub-domain "<name>" to Cloudflare.`, delete the site, and check for `Removed sub-domain`.
+6. **Delete the wildcard last**, after a second DNS backup. Check every child site returns 200 and an invented name no longer resolves.
+7. **Origin SSL for each new site** stays a Hostinger step the operator runs from aidevops, because Hostinger's API tokens cover the whole account and must not be stored in WordPress: `../../services/hosting/hostinger.md` "Subdomain multisite behind Cloudflare without a wildcard". Until it runs, the new site answers 525.
 
 ## Troubleshooting
 
