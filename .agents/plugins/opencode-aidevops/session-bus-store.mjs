@@ -20,6 +20,7 @@
 
 import { LIMITS, pruneBusFiles } from "./session-bus-files.mjs";
 import { pruneBindings } from "./session-bus-bindings.mjs";
+import { pruneIssueWatches } from "./session-bus-issue-watch.mjs";
 
 export * from "./session-bus-files.mjs";
 export * from "./session-bus-bindings.mjs";
@@ -32,11 +33,13 @@ export * from "./session-bus-format.mjs";
 /**
  * Full bus retention: messages, markers and settings (pruneBusFiles), then
  * t18892 channel bindings whose session has been gone and idle for the
- * retention period. Returns the number of messages and markers removed.
- * Bindings import the file primitives, so the two are composed here.
+ * retention period, then t19157 issue watches. Returns the number of messages
+ * and markers removed. Bindings and issue watches import the file primitives,
+ * so they are composed here.
  */
 export function pruneBus(root, now = Date.now()) {
   const removed = pruneBusFiles(root, now);
   pruneBindings(root, now - LIMITS.retentionMs);
+  pruneIssueWatches(root, now);
   return removed;
 }

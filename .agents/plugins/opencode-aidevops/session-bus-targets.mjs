@@ -180,6 +180,12 @@ export function crossRunnerHint(targets, repo = "") {
   return `Workers on other runners are not on this bus; GitHub shows their claim: ${reads.slice(0, 3).join("; ")}`;
 }
 
+/** The `who` no-match line for the tool and CLI, with crossRunnerHint when it applies. */
+export function noLocalSessionText(targets, repo = "") {
+  const hint = crossRunnerHint(targets, repo);
+  return `No other live session is working on ${targets.join(", ")}.${hint ? ` ${hint}` : ""}`;
+}
+
 /** matchSessions for several targets: each live record once. */
 export function matchAnySessions(records, targets, options = {}) {
   if (targets.length === 0) throw new Error("who needs a target: #issue, PR#n, repo, worktree or file path");

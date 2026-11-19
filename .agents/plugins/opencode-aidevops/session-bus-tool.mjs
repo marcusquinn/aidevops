@@ -7,7 +7,7 @@
 
 import * as store from "./session-bus-store.mjs";
 import * as releaseWatch from "./session-bus-release.mjs";
-import * as issueWatch from "./session-bus-issue-watch.mjs";
+import { watchIssueAction } from "./session-bus-tool-watch.mjs";
 import { setChatWake } from "./session-bus-chat-trust.mjs";
 import { setKeepalive } from "./session-bus-keepalive.mjs";
 import { awaitReply } from "./session-bus-replies.mjs";
@@ -82,10 +82,7 @@ function listAction(root, sender) {
 function whoAction(root, sender, args) {
   const cwd = sender.record.directory || sender.record.worktree;
   const records = store.sortPresence(store.matchSessions(store.readPresence(root), args.to, { selfID: sender.sessionID, cwd }), { repo: sender.record.repo });
-  if (records.length === 0) {
-    const hint = store.crossRunnerHint([args.to], sender.record.repo);
-    return `No other live session is working on ${args.to}.${hint ? ` ${hint}` : ""}`;
-  }
+  if (records.length === 0) return store.noLocalSessionText([args.to], sender.record.repo);
   return [`${records.length} other live session(s) on ${args.to}:`, ...records.map((record) => `- ${store.formatWhoRow(record)}`)].join("\n");
 }
 
@@ -184,23 +181,6 @@ function watchReleaseAction(root, sender, args) {
   if (args.text) throw new Error("watch-release takes to=owner/repo, and text only as \"off\"");
   const watch = releaseWatch.addReleaseWatch(root, repo, { session_id: sender.sessionID, handle: sender.from.handle });
   return `Watching releases for ${repo} until ${new Date(watch.expires_ms).toISOString()}: one info notice when a lane finalizes or its executor is first seen dead. Notices never wake this session.`;
-}
-
-// t19157: the watcher is always the caller's root session; `#N` uses its repo.
-function watchIssueAction(root, sender, args) {
-  const target = String(args.to || "").trim();
-  if (!target) {
-    const list = issueWatch.sessionIssueWatches(root, sender.sessionID);
-    if (list.length === 0) return "No issue watches.";
-    return ["Issue watches:", ...list.map((watch) => `- ${watch.repo}#${watch.number} until ${new Date(watch.expires_ms).toISOString()}`)].join("\n");
-  }
-  if (args.text === "off") {
-    return issueWatch.removeIssueWatch(root, target, sender.sessionID, sender.record.repo)
-      ? `Stopped watching ${target}.` : `Not watching ${target}.`;
-  }
-  if (args.text) throw new Error("watch-issue takes to=owner/repo#N, and text only as \"off\"");
-  const watch = issueWatch.addIssueWatch(root, target, sender.record);
-  return `Watching ${watch.repo}#${watch.number} until ${new Date(watch.expires_ms).toISOString()}: the pulse relay sends one batched info pointer per pass when its status, assignees, state or comments change. Pointers never wake this session.`;
 }
 
 // Actions that act as the caller's root session; `show` needs no sender.

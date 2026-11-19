@@ -24,10 +24,10 @@ Interactive sessions file worker-ready issues, then lose sight of them. Outcomes
 ### Files to Modify
 
 - `NEW: .agents/plugins/opencode-aidevops/session-bus-issue-watch.mjs`: watch records under `issue-watch/<session>/<owner>@<repo>@<n>.json`. Covers add, remove, list and prune, reject headless subscribers, cap at 50 per session and expire after 7 days. Model on `session-bus-release.mjs`.
-- `EDIT: .agents/plugins/opencode-aidevops/session-bus-files.mjs`: add `issueWatchDir` and prune watches in `pruneBusFiles`.
+- `EDIT: .agents/plugins/opencode-aidevops/session-bus-files.mjs`: add `issueWatchDir`. `EDIT: session-bus-store.mjs`: compose `pruneIssueWatches` in `pruneBus` (as for bindings).
 - `EDIT: .agents/plugins/opencode-aidevops/session-bus-cli.mjs` + `NEW: session-bus-cli-watch.mjs`: add `watch-issue <owner/repo#N|#N> [--repo] [--new] [--off]` and `watches [--all] [--json]`.
-- `EDIT: .agents/plugins/opencode-aidevops/session-bus-tool.mjs`: add the `watch-issue` action and the who-miss hint.
-- `EDIT: .agents/plugins/opencode-aidevops/session-bus-cli-commands.mjs` + `session-bus-targets.mjs`: add the who-miss hint for the CLI.
+- `EDIT: .agents/plugins/opencode-aidevops/session-bus-tool.mjs` + `NEW: session-bus-tool-watch.mjs`: add the `watch-issue` action and the who-miss hint.
+- `EDIT: .agents/plugins/opencode-aidevops/session-bus-cli-commands.mjs` + `session-bus-targets.mjs`: add the shared who-miss line (`noLocalSessionText`) for the CLI and tool.
 - `NEW: .agents/scripts/worker-bus-relay-watches.sh` (sourced) + `EDIT: .agents/scripts/worker-bus-relay-helper.sh`: an issue-watch pass that makes one issue listing per repo, diffs labels, assignees and state against per-watch state, reads comments only when the count rose, and sends one batched message per subscriber.
 - `EDIT: .agents/scripts/claim-task-id.sh`: best-effort `watch-issue <slug>#N --new` after issue creation (5 s budget, silent).
 - `EDIT: .agents/scripts/commands/full-loop.md` (Headless Dispatch Rules): add the cross-session pointer rule.
@@ -52,6 +52,8 @@ aidevops sessions watch-issue marcusquinn/aidevops#39234 --new
 - `.agents/plugins/opencode-aidevops/session-bus-cli-commands.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus-targets.mjs`
 - `.agents/plugins/opencode-aidevops/session-bus-tool.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-tool-watch.mjs`
+- `.agents/plugins/opencode-aidevops/session-bus-store.mjs`
 - `.agents/plugins/opencode-aidevops/tests/test-session-bus.mjs`
 - `.agents/scripts/worker-bus-relay-helper.sh`
 - `.agents/scripts/worker-bus-relay-watches.sh`

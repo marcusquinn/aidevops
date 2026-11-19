@@ -22,6 +22,7 @@ import {
   issueWatchDir,
   listDir,
   presenceDir,
+  pruneTemp,
   readJson,
   writeJsonAtomic,
 } from "./session-bus-files.mjs";
@@ -97,8 +98,9 @@ export function removeIssueWatch(root, ref, sessionID, defaultRepo = "") {
 }
 
 function validWatch(record, sessionID, name) {
-  return record?.v === BUS_VERSION && record.subscriber === sessionID && name === `${record.key}.json`
-    && SLUG.test(String(record.repo || "")) && Number.isSafeInteger(record.number) && record.number > 0;
+  if (record?.v !== BUS_VERSION || record.subscriber !== sessionID) return false;
+  if (name !== `${record.key}.json` || !SLUG.test(String(record.repo || ""))) return false;
+  return Number.isSafeInteger(record.number) && record.number > 0;
 }
 
 /** One session's live watches; expired or malformed records are removed. */
@@ -117,12 +119,26 @@ export function sessionIssueWatches(root, sessionID, now = Date.now()) {
 /** Every live watch, for the relay. Watches of sessions without presence are removed. */
 export function allIssueWatches(root, now = Date.now()) {
   const watches = [];
-  for (const sessionID of listDir(join(root, "issue-watch")).filter(isSafeId)) {
-    if (!hasPresence(root, sessionID)) {
+  for (const sessionID of listDir(join(root, "issue-watch"))) {
+    if (!isSafeId(sessionID) || !hasPresence(root, sessionID)) {
       rmSync(issueWatchDir(root, sessionID), { recursive: true, force: true });
       continue;
     }
     watches.push(...sessionIssueWatches(root, sessionID, now));
   }
   return watches;
+}
+
+/**
+ * Retention, composed by pruneBus in session-bus-store.mjs: a watch ends when
+ * it expires (7 days) or its session has no presence; stale temp files and
+ * empty session directories go too.
+ */
+export function pruneIssueWatches(root, now = Date.now()) {
+  allIssueWatches(root, now);
+  for (const sessionID of listDir(join(root, "issue-watch"))) {
+    const dir = issueWatchDir(root, sessionID);
+    for (const name of listDir(dir).filter((file) => file.endsWith(".tmp"))) pruneTemp(join(dir, name));
+    if (listDir(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+  }
 }
