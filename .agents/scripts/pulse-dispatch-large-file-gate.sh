@@ -705,6 +705,9 @@ _large_file_gate_normalize_debt_issue() {
 	fi
 	# Route the complete transition through the canonical lifecycle helper so
 	# sibling status labels converge atomically and repeated calls are no-ops.
+	# The canonical debt issue is the active record for the next split, not an
+	# archival consolidation source: strip consolidation lifecycle labels so the
+	# consolidated management-label dispatch gate cannot skip it forever (GH#39315).
 	set_issue_status "$issue_number" "$repo_slug" "available" \
 		--add-label "file-size-debt" \
 		--add-label "auto-dispatch" \
@@ -714,7 +717,10 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "already-fixed" \
 		--remove-label "wontfix" \
 		--remove-label "solved:worker" \
-		--remove-label "solved:interactive" >/dev/null 2>&1
+		--remove-label "solved:interactive" \
+		--remove-label "consolidated" \
+		--remove-label "needs-consolidation" \
+		--remove-label "consolidation-in-progress" >/dev/null 2>&1
 	return $?
 }
 

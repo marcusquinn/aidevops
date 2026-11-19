@@ -318,6 +318,11 @@ assert_contains \
 	"reopened canonical issue removes stale solved labels" \
 	"--remove-label solved:worker --remove-label solved:interactive" \
 	"$(cat "$GH_CALLS_LOG")"
+# GH#39315: a stale consolidated label makes the dispatch gate skip it forever.
+assert_contains \
+	"reopened canonical issue removes consolidation lifecycle labels" \
+	"--remove-label consolidated --remove-label needs-consolidation --remove-label consolidation-in-progress" \
+	"$(cat "$GH_CALLS_LOG")"
 assert_contains \
 	"reopened canonical issue restores active lifecycle labels" \
 	"--add-label file-size-debt --add-label auto-dispatch" \
