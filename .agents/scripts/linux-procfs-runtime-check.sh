@@ -29,7 +29,9 @@ BOOTSTRAP='command -v python3 >/dev/null 2>&1 || { apt-get update -qq >/dev/null
 # Container-side script for --sudo-session (runs as root; $1 = uid, tree at /tree).
 # Recorder log is world-writable because the kicked process runs as the real user.
 read -r -d '' SUDO_SESSION_SCRIPT <<'SUDO_SESSION_EOF' || true
-uid="$1"
+uid="${1}"
+run_dir="/run/user/${uid}"
+bus_path="${run_dir}/bus"
 export DEBIAN_FRONTEND=noninteractive
 need=""
 for tool in sudo jq pgrep git python3; do
@@ -44,29 +46,30 @@ fi
 useradd -m -u "$uid" -s /bin/bash alice
 printf 'alice ALL=(ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/alice
 chmod 440 /etc/sudoers.d/alice
-mkdir -p "/run/user/${uid}"
-chown alice "/run/user/${uid}"
-chmod 700 "/run/user/${uid}"
+mkdir -p "$run_dir"
+chown alice "$run_dir"
+chmod 700 "$run_dir"
 python3 -c 'import socket,sys,time
 s=socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1])
 s.listen(1)
-time.sleep(600)' "/run/user/${uid}/bus" &
+time.sleep(600)' "$bus_path" &
 for _ in $(seq 1 50); do
-	[ -S "/run/user/${uid}/bus" ] && break
+	[ -S "$bus_path" ] && break
 	sleep 0.1
 done
-[ -S "/run/user/${uid}/bus" ] || { echo "session bus socket was not created" >&2; exit 3; }
-chown alice "/run/user/${uid}/bus"
+[ -S "$bus_path" ] || { echo "session bus socket was not created" >&2; exit 3; }
+chown alice "$bus_path"
 LOG=/var/tmp/kick-recorder.log
 mkdir -p /opt/rec/bin "/home/alice/.aidevops/agents/scripts"
 cat >/opt/rec/record.sh <<'REC'
 #!/bin/sh
 LOG=/var/tmp/kick-recorder.log
+tag="${1}"
 {
-	printf '%s: user=%s args=[%s]\n' "$1" "$(id -un)" "$2"
-	printf '%s:   XDG_RUNTIME_DIR=%s\n' "$1" "${XDG_RUNTIME_DIR-<unset>}"
-	printf '%s:   DBUS_SESSION_BUS_ADDRESS=%s\n' "$1" "${DBUS_SESSION_BUS_ADDRESS-<unset>}"
+	printf '%s: user=%s args=[%s]\n' "$tag" "$(id -un)" "${2}"
+	printf '%s:   XDG_RUNTIME_DIR=%s\n' "$tag" "${XDG_RUNTIME_DIR-<unset>}"
+	printf '%s:   DBUS_SESSION_BUS_ADDRESS=%s\n' "$tag" "${DBUS_SESSION_BUS_ADDRESS-<unset>}"
 } >>"$LOG"
 REC
 printf '#!/bin/sh\nexec /opt/rec/record.sh pulse "$*"\n' >/home/alice/.aidevops/agents/scripts/pulse-wrapper.sh
@@ -89,7 +92,7 @@ run_case() {
 	sleep 0.5
 	if [ -s "$LOG" ]; then cat "$LOG"; else printf '(no kick observed)\n'; fi
 }
-printf 'fixture: sudo user=alice uid=%s bus=/run/user/%s/bus\n' "$uid" "$uid"
+printf 'fixture: sudo user=alice uid=%s bus=%s\n' "$uid" "$bus_path"
 run_case "permission kick, spawn fallback" "_kick_pulse_after_permission_approval" "/usr/bin"
 run_case "issue approval --merge-only kick" "_kick_pulse_after_approval issue 1 owner/repo" "/usr/bin"
 run_case "permission kick, systemctl recorder on PATH" "_kick_pulse_after_permission_approval" "/opt/rec/bin"
