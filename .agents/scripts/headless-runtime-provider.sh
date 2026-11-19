@@ -141,6 +141,9 @@ provider_auth_available() {
 		if opencode_auth_has_provider "$provider"; then
 			return 0
 		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
+			return 0
+		fi
 		return 1
 		;;
 	openai)
@@ -149,6 +152,9 @@ provider_auth_available() {
 			return 0
 		fi
 		if opencode_auth_has_provider "$provider"; then
+			return 0
+		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
 			return 0
 		fi
 		return 1
@@ -229,6 +235,64 @@ for account in accounts:
     status = account.get("status", "active")
     cooldown_until = int(account.get("cooldownUntil") or 0)
     if status in ("active", "idle") and cooldown_until <= now_ms:
+        sys.exit(0)
+
+sys.exit(1)
+PY
+	return $?
+}
+
+# opencode2_oauth_pool_auth_available: GH#39095. OpenCode 2.x keeps provider
+# credentials in its own database and writes no auth.json, so
+# opencode_auth_has_provider is always false there and every OAuth-only
+# provider was filtered out of headless model selection (canary rc=75, "all
+# configured models are currently backed off"). When auth.json is absent, the
+# aidevops OAuth pool is the credential source the plugin authenticates
+# workers from; accept a provider only when the pool holds at least one usable
+# account for it. Unlike provider_oauth_pool_available, a missing pool or an
+# empty provider list is NOT treated as available. Read-only; never prints
+# credential material.
+opencode2_oauth_pool_auth_available() {
+	local provider="$1"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	local pool_file="${AIDEVOPS_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+	if [[ "${AIDEVOPS_OPENCODE_PROFILE:-v1}" == "v2" ]]; then
+		# The V2 worker runtime (~/.local/bin/opencode2) authenticates only
+		# from its private pool; the interactive pool is never shared with it
+		# (tools/opencode/opencode.md). Judge worker auth by that pool.
+		pool_file="${AIDEVOPS_OPENCODE_V2_OAUTH_POOL_FILE:-${HOME}/.aidevops/runtimes/opencode-v2/auth/oauth-pool.json}"
+	fi
+
+	[[ -f "$auth_file" ]] && return 1
+	[[ -f "$pool_file" ]] || return 1
+
+	POOL_FILE="$pool_file" PROVIDER="$provider" python3 <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+import time
+
+try:
+    with open(os.environ["POOL_FILE"], encoding="utf-8") as fh:
+        pool = json.load(fh)
+except Exception:
+    sys.exit(1)
+
+accounts = pool.get(os.environ["PROVIDER"], [])
+if not isinstance(accounts, list):
+    sys.exit(1)
+
+now_ms = int(time.time() * 1000)
+for account in accounts:
+    if not isinstance(account, dict):
+        continue
+    # A missing status means usable; an expired rate-limit cooldown is usable.
+    status = account.get('status') or 'active'
+    try:
+        cooldown_until = int(account.get('cooldownUntil') or 0)
+    except (TypeError, ValueError):
+        cooldown_until = 0
+    if status in {'active', 'idle', 'rate-limited'} and cooldown_until <= now_ms:
         sys.exit(0)
 
 sys.exit(1)
