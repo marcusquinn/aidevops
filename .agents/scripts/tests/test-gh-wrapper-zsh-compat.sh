@@ -184,7 +184,7 @@ fi
 	printf '%s\n' '_gh_with_timeout write fake_gh issue edit 123'
 } >"$TMPFILE"
 
-zsh_timeout_output=$(zsh "$TMPFILE" 2>&1)
+zsh_timeout_output=$(env -u AIDEVOPS_GH_DEADLINE_EPOCH zsh "$TMPFILE" 2>&1)
 
 msg_2="2: _gh_with_timeout calls zsh function stubs directly"
 if [[ "$zsh_timeout_output" == "fake-gh-called:issue edit 123" ]]; then
