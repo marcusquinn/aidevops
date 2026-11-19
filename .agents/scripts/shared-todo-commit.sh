@@ -417,19 +417,121 @@ _todo_copy_planning_changes_to_worktree() {
 	local repo_path="$1"
 	local worktree_path="$2"
 	local changed_files="$3"
+	local log_target="${4:-/dev/null}"
 
-	local rel_path
+	# The worktree is discarded on failure, so a conflict never publishes a
+	# partial result. Returns 2 for a retryable conflict (GH#39120).
+	local rel_path rc
 	while IFS= read -r rel_path; do
 		[[ -n "$rel_path" ]] || continue
 		_todo_safe_planning_path "$rel_path" || continue
-		if [[ -e "${repo_path}/${rel_path}" ]]; then
+		rc=0
+		_todo_merge_planning_path "$repo_path" "$worktree_path" "$rel_path" "$log_target" || rc=$?
+		[[ "$rc" -eq 0 ]] || return "$rc"
+	done <<<"$changed_files"
+	return 0
+}
+
+# Blob id of <rev>:<path> in a checkout, or "-" when absent.
+_todo_blob_or_absent() {
+	local checkout="$1"
+	local rev_path="$2"
+	local blob=""
+	blob=$(git -C "$checkout" rev-parse "$rev_path" 2>/dev/null) || blob="-"
+	printf '%s' "$blob"
+	return 0
+}
+
+_todo_planning_conflict_message() {
+	local rel_path="$1"
+	local log_target="$2"
+	local msg="[todo_commit_push] Planning PR fallback conflict: ${rel_path} changed on the default branch since this checkout's HEAD. Retryable: refresh from the default branch and re-apply the planning edit."
+	printf '%s\n' "$msg" >&2
+	printf '%s\n' "$msg" >>"$log_target"
+	return 0
+}
+
+# Merge one caller planning file onto the worktree's origin/<default> copy.
+# base = caller HEAD blob, ours = caller working file, theirs = worktree file.
+# Mirrors the decision table in _planning_publish_build_index. Returns 2 for a
+# retryable conflict, 1 for a hard failure (GH#39120).
+_todo_merge_planning_path() {
+	local repo_path="$1"
+	local worktree_path="$2"
+	local rel_path="$3"
+	local log_target="$4"
+	local base_sha="" ours_sha="-" theirs_sha=""
+	local head_ref="HEAD:${rel_path}"
+	base_sha=$(_todo_blob_or_absent "$repo_path" "$head_ref")
+	theirs_sha=$(_todo_blob_or_absent "$worktree_path" "$head_ref")
+	if [[ -e "${repo_path}/${rel_path}" ]]; then
+		ours_sha=$(git -C "$repo_path" hash-object -- "$rel_path") || return 1
+	fi
+
+	if [[ "$theirs_sha" == "$base_sha" ]]; then
+		# Default branch did not move this file: take the caller's copy.
+		if [[ "$ours_sha" != "-" ]]; then
 			mkdir -p "${worktree_path}/$(dirname "$rel_path")" || return 1
 			cp -p "${repo_path}/${rel_path}" "${worktree_path}/${rel_path}" || return 1
 		else
 			rm -f "${worktree_path}/${rel_path}" || return 1
 		fi
-	done <<<"$changed_files"
+		return 0
+	fi
+	if [[ "$ours_sha" == "$base_sha" || "$ours_sha" == "$theirs_sha" ]]; then
+		return 0
+	fi
+	if [[ "$base_sha" == "-" || "$ours_sha" == "-" || "$theirs_sha" == "-" ]]; then
+		_todo_planning_conflict_message "$rel_path" "$log_target"
+		return 2
+	fi
+
+	local tmp_dir="" merge_rc=0
+	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-planning-merge.XXXXXX") || return 1
+	if ! git -C "$repo_path" cat-file blob "$base_sha" >"${tmp_dir}/base" ||
+		! cp -p "${repo_path}/${rel_path}" "${tmp_dir}/ours" ||
+		! git -C "$worktree_path" cat-file blob "$theirs_sha" >"${tmp_dir}/theirs"; then
+		rm -rf "$tmp_dir"
+		return 1
+	fi
+	git merge-file -p --diff3 "${tmp_dir}/ours" "${tmp_dir}/base" "${tmp_dir}/theirs" >"${tmp_dir}/merged" 2>/dev/null || merge_rc=$?
+	if [[ "$merge_rc" -ne 0 ]]; then
+		rm -rf "$tmp_dir"
+		[[ "$merge_rc" -eq 1 ]] || return 1
+		_todo_planning_conflict_message "$rel_path" "$log_target"
+		return 2
+	fi
+	cp "${tmp_dir}/merged" "${worktree_path}/${rel_path}" || {
+		rm -rf "$tmp_dir"
+		return 1
+	}
+	rm -rf "$tmp_dir"
 	return 0
+}
+
+# Refuse to publish a TODO.md that deletes or un-completes task lines the
+# commit message does not name (GH#35062 guard, shared via planning-publisher).
+_todo_guard_planning_task_regression() {
+	local worktree_path="$1"
+	local changed_files="$2"
+	local commit_msg="$3"
+	if ! declare -F _planning_publish_guard_task_regression >/dev/null 2>&1; then
+		# shellcheck source=./planning-publisher.sh
+		source "${BASH_SOURCE[0]%/*}/planning-publisher.sh" || return 1
+	fi
+	local parent_sha="" resolved_file="" rel_path="" staged="" rc=0
+	parent_sha=$(git -C "$worktree_path" rev-parse HEAD) || return 1
+	resolved_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-planning-resolved.XXXXXX") || return 1
+	while IFS= read -r rel_path; do
+		[[ -n "$rel_path" ]] || continue
+		_todo_safe_planning_path "$rel_path" || continue
+		[[ "$(basename "$rel_path")" == "TODO.md" ]] || continue
+		staged=$(_todo_blob_or_absent "$worktree_path" ":${rel_path}")
+		printf 'file\t-\t-\t%s\t%s\n' "$staged" "$rel_path" >>"$resolved_file"
+	done <<<"$changed_files"
+	_planning_publish_guard_task_regression "$worktree_path" "$parent_sha" "$resolved_file" "$commit_msg" || rc=$?
+	rm -f "$resolved_file"
+	return "$rc"
 }
 
 _todo_clean_source_planning_changes() {
@@ -637,8 +739,11 @@ _todo_commit_planning_worktree() {
 		return 0
 	fi
 
-	if ! _todo_copy_planning_changes_to_worktree "$repo_path" "$worktree_path" "$changed_files"; then
-		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot copy planning changes" >>"$log_target"
+	local copy_rc=0
+	_todo_copy_planning_changes_to_worktree "$repo_path" "$worktree_path" "$changed_files" "$log_target" || copy_rc=$?
+	if [[ "$copy_rc" -ne 0 ]]; then
+		[[ "$copy_rc" -eq 2 ]] ||
+			printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot copy planning changes" >>"$log_target"
 		return 1
 	fi
 
@@ -648,6 +753,11 @@ _todo_commit_planning_worktree() {
 		printf '%s\n' "[todo_commit_push] No changes staged in planning PR worktree" >>"$log_target"
 		TODO_COMMIT_PUSH_RESULT="$TODO_COMMIT_RESULT_NOOP"
 		return 0
+	fi
+
+	if ! _todo_guard_planning_task_regression "$worktree_path" "$changed_files" "$commit_msg" 2>>"$log_target"; then
+		printf '%s\n' "[todo_commit_push] Planning PR fallback refused: stale snapshot would delete or un-complete unnamed tasks" >>"$log_target"
+		return 1
 	fi
 
 	git -C "$worktree_path" commit -m "$commit_msg" \
