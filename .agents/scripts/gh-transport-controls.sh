@@ -244,7 +244,7 @@ _gh_transport_run_rest() {
 	_gh_transport_rest_temps "$temp_dir" || return 75
 	metadata="$_GHGT_REST_META" error_file="$_GHGT_REST_ERROR"
 	_shim_timing rest_tempfiles
-	start_ms=$(_gh_now_ms)
+	_gh_now_ms_into start_ms || start_ms=""
 	_shim_timing rest_clock
 	python3 "${_GHGT_DIR}/gh-transport-governor.py" "$metadata" "$executable" "$@" 2>"$error_file" || rc=$?
 	_shim_timing governor_total
@@ -277,8 +277,11 @@ _gh_transport_run_rest() {
 			[[ "$attempted" == true || "$attempted" == false ]] || attempted=false
 		fi
 	fi
-	end_ms=$(_gh_now_ms)
-	command cat "$error_file" >&2
+	_gh_now_ms_into end_ms || end_ms=""
+	# An empty error file is the common case; skip the cat exec (GH#39187).
+	if [[ -s "$error_file" ]]; then
+		command cat "$error_file" >&2
+	fi
 	if [[ "$rc" -eq 75 ]]; then
 		_gh_transport_emit_local_deferral "$metadata" || true
 	fi

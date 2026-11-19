@@ -164,17 +164,33 @@ _gh_now_seconds() {
 	return 0
 }
 
+# Assign epoch milliseconds to the named variable. Bash 5 EPOCHREALTIME avoids
+# a perl/python exec on every timed gh request (GH#39187); its decimal mark is
+# locale-dependent, so accept '.' or ',' with exactly six microsecond digits.
+# Older shells keep the original perl -> python3 -> whole-second chain.
+_gh_now_ms_into() {
+	local _gnm_var="$1"
+	local _gnm_now=""
+	local _gnm_epoch="${EPOCHREALTIME:-}"
+	if [[ -n "${BASH_VERSION:-}" && "$_gnm_epoch" =~ ^[1-9][0-9]*[.,][0-9]{6}$ ]]; then
+		_gnm_epoch="${_gnm_epoch//[.,]/}"
+		_gnm_now=$(((_gnm_epoch + 500) / 1000))
+	elif command -v perl >/dev/null 2>&1; then
+		_gnm_now=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null || true)
+	elif command -v python3 >/dev/null 2>&1; then
+		_gnm_now=$(python3 -c 'import time; print(round(time.time() * 1000))' 2>/dev/null || true)
+	fi
+	if [[ ! "$_gnm_now" =~ ^[0-9]+$ ]]; then
+		_gnm_now=$(_gh_now_seconds) || return 1
+		_gnm_now=$((_gnm_now * 1000))
+	fi
+	printf -v "$_gnm_var" '%s' "$_gnm_now"
+	return 0
+}
+
 _gh_now_ms() {
 	local now=""
-	if command -v perl >/dev/null 2>&1; then
-		now=$(perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000' 2>/dev/null || true)
-	elif command -v python3 >/dev/null 2>&1; then
-		now=$(python3 -c 'import time; print(round(time.time() * 1000))' 2>/dev/null || true)
-	fi
-	if [[ ! "$now" =~ ^[0-9]+$ ]]; then
-		now=$(_gh_now_seconds) || return 1
-		now=$((now * 1000))
-	fi
+	_gh_now_ms_into now || return 1
 	printf '%s\n' "$now"
 	return 0
 }
@@ -280,69 +296,123 @@ _gh_cleanup_legacy_scratch() {
 	return 0
 }
 
-_gh_safe_text() {
-	local value="$1"
-	local fallback="$2"
-	value="${value##*/}"
-	if [[ "$value" =~ ^[A-Za-z0-9_.:+-]+$ ]]; then
-		printf '%s' "$value"
+# The *_into helpers assign the named caller variable with printf -v instead of
+# printing for $(...) capture: every record sanitises ~20 fields, and a
+# command-substitution fork per field dominated shim cost (GH#39187). Helper
+# locals carry unique prefixes so dynamic scoping never shadows the target.
+_gh_safe_text_into() {
+	local _gst_var="$1"
+	local _gst_value="$2"
+	local _gst_fallback="$3"
+	_gst_value="${_gst_value##*/}"
+	if [[ "$_gst_value" =~ ^[A-Za-z0-9_.:+-]+$ ]]; then
+		printf -v "$_gst_var" '%s' "$_gst_value"
 	else
-		printf '%s' "$fallback"
+		printf -v "$_gst_var" '%s' "$_gst_fallback"
 	fi
 	return 0
 }
 
+_gh_safe_text() {
+	local raw="$1"
+	local fallback="$2"
+	local value=""
+	_gh_safe_text_into value "$raw" "$fallback"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_safe_number_into() {
+	local _gsn_var="$1"
+	local _gsn_value="$2"
+	[[ "$_gsn_value" =~ ^[0-9]+$ ]] || _gsn_value=""
+	printf -v "$_gsn_var" '%s' "$_gsn_value"
+	return 0
+}
+
 _gh_safe_number() {
-	local value="$1"
-	[[ "$value" =~ ^[0-9]+$ ]] && printf '%s' "$value"
+	local raw="$1"
+	local value=""
+	_gh_safe_number_into value "$raw"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_default_pool_into() {
+	local _gdp_var="$1"
+	local _gdp_path="${2:-}"
+	local _gdp_pool=""
+	case "$_gdp_path" in
+	graphql | search-graphql) _gdp_pool='graphql' ;;
+	rest) _gdp_pool='rest-core' ;;
+	search-rest) _gdp_pool='rest-search' ;;
+	*) _gdp_pool='other' ;;
+	esac
+	printf -v "$_gdp_var" '%s' "$_gdp_pool"
 	return 0
 }
 
 _gh_default_pool() {
 	local path="$1"
-	case "$path" in
-	graphql | search-graphql) printf 'graphql' ;;
-	rest) printf 'rest-core' ;;
-	search-rest) printf 'rest-search' ;;
-	*) printf 'other' ;;
+	local api_pool=""
+	_gh_default_pool_into api_pool "$path"
+	printf '%s' "$api_pool"
+	return 0
+}
+
+_gh_default_auth_into() {
+	local _gda_var="$1"
+	local _gda_pool="${2:-}"
+	local _gda_auth='gh-pat'
+	case "$_gda_pool" in
+	rest-core | rest-search)
+		# The GitHub App probe keeps its historical subshell isolation; it only
+		# runs when the app helper is loaded, which the gh shim does not do.
+		if command -v github_app_is_configured >/dev/null 2>&1 && (github_app_is_configured); then
+			_gda_auth='github-app'
+		fi
+		;;
 	esac
+	printf -v "$_gda_var" '%s' "$_gda_auth"
 	return 0
 }
 
 _gh_default_auth() {
 	local api_pool="$1"
-	case "$api_pool" in
-	rest-core | rest-search)
-		if command -v github_app_is_configured >/dev/null 2>&1 && github_app_is_configured; then
-			printf 'github-app'
-		else
-			printf 'gh-pat'
-		fi
-		;;
-	*) printf 'gh-pat' ;;
+	local auth_mode=""
+	_gh_default_auth_into auth_mode "$api_pool"
+	printf '%s' "$auth_mode"
+	return 0
+}
+
+_gh_resolve_caller_into() {
+	local _grc_var="$1"
+	local _grc_caller="${2:-}"
+	local _grc_i=1
+	local _grc_src=""
+	if [[ -z "$_grc_caller" ]]; then
+		while [[ $_grc_i -lt ${#BASH_SOURCE[@]} ]]; do
+			_grc_src="${BASH_SOURCE[$_grc_i]}"
+			if [[ -n "$_grc_src" && "${_grc_src##*/}" != "gh-api-instrument.sh" ]]; then
+				_grc_caller="${_grc_src##*/}"
+				break
+			fi
+			_grc_i=$((_grc_i + 1))
+		done
+		[[ -z "$_grc_caller" ]] && _grc_caller="${0##*/}"
+	fi
+	case "$_grc_caller" in
+	"" | -bash | bash) _grc_caller="unknown" ;;
 	esac
+	_gh_safe_text_into "$_grc_var" "$_grc_caller" unknown
 	return 0
 }
 
 _gh_resolve_caller() {
-	local caller="$1"
-	local i=1
-	local src=""
-	if [[ -z "$caller" ]]; then
-		while [[ $i -lt ${#BASH_SOURCE[@]} ]]; do
-			src="${BASH_SOURCE[$i]}"
-			if [[ -n "$src" && "${src##*/}" != "gh-api-instrument.sh" ]]; then
-				caller="${src##*/}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		[[ -z "$caller" ]] && caller="${0##*/}"
-	fi
-	case "$caller" in
-	"" | -bash | bash) caller="unknown" ;;
-	esac
-	_gh_safe_text "$caller" unknown
+	local requested="${1:-}"
+	local caller=""
+	_gh_resolve_caller_into caller "$requested"
+	printf '%s' "$caller"
 	return 0
 }
 
@@ -436,13 +506,21 @@ _GH_API_REQUEST_ATTEMPT_COUNT=0
 _GH_API_REQUEST_HTTP_FAILURE=0
 _GH_API_REQUEST_ATTEMPT_STATE_OWNER=0
 
-_gh_request_attempt_state_temp_dir() {
-	local temp_dir="${AIDEVOPS_TEMP_DIR:-${_GH_API_HOME}/.aidevops/.agent-workspace/tmp}"
-	if [[ ! -e "$temp_dir" ]]; then
-		(umask 077 && mkdir -p "$temp_dir") 2>/dev/null || return 1
+_gh_request_attempt_state_temp_dir_into() {
+	local _gat_var="$1"
+	local _gat_dir="${AIDEVOPS_TEMP_DIR:-${_GH_API_HOME}/.aidevops/.agent-workspace/tmp}"
+	if [[ ! -e "$_gat_dir" ]]; then
+		(umask 077 && mkdir -p "$_gat_dir") 2>/dev/null || return 1
 	fi
-	[[ -d "$temp_dir" && ! -L "$temp_dir" && -O "$temp_dir" ]] || return 1
-	printf '%s\n' "${temp_dir%/}"
+	[[ -d "$_gat_dir" && ! -L "$_gat_dir" && -O "$_gat_dir" ]] || return 1
+	printf -v "$_gat_var" '%s' "${_gat_dir%/}"
+	return 0
+}
+
+_gh_request_attempt_state_temp_dir() {
+	local temp_dir=""
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
+	printf '%s\n' "$temp_dir"
 	return 0
 }
 
@@ -450,7 +528,7 @@ _gh_request_attempt_state_file_valid() {
 	local state_file="$1"
 	local temp_dir=""
 	local basename=""
-	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 1
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
 	case "$state_file" in
 	"${temp_dir}"/gh-request-attempts.*) ;;
 	*) return 1 ;;
@@ -477,7 +555,7 @@ gh_request_attempt_state_begin() {
 	fi
 	unset AIDEVOPS_GH_REQUEST_ATTEMPT_STATE_FILE
 	unset AIDEVOPS_GH_REQUEST_ATTEMPT_STATE_LOGICAL_ID
-	temp_dir=$(_gh_request_attempt_state_temp_dir) || return 1
+	_gh_request_attempt_state_temp_dir_into temp_dir || return 1
 	state_file=$(mktemp "${temp_dir}/gh-request-attempts.XXXXXX" 2>/dev/null) || return 1
 	chmod 0600 "$state_file" 2>/dev/null || {
 		rm -f "$state_file" 2>/dev/null || true
@@ -616,31 +694,31 @@ _gh_append_v2() {
 	else
 		ts=$(_gh_now_seconds) || return 0
 	fi
-	caller=$(_gh_resolve_caller "$caller")
-	path=$(_gh_safe_text "$path" other)
-	auth_mode=$(_gh_safe_text "$auth_mode" unknown)
-	api_pool=$(_gh_safe_text "$api_pool" other)
-	route_decision=$(_gh_safe_text "$route_decision" unspecified)
-	event_kind=$(_gh_safe_text "$event_kind" logical)
-	logical_id=$(_gh_safe_text "$logical_id" unknown)
-	attempt_id=$(_gh_safe_text "$attempt_id" unknown)
-	outcome=$(_gh_safe_text "$outcome" unknown)
-	budget_remaining=$(_gh_safe_number "$budget_remaining")
-	page=$(_gh_safe_number "$page")
-	retry=$(_gh_safe_number "$retry")
-	http_status=$(_gh_safe_number "$http_status")
-	elapsed_ms=$(_gh_safe_number "$elapsed_ms")
-	quota_cost=$(_gh_safe_number "$quota_cost")
+	_gh_resolve_caller_into caller "$caller"
+	_gh_safe_text_into path "$path" other
+	_gh_safe_text_into auth_mode "$auth_mode" unknown
+	_gh_safe_text_into api_pool "$api_pool" other
+	_gh_safe_text_into route_decision "$route_decision" unspecified
+	_gh_safe_text_into event_kind "$event_kind" logical
+	_gh_safe_text_into logical_id "$logical_id" unknown
+	_gh_safe_text_into attempt_id "$attempt_id" unknown
+	_gh_safe_text_into outcome "$outcome" unknown
+	_gh_safe_number_into budget_remaining "$budget_remaining"
+	_gh_safe_number_into page "$page"
+	_gh_safe_number_into retry "$retry"
+	_gh_safe_number_into http_status "$http_status"
+	_gh_safe_number_into elapsed_ms "$elapsed_ms"
+	_gh_safe_number_into quota_cost "$quota_cost"
 	# The Pulse auth resolver labels its child gh process; other callers leave
 	# the reason empty ("unrouted" in reports).
-	auth_reason=$(_gh_safe_text "${AIDEVOPS_GH_AUTH_REASON:-}" "")
+	_gh_safe_text_into auth_reason "${AIDEVOPS_GH_AUTH_REASON:-}" ""
 	local auth_consumer=""
-	auth_consumer=$(_gh_safe_text "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" "")
+	_gh_safe_text_into auth_consumer "${AIDEVOPS_GITHUB_AUTH_CONSUMER:-}" ""
 	# Only accept the digest format produced by _ghqa_auth_fingerprint, never
 	# arbitrary auth text (which might accidentally contain a credential).
 	[[ "$auth_fingerprint" =~ ^[a-f0-9]{64}$ ]] || auth_fingerprint=""
-	reset_epoch=$(_gh_safe_number "$reset_epoch")
-	quota_used=$(_gh_safe_number "$quota_used")
+	_gh_safe_number_into reset_epoch "$reset_epoch"
+	_gh_safe_number_into quota_used "$quota_used"
 	# These fields are strict enums, not generic text: reject URLs/argv even if a
 	# caller bypasses the debug filter. Existing v2 columns remain unchanged.
 	case "$request_method" in GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS) ;; *) request_method=unknown ;; esac
@@ -690,12 +768,12 @@ gh_record_call() {
 	local budget_remaining="${6:-${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}}"
 	local event_kind="${7:-logical}"
 	local logical_id="${AIDEVOPS_GH_LOGICAL_ID:-}"
-	caller=$(_gh_resolve_caller "$caller")
+	_gh_resolve_caller_into caller "$caller"
 	if [[ -z "$api_pool" ]]; then
-		api_pool=$(_gh_default_pool "$path")
+		_gh_default_pool_into api_pool "$path"
 	fi
 	if [[ -z "$auth_mode" ]]; then
-		auth_mode=$(_gh_default_auth "$api_pool")
+		_gh_default_auth_into auth_mode "$api_pool"
 	fi
 	[[ -z "$route_decision" ]] && route_decision="${api_pool}-selected"
 	case "$route_decision" in
@@ -779,8 +857,11 @@ gh_record_attempt() {
 	[[ -n "$attempt_id" ]] || attempt_id=$(gh_new_attempt_id "$logical_id")
 	[[ -n "$page" ]] || page=1
 	[[ -n "$retry" ]] || retry=0
-	[[ -n "$api_pool" ]] || api_pool=$(_gh_default_pool "$path")
-	[[ -n "$auth_mode" ]] || auth_mode="${AIDEVOPS_GH_AUTH_MODE:-$(_gh_default_auth "$api_pool")}"
+	[[ -n "$api_pool" ]] || _gh_default_pool_into api_pool "$path"
+	if [[ -z "$auth_mode" ]]; then
+		auth_mode="${AIDEVOPS_GH_AUTH_MODE:-}"
+		[[ -n "$auth_mode" ]] || _gh_default_auth_into auth_mode "$api_pool"
+	fi
 	[[ -n "$route_decision" ]] || route_decision="${AIDEVOPS_GH_ROUTE_DECISION:-${api_pool}-selected}"
 	# Only the native boundary can attest a transport execution error. Legacy
 	# logical adapters may fail a local projection after a successful request.
@@ -810,8 +891,8 @@ gh_record_timeout() {
 	local budget_remaining="${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}"
 	local logical_id="${AIDEVOPS_GH_LOGICAL_ID:-}"
 	[[ "$elapsed_ms" =~ ^[0-9]+$ ]] || elapsed_ms=0
-	[[ -n "$api_pool" ]] || api_pool=$(_gh_default_pool "$path")
-	[[ -n "$auth_mode" ]] || auth_mode=$(_gh_default_auth "$api_pool")
+	[[ -n "$api_pool" ]] || _gh_default_pool_into api_pool "$path"
+	[[ -n "$auth_mode" ]] || _gh_default_auth_into auth_mode "$api_pool"
 	[[ -n "$logical_id" ]] || logical_id=$(gh_new_logical_id)
 	_gh_append_v2 timeout "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" \
 		"$budget_remaining" "$logical_id" "" "" "" timeout "" "$elapsed_ms" ""
@@ -862,7 +943,7 @@ gh_run_transport_attempt() {
 			auth_fingerprint=$(_ghqa_auth_fingerprint "$executable" "$host" 2>/dev/null || true)
 		fi
 	fi
-	start_ms=$(_gh_now_ms) || start_ms=""
+	_gh_now_ms_into start_ms || start_ms=""
 	_GH_TRANSPORT_ERROR_HTTP_STATUS=""
 	local -a transport_command=("$@")
 	if declare -F _gh_transport_capture_errors >/dev/null 2>&1; then
@@ -877,7 +958,7 @@ gh_run_transport_attempt() {
 		rc=$?
 		outcome="$GH_API_ERROR_KEY"
 	fi
-	end_ms=$(_gh_now_ms) || end_ms=""
+	_gh_now_ms_into end_ms || end_ms=""
 	if [[ "$start_ms" =~ ^[0-9]+$ && "$end_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
 		elapsed_ms=$((end_ms - start_ms))
 	fi
