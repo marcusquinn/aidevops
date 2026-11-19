@@ -2238,51 +2238,51 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md] pr:#39082 completed:2026-11-18
 
-- [ ] t19119 pulse: Bash 3.2-safe tracked-PID capacity waits in the parallel dispatch loop #auto-dispatch #bug ref:GH#39103
+- [x] t19119 pulse: Bash 3.2-safe tracked-PID capacity waits in the parallel dispatch loop #auto-dispatch #bug ref:GH#39103 pr:#39111 completed:2026-11-19
 
-- [ ] t19118 feat(cloudron): cloudron-helper.sh nginx-http2 off|on|status for HTTP/2 CVE windows #auto-dispatch #feat ref:GH#39098 -> [todo/tasks/t19118-brief.md]
+- [x] t19118 feat(cloudron): cloudron-helper.sh nginx-http2 off|on|status for HTTP/2 CVE windows #auto-dispatch #feat ref:GH#39098 -> [todo/tasks/t19118-brief.md] pr:#39102 completed:2026-11-19
 
-- [ ] t19120 feat(recovery-policy): delegable scope_acceptance action for source-exhausted phase holds #auto-dispatch #feat ref:GH#39113
+- [x] t19120 feat(recovery-policy): delegable scope_acceptance action for source-exhausted phase holds #auto-dispatch #feat ref:GH#39113 pr:#39116 completed:2026-11-19
 
-- [ ] t19121 fix(planning): protected-branch planning PR fallback overwrites newer default-branch TODO rows from a stale caller snapshot #auto-dispatch #bug #priority:high ref:GH#39120
+- [x] t19121 fix(planning): protected-branch planning PR fallback overwrites newer default-branch TODO rows from a stale caller snapshot #auto-dispatch #bug #priority:high ref:GH#39120 pr:#39124 completed:2026-11-19
 
-- [ ] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130
+- [x] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130 pr:#39134 completed:2026-11-19
 
-- [ ] t19122 perf(pulse): let a running dispatch round absorb worker slots freed mid-round #performance #priority:high ref:GH#39128
+- [x] t19122 perf(pulse): let a running dispatch round absorb worker slots freed mid-round #performance #priority:high ref:GH#39128 pr:#39141 completed:2026-11-19
 
-- [ ] t19125 Reset-aware OAuth pool rotation: prefer the account whose quota resets soonest #auto-dispatch #feat ref:GH#39137
+- [x] t19125 Reset-aware OAuth pool rotation: prefer the account whose quota resets soonest #auto-dispatch #feat ref:GH#39137 pr:#39143 completed:2026-11-19
 
-- [ ] t19126 fix(sync-workflows): create resync PRs ready with allow-auto-merge so green workflow syncs merge without the maintainer #bug #interactive tier:standard -> [todo/tasks/t19126-brief.md] ref:GH#39153
+- [x] t19126 fix(sync-workflows): create resync PRs ready with allow-auto-merge so green workflow syncs merge without the maintainer #bug #interactive tier:standard -> [todo/tasks/t19126-brief.md] ref:GH#39153 pr:#39155 completed:2026-11-19
 
-- [ ] t19133 fix(pulse-watchdog): starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving #bug #priority:high #interactive tier:standard -> [todo/tasks/t19133-brief.md] ref:GH#39179
+- [x] t19133 fix(pulse-watchdog): starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving #bug #priority:high #interactive tier:standard -> [todo/tasks/t19133-brief.md] ref:GH#39179 pr:#39180 completed:2026-11-19
 
-- [ ] t19130 fix(pulse-merge): stale non-required pending checks are ignored when required contexts are skipped, so path-filtered PRs stop starving the merge pass #bug #priority:high #interactive tier:standard -> [todo/tasks/t19130-brief.md] ref:GH#39166
+- [x] t19130 fix(pulse-merge): stale non-required pending checks are ignored when required contexts are skipped, so path-filtered PRs stop starving the merge pass #bug #priority:high #interactive tier:standard -> [todo/tasks/t19130-brief.md] ref:GH#39166 pr:#39168 completed:2026-11-19
 
-- [ ] t19132 perf(pulse-dispatch): PR-evidence negative-cache hints outlive one pulse cycle so blocked candidates skip the dedup ceremony #performance #priority:high #interactive tier:standard -> [todo/tasks/t19132-brief.md] ref:GH#39174
+- [x] t19132 perf(pulse-dispatch): PR-evidence negative-cache hints outlive one pulse cycle so blocked candidates skip the dedup ceremony #performance #priority:high #interactive tier:standard -> [todo/tasks/t19132-brief.md] ref:GH#39174 pr:#39176 completed:2026-11-19
 
-- [ ] t19134 perf(gh-shim): remove per-call bash forks from instrumentation, path resolution and cooldown preflight #performance #interactive tier:standard -> [todo/tasks/t19134-brief.md] ref:GH#39187
+- [x] t19134 perf(gh-shim): remove per-call bash forks from instrumentation, path resolution and cooldown preflight #performance #interactive tier:standard -> [todo/tasks/t19134-brief.md] ref:GH#39187 pr:#39192 completed:2026-11-19
 
-- [ ] t19135 test(zsh-compat): stub _gh_timeout_cooldown_preflight so the _gh_with_timeout zsh guard passes again #auto-dispatch #bug tier:simple -> [todo/tasks/t19135-brief.md] ref:GH#39189
+- [x] t19135 test(zsh-compat): stub _gh_timeout_cooldown_preflight so the _gh_with_timeout zsh guard passes again #auto-dispatch #bug tier:simple -> [todo/tasks/t19135-brief.md] ref:GH#39189 pr:#39191 completed:2026-11-19
 
-- [ ] t19136 fix(pulse-dispatch): parse macOS kern.boottime sec, not usec, so the post-boot dispatch ramp engages #auto-dispatch #bug tier:simple -> [todo/tasks/t19136-brief.md] ref:GH#39190
+- [x] t19136 fix(pulse-dispatch): parse macOS kern.boottime sec, not usec, so the post-boot dispatch ramp engages #auto-dispatch #bug tier:simple -> [todo/tasks/t19136-brief.md] ref:GH#39190 pr:#39193 completed:2026-11-19
 
 - [x] t19137 fix(pulse-dispatch): log the settled worker PGID after setsid instead of the launcher's #auto-dispatch #bug tier:simple ref:GH#39194 pr:#39196 completed:2026-11-19
 
-- [ ] t19142 fix(pulse-check): size the daily apply routine's collection budgets so worker history and the queue scan complete; drop duplicate r-pulse-check #bug #interactive tier:standard -> [todo/tasks/t19142-brief.md] ref:GH#39206
+- [x] t19142 fix(pulse-check): size the daily apply routine's collection budgets so worker history and the queue scan complete; drop duplicate r-pulse-check #bug #interactive tier:standard -> [todo/tasks/t19142-brief.md] ref:GH#39206 pr:#39208 completed:2026-11-19
 
-- [ ] t19138 fix(worker-watchdog): defer no-output kills while the worker's isolated DB shows live tool output #bug #interactive tier:standard -> [todo/tasks/t19138-brief.md] ref:GH#39197
+- [x] t19138 fix(worker-watchdog): defer no-output kills while the worker's isolated DB shows live tool output #bug #interactive tier:standard -> [todo/tasks/t19138-brief.md] ref:GH#39197 pr:#39199 completed:2026-11-19
 
-- [ ] t19139 fix(model-routing): add gpt-6.1-terra to the ChatGPT OAuth unsupported list #bug #interactive tier:simple -> [todo/tasks/t19139-brief.md] ref:GH#39200
+- [x] t19139 fix(model-routing): add gpt-6.1-terra to the ChatGPT OAuth unsupported list #bug #interactive tier:simple -> [todo/tasks/t19139-brief.md] ref:GH#39200 pr:#39201 completed:2026-11-19
 
-- [ ] t19141 fix(worker-lifecycle): accept pulse merge closeout marker as MERGE_SUMMARY evidence for merged worker PRs #bug #interactive tier:standard -> [todo/tasks/t19141-brief.md] ref:GH#39205
+- [x] t19141 fix(worker-lifecycle): accept pulse merge closeout marker as MERGE_SUMMARY evidence for merged worker PRs #bug #interactive tier:standard -> [todo/tasks/t19141-brief.md] ref:GH#39205 pr:#39207 completed:2026-11-19
 
-- [ ] t19143 fix(tests): restore the fixture workspace mode leaked by the group-writable workspace test #bug #interactive tier:simple -> [todo/tasks/t19143-brief.md] ref:GH#39209
+- [x] t19143 fix(tests): restore the fixture workspace mode leaked by the group-writable workspace test #bug #interactive tier:simple -> [todo/tasks/t19143-brief.md] ref:GH#39209 pr:#39214 completed:2026-11-19
 
-- [ ] t19144 feat(full-loop): add --ready to commit-and-pr so verified interactive PRs open non-draft #auto-dispatch #feat tier:simple -> [todo/tasks/t19144-brief.md] ref:GH#39210
+- [x] t19144 feat(full-loop): add --ready to commit-and-pr so verified interactive PRs open non-draft #auto-dispatch #feat tier:simple -> [todo/tasks/t19144-brief.md] ref:GH#39210 pr:#39211 completed:2026-11-19
 
-- [ ] t19145 fix(ci): affected-test selection runs vacuous sourced modules instead of their parent suites #auto-dispatch #bug tier:standard -> [todo/tasks/t19145-brief.md] ref:GH#39212
+- [x] t19145 fix(ci): affected-test selection runs vacuous sourced modules instead of their parent suites #auto-dispatch #bug tier:standard -> [todo/tasks/t19145-brief.md] ref:GH#39212 pr:#39215 completed:2026-11-19
 
-- [ ] t19146 fix(pulse-merge): close PRs whose non-closing issue is completed and whose diff is empty or a stale planning row #auto-dispatch #bug tier:standard -> [todo/tasks/t19146-brief.md] ref:GH#39213
+- [x] t19146 fix(pulse-merge): close PRs whose non-closing issue is completed and whose diff is empty or a stale planning row #auto-dispatch #bug tier:standard -> [todo/tasks/t19146-brief.md] ref:GH#39213 pr:#39216 completed:2026-11-19
 
 ## In Progress
 
