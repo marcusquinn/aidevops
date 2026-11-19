@@ -2298,9 +2298,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19159 fix(bounded-operation): completion-mode drain test reports failed under host load (GH#33747 test) #auto-dispatch #bug tier:standard ref:GH#39251 logged:2026-11-19 pr:#39252 completed:2026-11-19
 
-- [ ] t19160 fix(pulse): partial-continuation revisit walks past merged PRs that target a different issue #bug #interactive tier:standard -> [todo/tasks/t19160-brief.md] ref:GH#39254 logged:2026-11-19
+- [x] t19160 fix(pulse): partial-continuation revisit walks past merged PRs that target a different issue #bug #interactive tier:standard -> [todo/tasks/t19160-brief.md] ref:GH#39254 logged:2026-11-19 pr:#39260 completed:2026-11-19
 
-- [ ] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19
+- [x] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19 pr:#39259 completed:2026-11-19
 
 ## In Progress
 
