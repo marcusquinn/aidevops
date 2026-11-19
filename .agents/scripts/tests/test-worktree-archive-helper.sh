@@ -319,7 +319,7 @@ PY
 			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
 		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
 		# Estimate must include the ~150 KB tracked patch (10000 lines x 15 bytes).
-		estimate=$(sed -n 's/.*estimate=\([0-9][0-9]*\);.*/\1/p' "$TEST_ROOT/patch-capacity.stderr" | head -n1)
+		estimate=$(sed -n 's/.*estimate=\([0-9][0-9]*\);.*/\1/;ta;b;:a;p;q' "$TEST_ROOT/patch-capacity.stderr")
 		[[ -n "$estimate" && "$estimate" -ge 150000 ]] || rc=1
 		[[ ! -e "$root" ]] || rc=1
 		git -C "$worktree" reset -q --hard HEAD || return 1
