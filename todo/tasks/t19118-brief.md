@@ -27,7 +27,7 @@ Next nginx/HTTP/2 CVE, users should run one command instead of rebuilding this.
 - The `on` (revert) mode:
   - removes the cron;
   - turns `http2 off;` back into `http2 on;`;
-  - restores ` http2` after `ssl` on `listen ... 443 ssl` lines of recorded files only;
+  - restores the `http2` parameter after `ssl` on `listen ... 443 ssl` lines of recorded files only (yielding `listen ... 443 ssl http2`);
   - runs `nginx -t` (rollback on failure), then `systemctl restart nginx`.
 - `--patched-marker CVE-ID` (optional): `apply` becomes a no-op once `zgrep -q <CVE> /usr/share/doc/nginx-common/changelog.Debian.gz` matches, and `on` refuses until it matches unless `--force`.
 - Reference implementation (private, working, ShellCheck-clean): the session's host script had `apply|status|revert` modes with exactly the above logic. Re-derive from this brief; do not copy host-specific paths.
