@@ -585,6 +585,329 @@ health_evaluate() {
 	return 0
 }
 
+# Remote script installed at /usr/local/sbin/aidevops-nginx-http2 for HTTP/2 CVE windows.
+# Modes: off | apply | status | revert | install-cron | sctp-block | sctp-unblock
+# shellcheck disable=SC2016 # runs remotely; expansion must not happen locally
+readonly CLOUDRON_NGINX_HTTP2_SCRIPT='#!/bin/bash
+set -u
+STATE=/var/lib/aidevops-nginx-http2
+RECORD="$STATE/legacy-listen-files.txt"
+MARKER_FILE="$STATE/patched-marker"
+CRON=/etc/cron.d/aidevops-nginx-http2
+SELF=/usr/local/sbin/aidevops-nginx-http2
+SCTP_CONF=/etc/modprobe.d/aidevops-nginx-http2-sctp.conf
+PATTERN="http2[[:space:]]+on[[:space:]]*;|listen[^;]*[[:space:]]http2"
+MODE="${1:-status}"
+shift || true
+MARKER=""
+FORCE=0
+SCHEDULED=0
+WANT_MARKER=0
+for arg in "$@"; do
+  if [ "$WANT_MARKER" = 1 ]; then MARKER="$arg"; WANT_MARKER=0; continue; fi
+  case "$arg" in
+  --patched-marker) WANT_MARKER=1 ;;
+  --force) FORCE=1 ;;
+  --scheduled) SCHEDULED=1 ;;
+  esac
+done
+umask 077
+if [ -z "$MARKER" ] && [ -s "$MARKER_FILE" ]; then
+  MARKER=$(sed -n 1p "$MARKER_FILE")
+fi
+if [ -n "$MARKER" ] && [[ ! "$MARKER" =~ ^CVE-[0-9]{4}-[0-9]{4,}$ ]]; then
+  echo "invalid CVE marker" >&2
+  exit 1
+fi
+if [ "$MODE" != status ]; then
+  mkdir -p "$STATE" || exit 1
+  if [ -n "$MARKER" ]; then
+    printf "%s\n" "$MARKER" >"$MARKER_FILE" || exit 1
+  fi
+fi
+# shell-portability: ignore next
+REAL=$(readlink -f /etc/nginx)
+
+log() { logger -t aidevops-nginx-http2 -- "$*"; echo "$*"; return 0; }
+
+patched() {
+  [ -n "$MARKER" ] || return 1
+  zgrep -Eq -- "(^|[^[:alnum:]_-])${MARKER}([^[:alnum:]_-]|$)" /usr/share/doc/nginx-common/changelog.Debian.gz 2>/dev/null
+}
+
+US=$(printf "\037")
+
+# Lists matching conf files. Exit status 0 = scan completed (matches or none), 1 = scan failed.
+conf_files() {
+  local pat="$1" rc=0
+  grep -rlE --include="*.conf" -- "$pat" "$REAL" 2>/dev/null || rc=$?
+  [ "$rc" -le 1 ]
+}
+
+take_lock() {
+  local wait_s="$1"
+  exec 9>/run/aidevops-nginx-http2.lock
+  flock -w "$wait_s" 9
+}
+
+# Turns HTTP/2 off in nginx config read from stdin (both http2 on and the legacy listen form).
+disable_stream() {
+  sed -E -e "s/(^|[^[:alnum:]_])http2[[:space:]]+on[[:space:]]*;/\1http2 off;/g" \
+    -e "s/(listen[^;]*)[[:space:]]http2([[:space:];])/\1\2/g"
+  return 0
+}
+
+rewrite_file() {
+  local f="$1" tmp="$STATE/rewrite.tmp"
+  disable_stream <"$f" >"$tmp" || { rm -f "$tmp"; return 1; }
+  cat "$tmp" >"$f" || return 1
+  rm -f "$tmp"
+  return 0
+}
+
+# Records each original line (file, line number, exact text) that apply will change.
+record_file() {
+  local f="$1" add="$STATE/record.add" line n content
+  : >"$add"
+  while IFS= read -r line; do
+    n=${line%%:*}
+    content=${line#*:}
+    printf "%s%s%s%s%s\n" "$f" "$US" "$n" "$US" "$content" >>"$add"
+  done < <(grep -nE -- "$PATTERN" "$f")
+  touch "$RECORD" || return 1
+  awk -F "$US" "NR==FNR{k[\$(1) FS \$(2)]=1; next} !((\$(1) FS \$(2)) in k)" "$add" "$RECORD" >"$add.m" || return 1
+  cat "$add" >>"$add.m" || return 1
+  mv "$add.m" "$RECORD" || return 1
+  rm -f "$add"
+  return 0
+}
+
+# Restores recorded original lines, only where the line still has the text apply produced.
+restore_record() {
+  local f n orig cur mod
+  [ -f "$RECORD" ] || return 0
+  while IFS="$US" read -r f n orig; do
+    [ -f "$f" ] || continue
+    cur=$(sed -n "${n}p" "$f")
+    mod=$(printf "%s\n" "$orig" | disable_stream)
+    if [ "$cur" = "$mod" ]; then
+      ORIG="$orig" awk -v n="$n" "NR==n{print ENVIRON[\"ORIG\"]; next} 1" "$f" >"$STATE/restore.tmp" || return 1
+      cat "$STATE/restore.tmp" >"$f" || return 1
+    fi
+  done <"$RECORD"
+  rm -f "$STATE/restore.tmp"
+  return 0
+}
+
+retry_reload() {
+  [ -f "$STATE/reload-pending" ] || return 0
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx || return 1
+  rm -f "$STATE/reload-pending"
+  return 0
+}
+
+install_cron() {
+  printf "*/2 * * * * root %s apply --scheduled >/dev/null 2>&1\n" "$SELF" >"$CRON" || return 1
+  chmod 644 "$CRON"
+  return 0
+}
+
+backup() {
+  local ts tarball listing
+  ts=$(date +%Y%m%d%H%M%S)
+  tarball="$STATE/nginx-$ts.tgz"
+  tar -C "$(dirname "$REAL")" -czf "$tarball" "$(basename "$REAL")" || return 1
+  chmod 600 "$tarball"
+  listing=$(tar -tzf "$tarball")
+  case "$listing" in *applications/*.conf*) ;; *) log "warning: backup has no applications/*.conf" ;; esac
+  ls -1t "$STATE"/nginx-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+  echo "$tarball" >"$STATE/last-backup" || return 1
+  return 0
+}
+
+rollback() {
+  local tarball
+  tarball=$(cat "$STATE/last-backup" 2>/dev/null)
+  [ -f "$tarball" ] && tar -C "$(dirname "$REAL")" -xzf "$tarball"
+  log "nginx -t failed; restored $tarball"
+  return 0
+}
+
+do_apply() {
+  local files f left
+  take_lock 0 || return 0
+  # Scheduled runs re-check the cron under the lock so a concurrent revert wins.
+  if [ "$SCHEDULED" = 1 ] && [ ! -f "$CRON" ]; then return 0; fi
+  if patched; then return 0; fi
+  retry_reload || { log "pending reload still failing"; return 1; }
+  files=$(conf_files "$PATTERN") || { log "config scan failed; not editing"; return 1; }
+  [ -n "$files" ] || return 0
+  backup || { log "backup failed; not editing"; return 1; }
+  for f in $files; do
+    record_file "$f" || { log "could not record original lines for $f; not editing"; return 1; }
+  done
+  for f in $files; do
+    rewrite_file "$f" || { rollback; return 1; }
+  done
+  left=$(conf_files "$PATTERN") || left="scan-failed"
+  if [ -n "$left" ]; then
+    log "active http2 directives remain or scan failed; restoring"
+    rollback
+    return 1
+  fi
+  if nginx -t >/dev/null 2>&1; then
+    if systemctl reload nginx; then
+      log "http2 disabled in $(echo "$files" | wc -l) file(s); nginx reloaded"
+    else
+      touch "$STATE/reload-pending"
+      log "reload failed; will retry"
+      return 1
+    fi
+  else
+    rollback
+    return 1
+  fi
+  return 0
+}
+
+do_off() {
+  if patched; then
+    log "patched marker already in changelog; nothing to do"
+    return 0
+  fi
+  do_apply || return 1
+  install_cron
+}
+
+do_revert() {
+  take_lock 60 || { log "could not take lock"; return 1; }
+  if ! patched && [ "$FORCE" != 1 ]; then
+    log "refusing: patched marker not found in changelog (use --force)"
+    return 1
+  fi
+  backup || return 1
+  restore_record || { rollback; return 1; }
+  if nginx -t >/dev/null 2>&1; then
+    if systemctl restart nginx; then
+      rm -f "$RECORD" "$STATE/reload-pending" "$CRON"
+      log "http2 restored; cron removed; nginx restarted"
+    else
+      log "restart failed; record and cron kept; rerun on"
+      return 1
+    fi
+  else
+    rollback
+    return 1
+  fi
+  return 0
+}
+
+do_status() {
+  local pid exe nb=unknown
+  local on off
+  if on=$(conf_files "$PATTERN"); then echo "h2_on_files=$(echo "$on" | grep -c .)"; else echo "h2_on_files=scan-failed"; fi
+  if off=$(conf_files "http2[[:space:]]+off[[:space:]]*;"); then echo "h2_off_files=$(echo "$off" | grep -c .)"; else echo "h2_off_files=scan-failed"; fi
+  echo "legacy_listen_recorded=$([ -f "$RECORD" ] && wc -l <"$RECORD" || echo 0)"
+  if [ -f "$CRON" ]; then echo "cron=present"; else echo "cron=absent"; fi
+  if [ -f "$SCTP_CONF" ]; then echo "sctp_blocked=yes"; else echo "sctp_blocked=no"; fi
+  if grep -q "^sctp " /proc/modules; then echo "sctp_loaded=yes"; else echo "sctp_loaded=no"; fi
+  pid=$(cat /run/nginx.pid 2>/dev/null)
+  if [ -n "$pid" ]; then
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+    case "$exe" in *"(deleted)") nb=no ;; "") nb=unknown ;; *) nb=yes ;; esac
+  fi
+  echo "running_new_binary=$nb"
+  if patched; then echo "patched=yes"; else echo "patched=no"; fi
+  return 0
+}
+
+case "$MODE" in
+apply) do_apply ;;
+off) do_off ;;
+revert) do_revert ;;
+status) do_status ;;
+install-cron) install_cron ;;
+sctp-block)
+  printf "install sctp /bin/false\ninstall sctp_diag /bin/false\n" >"$SCTP_CONF"
+  chmod 644 "$SCTP_CONF"
+  log "SCTP blocked in modprobe.d; reboot required (turn/coturn holds SCTP sockets)"
+  ;;
+sctp-unblock)
+  rm -f "$SCTP_CONF"
+  log "SCTP block removed; run modprobe sctp and docker restart turn, or reboot"
+  ;;
+*) echo "unknown mode: $MODE" >&2; exit 1 ;;
+esac
+'
+
+# Toggle HTTP/2 on a Cloudron host nginx during an HTTP/2 CVE window.
+# Usage: nginx-http2 <off|on|status> <server> [--patched-marker CVE-ID] [--force]
+#        [--sctp-block|--sctp-unblock]
+nginx_http2() {
+	local action="${1:-}" server="${2:-}"
+	shift 2 || true
+	local marker="" force="" sctp=""
+
+	case "$action" in
+	off | on | status) ;;
+	*) print_error "Usage: nginx-http2 <off|on|status> <server> [--patched-marker CVE-ID] [--force] [--sctp-block|--sctp-unblock]"; return 1 ;;
+	esac
+	if [[ -z "$server" ]]; then
+		print_error "$ERROR_SERVER_NAME_REQUIRED"
+		return 1
+	fi
+	while [[ $# -gt 0 ]]; do
+		local opt="$1"
+		case "$opt" in
+		--patched-marker) marker="${2:-}"; shift 2 ;;
+		--force) force="--force"; shift ;;
+		--sctp-block) sctp="sctp-block"; shift ;;
+		--sctp-unblock) sctp="sctp-unblock"; shift ;;
+		*) print_error "Unknown nginx-http2 option: $opt"; return 1 ;;
+		esac
+	done
+	if [[ -n "$marker" && ! "$marker" =~ ^CVE-[0-9]{4}-[0-9]{4,}$ ]]; then
+		print_error "Invalid --patched-marker value"
+		return 1
+	fi
+
+	check_config
+	local ip ssh_port
+	ip=$(jq -r --arg s "$server" '.servers[$s].ip' "$CONFIG_FILE")
+	ssh_port=$(jq -r --arg s "$server" '.servers[$s].ssh_port // 22' "$CONFIG_FILE")
+	if [[ "$ip" == null ]]; then
+		print_error "$ERROR_SERVER_NOT_FOUND"
+		return 1
+	fi
+
+	local -a ssh_cmd=(ssh -p "$ssh_port" -o BatchMode=yes -o ConnectTimeout=15 "root@${ip}")
+	local remote="/usr/local/sbin/aidevops-nginx-http2"
+	local marker_arg=""
+	[[ -n "$marker" ]] && marker_arg="--patched-marker $marker"
+
+	if [[ "$action" == "status" ]]; then
+		# Read-only: run the script from stdin without installing anything.
+		printf '%s\n' "$CLOUDRON_NGINX_HTTP2_SCRIPT" | "${ssh_cmd[@]}" "bash -s -- status $marker_arg"
+		return $?
+	fi
+
+	if ! printf '%s\n' "$CLOUDRON_NGINX_HTTP2_SCRIPT" | "${ssh_cmd[@]}" "umask 077 && cat > ${remote}.tmp && chmod 700 ${remote}.tmp && mv ${remote}.tmp ${remote}"; then
+		print_error "Failed to install remote script on $server"
+		return 1
+	fi
+
+	local rc=0
+	if [[ "$action" == "off" ]]; then
+		"${ssh_cmd[@]}" "${remote} off $marker_arg" || rc=$?
+	else
+		"${ssh_cmd[@]}" "${remote} revert $marker_arg $force" || rc=$?
+	fi
+	if ((rc == 0)) && [[ -n "$sctp" ]]; then
+		"${ssh_cmd[@]}" "${remote} $sctp" || rc=$?
+	fi
+	return "$rc"
+}
+
 # Assign positional parameters to local variables
 # Main function
 main() {
@@ -635,6 +958,10 @@ main() {
 		shift || true
 		health_check "$@"
 		;;
+	"nginx-http2")
+		shift || true
+		nginx_http2 "$@"
+		;;
 	"help" | "-h" | "--help" | "")
 		echo "Cloudron Helper Script"
 		echo "$USAGE_COMMAND_OPTIONS"
@@ -653,6 +980,8 @@ main() {
 		echo "  wait-ready [server] [app-id] [timeout]  - Wait for app to be ready"
 		echo "  health [server] [--format json|text] [--backup-max-hours N] [--disk-warn N] [--disk-crit N] [--extra-unit U]"
 		echo "                                          - Fleet health; exit 2 on critical findings"
+		echo "  nginx-http2 <off|on|status> [server] [--patched-marker CVE-ID] [--force] [--sctp-block|--sctp-unblock]"
+		echo "                                          - Disable/restore HTTP/2 on host nginx during an HTTP/2 CVE window"
 		echo "  help                          - $HELP_SHOW_MESSAGE"
 		echo ""
 		echo "Examples:"
