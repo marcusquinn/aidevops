@@ -28,6 +28,8 @@ _FULL_LOOP_CHECK_INDETERMINATE="indeterminate"
 _FULL_LOOP_CHECK_DEFERRED="api-deferred"
 _FULL_LOOP_ERROR_COOLDOWN="github-api-cooldown"
 _FULL_LOOP_ERROR_READ_DEFERRED="github-api-read-deferred"
+_FULL_LOOP_CHECK_TERMINAL_FAILURE="terminal-failure"
+_FULL_LOOP_RETRY_DETAIL="retry-when-capacity-returns"
 _FULL_LOOP_TRUE="true"
 
 # Defensive SCRIPT_DIR fallback
