@@ -2247,6 +2247,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19121 fix(planning): protected-branch planning PR fallback overwrites newer default-branch TODO rows from a stale caller snapshot #auto-dispatch #bug #priority:high ref:GH#39120
 
+- [ ] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130
+
 - [ ] t19122 perf(pulse): let a running dispatch round absorb worker slots freed mid-round #performance #priority:high ref:GH#39128
 
 - [ ] t19125 Reset-aware OAuth pool rotation: prefer the account whose quota resets soonest #auto-dispatch #feat ref:GH#39137
