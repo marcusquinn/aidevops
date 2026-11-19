@@ -586,7 +586,7 @@ health_evaluate() {
 }
 
 # Remote script installed at /usr/local/sbin/aidevops-nginx-http2 for HTTP/2 CVE windows.
-# Modes: apply | status | revert | install-cron | sctp-block | sctp-unblock
+# Modes: off | apply | status | revert | install-cron | sctp-block | sctp-unblock
 # shellcheck disable=SC2016 # runs remotely; expansion must not happen locally
 readonly CLOUDRON_NGINX_HTTP2_SCRIPT='#!/bin/bash
 set -u
@@ -633,7 +633,82 @@ patched() {
   zgrep -Eq -- "(^|[^[:alnum:]_-])${MARKER}([^[:alnum:]_-]|$)" /usr/share/doc/nginx-common/changelog.Debian.gz 2>/dev/null
 }
 
-conf_files() { local pat="$1"; grep -rlE --include="*.conf" "$pat" "$REAL" 2>/dev/null; return 0; }
+US=$(printf "\037")
+
+# Lists matching conf files. Exit status 0 = scan completed (matches or none), 1 = scan failed.
+conf_files() {
+  local pat="$1" rc=0
+  grep -rlE --include="*.conf" -- "$pat" "$REAL" 2>/dev/null || rc=$?
+  [ "$rc" -le 1 ]
+}
+
+take_lock() {
+  local wait_s="$1"
+  exec 9>/run/aidevops-nginx-http2.lock
+  flock -w "$wait_s" 9
+}
+
+# Turns HTTP/2 off in nginx config read from stdin (both http2 on and the legacy listen form).
+disable_stream() {
+  sed -E -e "s/(^|[^[:alnum:]_])http2[[:space:]]+on[[:space:]]*;/\1http2 off;/g" \
+    -e "s/(listen[^;]*)[[:space:]]http2([[:space:];])/\1\2/g"
+  return 0
+}
+
+rewrite_file() {
+  local f="$1" tmp="$STATE/rewrite.tmp"
+  disable_stream <"$f" >"$tmp" || { rm -f "$tmp"; return 1; }
+  cat "$tmp" >"$f" || return 1
+  rm -f "$tmp"
+  return 0
+}
+
+# Records each original line (file, line number, exact text) that apply will change.
+record_file() {
+  local f="$1" add="$STATE/record.add" line n content
+  : >"$add"
+  while IFS= read -r line; do
+    n=${line%%:*}
+    content=${line#*:}
+    printf "%s%s%s%s%s\n" "$f" "$US" "$n" "$US" "$content" >>"$add"
+  done < <(grep -nE -- "$PATTERN" "$f")
+  touch "$RECORD" || return 1
+  awk -F "$US" "NR==FNR{k[\$(1) FS \$(2)]=1; next} !((\$(1) FS \$(2)) in k)" "$add" "$RECORD" >"$add.m" || return 1
+  cat "$add" >>"$add.m" || return 1
+  mv "$add.m" "$RECORD" || return 1
+  rm -f "$add"
+  return 0
+}
+
+# Restores recorded original lines, only where the line still has the text apply produced.
+restore_record() {
+  local f n orig cur mod
+  [ -f "$RECORD" ] || return 0
+  while IFS="$US" read -r f n orig; do
+    [ -f "$f" ] || continue
+    cur=$(sed -n "${n}p" "$f")
+    mod=$(printf "%s\n" "$orig" | disable_stream)
+    if [ "$cur" = "$mod" ]; then
+      ORIG="$orig" awk -v n="$n" "NR==n{print ENVIRON[\"ORIG\"]; next} 1" "$f" >"$STATE/restore.tmp" || return 1
+      cat "$STATE/restore.tmp" >"$f" || return 1
+    fi
+  done <"$RECORD"
+  rm -f "$STATE/restore.tmp"
+  return 0
+}
+
+retry_reload() {
+  [ -f "$STATE/reload-pending" ] || return 0
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx || return 1
+  rm -f "$STATE/reload-pending"
+  return 0
+}
+
+install_cron() {
+  printf "*/2 * * * * root %s apply >/dev/null 2>&1\n" "$SELF" >"$CRON" || return 1
+  chmod 644 "$CRON"
+  return 0
+}
 
 backup() {
   local ts tarball listing
@@ -644,7 +719,7 @@ backup() {
   listing=$(tar -tzf "$tarball")
   case "$listing" in *applications/*.conf*) ;; *) log "warning: backup has no applications/*.conf" ;; esac
   ls -1t "$STATE"/nginx-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
-  echo "$tarball" >"$STATE/last-backup"
+  echo "$tarball" >"$STATE/last-backup" || return 1
   return 0
 }
 
@@ -658,20 +733,26 @@ rollback() {
 
 do_apply() {
   local files f
-  exec 9>/run/aidevops-nginx-http2.lock
-  flock -n 9 || return 0
+  take_lock 0 || return 0
   if patched; then return 0; fi
-  files=$(conf_files "$PATTERN")
+  retry_reload || { log "pending reload still failing"; return 1; }
+  files=$(conf_files "$PATTERN") || { log "config scan failed; not editing"; return 1; }
   [ -n "$files" ] || return 0
   backup || { log "backup failed; not editing"; return 1; }
-  for f in $(conf_files "listen[^;]*[[:space:]]http2"); do echo "$f" >>"$RECORD"; done
-  [ -f "$RECORD" ] && sort -u "$RECORD" -o "$RECORD"
   for f in $files; do
-    sed -E -i -e "s/^([[:space:]]*)http2[[:space:]]+on[[:space:]]*;/\1http2 off;/" \
-      -e "s/^([[:space:]]*listen[^;]*)[[:space:]]http2([[:space:];])/\1\2/" "$f"
+    record_file "$f" || { log "could not record original lines for $f; not editing"; return 1; }
+  done
+  for f in $files; do
+    rewrite_file "$f" || { rollback; return 1; }
   done
   if nginx -t >/dev/null 2>&1; then
-    systemctl reload nginx && log "http2 disabled in $(echo "$files" | wc -l) file(s); nginx reloaded"
+    if systemctl reload nginx; then
+      log "http2 disabled in $(echo "$files" | wc -l) file(s); nginx reloaded"
+    else
+      touch "$STATE/reload-pending"
+      log "reload failed; will retry"
+      return 1
+    fi
   else
     rollback
     return 1
@@ -679,25 +760,31 @@ do_apply() {
   return 0
 }
 
+do_off() {
+  if patched; then
+    log "patched marker already in changelog; nothing to do"
+    return 0
+  fi
+  do_apply || return 1
+  install_cron
+}
+
 do_revert() {
-  local f
+  take_lock 60 || { log "could not take lock"; return 1; }
   if ! patched && [ "$FORCE" != 1 ]; then
     log "refusing: patched marker not found in changelog (use --force)"
     return 1
   fi
-  rm -f "$CRON"
   backup || return 1
-  for f in $(conf_files "http2[[:space:]]+off[[:space:]]*;"); do
-    sed -E -i "s/^([[:space:]]*)http2[[:space:]]+off[[:space:]]*;/\1http2 on;/" "$f"
-  done
-  if [ -f "$RECORD" ]; then
-    while read -r f; do
-      [ -f "$f" ] && sed -E -i "/http2/!s/^([[:space:]]*listen[^;]*443[^;]*[[:space:]]ssl)([[:space:];])/\1 http2\2/" "$f"
-    done <"$RECORD"
-  fi
+  restore_record || { rollback; return 1; }
   if nginx -t >/dev/null 2>&1; then
-    rm -f "$RECORD"
-    systemctl restart nginx && log "http2 restored; cron removed; nginx restarted"
+    if systemctl restart nginx; then
+      rm -f "$RECORD" "$STATE/reload-pending" "$CRON"
+      log "http2 restored; cron removed; nginx restarted"
+    else
+      log "restart failed; record and cron kept; rerun on"
+      return 1
+    fi
   else
     rollback
     return 1
@@ -709,7 +796,7 @@ do_status() {
   local pid exe nb=unknown
   echo "h2_on_files=$(conf_files "$PATTERN" | wc -l)"
   echo "h2_off_files=$(conf_files "http2[[:space:]]+off[[:space:]]*;" | wc -l)"
-  echo "legacy_listen_recorded=$(wc -l <"$RECORD" 2>/dev/null || echo 0)"
+  echo "legacy_listen_recorded=$([ -f "$RECORD" ] && wc -l <"$RECORD" || echo 0)"
   if [ -f "$CRON" ]; then echo "cron=present"; else echo "cron=absent"; fi
   if [ -f "$SCTP_CONF" ]; then echo "sctp_blocked=yes"; else echo "sctp_blocked=no"; fi
   if grep -q "^sctp " /proc/modules; then echo "sctp_loaded=yes"; else echo "sctp_loaded=no"; fi
@@ -725,12 +812,10 @@ do_status() {
 
 case "$MODE" in
 apply) do_apply ;;
+off) do_off ;;
 revert) do_revert ;;
 status) do_status ;;
-install-cron)
-  printf "*/2 * * * * root %s apply >/dev/null 2>&1\n" "$SELF" >"$CRON"
-  chmod 644 "$CRON"
-  ;;
+install-cron) install_cron ;;
 sctp-block)
   printf "install sctp /bin/false\ninstall sctp_diag /bin/false\n" >"$SCTP_CONF"
   chmod 644 "$SCTP_CONF"
@@ -802,7 +887,7 @@ nginx_http2() {
 
 	local rc=0
 	if [[ "$action" == "off" ]]; then
-		"${ssh_cmd[@]}" "${remote} apply $marker_arg && ${remote} install-cron" || rc=$?
+		"${ssh_cmd[@]}" "${remote} off $marker_arg" || rc=$?
 	else
 		"${ssh_cmd[@]}" "${remote} revert $marker_arg $force" || rc=$?
 	fi
