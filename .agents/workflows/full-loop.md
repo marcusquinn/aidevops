@@ -234,6 +234,8 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
 
 Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft so work survives interruption or restart. In a repository where the session has maintainer authority, implementation intent (`/full-loop`, "fix", "implement", "work on this now", or an issue-started implementation) is the finalise/ready consent: once verification passes and the remote head equals local `HEAD`, run `gh pr ready` and continue to 4.4 without another prompt. Keep the draft only when the user asked for review-first or draft-only, or the work is incomplete or blocked; external contributions stop at a verified ready PR. On rebase conflict: aborts and returns 1 — resolve and retry.
 
+Where the repository enforces Platform Fix Regression Evidence, the final title, body and diff are checked before push: a platform fix without a repository test change needs `--regression-evidence "<why automated regression is not possible + manual evidence>"`. Runtime Testing prose does not count.
+
 Explicit `--title` task prefixes are validated before push against TODO/linked-issue proof; issue-only work uses `GH#NNN`, not an invented `tNNN` task ID.
 
 **Non-closing link (GH#36598):** for an interactive PR on a long-running, non-parent issue that must stay open after merge, add `--keep-issue-open`. The body uses `For #NNN`, merge leaves the issue open, and the issue `status:in-review` handoff is skipped. Workers, `--allow-parent-close`, and `--completion-bookkeeping` refuse it. Parent-task and planning-only diffs already use `For` automatically.
