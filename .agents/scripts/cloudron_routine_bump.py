@@ -145,15 +145,12 @@ def check_upstream(doc, policy, old_up, new_up):
 
 def license_changes_ok(base_manifest, head_manifest, mappings):
     """upstreamLicense may differ only by the proven release-commit or version substitution."""
-    # An absent field is not the same as null: presence must match.
-    if ("upstreamLicense" in base_manifest) != ("upstreamLicense" in head_manifest):
-        return False
     base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
-    # A permitted substitution is optional: an exactly unchanged license is fine.
     if canonical(base) == canonical(head):
-        return True
-    if not isinstance(base, dict) or not isinstance(head, dict):
-        return canonical(base) == canonical(head)
+        # Unchanged is fine, but an absent field is not the same as null.
+        return ("upstreamLicense" in base_manifest) == ("upstreamLicense" in head_manifest)
+    if not (isinstance(base, dict) and isinstance(head, dict)):
+        return False
     url_base, url_head = base.get("url"), head.get("url")
     if not isinstance(url_base, str) or not isinstance(url_head, str):
         return False
@@ -217,9 +214,8 @@ def check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_l
         license_mappings += [{old_up: new_up}]
         if identity:
             license_mappings += [{**identity["commits"], **{old_up: new_up}}]
-    if commit_license:
-        # Signed commits-mode opt-in: only the proven full-SHA substitution.
-        license_mappings += [commit_license]
+    # Signed commits-mode opt-in: only the proven full-SHA substitution.
+    license_mappings.extend(filter(None, [commit_license]))
     exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
     unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),
@@ -276,10 +272,9 @@ def check(doc, repository):
     require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
             "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    commit_license = None
-    if policy.get("license_commit_url") is True:
-        proof = doc["upstream_proof"]  # check_upstream proved it for commits mode
-        commit_license = {proof["base"]: proof["head"]}
+    # Signed commits-mode opt-in; check_upstream proved doc["upstream_proof"].
+    commit_license = policy.get("license_commit_url") is True and {
+        doc["upstream_proof"]["base"]: doc["upstream_proof"]["head"]}
     check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license)
 
     # Shipped build inputs may change only the upstream version; an equal
