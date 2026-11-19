@@ -1327,17 +1327,21 @@ _route_pr_to_fix_worker() {
 
 #######################################
 # Retarget direct child PRs before deleting the merged parent branch.
+# Children move to the branch the parent merges into (its baseRefName), so a
+# stack on `dev` stays on `dev`; never a hard-coded `main` (GH#39167).
 #
 # Args:
 #   $1 - parent PR number
 #   $2 - repo slug
 #   $3 - parent head ref from per-cycle PR context (optional)
+#   $4 - parent base ref from per-cycle PR context (optional)
 # Returns: 0 always (errors are non-fatal)
 #######################################
 _retarget_stacked_children() {
 	local parent_pr_number="$1"
 	local repo_slug="$2"
 	local parent_head_ref="${3:-}"
+	local parent_base_ref="${4:-}"
 	if [[ -z "$parent_head_ref" ]]; then
 		parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
 	fi
@@ -1351,15 +1355,24 @@ _retarget_stacked_children() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(gh repo view "$repo_slug" --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null || true)
-	default_branch="${default_branch:-main}"
+	local target_base="$parent_base_ref" target_source="parent-base"
+	if [[ -z "$target_base" ]]; then
+		target_base=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json baseRefName -q '.baseRefName' 2>/dev/null) || target_base=""
+	fi
+	if [[ -z "$target_base" ]] && declare -F aidevops_pr_base_branch >/dev/null 2>&1; then
+		target_base=$(aidevops_pr_base_branch "$repo_slug" "") || target_base=""
+		target_source="repo-pr-base"
+	fi
+	if [[ -z "$target_base" ]]; then
+		echo "[pulse-merge] cannot resolve parent PR #${parent_pr_number} base in ${repo_slug}; stacked children of '${parent_head_ref}' not retargeted (GH#39167)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
-		gh pr edit "$child" --repo "$repo_slug" --base "$default_branch" 2>&1 | tee -a "$LOGFILE" || true
+		echo "[pulse-merge] retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' (${target_source}) before deleting parent PR #${parent_pr_number} branch (t2412)" >>"$LOGFILE"
+		gh pr edit "$child" --repo "$repo_slug" --base "$target_base" 2>&1 | tee -a "$LOGFILE" || true
 	done <<<"$children"
 	return 0
 }

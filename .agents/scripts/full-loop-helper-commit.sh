@@ -52,6 +52,12 @@ source "${_FULL_LOOP_COMMIT_DIR}/pulse-merge-required-checks.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
 source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-validators.sh"
 
+# Shared PR base resolution (GH#39167): configured pr_base_branch, then the
+# remote default; never a hard-coded `main`.
+# shellcheck source=./shared-pr-base.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via the helper directory
+source "${_FULL_LOOP_COMMIT_DIR}/shared-pr-base.sh"
+
 # Remote readiness and pre-merge gates retain the original public source contract.
 # Resolve the sibling independently of caller-owned SCRIPT_DIR fixture paths.
 # shellcheck source=./full-loop-helper-readiness.sh
@@ -246,30 +252,74 @@ _resolve_remote_default_branch() {
 	return 1
 }
 
-# Stacked-PR base override set by `--base <branch>` (empty = remote default).
+# Stacked-PR base override set by `--base <branch>` (empty = repository PR base).
 FULL_LOOP_STACK_BASE=""
+# Repository PR base resolved once per commit-and-pr (GH#39167).
+FULL_LOOP_PR_BASE=""
+FULL_LOOP_PR_BASE_SOURCE=""
 
-# Resolve the branch a PR targets: the validated --base override when set,
-# otherwise the remote default branch.
+# Resolve the branch a PR targets: the validated --base override, then the
+# resolved repository PR base, then the remote default branch.
 _resolve_pr_base_branch() {
 	local remote_name="${1:-origin}"
 	if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
 		printf '%s\n' "$FULL_LOOP_STACK_BASE"
 		return 0
 	fi
+	if [[ -n "${FULL_LOOP_PR_BASE:-}" ]]; then
+		printf '%s\n' "$FULL_LOOP_PR_BASE"
+		return 0
+	fi
 	_resolve_remote_default_branch "$remote_name"
 	return $?
 }
 
-# Validate a --base override: must exist on origin and differ from the
-# current branch. Sets FULL_LOOP_STACK_BASE on success; an empty value
-# resets it so the remote default branch is used.
-# Args: $1=base branch (may be empty) $2=current branch
+# Fetch origin/<branch> so rebase and diff checks can use it.
+_fetch_origin_branch() {
+	local branch="$1"
+	git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" --quiet 2>/dev/null &&
+		git rev-parse --verify --quiet "refs/remotes/origin/${branch}" >/dev/null && return 0
+	return 1
+}
+
+# Resolve the repository PR base (pr_base_branch config, then the remote
+# default) via shared-pr-base.sh. Sets FULL_LOOP_PR_BASE{,_SOURCE}; empty when
+# the shared resolver is unavailable, so origin/HEAD stays the fallback.
+# Args: $1=repo slug
+_resolve_repo_pr_base() {
+	local repo_slug="$1"
+	FULL_LOOP_PR_BASE=""
+	FULL_LOOP_PR_BASE_SOURCE=""
+	declare -F aidevops_pr_base_resolve >/dev/null 2>&1 || return 0
+	local resolved="" top=""
+	top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+	resolved=$(aidevops_pr_base_resolve "$repo_slug" "$top") || return 0
+	local branch="${resolved%% *}"
+	if ! _fetch_origin_branch "$branch"; then
+		print_error "PR base '${branch}' (source: ${resolved#* }) does not exist on origin; fix pr_base_branch or the remote default"
+		return 1
+	fi
+	FULL_LOOP_PR_BASE="$branch"
+	FULL_LOOP_PR_BASE_SOURCE="${resolved#* }"
+	return 0
+}
+
+# Resolve the PR base and validate a --base override: it must differ from the
+# current branch, exist on origin, and be either the repository PR base or the
+# head of an open PR (a real stacked parent). Workers fail closed; interactive
+# sessions may target another branch with a warning (explicit human intent).
+# Sets FULL_LOOP_STACK_BASE for a stacked parent, empty otherwise.
+# Args: $1=base branch (may be empty) $2=current branch $3=repo slug
 _validate_stack_base() {
 	local stack_base="$1"
 	local current_branch="$2"
+	local repo_slug="${3:-}"
 	FULL_LOOP_STACK_BASE=""
-	[[ -n "$stack_base" ]] || return 0
+	_resolve_repo_pr_base "$repo_slug" || return 1
+	if [[ -z "$stack_base" || "$stack_base" == "${FULL_LOOP_PR_BASE:-}" ]]; then
+		[[ -n "$FULL_LOOP_PR_BASE" ]] && print_info "PR base: ${FULL_LOOP_PR_BASE} (source: ${FULL_LOOP_PR_BASE_SOURCE})"
+		return 0
+	fi
 	if [[ "$stack_base" == "$current_branch" ]]; then
 		print_error "--base must name a branch other than the current branch (${current_branch})"
 		return 1
@@ -278,13 +328,26 @@ _validate_stack_base() {
 		print_error "--base '${stack_base}' is not a valid branch name"
 		return 1
 	fi
-	if ! git fetch origin "+refs/heads/${stack_base}:refs/remotes/origin/${stack_base}" --quiet 2>/dev/null ||
-		! git rev-parse --verify --quiet "refs/remotes/origin/${stack_base}" >/dev/null; then
+	if ! _fetch_origin_branch "$stack_base"; then
 		print_error "--base branch '${stack_base}' does not exist on origin; push the parent branch first"
 		return 1
 	fi
+	local parent_rc=0 headless=0
+	[[ "${HEADLESS:-false}" == "true" || "${FULL_LOOP_HEADLESS:-}" == "true" ]] && headless=1
+	if declare -F aidevops_pr_base_is_stacked_parent >/dev/null 2>&1 && [[ -n "$repo_slug" ]]; then
+		aidevops_pr_base_is_stacked_parent "$repo_slug" "$stack_base" || parent_rc=$?
+	fi
+	if [[ "$parent_rc" -ne 0 ]]; then
+		local why="is not the head of an open PR in ${repo_slug} (not a stacked parent)"
+		[[ "$parent_rc" -eq 2 ]] && why="could not be verified as an open parent PR head (lookup failed)"
+		if [[ "$headless" -eq 1 ]]; then
+			print_error "--base '${stack_base}' ${why} and is not the PR base '${FULL_LOOP_PR_BASE:-unknown}'; refusing worker PR (GH#39167)"
+			return 1
+		fi
+		print_warning "--base '${stack_base}' ${why}; PR base is '${FULL_LOOP_PR_BASE:-unknown}'. Proceeding on explicit interactive intent."
+	fi
 	FULL_LOOP_STACK_BASE="$stack_base"
-	print_info "Stacked PR: base is origin/${stack_base} (--base)"
+	print_info "Stacked PR: base is origin/${stack_base} (--base; PR base ${FULL_LOOP_PR_BASE:-unresolved})"
 	return 0
 }
 
@@ -1464,6 +1527,34 @@ _reconcile_pr_origin_label() {
 # GH#26045: After extracting the PR number, verify/re-apply the current session
 # origin label via set_origin_label so recovered partial-success PRs cannot remain
 # unlabeled and unroutable by pulse CI/review repair workers.
+# Align a continued PR with the intended base: an explicit --base always wins;
+# otherwise a PR on a branch that is neither the PR base nor an open parent
+# PR head moves to the resolved PR base (GH#39167). A stacked continuation
+# without --base keeps its parent base.
+# Args: $1=pr_number $2=repo slug
+_retarget_continuation_pr_base() {
+	local pr_number="$1"
+	local repo="$2"
+	local target="${FULL_LOOP_STACK_BASE:-${FULL_LOOP_PR_BASE:-}}"
+	[[ -n "$target" ]] || return 0
+	local current_base="" pr_endpoint="repos/${repo}/pulls/${pr_number}"
+	current_base=$(_gh_with_timeout read gh api "$pr_endpoint" --jq '.base.ref') || return 1
+	[[ "$current_base" == "$target" ]] && return 0
+	if [[ -z "${FULL_LOOP_STACK_BASE:-}" ]]; then
+		local parent_rc=2
+		declare -F aidevops_pr_base_is_stacked_parent >/dev/null 2>&1 && parent_rc=0 &&
+			{ aidevops_pr_base_is_stacked_parent "$repo" "$current_base" || parent_rc=$?; }
+		[[ "$parent_rc" -eq 1 ]] || return 0
+	fi
+	print_info "Retargeting PR #${pr_number} base: ${current_base} -> ${target}"
+	gh api "$pr_endpoint" --method PATCH \
+		--raw-field "base=${target}" >/dev/null || {
+		print_error "Failed to retarget PR #${pr_number} to base ${target}"
+		return 1
+	}
+	return 0
+}
+
 _create_or_continue_pr() {
 	local continuation_pr="$1"
 	local repo="$2"
@@ -1475,23 +1566,26 @@ _create_or_continue_pr() {
 		print_info "Continuing existing issue-linked PR #${continuation_pr} at the final creation boundary"
 		_reconcile_pr_origin_label "$continuation_pr" "$repo" "${origin_label#origin:}" || return 1
 		_reconcile_recovered_pr_metadata "$continuation_pr" "$repo" "$pr_title" "$pr_body" || return 1
-		if [[ -n "${FULL_LOOP_STACK_BASE:-}" ]]; then
-			local current_base=""
-			current_base=$(_gh_with_timeout read gh api "repos/${repo}/pulls/${continuation_pr}" --jq '.base.ref') || return 1
-			if [[ "$current_base" != "$FULL_LOOP_STACK_BASE" ]]; then
-				print_info "Retargeting PR #${continuation_pr} base: ${current_base} -> ${FULL_LOOP_STACK_BASE}"
-				gh api "repos/${repo}/pulls/${continuation_pr}" --method PATCH \
-					--raw-field "base=${FULL_LOOP_STACK_BASE}" >/dev/null || {
-					print_error "Failed to retarget PR #${continuation_pr} to base ${FULL_LOOP_STACK_BASE}"
-					return 1
-				}
-			fi
-		fi
+		_retarget_continuation_pr_base "$continuation_pr" "$repo" || return 1
 		printf '%s\n' "$continuation_pr"
 		return 0
 	fi
 	_create_pr "$repo" "$pr_title" "$pr_body" "$origin_label" "$@"
 	return $?
+}
+
+# GH#39167: print the explicit base for PR creation and log its source; gh's
+# implicit default ignored pr_base_branch and silently targeted the default.
+# Returns 1 (no --base) only when no base resolves at all.
+_explicit_pr_create_base() {
+	local pr_base=""
+	pr_base=$(_resolve_pr_base_branch origin) || return 1
+	[[ -n "$pr_base" ]] || return 1
+	local pr_base_source="${FULL_LOOP_PR_BASE_SOURCE:-origin-head}"
+	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_base_source="--base stacked parent"
+	print_info "PR base: ${pr_base} (source: ${pr_base_source})"
+	printf '%s\n' "$pr_base"
+	return 0
 }
 
 _create_pr() {
@@ -1531,7 +1625,8 @@ _create_pr() {
 	fi
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body-file "$body_file")
 	[[ -n "$head_branch" ]] && pr_cmd+=(--head "$(_pr_head_ref_for_repo "$repo" "$head_branch")")
-	[[ -n "${FULL_LOOP_STACK_BASE:-}" ]] && pr_cmd+=(--base "$FULL_LOOP_STACK_BASE")
+	local pr_base=""
+	pr_base=$(_explicit_pr_create_base) && pr_cmd+=(--base "$pr_base")
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done

@@ -122,6 +122,8 @@ _SOURCING_FOR_TEST=1
 # Extract _create_pr
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_explicit_pr_create_base() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_reconcile_recovered_pr_metadata() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"

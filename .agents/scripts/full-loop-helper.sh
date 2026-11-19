@@ -82,7 +82,8 @@ source "${SCRIPT_DIR}/macos-local-checks.sh"
 #
 # Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--risk-level <level>] [--testing-level <level>] [--decisions <notes>] [--regression-evidence <why>] [--label <label>...] [--completion-bookkeeping --proof-pr <N> --task-id <tNNN>] [--allow-parent-close] [--keep-issue-open] [--skip-hooks] [--no-rebase] [--base <branch>]
 # --base <branch>: stacked PR. Rebase onto origin/<branch> and open the PR against it
-#   (branch must exist on origin and differ from the current branch). Default: remote default branch.
+#   (branch must exist on origin, differ from the current branch, and be an open PR head;
+#   workers fail closed otherwise). Default: pr_base_branch config, else the remote default (GH#39167).
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --keep-issue-open: interactive only; link with `For #N` (no closing keyword) and skip the
@@ -129,7 +130,7 @@ cmd_commit_and_pr() {
 		fi
 	fi
 	_validate_explicit_pr_metadata "$runtime_risk" "$testing_level" || return 1
-	_validate_stack_base "$stack_base_arg" "$branch" || return 1
+	_validate_stack_base "$stack_base_arg" "$branch" "$repo" || return 1
 	_validate_completion_bookkeeping_request "$completion_bookkeeping" "$bookkeeping_proof_pr" \
 		"$bookkeeping_task_id" "$allow_parent_close" "$repo" \
 		"${extra_labels[@]+"${extra_labels[@]}"}" || return 1

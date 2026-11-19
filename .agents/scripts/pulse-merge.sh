@@ -324,6 +324,9 @@ _PULSE_MERGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./gh-closing-reference-lib.sh
 source "${_PULSE_MERGE_DIR}/gh-closing-reference-lib.sh"
 source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
+# GH#39167: shared PR base resolver + wrong-base worker PR merge guard.
+# shellcheck source=./shared-pr-base.sh
+source "${_PULSE_MERGE_DIR}/shared-pr-base.sh"
 
 # Final duplicate-implementation fence for live interactive issue owners.
 # shellcheck source=interactive-claim-fence.sh
@@ -1152,9 +1155,16 @@ _pmp_stage_parse_and_validate() {
 	# release; the raw merge below must never publish it without authority.
 	# Not skipped for snapshot hold-for-review: the live-state gate re-reads
 	# labels, so a hold removed mid-cycle must not bypass this check.
+	local labels_csv=",${pr_labels},"
 	if [[ "$repo_slug" != "${AIDEVOPS_RELEASE_LANE_COORDINATED_REPO:-marcusquinn/aidevops}" ]] \
-		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" ",${pr_labels}," 2>>"$LOGFILE"; then
+		&& ! cloudron_release_merge_guard "$repo_slug" "$pr_number" "$pr_head_ref_oid" "$labels_csv" 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Merge pass: deferring PR #${pr_number} in ${repo_slug} — Cloudron release requires exact-head release authority (GH#37955)" >>"$LOGFILE"
+		return 1
+	fi
+	# GH#39167: a worker PR on the wrong base is retargeted or held before any
+	# conflict, CI-repair or merge routing can act on base-divergence failures.
+	if [[ "${DRY_RUN:-0}" != "1" ]] && declare -F aidevops_pr_base_merge_guard >/dev/null 2>&1 \
+		&& ! aidevops_pr_base_merge_guard "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid" "$labels_csv"; then
 		return 1
 	fi
 	# GH#24634: refresh REST-first UNKNOWN state before conflict handling.
@@ -1389,7 +1399,7 @@ _pmp_stage_pre_merge() {
 	fi
 	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
 	merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
-	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name"
+	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name" "$pr_base_ref_name"
 	# GH#37795: the full final gate (admin safety, review refresh, worker-briefed
 	# verdict, REST snapshot) runs once, immediately before each mutation
 	# (_pmp_stage_admin_merge, native auto-merge, ruleset fallbacks). Here only the
