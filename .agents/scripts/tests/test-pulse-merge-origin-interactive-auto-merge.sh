@@ -262,6 +262,53 @@ test_case5_draft_pr_blocked() {
 }
 
 # =============================================================================
+# Case 13 (GH#39158): stale interactive draft → exactly one handover, still skipped
+# Case 14: hold-for-review / no-takeover / fresh draft → no handover
+# =============================================================================
+test_case13_stale_draft_hands_over() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handovers=0
+	_interactive_pr_is_stale() { return 0; }
+	_interactive_pr_trigger_handover() { handovers=$((handovers + 1)); return 0; }
+
+	local result=0
+	_check_interactive_pr_gates "113" "owner/repo" "origin:interactive" "true" && result=0 || result=$?
+	if [[ "$result" -ne 0 && "$handovers" -eq 1 ]]; then
+		print_result "Case 13: stale interactive draft handed over once and not merged" 0
+	else
+		print_result "Case 13: stale interactive draft handed over once and not merged" 1 \
+			"result=${result} handovers=${handovers}"
+	fi
+	unset -f _interactive_pr_is_stale _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+test_case14_opted_out_or_fresh_draft_not_handed_over() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local handovers=0
+	_interactive_pr_is_stale() { return 1; }
+	_recover_interactive_pr_work_issue() { return 1; }
+	_interactive_pr_trigger_handover() { handovers=$((handovers + 1)); return 0; }
+
+	_check_interactive_pr_gates "114" "owner/repo" "origin:interactive" "true" || true
+	_interactive_pr_is_stale() { return 0; }
+	_check_interactive_pr_gates "115" "owner/repo" "origin:interactive,hold-for-review" "true" || true
+	_check_interactive_pr_gates "116" "owner/repo" "origin:interactive,no-takeover" "true" || true
+	if [[ "$handovers" -eq 0 ]]; then
+		print_result "Case 14: fresh and opted-out drafts are not handed over" 0
+	else
+		print_result "Case 14: fresh and opted-out drafts are not handed over" 1 \
+			"handovers=${handovers}"
+	fi
+	unset -f _interactive_pr_is_stale _recover_interactive_pr_work_issue _interactive_pr_trigger_handover
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Case 6: explicit allow-auto-merge label opts interactive PRs into automation.
 # =============================================================================
 test_case6_allow_auto_merge_opt_in_passes() {
@@ -466,6 +513,8 @@ main() {
 	test_case10_env_false_blocks_preferences
 	test_case11_label_overrides_env_false
 	test_case12_stale_interactive_without_claim_passes
+	test_case13_stale_draft_hands_over
+	test_case14_opted_out_or_fresh_draft_not_handed_over
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
