@@ -195,7 +195,7 @@ const EVENT_REDUCERS = new Map([
 // GH#39151: OpenCode ends a response with finish "length" when it hits the
 // request output cap; the in-flight tool call is aborted and nothing is saved.
 export const OUTPUT_LIMIT_NOTE =
-  "Your previous response hit the 32K output-token limit and its tool call was discarded; " +
+  "Your previous response hit the configured output-token limit and its tool call was discarded; " +
   "nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends).";
 
 /**
@@ -207,6 +207,10 @@ export function createOutputLimitNotice() {
   const seen = new Set();
   return {
     observe(event) {
+      if (event?.type === "session.deleted") {
+        this.forget(event.properties?.info?.id || event.properties?.sessionID);
+        return;
+      }
       if (event?.type !== "message.updated") return;
       const info = event.properties?.info || {};
       if (info.role !== "assistant" || info.finish !== "length") return;
@@ -216,7 +220,11 @@ export function createOutputLimitNotice() {
       seen.add(key);
       capSet(seen, MAX_TRACKED_IDS * 4);
       pending.add(sessionID);
-      capSet(pending, MAX_TRACKED_IDS);
+    },
+    forget(sessionID) {
+      const id = String(sessionID || "");
+      pending.delete(id);
+      for (const key of seen) if (key.startsWith(`${id}:`)) seen.delete(key);
     },
     take(sessionID) {
       const id = String(sessionID || "");
