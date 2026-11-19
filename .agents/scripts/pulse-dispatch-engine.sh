@@ -1527,15 +1527,10 @@ _dispatch_execute_candidate_loop() {
 # Returns: dispatched worker count via stdout
 #######################################
 dispatch_max() {
-	local _PULSE_ELASTIC_DISPATCH=1
+	local _PULSE_ELASTIC_DISPATCH=1 _DISPATCH_ROUND_TOPUP_STARTED_AT="" _DISPATCH_ROUND_TOPUP_CHECKED_AT=""
 	local dependency_normalization_mode="${1:-normalize}"
-	# t19122: a worker exit recorded after this capacity read may top up the
-	# round's budget (pulse-dispatch-lib-capacity.sh _dispatch_round_topup_due).
-	local _DISPATCH_ROUND_TOPUP_STARTED_AT="" _DISPATCH_ROUND_TOPUP_CHECKED_AT=""
-	_DISPATCH_ROUND_TOPUP_STARTED_AT=$(date +%s)
-	_DISPATCH_ROUND_TOPUP_CHECKED_AT="$_DISPATCH_ROUND_TOPUP_STARTED_AT"
-	local capacity_line
-	capacity_line=$(_dispatch_compute_capacity) || {
+	local capacity_line=""
+	_dispatch_round_capacity_read capacity_line || { # t19122: stamps the read for in-round top-ups
 		echo 0
 		return 0
 	}

@@ -1827,6 +1827,19 @@ _dispatch_launch_slots_set_budget() {
 # DISPATCH_ROUND_TOPUP_MAX_ROUND_S (default 1800) bounds how long a round may
 # keep absorbing exits before it ends normally and a fresh census runs.
 #######################################
+# Read the round's capacity into the named variable and stamp the read time in
+# the caller's scoped _DISPATCH_ROUND_TOPUP_STARTED_AT/_CHECKED_AT.
+# Args: output variable name. Returns: _dispatch_compute_capacity's status
+_dispatch_round_capacity_read() {
+	local output_name="$1" line="" rc=0
+	[[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_DISPATCH_ROUND_TOPUP_STARTED_AT=$(date +%s)
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT="$_DISPATCH_ROUND_TOPUP_STARTED_AT"
+	line=$(_dispatch_compute_capacity) || rc=$?
+	printf -v "$output_name" '%s' "$line"
+	return "$rc"
+}
+
 _dispatch_round_topup_trigger_file() {
 	printf '%s\n' "${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
 	return 0
