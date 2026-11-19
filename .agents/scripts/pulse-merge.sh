@@ -689,6 +689,11 @@ _pm_gate_origin_authority() {
 				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — native auto-merge hold failed; manual intervention required" >>"$LOGFILE"
 			fi
 		fi
+		# GH#39158: stale origin:interactive drafts are handed to workers.
+		if [[ "${DRY_RUN:-0}" != "1" && "$is_draft" == "true" && ",${labels_str}," == *",origin:interactive,"* ]] \
+			&& declare -F _interactive_draft_pr_try_handover >/dev/null 2>&1; then
+			_interactive_draft_pr_try_handover "$pr_number" "$repo_slug" "$labels_str" || true
+		fi
 		_PMP_HUMAN_GATED=1 # GH#38248: live draft/hold read
 		return 1
 	fi
@@ -1121,6 +1126,10 @@ _pmp_stage_parse_and_validate() {
 	if [[ "$pr_is_draft" == "$PULSE_MERGE_BOOL_TRUE" ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
 		_pmp_record_negative_verdict "$repo_slug" "$pr_obj" draft
+		# GH#39158: stale origin:interactive drafts are handed to workers.
+		if [[ "${DRY_RUN:-0}" != "1" && ",${pr_labels}," == *",origin:interactive,"* ]]; then
+			_interactive_draft_pr_try_handover "$pr_number" "$repo_slug" "$pr_labels" || true
+		fi
 		_PMP_HUMAN_GATED=1 # GH#38248
 		return 1
 	fi
