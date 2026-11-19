@@ -32,6 +32,8 @@
 # t19068: record stamps human_decision with the repo recovery policy's actions
 # fingerprint; a later added, restored, edited or withdrawn policy ends that
 # suppression too, so newly delegated authority is applied on the next pass.
+# GH#39232: a standing human_decision also suspends the permission_required
+# backoff-window re-arm (both passes); a trusted retry or revision still wakes it.
 #
 # Queue records are evidence, never authority. Its only issue write is the
 # re-armed status:blocked → status:available release (GH#33138); it never
@@ -915,6 +917,20 @@ _tbr_decision_active() {
 	return 0
 }
 
+# GH#39232 #aidevops:trust-boundary: true while this runner's brief owner has a
+# recorded human_decision for the issue that no reply or policy change has
+# ended. It suspends only the time-window re-arm of a permission hold; a
+# trusted retry or a relevant revision still releases it. Args: repo issue comments
+_tbr_human_decision_standing() {
+	local repo="$1" issue="$2" comments="$3"
+	local key=""
+	key=$(_tbr_key "$repo" "$issue")
+	# A missing or unreadable record prints nothing, so it is not standing.
+	[[ "$(jq -r '.wake // ""' "${TBR_ROOT}/decisions/${key}.json" 2>/dev/null)" == human_decision ]] || return 1
+	_tbr_decision_active "$key" "$comments" || return 1
+	return 0
+}
+
 #######################################
 # GH#33138: a circuit this runner opened projects status:blocked; GH#34846:
 # so does a runtime-owned first observation. When the hold re-arms (trusted
@@ -923,7 +939,9 @@ _tbr_decision_active() {
 # dependency blocks, permission-helper holds or maintainer holds: only a plain
 # status:blocked issue with no other hold label is touched.
 # Args: repo issue issue_json comments_json. Returns 2 on incomplete evidence
-# or writes, so the queue entry survives for a later verified pass.
+# or writes, so the queue entry survives for a later verified pass; 3 while a
+# dependency is open; 4 when a standing human_decision keeps a permission hold
+# whose window expired (GH#39232).
 #######################################
 _tbr_post_rearm_receipt() {
 	local repo="$1"
@@ -1208,6 +1226,11 @@ _tbr_release_circuit_hold() {
 		# GH#36232 #aidevops:trust-boundary: no published request to approve.
 		# Schedules one new attempt per window; it grants no permission.
 		decision=unevidenced_permission_window
+		# GH#39232: the brief owner already named the human input; only a
+		# reply, revision, retry or policy change may wake this hold.
+		if _tbr_human_decision_standing "$repo" "$issue" "$comments"; then
+			decision=decided_permission_hold
+		fi
 	elif [[ "$reason" == "$_TBC_PERMISSION_REQUIRED" ]] &&
 		terminal_blocker_permission_window_spent "$comments" "$issue_json" "$evidence"; then
 		# GH#36342 #aidevops:trust-boundary: the window re-arm already repeated
@@ -1224,6 +1247,7 @@ _tbr_release_circuit_hold() {
 	[[ "$active_rc" -lt 2 ]] || decision=indeterminate_circuit
 	printf 'rearm_decision issue=%s observed_rev=%s current_rev=%s reason=%s\n' \
 		"$issue" "$observed_rev" "$current_rev" "$decision" >&2
+	[[ "$decision" != decided_permission_hold ]] || return 4
 	[[ "$decision" == revision_changed || "$decision" == trusted_retry ||
 		"$decision" == unevidenced_permission_window || "$decision" == lifecycle_recovered ]] || return 2
 	# GH#36126: hold without a receipt while a dependency is open.
@@ -1324,11 +1348,15 @@ _tbr_rearm_window_due() {
 }
 
 # Record the checked snapshot and, for an unevidenced permission hold, its
-# next window boundary (removed when no longer applicable).
+# next window boundary (removed when no longer applicable). Optional $5
+# "decided" (GH#39232): a standing human_decision has no time-based wake, so
+# only an issue update (reply, revision, retry) re-reads the entry.
 _tbr_stamp_rearm_check() {
-	local file="$1" updated_at="$2" comments="$3" brief="$4"
+	local file="$1" updated_at="$2" comments="$3" brief="$4" decided="${5:-}"
 	local next_window=""
-	next_window=$(terminal_blocker_permission_rearm_after "$comments" "$brief" 2>/dev/null) || next_window=""
+	if [[ "$decided" != decided ]]; then
+		next_window=$(terminal_blocker_permission_rearm_after "$comments" "$brief" 2>/dev/null) || next_window=""
+	fi
 	jq --arg at "$updated_at" --arg after "$next_window" '.rearm_checked_updated_at = $at
 		| if $after == "" then del(.rearm_after) else .rearm_after = ($after | tonumber) end' "$file" >"${file}.tmp.$$" &&
 		mv -f "${file}.tmp.$$" "$file" || return 1
@@ -1495,6 +1523,12 @@ _tbr_check_entry() {
 		# not stamp rearm_checked_updated_at: a blocker closing need not touch
 		# this issue's updated_at, so every pass must recheck it.
 		[[ "$release_rc" -ne 3 ]] || return 1
+		if [[ "$release_rc" -eq 4 ]]; then
+			# GH#39232: decided permission hold. Keep the entry and its
+			# decision; the supervisor already owns it, so print nothing.
+			_tbr_stamp_rearm_check "$file" "$updated_at" "$comments" "$brief" decided || return 2
+			return 1
+		fi
 		[[ "$release_rc" -lt 2 ]] || return 2
 		rm -f "$file" "${TBR_ROOT}/decisions/${key}.json"
 		return 1
