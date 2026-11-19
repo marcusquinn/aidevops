@@ -106,7 +106,7 @@ _ensure_state_dir() {
 	local routine_id="$1"
 	local dir
 	dir="$(_state_dir "$routine_id")"
-	mkdir -p "$dir"
+	mkdir -p "$dir" || return 1
 	return 0
 }
 
@@ -144,8 +144,11 @@ _read_state() {
 		if healed_issue=$(_heal_issue_number "$raw_issue") &&
 			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
 			state="$healed_state"
-			_write_state "$routine_id" "$state"
-			_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
+			if _write_state "$routine_id" "$state"; then
+				_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
+			else
+				_log_warn "Healed issue_number for ${routine_id} to #${healed_issue} in memory only; could not write ${state_file}"
+			fi
 		else
 			_log_warn "Malformed issue_number for ${routine_id} could not be healed; fix ${state_file} manually"
 		fi
@@ -159,8 +162,8 @@ _write_state() {
 	local state_json="$2"
 	local state_file
 	state_file="$(_state_file "$routine_id")"
-	_ensure_state_dir "$routine_id"
-	echo "$state_json" >"$state_file"
+	_ensure_state_dir "$routine_id" || return 1
+	echo "$state_json" >"$state_file" || return 1
 	return 0
 }
 
@@ -1113,7 +1116,7 @@ _save_initial_state() {
 
 	local state
 	state=$(_read_state "$routine_id")
-	state=$(echo "$state" | jq \
+	if ! state=$(echo "$state" | jq \
 		--arg in "$issue_number" \
 		--arg rs "$repo_slug" \
 		--arg t "$title" \
@@ -1121,8 +1124,14 @@ _save_initial_state() {
 		--arg rt "$routine_type" \
 		--arg sl "active" \
 		--arg tc "0.00" \
-		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc')
-	_write_state "$routine_id" "$state"
+		'.issue_number = $in | .repo_slug = $rs | .title = $t | .schedule = $s | .routine_type = $rt | .status_label = $sl | .total_cost = $tc'); then
+		_log_error "Could not build state for ${routine_id} (issue #${issue_number})"
+		return 1
+	fi
+	if ! _write_state "$routine_id" "$state"; then
+		_log_error "Could not persist state for ${routine_id}; issue #${issue_number} was created but is not recorded"
+		return 1
+	fi
 	return 0
 }
 
