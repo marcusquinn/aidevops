@@ -68,6 +68,15 @@ if [[ "$*" == "api repos/testorg/manual/actions/permissions" ]]; then
 	jq -cn --arg enabled "${COMPLETION_ACTIONS_ENABLED:-true}" '{enabled:($enabled == "true")}'
 	exit 0
 fi
+# GH#39085: fresh managed-caller installs pin the latest framework release SHA.
+if [[ "$*" == *"/releases/latest --jq .tag_name" ]]; then
+	printf '%s\n' 'v3.0.0'
+	exit 0
+fi
+if [[ "$*" == *"/commits/v3.0.0 --jq .sha" ]]; then
+	printf '%s\n' '3333333333333333333333333333333333333333'
+	exit 0
+fi
 if [[ "$*" == "api repos/testorg/manual/releases/123" ]]; then
 	jq -cn --arg mode "$release_mode" '{tag_name:"v3.0.0",draft:($mode == "draft-release"),assets:
 		(if $mode == "no-assets" then [] else [{name:"plugin.zip",state:(if $mode == "unfinished-asset" then "new" else "uploaded" end),size:(if $mode == "empty-asset" then 0 else 123 end)}] end)}'
