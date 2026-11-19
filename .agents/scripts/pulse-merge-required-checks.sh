@@ -1165,6 +1165,76 @@ _pmrc_is_configured_advisory_failure() {
 	return $?
 }
 
+# t19173 / GH#39310: an external static-analysis app can fail a PR only for
+# findings in files the PR never touched (CodeFactor reports every pre-existing
+# workflow finding as new once a PR edits any workflow). A worker cannot repair
+# those within scope, so the repair loop discarded finished PRs. Such a failure
+# is advisory only with complete evidence: one latest external (non-Actions)
+# run, every annotation fetched, none on a changed path. Actions runs are
+# excluded because cross-file analysers (type checkers) report real regressions
+# in untouched files. Any read, parse or completeness gap fails closed.
+_pmrc_off_diff_annotation_evidence() {
+	local repo_slug="$1" head_sha="$2" check_name="$3"
+	local max="${PULSE_MERGE_OFF_DIFF_MAX_ANNOTATIONS:-500}" encoded="" run_json="" run_id="" pages=""
+	[[ -n "$head_sha" && "$max" =~ ^[1-9][0-9]*$ ]] || return 1
+	encoded=$(jq -rn --arg value "$check_name" '$value | @uri') || return 1
+	run_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?check_name=${encoded}&filter=latest&per_page=100" 2>/dev/null) || return 1
+	run_json=$(jq -ec --arg name "$check_name" --arg failure "$PMRC_CHECK_FAILURE" --argjson max "$max" \
+		--arg number_type "$PMRC_JSON_NUMBER" '
+		[.check_runs[]? | select(.name == $name)]
+		| if length == 1 then .[0] else error("ambiguous check run") end
+		| select((.id | type) == $number_type and .id > 0 and (.id | floor) == .id
+			and ((.app.slug // "") | length) > 0 and .app.slug != "github-actions"
+			and .conclusion == $failure
+			and (.output.annotations_count | type) == $number_type
+			and .output.annotations_count > 0 and .output.annotations_count <= $max)
+		| {id, app: .app.slug, count: .output.annotations_count}
+	' <<<"$run_json" 2>/dev/null) || return 1
+	run_id=$(jq -er '.id' <<<"$run_json") || return 1
+	pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/check-runs/${run_id}/annotations?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	jq -ec --argjson run "$run_json" --arg string_type "$PMRC_JSON_STRING" --arg array_type "$PMRC_JSON_ARRAY" '
+		(if type == $array_type and all(.[]; type == $array_type) then (add // []) else error("invalid annotation pages") end) as $annotations
+		| if ($annotations | length) != $run.count then error("partial annotations")
+		elif any($annotations[]; (.path | type) != $string_type or .path == "") then error("annotation without path")
+		else {app: $run.app, count: $run.count, paths: ($annotations | map(.path) | unique)} end
+	' <<<"$pages" 2>/dev/null
+	return $?
+}
+
+_pmrc_pr_changed_paths_json() {
+	local repo_slug="$1" pr_number="$2" pages=""
+	pages=$(_pmrc_gh_read gh api "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 1
+	# GitHub lists at most 3000 files; a list at that cap may be truncated.
+	jq -ec --arg string_type "$PMRC_JSON_STRING" --arg array_type "$PMRC_JSON_ARRAY" '
+		(if type == $array_type and all(.[]; type == $array_type) then (add // []) else error("invalid file pages") end) as $files
+		| if ($files | length) == 0 or ($files | length) >= 3000 then error("empty or capped file list")
+		elif any($files[]; (.filename | type) != $string_type or .filename == "") then error("file without name")
+		else [$files[] | .filename, (.previous_filename // empty)] | unique end
+	' <<<"$pages" 2>/dev/null
+	return $?
+}
+
+_pmrc_is_off_diff_external_failure() {
+	local name="$1" members="$2" repo_slug="$3" pr_number="$4" head_sha="$5"
+	local evidence="" changed="" summary=""
+	[[ "$members" == "${name}@check_run" ]] || return 1
+	evidence=$(_pmrc_off_diff_annotation_evidence "$repo_slug" "$head_sha" "$name") || return 1
+	changed=$(_pmrc_pr_changed_paths_json "$repo_slug" "$pr_number") || return 1
+	# Stream both documents over stdin: up to 3000 paths can exceed the OS
+	# per-argument limit through --argjson (GH#28164).
+	summary=$(printf '%s\n%s\n' "$evidence" "$changed" | jq -ser '
+		if length != 2 then error("invalid off-diff evidence") else . end
+		| .[0] as $evidence | .[1] as $changed
+		| $evidence
+		| select(any(.paths[]; . as $path | ($changed | index($path)) != null) | not)
+		| "app=\(.app) annotations=\(.count) paths=\(.paths | length)"
+	' 2>/dev/null) || return 1
+	printf '%s\n' "$summary"
+	return 0
+}
+
 #######################################
 # Classify one terminal non-required failure. Logs the reason when advisory.
 # Args: $1=name $2=members $3=link $4=checks_json $5=configured_contexts_json
@@ -1181,7 +1251,7 @@ _pmrc_nonrequired_failure_is_advisory() {
 	local repo_slug="$7"
 	local pr_number="$8"
 	local head_sha="$9"
-	local subject="for PR #${pr_number} in ${repo_slug}"
+	local subject="for PR #${pr_number} in ${repo_slug}" off_diff=""
 
 	if declare -F _ci_check_url_has_infra_failure_log >/dev/null 2>&1 &&
 		_ci_check_url_has_infra_failure_log "$repo_slug" "$link"; then
@@ -1199,6 +1269,10 @@ _pmrc_nonrequired_failure_is_advisory() {
 	fi
 	if _pmrc_is_configured_advisory_failure "$name" "$configured_contexts_json" "$evidence_json" "$repo_slug" "$pr_number" "$head_sha"; then
 		echo "[pulse-merge] pre-merge snapshot: IGNORED configured non-required review-provider failure '${name}' with typed current-head review evidence ${subject}" >>"$LOGFILE"
+		return 0
+	fi
+	if off_diff=$(_pmrc_is_off_diff_external_failure "$name" "$members" "$repo_slug" "$pr_number" "$head_sha"); then
+		echo "[pulse-merge] pre-merge snapshot: IGNORED non-required external check '${name}' whose annotation(s) all lie outside the PR diff (${off_diff}) ${subject} (t19173)" >>"$LOGFILE"
 		return 0
 	fi
 	return 1
