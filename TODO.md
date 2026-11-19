@@ -2245,7 +2245,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19120 feat(recovery-policy): delegable scope_acceptance action for source-exhausted phase holds #auto-dispatch #feat ref:GH#39113
 
-- [ ] t19121 fix(planning): protected-branch planning PR fallback overwrites newer default-branch TODO rows from a stale caller snapshot #auto-dispatch #bug #priority:high ref:GH#39120
+- [ ] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130
 
 ## In Progress
 
