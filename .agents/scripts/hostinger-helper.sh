@@ -846,6 +846,7 @@ _sds_cf() {
     local method="$1"
     local path="$2"
     local body="${3:-}"
+    # shellcheck disable=SC2016 # inline script must expand in the child shell, not here
     SDS_METHOD="$method" SDS_PATH="$path" SDS_BODY="$body" SDS_TOKEN_NAME="$SDS_CF_SECRET" \
         aidevops secret "$SDS_CF_SECRET" -- bash -c '
         args=(-sS --max-time 30 -K - -X "$SDS_METHOD" -H "Content-Type: application/json")
