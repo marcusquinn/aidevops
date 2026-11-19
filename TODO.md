@@ -2294,9 +2294,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19158 perf(gh-transport): replay counted-list page frames (total_count) so unchanged check-run and status reads cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19158-brief.md] ref:GH#39244 pr:#39245 completed:2026-11-19
 
-- [ ] t19157 feat(session-bus): issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker dependency pointers #feat #interactive tier:standard -> [todo/tasks/t19157-brief.md] ref:GH#39240 assignee:marcusquinn logged:2026-11-19 started:2026-11-19
+- [x] t19157 feat(session-bus): issue watches relay worker/runner progress to interactive sessions; cross-runner who hint; worker dependency pointers #feat #interactive tier:standard -> [todo/tasks/t19157-brief.md] ref:GH#39240 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 pr:#39246 completed:2026-11-19
 
-- [ ] t19159 fix(bounded-operation): completion-mode drain test reports failed under host load (GH#33747 test) #auto-dispatch #bug tier:standard ref:GH#39251 logged:2026-11-19
+- [x] t19159 fix(bounded-operation): completion-mode drain test reports failed under host load (GH#33747 test) #auto-dispatch #bug tier:standard ref:GH#39251 logged:2026-11-19 pr:#39252 completed:2026-11-19
 
 - [ ] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19
 
