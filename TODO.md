@@ -2302,7 +2302,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19161 docs(full-loop): point the GH#27137 review-thread merge block at pr-review-thread-response-scanner reply/resolve #auto-dispatch #feat tier:simple ref:GH#39257 logged:2026-11-19 pr:#39259 completed:2026-11-19
 
-- [ ] t19162 fix(full-loop): privacy pre-scan is stricter than the pre-push hook and blocks already-public content #bug #interactive ref:GH#39261 logged:2026-11-19 -> [todo/tasks/t19162-brief.md]
+- [x] t19162 fix(full-loop): privacy pre-scan is stricter than the pre-push hook and blocks already-public content #bug #interactive ref:GH#39261 logged:2026-11-19 -> [todo/tasks/t19162-brief.md] pr:#39263 completed:2026-11-19
 
 ## In Progress
 
@@ -5930,3 +5930,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 pr:#38315 completed:2026-11-15
 - [x] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107 pr:#38127 completed:2026-11-19
+
+- [ ] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222
