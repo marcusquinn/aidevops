@@ -2263,6 +2263,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19134 perf(gh-shim): remove per-call bash forks from instrumentation, path resolution and cooldown preflight #performance #interactive tier:standard -> [todo/tasks/t19134-brief.md] ref:GH#39187
 
+- [ ] t19135 test(zsh-compat): stub _gh_timeout_cooldown_preflight so the _gh_with_timeout zsh guard passes again #auto-dispatch #bug tier:simple -> [todo/tasks/t19135-brief.md] ref:GH#39189
+
+- [ ] t19136 fix(pulse-dispatch): parse macOS kern.boottime sec, not usec, so the post-boot dispatch ramp engages #auto-dispatch #bug tier:simple -> [todo/tasks/t19136-brief.md] ref:GH#39190
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
