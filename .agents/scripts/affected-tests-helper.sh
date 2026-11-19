@@ -278,12 +278,15 @@ for suite in ordered:
         # t19150: point reviewers at the tracking issue for inherited red.
         title = "red-main: %s" % Path(suite).name
         link = "search open issues for '%s'" % title
-        if shutil.which("gh") and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+        gh_path = shutil.which("gh")
+        if gh_path and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
             jq = r'.[] | select(.title == "%s") | "#\(.number)"' % title
+            gh_args = [gh_path] + "issue list --state open --search".split() + ['"%s" in:title' % title,
+                       "--json", "number,title", "--jq", jq]
             try:
-                found = subprocess.run("gh issue list".split() + ["--state", "open", "--search", '"%s" in:title' % title,
-                                        "--json", "number,title", "--jq", jq],
-                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout.split()
+                # Fixed argv, absolute gh path, no shell; title derives from a repo suite filename.
+                found = subprocess.run(  # nosec B603
+                    gh_args, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout.split()
                 if found:
                     link = "tracked by " + found[0]
             except (subprocess.SubprocessError, OSError):
