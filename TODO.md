@@ -2284,6 +2284,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19146 fix(pulse-merge): close PRs whose non-closing issue is completed and whose diff is empty or a stale planning row #auto-dispatch #bug tier:standard -> [todo/tasks/t19146-brief.md] ref:GH#39213 pr:#39216 completed:2026-11-19
 
+- [x] t19131 fix(tests): test-browser-qa-helper runtime-check configured-executable case drifted from GH#36325 chromium selector precedence #auto-dispatch #bug tier:simple -> [todo/tasks/t19131-brief.md] ref:GH#39173 pr:#39175 completed:2026-11-19
+
+- [ ] t19155 ci: run test-browser-qa-helper.sh in required Framework Validation (core) shard #auto-dispatch #feat tier:simple -> [todo/tasks/t19155-brief.md] ref:GH#39234 logged:2026-11-19
+
+- [ ] t19156 fix(ci): affected-tests-helper ignores .mjs/.cjs/.js/.ts script changes, so JS runtime regressions never select their shell suites #auto-dispatch #bug tier:simple -> [todo/tasks/t19156-brief.md] ref:GH#39235 logged:2026-11-19
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
