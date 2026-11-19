@@ -50,6 +50,8 @@ _pr_comment_guarded() {
 		--repo=*) repo="${arg#--repo=}" ;;
 		-R?*) repo="${arg#-R}" ;;
 		--*=* | --) ;;
+		# Value-less flags must not swallow the next argument.
+		--editor | -e | --web | -w | --edit-last | --delete-last | --create-if-none | --yes) ;;
 		-*) skip_value=1 ;;
 		*) [[ -n "$target" ]] || target="$arg" ;;
 		esac
