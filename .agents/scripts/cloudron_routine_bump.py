@@ -44,11 +44,11 @@ from cloudron_release_identity import (
     release_identity, require, substitute_versions,
 )
 from cloudron_companion_image import companion_proof, companion_verify_file, companion_pinned_changes_ok
+from cloudron_manifest_fields import check_manifest_fields, commit_license_mapping
 
 MANIFEST = "CloudronManifest.json"
 POLICY_KIND = "cloudron-standing-upstream-release"
 POLICY_FILE_CLASSES = ("changelog_files", "pinned_files", "check_files")
-VERSION_KEYS = ("version", "upstreamVersion")
 MAX_FILES = 20
 MAX_PATTERN = 500
 # Patterns are applied with fullmatch, so a trailing newline never qualifies.
@@ -143,23 +143,6 @@ def check_upstream(doc, policy, old_up, new_up):
     require(new_up.lstrip("v") == finding, "upstreamVersion must equal the monitor finding")
 
 
-def license_changes_ok(base_manifest, head_manifest, mappings):
-    """upstreamLicense may differ only by the proven release-commit or version substitution."""
-    base, head = base_manifest.get("upstreamLicense"), head_manifest.get("upstreamLicense")
-    if canonical(base) == canonical(head):
-        # Unchanged is fine, but an absent field is not the same as null.
-        return ("upstreamLicense" in base_manifest) == ("upstreamLicense" in head_manifest)
-    if not (isinstance(base, dict) and isinstance(head, dict)):
-        return False
-    url_base, url_head = base.get("url"), head.get("url")
-    if not isinstance(url_base, str) or not isinstance(url_head, str):
-        return False
-    rest_base = {key: value for key, value in base.items() if key != "url"}
-    rest_head = {key: value for key, value in head.items() if key != "url"}
-    return canonical(rest_base) == canonical(rest_head) \
-        and any(substitute_versions(url_base, candidate) == url_head for candidate in mappings)
-
-
 def insertion_pattern(policy):
     value = policy.get("check_insertion_pattern")
     if value is None:
@@ -193,36 +176,6 @@ def check_file_changes(name, base_text, head_text, mapping, pattern):
         for line in actual[start:end]:
             require(pattern is not None and pattern.fullmatch(line) is not None,
                     name + ": inserted line does not match the signed insertion pattern")
-
-
-def canonical(value):
-    """Type-exact comparison: Python treats True == 1 and 1 == 1.0."""
-    return json.dumps(value, sort_keys=True, allow_nan=False)
-
-
-def check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license=None):
-    """Keep non-version fields fixed unless a signed proof permits the license URL."""
-    old_up, new_up = base_manifest.get("upstreamVersion"), head_manifest.get("upstreamVersion")
-    # Without a signed release identity or license_version_url the policy permits
-    # no manifest field change beyond the version keys; with one, upstreamLicense
-    # may also change by the proven release-commit and/or whole-token upstream
-    # version substitution (checked separately).
-    license_mappings = []
-    if identity:
-        license_mappings += [identity["commits"]]
-    if pins["license"]:
-        license_mappings += [{old_up: new_up}]
-        if identity:
-            license_mappings += [{**identity["commits"], **{old_up: new_up}}]
-    # Signed commits-mode opt-in: only the proven full-SHA substitution.
-    license_mappings.extend(filter(None, [commit_license]))
-    exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
-    unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
-    require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),
-            "manifest changes beyond version and upstreamVersion")
-    require(not license_mappings or license_changes_ok(base_manifest, head_manifest, license_mappings),
-            "manifest changes beyond version and upstreamVersion: upstreamLicense.url "
-            "is outside the permitted substitution")
 
 
 def check(doc, repository):
@@ -272,10 +225,7 @@ def check(doc, repository):
     require(pins["checksum"] is None or pins["version"] == new_up.lstrip("v"),
             "release_checksum: proof is not for the new upstream version")
     require(old_up != old_version, "package and upstream versions are ambiguous")
-    # Signed commits-mode opt-in; check_upstream proved doc["upstream_proof"].
-    commit_license = policy.get("license_commit_url") is True and {
-        doc["upstream_proof"]["base"]: doc["upstream_proof"]["head"]}
-    check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license)
+    check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_license_mapping(doc, policy))
 
     # Shipped build inputs may change only the upstream version; an equal
     # package-version token there could be an unrelated dependency pin.
