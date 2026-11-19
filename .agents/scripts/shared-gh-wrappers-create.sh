@@ -695,6 +695,7 @@ _gh_ci_ensure_derived_status_label() {
 _gh_ci_origin_label_unavailable() {
 	local target_repo="$1"
 	local origin_label="$2"
+	local caller="${3:-gh_create_issue}"
 	local snapshot=""
 	[[ -n "$target_repo" && -n "$origin_label" ]] || return 1
 	case ",${_ORIGIN_LABELS_FAILED}," in
@@ -707,7 +708,7 @@ _gh_ci_origin_label_unavailable() {
 	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 1
 	snapshot=$(_gh_managed_label_names_snapshot "$target_repo" 2>/dev/null) || return 1
 	_gh_managed_label_snapshot_has "$snapshot" "$origin_label" && return 1
-	print_info "[INFO] gh_create_issue: ${origin_label} is absent on ${target_repo} and cannot be provisioned; creating without the derived origin label"
+	print_info "[INFO] ${caller}: ${origin_label} is absent on ${target_repo} and cannot be provisioned; creating without the derived origin label"
 	return 0
 }
 
@@ -1290,8 +1291,8 @@ gh_create_pr() {
 	# wrapper's --label "$session_origin_label" produces two distinct origin
 	# labels on the resulting PR. Canonical failure: PR #21825.
 	local -a _origin_label_args=()
+	local origin_label=""
 	if ! _gh_wrapper_args_have_origin_label "$@"; then
-		local origin_label
 		origin_label=$(session_origin_label)
 		_origin_label_args=(--label "$origin_label")
 	fi
@@ -1300,6 +1301,19 @@ gh_create_pr() {
 		_draft_args=(--draft)
 	fi
 	_ensure_origin_labels_for_args "$@"
+	# GH#39054: match gh_create_issue — when the wrapper-derived origin label is
+	# confirmed absent and cannot be provisioned (no upstream write authority),
+	# create without it and defer provenance to repository triage instead of
+	# failing the whole create. Caller-supplied origins are never dropped.
+	local origin_deferred=0
+	if [[ -n "$origin_label" ]]; then
+		local origin_target_repo=""
+		origin_target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
+		if _gh_ci_origin_label_unavailable "$origin_target_repo" "$origin_label" gh_create_pr; then
+			_origin_label_args=()
+			origin_deferred=1
+		fi
+	fi
 
 	# t2115: auto-append signature footer when body lacks one
 	_gh_wrapper_auto_sig "$@"
@@ -1347,7 +1361,15 @@ gh_create_pr() {
 		fi
 		rc=$?
 	fi
-	if [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
+	if [[ "$is_help" -eq 0 && "$origin_deferred" -eq 1 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
+		# Deferred provenance still requires a verifiable durable PR identity.
+		if _gh_create_pr_resolve_durable_identity "$pr_output" "$@"; then
+			rc=0
+		else
+			printf '[aidevops] gh_create_pr: create returned without a verifiable durable PR identity; refusing ordinary success\n' >&2
+			rc="$_GH_PR_CREATE_PARTIAL_RC"
+		fi
+	elif [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
 		local postcondition_rc=0
 		_gh_create_pr_enforce_origin_postcondition "$pr_output" "$expected_origin_label" "$@" \
 			|| postcondition_rc=$?
