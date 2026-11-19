@@ -624,15 +624,17 @@ _full_loop_verify_pr_readiness() {
 _full_loop_enforce_review_thread_gate() {
 	local pr_number="$1"
 	local repo="$2"
-	local thread_count="" thread_msg=""
+	local thread_count="" thread_msg="" thread_hint=""
 	if ! thread_count=$(review_thread_gate_unresolved_bot_count "$repo" "$pr_number"); then
 		thread_msg="Merge blocked: unable to verify review-bot threads for PR #${pr_number} (GH#27137)"
 	elif [[ "$thread_count" -gt 0 ]]; then
 		thread_msg="Merge blocked: ${thread_count} unresolved review-bot thread(s) (GH#27137) on PR #${pr_number}; resolve or classify them first"
+		thread_hint="pr-review-thread-response-scanner.sh scan-pr ${repo} ${pr_number} (thread_id:url pairs in column 3); after reading and verifying each finding: pr-review-thread-response-scanner.sh reply ${repo} <thread_id> <body_file>, then pr-review-thread-response-scanner.sh resolve ${repo} <thread_id>"
 	fi
 	if [[ -n "$thread_msg" ]]; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_BLOCKER_REVIEW_BOT"
 		print_error "$thread_msg"
+		[[ -z "$thread_hint" ]] || print_info "Review threads: ${thread_hint}" >&2
 		return 1
 	fi
 	return 0
