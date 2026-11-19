@@ -538,7 +538,9 @@ Usage:
 
 Commands:
   generate      Output the signature line (no leading ---)
-  footer        Output the full footer block (--- + newline + signature)
+  footer        Output the full footer block (--- + newline + signature),
+                including the <!-- aidevops:origin:* --> and <!-- aidevops:sig -->
+                markers; do not add them to the body by hand
   record-child  Log a subagent's token usage to the parent session's ledger
   help          Show this help
 
