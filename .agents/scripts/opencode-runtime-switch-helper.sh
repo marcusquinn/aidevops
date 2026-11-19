@@ -120,6 +120,15 @@ _refine_owner() {
 	return 0
 }
 
+# First line of "<opencode> --version", read without an early-exit pipe reader.
+_version_line() {
+	local path="$1"
+	local output=""
+	output=$("$path" --version 2>/dev/null || true)
+	printf '%s\n' "${output%%$'\n'*}"
+	return 0
+}
+
 _load_state() {
 	local resolved="" owner="" path="" real=""
 	resolved=$(_resolve_global 2>/dev/null || printf 'none\t')
@@ -134,7 +143,7 @@ _load_state() {
 	real=$(_realpath "$path")
 	GLOBAL_OWNER=$(_refine_owner "$owner" "$real")
 	GLOBAL_PACKAGE=$(_package_for_path "$real")
-	GLOBAL_VERSION=$("$path" --version 2>/dev/null | head -n 1 || true)
+	GLOBAL_VERSION=$(_version_line "$path")
 	GLOBAL_SEMVER=$(aidevops_parse_semver "$GLOBAL_VERSION" || true)
 	GLOBAL_PROFILE=$(_profile_helper installed "$path" || true)
 	return 0
@@ -451,7 +460,7 @@ _verify_stable() {
 		printf 'The opencode command on PATH is not OpenCode 1 yet. Check: which -a opencode\n' >&2
 		return 1
 	fi
-	version=$("$path" --version 2>/dev/null | head -n 1 || true)
+	version=$(_version_line "$path")
 	_step_done "opencode now reports ${version:-OpenCode 1} (${path})"
 	return 0
 }
