@@ -13,6 +13,10 @@
 
 set -uo pipefail
 
+# Keep PR-identity validation independent of the host worker runtime: headless
+# sessions otherwise stamp origin:worker, which requires a `For #N` body line.
+export AIDEVOPS_SESSION_ORIGIN=interactive
+
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
 TEST_NATIVE_GIT=$(command -p -v git) || {
