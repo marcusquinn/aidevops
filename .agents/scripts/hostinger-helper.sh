@@ -1021,6 +1021,10 @@ _sds_run() {
         print_error "Missing dependency: timeout (GNU coreutils; gtimeout on macOS via brew install coreutils)" >&2
         return 1
     fi
+    if [[ "$apply" == "1" ]] && ! { openssl s_client -help 2>&1 | grep -q -e '-verify_hostname'; }; then
+        print_error "Missing dependency: openssl with s_client -verify_hostname support (OpenSSL 1.1+; LibreSSL may lack it)" >&2
+        return 1
+    fi
     username=$(_sds_resolve_username "$apex") || return 1
     if _sds_subdomain_names "$username" "$apex" | grep -qxF -e "$name" -e "$fqdn"; then
         exists_sub=1
