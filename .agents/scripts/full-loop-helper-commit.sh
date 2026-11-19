@@ -1589,6 +1589,19 @@ _explicit_pr_create_base() {
 	return 0
 }
 
+# GH#39210: run the PR create command; --ready scopes AIDEVOPS_PR_CREATE_READY=1
+# to this single call (never exported).
+_run_pr_create_cmd() {
+	local ready="$1"
+	shift
+	if [[ "$ready" -eq 1 ]]; then
+		AIDEVOPS_PR_CREATE_READY=1 "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -1636,11 +1649,7 @@ _create_pr() {
 		rm -f "$body_file"
 		return 1
 	}
-	if [[ "${create_ready:-0}" -eq 1 ]]; then
-		pr_url=$(AIDEVOPS_PR_CREATE_READY=1 "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
-	else
-		pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
-	fi
+	pr_url=$(_run_pr_create_cmd "${create_ready:-0}" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
