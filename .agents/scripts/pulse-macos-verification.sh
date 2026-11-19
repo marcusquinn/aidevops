@@ -31,7 +31,7 @@ text = sys.stdin.read().replace(os.environ["HOME"], "~").replace("`", "\x27")
 sys.stdout.write(re.sub(r"[^\x20-\x7e\n\t]", "", text))'
 		printf '\n```\n'
 	} >"$body"
-	bash "$_PULSE_MACOS_DIR/gh-write-helper.sh" pr comment "$pr" --repo "$repo" --body-file "$body" || return 1
+	bash "$_PULSE_MACOS_DIR/gh-write-helper.sh" pr comment "$pr" --repo "$repo" --body-file "$body" --allow-approval-stale || return 1
 	return 0
 }
 
