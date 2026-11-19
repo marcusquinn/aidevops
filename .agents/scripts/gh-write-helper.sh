@@ -61,9 +61,10 @@ _pr_comment_guarded() {
 		if [[ -z "$repo" && "$target" =~ github\.com/([^/]+/[^/]+)/pull/ ]]; then
 			repo="${BASH_REMATCH[1]}"
 		fi
-		if [[ "$n" =~ ^[1-9][0-9]*$ && -x "${SCRIPT_DIR}/approval-helper.sh" ]]; then
+		local approval_helper="${AIDEVOPS_APPROVAL_HELPER:-${SCRIPT_DIR}/approval-helper.sh}"
+		if [[ "$n" =~ ^[1-9][0-9]*$ && -x "$approval_helper" ]]; then
 			local out="" rc=0 last=""
-			out=$("${SCRIPT_DIR}/approval-helper.sh" verify pr "$n" ${repo:+"$repo"} 2>/dev/null) || rc=$?
+			out=$("$approval_helper" verify pr "$n" ${repo:+"$repo"} 2>/dev/null) || rc=$?
 			last=$(printf '%s\n' "$out" | tail -n 1)
 			if [[ "$rc" == 0 && "$last" == "VERIFIED" ]]; then
 				printf 'PR #%s has a verified signed approval; a new PR comment would stale it. Post on the linked issue, or pass --allow-approval-stale.\n' "$n" >&2
