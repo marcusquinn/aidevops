@@ -459,6 +459,50 @@ test_case_5_env_threshold_override() {
 	return 0
 }
 
+# =============================================================================
+# Case (6): GH#39084 — CLEAN + aged request + green → recover; CLEAN + fresh
+# request → keep deferring to GitHub (t3070).
+# =============================================================================
+test_case_6_clean_aged_request_recovers() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local state_file="${TEST_ROOT}/pr_state.json"
+	jq '.mergeStateStatus = "CLEAN"' "$state_file" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+
+	local result=0
+	_set_native_auto_merge_or_skip "600" "owner/repo" "0" "APPROVED" "stuck-head" || result=$?
+	if [[ "$result" -ne 1 ]] || ! grep -qE 'auto_merge stuck.*in CLEAN\+MERGEABLE.*t3192' "$LOGFILE" ||
+		grep -qE 'deferring to GitHub \(t3070\)' "$LOGFILE"; then
+		print_result "Case (6a): CLEAN + aged request → synchronous recovery" 1 \
+			"Expected exit 1 with CLEAN t3192 log, got ${result}. pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (6a): CLEAN + aged request → synchronous recovery, no t3070 deferral" 0
+	teardown_test_env
+
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local enabled_at_recent
+	enabled_at_recent=$(date -u -d '2 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| date -u -v-2M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| echo '2026-04-30T15:58:00Z')
+	state_file="${TEST_ROOT}/pr_state.json"
+	jq --arg at "$enabled_at_recent" '.mergeStateStatus = "CLEAN" | .autoMergeRequest.enabledAt = $at' \
+		"$state_file" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+	result=0
+	_set_native_auto_merge_or_skip "601" "owner/repo" "0" "APPROVED" "stuck-head" || result=$?
+	if [[ "$result" -ne 0 ]] || ! grep -qE 'auto_merge already set.*t3070' "$LOGFILE"; then
+		print_result "Case (6b): CLEAN + fresh request → defer to GitHub" 1 \
+			"Expected exit 0 with t3070 log, got ${result}. pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (6b): CLEAN + fresh request → keeps t3070 deferral" 0
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_1_stuck_falls_through
 	test_case_2_under_threshold_defers
@@ -468,6 +512,7 @@ main() {
 	test_case_4c_fresh_changes_requested_defers
 	test_case_4d_unavailable_review_refresh_defers
 	test_case_5_env_threshold_override
+	test_case_6_clean_aged_request_recovers
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
