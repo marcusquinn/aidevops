@@ -99,6 +99,8 @@ GH_CREATE_RESPONSE_URL=""
 GH_REMOTE_CONTENT_RESPONSE=""
 GH_REMOTE_CONTENT_FAIL=""
 GH_LABELS_RESPONSE=""
+GH_LOCK_COUNT_RESPONSE="0"
+GH_LOCK_COUNT_FAIL=""
 : >"$GH_CALLS_LOG"
 
 # =============================================================================
@@ -150,6 +152,12 @@ gh() {
 	done
 	if [[ "$1" == "api" && "$2" == "repos/owner/repo" ]]; then
 		printf 'main\n'
+		return 0
+	fi
+	# GH#39315: consolidation-lock marker count for normalization.
+	if [[ "$1" == "api" && "$2" == repos/owner/repo/issues/*/comments ]]; then
+		[[ -z "$GH_LOCK_COUNT_FAIL" ]] || return 1
+		printf '%s\n' "$GH_LOCK_COUNT_RESPONSE"
 		return 0
 	fi
 	if [[ "$1" == "api" && "$2" == "--method" && "$3" == "GET" && "$4" == repos/owner/repo/contents/* ]]; then
@@ -338,6 +346,28 @@ assert_eq \
 	"normalization avoids ad hoc issue-edit mutations" \
 	"0" \
 	"$(grep -cF 'gh issue edit' "$GH_CALLS_LOG" || true)"
+# GH#39315: a live cross-runner consolidation lock, or a failed lock lookup,
+# keeps consolidation-in-progress while still clearing consolidated.
+for _lock_case in live failed; do
+	: >"$GH_CALLS_LOG"
+	if [[ "$_lock_case" == "live" ]]; then
+		GH_LOCK_COUNT_RESPONSE="1"
+	else
+		GH_LOCK_COUNT_FAIL="1"
+	fi
+	_large_file_gate_normalize_debt_issue "18706" "owner/repo"
+	_lock_call=$(grep -F 'set_issue_status 18706 owner/repo available' "$GH_CALLS_LOG" | tail -1)
+	assert_contains \
+		"${_lock_case} consolidation lock still clears consolidated" \
+		"--remove-label consolidated --remove-label needs-consolidation" \
+		"$_lock_call"
+	assert_eq \
+		"${_lock_case} consolidation lock preserves consolidation-in-progress" \
+		"0" \
+		"$(printf '%s\n' "$_lock_call" | grep -cF 'consolidation-in-progress' || true)"
+	GH_LOCK_COUNT_RESPONSE="0"
+	GH_LOCK_COUNT_FAIL=""
+done
 issue_brief_hold_blocks_auto_release() { return 0; }
 : >"$GH_CALLS_LOG"
 _large_file_gate_normalize_debt_issue "18706" "owner/repo"
