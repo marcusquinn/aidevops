@@ -2304,9 +2304,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19162 fix(full-loop): privacy pre-scan is stricter than the pre-push hook and blocks already-public content #bug #interactive ref:GH#39261 logged:2026-11-19 -> [todo/tasks/t19162-brief.md] pr:#39263 completed:2026-11-19
 
-- [ ] t19163 fix(decisions): the --max cap fills up on the first repo alphabetically and hides every other repo's holds #bug #interactive ref:GH#39266 logged:2026-11-19 -> [todo/tasks/t19163-brief.md]
+- [x] t19163 fix(decisions): the --max cap fills up on the first repo alphabetically and hides every other repo's holds #bug #interactive ref:GH#39266 logged:2026-11-19 -> [todo/tasks/t19163-brief.md] pr:#39267 completed:2026-11-19
 
-- [ ] t19167 fix(decisions): holds the recovery supervisor marked as needing a human never reach /decisions #bug ref:GH#39275
+- [x] t19167 fix(decisions): holds the recovery supervisor marked as needing a human never reach /decisions #bug ref:GH#39275 pr:#39277 completed:2026-11-19
 
 ## In Progress
 
