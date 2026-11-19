@@ -1546,8 +1546,13 @@ _repo_allows_auto_merge() {
 # sits indefinitely. Observed 2026-04-30 on PRs that sat 8-9h despite
 # 100% required-check SUCCESS and `mergeable=MERGEABLE`.
 #
+# GH#39084: a request armed while BLOCKED may also never fire after the
+# blocker clears without a check/push event (e.g. a ruleset edit), leaving the
+# PR CLEAN and unmerged for days. A CLEAN PR with an aged request is the same
+# wedge: GitHub would have merged it within seconds if it were going to.
+#
 # Stuck means ALL of:
-#   * mergeStateStatus == BLOCKED
+#   * mergeStateStatus == BLOCKED or CLEAN
 #   * mergeable == MERGEABLE
 #   * reviewDecision is known-safe for this already-gated cycle
 #   * autoMergeRequest.enabledAt > $threshold seconds ago
@@ -1573,7 +1578,7 @@ _auto_merge_stuck_seconds() {
 
 	# Glob form (unquoted RHS inside [[ ]]) avoids adding new repeated string
 	# literals — the validator counts only quoted 4+-char literals.
-	[[ "$merge_state" == BLOCKED ]] || return 1
+	[[ "$merge_state" == BLOCKED || "$merge_state" == CLEAN ]] || return 1
 	[[ "$mergeable" == MERGEABLE ]] || return 1
 	[[ -n "$enabled_at" ]] || return 1
 
@@ -1803,7 +1808,9 @@ _handle_existing_native_auto_merge() {
 	local stuck_seconds=""
 	if stuck_seconds=$(_auto_merge_stuck_seconds "$pr_number" "$repo_slug" "$pr_state"); then
 		local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
+		local stuck_state=""
+		stuck_state=$(printf '%s' "$pr_state" | jq -r '.mergeStateStatus // "unknown"' 2>/dev/null) || stuck_state="unknown"
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${stuck_seconds}s (>${threshold}s) in ${stuck_state}+MERGEABLE with no failing/pending required checks — attempting synchronous recovery (t3192)" >>"$LOGFILE"
 		stop_rc=0
 		_stop_external_native_auto_merge "$pr_number" "$repo_slug" \
 			"stale wedge recovery requires a fresh synchronous merge (GH#26897)" || stop_rc=$?
@@ -1854,8 +1861,8 @@ _handle_existing_native_auto_merge() {
 # next pulse cycle to detect green.
 #
 # Decision tree:
-#   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
-#                                                             t3192 stuck fallback)
+#   * PR already has auto_merge set + STUCK green (BLOCKED or CLEAN, aged
+#     request) → return 1 (caller --admin path, t3192/GH#39084 stuck fallback)
 #   * PR already has auto_merge set + stale pending → return 0 (non-terminal;
 #                                                               keep deferring)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub
