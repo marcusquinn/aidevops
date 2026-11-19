@@ -63,13 +63,18 @@ test_bytes = {str(t.relative_to(root)): t.read_bytes() for t in tests}
 source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
 script_token = re.compile(r"[A-Za-z0-9_.-]+\.sh")
 
+
+def read_lines(path):
+    return path.read_text(errors="replace").splitlines()
+
+
 # GH#39221: reverse sourcing graph over production scripts (sourced -> sourcers),
 # so a changed shared library also selects suites naming its transitive consumers.
 scripts = [p for p in sorted(root.glob(".agents/scripts/*.sh")) if p.is_file()]
 script_names = {p.name for p in scripts}
 consumers = {}
 for script in scripts:
-    for line in script.read_text(errors="replace").splitlines():
+    for line in read_lines(script):
         match = source_line.match(line)
         if match:
             for token in set(script_token.findall(match.group(1))):
@@ -121,7 +126,7 @@ selected = set(distance)
 sourcers = {}
 for test in tests:
     rel = str(test.relative_to(root))
-    for line in test.read_text(errors="replace").splitlines():
+    for line in read_lines(test):
         match = source_line.match(line)
         if not match:
             continue
@@ -152,8 +157,11 @@ for suite in sorted(selected):
 ordered = sorted(resolved, key=lambda suite: (resolved[suite], suite))
 if args.command == "all":
     # t19150: scheduled main-health mode: every root suite, no cap, no base comparison.
-    # Sourced-only modules are skipped; their root suites exercise them.
-    ordered = [str(t.relative_to(root)) for t in tests if str(t.relative_to(root)) not in sourcers]
+    # Sourced-only modules (no standalone entry) are skipped; their root suites exercise them.
+    # Dual-use suites (sourced AND runnable: top-level main/exit or a BASH_SOURCE guard) stay.
+    standalone = re.compile(r"^(?:main\b|exit\b)|BASH_SOURCE\[0\]", re.M)
+    ordered = [str(t.relative_to(root)) for t in tests
+               if str(t.relative_to(root)) not in sourcers or standalone.search("\n".join(read_lines(t)))]
     args.max = max(args.max, len(ordered))
     args.compare_base = False
     resolved = {suite: (False, 0, 0) for suite in ordered}

@@ -18,9 +18,10 @@ on:
     - cron: '17 3 * * *'
   workflow_dispatch:
 
+# The default token is read-only: issues are written only with SYNC_PAT, and only
+# in the reconcile step (never while suites execute).
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: ${{ github.workflow }}
@@ -29,6 +30,9 @@ concurrency:
 jobs:
   shell-suite-health:
     name: Run all shell suites on main
+    # Enforce the header contract: SYNC_PAT is never released to a non-default-branch run
+    # (workflow_dispatch on another branch would use that branch's workflow copy).
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -37,6 +41,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run every root suite
         id: suites
@@ -44,10 +49,11 @@ jobs:
           set -o pipefail
           results="${RUNNER_TEMP}/suite-results.tsv"
           # Bounded parallelism, per-suite timeout, one rerun to drop flakes.
+          # Actions runs bash -e: capture the intentional nonzero status explicitly.
+          rc=0
           timeout --signal=TERM 3600 \
             .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 \
-            > "$results" 2> "${RUNNER_TEMP}/suite-stderr.log"
-          rc=$?
+            > "$results" 2> "${RUNNER_TEMP}/suite-stderr.log" || rc=$?
           if [[ "$rc" -eq 124 ]]; then
             echo "::error::Suite run exceeded the 60 minute bound"
             exit 1
@@ -65,15 +71,35 @@ jobs:
             tail -n 30 "${RUNNER_TEMP}/suite-stderr.log"
             exit "$rc"
           fi
+          # rc 1 is only a red report when the TSV header was written (not a crash).
+          header=$'suite\trc_head\trc_base\tclass'
+          if [[ "$rc" -eq 1 && "$(head -n 1 "$results")" != "$header" ]]; then
+            echo "::error::affected-tests-helper.sh all exited 1 without a completed report"
+            tail -n 30 "${RUNNER_TEMP}/suite-stderr.log"
+            exit 1
+          fi
+
+          # Capture failing lines now, without any issue-writing credential in the environment.
+          diag="${RUNNER_TEMP}/red-main/diag"
+          mkdir -p "$diag"
+          awk -F'\t' 'NR>1 && $4=="regression" {print $1}' "$results" | while IFS= read -r suite; do
+            timeout 180 bash "$suite" 2>&1 | grep -Ei 'fail|error' | head -n 20 > "${diag}/$(basename "$suite").txt" || true
+          done
 
       - name: File, update and close red-main issues
         env:
-          GH_TOKEN: ${{ secrets.SYNC_PAT || github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
           GH_REPO: ${{ github.repository }}
           RESULTS: ${{ steps.suites.outputs.results }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -o pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::SYNC_PAT is not configured; refusing to file issues with the bot token (not trusted for auto-dispatch)"
+            exit 1
+          fi
+          failed=0
+          marker='<!-- aidevops:shell-suite-main-health'
           # Framework wrappers apply origin labels and signatures (never raw gh issue create).
           # shellcheck source=/dev/null
           source .agents/scripts/shared-gh-wrappers.sh
@@ -86,7 +112,7 @@ jobs:
           sha="$(git rev-parse --short HEAD)"
 
           # Open red-main issues keyed by title -> number.
-          open_json="$(gh issue list --state open --limit 200 --search 'red-main: in:title' --json number,title)"
+          open_json="$(gh issue list --state open --limit 200 --search 'red-main: in:title' --json number,title,body)"
 
           red_list="${work}/red.txt"
           green_list="${work}/green.txt"
@@ -119,10 +145,11 @@ jobs:
             base="$(basename "$suite")"
             title="red-main: ${base}"
             rcs="$(awk -F'\t' -v s="$suite" '$1==s {print $2}' "$RESULTS")"
-            lines="$(timeout 180 bash "$suite" 2>&1 | grep -Ei 'fail|error' | head -n 20 || true)"
+            lines="$(cat "${RUNNER_TEMP}/red-main/diag/${base}.txt" 2>/dev/null || true)"
             [[ -n "$lines" ]] || lines="(no FAIL/ERROR lines captured; exit codes ${rcs})"
             body_file="${work}/${base}.md"
             {
+              echo "${marker} suite=${suite} -->"
               echo "## Suite \`${base}\` is red on \`main\`"
               echo
               echo "The scheduled shell-suite health run failed this suite at \`${sha}\` and again on rerun (exit codes: ${rcs}; 124 = timeout)."
@@ -153,28 +180,36 @@ jobs:
 
             number="$(issue_for "$title")"
             if [[ -n "$number" ]]; then
-              gh_issue_edit_safe "$number" --body-file "$body_file" || echo "::warning::failed to update #${number}"
-              echo "Updated #${number} (${title})"
+              if gh_issue_edit_safe "$number" --body-file "$body_file"; then
+                echo "Updated #${number} (${title})"
+              else
+                echo "::error::failed to update #${number}"; failed=1
+              fi
             else
               gh_create_issue --title "$title" --label bug --label auto-dispatch --body-file "$body_file" \
-                || echo "::warning::failed to create issue for ${title}"
+                || { echo "::error::failed to create issue for ${title}"; failed=1; }
             fi
           done < "$red_list"
 
-          # Close red-main issues whose suite is now green or no longer exists.
-          printf '%s' "$open_json" | jq -r '.[] | select(.title | startswith("red-main: ")) | "\(.number)\t\(.title)"' |
-            while IFS=$'\t' read -r number title; do
-              base="${title#red-main: }"
-              if grep -qxF -- ".agents/scripts/tests/${base}" "$red_list"; then
-                continue
-              fi
-              if grep -qxF -- ".agents/scripts/tests/${base}" "$green_list" || [[ ! -f ".agents/scripts/tests/${base}" ]]; then
-                gh_issue_close_safe "$number" --reason completed \
-                  --comment "Suite \`${base}\` passed on \`main\` at \`${sha}\` in ${RUN_URL}. Closing." \
-                  || echo "::warning::failed to close #${number}"
-              fi
-            done
+          # Close only workflow-managed issues (marker + valid suite path) whose suite is now green or removed.
+          managed="${work}/managed.tsv"
+          printf '%s' "$open_json" | jq -r --arg m "$marker" '.[] | select((.body // "") | contains($m)) | [.number, ((.body | capture("suite=(?<s>\\.agents/scripts/tests/[A-Za-z0-9_.-]+\\.sh)") | .s) // "")] | @tsv' > "$managed"
+          while IFS=$'\t' read -r number suite; do
+            [[ -n "$number" && -n "$suite" ]] || continue
+            if grep -qxF -- "$suite" "$red_list"; then
+              continue
+            fi
+            if grep -qxF -- "$suite" "$green_list" || [[ ! -f "$suite" ]]; then
+              gh_issue_close_safe "$number" --reason completed \
+                --comment "Suite \`$(basename "$suite")\` passed on \`main\` at \`${sha}\` in ${RUN_URL}. Closing." \
+                || { echo "::error::failed to close #${number}"; failed=1; }
+            fi
+          done < "$managed"
 
           if [[ -s "$red_list" ]]; then
             echo "::warning::$(wc -l < "$red_list" | tr -d ' ') red suite(s) on main; see red-main issues"
+          fi
+          if [[ "$failed" -ne 0 ]]; then
+            echo "::error::one or more issue mutations failed; the next run re-reads issue state and retries"
+            exit 1
           fi
