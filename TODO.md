@@ -2286,6 +2286,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19131 fix(tests): test-browser-qa-helper runtime-check configured-executable case drifted from GH#36325 chromium selector precedence #auto-dispatch #bug tier:simple -> [todo/tasks/t19131-brief.md] ref:GH#39173 pr:#39175 completed:2026-11-19
 
+- [ ] t19154 perf(gh-transport): revalidate explicit-pagination pages with ETags so unchanged comment lists cost no REST quota #feat #interactive tier:standard -> [todo/tasks/t19154-brief.md] ref:GH#39233
+
 - [ ] t19155 ci: run test-browser-qa-helper.sh in required Framework Validation (core) shard #auto-dispatch #feat tier:simple -> [todo/tasks/t19155-brief.md] ref:GH#39234 logged:2026-11-19
 
 - [ ] t19156 fix(ci): affected-tests-helper ignores .mjs/.cjs/.js/.ts script changes, so JS runtime regressions never select their shell suites #auto-dispatch #bug tier:simple -> [todo/tasks/t19156-brief.md] ref:GH#39235 logged:2026-11-19

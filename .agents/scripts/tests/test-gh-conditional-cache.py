@@ -24,7 +24,7 @@ GOVERNOR = SCRIPTS / "gh-transport-governor.py"
 sys.path.insert(0, str(SCRIPTS))
 
 from gh_conditional_cache import MAX_AGE_SECONDS, prune  # noqa: E402
-from gh_conditional_request import eligible  # noqa: E402
+from gh_conditional_request import eligible, page_frame_replayable  # noqa: E402
 
 FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys, time
@@ -49,12 +49,16 @@ if state["status"] != 200:
     sys.stderr.write("gh: HTTP %d\n" % state["status"])
     sys.exit(1)
 etag = "Etag: %s\r\n" % state["etag"] if state["etag"] else ""
+# Like GitHub, only a 200 carries Link; the 304 above never does.
+link = "Link: %s\r\n" % state["link"] if state.get("link") else ""
 body = "%s|%s\n" % (jq, state["body"]) if jq else state["body"] + "\n"
-sys.stdout.write("HTTP/2.0 200 OK\r\n%s%s\r\n%s" % (etag, rate, body))
+sys.stdout.write("HTTP/2.0 200 OK\r\n%s%s%s\r\n%s" % (etag, link, rate, body))
 '''
+PAGE = {"AIDEVOPS_GH_PAGINATION_INCLUDE_OWNED": "1"}
+NEXT = '<https://api.github.com/repositories/1/issues/1/comments?per_page=2&page=2>; rel="next"'
 
 
-class ConditionalGovernorTest(unittest.TestCase):
+class GovernorFixture(unittest.TestCase):
     def setUp(self):
         root = Path(os.environ.get("AIDEVOPS_TEMP_DIR", str(Path.home() / ".aidevops/.agent-workspace/tmp")))
         root.mkdir(parents=True, exist_ok=True)
@@ -82,8 +86,9 @@ class ConditionalGovernorTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def serve(self, status: int, etag: str, body: str) -> None:
-        self.state.write_text(json.dumps({"status": status, "etag": etag, "body": body}), encoding="utf-8")
+    def serve(self, status: int, etag: str, body: str, link: str = "") -> None:
+        state = {"status": status, "etag": etag, "body": body, "link": link}
+        self.state.write_text(json.dumps(state), encoding="utf-8")
 
     def call(self, *args: str, **env: str):
         metadata = self.root / "metadata.json"
@@ -103,6 +108,8 @@ class ConditionalGovernorTest(unittest.TestCase):
             return []
         return [path for path in self.cache_dir.iterdir() if not path.name.startswith(".")]
 
+
+class ConditionalGovernorTest(GovernorFixture):
     def test_unchanged_resource_replays_stdout_for_free(self):
         first, meta = self.call("repos/o/r/issues/1", "--jq", ".state")
         self.assertEqual((first.returncode, first.stdout), (0, ".state|body-one\n"))
@@ -184,6 +191,56 @@ class ConditionalGovernorTest(unittest.TestCase):
         self.assertTrue(entry.read_bytes().startswith(b'W/"v1"\n'))
 
 
+class PageFrameGovernorTest(GovernorFixture):
+    """GH#39233: explicit pagination pages revalidate their whole frame."""
+
+    COMMENTS = "repos/o/r/issues/1/comments?per_page=2"
+
+    def page(self, *extra: str, **env: str):
+        return self.call(self.COMMENTS, *extra, "--include", **{**PAGE, **env})
+
+    def test_final_page_with_room_replays_the_whole_frame(self):
+        self.serve(200, 'W/"p1"', '[{"id":1}]')
+        first, _ = self.page()
+        second, meta = self.page()
+        self.assertEqual(self.last_validators(), ['If-None-Match: W/"p1"'])
+        self.assertEqual((second.returncode, second.stdout), (0, first.stdout))
+        self.assertTrue(second.stdout.startswith("HTTP/2.0 200 OK"), "the page loop reads the stored frame")
+        self.assertNotIn("HTTP 304", second.stderr)
+        self.assertEqual((meta["status"], meta["cost"]), (304, 0))
+
+    def test_full_final_page_is_never_replayed(self):
+        # An appended comment would land on page 2 and leave this body and
+        # ETag unchanged; the 304 carries no Link to reveal it.
+        self.serve(200, 'W/"p2"', '[{"id":1},{"id":2}]')
+        self.page()
+        _second, meta = self.page()
+        self.assertEqual((self.last_validators(), self.entries(), meta["status"]), ([], [], 200))
+
+    def test_page_that_links_onward_replays_its_link(self):
+        self.serve(200, 'W/"p3"', '[{"id":1},{"id":2}]', link=NEXT)
+        self.page()
+        replay, meta = self.page()
+        self.assertEqual(meta["status"], 304)
+        self.assertIn('rel="next"', replay.stdout)
+
+    def test_filtered_final_page_is_not_stored_but_onward_page_is(self):
+        self.serve(200, 'W/"p4"', '[{"id":1}]')
+        self.page("--jq", ".[].id")
+        self.page("--jq", ".[].id")
+        self.assertEqual((self.last_validators(), self.entries()), ([], []))
+        self.serve(200, 'W/"p5"', '[{"id":1},{"id":2}]', link=NEXT)
+        self.page("--jq", ".[].id")
+        _replay, meta = self.page("--jq", ".[].id")
+        self.assertEqual(meta["status"], 304)
+
+    def test_caller_requested_headers_stay_live(self):
+        self.serve(200, 'W/"p6"', '[{"id":1}]')
+        for _ in range(2):
+            self.page(AIDEVOPS_GH_PAGINATION_INCLUDE_OWNED="0")
+        self.assertEqual((self.last_validators(), self.entries()), ([], []))
+
+
 class EligibilityAndPruneTest(unittest.TestCase):
     def test_eligibility_rules(self):
         self.assertTrue(eligible(["api", "repos/o/r/pulls/2", "--jq", ".head.sha"], "core", False, False))
@@ -191,6 +248,27 @@ class EligibilityAndPruneTest(unittest.TestCase):
         self.assertFalse(eligible(["api", "search/issues", "-f", "q=x"], "search", False, False))
         self.assertFalse(eligible(["api", "repos/o/r/issues/1", "--jq=now"], "core", False, False))
         self.assertFalse(eligible(["api", "repos/o/r/issues/1", "--header=if-modified-since: x"], "core", False, False))
+
+    def test_page_frame_replay_rules(self):
+        def replayable(endpoint, items, *extra, link=b""):
+            head = b"HTTP/2.0 200 OK\r\nLink: " + link + b"\r\n\r\n" if link else b"HTTP/2.0 200 OK\r\n\r\n"
+            body = json.dumps([{"id": n} for n in range(items)]).encode()
+            return page_frame_replayable(["api", endpoint, *extra, "--include"], head, body)
+
+        self.assertTrue(replayable("repos/o/r/issues/1/comments", 29), "default page size is 30")
+        self.assertFalse(replayable("repos/o/r/issues/1/comments", 30))
+        self.assertTrue(replayable("repos/o/r/issues/1/comments?per_page=500", 99), "GitHub caps at 100")
+        self.assertFalse(replayable("repos/o/r/issues/1/comments?per_page=500", 100))
+        self.assertFalse(replayable("repos/o/r/notifications?per_page=100", 1))
+        self.assertFalse(replayable("repos/o/r/issues/1/comments?per_page=0", 0))
+        self.assertFalse(replayable("repos/o/r/issues", 1, "-f", "per_page=100", "-X", "GET"))
+        self.assertFalse(replayable("repos/o/r/issues/1/comments", 1, "-q", ".[].id"))
+        self.assertTrue(replayable("repos/o/r/issues/1/comments", 30, link=NEXT.encode()))
+        last_only = b'<https://api.github.com/x?page=1>; rel="prev", <https://api.github.com/x?page=1>; rel="first"'
+        self.assertFalse(replayable("repos/o/r/issues/1/comments", 30, link=last_only))
+        self.assertTrue(replayable("repos/o/r/issues/1/comments", 3, link=last_only))
+        self.assertFalse(page_frame_replayable(["api", "repos/o/r/issues/1", "--include"],
+                                               b"HTTP/2.0 200 OK\r\n\r\n", b'{"id":1}'))
 
     def test_prune_removes_only_stale_entries(self):
         with tempfile.TemporaryDirectory() as temp:
