@@ -82,9 +82,16 @@ jobs:
           # Capture failing lines now, without any issue-writing credential in the environment.
           diag="${RUNNER_TEMP}/red-main/diag"
           mkdir -p "$diag"
-          awk -F'\t' 'NR>1 && $4=="regression" {print $1}' "$results" | while IFS= read -r suite; do
-            timeout 180 bash "$suite" 2>&1 | grep -Ei 'fail|error' | head -n 20 > "${diag}/$(basename "$suite").txt" || true
-          done
+          # Total diagnostic budget (10 min) reserves time for reconciliation inside the job timeout;
+          # TERM then KILL so a suite ignoring TERM cannot hold the pipe open.
+          deadline=$((SECONDS + 600))
+          while IFS= read -r suite; do
+            if [[ "$SECONDS" -ge "$deadline" ]]; then
+              echo "::warning::diagnostic budget exhausted; remaining suites filed without captured lines"
+              break
+            fi
+            timeout --kill-after=10 120 bash "$suite" 2>&1 | grep -Ei 'fail|error' | head -n 20 > "${diag}/$(basename "$suite").txt" || true
+          done < <(awk -F'\t' 'NR>1 && $4=="regression" {print $1}' "$results")
 
       - name: File, update and close red-main issues
         env:
@@ -152,6 +159,7 @@ jobs:
             body_file="${work}/${base}.md"
             {
               echo "${marker} suite=${suite} -->"
+              echo '<!-- aidevops:brief-schema=v2 -->'
               echo "## Suite \`${base}\` is red on \`main\`"
               echo
               echo "The scheduled shell-suite health run failed this suite at \`${sha}\` and again on rerun (exit codes: ${rcs}; 124 = timeout)."
@@ -171,14 +179,65 @@ jobs:
               echo "bash ${suite}"
               echo '```'
               echo
+              echo "## Why"
+              echo
+              echo "A red \`main\` is invisible to the PR gate (it classifies base-red suites as pre-existing), so this issue is the only record that the suite needs repair."
+              echo
+              echo "## How (Approach)"
+              echo
+              echo "### Files to Modify"
+              echo
+              echo "- EDIT: \`${suite}\` (or the script it exercises, per the candidate commit above)"
+              echo
               echo "### Files Scope"
               echo
               echo "- \`${suite}\`"
               echo
-              echo "### Verification"
+              echo "### Implementation Steps"
               echo
-              echo "Rerun the reproduce command: it must exit 0. This issue closes automatically when the next scheduled run passes the suite."
+              echo "1. Run the reproduce command and confirm the failing lines quoted above."
+              echo "2. Inspect the candidate commit, then fix the regressed script or the stale suite assertion."
+              echo "3. Rerun the suite until it exits 0, and run \`shellcheck\` on every file touched."
+              echo
+              echo "### Complete Write Surface"
+              echo
+              echo "- **Callers/readers:** \`${suite}\` is run by \`.agents/scripts/affected-tests-helper.sh\` and by this workflow (\`.github/workflows/shell-suite-main-health.yml\`); the scripts it names are listed under the candidate commit above."
+              echo "- **Writers/mutation paths:** the suite and the \`.agents/scripts/\` files it invokes; the fix belongs in whichever of them regressed."
+              echo "- **Existing verification/tests:** \`${suite}\` is itself the check; its failing lines are quoted above."
+              echo "- **Schemas/config:** N/A: a shell suite fix changes no schema; searched the suite for config reads, none are the cause of a regression by definition of this report."
+              echo "- **Generated/deployed mirrors:** \`~/.aidevops/agents/scripts/\` is deployed from \`.agents/scripts/\` by \`setup.sh\`; edit the repo copy only."
+              echo "- **Migrations/backfills:** N/A because repairing a failing suite changes no persisted data (searched \`${suite}\`: it only reads and writes temp files)."
+              echo "- **Cleanup/rollback paths:** \`git revert\` the fixing commit (or the candidate commit above); \`${suite}\` keeps no state between runs."
+              echo
+              echo "### Hazards and Compatibility"
+              echo
+              echo "- **Concurrency/atomicity:** the suite runs in isolation per run; preserved behavior is that no shared state is written outside the suite's own temp dirs."
+              echo "- **Migration/rollback:** no ordering constraints; a bad fix is reverted with a plain \`git revert\`."
+              echo "- **Mixed-version/backward compatibility:** preserve the behavior other suites and callers rely on from the scripts the suite exercises."
+              echo "- **Idempotency/retry:** the suite can be rerun any number of times; this issue is updated in place by the scheduled run, not duplicated."
+              echo "- **Partial failure/recovery:** if the fix is partial, the next scheduled run keeps this issue open and refreshes the failing lines."
+              echo
+              echo "### Verification Before Dispatch"
+              echo
+              echo '```bash'
+              echo "bash ${suite}"
+              echo "shellcheck ${suite}"
+              echo '```'
+              echo
+              echo "- **Surface mapping:** \`bash ${suite}\` covers the scripts the suite names and their callers; \`shellcheck ${suite}\` covers the suite file itself."
+              echo
+              echo "## Acceptance Criteria"
+              echo
+              echo "- [ ] \`bash ${suite}\` exits 0 on a branch containing the fix."
+              echo "- [ ] Regression guard: no other root suite regresses (\`.agents/scripts/affected-tests-helper.sh\` reports no \`regression\` for the touched scripts)."
+              echo "- [ ] This issue closes automatically when the next scheduled run passes the suite."
             } > "$body_file"
+            # Generated briefs must pass readiness before they are filed or refreshed.
+            if ! bash .agents/scripts/verify-brief-helper.sh check-readiness "$body_file" > "${work}/readiness.log" 2>&1; then
+              echo "::error::generated brief for ${title} failed readiness"; cat "${work}/readiness.log"
+              failed=1
+              continue
+            fi
 
             number="$(issue_for "$title")"
             if [[ -n "$number" ]]; then
@@ -188,7 +247,7 @@ jobs:
                 echo "::error::failed to update #${number}"; failed=1
               fi
             else
-              gh_create_issue --title "$title" --label bug --label auto-dispatch --body-file "$body_file" \
+              gh_create_issue --repo "$GH_REPO" --title "$title" --label bug --label auto-dispatch --body-file "$body_file" \
                 || { echo "::error::failed to create issue for ${title}"; failed=1; }
             fi
           done < "$red_list"
