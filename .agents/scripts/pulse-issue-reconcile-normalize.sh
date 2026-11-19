@@ -354,6 +354,22 @@ _enforce_orphan_active_status_one_issue() {
 	return 0
 }
 
+# t19179: listing-row gate for the orphan release. Cheap hint checks only
+# (active status, zero assignees, idle past ORPHAN_STATUS_RELEASE_HOURS), then
+# the live re-read in _enforce_orphan_active_status_one_issue.
+# Args: $1 issue, $2 slug, $3 status name, $4 assignee count, $5 updated epoch
+_orphan_status_row_release() {
+	local issue_num="$1" slug="$2" status_name="$3" assignee_count="$4" updated_epoch="$5"
+	local hours="${ORPHAN_STATUS_RELEASE_HOURS:-24}" now_epoch=""
+	[[ "$assignee_count" == "0" && "$updated_epoch" =~ ^[0-9]+$ ]] || return 1
+	[[ "$status_name" =~ ^(claimed|in-review|in-progress|queued)$ ]] || return 1
+	[[ "$hours" =~ ^[0-9]+$ && "$hours" -ge 1 ]] || hours=24
+	now_epoch=$(date +%s)
+	[[ "$updated_epoch" -lt $((now_epoch - hours * 3600)) ]] || return 1
+	_enforce_orphan_active_status_one_issue "$issue_num" "$slug" "$now_epoch" "$hours" || return 1
+	return 0
+}
+
 # Helper: fetch issues for a repo and emit '|'-delimited rows per issue.
 # See delimiter note in _normalize_label_invariants_for_repo.
 _fetch_label_invariant_rows() {
@@ -428,11 +444,7 @@ _normalize_label_invariants_for_repo() {
 
 	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
 	local has_persistent="" has_publication_pending="" has_tracker_identity="" has_needs="" owned_companions="" hold_recovery=""
-	local assignee_count="" updated_epoch="" orphan_now="" orphan_cutoff=""
-	local orphan_hours="${ORPHAN_STATUS_RELEASE_HOURS:-24}"
-	[[ "$orphan_hours" =~ ^[0-9]+$ && "$orphan_hours" -ge 1 ]] || orphan_hours=24
-	orphan_now=$(date +%s)
-	orphan_cutoff=$((orphan_now - orphan_hours * 3600))
+	local assignee_count="" updated_epoch=""
 	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count \
 		has_persistent has_publication_pending has_tracker_identity has_needs owned_companions hold_recovery \
 		assignee_count updated_epoch; do
@@ -469,10 +481,8 @@ _normalize_label_invariants_for_repo() {
 
 		# t19179: unassigned active status idle past the threshold. The listing
 		# row is a hint; the helper re-reads the live issue before any write.
-		if [[ "$core_count" -eq 1 && "$assignee_count" == "0" && "$has_tracker_identity" == "$_LI_BOOL_FALSE" &&
-			"$updated_epoch" =~ ^[0-9]+$ && "$updated_epoch" -lt "$orphan_cutoff" ]] &&
-			[[ "${_LI_FILTERED_STATUS[0]}" =~ ^(claimed|in-review|in-progress|queued)$ ]] &&
-			_enforce_orphan_active_status_one_issue "$issue_num" "$slug" "$orphan_now" "$orphan_hours"; then
+		if [[ "$core_count" -eq 1 && "$has_tracker_identity" == "$_LI_BOOL_FALSE" ]] &&
+			_orphan_status_row_release "$issue_num" "$slug" "${_LI_FILTERED_STATUS[0]}" "$assignee_count" "$updated_epoch"; then
 			_LI_ORPHAN_RELEASED=$((_LI_ORPHAN_RELEASED + 1))
 		fi
 
