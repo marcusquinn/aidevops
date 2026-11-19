@@ -10,6 +10,8 @@ _PULSE_MERGE_REQUIRED_CHECKS_DIR="${BASH_SOURCE[0]%/*}"
 source "${_PULSE_MERGE_REQUIRED_CHECKS_DIR}/lib/descriptor-safe-log.sh"
 PMRC_CHECK_COMPLETED="completed"
 PMRC_CHECK_SUCCESS="success"
+PMRC_CHECK_NEUTRAL="neutral"
+PMRC_CHECK_SKIPPED="skipped"
 PMRC_CHECK_FAILURE="failure"
 PMRC_BOOL_TRUE="true"
 PMRC_JSON_ARRAY="array"
@@ -623,8 +625,8 @@ _pmrc_normalize_snapshot_checks_json() {
 	checks_json=$(jq -s \
 		--arg completed "$PMRC_CHECK_COMPLETED" --arg success "$PMRC_CHECK_SUCCESS" --arg failure "$PMRC_CHECK_FAILURE" \
 		--arg array_type "$PMRC_JSON_ARRAY" --arg object_type "$PMRC_JSON_OBJECT" \
-		--arg skipped "skipped" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" \
-		--arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" \
+		--arg skipped "$PMRC_CHECK_SKIPPED" --arg neutral "$PMRC_CHECK_NEUTRAL" --arg maintainer "$PMRC_MAINTAINER_GATE" \
+		--arg maintainer_display "$PMRC_MAINTAINER_GATE_DISPLAY" --arg maintainer_workflow "$PMRC_MAINTAINER_GATE_WORKFLOW" \
 		--arg review_gate "$PMRC_REVIEW_BOT_GATE" --arg review_gate_workflow "$PMRC_REVIEW_BOT_GATE_WORKFLOW" '
 		if length != 2 or (.[0] | type) != $array_type or (.[1] | type) != $object_type
 		then error("invalid check-runs or commit-status response")
@@ -697,7 +699,7 @@ _pmrc_normalize_snapshot_checks_json() {
 					conclusion: (
 						if any($effective[]; (.conclusion == $failure or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure")) then $failure
 						elif ($family == $review_gate and all($effective[]; .conclusion == $success)) then $success
-						elif ($family == $maintainer and all($effective[]; (.conclusion == $success or .conclusion == "neutral" or .conclusion == $skipped))) then $success
+						elif ($family == $maintainer and all($effective[]; (.conclusion == $success or .conclusion == $neutral or .conclusion == $skipped))) then $success
 						else "" end
 					),
 					app_slug: ([$effective[]?.app_slug | select(. != "")] | first // ""),
@@ -1203,17 +1205,21 @@ _pmrc_nonrequired_failure_is_advisory() {
 }
 
 # Ignore only aged individual check runs after proving every required context
-# has a successful terminal result. Missing or malformed evidence fails closed.
+# has a passing terminal result. Missing or malformed evidence fails closed.
+# GH#39166: passing matches the snapshot loop and branch protection
+# (success, neutral, skipped), so path-filtered required workflows on
+# planning-only PRs do not leave a hung advisory run blocking forever.
 _pmrc_stale_pending_age() {
 	local repo_slug="$1" head_sha="$2" checks_json="$3" required_json="$4" name="$5"
 	local limit="${PULSE_MERGE_STALE_NONREQUIRED_PENDING_SECONDS:-3600}"
 	local now="${PULSE_MERGE_NOW_EPOCH:-$(date +%s)}" started="" epoch="" commit_json=""
 	[[ "$limit" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || return 1
 	jq -e --argjson required "$required_json" --arg completed "$PMRC_CHECK_COMPLETED" \
-		--arg success "$PMRC_CHECK_SUCCESS" '
+		--arg success "$PMRC_CHECK_SUCCESS" --arg neutral "$PMRC_CHECK_NEUTRAL" --arg skipped "$PMRC_CHECK_SKIPPED" '
 		. as $checks | all($required[]; . as $context |
 			any($checks[]; (.name == $context or any(.members[]?; .name == $context))
-				and .status == $completed and .conclusion == $success))
+				and .status == $completed
+				and (.conclusion == $success or .conclusion == $neutral or .conclusion == $skipped)))
 	' <<<"$checks_json" >/dev/null 2>&1 || return 1
 	started=$(jq -er --arg name "$name" --arg maintainer "$PMRC_MAINTAINER_GATE" --arg review "$PMRC_REVIEW_BOT_GATE" '
 		[.[] | select(.name == $name and .source == "check_run" and .family != $maintainer and .family != $review)
