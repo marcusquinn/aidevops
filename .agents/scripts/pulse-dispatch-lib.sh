@@ -100,6 +100,13 @@ _DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_TERMINAL_BACKO
 _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS:-7200}"
 [[ "$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=7200
 ((_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS=14400
+# GH#39174: PR-evidence hints are revalidated against the issue revision and the
+# exact PR fingerprint on every hit, so they need not expire within one cycle.
+# Cycles routinely exceed the general 1800s TTL, which made these hints miss
+# every cycle and re-run the full dedup ceremony.
+_DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS="${AIDEVOPS_DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS:-7200}"
+[[ "$_DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS=7200
+((_DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS <= 14400)) || _DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS=14400
 _DISPATCH_BENIGN_BLOCKS_SCRATCH_DIR=""
 _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS="${AIDEVOPS_PULSE_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS:-3600}"
 [[ "$_DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || _DISPATCH_BENIGN_BLOCKS_LEGACY_MIN_AGE_SECONDS=3600
@@ -648,10 +655,32 @@ _dispatch_negative_cache_refresh_revision() {
 	return 0
 }
 
+# Fixed TTL ceiling per hint reason. Checkpoint reasons compute their own TTL in
+# _dispatch_negative_cache_reason; everything else uses the general TTL.
+_dispatch_negative_cache_reason_ttl() {
+	local reason="$1"
+	case "$reason" in
+	terminal_blocker_circuit) printf '%s\n' "$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS" ;;
+	# GH#36214: the zero-attempt backoff is windowed and self-expiring like
+	# the unknown-blocker backoff; a reset comment bumps updatedAt at once.
+	# GH#36772: a fleet hold can wake on runner capability without an
+	# issue edit, so it keeps this short ceiling instead of the circuit's.
+	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
+		printf '%s\n' "$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
+		;;
+	dedup_pr_evidence) printf '%s\n' "$_DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS" ;;
+	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated)
+		printf '%s\n' "$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS"
+		;;
+	*) printf '%s\n' "$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS" ;;
+	esac
+	return 0
+}
+
 _dispatch_negative_cache_reason() {
 	local candidate="$1" fields="" issue="" repo="" updated="" file="" stamp="" cached="" reason="" now="" pr="" fingerprint="" current="" owner_path=""
 	local expected_reason="${2:-}" checkpoint_mode="${3:-allow_rest}" checkpoint_boundary="" record="" material="" revision_anchor=""
-	local ttl="$_DISPATCH_NEGATIVE_CACHE_TTL_SECONDS"
+	local ttl=""
 	local quiet_ttl="${AIDEVOPS_DISPATCH_CHECKPOINT_QUIET_COOLDOWN_SECONDS:-21600}"
 	fields=$(jq -r "$_DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ" <<<"$candidate") || return 1
 	IFS=$'\t' read -r issue repo updated <<<"$fields"
@@ -663,6 +692,7 @@ _dispatch_negative_cache_reason() {
 	IFS=$'\034' read -r stamp cached reason pr fingerprint owner_path checkpoint_boundary material revision_anchor <<<"${record//$'\t'/$'\034'}" || return 1
 	[[ -z "$expected_reason" || "$reason" == "$expected_reason" ]] || return 1
 	[[ "$stamp" =~ ^[0-9]+$ ]] || return 1
+	ttl=$(_dispatch_negative_cache_reason_ttl "$reason")
 	# GH#38261: only the cheap gate here. The material and comment reads run in
 	# the refresh below, after the TTL checks, so expired hints cost no API call.
 	[[ "$cached" == "$updated" || "$reason" == "$_DISPATCH_LIVE_OWNER_HOLD_REASON" ]] ||
@@ -693,16 +723,7 @@ _dispatch_negative_cache_reason() {
 		current=$(_dispatch_checkpoint_pr_head "$repo" "$pr" "$checkpoint_mode") || return 1
 		[[ -n "$owner_path" && "$current" == "$owner_path" ]] || return 1
 		;;
-	terminal_blocker_circuit)
-		ttl="$_DISPATCH_TERMINAL_CIRCUIT_CACHE_TTL_SECONDS"
-		;;
-	terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold)
-		# GH#36214: the zero-attempt backoff is windowed and self-expiring like
-		# the unknown-blocker backoff; a reset comment bumps updatedAt at once.
-		# GH#36772: a fleet hold can wake on runner capability without an
-		# issue edit, so it keeps this short ceiling instead of the circuit's.
-		ttl="$_DISPATCH_TERMINAL_BACKOFF_CACHE_TTL_SECONDS"
-		;;
+	terminal_blocker_circuit | terminal_blocker_backoff | zero_attempt_backoff | terminal_blocker_fleet_hold) ;;
 	dedup_active_claim | dedup_active_claim_live_owner | dedup_active_claim_durable_launch)
 		# Empty worker pools must retain the authoritative active-claim recheck
 		# for claims this runner could own. GH#37780: an empty local pool says
@@ -734,10 +755,8 @@ _dispatch_negative_cache_reason() {
 	"$_DISPATCH_LIVE_OWNER_HOLD_REASON")
 		_dispatch_live_owner_hold_valid "$pr" "$fingerprint" "$owner_path" || return 1
 		;;
-	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated)
-		# GH#33538: material issue revisions invalidate maintainer-gate hints.
-		ttl="$_DISPATCH_MAINTAINER_GATE_CACHE_TTL_SECONDS"
-		;;
+	# GH#33538: material issue revisions invalidate maintainer-gate hints.
+	permission_grant_unverified | needs_maintainer_permissions | cost_budget_exceeded | consolidated) ;;
 	*) return 1 ;;
 	esac
 	now=$(date +%s)
