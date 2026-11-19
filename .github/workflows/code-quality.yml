@@ -954,6 +954,39 @@ jobs:
         echo "::error::New shell function complexity violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
         exit 1
 
+    - name: Pulse set -u multi-var locals (t2863, GH#39224)
+      # pulse-unbound-var-check.yml is path-filtered, so it cannot be a
+      # required context; PR #39216 merged with it failing. Enforce the same
+      # diff-additions scan here (main still carries pre-existing debt, so a
+      # full-file scan cannot gate). That workflow keeps the remediation comment.
+      if: github.event_name == 'pull_request'
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        MERGE_BASE=$(git merge-base "${HEAD_SHA}" "${BASE_SHA}" 2>/dev/null || echo "${BASE_SHA}")
+        added_dir="${RUNNER_TEMP}/pulse-unbound-added"
+        mkdir -p "$added_dir"
+        scan_files=()
+        # Keep each basename: the scanner only judges pulse-*.sh names.
+        while IFS= read -r file; do
+          added="${added_dir}/${file##*/}"
+          git diff "${MERGE_BASE}..${HEAD_SHA}" -- "$file" |
+            { grep '^+' || true; } | { grep -v '^+++' || true; } | sed 's/^+//' >"$added"
+          if [ -s "$added" ]; then
+            scan_files+=("$added")
+          fi
+        done < <(git diff --name-only --diff-filter=AMR "${MERGE_BASE}" "${HEAD_SHA}" -- '.agents/scripts/pulse-*.sh')
+        if [ "${#scan_files[@]}" -eq 0 ]; then
+          echo "No added lines in .agents/scripts/pulse-*.sh."
+          exit 0
+        fi
+        if ! bash .agents/scripts/pulse-unbound-var-check.sh --scan-files "${scan_files[@]}"; then
+          echo "::error title=Pulse set -u safety::new multi-var local without initialisation; use local a=\"\" b=\"\" (t2841, t2863)"
+          exit 1
+        fi
+
     - name: Shell nesting depth
       # t2171: per-file regression model replaces total-count-vs-threshold.
       # PRs fail only when they introduce NEW nesting-depth violations (set
