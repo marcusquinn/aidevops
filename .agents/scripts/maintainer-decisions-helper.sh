@@ -170,7 +170,8 @@ Options:
                       tsv (default): kind, age_days, ref, reason, question or title, url
                       json: array of records
                       md: counts plus numbered lists grouped by kind
-  --max N             Maximum issues to classify (default: ${MD_MAX})
+  --max N             Maximum issues to classify (default: ${MD_MAX}); the cap is
+                      shared round-robin across repos, oldest first per repo
 EOF
 	return 0
 }
@@ -301,6 +302,19 @@ _md_render() {
 	return 0
 }
 
+# Dedupes "owner/repo<TAB>number" refs on stdin and orders them round-robin
+# across repos, oldest issue first within each repo. GH#39266: a plain sort let
+# --max exhaust the alphabetically first repo, so other repos' holds were never
+# classified or shown.
+_md_interleave_refs() {
+	awk -F'\t' 'NF >= 2 && $2 ~ /^[0-9]+$/ && !seen[$0]++' |
+		sort -t $'\t' -k1,1 -k2,2n |
+		awk -F'\t' '{ print (++rank[$1]) "\t" $0 }' |
+		sort -t $'\t' -k1,1n -k2,2 |
+		cut -f2-
+	return 0
+}
+
 _md_list() {
 	local refs=""
 	local records=""
@@ -308,18 +322,19 @@ _md_list() {
 	local number=""
 	local now=""
 	local total=0
-	refs=$(_md_discover | sort -u) || return 1
+	local repo_count=0
+	refs=$(_md_discover | _md_interleave_refs) || return 1
+	total=$(printf '%s\n' "$refs" | grep -c $'\t' || true)
+	if [[ "$total" -gt "$MD_MAX" ]]; then
+		repo_count=$(printf '%s\n' "$refs" | cut -f1 | sort -u | grep -c . || true)
+		print_warning "classifying ${MD_MAX} of ${total} held issues across ${repo_count} repos (round-robin, oldest first per repo); use --repo owner/repo or a larger --max for the rest"
+	fi
 	now=$(date -u '+%s')
 	records=$(mktemp)
 	while IFS=$'\t' read -r repo number; do
 		[[ -n "$repo" && "$number" =~ ^[0-9]+$ ]] || continue
-		total=$((total + 1))
-		if [[ "$total" -gt "$MD_MAX" ]]; then
-			print_warning "stopped at --max ${MD_MAX}; more held issues exist"
-			break
-		fi
 		_md_classify_issue "$repo" "$number" "$now" >>"$records"
-	done <<<"$refs"
+	done < <(printf '%s\n' "$refs" | head -n "$MD_MAX")
 	jq -s '.' "$records" | _md_render
 	rm -f "$records"
 	return 0
