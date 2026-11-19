@@ -177,8 +177,13 @@ AI brief owner:
    evidence; excerpts are matched by issue number, so confirm the repository).
    Classify the real cause; the reported class is often a symptom.
 2. **Brief defect** (missing/wrong Files Scope, stale verification, impossible
-   acceptance): make the minimal issue-body revision under brief-author
-   authority. A relevant revision re-arms the circuit; no retry directive needed.
+    acceptance): make the minimal issue-body revision under brief-author
+    authority. A relevant revision re-arms the circuit; no retry directive needed.
+    For an insert or replacement immediately before a unique exact line, use
+    `gh-write-helper.sh issue brief-section <N> --repo <owner/repo> --anchor <line> --section-file <file>`.
+    The section file must end with a newline and contain a first line
+    `<!-- aidevops:brief-owner-section id=<stable-id> -->` and a final line
+    `<!-- /aidevops:brief-owner-section -->`. Reuse the ID to replace it.
    A requirement to salvage checkpoint commits or branches that no remote ref
    holds is impossible acceptance for every other runner: rewrite it as
    best-effort recovery with the functional spec as source of truth

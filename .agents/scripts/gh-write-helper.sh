@@ -17,6 +17,7 @@ usage() {
 	printf '         (--edit-last/--delete-last/--create-if-none are refused; use comment-edit)\n'
 	printf '       gh-write-helper.sh {issue|pr} comment-edit <comment-id> --repo <owner/repo> --body-file <file> [--target <number>]\n'
 	printf '       gh-write-helper.sh issue review-handoff <number> --repo <owner/repo> --pr <number>\n'
+	printf '       gh-write-helper.sh issue brief-section <number> --repo <owner/repo> --anchor <line> --section-file <file>\n'
 	printf '       gh-write-helper.sh issue status <number> --repo <owner/repo> <status>\n'
 	printf '         (status: available|queued|claimed|in-progress|in-review|done|blocked)\n'
 	printf '       gh-write-helper.sh batch MANIFEST.json\n'
@@ -115,6 +116,33 @@ _issue_edit_signed() {
 	return $?
 }
 
+_issue_brief_section() {
+	local number="${1:-}" repo="" anchor="" section="" output=""
+	[[ "$number" =~ ^[1-9][0-9]*$ ]] || return 2
+	shift
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		[[ $# -ge 2 ]] || return 2
+		local value="$2"
+		case "$option" in
+		--repo) repo="$value" ;;
+		--anchor) anchor="$value" ;;
+		--section-file) section="$value" ;;
+		*) return 2 ;;
+		esac
+		shift 2
+	done
+	[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && -n "$anchor" && "$anchor" != *$'\n'* && -f "$section" ]] || return 2
+	output=$(mktemp "${AIDEVOPS_TEMP_DIR:-${TMPDIR:-/tmp}}/brief-section.XXXXXXXX") || return 1
+	if ! gh_issue_brief_section_render "$repo" "$number" "$anchor" "$section" "$output"; then
+		rm -f "$output"
+		return 1
+	fi
+	_issue_edit_signed "$number" --repo "$repo" --body-file "$output" || { rm -f "$output"; return 1; }
+	rm -f "$output"
+	return 0
+}
+
 # GH#37406: edit exactly one comment by ID. Refuses comments not authored by
 # the authenticated user or, with --target, not on that issue/PR; then applies
 # the same signature and privacy guards as comment creation.
@@ -195,7 +223,7 @@ main() {
 		return $?
 	fi
 	if [[ "$action" != "create" && "$action" != "edit" && "$action" != "comment" &&
-		"$action" != "comment-edit" && "$action" != "review-handoff" && "$action" != "status" ]]; then
+		"$action" != "comment-edit" && "$action" != "review-handoff" && "$action" != "status" && "$action" != "brief-section" ]]; then
 		usage >&2
 		return 2
 	fi
@@ -245,6 +273,7 @@ main() {
 		_issue_edit_signed "$@"
 		;;
 	issue:review-handoff) _issue_review_handoff "$@" ;;
+	issue:brief-section) _issue_brief_section "$@" ;;
 	issue:status) _issue_status "$@" ;;
 	issue:comment) gh_issue_comment "$@" ;;
 	issue:comment-edit | pr:comment-edit) _comment_edit "$@" ;;
