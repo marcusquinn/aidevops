@@ -2247,6 +2247,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19123 linux-procfs-runtime-check.sh: add a sudo/user-session-bus fixture so approval and pulse kicks can be runtime-verified from macOS #auto-dispatch #feat ref:GH#39130
 
+- [ ] t19122 perf(pulse): let a running dispatch round absorb worker slots freed mid-round #performance #priority:high ref:GH#39128
+
+- [ ] t19125 Reset-aware OAuth pool rotation: prefer the account whose quota resets soonest #auto-dispatch #feat ref:GH#39137
+
+- [ ] t19126 fix(sync-workflows): create resync PRs ready with allow-auto-merge so green workflow syncs merge without the maintainer #bug #interactive tier:standard -> [todo/tasks/t19126-brief.md] ref:GH#39153
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

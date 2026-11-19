@@ -119,15 +119,35 @@ creative work while the primary owns the pipeline, budget and render.
 4. **Resume** with `--session <id>` from `opencode session list --format json` run
    in the scratch directory. Bare `--continue` is blocked because it can attach to
    another live session.
-5. **Diagnose a silent exit** with `opencode export <id> | rg '"finish"'`. Piped
-   export output can be truncated, so read the last `finish` values.
+5. **Diagnose a silent exit** from the session database (below): a `length`
+   finish means the output clamp was hit. Piped `opencode export` output can be
+   truncated, so do not rely on it.
 6. **Verify independently:** load the file with `-Y`, check settings and view frames.
+7. **Report tokens and API-equivalent cost** next to the GPU cost, even on a
+   subscription. The session database path is `<data>/opencode.db`, where `<data>`
+   comes from `opencode debug paths` run in the scratch directory (aidevops can
+   give each project its own data directory). Group by finish reason to separate
+   wasted clamped responses (one line, because OpenCode's command policy rejects
+   multi-line commands and `'$.path'` JSON paths, so chain `->` labels instead):
+
+   ```bash
+   sqlite3 -readonly -header -column <data>/opencode.db "select data->>'finish' finish, count(*) msgs, sum(data->'tokens'->>'output') output, sum(data->'tokens'->>'reasoning') reasoning, sum(data->'tokens'->'cache'->>'read') cache_read, sum(data->'tokens'->'cache'->>'write') cache_write, round(sum(data->>'cost'),2) cost from message where session_id='<id>' and data->>'role'='assistant' group by 1"
+   ```
+
+   `cost` is OpenCode's estimate at list API prices. Reasoning tokens bill as
+   output. Cross-check with `configs/model-pricing.json`.
 
 Observed on 2026-11-17: `claude-fable-5-2` built a 636-line sunflower scene in
 about 17 minutes once the clamp was raised (1,300 florets, translucent petals,
 subdivision, depth of field, about 110k triangles). Its brief asked for one cold
 full-quality frame, which over-stated the cost about 3x; ask delegates for warm
-timing instead. Delegate token cost was not measured.
+timing instead.
+
+Tokens for that run: 30 responses, 44,723 output plus 102,535 reasoning tokens,
+2.32M cache reads and 223k cache writes. At Fable 5.2 list prices that is $8.59
+API-equivalent, about 40x the $0.21 GPU render. The two clamped responses that
+saved nothing cost $3.05 of it, so starting with the raised clamp and sectioned
+writes would have cost about $5.50.
 
 ## Related
 

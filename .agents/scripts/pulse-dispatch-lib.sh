@@ -1577,6 +1577,8 @@ _dispatch_max_loop() {
 	if _dispatch_launch_slot_gate_enabled; then
 		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init "$effective_slots") || _DISPATCH_LAUNCH_SLOT_DIR=""
 	fi
+	# t19122: this loop's budget after in-round top-ups (only ever raised).
+	local _DISPATCH_ROUND_TOPUP_BUDGET="$effective_slots" _DISPATCH_ROUND_TOPUP_GRANT=""
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
@@ -1594,10 +1596,15 @@ _dispatch_max_loop() {
 
 		local successes_so_far=0 launches_so_far=0 in_flight_launches=0
 		successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
+		if ((successes_so_far >= effective_slots)) && _dispatch_max_loop_topup "$outcomes_file"; then
+			effective_slots="$_DISPATCH_ROUND_TOPUP_BUDGET"
+		fi
 		if _dispatch_max_should_stop "$processed_count" "$successes_so_far" "$effective_slots"; then
 			break
 		fi
 		_dispatch_max_await_slot _pids "$processed_count" "$outcomes_file" "$effective_slots" || break
+		# t19122: adopt a top-up granted while waiting for a slot.
+		effective_slots="$_DISPATCH_ROUND_TOPUP_BUDGET"
 
 		launches_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
 		in_flight_launches="${#_pids[@]}"
@@ -1627,7 +1634,9 @@ _dispatch_max_loop() {
 # every pending ceremony. With the t19116 launch-slot gate only claim-time
 # holders count, so rejections keep evaluating while unheld slots remain. A
 # rejected ceremony or a failed holder frees capacity for this candidate,
-# which is reconciled rather than dropped.
+# which is reconciled rather than dropped. t19122: before waiting or ending,
+# a spent budget absorbs worker slots freed since the last capacity read;
+# the loop adopts the raised budget from _DISPATCH_ROUND_TOPUP_BUDGET.
 #
 # Arguments:
 #   $1 - nameref-style PID array name
@@ -1643,19 +1652,41 @@ _dispatch_max_await_slot() {
 		eval "in_flight=\${#${pids_name}[@]}"
 		if [[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]]; then
 			_dispatch_launch_slot_available && return 0
-			if ((in_flight == 0)); then
-				echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (all ${effective_slots} launch slots held) (t19116)" >>"$LOGFILE"
-				return 1
-			fi
 		else
 			successes=$(_dispatch_max_count_outcomes "$outcomes_file")
 			((successes + in_flight < effective_slots)) && return 0
 		fi
+		if _dispatch_max_loop_topup "$outcomes_file"; then
+			effective_slots="$_DISPATCH_ROUND_TOPUP_BUDGET"
+			continue
+		fi
+		if [[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]] && ((in_flight == 0)); then
+			echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (all ${effective_slots} launch slots held) (t19116)" >>"$LOGFILE"
+			return 1
+		fi
 		_dispatch_max_wait_for_reservation "$pids_name"
 		successes=$(_dispatch_max_count_outcomes "$outcomes_file")
+		if ((successes >= effective_slots)) && _dispatch_max_loop_topup "$outcomes_file"; then
+			effective_slots="$_DISPATCH_ROUND_TOPUP_BUDGET"
+		fi
 		_dispatch_max_should_stop "$processed_count" "$successes" "$effective_slots" && return 1
 	done
 	return 1
+}
+
+# t19122: commit an in-round top-up for this loop: raise the launch-slot
+# budget file first (gate mode), then _DISPATCH_ROUND_TOPUP_BUDGET.
+# Args: outcomes file. Returns: 0 when the budget grew
+_dispatch_max_loop_topup() {
+	local outcomes_file="$1" launched=0 budget="${_DISPATCH_ROUND_TOPUP_BUDGET:-0}"
+	_dispatch_round_topup_due || return 1
+	launched=$(_dispatch_max_count_outcomes "$outcomes_file")
+	_dispatch_round_topup_budget "$launched" "$budget" "${_DISPATCH_ROUND_TOPUP_HOLD:-0}" parallel || return 1
+	if [[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]]; then
+		_dispatch_launch_slots_set_budget "$_DISPATCH_ROUND_TOPUP_GRANT" || return 1
+	fi
+	_DISPATCH_ROUND_TOPUP_BUDGET="$_DISPATCH_ROUND_TOPUP_GRANT"
+	return 0
 }
 
 #######################################
@@ -2040,11 +2071,16 @@ _dispatch_priority_reserved_pools() {
 		>"$phase_dir/ordinary.candidates" || return 1
 	: >"$phase_dir/product.outcomes"
 	: >"$phase_dir/ordinary.outcomes"
+	# t19122: slots a pool's in-round top-up must leave for the other pool.
+	local _DISPATCH_ROUND_TOPUP_HOLD=0
 	if ((parallel > 1 && reserved > 0 && ordinary > 0)) &&
 		[[ -s "$phase_dir/product.candidates" && -s "$phase_dir/ordinary.candidates" ]]; then
 		# GH#38033: concurrent pools split one ceremony cap; a serial pool
 		# must not widen to the full cap if the REST reserve recovers.
 		local _DISPATCH_REST_SERIAL_RECOVERY_ALLOWED=0
+		# t19122: two live pools would both claim the same freed slots; the
+		# next phase transition absorbs them instead.
+		local _DISPATCH_ROUND_TOPUP_ALLOWED=0
 		product_parallel=$(((parallel * reserved + budget - 1) / budget))
 		((product_parallel < parallel)) || product_parallel=$((parallel - 1))
 		ordinary_parallel=$((parallel - product_parallel))
@@ -2057,8 +2093,14 @@ _dispatch_priority_reserved_pools() {
 		wait "$product_pid" || result=1
 		wait "$ordinary_pid" || result=1
 	else
+		# t19122: each serial pool tops up only beyond the other pool's share:
+		# the product pool keeps the ordinary budget free, and the ordinary
+		# pool keeps the product reservation its pool did not launch into.
+		_DISPATCH_ROUND_TOPUP_HOLD="$ordinary"
 		_dispatch_run_priority_phase "$phase_dir/product.candidates" "$reserved" "$login" "$parallel" \
 			"$phase_dir/product.outcomes" >"$phase_dir/product.result" || result=1
+		_DISPATCH_ROUND_TOPUP_HOLD=$((reserved - $(_dispatch_max_count_outcomes "$phase_dir/product.outcomes")))
+		((_DISPATCH_ROUND_TOPUP_HOLD >= 0)) || _DISPATCH_ROUND_TOPUP_HOLD=0
 		_dispatch_run_priority_phase "$phase_dir/ordinary.candidates" "$ordinary" "$login" "$parallel" \
 			"$phase_dir/ordinary.outcomes" >"$phase_dir/ordinary.result" || result=1
 	fi
@@ -2085,9 +2127,15 @@ _dispatch_priority_loop() {
 	fi
 	local phase_dir="" phase="" phase_budget=0 launched=0 processed=0 result=""
 	local phase_launched=0 phase_processed=0 product_launched=0 product_unknown=0 held=0
+	local _DISPATCH_ROUND_TOPUP_GRANT="" _DISPATCH_ROUND_TOPUP_HOLD=0
 	phase_dir=$(mktemp -d) || return 1
 	_dispatch_priority_retry_keys >"$phase_dir/retry.keys" || : >"$phase_dir/retry.keys"
 	for phase in urgent pools remainder; do
+		# t19122: phases run drained, so a worker exit since the last capacity
+		# read raises the round budget to launched + free before sizing.
+		if _dispatch_round_topup_budget "$launched" "$budget" 0 "priority:${phase}"; then
+			budget="$_DISPATCH_ROUND_TOPUP_GRANT"
+		fi
 		phase_budget=$((budget - launched))
 		((phase_budget > 0)) || break
 		read -r product_launched product_unknown < <(_dispatch_priority_product_outcomes "$outcomes")
@@ -2117,6 +2165,8 @@ _dispatch_priority_loop() {
 			fi
 			phase_budget=$((phase_budget - held))
 		fi
+		# t19122: a remainder top-up keeps the held product slots free.
+		[[ "$phase" != remainder ]] || _DISPATCH_ROUND_TOPUP_HOLD="$held"
 		: >"$phase_dir/outcomes"
 		result=$(_dispatch_run_priority_phase "$phase_dir/candidates" "$phase_budget" "$login" "$parallel" "$phase_dir/outcomes") || {
 			rm -rf "$phase_dir"; return 1;
@@ -2130,6 +2180,8 @@ _dispatch_priority_loop() {
 	processed=$(awk -F'|' -v succeeded="$_DISPATCH_OUTCOME_SUCCESS" -v failed="$_DISPATCH_OUTCOME_FAILED" \
 		-v deferred="$_DISPATCH_OUTCOME_DEFERRED" \
 		'$1 == succeeded || $1 == failed || $1 == deferred { n++ } END { print n+0 }' "$outcomes")
+	# t19122: an in-phase top-up may launch past the budget this loop sized.
+	((launched <= budget)) || budget="$launched"
 	((held <= budget - launched)) || held=$((budget - launched))
 	echo "[pulse-wrapper] PRIORITY_RESERVATION requested=${reserved} product_launched=${product_launched} held=${held} discovery_complete=${complete} launched=${launched}" >>"$LOGFILE"
 	rm -rf "$phase_dir"

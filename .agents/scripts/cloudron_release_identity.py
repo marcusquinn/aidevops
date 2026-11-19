@@ -23,7 +23,7 @@ PIN_KEYS = {"upstream_repository", "release_identity", "registry_images", "relea
 POLICY_KEYS = {
     "schema", "kind", "repository", "changelog_files", "pinned_files", "check_files", "check_insertion_pattern",
     "upstream_mode", "upstream_repository", "release_identity", "registry_images", "release_checksum",
-    "license_version_url", "companion_image", "catalog_baseline",
+    "license_version_url", "companion_image", "catalog_baseline", "license_commit_url",
 }
 
 
@@ -118,6 +118,9 @@ def validate_pin_fields(policy):
     """Fail closed on unknown keys and malformed opt-in pin fields of a signed policy."""
     require(isinstance(policy, dict) and set(policy) <= POLICY_KEYS, "policy contains an unknown field")
     require(policy.get("license_version_url", True) is True, "policy license_version_url is invalid")
+    require(policy.get("license_commit_url", True) is True, "policy license_commit_url is invalid")
+    require("license_commit_url" not in policy or policy.get("upstream_mode") == "commits",
+            "license_commit_url needs a commits policy")
     require("upstream_repository" not in policy or matches(UPSTREAM_REPO, policy["upstream_repository"]),
             "policy upstream_repository is invalid")
     check_registry_images(policy)

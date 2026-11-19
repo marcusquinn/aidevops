@@ -79,6 +79,8 @@ readonly MANAGED_BLOCK_HELPER="$SELF_DIR/managed-markdown-block-helper.py"
 readonly CONTRIBUTING_POLICY_TEMPLATE_NAME="issue-first-pr-contributing.md"
 readonly LINKED_ISSUE_WORKFLOW_NAME="linked-issue-check"
 readonly METRICS_WORKFLOW_NAME="loc-badge"
+# t19126: deterministic sync PRs opt into automated merge (GH#23238).
+readonly SYNC_AUTO_MERGE_LABEL="allow-auto-merge"
 
 # Known managed workflows — each entry is workflow_file:template_file.
 # Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
@@ -455,7 +457,9 @@ Options:
                     CURRENT callers whose pin differs, e.g. to bump @v3.9.0
                     after an upgrade. Without this, existing pins (@v3.9.0,
                     @<sha>) are preserved.
-  --ref REF         Explicit @ref for new installs (default: @main).
+  --ref REF         Explicit @ref for new installs (default: the latest release
+                    SHA with its tag as a comment, unless repos.json configures
+                    workflow_reusable_ref).
   --pin-floating    Migrate only existing loc-badge @main callers to the latest
                     release SHA. Requires --workflow loc-badge. Preserves real
                     pins and registry workflow_reusable_ref overrides.
@@ -690,14 +694,17 @@ _workflow_reusable_ref_for_slug() {
 
 # _sync_target_ref_for_slug <slug> — the "@ref" a sync writes for this repo:
 # an explicit --ref wins, otherwise the repos.json/default reusable ref.
+# Fresh installs of any managed caller (and --pin-floating loc-badge
+# migrations) without a configured ref pin the latest release SHA, so repos
+# enforcing hash-pinned actions do not fail on a new @main caller (GH#39085).
 _sync_target_ref_for_slug() {
 	local _slug="$1"
 	local _status="${2:-}" _workflow_name="${3:-}"
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
-	elif [[ ( "$_status" == "NO-WORKFLOW" || "${_OPT_PIN_FLOATING:-0}" -eq 1 ) && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" &&
-		-z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
+	elif [[ ( "$_status" == "NO-WORKFLOW" || ( "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" ) ) &&
+		-n "$_workflow_name" && -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
 		local _repo
 		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
 		_ref=$(workflow_release_ref "$_repo") || return 1
@@ -1512,8 +1519,49 @@ _sync_report_identical_pr() {
 		printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_identical_pr"
 		return 1
 	fi
+	_sync_promote_pr "$_slug" "$_identical_pr"
 	printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_identical_pr"
 	return 2
+}
+
+# t19126: sync PRs are deterministic framework output, yet gh_create_pr
+# defaults interactive-origin PRs to draft and the merge pass never merges
+# drafts or unopted origin:interactive PRs, so green syncs sat for weeks
+# waiting on the maintainer. Publish them ready with the automated-merge
+# opt-in, like the planning PR fallback; required checks and the review-bot
+# gate still decide the merge.
+_sync_ensure_auto_merge_label() {
+	local _slug="$1"
+	declare -F managed_labels_ensure_planning_pr_set >/dev/null 2>&1 || return 1
+	declare -F _gh_managed_label_names_snapshot >/dev/null 2>&1 || return 1
+	declare -F _gh_managed_label_create_runner >/dev/null 2>&1 || return 1
+	managed_labels_ensure_planning_pr_set "$_slug" \
+		_gh_managed_label_names_snapshot _gh_managed_label_create_runner >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Promote a reused sync PR: mark it ready and add the automated-merge opt-in.
+# A hold-for-review label is a maintainer opt-out and is left untouched.
+# Best effort: the sync already applied, so failures only warn.
+_sync_promote_pr() {
+	local _slug="$1" _pr_ref="$2" _state="" _readiness="" _labels=""
+	[[ -n "$_pr_ref" ]] || return 0
+	if ! _state=$(gh pr view "$_pr_ref" --repo "$_slug" --json isDraft,labels \
+		--jq '[(if .isDraft then "draft" else "ready" end), ([.labels[].name] | join(","))] | @tsv' 2>/dev/null); then
+		printf '[%s] WARN: unable to read %s for ready promotion\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+		return 0
+	fi
+	IFS=$'\t' read -r _readiness _labels <<<"$_state"
+	[[ ",${_labels}," != *",hold-for-review,"* ]] || return 0
+	if [[ "$_readiness" == draft ]] && ! gh pr ready "$_pr_ref" --repo "$_slug" >/dev/null 2>&1; then
+		printf '[%s] WARN: unable to mark %s ready for review\n' "$SCRIPT_NAME" "$_pr_ref" >&2
+	fi
+	[[ ",${_labels}," != *",${SYNC_AUTO_MERGE_LABEL},"* ]] || return 0
+	if ! _sync_ensure_auto_merge_label "$_slug" ||
+		! gh pr edit "$_pr_ref" --repo "$_slug" --add-label "$SYNC_AUTO_MERGE_LABEL" >/dev/null 2>&1; then
+		printf '[%s] WARN: unable to add %s to %s\n' "$SCRIPT_NAME" "$SYNC_AUTO_MERGE_LABEL" "$_pr_ref" >&2
+	fi
+	return 0
 }
 
 # Branch names alone also match fork heads. Require the actual head repository
@@ -1557,9 +1605,13 @@ _sync_open_pr() {
 			printf '%s\t%s\t%s\tPR: %s; unable to supersede older sync PRs\n' "$_slug" "$_status" "$_STATUS_FAILED" "$_existing_pr"
 			return 1
 		fi
+		_sync_promote_pr "$_slug" "$_existing_pr"
 		printf '%s\t%s\t%s\tPR: %s\n' "$_slug" "$_status" "$_STATUS_APPLIED" "$_existing_pr"
 		return 0
 	fi
+	# t19126: ready + automated-merge opt-in; a missing label never blocks creation.
+	local _label_args=()
+	_sync_ensure_auto_merge_label "$_slug" && _label_args=(--label "$SYNC_AUTO_MERGE_LABEL")
 	local _pr_title
 	_pr_title=$(_format_pr_title "$_sync_contributing")
 	local _body_file
@@ -1577,12 +1629,12 @@ _sync_open_pr() {
 		return 1
 	}
 	local _pr_url _pr_stderr _failure_detail
-	if ! _pr_url=$(gh_create_pr \
+	if ! _pr_url=$(AIDEVOPS_PR_CREATE_READY=1 gh_create_pr \
 		--repo "$_slug" \
 		--title "$_pr_title" \
 		--body-file "$_body_file" \
 		--head "$_branch_name" \
-		--base "$_default_branch" 2>"$_stderr_file"); then
+		--base "$_default_branch" ${_label_args[@]+"${_label_args[@]}"} 2>"$_stderr_file"); then
 		_pr_stderr=$(<"$_stderr_file")
 		[[ -s "$_stderr_file" ]] && command cat "$_stderr_file" >&2
 		_failure_detail=$(printf '%s %s' "$_pr_url" "$_pr_stderr" |

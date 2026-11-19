@@ -1102,26 +1102,82 @@ _kick_pulse_after_approval() {
 	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
 	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
 
-	# Detach completely so this exits even if the child blocks. The double
-	# fork via subshell + disown matches the pattern in
-	# pulse-lifecycle-helper.sh::_start. Drop sudo (run as the real user)
-	# so the spawned pulse uses the same env/locks as the launchd-managed
-	# pulse — root-owned locks would corrupt the lockdir tree.
+	_approval_spawn_user_pulse "$pulse_wrapper" "$kick_log" --merge-only
+	return 0
+}
+
+#######################################
+# Emit the real user's session-bus env assignments (one per line) when running
+# under sudo on a host with a per-user runtime dir. `sudo -u` resets the env,
+# so without these a kicked pulse has no XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS
+# and every systemd worker launch fails with manager_probe_failed (GH#39028).
+#######################################
+_approval_user_session_env() {
+	local real_uid=""
+	[[ -n "${SUDO_USER:-}" ]] || return 0
+	real_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+	[[ "$real_uid" =~ ^[0-9]+$ && -d "/run/user/${real_uid}" ]] || return 0
+	printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$real_uid"
+	if [[ -S "/run/user/${real_uid}/bus" ]]; then
+		printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus\n' "$real_uid"
+	fi
+	return 0
+}
+
+#######################################
+# Spawn a detached pulse-wrapper run as the real user. The double fork via
+# subshell + disown matches pulse-lifecycle-helper.sh::_start. Under sudo, drop
+# to the real user (root-owned locks would corrupt the lockdir tree) and carry
+# the user session bus so the spawned pulse can reach the systemd worker backend.
+# Args: $1=pulse wrapper, $2=kick log, remaining args=pulse-wrapper args
+#######################################
+_approval_spawn_user_pulse() {
+	local pulse_wrapper="$1"
+	local kick_log="$2"
+	shift 2
 	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
 		(
-			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup sudo -u "$SUDO_USER" -H -- env ${user_env[@]+"${user_env[@]}"} \
+				"$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	else
 		(
-			nohup "$pulse_wrapper" --merge-only \
-				>>"$kick_log" 2>&1 </dev/null &
+			nohup "$pulse_wrapper" "$@" >>"$kick_log" 2>&1 </dev/null &
 			disown 2>/dev/null || true
 		) 2>/dev/null
 	fi
-
 	return 0
+}
+
+#######################################
+# Ask a loaded systemd user supervisor to run the managed pulse now instead of
+# spawning an unmanaged one (GH#39028). Linux only; macOS/launchd unchanged.
+# Returns: 0 when the managed start was accepted, 1 to use the spawn fallback.
+#######################################
+_approval_start_managed_pulse() {
+	[[ "$(uname -s 2>/dev/null || true)" == "Linux" ]] || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	local unit="aidevops-supervisor-pulse.service"
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		command -v sudo >/dev/null 2>&1 || return 1
+		local -a user_env=()
+		local env_line=""
+		while IFS= read -r env_line; do
+			[[ -n "$env_line" ]] && user_env+=("$env_line")
+		done < <(_approval_user_session_env)
+		[[ ${#user_env[@]} -gt 0 ]] || return 1
+		sudo -u "$SUDO_USER" -H -- env "${user_env[@]}" \
+			systemctl --user start --no-block "$unit" >/dev/null 2>&1
+		return $?
+	fi
+	systemctl --user start --no-block "$unit" >/dev/null 2>&1
+	return $?
 }
 
 _approve_target_after_confirmation() {

@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.236] - 2026-11-19
+
+### Added
+
+- check platform-fix regression evidence before push and accept --regression-evidence
+- reset-aware oauth pool ordering (#39143)
+
+### Fixed
+
+- graduate plugin validator concurrency under load (#39135)
+- signed license_commit_url opt-in for commits-mode standing policy (GH#39115)
+
+## [3.39.235] - 2026-11-19
+
+### Added
+
+- delegable scope_acceptance action for source-exhausted phase holds
+
+### Changed
+
+- plan: add t19120 recovery-policy scope_acceptance action (#39114)
+
+### Fixed
+
+- Codex config must not abort setup without a TOML-capable Python
+- gh_create_pr defers unprovisionable origin label like gh_create_issue
+- add Claude Fable 5.2 rates; document delegated-run token cost
+- kick the managed pulse with the user session bus after sudo approvals
+- SHA-pin every fresh managed caller install to the latest release
+- recover CLEAN PRs wedged behind an aged native auto-merge request
+- merge planning PR fallback onto origin default and guard task regression
+- skip worker dispatch for the cycle when systemd backend probe fails (#39119)
+- Bash 3.2-safe tracked-PID capacity waits (#39111)
+- record exact changed lines, keep cron until revert succeeds, serialize revert (GH#39098)
+- framework-managed block in generated AGENTS.md keeps user content
+- repair test-failure-family-remediation fixtures (GH#39105) (#39109)
+- stub cmd_merge closing guards so trust-parity test runs to the end
+
 ## [3.39.234] - 2026-11-19
 
 ### Added

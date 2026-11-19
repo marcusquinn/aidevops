@@ -1796,6 +1796,105 @@ _dispatch_launch_slot_available() {
 	return 1
 }
 
+# t19122: raise the loop-owned slot budget (atomic replace; never lowered).
+# Args: new budget
+_dispatch_launch_slots_set_budget() {
+	local budget="$1" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" temporary=""
+	[[ -n "$dir" && -d "$dir" && "$budget" =~ ^[0-9]+$ ]] || return 1
+	temporary="${dir}/budget.tmp.$$"
+	printf '%s\n' "$budget" >"$temporary" 2>/dev/null || return 1
+	mv -f "$temporary" "${dir}/budget" 2>/dev/null && return 0
+	rm -f "$temporary" 2>/dev/null || true
+	return 1
+}
+
+#######################################
+# t19122: in-round slot top-up.
+#
+# A round sizes its slot budget once, before a census that takes minutes, then
+# runs 20-60 minutes. A worker exit during the round records the refill
+# trigger, but its event refill cannot take the instance lock the round holds
+# (lock_busy), so the freed slot idles until the next round. A sole running
+# loop may instead absorb it: when the worker-exit trigger is newer than the
+# round's last capacity read, re-read _dispatch_compute_capacity and raise the
+# budget to launched + free - hold. Pending ceremonies are not in the worker
+# count, so the existing slot checks still subtract them; hold keeps slots a
+# caller reserves for other work (the remainder phase's product hold).
+#
+# Callers opt in by scoping _DISPATCH_ROUND_TOPUP_ALLOWED=1; concurrent pools
+# and serial/floor rounds never do. dispatch_max scopes the read timestamp and
+# round start. DISPATCH_ROUND_TOPUP=0 disables the top-up;
+# DISPATCH_ROUND_TOPUP_MAX_ROUND_S (default 1800) bounds how long a round may
+# keep absorbing exits before it ends normally and a fresh census runs.
+#######################################
+# Read the round's capacity into the named variable and stamp the read time in
+# the caller's scoped _DISPATCH_ROUND_TOPUP_STARTED_AT/_CHECKED_AT.
+# Args: output variable name. Returns: _dispatch_compute_capacity's status
+_dispatch_round_capacity_read() {
+	local output_name="$1" line="" rc=0
+	[[ "$output_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_DISPATCH_ROUND_TOPUP_STARTED_AT=$(date +%s)
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT="$_DISPATCH_ROUND_TOPUP_STARTED_AT"
+	line=$(_dispatch_compute_capacity) || rc=$?
+	printf -v "$output_name" '%s' "$line"
+	return "$rc"
+}
+
+_dispatch_round_topup_trigger_file() {
+	printf '%s\n' "${PULSE_EVENT_REFILL_TRIGGER_FILE:-${AIDEVOPS_PULSE_EVENT_REFILL_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-event-refill.trigger}}"
+	return 0
+}
+
+# Returns 0 when this loop may top up and a worker exit was recorded at or
+# after the last capacity read. No process scan or API call happens here.
+_dispatch_round_topup_due() {
+	local trigger="" mtime="" now="" checked="${_DISPATCH_ROUND_TOPUP_CHECKED_AT:-0}"
+	local started="${_DISPATCH_ROUND_TOPUP_STARTED_AT:-}" max_age="${DISPATCH_ROUND_TOPUP_MAX_ROUND_S:-1800}"
+	[[ "${DISPATCH_ROUND_TOPUP:-1}" != "0" && "${_DISPATCH_ROUND_TOPUP_ALLOWED:-0}" == "1" ]] || return 1
+	trigger=$(_dispatch_round_topup_trigger_file)
+	[[ -f "$trigger" && ! -L "$trigger" ]] || return 1
+	mtime=$(_file_mtime_epoch "$trigger" 2>/dev/null) || return 1
+	[[ "$mtime" =~ ^[0-9]+$ && "$checked" =~ ^[0-9]+$ ]] || return 1
+	((mtime >= checked)) || return 1
+	[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=1800
+	now=$(date +%s)
+	if [[ "$started" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] && ((now - started > max_age)); then
+		return 1
+	fi
+	return 0
+}
+
+# Re-read capacity and compute a raised budget. Call directly (no subshell) so
+# the read timestamp persists. Sets _DISPATCH_ROUND_TOPUP_GRANT on a grant.
+# Args: launched by this budget, current budget, slots to hold, log context
+# Returns: 0 when the budget may grow, 1 otherwise
+_dispatch_round_topup_budget() {
+	local launched="$1" budget="$2" hold="${3:-0}" context="${4:-round}"
+	local capacity_line="" max_workers="" active_workers="" free="" plan="" target=0
+	_DISPATCH_ROUND_TOPUP_GRANT=""
+	[[ "$launched" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] || return 1
+	[[ "$hold" =~ ^[0-9]+$ ]] || hold=0
+	_dispatch_round_topup_due || return 1
+	plan=$(_dispatch_round_budget_plan after)
+	if _dispatch_round_plan_skips "$plan"; then
+		_DISPATCH_ROUND_TOPUP_CHECKED_AT=$(date +%s)
+		return 1
+	fi
+	capacity_line=$(_dispatch_compute_capacity) || capacity_line=""
+	_DISPATCH_ROUND_TOPUP_CHECKED_AT=$(date +%s)
+	read -r max_workers active_workers free <<<"$capacity_line"
+	[[ "$free" =~ ^[0-9]+$ ]] || return 1
+	target=$((launched + free - hold))
+	if ((target <= budget)); then
+		echo "[pulse-wrapper] Dispatch_max: in-round top-up check (${context}) — no new headroom (launched=${launched} budget=${budget} free=${free} hold=${hold} active=${active_workers}/${max_workers}) (t19122)" >>"$LOGFILE"
+		return 1
+	fi
+	_DISPATCH_ROUND_TOPUP_GRANT="$target"
+	echo "[pulse-wrapper] Dispatch_max: in-round top-up (${context}) — budget ${budget} -> ${target} (launched=${launched} free=${free} hold=${hold} active=${active_workers}/${max_workers}) after a worker exit (t19122)" >>"$LOGFILE"
+	_dispatch_stats_increment "dispatch_round_topup_grants"
+	return 0
+}
+
 #######################################
 # Compute the dispatch capacity for this round.
 #

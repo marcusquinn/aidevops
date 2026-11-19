@@ -749,6 +749,31 @@ if [[ -n "$last" && "$last" != *"origin:"* && "$last" != *"status:available"* &&
 else
 	print_result "B'15: confirmed-absent derived origin label is dropped; caller label kept" 1 "line: $last"
 fi
+
+# B'16 (GH#39054): gh_create_pr degrades like gh_create_issue. The exact-origin
+# readback is forced to fail, so success proves provenance was deferred.
+reset_recorder
+pr_rc=0
+pr_err=$(MOCK_LABEL_NAMES="bug" MOCK_ORIGIN_EXACT=0 SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" 2>&1 >/dev/null) || pr_rc=$?
+last=$(grep '^pr create ' "$GH_RECORD_FILE" | tail -1)
+if [[ "$pr_rc" -eq 0 && -n "$last" && "$last" != *"origin:"* && "$pr_err" == *"gh_create_pr: origin:interactive is absent"* ]]; then
+	print_result "B'16: gh_create_pr drops confirmed-absent derived origin and exits 0" 0
+else
+	print_result "B'16: gh_create_pr drops confirmed-absent derived origin and exits 0" 1 \
+		"rc=$pr_rc line: $last stderr: $(printf '%s' "$pr_err" | tr '\n' ' ')"
+fi
+
+# B'17: a caller-supplied origin is never dropped, even when provisioning failed.
+reset_recorder
+MOCK_LABEL_NAMES="bug" SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" --label origin:worker >/dev/null 2>&1
+last=$(grep '^pr create ' "$GH_RECORD_FILE" | tail -1)
+if [[ "$last" == *"origin:worker"* ]]; then
+	print_result "B'17: gh_create_pr keeps caller-supplied origin after provisioning failure" 0
+else
+	print_result "B'17: gh_create_pr keeps caller-supplied origin after provisioning failure" 1 "line: $last"
+fi
 _ORIGIN_LABELS_FAILED=""
 unset -f _status_labels_snapshot _gh_managed_label_names_snapshot
 

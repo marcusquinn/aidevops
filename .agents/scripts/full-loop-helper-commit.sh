@@ -110,8 +110,8 @@ _commit_and_pr_privacy_scan() {
 
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
-# summary_what, summary_testing, summary_decisions, runtime_risk, testing_level,
-# completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
+# summary_what, summary_testing, summary_decisions, summary_regression,
+# runtime_risk, testing_level, completion_bookkeeping, bookkeeping_proof_pr, bookkeeping_task_id,
 # skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
@@ -123,7 +123,7 @@ _parse_commit_and_pr_args() {
 		arg="${args[$index]}"
 		pr_metadata_overrides="${pr_metadata_overrides:-} ${arg#--}"
 		case "$arg" in
-		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
+		--issue | --message | --title | --summary | --testing | --risk-level | --testing-level | --decisions | --regression-evidence | --label | --proof-pr | --task-id | --replace-pr | --replacement-reason | --base)
 			if [[ $((index + 1)) -ge ${#args[@]} ]]; then
 				print_error "${arg} requires a value"
 				return 1
@@ -165,6 +165,7 @@ _parse_commit_and_pr_args() {
 			summary_decisions="$value"
 			index=$((index + 2))
 			;;
+		--regression-evidence) summary_regression="$value"; index=$((index + 2)) ;; # GH#39136
 		--label)
 			extra_labels+=("$value")
 			index=$((index + 2))
@@ -1042,7 +1043,8 @@ _summary_declares_partial_self() {
 # Build the PR body string and print it to stdout.
 # Arguments: issue_number, summary_what, summary_testing, files_changed,
 #            sig_footer, closing_keyword (default: Resolves), requested_risk,
-#            requested_testing_level, base_ref (resolved merge base)
+#            requested_testing_level, base_ref (resolved merge base),
+#            replacement_note, decisions, regression_evidence
 _build_pr_body() {
 	local issue_number="$1" summary_what="$2" summary_testing="$3"
 	local files_changed="$4" sig_footer="$5"
@@ -1052,6 +1054,7 @@ _build_pr_body() {
 	local base_ref="${9:-}"
 	local replacement_note="${10:-}"
 	local decisions="${11:-}"
+	local regression_evidence="${12:-}"
 	local runtime_risk=""
 	local testing_level=""
 	local related="" related_numbers=" "
@@ -1061,7 +1064,7 @@ _build_pr_body() {
 	# GH#36864: prose must not introduce a second explicit work identity.
 	# Keep the dispatched declaration below authoritative, even when summaries
 	# contain same-line, multiline or prose-prefixed child/umbrella references.
-	for field in summary_what summary_testing replacement_note decisions; do
+	for field in summary_what summary_testing replacement_note decisions regression_evidence; do
 		text="${!field}"
 		while [[ "$text" =~ $reference_pattern ]]; do
 			reference="${BASH_REMATCH[0]}"
@@ -1104,13 +1107,49 @@ ${decisions}
 - **Risk level:** ${runtime_risk}
 - **Verification:** ${testing_level} — ${summary_testing:-no additional evidence supplied}
 
-${closing_keyword} #${issue_number}
+${regression_evidence:+## Regression Evidence
+
+${regression_evidence}
+
+}${closing_keyword} #${issue_number}
 
 ${related:+## Related
 
 ${related}
 }
 ${sig_footer}"
+	return 0
+}
+
+# GH#39136: run the repository's own Platform Fix Regression Evidence gate on
+# the final title, body and diff before any push, so a platform-fix PR is not
+# published only to fail CI (a rerun replays the old body; only an edit passes).
+# Applies only where the repository's CI enforces it; uses its checked-in script.
+# Arguments: pr_title, pr_body, comparison_base
+_commit_and_pr_platform_evidence_gate() {
+	local pr_title="$1" pr_body="$2" comparison_base="$3"
+	local repo_root="" gate="" temp_root="" body_file="" files_file="" rc=0
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+	gate="${repo_root}/.agents/scripts/platform-fix-regression-evidence.sh"
+	[[ -f "${repo_root}/.github/workflows/platform-fix-regression-evidence.yml" && -f "$gate" ]] || return 0
+	temp_root="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}"
+	mkdir -p "$temp_root" || return 1
+	body_file=$(mktemp "${temp_root}/aidevops-platform-evidence-body.XXXXXX") || return 1
+	files_file=$(mktemp "${temp_root}/aidevops-platform-evidence-files.XXXXXX") || {
+		rm -f "$body_file"
+		return 1
+	}
+	printf '%s\n' "$pr_body" >"$body_file"
+	if git diff --name-only "$comparison_base" HEAD >"$files_file"; then
+		bash "$gate" --title "$pr_title" --body-file "$body_file" --files-file "$files_file" >&2 || rc=$?
+	else
+		rc=1
+	fi
+	rm -f "$body_file" "$files_file"
+	if [[ "$rc" -ne 0 ]]; then
+		print_error "Platform Fix Regression Evidence would fail in CI; add a repository test or pass --regression-evidence \"<why automated regression is not possible, plus the manual evidence>\". Nothing was pushed."
+		return 1
+	fi
 	return 0
 }
 
@@ -1607,7 +1646,8 @@ def insert_section(body, text):
     position = footer.start() if footer else len(body)
     return body[:position].rstrip('\n') + '\n\n' + text.rstrip('\n') + '\n\n' + body[position:]
 
-for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions')]:
+for name, flag in [('Files Changed', None), ('Summary', 'summary'), ('Decisions', 'decisions'),
+                   ('Regression Evidence', 'regression-evidence')]:
     old, new = section(current, name), section(generated, name)
     if old and not new and flag in overrides:
         current = current[:old.start()] + current[old.end():]

@@ -1476,6 +1476,12 @@ _dispatch_execute_candidate_loop() {
 	local active_count="$4"
 	local login="$5"
 	local loop_output="" outcomes_file="" product_reserved=0 product_complete=false
+	# t19122: only a parallel max-path round absorbs mid-round worker exits;
+	# floor, throttle and serial rounds keep their fixed launch count.
+	local _DISPATCH_ROUND_TOPUP_ALLOWED=0
+	if [[ "$_dispatch_path" == "max" ]] && ((_dispatch_max_parallel > 1)); then
+		_DISPATCH_ROUND_TOPUP_ALLOWED=1
+	fi
 	product_reserved=$(_dispatch_product_reservation_slots "$worker_limit" "$active_count" "$_effective_slots")
 	product_complete=$(jq -r 'all(.[]; .product_discovery_complete == true)' <<<"$ranked_candidates")
 	if ((product_reserved > 0)); then
@@ -1521,10 +1527,10 @@ _dispatch_execute_candidate_loop() {
 # Returns: dispatched worker count via stdout
 #######################################
 dispatch_max() {
-	local _PULSE_ELASTIC_DISPATCH=1
+	local _PULSE_ELASTIC_DISPATCH=1 _DISPATCH_ROUND_TOPUP_STARTED_AT="" _DISPATCH_ROUND_TOPUP_CHECKED_AT=""
 	local dependency_normalization_mode="${1:-normalize}"
-	local capacity_line
-	capacity_line=$(_dispatch_compute_capacity) || {
+	local capacity_line=""
+	_dispatch_round_capacity_read capacity_line || { # t19122: stamps the read for in-round top-ups
 		echo 0
 		return 0
 	}
