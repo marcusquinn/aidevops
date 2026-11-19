@@ -1629,15 +1629,9 @@ _create_pr() {
 
 	print_info "Creating PR..."
 	local pr_url="" pr_error="" rc=0
-	# t2115/t3088: gh_create_pr auto-appends origin label and signature footer.
-	# Previously we passed --label "$origin_label" here too, with the comment
-	# "GitHub deduplicates". That claim is FALSE for non-identical labels: when
-	# this caller's $origin_label disagreed with gh_create_pr's session-detected
-	# label (env-var divergence — see full-loop-helper.sh t3088 fix), GitHub
-	# applied BOTH labels, producing the t2200 mutual-exclusion violation.
-	# Canonical failure: PR #21825. Origin label is now injected at creation by
-	# gh_create_pr, via session_origin_label(), then reconciled below after the
-	# PR number is known to cover partial-success recovery gaps (GH#26045).
+	# t2115/t3088: gh_create_pr injects the origin label and signature footer;
+	# passing --label "$origin_label" too applied both labels (t2200, PR #21825).
+	# The label is reconciled below once the PR number is known (GH#26045).
 	# GH#33381: pass the exact pushed head instead of letting gh infer it from
 	# ambient checkout state (wrong after a replacement branch, or in linked
 	# worktrees backed by a bare common directory).
@@ -1664,14 +1658,11 @@ _create_pr() {
 		pr_cmd+=(--label "$lbl")
 	done
 
-	local effective_ready
-	effective_ready=$(_effective_pr_ready "${create_ready:-0}" "$head_branch")
-
 	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || {
 		rm -f "$body_file"
 		return 1
 	}
-	pr_url=$(_run_pr_create_cmd "$effective_ready" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
+	pr_url=$(_run_pr_create_cmd "$(_effective_pr_ready "${create_ready:-0}" "$head_branch")" "${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 	rm -f "$body_file"
 
 	if [[ $rc -ne 0 ]]; then
