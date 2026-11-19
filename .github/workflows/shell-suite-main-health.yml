@@ -1,0 +1,276 @@
+name: Shell Suite Main Health
+
+# t19150 / GH#39222: the PR gate (affected-tests-helper.sh run --compare-base)
+# classifies a suite that is also red on the base as `pre-existing`, so a red
+# `main` never fails a PR and nothing recorded it. This scheduled run executes
+# every root shell suite on main and files one deduped `red-main: <suite>` issue
+# per still-failing suite; it closes the issue once the suite passes again.
+#
+# Issue-authoring token: issues opened with the default GITHUB_TOKEN are authored
+# by github-actions[bot] and are not trusted for auto-dispatch. Provide SYNC_PAT
+# (maintainer fine-grained PAT, Issues: Read and write). See
+# .agents/reference/auto-merge.md "Scheduled-Workflow Issues" (GH#37882).
+# Trusted triggers only: schedule/workflow_dispatch on the default branch, and
+# issue bodies built from main's own suite output, never PR or issue text.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+# The default token is read-only: issues are written only with SYNC_PAT, and only
+# in the reconcile step (never while suites execute).
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  shell-suite-health:
+    name: Run all shell suites on main
+    # Enforce the header contract: SYNC_PAT is never released to a non-default-branch run
+    # (workflow_dispatch on another branch would use that branch's workflow copy).
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run every root suite
+        id: suites
+        run: |
+          set -o pipefail
+          results="${RUNNER_TEMP}/suite-results.tsv"
+          # Bounded parallelism, per-suite timeout, one rerun to drop flakes.
+          # Actions runs bash -e: capture the intentional nonzero status explicitly.
+          rc=0
+          timeout --signal=TERM 3600 \
+            .agents/scripts/affected-tests-helper.sh all --jobs 4 --timeout 180 --retries 1 \
+            > "$results" 2> "${RUNNER_TEMP}/suite-stderr.log" || rc=$?
+          if [[ "$rc" -eq 124 ]]; then
+            echo "::error::Suite run exceeded the 60 minute bound"
+            exit 1
+          fi
+          {
+            echo '### Shell suite health on main'
+            echo '```'
+            cat "$results"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "results=${results}" >> "$GITHUB_OUTPUT"
+          # rc 1 means at least one red suite: routed to issues below, not a job failure.
+          if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+            echo "::error::affected-tests-helper.sh all exited ${rc}"
+            tail -n 30 "${RUNNER_TEMP}/suite-stderr.log"
+            exit "$rc"
+          fi
+          # rc 1 is only a red report when the TSV header was written (not a crash).
+          header=$'suite\trc_head\trc_base\tclass'
+          if [[ "$rc" -eq 1 && "$(head -n 1 "$results")" != "$header" ]]; then
+            echo "::error::affected-tests-helper.sh all exited 1 without a completed report"
+            tail -n 30 "${RUNNER_TEMP}/suite-stderr.log"
+            exit 1
+          fi
+
+          # Capture failing lines now, without any issue-writing credential in the environment.
+          diag="${RUNNER_TEMP}/red-main/diag"
+          mkdir -p "$diag"
+          # Total diagnostic budget (10 min) reserves time for reconciliation inside the job timeout;
+          # TERM then KILL so a suite ignoring TERM cannot hold the pipe open.
+          deadline=$((SECONDS + 600))
+          while IFS= read -r suite; do
+            if [[ "$SECONDS" -ge "$deadline" ]]; then
+              echo "::warning::diagnostic budget exhausted; remaining suites filed without captured lines"
+              break
+            fi
+            timeout --kill-after=10 120 bash "$suite" 2>&1 | grep -Ei 'fail|error' | head -n 20 > "${diag}/$(basename "$suite").txt" || true
+          done < <(awk -F'\t' 'NR>1 && $4=="regression" {print $1}' "$results")
+
+      - name: File, update and close red-main issues
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+          GH_REPO: ${{ github.repository }}
+          RESULTS: ${{ steps.suites.outputs.results }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::SYNC_PAT is not configured; refusing to file issues with the bot token (not trusted for auto-dispatch)"
+            exit 1
+          fi
+          failed=0
+          marker='<!-- aidevops:shell-suite-main-health'
+          # Framework wrappers apply origin labels and signatures (never raw gh issue create).
+          # shellcheck source=/dev/null
+          source .agents/scripts/shared-gh-wrappers.sh
+          for fn in gh_create_issue gh_issue_edit_safe gh_issue_close_safe; do
+            declare -F "$fn" >/dev/null || { echo "::error::wrapper ${fn} unavailable"; exit 1; }
+          done
+
+          work="${RUNNER_TEMP}/red-main"
+          mkdir -p "$work"
+          sha="$(git rev-parse --short HEAD)"
+
+          # Open red-main issues keyed by title -> number.
+          # Paginated full inventory (no result cap) so lookup and closure never miss an issue.
+          open_json="$(gh api --paginate "repos/${GH_REPO}/issues?state=open&per_page=100" \
+            --jq '.[] | select(.pull_request | not) | select(.title | startswith("red-main: ")) | {number,title,body}' | jq -s '.')"
+
+          red_list="${work}/red.txt"
+          green_list="${work}/green.txt"
+          awk -F'\t' 'NR>1 && $4=="regression" {print $1}' "$RESULTS" > "$red_list"
+          awk -F'\t' 'NR>1 && ($4=="pass" || $4=="flaky") {print $1}' "$RESULTS" > "$green_list"
+
+          issue_for() {
+            local title="$1"
+            printf '%s' "$open_json" | jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty'
+            return 0
+          }
+
+          # Candidate first-bad commit: latest commit touching scripts the suite names.
+          candidate_commit() {
+            local suite="$1" scripts="" name
+            while IFS= read -r name; do
+              [[ -f ".agents/scripts/${name}" ]] && scripts="${scripts} .agents/scripts/${name}"
+            done < <(grep -oE '[A-Za-z0-9_.-]+\.sh' "$suite" | sort -u)
+            if [[ -z "$scripts" ]]; then
+              echo "not narrowed (suite names no tracked script)"
+              return 0
+            fi
+            # shellcheck disable=SC2086
+            git log -n 1 --format='%h %s (%an, %ad)' --date=short -- $scripts
+            return 0
+          }
+
+          while IFS= read -r suite; do
+            [[ -n "$suite" ]] || continue
+            base="$(basename "$suite")"
+            title="red-main: ${base}"
+            rcs="$(awk -F'\t' -v s="$suite" '$1==s {print $2}' "$RESULTS")"
+            lines="$(cat "${RUNNER_TEMP}/red-main/diag/${base}.txt" 2>/dev/null || true)"
+            [[ -n "$lines" ]] || lines="(no FAIL/ERROR lines captured; exit codes ${rcs})"
+            body_file="${work}/${base}.md"
+            {
+              echo "${marker} suite=${suite} -->"
+              echo '<!-- aidevops:brief-schema=v2 -->'
+              echo "## Suite \`${base}\` is red on \`main\`"
+              echo
+              echo "The scheduled shell-suite health run failed this suite at \`${sha}\` and again on rerun (exit codes: ${rcs}; 124 = timeout)."
+              echo
+              echo "- Run: ${RUN_URL}"
+              echo "- Candidate commit (latest touching the scripts this suite names; not a bisect result): $(candidate_commit "$suite")"
+              echo
+              echo "### Failing lines"
+              echo
+              echo '```'
+              printf '%s\n' "$lines"
+              echo '```'
+              echo
+              echo "### Reproduce"
+              echo
+              echo '```bash'
+              echo "bash ${suite}"
+              echo '```'
+              echo
+              echo "## Why"
+              echo
+              echo "A red \`main\` is invisible to the PR gate (it classifies base-red suites as pre-existing), so this issue is the only record that the suite needs repair."
+              echo
+              echo "## How (Approach)"
+              echo
+              echo "### Files to Modify"
+              echo
+              echo "- EDIT: \`${suite}\` (or the script it exercises, per the candidate commit above)"
+              echo
+              echo "### Files Scope"
+              echo
+              echo "- \`${suite}\`"
+              echo
+              echo "### Implementation Steps"
+              echo
+              echo "1. Run the reproduce command and confirm the failing lines quoted above."
+              echo "2. Inspect the candidate commit, then fix the regressed script or the stale suite assertion."
+              echo "3. Rerun the suite until it exits 0, and run \`shellcheck\` on every file touched."
+              echo
+              echo "### Complete Write Surface"
+              echo
+              echo "- **Callers/readers:** \`${suite}\` is run by \`.agents/scripts/affected-tests-helper.sh\` and by this workflow (\`.github/workflows/shell-suite-main-health.yml\`); the scripts it names are listed under the candidate commit above."
+              echo "- **Writers/mutation paths:** the suite and the \`.agents/scripts/\` files it invokes; the fix belongs in whichever of them regressed."
+              echo "- **Existing verification/tests:** \`${suite}\` is itself the check; its failing lines are quoted above."
+              echo "- **Schemas/config:** N/A: a shell suite fix changes no schema; searched the suite for config reads, none are the cause of a regression by definition of this report."
+              echo "- **Generated/deployed mirrors:** \`~/.aidevops/agents/scripts/\` is deployed from \`.agents/scripts/\` by \`setup.sh\`; edit the repo copy only."
+              echo "- **Migrations/backfills:** N/A because repairing a failing suite changes no persisted data (searched \`${suite}\`: it only reads and writes temp files)."
+              echo "- **Cleanup/rollback paths:** \`git revert\` the fixing commit (or the candidate commit above); \`${suite}\` keeps no state between runs."
+              echo
+              echo "### Hazards and Compatibility"
+              echo
+              echo "- **Concurrency/atomicity:** the suite runs in isolation per run; preserved behavior is that no shared state is written outside the suite's own temp dirs."
+              echo "- **Migration/rollback:** no ordering constraints; a bad fix is reverted with a plain \`git revert\`."
+              echo "- **Mixed-version/backward compatibility:** preserve the behavior other suites and callers rely on from the scripts the suite exercises."
+              echo "- **Idempotency/retry:** the suite can be rerun any number of times; this issue is updated in place by the scheduled run, not duplicated."
+              echo "- **Partial failure/recovery:** if the fix is partial, the next scheduled run keeps this issue open and refreshes the failing lines."
+              echo
+              echo "### Verification Before Dispatch"
+              echo
+              echo '```bash'
+              echo "bash ${suite}"
+              echo "shellcheck ${suite}"
+              echo '```'
+              echo
+              echo "- **Surface mapping:** \`bash ${suite}\` covers the scripts the suite names and their callers; \`shellcheck ${suite}\` covers the suite file itself."
+              echo
+              echo "## Acceptance Criteria"
+              echo
+              echo "- [ ] \`bash ${suite}\` exits 0 on a branch containing the fix."
+              echo "- [ ] Regression guard: no other root suite regresses (\`.agents/scripts/affected-tests-helper.sh\` reports no \`regression\` for the touched scripts)."
+              echo "- [ ] This issue closes automatically when the next scheduled run passes the suite."
+            } > "$body_file"
+            # Generated briefs must pass readiness before they are filed or refreshed.
+            if ! bash .agents/scripts/verify-brief-helper.sh check-readiness "$body_file" > "${work}/readiness.log" 2>&1; then
+              echo "::error::generated brief for ${title} failed readiness"; cat "${work}/readiness.log"
+              failed=1
+              continue
+            fi
+
+            number="$(issue_for "$title")"
+            if [[ -n "$number" ]]; then
+              if gh_issue_edit_safe "$number" --body-file "$body_file"; then
+                echo "Updated #${number} (${title})"
+              else
+                echo "::error::failed to update #${number}"; failed=1
+              fi
+            else
+              gh_create_issue --repo "$GH_REPO" --title "$title" --label bug --label auto-dispatch --body-file "$body_file" \
+                || { echo "::error::failed to create issue for ${title}"; failed=1; }
+            fi
+          done < "$red_list"
+
+          # Close only workflow-managed issues (marker + valid suite path) whose suite is now green or removed.
+          managed="${work}/managed.tsv"
+          printf '%s' "$open_json" | jq -r --arg m "$marker" '.[] | select((.body // "") | contains($m)) | [.number, ((.body | capture("suite=(?<s>\\.agents/scripts/tests/[A-Za-z0-9_.-]+\\.sh)") | .s) // "")] | @tsv' > "$managed"
+          while IFS=$'\t' read -r number suite; do
+            [[ -n "$number" && -n "$suite" ]] || continue
+            if grep -qxF -- "$suite" "$red_list"; then
+              continue
+            fi
+            if grep -qxF -- "$suite" "$green_list" || [[ ! -f "$suite" ]]; then
+              gh_issue_close_safe "$number" --reason completed \
+                --comment "Suite \`$(basename "$suite")\` passed on \`main\` at \`${sha}\` in ${RUN_URL}. Closing." \
+                || { echo "::error::failed to close #${number}"; failed=1; }
+            fi
+          done < "$managed"
+
+          if [[ -s "$red_list" ]]; then
+            echo "::warning::$(wc -l < "$red_list" | tr -d ' ') red suite(s) on main; see red-main issues"
+          fi
+          if [[ "$failed" -ne 0 ]]; then
+            echo "::error::one or more issue mutations failed; the next run re-reads issue state and retries"
+            exit 1
+          fi
