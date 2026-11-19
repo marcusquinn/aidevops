@@ -481,21 +481,21 @@ test_profile_publication_detached_archive_plans_without_apply() {
 	"$GIT_BIN" -C "$repo_path" add README.md || rc=1
 	"$GIT_BIN" -C "$repo_path" commit -q -m init || rc=1
 	"$GIT_BIN" -C "$repo_path" remote add origin 'https://github.com/example/profile.git' || rc=1
-	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$worktree_path" HEAD || rc=1
+	create_enrolled_worktree "$repo_path" "$worktree_path" --detach || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		create_legacy_worktree_recovery_fixture "$worktree_path" 'profile-readme-helper.sh' \
 		'recovery_path=profile-publication-archive profile_scratch=true' || rc=1
 	archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+	remove_enrolled_fixture "$repo_path" \
 		"$worktree_path" "$archive_path" 'profile-readme-helper.sh' 'profile-publication' \
 		'recovery_path=profile-publication-archive profile_scratch=true' 'true' 'true' || rc=1
-	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$dirty_worktree_path" HEAD || rc=1
+	create_enrolled_worktree "$repo_path" "$dirty_worktree_path" --detach || rc=1
 	printf 'unique unpublished data\n' >"${dirty_worktree_path}/unique.bin" || rc=1
 	AIDEVOPS_WORKTREE_TRASH_ROOT="$recovery_root" AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" \
 		create_legacy_worktree_recovery_fixture "$dirty_worktree_path" 'profile-readme-helper.sh' \
 		'recovery_path=profile-publication-archive profile_scratch=true' || rc=1
 	dirty_archive_path="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
-	AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+	remove_enrolled_fixture "$repo_path" \
 		"$dirty_worktree_path" "$dirty_archive_path" 'profile-readme-helper.sh' 'profile-publication' \
 		'recovery_path=profile-publication-archive profile_scratch=true' 'true' 'true' || rc=1
 	if ! (
@@ -705,8 +705,8 @@ test_generic_detached_archive_plans_and_applies() {
 	"$GIT_BIN" -C "$repo_path" commit -q -m init || rc=1
 	"$GIT_BIN" -C "$repo_path" remote add origin 'https://github.com/example/detached.git' || rc=1
 	published_head=$("$GIT_BIN" -C "$repo_path" rev-parse HEAD) || rc=1
-	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$worktree_path" HEAD || rc=1
-	"$GIT_BIN" -C "$repo_path" worktree add -q --detach "$unpublished_path" HEAD || rc=1
+	create_enrolled_worktree "$repo_path" "$worktree_path" --detach || rc=1
+	create_enrolled_worktree "$repo_path" "$unpublished_path" --detach || rc=1
 	printf 'local only\n' >"${unpublished_path}/local.txt" || rc=1
 	"$GIT_BIN" -C "$unpublished_path" add local.txt || rc=1
 	"$GIT_BIN" -C "$unpublished_path" commit -q -m 'unpublished detached work' || rc=1
@@ -719,7 +719,7 @@ test_generic_detached_archive_plans_and_applies() {
 		else
 			unpublished_archive="$WORKTREE_RECOVERABLE_ARCHIVE_PATH"
 		fi
-		AIDEVOPS_REAL_GIT_BIN="$GIT_BIN" remove_archived_worktree_path \
+		remove_enrolled_fixture "$repo_path" \
 			"$path" "$WORKTREE_RECOVERABLE_ARCHIVE_PATH" 'worktree-helper.sh' 'test-cleanup' \
 			'recovery_path=test-detached' 'true' 'true' || rc=1
 	done
