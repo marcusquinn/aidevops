@@ -72,12 +72,27 @@ The account name comes from `ssh <alias> whoami` and the token is injected from 
 
 Observed **2026-10-25/26**: a new site behind a proxied Cloudflare wildcard stayed at `waiting_for_retry` with `last_error: "Domain challenge failed"`; Full (strict) returned 525. Even a reachable HTTP challenge token did not prove Hostinger could issue the certificate. Hostinger's challenge checks expect the hostname to resolve to the hosting origin IP, not Cloudflare's proxy IPs.
 
-For an authorised DNS recovery (not performed by the helper):
+For a new multisite child site, `hostinger-helper.sh subdomain-ssl` automates this (see below). Otherwise, for an authorised manual DNS recovery:
 
 1. Record the existing DNS state and privately verify the Hostinger origin IP. Add temporary **DNS-only** A records for the exact site hostname (for example `site.example.com`) and its `www` name (`www.site.example.com`), pointing at that origin. Use TTL 60 where supported and a unique comment identifying this SSL recovery. Do not replace an existing explicit record without a separately reviewed restoration plan; exposing the origin bypasses Cloudflare protection during this interval.
 2. Wait for DNS propagation and Hostinger's automatic retry; inspect `hostinger-helper.sh ssl-status site.example.com`. Certificates issued within 2–15 minutes in these observations, not a guaranteed retry interval. `POST .../ssl/setup` returns 422 while status is `installing` or `waiting_for_retry`: it cannot force a retry. Use the retry timer or hPanel **Cancel → Install SSL**, not DELETE or repeated setup calls.
 3. Before restoring the proxy, verify the origin certificate privately with `openssl s_client -connect <origin-IP>:443 -servername site.example.com -verify_hostname site.example.com -verify_return_error </dev/null`. Check successful chain/hostname verification, issuer and expiry; do not publish the origin IP or raw output.
 4. Delete **only** the temporary records identified by their saved IDs and recovery comment, restoring the original wildcard/proxy behaviour. Do not delete or change the wildcard. Verify HTTPS through Cloudflare returns the expected site under Full (strict). If issuance is still pending, keep an explicit recovery checkpoint rather than silently leaving DNS-only records behind.
+
+### Subdomain multisite behind Cloudflare without a wildcard
+
+Each new child site of a subdomain multisite needs its own Hostinger subdomain and certificate. Use the command instead of the manual steps above; it keeps both tokens in the secret store:
+
+```bash
+hostinger-helper.sh subdomain-ssl <name>.<apex> --zone-token-secret CLOUDFLARE_<ACCOUNT>_API_TOKEN          # preview, read-only
+hostinger-helper.sh subdomain-ssl <name>.<apex> --zone-token-secret CLOUDFLARE_<ACCOUNT>_API_TOKEN --apply
+hostinger-helper.sh subdomain-ssl --restore <snapshot> --zone-token-secret CLOUDFLARE_<ACCOUNT>_API_TOKEN
+hostinger-helper.sh subdomain-ssl --audit <apex> --ssh <alias>
+```
+
+`--apply` runs: (1) resolve `{username}` from `GET /api/hosting/v1/websites?domain=<apex>` and add the subdomain (`{"subdomain":"<name>","is_using_public_directory":true}`) if missing; (2) save the Cloudflare record for the child host to a 0600 snapshot in `~/.aidevops/.agent-workspace/work/hostinger-subdomain-ssl/` and replace it with a DNS-only A record (TTL 60, recovery comment) to the origin; (3) poll `ssl-status` up to 15 times, 60 s apart (`HOSTINGER_SDS_POLL_ATTEMPTS`, `HOSTINGER_SDS_POLL_INTERVAL`) until `active`; (4) verify the origin certificate privately with `openssl s_client -verify_hostname`, restore the saved record (for example proxied `CNAME <name> → @`; a temporary record is deleted when none existed) and check HTTPS 200 through Cloudflare. On failure the DNS-only record stays as a checkpoint and the command prints the `--restore` command. The origin IP is read from the Cloudflare A record of `--origin-host` (default: the apex). The IP, account username and tokens are never printed. The Cloudflare token needs Zone → DNS: Edit and Zone: Read for the zone ([token setup](cloudflare.md)).
+
+`--audit` compares `wp site list --field=domain` (over SSH) with the Hostinger subdomain list and probes each child for 525; it exits non-zero on any finding.
 
 ### Detect copied or restored WordPress sites
 
