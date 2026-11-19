@@ -213,7 +213,7 @@ def check_manifest_fields(base_manifest, head_manifest, identity, pins, commit_l
             license_mappings += [{**identity["commits"], **{old_up: new_up}}]
     if commit_license:
         # Signed commits-mode opt-in: only the proven full-SHA substitution.
-        license_mappings += [commit_license, {**commit_license, **{old_up: new_up}}]
+        license_mappings += [commit_license]
     exempt = VERSION_KEYS + (("upstreamLicense",) if license_mappings else ())
     unchanged = {key: value for key, value in base_manifest.items() if key not in exempt}
     require(canonical(unchanged) == canonical({key: value for key, value in head_manifest.items() if key not in exempt}),

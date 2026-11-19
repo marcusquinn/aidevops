@@ -959,7 +959,11 @@ NEW_UPSTREAM=abcdef1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	assert_routine not 'commit license URL opt-in with unproven SHA' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/"${NEW_UPSTREAM}0"}")" 'manifest changes beyond'
 	assert_routine not 'commit license URL opt-in with other key' "$license_filter | $(manifest_head "${HEAD_MANIFEST/MIT/Apache}")" 'manifest changes beyond'
 	assert_routine not 'commit license URL opt-in malformed' "$license_filter | .policy.license_commit_url = \"yes\"" 'license_commit_url is invalid'
-	assert_routine not 'commit license URL opt-in needs commits mode' "$license_filter | .policy.upstream_mode = \"semver\"" 'license_commit_url needs a commits policy'
+	# Semver manifests so check_upstream passes and the opt-in mode restriction is reached.
+	semver_base=$(jq -c '.upstreamVersion = "3.39.87"' <<<"$BASE_MANIFEST")
+	semver_head=$(jq -c '.upstreamVersion = "3.39.114"' <<<"$HEAD_MANIFEST")
+	assert_routine not 'commit license URL opt-in needs commits mode' "$license_filter | .policy.upstream_mode = \"semver\" | .finding_upstream = \"3.39.114\" | $(manifest_base "$semver_base") | $(manifest_head "$semver_head")" 'license_commit_url needs a commits policy'
+	assert_routine not 'commit license URL abbreviated head is rejected' "$license_filter | $(manifest_head "${HEAD_MANIFEST/"$NEW_UPSTREAM"/abcdef1}")" 'manifest changes beyond'
 	# Coincident keys: full old SHA in the Dockerfile may become the short new version.
 	collision_base=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = $sha' <<<"$BASE_MANIFEST")
 	collision_head=$(jq -c --arg sha "$OLD_UPSTREAM" '.upstreamVersion = "abcdef1" | .upstreamLicense.url |= sub("[0-9a-f]{40}"; $sha)' <<<"$HEAD_MANIFEST")
