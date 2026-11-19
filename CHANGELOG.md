@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.241] - 2026-11-19
+
+### Added
+
+- add --ready to commit-and-pr so verified interactive PRs open non-draft (#39211)
+
+### Changed
+
+- Maintenance: mark t19154 complete (pr:#39238 completed:2026-11-19) (#39239)
+- CI: run browser QA helper regression in Framework Validation core (t19155). Resolves #39234 (#39237)
+- Maintenance: sync GitHub issue refs to TODO.md (#39231)
+
+### Fixed
+
+- merge gate blocks unclassified terminal non-required check failures (GH#39227) (#39230)
+- mine failed post-merge and repo-level workflow runs (GH#39228)
+- enforce diff-scoped Pulse unbound-var scan in required Complexity Analysis
+- declare primary For identity on TODO publication PR
+- affected-test selection follows transitive production sourcers (GH#39221)
+- initialise multi-var locals in stale non-closing PR retirement
+- close non-closing PRs for completed issues with empty or stale planning diff (GH#39213)
+- resolve sourced test modules to root suites in affected-tests-helper (GH#39212)
+- restore leaked fixture workspace mode and tolerate fail-closed orphan PR base
+- size the daily apply routine's collection budgets; drop duplicate r-pulse-check
+- accept the merge closeout marker as MERGE_SUMMARY evidence
+- flush queued writes on process exit instead of discarding them (#39203)
+
 ## [3.39.240] - 2026-11-19
 
 ### Added
