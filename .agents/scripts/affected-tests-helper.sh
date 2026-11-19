@@ -75,7 +75,7 @@ def report_inherited_red(suite):
         link = "tracked by #%s" % found[0]
         links_file = os.environ.get("AFFECTED_TESTS_LINKS_FILE")
         if links_file:
-            with open(links_file, "a") as handle:
+            with open(links_file, "a", encoding="utf-8") as handle:
                 handle.write("- `%s` is red on base: [#%s](%s)\n" % (Path(suite).name, found[0], found[1]))
     print("  inherited red %s: %s" % (suite, link), file=sys.stderr)
 
@@ -187,8 +187,11 @@ if args.command == "all":
     # Sourced-only modules (no standalone entry) are skipped; their root suites exercise them.
     # Dual-use suites (sourced AND runnable: top-level main/exit or a BASH_SOURCE guard) stay.
     standalone = re.compile(r"^(?:main\b|exit\b)|BASH_SOURCE\[0\]", re.M)
-    ordered = [str(t.relative_to(root)) for t in tests
-               if str(t.relative_to(root)) not in sourcers or standalone.search("\n".join(t.read_text(errors="replace").splitlines()))]
+    ordered = []
+    for t in tests:
+        rel = str(t.relative_to(root))
+        if rel not in sourcers or standalone.search(test_bytes[rel].decode(errors="ignore")):
+            ordered.append(rel)
     args.max = max(args.max, len(ordered))
     args.compare_base = False
     resolved = {suite: (False, 0, 0) for suite in ordered}
