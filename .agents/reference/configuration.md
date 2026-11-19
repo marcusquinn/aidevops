@@ -108,6 +108,8 @@ Supervisor, dispatch, and autonomous operation settings.
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily read-only drift report on clean repos in `repos.json`; never fetches or pulls canonical checkouts. |
 | `orchestration.max_workers_cap` | integer | `0` (auto: `(total RAM − RAM_RESERVE_MB) / RAM_PER_WORKER_MB`, clamped to 2–64 before host sharing) | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. Auto divides this ceiling among detected co-located runner users (minimum 1 per user); a positive explicit cap is a per-runner override and is not divided. |
+| `orchestration.ram_per_worker_mb` | integer | `1536` | `RAM_PER_WORKER_MB` | Estimated RAM per headless worker process tree; divides reclaimable RAM into worker slots. See [Worker resource policy](#worker-resource-policy). |
+| `orchestration.ram_reserve_mb` | integer | `6144` | `RAM_RESERVE_MB` | Reclaimable RAM kept free for the OS and user apps before worker slots are counted. Lower it on small desktops whose reclaimable RAM rarely exceeds it. |
 | `orchestration.max_load_per_core` | — | — | — | **Deprecated, ignored** (GH#35537). CPU load never gates admission; see [Worker resource policy](#worker-resource-policy). Remove from config. |
 | `orchestration.cpu_idle_admit_percent` | — | — | — | **Deprecated, ignored** (GH#35537). Remove from config. |
 | `orchestration.min_worker_concurrency` | integer | `6` | `AIDEVOPS_MIN_WORKER_CONCURRENCY` | Minimum active implementation-worker floor while provider/account health and RAM headroom permit. Never exceeds RAM headroom. Set to `0` to disable. |
@@ -134,7 +136,9 @@ How admission is computed each preflight and refill pass:
   never exceeds RAM headroom. No RAM slots closes admission (running workers
   continue); a host running no workers keeps one slot while one worker fits.
 - Defaults: `RAM_PER_WORKER_MB=1536` (measured worker trees 0.7–1.6 GB),
-  `RAM_RESERVE_MB=6144`. Override per host with those environment variables.
+  `RAM_RESERVE_MB=6144`. Override per host with `orchestration.ram_per_worker_mb`
+  and `orchestration.ram_reserve_mb` in `config.jsonc`; the environment
+  variables of the same names win when set.
   Dispatch logs show `admission_policy=ram_only` with `ram_available_mb`,
   `ram_worker_growth_mb`, `ram_slots` and `ram_cap`.
 
