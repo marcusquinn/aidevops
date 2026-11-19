@@ -220,15 +220,21 @@ printf 'PASS missing/malformed PR metadata fails closed\n'
 
 # Prove cmd_merge exits before pre-merge/native/admin transport on denial.
 _merge_handle_already_merged_provenance() { return 2; }
-_merge_check_closure_metadata() { return 0; }
+_merge_check_closing_guards() { return 0; }
 _merge_pre_merge_gate_with_admission_retry() { printf 'unexpected gate\n' >>"${TEST_ROOT}/transport"; return 0; }
 _merge_execute() { printf 'unexpected merge\n' >>"${TEST_ROOT}/transport"; return 1; }
 if cmd_merge 100 owner/repo --admin >"${TEST_ROOT}/command.log" 2>&1; then
 	printf 'FAIL cmd_merge accepted untrusted issue\n' >&2
 	exit 1
 fi
-[[ ! -e "${TEST_ROOT}/transport" ]]
-grep -q 't2449/t3052' "${TEST_ROOT}/command.log"
+if [[ -e "${TEST_ROOT}/transport" ]]; then
+	printf 'FAIL cmd_merge reached merge transport before the t2449 denial\n' >&2
+	exit 1
+fi
+if ! grep -q 't2449/t3052' "${TEST_ROOT}/command.log"; then
+	printf 'FAIL cmd_merge denial lacked t2449/t3052 reason; log: %s\n' "$(tr '\n' ' ' <"${TEST_ROOT}/command.log")" >&2
+	exit 1
+fi
 printf 'PASS cmd_merge denies with t2449 reason before any merge/admin fallback\n'
 
 FULL_LOOP_HEADLESS=false
