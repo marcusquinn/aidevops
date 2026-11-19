@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.245] - 2026-11-19
+
+### Added
+
+- route configured dependency-bot (Renovate) PRs to worker intake instead of skipping
+
+### Changed
+
+- Tests: enrol recovery lifecycle fixtures in the worker registry (GH#39295) (#39303)
+- Tests: make archive patch-capacity case independent of host free space (#39302)
+- Maintenance: batch retirement guard evidence into one claim, registry, listing and process snapshot
+- Maintenance: mark t19168 complete (pr:#39286 completed:2026-11-19) (#39288)
+
+### Fixed
+
+- trusted worker progress supersedes earlier zero-output hold evidence
+- guarantee cursor progress and run a bounded CI-repair lane first
+
 ## [3.39.244] - 2026-11-19
 
 ### Changed
