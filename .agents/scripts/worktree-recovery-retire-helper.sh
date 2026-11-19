@@ -76,7 +76,7 @@ _worktree_recovery_retirement_evidence() {
 		registry_states[index]="$state"
 		index=$((index + 1))
 	done < <(_worktree_recovery_retirement_registry_states "${paths[@]}")
-	[[ "$index" -eq "$path_count" ]] || return 1
+	[[ "$index" -eq "$path_count" ]] || { printf 'registry-%s\n' "$WORKTREE_RECOVERY_UNAVAILABLE"; return 1; }
 	listing=$(GIT_OPTIONAL_LOCKS=0 git -C "$common_path" worktree list --porcelain 2>/dev/null) ||
 		listing_ok=false
 	index=0
