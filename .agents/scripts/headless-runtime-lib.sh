@@ -534,8 +534,19 @@ except (AttributeError, OSError):
     record["load_1min"] = None
     record["cpu_count"] = os.cpu_count() or 0
     record["load_per_cpu"] = None
-with open(os.environ["METRICS_PATH"], "a") as f:
-    f.write(json.dumps(record, separators=(",", ":")) + "\n")
+# GH#39185: one O_APPEND write per record under an advisory lock, so
+# concurrent producers cannot interleave records (O_APPEND alone is only
+# atomic below PIPE_BUF; records can reach 2 KB+).
+import fcntl
+line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(os.environ["METRICS_PATH"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    view = memoryview(line)
+    while view:
+        view = view[os.write(fd, view):]
+finally:
+    os.close(fd)
 PY
 	# A later EXIT trap must not duplicate an already persisted invocation metric.
 	_HEADLESS_RUNTIME_LAST_METRIC_KEY="${AIDEVOPS_RUN_ID:-${_WORKER_START_EPOCH_MS:-0}}:${session_key}"
