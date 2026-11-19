@@ -1197,6 +1197,46 @@ _gh_create_pr_origin_is_exact() {
 }
 
 #######################################
+# Resolve the wrapper-derived origin label args for gh_create_pr.
+# t3088: defence-in-depth — only auto-inject the session origin label when the
+# caller has NOT already specified one (dual-origin-label bug, PR #21825).
+# GH#39054: match gh_create_issue — when the derived label is confirmed absent
+# and cannot be provisioned (no upstream write authority), create without it
+# and defer provenance to repository triage instead of failing the create.
+# Caller-supplied origins are never dropped.
+# Args: PR create argv
+# Sets: _GH_CREATE_PR_ORIGIN_ARGS (array), _GH_CREATE_PR_ORIGIN_DEFERRED (0|1)
+#######################################
+_gh_create_pr_prepare_origin_args() {
+	_GH_CREATE_PR_ORIGIN_ARGS=()
+	_GH_CREATE_PR_ORIGIN_DEFERRED=0
+	_ensure_origin_labels_for_args "$@"
+	_gh_wrapper_args_have_origin_label "$@" && return 0
+	local origin_label="" target_repo=""
+	origin_label=$(session_origin_label)
+	target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
+	if _gh_ci_origin_label_unavailable "$target_repo" "$origin_label" gh_create_pr; then
+		_GH_CREATE_PR_ORIGIN_DEFERRED=1
+		return 0
+	fi
+	_GH_CREATE_PR_ORIGIN_ARGS=(--label "$origin_label")
+	return 0
+}
+
+#######################################
+# Require a verifiable durable PR identity before reporting ordinary success.
+# Args: $1=create output, remaining args=PR create argv
+# Returns: 0=resolved, 78=durable identity unverified
+#######################################
+_gh_create_pr_require_durable_identity() {
+	local output="$1"
+	shift
+	_gh_create_pr_resolve_durable_identity "$output" "$@" && return 0
+	printf '[aidevops] gh_create_pr: create returned without a verifiable durable PR identity; refusing ordinary success\n' >&2
+	return "$_GH_PR_CREATE_PARTIAL_RC"
+}
+
+#######################################
 # Enforce the common post-create origin invariant without recreating a PR.
 # Args: $1=create output $2=expected origin, remaining args=PR create argv
 # Returns: 0=verified/reconciled, 78=durable PR remains unverified
@@ -1205,10 +1245,7 @@ _gh_create_pr_enforce_origin_postcondition() {
 	local output="$1"
 	local expected_origin="$2"
 	shift 2
-	if ! _gh_create_pr_resolve_durable_identity "$output" "$@"; then
-		printf '[aidevops] gh_create_pr: create returned without a verifiable durable PR identity; refusing ordinary success\n' >&2
-		return "$_GH_PR_CREATE_PARTIAL_RC"
-	fi
+	_gh_create_pr_require_durable_identity "$output" "$@" || return $?
 	if _gh_create_pr_origin_is_exact "$_GH_CREATE_PR_DURABLE_REPO" \
 		"$_GH_CREATE_PR_DURABLE_NUMBER" "$expected_origin"; then
 		return 0
@@ -1285,34 +1322,13 @@ gh_create_pr() {
 	local is_help=0
 	_gh_wrapper_args_have_flag "--help" "$@" && is_help=1
 
-	# t3088: defence-in-depth — only auto-inject the session origin label when
-	# the caller has NOT already specified one. Prevents the dual-origin-label
-	# bug (t2200 violation) where a caller's --label "origin:X" plus the
-	# wrapper's --label "$session_origin_label" produces two distinct origin
-	# labels on the resulting PR. Canonical failure: PR #21825.
-	local -a _origin_label_args=()
-	local origin_label=""
-	if ! _gh_wrapper_args_have_origin_label "$@"; then
-		origin_label=$(session_origin_label)
-		_origin_label_args=(--label "$origin_label")
-	fi
+	# t3088/GH#39054: derived session origin only when the caller supplied none.
+	_gh_create_pr_prepare_origin_args "$@"
+	local -a _origin_label_args=(${_GH_CREATE_PR_ORIGIN_ARGS[@]+"${_GH_CREATE_PR_ORIGIN_ARGS[@]}"})
+	local origin_deferred="$_GH_CREATE_PR_ORIGIN_DEFERRED"
 	local -a _draft_args=()
 	if _gh_create_pr_should_default_draft "$@"; then
 		_draft_args=(--draft)
-	fi
-	_ensure_origin_labels_for_args "$@"
-	# GH#39054: match gh_create_issue — when the wrapper-derived origin label is
-	# confirmed absent and cannot be provisioned (no upstream write authority),
-	# create without it and defer provenance to repository triage instead of
-	# failing the whole create. Caller-supplied origins are never dropped.
-	local origin_deferred=0
-	if [[ -n "$origin_label" ]]; then
-		local origin_target_repo=""
-		origin_target_repo=$(_gh_extract_repo_from_args "$@" 2>/dev/null || true)
-		if _gh_ci_origin_label_unavailable "$origin_target_repo" "$origin_label" gh_create_pr; then
-			_origin_label_args=()
-			origin_deferred=1
-		fi
 	fi
 
 	# t2115: auto-append signature footer when body lacks one
@@ -1361,18 +1377,14 @@ gh_create_pr() {
 		fi
 		rc=$?
 	fi
-	if [[ "$is_help" -eq 0 && "$origin_deferred" -eq 1 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
-		# Deferred provenance still requires a verifiable durable PR identity.
-		if _gh_create_pr_resolve_durable_identity "$pr_output" "$@"; then
-			rc=0
-		else
-			printf '[aidevops] gh_create_pr: create returned without a verifiable durable PR identity; refusing ordinary success\n' >&2
-			rc="$_GH_PR_CREATE_PARTIAL_RC"
-		fi
-	elif [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
+	if [[ "$is_help" -eq 0 && ( "$rc" -eq 0 || "$rc" -eq "$_GH_PR_CREATE_PARTIAL_RC" ) ]]; then
 		local postcondition_rc=0
-		_gh_create_pr_enforce_origin_postcondition "$pr_output" "$expected_origin_label" "$@" \
-			|| postcondition_rc=$?
+		if [[ "$origin_deferred" -eq 1 ]]; then
+			_gh_create_pr_require_durable_identity "$pr_output" "$@" || postcondition_rc=$?
+		else
+			_gh_create_pr_enforce_origin_postcondition "$pr_output" "$expected_origin_label" "$@" \
+				|| postcondition_rc=$?
+		fi
 		if [[ "$postcondition_rc" -eq 0 ]]; then
 			rc=0
 		else
