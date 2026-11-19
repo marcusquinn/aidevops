@@ -102,10 +102,10 @@ issue_sync_primary_issue_number() {
 	local reference_numbers="$2"
 	local candidate=""
 	local pattern=""
-	for pattern in 'ref:GH#[1-9][0-9]*' 'GH#[1-9][0-9]*'; do
-		candidate=$(grep -oE "$pattern" <<<"$changed_text" | head -n 1 || true)
-		[[ -n "$candidate" ]] || continue
-		printf '%s\n' "${candidate##*#}"
+	# Bash =~ returns the leftmost match, so no early-exit pipe reader is needed.
+	for pattern in 'ref:GH#([1-9][0-9]*)' 'GH#([1-9][0-9]*)'; do
+		[[ "$changed_text" =~ $pattern ]] || continue
+		printf '%s\n' "${BASH_REMATCH[1]}"
 		return 0
 	done
 	while IFS= read -r candidate; do
