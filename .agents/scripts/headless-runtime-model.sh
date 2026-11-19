@@ -628,6 +628,12 @@ _build_run_cmd() {
 	local persisted_session="$7"
 	shift 7
 	local opencode_profile="${AIDEVOPS_OPENCODE_PROFILE:-v1}"
+	if declare -F _headless_opencode_profile_is_v2 >/dev/null 2>&1; then
+		opencode_profile="v1"
+		if _headless_opencode_profile_is_v2; then
+			opencode_profile="v2"
+		fi
+	fi
 	local command_model="$selected_model"
 	if [[ "$opencode_profile" == "v2" && -n "$variant_override" ]]; then
 		command_model="${selected_model}#${variant_override}"
