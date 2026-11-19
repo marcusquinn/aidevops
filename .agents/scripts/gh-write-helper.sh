@@ -15,6 +15,7 @@ usage() {
 	printf '       gh-write-helper.sh {issue|pr} edit <number-or-url> [gh edit options]\n'
 	printf '       gh-write-helper.sh {issue|pr} comment <number-or-url> [gh comment options]\n'
 	printf '         (--edit-last/--delete-last/--create-if-none are refused; use comment-edit)\n'
+	printf '         (pr comment refuses with exit 2 when a verified PR approval would go stale; --allow-approval-stale overrides)\n'
 	printf '       gh-write-helper.sh {issue|pr} comment-edit <comment-id> --repo <owner/repo> --body-file <file> [--target <number>]\n'
 	printf '       gh-write-helper.sh issue review-handoff <number> --repo <owner/repo> --pr <number>\n'
 	printf '       gh-write-helper.sh issue brief-section <number> --repo <owner/repo> --anchor <line> --section-file <file>\n'
@@ -23,6 +24,58 @@ usage() {
 	printf '       gh-write-helper.sh batch MANIFEST.json\n'
 	printf 'Bodies may use --body-file - to read stdin once through the safe wrapper.\n'
 	return 0
+}
+
+# Refuse a PR comment that would stale a verified signed PR approval (any
+# non-bot comment changes the exact snapshot). Fails open: only an exact
+# VERIFIED blocks; parse gaps and verification errors post as before.
+_pr_comment_guarded() {
+	local allow=0 arg="" target="" repo="" skip_value=0 prev="" n=""
+	local -a rest=()
+	for arg in "$@"; do
+		rest+=("$arg")
+		# Values belong to the preceding option (e.g. --body text); never parse them.
+		if [[ "$skip_value" == 1 ]]; then
+			skip_value=0
+			[[ "$prev" == "--repo" || "$prev" == "-R" ]] && repo="$arg"
+			prev="$arg"
+			continue
+		fi
+		prev="$arg"
+		case "$arg" in
+		--allow-approval-stale)
+			allow=1
+			unset 'rest[${#rest[@]}-1]'
+			;;
+		--repo=*) repo="${arg#--repo=}" ;;
+		-R?*) repo="${arg#-R}" ;;
+		--*=* | --) ;;
+		# Value-less flags must not swallow the next argument.
+		--editor | -e | --web | -w | --edit-last | --delete-last | --create-if-none | --yes) ;;
+		-*) skip_value=1 ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
+	done
+	if [[ "$allow" == 0 ]]; then
+		n="${target##*/pull/}"
+		if [[ -z "$repo" && "$target" =~ github\.com/([^/]+/[^/]+)/pull/ ]]; then
+			repo="${BASH_REMATCH[1]}"
+		fi
+		local approval_helper="${AIDEVOPS_APPROVAL_HELPER:-${SCRIPT_DIR}/approval-helper.sh}"
+		if [[ "$n" =~ ^[1-9][0-9]*$ && -x "$approval_helper" ]]; then
+			local out="" rc=0 last=""
+			out=$("$approval_helper" verify pr "$n" ${repo:+"$repo"} 2>/dev/null) || rc=$?
+			last=$(printf '%s\n' "$out" | tail -n 1)
+			if [[ "$rc" == 0 && "$last" == "VERIFIED" ]]; then
+				printf 'PR #%s has a verified signed approval; a new PR comment would stale it. Post on the linked issue, or pass --allow-approval-stale.\n' "$n" >&2
+				return 2
+			elif [[ "$rc" != 0 && "$last" != "STALE_APPROVAL" && "$last" != "UNSIGNED" ]]; then
+				printf '[aidevops][gh-write-helper][WARN] approval verification errored (exit %s); posting without approval guard\n' "$rc" >&2
+			fi
+		fi
+	fi
+	gh_pr_comment "${rest[@]}"
+	return $?
 }
 
 # Explicit, owned PR handoff; generic issue edits never acquire this provenance.
@@ -279,7 +332,7 @@ main() {
 	issue:comment-edit | pr:comment-edit) _comment_edit "$@" ;;
 	pr:create) gh_create_pr "$@" ;;
 	pr:edit) gh_pr_edit_safe "$@" ;;
-	pr:comment) gh_pr_comment "$@" ;;
+	pr:comment) _pr_comment_guarded "$@" ;;
 	*)
 		usage >&2
 		return 2
