@@ -95,7 +95,6 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [x] r046 Canonical-recovery sweep — re-attempt failed git pull/stash for repos with active advisory files (t3027) repeat:cron(*/10 * * * *) ~1m run:scripts/canonical-recovery-routine.sh tick
 - [ ] r047 Knowledge collector freshness — execute due read-only sources and emit content-free health repeat:cron(*/10 * * * *) ~2m run:scripts/knowledge-collector-routine.sh run
 - [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
-- [x] r-pulse-check Daily pulse/worker utilisation check — aggregate repos.json auto-dispatch queue, active capacity, provider/API budget, and file deduplicated self-improvement issues for high-confidence productivity gaps repeat:daily(@06:20) ~5m run:scripts/pulse-check-helper.sh apply
 - [ ] r-php-cve-watch PHP CVE-2026-109618/109619 patch watch — read-only 2-hourly check of owner hosting PHP builds and app packages; private status in the agent workspace; disabled 2026-10-29: all hosts patched repeat:cron(0 */2 * * *) timezone:UTC ~3m run:custom/scripts/r-php-cve-watch.sh
 
 ## Ready
@@ -2268,6 +2267,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t19136 fix(pulse-dispatch): parse macOS kern.boottime sec, not usec, so the post-boot dispatch ramp engages #auto-dispatch #bug tier:simple -> [todo/tasks/t19136-brief.md] ref:GH#39190
 
 - [x] t19137 fix(pulse-dispatch): log the settled worker PGID after setsid instead of the launcher's #auto-dispatch #bug tier:simple ref:GH#39194 pr:#39196 completed:2026-11-19
+
+- [ ] t19142 fix(pulse-check): size the daily apply routine's collection budgets so worker history and the queue scan complete; drop duplicate r-pulse-check #bug #interactive tier:standard -> [todo/tasks/t19142-brief.md] ref:GH#39206
 
 - [ ] t19138 fix(worker-watchdog): defer no-output kills while the worker's isolated DB shows live tool output #bug #interactive tier:standard -> [todo/tasks/t19138-brief.md] ref:GH#39197
 
