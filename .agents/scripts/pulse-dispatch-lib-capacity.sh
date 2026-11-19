@@ -1547,7 +1547,14 @@ _dispatch_ramp_system_boot_ts() {
 		fi
 	fi
 	if command -v sysctl >/dev/null 2>&1; then
-		boot_ts=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/.*sec = ([0-9]+).*/\1/p' | sed -n '1p')
+		# Output: "{ sec = 1794166500, usec = 274703 } <date>". Anchor on the
+		# leading "{ sec =" so the greedy match cannot land on "usec =".
+		local boottime_raw=""
+		boottime_raw=$(sysctl -n kern.boottime 2>/dev/null || true)
+		boot_ts=""
+		if [[ "$boottime_raw" =~ ^\{[[:space:]]*sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+			boot_ts="${BASH_REMATCH[1]}"
+		fi
 		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
 			printf '%s' "$boot_ts"
 			return 0
