@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.242] - 2026-11-19
+
+### Changed
+
+- Maintenance: clear the persisted worker session when a release ends the delivery
+- Maintenance: sync GitHub issue refs to TODO.md (#39250)
+- Maintenance: standing human_decision suspends the permission_required window re-arm
+- Maintenance: triage keeps transient third-party rate limits out of permission_required
+- Maintenance: mark t19158 complete (pr:#39245 completed:2026-11-19) (#39243)
+
+### Fixed
+
+- select shell suites for changed JS/TS scripts in affected-tests-helper
+
 ## [3.39.241] - 2026-11-19
 
 ### Added
