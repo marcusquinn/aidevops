@@ -32,12 +32,18 @@ parser.add_argument("--base", required=True)
 parser.add_argument("--max", type=int, default=30)
 parser.add_argument("--jobs", type=int, default=4)
 parser.add_argument("--timeout", type=int, default=240)
+parser.add_argument("--max-hops", type=int, default=3,
+                    help="sourcing hops to follow from a changed script; 0 disables")
+parser.add_argument("--ubiquity", type=float, default=0.1,
+                    help="scripts sourced by more than this share of scripts are not expanded")
 parser.add_argument("--compare-base", action="store_true")
 parser.add_argument("--retries", type=int, default=2,
                     help="reruns for a would-be regression before it counts; 0 disables")
 args = parser.parse_args()
 if min(args.max, args.jobs, args.timeout) < 1:
     parser.error("--max, --jobs and --timeout must be positive")
+if args.max_hops < 0:
+    parser.error("--max-hops must be zero or positive")
 if args.retries < 0:
     parser.error("--retries must be zero or positive")
 
@@ -49,19 +55,63 @@ diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_ba
 changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
 changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))
-selected = set()
+test_bytes = {str(t.relative_to(root)): t.read_bytes() for t in tests}
+source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
+script_token = re.compile(r"[A-Za-z0-9_.-]+\.sh")
+
+# GH#39221: reverse sourcing graph over production scripts (sourced -> sourcers),
+# so a changed shared library also selects suites naming its transitive consumers.
+scripts = [p for p in sorted(root.glob(".agents/scripts/*.sh")) if p.is_file()]
+script_names = {p.name for p in scripts}
+consumers = {}
+for script in scripts:
+    for line in script.read_text(errors="replace").splitlines():
+        match = source_line.match(line)
+        if match:
+            for token in set(script_token.findall(match.group(1))):
+                if token in script_names and token != script.name:
+                    consumers.setdefault(token, set()).add(script.name)
+ubiquitous = {"shared-constants.sh"}
+ubiquitous |= {n for n, c in consumers.items() if len(c) > args.ubiquity * len(scripts)}
+
+def sourcer_distances(name):
+    seen, frontier, hop = {name: 0}, [name], 0
+    while frontier and hop < args.max_hops:
+        hop += 1
+        nxt = []
+        for current in frontier:
+            if current in ubiquitous:
+                continue
+            for parent in sorted(consumers.get(current, ())):
+                if parent not in seen:
+                    seen[parent] = hop
+                    nxt.append(parent)
+        frontier = nxt
+    return seen
+
+distance = {}
+def select(suite, rank):
+    distance[suite] = min(rank, distance.get(suite, rank))
+
 for name in changed:
     path = Path(name)
     if path.parent == Path(".agents/scripts/tests") and path.name.startswith("test-") and path.suffix == ".sh":
         if (root / path).is_file():
-            selected.add(str(path))
+            select(str(path), (False, 0, 0))
     elif path.suffix in (".sh", ".py") and "tests" not in path.parts:
-        for test in tests:
-            if path.name.encode() in test.read_bytes():
-                selected.add(str(test.relative_to(root)))
+        if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in script_names:
+            related = sourcer_distances(path.name)
+        else:
+            related = {path.name: 0}
+        # Within a hop, suites naming rarely-referenced scripts are the more specific signal.
+        specificity = {n: sum(1 for b in test_bytes.values() if n.encode() in b) for n in related}
+        for rel, blob in test_bytes.items():
+            for related_name, hops in related.items():
+                if related_name.encode() in blob:
+                    select(rel, (hops > 0, specificity[related_name], hops))
+selected = set(distance)
 # Sourced-only modules define functions and exit 0 when run alone (a vacuous pass).
 # Replace each selected module with the root suite(s) that transitively source it.
-source_line = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
 sourcers = {}
 for test in tests:
     rel = str(test.relative_to(root))
@@ -86,19 +136,22 @@ def resolve_roots(module):
                 roots.add(parent)
     return roots
 
-resolved = set()
+resolved = {}
 for suite in sorted(selected):
     roots = resolve_roots(suite) if suite in sourcers else set()
     if roots:
         print("module %s -> %s" % (suite, ", ".join(sorted(roots))), file=sys.stderr)
-        resolved |= roots
-    else:
-        resolved.add(suite)
-ordered = sorted(resolved)
+    for target in (roots or {suite}):
+        resolved[target] = min(distance[suite], resolved.get(target, distance[suite]))
+ordered = sorted(resolved, key=lambda suite: (resolved[suite], suite))
 omitted = ordered[args.max:]
 overflow = len(omitted)
 ordered = ordered[:args.max]
 print("Affected suites: %d selected, %d omitted by cap" % (len(ordered), overflow), file=sys.stderr)
+counts = {}
+for _, _, hops in resolved.values():
+    counts[hops] = counts.get(hops, 0) + 1
+print("by hop distance: %s" % ", ".join("%d=%d" % (k, counts[k]) for k in sorted(counts)), file=sys.stderr)
 if omitted:
     print("omitted by cap: %s" % ", ".join(omitted), file=sys.stderr)
 if args.command == "list":
