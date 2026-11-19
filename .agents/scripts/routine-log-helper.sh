@@ -110,15 +110,47 @@ _ensure_state_dir() {
 	return 0
 }
 
+_is_valid_issue_number() {
+	local issue_number="$1"
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]] && return 0
+	return 1
+}
+
+# GH#39144: state written before this fix could hold wrapper diagnostics
+# merged into the issue number (e.g. "37993\n18"). The created issue's URL was
+# always the last captured line, so its number is the last line of the value.
+# Outputs the healed number; returns 1 when the value cannot be healed.
+_heal_issue_number() {
+	local raw="$1"
+	local last_line="${raw##*$'\n'}"
+	_is_valid_issue_number "$last_line" || return 1
+	printf '%s\n' "$last_line"
+	return 0
+}
+
 _read_state() {
 	local routine_id="$1"
 	local state_file
 	state_file="$(_state_file "$routine_id")"
-	if [[ -f "$state_file" ]]; then
-		cat "$state_file"
-	else
+	if [[ ! -f "$state_file" ]]; then
 		echo '{}'
+		return 0
 	fi
+
+	local state raw_issue healed_issue healed_state
+	state=$(cat "$state_file")
+	raw_issue=$(printf '%s' "$state" | jq -r '.issue_number // empty | tostring' 2>/dev/null || true)
+	if [[ -n "$raw_issue" ]] && ! _is_valid_issue_number "$raw_issue"; then
+		if healed_issue=$(_heal_issue_number "$raw_issue") &&
+			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
+			state="$healed_state"
+			_write_state "$routine_id" "$state"
+			_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
+		else
+			_log_warn "Malformed issue_number for ${routine_id} could not be healed; fix ${state_file} manually"
+		fi
+	fi
+	printf '%s\n' "$state"
 	return 0
 }
 
@@ -582,6 +614,10 @@ _load_routine_state() {
 		_log_error "No tracking issue found for ${routine_id}. Run 'create-issue' first."
 		return 1
 	fi
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Invalid tracking issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
 
 	echo "$state"
 	return 0
@@ -908,6 +944,10 @@ cmd_notable() {
 		_log_error "No tracking issue found for ${routine_id}. Run 'create-issue' first."
 		return 1
 	fi
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Invalid tracking issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
 
 	local timestamp
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -1024,24 +1064,31 @@ _create_github_issue() {
 	local body="$3"
 
 	_ensure_tracking_labels "$repo_slug" || return 1
-	local issue_url body_file
+	local issue_output body_file
 	body_file=$(mktemp) || return 1
 	printf '%s\n' "$body" >"$body_file"
 	# t2115: Use gh_create_issue wrapper for origin label + signature auto-append.
-	if ! issue_url=$(gh_create_issue --repo "$repo_slug" --title "$title" --body-file "$body_file" \
+	# GH#39144: capture stdout only. Wrapper diagnostics stay on stderr; merging
+	# them corrupted the parsed issue number (e.g. "... per GH#37993").
+	if ! issue_output=$(gh_create_issue --repo "$repo_slug" --title "$title" --body-file "$body_file" \
 		--label "routines" --label "routine-tracking" \
-		--label "persistent" --label "no-auto-dispatch" 2>&1); then
+		--label "persistent" --label "no-auto-dispatch"); then
 		rm -f "$body_file"
-		_log_error "Failed to create issue: ${issue_url}"
+		_log_error "Failed to create issue in ${repo_slug}: ${issue_output}"
 		return 1
 	fi
 	rm -f "$body_file"
 
-	local issue_number
-	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
+	# Use the last canonical issue URL line (framework-issue-helper.sh pattern).
+	local issue_url="" line=""
+	local url_re='^https://[^[:space:]]+/issues/[0-9]+$'
+	while IFS= read -r line; do
+		[[ "$line" =~ $url_re ]] && issue_url="$line"
+	done <<<"$issue_output"
 
-	if [[ -z "$issue_number" ]]; then
-		_log_error "Could not extract issue number from: ${issue_url}"
+	local issue_number="${issue_url##*/}"
+	if [[ -z "$issue_url" ]] || ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Could not extract issue number from: ${issue_output}"
 		return 1
 	fi
 
@@ -1058,6 +1105,11 @@ _save_initial_state() {
 	local title="$4"
 	local schedule="$5"
 	local routine_type="$6"
+
+	if ! _is_valid_issue_number "$issue_number"; then
+		_log_error "Refusing to persist invalid issue number for ${routine_id}: ${issue_number}"
+		return 1
+	fi
 
 	local state
 	state=$(_read_state "$routine_id")
@@ -1094,6 +1146,11 @@ cmd_create_issue() {
 	local existing_issue
 	existing_issue=$(_get_state_field "$routine_id" "issue_number" "")
 	if [[ -n "$existing_issue" ]]; then
+		# Fail closed on an unhealable value rather than creating a duplicate.
+		if ! _is_valid_issue_number "$existing_issue"; then
+			_log_error "Invalid tracking issue number for ${routine_id}: ${existing_issue}"
+			return 1
+		fi
 		_log_warn "Issue #${existing_issue} already exists for ${routine_id}"
 		echo "$existing_issue"
 		return 0
@@ -1121,7 +1178,7 @@ cmd_create_issue() {
 	issue_number=$(_create_github_issue "$repo_slug" "$title" "$initial_body") || return 1
 
 	# Save state
-	_save_initial_state "$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" "$routine_type"
+	_save_initial_state "$routine_id" "$issue_number" "$repo_slug" "$title" "$schedule" "$routine_type" || return 1
 
 	_log_success "Created issue #${issue_number} for ${routine_id} in ${repo_slug}"
 	echo "$issue_number"
@@ -1153,7 +1210,7 @@ cmd_status() {
 			[[ -f "$state_file" ]] || continue
 
 			local state
-			state=$(cat "$state_file")
+			state=$(_read_state "$rid")
 			local issue_number
 			issue_number=$(echo "$state" | jq -r '.issue_number // "—"')
 			local last_run
