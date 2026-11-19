@@ -478,6 +478,33 @@ _tbr_discovery_candidates() {
 	return 0
 }
 
+# t19170: list the queued holds this search saw change since their last rearm
+# check (a trusted retry, a reply, a brief revision) in changed_entries, which
+# _tbr_pending_scan_changed checks before the rotation. Local reads only; the
+# hold intakes the rearm pass never reads are skipped. Merged sorted and unique.
+_tbr_note_changed_entries() {
+	local candidates="$1"
+	local list="${TBR_ROOT}/changed_entries" names=""
+	local repo issue updated file
+	while IFS=$'\t' read -r repo issue updated; do
+		_tbr_valid_ref "$repo" "$issue" || continue
+		file="${TBR_ROOT}/queue/${repo//\//--}--${issue}.json"
+		[[ -f "$file" ]] || continue
+		jq -e --arg u "$updated" '(.intake | tostring | test("^(unclassified|answered|unexplained)_hold$") | not)
+			and ((.rearm_checked_updated_at // "") as $s | $s == "" or $u > $s)' "$file" >/dev/null 2>&1 || continue
+		names+="${file##*/}"$'\n'
+	done <<<"$candidates"
+	[[ -n "$names" ]] || return 0
+	if [[ -f "$list" ]]; then
+		while IFS= read -r file; do
+			names+="${file}"$'\n'
+		done <"$list"
+	fi
+	printf '%s' "$names" | sort -u >"${list}.tmp.$$" || return 1
+	mv -f "${list}.tmp.$$" "$list" || return 1
+	return 0
+}
+
 #######################################
 # GH#36114: incremental owner-scoped intake for the mechanical rearm cadence.
 # The per-repo seed needs two searches per pulse repo and rarely completes in
@@ -527,6 +554,8 @@ tbr_discover() {
 		refs+="${result}"$'\n'
 	done < <(printf '%s\n' "$owners" | paste -d' ' - - - - -)
 	candidates=$(_tbr_discovery_candidates "$refs" "$repos") || return 2
+	# Before the reads below, so a pass cut short by its cap still lists them.
+	_tbr_note_changed_entries "$candidates" || return 2
 	[[ ! -f "${TBR_ROOT}/discovery_cursor" ]] || read -r cursor <"${TBR_ROOT}/discovery_cursor" || true
 	candidates=$(_tbr_rotate "$candidates" "$cursor") || return 2
 	# shellcheck source=terminal-blocker-circuit.sh
@@ -553,6 +582,8 @@ tbr_discover() {
 			incomplete=1
 			continue
 		}
+		# t19170: a hold queued here changed in this window too; check it first.
+		[[ ! -f "${TBR_ROOT}/queue/${key}.json" ]] || printf '%s.json\n' "$key" >>"${TBR_ROOT}/changed_entries" || return 2
 		# An unreadable policy may have hidden eligibility; evaluate it again.
 		[[ "$policy_rc" -ge 2 ]] || _tbr_save_cursor "discovered/${key}" "$updated" || return 2
 	done <<<"$candidates"
@@ -1785,6 +1816,53 @@ _tbr_pending_park() {
 	return 0
 }
 
+# t19170: changed-first rearm. Check the holds discovery listed as changed
+# (_tbr_note_changed_entries) before the rotation, so a trusted retry or reply
+# applies on the next pass, not hours later when a long queue's rotation
+# reaches it. Ordering only: _tbr_check_entry still decides every release. At
+# most half the remaining window, so backoff expiry and closed dependencies,
+# which leave updated_at unchanged, still advance in the rotation. Moves no
+# cursor. Unreached entries and quick read failures stay listed; an entry this
+# share cut short returns to the rotation. Runs inside tbr_pending's scope
+# (entry_mode, count, incomplete, observed, self_resolved); returns 1 when the
+# list cannot be rewritten.
+_tbr_pending_scan_changed() {
+	local list="${TBR_ROOT}/changed_entries" name="" rc=0 keep="" deadline=0
+	[[ "$entry_mode" == rearm && -s "$list" ]] || return 0
+	deadline=$((SECONDS + (TBR_QUEUE_DEADLINE - SECONDS) / 2))
+	local TBR_QUEUE_DEADLINE="$deadline"
+	# Same identity rule as the tier scan; unresolved leaves the list intact.
+	if [[ "$self_resolved" -eq 0 && -z "${TERMINAL_BLOCKER_SELF_LOGIN:-}" ]]; then
+		TERMINAL_BLOCKER_SELF_LOGIN=$(_tbr_run_stage identity _tbr_self_login) || return 0
+		export TERMINAL_BLOCKER_SELF_LOGIN
+	fi
+	self_resolved=1
+	while IFS= read -r name; do
+		[[ "$name" =~ ^[A-Za-z0-9_.-]+--[1-9][0-9]*\.json$ && -f "${TBR_ROOT}/queue/${name}" ]] || continue
+		# Appends can repeat a name; check each once.
+		case "$observed" in *";$name;"*) continue ;; esac
+		if [[ "$SECONDS" -ge "$deadline" ]]; then
+			keep+="${name}"$'\n'
+			continue
+		fi
+		printf 'blocker-recovery: queue changed-first entry=%s\n' "$name" >&2
+		observed+="${name};"
+		rc=0
+		_tbr_run_stage entry _tbr_check_entry "${TBR_ROOT}/queue/${name}" "$entry_mode" || rc=$?
+		[[ "$rc" -ne 0 ]] || count=$((count + 1))
+		[[ "$rc" -ge 2 ]] || continue
+		incomplete=1
+		[[ "$SECONDS" -ge "$deadline" ]] || keep+="${name}"$'\n'
+	done <"$list"
+	if [[ -z "$keep" ]]; then
+		rm -f "$list" || return 1
+		return 0
+	fi
+	printf '%s' "$keep" >"${list}.tmp.$$" || return 1
+	mv -f "${list}.tmp.$$" "$list" || return 1
+	return 0
+}
+
 # GH#38692: tier 0 = entries without a standing human_decision, tier 1 =
 # decided ones; each tier rotates with its own cursor. GH#39010: when tier 0
 # stops at its share and tier 1 finishes early, tier 0 resumes in the time
@@ -1795,6 +1873,7 @@ _tbr_pending_park() {
 # cursor or marker could not be written.
 _tbr_pending_scan_queue() {
 	local tier=0 scan_rc=0 tier0_rc=0 count_before="$count" tier0_counted=0 decided_set=";" tier0_deadline="" parked=0
+	_tbr_pending_scan_changed || return 1
 	_tbr_pending_classify || return 1
 	for tier in 0 1; do
 		scan_rc=0
