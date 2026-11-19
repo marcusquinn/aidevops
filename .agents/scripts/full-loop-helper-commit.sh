@@ -1602,6 +1602,25 @@ _run_pr_create_cmd() {
 	return $?
 }
 
+# Verify the final pushed head (post commit/rebase/push) before opening
+# non-draft; on mismatch or lookup failure keep the draft default.
+# Args: $1=requested ready (0|1) $2=head branch. Prints effective ready (0|1).
+_effective_pr_ready() {
+	local ready="$1"
+	local head_branch="$2"
+	if [[ "$ready" -eq 1 && -n "$head_branch" ]]; then
+		local local_head="" remote_head=""
+		local_head=$(git rev-parse HEAD 2>/dev/null || true)
+		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | head -n 1 || true)
+		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
+			print_warning "Pushed head does not match local HEAD; creating PR as draft" >&2
+			ready=0
+		fi
+	fi
+	printf '%s\n' "$ready"
+	return 0
+}
+
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -1645,18 +1664,8 @@ _create_pr() {
 		pr_cmd+=(--label "$lbl")
 	done
 
-	# Verify the final pushed head (post commit/rebase/push) before opening
-	# non-draft; on mismatch or lookup failure keep the draft default.
-	local effective_ready="${create_ready:-0}"
-	if [[ "$effective_ready" -eq 1 && -n "$head_branch" ]]; then
-		local local_head="" remote_head=""
-		local_head=$(git rev-parse HEAD 2>/dev/null || true)
-		remote_head=$(git ls-remote --heads origin "refs/heads/${head_branch}" 2>/dev/null | cut -f1 | head -n 1 || true)
-		if [[ -z "$local_head" || "$local_head" != "$remote_head" ]]; then
-			print_warning "Pushed head does not match local HEAD; creating PR as draft"
-			effective_ready=0
-		fi
-	fi
+	local effective_ready
+	effective_ready=$(_effective_pr_ready "${create_ready:-0}" "$head_branch")
 
 	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || {
 		rm -f "$body_file"
