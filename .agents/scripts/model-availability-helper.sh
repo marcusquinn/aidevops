@@ -400,25 +400,8 @@ process.stdout.write(credentialFileSecret(process.argv[2]));
 	# live OAuth session. The marker makes the probe record healthy and
 	# skip HTTP; workers authenticate via the opencode runtime's own
 	# OAuth flow, which handles refresh at session start.
-	local auth_file="${HOME}/.local/share/opencode/auth.json"
-	if [[ -f "$auth_file" ]]; then
-		local auth_type
-		auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
-		if [[ "$auth_type" == "oauth" ]]; then
-			# OAuth entry: presence of the entry means the runtime can
-			# authenticate. Probe records healthy and skips HTTP.
-			RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
-			echo "oauth-refresh-available"
-			return 0
-		fi
-		# API-key type entries (e.g., opencode, claudecli providers)
-		local api_key_entry
-		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
-		if [[ -n "$api_key_entry" ]]; then
-			RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
-			echo "$api_key_entry"
-			return 0
-		fi
+	if _resolve_auth_json_key "$provider"; then
+		return 0
 	fi
 
 	# Source 5: aidevops OAuth pool (GH#39095)
@@ -432,6 +415,34 @@ process.stdout.write(credentialFileSecret(process.argv[2]));
 		return 0
 	fi
 
+	return 1
+}
+
+# _resolve_auth_json_key: Source 4 of resolve_api_key (see the comment there).
+# Echoes the OAuth marker or the stored API key for the provider from OpenCode
+# auth.json and sets RESOLVED_API_KEY_SOURCE. Returns 1 when there is no entry.
+_resolve_auth_json_key() {
+	local provider="$1"
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	[[ -f "$auth_file" ]] || return 1
+
+	local auth_type
+	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	if [[ "$auth_type" == "oauth" ]]; then
+		# OAuth entry: presence of the entry means the runtime can
+		# authenticate. Probe records healthy and skips HTTP.
+		RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
+		echo "oauth-refresh-available"
+		return 0
+	fi
+	# API-key type entries (e.g., opencode, claudecli providers)
+	local api_key_entry
+	api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
+	if [[ -n "$api_key_entry" ]]; then
+		RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
+		echo "$api_key_entry"
+		return 0
+	fi
 	return 1
 }
 
