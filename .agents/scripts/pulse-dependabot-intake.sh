@@ -24,6 +24,30 @@ _pulse_dependabot_intake_marker() {
 	return 0
 }
 
+# Per-route dependency-bot identity (GH#39280). Dependabot keeps its built-in
+# lane; other GitHub App bots qualify only via the maintainer-local
+# `trusted_dependency_bots` repos.json field and are re-proven at exact head.
+_PULSE_INTAKE_DEPENDABOT_SLUG="dependabot"
+_PULSE_INTAKE_BOT_SLUG="$_PULSE_INTAKE_DEPENDABOT_SLUG"
+_PULSE_INTAKE_BOT_NAME="Dependabot"
+
+_pulse_dependency_bot_route_identity() {
+	local pr_author="$1"
+	local repo_slug="$2"
+	local bot_slug=""
+
+	_PULSE_INTAKE_BOT_SLUG="$_PULSE_INTAKE_DEPENDABOT_SLUG"
+	_PULSE_INTAKE_BOT_NAME="Dependabot"
+	case "$pr_author" in
+	dependabot\[bot\] | app/dependabot | "") return 0 ;;
+	esac
+	declare -F _trusted_dependency_bot_for_author >/dev/null 2>&1 || return 1
+	bot_slug=$(_trusted_dependency_bot_for_author "$pr_author" "$repo_slug") || return 1
+	_PULSE_INTAKE_BOT_SLUG="$bot_slug"
+	_PULSE_INTAKE_BOT_NAME="Dependency bot ${bot_slug}"
+	return 0
+}
+
 # Build executable scope from the authentic source PR's exact current diff.
 # The identity gate runs first; this second read binds the scope to the same
 # head and rejects paths that cannot be represented safely in Markdown.
@@ -160,7 +184,7 @@ _pulse_dependabot_completed_intake_issue() {
 	local issues_json="[]"
 
 	issues_json=$(gh_issue_list --repo "$repo_slug" --state closed \
-		--search "Dependabot PR #${pr_number} in:title" --limit 20 \
+		--search "${_PULSE_INTAKE_BOT_NAME:-Dependabot} PR #${pr_number} in:title" --limit 20 \
 		--json number,body,labels 2>/dev/null) || return 1
 	printf '%s' "$issues_json" | jq -r --arg marker "$marker" '
 		[.[]
@@ -355,10 +379,23 @@ Maintainer action: inspect the added commits, then either close and recreate the
 _pulse_dependabot_preflight_route() {
 	local pr_number="$1" repo_slug="$2" pr_author="$3" expected_head_sha="$4" marker="$5"
 	local reconcile_rc=0
+	local bot_slug="${_PULSE_INTAKE_BOT_SLUG:-$_PULSE_INTAKE_DEPENDABOT_SLUG}"
+	local authentic_rc=0
 
 	#aidevops:trust-boundary — only a typed failure reached after exact-head Bot,
 	# repository, and source-head verification may trigger a maintainer hold write.
-	if ! _is_authentic_dependabot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha"; then
+	# GH#39280: configured bots get the same exact-head proof but no hold writes.
+	if [[ "$bot_slug" == "$_PULSE_INTAKE_DEPENDABOT_SLUG" ]]; then
+		_is_authentic_dependabot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" || authentic_rc=$?
+	else
+		declare -F _is_authentic_dependency_bot_pr >/dev/null 2>&1 || return 1
+		_is_authentic_dependency_bot_pr "$pr_number" "$repo_slug" "$pr_author" "$expected_head_sha" "$bot_slug" || authentic_rc=$?
+	fi
+	if [[ "$authentic_rc" -ne 0 ]]; then
+		if [[ "$bot_slug" != "$_PULSE_INTAKE_DEPENDABOT_SLUG" ]]; then
+			echo "[pulse-dependabot-intake] PR #${pr_number} in ${repo_slug}: configured dependency bot ${bot_slug} failed exact-head authenticity (${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-unknown}); no intake" >>"$LOGFILE"
+			return 1
+		fi
 		if [[ "${_TRUSTED_DEPENDABOT_AUTH_FAILURE_REASON:-}" == "commit-author-mismatch" ]] &&
 			_pulse_dependabot_mark_modified_source_pr "$pr_number" "$repo_slug" "$expected_head_sha"; then
 			return 5
@@ -408,6 +445,7 @@ _pulse_dependabot_intake_body() {
 	local policy_guidance="Do not edit framework trust policy from this project repository."
 	local reference_guidance="Preserve exact-head bot identity, repository ownership, commit provenance, dependency allowlist, and security checks; route repairs without granting merge authority."
 	local approval_guidance=""
+	local bot_name="${_PULSE_INTAKE_BOT_NAME:-Dependabot}"
 
 	if [[ "$repo_slug" == "marcusquinn/aidevops" ]]; then
 		policy_guidance="If the source PR is safe but only outside the maintained trust policy, update the narrow policy with evidence."
@@ -419,10 +457,10 @@ _pulse_dependabot_intake_body() {
 	fi
 
 	cat <<-EOF
-		## Dependabot PR worker intake
+		## ${bot_name} PR worker intake
 
-		Pulse verified GitHub's live Dependabot Bot identity, same-repository head ownership,
-		the exact observed head, and Dependabot commit authorship. Automated merge did not
+		Pulse verified GitHub's live ${bot_name} Bot identity, same-repository head ownership,
+		the exact observed head, and ${bot_name} commit authorship. Automated merge did not
 		proceed because: **${reason}**.
 
 		Source PR: https://github.com/${repo_slug}/pull/${pr_number}
@@ -564,7 +602,7 @@ _pulse_dependabot_create_intake_issue() {
 		return 1
 	fi
 	issue_output=$(gh_create_issue --repo "$repo_slug" \
-		--title "Dependabot PR #${pr_number} requires worker resolution" \
+		--title "${_PULSE_INTAKE_BOT_NAME:-Dependabot} PR #${pr_number} requires worker resolution" \
 		--body-file "$body_file" \
 		--label "auto-dispatch,origin:worker,tier:standard,dependencies" 2>&1) || {
 		create_rc=$?
@@ -606,6 +644,15 @@ _pulse_route_dependabot_pr_to_worker_issue() {
 	*) reason="policy-ineligible" ;;
 	esac
 	declare -F _is_authentic_dependabot_pr >/dev/null 2>&1 || return 1
+	_pulse_dependency_bot_route_identity "$pr_author" "$repo_slug" || return 1
+	# GH#39280: configured non-Dependabot bots have no dependency allowlist, so
+	# only exact-head terminal CI failures and merge conflicts route to intake.
+	if [[ "$_PULSE_INTAKE_BOT_SLUG" != "$_PULSE_INTAKE_DEPENDABOT_SLUG" ]]; then
+		case "$reason" in
+		terminal-ci-failure | merge-conflict) ;;
+		*) return 1 ;;
+		esac
+	fi
 	declare -F gh_create_issue >/dev/null 2>&1 || return 1
 	declare -F gh_issue_list >/dev/null 2>&1 || return 1
 	declare -F gh_pr_view >/dev/null 2>&1 || return 1
