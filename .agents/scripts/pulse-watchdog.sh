@@ -349,12 +349,13 @@ _pulse_stage_fuse_finish() {
 
 # Print a fused timeout for a stage the cycle clock would defer.
 # Args: stage, requested timeout, effective reserve, optional borrow budget
-# (GH#38840: caps the per-cycle fuse budget when lending dispatch reserve).
+# (GH#38840: caps the per-cycle fuse budget when lending dispatch reserve),
+# optional starvation bound override (GH#39179: deferrable borrowers).
 # Returns 1 (defer as before) unless the stage has starved and the fuse
 # budget and lock lease both leave at least 15s.
 _pulse_stage_starvation_fuse() {
 	local stage="$1" timeout_seconds="$2" reserve="$3" borrow="${4:-}"
-	local starvation="${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}" cap="${AIDEVOPS_PULSE_STAGE_FUSE_TIMEOUT_S:-120}"
+	local starvation="${5:-${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}}" cap="${AIDEVOPS_PULSE_STAGE_FUSE_TIMEOUT_S:-120}"
 	local budget="${AIDEVOPS_PULSE_STAGE_FUSE_BUDGET_S:-300}" ceiling="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	local dir=""
 	local heartbeat=""
@@ -396,15 +397,27 @@ _pulse_stage_starvation_fuse() {
 # early dispatch spent each cycle clock). A starved budget-priority "critical"
 # stage may borrow up to AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S (default 120;
 # 0 disables) of that reserve per cycle, charged to the shared fuse spend.
-# Deferrable stages, and every stage when the classifier is absent, defer.
-# Prints the borrow budget; returns 1 when the stage may not borrow.
+# GH#39179: deferrable stages never borrowed, so dirty_pr_sweep went 6 days
+# without a start and TODO-only conflicted PRs waited for a human. They now
+# borrow the same capped slice after a longer bound,
+# AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S (default 4h; 0 disables),
+# so starved critical stages win the shared slice first. Progress stages, and
+# every stage when the classifier is absent, still defer.
+# Prints "<borrow budget> <starvation bound>"; returns 1 when it may not borrow.
 _pulse_stage_reserve_borrow_budget() {
 	local stage="$1" borrow="${AIDEVOPS_PULSE_STAGE_RESERVE_BORROW_S:-120}" class=""
+	local bound="${AIDEVOPS_PULSE_STAGE_STARVATION_S:-3600}"
 	[[ "$borrow" =~ ^[1-9][0-9]*$ ]] || return 1
 	declare -F _pulse_stage_priority_class >/dev/null 2>&1 || return 1
 	class=$(_pulse_stage_priority_class "$stage" 2>/dev/null) || return 1
-	[[ "$class" == critical ]] || return 1
-	printf '%s\n' "$borrow"
+	case "$class" in
+	critical) ;;
+	deferrable) bound="${AIDEVOPS_PULSE_STAGE_DEFERRABLE_BORROW_STARVATION_S:-14400}" ;;
+	*) return 1 ;;
+	esac
+	[[ "$bound" =~ ^[0-9]+$ ]] || return 1
+	[[ "$class" == critical || "$bound" -gt 0 ]] || return 1
+	printf '%s %s\n' "$borrow" "$bound"
 	return 0
 }
 
@@ -501,7 +514,7 @@ _pulse_stage_cycle_timeout() {
 		if ((dispatch_reserved == 0)); then
 			fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$reserve") || fused=""
 		elif borrow=$(_pulse_stage_reserve_borrow_budget "$stage_name"); then
-			fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$finalise_reserve" "$borrow") || fused=""
+			fused=$(_pulse_stage_starvation_fuse "$stage_name" "$timeout_seconds" "$finalise_reserve" "${borrow%% *}" "${borrow##* }") || fused=""
 		fi
 		if [[ -n "$fused" ]]; then
 			printf '%s\n' "$fused"

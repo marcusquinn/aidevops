@@ -2253,6 +2253,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19126 fix(sync-workflows): create resync PRs ready with allow-auto-merge so green workflow syncs merge without the maintainer #bug #interactive tier:standard -> [todo/tasks/t19126-brief.md] ref:GH#39153
 
+- [ ] t19133 fix(pulse-watchdog): starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving #bug #priority:high #interactive tier:standard -> [todo/tasks/t19133-brief.md] ref:GH#39179
+
 - [ ] t19130 fix(pulse-merge): stale non-required pending checks are ignored when required contexts are skipped, so path-filtered PRs stop starving the merge pass #bug #priority:high #interactive tier:standard -> [todo/tasks/t19130-brief.md] ref:GH#39166
 
 ## In Progress
