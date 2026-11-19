@@ -276,15 +276,20 @@ for suite in ordered:
         link = "search open issues for '%s'" % title
         gh_path = shutil.which("gh")
         if gh_path and (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
-            jq = r'.[] | select(.title == "%s") | "#\(.number)"' % title
+            jq = r'.[] | select(.title == "%s") | "\(.number) \(.url)"' % title
             gh_args = [gh_path] + "issue list --state open --search".split() + ['"%s" in:title' % title,
-                       "--json", "number,title", "--jq", jq]
+                       "--json", "number,title,url", "--jq", jq]
             try:
                 # Fixed argv, absolute gh path, no shell; title derives from a repo suite filename.
                 found = subprocess.run(  # nosec B603
                     gh_args, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30).stdout.split()
-                if found:
-                    link = "tracked by " + found[0]
+                if len(found) >= 2:
+                    link = "tracked by #%s" % found[0]
+                    # Markdown link for the caller to render outside the fenced report.
+                    links_file = os.environ.get("AFFECTED_TESTS_LINKS_FILE")
+                    if links_file:
+                        with open(links_file, "a") as handle:
+                            handle.write("- `%s` is red on base: [#%s](%s)\n" % (Path(suite).name, found[0], found[1]))
             except (subprocess.SubprocessError, OSError):
                 pass
         print("  inherited red %s: %s" % (suite, link), file=sys.stderr)
