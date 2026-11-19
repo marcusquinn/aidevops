@@ -1202,15 +1202,19 @@ _retarget_stacked_children_interactive() {
 		return 0
 	fi
 
-	local default_branch
-	default_branch=$(_flm_gh_read gh repo view "$repo" --json defaultBranchRef -q '.defaultBranchRef.name' || true)
-	default_branch="${default_branch:-main}"
+	# GH#39167: children follow the parent into its own base, never `main`.
+	local target_base=""
+	target_base=$(_flm_gh_read gh pr view "$pr_number" --repo "$repo" --json baseRefName -q '.baseRefName') || target_base=""
+	if [[ -z "$target_base" ]]; then
+		print_warning "Cannot resolve PR #${pr_number} base; stacked children of '${parent_head_ref}' not retargeted (GH#39167)"
+		return 0
+	fi
 
 	local child
 	while IFS= read -r child; do
 		[[ -z "$child" ]] && continue
-		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${default_branch}' before merging PR #${pr_number} (t2412)"
-		gh pr edit "$child" --repo "$repo" --base "$default_branch" 2>&1 || true
+		print_info "Retargeting stacked PR #${child} from '${parent_head_ref}' to '${target_base}' before merging PR #${pr_number} (t2412)"
+		gh pr edit "$child" --repo "$repo" --base "$target_base" 2>&1 || true
 	done <<<"$children"
 	return 0
 }

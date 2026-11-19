@@ -77,6 +77,12 @@ if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
 	exit 0
 fi
 
+# Shared PR base resolver (GH#39167): REST repository default branch.
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/* && "$*" == *"default_branch"* ]]; then
+	printf 'main\n'
+	exit 0
+fi
+
 if [[ "${1:-}" == "pr" && "${2:-}" == "create" ]]; then
 	printf '%s\n' "$*" >"${TEST_ROOT}/calls/pr-create.argv"
 	exit 0
