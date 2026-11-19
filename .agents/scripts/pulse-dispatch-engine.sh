@@ -1523,11 +1523,6 @@ _dispatch_execute_candidate_loop() {
 dispatch_max() {
 	local _PULSE_ELASTIC_DISPATCH=1
 	local dependency_normalization_mode="${1:-normalize}"
-	# GH#39118: skip claim/launch when the selected systemd backend is down.
-	if declare -F _dlw_cycle_dispatch_backend_gate >/dev/null 2>&1 && ! _dlw_cycle_dispatch_backend_gate; then
-		echo 0
-		return 0
-	fi
 	local capacity_line
 	capacity_line=$(_dispatch_compute_capacity) || {
 		echo 0
