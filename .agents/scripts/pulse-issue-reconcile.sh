@@ -1064,6 +1064,9 @@ normalize_active_issue_assignments() {
 	# label, no assignee).
 	# Pass 2 (unassign_stale): reset stale assignments (active label, assignee
 	# present, no running worker).
+	# Pass 2c (unassign_available_stale, GH#39327): release stale assignees from
+	# open status:available + auto-dispatch issues (prior-lifecycle assignees
+	# after a reopen, or is-assigned stale recovery); capped per cycle.
 	# Pass 2b (unassign_stampless_interactive, t2148): recover aged stampless origin:interactive claims.
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
@@ -1111,6 +1114,9 @@ normalize_active_issue_assignments() {
 			_normalize_stale_close_pending_checkpoint_leases
 			_normalize_deferred_claim_releases
 			_normalize_unassign_stale "$runner_user" "$repos_json" "$now_epoch" "$cross_runner_max_runtime"
+			;;
+		unassign_available_stale)
+			_normalize_unassign_available_stale "$runner_user" "$repos_json" "$now_epoch" "$dedup_helper"
 			;;
 		unassign_stampless_interactive)
 			_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
