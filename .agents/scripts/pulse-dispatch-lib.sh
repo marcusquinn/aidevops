@@ -79,6 +79,7 @@ _DISPATCH_NEGATIVE_CACHE_SOURCE=""
 _DISPATCH_NEGATIVE_CACHE_SOURCE_KEY=""
 _DISPATCH_NEGATIVE_CACHE_SOURCE_JSON=""
 _DISPATCH_NEGATIVE_CACHE_IDENTITY_JQ='[(.number // ""), (.repo_slug // ""), (.updatedAt // "")] | @tsv'
+_DISPATCH_CANDIDATE_IDENTITY_JQ='[(.number // ""), (.repo_slug // "")] | @tsv'
 # A terminal-blocker circuit is keyed to material issue revisions: an edit, a
 # retry directive or a non-ops comment invalidates the hint at once.
 # Only target-code revisions can re-arm it silently, so bound that delay. Each
@@ -1094,6 +1095,20 @@ _dispatch_release_footprint_reservation() {
 	return 0
 }
 
+# Record a launch that failed validation after dispatch_with_dedup returned 0.
+# t19116: a submitted launch (e.g. an unconfirmed systemd unit) can still start,
+# so its launch state is unknown and the slot stays held this round.
+# Args: issue, repo slug, attempt epoch, validation rc
+_dispatch_launch_validation_failed() {
+	local issue_number="$1" repo_slug="$2" attempt_epoch="$3" launch_rc="$4"
+	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+	_DISPATCH_SETTLE_RC=124
+	_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
+	_dispatch_stats_increment "dispatch_worker_launch_failed"
+	_dispatch_record_launch_failure
+	return 0
+}
+
 #######################################
 # Run triage under one cumulative Pulse-cycle budget, refreshing stale triage
 # state at bounded intervals while unspent attempts remain. Typed outcomes never
@@ -1171,6 +1186,8 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
+		# t19116: a timed-out candidate may have launched; keep its slot held.
+		[[ "$dispatch_rc" -ne 124 ]] || _DISPATCH_SETTLE_RC=124
 		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
 		_dispatch_record_and_cache_block "$candidate_json" "$issue_number" "$repo_slug" "$dispatch_rc"
 		return $?
@@ -1183,10 +1200,7 @@ _dispatch_process_candidate() {
 	local launch_rc=0
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
-		_dispatch_release_attempt_reservations "$repo_slug" "$issue_number" "$attempt_epoch"
-		_dispatch_stats_increment "dispatch_worker_launch_failed"
-		_dispatch_record_launch_failure
+		_dispatch_launch_validation_failed "$issue_number" "$repo_slug" "$attempt_epoch" "$launch_rc"
 		return 1
 	fi
 	_dispatch_stats_increment "dispatch_worker_spawned"
@@ -1282,8 +1296,12 @@ _dispatch_max_compute_base_parallel() {
 	if ! [[ "$max_parallel" =~ ^[1-9][0-9]*$ ]]; then
 		max_parallel=6
 	fi
-	if ((max_parallel > effective_slots)); then
-		max_parallel="$effective_slots"
+	# t19116: with the launch-slot gate, evaluations may oversubscribe the
+	# slot budget; launches stay bounded by the claim-time slot semaphore.
+	local eval_cap=""
+	eval_cap=$(_dispatch_eval_parallel_cap "$effective_slots")
+	if ((max_parallel > eval_cap)); then
+		max_parallel="$eval_cap"
 	fi
 	# In throttle mode, _effective_slots is already 1 → max_parallel=1 (serial).
 	# t3418/t3558: when the minimum worker floor is active, launch throttles
@@ -1520,6 +1538,14 @@ _dispatch_floor_resume_parallel() {
 #   success|<issue>           — dispatched + launch validated
 #   fail|<issue>|rc=<n>|<reason>  — pre-skip, dispatch failure, or launch failure
 #   defer|<issue>|rc=75|reason=cycle_budget_floor — stage not started (GH#34428)
+#   defer|<issue>|rc=75|reason=launch_slot_full — every launch slot was held
+#        at the candidate's claim point; no claim written (t19116)
+#
+# t19116: with the launch-slot gate (default), in-flight ceremonies are
+# evaluations, not reservations. max_parallel may exceed effective_slots
+# (_dispatch_eval_parallel_cap); launches stay bounded by the claim-time slot
+# semaphore in _DISPATCH_LAUNCH_SLOT_DIR. DISPATCH_LAUNCH_SLOT_GATE=0 restores
+# the ceremony-start reservation.
 #
 # Arguments:
 #   $1 - candidate_file
@@ -1540,6 +1566,12 @@ _dispatch_max_loop() {
 
 	local processed_count=0 candidate_json
 	local _pids=()
+	# t19116: dynamically scoped into the background candidate subshells, where
+	# _dlw_claim_slot_and_lock takes a slot just before the first claim write.
+	local _DISPATCH_LAUNCH_SLOT_DIR=""
+	if _dispatch_launch_slot_gate_enabled; then
+		_DISPATCH_LAUNCH_SLOT_DIR=$(_dispatch_launch_slots_init "$effective_slots") || _DISPATCH_LAUNCH_SLOT_DIR=""
+	fi
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
@@ -1555,23 +1587,20 @@ _dispatch_max_loop() {
 		_dispatch_max_refresh_pids _pids
 		_dispatch_max_wait_for_capacity _pids "$max_parallel"
 
-		local successes_so_far=0
+		local successes_so_far=0 launches_so_far=0 in_flight_launches=0
 		successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
 		if _dispatch_max_should_stop "$processed_count" "$successes_so_far" "$effective_slots"; then
 			break
 		fi
-		# Pending ceremonies reserve slots only until their outcomes are known.
-		# Wait and reconcile the current candidate rather than ending the round:
-		# a rejected ceremony frees its reservation for this unconsumed candidate.
-		while ((successes_so_far + ${#_pids[@]} >= effective_slots)); do
-			_dispatch_max_wait_for_reservation _pids
-			successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
-			if _dispatch_max_should_stop "$processed_count" "$successes_so_far" "$effective_slots"; then
-				break 2
-			fi
-		done
+		_dispatch_max_await_slot _pids "$processed_count" "$outcomes_file" "$effective_slots" || break
 
-		_dispatch_max_apply_inter_launch_delay "$successes_so_far" "${#_pids[@]}" "$processed_count" "$candidate_json" "$max_parallel"
+		launches_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
+		in_flight_launches="${#_pids[@]}"
+		if [[ -n "$_DISPATCH_LAUNCH_SLOT_DIR" ]]; then
+			launches_so_far=$(_dispatch_launch_slots_taken)
+			in_flight_launches=0
+		fi
+		_dispatch_max_apply_inter_launch_delay "$launches_so_far" "$in_flight_launches" "$processed_count" "$candidate_json" "$max_parallel"
 		_dispatch_max_spawn_candidate "$candidate_json" "$self_login" "$available_slots" "$outcomes_file" &
 		_pids+=($!)
 	done <"$candidate_file"
@@ -1581,10 +1610,47 @@ _dispatch_max_loop() {
 	# has already reaped a child (GH#22919).
 	_dispatch_max_wait_tracked_pids "${_pids[@]+${_pids[@]}}"
 	_pids=()
+	[[ -z "$_DISPATCH_LAUNCH_SLOT_DIR" ]] || rm -rf "$_DISPATCH_LAUNCH_SLOT_DIR"
 	local dispatched_count
 	dispatched_count=$(_dispatch_max_count_outcomes "$outcomes_file")
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
 	return 0
+}
+
+#######################################
+# Wait until the current candidate may start. Legacy mode reserves a slot for
+# every pending ceremony. With the t19116 launch-slot gate only claim-time
+# holders count, so rejections keep evaluating while unheld slots remain. A
+# rejected ceremony or a failed holder frees capacity for this candidate,
+# which is reconciled rather than dropped.
+#
+# Arguments:
+#   $1 - nameref-style PID array name
+#   $2 - processed count
+#   $3 - outcomes file
+#   $4 - effective slot budget
+# Returns: 0 to start the candidate, 1 to end the round
+#######################################
+_dispatch_max_await_slot() {
+	local pids_name="$1" processed_count="$2" outcomes_file="$3" effective_slots="$4"
+	local successes=0 in_flight=0
+	while :; do
+		eval "in_flight=\${#${pids_name}[@]}"
+		if [[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]]; then
+			_dispatch_launch_slot_available && return 0
+			if ((in_flight == 0)); then
+				echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (all ${effective_slots} launch slots held) (t19116)" >>"$LOGFILE"
+				return 1
+			fi
+		else
+			successes=$(_dispatch_max_count_outcomes "$outcomes_file")
+			((successes + in_flight < effective_slots)) && return 0
+		fi
+		_dispatch_max_wait_for_reservation "$pids_name"
+		successes=$(_dispatch_max_count_outcomes "$outcomes_file")
+		_dispatch_max_should_stop "$processed_count" "$successes" "$effective_slots" && return 1
+	done
+	return 1
 }
 
 #######################################
@@ -1605,7 +1671,7 @@ _dispatch_max_prefilter_cached_block() {
 	local outcomes_file="$2"
 	local issue="" repo="" fields="" reason=""
 	reason=$(_dispatch_negative_cache_reason "$candidate_json") || return 1
-	fields=$(jq -r '[(.number // ""), (.repo_slug // "")] | @tsv' <<<"$candidate_json" 2>/dev/null) || return 1
+	fields=$(jq -r "$_DISPATCH_CANDIDATE_IDENTITY_JQ" <<<"$candidate_json" 2>/dev/null) || return 1
 	IFS=$'\t' read -r issue repo <<<"$fields"
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue} (${repo}) — cross-cycle block:${reason} (no wave slot spent)" >>"$LOGFILE"
 	_dispatch_stats_increment "dispatch_candidate_negative_cache_hit"
@@ -1773,11 +1839,32 @@ _dispatch_max_spawn_candidate() {
 	local self_login="$2"
 	local available_slots="$3"
 	local outcomes_file="$4"
-	local _rc=0
+	local _rc=0 _DISPATCH_DEFER_REASON="" _DISPATCH_SETTLE_RC=""
 
 	_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
+	# t19116: an unknown launch state (124) overrides the reported result.
+	_dispatch_settle_candidate_launch_slot "$candidate_json" "${_DISPATCH_SETTLE_RC:-$_rc}"
 	_dispatch_record_candidate_outcome "$candidate_json" "$_rc" "$outcomes_file"
 	return $?
+}
+
+# t19116: settle this candidate's launch slot and name a slot-full deferral.
+# Sets the caller's dynamically scoped _DISPATCH_DEFER_REASON.
+# Args: candidate JSON, candidate return code
+_dispatch_settle_candidate_launch_slot() {
+	local candidate_json="$1" result_code="$2"
+	[[ -n "${_DISPATCH_LAUNCH_SLOT_DIR:-}" ]] || return 0
+	local identity
+	identity=$(jq -r "$_DISPATCH_CANDIDATE_IDENTITY_JQ" <<<"$candidate_json" 2>/dev/null) || return 0
+	local issue
+	local repo
+	IFS=$'\t' read -r issue repo <<<"$identity"
+	_dispatch_launch_slot_settle "$issue" "$repo" "$result_code"
+	if [[ "$result_code" -eq "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}" ]] &&
+		_dispatch_launch_slot_deferred "$issue" "$repo"; then
+		_DISPATCH_DEFER_REASON="launch_slot_full"
+	fi
+	return 0
 }
 
 # Preserve repository/class identity and proven ineligibility across subshells.
@@ -1795,8 +1882,10 @@ _dispatch_record_candidate_outcome() {
 	elif [[ "$result_code" -eq "${_DISPATCH_CYCLE_BUDGET_DEFER_RC:-75}" ]]; then
 		# GH#34428: a deferral is neither a launch nor a failure, so it stays
 		# out of the round's throttle denominator and product-unknown counts.
-		printf '%s|%s|rc=%d|reason=cycle_budget_floor|repo=%s|priority=%s\n' \
-			"$_DISPATCH_OUTCOME_DEFERRED" "$issue_num" "$result_code" "$repo_slug" "$priority" >>"$outcomes_file" || return 1
+		# t19116: launch_slot_full names a claim-time slot deferral.
+		printf '%s|%s|rc=%d|reason=%s|repo=%s|priority=%s\n' \
+			"$_DISPATCH_OUTCOME_DEFERRED" "$issue_num" "$result_code" "${_DISPATCH_DEFER_REASON:-cycle_budget_floor}" \
+			"$repo_slug" "$priority" >>"$outcomes_file" || return 1
 	else
 		printf 'fail|%s|rc=%d|reason=%s|repo=%s|priority=%s|eligibility=%s\n' \
 			"$issue_num" "$result_code" "${_PULSE_LAST_LAUNCH_FAILURE:-none}" "$repo_slug" "$priority" "$eligibility" >>"$outcomes_file" || return 1
@@ -1812,7 +1901,9 @@ _dispatch_run_priority_phase() {
 		printf '0 0\n'
 		return 0
 	fi
-	((parallel <= budget)) || parallel="$budget"
+	local eval_cap=""
+	eval_cap=$(_dispatch_eval_parallel_cap "$budget") # t19116
+	((parallel <= eval_cap)) || parallel="$eval_cap"
 	if ((parallel <= 1)) && [[ "${_DISPATCH_REST_SERIAL_ROUND:-0}" == "1" &&
 		"${_DISPATCH_REST_SERIAL_RECOVERY_ALLOWED:-1}" == "1" ]] &&
 		! _dispatch_rest_core_requires_serial; then

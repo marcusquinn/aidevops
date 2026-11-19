@@ -1660,6 +1660,143 @@ _dispatch_apply_startup_capacity_ramp() {
 }
 
 #######################################
+# t19116: launch-slot semaphore for one parallel dispatch loop.
+#
+# An evaluating ceremony (read-only dedup layers, eligibility, validators)
+# holds no worker slot. A candidate takes a slot only at its first persistent
+# write, immediately before the cross-runner claim (_dlw_claim_slot_and_lock),
+# so rejections evaluate concurrently while launches never exceed the round's
+# slot budget. _dispatch_max_loop owns the directory through a dynamically
+# scoped _DISPATCH_LAUNCH_SLOT_DIR; without one (serial loop, direct callers)
+# every acquire succeeds and behaviour is unchanged. mkdir is the atomic
+# test-and-set shared by the loop's background subshells.
+# Opt-out: DISPATCH_LAUNCH_SLOT_GATE=0 restores ceremony-start reservations.
+# A forced floor (_DISPATCH_FORCE_FLOOR) keeps its serial single launch.
+#######################################
+_dispatch_launch_slot_gate_enabled() {
+	[[ "${DISPATCH_LAUNCH_SLOT_GATE:-1}" != "0" ]] || return 1
+	[[ -z "${_DISPATCH_FORCE_FLOOR:-}" ]] || return 1
+	return 0
+}
+
+# Evaluation concurrency cap for a slot budget: slots x DISPATCH_EVAL_OVERSUBSCRIBE
+# (default 3) with the gate, else the legacy slot clamp. Callers still apply
+# DISPATCH_MAX_PARALLEL, the throttle file and REST-core serial mode.
+# Args: slot budget. Stdout: integer cap.
+_dispatch_eval_parallel_cap() {
+	local slots="$1" factor="${DISPATCH_EVAL_OVERSUBSCRIBE:-3}"
+	[[ "$slots" =~ ^[0-9]+$ ]] || slots=1
+	[[ "$factor" =~ ^[1-9][0-9]*$ ]] || factor=3
+	_dispatch_launch_slot_gate_enabled || factor=1
+	printf '%d\n' "$((slots * factor))"
+	return 0
+}
+
+# Args: issue number, repo slug. Stdout: filesystem-safe candidate key.
+_dispatch_launch_slot_key() {
+	local issue="$1" repo="$2" key=""
+	key="${repo//\//--}--${issue}"
+	printf '%s\n' "${key//[^A-Za-z0-9._-]/_}"
+	return 0
+}
+
+# Create a loop-owned slot directory. Args: slot budget. Stdout: directory.
+_dispatch_launch_slots_init() {
+	local budget="$1" dir=""
+	[[ "$budget" =~ ^[0-9]+$ ]] || return 1
+	dir=$(mktemp -d 2>/dev/null) || return 1
+	if ! printf '%s\n' "$budget" >"${dir}/budget"; then
+		rm -rf "$dir"
+		return 1
+	fi
+	printf '%s\n' "$dir"
+	return 0
+}
+
+# Args: issue number, repo slug
+# Returns: 0 when the candidate holds a slot (or no gate is active), 1 when all
+# slots are held. Lost or unreadable loop state fails closed (defer, no claim).
+_dispatch_launch_slot_acquire() {
+	local issue="$1" repo="$2" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" budget="" key="" n=0
+	[[ -n "$dir" ]] || return 0
+	key=$(_dispatch_launch_slot_key "$issue" "$repo")
+	[[ ! -f "${dir}/held.${key}" ]] || return 0
+	read -r budget <"${dir}/budget" 2>/dev/null || budget=""
+	if [[ "$budget" =~ ^[0-9]+$ ]]; then
+		for ((n = 1; n <= budget; n++)); do
+			mkdir "${dir}/slot.${n}" 2>/dev/null || continue
+			# An overflow launch (settle) shrinks the budget; back off rather
+			# than launch past it. Concurrent acquirers may both back off.
+			if (($(_dispatch_launch_slots_taken) > budget)); then
+				rmdir "${dir}/slot.${n}" 2>/dev/null || true
+				break
+			fi
+			printf '%s\n' "$n" >"${dir}/held.${key}"
+			return 0
+		done
+	fi
+	: >"${dir}/deferred.${key}" 2>/dev/null || true
+	return 1
+}
+
+# Keep the slot for a launch (rc 0) or an unknown launch state (rc 124: the
+# per-candidate timeout kill, or failed launch validation after a submitted
+# spawn, reported via _DISPATCH_SETTLE_RC); release it otherwise. A success that never
+# acquired (a launch path outside _dlw_claim_slot_and_lock) still takes an
+# overflow slot, so the loop stops instead of launching past the budget.
+# Args: issue number, repo slug, candidate return code
+_dispatch_launch_slot_settle() {
+	local issue="$1" repo="$2" rc="$3" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" key="" n=""
+	[[ -n "$dir" && -d "$dir" ]] || return 0
+	key=$(_dispatch_launch_slot_key "$issue" "$repo")
+	if [[ -f "${dir}/held.${key}" ]]; then
+		[[ "$rc" == "0" || "$rc" == "124" ]] && return 0
+		read -r n <"${dir}/held.${key}" 2>/dev/null || n=""
+		if [[ "$n" =~ ^[0-9]+$ ]]; then
+			rmdir "${dir}/slot.${n}" 2>/dev/null || true
+		fi
+		rm -f "${dir}/held.${key}"
+		return 0
+	fi
+	if [[ "$rc" == "0" ]]; then
+		mkdir "${dir}/slot.overflow.${key}" 2>/dev/null || true
+		echo "[pulse-wrapper] Dispatch_max: #${issue} (${repo}) launched without a launch slot; counted as overflow (t19116)" >>"${LOGFILE:-/dev/null}"
+	fi
+	return 0
+}
+
+# Args: issue number, repo slug. Returns 0 when acquire found every slot held.
+_dispatch_launch_slot_deferred() {
+	local issue="$1" repo="$2" dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}"
+	[[ -n "$dir" ]] || return 1
+	[[ -f "${dir}/deferred.$(_dispatch_launch_slot_key "$issue" "$repo")" ]] && return 0
+	return 1
+}
+
+# Stdout: slots held in this loop (launched, launching or unknown state).
+_dispatch_launch_slots_taken() {
+	local dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" entry="" taken=0
+	if [[ -n "$dir" ]]; then
+		for entry in "$dir"/slot.*; do
+			[[ -d "$entry" ]] && taken=$((taken + 1))
+		done
+	fi
+	printf '%d\n' "$taken"
+	return 0
+}
+
+# Returns 0 while an unheld slot remains (always without an active gate).
+_dispatch_launch_slot_available() {
+	local dir="${_DISPATCH_LAUNCH_SLOT_DIR:-}" budget="" taken=0
+	[[ -n "$dir" ]] || return 0
+	read -r budget <"${dir}/budget" 2>/dev/null || return 1
+	[[ "$budget" =~ ^[0-9]+$ ]] || return 1
+	taken=$(_dispatch_launch_slots_taken)
+	((taken < budget)) && return 0
+	return 1
+}
+
+#######################################
 # Compute the dispatch capacity for this round.
 #
 # Stdout: "<max_workers> <active_workers> <available_slots>" on success.
