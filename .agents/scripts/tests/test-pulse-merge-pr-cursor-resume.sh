@@ -181,8 +181,10 @@ export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=2
 _PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || first_rc=$?
 assert_eq "first pass pauses when graceful budget is exhausted" "5" "${first_rc:-0}"
-assert_eq "production-shaped backlog prioritizes ready then failing PRs" "103 102 " "$PROCESSED_PRS"
-assert_eq "cursor records next sorted tail PR" "org/repo|2|102|101" "$(tr -d '\n' <"$PULSE_MERGE_PR_CURSOR_FILE")"
+# GH#39281: the failing PR has no CI-repair lease, so the CI-repair lane runs
+# it ahead of merge-ready work.
+assert_eq "production-shaped backlog runs the CI-repair lane, then ready PRs" "102 103 " "$PROCESSED_PRS"
+assert_eq "cursor records next sorted tail PR" "org/repo|2|103|101" "$(tr -d '\n' <"$PULSE_MERGE_PR_CURSOR_FILE")"
 
 # Losing advisory enrichment state must rebuild safely, then resume the
 # authoritative processing cursor rather than repeating completed PRs.
@@ -216,7 +218,7 @@ export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=2
 _PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
 lane_first_rc=0
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_first_rc=$?
-assert_eq "lane setup pauses after the ready and failing PRs" "5|103 102 " "${lane_first_rc}|${PROCESSED_PRS}"
+assert_eq "lane setup pauses after the failing and ready PRs" "5|102 103 " "${lane_first_rc}|${PROCESSED_PRS}"
 assert_eq "lane setup retains the stale advisory failure for PR 102" "FAILURE" "$(jq -r '.prs[] | select(.number == 102) | .statusCheckRollup[0].conclusion' "$PULSE_MERGE_ENRICHMENT_CACHE_FILE")"
 PR102_CHECK_STATE="SUCCESS"
 PROCESSED_PRS=""
@@ -225,10 +227,32 @@ export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
 _PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
 lane_second_rc=0
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || lane_second_rc=$?
-assert_eq "resume lane evaluates the newly ready PR before the tail" "0|102 101 104 " "${lane_second_rc}|${PROCESSED_PRS}"
+# GH#39281: the resume item runs first, then the lane item, then the tail.
+assert_eq "resume lane evaluates the resume item, then the newly ready PR, before the tail" "0|101 102 104 " "${lane_second_rc}|${PROCESSED_PRS}"
 assert_eq "resume lane is logged" "1" "$(grep -c 'resume priority lane for org/repo moved 1 ' "$LOGFILE")"
-assert_eq "completed walk clears the lane records" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-refreshed" ]] && printf true || printf false)"
+assert_eq "completed walk clears the lane records" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-refreshed" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" ]] && printf true || printf false)"
+
+# GH#39281: a PR that starts failing after the walk passed it joins the
+# CI-repair lane on the next resume and runs right after the resume item.
+rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
+PROCESSED_PRS=""
+FAKE_NOW=100
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=2
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+ci_first_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || ci_first_rc=$?
+assert_eq "CI lane setup evaluates both ready PRs, then pauses" "5|102 103 " "${ci_first_rc}|${PROCESSED_PRS}"
 PR102_CHECK_STATE="FAILURE"
+rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
+: >"$LOGFILE"
+PROCESSED_PRS=""
+FAKE_NOW=200
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+ci_second_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || ci_second_rc=$?
+assert_eq "resume evaluates the resume item, then the newly failing PR, before the tail" "0|101 102 104 " "${ci_second_rc}|${PROCESSED_PRS}"
+assert_eq "resume CI-repair lane is logged" "1" "$(grep -c 'moved 0 merge-ready PR(s) and 1 CI-repair PR(s) behind resume item index=2 next_pr=101' "$LOGFILE")"
 
 assert_budget_pause_after_phase() {
 	local phase="$1"
@@ -285,7 +309,7 @@ _PMP_MERGE_PASS_DEADLINE_EPOCH=0
 resume_after_enrichment_rc=0
 _merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || resume_after_enrichment_rc=$?
 assert_eq "cycle after enrichment pause completes without cached partial JSON" "0" "$resume_after_enrichment_rc"
-assert_eq "cycle after enrichment pause makes forward progress in backlog priority order" "103 102 101 104 " "$PROCESSED_PRS"
+assert_eq "cycle after enrichment pause makes forward progress in backlog priority order" "102 103 101 104 " "$PROCESSED_PRS"
 assert_eq "successful resumed cycle clears the current-PR cursor" "false" "$([[ -f "$PULSE_MERGE_PR_CURSOR_FILE" ]] && printf true || printf false)"
 assert_eq "successful resumed cycle clears enrichment state" "false" "$([[ -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" || -f "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE" ]] && printf true || printf false)"
 
@@ -411,14 +435,38 @@ run_guardrail_lane_scenario 0
 assert_eq "guardrail lane setup visits the in-flight PRs not ready, then pauses" \
 	"5|305:merge-ready 306:merge-ready 301:checks-in-progress 302:checks-in-progress 303:checks-in-progress 304:checks-in-progress " "$GUARDRAIL_LANE_FIRST"
 # 303 and 304 stay behind the cursor until the next revolution (the bug).
-assert_eq "without the guardrail the base lane drains only two CLEAN PRs before the tail" \
-	"0|301:merge-ready 302:merge-ready 307:dirty-conflicted " "$GUARDRAIL_LANE_SECOND"
+# GH#39281: the resume item (307) always runs before the lane items.
+assert_eq "without the guardrail the base lane drains only two CLEAN PRs after the resume item" \
+	"0|307:dirty-conflicted 301:merge-ready 302:merge-ready " "$GUARDRAIL_LANE_SECOND"
 run_guardrail_lane_scenario 1
 assert_eq "guardrail lane setup is unchanged by the marker" \
 	"5|305:merge-ready 306:merge-ready 301:checks-in-progress 302:checks-in-progress 303:checks-in-progress 304:checks-in-progress " "$GUARDRAIL_LANE_FIRST"
-assert_eq "active guardrail drains every counted PR that went CLEAN ahead of the cursor" \
-	"0|301:merge-ready 302:merge-ready 303:merge-ready 304:merge-ready 307:dirty-conflicted " "$GUARDRAIL_LANE_SECOND"
-assert_eq "guardrail lane promotion is logged" "1" "$(grep -c 'moved 4 merge-ready PR(s) ahead of cursor index=6 guardrail_counted=4' "$LOGFILE")"
+assert_eq "active guardrail drains every counted PR that went CLEAN in the next pass" \
+	"0|307:dirty-conflicted 301:merge-ready 302:merge-ready 303:merge-ready 304:merge-ready " "$GUARDRAIL_LANE_SECOND"
+assert_eq "guardrail lane promotion is logged" "1" "$(grep -c 'moved 4 merge-ready PR(s) and 0 CI-repair PR(s) behind resume item index=6 next_pr=307 guardrail_counted=4' "$LOGFILE")"
+
+# GH#39281: cursor progress guarantee. Slow lane items used to exhaust the
+# slice before the resume item ran, so every resume paused at the same PR.
+# The resume item now runs first; a pause during the lane persists the tail
+# with the resume item as predecessor, and a pause before it keeps it.
+# Original order [1,2,3,9,4] resumed at 9 (index 3) with lane [2,3] becomes
+# [1,9,2,3,4]: resume item at index 1, last lane item at index 3.
+progress_json='[{"number":1},{"number":9},{"number":2},{"number":3},{"number":4}]'
+_PMP_RESUME_LANE_START=1 _PMP_RESUME_LANE_END=3 _PMP_RESUME_LANE_ITEM_PR=9 _PMP_RESUME_LANE_LAST_PR=3
+rm -f "$PULSE_MERGE_PR_CURSOR_FILE"
+_pmp_pause_merge_pr_cursor "org/progress" "$progress_json" 1 budget merged closed failed 0 0 0 "" ""
+assert_eq "pause before the resume item keeps it with its original predecessor" "org/progress|3|3|9" "$(tr -d '\n' <"$PULSE_MERGE_PR_CURSOR_FILE")"
+pr_json="$progress_json"
+progress_index="" progress_next="" progress_last=""
+_pmp_lane_clamped_cursor "org/progress" 2 progress_index progress_next "" progress_last 9
+assert_eq "after the resume item the cursor persists the tail behind it" "4|4|9" "${progress_index}|${progress_next}|${progress_last}"
+_pmp_lane_clamped_cursor "org/progress" 4 progress_index progress_next "" progress_last 3
+assert_eq "after the last lane item the cursor still names the resume item as predecessor" "4|4|9" "${progress_index}|${progress_next}|${progress_last}"
+_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "org/progress" 4 9 4
+_pmp_pause_merge_pr_cursor "org/progress" "$progress_json" 2 budget merged closed failed 0 0 0 "" ""
+assert_eq "pause during the lane advances past the resume item" "org/progress|4|9|4" "$(tr -d '\n' <"$PULSE_MERGE_PR_CURSOR_FILE")"
+_PMP_RESUME_LANE_START=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_LANE_ITEM_PR="" _PMP_RESUME_LANE_LAST_PR=""
+rm -f "$PULSE_MERGE_PR_CURSOR_FILE"
 
 # Lane refreshes stop while time remains to evaluate a promoted PR.
 _PMP_MERGE_PASS_DEADLINE_EPOCH=$((FAKE_NOW + 10))
