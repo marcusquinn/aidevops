@@ -2276,6 +2276,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19141 fix(worker-lifecycle): accept pulse merge closeout marker as MERGE_SUMMARY evidence for merged worker PRs #bug #interactive tier:standard -> [todo/tasks/t19141-brief.md] ref:GH#39205
 
+- [ ] t19143 fix(tests): restore the fixture workspace mode leaked by the group-writable workspace test #bug #interactive tier:simple -> [todo/tasks/t19143-brief.md] ref:GH#39209
+
+- [ ] t19144 feat(full-loop): add --ready to commit-and-pr so verified interactive PRs open non-draft #auto-dispatch #feat tier:simple -> [todo/tasks/t19144-brief.md] ref:GH#39210
+
+- [ ] t19145 fix(ci): affected-test selection runs vacuous sourced modules instead of their parent suites #auto-dispatch #bug tier:standard -> [todo/tasks/t19145-brief.md] ref:GH#39212
+
+- [ ] t19146 fix(pulse-merge): close PRs whose non-closing issue is completed and whose diff is empty or a stale planning row #auto-dispatch #bug tier:standard -> [todo/tasks/t19146-brief.md] ref:GH#39213
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02

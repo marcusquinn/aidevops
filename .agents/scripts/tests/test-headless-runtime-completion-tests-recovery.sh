@@ -9,6 +9,15 @@
 [[ -n "${_TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_RECOVERY_LOADED:-}" ]] && return 0
 _TEST_HEADLESS_RUNTIME_COMPLETION_TESTS_RECOVERY_LOADED=1
 
+# True when a stubbed gh call is the shared PR-base resolver's remote default
+# lookup (`gh api repos/<slug> --jq .default_branch`, shared-pr-base.sh,
+# GH#39167). Stubs answer it so fixtures without a configured base still
+# resolve one; the resolver no longer reads `gh repo view` (GH#39209).
+_fixture_gh_is_default_branch_lookup() {
+	[[ "${1:-}" == "api" && "${2:-}" == "repos/test-owner/test-repo" ]]
+	return $?
+}
+
 test_begin_worker_runtime_run_refreshes_run_id() {
 	local first_run_id="" second_run_id=""
 	AIDEVOPS_RUN_ID="run:stale"
@@ -203,8 +212,11 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	}
 	_last_flag=""
 
+	# Capture the status: under `set -e` a bare non-zero return aborts the whole
+	# suite before its Tests run/Failures summary (GH#39209).
+	local recovery_rc=0
 	_attempt_orphan_recovery_pr \
-		"issue-99999" "$work_dir" "feature/auto-test-issue-99999" "test-owner/test-repo"
+		"issue-99999" "$work_dir" "feature/auto-test-issue-99999" "test-owner/test-repo" || recovery_rc=$?
 
 	unset -f gh 2>/dev/null || true
 
@@ -212,7 +224,7 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 		print_result "_attempt_orphan_recovery_pr calls gh pr create" 0
 	else
 		print_result "_attempt_orphan_recovery_pr calls gh pr create" 1 \
-			"gh was not called"
+			"gh was not called (rc=${recovery_rc})"
 	fi
 
 	if [[ "$gh_head" == "feature/auto-test-issue-99999" ]]; then
@@ -266,7 +278,7 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 			printf '0'
 		elif [[ "${*}" == *"issue view"* ]]; then
 			printf 'OPEN'
-		elif [[ "${*}" == *"repo view"* ]]; then
+		elif _fixture_gh_is_default_branch_lookup "$@"; then
 			printf 'main'
 		elif [[ "${*}" == *"pr create"* ]]; then
 			gh_called=1
@@ -274,9 +286,10 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 		return 0
 	}
 
+	local recovery_rc=0
 	_attempt_orphan_recovery_pr \
 		"manual-cli-28313-1784593858" "$work_dir" \
-		"feature/auto-test-issue-99999" "test-owner/test-repo" "draft"
+		"feature/auto-test-issue-99999" "test-owner/test-repo" "draft" || recovery_rc=$?
 	unset -f gh 2>/dev/null || true
 
 	# GH#32933: recovery PRs use the non-closing `For #N` reference.
@@ -286,7 +299,7 @@ test_attempt_orphan_recovery_pr_uses_authoritative_worker_issue() {
 		print_result "orphan recovery prefers authoritative worker issue over session timestamp" 0
 	else
 		print_result "orphan recovery prefers authoritative worker issue over session timestamp" 1 \
-			"called=${gh_called} title=${gh_title:-<empty>} body=${gh_body:-<empty>}"
+			"rc=${recovery_rc} called=${gh_called} title=${gh_title:-<empty>} body=${gh_body:-<empty>}"
 	fi
 	return 0
 }
@@ -339,7 +352,7 @@ test_cmd_run_finish_orphan_recovery_success_emits_worker_complete() {
 	gh() {
 		if [[ "${*}" == *"pr list"* ]]; then printf '0'
 		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
-		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		elif _fixture_gh_is_default_branch_lookup "$@"; then printf 'main'
 		fi
 		return 0
 	}
@@ -382,7 +395,7 @@ test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr() {
 		done
 		if [[ "${*}" == *"pr list"* ]]; then printf '0'
 		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
-		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		elif _fixture_gh_is_default_branch_lookup "$@"; then printf 'main'
 		elif [[ "${*}" == *"pr create"* ]]; then gh_called=1
 		fi
 		return 0
@@ -585,7 +598,7 @@ test_cmd_run_finish_fail_recovers_branch_orphan_output() {
 	gh() {
 		if [[ "${*}" == *"pr list"* ]]; then printf '0'
 		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
-		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		elif _fixture_gh_is_default_branch_lookup "$@"; then printf 'main'
 		fi
 		return 0
 	}
