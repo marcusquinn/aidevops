@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.240] - 2026-11-19
+
+### Added
+
+- support anchored brief sections
+
+### Changed
+
+- Tests: stub _gh_with_timeout collaborators
+
+### Fixed
+
+- add gpt-6.1-terra to the ChatGPT OAuth unsupported list
+- defer no-output kills while the worker's isolated DB shows live tool output
+- tolerate corrupt metrics lines and write records atomically (GH#39185) (#39195)
+- log settled worker PGID after setsid (GH#39194)
+- parse macOS kern.boottime sec, not usec
+- clarify consolidation worker completion contract (#39182)
+- starved deferrable stages borrow the capped dispatch-reserve fuse so dirty_pr_sweep stops starving
+
 ## [3.39.239] - 2026-11-19
 
 ### Changed
