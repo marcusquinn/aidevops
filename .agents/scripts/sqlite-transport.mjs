@@ -6,7 +6,7 @@
  * Public callers use sqlite-process.mjs; this module owns child lifecycle.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 const SQLITE_SENTINEL = "__AIDEVOPS_QUERY_DONE__";
 const SQLITE_BUSY_RE = /database is locked|SQLITE_BUSY|database table is locked/i;
@@ -56,8 +56,40 @@ function hookProcessExit() {
   if (registry.exitHooked) return;
   registry.exitHooked = true;
   process.once("exit", () => {
-    for (const transport of registry.transports.values()) stopTransport(transport);
+    for (const transport of registry.transports.values()) flushTransportOnExit(transport);
   });
+}
+
+const EXIT_FLUSH_TIMEOUT_MS = 2500;
+
+/**
+ * Exit-time flush. The in-flight query was already written to the child's
+ * stdin, so we end stdin WITHOUT SIGTERM: sqlite3 finishes it on EOF as an
+ * independent process (no re-run, so no duplicate row). Writes never sent
+ * (still queued) run once via a bounded synchronous sqlite3 call. Fails open.
+ */
+function flushTransportOnExit(transport) {
+  const pending = transport.queue.splice(0).map((query) => query.sql);
+  const proc = transport.proc;
+  transport.proc = null;
+  if (proc) {
+    try { proc.stdin.end(); } catch { /* already dead */ }
+  }
+  if (pending.length > 0) {
+    try {
+      execFileSync("sqlite3", ["-cmd", `.timeout ${EXIT_FLUSH_TIMEOUT_MS}`, transport.dbPath], {
+        input: `${pending.join("\n")}\n`,
+        timeout: EXIT_FLUSH_TIMEOUT_MS + 500,
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+    } catch (error) {
+      console.error(`[aidevops] SQLite exit flush failed (${pending.length} writes dropped): ${String(error.message).split("\n")[0]}`);
+    }
+  }
+  transport.processing = false;
+  transport.currentCallback = null;
+  transport.stdoutBuffer = "";
+  transport.closeWhenIdle = false;
 }
 
 export function stopTransport(transport) {
