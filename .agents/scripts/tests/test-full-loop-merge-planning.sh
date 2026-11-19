@@ -127,6 +127,10 @@ _full_loop_persist_pr_check_evidence() {
 	: "\$status" "\$head_sha" "\$evidence"
 	return 0
 }
+_pmrc_snapshot_checks_with_retry() {
+	printf '[]\n'
+	return 0
+}
 cd '${repo}'
 _full_loop_verify_pr_readiness '42' 'testorg/testrepo'
 RUNNER_EOF

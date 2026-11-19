@@ -23,6 +23,9 @@
 [[ -n "${_FULL_LOOP_READINESS_LIB_LOADED:-}" ]] && return 0
 _FULL_LOOP_READINESS_LIB_LOADED=1
 
+_FULL_LOOP_RETRY_DETAIL="retry-when-capacity-returns"
+_FULL_LOOP_CHECK_TERMINAL_FAILURE="terminal-failure"
+
 # Preserve a custom caller SCRIPT_DIR; authority diagnostics use the source path.
 if [[ -z "${_FULL_LOOP_COMMIT_DIR:-}" ]]; then
 	_FULL_LOOP_COMMIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,7 +96,7 @@ _full_loop_local_admission_evidence() {
 		'[gh-transport] error_kind=github-api-read-deferred attempted=false deferred_by=local_admission '*)
 			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${line#*error_kind=}"
 			FULL_LOOP_PRE_MERGE_BLOCKER_KIND="${FULL_LOOP_PRE_MERGE_BLOCKER_KIND%% *}"
-			FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="retry-when-capacity-returns"
+			FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
 			[[ ! "$line" =~ retry_at=([0-9]+([.][0-9]+)?) ]] || FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="${BASH_REMATCH[1]}"
 			FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$FULL_LOOP_PRE_MERGE_BLOCKER_KIND"
 			FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="$line"
@@ -196,7 +199,7 @@ _full_loop_query_required_checks() {
 		fi
 	elif [[ "$required_checks_stderr" == *"error_kind=github-api-read-deferred"* ]]; then
 		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
-		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="retry-when-capacity-returns"
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
 		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_READ_DEFERRED"
 		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="GitHub API read capacity is deferred; preserve the PR and retry when capacity returns"
 	fi
@@ -465,6 +468,62 @@ _full_loop_accept_rbg_override() {
 	return 0
 }
 
+#######################################
+# Pulse parity (GH#27137, GH#39227): after required checks pass, a terminal
+# non-required failure that the pulse classifiers do not treat as advisory
+# (infrastructure, Qlty companions, provider quota, configured advisories)
+# blocks the merge. Pending non-required checks never block. Snapshot read
+# failures defer the merge; they are neither a pass nor a CI failure.
+# Args: $1=pr_number, $2=repo, $3=verified head, $4=required checks JSON
+# Returns: 0=acceptable, 1=blocked or deferred
+#######################################
+_full_loop_enforce_nonrequired_check_gate() {
+	local pr_number="$1" repo="$2" verified_head="$3" required_checks="$4"
+	local required_contexts="" checks_json="" snapshot_rc=0 kind="" failure_names=""
+
+	# Trusted local verification has no Actions checks; an accepted review-bot-gate
+	# override is itself a failing required context the classifiers would reject.
+	case "${FULL_LOOP_REQUIRED_CHECKS_SUCCESS_EVIDENCE:-}" in
+	trusted-local-verification | review-bot-gate-maintainer-override) return 0 ;;
+	esac
+	declare -F _pmrc_snapshot_checks_acceptable >/dev/null 2>&1 || return 0
+	# The pulse classifiers append diagnostics to LOGFILE; blocking names are
+	# reported below, so discard them unless the caller configured a log.
+	: "${LOGFILE:=/dev/null}"
+	required_contexts=$(printf '%s' "$required_checks" | jq -r '.[]?.name // empty' 2>/dev/null) || required_contexts=""
+
+	checks_json=$(_pmrc_snapshot_checks_with_retry "$repo" "$verified_head" 2>/dev/null) || snapshot_rc=$?
+	if [[ "$snapshot_rc" -ne 0 ]]; then
+		FULL_LOOP_PRE_MERGE_BLOCKER_KIND="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_PRE_MERGE_BLOCKER_DETAIL="$_FULL_LOOP_RETRY_DETAIL"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="$_FULL_LOOP_ERROR_READ_DEFERRED"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check snapshot read exit ${snapshot_rc}; preserve the PR and retry"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+	fi
+	if _pmrc_snapshot_checks_acceptable "$repo" "$pr_number" "$checks_json" "$required_contexts" "" "$verified_head" >&2; then
+		return 0
+	fi
+	kind="${_PULSE_MERGE_PREFLIGHT_BLOCKER_KIND:-}"
+	case "$kind" in
+	"$PMRC_BLOCKER_CHECKS_ACTIVE") return 0 ;; # only pending non-required checks
+	"$PMRC_BLOCKER_CHECKS_FAILED") ;;
+	*)
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_EVIDENCE="nonrequired-snapshot-unavailable"
+		FULL_LOOP_REQUIRED_CHECKS_ERROR_DETAIL="non-required check classification unavailable (${kind:-unknown})"
+		_full_loop_record_check_read_failure "$pr_number" "$verified_head"
+		return 1
+		;;
+	esac
+	FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_TERMINAL_FAILURE"
+	FULL_LOOP_PR_FAILURE_EVIDENCE="${_PULSE_MERGE_PREFLIGHT_BLOCKING_CHECKS_JSON:-[]}"
+	export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
+	failure_names=$(printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -r 'map(.name) | join(",")' 2>/dev/null) || failure_names=""
+	_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "${failure_names:-nonrequired-check-failure}" || true
+	print_error "PR #${pr_number} has terminal non-required check failures at the current head: ${failure_names:-unclassified} (GH#27137 parity)"
+	return 1
+}
+
 _full_loop_verify_pr_readiness() {
 	local pr_number="$1"
 	local repo="$2"
@@ -525,7 +584,7 @@ _full_loop_verify_pr_readiness() {
 			_full_loop_persist_pr_check_evidence "$FULL_LOOP_PR_CHECK_STATUS" "$verified_head" "required-checks-pending" || true
 			print_info "PR #${pr_number} required checks are pending at the current head; no repair action is eligible"
 		else
-			FULL_LOOP_PR_CHECK_STATUS="terminal-failure"
+			FULL_LOOP_PR_CHECK_STATUS="$_FULL_LOOP_CHECK_TERMINAL_FAILURE"
 			FULL_LOOP_PR_FAILURE_EVIDENCE=$(printf '%s' "$non_passing" | jq -c --arg pending "$_FULL_LOOP_CHECK_PENDING" '[.[] | select((.bucket // "") != $pending) | {name,state,bucket}]')
 			export FULL_LOOP_PR_CHECK_STATUS FULL_LOOP_PR_FAILURE_EVIDENCE
 			local failure_names=""
@@ -535,6 +594,7 @@ _full_loop_verify_pr_readiness() {
 		fi
 		return 1
 	fi
+	_full_loop_enforce_nonrequired_check_gate "$pr_number" "$repo" "$verified_head" "$required_checks" || return 1
 	FULL_LOOP_PR_CHECK_STATUS="terminal-success"
 	export FULL_LOOP_PR_CHECK_STATUS
 	local local_branch=""
@@ -608,7 +668,7 @@ cmd_pre_merge_gate() {
 		# Diagnostic only: never turn a failed authority check into merge readiness.
 		# The gate reports as its commit-status context, its job name or its
 		# workflow check name; mirrors pulse-merge-required-checks.sh (GH#39064).
-		if [[ "$FULL_LOOP_PR_CHECK_STATUS" == "terminal-failure" ]] &&
+		if [[ "$FULL_LOOP_PR_CHECK_STATUS" == "$_FULL_LOOP_CHECK_TERMINAL_FAILURE" ]] &&
 			printf '%s' "$FULL_LOOP_PR_FAILURE_EVIDENCE" | jq -e '
 				["maintainer-gate", "Maintainer Review & Assignee Gate",
 					"gate / Maintainer Review & Assignee Gate"] as $authority |

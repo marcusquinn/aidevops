@@ -1709,3 +1709,45 @@ test_exact_check_deferral_preserves_retry_deadline() {
 	print_result "exact-check deferral preserves its deadline through merge reporting" "$result" "output=$output"
 	return 0
 }
+
+# GH#39227: the full-loop gate mirrors the pulse (GH#27137) handling of
+# non-required terminal failures after required checks pass.
+test_nonrequired_check_failure_parity() {
+	local scenario="" expected="" rc=0
+	for scenario in unclassified-failure classified-advisory pending-nonrequired snapshot-unavailable; do
+		rc=0
+		(
+			local scripts_dir="${SCRIPT_DIR}/.." fixture=""
+			SCRIPT_DIR="$scripts_dir"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/shared-constants.sh"
+			# shellcheck source=/dev/null
+			source "$scripts_dir/full-loop-helper-commit.sh"
+			aidevops_log_line() { return 0; }
+			_full_loop_persist_pr_check_evidence() { return 0; }
+			_pmrc_configured_advisory_contexts_json() { printf '[]\n'; return 0; }
+			_ci_check_url_has_infra_failure_log() { return 1; }
+			case "$scenario" in
+			unclassified-failure) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"Pulse Unbound-Var Lint","status":"completed","conclusion":"failure"}]' ;;
+			classified-advisory) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"qlty check","status":"completed","conclusion":"failure"},{"name":"Qlty Regression Gate","status":"completed","conclusion":"success"}]' ;;
+			pending-nonrequired) fixture='[{"name":"required-ci","status":"completed","conclusion":"success"},{"name":"slow-lint","status":"in_progress","conclusion":""}]' ;;
+			*) fixture='[]' ;;
+			esac
+			_pmrc_snapshot_checks_with_retry() {
+				[[ "$scenario" != snapshot-unavailable ]] || return 75
+				printf '%s\n' "$fixture"
+				return 0
+			}
+			export LOGFILE="$TEST_ROOT/logs/nonrequired-parity.log"
+			_full_loop_enforce_nonrequired_check_gate 42 testorg/testrepo \
+				0123456789abcdef0123456789abcdef01234567 \
+				'[{"name":"required-ci","state":"SUCCESS","bucket":"pass"}]' >/dev/null 2>&1
+		) || rc=$?
+		case "$scenario" in
+		classified-advisory | pending-nonrequired) expected=0 ;;
+		*) expected=1 ;;
+		esac
+		print_result "non-required check parity: $scenario" "$((rc == expected ? 0 : 1))"
+	done
+	return 0
+}
