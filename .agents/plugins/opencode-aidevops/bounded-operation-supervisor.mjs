@@ -76,20 +76,29 @@ function validCommand(command) {
 // Signals nested helper groups before and after the grace period, then the
 // supervisor's own group. Containment is reported before the final SIGKILL.
 function createTerminator(tracker, killGraceMs, reportContainment, reportTermination) {
-  const state = { terminating: false };
+  const state = { terminating: false, postExit: false };
   const signalNested = (signal) => {
     const snapshot = tracker.track(MARKER_SCAN);
     signalEach(tracker.nestedTargets(snapshot), signal, snapshot?.entries);
   };
   state.terminate = (cause) => {
-    if (state.terminating) return;
+    // Post-exit cleanup is a drain, not a kill of the supervisor: a budget,
+    // cancel or signal request may still take over and escalate fully.
+    if (state.terminating && !(state.postExit && cause !== "post_exit_cleanup")) return;
+    const postExit = cause === "post_exit_cleanup";
     state.terminating = true;
+    state.postExit = postExit;
     reportTermination(cause);
     signalNested("SIGTERM");
-    signalOwnGroup("SIGTERM");
+    // The command's exit was already observed. Never signal our own group:
+    // under host load the drain can outlast killGraceMs, and the self-SIGKILL
+    // replaced the command's exit 0 with a signal exit (GH#39251). The drain
+    // loop kills surviving group members individually and keeps this process.
+    if (!postExit) signalOwnGroup("SIGTERM");
     setTimeout(() => {
       signalNested("SIGKILL");
       reportContainment().finally(() => {
+        if (state.postExit !== postExit || postExit) return;
         if (!signalOwnGroup("SIGKILL")) process.exit(1);
       });
     }, killGraceMs).unref();
