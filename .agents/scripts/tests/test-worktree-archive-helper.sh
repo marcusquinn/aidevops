@@ -301,7 +301,7 @@ test_failed_capture_leaves_no_archive() {
 }
 
 test_tracked_patch_capacity() {
-	local paths canonical worktree root reserve phase rc=0
+	local paths canonical worktree root reserve phase estimate rc=0
 	paths=$(setup_repo patch-capacity) || return 1
 	IFS=$'\t' read -r canonical worktree <<<"$paths"
 	root="$TEST_ROOT/patch-capacity-archives"
@@ -312,12 +312,15 @@ path = pathlib.Path(sys.argv[1])
 path.write_text(path.read_text() + "tracked change\n" * 10000)
 PY
 		if [[ "$phase" == staged ]]; then git -C "$worktree" add file.txt || return 1; fi
-		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free - 4096))' "$TEST_ROOT") || return 1
+		reserve=$(python3 -c 'import shutil, sys; print(max(0, shutil.disk_usage(sys.argv[1]).free + 2**40))' "$TEST_ROOT") || return 1
 		if env -u AIDEVOPS_MIN_WORKTREE_FREE_KB -u AIDEVOPS_MIN_WORKTREE_FREE_PERCENT \
 			AIDEVOPS_WORKTREE_ARCHIVE_RESERVE_BYTES="$reserve" AIDEVOPS_WORKTREE_ARCHIVE_MAX_UNTRACKED_BYTES=0 \
 			bash "$HELPER" archive "$worktree" --repo owner/repo --issue 32 --reason failed-worker \
 			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
 		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
+		# Estimate must include the ~150 KB tracked patch (10000 lines x 15 bytes).
+		estimate=$(sed -n 's/.*estimate=\([0-9][0-9]*\);.*/\1/;ta;b;:a;p;q' "$TEST_ROOT/patch-capacity.stderr")
+		[[ -n "$estimate" && "$estimate" -ge 150000 ]] || rc=1
 		[[ ! -e "$root" ]] || rc=1
 		git -C "$worktree" reset -q --hard HEAD || return 1
 	done
