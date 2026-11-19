@@ -354,6 +354,17 @@ _enforce_orphan_active_status_one_issue() {
 	return 0
 }
 
+# An existing auto-dispatch label is the only authority needed for this
+# conservative metadata repair. Do not add auto-dispatch, clear holds, or
+# alter needs-maintainer-review; this only makes already-authorized work
+# routable with the framework's default tier before pickup.
+_backfill_auto_dispatch_tier_one_issue() {
+	local issue_num="$1" slug="$2"
+	gh issue edit "$issue_num" --repo "$slug" --add-label "tier:standard" >/dev/null 2>&1 || return 1
+	echo "[pulse-wrapper] label_invariants: backfilled tier:standard on auto-dispatch #${issue_num} in ${slug}" >>"$LOGFILE"
+	return 0
+}
+
 # t19179: listing-row gate for the orphan release. Cheap hint checks only
 # (active status, zero assignees, idle past ORPHAN_STATUS_RELEASE_HOURS), then
 # the live re-read in _enforce_orphan_active_status_one_issue.
@@ -499,15 +510,9 @@ _normalize_label_invariants_for_repo() {
 			_enforce_tier_invariant_one_issue "$issue_num" "$slug" "${tier_arr[@]}"; then
 			_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
 		fi
-		# An existing auto-dispatch label is the only authority needed for this
-		# conservative metadata repair. Do not add auto-dispatch, clear holds, or
-		# alter needs-maintainer-review; this only makes already-authorized work
-		# routable with the framework's default tier before pickup.
-		if [[ "$has_auto" == "$_LI_BOOL_TRUE" && "$tier_count" -eq 0 ]]; then
-			if gh issue edit "$issue_num" --repo "$slug" --add-label "tier:standard" >/dev/null 2>&1; then
-				_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
-				echo "[pulse-wrapper] label_invariants: backfilled tier:standard on auto-dispatch #${issue_num} in ${slug}" >>"$LOGFILE"
-			fi
+		if [[ "$has_auto" == "$_LI_BOOL_TRUE" && "$tier_count" -eq 0 ]] &&
+			_backfill_auto_dispatch_tier_one_issue "$issue_num" "$slug"; then
+			_LI_TIER_FIXED=$((_LI_TIER_FIXED + 1))
 		fi
 
 		# A publication-backed issue is finite, and lifecycle labels prove it is a
