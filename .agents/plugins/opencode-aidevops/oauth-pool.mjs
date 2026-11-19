@@ -42,6 +42,7 @@ import {
   getAccounts, patchAccount, poolAccountKey, poolAccountLabel,
 } from "./oauth-pool-storage.mjs";
 import { ensureValidToken, normalizeExpiredCooldowns } from "./oauth-pool-refresh.mjs";
+import { compareByReset } from "./oauth-pool-ordering.mjs";
 
 // ---------------------------------------------------------------------------
 // Re-exports — public API (backward-compatible surface)
@@ -91,12 +92,15 @@ export { createPoolTool } from "./oauth-pool-tool.mjs";
 /**
  * Compare two accounts for rotation preference.
  * Primary: priority descending (higher priority first; missing/0 = default).
- * Secondary: lastUsed ascending (least recently used first, i.e. LRU).
+ * Secondary: soonest usable usage-window reset (t19125), when known.
+ * Tertiary: lastUsed ascending (least recently used first, i.e. LRU).
  */
 function compareAccountPriority(a, b) {
   const pa = a.priority || 0;
   const pb = b.priority || 0;
   if (pa !== pb) return pb - pa;
+  const byReset = compareByReset(a, b);
+  if (byReset !== 0) return byReset;
   return new Date(a.lastUsed || 0).getTime() - new Date(b.lastUsed || 0).getTime();
 }
 

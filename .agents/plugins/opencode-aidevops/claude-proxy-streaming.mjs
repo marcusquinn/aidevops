@@ -23,6 +23,7 @@ import {
   getAvailableAccounts,
   getNativeCliFallback,
   markAccountRateLimited,
+  recordAccountUsage,
 } from "./claude-proxy-retry.mjs";
 import {
   createOpenAIChunk,
@@ -149,6 +150,7 @@ function onStreamStdout(session, chunk) {
     if (!line.trim()) continue;
     const event = parseEventLine(line);
     if (!event) continue;
+    recordAccountUsage(session.account, event);
 
     if (session.probePhase) {
       const stopped = handleProbeEvent(session, event);
