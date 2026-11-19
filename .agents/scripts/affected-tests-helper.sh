@@ -59,8 +59,9 @@ def find_tracking_issue(title):
                "--json", "number,title,url", "--jq", jq]
     try:
         # Fixed argv, absolute gh path, no shell; title derives from a repo suite filename.
-        out = subprocess.run(gh_args, text=True, stdout=subprocess.PIPE,  # nosec B603
-                             stderr=subprocess.DEVNULL, timeout=30).stdout.split()
+        proc = subprocess.run(  # nosec B603
+            gh_args, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
+        out = proc.stdout.split()
     except (subprocess.SubprocessError, OSError):
         return None
     return (out[0], out[1]) if len(out) >= 2 else None
