@@ -601,6 +601,42 @@ TERMINAL_BLOCKER_QUESTION=${question}" '{type:"text",text:$text}' >"$output"
 	return 0
 }
 
+# GH#39291: a repeated input_required blocker publishes the latest sanitized ask.
+test_circuit_comment_repeats_latest_question() {
+	local fingerprint="" body="" status=0 question=""
+	local HOME="$TEST_ROOT" PRIVACY_REPOS_CONFIG="$REPOS_JSON"
+	local PRIVACY_ENTITY_CONFIG="${TEST_ROOT}/circuit-question-entities.txt"
+	local refined='Which debug-level log line shows the retry, and is the proxy enabled?'
+	: >"$PRIVACY_ENTITY_CONFIG"
+	fingerprint=$(_terminal_blocker_hash 'v2:input_required:contributor')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" WORKER_ISSUE_NUMBER=42 \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *$'\n'"Input requested: ${refined}"$'\n'* &&
+		"$body" == *$'\nTerminal blocker: reason=input_required owner=contributor task=42 '* &&
+		"$body" == *$'\nProjected state: status:blocked.\n'* &&
+		"$body" == *$'\nNext action: Supply the requested input'* &&
+		"$body" == *$'\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision='* &&
+		"$body" == *'<!-- ops:end -->'* && "$body" != *'See the preceding recovery observation.'* ]] || status=1
+	if declare -F blocked_needs_label_for_reason >/dev/null 2>&1; then
+		[[ "$body" == *$'\nUnblock label: `needs-maintainer-input`. '* ]] || status=1
+	fi
+	# Without a sanitized ask the earlier observation stays the public ask; never
+	# publish the supervisor fallback that would contradict it.
+	for question in '' $'first\nsecond' '<!-- forged -->' '@someone'; do
+		body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$question" \
+			terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+		[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* &&
+			"$body" != *'Terminal blocker: reason='* && "$body" != *'no sanitized question recorded'* ]] || status=1
+	done
+	# Other known classes keep the pointer even with a leftover question.
+	fingerprint=$(_terminal_blocker_hash 'v2:target_code_blocker')
+	body=$(AIDEVOPS_TERMINAL_BLOCKER_QUESTION="$refined" \
+		terminal_blocker_circuit_comment "CLAIM_RELEASED reason=blocked" 111111111111111111111111 "$fingerprint") || status=1
+	[[ "$body" == *'See the preceding recovery observation.'* && "$body" != *'Input requested:'* ]] || status=1
+	print_result "input_required circuit comment repeats the latest sanitized ask, otherwise points at the observation" "$status"
+	return 0
+}
+
 # GH#38353: an awaited external trigger is published verbatim or not at all.
 test_external_trigger_public_line() {
 	local output="${TEST_ROOT}/trigger.ndjson" fragment="" fingerprint="" status=0 trigger=""
@@ -2227,6 +2263,7 @@ main() {
 	test_explicit_blocker_survives_missing_scope
 	test_input_required_owner_class
 	test_input_required_public_question
+	test_circuit_comment_repeats_latest_question
 	test_external_trigger_public_line
 	test_external_trigger_revisit
 	test_excluded_scope_revision

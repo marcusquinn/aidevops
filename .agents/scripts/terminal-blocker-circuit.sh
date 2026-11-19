@@ -1196,12 +1196,23 @@ terminal_blocker_circuit_comment() {
 	local machine_readable_release="$1"
 	local task_revision="$2"
 	local blocker_fingerprint="$3"
-	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_RUNNER_CAPABILITY" ]] || return 1
-	[[ "$(_terminal_blocker_reason "$blocker_fingerprint")" != "$_TBC_UNKNOWN" ]] || return 1
-	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. See the preceding recovery observation.\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
+	local reason="" question="" latest="" summary='See the preceding recovery observation.'
+	reason=$(_terminal_blocker_reason "$blocker_fingerprint")
+	[[ "$reason" != "$_TBC_RUNNER_CAPABILITY" && "$reason" != "$_TBC_UNKNOWN" ]] || return 1
+	# GH#39291: an answer posted as a comment leaves the input_required revision
+	# unchanged, so the second attempt can open the circuit with a refined ask.
+	# Publish that sanitized ask so the newest comment (and /decisions) is
+	# self-contained. Without one, the earlier observation stays the public ask.
+	if [[ "$reason" == input_required ]]; then
+		question=$(_terminal_blocker_public_line "${AIDEVOPS_TERMINAL_BLOCKER_QUESTION:-}") || question=""
+		[[ -z "$question" ]] ||
+			latest=$(_terminal_blocker_recovery "$blocker_fingerprint" circuit status:blocked) || latest=""
+	fi
+	[[ -z "$latest" ]] || summary=$'The latest attempt\'s request follows.\n\n'"$latest"
+	printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n%s\n<!-- %s revision=%s blocker=%s -->\nTERMINAL_BLOCKER_CIRCUIT active=true observations=2 task_revision=%s blocker=%s\n\nAutomatic redispatch is held for the repeated known blocker. %s\n\nAn OWNER/MEMBER can retry without deleting history by posting %s as a standalone line. Relevant revisions re-arm code/brief blockers, but never permission blockers. Retry schedules verification only and grants no access.\n<!-- ops:end -->\n' \
 		"$machine_readable_release" "$_TBC_CIRCUIT_MARKER" "$task_revision" \
 		"$blocker_fingerprint" "$task_revision" "$blocker_fingerprint" \
-		"$_TBC_RETRY_MARKER"
+		"$summary" "$_TBC_RETRY_MARKER"
 	return 0
 }
 
