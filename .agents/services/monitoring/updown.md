@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: uptime, TLS and domain-expiry monitoring for every site, with a public status page per site.
+- **Purpose**: uptime and TLS-certificate monitoring for every site, with a public status page per site.
 - **Policy**: one updown.io account monitors every site. Each site gets its own status page on a subdomain of its live domain, `status.<domain>`, a `CNAME` to `page.updown.io`. Do not create an updown account per site.
 - **Helper**: `updown-helper.sh` — `list`, `json`, `add`, `update`, `delete`, `metrics`, `recipients`, `status-page list|add|update|delete`. Full flags: `updown-helper.sh help`.
 - **Credentials**: `aidevops secret set UPDOWN_API_KEY` (the read-write key from updown.io settings). The helper sends it as an `X-API-KEY` header on curl's stdin, never in arguments or URLs.
@@ -33,7 +33,7 @@ tools:
 
 ## Set up a site
 
-Once per account: in the updown.io account settings, enable domain-expiration reminders. updown collects expiry dates for every check but leaves these reminders off by default, and the API cannot change account settings.
+Domain-expiration reminders are optional and off by default. Leave them off when the domains auto-renew. To use them, enable them once in the updown.io account settings; the API cannot change account settings.
 
 ```bash
 # 1. Create the check: private, hourly. Prints the check token.
