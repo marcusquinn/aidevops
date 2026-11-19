@@ -943,6 +943,27 @@ _opencode_brew_major_held() {
 	return 0
 }
 
+# Classify Homebrew OpenCode as held when its formula crosses the profile major.
+# Held is neither outdated nor failed: never queued, so auto-update never retries.
+# Sets _HOLD_JSON and the status/icon/color namerefs. Args: category cmd installed latest status_ref icon_ref color_ref
+_opencode_hold_major() {
+	local category="$1"
+	local cmd="$2"
+	local installed="$3"
+	local latest="$4"
+	local status_ref="$5"
+	local icon_ref="$6"
+	local color_ref="$7"
+	[[ "$category" == brew && "$cmd" == opencode && "$installed" != "not installed" ]] || return 1
+	_opencode_brew_major_held "$installed" "$latest" || return 1
+	((++HELD_MAJOR_COUNT))
+	_HOLD_JSON=", \"hold_reason\": \"Homebrew now ships OpenCode 2 (preview in aidevops); run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}\""
+	printf -v "$status_ref" '%s' "held_major"
+	printf -v "$icon_ref" '%s' "⏸"
+	printf -v "$color_ref" '%s' "$YELLOW"
+	return 0
+}
+
 # Check a single tool
 check_tool() {
 	local category="$1"
@@ -1003,16 +1024,9 @@ check_tool() {
 			installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
 		fi
 	fi
-	local hold_json=""
-	if [[ "$category" == brew && "$cmd" == opencode && "$installed" != "not installed" ]] &&
-		_opencode_brew_major_held "$installed" "$latest"; then
-		# Held, not outdated: never queued, never a failure (auto-update must not retry).
-		status="held_major"
-		icon="⏸"
-		color="$YELLOW"
+	_HOLD_JSON=""
+	if _opencode_hold_major "$category" "$cmd" "$installed" "$latest" status icon color; then
 		update_cmd=""
-		((++HELD_MAJOR_COUNT))
-		hold_json=", \"hold_reason\": \"Homebrew now ships OpenCode 2 (preview in aidevops); run: ${AIDEVOPS_OPENCODE_BREW_MIGRATION_CMD}\""
 	else
 		_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
 	fi
@@ -1041,7 +1055,7 @@ check_tool() {
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		_PW_EXTRA_JSON="$hold_json"
+		_PW_EXTRA_JSON="$_HOLD_JSON"
 		[[ "$pkg" == playwriter ]] && _playwriter_version_policy_note "$(_playwriter_approved_version)"
 		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd" "$_PW_EXTRA_JSON"
 	elif [[ "$pkg" == playwriter ]]; then

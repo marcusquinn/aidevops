@@ -27,6 +27,7 @@ extract_function() {
 		/^_tool_latest_version\(\)/, /^}$/ { print; next }
 		/^_playwriter_approved_version\(\)/, /^}$/ { print; next }
 		/^_tool_is_nix_managed\(\)/, /^}$/ { print; next }
+		/^_opencode_hold_major\(\)/, /^}$/ { print; next }
 		/^check_tool\(\)/, /^}$/ { print; next }
 		/^_run_outdated_tool_updates\(\)/, /^}$/ { print; next }
 		/^_output_summary_and_updates\(\)/, /^}$/ { print; next }
