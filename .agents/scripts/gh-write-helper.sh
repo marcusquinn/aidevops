@@ -33,26 +33,26 @@ _pr_comment_guarded() {
 	local allow=0 arg="" target="" repo="" skip_value=0 prev="" n=""
 	local -a rest=()
 	for arg in "$@"; do
-		if [[ "$arg" == "--allow-approval-stale" ]]; then
-			allow=1
-			continue
-		fi
 		rest+=("$arg")
-		if [[ "$prev" == "--repo" || "$prev" == "-R" ]]; then
-			repo="$arg"
-		elif [[ "$arg" == --repo=* ]]; then
-			repo="${arg#--repo=}"
-		fi
+		# Values belong to the preceding option (e.g. --body text); never parse them.
 		if [[ "$skip_value" == 1 ]]; then
 			skip_value=0
-		elif [[ -z "$target" ]]; then
-			case "$arg" in
-			--*=* | --) ;;
-			-*) skip_value=1 ;;
-			*) target="$arg" ;;
-			esac
+			[[ "$prev" == "--repo" || "$prev" == "-R" ]] && repo="$arg"
+			prev="$arg"
+			continue
 		fi
 		prev="$arg"
+		case "$arg" in
+		--allow-approval-stale)
+			allow=1
+			unset 'rest[${#rest[@]}-1]'
+			;;
+		--repo=*) repo="${arg#--repo=}" ;;
+		-R?*) repo="${arg#-R}" ;;
+		--*=* | --) ;;
+		-*) skip_value=1 ;;
+		*) [[ -n "$target" ]] || target="$arg" ;;
+		esac
 	done
 	if [[ "$allow" == 0 ]]; then
 		n="${target##*/pull/}"
