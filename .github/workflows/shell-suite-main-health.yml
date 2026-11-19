@@ -112,7 +112,9 @@ jobs:
           sha="$(git rev-parse --short HEAD)"
 
           # Open red-main issues keyed by title -> number.
-          open_json="$(gh issue list --state open --limit 200 --search 'red-main: in:title' --json number,title,body)"
+          # Paginated full inventory (no result cap) so lookup and closure never miss an issue.
+          open_json="$(gh api --paginate "repos/${GH_REPO}/issues?state=open&per_page=100" \
+            --jq '.[] | select(.pull_request | not) | select(.title | startswith("red-main: ")) | {number,title,body}' | jq -s '.')"
 
           red_list="${work}/red.txt"
           green_list="${work}/green.txt"
