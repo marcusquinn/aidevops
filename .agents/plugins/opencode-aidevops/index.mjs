@@ -615,8 +615,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const systemTransformHook = async (input, output) => {
     instructionReminders.rememberSystem(input?.sessionID, output?.system);
     // GH#39151: one-shot steering after a finish=length (output-limit) response.
-    const limitNote = outputLimitNotice.take(input?.sessionID);
-    if (limitNote && Array.isArray(output?.system)) output.system.push(limitNote);
+    outputLimitNotice.inject(input?.sessionID, output?.system);
     const providerID = input?.model?.providerID;
     if (providerID && !isHeadless()) {
       const starter = proxyStarters[providerID];
@@ -838,7 +837,7 @@ export async function AidevopsPlugin({ directory, client }) {
     // LLM observability + session-start toast greeting (t2724).
     // Both run on every event; greeting self-gates to session.created.
     event: async (input) => {
-      try { outputLimitNotice.observe(input?.event); } catch (err) { debugEventError("output limit notice", err); }
+      outputLimitNotice.observeSafe(input?.event, (err) => debugEventError("output limit notice", err));
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input, { resolveSessionModel: (sessionId) => sessionModels.resolve(sessionId) }),

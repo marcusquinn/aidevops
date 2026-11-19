@@ -231,6 +231,19 @@ export function createOutputLimitNotice() {
       if (!id || !pending.delete(id)) return "";
       return OUTPUT_LIMIT_NOTE;
     },
+    /** Append the one-shot note to a system prompt array, if pending. */
+    inject(sessionID, system) {
+      const note = Array.isArray(system) ? this.take(sessionID) : "";
+      if (note) system.push(note);
+    },
+    /** observe() that reports errors via onError instead of throwing. */
+    observeSafe(event, onError) {
+      try {
+        this.observe(event);
+      } catch (err) {
+        onError(err);
+      }
+    },
   };
 }
 
