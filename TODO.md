@@ -2316,13 +2316,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19168 feat(opencode): one-command switch from an unintended global OpenCode 2 back to stable OpenCode 1 #auto-dispatch #feat #interactive tier:standard ref:GH#39282 assignee:marcusquinn logged:2026-11-19 started:2026-11-19 -> [todo/tasks/t19168-brief.md] pr:#39286 completed:2026-11-19
 
-- [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
+- [x] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 pr:#39285 logged:2026-11-19 -> [todo/tasks/t19170-brief.md] completed:2026-11-19
 
 - [x] t19171 fix(dispatch): zero-output hold ignores later trusted worker progress and keeps a released issue held for up to 12h #bug #interactive ref:GH#39293 logged:2026-11-19 -> [todo/tasks/t19171-brief.md] pr:#39297 completed:2026-11-19
 
 - [x] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304 pr:#39305 completed:2026-11-19
 
-- [ ] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 logged:2026-11-19 -> [todo/tasks/t19173-brief.md]
+- [x] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 pr:#39311 logged:2026-11-19 -> [todo/tasks/t19173-brief.md] completed:2026-11-19
 
 ## In Progress
 
@@ -5951,4 +5951,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 pr:#38315 completed:2026-11-15
 - [x] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107 pr:#38127 completed:2026-11-19
 
-- [ ] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222
+- [x] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222 pr:#39307 completed:2026-11-19
