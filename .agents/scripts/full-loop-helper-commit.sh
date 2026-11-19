@@ -85,6 +85,7 @@ source "${_FULL_LOOP_COMMIT_DIR}/full-loop-helper-commit-bookkeeping.sh"
 # pre-push hook remains authoritative for the actual ref being pushed.
 _commit_and_pr_privacy_scan() {
 	local remote_url="" base_branch="" entities_file="" hits="" scan_rc=0
+	local target_repo="" fetch_url="" public_head=""
 	remote_url=$(git remote get-url --push origin 2>/dev/null) || return 1
 	# shellcheck source=./privacy-guard-helper.sh
 	# shellcheck disable=SC1091
@@ -99,8 +100,19 @@ _commit_and_pr_privacy_scan() {
 		privacy_log ERROR "could not enumerate private entity inventory — failing closed"
 		return 1
 	fi
+	# GH#39261: pass the same public head and target slug as the authoritative
+	# pre-push hook (privacy-guard-pre-push.sh). Without them this preview was
+	# stricter than the hook and blocked content the target already publishes.
+	# A tracking ref is a public head only when the fetch remote is the target.
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/]+) ]]; then
+		target_repo="${BASH_REMATCH[1]%.git}"
+	fi
+	fetch_url=$(git remote get-url origin 2>/dev/null) || fetch_url=""
+	if [[ -n "$target_repo" && "$fetch_url" =~ github\.com[:/]([^/]+/[^/]+) ]] && [[ "${BASH_REMATCH[1]%.git}" == "$target_repo" ]]; then
+		public_head=$(git rev-parse --verify --quiet "refs/remotes/origin/${base_branch}^{commit}" 2>/dev/null) || public_head=""
+	fi
 	print_info "[privacy-guard] Scanning public diff before validators..."
-	hits=$(privacy_scan_public_diff "refs/remotes/origin/${base_branch}" HEAD "$entities_file") || scan_rc=$?
+	hits=$(privacy_scan_public_diff "refs/remotes/origin/${base_branch}" HEAD "$entities_file" "$public_head" "$target_repo") || scan_rc=$?
 	rm -f "$entities_file"
 	if [[ "$scan_rc" -eq 1 && -n "$hits" ]]; then
 		printf '\n[privacy-guard][BLOCK] Push to origin contains private references in public-repo content:\n\n%s\n\n' "$hits" >&2
