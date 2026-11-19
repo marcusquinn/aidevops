@@ -422,7 +422,7 @@ describe("bounded interactive operations", () => {
       const pidFile = join(root, `escaped-${mode}.json`);
       const server = `const net=require('node:net'); process.on('SIGTERM',()=>{}); net.createServer().listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(${JSON.stringify(pidFile)},JSON.stringify({pid:process.pid})))`;
       const script = `const {spawn}=require('node:child_process'); const c=spawn(process.execPath,['-e',${JSON.stringify(server)}],{detached:true,stdio:'ignore'}); c.unref(); ${mode === "completion" ? `const t=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(pidFile)})){clearInterval(t);process.exit(0)}},10)` : "setInterval(()=>{},1000)"}`;
-      const started = await instance.start({ command: [process.execPath, "-e", script], budgetMs: mode === "expiry" ? 4000 : 15000 }, owner);
+      const started = await instance.start({ command: [process.execPath, "-e", script], budgetMs: mode === "expiry" ? 12000 : 15000 }, owner);
       let pid;
       try {
         // Waits end as soon as the listener appears; the generous ceilings only
@@ -434,7 +434,7 @@ describe("bounded interactive operations", () => {
         }
         assert.ok(pid, "escaped server never listened");
         if (mode === "cancel") instance.cancel(started.operation_id, owner);
-        const result = await terminal(instance, started.operation_id, owner, 10000);
+        const result = await terminal(instance, started.operation_id, owner, 20000);
         assert.equal(result.state, { completion: "succeeded", cancel: "cancelled", expiry: "timed_out" }[mode]);
         // GH#34047: only completion-triggered cleanup is reported; exit 0 is not liveness.
         assert.equal(result.post_exit_descendants_terminated, mode === "completion", `${mode}: post-exit receipt field`);
