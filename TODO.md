@@ -2239,9 +2239,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19115 fix(checkpoints): a trusted terminal-blocker re-arm never releases a blocked worker draft, even for a maintainer retry #auto-dispatch #bug #priority:high ref:GH#39077 -> [todo/tasks/t19115-brief.md]
 
-- [ ] t19119 pulse: Bash 3.2-safe tracked-PID capacity waits in the parallel dispatch loop #auto-dispatch #bug ref:GH#39103
-
-- [ ] t19118 feat(cloudron): cloudron-helper.sh nginx-http2 off|on|status for HTTP/2 CVE windows #auto-dispatch #feat ref:GH#39098 -> [todo/tasks/t19118-brief.md]
+- [ ] t19120 feat(recovery-policy): delegable scope_acceptance action for source-exhausted phase holds #auto-dispatch #feat ref:GH#39113
 
 ## In Progress
 
