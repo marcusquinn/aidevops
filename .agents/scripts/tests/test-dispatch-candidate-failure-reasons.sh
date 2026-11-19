@@ -403,7 +403,12 @@ printf 'PASS empty-pool active-claim hints: foreign owners cached, own/mixed/unk
 	[[ "$(_dispatch_negative_cache_reason "$held")" == dedup_pr_evidence ]] || exit 1
 	fingerprint=$(_dispatch_pr_evidence_fingerprint example/repo 241)
 	[[ -n "$fingerprint" ]] || exit 1
-	printf '%s\t%s\t%s\t241\t%s\t\t\n' "$(($(date +%s) - 1800))" \
+	# GH#39174: the hint outlives a pulse cycle longer than the general 1800s
+	# TTL, then expires at its own TTL.
+	printf '%s\t%s\t%s\t241\t%s\t\t\n' "$(($(date +%s) - 3600))" \
+		'2026-10-13T00:00:00Z' dedup_pr_evidence "$fingerprint" >"$cache"
+	[[ "$(_dispatch_negative_cache_reason "$held")" == dedup_pr_evidence ]] || exit 1
+	printf '%s\t%s\t%s\t241\t%s\t\t\n' "$(($(date +%s) - _DISPATCH_PR_EVIDENCE_CACHE_TTL_SECONDS))" \
 		'2026-10-13T00:00:00Z' dedup_pr_evidence "$fingerprint" >"$cache"
 	if _dispatch_negative_cache_reason "$held"; then exit 1; fi
 	rm -f "$cache"
