@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.238] - 2026-11-19
+
+### Added
+
+- expose RAM_RESERVE_MB and RAM_PER_WORKER_MB as orchestration config keys
+
+### Fixed
+
+- treat temp_dir_recovery releases as stall-class (t19129) (#39165)
+- discover system and unversioned Homebrew Node without returning shared bin dirs
+- hand stale origin:interactive draft PRs to workers (GH#39158) (#39163)
+- ignore stale non-required pending runs when required contexts are skipped (t19130)
+
 ## [3.39.237] - 2026-11-19
 
 ### Added
