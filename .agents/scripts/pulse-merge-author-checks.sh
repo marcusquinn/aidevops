@@ -352,6 +352,42 @@ _interactive_pr_auto_merge_allowed() {
 }
 
 #######################################
+# GH#39158: Hand a stale origin:interactive DRAFT PR to the worker pipeline.
+# Mirrors the non-draft stale path (GH#23425): orphan drafts get a tracking
+# issue via _recover_interactive_pr_work_issue, then _interactive_pr_is_stale
+# decides, then _interactive_pr_trigger_handover (idempotent) applies
+# origin:worker-takeover. The PR stays draft and is never merged here; the
+# continuation worker decides readiness. hold-for-review / no-takeover and
+# fresh drafts are left untouched.
+# Args: $1=pr_number, $2=repo_slug, $3=labels_str
+# Returns: 0 if handover confirmed, 1 otherwise
+#######################################
+_interactive_draft_pr_try_handover() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local labels_str="$3"
+
+	# Opted out, or already handed over (idempotent): nothing to do.
+	local wrapped=","
+	wrapped+="${labels_str},"
+	case "$wrapped" in
+	*,hold-for-review,* | *,no-takeover,* | *,origin:worker-takeover,*) return 1 ;;
+	esac
+	declare -F _interactive_pr_is_stale >/dev/null 2>&1 || return 1
+	declare -F _interactive_pr_trigger_handover >/dev/null 2>&1 || return 1
+
+	if ! _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+		# Orphan drafts (no closing issue link) need a tracking issue first.
+		declare -F _recover_interactive_pr_work_issue >/dev/null 2>&1 || return 1
+		_recover_interactive_pr_work_issue "$pr_number" "$repo_slug" >/dev/null || return 1
+		_interactive_pr_is_stale "$pr_number" "$repo_slug" || return 1
+	fi
+
+	_interactive_pr_trigger_handover "$pr_number" "$repo_slug" "stale interactive draft PR (GH#39158)" || return 1
+	return 0
+}
+
+#######################################
 # Check origin:interactive-specific gates (t2411): draft status, the
 # hold-for-review opt-out label, and the default manual-merge policy. Called
 # from _check_pr_merge_gates when the PR carries origin:interactive. These
@@ -369,6 +405,9 @@ _check_interactive_pr_gates() {
 	local is_draft="$4"
 
 	if [[ "$is_draft" == "true" ]]; then
+		# GH#39158: a stale draft (no live claim, idle past the handover window)
+		# is handed to the worker pipeline; the worker decides readiness.
+		_interactive_draft_pr_try_handover "$pr_number" "$repo_slug" "$labels_str" || true
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive draft PR not eligible for auto-merge (t2411)" >>"$LOGFILE"
 		return 1
 	fi
