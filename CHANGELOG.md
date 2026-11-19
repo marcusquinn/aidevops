@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.246] - 2026-11-19
+
+### Added
+
+- scheduled main shell-suite health run files deduped red-main issues (t19150) (#39307)
+
+### Changed
+
+- Maintenance: mark t19172 complete (pr:#39305 completed:2026-11-19) (#39306)
+
+### Fixed
+
+- external check findings outside the PR diff no longer discard a green worker PR
+- repair five pre-existing drifted test suites (GH#39309)
+- circuit comment repeats the latest worker's input request
+
 ## [3.39.245] - 2026-11-19
 
 ### Added
