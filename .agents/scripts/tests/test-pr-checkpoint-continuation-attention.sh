@@ -441,7 +441,7 @@ PCC_LINK_KIND="closing"
 # completed exits that left the draft open.
 # GH#36597: zero-output and incomplete exits are runtime stalls, not decisions.
 export STUB_POST_DIR="${TEST_ROOT}/posts"
-for release_reason in stale_assignment_reset worker_ownership_lost worker_draft_checkpoint worker_noop_zero_output worker_incomplete_exit capability_limit clean worker_complete; do
+for release_reason in stale_assignment_reset worker_ownership_lost worker_draft_checkpoint worker_noop_zero_output worker_incomplete_exit temp_dir_recovery capability_limit clean worker_complete; do
 	STUB_COMMENTS_JSON="$(stall_comments stall-lease | jq -c --arg reason "$release_reason" '
 		map(map(if .id == 31 then .body |= sub("reason=no_activity"; "reason=" + $reason) else . end))')"
 	STUB_ISSUE_JSON="$RELEASED_ISSUE_JSON"
