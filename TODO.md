@@ -2318,9 +2318,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19170 fix(recovery): a trusted retry on a queued hold waits hours for the rearm rotation #bug #interactive ref:GH#39284 logged:2026-11-19 -> [todo/tasks/t19170-brief.md]
 
-- [ ] t19171 fix(dispatch): zero-output hold ignores later trusted worker progress and keeps a released issue held for up to 12h #bug #interactive ref:GH#39293 logged:2026-11-19 -> [todo/tasks/t19171-brief.md]
+- [x] t19171 fix(dispatch): zero-output hold ignores later trusted worker progress and keeps a released issue held for up to 12h #bug #interactive ref:GH#39293 logged:2026-11-19 -> [todo/tasks/t19171-brief.md] pr:#39297 completed:2026-11-19
 
-- [ ] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304
+- [x] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304 pr:#39305 completed:2026-11-19
 
 ## In Progress
 
