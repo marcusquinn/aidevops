@@ -307,11 +307,14 @@ sql_escape() {
 # =============================================================================
 # API Key Resolution
 # =============================================================================
-# Resolves API keys/tokens from four sources (in priority order):
+# Resolves API keys/tokens from five sources (in priority order):
 # 1. Environment variables (e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY)
 # 2. gopass encrypted secrets
 # 3. credentials.sh plaintext fallback
 # 4. OpenCode OAuth auth.json (~/.local/share/opencode/auth.json)
+# 5. aidevops OAuth pool (~/.aidevops/oauth-pool.json). OpenCode 2.x keeps
+#    credentials in its own database and writes no auth.json, so this is the
+#    OAuth signal on current installs (GH#39095).
 #
 # Source 4 is critical for headless dispatch: the OpenCode runtime authenticates
 # via OAuth tokens stored in auth.json, NOT env vars. Without this source, the
@@ -418,6 +421,45 @@ process.stdout.write(credentialFileSecret(process.argv[2]));
 		fi
 	fi
 
+	# Source 5: aidevops OAuth pool (GH#39095)
+	# Without auth.json, every provider reported no-key and Pulse could not
+	# resolve any tier. The pool is the credential set headless workers rotate
+	# through; one usable account means the runtime can authenticate. Return
+	# the same marker as Source 4 OAuth entries (healthy, skip HTTP probe).
+	if _resolve_oauth_pool_available "$provider"; then
+		RESOLVED_API_KEY_SOURCE="oauth-pool:${provider}"
+		echo "oauth-refresh-available"
+		return 0
+	fi
+
+	return 1
+}
+
+# _resolve_oauth_pool_available: exit 0 when the aidevops OAuth pool holds at
+# least one usable account for the provider (not auth-error, not inside an
+# active rate-limit cooldown). Read-only; never prints credential material.
+_resolve_oauth_pool_available() {
+	local provider="$1"
+	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+
+	[[ -f "$pool_file" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	local now_ms available
+	now_ms=$(($(date +%s) * 1000))
+	available=$(jq -r --arg provider "$provider" --argjson now "$now_ms" '
+		def n: tonumber? // 0;
+		(.[$provider] // [])
+		| if type == "array" then . else [] end
+		| map(select(((.status // "") != "auth-error")
+			and (((.status // "") != "rate-limited") or (((.cooldownUntil // 0) | n) <= $now))))
+		| length
+	' "$pool_file" 2>/dev/null) || available=0
+
+	[[ "${available:-0}" =~ ^[0-9]+$ ]] || available=0
+	if [[ "$available" -gt 0 ]]; then
+		return 0
+	fi
 	return 1
 }
 
