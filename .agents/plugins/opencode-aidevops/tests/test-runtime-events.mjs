@@ -602,7 +602,9 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
       stdio: "pipe",
       timeout: 5000,
     });
-    const counts = execFileSync("sqlite3", [dbPath, `
+    // Queued writes now finish in the sqlite3 child after the driver exits
+    // (GH#39202), so the reader must wait out the writer's lock.
+    const countsSql = `
       SELECT
         (SELECT COUNT(*) FROM llm_requests),
         (SELECT COUNT(*) FROM tool_calls),
@@ -623,11 +625,47 @@ test("OpenCode observability emits runtime evidence without changing legacy tabl
         (SELECT json_extract(payload_json, '$.outcome_category')
           FROM runtime_events WHERE event_type = 'tool.completed'),
         (SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='outcome_category');
-    `], { encoding: "utf8" }).trim();
+    `;
+    let counts = "";
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        counts = execFileSync("sqlite3", ["-cmd", ".timeout 10000", dbPath, countsSql], { encoding: "utf8" }).trim();
+      } catch { counts = ""; }
+      if (counts.startsWith("1|1|8|")) break;
+      execFileSync("sleep", ["0.2"]);
+    }
     assert.equal(
       counts,
       "1|1|8|message.completed,message.part.updated,objective.session.attached,objective.started,session.created,session.error,subagent.cancellation.receipt,tool.completed|100|PartFailure|gateway_denied|req-safe|1|success|1",
     );
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("queued sqliteExec writes land on normal process exit (GH#39202)", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-sqlite-exit-"));
+  const dbPath = join(tempDir, "exit.db");
+  const moduleUrl = new URL("../../../scripts/sqlite-process.mjs", import.meta.url).href;
+  const driver = [
+    `import { setDbPath, sqliteExec, sqliteExecSync } from ${JSON.stringify(moduleUrl)};`,
+    `setDbPath(${JSON.stringify(dbPath)});`,
+    `sqliteExecSync("CREATE TABLE IF NOT EXISTS t (n integer);", 5000);`,
+    `for (let i = 0; i < 20; i += 1) sqliteExec("INSERT INTO t VALUES (" + i + ");");`,
+    `process.exit(0);`,
+  ].join("\n");
+  try {
+    execFileSync(process.execPath, ["--input-type=module", "-e", driver], { timeout: 20000 });
+    // The in-flight write finishes in the sqlite3 child after stdin EOF.
+    let count = "";
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      count = execFileSync("sqlite3", [dbPath, "SELECT count(*) || '|' || count(DISTINCT n) FROM t;"], { encoding: "utf8" }).trim();
+      if (count === "20|20") break;
+      execFileSync("sleep", ["0.1"]);
+    }
+    assert.equal(count, "20|20");
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }
