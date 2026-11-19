@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.234] - 2026-11-19
+
+### Added
+
+- DataForSEO SERP resolve_poisoned_results and resolve_goto_urls
+
+### Fixed
+
+- print sudo-resolvable approval commands on Linux user-local installs
+
 ## [3.39.233] - 2026-11-19
 
 ### Added
