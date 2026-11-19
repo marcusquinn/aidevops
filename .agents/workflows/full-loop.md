@@ -158,6 +158,8 @@ Before investigating a non-task blocker, run `prework-discovery-helper.sh --bloc
 
 ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + no runtime → **BLOCK**. Use `.aidevops/testing.json` if present. Record `## Runtime Testing` in PR body.
 
+**Sudo/systemd/session-bus changes (GH#39130):** from macOS, runtime-verify critical/high `sudo`, approval-kick, systemd user unit or session-bus changes with `linux-procfs-runtime-check.sh --sudo-session --head <tree> --base <tree>` (Docker; reports the user and session env each kick receives).
+
 **Native macOS coverage (GH#36691):** `commit-and-pr` automatically runs the
 single `macos-local-checks.sh` entry point before PR readiness for sensitive
 sandbox/model replay, platform detection and PATH changes. Darwin hosts record
