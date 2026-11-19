@@ -94,7 +94,7 @@ _relay_watch_due() {
 				created: (($w.created_ms // 0) / 1000 | floor), checked: 0, baseline: null,
 				comments_seen: -1, last_comment_id: 0
 			} + (if ($state.key // "") == $w.key then $state else {} end))}
-			| select($now - .state.checked >= $interval)' <<<"$watch" >>"$output" 2>/dev/null || true
+			| select(.state.gone != true and $now - .state.checked >= $interval)' <<<"$watch" >>"$output" 2>/dev/null || true
 	done < <(jq -c '.[]?' "$watches_file" 2>/dev/null)
 	return 0
 }
@@ -192,6 +192,15 @@ _relay_watch_one() {
 		return 0
 	fi
 	if [[ "$rc" -ne 0 ]]; then
+		# A missing item (typo, deleted, or no access) is told once and not read again.
+		# The repo listing just succeeded, so a 404 here is the item, not the repo
+		# or transport ("gh: Not Found (HTTP 404)" survives the excerpt as "not found").
+		if [[ "$RELAY_FAILURE" == "gh-rc="*" not found"* ]]; then
+			jq -nc --argjson e "$entry" --argjson now "$now" '{
+				line: "- \($e.state.repo)#\($e.state.number): not found on GitHub (wrong number, deleted, or no access); this watch is no longer checked.",
+				state: ($e.state + {checked: $now, gone: true})}' >>"${work}/watch-batch-${subscriber}.jsonl" || true
+			return 0
+		fi
 		_relay_log "watch ${repo}#${issue_number} deferred or failed (${RELAY_FAILURE:-listing-parse}); watch keeps its state"
 		return 0
 	fi

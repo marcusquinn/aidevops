@@ -492,7 +492,9 @@ cmd_status() {
 	for file in "$RELAY_STATE_DIR"/watch/*/*.json; do
 		[[ -f "$file" ]] || continue
 		found=1
-		jq -r '"\(.subscriber) \(.repo)#\(.number) checked=\(.checked) labels=\((.baseline.labels // []) | join(",")) assignees=\((.baseline.assignees // []) | join(",")) state=\(.baseline.state // "unseen") comments_seen=\(.comments_seen)"' "$file" 2>/dev/null || true
+		jq -r '(if .gone == true then "not-found" else (.baseline.state // "unseen") end) as $state
+			| ((.baseline.labels // []) | join(",")) as $labels | ((.baseline.assignees // []) | join(",")) as $assignees
+			| "\(.subscriber) \(.repo)#\(.number) checked=\(.checked) labels=\($labels) assignees=\($assignees) state=\($state) comments_seen=\(.comments_seen)"' "$file" 2>/dev/null || true
 	done
 	[[ "$found" -eq 1 ]] || printf 'No checked issue watches.\n'
 	printf 'Mission keepalive (dry run, nothing sent):\n'

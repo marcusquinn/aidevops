@@ -252,7 +252,8 @@ They are advisory: GitHub stays the record and decides ownership.
   6 items, each with labels, logins, comment IDs and times plus the
   `gh issue|pr view N --repo R --comments` read. Titles and comment bodies are
   never copied. It never wakes a session. Items beyond 6, a failed send or a
-  deferred read keep their state and go in a later pass.
+  deferred read keep their state and go in a later pass. An item GitHub
+  reports as not found is reported once and then no longer read.
 - **Cost:** shares the relay interval and budget gate. One issue listing
   (`since=`) per repo with due watches, one baseline issue read per new watch,
   and one comments read only when a comment count rose.
