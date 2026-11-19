@@ -527,6 +527,9 @@ jobs:
     - name: MCP Helper Help Regression (GH#30473)
       run: bash .agents/scripts/tests/test-mcp-helper-help.sh
 
+    - name: Browser QA Helper Regression (GH#39173)
+      run: bash .agents/scripts/tests/test-browser-qa-helper.sh
+
     - name: Secret Safety Policy Check
       run: |
         echo "Running secret safety policy checks..."
