@@ -87,7 +87,9 @@ _dlw_zero_output_failure_count() {
 #   mentions "zero-output"; counting it made every hold feed the next one.
 # - evidence_comments: evidence before the latest authoritative reset
 #   (signed approval or explicit reset marker) belongs to a fixed failure
-#   family and must not keep the issue held forever.
+#   family and must not keep the issue held forever. t19171: the backoff
+#   notice quotes the reset marker as an instruction, so a breaker notice is
+#   never a reset; an OWNER/MEMBER runner otherwise cleared its own hold.
 # shellcheck disable=SC2016  # jq program is intentionally single-quoted.
 _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS='
 		def comments:
@@ -104,6 +106,7 @@ _DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS='
 		def comment_key: [(.created_at // ""), ((.id | tonumber?) // 0)];
 		def reset_notice:
 			authoritative_association
+			and (breaker_notice | not)
 			and (body_text | test("aidevops-signed-approval|<!--\\s*dispatch-infrastructure-reset\\s*-->"; "i"));
 		def evidence_comments:
 			. as $all
@@ -125,6 +128,27 @@ _DLW_DISPATCH_MARKER_JQ_DEFS='
 		def comment_epoch: ((try ((.created_at // "") | fromdateiso8601) catch 0) // 0);
 		def count_since($start): map(select(. >= $start)) | length;
 '
+
+# Evidence trust and progress boundary for the comment metrics program; append
+# after _DLW_DISPATCH_MARKER_JQ_DEFS. Requires the $trusted_authors argument.
+# - #aidevops:trust-boundary: trusted_authors holds only logins whose
+#   per-repository permission was verified as write or higher.
+# - t19171: a trusted completion, partial-merge or routed PR-feedback release
+#   proves a worker produced output after earlier failures, so windowed hold
+#   evidence before it is superseded. A ready lease alone is not progress:
+#   ready-then-fail loops must still hold.
+# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
+_DLW_EVIDENCE_TRUST_JQ_DEFS='
+		def lease_token: marker_value("lease_token");
+		def evidence_trusted:
+			authoritative_association
+			or (author_login as $login | $login != "" and (($trusted_authors | index($login)) != null));
+		def output_progress:
+			body_text | test("(^|\\n)CLAIM_RELEASED reason=(worker_complete|worker_merged_partial|feedback_route_[a-z]+)\\b");
+		def progress_key: [.[] | select(evidence_trusted and output_progress) | comment_key] | max;
+		def after_key($boundary): $boundary == null or . > $boundary;
+'
+_DLW_PROGRESS_RELEASE_PATTERN='CLAIM_RELEASED reason=(worker_complete|worker_merged_partial|feedback_route_)'
 
 _dlw_zero_output_comment_count() {
 	local issue_number="$1"
@@ -160,13 +184,15 @@ _dlw_zero_output_comment_count() {
 # is the only cross-runner trace of the failed attempt, so it counts once per
 # author+token. Evidence authors are OWNER/MEMBER or logins in the
 # permission-verified trusted_authors list (peer runners on user-owned repos
-# are COLLABORATOR). The windowed count bounds the self-healing hold.
+# are COLLABORATOR). The windowed count bounds the self-healing hold; t19171:
+# only evidence after the latest trusted output progress enters it.
 # Args: raw comments JSON, now epoch, orphan grace, zero-output regex,
 #       zero-attempt regex, trusted authors JSON array (default []),
 #       hold window seconds (default 43200; 0 counts all evidence)
 # Output: comments, ops, zero, chars, zero-attempt, recent-zero,
 #         recent-hold-notices, recent evidence epochs (ascending CSV, "-" when
-#         none), latest authoritative reset epoch (0 when none) as a TSV row
+#         none), latest evidence boundary epoch (authoritative reset or trusted
+#         output progress; 0 when none) as a TSV row
 #######################################
 _dlw_comment_bloat_metrics_from_json() {
 	local raw_comments="$1"
@@ -186,20 +212,15 @@ _dlw_comment_bloat_metrics_from_json() {
 		--argjson window_seconds "$window_seconds" \
 		--arg zero_output_pattern "$zero_output_pattern" \
 		--arg zero_attempt_pattern "$zero_attempt_pattern" '
-'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}${_DLW_DISPATCH_MARKER_JQ_DEFS}"'
-		def lease_token: marker_value("lease_token");
-		# #aidevops:trust-boundary: trusted_authors holds only logins whose
-		# per-repository permission was verified as write or higher.
-		def evidence_trusted:
-			authoritative_association
-			or (author_login as $login | $login != "" and (($trusted_authors | index($login)) != null));
+'"${_DLW_ZERO_OUTPUT_EVIDENCE_JQ_DEFS}${_DLW_DISPATCH_MARKER_JQ_DEFS}${_DLW_EVIDENCE_TRUST_JQ_DEFS}"'
 		(if $window_seconds > 0 then ($now_epoch - $window_seconds) else 0 end) as $window_start |
 		comments as $comments |
 		($comments | evidence_comments) as $evidence |
+		($comments | progress_key) as $progress_key |
 		([$comments[] | select(body_text | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length) as $ops |
-		[$evidence[] | select(evidence_trusted and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i"))) | comment_epoch] as $explicit_zero_epochs |
+		[$evidence[] | select(evidence_trusted and (breaker_notice | not) and (body_text | test($zero_output_pattern; "i"))) | {epoch: comment_epoch, key: comment_key}] as $explicit_zero |
 		([$evidence[] | select(evidence_trusted and (breaker_notice | not) and (body_text | test($zero_attempt_pattern; "i")) and (body_text | test("session_count=0"; "i")))] | length) as $explicit_zero_attempt |
-		([$evidence[] | select(evidence_trusted and breaker_notice) | comment_epoch] | count_since($window_start)) as $recent_notices |
+		([$evidence[] | select(evidence_trusted and breaker_notice and (comment_key | after_key($progress_key))) | comment_epoch] | count_since($window_start)) as $recent_notices |
 		([$evidence[]
 			| select(evidence_trusted)
 			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
@@ -224,7 +245,7 @@ _dlw_comment_bloat_metrics_from_json() {
 				| select(lease_session == $claim_session)
 				| select([(.created_at // ""), ((.id | tonumber?) // 0)] >= [($claim.created_at // ""), (($claim.id | tonumber?) // 0)])
 			] | length == 0)
-			| {token: $token, author: $claim_author, epoch: $claim_epoch}
+			| {token: $token, author: $claim_author, epoch: $claim_epoch, key: ($claim | comment_key)}
 		]) as $unmatched_claims |
 		([$comments[]
 			| select(body_text | test("DISPATCH_CLAIM nonce="; "i"))
@@ -247,21 +268,21 @@ _dlw_comment_bloat_metrics_from_json() {
 				| select(body_text | test("DISPATCH_LEASE phase=(ready|terminal) |Dispatching worker"; "i"))
 				| select(lease_token == $token)
 			] | length == 0)
-			| {token: $token, author: $lease_author, epoch: $lease_epoch}
+			| {token: $token, author: $lease_author, epoch: $lease_epoch, key: ($lease | comment_key)}
 		] | group_by([.author, .token]) | map(max_by(.epoch))) as $orphan_leases |
 		(($unmatched_claims | length) + ($orphan_leases | length)) as $attempt_failures |
-		($explicit_zero_epochs + [$unmatched_claims[].epoch] + [$orphan_leases[].epoch]
-			| map(select(. >= $window_start)) | sort) as $recent_epochs |
+		($explicit_zero + $unmatched_claims + $orphan_leases
+			| map(select((.key | after_key($progress_key)) and .epoch >= $window_start) | .epoch) | sort) as $recent_epochs |
 		[
 			($comments | length),
 			$ops,
-			(($explicit_zero_epochs | length) + $attempt_failures),
+			(($explicit_zero | length) + $attempt_failures),
 			([$comments[] | (body_text | length)] | add // 0),
 			($explicit_zero_attempt + $attempt_failures),
 			($recent_epochs | length),
 			$recent_notices,
 			(if ($recent_epochs | length) == 0 then "-" else ($recent_epochs | map(tostring) | join(",")) end),
-			([$comments[] | select(reset_notice) | comment_epoch] | max // 0)
+			([$comments[] | select(reset_notice or (evidence_trusted and output_progress)) | comment_epoch] | max // 0)
 		] | @tsv
 	' 2>/dev/null
 	return $?
@@ -335,7 +356,7 @@ _dlw_comment_bloat_metrics() {
 	raw_comments=$(gh api --paginate --slurp \
 		"repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || raw_comments="[]"
 	trusted_authors=$(_dlw_evidence_trusted_authors "$raw_comments" "$repo_slug" \
-		"DISPATCH_CLAIM nonce=|DISPATCH_LEASE phase=|dispatch-infrastructure-failure|${zero_output_pattern}")
+		"DISPATCH_CLAIM nonce=|DISPATCH_LEASE phase=|dispatch-infrastructure-failure|${_DLW_PROGRESS_RELEASE_PATTERN}|${zero_output_pattern}")
 	metrics=$(_dlw_comment_bloat_metrics_from_json "$raw_comments" "$now_epoch" "$orphan_grace" \
 		"$zero_output_pattern" "$zero_attempt_pattern" "$trusted_authors" "$window_seconds") ||
 		metrics="$_DLW_EMPTY_COMMENT_METRICS"
