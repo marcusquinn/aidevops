@@ -708,6 +708,20 @@ _large_file_gate_normalize_debt_issue() {
 	# The canonical debt issue is the active record for the next split, not an
 	# archival consolidation source: strip consolidation lifecycle labels so the
 	# consolidated management-label dispatch gate cannot skip it forever (GH#39315).
+	# Exception: never release a consolidation lock another runner still holds.
+	# A live `consolidation-lock:runner=` marker keeps `consolidation-in-progress`
+	# in place; it is stripped on a later pass once the lock marker is gone.
+	# Fail closed: an API error also preserves the label.
+	local lock_count="" keep_in_progress=0
+	lock_count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
+		--jq '[.[] | select(.body | test("^<!-- consolidation-lock:runner=[A-Za-z0-9_-]+ ts="))] | length' 2>/dev/null | paste -sd+ - | bc 2>/dev/null) || lock_count=""
+	if [[ -z "$lock_count" || "$lock_count" != "0" ]]; then
+		keep_in_progress=1
+	fi
+	local -a in_progress_args=()
+	if [[ "$keep_in_progress" -eq 0 ]]; then
+		in_progress_args=(--remove-label "consolidation-in-progress")
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" \
 		--add-label "file-size-debt" \
 		--add-label "auto-dispatch" \
@@ -720,7 +734,7 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "solved:interactive" \
 		--remove-label "consolidated" \
 		--remove-label "needs-consolidation" \
-		--remove-label "consolidation-in-progress" >/dev/null 2>&1
+		${in_progress_args[@]+"${in_progress_args[@]}"} >/dev/null 2>&1
 	return $?
 }
 
