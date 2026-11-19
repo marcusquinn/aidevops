@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.233] - 2026-11-19
+
+### Added
+
+- add test-load-repro-helper for flaky tests
+
+### Fixed
+
+- route source_access_blocked to needs-source-access, not needs-credentials (GH#39091)
+
 ## [3.39.232] - 2026-11-18
 
 ### Added
