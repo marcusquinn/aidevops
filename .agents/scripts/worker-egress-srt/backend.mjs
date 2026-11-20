@@ -199,12 +199,42 @@ export function tightenMacProfile(profile) {
   return strict + '\n(deny mach-lookup)\n(deny mach-register)\n';
 }
 
+// Names the workload may see. The SRT-set names were verified against
+// @anthropic-ai/sandbox-runtime 0.0.83 dist/sandbox/sandbox-utils.js
+// (generateProxyEnvVars) and the bwrap/macOS JAVA_TOOL_OPTIONS injection.
+// CA-trust variables and GIT_CONFIG_COUNT/KEY/VALUE are only emitted when TLS
+// termination or git safe directories are configured; neither is, so a
+// presence of them fails the env-allowlisted canary instead of passing silently.
+const SRT_SET_ENV = [
+  'SANDBOX_RUNTIME', 'NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy',
+  'ALL_PROXY', 'all_proxy', 'GRPC_PROXY', 'grpc_proxy', 'FTP_PROXY', 'ftp_proxy', 'RSYNC_PROXY',
+  'DOCKER_HTTP_PROXY', 'DOCKER_HTTPS_PROXY', 'CLOUDSDK_PROXY_TYPE', 'CLOUDSDK_PROXY_ADDRESS',
+  'CLOUDSDK_PROXY_PORT', 'CLOUDSDK_PROXY_USERNAME', 'CLOUDSDK_PROXY_PASSWORD',
+  'GIT_CONFIG_PARAMETERS', 'GIT_SSH_COMMAND', 'SRT_SSH_PROXY_COMMAND', 'JAVA_TOOL_OPTIONS',
+];
+export const ENV_ALLOWLIST = ['PATH', 'HOME', 'TMPDIR', 'LANG', ...SRT_SET_ENV];
+// Added by the shell, OS or the Nix python wrapper rather than copied; tolerated
+// by the canary and the test only.
+export const ENV_ADDED = ['PWD', 'SHLVL', '__CF_USER_TEXT_ENCODING', 'PYTHONNOUSERSITE'];
+
+// loadEnvelope() resolves symlinks, so on NixOS `env` arrives as the GNU
+// coreutils multicall binary, which dispatches on argv[0] and rejects `-i`.
+function envCommand(tool) {
+  return path.basename(tool) === 'coreutils' ? `${quote(tool)} --coreutils-prog=env` : quote(tool);
+}
+
 async function wrappedArgv(manager, argv, envelope) {
   // With a sealed filesystem there is no ambient /etc/hosts. Don't make clients
   // resolve SRT's "localhost" bridge name through an unavailable system resolver.
   const proxySetup = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
     .map(key => `export ${key}="\${${key}/localhost:/127.0.0.1:}"; `).join('');
-  const command = proxySetup + 'exec ' + argv.map(quote).join(' ');
+  // The supervisor shell sources framework helpers that export constants, and
+  // the sandbox child would inherit them. Rebuild the workload environment from
+  // the allowlist only: copy each name that is set, then exec through env -i.
+  const collect = ENV_ALLOWLIST.map(key =>
+    `if [ -n "\${${key}+x}" ]; then set -- "$@" "${key}=\${${key}}"; fi; `).join('');
+  const command = proxySetup + 'set --; ' + collect
+    + `exec ${envCommand(envelope.tools.coreutils)} -i "$@" ` + argv.map(quote).join(' ');
   let wrapped = await manager.wrapWithSandbox(command, envelope.tools.shell);
   if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped);
   return [envelope.tools.shell, '-c', wrapped];
@@ -212,8 +242,9 @@ async function wrappedArgv(manager, argv, envelope) {
 
 const canary = String.raw`
 import ctypes, errno, json, os, socket, subprocess, sys, urllib.request, urllib.error
-outside, approved_input, output, python, endpoints_json = sys.argv[1:]
+outside, approved_input, output, python, endpoints_json, allowed_env_json = sys.argv[1:]
 endpoints = json.loads(endpoints_json)
+checks_env_extra = sorted(set(os.environ) - set(json.loads(allowed_env_json)))
 checks = {}
 try:
     open(outside).read()
@@ -263,6 +294,9 @@ else:
         checks[service.decode()] = rc != 0
 child = subprocess.run([python, '-I', '-c', 'import sys; sys.exit(0 if len(sys.argv)==2 and sys.argv[1]=="a b;$(false)" else 1)', 'a b;$(false)'], env=os.environ)
 checks['descendant-and-argv'] = child.returncode == 0
+checks['env-allowlisted'] = not checks_env_extra
+if checks_env_extra:
+    print('unexpected environment names:', ','.join(checks_env_extra), file=sys.stderr)
 try:
     urllib.request.urlopen('https://blocked.invalid/', timeout=2)
     checks['proxy-live-and-denying'] = False
@@ -312,7 +346,7 @@ async function qualify(manager, envelope, scratch) {
     }
     const result = await supervised(await wrappedArgv(manager,
       [envelope.tools.python, '-I', '-c', canary, outside, input, envelope.write[0], envelope.tools.python,
-        JSON.stringify(endpoints)], envelope), envelope, scratch);
+        JSON.stringify(endpoints), JSON.stringify([...ENV_ALLOWLIST, ...ENV_ADDED])], envelope), envelope, scratch);
     if (result.code !== 0) {
       let checks = {};
       try { checks = JSON.parse(result.stdout); } catch { /* no arbitrary output in diagnostics */ }
