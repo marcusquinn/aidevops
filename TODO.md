@@ -2332,13 +2332,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19182 fix(pulse-merge): duplicate PR consolidation stops scoring singleton PRs that cannot form a group #bug #framework #interactive tier:standard ref:GH#39351 logged:2026-11-19 -> [todo/tasks/t19182-brief.md] pr:#39355 completed:2026-11-20
 
-- [ ] t19180 refactor: split headless-runtime-worker.sh to 1200 lines for regrowth headroom #auto-dispatch #feat #file-size-debt ref:GH#39337
+- [x] t19180 refactor: split headless-runtime-worker.sh to 1200 lines for regrowth headroom #auto-dispatch #feat #file-size-debt ref:GH#39337 pr:#39375 completed:2026-11-20
 
 - [ ] t19183 fix(oauth-pool): share one runtime pool resolver and usability rule between model availability and headless auth #bug #auto-dispatch tier:standard ~1h20m blocked-by:GH#39095 ref:GH#39352 logged:2026-11-19 -> [todo/tasks/t19183-brief.md]
 
-- [ ] t19186 Strip supervisor-exported framework constants from the SRT workload environment #auto-dispatch #feat ref:GH#39360
+- [x] t19186 Strip supervisor-exported framework constants from the SRT workload environment #auto-dispatch #feat ref:GH#39360 pr:#39398 completed:2026-11-20
 
-- [ ] t19187 Qualify SRT proxy resolved-address, redirect and protocol bypass handling #auto-dispatch #feat ref:GH#39361
+- [x] t19187 Qualify SRT proxy resolved-address, redirect and protocol bypass handling #auto-dispatch #feat ref:GH#39361 pr:#39389 completed:2026-11-20
 
 - [ ] t19188 Attribute the inherited Mach send rights in the macOS SRT sandbox #auto-dispatch #feat ref:GH#39362
 
