@@ -648,6 +648,7 @@ summarise_scan_json() {
 	local candidates_file="${1:-}"
 	local root="${2:-}"
 	jq -r --rawfile candidates "${candidates_file}" --arg root "${root}" '
+		def esc: tojson | .[1:-1];
 		def rel: if startswith($root) then .[($root | length):] else . end;
 		[.[] | {path: (.filePath | rel), count: (.messages | length), rules: ([.messages[].ruleId] | unique)}] as $files
 		| ($files | map(.path)) as $scanned
@@ -657,9 +658,9 @@ summarise_scan_json() {
 		| "scanned: \($files | length)",
 		  "flagged: \($flagged | length)",
 		  "excluded: \($excluded | length)",
-		  ($files[] | "scanned-path: \(.path)"),
-		  ($flagged[] | "finding: \(.path)\t\(.rules | join(","))\t\(.count)"),
-		  ($excluded[] | "excluded-path: \(.)")
+		  ($files[] | "scanned-path: \(.path | esc)"),
+		  ($flagged[] | "finding: \(.path | esc)\t\(.rules | join(","))\t\(.count)"),
+		  ($excluded[] | "excluded-path: \(. | esc)")
 	'
 	return $?
 }
@@ -712,11 +713,16 @@ run_secretlint_summary() {
 		print_error "Scan output could not be summarised - no summary produced"
 		result=2
 	else
-		flagged_count=$(sed -n 's/^flagged: //p' "${summary}")
-		echo "target: ${target}"
-		cat "${summary}"
-		if [[ "${flagged_count}" -gt 0 ]] || [[ "${scan_status}" -eq 1 ]]; then
-			result=1
+		flagged_count=$(sed -n '2s/^flagged: //p' "${summary}")
+		if [[ ! "${flagged_count}" =~ ^[0-9]+$ ]]; then
+			print_error "Scan summary count was malformed - no summary produced"
+			result=2
+		else
+			echo "target: ${target}"
+			cat "${summary}"
+			if [[ "${flagged_count}" -gt 0 ]] || [[ "${scan_status}" -eq 1 ]]; then
+				result=1
+			fi
 		fi
 	fi
 	rm -rf "${work}"

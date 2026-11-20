@@ -21,7 +21,8 @@ def expect(condition, detail):
 
 
 def invoke(command, cwd, env):
-    return subprocess.run(
+    # Fixed argv list, no shell; commands are test-controlled literals.
+    return subprocess.run(  # nosec B603
         command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
         capture_output=True, text=True, timeout=30, check=False,
     )
