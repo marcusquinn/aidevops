@@ -2354,7 +2354,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19203 fix(ci): review-bot-gate.yml invalid since #39427 (workflow cannot listen to itself), blocking all merges #bug ref:GH#39458 pr:#39460 completed:2026-11-20
 
-- [ ] t19205 fix(setup): reinstall the systemic CI failure miner on pulse hosts during non-interactive setup #bug #interactive ref:GH#39466 logged:2026-11-20 -> [todo/tasks/t19205-brief.md]
+- [x] t19205 fix(setup): reinstall the systemic CI failure miner on pulse hosts during non-interactive setup #bug #interactive ref:GH#39466 logged:2026-11-20 -> [todo/tasks/t19205-brief.md] pr:#39478 completed:2026-11-20
 
 ## In Progress
 
@@ -5985,4 +5985,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222 pr:#39307 completed:2026-11-19
 
-- [ ] t19202 fix(headless): worker DB init fails exit 86 when shared OpenCode DB is briefly locked #bug ref:GH#39417
+- [x] t19202 fix(headless): worker DB init fails exit 86 when shared OpenCode DB is briefly locked #bug ref:GH#39417 pr:#39462 completed:2026-11-20
