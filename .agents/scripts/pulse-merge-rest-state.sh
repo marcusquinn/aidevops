@@ -620,14 +620,16 @@ _pmrs_rerun_zero_job_run() {
 #######################################
 # Rerun zero-job workflow runs for the gated head before any update-branch.
 # Args: $1=repo slug, $2=PR number, $3=head SHA
-# Returns: 0=zero-job runs exist and were handled (caller must not
-#          update-branch), 1=none exist or reruns are not permitted
+# Returns: 0=at least one rerun was newly requested (caller must not
+#          update-branch), 1=none exist, reruns are not permitted, or every
+#          rerun failed or was already requested earlier (caller falls back
+#          to update-branch)
 #######################################
 _pmrs_remediate_zero_job_runs() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local head_sha="$3"
-	local runs="" run_id="" run_name=""
+	local runs="" run_id="" run_name="" rerun_rc=0 requested=0
 
 	if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 &&
 		! repo_allows_pulse_write_actions "$repo_slug"; then
@@ -640,9 +642,15 @@ _pmrs_remediate_zero_job_runs() {
 	runs=$(_pmrs_zero_job_runs "$repo_slug" "$head_sha") || return 1
 	while IFS=$'\t' read -r run_id run_name; do
 		[[ -n "$run_id" ]] || continue
-		_pmrs_rerun_zero_job_run "$repo_slug" "$pr_number" "$head_sha" "$run_id" || true
+		rerun_rc=0
+		_pmrs_rerun_zero_job_run "$repo_slug" "$pr_number" "$head_sha" "$run_id" || rerun_rc=$?
+		[[ "$rerun_rc" -eq 0 ]] && requested=$((requested + 1))
 	done <<<"$runs"
-	return 0
+	# Only a rerun newly requested by this call suppresses update-branch. When
+	# every request failed (rc 1) or was already made on an earlier pass (rc 2),
+	# fall back to the bounded update-branch path (GH#39533).
+	[[ "$requested" -gt 0 ]] && return 0
+	return 1
 }
 
 #######################################
