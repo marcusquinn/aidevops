@@ -175,13 +175,18 @@ def capture_bundle(root, archive, roots, base):
             '--git-path', 'objects', 'HEAD').rstrip(b'\n').split(b'\n')
         object_format = object_format_raw.decode('ascii')
         head = head_raw.decode('ascii')
-        git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}')
+        # HEAD now travels in the update-ref batch: accept only a full object ID.
+        if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', head):
+            raise ValueError('git_admin:invalid_object_id')
+        # --initial-branch points the new HEAD at refs/heads/archive-head, so no
+        # separate symbolic-ref spawn; one transaction writes every scratch ref.
+        git(scratch, "init", "--bare", "--quiet", f'--object-format={object_format}',
+            '--initial-branch=archive-head')
         (scratch / "objects/info/alternates").write_bytes(objects + b"\n")
         updates = ''.join(f'update refs/archive/{number} {oid}\n'
                           for number, oid in enumerate(roots))
+        updates += f'update refs/heads/archive-head {head}\n'
         git(scratch, "update-ref", "--stdin", data=updates.encode('ascii'))
-        git(scratch, "update-ref", "refs/heads/archive-head", head)
-        git(scratch, "symbolic-ref", "HEAD", "refs/heads/archive-head")
         exclusions = (f'^{base}',) if base else ()
         git(scratch, "bundle", "create", str(archive / "commits.bundle"), "--all", *exclusions)
 

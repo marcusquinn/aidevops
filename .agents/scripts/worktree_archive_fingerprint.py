@@ -33,7 +33,12 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     for name in ('aidevops/js-admission.json',):
         if os.path.lexists(admin / name):
             raise ValueError(f'git_admin:requires_preservation:{name}')
-    metadata = metadata if metadata is not None else git_index_state(root, dirs=dirs)
+    # Only metadata read in this pass may vouch for AUTO_MERGE; caller-supplied
+    # metadata never skips validation.
+    validated = None
+    if metadata is None:
+        metadata = git_index_state(root, dirs=dirs)
+        validated = metadata.get('auto_merge_validated')
     if 'merge' in metadata:
         state = metadata['merge']
         result = {'schema': 4, 'policy': 'git-only', 'head': state['head'],
@@ -56,7 +61,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     result = {"schema": 2, "policy": "git-only", "head": head, "files": metadata["files"],
                "bytes": len(staged) + len(unstaged),
                "sha256": hashlib.sha256(json.dumps(values).encode("ascii")).hexdigest()}
-    oid = auto_merge(root, admin)
+    oid = auto_merge(root, admin, validated)
     if oid is not None:
         result['auto_merge'] = oid
     # GH#36883: bind preserved runtime-local config so source-matches blocks

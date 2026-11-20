@@ -205,7 +205,7 @@ def snapshot(path, preserve_git_admin=False, include_ignored=False, git_only=Fal
 def main(argv):
     command = argv[0] if argv else ''
     handlers = {
-        'auto-merge-capture': ((4,), lambda: capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), argv[3])),
+        'auto-merge-capture': ((4, 5), lambda: capture_auto_merge(Path(argv[1]), Path(argv[2]).resolve(), *argv[3:])),
         'merge-capture': ((3,), lambda: capture_merge(Path(argv[1]), Path(argv[2]).resolve())),
         'merge-restore': ((3,), lambda: restore_merge(Path(argv[1]), Path(argv[2]).resolve())),
         'auto-merge-restore': ((3,), lambda: restore_auto_merge(Path(argv[1]), Path(argv[2]).resolve())),

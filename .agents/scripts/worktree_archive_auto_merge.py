@@ -14,8 +14,13 @@ from worktree_archive_git import (
 )
 
 
-def auto_merge(root, admin=None):
-    # A caller that resolved the admin directory in the same pass may share it.
+def auto_merge(root, admin=None, validated=None):
+    """Return the validated AUTO_MERGE tree, or None.
+
+    A caller may share the admin directory it resolved in the same pass, and the
+    AUTO_MERGE OID that pass already proved is a tree (`validated`). Only that
+    exact OID skips the repeat `cat-file -t`; a changed file is still validated.
+    """
     if admin is None:
         admin = Path(os.fsdecode(git(root, "rev-parse", "--absolute-git-dir").rstrip(b"\n")))
     path = Path(admin) / "AUTO_MERGE"
@@ -27,12 +32,14 @@ def auto_merge(root, admin=None):
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError('git_admin:AUTO_MERGE_not_regular')
         oid = auto_merge_oid(stream.read(66))
-    validate_auto_merge(root, oid)
+    if oid != validated:
+        validate_auto_merge(root, oid)
     return oid
 
 
-def capture_auto_merge(root, archive, base):
-    oid = auto_merge(root)
+def capture_auto_merge(root, archive, base, admin=None):
+    # The archive helper passes the admin directory it resolved in this invocation.
+    oid = auto_merge(root, Path(admin) if admin else None)
     if oid is None:
         return
     # Reuse the single bundle and exclude only objects durably covered by base.

@@ -141,12 +141,15 @@ def identity(path):
     """Same physical identity for every producer and lifetime manager."""
     require(path.is_absolute() and not path.is_symlink(), "unsafe worktree path")
     path = path.resolve(strict=True)
-    def git(*args):
-        return subprocess.check_output(
-            ["git", "-C", str(path), "rev-parse", *args],
-            stderr=subprocess.DEVNULL, text=True, timeout=10).strip()
-    admin = Path(git("--absolute-git-dir")).resolve(strict=True)
-    common = Path(git("--path-format=absolute", "--git-common-dir")).resolve(strict=True)
+    # One spawn reads both directories; --absolute-git-dir is absolute before
+    # the --path-format switch. A newline inside either path fails closed.
+    lines = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "--absolute-git-dir",
+         "--path-format=absolute", "--git-common-dir"],
+        stderr=subprocess.DEVNULL, text=True, timeout=10).rstrip("\n").split("\n")
+    require(len(lines) == 2, "unexpected Git directory resolution")
+    admin = Path(lines[0].strip()).resolve(strict=True)
+    common = Path(lines[1].strip()).resolve(strict=True)
     require(admin != common, "canonical repository cannot enroll")
     return {"path": str(path), "source_inode": inode(path), "admin": str(admin),
             "admin_inode": inode(admin), "common": str(common)}

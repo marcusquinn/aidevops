@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 
-from worktree_archive_administration import administration, git
+from worktree_archive_administration import administration, auto_merge_oid, git
 from worktree_archive_filesystem import supported_git_metadata
 from worktree_archive_state import intent_to_add_differs, inventories, supported_history, tagged_index
 
@@ -91,5 +91,9 @@ def git_index_state(path, head=None, dirs=None):
     supported_history(root, admin, require_reachable_history=False, private_refs=list(state['refs']))
     # Retain the Git-filter/LFS preservation guard; git_snapshot lists untracked files itself.
     inventories(root, index=index, untracked=False)
-    return {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
-            "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
+    result = {"head": head or git(root, "rev-parse", "--verify", "HEAD").strip().decode("ascii"),
+              "index": hashlib.sha256(index).hexdigest(), "files": len(entries)}
+    if "AUTO_MERGE" in state["files"]:
+        # administration() proved this exact OID is a tree in this pass.
+        result["auto_merge_validated"] = auto_merge_oid(bytes.fromhex(state["files"]["AUTO_MERGE"]))
+    return result
