@@ -286,6 +286,8 @@ _pmp_merge_pass_budget_deadline() {
 # work in the current phase (_PMP_MERGE_REPO_SLICE_PROGRESS=1); before that the
 # whole-pass deadline applies, so a PR whose enrichment or evaluation exceeds
 # one slice still completes instead of repeating every pass (GH#38213).
+# A promoted merge-lane item (_PMP_MERGE_LANE_SLICE_EXEMPT=1) also uses only
+# the whole-pass deadline (GH#39396).
 # Stdout: deadline epoch (0 = unbounded)
 #######################################
 _pmp_merge_effective_deadline_epoch() {
@@ -294,6 +296,7 @@ _pmp_merge_effective_deadline_epoch() {
 
 	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
 	[[ "$slice_epoch" =~ ^[0-9]+$ ]] || slice_epoch=0
+	[[ "${_PMP_MERGE_LANE_SLICE_EXEMPT:-0}" == "1" ]] && slice_epoch=0
 	if [[ "${_PMP_MERGE_REPO_SLICE_PROGRESS:-0}" == "1" && "$slice_epoch" -gt 0 ]] \
 		&& [[ "$deadline_epoch" -eq 0 || "$slice_epoch" -lt "$deadline_epoch" ]]; then
 		deadline_epoch="$slice_epoch"

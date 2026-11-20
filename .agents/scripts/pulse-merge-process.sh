@@ -442,7 +442,7 @@ _merge_ready_prs_for_repo() {
 		return "$preparation_rc"
 	fi
 
-	local i=0 _PMP_RESUME_LANE_START=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_LANE_LAST_PR="" _PMP_RESUME_LANE_ITEM_PR=""
+	local i=0 _PMP_RESUME_LANE_START=0 _PMP_RESUME_LANE_END=0 _PMP_RESUME_MERGE_LANE_END=0 _PMP_MERGE_LANE_SLICE_EXEMPT=0 _PMP_RESUME_LANE_LAST_PR="" _PMP_RESUME_LANE_ITEM_PR=""
 	_pmp_resume_cursor_with_priority_lane "$repo_slug" i || i=0 # GH#38248
 	local _evaluated_from_start=$((i == 0 && _PMP_RESUME_LANE_END == 0))
 	while [[ "$i" -lt "$pr_count" ]]; do

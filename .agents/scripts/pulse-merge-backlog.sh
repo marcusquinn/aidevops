@@ -441,6 +441,8 @@ _pmp_pr_with_unknown_enrichment() {
 #######################################
 # Prepare one cursor item for eligibility processing. Stop, budget, and
 # cooldown pauses persist the current item before returning status 5.
+# GH#39396: first sets the caller's _PMP_MERGE_LANE_SLICE_EXEMPT for this
+# item; it stays in force through the item's evaluation.
 # Args: $1=repo, $2=PR array, $3=index, $4=output var,
 #       $5-$7=counter var names, $8-$10=counter values, $11-$12=cache dirs
 #######################################
@@ -460,6 +462,7 @@ _pmp_prepare_pr_at_cursor() {
 	local prepared_pr_obj="" enriched_pr_obj="" enrichment_rc=0
 
 	[[ "$output_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_pmp_merge_lane_slice_exemption "$cursor_index"
 	if [[ -f "$STOP_FLAG" ]]; then
 		_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$cursor_index" stop "$merged_var" "$closed_var" "$failed_var" "$merged_count" "$closed_count" "$failed_count" "$required_contexts_cache_dir" "$author_permission_cache_dir"
 		return $?
@@ -945,18 +948,23 @@ _pmp_collect_merge_lane() {
 #######################################
 # GH#38248/GH#39281: resolve the caller's resume index, then evaluate the
 # resume item first and the promoted lane items right after it:
-#   [0..start) minus lanes + [resume item] + CI-repair lane + merge lane + (start..]
+#   [0..start) minus lanes + [resume item] + merge lane + CI-repair lane + (start..]
 # Running the resume item first guarantees the cursor advances on every
-# resume, even when slow lane items use up the slice (GH#39281). The
-# CI-repair lane is every PR before the cursor that the backlog sort marked
-# `_pulseCiRepairLane` (already bounded by PULSE_MERGE_CI_REPAIR_LANE_LIMIT);
-# the merge lane comes from _pmp_collect_merge_lane. The lane bounds
-# (_PMP_RESUME_LANE_START = resume item index, _PMP_RESUME_LANE_END = last
-# lane index), the resume PR (_PMP_RESUME_LANE_ITEM_PR) and its original
-# predecessor (_PMP_RESUME_LANE_LAST_PR) let durable cursor writes skip
-# unprocessed lane items, which a later resume promotes again, without ever
-# rewinding the walk. Ordering only: every gate still runs.
-# Uses the caller's dynamically scoped pr_json, pr_count and _PMP_RESUME_LANE_*.
+# resume, even when slow lane items use up the slice (GH#39281). GH#39396:
+# merge-ready PRs precede CI-repair PRs (workflows/pulse.md "Priority Order"
+# 1 before 2) and are exempt from the per-repo slice (see
+# _pmp_merge_lane_slice_exemption), so one slow resume item can no longer
+# starve them pass after pass. The CI-repair lane is every PR before the
+# cursor that the backlog sort marked `_pulseCiRepairLane` (already bounded by
+# PULSE_MERGE_CI_REPAIR_LANE_LIMIT); the merge lane comes from
+# _pmp_collect_merge_lane. The lane bounds (_PMP_RESUME_LANE_START = resume
+# item index, _PMP_RESUME_MERGE_LANE_END = last merge-lane index,
+# _PMP_RESUME_LANE_END = last lane index), the resume PR
+# (_PMP_RESUME_LANE_ITEM_PR) and its original predecessor
+# (_PMP_RESUME_LANE_LAST_PR) let durable cursor writes skip unprocessed lane
+# items, which a later resume promotes again, without ever rewinding the
+# walk. Ordering only: every gate still runs.
+# Uses the caller's dynamically scoped pr_json, pr_count and _PMP_RESUME_*.
 # Args: $1=repo slug, $2=start index output var
 #######################################
 _pmp_resume_cursor_with_priority_lane() {
@@ -969,6 +977,7 @@ _pmp_resume_cursor_with_priority_lane() {
 	[[ "$start_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 	_PMP_RESUME_LANE_START=0
 	_PMP_RESUME_LANE_END=0
+	_PMP_RESUME_MERGE_LANE_END=0
 	_PMP_RESUME_LANE_LAST_PR=""
 	_PMP_RESUME_LANE_ITEM_PR=""
 	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" lane_resume_index || lane_resume_index=0
@@ -1004,7 +1013,7 @@ _pmp_resume_cursor_with_priority_lane() {
 			. as $all
 			| ($ci + $lane) as $moved
 			| [range(0; $start) | select(. as $i | $moved | any(.[]; . == $i) | not) | $all[.]]
-				+ [$all[$start]] + [$ci[] | $all[.]] + [$lane[] | $all[.]] + $all[($start + 1):]' 2>/dev/null) || reordered=""
+				+ [$all[$start]] + [$lane[] | $all[.]] + [$ci[] | $all[.]] + $all[($start + 1):]' 2>/dev/null) || reordered=""
 	fi
 	if [[ -z "$reordered" ]]; then
 		echo "${lane_fail}: reorder failed for ${total} lane PR(s) (GH#39281)" >>"$LOGFILE"
@@ -1012,11 +1021,33 @@ _pmp_resume_cursor_with_priority_lane() {
 	fi
 	pr_json="$reordered"
 	_PMP_RESUME_LANE_START=$((start_index - total))
+	_PMP_RESUME_MERGE_LANE_END=$((_PMP_RESUME_LANE_START + merge_moved))
 	_PMP_RESUME_LANE_END="$start_index"
 	_PMP_RESUME_LANE_LAST_PR="$last_pr"
 	_PMP_RESUME_LANE_ITEM_PR="$item_pr"
 	printf -v "$start_var" '%s' "$_PMP_RESUME_LANE_START"
 	echo "[pulse-wrapper] Merge pass: resume priority lane for ${repo_slug} moved ${merge_moved} merge-ready PR(s) and ${ci_moved} CI-repair PR(s) behind resume item index=${start_index} next_pr=${item_pr} guardrail_counted=${merge_counted} (GH#38248, GH#38508, GH#39281)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# GH#39396: set _PMP_MERGE_LANE_SLICE_EXEMPT=1 while the walk index is a
+# promoted merge-lane item (after the resume item, up to
+# _PMP_RESUME_MERGE_LANE_END), else 0. _pmp_merge_effective_deadline_epoch
+# then applies only the whole-pass deadline to that item, so the per-repo
+# slice spent by the resume item cannot pause green PRs. The lane is bounded
+# by _pmp_collect_merge_lane limits and serves each head once. Called by
+# _pmp_prepare_pr_at_cursor; uses _merge_ready_prs_for_repo's dynamically
+# scoped _PMP_RESUME_* and _PMP_MERGE_LANE_SLICE_EXEMPT. Args: $1=walk index
+#######################################
+_pmp_merge_lane_slice_exemption() {
+	local walk_index="$1"
+	local lane_start="${_PMP_RESUME_LANE_START:-0}" merge_end="${_PMP_RESUME_MERGE_LANE_END:-0}"
+	_PMP_MERGE_LANE_SLICE_EXEMPT=0
+	[[ "$walk_index" =~ ^[0-9]+$ && "$lane_start" =~ ^[0-9]+$ && "$merge_end" =~ ^[0-9]+$ ]] || return 0
+	if [[ "$merge_end" -gt "$lane_start" && "$walk_index" -gt "$lane_start" && "$walk_index" -le "$merge_end" ]]; then
+		_PMP_MERGE_LANE_SLICE_EXEMPT=1
+	fi
 	return 0
 }
 
