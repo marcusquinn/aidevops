@@ -135,7 +135,7 @@ an interrupted writer cannot leave stale lock ownership behind.
 
 ### Push timeout in `full-loop-helper.sh commit-and-pr`
 
-Code-diff pushes legitimately take ~75s or more (privacy, complexity, repo-verify typecheck, secretlint/SonarCloud). The helper's push timeout defaults to 300s; override with `AIDEVOPS_PUSH_TIMEOUT_S=<seconds>` (positive integer; invalid values fall back to 300). A timeout advisory means hooks exceeded that budget: diagnose with the debug flags above rather than bypassing; `--skip-hooks` is for doc-only diffs only.
+Code-diff pushes legitimately take ~75s or more (privacy, complexity, repo-verify typecheck, secretlint/SonarCloud). The helper's push timeout defaults to 300s; override with `AIDEVOPS_PUSH_TIMEOUT_S=<seconds>` (positive integer; invalid values fall back to 300). A timeout advisory means `git push` did not finish within that budget. The budget covers pre-push hooks and the network transfer. To check a slow hook, use the debug flags above rather than bypassing; `--skip-hooks` is for doc-only diffs only.
 
 ### Test harness
 
