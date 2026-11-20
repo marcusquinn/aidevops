@@ -119,6 +119,15 @@ jobs:
       statuses: write
 
     steps:
+      # Fail closed: if label protection failed or was cancelled, the NMR label
+      # may be absent, so a normal evaluation could wrongly pass. Later steps
+      # are skipped after this failure.
+      - name: Fail gate when label protection did not complete
+        if: needs.protect-pr-labels.result == 'failure' || needs.protect-pr-labels.result == 'cancelled'
+        run: |
+          echo "::error::protect-pr-labels ${{ needs.protect-pr-labels.result }}; failing gate closed"
+          exit 1
+
       # Security: This job uses pull_request_target for fork PR write access.
       # It ONLY reads event metadata (PR title, body, number) — never checks
       # out or executes code from the PR head branch.
