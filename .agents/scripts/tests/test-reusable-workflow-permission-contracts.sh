@@ -8,7 +8,33 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 
-python3 - "$REPO_ROOT" <<'PYEOF'
+# Select the first python3 that can import PyYAML. Homebrew python3 often lacks
+# it while the macOS system interpreter has it (GH#39344). CI installs
+# PyYAML==6.0.3 and must never skip; local hosts without it skip explicitly.
+select_yaml_python() {
+	local candidate=""
+	local tabby_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	for candidate in "${AIDEVOPS_TEST_PYTHON:-}" python3 /usr/bin/python3 "$tabby_python"; do
+		[[ -n "$candidate" ]] || continue
+		command -v "$candidate" >/dev/null 2>&1 || continue
+		if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+if ! PYTHON_BIN="$(select_yaml_python)"; then
+	if [[ "${CI:-}" == "true" ]]; then
+		printf 'FAIL: PyYAML is required for workflow permission contract tests under CI=true\n'
+		exit 1
+	fi
+	printf 'SKIP: no python3 with PyYAML found (set AIDEVOPS_TEST_PYTHON; CI installs PyYAML==6.0.3)\n'
+	exit 0
+fi
+
+"$PYTHON_BIN" - "$REPO_ROOT" <<'PYEOF'
 from __future__ import annotations
 
 import pathlib
