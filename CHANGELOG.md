@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.250] - 2026-11-20
+
+### Added
+
+- add content-free secretlint summary mode (#39474)
+- add WordPress delivery subagents
+
+### Changed
+
+- Maintenance: mark t19210 complete (pr:#39485 completed:2026-11-20) (#39486)
+- Maintenance: sync GitHub issue refs to TODO.md (#39430)
+- Documentation: adopt iris App Compliance guidance (GH#39435) (#39436)
+- Maintenance: mark t19205 complete (pr:#39478 completed:2026-11-20) (#39479)
+- Maintenance: sync ref:GH#39466 to TODO.md (#39459)
+
+### Fixed
+
+- credential audit TOML parser fallback on Python 3.9
+- isolate scanner fixtures from continuation identity (GH#39450) (#39451)
+- publish trigger guidance for external_trigger_pending holds
+- routine-log-helper repair write avoids clobbering concurrent updates (#39434)
+- trigger revisit reaches every hold instead of starving past the first ~20 search hits
+- skip negative-verdict demotion during resumed walks (GH#39455) (#39456)
+- order check-pr after protect-pr-labels in maintainer gate (#39428)
+- fail procfs fixture run when denied/cwdmap observer exits nonzero (#39447)
+- refuse intent-to-add on HEAD-empty files in supported_state (#39465)
+- reinstall the systemic CI failure miner on pulse hosts and mine default-branch runs server-side
+- shell-suite main health stops filing from Actions, bounds storms, uploads artifact (GH#39472) (#39476)
+- share OAuth pool resolver and usability rule (GH#39475)
+- retry worker DB schema init and stop worker-side writes taking the shared DB lock
+
 ## [3.39.249] - 2026-11-20
 
 ### Added
