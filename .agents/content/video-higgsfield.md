@@ -222,7 +222,10 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 platform API pool, and needs no browser automation. Verified 2026-11-19.
 
 - **Auth:** OAuth, once per machine: `npx -y mcporter@0.17.1 auth https://mcp.higgsfield.ai/mcp`
-  (tokens stay under `~/.mcporter/`). Then call tools with
+  (tokens go to mcporter's vault: `~/.mcporter/credentials.json`, or
+  `$XDG_DATA_HOME/mcporter/credentials.json` when that is set to an absolute path,
+  plus any configured `tokenCacheDir`; remove with `mcporter logout`, which clears
+  all of them, rather than deleting one directory). Then call tools with
   `npx -y mcporter@0.17.1 call https://mcp.higgsfield.ai/mcp.<tool> key=value --output json`.
 - **Generation:** image and video models with a cost estimate before submit, and
   media upload for references. A Blender frame to Kling 3.0 Turbo 5 s 720p

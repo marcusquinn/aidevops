@@ -252,8 +252,15 @@ tolerance (PSNR), not by hash.
   auto-stop. No SSH: run the job contract through `gpu_rental_exec` (60 s per
   call, so start the worker with `nohup` and poll its log), move files through
   MCP media uploads, check SHA-256 both ways, then `gpu_rental_stop` and confirm
-  `gpu_my scope=live` is empty. `max_credits_per_hour` is a rate cap, not a
-  total budget: watch `credits_spent` and stop at the ceiling.
+  `gpu_my scope=live` is empty. No provider-enforced total spend limit was
+  found (`max_credits_per_hour` caps the rate only), and the box cannot call
+  `gpu_rental_stop` on itself. Bound spend with a deadline on the box: start the
+  worker as `nohup timeout <deadline> bash render_worker.sh ...`, so the box goes
+  idle when the deadline passes and the idle auto-stop ends it. Worst case is
+  rate × (staging + deadline + 10 idle minutes + fetch); size the deadline so
+  that fits the ceiling. "Idle" was not verified to ignore status polls, so
+  still watch `credits_spent` and call `gpu_rental_stop` as soon as frames are
+  fetched. Without that on-box deadline this route cannot guarantee the ceiling.
 - **Vast.ai**: lowest list prices; host quality varies, interruptible jobs get
   outbid, bandwidth may be billed per byte. Filter by reliability score.
 - **SaladCloud**: consumer RTX at the lowest rates; interruptible by design.
