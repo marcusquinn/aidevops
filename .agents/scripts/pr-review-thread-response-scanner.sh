@@ -1054,6 +1054,7 @@ _prrts_upstream_title() {
 	local thread_id="$3"
 	local finding_text="$4"
 	local file="" defect="" suffix=""
+	# shellcheck disable=SC2016
 	file="$(printf '%s\n' "$finding_text" | sed -e 's/^[[:space:]]*Files:[[:space:]]*//' -e 't found' -e d -e ':found' -e q |
 		sed -E -e 's/^`([^`]*)`.*$/\1/' -e 't quoted' -e 's/[,;[:space:]].*$//' -e ':quoted' | tr -d '`<>\r')"
 	defect="$(printf '%s\n' "$finding_text" | sed -e 's/^[[:space:]]*Defect:[[:space:]]*//' -e 't found' -e d -e ':found' -e q |
