@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 
 # Select the first python3 that can import PyYAML. Homebrew python3 often lacks
-# it while the macOS system interpreter has it (GH#39344). CI installs
-# PyYAML==6.0.3 and must never skip; local hosts without it skip explicitly.
+# it while the macOS system interpreter has it (GH#39344). A missing parser
+# fails loudly: a skip that exits 0 would report unchecked contracts as passing.
 select_yaml_python() {
 	local candidate=""
 	local tabby_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
@@ -26,12 +26,8 @@ select_yaml_python() {
 }
 
 if ! PYTHON_BIN="$(select_yaml_python)"; then
-	if [[ "${CI:-}" == "true" ]]; then
-		printf 'FAIL: PyYAML is required for workflow permission contract tests under CI=true\n'
-		exit 1
-	fi
-	printf 'SKIP: no python3 with PyYAML found (set AIDEVOPS_TEST_PYTHON; CI installs PyYAML==6.0.3)\n'
-	exit 0
+	printf 'FAIL: no python3 with PyYAML found; install PyYAML or set AIDEVOPS_TEST_PYTHON\n' >&2
+	exit 1
 fi
 
 "$PYTHON_BIN" - "$REPO_ROOT" <<'PYEOF'
