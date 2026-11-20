@@ -111,6 +111,12 @@ cmd_commit_and_pr() {
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
 
+	# Validate required inputs and detect repo/branch first (read-only; sets
+	# $repo and $branch in this scope) so a call missing --issue/--message
+	# prints usage instead of a title error composed from empty fields.
+	local repo="" branch="" base_branch="" base_ref=""
+	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+
 	# Reject the final title before staging, rebasing or publishing anything.
 	if [[ -z "$pr_title" ]]; then
 		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")" || return 1
@@ -120,10 +126,6 @@ cmd_commit_and_pr() {
 		print_error "Use GH#N: ..., tNNN: ..., or conventional type(scope): ...; extra issues belong in the body as Resolves #N."
 		return 1
 	fi
-
-	# Validate inputs and detect repo/branch (sets $repo and $branch in this scope)
-	local repo="" branch="" base_branch="" base_ref=""
-	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		if [[ ! "$replacement_pr" =~ ^[1-9][0-9]*$ || ${#replacement_reason} -lt 20 ]]; then
 			print_error "Explicit replacement requires --replace-pr N and --replacement-reason with at least 20 characters"
@@ -527,6 +529,13 @@ Commands:
                                           Audited replacement of an open PR (reason: 20+ characters)
                 [--completion-bookkeeping --proof-pr N --task-id tNNN]
                                           Allow audited metadata-only PR for a terminal issue
+                [--ready]                 Open the PR non-draft once verification passed
+                                          (interactive default is draft; readying later
+                                          re-runs every required check, GH#39210)
+                [--keep-issue-open]       Link with For #N so merge leaves a long-running
+                                          issue open (interactive only, GH#36598)
+                [--allow-parent-close]    Permit a closing keyword on a parent-task issue
+                                          (verified final phase only, GH#37690)
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
                 [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
