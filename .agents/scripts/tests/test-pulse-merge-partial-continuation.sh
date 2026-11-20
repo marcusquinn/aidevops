@@ -217,6 +217,7 @@ gh_pr_view() {
 		return 0
 	fi
 	if [[ "$args" == *"--json title"* ]]; then
+		printf '%s\n' "pr-title $*" >>"$API_LOG"
 		[[ "$TEST_PR_TITLE_RC" -eq 0 ]] || return "$TEST_PR_TITLE_RC"
 		if [[ "$args" == "960 "* ]]; then
 			printf '%s' "$TEST_PR_TITLE_960"
@@ -1287,6 +1288,45 @@ test_revisit_skips_other_target_prs() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060
 	assert_no_write "walk cap stops before the older partial"
 	assert_log_contains "stopped #501 revisit after 1 merged PRs" "walk cap is logged"
+	test_revisit_uses_timeline_pr_fields
+	return 0
+}
+
+# GH#39493: a timeline row carrying body/title spares the per-PR live reads.
+# Args: $1=PR 960 timeline title
+revisit_with_timeline_960_fields() {
+	local title="$1"
+	revisit_with_newer_960 777 "live title must not be read"
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c --arg t "$title" \
+		'.[0] |= map(if .source.issue.number == 960 then .source.issue += {body:"For #777", title:$t} else . end)')
+	return 0
+}
+
+test_revisit_uses_timeline_pr_fields() {
+	revisit_with_timeline_960_fields "t777: other work"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"timeline body/title: skips newer other-target PR and restores from the older partial"
+	if ! grep -Eq '^pr-(body|title) 960 ' "$API_LOG"; then
+		pass "timeline body/title: no live body or title read for the skipped PR"
+	else
+		fail "timeline body/title: no live body or title read for the skipped PR"
+	fi
+	revisit_with_timeline_960_fields "t501: continuation"
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_no_write "timeline title naming the issue ends the walk (guard decides)"
+	# A null timeline body is GitHub's empty body, not a missing field.
+	revisit_with_newer_960 "" "live title must not be read"
+	TEST_TIMELINE=$(printf '%s' "$TEST_TIMELINE" | jq -c \
+		'.[0] |= map(if .source.issue.number == 960 then .source.issue += {body:null, title:"chore: no target"} else . end)')
+	_pm_reconcile_partial_continuations "$SLUG" 2000000060
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"null timeline body: untargeted newer PR is skipped without a live read"
+	if ! grep -Eq '^pr-(body|title) 960 ' "$API_LOG"; then
+		pass "null timeline body: no live body or title read"
+	else
+		fail "null timeline body: no live body or title read"
+	fi
 	return 0
 }
 
