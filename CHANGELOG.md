@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.251] - 2026-11-20
+
+### Added
+
+- downstream fork-review caller template and workflow self-listen validator (t19204) (#39464)
+
+### Changed
+
+- Maintenance: mark t19213 complete (pr:#39498 completed:2026-11-20) (#39496)
+- Documentation: document NanoGPT image generation route (GH#39501) (#39505)
+
+### Fixed
+
+- close measured-resolved file-size-debt held under consolidation (GH#39503) (#39506)
+- hold dependants of blockers closed not planned without a successor (GH#39500)
+- partial-continuation merged-PR lane prefilters list rows and walks incrementally (GH#39491)
+
 ## [3.39.250] - 2026-11-20
 
 ### Added
