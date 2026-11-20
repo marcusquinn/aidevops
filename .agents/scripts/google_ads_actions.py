@@ -43,6 +43,7 @@ MATCH_TYPES = {"EXACT", "PHRASE", "BROAD"}
 KEYWORD_STATUSES = {"ENABLED", "PAUSED"}
 REVERSIBLE_BIDDING = {"MANUAL_CPC", "TARGET_SPEND"}
 NUMERIC = re.compile(r"^[0-9]{1,20}$")
+MICROS = re.compile(r"[0-9]{1,18}")  # ASCII only: str.isdigit() accepts superscripts int() rejects
 LIMIT_FIELDS = ("max_daily_budget_micros", "max_cpc_bid_ceiling_micros", "max_operations")
 NEGATIVE_LEVELS = {"campaign_negative_keyword": "campaign", "ad_group_negative_keyword": "ad_group"}
 
@@ -72,7 +73,7 @@ def _numeric(value: Any, field: str) -> str:
 
 
 def _micros(value: Any, field: str, cap: int) -> str:
-    valid = isinstance(value, (int, str)) and not isinstance(value, bool) and str(value).isdigit()
+    valid = isinstance(value, (int, str)) and not isinstance(value, bool) and bool(MICROS.fullmatch(str(value)))
     _require(valid and int(value) > 0, f"{field} must be a positive integer of micros")
     _require(int(value) <= cap, f"{field} exceeds the configured cap")
     return str(int(value))
