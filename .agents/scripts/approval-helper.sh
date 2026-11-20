@@ -2040,6 +2040,43 @@ cmd_reconcile() {
 	return 0
 }
 
+# ── Marketing action plans ───────────────────────────────────────────────────
+
+# Record an operator approval for one reviewed marketing action plan or receipt.
+# The Python ceremony re-checks root, SUDO_USER and TTY, shows the exact plan,
+# requires a typed APPROVE, and writes a root-owned, plan-bound record.
+#aidevops:trust-boundary -- only root+TTY can mint the record marketing_actions.py trusts.
+cmd_marketing_plan() {
+	local usage
+	usage="Usage: $(approval_cli_prefix) approve marketing-plan <plan.json> | --rollback <receipt.json>"
+	local subject_flag="--plan"
+	local subject_path="${1:-}"
+
+	_require_interactive_root "$usage" || return 1
+	if [[ -z "${SUDO_USER:-}" || "${SUDO_USER}" == "root" ]]; then
+		_print_error "Run via sudo from the operator account that owns the plan"
+		return 1
+	fi
+	if [[ "$subject_path" == "--rollback" ]]; then
+		subject_flag="--receipt"
+		subject_path="${2:-}"
+	fi
+	if [[ -z "$subject_path" || "$subject_path" == -* ]]; then
+		echo "$usage"
+		return 1
+	fi
+
+	# Prefer the system interpreter; the approval module stays Python 3.9-safe.
+	local python_bin="/usr/bin/python3"
+	[[ -x "$python_bin" ]] || python_bin=$(command -v python3 || true)
+	if [[ -z "$python_bin" ]]; then
+		_print_error "python3 is required for marketing-plan approval"
+		return 1
+	fi
+	"$python_bin" "$SCRIPT_DIR/marketing-action-helper.py" approve "$subject_flag" "$subject_path"
+	return $?
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -2051,6 +2088,7 @@ main() {
 	issue | issue-approved) cmd_issue_approved "$@" ;;
 	pr | pr-approved) cmd_pr_approved "$@" ;;
 	batch) cmd_batch_approved "$@" ;;
+	marketing-plan) cmd_marketing_plan "$@" ;;
 	permissions) cmd_permissions "$@" ;;
 	verify-permissions) cmd_verify_permissions "$@" ;;
 	verify) cmd_verify "$@" ;;
