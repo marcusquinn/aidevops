@@ -2322,13 +2322,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19172 updown guide: make domain-expiration reminders optional (auto-renewed domains) #documentation ref:GH#39304 pr:#39305 completed:2026-11-19
 
-- [ ] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 logged:2026-11-19 -> [todo/tasks/t19173-brief.md]
+- [x] t19173 fix(pulse-merge): external check findings outside the PR diff no longer discard a green worker PR #bug #framework #interactive ref:GH#39310 logged:2026-11-19 -> [todo/tasks/t19173-brief.md] pr:#39311 completed:2026-11-19
 
 - [ ] t19178 feat(pulse): persistent dispatch exclusions reach the AI brief owner instead of a user session #auto-dispatch #feat #framework ref:GH#39332 logged:2026-11-19 -> [todo/tasks/t19178-brief.md]
 
 - [ ] t19179 fix(pulse): release orphaned active-status labels with no assignee and resurface aged no-auto-dispatch holds daily #auto-dispatch #feat ref:GH#39334
 
-- [ ] t19181 docs(worker-egress-srt): record macOS arm64 real-check evidence, Homebrew closure requirement, and resolved zod advisory #auto-dispatch #documentation ref:GH#39340
+- [x] t19181 docs(worker-egress-srt): record macOS arm64 real-check evidence, Homebrew closure requirement, and resolved zod advisory #auto-dispatch #documentation ref:GH#39340 pr:#39345 completed:2026-11-20
 
 - [ ] t19182 fix(pulse-merge): duplicate PR consolidation stops scoring singleton PRs that cannot form a group #bug #framework #interactive tier:standard ref:GH#39351 logged:2026-11-19 -> [todo/tasks/t19182-brief.md]
 
@@ -5959,4 +5959,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18998 feat(mcp): add on-demand NetBird MCP server (self-hosted URL + PAT from aidevops secrets) #enhancement ref:GH#38313 pr:#38315 completed:2026-11-15
 - [x] t18980 Reclaim phase 2: observe worktree owners through the lifecycle registry and ProcessAdapter, not a /proc scan #bug #type:enhancement ref:GH#38107 pr:#38127 completed:2026-11-19
 
-- [ ] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222
+- [x] t19150 feat(ci): scheduled main shell-suite health run files deduped red-main issues #auto-dispatch #enhancement #framework ref:GH#39222 pr:#39307 completed:2026-11-19
