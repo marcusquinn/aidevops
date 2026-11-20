@@ -2336,6 +2336,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19183 fix(oauth-pool): share one runtime pool resolver and usability rule between model availability and headless auth #bug #auto-dispatch tier:standard ~1h20m blocked-by:GH#39095 ref:GH#39352 logged:2026-11-19 -> [todo/tasks/t19183-brief.md]
 
+- [ ] t19186 Strip supervisor-exported framework constants from the SRT workload environment #auto-dispatch #feat ref:GH#39360
+
+- [ ] t19187 Qualify SRT proxy resolved-address, redirect and protocol bypass handling #auto-dispatch #feat ref:GH#39361
+
+- [ ] t19188 Attribute the inherited Mach send rights in the macOS SRT sandbox #auto-dispatch #feat ref:GH#39362
+
+- [ ] t19189 Run SRT synthetic qualification on NixOS arm64 and Intel macOS hosts #feat #no-auto-dispatch ref:GH#39363
+
+- [ ] t19190 Design the provider credential boundary and extraction-role envelope for SRT inference #auto-dispatch #feat ref:GH#39364
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
