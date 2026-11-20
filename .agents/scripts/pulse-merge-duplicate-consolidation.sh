@@ -279,7 +279,7 @@ _pmp_consolidate_duplicate_pr_groups() {
 	[[ "$pr_count" -gt 1 ]] || return 0
 	[[ "${PULSE_MERGE_CONSOLIDATE_DUPLICATE_PRS:-true}" == "true" ]] || return 0
 
-	local group_file candidate_file
+	local group_file="" candidate_file=""
 	group_file=$(mktemp 2>/dev/null) || group_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-groups-$$.tmp"
 	candidate_file=$(mktemp 2>/dev/null) || candidate_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-candidates-$$.tmp"
 	: >"$group_file"
