@@ -1184,7 +1184,7 @@ _terminal_blocker_recovery() {
 		[[ -n "${AIDEVOPS_TERMINAL_BLOCKER_MISSING_SECRETS:-}" ]] &&
 			companion=$(blocked_needs_label_for_reason missing_secret)
 		# shellcheck disable=SC2016 # literal Markdown backticks
-		printf 'Unblock label: `%s`. %s\n' "$companion" "$(blocked_companion_guidance "$companion")"
+		printf 'Unblock label: `%s`. %s\n' "$companion" "$(blocked_companion_guidance "$companion" "$reason")"
 	fi
 	if [[ "$reason" == "unknown" && "${AIDEVOPS_TERMINAL_BLOCKER_TRIAGE:-}" =~ ^pending_work\ brief=[a-f0-9]{64}\ head=[a-f0-9]{40,64}$ ]]; then
 		printf 'CHECKPOINT_UNKNOWN_TRIAGE %s\n' "$AIDEVOPS_TERMINAL_BLOCKER_TRIAGE"

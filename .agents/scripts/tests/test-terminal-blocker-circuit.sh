@@ -671,6 +671,14 @@ TERMINAL_BLOCKER_TRIGGER=Vendor release 4.2 ships on 2026-12-01" '{type:"text",t
 		[[ "$fragment" == *'Wait for the specified external trigger.'* && "$fragment" != *'Trigger awaited:'* ]] || status=1
 	done
 	unset AIDEVOPS_TERMINAL_BLOCKER_TRIGGER
+	# t19210: a trigger hold carries trigger guidance, never the linked-issue text.
+	fragment=$(
+		# shellcheck source=../shared-gh-wrappers-status.sh
+		source "${SCRIPT_DIR}/shared-gh-wrappers-status.sh"
+		AIDEVOPS_TERMINAL_BLOCKER_TRIGGER='Vendor release 4.2' terminal_blocker_observation_fragment 111111111111111111111111 "$fingerprint" normal status:blocked
+	)
+	[[ "$fragment" == *$'\nUnblock label: `needs-dependency`. Needed: the awaited trigger named above.'* &&
+		"$fragment" == *'trigger-revisit pass'* && "$fragment" != *'linked blocking issue must close'* ]] || status=1
 	print_result "external_trigger_pending publishes only an unaltered one-line trigger" "$status"
 	return 0
 }

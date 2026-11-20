@@ -672,10 +672,16 @@ blocked_needs_label_for_reason() {
 #######################################
 # Print a one-line public explanation for a companion label: what is needed,
 # who supplies it, the secure route, and what runs automatically afterwards.
-# Args: $1 = companion label
+# Args: $1 = companion label, $2 = optional reason class (an
+#       external_trigger_pending hold has no linked blocking issue)
 #######################################
 blocked_companion_guidance() {
 	local label="${1:-}"
+	local reason="${2:-}"
+	if [[ "$label" == "needs-dependency" && "$reason" == "external_trigger_pending" ]]; then
+		printf '%s\n' 'Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER/MEMBER may post it sooner. Afterwards dispatch resumes automatically.'
+		return 0
+	fi
 	case "$label" in
 	needs-ai-recovery)
 		# shellcheck disable=SC2016 # literal Markdown backticks

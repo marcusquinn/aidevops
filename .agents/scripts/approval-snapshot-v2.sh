@@ -148,13 +148,15 @@ _approval_snapshot_v2_terminal_blocker_filters() {
 					and ($u.l == "needs-" + ({input_required: "maintainer-input", permission_required: "maintainer-input",
 						source_access_blocked: "source-access", external_trigger_pending: "dependency"}[$r] // "ai-recovery")
 						or $u.l == "needs-credentials")
-					and $u.g == {
+					and (($r == "external_trigger_pending" and $u.l == "needs-dependency"
+						and $u.g == "Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER/MEMBER may post it sooner. Afterwards dispatch resumes automatically.")
+					or $u.g == {
 						"needs-ai-recovery": "Needed: AI recovery. Owner: the recovery supervisor (no human action). It solves or releases the hold, or names the one human input with a specific `needs-*` label and a comment. Afterwards dispatch resumes automatically.",
 						"needs-dependency": "Needed: the linked blocking issue must close. Owner: whoever solves that issue (usually a worker). Afterwards the dependency pass removes status:blocked and this label automatically.",
 						"needs-maintainer-input": "Needed: one owner decision or input that AI cannot supply (named in the brief or the latest blocker comment). Owner: maintainer. Route: answer in the issue brief, or post the retry directive; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.",
 						"needs-source-access": "Needed: a permitted capture, an alternative official source, or the host recovering. Owner: access owner. Route: provide the source through an approved channel or confirm the canonical site in the issue; never paste secrets into issues. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes.",
 						"needs-credentials": "Needed: credentials or account access. Owner: maintainer. Route: provision on a runner with `aidevops secret set NAME` (never in issues or comments), then post the retry directive. Afterwards the recovery pass removes status:blocked and this label and dispatch resumes."
-					}[$u.l]))
+					}[$u.l])))
 				and (($triage | not) or $r == "unknown")
 			);
 JQ
