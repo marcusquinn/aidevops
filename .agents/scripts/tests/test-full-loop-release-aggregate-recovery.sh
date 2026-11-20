@@ -19,6 +19,9 @@ source "${SCRIPT_DIR}/full-loop-release-aggregate-recovery.sh"
 	# shellcheck source=../full-loop-release-helper.sh
 	source "${SCRIPT_DIR}/full-loop-release-helper.sh" help >/dev/null
 	export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+	# Ambient env-injected config (GIT_CONFIG_COUNT/KEY_n) outranks repo config
+	# and would redirect signing away from the fixture key.
+	unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 	fixture="${TEST_ROOT}/protected-main"
 	remote="${TEST_ROOT}/protected-main.git"
 	git init -q --bare "$remote"
