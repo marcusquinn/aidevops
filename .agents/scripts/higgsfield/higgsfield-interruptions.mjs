@@ -14,7 +14,10 @@ function knownInterruptionsFile() {
 export function loadKnownInterruptions() {
   try {
     if (existsSync(knownInterruptionsFile())) {
-      return JSON.parse(readFileSync(knownInterruptionsFile(), 'utf-8'));
+      const data = JSON.parse(readFileSync(knownInterruptionsFile(), 'utf-8'));
+      // Older state files stored a bare array of entries.
+      if (Array.isArray(data)) return { types: data };
+      if (Array.isArray(data?.types)) return data;
     }
   } catch {}
   return { types: [] };
