@@ -2360,9 +2360,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19210 fix(terminal-blocker): external_trigger_pending holds publish dependency guidance that names a nonexistent linked blocker #auto-dispatch #bug ref:GH#39482 logged:2026-11-20 -> [todo/tasks/t19210-brief.md] pr:#39485 completed:2026-11-20
 
-- [ ] t19212 fix(pulse): partial-continuation merged-PR lane prefilters list rows and walks incrementally so high-volume repos stop stranding in-review partials #bug #priority:high #interactive ref:GH#39491 logged:2026-11-20 -> [todo/tasks/t19212-brief.md]
+- [x] t19212 fix(pulse): partial-continuation merged-PR lane prefilters list rows and walks incrementally so high-volume repos stop stranding in-review partials #bug #priority:high #interactive ref:GH#39491 logged:2026-11-20 -> [todo/tasks/t19212-brief.md] pr:#39492 completed:2026-11-20
 
-- [ ] t19213 perf(pulse): partial-continuation in-review revisit reuses timeline PR body/title instead of per-PR reads #auto-dispatch #feat ref:GH#39493 logged:2026-11-20 -> [todo/tasks/t19213-brief.md]
+- [x] t19213 perf(pulse): partial-continuation in-review revisit reuses timeline PR body/title instead of per-PR reads #auto-dispatch #feat ref:GH#39493 logged:2026-11-20 -> [todo/tasks/t19213-brief.md] pr:#39498 completed:2026-11-20
 
 ## In Progress
 
