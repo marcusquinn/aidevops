@@ -17,9 +17,11 @@ action set, limits, and rollback method into `plan_digest`.
 
 `noindex`, canonical, redirect, delete, budget, bid, negative-keyword, campaign,
 pixel, conversion, moderation, and posting proposals are rendered as
-`handoff_only`; they cannot be applied. Canonical checkouts, default branches,
+`handoff_only` by this local executor; they cannot be applied here. Canonical checkouts, default branches,
 symlinks, untracked files, CMS/ad accounts, generated deployments, commits,
 pushes, publication, and account operations are always rejected or absent.
+A narrow set of Google Ads account changes has its own adapter: see
+[Google Ads Account Actions](#google-ads-account-actions).
 
 ```bash
 python3 .agents/scripts/marketing-action-helper.py plan \
@@ -98,9 +100,71 @@ single mismatch preserves all evidence and refuses the entire rollback, so
 unrelated edits are never overwritten. Repeated rollback is a no-op. Recovery
 never runs reset, clean, commit, push, publication, or remote/account commands.
 
+## Google Ads Account Actions
+
+`.agents/scripts/google-ads-action-helper.py` applies only these kinds, each with
+an exact recorded inverse:
+
+| Kind | Input fields | Inverse |
+|------|--------------|---------|
+| `campaign_negative_keyword` | `campaign_id`, `text`, `match_type` | remove the created criterion |
+| `ad_group_negative_keyword` | `ad_group_id`, `text`, `match_type` | remove the created criterion |
+| `keyword_status` | `ad_group_id`, `criterion_id`, `status` (`ENABLED`/`PAUSED`) | restore the previous status |
+| `maximize_clicks` | `campaign_id`, `cpc_bid_ceiling_micros` | restore `MANUAL_CPC` (eCPC flag) or the previous ceiling |
+| `campaign_budget` | `campaign_id`, `amount_micros` | restore the previous amount |
+
+It refuses:
+
+- portfolio bidding, any bidding other than `MANUAL_CPC` or `TARGET_SPEND`, and shared budgets
+- duplicate negatives, no-op changes, and two actions on the same resource
+- values over the config caps, and customers outside the allowlist
+
+The operator writes the input (`aidevops.google-ads-action-input/v1`: `customer_id`,
+optional `login_customer_id`, `owner`, `source_evidence`, `actions`). Triage output
+from `google_ads_triage.py` stays a proposal. Use a per-project config
+(`aidevops.google-ads-action-config/v1`) with `customer_allowlist`,
+`max_daily_budget_micros`, `max_cpc_bid_ceiling_micros` and `max_operations`.
+
+```bash
+python3 .agents/scripts/google-ads-action-helper.py plan \
+  --input actions.json --config google-ads-actions.json --output /path/to/new-plan.json
+sudo aidevops approve marketing-plan /path/to/new-plan.json        # operator only
+python3 .agents/scripts/google-ads-action-helper.py apply \
+  --plan /path/to/new-plan.json \
+  --receipt-dir "$HOME/.aidevops/.agent-workspace/google-ads-action-receipts"
+sudo aidevops approve marketing-plan --rollback RECEIPT.json        # operator only
+python3 .agents/scripts/google-ads-action-helper.py rollback --receipt RECEIPT.json
+```
+
+How each step works:
+
+- `plan` reads the live state through fixed GAQL queries. It sends the exact
+  operations as one `googleAds:mutate` with `validateOnly: true`, then
+  exclusive-creates a mode-0600 plan. The plan records the operations, before
+  and after states, inverses, caps, and a 24-hour expiry, all under `plan_digest`.
+- `apply` re-checks the digest, expiry, allowlist and caps. It requires the root
+  approval record (bound to `customer_id`), takes a receipt-directory lock, and
+  refuses any drift. It writes an `applying` receipt, then sends one mutate with
+  `partialFailure: false`, so every operation applies or none do. It then
+  records the resource names and appends to `audit.jsonl`.
+- Replaying an applied plan is a verified no-op. After a crash, a plan whose
+  live state equals the after-state is marked applied without a second write.
+- `rollback` needs a fresh rollback approval bound to the receipt digest. Every
+  live state must still equal its after-state, including the created criterion
+  resource names. It validates the inverses (validate-only) and then sends them.
+  Repeating a rollback is a no-op.
+
+Credentials come only from the environment. `GOOGLE_ADS_ACCESS_TOKEN` (an OAuth
+access token with the `adwords` scope) is required. `GOOGLE_ADS_DEVELOPER_TOKEN`
+is optional: Google's developer-token policy says tokens were sunset on
+2026-09-09 and are ignored. The adapter uses the same API version as
+`marketing_account_google.py`.
+
 ## Verification Boundary
 
 Focused tests use synthetic linked worktrees, and they patch the trusted approver
 UID and operator home so they can run without root. They prove the
 local guard and recovery contract only; they do not establish ROI, authorize a
-real proposal, or activate scheduled/live-site execution.
+real proposal, or activate scheduled/live-site execution. Google Ads tests use an
+in-memory fake account. Only a live validate-only `plan` against a test account
+proves that Google accepts the payloads.
