@@ -23,8 +23,8 @@ tools:
 ## Setup
 
 1. [Bing Webmaster Tools](https://www.bing.com/webmasters/) → **Settings** → **API Access** → **Generate API Key**
-2. Store it: `aidevops secret set BING_WEBMASTER_API_KEY` (account form `BING_WEBMASTER_API_KEY_<ACCOUNT>`, as read by `seo-export-bing.sh`)
-3. Run curl with the key injected, never printed: `aidevops secret BING_WEBMASTER_API_KEY -- sh -c 'curl -s -G "https://ssl.bing.com/webmaster/api.svc/json/GetUserSites" --data-urlencode "apikey=$BING_WEBMASTER_API_KEY"'`
+2. Store it: `aidevops secret set BING_WEBMASTER_API_KEY`. For an account-specific key use `BING_WEBMASTER_API_KEY_<ACCOUNT>` instead and inject that name in step 3 (`seo-export-bing.sh` uses a suffixed key only when exactly one exists)
+3. Run curl inside the wrapper so the key is injected, never printed: `aidevops secret BING_WEBMASTER_API_KEY -- sh -c 'BASE=https://ssl.bing.com/webmaster/api.svc/json; KEY=$BING_WEBMASTER_API_KEY; curl -s -G "$BASE/GetUserSites" --data-urlencode "apikey=$KEY"'`
 
 ## API Operations (`BASE="https://ssl.bing.com/webmaster/api.svc/json"`)
 
@@ -79,7 +79,7 @@ curl -s -G "$BASE/GetFeedStats" \
 
 ## New Site Setup
 
-Add, verify and submit a new site with no browser sign-in. Run the calls through `aidevops secret BING_WEBMASTER_API_KEY -- sh -c '...'`; `$KEY` below stands for the injected `BING_WEBMASTER_API_KEY`.
+Add, verify and submit a new site with no browser sign-in. Run every call inside the wrapper from Setup step 3, which sets `BASE` and `KEY` (`KEY=$BING_WEBMASTER_API_KEY`, or the suffixed variable for an account key) before the commands below.
 
 ### 1. List sites
 
