@@ -14,7 +14,7 @@
 #      written by `gcloud auth application-default login`, including keyless
 #      `--impersonate-service-account=<sa>` setups
 #
-# Tokens always request the Search Console read-only scope; Search Console
+# Tokens request the read-only scope unless the caller passes scopes; Search Console
 # rejects unscoped service-account ADC tokens (GH#32843). Functions print
 # results only and never log credentials; callers own error messages.
 #
@@ -26,6 +26,8 @@
 _GSC_AUTH_LIB_LOADED=1
 
 GSC_ADC_SCOPE="https://www.googleapis.com/auth/webmasters.readonly"
+GSC_SITE_VERIFICATION_SCOPE="https://www.googleapis.com/auth/siteverification"
+GSC_WEBMASTERS_SCOPE="https://www.googleapis.com/auth/webmasters"
 
 # Print the ADC file to use, or nothing when none is configured.
 gsc_adc_credential_file() {
@@ -41,15 +43,16 @@ gsc_adc_credential_file() {
 	return 0
 }
 
-# gsc_adc_access_token <credential-file>
+# gsc_adc_access_token <credential-file> [comma-separated-scopes]
 # Print a Search Console-scoped access token; return 1 when gcloud cannot
 # produce one (missing file, missing gcloud, or a refresh/reauth failure).
 gsc_adc_access_token() {
 	local _cred_file="$1"
+	local _scopes="${2:-$GSC_ADC_SCOPE}"
 	local _token=""
 	[[ -n "$_cred_file" && -f "$_cred_file" ]] || return 1
 	_token=$(GOOGLE_APPLICATION_CREDENTIALS="$_cred_file" \
-		gcloud auth application-default print-access-token --scopes="$GSC_ADC_SCOPE" 2>/dev/null) || _token=""
+		gcloud auth application-default print-access-token --scopes="$_scopes" 2>/dev/null) || _token=""
 	[[ -n "$_token" ]] || return 1
 	printf '%s\n' "$_token"
 	return 0
