@@ -34,7 +34,7 @@ tools:
 
 ## Setup
 
-Spaceship Dashboard → API Manager → New API key (grant `domains:read`, plus `domains:write` / `dnsrecords:*` as needed, and `domains:transfer` for `lock`, `unlock`, `transfer-status`). Store both values with `aidevops secret set` (names above), then run the helper through secret injection so values never appear in output:
+Spaceship Dashboard → API Manager → New API key (grant `domains:read`, plus `domains:write` / `dnsrecords:*` as needed, `domains:transfer` for `lock`, `unlock`, `transfer-status`, `domains:billing` for `purchase`, and `asyncoperations:read` for `operation-status`). Store both values with `aidevops secret set` (names above), then run the helper through secret injection so values never appear in output:
 
 ```bash
 aidevops secret SPACESHIP_PERSONAL_API_KEY SPACESHIP_PERSONAL_API_SECRET -- \

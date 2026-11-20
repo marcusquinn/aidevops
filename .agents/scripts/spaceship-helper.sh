@@ -454,9 +454,19 @@ update_dns_record() {
         exit 1
     fi
     
-    local del_data add_data
-    del_data=$(dns_record_payload "$name" "$type" "$old_content" "3600" | jq -c '[del(.ttl)]')
-    add_data=$(dns_record_payload "$name" "$type" "$content" "$ttl" | jq -c '{force: true, items: [.]}')
+    # Build and validate both payloads before DELETE so a bad TTL/content never
+    # removes the working record.
+    local del_payload add_payload del_data add_data
+    if ! del_payload=$(dns_record_payload "$name" "$type" "$old_content" "3600") || [[ -z "$del_payload" ]] ||
+        ! add_payload=$(dns_record_payload "$name" "$type" "$content" "$ttl") || [[ -z "$add_payload" ]]; then
+        print_error "Invalid DNS record values (check TTL and content); nothing was changed"
+        return 1
+    fi
+    if ! del_data=$(echo "$del_payload" | jq -c '[del(.ttl)]') || [[ -z "$del_data" ]] ||
+        ! add_data=$(echo "$add_payload" | jq -c '{force: true, items: [.]}') || [[ -z "$add_data" ]]; then
+        print_error "Failed to build DNS payloads; nothing was changed"
+        return 1
+    fi
     
     print_info "Replacing DNS record: $name $type ($old_content -> $content)"
     local response
