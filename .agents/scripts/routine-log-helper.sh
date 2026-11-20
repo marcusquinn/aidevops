@@ -143,19 +143,11 @@ _read_state() {
 	if [[ -n "$raw_issue" ]] && ! _is_valid_issue_number "$raw_issue"; then
 		if healed_issue=$(_heal_issue_number "$raw_issue") &&
 			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
-			# Compare-and-swap: persist the repair only if the file still holds
-			# the snapshot we read, so a concurrent cmd_update's newer run
-			# metrics are never overwritten by this read-path repair.
-			local current_state
-			current_state=$(cat "$state_file" 2>/dev/null || true)
-			if [[ "$current_state" != "$state" ]]; then
-				_log_warn "State for ${routine_id} changed during issue_number repair; skipping persisted repair (healed in memory)"
-				state="$healed_state"
-			elif state="$healed_state" && _write_state_atomic "$routine_id" "$state"; then
-				_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
-			else
-				_log_warn "Healed issue_number for ${routine_id} to #${healed_issue} in memory only; could not write ${state_file}"
-			fi
+			# Read-path repair stays in memory only: writing here would race
+			# with unlocked state writers and could clobber their newer data.
+			# The next full-state write persists the healed value.
+			state="$healed_state"
+			_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} in memory (GH#39144); persisted on next state write"
 		else
 			_log_warn "Malformed issue_number for ${routine_id} could not be healed; fix ${state_file} manually"
 		fi
