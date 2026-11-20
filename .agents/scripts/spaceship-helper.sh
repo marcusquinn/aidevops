@@ -713,8 +713,13 @@ monitor_expiration() {
     local days_threshold="${2:-30}"
 
     print_info "Monitoring domain expiration (threshold: $days_threshold days)"
-    local response
-    if response=$(api_request "$account_name" "GET" "${DOMAINS_ENDPOINT}?take=100&skip=0"); then
+    local response skip=0 total=1
+    while [[ "$skip" -lt "$total" ]]; do
+        if ! response=$(api_request "$account_name" "GET" "${DOMAINS_ENDPOINT}?take=100&skip=${skip}"); then
+            print_error "Failed to retrieve domain expiration data"
+            echo "$response"
+            return 1
+        fi
         echo "$response" | jq -r --arg threshold "$days_threshold" '
             def days: ((.expirationDate | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) - now) / 86400;
             .items[] |
@@ -722,10 +727,9 @@ monitor_expiration() {
             select(days < ($threshold | tonumber)) |
             "\(.name) expires on \(.expirationDate) (\(days | floor) days)"
         '
-    else
-        print_error "Failed to retrieve domain expiration data"
-        echo "$response"
-    fi
+        total=$(echo "$response" | jq -r '.total // 0')
+        skip=$((skip + 100))
+    done
     return 0
 }
 
