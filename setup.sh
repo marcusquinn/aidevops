@@ -1939,7 +1939,7 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_stats_wrapper; then
 		_time_step "setup_stats_wrapper" setup_stats_wrapper "${PULSE_ENABLED:-}"
 	fi
-	if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
+	if _should_setup_noninteractive_failure_miner; then
 		_time_step "setup_failure_miner" setup_failure_miner "${PULSE_ENABLED:-}"
 	fi
 	if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
