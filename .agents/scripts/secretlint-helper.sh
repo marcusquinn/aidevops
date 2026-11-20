@@ -619,12 +619,9 @@ list_summary_candidates() {
 	return 0
 }
 
-# Content-free scan summary for AI sessions: file paths, per-file rule IDs and
-# counts, and excluded paths. Never emits sourceContent, messages, data or ranges.
-run_secretlint_summary() {
-	local target="${1:-${DEFAULT_GLOB_PATTERN}}"
-	local include_untracked="${2:-}"
-
+# Validate summary prerequisites (target, config, jq, installed rules).
+validate_summary_prereqs() {
+	local target="${1:-}"
 	if [[ "${target}" == *";"* ]] || [[ "${target}" == *"|"* ]] || [[ "${target}" == *"&"* ]] || [[ "${target}" == *"\`"* ]]; then
 		print_error "Invalid target pattern: contains forbidden characters"
 		return 1
@@ -637,12 +634,44 @@ run_secretlint_summary() {
 		print_error "jq is required for summary mode"
 		return 2
 	fi
-
 	local rules_check=0
 	check_rules_installed "${SECRETLINT_CONFIG_FILE}" >/dev/null 2>&1 || rules_check=$?
 	if [[ "${rules_check}" -eq 1 ]]; then
 		print_error "Secretlint rules not properly installed. Run: $0 install"
 		return 2
+	fi
+	return 0
+}
+
+# Reduce raw secretlint JSON (stdin) to content-free summary lines.
+summarise_scan_json() {
+	local candidates_file="${1:-}"
+	local root="${2:-}"
+	jq -r --rawfile candidates "${candidates_file}" --arg root "${root}" '
+		def rel: if startswith($root) then .[($root | length):] else . end;
+		[.[] | {path: (.filePath | rel), count: (.messages | length), rules: ([.messages[].ruleId] | unique)}] as $files
+		| ($files | map(.path)) as $scanned
+		| ($candidates | split("\n") | map(select(. != ""))) as $cand
+		| ($cand - $scanned) as $excluded
+		| ($files | map(select(.count > 0))) as $flagged
+		| "scanned: \($files | length)",
+		  "flagged: \($flagged | length)",
+		  "excluded: \($excluded | length)",
+		  ($flagged[] | "finding: \(.path)\t\(.rules | join(","))\t\(.count)"),
+		  ($excluded[] | "excluded-path: \(.)")
+	'
+	return $?
+}
+
+# Content-free scan summary for AI sessions: file paths, per-file rule IDs and
+# counts, and excluded paths. Never emits sourceContent, messages, data or ranges.
+run_secretlint_summary() {
+	local target="${1:-${DEFAULT_GLOB_PATTERN}}"
+	local include_untracked="${2:-}"
+	local prereq_status=0
+	validate_summary_prereqs "${target}" || prereq_status=$?
+	if [[ "${prereq_status}" -ne 0 ]]; then
+		return "${prereq_status}"
 	fi
 
 	local cmd cmd_array
@@ -664,45 +693,29 @@ run_secretlint_summary() {
 	# Raw scanner output contains file contents: it only ever flows into jq.
 	local scan_status=0 jq_status=0
 	set +e
-	"${cmd_array[@]}" 2>/dev/null | jq -r --rawfile candidates "${candidates}" --arg root "${PWD}/" '
-		def rel: if startswith($root) then .[($root | length):] else . end;
-		[.[] | {path: (.filePath | rel), count: (.messages | length), rules: ([.messages[].ruleId] | unique)}] as $files
-		| ($files | map(.path)) as $scanned
-		| ($candidates | split("\n") | map(select(. != ""))) as $cand
-		| ($cand - $scanned) as $excluded
-		| ($files | map(select(.count > 0))) as $flagged
-		| "scanned: \($files | length)",
-		  "flagged: \($flagged | length)",
-		  "excluded: \($excluded | length)",
-		  ($flagged[] | "finding: \(.path)\t\(.rules | join(","))\t\(.count)"),
-		  ($excluded[] | "excluded-path: \(.)")
-	' >"${summary}"
+	"${cmd_array[@]}" 2>/dev/null | summarise_scan_json "${candidates}" "${PWD}/" >"${summary}"
 	local statuses=("${PIPESTATUS[@]}")
 	scan_status=${statuses[0]}
 	jq_status=${statuses[1]}
 	set -e
-	rm -f "${candidates}"
 
-	local flagged_count=0
+	local flagged_count=0 result=0
 	if [[ "${scan_status}" -ne 0 ]] && [[ "${scan_status}" -ne 1 ]]; then
-		rm -rf "${work}"
 		print_error "Scan failed (exit ${scan_status}) - no summary produced"
-		return 2
-	fi
-	if [[ "${jq_status}" -ne 0 ]] || [[ ! -s "${summary}" ]]; then
-		rm -rf "${work}"
+		result=2
+	elif [[ "${jq_status}" -ne 0 ]] || [[ ! -s "${summary}" ]]; then
 		print_error "Scan output could not be summarised - no summary produced"
-		return 2
+		result=2
+	else
+		flagged_count=$(sed -n 's/^flagged: //p' "${summary}")
+		echo "target: ${target}"
+		cat "${summary}"
+		if [[ "${flagged_count}" -gt 0 ]] || [[ "${scan_status}" -eq 1 ]]; then
+			result=1
+		fi
 	fi
-
-	flagged_count=$(sed -n 's/^flagged: //p' "${summary}")
-	echo "target: ${target}"
-	cat "${summary}"
 	rm -rf "${work}"
-	if [[ "${flagged_count}" -gt 0 ]] || [[ "${scan_status}" -eq 1 ]]; then
-		return 1
-	fi
-	return 0
+	return "${result}"
 }
 
 # Run quick scan via npx (no installation)
