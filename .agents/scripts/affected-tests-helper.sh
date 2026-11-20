@@ -88,8 +88,8 @@ if args.command == "all":
 merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
 # Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
-changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
-changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
+changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts", "aidevops.sh"], text=True).splitlines()
+changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts", "aidevops.sh"], text=True).splitlines()
 if args.command == "all":
     changed = []
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))

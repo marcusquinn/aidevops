@@ -7,6 +7,8 @@
 # Asserts that `aidevops security dismiss <id>` records the exact requested
 # advisory ID (including supply-chain IDs such as TanStack and keyv) in
 # dismissed.txt, never a hardcoded ID-to-helper mapping.
+# Exercises aidevops.sh and secret-hygiene-helper.sh (named here so
+# affected-tests-helper.sh selects this suite when either changes).
 
 set -uo pipefail
 
