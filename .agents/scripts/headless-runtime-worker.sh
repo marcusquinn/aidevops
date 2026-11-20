@@ -378,6 +378,12 @@ _recover_worker_output_on_failure() {
 		pr_handoff=$(_pr_handoff_state_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug" \
 			"branch-or-issue" "$local_head" 1)
 		local pr_state="${pr_handoff%%|*}"
+		# t19201: same closed-issue rule as the success path (t19196). Only a
+		# closed issue upgrades; open or unreadable keeps retention below.
+		if [[ "$pr_state" == "merged_missing_summary" ]] && \
+			[[ "$(_hrw_merged_pr_output_class "$pr_state" "$repo_slug" "$issue_number")" == "pr_exists" ]]; then
+			pr_state="merged"
+		fi
 		if [[ "$pr_state" == "$_HRW_HANDOFF_READY" || "$pr_state" == "merged" ]]; then
 			if [[ "$pr_state" == "$_HRW_HANDOFF_READY" ]] && ! _hrw_reconcile_worker_handoff_origin "$session_key" "$work_dir"; then
 				_HRW_RECOVERY_CLASSIFICATION="$_HRW_REASON_ORIGIN_RECONCILIATION_FAILED"

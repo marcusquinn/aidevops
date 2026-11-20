@@ -82,6 +82,42 @@ run_worker_no_output_classification_tests() {
 	test_already_satisfied_completion_evidence
 	test_signal_less_exit_after_own_pr_handoff
 	test_merged_missing_summary_output_class
+	test_merged_missing_summary_failure_recovery
+	return 0
+}
+
+# t19201: failure recovery applies the same closed-issue rule. A closed issue
+# releases as worker_complete; an open or unreadable issue retains the claim.
+test_merged_missing_summary_failure_recovery() {
+	local work_dir="${TEST_ROOT}/repo-recovery-merged-missing-summary"
+	_setup_test_git_repo "$work_dir" 0
+	local fixture_issue expected got
+	for fixture_issue in closed open unreadable; do
+		expected="classification=worker_merged_missing_summary|release=none"
+		[[ "$fixture_issue" != closed ]] || expected="classification=worker_complete|release=worker_complete"
+		got=$(
+			(
+				DISPATCH_REPO_SLUG="owner/repo"
+				local release_reason="none"
+				_pr_handoff_state_for_branch_or_issue() { printf 'merged_missing_summary|7'; return 0; }
+				_hrw_release_dispatch_claim() { release_reason="$2"; return 0; }
+				print_info() { return 0; }
+				print_warning() { return 0; }
+				gh() {
+					[[ "$fixture_issue" != unreadable ]] || return 1
+					printf '%s\n' "$fixture_issue"
+					return 0
+				}
+				_recover_worker_output_on_failure "issue-99999" "$work_dir"
+				printf 'classification=%s|release=%s' "$_HRW_RECOVERY_CLASSIFICATION" "$release_reason"
+			)
+		)
+		if [[ "$got" == "$expected" ]]; then
+			print_result "failure recovery merged_missing_summary with ${fixture_issue} issue: ${expected}" 0
+		else
+			print_result "failure recovery merged_missing_summary with ${fixture_issue} issue: ${expected}" 1 "got: '${got}'"
+		fi
+	done
 	return 0
 }
 
