@@ -31,12 +31,21 @@ test_automatic_maintenance_is_bounded_and_policy_bound() {
 	protected_bucket="${archive_protected%/*}"
 	# The existing clear-evidence fixture permits a size differential without
 	# adding any production/test interface. One slot must select the larger bucket.
-	python3 - "$archive_b" <<'PY' || rc=1
+	# Guard against empty fixture paths so failures never write into the CWD.
+	if [[ -n "$archive_b" && -d "$archive_b" ]]; then
+		python3 - "$archive_b" <<'PY' || rc=1
 from pathlib import Path
 import sys
 Path(sys.argv[1], "size-fixture").write_bytes(b"x" * 1048576)
 PY
-	printf 'pending\n' >"${protected_bucket}/${_WT_RECOVERY_DIR_NAME}/source-removal-outcome" || rc=1
+	else
+		rc=1
+	fi
+	if [[ -n "$archive_protected" && -d "${protected_bucket}/${_WT_RECOVERY_DIR_NAME}" ]]; then
+		printf 'pending\n' >"${protected_bucket}/${_WT_RECOVERY_DIR_NAME}/source-removal-outcome" || rc=1
+	else
+		rc=1
+	fi
 	install_clear_evidence_stubs
 	output=$(
 		uname() {
