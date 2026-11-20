@@ -7,11 +7,24 @@ import concurrent.futures
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
 
 HELPER = Path(__file__).resolve().parents[1] / "secretlint-helper.sh"
+
+
+def expect(condition, detail):
+    if not condition:
+        raise AssertionError(detail)
+
+
+def invoke(command, cwd, env):
+    return subprocess.run(
+        command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=30, check=False,
+    )
 
 
 def main():
@@ -77,8 +90,9 @@ def main():
         (project / "found.txt").write_text(marker, encoding="utf-8")
         (project / "skipped.txt").write_text(marker, encoding="utf-8")
         ignore.write_text(marker + "\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-q"], cwd=project, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+        git = shutil.which("git", path=environment["PATH"])
+        for git_args in (["init", "-q"], ["add", "-A"]):
+            invoke([git, *git_args], project, environment)
         real_project = Path(os.path.realpath(project))
         scanned = json.dumps([
             {"filePath": str(real_project / "kept.txt"), "sourceContent": marker, "messages": []},
@@ -91,35 +105,25 @@ def main():
         results_file.write_text(scanned, encoding="utf-8")
         summary_env = {**environment, "SCAN_JSON": str(results_file)}
 
-        def summary(exit_code):
-            return subprocess.run(
-                ["bash", str(HELPER), "summary"], cwd=project,
-                env={**summary_env, "SCAN_EXIT": str(exit_code)},
-                stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                timeout=30, check=False,
-            )
+        def summary(exit_code, env=summary_env):
+            return invoke(["bash", str(HELPER), "summary"], project,
+                          {**env, "SCAN_EXIT": str(exit_code)})
 
         result = summary(1)
         output = result.stdout + result.stderr
-        assert result.returncode == 1, result
-        assert marker not in output and "sourceContent" not in output, result
-        assert "excluded-path: skipped.txt" in output, result
-        assert "excluded-path: .secretlintignore" in output, result
-        assert "finding: found.txt\tsynthetic-rule\t2" in output, result
-        assert "scanned-path: kept.txt" in output, result
-        assert "scanned: 2" in output and "flagged: 1" in output, result
-        result = summary(0)
-        assert result.returncode == 1, "findings must not look clean"
-        result = subprocess.run(
-            ["bash", str(HELPER), "summary"], cwd=project,
-            env={**environment, "SCAN_EXIT": "2"}, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        assert result.returncode == 2, result
-        assert "scanned:" not in result.stdout, "fatal scan printed a summary"
+        expect(result.returncode == 1, result)
+        expect(marker not in output and "sourceContent" not in output, result)
+        for line in ("excluded-path: skipped.txt", "excluded-path: .secretlintignore",
+                     "finding: found.txt\tsynthetic-rule\t2", "scanned-path: kept.txt",
+                     "scanned: 2", "flagged: 1"):
+            expect(line in output, result)
+        expect(summary(0).returncode == 1, "findings must not look clean")
+        result = summary(2, environment)
+        expect(result.returncode == 2, result)
+        expect("scanned:" not in result.stdout, "fatal scan printed a summary")
         results_file.write_text("[]", encoding="utf-8")
         result = summary(0)
-        assert result.returncode == 0 and "scanned: 0" in result.stdout, result
+        expect(result.returncode == 0 and "scanned: 0" in result.stdout, result)
     print("PASS scan/lint missing config, concurrency, explicit init, configured exit codes, content-free summary")
 
 
