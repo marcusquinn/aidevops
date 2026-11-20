@@ -63,23 +63,58 @@ def listed_names(lines, index, value):
     return block_items(lines[index + 1:])
 
 
+RUN_KEY = re.compile(r'(?:^|[\s{,])["\']?workflow_run["\']?\s*:')
+WORKFLOWS_KEY = re.compile(
+    r'(?:^|[\s{,\-])(?:"workflows"|\'workflows\'|workflows)\s*:\s*(.*)$'
+)
+BLOCK_SCALAR = re.compile(r'^([>|])([+-]?)\d*$')
+
+
+def indent_of(line):
+    return len(line) - len(line.lstrip())
+
+
 def declared_names(lines):
-    """Names under any `workflows:` key that follows a workflow_run key."""
+    """Names under a `workflows:` key inside the workflow_run mapping only."""
     names = []
-    seen_run = False
+    run_indent = None
     for i, line in enumerate(lines):
-        seen_run = seen_run or 'workflow_run' in line
-        match = re.search(r'\bworkflows:\s*(.*)$', line)
-        if seen_run and match:
+        if not line.strip():
+            continue
+        if run_indent is not None and indent_of(line) <= run_indent:
+            run_indent = None
+        if run_indent is None and RUN_KEY.search(line):
+            run_indent = indent_of(line)
+        if run_indent is None:
+            continue
+        match = WORKFLOWS_KEY.search(line)
+        if match:
             names += listed_names(lines, i, match.group(1).strip())
     return names
 
 
+def block_scalar(lines, index, style, chomp):
+    """Value of a folded (>) or literal (|) block scalar after lines[index]."""
+    body = []
+    for line in lines[index + 1:]:
+        if line.strip() and indent_of(line) == 0:
+            break
+        body.append(line.strip())
+    while body and not body[-1]:
+        body.pop()
+    text = (' ' if style == '>' else '\n').join(body)
+    return text if chomp == '+' else text.rstrip('\n')
+
+
 def workflow_name(lines):
-    for line in lines:
+    for index, line in enumerate(lines):
         match = re.match(r'^name:\s*(.+)$', line)
         if match:
-            return unq(match.group(1))
+            value = match.group(1).strip()
+            scalar = BLOCK_SCALAR.match(value)
+            if scalar:
+                return block_scalar(lines, index, scalar.group(1), scalar.group(2))
+            return unq(value)
     return None
 
 
