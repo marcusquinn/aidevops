@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.252] - 2026-11-20
+
+### Added
+
+- per-repo file-size exemptions via .aidevops.json complexity.file_size_exclude
+- root-owned operator approval records replace inherited-pipe HMAC (GH#39508)
+- add Search Console new-property setup helper and docs (GH#39502) (#39507)
+
+### Changed
+
+- Maintenance: define macOS acceptance for the installed-runtime worktree lifecycle canary
+- Performance: reuse in-pass git evidence in archive capture callers (partial)
+- Maintenance: record macOS installed-runtime lifecycle canary in rollout matrix
+
+### Fixed
+
+- answer privacy-guard probe in framework-routing test gh stub (#39534)
+- skip resume when the prior attempt head already merged
+
 ## [3.39.251] - 2026-11-20
 
 ### Added
