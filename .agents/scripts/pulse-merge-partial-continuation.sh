@@ -384,7 +384,8 @@ _pmpc_pr_body_has_closing_ref() {
 # Resolve a title target corroborated by a visible For/Ref body reference.
 # Unlike the shared explicit resolver, secondary sections and mid-line refs
 # are eligible here: the title independently identifies the partial's target.
-# Args: $1=PR number, $2=repo slug, $3=optional PR body (title stays live)
+# Args: $1=PR number, $2=repo slug, $3=optional PR body (title stays live
+#       unless _pmpc_pr_may_own_issue scoped a timeline hint for this PR)
 # Stdout: corroborated issue number
 # Returns: 0 when corroborated, 1 when absent or unreadable
 #######################################
@@ -392,8 +393,9 @@ _pmpc_corroborated_target() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local supplied_body="${3-}"
-	local pr_title="" pr_body="" title_target="" target=""
-	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 1
+	local pr_title="" pr_body="" title_target="" target="" title_hint=""
+	[[ "${_PMPC_SOURCE_PR:-}" != "$pr_number" ]] || title_hint="${_PMPC_SOURCE_JSON:-}"
+	pr_title=$(_pmpc_pr_field "$pr_number" "$repo_slug" title "$title_hint") || return 1
 	[[ "$pr_title" =~ ^(t|GH#)([0-9]+)([^[:alnum:]_]|$) ]] || return 1
 	title_target="${BASH_REMATCH[2]}"
 	if [[ "$#" -ge 3 ]]; then
@@ -1144,15 +1146,19 @@ _pmpc_list_candidates() {
 # the revisit walk before an older partial that does target the issue.
 # Mirrors the guard's resolution: closing target, then explicit target, then a
 # title target corroborated by the body. Uncertainty hands the PR to the guard.
-# Args: $1=PR number, $2=repo slug, $3=issue number
+# GH#39493: $4 is the PR's timeline source object; its body/title spare one to
+# three live reads per walked PR. A missing field falls back to a live read.
+# Args: $1=PR number, $2=repo slug, $3=issue number, $4=optional source JSON
 # Stdout: the sibling issue a closing PR closes (empty otherwise)
 # Returns: 0 when the PR closes or targets the issue, or its metadata is
 #          unreadable or ambiguous (the guard decides); 1 when it provably
 #          closes or targets another issue, or no issue at all (skip)
 _pmpc_pr_may_own_issue() {
-	local pr_number="$1" repo_slug="$2" issue_num="$3"
+	local pr_number="$1" repo_slug="$2" issue_num="$3" source_json="${4:-}"
 	local pr_body="" closing="" pr_title="" body_rc=0 work_target=""
-	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || return 0
+	# Dynamic scope: _pmpc_corroborated_target reads the title hint for this PR only.
+	local _PMPC_SOURCE_PR="$pr_number" _PMPC_SOURCE_JSON="$source_json"
+	pr_body=$(_pmpc_pr_field "$pr_number" "$repo_slug" body "$source_json") || return 0
 	closing=$(_extract_linked_issue "$pr_number" "$repo_slug" "$pr_body" 2>/dev/null) || return 0
 	if [[ -n "$closing" ]]; then
 		[[ "$closing" == "$issue_num" ]] && return 0
@@ -1164,9 +1170,33 @@ _pmpc_pr_may_own_issue() {
 	[[ "$body_rc" -eq 1 ]] || return 0
 	work_target=$(_extract_pr_work_issue "$pr_number" "$repo_slug" explicit "$pr_body" 2>/dev/null) || return 0
 	[[ "$work_target" == "$issue_num" ]] && return 0
-	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || return 0
+	pr_title=$(_pmpc_pr_field "$pr_number" "$repo_slug" title "$source_json") || return 0
 	[[ "$pr_title" =~ ^(t|GH#)${issue_num}([^[:alnum:]_]|$) ]] && return 0
 	return 1
+}
+
+# GH#39493: read a merged PR's body or title from its timeline source object,
+# else live. A null body is GitHub's empty body; a title must be a string.
+# Args: $1=PR number, $2=repo slug, $3=field (body|title), $4=optional source JSON
+# Stdout: the field value
+# Returns: 0 when read, 1 when the live read fails
+_pmpc_pr_field() {
+	local pr_number="$1" repo_slug="$2" field="$3" source_json="${4:-}" value="" nullable=false
+	[[ "$field" != body ]] || nullable=true
+	# No output (an absent or non-string field) makes jq -e exit 4: read live.
+	if [[ -n "$source_json" ]] && value=$(jq -er --arg f "$field" --argjson nullable "$nullable" '
+		if (.[$f] | type) == "string" then .[$f]
+		elif $nullable and has($f) and .[$f] == null then ""
+		else empty end' <<<"$source_json" 2>/dev/null); then
+		printf '%s' "$value"
+		return 0
+	fi
+	if [[ "$field" == body ]]; then
+		gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null
+		return $?
+	fi
+	gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null
+	return $?
 }
 
 # Revisit one in-review issue: walk its merged cross-referenced PRs newest
@@ -1175,30 +1205,34 @@ _pmpc_pr_may_own_issue() {
 # issue, or none (GH#38869, GH#39254), is skipped so it cannot hide an older
 # eligible partial; the first PR that may own this issue goes to the guard and
 # ends the walk. At most PULSE_PARTIAL_REVISIT_MAX_PRS PRs are examined.
+# GH#39493: each row carries the PR's timeline body/title (compact JSON has no
+# literal tab or newline), so skipping a PR needs no per-PR read.
 # Args: $1=repo slug, $2=issue number
 # Returns: 0 when handled or nothing to do, 1 on an unreadable timeline
 _pmpc_revisit_in_review_issue() {
-	local repo_slug="$1" issue_num="$2" timeline="" pr_numbers="" pr_number="" sibling=""
+	local repo_slug="$1" issue_num="$2" timeline="" pr_rows="" pr_number="" sibling="" source_json=""
 	local max_prs="${PULSE_PARTIAL_REVISIT_MAX_PRS:-10}" walked=0
 	[[ "$max_prs" =~ ^[1-9][0-9]{0,2}$ ]] || max_prs=10
 	timeline=$(_pmpc_gh_read api "repos/${repo_slug}/issues/${issue_num}/timeline?per_page=100" --paginate --slurp 2>/dev/null) || return 1
-	pr_numbers=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" '
+	pr_rows=$(printf '%s' "$timeline" | jq -r --arg repo "https://api.github.com/repos/${repo_slug}" \
+		--arg body_key body --arg title_key title '
 		if type != "array" then error("unreadable timeline")
 		elif (.[0]? | type) == "array" then [.[][]] else . end
 		| [ .[] | select(.event == "cross-referenced") | .source.issue
 			| select(.repository_url == $repo and (.pull_request.merged_at | type) == "string") ]
 		| sort_by(.pull_request.merged_at, .number) | reverse | .[]
-		| if (.number | type) == "number" then .number
+		| if (.number | type) == "number" then
+			"\(.number)\t\(with_entries(select(.key == $body_key or .key == $title_key)) | tojson)"
 			else error("unreadable PR number") end
 	' 2>/dev/null) || return 1
-	while IFS= read -r pr_number; do
+	while IFS=$'\t' read -r pr_number source_json; do
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
 		if [[ "$walked" -ge "$max_prs" ]]; then
 			echo "[pulse-wrapper] Deterministic merge: stopped #${issue_num} revisit after ${walked} merged PRs that target other issues (GH#39254)" >>"$LOGFILE"
 			return 0
 		fi
 		walked=$((walked + 1))
-		if ! sibling=$(_pmpc_pr_may_own_issue "$pr_number" "$repo_slug" "$issue_num"); then
+		if ! sibling=$(_pmpc_pr_may_own_issue "$pr_number" "$repo_slug" "$issue_num" "$source_json"); then
 			if [[ -n "$sibling" ]]; then
 				echo "[pulse-wrapper] Deterministic merge: skipped merged PR #${pr_number} in #${issue_num} revisit — it closes sibling issue #${sibling} (GH#38869)" >>"$LOGFILE"
 			else
@@ -1210,7 +1244,7 @@ _pmpc_revisit_in_review_issue() {
 		# and returns without a restore when this PR closes the issue.
 		_pm_restore_partial_continuation "$pr_number" "$repo_slug" "" "" "$issue_num"
 		return 0
-	done <<<"$pr_numbers"
+	done <<<"$pr_rows"
 	return 0
 }
 
