@@ -304,7 +304,18 @@ _store_headless_session_if_allowed() {
 	if _headless_run_is_ephemeral "$role"; then
 		return 0
 	fi
-	store_session_id "$provider" "$session_key" "$session_id" "$selected_model"
+	# GH#38982: bind the session to the head this attempt ended at (the
+	# caller's dynamic work_dir), so a later dispatch can tell delivered work.
+	local head_sha="" head_branch=""
+	if [[ "$session_key" == issue-* && -n "${work_dir:-}" && -d "${work_dir:-}" ]]; then
+		head_sha=$(git -C "$work_dir" rev-parse HEAD 2>/dev/null) || head_sha=""
+		head_branch=$(git -C "$work_dir" branch --show-current 2>/dev/null) || head_branch=""
+		[[ "$head_sha" =~ ^[0-9a-f]{40}$ && -n "$head_branch" ]] || {
+			head_sha=""
+			head_branch=""
+		}
+	fi
+	store_session_id "$provider" "$session_key" "$session_id" "$selected_model" "$head_sha" "$head_branch"
 	return $?
 }
 

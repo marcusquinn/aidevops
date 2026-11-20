@@ -223,6 +223,77 @@ test_terminal_delivery_release_clears_persisted_session() {
 	return 0
 }
 
+# GH#38982 defence in depth: a session whose recorded attempt head is the exact
+# head of a merged PR is not resumed; an unmerged, PR-less or unrecorded head
+# keeps --session/--continue. Also covers the head-column migration.
+test_prepare_attempt_skips_resume_for_merged_recorded_head() {
+	local failures=""
+	if ! failures=$(
+		export WORKER_REPO_SLUG="owner/one" DISPATCH_REPO_SLUG="owner/one"
+		local merged_head="1111111111111111111111111111111111111111"
+		local open_head="2222222222222222222222222222222222222222"
+		local nopr_head="3333333333333333333333333333333333333333"
+		_pr_handoff_state_for_branch_or_issue() {
+			[[ "$1" == feature/gh77 && "$2" == 77 && "$3" == owner/one && "$4" == head-only ]] || {
+				printf 'unknown|'
+				return 0
+			}
+			if [[ "$5" == "$merged_head" ]]; then
+				printf 'merged|501'
+			elif [[ "$5" == "$open_head" ]]; then
+				printf 'ready|502'
+			else
+				printf 'absent|'
+			fi
+			return 0
+		}
+		_recover_deleted_cwd_before_launch() { return 0; }
+		_prepare_runtime_prompt_transport() {
+			_HEADLESS_RUN_PROMPT_ARG="prompt"
+			_HEADLESS_RUN_PROMPT_FILE=""
+			_HEADLESS_CLAUDE_STDIN_FILE=""
+			return 0
+		}
+		print_info() { return 0; }
+		_prepare_cmd_text() {
+			local work_dir="$TEST_ROOT" role="worker" headless_runtime="opencode" prompt="prompt"
+			local force_file_transport=0 selected_model="anthropic/claude-sonnet-5-5"
+			local session_key="issue-77" title="title" agent_name="" variant_override=""
+			local persisted_session="" runtime="" provider="" metric_work_dir=""
+			local prompt_arg="" prompt_file_arg="" claude_stdin_file=""
+			local -a cmd=() extra_args=()
+			_prepare_run_attempt_command >/dev/null 2>&1 || printf 'prepare_rc '
+			printf '%s' "${cmd[*]}"
+			return 0
+		}
+		local head="" text=""
+		for head in "$merged_head" "$open_head" "$nopr_head" ""; do
+			store_session_id anthropic "issue-77" "ses_prior" "anthropic/claude-sonnet-5-5" "$head" "feature/gh77"
+			text=$(_prepare_cmd_text)
+			if [[ "$head" == "$merged_head" ]]; then
+				[[ "$text" != *--session* && "$text" != *--continue* && -z "$(get_session_id anthropic issue-77)" ]] ||
+					printf 'merged_head_resumed cmd=%s\n' "$text"
+			else
+				[[ "$text" == *"--session ses_prior --continue"* ]] ||
+					printf 'resume_lost head=%s cmd=%s\n' "${head:-<none>}" "$text"
+			fi
+		done
+		clear_session_id_all_providers "issue-77"
+		# Older state DBs gain the head columns without losing rows.
+		local legacy_db="${TEST_ROOT}/gh38982-legacy.db"
+		sqlite3 "$legacy_db" "CREATE TABLE provider_sessions (provider TEXT NOT NULL, session_key TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (provider, session_key)); INSERT INTO provider_sessions (provider, session_key, session_id, model) VALUES ('openai', 'owner/one#issue-9', 'ses_legacy', 'openai/gpt-5.5');"
+		_migrate_provider_sessions_head_columns "$legacy_db"
+		_migrate_provider_sessions_head_columns "$legacy_db"
+		[[ "$(sqlite3 "$legacy_db" "SELECT session_id || '|' || head_sha || '|' || head_branch FROM provider_sessions;")" == "ses_legacy||" ]] ||
+			printf 'legacy_migration_failed\n'
+	) || [[ -n "$failures" ]]; then
+		print_result "prepare attempt skips resume only for a merged recorded head" 1 "$failures"
+		return 0
+	fi
+	print_result "prepare attempt skips resume only for a merged recorded head" 0
+	return 0
+}
+
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
 	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"
