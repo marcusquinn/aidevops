@@ -13,6 +13,24 @@
 
 set -uo pipefail
 
+# Keep PR-identity validation independent of the host worker runtime: headless
+# sessions otherwise stamp origin:worker, which requires a `For #N` body line.
+export AIDEVOPS_SESSION_ORIGIN=interactive
+# An inherited runtime lifecycle identity routes worktree creation to the native
+# registry, which these Git fixtures do not provide (GH#39344).
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+# Registry state parents must be canonical; macOS TMPDIR sits behind /var -> /private/var.
+mktemp() {
+	local created=""
+	created=$(command mktemp "$@") || return 1
+	if [[ -d "$created" ]]; then
+		(cd "$created" && pwd -P) || return 1
+	else
+		printf '%s\n' "$created"
+	fi
+	return 0
+}
+
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
 TEST_NATIVE_GIT=$(command -p -v git) || {

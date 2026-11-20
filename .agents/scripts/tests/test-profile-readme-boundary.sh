@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# GH#39344: 31 fixture scenarios; about 470s observed on a loaded macOS host.
+# aidevops:suite-timeout=900
 
 set -euo pipefail
 
@@ -11,7 +13,8 @@ export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=commit.gpgsign
 export GIT_CONFIG_VALUE_0=false
-REAL_GIT=$(command -p -v git 2>/dev/null || command -v git)
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+REAL_GIT=$(PATH=$(command -p getconf PATH) command -v git 2>/dev/null || command -v git)
 export REAL_GIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit

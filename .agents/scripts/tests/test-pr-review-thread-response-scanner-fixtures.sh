@@ -498,6 +498,10 @@ DIRTY_BACKUP_STUB
 setup_test_env() {
 	unset INVOCATION_ID # Fixture workers do not belong to the host's service.
 	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
+	# GH#39344: a host continuation worker exports its own repair context, which
+	# turned ordinary review-thread fixtures into continuation workers.
+	unset AIDEVOPS_PR_REPAIR_NUMBER AIDEVOPS_PR_REPAIR_HEAD_SHA AIDEVOPS_PR_REPAIR_HEAD_REF
+	unset AIDEVOPS_PR_REPAIR_LINKED_ISSUE AIDEVOPS_PR_REPAIR_ISSUE_ASSIGNEE WORKER_REPO_SLUG
 	# Native lifecycle enrollment requires real Git metadata, not this fake repo.
 	export AIDEVOPS_LIFECYCLE_DISABLED=1
 	unset STUB_PR_LIST STUB_PR_VIEW STUB_PR_LABELS STUB_THREADS_MODE STUB_HANG_SECONDS STUB_GRAPHQL_COST_MODE STUB_PR_REPOSITORY_MODE STUB_REMOTE_HEAD STUB_GH_LOGIN

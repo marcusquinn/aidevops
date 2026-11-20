@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Regression tests for exact worktree recovery planning and explicit apply.
+# GH#39344: 73 fixture repositories; 1500s observed on a loaded macOS host.
+# aidevops:suite-timeout=1800
 
 set -euo pipefail
 
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
-TEST_NATIVE_GIT=$(command -p -v git) || {
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git 2>/dev/null || command -v git) || {
 	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
 	exit 1
 }
@@ -106,13 +109,16 @@ create_enrolled_worktree() {
 
 	# --initialize creates the state directory, which must be absent on first use.
 	# Short-lived creator: retirement waits for the creating caller to exit.
-	sleep 1 &
+	# GH#39344: keep it alive until creation returns; a fixed sleep raced
+	# registry startup on loaded hosts (process-identity-unavailable).
+	sleep 300 &
 	creator_pid=$!
 	python3 "$registry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
 		create-worktree --repo "$repo_path" --path "$worktree_path" --ref HEAD \
 		--pid "$creator_pid" --session-id fixture-creator --initialize \
 		-- "${git_args[@]}" >/dev/null || rc=$?
-	wait "$creator_pid" || true
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
 	return "$rc"
 }
 

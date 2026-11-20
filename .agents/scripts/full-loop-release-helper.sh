@@ -1141,6 +1141,14 @@ _full_loop_release_valid_argv() {
 
 if [[ $# -eq 1 && ( "${1:-}" == help || "${1:-}" == --help || "${1:-}" == -h ) ]]; then
 	_full_loop_release_usage
+	# GH#39344: `source full-loop-release-helper.sh help` loads the function
+	# library; exiting here ended the sourcing shell. Like the executable path
+	# it binds the repository and lifecycle owner, but creates no checkout.
+	if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+		REPO_ROOT=$(_full_loop_release_resolve_repo_root) || REPO_ROOT=""
+		_full_loop_release_declare_lifecycle_owner
+		return 0
+	fi
 	exit 0
 fi
 if ! _full_loop_release_valid_argv "$@"; then

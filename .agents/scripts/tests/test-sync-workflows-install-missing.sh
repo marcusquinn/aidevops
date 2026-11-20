@@ -8,6 +8,9 @@ set -uo pipefail
 
 # Keep the mocked provenance readback independent of the host worker runtime.
 export AIDEVOPS_SESSION_ORIGIN=interactive
+# An inherited runtime lifecycle identity routes worktree creation to the native
+# registry, which these Git fixtures do not provide (GH#39344).
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
@@ -63,6 +66,8 @@ assert_exit() {
 }
 
 test_root=$(mktemp -d) || exit 1
+# Registry state parents must be canonical; macOS TMPDIR sits behind /var -> /private/var.
+test_root=$(cd "$test_root" && pwd -P) || exit 1
 trap 'rm -rf "$test_root"' EXIT
 mkdir -p "$test_root/.config/aidevops" "$test_root/bin"
 for repo_name in admin maintain upstream local archived read inaccessible; do
@@ -100,8 +105,16 @@ if [[ "${1:-}" != "api" ]]; then
 	exit 0
 fi
 case "${2:-}" in
+repos/fake/apply/pulls/1/files*)
+	printf '%s\n' '[{"filename":".github/workflows/loc-badge.yml","status":"added","sha":"0000000000000000000000000000000000000001"}]'
+	;;
 repos/fake/apply/pulls\?state=open*)
-	printf '%s\n' '[]'
+	# The replacement PR must remain discoverable (vanished replacements fail closed).
+	if [[ -n "${MOCK_PR_HEAD:-}" ]]; then
+		printf '[{"number":1,"html_url":"https://github.com/fake/apply/pull/1","head":{"ref":"%s","repo":{"full_name":"fake/apply"}},"base":{"ref":"main"}}]\n' "$MOCK_PR_HEAD"
+	else
+		printf '%s\n' '[]'
+	fi
 	;;
 repos/marcusquinn/aidevops/releases/latest | repos/other/project/releases/latest)
 	printf '%s\n' 'v3.39.45'
@@ -328,14 +341,15 @@ for ref_case in release cli registry global; do
 		expected_ref=main
 		;;
 	esac
-	metrics_output=$(HOME="$test_root" PATH="$safe_path" \
+	metrics_output=$(MOCK_PR_HEAD="chore/metrics-$ref_case" HOME="$test_root" PATH="$safe_path" \
 		GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
 		AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
 		AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \
 		CANONICAL_GIT_GUARD_LOG="$test_root/canonical-git-guard.log" bash "$HELPER" \
 		--apply --repo fake/apply --workflow loc-badge --install-missing \
-		--branch "chore/metrics-$ref_case" "${ref_args[@]}" 2>&1)
-	assert_exit "metrics $ref_case install succeeds" 0 "$?"
+		--branch "chore/metrics-$ref_case" ${ref_args[@]+"${ref_args[@]}"} 2>&1)
+	metrics_rc=$?
+	assert_exit "metrics $ref_case install succeeds" 0 "$metrics_rc"
 	metrics_caller=$("$real_git" --git-dir="$apply_bare" show \
 		"chore/metrics-$ref_case:.github/workflows/loc-badge.yml")
 	assert_contains "metrics $ref_case uses expected ref" "$metrics_caller" \
@@ -447,7 +461,7 @@ cp "$test_root/registry.json" "$test_root/.config/aidevops/repos.json"
 # Restore the clean local checkout; remote main still has the legacy caller.
 cp "$SCRIPT_DIR/../../templates/workflows/loc-badge-caller.yml" \
 	"$apply_repo/.github/workflows/loc-badge.yml"
-migration_output=$(HOME="$test_root" PATH="$safe_path" \
+migration_output=$(MOCK_PR_HEAD=chore/pin-floating HOME="$test_root" PATH="$safe_path" \
 	GH_CALL_LOG="$test_root/gh.log" AIDEVOPS_TEMP_DIR="$test_root/agent-tmp" \
 	AIDEVOPS_WORKTREE_BASE_DIR="$test_root/worktrees" \
 	AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \

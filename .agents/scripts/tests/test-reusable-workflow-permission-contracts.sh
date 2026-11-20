@@ -8,7 +8,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 
-python3 - "$REPO_ROOT" <<'PYEOF'
+# Select the first python3 that can import PyYAML. Homebrew python3 often lacks
+# it while the macOS system interpreter has it (GH#39344). A missing parser
+# fails loudly: a skip that exits 0 would report unchecked contracts as passing.
+select_yaml_python() {
+	local candidate=""
+	local tabby_python="${HOME}/.aidevops/.agent-workspace/python-env/tabby/bin/python3"
+	for candidate in "${AIDEVOPS_TEST_PYTHON:-}" python3 /usr/bin/python3 "$tabby_python"; do
+		[[ -n "$candidate" ]] || continue
+		command -v "$candidate" >/dev/null 2>&1 || continue
+		if "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+if ! PYTHON_BIN="$(select_yaml_python)"; then
+	printf 'FAIL: no python3 with PyYAML found; install PyYAML or set AIDEVOPS_TEST_PYTHON\n' >&2
+	exit 1
+fi
+
+"$PYTHON_BIN" - "$REPO_ROOT" <<'PYEOF'
 from __future__ import annotations
 
 import pathlib
