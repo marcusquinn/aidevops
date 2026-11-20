@@ -985,7 +985,7 @@ _action_reconcile_stranded_consolidated() {
 		echo "[pulse-wrapper] Reconcile consolidated: deferred #${issue_num} in ${slug} — supersession lookup unavailable (GH#37600)" >>"$LOGFILE"
 		return 1
 	fi
-	IFS='|' read -r state _ successor <<<"$row"
+	IFS='|' read -r state _ successor _ <<<"$row"
 	[[ "$state" == "OPEN" ]] || return 1
 	if [[ "$successor" =~ ^[1-9][0-9]*$ ]]; then
 		_pir_stranded_close_superseded "$slug" "$issue_num" "$successor" && return 0

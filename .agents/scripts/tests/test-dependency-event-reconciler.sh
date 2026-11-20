@@ -190,6 +190,11 @@ supersession_fixture() {
 	for arg in "$@"; do
 		[[ "$arg" == number=* ]] && number="${arg#number=}"
 	done
+	if [[ "$number" == 10 && "${NO_SUCCESSOR:-false}" == "true" ]]; then
+		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",state:"CLOSED",stateReason:"NOT_PLANNED",
+			comments:{nodes:[{authorAssociation:"OWNER",body:"Publish nothing to this record."}]}}},rateLimit:{cost:1}}}'
+		return 0
+	fi
 	if [[ "$number" == 10 ]]; then
 		jq -cn '{data:{repository:{issueOrPullRequest:{__typename:"Issue",state:"CLOSED",stateReason:"NOT_PLANNED",
 			comments:{nodes:[{authorAssociation:"OWNER",body:"Superseded by #12. Continue there."}]}}},rateLimit:{cost:1}}}'
@@ -562,6 +567,23 @@ assert_eq 0 "$(run_reconcile)" "declared superseded blocker with an open success
 LIVE_REASON="COMPLETED"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked"
 assert_eq 1 "$(run_reconcile)" "declared completed blocker still releases the dependant"
+# GH#39500: a blocker closed not planned with no successor holds the dependant
+# and routes it to AI recovery instead of unblocking it.
+NATIVE_REASON="NOT_PLANNED" NO_SUCCESSOR=true NATIVE_EMPTY=false
+EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20="Blocked by #10"
+abandoned_summary=$(reconcile_dependants_after_verified_closure "owner/repo" 10 2>&1 >/dev/null || true)
+[[ "$abandoned_summary" == *"unblocked=0"* && "$abandoned_summary" == *"held=1"* ]] &&
+	pass "not-planned blocker without a successor is held, not unblocked" ||
+	fail "not-planned blocker without a successor is held, not unblocked ($abandoned_summary)"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+assert_eq 1 "$(run_reconcile)" "held dependant receives only the AI-recovery label edit"
+NATIVE_EMPTY=true LIVE_REASON="NOT_PLANNED"
+EDIT_COUNT=0 REREAD_LABELS="status:blocked"
+abandoned_summary=$(reconcile_dependants_after_verified_closure "owner/repo" 10 2>&1 >/dev/null || true)
+[[ "$abandoned_summary" == *"unblocked=0"* && "$abandoned_summary" == *"held=1"* ]] &&
+	pass "declared not-planned blocker without a successor is held" ||
+	fail "declared not-planned blocker without a successor is held ($abandoned_summary)"
+NO_SUCCESSOR=false
 unset DER_STALE_BLOCKED_SKIP_TTL_SECONDS
 NATIVE_EMPTY=false LIVE_REASON="" NATIVE_REASON=""
 

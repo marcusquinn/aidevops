@@ -17,6 +17,11 @@
 _DEPENDENCY_SUPERSESSION_LIB_LOADED=1
 
 DEP_SUPERSESSION_DETAIL=""
+# Set to 1 by dep_supersession_outstanding when a blocker was closed
+# NOT_PLANNED/DUPLICATE with no trusted successor and no trusted
+# "Dependants: proceed" release (GH#39500); callers route the dependant to
+# recovery instead of unblocking it.
+DEP_SUPERSESSION_ABANDONED=0
 
 #######################################
 # Closure reasons that can mean "continued elsewhere". COMPLETED and legacy
@@ -33,7 +38,9 @@ dep_supersession_reason_applies() {
 }
 
 #######################################
-# Read one hop and print "STATE|REASON|SUCCESSOR" (successor may be empty).
+# Read one hop and print "STATE|REASON|SUCCESSOR|PROCEED" (successor may be
+# empty; PROCEED is 1 when a trusted comment's first line is "Dependants:
+# proceed", which releases dependants of a blocker closed without a successor).
 # aidevops:trust-boundary — only OWNER/MEMBER/COLLABORATOR comments whose first
 # non-blank line starts "Superseded by #N" can name a successor; newest wins.
 # Args: $1 - repo slug, $2 - issue or PR number
@@ -64,12 +71,13 @@ query($owner:String!,$name:String!,$number:Int!) {
 	printf '%s' "$response" | jq -er '
 		.data.repository.issueOrPullRequest
 		| select(type == "object" and (.state | type) == "string")
-		| [.state, (.stateReason // ""),
-			([(.comments.nodes // [])[]
+		| [(.comments.nodes // [])[]
 				| select(type == "object")
 				| select((.authorAssociation // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
-				| (.body // "") | gsub("\r"; "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")
-				| capture("^\\s*Superseded by #(?<n>[0-9]+)\\b"; "i") | .n] | last // "")]
+				| (.body // "") | gsub("\r"; "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")] as $firsts
+		| [.state, (.stateReason // ""),
+			([$firsts[] | capture("^\\s*Superseded by #(?<n>[0-9]+)\\b"; "i") | .n] | last // ""),
+			(if any($firsts[]; test("^\\s*Dependants:\\s*proceed\\b"; "i")) then "1" else "0" end)]
 		| join("|")' 2>/dev/null
 	return $?
 }
@@ -101,8 +109,9 @@ dep_supersession_outstanding() {
 	local dependant_ref="${4:-}"
 	local origin="$number"
 	local max_hops="${DEP_SUPERSESSION_MAX_HOPS:-3}"
-	local hops=0 seen="," row="" state="" successor=""
+	local hops=0 seen="," row="" state="" successor="" proceed=""
 	DEP_SUPERSESSION_DETAIL=""
+	DEP_SUPERSESSION_ABANDONED=0
 	# COMPLETED, legacy empty and other reasons need no request.
 	dep_supersession_reason_applies "$reason" || return 1
 	[[ "$max_hops" =~ ^[1-9]$ ]] || max_hops=3
@@ -115,7 +124,7 @@ dep_supersession_outstanding() {
 			DEP_SUPERSESSION_DETAIL="supersession lookup failed for #${number}"
 			return 0
 		}
-		IFS='|' read -r state reason successor <<<"$row"
+		IFS='|' read -r state reason successor proceed <<<"$row"
 		case "$state" in
 		CLOSED | MERGED) ;;
 		OPEN)
@@ -129,7 +138,15 @@ dep_supersession_outstanding() {
 			;;
 		esac
 		dep_supersession_reason_applies "$reason" || return 1
-		[[ "$successor" =~ ^[1-9][0-9]*$ ]] || return 1
+		if [[ ! "$successor" =~ ^[1-9][0-9]*$ ]]; then
+			# GH#39500: closed not planned/duplicate with no successor is
+			# ambiguous (proceed vs abandoned subject). Hold unless a trusted
+			# "Dependants: proceed" comment releases it.
+			[[ "$proceed" == "1" ]] && return 1
+			DEP_SUPERSESSION_ABANDONED=1
+			DEP_SUPERSESSION_DETAIL="blocker #${number} closed ${reason} without a successor"
+			return 0
+		fi
 		# The dependant itself absorbed the work; waiting on it would deadlock.
 		_dep_supersession_same_ref "${repo}#${successor}" "$dependant_ref" && return 1
 		seen="${seen}${number},"
@@ -181,13 +198,13 @@ dep_supersession_open_successor() {
 	local number="$2"
 	local reason="${3:-}"
 	local max_hops="${DEP_SUPERSESSION_MAX_HOPS:-3}"
-	local hops=0 seen="," row="" state="" successor=""
+	local hops=0 seen="," row="" state="" successor="" _proceed=""
 	dep_supersession_reason_applies "$reason" || return 1
 	[[ "$max_hops" =~ ^[1-9]$ ]] || max_hops=3
 	[[ "$repo" =~ ^[^/[:space:]]+/[^/[:space:]]+$ && "$number" =~ ^[1-9][0-9]*$ ]] || return 1
 	while [[ "$hops" -le "$max_hops" ]]; do
 		row=$(_dep_supersession_fetch "$repo" "$number") || return 1
-		IFS='|' read -r state reason successor <<<"$row"
+		IFS='|' read -r state reason successor _proceed <<<"$row"
 		if [[ "$state" == "OPEN" ]]; then
 			[[ "$hops" -gt 0 ]] || return 1
 			printf '%s\n' "$number"
