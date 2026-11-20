@@ -307,11 +307,14 @@ sql_escape() {
 # =============================================================================
 # API Key Resolution
 # =============================================================================
-# Resolves API keys/tokens from four sources (in priority order):
+# Resolves API keys/tokens from five sources (in priority order):
 # 1. Environment variables (e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY)
 # 2. gopass encrypted secrets
 # 3. credentials.sh plaintext fallback
 # 4. OpenCode OAuth auth.json (~/.local/share/opencode/auth.json)
+# 5. aidevops OAuth pool (~/.aidevops/oauth-pool.json). OpenCode 2.x keeps
+#    credentials in its own database and writes no auth.json, so this is the
+#    OAuth signal on current installs (GH#39095).
 #
 # Source 4 is critical for headless dispatch: the OpenCode runtime authenticates
 # via OAuth tokens stored in auth.json, NOT env vars. Without this source, the
@@ -397,27 +400,77 @@ process.stdout.write(credentialFileSecret(process.argv[2]));
 	# live OAuth session. The marker makes the probe record healthy and
 	# skip HTTP; workers authenticate via the opencode runtime's own
 	# OAuth flow, which handles refresh at session start.
-	local auth_file="${HOME}/.local/share/opencode/auth.json"
-	if [[ -f "$auth_file" ]]; then
-		local auth_type
-		auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
-		if [[ "$auth_type" == "oauth" ]]; then
-			# OAuth entry: presence of the entry means the runtime can
-			# authenticate. Probe records healthy and skips HTTP.
-			RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
-			echo "oauth-refresh-available"
-			return 0
-		fi
-		# API-key type entries (e.g., opencode, claudecli providers)
-		local api_key_entry
-		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
-		if [[ -n "$api_key_entry" ]]; then
-			RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
-			echo "$api_key_entry"
-			return 0
-		fi
+	if _resolve_auth_json_key "$provider"; then
+		return 0
 	fi
 
+	# Source 5: aidevops OAuth pool (GH#39095)
+	# Without auth.json, every provider reported no-key and Pulse could not
+	# resolve any tier. The pool is the credential set headless workers rotate
+	# through; one usable account means the runtime can authenticate. Return
+	# the same marker as Source 4 OAuth entries (healthy, skip HTTP probe).
+	if _resolve_oauth_pool_available "$provider"; then
+		RESOLVED_API_KEY_SOURCE="oauth-pool:${provider}"
+		echo "oauth-refresh-available"
+		return 0
+	fi
+
+	return 1
+}
+
+# _resolve_auth_json_key: Source 4 of resolve_api_key (see the comment there).
+# Echoes the OAuth marker or the stored API key for the provider from OpenCode
+# auth.json and sets RESOLVED_API_KEY_SOURCE. Returns 1 when there is no entry.
+_resolve_auth_json_key() {
+	local provider="$1"
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	[[ -f "$auth_file" ]] || return 1
+
+	local auth_type
+	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	if [[ "$auth_type" == "oauth" ]]; then
+		# OAuth entry: presence of the entry means the runtime can
+		# authenticate. Probe records healthy and skips HTTP.
+		RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
+		echo "oauth-refresh-available"
+		return 0
+	fi
+	# API-key type entries (e.g., opencode, claudecli providers)
+	local api_key_entry
+	api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
+	if [[ -n "$api_key_entry" ]]; then
+		RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
+		echo "$api_key_entry"
+		return 0
+	fi
+	return 1
+}
+
+# _resolve_oauth_pool_available: exit 0 when the aidevops OAuth pool holds at
+# least one usable account for the provider (not auth-error, not inside an
+# active rate-limit cooldown). Read-only; never prints credential material.
+_resolve_oauth_pool_available() {
+	local provider="$1"
+	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+
+	[[ -f "$pool_file" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	local now_ms available
+	now_ms=$(($(date +%s) * 1000))
+	available=$(jq -r --arg provider "$provider" --argjson now "$now_ms" '
+		def n: tonumber? // 0;
+		(.[$provider] // [])
+		| if type == "array" then . else [] end
+		| map(select(((.status // "") != "auth-error")
+			and (((.status // "") != "rate-limited") or (((.cooldownUntil // 0) | n) <= $now))))
+		| length
+	' "$pool_file" 2>/dev/null) || available=0
+
+	[[ "${available:-0}" =~ ^[0-9]+$ ]] || available=0
+	if [[ "$available" -gt 0 ]]; then
+		return 0
+	fi
 	return 1
 }
 
