@@ -55,10 +55,9 @@ def supported_state(root, preserve_git_admin=False, include_ignored=False):
         raise ValueError("special index flags or unmerged entries are unsupported")
     # ls-files --stage cannot distinguish intent-to-add from a staged empty blob.
     visible = git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-visible-in-index")
-    # The invisible view only hides entries: an empty visible view proves equality,
-    # so the second spawn is needed only when something is staged.
-    invisible = (git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-invisible-in-index")
-                 if visible else visible)
+    # An empty visible view does not prove equality: an intent-to-add entry for a
+    # file that HEAD holds as an empty blob is visible-empty but invisible-deleted.
+    invisible = git(root, "diff", "--cached", "--raw", "-z", "--no-ext-diff", "--ita-invisible-in-index")
     if visible != invisible and not preserve_git_admin:
         raise ValueError("intent-to-add index entries require separate preservation")
     if not preserve_git_admin:
