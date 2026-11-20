@@ -579,6 +579,15 @@ _sandbox_pgkill_cleanup() {
 		wait "$cleanup_watchdog_pid" 2>/dev/null || true
 	fi
 
+	# Final descendant snapshot BEFORE any signal (GH#38861). Without setsid(1)
+	# (macOS) there is no child PGID, so cleanup depends on snapshots that the
+	# poll loop only refreshes every 0.5s. A cancellation inside that window
+	# would kill the direct child first, orphan the tree to init/launchd, and
+	# leave descendants the snapshot never saw.
+	if [[ -n "$cleanup_snapshot_file" && -f "$cleanup_snapshot_file" ]]; then
+		_sandbox_snapshot_descendants "$cleanup_child_pid" "$cleanup_snapshot_file"
+	fi
+
 	local cleanup_self_pgid=""
 	cleanup_self_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')" || true
 	if [[ -n "$cleanup_child_pgid" && -n "$cleanup_self_pgid" && "$cleanup_child_pgid" == "$cleanup_self_pgid" ]]; then

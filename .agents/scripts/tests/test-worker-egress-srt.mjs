@@ -53,6 +53,21 @@ test('macOS DNS guard must recognize exactly one pinned Seatbelt invocation', ()
   assert.throws(() => tightenMacProfile('(version 1)\n(deny default)\n(allow mach-lookup (unknown-filter "new"))'));
 });
 
+// GH#38861: Homebrew binaries load dylibs through /opt/homebrew/opt/<keg>
+// symlinks. The envelope realpaths every entry, so it must list each runtime
+// keg's Cellar directory plus the real /opt/homebrew/opt directory (which
+// discloses only installed keg names, a maintainer-accepted exposure).
+function homebrewClosure(tools) {
+  const cellar = /^(.*)\/Cellar\/([^/]+)\/[^/]+\//;
+  const formulae = [...new Set(tools.map(t => t.match(cellar)?.[2]).filter(Boolean))];
+  if (process.platform !== 'darwin' || formulae.length === 0) return [];
+  const prefix = tools.find(t => cellar.test(t)).match(cellar)[1];
+  const deps = spawnSync('brew', ['deps', '--installed', '--union', ...formulae], { encoding: 'utf8' });
+  assert.equal(deps.status, 0, 'brew deps failed: ' + deps.stderr);
+  const kegs = [...formulae, ...deps.stdout.split('\n').filter(Boolean)];
+  return [path.join(prefix, 'opt'), ...kegs.map(k => fs.realpathSync(path.join(prefix, 'opt', k)))];
+}
+
 test('real platform qualification (explicit opt-in, synthetic data, no provider contact)', {
   skip: process.env.AIDEVOPS_SRT_REAL_CHECK !== '1', timeout: 120000,
 }, async () => {
@@ -81,6 +96,7 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       ...Object.values(tools)];
     // NixOS requires a reviewed executable closure, not the entire store.
     if (process.env.AIDEVOPS_SRT_TEST_READ) read.push(...JSON.parse(process.env.AIDEVOPS_SRT_TEST_READ));
+    else read.push(...homebrewClosure(Object.values(tools)));
     const manifest = path.join(root, 'manifest.json');
     fs.writeFileSync(manifest, JSON.stringify({ schema: 'aidevops.srt-envelope.v1',
       cwd: output, read: read.filter(p => fs.existsSync(p)), write: [output], tools,
@@ -91,11 +107,11 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       env: { ...process.env, AIDEVOPS_SRT_ENVELOPE: manifest }, encoding: 'utf8', timeout: 45000,
     });
     const probe = invoke(['probe', '--policy', policyFile]);
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && process.arch !== 'arm64') {
       assert.equal(probe.status, 126);
       assert.equal(JSON.parse(probe.stdout).ready, false);
-      assert.equal(JSON.parse(probe.stdout).reason, 'macos-dns-and-ipc-qualification-pending', probe.stderr);
-      // This proves a deliberate qualification hold, not full macOS support.
+      assert.equal(JSON.parse(probe.stdout).reason, 'macos-x64-qualification-pending', probe.stderr);
+      // This proves a deliberate qualification hold, not Intel Mac support.
       return;
     }
     assert.equal(probe.status, 0, probe.stdout + probe.stderr);

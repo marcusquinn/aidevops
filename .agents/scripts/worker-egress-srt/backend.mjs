@@ -210,6 +210,13 @@ async function wrappedArgv(manager, argv, envelope) {
   return [envelope.tools.shell, '-c', wrapped];
 }
 
+// GH#38861: resolver, network-configuration and trust services observed
+// REACHABLE on the host and refused (1100) inside the tightened profile.
+const macResolverServices = ['com.apple.system.opendirectoryd.libinfo',
+  'com.apple.system.DirectoryService.libinfo_v1', 'com.apple.SystemConfiguration.configd',
+  'com.apple.SystemConfiguration.DNSConfiguration', 'com.apple.SecurityServer', 'com.apple.trustd',
+  'com.apple.cfnetwork.cfnetworkagent', 'com.apple.nsurlsessiond'];
+
 const canary = String.raw`
 import ctypes, errno, json, os, socket, subprocess, sys, urllib.request, urllib.error
 outside, approved_input, output, python, endpoints_json = sys.argv[1:]
@@ -257,10 +264,25 @@ if sys.platform == 'linux':
 else:
     lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
     port = ctypes.c_uint.in_dll(lib, 'bootstrap_port').value
-    for service in [b'com.apple.system.opendirectoryd.libinfo', b'com.apple.SecurityServer']:
+    for service in ${JSON.stringify(macResolverServices)}:
         handle = ctypes.c_uint()
-        rc = lib.bootstrap_look_up(port, service, ctypes.byref(handle))
-        checks[service.decode()] = rc != 0
+        rc = lib.bootstrap_look_up(port, service.encode(), ctypes.byref(handle))
+        checks[service] = rc != 0
+    # GH#38861: every system resolver path must fail, not only the Mach lookups.
+    # The host-side control proves both succeed outside the sandbox.
+    try:
+        socket.getaddrinfo('localhost', 443)
+        checks['resolver-denied'] = False
+    except socket.gaierror:
+        checks['resolver-denied'] = True
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect('/var/run/mDNSResponder')
+        checks['dns-sd-socket-denied'] = False
+    except OSError:
+        checks['dns-sd-socket-denied'] = True
+    finally:
+        s.close()
 child = subprocess.run([python, '-I', '-c', 'import sys; sys.exit(0 if len(sys.argv)==2 and sys.argv[1]=="a b;$(false)" else 1)', 'a b;$(false)'], env=os.environ)
 checks['descendant-and-argv'] = child.returncode == 0
 try:
@@ -304,10 +326,19 @@ async function qualify(manager, envelope, scratch) {
       if (typeof dest !== 'string') endpoints.push(dest.port);
     }
     if (process.platform === 'darwin') {
-      // Both services must be reachable OUTSIDE the sandbox, or the negative
-      // bootstrap checks below would be meaningless.
-      const control = spawnSync(envelope.tools.python, ['-I', '-c',
-        'import ctypes,sys; l=ctypes.CDLL("/usr/lib/libSystem.B.dylib"); p=ctypes.c_uint.in_dll(l,"bootstrap_port").value; sys.exit(any(l.bootstrap_look_up(p,s,ctypes.byref(ctypes.c_uint())) != 0 for s in [b"com.apple.system.opendirectoryd.libinfo",b"com.apple.SecurityServer"]))']);
+      // Every service, the resolver and the dns_sd socket must work OUTSIDE
+      // the sandbox, or the negative checks below would be meaningless.
+      const control = spawnSync(envelope.tools.python, ['-I', '-c', String.raw`
+import ctypes, json, socket, sys
+l = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+p = ctypes.c_uint.in_dll(l, 'bootstrap_port').value
+ok = all(l.bootstrap_look_up(p, s.encode(), ctypes.byref(ctypes.c_uint())) == 0 for s in json.loads(sys.argv[1]))
+socket.getaddrinfo('localhost', 443)
+u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+u.connect('/var/run/mDNSResponder')
+u.close()
+sys.exit(0 if ok else 1)
+`, JSON.stringify(macResolverServices)]);
       insist(control.status === 0, 'mach-positive-control-unavailable');
     }
     const result = await supervised(await wrappedArgv(manager,
@@ -386,14 +417,12 @@ async function main(argv) {
       insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
       manager.updateConfig(settings(host, envelope, sockets));
     }
-    const checks = await qualify(manager, envelope, scratch);
     if (process.platform === 'darwin') {
-      // The legacy v1 caller ignores qualification fields. Do NOT let passing
-      // these limited canaries turn an unreviewed DNS/inherited-Mach boundary
-      // into an accepted backend. No environment-variable bypass is provided.
-      console.error(JSON.stringify({ qualification: 'macos-incomplete', checks }));
-      throw new BackendError('macos-dns-and-ipc-qualification-pending');
+      // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
+      // Macs stay refused until they have their own evidence; no bypass.
+      insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
     }
+    const checks = await qualify(manager, envelope, scratch);
     if (action === 'probe') {
       console.log(JSON.stringify({ schema: 'aidevops.worker-egress-backend.v1', ready: true,
         scope: 'process-tree', enforcement: 'equivalent', policy_sha256: digest(policy.bytes),
