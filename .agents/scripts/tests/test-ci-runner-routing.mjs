@@ -83,6 +83,9 @@ for (const [label, files, versionDiff, shell, substantive] of [
   ['header-like added line', ['setup.sh'], `${hunk('setup.sh', '100755', '# Version: 1.0.0', '# Version: 1.0.1')}\n+++ b/x`, true, true],
   ['mode change', ['setup.sh'], ['diff --git a/setup.sh b/setup.sh', 'old mode 100755', 'new mode 100644'].join('\n'), true, true],
   ['other sonar key', ['sonar-project.properties'], hunk('sonar-project.properties', '100644', 'sonar.sources=.agents', 'sonar.sources=.'), false, true],
+  // Removed and added lines must match once the version is masked.
+  ['added trailing comma', ['.claude-plugin/marketplace.json'], hunk('.claude-plugin/marketplace.json', '100644', '    "version": "3.39.250"', '    "version": "3.39.251",'), false, true],
+  ['lone added version line', ['setup.sh'], ['diff --git a/setup.sh b/setup.sh', 'index 1111111111..2222222222 100755', '--- a/setup.sh', '+++ b/setup.sh', '@@ -7,0 +8 @@', '+# Version: 3.39.251'].join('\n'), true, true],
 ]) {
   test(`actual PR scope: ${label}`, () => {
     assertScope(files, versionDiff, shell, substantive);

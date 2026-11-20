@@ -121,27 +121,34 @@ jobs:
             exit 0
           fi
           # GH#39544: zero-context hunks of the release version-reference files,
-          # parsed by version_lines_only below. A failed diff leaves full scope.
-          version_diff=$(git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+          # parsed by version_lines_only below. A failed diff (even one that
+          # printed earlier patches) leaves full scope via the empty check.
+          if ! version_diff=$(git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
             --src-prefix=a/ --dst-prefix=b/ "${MERGE_BASE}" "${HEAD_SHA}" -- \
             VERSION package.json sonar-project.properties setup.sh aidevops.sh \
-            .claude-plugin/marketplace.json || true)
+            .claude-plugin/marketplace.json); then
+            version_diff=""
+          fi
           printf 'Changed files:\n%s\n' "$changed"
 
           # GH#39544: a release version bump edits only version-reference lines.
           # Accept header lines before each hunk and +/- lines matching the
           # file's version pattern; mode changes, new/deleted files, binary
-          # diffs or any other line keep those files in scope.
+          # diffs or any other line keep those files in scope. Per file, the
+          # removed and added lines must be identical once the version is
+          # masked, so punctuation edits and lone additions/deletions do too.
           version_refs='^(VERSION|package\.json|sonar-project\.properties|setup\.sh|aidevops\.sh|\.claude-plugin/marketplace\.json)$'
           semver='[0-9]+\.[0-9]+\.[0-9]+'
           version_lines_only() {
-            local line="" file="" pattern="" in_hunk=0
+            local line="" file="" pattern="" in_hunk=0 masked="" removed="" added=""
             [ -n "${version_diff:-}" ] || return 1
             while IFS= read -r line; do
               # A blank line carries no change (changed lines start with +/-).
               [ -n "$line" ] || continue
               case "$line" in
                 'diff --git a/'*)
+                  [ "$removed" = "$added" ] || return 1
+                  removed="" added=""
                   file=${line#diff --git a/}
                   file=${file%% b/*}
                   in_hunk=0
@@ -161,14 +168,17 @@ jobs:
                     esac
                     return 1
                   fi
+                  grep -Eq "$pattern" <<<"${line#?}" || return 1
+                  masked=$(sed -E "s/${semver}/V/g" <<<"${line#?}")
                   case "$line" in
-                    [+-]*) ;;
+                    -*) removed="${removed}${masked}"$'\n' ;;
+                    +*) added="${added}${masked}"$'\n' ;;
                     *) return 1 ;;
                   esac
-                  grep -Eq "$pattern" <<<"${line#?}" || return 1
                   ;;
               esac
             done <<<"$version_diff"
+            [ "$removed" = "$added" ] || return 1
             return 0
           }
           if grep -Eq "$version_refs" <<<"$changed" && version_lines_only; then
