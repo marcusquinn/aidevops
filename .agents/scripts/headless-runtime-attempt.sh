@@ -174,6 +174,29 @@ _prepare_headless_worker_signing() {
 	return 1
 }
 
+# GH#38982 defence in depth: return 0 only when the head recorded with the
+# persisted issue session is the exact head of a merged PR on its branch.
+# Squash merges leave no ancestry, so ask GitHub for exact-head PR state. A
+# head with no PR (interrupted before the first commit), an open PR, or any
+# unknown/API failure keeps the existing resume behaviour.
+_persisted_session_head_merged() {
+	local provider="$1"
+	local session_key="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-${WORKER_REPO_SLUG:-}}"
+	local issue_number="" recorded="" head_sha="" head_branch="" handoff=""
+	[[ "$session_key" =~ ^issue-([1-9][0-9]*)$ && "$repo_slug" == */* ]] || return 1
+	issue_number="${BASH_REMATCH[1]}"
+	declare -F _pr_handoff_state_for_branch_or_issue >/dev/null 2>&1 || return 1
+	recorded=$(get_session_head "$provider" "$session_key") || return 1
+	head_sha="${recorded%%$'\t'*}"
+	head_branch="${recorded#*$'\t'}"
+	[[ "$head_sha" =~ ^[0-9a-f]{40}$ && -n "$head_branch" && "$head_branch" != "$recorded" ]] || return 1
+	handoff=$(_pr_handoff_state_for_branch_or_issue "$head_branch" "$issue_number" \
+		"$repo_slug" head-only "$head_sha" 0) || return 1
+	[[ "$handoff" =~ ^merged\|[1-9][0-9]*$ ]] || return 1
+	return 0
+}
+
 # Resolve prompt transport, provider/session state, and the runtime command.
 _prepare_run_attempt_command() {
 	local prepare_status=0
@@ -227,6 +250,11 @@ _prepare_run_attempt_command() {
 		clear_session_id "$provider" "$session_key"
 	else
 		persisted_session=$(get_session_id "$provider" "$session_key")
+		if [[ -n "$persisted_session" ]] && _persisted_session_head_merged "$provider" "$session_key"; then
+			print_info "[lifecycle] persisted_session_skipped session=${session_key} reason=prior_head_merged"
+			clear_session_id "$provider" "$session_key"
+			persisted_session=""
+		fi
 	fi
 	case "$runtime" in
 	claude)

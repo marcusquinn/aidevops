@@ -260,30 +260,50 @@ clear_session_id_all_providers() {
 	return 0
 }
 
+# Args: provider session_key session_id model [head_sha] [head_branch]
+# The optional head/branch record the worktree state the attempt ended at
+# (GH#38982), so a later dispatch can refuse to resume a delivered session.
 store_session_id() {
 	local provider="$1"
 	local session_key="$2"
 	local session_id="$3"
 	local model="$4"
+	local head_sha="${5:-}"
+	local head_branch="${6:-}"
 	local scoped_key=""
 	scoped_key=$(scoped_provider_session_key "$session_key")
 	if [[ "$scoped_key" != "$session_key" ]]; then
 		db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
 	fi
 	db_query "
-INSERT INTO provider_sessions (provider, session_key, session_id, model, updated_at)
+INSERT INTO provider_sessions (provider, session_key, session_id, model, updated_at, head_sha, head_branch)
 VALUES (
     '$(sql_escape "$provider")',
     '$(sql_escape "$scoped_key")',
     '$(sql_escape "$session_id")',
     '$(sql_escape "$model")',
-    strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    '$(sql_escape "$head_sha")',
+    '$(sql_escape "$head_branch")'
 )
 ON CONFLICT(provider, session_key) DO UPDATE SET
     session_id = excluded.session_id,
     model = excluded.model,
-    updated_at = excluded.updated_at;
+    updated_at = excluded.updated_at,
+    head_sha = excluded.head_sha,
+    head_branch = excluded.head_branch;
 " >/dev/null
+	return 0
+}
+
+# Print "<head_sha>\t<head_branch>" recorded with the persisted session, or
+# nothing. Git ref names cannot contain a tab, so the separator is unambiguous.
+get_session_head() {
+	local provider="$1"
+	local session_key="$2"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "SELECT head_sha || char(9) || head_branch FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$scoped_key")' AND head_sha != '';"
 	return 0
 }
 

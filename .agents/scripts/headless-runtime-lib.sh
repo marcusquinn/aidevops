@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS provider_sessions (
     session_id   TEXT NOT NULL,
     model        TEXT NOT NULL,
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    head_sha     TEXT NOT NULL DEFAULT '',
+    head_branch  TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (provider, session_key)
 );
 
@@ -103,6 +105,22 @@ CREATE TABLE IF NOT EXISTS private_workload_locks (
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 SQL
+	_migrate_provider_sessions_head_columns
+	return 0
+}
+
+# GH#38982: older state DBs predate the attempt-head columns that let a
+# continuation refuse to resume a session whose delivered head already merged.
+# Probe first so steady-state startup takes no write lock; a concurrent
+# migration losing the race to a duplicate-column error is harmless.
+_migrate_provider_sessions_head_columns() {
+	local column=""
+	for column in head_sha head_branch; do
+		if ! sqlite3_with_timeout "$STATE_DB" "SELECT ${column} FROM provider_sessions LIMIT 0;" >/dev/null 2>&1; then
+			sqlite3_with_timeout "$STATE_DB" \
+				"ALTER TABLE provider_sessions ADD COLUMN ${column} TEXT NOT NULL DEFAULT '';" >/dev/null 2>&1 || true
+		fi
+	done
 	return 0
 }
 
