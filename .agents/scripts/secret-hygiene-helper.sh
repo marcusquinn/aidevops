@@ -493,7 +493,7 @@ audit_mcp_configs() {
 }
 
 _scan_mcp_env_literals() {
-	local config="$1" location="" detail="" records=""
+	local config="$1" location="" detail="" records="" py_version=""
 	if ! records=$(python3 "${SCRIPT_DIR}/credential_audit.py" mcp "$config" |
 		python3 "${SCRIPT_DIR}/credential_audit.py" display); then
 		report_finding "high" "$config" "MCP audit failed; results incomplete" "Review runtime configuration"
@@ -501,6 +501,16 @@ _scan_mcp_env_literals() {
 	fi
 	while IFS=$'\t' read -r location detail; do
 		[[ -n "$location" ]] || continue
+		# GH#39412: the interpreter, not the file, is the cause; security fix
+		# cannot repair it, so name the parser remedy instead. Match the whole
+		# record: a substring test would also match a server with that name.
+		if [[ "$detail" == '{"name": "", "category": "mcp-toml-parser-missing"}' ]]; then
+			py_version=$(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null) || py_version="unknown"
+			report_finding "medium" "$location" \
+				"$detail (TOML not audited: python3 ${py_version} has no tomllib or tomli)" \
+				"Needs Python 3.11+ or tomli: python3 -m pip install --user tomli, or install Python 3.11+; other fixes still run in aidevops security fix"
+			continue
+		fi
 		report_finding "high" "$location" "$detail" \
 			"aidevops security fix; use dataforseo-credentials.sh / outscraper-credentials.sh launch-time loaders, not literal env values"
 	done <<<"$records"
