@@ -29,7 +29,7 @@ APPROVAL_SCHEMA = "aidevops.marketing-action-approval/v2"
 MAX_APPROVAL_TTL_SECONDS = 900
 MAX_RECORD_BYTES = 16_384
 MAX_DOCUMENT_BYTES = 1_048_576
-MAX_SUMMARY_DIFF_LINES = 200
+MAX_SUMMARY_LINES = 400
 TRUSTED_APPROVAL_UID = 0
 OPERATIONS = ("apply", "rollback")
 CONFIRMATION = "APPROVE"
@@ -246,13 +246,23 @@ def create_cancellation(owner: str, nonce: str) -> Path:
 
 
 def verify_cancellation(approval: Dict[str, Any]) -> None:
+    """Validate and read the cancellation file through one no-follow, non-blocking descriptor."""
     path = Path(approval["cancellation_path"])
-    _require(path.is_absolute() and path.is_file() and not path.is_symlink(), "cancellation state is unavailable")
-    metadata = path.stat()
-    _require(metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == 0o600,
-             "cancellation state is not private to the operator")
+    _require(path.is_absolute(), "cancellation state is unavailable")
+    try:
+        handle = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise ApprovalError("cancellation state is unavailable") from error
     expected = f"active:{approval['nonce']}\n".encode("utf-8")
-    _require(path.read_bytes() == expected, "operation was cancelled")
+    try:
+        metadata = os.fstat(handle)
+        _require(stat.S_ISREG(metadata.st_mode), "cancellation state is unavailable")
+        _require(metadata.st_uid == os.getuid() and stat.S_IMODE(metadata.st_mode) == 0o600,
+                 "cancellation state is not private to the operator")
+        content = os.read(handle, len(expected) + 1)
+    finally:
+        os.close(handle)
+    _require(content == expected, "operation was cancelled")
 
 
 def _read_record(path: Path) -> Dict[str, Any]:
@@ -331,21 +341,34 @@ def _load_operator_document(path: str, owner_uid: int) -> Any:
         raise ApprovalError("document is not valid JSON") from error
 
 
+def _escape(text: Any) -> str:
+    """Render document-derived text inert on a terminal (control, format and bidi characters)."""
+    return "".join(char if char.isprintable() else f"\\u{ord(char):04x}" for char in str(text))
+
+
+def _value_lines(label: str, value: Any) -> List[str]:
+    lines = str(value).split("\n")
+    return [f"    {label} {line}" for line in lines]
+
+
 def _plan_subject(plan: Any) -> Tuple[Dict[str, Any], str, List[str]]:
+    """Summarise exactly what apply executes, never a stored free-text diff."""
     _require(isinstance(plan, dict), "plan must be an object")
     schema = plan.get("schema")
     _require(schema in PLAN_BINDINGS, "plan schema is not approvable")
     unsigned = {key: value for key, value in plan.items() if key != "plan_digest"}
     _require(plan.get("plan_digest") == digest(unsigned), "plan digest is invalid")
-    lines = [f"Plan schema: {schema}", f"Plan digest: {plan['plan_digest']}",
-             f"Owner: {plan.get('owner')}"]
+    actions = plan.get("actions")
+    _require(isinstance(actions, list) and all(isinstance(item, dict) for item in actions), "plan actions are invalid")
+    lines = [f"Plan schema: {schema}", f"Plan digest: {plan['plan_digest']}", f"Owner: {plan.get('owner')}"]
     lines += [f"{field}: {plan.get(field)}" for field in PLAN_BINDINGS[schema] + ("branch",) if field in plan]
-    for item in plan.get("actions", []):
-        if not isinstance(item, dict):
-            continue
+    lines.append(f"Authorised action set: {json.dumps(plan.get('action_set'))}")
+    for item in actions:
         if item.get("status") == "ready":
-            lines.append(f"- APPLY {item.get('id')} [{item.get('kind')}] {item.get('path', '')}")
-            lines += ["    " + line for line in str(item.get("diff", "")).splitlines()]
+            # apply replaces exactly `old` with `new` once in `path` after verifying before_sha256.
+            lines.append(f"- APPLY {item.get('id')} [{item.get('kind')}] {item.get('path', '')} "
+                         f"(before {item.get('before_sha256')})")
+            lines += _value_lines("-", item.get("old", "")) + _value_lines("+", item.get("new", ""))
         else:
             lines.append(f"- handoff only (not applied): {item.get('id')} [{item.get('kind')}]")
     return plan, schema, lines
@@ -362,7 +385,9 @@ def _receipt_subject(receipt: Any) -> Tuple[Dict[str, Any], str, List[str], str]
     subject["action_set"] = [item.get("action_id") for item in files]
     lines = [f"Rollback of plan: {receipt.get('plan_digest')}", f"Owner: {receipt.get('owner')}"]
     lines += [f"{field}: {receipt.get(field)}" for field in PLAN_BINDINGS[plan_schema]]
-    lines += [f"- RESTORE {item.get('action_id')} {item.get('path')}" for item in files]
+    lines.append(f"Authorised action set: {json.dumps(subject['action_set'])}")
+    lines += [f"- RESTORE {item.get('action_id')} {item.get('path')} (to {item.get('before_sha256')})"
+              for item in files]
     return subject, plan_schema, lines, digest(receipt)
 
 
@@ -386,9 +411,10 @@ def mint(
         subject, plan_schema, lines, receipt_digest = _receipt_subject(
             _load_operator_document(str(receipt_path), account.pw_uid))
     _require(subject.get("owner") == operator, "plan owner is not the approving operator")
-    if len(lines) > MAX_SUMMARY_DIFF_LINES:
-        lines = lines[:MAX_SUMMARY_DIFF_LINES] + [f"... {len(lines) - MAX_SUMMARY_DIFF_LINES} more lines omitted"]
-    print("\n".join(lines), file=output)
+    # Never approve what was not shown: an oversized review is refused, not truncated.
+    _require(len(lines) <= MAX_SUMMARY_LINES,
+             f"plan review exceeds {MAX_SUMMARY_LINES} lines; split it into smaller plans")
+    print("\n".join(_escape(line) for line in lines), file=output)
     ttl_minutes = MAX_APPROVAL_TTL_SECONDS // 60
     answer = prompt(f"Type {CONFIRMATION} to authorise {operation} for {ttl_minutes} minutes: ")
     _require(answer.strip() == CONFIRMATION, "approval was not confirmed")

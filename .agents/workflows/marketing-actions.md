@@ -41,8 +41,11 @@ sudo aidevops approve marketing-plan --rollback /path/to/receipt.json
 The ceremony (`marketing_action_approval.mint`) refuses unless it runs as root
 with `SUDO_USER` set and an interactive stdin. It reads the plan or receipt
 without following symlinks and only when the operator owns the file. It
-recomputes the plan digest, prints every ready action with its exact diff plus
-the handoff-only items, and requires a typed `APPROVE`. Then it writes a v2
+recomputes the plan digest, then prints the authorised action set and every
+ready action. Each action shows its before hash and the exact `old`/`new` text
+that apply will execute, not the stored diff. It also lists the handoff-only
+items. Control characters are escaped. A review over 400 lines is refused rather
+than truncated. Then it requires a typed `APPROVE` and writes a v2
 record (`aidevops.marketing-action-approval/v2`) to
 `~/.aidevops/approval-keys/marketing-actions/{apply|rollback}-<digest>.json`.
 That directory is root-owned and not group/other writable. The record binds:
