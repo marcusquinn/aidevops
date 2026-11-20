@@ -60,12 +60,12 @@ class GoogleAdsCredentials:
     """Ephemeral live-read credentials kept outside stored request evidence."""
 
     access_token: str
-    developer_token: str
     customer_id: str
+    developer_token: str = ""  # Optional legacy value; Google sunset developer tokens on 2026-09-09.
     login_customer_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not all((self.access_token, self.developer_token, self.customer_id)):
+        if not all((self.access_token, self.customer_id)):
             raise GoogleAdsError("Google Ads live sync requires configured credentials and a customer target")
 
 
@@ -261,9 +261,10 @@ class GoogleAdsClient:
         )
         headers = {
             "Authorization": f"Bearer {self.credentials.access_token}",
-            "developer-token": self.credentials.developer_token,
             "Content-Type": "application/json",
         }
+        if self.credentials.developer_token:
+            headers["developer-token"] = self.credentials.developer_token
         if self.credentials.login_customer_id:
             headers["login-customer-id"] = self.credentials.login_customer_id
         request = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")

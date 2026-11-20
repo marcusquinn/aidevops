@@ -46,19 +46,18 @@ def collect(
 ) -> dict[str, Any]:
     """Collect one fixed GAQL view; no arbitrary query or mutation endpoint is accepted."""
     access_token, developer_token = credentials
-    if not access_token or not developer_token:
+    if not access_token:
         raise GoogleAccountError("Google Ads live collection requires configured credentials")
     endpoint = _endpoint(account_ref)
     if not endpoint.startswith(f"https://googleads.googleapis.com/{GOOGLE_ADS_API_VERSION}/"):
         raise GoogleAccountError("Google Ads endpoint was invalid")
     payload = json.dumps({"query": _query(start, end)}, separators=(",", ":")).encode("utf-8")
     opener = request or (lambda item: urlopen(item, timeout=30))  # nosec B310 -- fixed HTTPS endpoint above
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    if developer_token:  # Optional legacy value; Google sunset developer tokens on 2026-09-09.
+        headers["developer-token"] = developer_token
     try:
-        response = opener(Request(endpoint, data=payload, headers={
-            "Authorization": f"Bearer {access_token}",
-            "developer-token": developer_token,
-            "Content-Type": "application/json",
-        }, method="POST"))
+        response = opener(Request(endpoint, data=payload, headers=headers, method="POST"))
         raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise GoogleAccountError("Google Ads response exceeded byte budget")

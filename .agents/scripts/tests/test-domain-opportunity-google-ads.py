@@ -148,6 +148,23 @@ class GoogleAdsHistoricalMetricsTest(unittest.TestCase):
         self.assertNotIn(placeholder_access_token, str(raised.exception))
         self.assertEqual(sleeps, [1.0, 1.0, 2.0, 1.0])
 
+    def test_developer_token_header_is_optional(self) -> None:
+        for token, expected in (("", False), ("legacy", True)):
+            seen: list[object] = []
+
+            def opener(req: object, *_args: object, **_kwargs: object) -> object:
+                seen.append(req)
+                raise urllib.error.URLError("stop")
+
+            client = GoogleAdsClient(
+                self.request,
+                GoogleAdsCredentials(access_token="a", customer_id="c", developer_token=token),
+                transport=GoogleAdsTransport(opener=opener, sleep=lambda _s: None, monotonic=lambda: 0.0),
+            )
+            with self.assertRaises(GoogleAdsError):
+                client.historical_metrics(["example"])
+            self.assertEqual(seen[0].has_header("Developer-token"), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

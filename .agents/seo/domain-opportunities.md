@@ -16,7 +16,7 @@ Use this workflow to rank auction inventory locally without a web interface. SQL
 |---|---|---|---|
 | Namecheap Market | Current official auction listings | Read-only API credentials | Import step is skipped; existing evidence remains usable |
 | Provider bulk files | GoDaddy/SnapNames inventory | Operator-authorized local download | File is inspected and archived locally; never commit it |
-| Google Ads | Primary quantitative demand metrics | Read-only Ads account access; `GOOGLE_ADS_ACCESS_TOKEN` and `GOOGLE_ADS_DEVELOPER_TOKEN` via `aidevops secret set` | `google_ads` missing flag; no zero is invented |
+| Google Ads | Primary quantitative demand metrics | Read-only Ads account access; `GOOGLE_ADS_ACCESS_TOKEN` (optional legacy `GOOGLE_ADS_DEVELOPER_TOKEN`, sunset 2026-09-09) via `aidevops secret set` | `google_ads` missing flag; no zero is invented |
 | Google Trends | Optional relative direction/seasonality | Visible operator browser session | `trends_optional` flag; scoring remains valid without it |
 | Provider/history evidence | Appraisal, comparable, backlink/history observations | Provider-specific permission | Corresponding score component stays unknown with zero weight |
 
