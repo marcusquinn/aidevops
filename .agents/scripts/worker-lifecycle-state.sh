@@ -65,6 +65,29 @@ worker_lifecycle_state_dir() {
 	return 0
 }
 
+# Seconds allowed for the relinquish call and the single retirement retry
+# (issue #39561). Non-numeric or zero values fall back to 10.
+_worker_lifecycle_retry_timeout() {
+	local seconds="${WORKER_LIFECYCLE_RETRY_TIMEOUT:-10}"
+	[[ "$seconds" =~ ^[1-9][0-9]*$ ]] || seconds=10
+	printf '%s\n' "$seconds"
+	return 0
+}
+
+# Run a command under the retry bound; without timeout/gtimeout, run unbounded.
+# Returns: the command status, or 124 when the bound expired.
+_worker_lifecycle_run_bounded() {
+	local seconds="" timeout_bin=""
+	seconds=$(_worker_lifecycle_retry_timeout)
+	timeout_bin=$(type -P timeout || type -P gtimeout) || timeout_bin=""
+	if [[ -n "$timeout_bin" ]]; then
+		"$timeout_bin" "$seconds" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 # Targeted removal shares the collector's registry policy and preservation executor.
 worker_lifecycle_cleanup_worktree() {
 	local worktree="$1"
@@ -94,9 +117,16 @@ worker_lifecycle_cleanup_worktree() {
 		--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
 		--output-root "$archive_root") || rc=$?
 	if [[ "$rc" -eq 0 ]] && _worker_lifecycle_relinquish_caller "$result" "$python" "$entry" "$state_dir" "$worktree"; then
-		result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
+		# Issue #39561: the one-shot retry is bounded so a locked lifecycle DB
+		# cannot stall read-only callers (e.g. release status) at exit.
+		result=$(_worker_lifecycle_run_bounded "$python" -E -s -B "$entry" --state-dir "$state_dir" cleanup-worktree \
 			--path "$worktree" --repos-config "${HOME}/.config/aidevops/repos.json" \
 			--output-root "$archive_root") || rc=$?
+		if [[ "$rc" -eq 124 ]]; then
+			printf '[worker-lifecycle] retirement-retry timed out after %ss; worktree preserved for later cleanup\n' \
+				"$(_worker_lifecycle_retry_timeout)" >&2
+			return 1
+		fi
 	fi
 	if [[ "$rc" -ne 0 ]]; then
 		_worker_lifecycle_report_refusal "$result" "$rc" "$worktree" "$state_dir" "$archive_root"
@@ -148,7 +178,7 @@ _worker_lifecycle_relinquish_status() {
 	local session="${AIDEVOPS_LIFECYCLE_SESSION_ID:-}"
 	local result="" status=""
 	[[ "$pid" =~ ^[1-9][0-9]*$ && -n "$session" && -n "$worktree" ]] || return 1
-	result=$("$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
+	result=$(_worker_lifecycle_run_bounded "$python" -E -s -B "$entry" --state-dir "$state_dir" relinquish-session \
 		--path "$worktree" --pid "$pid" --session-id "$session" 2>/dev/null) || return 1
 	status=$(jq -r '.status // empty' 2>/dev/null <<<"$result") || return 1
 	case "$status" in
