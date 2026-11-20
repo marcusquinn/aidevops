@@ -716,6 +716,54 @@ else
 fi
 
 # =============================================================================
+# GH#39475 — Source 5 shares the runtime pool resolver and usability allowlist
+# =============================================================================
+rm -f "$AUTH_FILE"
+POOL_DIR="${TEST_ROOT}/pool"
+mkdir -p "$POOL_DIR"
+future_pool_ms=$(($(date +%s) * 1000 + 3600000))
+
+printf '{"anthropic":[{"status":"active"}]}' >"${POOL_DIR}/active.json"
+printf '{"anthropic":[{"status":"billing-error","cooldownUntil":%s},{"status":"billing-error"}]}' \
+	"$future_pool_ms" >"${POOL_DIR}/billing.json"
+
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/active.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -eq 0 && "$result" == "oauth-refresh-available" ]]; then
+	print_result "pool: AIDEVOPS_OAUTH_POOL_FILE with active account is healthy" 0
+else
+	print_result "pool: AIDEVOPS_OAUTH_POOL_FILE with active account is healthy" 1 "(rc=$rc)"
+fi
+
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/billing.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -ne 0 && -z "$result" ]]; then
+	print_result "pool: billing-error-only pool is not healthy" 0
+else
+	print_result "pool: billing-error-only pool is not healthy" 1 "(rc=$rc)"
+fi
+
+mkdir -p "${POOL_DIR}/v2root/auth"
+cp "${POOL_DIR}/active.json" "${POOL_DIR}/v2root/auth/oauth-pool.json"
+resolved=$(AIDEVOPS_OPENCODE_PROFILE=v2 AIDEVOPS_OPENCODE_V2_ROOT="${POOL_DIR}/v2root" oauth_pool_runtime_file)
+if [[ "$resolved" == "${POOL_DIR}/v2root/auth/oauth-pool.json" ]]; then
+	print_result "pool: v2 profile resolves AIDEVOPS_OPENCODE_V2_ROOT pool" 0
+else
+	print_result "pool: v2 profile resolves AIDEVOPS_OPENCODE_V2_ROOT pool" 1 "(got '$resolved')"
+fi
+
+# Source 5 is never consulted when auth.json exists (even without a usable entry).
+printf '{}' >"$AUTH_FILE"
+result=$(AIDEVOPS_OPENCODE_PROFILE=v1 AIDEVOPS_OAUTH_POOL_FILE="${POOL_DIR}/active.json" resolve_api_key anthropic 2>/dev/null)
+rc=$?
+if [[ "$rc" -ne 0 && -z "$result" ]]; then
+	print_result "pool: Source 5 skipped when auth.json exists" 0
+else
+	print_result "pool: Source 5 skipped when auth.json exists" 1 "(rc=$rc)"
+fi
+rm -f "$AUTH_FILE"
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%d test(s) run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

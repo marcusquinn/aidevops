@@ -43,6 +43,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=oauth-pool-usable-lib.sh
+source "${SCRIPT_DIR}/oauth-pool-usable-lib.sh"
 
 set -euo pipefail
 
@@ -409,7 +411,8 @@ process.stdout.write(credentialFileSecret(process.argv[2]));
 	# resolve any tier. The pool is the credential set headless workers rotate
 	# through; one usable account means the runtime can authenticate. Return
 	# the same marker as Source 4 OAuth entries (healthy, skip HTTP probe).
-	if _resolve_oauth_pool_available "$provider"; then
+	# Only when auth.json is absent, matching headless selection.
+	if [[ ! -f "${HOME}/.local/share/opencode/auth.json" ]] && _resolve_oauth_pool_available "$provider"; then
 		RESOLVED_API_KEY_SOURCE="oauth-pool:${provider}"
 		echo "oauth-refresh-available"
 		return 0
@@ -451,27 +454,9 @@ _resolve_auth_json_key() {
 # active rate-limit cooldown). Read-only; never prints credential material.
 _resolve_oauth_pool_available() {
 	local provider="$1"
-	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
-
-	[[ -f "$pool_file" ]] || return 1
-	command -v jq >/dev/null 2>&1 || return 1
-
-	local now_ms available
-	now_ms=$(($(date +%s) * 1000))
-	available=$(jq -r --arg provider "$provider" --argjson now "$now_ms" '
-		def n: tonumber? // 0;
-		(.[$provider] // [])
-		| if type == "array" then . else [] end
-		| map(select(((.status // "") != "auth-error")
-			and (((.status // "") != "rate-limited") or (((.cooldownUntil // 0) | n) <= $now))))
-		| length
-	' "$pool_file" 2>/dev/null) || available=0
-
-	[[ "${available:-0}" =~ ^[0-9]+$ ]] || available=0
-	if [[ "$available" -gt 0 ]]; then
-		return 0
-	fi
-	return 1
+	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-$(oauth_pool_runtime_file)}"
+	oauth_pool_has_usable_account "$provider" "$pool_file"
+	return $?
 }
 
 # _get_key_value: deprecated shim — resolve_api_key now echoes the value directly.
