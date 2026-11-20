@@ -243,12 +243,15 @@ _expect_listen_form() {
 	local workflow_name="$2"
 	local workflows="$3"
 	local expect_fail="$4"
+	# Avoid a trailing space (yamllint trailing-spaces) when the value starts on the next line.
+	local sep=" "
+	[[ "$workflows" == $'\n'* ]] && sep=""
 	local content="name: $workflow_name
 on:
 # A column-zero comment does not close on.
   workflow_run:
 # Nor does it close workflow_run.
-    workflows: $workflows
+    workflows:${sep}${workflows}
     types: [completed]
 jobs:
   gate:
