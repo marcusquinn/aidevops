@@ -74,6 +74,7 @@ jobs:
           ref: ${{ inputs.aidevops_ref || 'main' }}
           path: __aidevops
           fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
       - name: Evaluate review gate and publish status

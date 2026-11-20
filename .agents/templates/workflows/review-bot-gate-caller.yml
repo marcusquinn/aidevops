@@ -145,4 +145,5 @@ jobs:
     with:
       aidevops_ref: main
       completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
-    secrets: inherit
+    secrets:
+      AIDEVOPS_READ_TOKEN: ${{ secrets.AIDEVOPS_READ_TOKEN }}
