@@ -39,6 +39,8 @@ tools:
 
 **Site-specific code** (an experiment, a client-only change, an override of a theme or plugin you cannot change upstream): a SEO Pro Custom file, not a new mu-plugin or `functions.php` snippet. An inactive `seoprocustom` on a site is intentional. See [Site-specific code](#site-specific-code).
 
+**Delivery playbooks** (cross-site know-how; board cards and plugin docs stay the site-specific source): `delivery-site-from-template.md`, `delivery-featured-listing.md`, `delivery-addon-setup.md`, `delivery-directory-refresh.md`.
+
 **Subagents**: `@localwp` (DB), `@wp-admin` (content), `@browser-automation` (E2E), `@code-standards` (quality). **Always use Context7** for latest WP/WP-CLI/PHP docs.
 
 <!-- AI-CONTEXT-END -->
