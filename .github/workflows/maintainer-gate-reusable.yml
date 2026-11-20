@@ -826,7 +826,7 @@ jobs:
     if: >-
       github.event_name == 'issues' &&
       (
-        github.event.action == 'assigned' || github.event.action == 'unassigned' ||
+        github.event.action == 'assigned' || github.event.action == 'unassigned' || github.event.action == 'reopened' ||
         (
           (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
           (
