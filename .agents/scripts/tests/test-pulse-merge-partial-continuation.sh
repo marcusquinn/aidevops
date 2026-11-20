@@ -103,7 +103,10 @@ reset_case() {
 	TEST_CLOSED_PRS_P2='[]'
 	TEST_CLOSED_P2_RC=0
 	PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS=999999999
-	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page"
+	# GH#39491: fixture merges predate the synthetic clock by years.
+	PULSE_PARTIAL_MERGED_OVERLAP_SECONDS=999999999
+	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page" \
+		"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-walk"
 	unset PULSE_CLOSED_CHECKPOINT_PAGE_SIZE PULSE_CLOSED_CHECKPOINT_MAX_PAGES
 	rm -f "${PULSE_PARTIAL_RECONCILE_STATE_DIR}/"*.closed-scan 2>/dev/null
 	TEST_CLOSED_PR_JSON=$(closed_pr_json false 2026-10-11T00:00:00Z feature/auto-20261010-095500-gh501)
@@ -850,6 +853,59 @@ test_recent_merged_scan_outside_traversal() {
 	_pm_reconcile_partial_continuations "$SLUG" 2000000060 || true
 	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
 		"recent merged PR restores outside the in-review traversal window"
+	return 0
+}
+
+# GH#39491: rows the guard would reject from their own body and labels are
+# dropped from the listing without a per-PR read; candidates still reach it.
+test_recent_merged_prefilter_skips_reads() {
+	local merged='"merged_at":"2026-10-10T12:00:00Z","updated_at":"2026-10-10T12:00:00Z"'
+	local reads=""
+	reset_case
+	mkdir -p "$PULSE_PARTIAL_RECONCILE_STATE_DIR"
+	TEST_CLOSED_PRS="[{\"number\":910,${merged},\"body\":\"Fixes: owner/repo#600\",\"labels\":[{\"name\":\"origin:worker\"}]},"
+	TEST_CLOSED_PRS+="{\"number\":911,${merged},\"body\":\"For #600\",\"labels\":[{\"name\":\"origin:interactive\"}]},"
+	TEST_CLOSED_PRS+="{\"number\":900,${merged},\"body\":\"For #501\",\"labels\":[{\"name\":\"origin:worker\"},{\"name\":\"origin:interactive\"}]}]"
+	_pmpc_reconcile_recent_merges "$SLUG" 2000000060 || fail "prefilter: walk completes" "rc=$?"
+	assert_status_call "501 ${SLUG} available --remove-assignee runner1 --add-label auto-dispatch" \
+		"prefilter: worker partial still restores"
+	reads=$(grep -c '^closing-read$' "$API_LOG")
+	if [[ "$reads" == "1" ]]; then
+		pass "prefilter: closing and foreign-origin rows make no guard reads"
+	else
+		fail "prefilter: closing and foreign-origin rows make no guard reads" "closing reads=${reads}"
+	fi
+	return 0
+}
+
+# GH#39491: a completed walk bounds the next one, and a cursor left without walk
+# state (pre-GH#39491) restarts at page 1 instead of resuming deep history.
+test_recent_merged_walk_is_incremental() {
+	local walk="${TEST_ROOT}/partial-cursor/owner__repo.merged-walk"
+	reset_case
+	mkdir -p "$PULSE_PARTIAL_RECONCILE_STATE_DIR"
+	printf '7\n' >"${PULSE_PARTIAL_RECONCILE_STATE_DIR}/owner__repo.merged-page"
+	TEST_CLOSED_PRS='[{"number":900,"merged_at":"2026-10-10T12:00:00Z","updated_at":"2026-10-10T12:00:00Z"}]'
+	_pmpc_reconcile_recent_merges "$SLUG" 2000000060 || fail "incremental: first walk completes" "rc=$?"
+	if grep -q 'pulls?state=closed.*&page=1$' "$API_LOG" && ! grep -q '&page=7$' "$API_LOG"; then
+		pass "incremental: legacy cursor restarts at page 1"
+	else
+		fail "incremental: legacy cursor restarts at page 1" "$(tr '\n' ' ' <"$API_LOG")"
+	fi
+	if grep -qx "completed=${TEST_NOW}" "$walk" && ! grep -q '^start=' "$walk"; then
+		pass "incremental: completed walk is recorded"
+	else
+		fail "incremental: completed walk is recorded" "$(tr '\n' ' ' <"$walk")"
+	fi
+	: >"$STATUS_LOG"
+	: >"$API_LOG"
+	PULSE_PARTIAL_MERGED_OVERLAP_SECONDS=3600
+	_pmpc_reconcile_recent_merges "$SLUG" 2000000060 || fail "incremental: second walk completes" "rc=$?"
+	if [[ ! -s "$STATUS_LOG" ]] && ! grep -q '^closing-read$' "$API_LOG"; then
+		pass "incremental: merges before the previous walk are left to the in-review traversal"
+	else
+		fail "incremental: merges before the previous walk are left to the in-review traversal" "$(tr '\n' ' ' <"$API_LOG")"
+	fi
 	return 0
 }
 
@@ -1641,6 +1697,8 @@ main() {
 	test_qualified_open_pr_reference_keeps_review
 	test_unparsed_closing_reference_is_noop
 	test_recent_merged_scan_outside_traversal
+	test_recent_merged_prefilter_skips_reads
+	test_recent_merged_walk_is_incremental
 	test_expired_lease_recovery
 	test_periodic_pass
 	test_multi_page_traversal

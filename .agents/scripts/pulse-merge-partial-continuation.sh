@@ -893,51 +893,126 @@ _pmpc_reconcile_closed_checkpoints() {
 	return 0
 }
 
-# Revisit recent merged PRs independently of the issue traversal cursor. Repeat
-# the lookback window rather than stamping a scan complete: restore is best
-# effort and an unreadable issue or PR must be retried on a later cycle.
+# Persist the merged-PR walk state atomically.
+# Args: $1=state file, $2=walk start epoch (empty when no walk is open),
+#       $3=walk floor epoch, $4=start epoch of the last completed walk (optional)
+# Returns: 0 on success, 1 on a write failure
+_pmpc_merged_walk_write() {
+	local walk_file="$1" walk_start="$2" walk_floor="$3" walk_completed="${4:-}" content=""
+	[[ -z "$walk_start" ]] || content="start=${walk_start}"$'\n'"floor=${walk_floor}"$'\n'
+	[[ -z "$walk_completed" ]] || content+="completed=${walk_completed}"$'\n'
+	# One write, checked on its own, so a failed write never replaces the state.
+	printf '%s' "$content" >"${walk_file}.$$" || return 1
+	mv -f "${walk_file}.$$" "$walk_file" || return 1
+	return 0
+}
+
+# List one page of closed PRs (most recently updated first) and keep only the
+# merges at or after the floor that the merge-time guard could restore. Rows it
+# would reject from the same body and labels are dropped here, without a read
+# (GH#39491): a body matching _PMPC_CLOSING_REF_PATTERN (a superset of the
+# closing forms _extract_linked_issue accepts), or an origin:* label with
+# neither origin:worker nor origin:worker-takeover.
+# Args: $1=repo slug, $2=page, $3=floor epoch
+# Stdout: "<page length> <oldest updated_at epoch>", then one PR number per line
+# Returns: 0 on success, 1 on an unreadable listing
+_pmpc_merged_page_candidates() {
+	local repo_slug="$1" page="$2" floor="$3" page_json=""
+	page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
+	printf '%s' "$page_json" | jq -r --argjson floor "$floor" --arg closing "$_PMPC_CLOSING_REF_PATTERN" '
+		if type != "array" then error("unreadable PR list") else . end
+		| "\(length) \(map(.updated_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
+		  (.[] | select((.number | type) == "number" and (.merged_at | type) == "string")
+		   | select((.merged_at | fromdateiso8601) >= $floor)
+		   | ([(.labels // [])[] | (.name? // .) | strings | select(startswith("origin:"))]) as $origins
+		   | select(($origins | length) == 0
+			or any($origins[]; . == "origin:worker" or . == "origin:worker-takeover"))
+		   | select((.body // "") | if type == "string" then (test($closing; "i") | not) else true end)
+		   | .number)
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Revisit recently merged PRs independently of the issue traversal cursor: the
+# low-latency path for partials merged by another account or a person, whose
+# merge never ran this Pulse's post-merge restore. GH#39491: a repository can
+# merge thousands of PRs a week, and re-walking the whole lookback window each
+# pass never reached the newest merges. Each walk now stops at the start of the
+# previous completed walk minus PULSE_PARTIAL_MERGED_OVERLAP_SECONDS (default
+# 3600), never older than the lookback; a first walk, or one replacing a cursor
+# without walk state, covers only the overlap. Older merges and unreadable
+# reads stay with the in-review traversal, which revisits every candidate.
+# State: <repo>.merged-page (next page, then unprocessed PR numbers) and
+# <repo>.merged-walk (start, floor, completed).
+# Args: $1=repo slug, $2=deadline epoch
+# Returns: 0 when the walk completed, 3 when time ran out, 1 on failure
 _pmpc_reconcile_recent_merges() {
-	local repo_slug="$1" deadline="$2" now_epoch="" page_json="" rows="" pr=""
+	local repo_slug="$1" deadline="$2" now_epoch="" rows="" pr="" fetched=0
 	local state_dir="${PULSE_PARTIAL_RECONCILE_STATE_DIR:-${HOME}/.aidevops/cache/partial-continuation}"
 	local cursor="${state_dir}/${repo_slug//\//__}.merged-page" page=1 count=0 oldest=0 floor=0 line="" loaded=0
-	local lookback="${PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS:-604800}"
+	local walk_file="${state_dir}/${repo_slug//\//__}.merged-walk" walk_start="" walk_floor="" walk_completed=""
+	local lookback="${PULSE_PARTIAL_MERGED_LOOKBACK_SECONDS:-604800}" overlap="${PULSE_PARTIAL_MERGED_OVERLAP_SECONDS:-3600}"
 	[[ "$lookback" =~ ^[1-9][0-9]{0,8}$ ]] || lookback=604800
-	if [[ -r "$cursor" ]]; then
+	[[ "$overlap" =~ ^[1-9][0-9]{0,8}$ ]] || overlap=3600
+	if [[ -r "$walk_file" ]]; then
+		while IFS= read -r line; do
+			case "$line" in
+			start=*) walk_start="${line#start=}" ;;
+			floor=*) walk_floor="${line#floor=}" ;;
+			completed=*) walk_completed="${line#completed=}" ;;
+			esac
+		done <"$walk_file"
+	fi
+	[[ "$walk_start" =~ ^[0-9]+$ && "$walk_floor" =~ ^[0-9]+$ ]] || walk_start=""
+	[[ "$walk_completed" =~ ^[0-9]+$ ]] || walk_completed=""
+	now_epoch=$(date +%s) || return 1
+	[[ "$now_epoch" -lt "$deadline" ]] || return 3
+	mkdir -p "$state_dir" 2>/dev/null || return 1
+	if [[ -z "$walk_start" ]]; then
+		# Open a walk; a cursor without walk state belongs to no open walk.
+		walk_start="$now_epoch"
+		walk_floor=$((now_epoch - overlap))
+		[[ -z "$walk_completed" ]] || walk_floor=$((walk_completed - overlap))
+		rm -f "$cursor" 2>/dev/null || return 1
+		_pmpc_merged_walk_write "$walk_file" "$walk_start" "$walk_floor" "$walk_completed" || return 1
+	elif [[ -r "$cursor" ]]; then
+		fetched=1
 		while IFS= read -r line; do
 			if [[ "$loaded" -eq 0 ]]; then page="$line"; loaded=1
 			elif [[ "$line" =~ ^[0-9]+$ ]]; then rows="${rows}${rows:+$'\n'}${line}"; fi
 		done <"$cursor"
 	fi
 	[[ "$page" =~ ^[1-9][0-9]{0,3}$ ]] || page=1
-	now_epoch=$(date +%s) || return 1
-	[[ "$now_epoch" -lt "$deadline" ]] || return 3
-	if [[ -z "$rows" ]]; then
-		floor=$((now_epoch - lookback))
-		page_json=$(_pmpc_gh_read api "repos/${repo_slug}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}" 2>/dev/null) || return 1
-		rows=$(printf '%s' "$page_json" | jq -r --argjson floor "$floor" '
-		if type != "array" then error("unreadable PR list") else . end
-		| "\(length) \(map(.updated_at // "" | if type == "string" and . != "" then fromdateiso8601 else 0 end) | min // 0)",
-		  (.[] | select((.number | type) == "number" and (.merged_at | type) == "string")
-		   | select((.merged_at | fromdateiso8601) >= $floor) | .number)
-		' 2>/dev/null) || return 1
-		read -r count oldest <<<"${rows%%$'\n'*}"
-		[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
-		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
-		if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
-	fi
-	mkdir -p "$state_dir" 2>/dev/null || return 1
-	while [[ -n "$rows" ]]; do
-		# Persist the unprocessed suffix before each attempt, so a deadline or
-		# interrupted process cannot repeatedly starve the end of a full page.
-		printf '%s\n%s\n' "$page" "$rows" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
-		now_epoch=$(date +%s) || return 1
-		[[ "$now_epoch" -lt "$deadline" ]] || return 3
-		pr="${rows%%$'\n'*}"
-		_pm_restore_partial_continuation "$pr" "$repo_slug" "" ""
-		[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+	floor="$walk_floor"
+	[[ "$floor" -ge $((now_epoch - lookback)) ]] || floor=$((now_epoch - lookback))
+	while true; do
+		if [[ -z "$rows" && "$fetched" -eq 1 && "$page" -eq 1 ]]; then
+			# The last page has been processed: close the walk.
+			_pmpc_merged_walk_write "$walk_file" "" "" "$walk_start" || return 1
+			return 0
+		fi
+		if [[ -z "$rows" ]]; then
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			rows=$(_pmpc_merged_page_candidates "$repo_slug" "$page" "$floor") || return 1
+			read -r count oldest <<<"${rows%%$'\n'*}"
+			[[ "$count" =~ ^[0-9]+$ && "$oldest" =~ ^[0-9]+$ ]] || return 1
+			[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+			if [[ "$count" -lt 100 || "$oldest" -lt "$floor" ]]; then page=1; else page=$((page + 1)); fi
+			fetched=1
+		fi
+		while [[ -n "$rows" ]]; do
+			# Persist the unprocessed suffix before each attempt, so a deadline or
+			# interrupted process cannot repeatedly starve the end of a full page.
+			printf '%s\n%s\n' "$page" "$rows" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
+			now_epoch=$(date +%s) || return 1
+			[[ "$now_epoch" -lt "$deadline" ]] || return 3
+			pr="${rows%%$'\n'*}"
+			_pm_restore_partial_continuation "$pr" "$repo_slug" "" ""
+			[[ "$rows" == *$'\n'* ]] && rows="${rows#*$'\n'}" || rows=""
+		done
+		printf '%s\n' "$page" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
 	done
-	printf '%s\n' "$page" >"${cursor}.$$" && mv -f "${cursor}.$$" "$cursor" || return 1
-	[[ "$page" -eq 1 ]] || return 3
 	return 0
 }
 
