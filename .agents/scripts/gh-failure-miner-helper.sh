@@ -1049,6 +1049,7 @@ build_repo_clusters_json() {
 		check_name: .[0].check_name,
 		signature: .[0].signature,
 		count: length,
+		scheduled: (any(.[]; .source_kind == "workflow" and ((.source_ref // "") | startswith("schedule:")))),
 		is_infra: (any(.[]; .is_infra == true)),
 		infra_reasons: (map(.infra_reason // empty) | unique),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
@@ -1441,8 +1442,10 @@ create_systemic_issues() {
 	#   error signature. Treating it as systemic creates false-positive issues (GH#18978).
 	local candidate_file
 	candidate_file=$(mktemp)
+	# GH#39472: a daily schedule yields one event per 24h window, so a scheduled
+	# workflow whose newest run failed is systemic at threshold 1.
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(
-		.count >= $min_count
+		(.count >= $min_count or (.scheduled // false) == true)
 		and (.is_infra // false) == false
 		and ((.signature // "") as $signature | ["billing_outage","job_not_started","signature_not_fetched"] | index($signature) | not)
 	)]' >"$candidate_file"
