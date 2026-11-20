@@ -654,6 +654,45 @@ test_min_worker_floor_refill_stops_after_triage_only_round() {
 	return 0
 }
 
+# GH#39510: refill rounds under the early first wave run as normal refills;
+# the caller's first-wave scope is restored after the refill returns.
+test_min_worker_floor_refill_runs_normal_refill_scope() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_WAVE_FILE="${TEST_ROOT}/refill-wave-scope.txt"
+		: >"$TEST_WAVE_FILE"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() {
+			printf '6 1\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '%s\n' "${_PULSE_FIRST_DISPATCH_WAVE:-unset}" >>"$TEST_WAVE_FILE"
+			printf '0\n'
+			return 0
+		}
+		local _PULSE_FIRST_DISPATCH_WAVE=1
+		_dispatch_min_worker_floor_refill 6 2
+		if [[ "$(<"$TEST_WAVE_FILE")" == 0 && "$_PULSE_FIRST_DISPATCH_WAVE" == 1 ]]; then
+			return 0
+		fi
+		printf 'refill_waves=%s caller_wave=%s\n' "$(tr '\n' ',' <"$TEST_WAVE_FILE")" \
+			"$_PULSE_FIRST_DISPATCH_WAVE" >"${TEST_ROOT}/refill-wave-scope-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: early first-wave refill rounds use normal refill scope (GH#39510)" 0
+	else
+		print_result "refill: early first-wave refill rounds use normal refill scope (GH#39510)" 1 \
+			"$(<"${TEST_ROOT}/refill-wave-scope-failure.txt")"
+	fi
+	unset TEST_WAVE_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
 test_apply_dispatch_refill_reuses_initial_worker_counts() {
 	(
 		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
@@ -1125,6 +1164,7 @@ for test_name in \
 	test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor \
 	test_min_worker_floor_refill_uses_precomputed_counts \
 	test_min_worker_floor_refill_stops_after_triage_only_round \
+	test_min_worker_floor_refill_runs_normal_refill_scope \
 	test_apply_dispatch_refill_reuses_initial_worker_counts \
 	test_early_exit_refill_reuses_precomputed_active_count \
 	test_active_pulse_refill_uses_min_floor_above_raw_max \
