@@ -44,7 +44,9 @@ class LifecycleCases(UnregisteredCases, AdministrationCases, CanonicalCases, Mer
         self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(prefix="archive-lifecycle-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # macOS temp dirs live under the /var -> /private/var symlink; the lifecycle
+        # state-parent guard requires a canonical path (GH#39524).
+        self.root = Path(self.temp.name).resolve()
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
                         AIDEVOPS_RECOVERY_TIMING_LOG=str(self.root / "timing.jsonl"),
