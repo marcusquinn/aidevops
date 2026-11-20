@@ -132,9 +132,13 @@ export function settings(host, envelope, bridgeSockets = []) {
   return {
     network: {
       allowedDomains: [host + ':443'], deniedDomains: [], strictAllowlist: true,
-      // SRT does NOT deny all private-use addresses by default.
+      // SRT does NOT deny all private-use addresses by default. Loopback,
+      // unspecified and link-local are denied by SRT 0.0.83 already (GH#39361
+      // verified); they are listed too so the policy does not depend on that
+      // default, and IPv4-mapped IPv6 forms match the IPv4 rules.
       deniedResolvedAddresses: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-        '100.64.0.0/10', 'fc00::/7'],
+        '100.64.0.0/10', 'fc00::/7', '127.0.0.0/8', '::1', '0.0.0.0/8',
+        '169.254.0.0/16', 'fe80::/10'],
       allowLocalBinding: false, allowUnixSockets: [], allowAllUnixSockets: false,
     },
     filesystem: {

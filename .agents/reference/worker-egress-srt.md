@@ -268,6 +268,31 @@ and keep the minimal coreutils and util-linux variants ahead of the system
 profile on `PATH`. Inspect bounded-operation cleanup receipts as well as
 test exit status; child exit alone does not establish absence of descendants.
 
+## Proxy resolved-address, redirect and protocol qualification (GH#39361)
+
+Synthetic and offline; no real DNS, `/etc/hosts` or network. SRT 0.0.83 has no
+resolver option, but its resolved-address guard calls `node:dns` `lookup` when
+the guard is built. The tests in `tests/test-worker-egress-srt.mjs` swap that
+function (plus `syncBuiltinESMExports()`) for a fixture mapping the allowed test
+name to chosen addresses, start the real `SandboxManager` proxies with
+`settings()`, and drive the HTTP and authenticated SOCKS5 ports directly. They
+run on Linux or macOS wherever SRT initializes (needs `rg`, plus `bwrap` and
+`socat` on Linux) and are not part of the opt-in real-platform run. Result of a
+real Linux x64 run:
+
+| Case | Result |
+|------|--------|
+| Allowed name resolving to 10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7, 127/8, `::1`, 169.254/16, fe80::/10, 0.0.0.0, or IPv4-mapped loopback, RFC 1918 and link-local | CONNECT 403 and SOCKS reply 2 (not allowed) for every class |
+| Positive control: a test-only variant that carves owned loopback listeners out of the guard | Allowed name reaches the owned listener, proving the fixture resolver and dial path |
+| HTTP 302 from the allowed host to another host | Follow-up request to the other host is refused with 403 |
+| Allowed name on ports 80, 22, 25, 8443 or any other non-443 port, via CONNECT, plain HTTP or SOCKS | Refused (403 / SOCKS reply 2) |
+| Raw non-TLS bytes on an allowed authority | Documented behaviour: tunnelled opaquely. SRT does not inspect or terminate TLS here, so the only refusal is by host and port; the bytes reach only the one allowed host on 443 |
+
+Loopback, unspecified and link-local are denied by SRT 0.0.83 by default
+(`DENIED_CLASSES` in its resolved-address guard, including IPv4-mapped forms).
+`settings()` also lists them in `deniedResolvedAddresses` so the policy does not
+depend on that default; the policy unit test asserts it.
+
 ## Before promotion
 
 NixOS x64 host testing is complete under
@@ -277,8 +302,7 @@ GH#35043. macOS arm64 synthetic qualification is complete under
 qualifies the other architecture.
 
 Still required, tracked as GH#35043 follow-ups: NixOS arm64 and macOS x64
-evidence; attribution of the inherited macOS send rights; proxy
-resolved-address/redirect and protocol bypass qualification; independent review
+evidence; attribution of the inherited macOS send rights; independent review
 of filesystem composition; minimal credential handling and an explicit
 extraction-role envelope. Model/settings, wall-time/resources/cost, input release
 and comparison-attempt approval remain separate decisions.
