@@ -8,7 +8,7 @@ set -euo pipefail
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
 # GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
-TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git) || {
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git 2>/dev/null || command -v git) || {
 	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
 	exit 1
 }
