@@ -1137,6 +1137,13 @@ _blocked_by_extract_tids() {
 	# `blocked-by:t001,t002,t003` are enforced consistently at dispatch time.
 	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1).
 	blocker_lines=$(_blocked_by_structured_lines "$body")
+	# Research-note paths are valid file paths, not dependency references. Because
+	# task extraction deliberately ignores their embedded IDs, keep path-only or
+	# mixed path values fail-closed instead of silently dropping the declaration.
+	if [[ "$blocker_lines" =~ $TASK_IDENTITY_RESEARCH_PATH_ERE ]]; then
+		printf '%s\n' '__malformed__'
+		return 0
+	fi
 	if task_identity_has_malformed_candidate "$blocker_lines"; then
 		printf '%s\n' '__malformed__'
 		return 0
