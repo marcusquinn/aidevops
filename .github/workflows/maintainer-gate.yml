@@ -27,7 +27,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   issues:
-    types: [unlabeled, labeled, assigned, unassigned]
+    types: [unlabeled, labeled, assigned, unassigned, reopened]
 
 # Keep cancellation job-scoped in the reusable workflow's check-pr verdict job.
 # Workflow-level cancellation would also interrupt PR label restoration.

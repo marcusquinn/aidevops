@@ -35,7 +35,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   issues:
-    types: [unlabeled, labeled, assigned, unassigned]
+    types: [unlabeled, labeled, assigned, unassigned, reopened]
 
 jobs:
   gate:
