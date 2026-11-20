@@ -27,6 +27,49 @@ def invoke(command, cwd, env):
     )
 
 
+def check_summary(root, project, environment, ignore):
+    """Summary mode: content-free output, excluded = candidates - scanned."""
+    marker = "SYNTHETIC_FILE_BODY_MARKER"
+    for name in ("kept.txt", "found.txt", "skipped.txt"):
+        (project / name).write_text(marker, encoding="utf-8")
+    ignore.write_text(marker + "\n", encoding="utf-8")
+    git = shutil.which("git", path=environment["PATH"])
+    for git_args in (["init", "-q"], ["add", "-A"]):
+        invoke([git, *git_args], project, environment)
+    real_project = Path(os.path.realpath(project))
+    findings = [
+        {"ruleId": "synthetic-rule", "message": marker, "data": {"v": marker}, "range": [0, 1]},
+        {"ruleId": "synthetic-rule", "message": marker, "range": [2, 3]},
+    ]
+    scanned = json.dumps([
+        {"filePath": str(real_project / "kept.txt"), "sourceContent": marker, "messages": []},
+        {"filePath": str(real_project / "found.txt"), "sourceContent": marker, "messages": findings},
+    ])
+    results_file = root / "results.json"
+    results_file.write_text(scanned, encoding="utf-8")
+    summary_env = {**environment, "SCAN_JSON": str(results_file)}
+
+    def summary(exit_code, env=summary_env):
+        return invoke(["bash", str(HELPER), "summary"], project,
+                      {**env, "SCAN_EXIT": str(exit_code)})
+
+    result = summary(1)
+    output = result.stdout + result.stderr
+    expect(result.returncode == 1, result)
+    expect(marker not in output and "sourceContent" not in output, result)
+    for line in ("excluded-path: skipped.txt", "excluded-path: .secretlintignore",
+                 "finding: found.txt\tsynthetic-rule\t2", "scanned-path: kept.txt",
+                 "scanned: 2", "flagged: 1"):
+        expect(line in output, result)
+    expect(summary(0).returncode == 1, "findings must not look clean")
+    result = summary(2, environment)
+    expect(result.returncode == 2, result)
+    expect("scanned:" not in result.stdout, "fatal scan printed a summary")
+    results_file.write_text("[]", encoding="utf-8")
+    result = summary(0)
+    expect(result.returncode == 0 and "scanned: 0" in result.stdout, result)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="scan-config-boundary-") as temporary:
         root = Path(temporary)
@@ -84,46 +127,7 @@ def main():
         assert before == after, "configured scans changed project files"
         assert "secretlint **/* --format json" in calls.read_text(encoding="utf-8")
 
-        # Summary mode: content-free output, excluded = candidates - scanned.
-        marker = "SYNTHETIC_FILE_BODY_MARKER"
-        (project / "kept.txt").write_text(marker, encoding="utf-8")
-        (project / "found.txt").write_text(marker, encoding="utf-8")
-        (project / "skipped.txt").write_text(marker, encoding="utf-8")
-        ignore.write_text(marker + "\n", encoding="utf-8")
-        git = shutil.which("git", path=environment["PATH"])
-        for git_args in (["init", "-q"], ["add", "-A"]):
-            invoke([git, *git_args], project, environment)
-        real_project = Path(os.path.realpath(project))
-        scanned = json.dumps([
-            {"filePath": str(real_project / "kept.txt"), "sourceContent": marker, "messages": []},
-            {"filePath": str(real_project / "found.txt"), "sourceContent": marker, "messages": [
-                {"ruleId": "synthetic-rule", "message": marker, "data": {"v": marker}, "range": [0, 1]},
-                {"ruleId": "synthetic-rule", "message": marker, "range": [2, 3]},
-            ]},
-        ])
-        results_file = root / "results.json"
-        results_file.write_text(scanned, encoding="utf-8")
-        summary_env = {**environment, "SCAN_JSON": str(results_file)}
-
-        def summary(exit_code, env=summary_env):
-            return invoke(["bash", str(HELPER), "summary"], project,
-                          {**env, "SCAN_EXIT": str(exit_code)})
-
-        result = summary(1)
-        output = result.stdout + result.stderr
-        expect(result.returncode == 1, result)
-        expect(marker not in output and "sourceContent" not in output, result)
-        for line in ("excluded-path: skipped.txt", "excluded-path: .secretlintignore",
-                     "finding: found.txt\tsynthetic-rule\t2", "scanned-path: kept.txt",
-                     "scanned: 2", "flagged: 1"):
-            expect(line in output, result)
-        expect(summary(0).returncode == 1, "findings must not look clean")
-        result = summary(2, environment)
-        expect(result.returncode == 2, result)
-        expect("scanned:" not in result.stdout, "fatal scan printed a summary")
-        results_file.write_text("[]", encoding="utf-8")
-        result = summary(0)
-        expect(result.returncode == 0 and "scanned: 0" in result.stdout, result)
+        check_summary(root, project, environment, ignore)
     print("PASS scan/lint missing config, concurrency, explicit init, configured exit codes, content-free summary")
 
 
