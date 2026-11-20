@@ -79,9 +79,10 @@ def main():
         ignore.write_text(marker + "\n", encoding="utf-8")
         subprocess.run(["git", "init", "-q"], cwd=project, check=True)
         subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+        real_project = Path(os.path.realpath(project))
         scanned = json.dumps([
-            {"filePath": str(project / "kept.txt"), "sourceContent": marker, "messages": []},
-            {"filePath": str(project / "found.txt"), "sourceContent": marker, "messages": [
+            {"filePath": str(real_project / "kept.txt"), "sourceContent": marker, "messages": []},
+            {"filePath": str(real_project / "found.txt"), "sourceContent": marker, "messages": [
                 {"ruleId": "synthetic-rule", "message": marker, "data": {"v": marker}, "range": [0, 1]},
                 {"ruleId": "synthetic-rule", "message": marker, "range": [2, 3]},
             ]},
@@ -105,6 +106,7 @@ def main():
         assert "excluded-path: skipped.txt" in output, result
         assert "excluded-path: .secretlintignore" in output, result
         assert "finding: found.txt\tsynthetic-rule\t2" in output, result
+        assert "scanned-path: kept.txt" in output, result
         assert "scanned: 2" in output and "flagged: 1" in output, result
         result = summary(0)
         assert result.returncode == 1, "findings must not look clean"

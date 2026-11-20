@@ -603,11 +603,11 @@ list_summary_candidates() {
 	local include_untracked="${1:-}"
 	local file
 	if git rev-parse --is-inside-work-tree &>/dev/null; then
-		while IFS= read -r file; do
+		while IFS= read -r -d '' file; do
 			if [[ -e "${file}" ]]; then
 				printf '%s\n' "${file}"
 			fi
-		done < <(git ls-files)
+		done < <(git ls-files -z)
 	fi
 	if [[ "${include_untracked}" == "untracked" ]]; then
 		if command -v rg &>/dev/null; then
@@ -657,6 +657,7 @@ summarise_scan_json() {
 		| "scanned: \($files | length)",
 		  "flagged: \($flagged | length)",
 		  "excluded: \($excluded | length)",
+		  ($files[] | "scanned-path: \(.path)"),
 		  ($flagged[] | "finding: \(.path)\t\(.rules | join(","))\t\(.count)"),
 		  ($excluded[] | "excluded-path: \(.)")
 	'
@@ -677,7 +678,11 @@ run_secretlint_summary() {
 	local cmd cmd_array
 	cmd=$(get_secretlint_cmd)
 	cmd_array=()
-	read -ra cmd_array <<<"${cmd}"
+	if [[ "${cmd}" == "npx secretlint" ]]; then
+		cmd_array=(npx secretlint)
+	else
+		cmd_array=("${cmd}")
+	fi
 	cmd_array+=("${target}" "--secretlintrc" "${SECRETLINT_CONFIG_FILE}")
 	if [[ -f "${SECRETLINT_IGNORE_FILE}" ]]; then
 		cmd_array+=("--secretlintignore" "${SECRETLINT_IGNORE_FILE}")
@@ -693,7 +698,7 @@ run_secretlint_summary() {
 	# Raw scanner output contains file contents: it only ever flows into jq.
 	local scan_status=0 jq_status=0
 	set +e
-	"${cmd_array[@]}" 2>/dev/null | summarise_scan_json "${candidates}" "${PWD}/" >"${summary}"
+	"${cmd_array[@]}" 2>/dev/null | summarise_scan_json "${candidates}" "$(pwd -P)/" >"${summary}"
 	local statuses=("${PIPESTATUS[@]}")
 	scan_status=${statuses[0]}
 	jq_status=${statuses[1]}
