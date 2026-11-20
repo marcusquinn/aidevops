@@ -143,8 +143,15 @@ _read_state() {
 	if [[ -n "$raw_issue" ]] && ! _is_valid_issue_number "$raw_issue"; then
 		if healed_issue=$(_heal_issue_number "$raw_issue") &&
 			healed_state=$(printf '%s' "$state" | jq --arg in "$healed_issue" '.issue_number = $in'); then
-			state="$healed_state"
-			if _write_state "$routine_id" "$state"; then
+			# Compare-and-swap: persist the repair only if the file still holds
+			# the snapshot we read, so a concurrent cmd_update's newer run
+			# metrics are never overwritten by this read-path repair.
+			local current_state
+			current_state=$(cat "$state_file" 2>/dev/null || true)
+			if [[ "$current_state" != "$state" ]]; then
+				_log_warn "State for ${routine_id} changed during issue_number repair; skipping persisted repair (healed in memory)"
+				state="$healed_state"
+			elif state="$healed_state" && _write_state_atomic "$routine_id" "$state"; then
 				_log_warn "Healed malformed issue_number for ${routine_id} to #${healed_issue} (GH#39144)"
 			else
 				_log_warn "Healed issue_number for ${routine_id} to #${healed_issue} in memory only; could not write ${state_file}"
@@ -154,6 +161,25 @@ _read_state() {
 		fi
 	fi
 	printf '%s\n' "$state"
+	return 0
+}
+
+# Write via temp file + rename so readers never see a truncated snapshot.
+_write_state_atomic() {
+	local routine_id="$1"
+	local state_json="$2"
+	local state_file tmp_file
+	state_file="$(_state_file "$routine_id")"
+	_ensure_state_dir "$routine_id" || return 1
+	tmp_file="${state_file}.tmp.$$"
+	if ! printf '%s\n' "$state_json" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv -f "$tmp_file" "$state_file" || {
+		rm -f "$tmp_file"
+		return 1
+	}
 	return 0
 }
 
