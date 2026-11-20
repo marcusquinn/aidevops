@@ -26,9 +26,10 @@ tools:
 - **Quick start**: `npx @secretlint/quick-start "**/*"` (no install) or `docker run -v $(pwd):$(pwd) -w $(pwd) --rm secretlint/secretlint secretlint "**/*"`
 - **Init**: `npx secretlint --init` creates `.secretlintrc.json` with `{ "rules": [{ "id": "@secretlint/secretlint-rule-preset-recommend" }] }`
 - **Config**: `.secretlintrc.json` (rules), `.secretlintignore` (exclusions)
-- **Helper**: `secretlint-helper.sh [install|init|scan|quick|docker|mask|sarif|hook|status|help]`
+- **Helper**: `secretlint-helper.sh [install|init|scan|summary|quick|docker|mask|sarif|hook|status|help]`
 - **Exit codes**: 0=clean, 1=secrets found, 2=error
-- **Output formats**: stylish (default), json, compact, table, sarif, mask-result
+- **AI sessions**: use `secretlint-helper.sh summary` (paths, rule IDs, counts, excluded paths; no contents). `--format json` embeds full file contents (`sourceContent`) and must not be read by AI sessions.
+- **Output formats**: stylish (default), compact, table, sarif, mask-result, json (contains file contents)
 - **Pre-commit**: Husky+lint-staged or native git hooks supported
 - **Quality pipeline**: `linters-local.sh` and `pre-commit-hook.sh` both include secretlint
 
@@ -113,11 +114,12 @@ const testToken = "ghs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 ```bash
 secretlint "**/*"                                                              # Stylish (default)
-secretlint "**/*" --format json                                                # JSON
+secretlint "**/*" --format json                                                # JSON (embeds full file contents; not for AI context)
 secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > out.sarif  # SARIF (CI dashboards)
 secretlint .zsh_history --format=mask-result --output=.zsh_history             # Mask secrets in file
 # Via helper
-secretlint-helper.sh scan . json   # JSON
+secretlint-helper.sh summary       # Content-free summary: scanned/flagged/excluded, rule IDs and counts (use this in AI sessions)
+secretlint-helper.sh summary . untracked   # Also count untracked files as candidates for the excluded list
 secretlint-helper.sh sarif         # SARIF (requires @secretlint/secretlint-formatter-sarif)
 secretlint-helper.sh mask .env.example
 ```
