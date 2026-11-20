@@ -2356,9 +2356,9 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19205 fix(setup): reinstall the systemic CI failure miner on pulse hosts during non-interactive setup #bug #interactive ref:GH#39466 logged:2026-11-20 -> [todo/tasks/t19205-brief.md] pr:#39478 completed:2026-11-20
 
-- [ ] t19209 fix(terminal-blocker): trigger revisit starves holds beyond the first ~20 search hits #bug #interactive ref:GH#39481 logged:2026-11-20 -> [todo/tasks/t19209-brief.md]
+- [x] t19209 fix(terminal-blocker): trigger revisit starves holds beyond the first ~20 search hits #bug #interactive ref:GH#39481 logged:2026-11-20 -> [todo/tasks/t19209-brief.md] pr:#39484 completed:2026-11-20
 
-- [ ] t19210 fix(terminal-blocker): external_trigger_pending holds publish dependency guidance that names a nonexistent linked blocker #auto-dispatch #bug ref:GH#39482 logged:2026-11-20 -> [todo/tasks/t19210-brief.md]
+- [x] t19210 fix(terminal-blocker): external_trigger_pending holds publish dependency guidance that names a nonexistent linked blocker #auto-dispatch #bug ref:GH#39482 logged:2026-11-20 -> [todo/tasks/t19210-brief.md] pr:#39485 completed:2026-11-20
 
 ## In Progress
 
