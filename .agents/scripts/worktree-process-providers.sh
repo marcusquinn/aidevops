@@ -93,6 +93,7 @@ _worktree_resolve_privileged_cwd_links() {
 	local -a targets=()
 
 	_WT_PRIV_CAPTURED=0
+	[[ "$chunk_size" =~ ^[1-9][0-9]*$ ]] || chunk_size=4096
 	while [[ "$start" -lt "${#links[@]}" ]]; do
 		chunk_links=("${links[@]:$start:$chunk_size}")
 		start=$((start + chunk_size))

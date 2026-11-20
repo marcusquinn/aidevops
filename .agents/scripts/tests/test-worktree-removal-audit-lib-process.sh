@@ -565,6 +565,10 @@ test_privileged_cwd_links_are_chunked_at_inspector_limit() {
 	[[ "$(wc -l <"$out_file" | tr -d ' ')" == "$total" ]] || rc=1
 	[[ "$(sed -n "${total}p" "$out_file")" == "/cwd/${total}" ]] || rc=1
 
+	# Chunk 2 times out; the still-present link in chunk 3 must stay degraded
+	# although chunk 3 is never sent.
+	mkdir -p "${proc_root}/${total}"
+	ln -s /late-cwd "${proc_root}/${total}/cwd"
 	: >"$calls_file"
 	(
 		_worktree_privileged_read_cwds() {
@@ -580,24 +584,36 @@ test_privileged_cwd_links_are_chunked_at_inspector_limit() {
 			printf 'single %s\n' "$2" >>"$calls_file"
 			return 1
 		}
-		_worktree_resolve_privileged_cwd_links "$proc_root" "${links[@]}" >"$out_file" || exit 1
-		printf '%s\n' "$_WT_PRIV_CAPTURED" >"$meta_file"
+		resolve_status=0
+		_worktree_resolve_privileged_cwd_links "$proc_root" "${links[@]}" >"$out_file" || resolve_status=$?
+		printf '%s %s\n' "$resolve_status" "$_WT_PRIV_CAPTURED" >"$meta_file"
 	) || rc=1
 	[[ "$(<"$calls_file")" == "batch 1"$'\n'"batch $((limit + 1))" ]] || rc=1
-	[[ "$(<"$meta_file")" == "$limit" ]] || rc=1
+	[[ "$(<"$meta_file")" == "2 ${limit}" ]] || rc=1
 
+	# The size guard is the refusing check: an oversized request never reaches
+	# the platform policy (or sudo), while a request at the limit does.
+	: >"$calls_file"
 	if (
-		sudo() {
-			printf 'sudo\n' >>"$calls_file"
-			return 0
+		worktree_process_inspector_allowed() {
+			printf 'policy\n' >>"$calls_file"
+			return 1
 		}
 		_worktree_privileged_read_cwds /proc "${pids[@]:0:$((limit + 1))}"
 	) >/dev/null; then
 		rc=1
 	fi
-	[[ "$(<"$calls_file")" != *sudo* ]] || rc=1
+	[[ ! -s "$calls_file" ]] || rc=1
+	(
+		worktree_process_inspector_allowed() {
+			printf 'policy\n' >>"$calls_file"
+			return 1
+		}
+		_worktree_privileged_read_cwds /proc "${pids[@]:0:$limit}"
+	) >/dev/null || true
+	[[ "$(<"$calls_file")" == policy ]] || rc=1
 	print_result "privileged_cwd_links_are_chunked_at_inspector_limit" "$rc" \
-		"Expected ceil(N/${limit}) batch calls capturing every path, and no calls after a timeout"
+		"Expected ceil(N/${limit}) batch calls capturing every path, degraded links after a timeout, and an enforced per-call limit"
 	return 0
 }
 
