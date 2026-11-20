@@ -502,8 +502,9 @@ _scan_mcp_env_literals() {
 	while IFS=$'\t' read -r location detail; do
 		[[ -n "$location" ]] || continue
 		# GH#39412: the interpreter, not the file, is the cause; security fix
-		# cannot repair it, so name the parser remedy instead.
-		if [[ "$detail" == *'"mcp-toml-parser-missing"'* ]]; then
+		# cannot repair it, so name the parser remedy instead. Match the whole
+		# record: a substring test would also match a server with that name.
+		if [[ "$detail" == '{"name": "", "category": "mcp-toml-parser-missing"}' ]]; then
 			py_version=$(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null) || py_version="unknown"
 			report_finding "medium" "$location" \
 				"$detail (TOML not audited: python3 ${py_version} has no tomllib or tomli)" \

@@ -352,6 +352,14 @@ audit_mcp_configs
         self.assertTrue(other.is_symlink())
 
     def test_toml_parser_missing_is_named_and_other_fixes_run(self):
+        # A literal under a server named like the category stays a HIGH literal.
+        opencode = self.home / '.config/opencode/opencode.json'
+        self.write(opencode, json.dumps({'mcp': {'mcp-toml-parser-missing': {'env': {'SERVICE_API_KEY': self.values[-1]}}}}))
+        scan = self.cmd('secret-hygiene-helper.sh', 'scan')
+        self.assertIn('mcp-literal', scan.stdout)
+        self.assertNotIn('Needs Python 3.11+ or tomli', scan.stdout)
+        self.assert_no_values(scan.stdout + scan.stderr)
+        opencode.unlink()
         # GH#39412: stock macOS python3 (3.9) has neither tomllib nor tomli.
         shadow = self.home / 'no-toml'
         for module in ('tomllib', 'tomli'):
