@@ -552,7 +552,16 @@ printf 'PASS capped timeouts reduce repository work and recover candidates (GH#3
 	reused=$(_dispatch_census_enumerate_repo owner/big /tmp 15 60 50 skip "") || rc=$?
 	[[ "$rc" == 124 ]]
 	jq -e 'length == 1 and .[0].number == 7' <<<"$reused" >/dev/null
-	grep -q 'reused last-good candidates: repo=owner/big count=1 age=30s (GH#38483)' "$LOGFILE"
+	grep -q 'reused last-good candidates: repo=owner/big count=1 filtered=0 age=30s (GH#38483)' "$LOGFILE"
+	# GH#39517: an issue launched after the list was stored is not re-offered.
+	(
+		AIDEVOPS_DISPATCH_LEDGER_FILE="${TEST_ROOT}/reuse-ledger.jsonl"
+		jq -nc --argjson at "$(($(_dispatch_first_wave_now_s) + 1))" \
+			'{repo_slug:"owner/big",issue_number:"7",dispatched_at:($at | todate)}' >"$AIDEVOPS_DISPATCH_LEDGER_FILE"
+		launched=$(_dispatch_census_last_good_candidates owner/big)
+		[[ "$launched" == '[]' ]]
+		grep -q 'reused last-good candidates: repo=owner/big count=0 filtered=1 age=30s (GH#38483)' "$LOGFILE"
+	)
 	# The PR-backlog guardrail is reapplied to the reused list.
 	(
 		_dispatch_filter_repo_pr_backlog_candidates() { printf '[]\n'; return 0; }
