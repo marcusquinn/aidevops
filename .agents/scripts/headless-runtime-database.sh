@@ -56,6 +56,9 @@ _copy_worker_db_migration_ledger_table() {
 	local worker_db="$1"
 	local shared_db="$2"
 	local ledger_table="$3"
+	# Optional: file that receives (appends) SQLite stderr from failed writes so
+	# the init retry log can name the error; successful copies stay silent.
+	local err_file="${4:-$_HEADLESS_DB_NO_ERR_FILE}"
 	local has_shared has_worker schema shared_db_sql
 
 	has_shared=$(sqlite3_with_timeout "$shared_db" "${_HEADLESS_SQL_SELECT} 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
@@ -63,7 +66,7 @@ _copy_worker_db_migration_ledger_table() {
 
 	has_worker=$(sqlite3_with_timeout "$worker_db" "${_HEADLESS_SQL_SELECT} 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
 	if [[ -z "$has_worker" ]]; then
-		if ! schema=$(sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null) || [[ -z "$schema" ]] || ! printf '%s\n' "$schema" | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
+		if ! schema=$(sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>>"$err_file") || [[ -z "$schema" ]] || ! printf '%s\n' "$schema" | sqlite3_with_timeout "$worker_db" >/dev/null 2>>"$err_file"; then
 			print_warning "OpenCode worker DB could not create ${ledger_table} migration ledger from shared DB"
 			return 1
 		fi
@@ -73,7 +76,7 @@ _copy_worker_db_migration_ledger_table() {
 	# Deferred BEGIN: the first statement writes main, so only the worker DB is
 	# write-locked. BEGIN IMMEDIATE would also take the attached shared DB's
 	# write lock and fail while any session or worker merge writes it (GH#39417).
-	if ! sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1; then
+	if ! sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>>"$err_file"; then
 		.bail on
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
 		BEGIN;
@@ -90,17 +93,19 @@ _copy_worker_db_migration_ledger_table() {
 
 #######################################
 # Synchronise all known OpenCode migration ledger tables into worker DB.
-# Args: $1 = worker DB path, $2 = shared DB path.
+# Args: $1 = worker DB path, $2 = shared DB path,
+#       $3 = optional SQLite error file (appended; default discards).
 #######################################
 _sync_worker_db_migration_ledgers() {
 	local worker_db="$1"
 	local shared_db="$2"
+	local err_file="${3:-$_HEADLESS_DB_NO_ERR_FILE}"
 	local ledger_table
 	local sync_failed=0
 
 	[[ -f "$worker_db" && -f "$shared_db" ]] || return 0
 	for ledger_table in __drizzle_migrations data_migration migration; do
-		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" || sync_failed=1
+		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" "$err_file" || sync_failed=1
 	done
 	[[ "$sync_failed" -eq 0 ]] || return 1
 	return 0
@@ -328,8 +333,10 @@ _initialize_worker_db_from_shared_schema_once() {
 		_worker_db_init_attempt_failed "set_user_version" "$err_file"
 		return 1
 	fi
-	if ! _sync_worker_db_migration_ledgers "$worker_db" "$shared_db"; then
-		_worker_db_init_attempt_failed "sync_migration_ledgers" "$_HEADLESS_DB_NO_ERR_FILE"
+	# The successful set_user_version step left err_file empty; ledger copies
+	# append only SQLite errors, so the retry log names the failing statement.
+	if ! _sync_worker_db_migration_ledgers "$worker_db" "$shared_db" "$err_file"; then
+		_worker_db_init_attempt_failed "sync_migration_ledgers" "$err_file"
 		return 1
 	fi
 	[[ "$err_file" == "$_HEADLESS_DB_NO_ERR_FILE" ]] || rm -f "$err_file" 2>/dev/null || true
@@ -354,6 +361,9 @@ _initialize_worker_db_from_shared_schema() {
 
 	[[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || max_attempts=5
 	[[ "$delay" =~ ^[0-9]+$ ]] || delay=2
+	# Base 10: a leading zero (e.g. 08) would otherwise be parsed as octal by
+	# the doubling arithmetic below and abort the retry loop.
+	delay=$((10#$delay))
 	while true; do
 		if _initialize_worker_db_from_shared_schema_once "$worker_db" "$shared_db"; then
 			if [[ "$attempt" -gt 1 ]]; then
