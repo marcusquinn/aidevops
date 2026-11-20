@@ -159,6 +159,30 @@ write_pool "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"idle\",\"c
 actual="$(_choose_model_auto "worker" "standard")"
 assert_equals "openai/gpt-5.5" "$actual" "expired cooldown does not block an otherwise idle account" || true
 
+# GH#39475: opencode2_oauth_pool_auth_available shares the availability rule.
+# auth.json is absent (OPENCODE_AUTH_FILE points at a missing file).
+write_pool '{"anthropic":[{"status":"billing-error","cooldownUntil":0}]}'
+rc=0
+AIDEVOPS_OPENCODE_PROFILE=v1 opencode2_oauth_pool_auth_available anthropic || rc=$?
+assert_equals "1" "$rc" "billing-error-only pool is rejected by headless check" || true
+
+write_pool '{"anthropic":[{"status":"active"}]}'
+rc=0
+AIDEVOPS_OPENCODE_PROFILE=v1 opencode2_oauth_pool_auth_available anthropic || rc=$?
+assert_equals "0" "$rc" "active account is accepted by headless check" || true
+
+mkdir -p "$TMP_DIR/v2root/auth"
+printf '%s\n' '{"anthropic":[{"status":"idle"}]}' >"$TMP_DIR/v2root/auth/oauth-pool.json"
+rc=0
+AIDEVOPS_OPENCODE_PROFILE=v2 AIDEVOPS_OPENCODE_V2_ROOT="$TMP_DIR/v2root" opencode2_oauth_pool_auth_available anthropic || rc=$?
+assert_equals "0" "$rc" "v2 profile reads AIDEVOPS_OPENCODE_V2_ROOT pool" || true
+
+printf '{}' >"$OPENCODE_AUTH_FILE"
+rc=0
+AIDEVOPS_OPENCODE_PROFILE=v1 opencode2_oauth_pool_auth_available anthropic || rc=$?
+assert_equals "1" "$rc" "pool ignored when auth.json exists" || true
+rm -f "$OPENCODE_AUTH_FILE"
+
 if [[ "$failures" -ne 0 ]]; then
 	printf '\n%d OAuth pool gate regression test(s) failed\n' "$failures" >&2
 	exit 1
