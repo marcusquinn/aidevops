@@ -35,7 +35,10 @@
 #   AIDEVOPS_TRIGGER_REVISIT_DIR          advisory records (default
 #                                         ~/.aidevops/logs/terminal-blocker-trigger-revisit)
 # Records are advisory and expire after 30 days; deleting one only causes one
-# early revisit. stdout carries one TRIGGER_REVISIT line per action.
+# early revisit. Ineligible hits get a read-cache memo, and each pass walks
+# hits least-recently-checked first, so a budget-bound pass resumes where the
+# last one stopped (GH#39481). stdout carries one TRIGGER_REVISIT line per
+# action; the pulse appends it to pulse.log.
 # =============================================================================
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] && set -euo pipefail
@@ -90,10 +93,12 @@ _tbtr_record_write() {
 }
 
 # Print the recorded next revisit epoch for pulse-dispatch-lib.sh wakeups.
+# Ineligible memos (GH#39481) are read caches, not revisits, so they add none.
 tbtr_next_due() {
 	local slug="${1:-}" issue="${2:-}" record=""
 	record=$(_tbtr_record_read "$slug" "$issue") || return 0
-	jq -r 'select((.next_at | type) == "number" and .next_at > 0) | .next_at | floor' <<<"$record" 2>/dev/null || true
+	jq -r 'select(.decision != "ineligible" and (.next_at | type) == "number" and .next_at > 0) | .next_at | floor' \
+		<<<"$record" 2>/dev/null || true
 	return 0
 }
 
@@ -229,12 +234,30 @@ _tbtr_reconcile_label() {
 }
 
 # Record a not-yet-revisited observation without consuming an attempt.
+# checked_at orders the next pass (GH#39481).
 # Args: slug issue record key updated_at next_at attempts
 _tbtr_record_scheduled() {
 	local slug="$1" issue="$2" record="$3" key="$4" updated_at="$5" next_at="$6" attempts="$7"
 	_tbtr_record_write "$slug" "$issue" "$(jq -c --arg k "$key" --arg u "$updated_at" --argjson n "$next_at" --argjson a "$attempts" \
-		'. + {observation: $k, updated_at: $u, next_at: $n, attempts: $a} | .decision //= "scheduled"' <<<"$record")" || true
+		--argjson c "$(date +%s)" \
+		'. + {observation: $k, updated_at: $u, next_at: $n, attempts: $a, checked_at: $c} | .decision //= "scheduled"' <<<"$record")" || true
 	return 0
+}
+
+# GH#39481: memoize a hit that a successful read proved ineligible (closed,
+# maintainer-gated, no observation, another reason class or an inactive hold).
+# The unchanged-and-not-due early return in _tbtr_issue then skips it without
+# reads until the issue changes or the interval elapses; before this, every
+# pass re-read the same ineligible hits and ran out of budget before the tail.
+# Transient read failures are never memoized. Always returns 3 (nothing used).
+# Args: slug issue updated_at
+_tbtr_record_ineligible() {
+	local slug="$1" issue="$2" updated_at="$3" now="" interval=""
+	now=$(date +%s)
+	interval=$(_tbtr_number "${AIDEVOPS_TRIGGER_REVISIT_INTERVAL_S:-}" 86400)
+	_tbtr_record_write "$slug" "$issue" "$(jq -nc --arg u "$updated_at" --argjson n "$((now + interval))" --argjson c "$now" \
+		'{updated_at: $u, next_at: $n, decision: "ineligible", checked_at: $c}')" || true
+	return 3
 }
 
 # Args: slug issue updated_at self can_write can_retry ai_allowed(true|false)
@@ -254,15 +277,18 @@ _tbtr_issue() {
 	fi
 	issue_json=$(terminal_blocker_fetch_issue "$slug" "$issue") || return 3
 	jq -e '.state == "open" and ([.labels[]? | .name? // .] | index("needs-maintainer-review") == null)' \
-		<<<"$issue_json" >/dev/null 2>&1 || return 3
+		<<<"$issue_json" >/dev/null 2>&1 || { _tbtr_record_ineligible "$slug" "$issue" "$updated_at"; return 3; }
 	comments=$(terminal_blocker_fetch_trusted_comments "$issue" "$slug" "$self") || return 3
 	observation=$(_terminal_blocker_latest_marker "$comments" "$_TBC_OBSERVATION_MARKER revision=") || return 3
-	[[ -n "$observation" ]] || return 3
+	[[ -n "$observation" ]] || { _tbtr_record_ineligible "$slug" "$issue" "$updated_at"; return 3; }
 	fingerprint=$(jq -r '.body | capture("blocker=(?<b>[a-f0-9]{24}) -->").b // empty' <<<"$observation" 2>/dev/null) || fingerprint=""
 	# Never revisit any other class, including permission or source-access holds.
-	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBTR_REASON" ]] || return 3
+	[[ "$(_terminal_blocker_reason "$fingerprint")" == "$_TBTR_REASON" ]] ||
+		{ _tbtr_record_ineligible "$slug" "$issue" "$updated_at"; return 3; }
 	TERMINAL_BLOCKER_SELF_LOGIN="$self" terminal_blocker_observation_hold_active \
 		"$comments" "$issue_json" "$slug" "$issue" "" >/dev/null 2>&1 || hold_rc=$?
+	# rc 1 is a definitely inactive hold; rc 2 (revision unavailable) is transient.
+	[[ "$hold_rc" != 1 ]] || { _tbtr_record_ineligible "$slug" "$issue" "$updated_at"; return 3; }
 	[[ "$hold_rc" == 0 ]] || return 3
 	[[ "$can_write" != true ]] || _tbtr_reconcile_label "$slug" "$issue" "$issue_json" || true
 	observation_id=$(jq -r '.id // empty' <<<"$observation")
@@ -356,6 +382,24 @@ _tbtr_refs_for_slug() {
 	return 0
 }
 
+# GH#39481: least-recently-checked first (never-checked hits lead), stable on
+# search order. Search "best match" order is the same every pass, so a pass
+# that ran out of budget restarted on the same leading hits and the tail was
+# never revisited. Args: slug, refs. Stdout: the refs, reordered.
+_tbtr_order_refs() {
+	local slug="$1" refs="$2" ref_slug="" issue="" updated="" record="" checked=0 position=0
+	while IFS=$'\t' read -r ref_slug issue updated; do
+		[[ -n "$ref_slug" && "$issue" =~ ^[0-9]+$ ]] || continue
+		position=$((position + 1))
+		checked=0
+		record=$(_tbtr_record_read "$slug" "$issue") || record=""
+		[[ -z "$record" ]] || checked=$(jq -r '(.checked_at // .revisited_at // 0) | floor' <<<"$record" 2>/dev/null) || checked=0
+		[[ "$checked" =~ ^[0-9]+$ ]] || checked=0
+		printf '%s\t%s\t%s\t%s\t%s\n' "$checked" "$position" "$ref_slug" "$issue" "$updated"
+	done <<<"$refs" | sort -t $'\t' -k1,1n -k2,2n | cut -f3-
+	return 0
+}
+
 # Args: slug remaining_ai_budget self refs (already scoped to the slug).
 # Prints the AI revisits used. AI is withheld when the pass is nearly over,
 # so one inference never outlives the deadline (GH#38489).
@@ -366,6 +410,7 @@ _tbtr_repo() {
 	[[ "$(_tbtr_time_left)" -ge "$_TBTR_MIN_READ_S" ]] || { printf '0\n'; return 0; }
 	authority=$(_tbtr_authority "$slug" "$self") || { printf '0\n'; return 1; }
 	read -r can_write can_retry <<<"$authority"
+	refs=$(_tbtr_order_refs "$slug" "$refs")
 	while IFS=$'\t' read -r ref_slug issue updated; do
 		[[ -n "$ref_slug" && "$issue" =~ ^[0-9]+$ ]] || continue
 		[[ "$(_tbtr_time_left)" -ge "$_TBTR_MIN_READ_S" && "$scanned" -lt "$scan_max" ]] || break
@@ -381,7 +426,7 @@ _tbtr_repo() {
 }
 
 tbtr_run() {
-	local max="" budget="" self="" slug="" used="" remaining=0 owner="" owners="" requested="" refs="" slug_refs=""
+	local max="" budget="" self="" slug="" used="" remaining=0 owner="" owners="" requested="" refs="" slug_refs="" out=""
 	_tbtr_load || return 1
 	max=$(_tbtr_number "${AIDEVOPS_TRIGGER_REVISIT_MAX_PER_CYCLE:-}" 5)
 	budget=$(_tbtr_number "${AIDEVOPS_TRIGGER_REVISIT_BUDGET_S:-}" 240)
@@ -405,7 +450,12 @@ tbtr_run() {
 			[[ "$(_tbtr_time_left)" -gt 0 ]] || break
 			slug_refs=$(_tbtr_refs_for_slug "$slug" "$refs")
 			[[ -n "$slug_refs" ]] || continue
-			used=$(_tbtr_repo "$slug" "$remaining" "$self" "$slug_refs") || used=0
+			out=$(_tbtr_repo "$slug" "$remaining" "$self" "$slug_refs") || out=""
+			# GH#39481: _tbtr_repo prints its TRIGGER_REVISIT action lines and
+			# then the AI revisits used. Capturing it whole swallowed every
+			# action line and reset the count to 0 whenever one was printed.
+			used="${out##*$'\n'}"
+			[[ "$out" != *$'\n'* ]] || printf '%s\n' "${out%$'\n'*}"
 			[[ "$used" =~ ^[0-9]+$ ]] || used=0
 			remaining=$((remaining - used))
 			[[ "$remaining" -ge 0 ]] || remaining=0
