@@ -43,7 +43,8 @@ class FakeAds:
                     for item in self.negatives if (item["level"], item["parent"]) == (match[1], match[2])]
         if match := re.search(r"adGroupCriteria/(\d+~\d+)'", query):
             status = self.keywords.get(match[1])
-            return [{"adGroupCriterion": {"status": status, "negative": False}}] if status else []
+            keyword = {"text": "running shoes", "matchType": "EXACT"}
+            return [{"adGroupCriterion": {"status": status, "negative": False, "keyword": keyword}}] if status else []
         match = re.search(r"FROM campaign WHERE campaign\.id = (\d+)", query)
         campaign = self.campaigns.get(match[1]) if match else None
         if not campaign:
@@ -155,6 +156,8 @@ class GoogleAdsActionTests(unittest.TestCase):
         self.assertIn("- APPLY neg [campaign_negative_keyword] add PHRASE negative \"free shoes\" to campaign 111",
                       summary)
         self.assertIn(f"    operation: {json.dumps(negative['forward'], sort_keys=True)}", summary)
+        self.assertEqual((pause["before"]["text"], pause["after"]), ("running shoes", {**pause["before"], "status": "PAUSED"}))
+        self.assertIn(f"keyword {pause['target']} \"running shoes\" [EXACT]: ENABLED -> PAUSED", pause["summary"])
 
     def test_plan_refuses_unlisted_customer_caps_and_existing_negative(self) -> None:
         for change in ({"customer_id": "999"},):
@@ -219,6 +222,29 @@ class GoogleAdsActionTests(unittest.TestCase):
         self.account.budgets["888"] = {"amount": "5000000", "shared": False}
         self.account.campaigns["111"]["budget"] = "888"  # same amount, different budget resource
         self.assert_no_write(plan)
+
+    def test_unsent_apply_never_adopts_external_change_and_rollback_rebuilds_inverse(self) -> None:
+        self.input["actions"] = self.input["actions"][:1]  # negative only: an external add equals its after-state
+        plan = self.plan()
+        self.approve(plan)
+        with patch.object(ads, "_still_approved", side_effect=ads.GoogleAdsActionError("cancelled")):
+            self.assert_no_write(plan)
+        self.account.negatives.append({"level": "campaign", "parent": "111", "text": "free shoes", "match": "PHRASE",
+                                       "rn": f"customers/{CUSTOMER}/campaignCriteria/111~77"})  # another operator
+        self.assert_no_write(plan)
+        self.assertEqual(len(self.account.negatives), 1)
+        self.account.negatives.clear()
+        receipt, _ = ads.apply_plan(plan, self.receipts, self.account)
+        path = ads.action_io.receipt_path(self.receipts, plan["plan_digest"])
+        receipt["actions"][0]["inverse"]["campaignCriterionOperation"]["remove"] = (
+            f"customers/{CUSTOMER}/campaignCriteria/111~77")  # tampered: would delete a criterion never created
+        ads._write_receipt(path, receipt)
+        self.approve({"plan_digest": receipt["plan_digest"], "owner": receipt["owner"], "customer_id": CUSTOMER,
+                      "action_set": receipt["action_set"]}, "rollback", receipt)
+        sent = len(self.account.mutations)
+        with self.assertRaises(ads.GoogleAdsActionError):
+            ads.rollback_receipt(path, self.account)
+        self.assertEqual(len(self.account.mutations), sent)
 
     def test_interrupted_rollback_reconciles_and_missing_audit_is_repaired(self) -> None:
         plan = self.plan()

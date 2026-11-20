@@ -102,13 +102,17 @@ def _negative_probe(client: Any, customer: str, params: dict[str, Any], kind: st
 
 def _keyword_probe(client: Any, customer: str, params: dict[str, Any], kind: str) -> tuple[dict[str, Any], str]:
     name = f"customers/{customer}/adGroupCriteria/{params['ad_group_id']}~{params['criterion_id']}"
-    query = ("SELECT ad_group_criterion.resource_name, ad_group_criterion.status, ad_group_criterion.negative "
+    query = ("SELECT ad_group_criterion.resource_name, ad_group_criterion.status, ad_group_criterion.negative, "
+             "ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type "
              f"FROM ad_group_criterion WHERE ad_group_criterion.resource_name = '{name}' "
              "AND ad_group_criterion.type = KEYWORD")  # nosec B608 -- numeric IDs only
     rows = client.search(customer, query)
     _require(len(rows) == 1, f"keyword {name} was not found")
-    _require(not _dig(rows[0], "adGroupCriterion", "negative"), "status changes apply only to positive keywords")
-    return {"status": _dig(rows[0], "adGroupCriterion", "status")}, name
+    criterion = rows[0].get("adGroupCriterion") or {}
+    _require(not criterion.get("negative"), "status changes apply only to positive keywords")
+    keyword = criterion.get("keyword") or {}
+    # Text and match type are immutable on a criterion: recorded so the plan and approval name the keyword.
+    return {"status": criterion.get("status"), "text": keyword.get("text"), "match_type": keyword.get("matchType")}, name
 
 
 def _campaign_row(client: Any, customer: str, campaign_id: str) -> dict[str, Any]:
@@ -177,8 +181,9 @@ def _plan_negative(customer: str, params: dict[str, Any], before: dict[str, Any]
 
 def _plan_status(customer: str, params: dict[str, Any], before: dict[str, Any], name: str, kind: str) -> tuple:
     _require(before["status"] in KEYWORD_STATUSES, f"keyword status {before['status']} is not reversible")
-    summary = f"keyword {name}: {before['status']} -> {params['status']}"
-    return ({"status": params["status"]}, _status_operation(name, params["status"]),
+    summary = (f"keyword {name} \"{before['text']}\" [{before['match_type']}]: "
+               f"{before['status']} -> {params['status']}")
+    return ({**before, "status": params["status"]}, _status_operation(name, params["status"]),
             _status_operation(name, before["status"]), summary)
 
 
@@ -234,3 +239,29 @@ def rebuild_check(customer: str, item: dict[str, Any]) -> None:
     stored = (item.get("after"), item.get("forward"), item.get("inverse"), item.get("summary"))
     _require(rebuilt == stored, f"action {item.get('id')}: operations do not match its validated parameters")
     _require(item["before"] != item["after"], f"action {item.get('id')} would not change the account")
+
+
+def receipt_inverse(kind: str, forward: dict[str, Any], inverse: Any, resource_name: str) -> Any:
+    """Created negatives revert by removing exactly the created criterion; other kinds use the planned inverse."""
+    if kind in NEGATIVE_LEVELS:
+        return {next(iter(forward)): {"remove": resource_name}}
+    return inverse
+
+
+def rebuild_receipt_check(customer: str, item: dict[str, Any]) -> None:
+    """Before rollback writes: re-derive after-state, summary and inverse; stored receipt copies never count."""
+    name = item.get("resource_name")
+    _require(isinstance(name, str) and name.startswith(f"customers/{customer}/"),
+             f"action {item.get('id')}: receipt resource is foreign or missing")
+    try:
+        after, forward, inverse, summary = plan_kind(customer, item["kind"], item["params"], item["before"], name)
+        level = NEGATIVE_LEVELS.get(item["kind"])
+        if level:  # the removed criterion must sit under the planned campaign/ad group
+            path = "campaignCriteria" if level == "campaign" else "adGroupCriteria"
+            _require(name.startswith(f"customers/{customer}/{path}/{item['params'][level + '_id']}~"),
+                     f"action {item.get('id')}: receipt resource is not under its planned parent")
+    except (KeyError, TypeError) as error:
+        raise GoogleAdsActionError(f"action {item.get('id')}: receipt action is malformed") from error
+    rebuilt = (after, summary, receipt_inverse(item["kind"], forward, inverse, name))
+    _require(rebuilt == (item.get("after"), item.get("summary"), item.get("inverse")),
+             f"action {item.get('id')}: receipt inverse does not match its recorded state")

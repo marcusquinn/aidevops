@@ -28,7 +28,8 @@ from urllib.request import Request, urlopen
 import marketing_action_approval as approval_records
 import marketing_action_io as action_io
 from google_ads_action_kinds import (
-    NEGATIVE_LEVELS, GoogleAdsActionError, _numeric, _require, plan_kind, probe, rebuild_check, validate_params,
+    NEGATIVE_LEVELS, GoogleAdsActionError, _numeric, _require, plan_kind, probe, rebuild_check,
+    rebuild_receipt_check, receipt_inverse, validate_params,
 )
 from marketing_account_google import GOOGLE_ADS_API_VERSION
 
@@ -305,12 +306,9 @@ def _live_states(client: Any, customer: str, actions: list[dict[str, Any]]) -> l
 def _receipt_action(item: dict[str, Any], resource_name: str, customer: str) -> dict[str, Any]:
     _require(isinstance(resource_name, str) and resource_name.startswith(f"customers/{customer}/"),
              "Google Ads returned a foreign or missing resource name")
-    inverse = item["inverse"]
-    if inverse is None:  # created negatives revert by removing exactly the created criterion
-        key = next(iter(item["forward"]))
-        inverse = {key: {"remove": resource_name}}
     recorded = {key: item[key] for key in ("id", "kind", "summary", "params", "before", "after")}
-    recorded.update(resource_name=resource_name, inverse=inverse)
+    recorded.update(resource_name=resource_name,
+                    inverse=receipt_inverse(item["kind"], item["forward"], item["inverse"], resource_name))
     return recorded
 
 
@@ -366,12 +364,15 @@ def apply_plan(plan: dict[str, Any], receipt_directory: str | Path, client: Any)
             _require(live == after, "applied-plan replay found drifted state")
             _audit(directory, path, "apply", receipt)  # repairs a missing audit entry; no account write
             return receipt, True
-        if path.exists() and live == after:  # crash after a committed mutate: recover names from live state
+        if receipt.get("mutate_sent_at") and live == after:  # lost response after our send: recover live names
             return _finish(directory, path, receipt, plan, [name for _, name in states]), False
+        # Without the send marker a matching after-state was made by someone else: never adopt it.
         _require(live == before, "live account state drifted since planning")
         receipt["approval_nonce"] = approval["nonce"]
         _write_receipt(path, receipt)
         _still_approved(approval, plan["expires_at"])
+        receipt["mutate_sent_at"] = _stamp(_now())  # provenance: only this plan's send can explain after-state
+        _write_receipt(path, receipt)
         responses = client.mutate(plan["customer_id"], plan["operations"], validate_only=False)
         return _finish(directory, path, receipt, plan, _result_names(responses, len(plan["actions"]))), False
 
@@ -394,6 +395,10 @@ def rollback_receipt(receipt_path: str | Path, client: Any) -> tuple[dict[str, A
                "customer_id": receipt["customer_id"], "action_set": receipt["action_set"]}
     approval = _approval(subject, "rollback", action_io.digest(receipt))
     customer, actions = receipt["customer_id"], receipt["actions"]
+    _require(isinstance(actions, list) and actions and all(isinstance(item, dict) for item in actions),
+             "receipt actions are invalid")
+    for item in actions:
+        rebuild_receipt_check(customer, item)
     with _receipt_lock(directory):
         if receipt["status"] == "rolled_back":
             _audit(directory, path, "rollback", receipt)  # repairs a missing audit entry; no account write
