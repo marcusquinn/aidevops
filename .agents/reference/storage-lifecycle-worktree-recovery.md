@@ -146,6 +146,8 @@ Managed native-removal gates may hold SQLite's writer lock: they require the bou
 Source fingerprints, source/writer/admission guards, secure claim and descriptor-anchored removal remain independent. Neither advisory locks nor content comparisons exclude arbitrary same-UID mutation or already-open writers.
 No performance improvement is implied: measure base hashing and source scans separately.
 
+For subprocess fan-out work, compare per-test Git spawn counts, not wall time (host load makes timings unusable): `git-spawn-profile-helper.sh run <worktree> <out-dir> [test-filter...]` runs `test-worktree-archive-lifecycle.py` with a PATH shim that logs `<test>\t<argv>` and execs the Git resolved before PATH changed (an earlier `.agents/scripts/git` guard wrapper stays in force); `summary <log>` lists top shapes and most-spawn tests; `compare <base-log> <head-log> [--completed <times.json>]` prints per-test deltas for tests completed on both trees. Tests that reset `PATH` bypass the shim. Keep `<out-dir>` under `${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}`.
+
 | Interrupted/historical state | Conservative transition |
 | --- | --- |
 | Planning or restoring, owned empty slot | Revalidate source/identities and retry; no duplicate archive |
