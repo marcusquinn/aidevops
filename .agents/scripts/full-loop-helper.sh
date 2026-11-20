@@ -111,10 +111,12 @@ cmd_commit_and_pr() {
 	_parse_commit_and_pr_args "$@" || return 1
 	_validate_keep_issue_open_request || return 1
 
-	# Required inputs first (read-only; sets $repo/$branch), then the title (GH#39377).
+	# Missing inputs report usage (GH#39377); the title is then rejected before any
+	# repo read, staging, rebase or publication (GH#33949).
+	_require_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
+	_commit_and_pr_validate_title || return 1
 	local repo="" branch="" base_branch="" base_ref=""
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
-	_commit_and_pr_validate_title || return 1
 	if [[ -n "$replacement_pr" || -n "$replacement_reason" ]]; then
 		if [[ ! "$replacement_pr" =~ ^[1-9][0-9]*$ || ${#replacement_reason} -lt 20 ]]; then
 			print_error "Explicit replacement requires --replace-pr N and --replacement-reason with at least 20 characters"

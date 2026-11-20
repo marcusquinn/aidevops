@@ -400,16 +400,24 @@ _is_wip_commit_message() {
 	return 1
 }
 
+# Pure check (no API/git reads) that --issue and --message are present; runs
+# before title composition so a missing input reports usage (GH#39377).
+_require_commit_and_pr_inputs() {
+	local issue_number="$1" commit_message="$2"
+	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
+		print_error "Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg>"
+		return 1
+	fi
+	return 0
+}
+
 # Validate commit-and-pr inputs: required fields and branch safety.
 # Sets caller-scoped $repo and $branch on success.
 # Returns 1 on validation failure.
 _validate_commit_and_pr_inputs() {
 	local issue_number="$1" commit_message="$2"
 
-	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
-		print_error "Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg>"
-		return 1
-	fi
+	_require_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 	if _is_wip_commit_message "$commit_message"; then
 		print_error "Refusing WIP final commit message: ${commit_message}"
 		print_error "Use a conventional final subject such as 'fix: describe the completed change'."
