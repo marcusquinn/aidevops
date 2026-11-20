@@ -647,6 +647,7 @@ _run_ci_rebase_case() {
 	src=$(awk '
 		/^_pmp_ci_rebase_policy_gate_only_failure\(\) \{/,/^}$/ { print }
 		/^_pmp_ci_rebase_pr_is_external\(\) \{/,/^}$/ { print }
+		/^_pmp_ci_rebase_should_skip\(\) \{/,/^}$/ { print }
 		/^_attempt_pr_ci_rebase_retry\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
 	(

@@ -676,6 +676,25 @@ _pmp_ci_rebase_pr_is_external() {
 }
 
 #######################################
+# Return 0 (skip) when update-branch must not run: policy-gate-only failures
+# or external/fork PRs. Logs the reason. Arguments: $1=pr, $2=repo, $3=head.
+#######################################
+_pmp_ci_rebase_should_skip() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local head_sha="${3:-}"
+	if _pmp_ci_rebase_policy_gate_only_failure "$repo_slug" "$pr_number" "$head_sha"; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch because every terminal failed required context is a policy gate (maintainer-gate/review-bot-gate); a new base cannot fix a policy verdict" >>"$LOGFILE"
+		return 0
+	fi
+	if _pmp_ci_rebase_pr_is_external "$pr_number" "$repo_slug"; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch for external/fork PR because a head change would invalidate the head-bound maintainer approval" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Attempt to rebase a MERGEABLE PR with failing CI before routing to a
 # fix-worker. When a PR is behind its base branch, failing CI is often
 # caused by base-drift (e.g. a pre-existing test failure fixed in a
@@ -754,16 +773,8 @@ _attempt_pr_ci_rebase_retry() {
 		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: required-check head-state unavailable before CI-drift update-branch; fail-open to existing update-branch behaviour (GH#26406)" >>"$LOGFILE"
 	fi
-	# Policy-gate and external-PR guards: update-branch cannot fix a policy
-	# verdict and a head change voids head-bound maintainer approval.
-	if _pmp_ci_rebase_policy_gate_only_failure "$repo_slug" "$pr_number" "$_head_oid"; then
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch because every terminal failed required context is a policy gate (maintainer-gate/review-bot-gate); a new base cannot fix a policy verdict" >>"$LOGFILE"
-		return 1
-	fi
-	if _pmp_ci_rebase_pr_is_external "$pr_number" "$repo_slug"; then
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch for external/fork PR because a head change would invalidate the head-bound maintainer approval" >>"$LOGFILE"
-		return 1
-	fi
+	# Skip policy-gate-only failures and external PRs (GH#39381).
+	_pmp_ci_rebase_should_skip "$pr_number" "$repo_slug" "$_head_oid" && return 1
 	if [[ "$_rebase_policy" == "$_review_repair_policy" ]]; then
 		local _pending_check_rc=0
 		_check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" "$_head_oid" >/dev/null 2>&1 || _pending_check_rc=$?
@@ -792,7 +803,6 @@ _attempt_pr_ci_rebase_retry() {
 	local _ub_output _ub_exit
 	_ub_output=$(_pmp_update_branch_rest "$pr_number" "$repo_slug" "$_head_oid" 2>&1)
 	_ub_exit=$?
-
 	if [[ $_ub_exit -eq 0 ]]; then
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: CI-drift rebase succeeded via update-branch, deferring to next cycle (t2805)" >>"$LOGFILE"
 		return 0
