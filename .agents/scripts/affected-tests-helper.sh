@@ -100,13 +100,17 @@ script_token = re.compile(r"[A-Za-z0-9_.-]+\.sh")
 # so a changed shared library also selects suites naming its transitive consumers.
 scripts = [p for p in sorted(root.glob(".agents/scripts/*.sh")) if p.is_file()]
 script_names = {p.name for p in scripts}
+# A changed script may be deleted: keep its name in the graph so remaining sourcers are traversed.
+scripts_dir = Path(root, ".agents", "scripts").relative_to(root)
+graph_names = script_names | {Path(c).name for c in changed
+                              if Path(c).parent == scripts_dir and c.endswith(".sh")}
 consumers = {}
 for script in scripts:
     for line in script.read_text(errors="replace").splitlines():
         match = source_line.match(line)
         if match:
             for token in set(script_token.findall(match.group(1))):
-                if token in script_names and token != script.name:
+                if token in graph_names and token != script.name:
                     consumers.setdefault(token, set()).add(script.name)
 ubiquitous = {"shared-constants.sh"}
 ubiquitous |= {n for n, c in consumers.items() if len(c) > args.ubiquity * len(scripts)}
@@ -138,7 +142,7 @@ for name in changed:
     # GH#39235: JS/TS runtimes (e.g. playwright-runtime.mjs) are exercised by
     # shell suites that name them; select those suites like .py (name match, hop 0).
     elif path.suffix in (".sh", ".py", ".mjs", ".cjs", ".js", ".ts") and "tests" not in path.parts:
-        if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in script_names:
+        if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in graph_names:
             related = sourcer_distances(path.name)
         else:
             related = {path.name: 0}
