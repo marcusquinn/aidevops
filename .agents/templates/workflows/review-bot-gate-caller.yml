@@ -48,6 +48,12 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  # GH#39418: fork PR review events get a read-only token and cannot clear a
+  # failing review-bot-gate status under completion_behavior: strict. workflow_run
+  # executes in base context with a write-capable token and never checks out PR code.
+  workflow_run:
+    workflows: ["Review Bot Gate"]
+    types: [completed]
   issue_comment:
     # edited re-triggers when CodeRabbit finalises its Phase 1 placeholder (t2139).
     # Without this trigger, the settlement check only fires on new comments, not
@@ -105,5 +111,38 @@ jobs:
       # Keep this equal to the ref on `uses:` so helper code is pinned with the reusable YAML.
       aidevops_ref: main
       # Explicit CI opt-in: set this Actions variable to strict when required.
+      completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
+    secrets: inherit
+
+  # GH#39418: trusted write path for fork PR review events. The same-repository
+  # path above is unchanged. This job evaluates the live PR and posts the status;
+  # it checks out only aidevops scripts, never fork PR code.
+  gate-fork-review:
+    if: >
+      github.event_name == 'workflow_run' &&
+      (
+        github.event.workflow_run.event == 'pull_request_review' ||
+        github.event.workflow_run.event == 'pull_request_review_comment'
+      ) &&
+      github.event.workflow_run.head_repository.full_name != github.repository &&
+      (
+        github.event.workflow_run.actor.login == 'coderabbitai' ||
+        github.event.workflow_run.actor.login == 'coderabbitai[bot]' ||
+        github.event.workflow_run.actor.login == 'gemini-code-assist' ||
+        github.event.workflow_run.actor.login == 'gemini-code-assist[bot]' ||
+        github.event.workflow_run.actor.login == 'augment-code' ||
+        github.event.workflow_run.actor.login == 'augment-code[bot]' ||
+        github.event.workflow_run.actor.login == 'augmentcode' ||
+        github.event.workflow_run.actor.login == 'augmentcode[bot]' ||
+        github.event.workflow_run.actor.login == 'copilot' ||
+        github.event.workflow_run.actor.login == 'copilot[bot]' ||
+        github.event.workflow_run.actor.login == 'github-actions[bot]'
+      )
+    concurrency:
+      group: review-bot-gate-fork-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: false
+    uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-fork-review-reusable.yml@main
+    with:
+      aidevops_ref: main
       completion_behavior: ${{ vars.AIDEVOPS_REVIEW_GATE_COMPLETION_BEHAVIOR || 'fast' }}
     secrets: inherit
