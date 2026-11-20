@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOutputLimitNotice, OUTPUT_LIMIT_NOTE, EMPTY_TURN_NOTE, EMPTY_TOOL_NOTE } from "../session-turn-state.mjs";
+import { createOutputLimitNotice, OUTPUT_LIMIT_NOTE, EMPTY_TURN_NOTE, EMPTY_TOOL_NOTE, EMPTY_TOOL_ERROR_NOTE } from "../session-turn-state.mjs";
 
 const updated = (info) => ({ type: "message.updated", properties: { info } });
 
@@ -47,8 +47,17 @@ test("message with text or completed tool is not a dead turn", () => {
 
 test("aborted tool part with empty input yields the empty-tool note", () => {
   const notice = createOutputLimitNotice();
-  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "tool", state: { status: "error", input: {} } }));
+  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "tool", state: { status: "error", error: "Tool execution aborted", input: {} } }));
   assert.equal(notice.take("s1"), EMPTY_TOOL_NOTE);
+  notice.observe(part({ id: "p2", messageID: "m2", sessionID: "s1", type: "tool", state: { status: "error", input: {} } }));
+  assert.equal(notice.take("s1"), EMPTY_TOOL_ERROR_NOTE);
+});
+
+test("length finish replaces a pending tool notice", () => {
+  const notice = createOutputLimitNotice();
+  notice.observe(part({ id: "p1", messageID: "m1", sessionID: "s1", type: "tool", state: { status: "aborted", input: {} } }));
+  notice.observe(updated({ id: "m1", sessionID: "s1", role: "assistant", finish: "length" }));
+  assert.equal(notice.take("s1"), OUTPUT_LIMIT_NOTE);
 });
 
 test("other finishes, roles and sessions are ignored", () => {

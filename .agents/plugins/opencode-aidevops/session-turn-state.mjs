@@ -205,6 +205,14 @@ export const EMPTY_TOOL_NOTE =
   "Your previous tool call had empty arguments and was aborted; nothing was executed. " +
   "Plan in smaller steps, then retry with complete arguments; write files in sections of under ~120 lines.";
 
+export const EMPTY_TOOL_ERROR_NOTE =
+  "Your previous tool call failed with empty arguments; it may have partly run, so check state before retrying. " +
+  "Plan in smaller steps, then retry with complete arguments; write files in sections of under ~120 lines.";
+
+function isAbortedTool(state) {
+  return state.status === "aborted" || state.error === "Tool execution aborted" || state.metadata?.interrupted === true;
+}
+
 const EMPTY_INPUT_TOOL_STATUSES = new Set(["error", "aborted"]);
 
 function isEmptyInput(input) {
@@ -224,17 +232,21 @@ export function createOutputLimitNotice() {
     if (!sessionID || seen.has(key)) return;
     seen.add(key);
     capSet(seen, MAX_TRACKED_IDS * 4);
-    if (!pending.has(sessionID)) pending.set(sessionID, note);
+    // An explicit output-limit finish outranks a pending fallback notice.
+    if (!pending.has(sessionID) || note === OUTPUT_LIMIT_NOTE) pending.set(sessionID, note);
   };
   const observePart = (part) => {
     const sessionID = String(part.sessionID || "");
     const messageID = String(part.messageID || "");
     if (part.type === "text" && String(part.text || "").trim()) content.add(messageID);
-    if (part.type !== "tool") return;
+    if (part.type !== "tool") {
+      capSet(content, MAX_TRACKED_IDS * 4);
+      return;
+    }
     const state = part.state || {};
     if (state.status === "completed") content.add(messageID);
     else if (EMPTY_INPUT_TOOL_STATUSES.has(state.status) && isEmptyInput(state.input)) {
-      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, EMPTY_TOOL_NOTE);
+      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, isAbortedTool(state) ? EMPTY_TOOL_NOTE : EMPTY_TOOL_ERROR_NOTE);
     }
     capSet(content, MAX_TRACKED_IDS * 4);
   };
