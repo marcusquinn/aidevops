@@ -1451,11 +1451,9 @@ _cmd_security() {
 		_dispatch_helper "security-fix-helper.sh" "security-fix-helper.sh" || return $?
 		;;
 	dismiss)
-		if [[ "${2:-}" == "tanstack-minishaihulud-2026-05" ]]; then
-			_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" dismiss
-		else
-			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
-		fi
+		# Every advisory, including supply-chain ones, is dismissed by its exact
+		# ID through the generic path; never hardcode an ID-to-helper mapping (GH#39350).
+		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
 		;;
 	hygiene)
 		shift
