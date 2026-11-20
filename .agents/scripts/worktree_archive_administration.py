@@ -14,6 +14,7 @@ from worktree_archive_readiness import (
 from worktree_archive_git import (
     auto_merge_oid as auto_merge_oid, git as git, git_dirs as git_dirs,
     validate_auto_merge as validate_auto_merge, fetch_head_roots as fetch_head_roots,
+    refuse_split_index,
 )
 
 
@@ -85,18 +86,19 @@ def validate_admin_config(root, admin):
                 raise ValueError('git_admin:location_dependent_config:' + key.decode('ascii'))
 
 
-def administration(root, allow_merge=False, *, admin=None, common=None):
+def administration(root, allow_merge=False, *, dirs=(None, None)):
     """Read only explicitly supported per-worktree administration, never common config.
 
-    Callers may pass directories they resolved earlier in the same guard pass.
+    Callers may pass dirs=(admin, common[, shared_index]) resolved earlier in the
+    same guard pass; shared_index is the rev-parse --shared-index-path output.
     """
+    admin, common, *probe = dirs
     admin, common = (admin, common) if admin and common else git_dirs(root)
     files = administration_files(admin, admin, admin.resolve() != common.resolve(), allow_merge)
     fetch_head_roots(files.get("FETCH_HEAD", ""))
     if "AUTO_MERGE" in files:
         validate_auto_merge(root, auto_merge_oid(bytes.fromhex(files["AUTO_MERGE"])))
-    if git(root, "rev-parse", "--shared-index-path").strip():
-        raise ValueError("git_admin:split_index:index")
+    refuse_split_index(root, *probe)
     validate_admin_config(root, admin)
     refs = git(root, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", *PRIVATE_PREFIXES)
     head = bytes.fromhex(files['HEAD'])

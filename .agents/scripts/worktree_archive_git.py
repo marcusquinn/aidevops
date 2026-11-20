@@ -137,6 +137,18 @@ def git_dirs(root):
     return Path(os.fsdecode(admin)), Path(os.fsdecode(common))
 
 
+def refuse_split_index(root, shared_index=None):
+    """Refuse split-index mode.
+
+    A caller may pass this guard pass's `rev-parse --shared-index-path` output;
+    otherwise it is read here.
+    """
+    if shared_index is None:
+        shared_index = git(root, "rev-parse", "--shared-index-path")
+    if shared_index.strip():
+        raise ValueError("git_admin:split_index:index")
+
+
 def auto_merge_oid(data):
     if not re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\n?", data):
         raise ValueError("git_admin:invalid_AUTO_MERGE")

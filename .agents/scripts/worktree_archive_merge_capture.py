@@ -33,7 +33,7 @@ def validate_merge(state):
 
 
 def supported_merge_administration(root, admin=None, common=None):
-    state = administration(root, allow_merge=True, admin=admin, common=common)
+    state = administration(root, allow_merge=True, dirs=(admin, common))
     if state['refs'] or 'SQUASH_MSG' in state['files'] or 'config.worktree' in state['files']:
         raise ValueError('merge:unsupported_private_state')
     if git(root, 'rev-parse', '--is-shallow-repository').strip() != b'false':

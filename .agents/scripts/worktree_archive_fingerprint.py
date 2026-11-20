@@ -26,7 +26,7 @@ def git_snapshot(path, patches=None, metadata=None, include_untracked=True):
     # git_index_state is also used independently of the archive capture policy.
     # The profile publication record is deliberately excluded: profile-readme
     # recovery retires completed publication worktrees through Git-only capture.
-    # One spawn resolves admin, common and lock paths; git_index_state reuses them
+    # One spawn resolves admin, common, lock and shared-index paths; git_index_state reuses them
     # within this snapshot pass (no result is cached across passes).
     dirs = index_dirs(root)
     admin = dirs[0]
