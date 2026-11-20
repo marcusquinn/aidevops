@@ -25,13 +25,13 @@ on:
   # GH#36961: fork PR runs get a read-only token and cannot post the required
   # review-bot-gate status. pull_request_target evaluates fork PRs in base
   # context; the gate checks out only aidevops scripts at main, never PR code.
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] fork PRs only (job if:); main scripts, never PR code
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  issue_comment:
+  issue_comment: # zizmor: ignore[dangerous-triggers] review-bot actors only (job if:); reads PR state, runs no PR code
     # edited re-triggers when CodeRabbit finalises its Phase 1 placeholder (t2139).
     # Without this trigger, the settlement check would only fire on new comments,
     # not on the Phase 2 edit that makes the placeholder a real review.

@@ -131,6 +131,23 @@ is not an external event: brief authors name `runner_capability_unmet` for it,
 and workers use that class even when a brief names another, so the runner that
 meets it continues instead of the issue blocking globally (#35605).
 
+#### Persistent dispatch exclusions
+
+A deterministic dispatch filter (the consolidated management-label gate or a
+cross-cycle negative-cache block) that skips an `auto-dispatch` issue every
+cycle for over `AIDEVOPS_DISPATCH_EXCLUSION_ESCALATE_SECONDS` (default 86400; 0
+disables) queues it once as intake `persistent_exclusion`; the reason names the
+filter. `dispatch-exclusion-age-helper.sh` keeps a runner-local stamp (a gap over
+`AIDEVOPS_DISPATCH_EXCLUSION_GAP_SECONDS`, default 21600, restarts the streak).
+Maintainer gates (`permission_grant_unverified`, `needs_maintainer_permissions`,
+`cost_budget_exceeded`) never escalate. The entry retires without a GitHub write
+once the filter stops skipping the issue or the issue loses `auto-dispatch`; the
+mechanical `rearm` pass never reads it. Verify the cause on current evidence and
+repair a mechanical defect within existing authority: a stale lifecycle label, a
+superseded hold, a stale claim with no live owner, or a blocking dependency that
+is itself stuck. Otherwise record one decision naming the exact human input. Never
+grant permissions or approvals.
+
 `input_required` (GH#33332) needs a standalone
 `TERMINAL_BLOCKER_INPUT_OWNER=user|contributor|maintainer|admin` line; without
 it the evidence stays `unknown`. Its revision tracks the brief and

@@ -1,0 +1,168 @@
+name: Review Bot Gate - fork review events (reusable)
+
+# Trusted write path for fork PR review events (GH#39418).
+#
+# pull_request_review and pull_request_review_comment runs for fork PRs receive a
+# read-only token, so the commit status review-bot-gate cannot be updated when a
+# review bot responds. Under completion_behavior=strict the earlier failing status
+# then never clears. A workflow_run job executes in the base repository context with
+# a write-capable token after the triggering run completes.
+#
+# Security: this workflow NEVER checks out or executes PR-head code. It checks out
+# only the aidevops framework scripts, and every PR-controlled value is read from the
+# GitHub API into environment variables (never interpolated into shell source).
+# The same-repository path (reusable workflow review-bot-gate-reusable.yml) is
+# unchanged.
+#
+# See: .agents/templates/workflows/review-bot-gate-caller.yml
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_repository:
+        description: 'Repository to fetch framework scripts from (defaults to the canonical aidevops repository)'
+        required: false
+        type: string
+        default: 'marcusquinn/aidevops'
+      aidevops_ref:
+        description: 'aidevops ref to fetch framework scripts from (main, or a version tag like v3.9.0)'
+        required: false
+        type: string
+        default: 'main'
+      runner:
+        description: 'Runner label override. Defaults to ubuntu-latest.'
+        required: false
+        default: 'ubuntu-latest'
+        type: string
+      rate_limit_behavior:
+        description: 'API/bot rate-limit policy: pass (default) or wait'
+        required: false
+        default: 'pass'
+        type: string
+      completion_behavior:
+        description: 'Review completion policy: fast/advisory (default) or strict/required'
+        required: false
+        default: 'fast'
+        type: string
+    secrets:
+      AIDEVOPS_READ_TOKEN:
+        required: false
+        description: 'Optional token with read access to a private configured helper repository'
+
+jobs:
+  review-bot-gate-fork-review:
+    runs-on: ${{ inputs.runner }}
+    # Defence-in-depth: only fork-originated review events observed by workflow_run.
+    if: >
+      github.event_name == 'workflow_run' &&
+      (
+        github.event.workflow_run.event == 'pull_request_review' ||
+        github.event.workflow_run.event == 'pull_request_review_comment'
+      ) &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+
+    permissions:
+      pull-requests: read
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.aidevops_repository || 'marcusquinn/aidevops' }}
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          path: __aidevops
+          fetch-depth: 1
+          token: ${{ secrets.AIDEVOPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - name: Evaluate review gate and publish status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          REVIEW_GATE_RATE_LIMIT_BEHAVIOR: ${{ inputs.rate_limit_behavior }}
+          REVIEW_GATE_COMPLETION_BEHAVIOR: ${{ inputs.completion_behavior }}
+        run: |
+          set -u
+          HELPER="${GITHUB_WORKSPACE}/__aidevops/.agents/scripts/review-bot-gate-helper.sh"
+
+          if ! [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::workflow_run head SHA is not a 40-hex commit; skipping"
+            exit 0
+          fi
+
+          # Resolve the open PR whose live head is exactly the observed commit and
+          # whose base is this repository. Empty result: nothing to update.
+          PR_JSON=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+            --jq "[.[] | select(.state == \"open\" and .base.repo.full_name == \"${REPO}\" and .head.sha == \"${HEAD_SHA}\" and .head.repo.full_name != \"${REPO}\")][0] // empty" \
+            2>/dev/null || true)
+          if [[ -z "${PR_JSON}" ]]; then
+            echo "No open fork PR with head ${HEAD_SHA}; nothing to update."
+            exit 0
+          fi
+          PR_NUMBER=$(printf '%s' "${PR_JSON}" | jq -r '.number')
+          AUTHOR_ASSOCIATION=$(printf '%s' "${PR_JSON}" | jq -r '.author_association // ""')
+          if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::warning::Could not resolve PR number; skipping"
+            exit 0
+          fi
+
+          # #aidevops:trust-boundary
+          # Fork authors are external unless GitHub reports repository membership.
+          # External PRs may not use the skip-review-gate label.
+          case "${AUTHOR_ASSOCIATION}" in
+          OWNER|MEMBER|COLLABORATOR) IS_EXTERNAL_PR=false ;;
+          *) IS_EXTERNAL_PR=true ;;
+          esac
+          export REVIEW_GATE_AUTHOR_ASSOCIATION="${AUTHOR_ASSOCIATION}"
+          export REVIEW_GATE_AUTHOR_ASSOCIATION_RESOLVED=true
+
+          RESULT=""
+          HELPER_EXIT=0
+          HELPER_STDERR=$(mktemp)
+          RESULT=$(bash "${HELPER}" check "${PR_NUMBER}" "${REPO}" 2>"${HELPER_STDERR}") || HELPER_EXIT=$?
+          cat "${HELPER_STDERR}" >&2
+          if grep -qiE 'API rate limit exceeded|x-ratelimit-remaining[^0-9]*0' "${HELPER_STDERR}"; then
+            RESULT=$(bash "${HELPER}" classify-infra-rate-limit \
+              "${AUTHOR_ASSOCIATION}" "${REPO}") || true
+            if [[ "${RESULT}" == "PASS_ADVISORY" ]]; then
+              HELPER_EXIT=0
+            else
+              HELPER_EXIT=2
+            fi
+          fi
+          rm -f "${HELPER_STDERR}"
+          echo "Helper result: ${RESULT:-<empty>} (exit: ${HELPER_EXIT})"
+
+          if [[ "${IS_EXTERNAL_PR}" == "true" && "${RESULT}" == "SKIP" ]]; then
+            RESULT="WAITING"
+            HELPER_EXIT=1
+          fi
+
+          case "${RESULT}" in
+          PASS|PASS_ADVISORY|PASS_RATE_LIMITED|SKIP) ;;
+          WAITING) [[ "${HELPER_EXIT}" -ne 0 ]] || HELPER_EXIT=1 ;;
+          INFRA_RATE_LIMITED) [[ "${HELPER_EXIT}" -ne 0 ]] || HELPER_EXIT=2 ;;
+          *) HELPER_EXIT=2 ;;
+          esac
+
+          if [[ "${HELPER_EXIT}" -eq 0 ]]; then
+            STATE=success
+            DESC="Review bot gate passed (${RESULT})"
+          elif [[ "${RESULT}" == "INFRA_RATE_LIMITED" ]]; then
+            STATE=failure
+            DESC="Review bot gate infrastructure wait — GitHub API quota exhausted"
+          else
+            STATE=failure
+            DESC="Review bot gate WAITING — no real bot review yet"
+          fi
+
+          gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+            --method POST \
+            -f state="${STATE}" \
+            -f context="review-bot-gate" \
+            -f description="${DESC}"
+          echo "Posted review-bot-gate status for PR #${PR_NUMBER}: ${STATE} (${DESC}; trigger ${RUN_EVENT})"

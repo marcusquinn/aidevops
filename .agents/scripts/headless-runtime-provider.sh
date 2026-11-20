@@ -34,6 +34,11 @@ readonly _HEADLESS_RUNTIME_PROVIDER_LOADED=1
 # GH#38713: entitlement-rejection reason; its expired rows persist as history.
 _HRP_REASON_MODEL_UNAVAILABLE="model_unavailable"
 
+# GH#39475: shared OAuth pool resolver and usability rule (also used by
+# model-availability-helper.sh). SCRIPT_DIR is set by every sourcing caller.
+# shellcheck source=oauth-pool-usable-lib.sh
+source "${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/oauth-pool-usable-lib.sh"
+
 # --- Provider Auth ---
 
 extract_provider() {
@@ -141,6 +146,9 @@ provider_auth_available() {
 		if opencode_auth_has_provider "$provider"; then
 			return 0
 		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
+			return 0
+		fi
 		return 1
 		;;
 	openai)
@@ -149,6 +157,9 @@ provider_auth_available() {
 			return 0
 		fi
 		if opencode_auth_has_provider "$provider"; then
+			return 0
+		fi
+		if opencode2_oauth_pool_auth_available "$provider"; then
 			return 0
 		fi
 		return 1
@@ -233,6 +244,29 @@ for account in accounts:
 
 sys.exit(1)
 PY
+	return $?
+}
+
+# opencode2_oauth_pool_auth_available: GH#39095. OpenCode 2.x keeps provider
+# credentials in its own database and writes no auth.json, so
+# opencode_auth_has_provider is always false there and every OAuth-only
+# provider was filtered out of headless model selection (canary rc=75, "all
+# configured models are currently backed off"). When auth.json is absent, the
+# aidevops OAuth pool is the credential source the plugin authenticates
+# workers from; accept a provider only when the pool holds at least one usable
+# account for it. Unlike provider_oauth_pool_available, a missing pool or an
+# empty provider list is NOT treated as available. Read-only; never prints
+# credential material.
+opencode2_oauth_pool_auth_available() {
+	local provider="$1"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+
+	[[ -f "$auth_file" ]] && return 1
+
+	# Shared with model-availability-helper.sh Source 5 (oauth-pool-usable-lib.sh).
+	local pool_file
+	pool_file=$(oauth_pool_runtime_file)
+	oauth_pool_has_usable_account "$provider" "$pool_file"
 	return $?
 }
 

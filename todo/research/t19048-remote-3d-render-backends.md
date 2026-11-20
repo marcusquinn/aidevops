@@ -115,3 +115,53 @@ irender-1x4090               gpu           0.1520         4.10         364.90
 Conclusion: for agent-driven renders, rented RTX-class GPUs are roughly 3-25x
 cheaper than managed farms per GPU-hour; farms buy managed upload, plugins, NDA
 and support. Measured seconds per frame decides the answer.
+
+## 6. Higgsfield GPU boxes via MCP (live trial 2026-11-19)
+
+Source: Higgsfield MCP `gpu_list_gpus` (`https://mcp.higgsfield.ai/mcp`, OAuth),
+queried 2026-11-20; matches the public catalog at higgsfield.ai/gpu/all.
+
+| GPU | Credits per GPU-hour | Max per box | Typical start (1 GPU) |
+|---|---|---|---|
+| L40S 48 GB | 71 | 8 | 7 s |
+| RTX PRO 6000 96 GB | 98 | 8 | 6 s |
+| H100 | 120 | 8 | 6 s |
+| H200 | 134 | 8 | 20 s |
+| B200 | 176 | 8 | 6 s |
+| B300 | 197 | 8 | 10 s |
+| Rubin | contact sales | — | — |
+
+Billing per the MCP: per second from ready, no minimum, until `gpu_rental_stop`,
+credits run out, or 10 idle minutes. Credits come from the web subscription pool
+(not the separate platform API). On the Creator plan (6,000 credits/month,
+about $249/month on 24-month billing) one credit is about $0.04, so L40S is about
+$2.95/h at plan rate: roughly 3x Runpod L40S secure ($1.09/h). Marginal cost is
+zero when monthly credits would otherwise lapse unused.
+
+Measured run (sunflower scene, 120 frames, 1920x1080, Cycles OptiX, 128 samples,
+OIDN, Blender 5.3.0 pinned official build):
+
+| Route | Setup | Warm s/frame | Box lifetime | Cost |
+|---|---|---|---|---|
+| Higgsfield 1x L40S | box ready in 5 s; Blender download + SHA-256 verify 34 s | 4.1 | 13 min 17 s (incl. staging, upload/fetch) | 15.72 credits (~$0.65 at plan rate) |
+| Runpod 1x A40 secure (2026-11-17) | Blender verify 85 s | 8.1 | 16 min rendering | $0.21 |
+
+- Box: Ubuntu 24.04 root shell, 4 vCPU, 334 GB RAM, 512 GB root disk, NVIDIA
+  driver 620.70.06; runs on Modal infrastructure (`/__modal/volumes`). No SSH:
+  commands go through `gpu_rental_exec` (60 s per call, so long jobs run with
+  `nohup` and are polled).
+- Transfer: inputs via the MCP media upload (CloudFront URL fetched on the box);
+  outputs via the MCP box-upload flow. Archive SHA-256 matched both ways. A `.tgz`
+  name defaulted to an unusable content type; `.tar.gz` worked.
+- Output check: all 120 frame hashes verified locally; frame 60 PSNR 88.7 dB
+  against the Runpod A40 render (visually identical; hashes differ by device).
+- Render-to-video on the same subscription: Kling 3.0 Turbo 5 s 720p
+  image-to-video from a Blender frame cost 7.5 credits (~80 s); Seedance 2.5 5 s
+  draft estimated 15 credits; Kling 4.0 5 s 1080p estimated 16.25 credits. UI
+  "unlimited" models (for example Kling 2.5 Turbo Unlimited) were not exposed by
+  the MCP.
+
+Conclusion: Higgsfield is not the cheapest cash route for renders, but for a
+subscription with unused monthly credits it is a fast, scriptable L40S/RTX PRO
+6000 route with near-instant starts and no capacity refusals in this trial, and
+the same credits cover render-to-video.

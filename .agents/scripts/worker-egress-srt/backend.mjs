@@ -132,9 +132,13 @@ export function settings(host, envelope, bridgeSockets = []) {
   return {
     network: {
       allowedDomains: [host + ':443'], deniedDomains: [], strictAllowlist: true,
-      // SRT does NOT deny all private-use addresses by default.
+      // SRT does NOT deny all private-use addresses by default. Loopback,
+      // unspecified and link-local are denied by SRT 0.0.83 already (GH#39361
+      // verified); they are listed too so the policy does not depend on that
+      // default, and IPv4-mapped IPv6 forms match the IPv4 rules.
       deniedResolvedAddresses: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-        '100.64.0.0/10', 'fc00::/7'],
+        '100.64.0.0/10', 'fc00::/7', '127.0.0.0/8', '::1', '0.0.0.0/8',
+        '169.254.0.0/16', 'fe80::/10'],
       allowLocalBinding: false, allowUnixSockets: [], allowAllUnixSockets: false,
     },
     filesystem: {
@@ -199,21 +203,107 @@ export function tightenMacProfile(profile) {
   return strict + '\n(deny mach-lookup)\n(deny mach-register)\n';
 }
 
+// Names the workload may see. The SRT-set names were verified against
+// @anthropic-ai/sandbox-runtime 0.0.83 dist/sandbox/sandbox-utils.js
+// (generateProxyEnvVars) and the bwrap/macOS JAVA_TOOL_OPTIONS injection.
+// CA-trust variables and GIT_CONFIG_COUNT/KEY/VALUE are only emitted when TLS
+// termination or git safe directories are configured; neither is, so a
+// presence of them fails the env-allowlisted canary instead of passing silently.
+const SRT_SET_ENV = [
+  'SANDBOX_RUNTIME', 'NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy',
+  'ALL_PROXY', 'all_proxy', 'GRPC_PROXY', 'grpc_proxy', 'FTP_PROXY', 'ftp_proxy', 'RSYNC_PROXY',
+  'DOCKER_HTTP_PROXY', 'DOCKER_HTTPS_PROXY', 'CLOUDSDK_PROXY_TYPE', 'CLOUDSDK_PROXY_ADDRESS',
+  'CLOUDSDK_PROXY_PORT', 'CLOUDSDK_PROXY_USERNAME', 'CLOUDSDK_PROXY_PASSWORD',
+  'GIT_CONFIG_PARAMETERS', 'GIT_SSH_COMMAND', 'SRT_SSH_PROXY_COMMAND', 'JAVA_TOOL_OPTIONS',
+];
+export const ENV_ALLOWLIST = ['PATH', 'HOME', 'TMPDIR', 'LANG', ...SRT_SET_ENV];
+// Added by the shell, OS or the Nix python wrapper rather than copied; tolerated
+// by the canary and the test only.
+export const ENV_ADDED = ['PWD', 'SHLVL', '__CF_USER_TEXT_ENCODING', 'PYTHONNOUSERSITE'];
+
+// loadEnvelope() resolves symlinks, so on NixOS `env` arrives as the GNU
+// coreutils multicall binary, which dispatches on argv[0] and rejects `-i`.
+function envCommand(tool) {
+  return path.basename(tool) === 'coreutils' ? `${quote(tool)} --coreutils-prog=env` : quote(tool);
+}
+
 async function wrappedArgv(manager, argv, envelope) {
   // With a sealed filesystem there is no ambient /etc/hosts. Don't make clients
   // resolve SRT's "localhost" bridge name through an unavailable system resolver.
   const proxySetup = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
     .map(key => `export ${key}="\${${key}/localhost:/127.0.0.1:}"; `).join('');
-  const command = proxySetup + 'exec ' + argv.map(quote).join(' ');
+  // The supervisor shell sources framework helpers that export constants, and
+  // the sandbox child would inherit them. Rebuild the workload environment from
+  // the allowlist only: copy each name that is set, then exec through env -i.
+  const collect = ENV_ALLOWLIST.map(key =>
+    `if [ -n "\${${key}+x}" ]; then set -- "$@" "${key}=\${${key}}"; fi; `).join('');
+  const command = proxySetup + 'set --; ' + collect
+    + `exec ${envCommand(envelope.tools.coreutils)} -i "$@" ` + argv.map(quote).join(' ');
   let wrapped = await manager.wrapWithSandbox(command, envelope.tools.shell);
   if (process.platform === 'darwin') wrapped = tightenMacCommand(wrapped);
   return [envelope.tools.shell, '-c', wrapped];
 }
 
+// GH#38861: resolver, network-configuration and trust services observed
+// REACHABLE on the host and refused (1100) inside the tightened profile.
+const macResolverServices = ['com.apple.system.opendirectoryd.libinfo',
+  'com.apple.system.DirectoryService.libinfo_v1', 'com.apple.SystemConfiguration.configd',
+  'com.apple.SystemConfiguration.DNSConfiguration', 'com.apple.SecurityServer', 'com.apple.trustd',
+  'com.apple.cfnetwork.cfnetworkagent', 'com.apple.nsurlsessiond'];
+
+// GH#39362: name every send right in the task's Mach name space by identity,
+// never by kernel object-type numbers, which change between releases. Send
+// rights coalesce per port, so a lookup that returns an existing name proves
+// what it is. Anything not named here (a send right to another process's port)
+// is unattributed: the sandbox check fails and the host control requires one.
+const macSendRights = String.raw`
+def mach_send_attribution(lib):
+    u, ref = ctypes.c_uint, ctypes.byref
+    task = u.in_dll(lib, 'mach_task_self_').value
+    names, types, n, m = ctypes.POINTER(u)(), ctypes.POINTER(u)(), u(), u()
+    if lib.mach_port_names(task, ref(names), ref(n), ref(types), ref(m)) != 0:
+        return None
+    space = {names[i]: types[i] for i in range(n.value)}
+    def kobject(name):
+        kind = u()
+        return kind.value if lib.mach_port_kobject(task, name, ref(kind), ref(ctypes.c_uint64())) == 0 else None
+    lib.mach_host_self.restype = u
+    host = lib.mach_host_self()
+    known = {task: 'task-self', host: 'host-name', u.in_dll(lib, 'bootstrap_port').value: 'bootstrap'}
+    threads, count, clock, voucher, semaphore = ctypes.POINTER(u)(), u(), u(), u(), u()
+    if lib.task_threads(task, ref(threads), ref(count)) == 0:
+        known.update({threads[i]: 'thread-self' for i in range(count.value)})
+    if lib.host_get_clock_service(host, 0, ref(clock)) == 0:  # SYSTEM_CLOCK
+        known.setdefault(clock.value, 'system-clock')
+    # MACH_VOUCHER_ATTR_KEY_BANK + BANK_CREATE: the kernel dedupes vouchers, so
+    # this returns the task's existing bank voucher held by libdispatch.
+    if lib.host_create_mach_voucher(host, (u * 4)(3, 610, 0, 0), 16, ref(voucher)) == 0 and voucher.value:
+        known.setdefault(voucher.value, 'bank-voucher')
+    semaphore_kind = None
+    if lib.semaphore_create(task, ref(semaphore), 0, 0) == 0:
+        semaphore_kind = kobject(semaphore.value)
+        lib.semaphore_destroy(task, semaphore.value)
+    rights = {}
+    for name, kind in space.items():
+        if not kind & 0x10000:  # MACH_PORT_TYPE_SEND
+            continue
+        if name in known:
+            rights[name] = known[name]
+        elif kind & 0x20000:  # MACH_PORT_TYPE_RECEIVE: this task is the receiver
+            rights[name] = 'self-owned'
+        elif semaphore_kind is not None and kobject(name) == semaphore_kind:
+            rights[name] = 'semaphore'
+        else:
+            rights[name] = None
+    return rights
+`;
+
 const canary = String.raw`
 import ctypes, errno, json, os, socket, subprocess, sys, urllib.request, urllib.error
-outside, approved_input, output, python, endpoints_json = sys.argv[1:]
+${macSendRights}
+outside, approved_input, output, python, endpoints_json, allowed_env_json = sys.argv[1:]
 endpoints = json.loads(endpoints_json)
+checks_env_extra = sorted(set(os.environ) - set(json.loads(allowed_env_json)))
 checks = {}
 try:
     open(outside).read()
@@ -256,13 +346,35 @@ if sys.platform == 'linux':
         checks['nested-userns-denied'] = e.errno in (errno.ENOSPC, errno.EPERM)
 else:
     lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    rights = mach_send_attribution(lib)
+    checks['mach-send-rights-attributed'] = bool(rights) and all(rights.values())
+    if not checks['mach-send-rights-attributed']:
+        print('unattributed mach send rights:', None if rights is None else sum(not v for v in rights.values()), file=sys.stderr)
     port = ctypes.c_uint.in_dll(lib, 'bootstrap_port').value
-    for service in [b'com.apple.system.opendirectoryd.libinfo', b'com.apple.SecurityServer']:
+    for service in ${JSON.stringify(macResolverServices)}:
         handle = ctypes.c_uint()
-        rc = lib.bootstrap_look_up(port, service, ctypes.byref(handle))
-        checks[service.decode()] = rc != 0
+        rc = lib.bootstrap_look_up(port, service.encode(), ctypes.byref(handle))
+        checks[service] = rc != 0
+    # GH#38861: every system resolver path must fail, not only the Mach lookups.
+    # The host-side control proves both succeed outside the sandbox.
+    try:
+        socket.getaddrinfo('localhost', 443)
+        checks['resolver-denied'] = False
+    except socket.gaierror:
+        checks['resolver-denied'] = True
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect('/var/run/mDNSResponder')
+        checks['dns-sd-socket-denied'] = False
+    except OSError:
+        checks['dns-sd-socket-denied'] = True
+    finally:
+        s.close()
 child = subprocess.run([python, '-I', '-c', 'import sys; sys.exit(0 if len(sys.argv)==2 and sys.argv[1]=="a b;$(false)" else 1)', 'a b;$(false)'], env=os.environ)
 checks['descendant-and-argv'] = child.returncode == 0
+checks['env-allowlisted'] = not checks_env_extra
+if checks_env_extra:
+    print('unexpected environment names:', ','.join(checks_env_extra), file=sys.stderr)
 try:
     urllib.request.urlopen('https://blocked.invalid/', timeout=2)
     checks['proxy-live-and-denying'] = False
@@ -304,15 +416,30 @@ async function qualify(manager, envelope, scratch) {
       if (typeof dest !== 'string') endpoints.push(dest.port);
     }
     if (process.platform === 'darwin') {
-      // Both services must be reachable OUTSIDE the sandbox, or the negative
-      // bootstrap checks below would be meaningless.
-      const control = spawnSync(envelope.tools.python, ['-I', '-c',
-        'import ctypes,sys; l=ctypes.CDLL("/usr/lib/libSystem.B.dylib"); p=ctypes.c_uint.in_dll(l,"bootstrap_port").value; sys.exit(any(l.bootstrap_look_up(p,s,ctypes.byref(ctypes.c_uint())) != 0 for s in [b"com.apple.system.opendirectoryd.libinfo",b"com.apple.SecurityServer"]))']);
+      // Every service, the resolver and the dns_sd socket must work OUTSIDE
+      // the sandbox, or the negative checks below would be meaningless. The
+      // looked-up services are foreign send rights the attribution must flag.
+      const control = spawnSync(envelope.tools.python, ['-I', '-c', String.raw`
+import ctypes, json, socket, sys
+${macSendRights}
+l = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+p = ctypes.c_uint.in_dll(l, 'bootstrap_port').value
+handles = [ctypes.c_uint() for s in json.loads(sys.argv[1])]
+ok = all(l.bootstrap_look_up(p, s.encode(), ctypes.byref(h)) == 0 for s, h in zip(json.loads(sys.argv[1]), handles))
+rights = mach_send_attribution(l)
+ok = ok and rights is not None and all(rights.get(h.value, 'missing') is None for h in handles)
+ok = ok and {'task-self', 'thread-self', 'host-name', 'bootstrap'} <= set(rights.values())
+socket.getaddrinfo('localhost', 443)
+u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+u.connect('/var/run/mDNSResponder')
+u.close()
+sys.exit(0 if ok else 1)
+`, JSON.stringify(macResolverServices)]);
       insist(control.status === 0, 'mach-positive-control-unavailable');
     }
     const result = await supervised(await wrappedArgv(manager,
       [envelope.tools.python, '-I', '-c', canary, outside, input, envelope.write[0], envelope.tools.python,
-        JSON.stringify(endpoints)], envelope), envelope, scratch);
+        JSON.stringify(endpoints), JSON.stringify([...ENV_ALLOWLIST, ...ENV_ADDED])], envelope), envelope, scratch);
     if (result.code !== 0) {
       let checks = {};
       try { checks = JSON.parse(result.stdout); } catch { /* no arbitrary output in diagnostics */ }
@@ -386,14 +513,12 @@ async function main(argv) {
       insist(sockets.every(p => typeof p === 'string'), 'bridge-sockets-not-ready');
       manager.updateConfig(settings(host, envelope, sockets));
     }
-    const checks = await qualify(manager, envelope, scratch);
     if (process.platform === 'darwin') {
-      // The legacy v1 caller ignores qualification fields. Do NOT let passing
-      // these limited canaries turn an unreviewed DNS/inherited-Mach boundary
-      // into an accepted backend. No environment-variable bypass is provided.
-      console.error(JSON.stringify({ qualification: 'macos-incomplete', checks }));
-      throw new BackendError('macos-dns-and-ipc-qualification-pending');
+      // GH#38861 reviewed arm64 only (synthetic, DNS and Mach evidence). Intel
+      // Macs stay refused until they have their own evidence; no bypass.
+      insist(process.arch === 'arm64', 'macos-x64-qualification-pending');
     }
+    const checks = await qualify(manager, envelope, scratch);
     if (action === 'probe') {
       console.log(JSON.stringify({ schema: 'aidevops.worker-egress-backend.v1', ready: true,
         scope: 'process-tree', enforcement: 'equivalent', policy_sha256: digest(policy.bytes),

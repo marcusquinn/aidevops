@@ -10,6 +10,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.249] - 2026-11-20
+
+### Added
+
+- attribute inherited macOS Mach send rights and fail closed on unknown ones
+- target /ai/video with Unlimited guard, pick played output video, add paired-browser session mode (#39408)
+
+### Changed
+
+- Maintenance: mark t19188 complete (pr:#39415 completed:2026-11-20) (#39413)
+
+### Fixed
+
+- narrow terminal-blocker ACTION REQUIRED match (GH#39452) (#39454)
+- move review-bot-gate fork-review listener out of the workflow it listens to
+- re-evaluate gate when linked issue is reopened (#39426)
+- clear strict status on fork PR review events
+- traverse sourcers of deleted scripts in affected-test selection
+- apply closed-issue completion rule to merged_missing_summary on failure recovery (t19201) (#39422)
+- pin issue-triage-gate callers to one SHA
+- match ACTION REQUIRED hold case-sensitively (#39409)
+
+## [3.39.248] - 2026-11-20
+
+### Added
+
+- allowlist the SRT workload environment
+- require split headroom in file-size-debt briefs (t19177) (#39368)
+- persistent dispatch exclusions reach the AI brief owner (#39346)
+- qualify macOS arm64 synthetic-only readiness
+- hostinger-helper subdomain-ssl for multisite children behind Cloudflare (#39294)
+
+### Changed
+
+- Maintenance: add t19176 stale available assignees and t19177 split headroom
+- Maintenance: mark t19187 complete (pr:#39389 completed:2026-11-20) (#39399)
+- Refactor: split full-loop-helper-commit.sh below 2000 lines (#39388)
+- Tests: qualify SRT proxy resolved-address, redirect and protocol handling (#39389)
+- Refactor: split headless-runtime-worker finish/terminal helpers to 530 lines (t19180) (#39375)
+- Tests: add security dismiss CLI routing regression (GH#39365) (#39372)
+- Maintenance: add t19186-t19190 (GH#35043 SRT follow-ups)
+- Documentation: SRT credential boundary design rev 2 (OAuth subscription relay, placement, allowance accounting)
+- Maintenance: mark t19178 complete (pr:#39346 completed:2026-11-20) (#39384)
+- Maintenance: mark t19181 complete (pr:#39345 completed:2026-11-20) (#39314)
+- Refactor: split external terminal completion out of headless-runtime-worker.sh (GH#39320) (#39326)
+
+### Fixed
+
+- repair stale imports and init cycle that break every helper command
+- raise commit-and-pr push timeout to 300s, configurable (GH#39356) (#39407)
+- classify self-merged worker PRs without MERGE_SUMMARY as complete when the issue is closed
+- keep external_trigger_pending holds when companion label lands (#39393)
+- run merge-ready resume lane before CI-repair lane and exempt it from the per-repo slice
+- treat a usable OAuth pool account as provider auth on OpenCode 2 (#39097)
+- skip CI-drift update-branch on policy-gate failures and external PRs (#39386)
+- orphan interactive PRs with unresolved review threads recover a tracking issue before handover
+- make route-upstream issue titles finding-specific (#39342)
+- schedule once --name docs example and allowed-character error (Ref #39321)
+- release commands retire their own control and verifier trees at exit
+- release orphaned active-status labels and resurface aged holds (#39347)
+- duplicate PR consolidation scores only multi-PR groups
+
+## [3.39.247] - 2026-11-20
+
+### Added
+
+- add --stage so closeout bundles are readable by sandboxed reviewers (#39322)
+- schedule once recheck/snooze policy and failure advisories
+
+### Fixed
+
+- security dismiss tanstack-minishaihulud-2026-05 writes the requested ID
+- strip consolidation labels when normalizing file-size-debt issues (#39318)
+- release stale assignees from status:available auto-dispatch issues (t19176) (#39336)
+- parallelise approval content-binding suite lanes (GH#39324)
+
+## [3.39.246] - 2026-11-19
+
+### Added
+
+- scheduled main shell-suite health run files deduped red-main issues (t19150) (#39307)
+
+### Changed
+
+- Maintenance: mark t19172 complete (pr:#39305 completed:2026-11-19) (#39306)
+
+### Fixed
+
+- external check findings outside the PR diff no longer discard a green worker PR
+- repair five pre-existing drifted test suites (GH#39309)
+- circuit comment repeats the latest worker's input request
+
 ## [3.39.245] - 2026-11-19
 
 ### Added

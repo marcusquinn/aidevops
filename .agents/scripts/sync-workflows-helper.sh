@@ -79,6 +79,9 @@ readonly MANAGED_BLOCK_HELPER="$SELF_DIR/managed-markdown-block-helper.py"
 readonly CONTRIBUTING_POLICY_TEMPLATE_NAME="issue-first-pr-contributing.md"
 readonly LINKED_ISSUE_WORKFLOW_NAME="linked-issue-check"
 readonly METRICS_WORKFLOW_NAME="loc-badge"
+# Workflows whose floating @main callers --pin-floating may migrate to a
+# release SHA (uses: and aidevops_ref move together, GH#39416).
+readonly PIN_FLOATING_WORKFLOWS="loc-badge issue-triage-gate"
 # t19126: deterministic sync PRs opt into automated merge (GH#23238).
 readonly SYNC_AUTO_MERGE_LABEL="allow-auto-merge"
 
@@ -460,8 +463,8 @@ Options:
   --ref REF         Explicit @ref for new installs (default: the latest release
                     SHA with its tag as a comment, unless repos.json configures
                     workflow_reusable_ref).
-  --pin-floating    Migrate only existing loc-badge @main callers to the latest
-                    release SHA. Requires --workflow loc-badge. Preserves real
+  --pin-floating    Migrate only existing loc-badge / issue-triage-gate @main callers to the latest
+                    release SHA. Requires --workflow loc-badge or issue-triage-gate. Preserves real
                     pins and registry workflow_reusable_ref overrides.
   --branch NAME     Branch name prefix (default: chore/workflow-sync-YYYYMMDD).
   --json            Emit one JSON object per repo × workflow describing outcome.
@@ -703,7 +706,7 @@ _sync_target_ref_for_slug() {
 	local _ref
 	if [[ -n "${_OPT_TARGET_REF:-}" ]]; then
 		_ref="${_OPT_TARGET_REF#@}"
-	elif [[ ( "$_status" == "NO-WORKFLOW" || ( "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow_name" == "$METRICS_WORKFLOW_NAME" ) ) &&
+	elif [[ ( "$_status" == "NO-WORKFLOW" || ( "${_OPT_PIN_FLOATING:-0}" -eq 1 && -n "$_workflow_name" ) ) &&
 		-n "$_workflow_name" && -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]]; then
 		local _repo
 		_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
@@ -715,17 +718,28 @@ _sync_target_ref_for_slug() {
 	return 0
 }
 
-# Select only unconfigured legacy metrics callers, never intentional pins.
+# _is_pin_floating_workflow <name> — success when --pin-floating supports it.
+_is_pin_floating_workflow() {
+	local _name="$1"
+	local _w
+	for _w in $PIN_FLOATING_WORKFLOWS; do
+		[[ "$_name" == "$_w" ]] && return 0
+	done
+	return 1
+}
+
+# Select only unconfigured legacy floating callers, never intentional pins.
 _is_floating_caller() {
 	local _slug="$1"
 	local _workflow_file="$2"
-	local _repo _pin _helper_ref
-	[[ "$_workflow_file" == */loc-badge.yml ]] || return 1
+	local _repo _pin _helper_ref _wf_name
+	_wf_name=$(basename "$_workflow_file" .yml)
+	_is_pin_floating_workflow "$_wf_name" || return 1
 	[[ -z "$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")" ]] || return 1
 	[[ -f "$_workflow_file" ]] || return 1
 	_repo=$(_workflow_reusable_repo_for_slug "$_slug") || return 1
 	# Match the configured reusable workflow, not an unrelated job's first ref.
-	_pin=$(awk -v target="${_repo}/.github/workflows/loc-badge-reusable.yml@" '
+	_pin=$(awk -v target="${_repo}/.github/workflows/${_wf_name}-reusable.yml@" '
 		$1 == "uses:" && index($2, target) == 1 {
 			print substr($2, length(target) + 1)
 		}
@@ -1202,7 +1216,8 @@ _resolve_effective_ref() {
 		local _existing_pin
 		_existing_pin=$(_extract_ref_pin "$_workflow")
 		# Floating mode has already verified the configured metrics caller ref.
-		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 && "$_workflow" == */loc-badge.yml ]]; then
+		if [[ "${_OPT_PIN_FLOATING:-0}" -eq 1 ]] &&
+			[[ "$_workflow" == */loc-badge.yml || "$_workflow" == */issue-triage-gate.yml ]]; then
 			_effective_ref="$_target_ref"
 		elif [[ -n "$_existing_pin" ]]; then
 			_effective_ref="$_existing_pin"
@@ -1992,7 +2007,7 @@ _parse_args() {
 		_die "--install-missing requires an explicit --workflow filter"
 	fi
 	if [[ "$_OPT_PIN_FLOATING" -eq 1 ]]; then
-		[[ "$_OPT_FILTER_WORKFLOW" == "$METRICS_WORKFLOW_NAME" ]] || _die "--pin-floating requires --workflow loc-badge"
+		_is_pin_floating_workflow "$_OPT_FILTER_WORKFLOW" || _die "--pin-floating requires --workflow loc-badge or issue-triage-gate"
 		[[ "$_OPT_FORCE_REF" -eq 0 && "$_OPT_INSTALL_MISSING" -eq 0 && -z "$_OPT_TARGET_REF" ]] ||
 			_die "--pin-floating cannot be combined with --force-ref, --install-missing or --ref"
 	fi

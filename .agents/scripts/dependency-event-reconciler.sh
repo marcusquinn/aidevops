@@ -115,7 +115,10 @@ _der_labels_have_hold() {
 # trusted comments: the runtime records terminal blockers as comments
 # (_apply_terminal_blocker, terminal-blocker-circuit.sh), while issue bodies
 # document the worker protocol (`TERMINAL_BLOCKER_REASON=...`) as instructions.
-DER_STRONG_HOLD_RE='HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|ACTION REQUIRED|worker[_ -]blocked|aidevops:brief-hold'
+# Machine markers match case-sensitively: the brief template's
+# "**Action required:** None." is not the supervisor ACTION REQUIRED marker (GH#39397).
+DER_STRONG_HOLD_RE='HUMAN_UNBLOCK_REQUIRED|Worker Watchdog Kill|ACTION REQUIRED|aidevops:brief-hold'
+DER_WORKER_BLOCKED_RE='worker[_ -]blocked'
 DER_TERMINAL_BLOCKER_RE='Terminal[_ -]blocker([_ -]detected)?|^CLAIM_RELEASED reason=blocked([[:space:]]|$)'
 # jq (Oniguruma) twin of DER_TERMINAL_BLOCKER_RE; ^ is line-anchored via \n.
 DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(\s|$)'
@@ -124,7 +127,8 @@ DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(
 _der_text_has_strong_hold() {
 	local text="$1"
 	local comments="${2:-}"
-	printf '%s\n' "$text" | grep -qiE "$DER_STRONG_HOLD_RE" && return 0
+	grep -qE "$DER_STRONG_HOLD_RE" <<<"$text" && return 0
+	grep -qiE "$DER_WORKER_BLOCKED_RE" <<<"$text" && return 0
 	printf '%s\n' "$comments" | grep -qiE "$DER_TERMINAL_BLOCKER_RE" && return 0
 	if printf '%s\n' "$text" | grep -qiE '\*\*BLOCKED\*\*' &&
 		printf '%s\n' "$text" | grep -qiE 'cannot proceed'; then
@@ -485,7 +489,11 @@ _der_upstream_gates_ready() {
 # GH#38866: a terminal-blocker observation older than the latest transition to
 # needs-dependency was superseded by that recovery decision; the dependency pass
 # owns release. Prints trusted comment bodies minus the terminal-blocker lines of
-# such superseded observations (other hold text is kept). Fails closed
+# such superseded observations (other hold text is kept). t19195: an
+# external_trigger_pending observation is never superseded, because the worker
+# release applies the needs-dependency companion itself seconds later; its
+# release belongs to terminal-blocker-trigger-revisit.sh or a trusted retry.
+# Fails closed
 # (non-zero) when the label history is unreadable or has no transition.
 _der_comments_after_dependency_conversion() {
 	local repo="$1"
@@ -498,10 +506,16 @@ _der_comments_after_dependency_conversion() {
 	# aidevops:trust-boundary — only trusted comments are considered at all.
 	# Older comments lose only their terminal-blocker lines, so every other hold
 	# marker or operational hold in the same comment still counts.
+	# An external_trigger_pending observation is superseded once an OWNER/MEMBER
+	# trigger-revisit "decision=trigger_met" record (it carries the retry
+	# directive) postdates it; pending observations stay active until then.
 	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" '
-		.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
+		([.[][] | select((.author_association // "") | test("^(OWNER|MEMBER)$"))
+			| select((.body // "") | test("aidevops:trigger-revisit [^>]*decision=trigger_met"))
+			| .created_at // ""] | max // "") as $met
+		| .[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
 		| (.body // "") as $body
-		| if (.created_at // "9999") >= $cutoff then $body
+		| if (.created_at // "9999") >= $cutoff or (($body | test("external_trigger_pending"; "i")) and ($met == "" or (.created_at // "9999") > $met)) then $body
 		  else ($body | split("\n") | map(select(test($tb; "i") | not)) | join("\n")) end' 2>/dev/null
 	return $?
 }

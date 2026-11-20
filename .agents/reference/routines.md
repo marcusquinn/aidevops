@@ -19,6 +19,50 @@ success|failure|cancelled`. A single platform scheduler calls `run-due`, so
 queued jobs survive reboot without one service or sleeper per job. Prompt
 material, dispatch paths, and logs remain private with restrictive modes.
 
+## Follow-ups and later checks
+
+Use a one-shot recheck job when a session finishes what it can now but an
+outcome depends on time: a DNS/SSL change propagating, an upstream PR review,
+a quota reset, a 24-hour incident recheck. Do not leave it as "check back
+later" in prose, a sleeping process, or a user reminder.
+
+1. Record the check in Git first: a comment on the tracking issue (or a
+   `TODO.md` entry) naming the success criteria and where evidence goes. The
+   scheduled worker is a fresh session; it does not resume the current
+   conversation, so that record plus the prompt file is its only context.
+2. Write a private prompt file (outside Git, mode 600) that is self-contained:
+   target repo/issue/PR, exact commands to verify, success criteria, where
+   to report, and what to do when the criteria are met (comment, close, file
+   the follow-up). Never put secrets in it; name the secret, not its value.
+3. Schedule it with a bounded recheck policy:
+
+   ```bash
+   aidevops schedule once --after 24h --name "recheck-<repo>-<N>" \
+     --dir <repo-checkout> --prompt-file <private-prompt-file> \
+     --recheck-every 12h --max-checks 4 --until <YYYY-MM-DDTHH:MM:SSZ>
+   ```
+
+   Names allow letters, digits, spaces, `.`, `_` and `-` only (no `#` or `/`);
+   put the issue reference in the prompt and the tracking comment.
+
+4. Report the job ID on the tracking issue so the next session can find it
+   with `aidevops schedule status <JOB_ID>`.
+
+Each run receives the prompt plus a check contract naming its job. Criteria
+met: the worker reports evidence and ends; the job closes as `success`. Not
+met yet: the worker runs `aidevops schedule snooze <JOB_ID> --reason "<what is
+unmet>"` (optionally `--after 6h`) and ends; the runner queues the next check.
+Failed runs retry on the same interval. When checks or the deadline run out,
+the job ends as `failure`/`recheck_exhausted` and leaves a session-start
+advisory (`deferred-job-<JOB_ID>`) with the last unmet reason, so nothing
+fails silently. Rechecks require `--prompt-file` or `--worktree` (minimum
+interval 5m, default 6 checks, max 100); manual `--issue` dispatch cannot
+report a snooze.
+
+Prefer Pulse instead when the condition is queue state Pulse already watches
+(open PR checks, review gates, issue labels), and a recurring routine when
+the check never ends.
+
 ## Format
 
 ```markdown

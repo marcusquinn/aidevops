@@ -107,6 +107,7 @@ check_grammar 'repository references' '**Blocked by:** owner/repo#12 and owner/r
 check_grammar 'bold value' 'Blocked by: **#10**' '|10'
 check_grammar 'prose-led value fails closed' '- **Blocked by:** native relationship to t18418 / #31685' 't18418|31685'
 check_grammar 'malformed list token fails closed' 'blocked-by:t143,t001' '__malformed__|'
+check_grammar 'research path blocker fails closed' 'blocked-by: todo/research/t19048-t19049-note.md' '__malformed__|'
 check_grammar 'unchanged bare list' 'blocked-by:t1,t2' 't1,t2|'
 
 printf '\n%d passed, %d failed\n' "$pass_count" "$fail_count"

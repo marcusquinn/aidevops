@@ -5,12 +5,19 @@ import { join } from 'node:path';
 
 import { STATE_DIR } from './higgsfield-common.mjs';
 
-const KNOWN_INTERRUPTIONS_FILE = join(STATE_DIR, 'known-interruptions.json');
+// Resolved lazily: common re-exports browser, which imports this module, so
+// STATE_DIR is still in its temporal dead zone while this module evaluates.
+function knownInterruptionsFile() {
+  return join(STATE_DIR, 'known-interruptions.json');
+}
 
 export function loadKnownInterruptions() {
   try {
-    if (existsSync(KNOWN_INTERRUPTIONS_FILE)) {
-      return JSON.parse(readFileSync(KNOWN_INTERRUPTIONS_FILE, 'utf-8'));
+    if (existsSync(knownInterruptionsFile())) {
+      const data = JSON.parse(readFileSync(knownInterruptionsFile(), 'utf-8'));
+      // Older state files stored a bare array of entries.
+      if (Array.isArray(data)) return { types: data };
+      if (Array.isArray(data?.types)) return data;
     }
   } catch {}
   return { types: [] };
@@ -22,7 +29,7 @@ export function logNewInterruption(type, selector, detail) {
   if (!exists) {
     data.types.push({ type, selector, detail, firstSeen: new Date().toISOString() });
     try {
-      writeFileSync(KNOWN_INTERRUPTIONS_FILE, JSON.stringify(data, null, 2));
+      writeFileSync(knownInterruptionsFile(), JSON.stringify(data, null, 2));
     } catch {}
   }
 }

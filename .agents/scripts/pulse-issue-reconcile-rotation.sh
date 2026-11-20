@@ -11,7 +11,7 @@ _PULSE_ISSUE_RECONCILE_ROTATION_LOADED=1
 # fleets: with a fixed order the stage watchdog killed every cycle inside
 # Pass 1 and Passes 2/2b/3 never ran (stale assignments and stampless
 # interactive claims stayed dispatch-blocked for days).
-_NORMALIZE_PASSES="reassign_self unassign_stale unassign_stampless_interactive label_invariants"
+_NORMALIZE_PASSES="reassign_self unassign_stale unassign_available_stale unassign_stampless_interactive label_invariants"
 
 #######################################
 # Print normalization passes least-recently-started first so a stage timeout

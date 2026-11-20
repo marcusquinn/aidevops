@@ -18,6 +18,7 @@
 #   _normalize_stale_get_dispatch_info — Read PID, timestamp, runner from dispatch comment
 #   _normalize_stale_should_skip_reset — Gate reset decision (t1933 + t2375 cross-runner)
 #   _normalize_unassign_stale          — Detect and reset stale runner assignments
+#   _normalize_unassign_available_stale — Release stale assignees on status:available issues (GH#39327)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_STALE_LOADED:-}" ]] && return 0
@@ -642,5 +643,111 @@ _normalize_unassign_stale() {
 	# and operators can confirm the sweep is firing per-cycle.
 	echo "[pulse-wrapper] Stale assignment scan: threshold=${_stale_threshold}s candidates=${total_candidates} reset=${total_reset}" >>"$LOGFILE"
 
+	return 0
+}
+
+#######################################
+# Pass 2c (GH#39327): release stale assignees from open status:available +
+# auto-dispatch issues. _normalize_unassign_stale only sees active-status
+# issues and _action_rsd_single only heals status:done, so a reopened issue
+# kept a closed lifecycle's assignee, which demotes it behind all fresh work
+# on every other runner (GH#38333 ordering).
+#
+# Fast path: _pir_prior_lifecycle_assignees names assignees added before the
+# latest reopen; exactly those logins are removed. Otherwise the existing
+# `dispatch-dedup-helper.sh is-assigned` guard decides: its stale recovery is
+# positive-proof, fail-closed and writes the audit comment. No staleness rule
+# is reimplemented here. Any read failure makes no mutation.
+#
+# Args:
+#   $1 runner_user  — GH login of the current runner
+#   $2 repos_json   — path to repos.json
+#   $3 now_epoch    — current Unix timestamp
+#   $4 dedup_helper — path to dispatch-dedup-helper.sh
+# Env: AIDEVOPS_AVAILABLE_STALE_ASSIGNEE_CAP (default 5) issues per cycle,
+#      STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS (default 600)
+# Returns: 0 always (best-effort)
+#######################################
+_normalize_unassign_available_stale() {
+	local runner_user="$1"
+	local repos_json="$2"
+	local now_epoch="$3"
+	local dedup_helper="$4"
+
+	local cap="${AIDEVOPS_AVAILABLE_STALE_ASSIGNEE_CAP:-5}"
+	[[ "$cap" =~ ^[0-9]+$ ]] || cap=5
+	local threshold="${STALE_REASSIGN_UPDATED_THRESHOLD_SECONDS:-600}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=600
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || return 0
+
+	local processed=0 released=0 slugs=""
+	slugs=$(jq -r '.initialized_repos[] | select((.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" 2>/dev/null) || slugs=""
+	if declare -F _normalize_rotated_slugs >/dev/null 2>&1; then
+		slugs=$(_normalize_rotated_slugs unassign_available_stale "$slugs")
+	fi
+
+	local slug
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		[[ "$processed" -lt "$cap" ]] || break
+		if declare -F _normalize_mark_repo_started >/dev/null 2>&1; then
+			_normalize_mark_repo_started unassign_available_stale "$slug"
+		fi
+		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			|| ! repo_allows_pulse_write_actions "$slug"; then
+			continue
+		fi
+
+		local listing="" listing_rc=0
+		listing=$(_normalize_repo_listing "$slug") || listing_rc=$?
+		if [[ "$listing_rc" -eq 2 ]]; then
+			listing=$(gh_issue_list --repo "$slug" --state open \
+				--json number,assignees,labels,createdAt,updatedAt \
+				--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || listing=""
+		elif [[ "$listing_rc" -ne 0 ]]; then
+			listing=""
+		fi
+		[[ -n "$listing" && "$listing" != "null" ]] || continue
+
+		local candidates=""
+		local frac_re='\.[0-9]+Z$'
+		candidates=$(printf '%s' "$listing" | jq -r --arg cutoff "$((now_epoch - threshold))" --arg frac "$frac_re" '
+			[.[] | select(
+				(.labels | map(.name)) as $l
+				| ($l | index("status:available")) and ($l | index("auto-dispatch"))
+				and ((.assignees // []) | length > 0)
+				and ([$l[] | select(. == "status:queued" or . == "status:in-progress"
+					or . == "status:in-review" or . == "status:claimed"
+					or . == "hold-for-review" or . == "needs-maintainer-review"
+					or . == "parent-task" or . == "persistent" or . == "no-auto-dispatch")] | length == 0)
+				and ((.updatedAt | sub($frac; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber))
+			) | .number] | .[]' 2>/dev/null) || candidates=""
+		[[ -n "$candidates" ]] || continue
+
+		local num
+		while IFS= read -r num; do
+			[[ "$num" =~ ^[0-9]+$ ]] || continue
+			[[ "$processed" -lt "$cap" ]] || break
+			processed=$((processed + 1))
+
+			local issue_json="" stale=""
+			issue_json=$(printf '%s' "$listing" | jq -c --argjson n "$num" '.[] | select(.number == $n)' 2>/dev/null) || issue_json=""
+			[[ -n "$issue_json" ]] || continue
+			stale=$(_pir_prior_lifecycle_assignees "$slug" "$num" "$issue_json") || stale=""
+			if [[ -n "$stale" ]]; then
+				if gh issue edit "$num" --repo "$slug" --remove-assignee "$stale" >/dev/null 2>&1; then
+					released=$((released + 1))
+					echo "[pulse-wrapper] Available stale assignment: released prior-lifecycle assignees (${stale}) on #${num} in ${slug}" >>"$LOGFILE"
+				fi
+				continue
+			fi
+			if [[ -x "$dedup_helper" ]]; then
+				# Stale recovery (and its audit comment) lives inside is-assigned.
+				"$dedup_helper" is-assigned "$num" "$slug" "$runner_user" >/dev/null 2>&1 || true
+			fi
+		done <<<"$candidates"
+	done <<<"$slugs"
+
+	echo "[pulse-wrapper] Available stale assignment scan: cap=${cap} processed=${processed} prior_lifecycle_released=${released}" >>"$LOGFILE"
 	return 0
 }

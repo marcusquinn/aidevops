@@ -359,6 +359,8 @@ assert_hold 1 "" "Terminal blocker: reason=target_code_blocker owner=target-main
 assert_hold 1 "$TB_PROTOCOL" "TERMINAL_BLOCKER_CIRCUIT active=true observations=2" "status:blocked" "direct classifier preserves terminal-blocker circuit comments beside body protocol text"
 assert_hold 1 "HUMAN_UNBLOCK_REQUIRED" "" "status:blocked" "direct classifier preserves human-unblock markers in the body"
 assert_hold 1 "ACTION REQUIRED: rotate the deploy key" "" "status:blocked" "direct classifier preserves action-required markers in the body"
+assert_hold 0 $'## Complexity Impact\n- **Action required:** None.' "" "status:blocked" "brief-template Action required: None is not a hold (GH#39397)"
+assert_hold 1 "" "ACTION REQUIRED: refresh token" "status:blocked" "direct classifier preserves action-required supervisor comments"
 
 EDIT_COUNT=0 REREAD_LABELS="status:blocked" BODY20=$'Blocked by #10\n\n| Outcome | Action |\n|---|---|\n| unknown_review | Hold for bounded review; no implementation issue |'
 assert_eq 1 "$(run_reconcile)" "classification table prose does not suppress close-event reconciliation"
@@ -384,6 +386,11 @@ EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_NEW" 
 assert_eq 0 "$(run_reconcile)" "terminal blocker newer than needs-dependency conversion still holds"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_OLD" EVENTS=""
 assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-blocker hold"
+# t19195: the release's own needs-dependency companion label must not supersede
+# an external_trigger_pending observation, even with closed native blockers.
+TB_ETP='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending"}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "external_trigger_pending observation is not superseded by the companion needs-dependency label"
 SEARCH_EXTRA_LABEL="" COMMENTS='[[]]' EVENTS=""
 
 # t18662: a dependant still waiting on another open blocker must not stop the

@@ -20,6 +20,9 @@ _DJ_LOCK_RECLAIM_DIR="${DEFERRED_JOB_ROOT}/queue.lock.reclaim"
 _DJ_OWNER_MARKER="${DEFERRED_JOB_ROOT}/.aidevops-deferred-job-root"
 _DJ_OWNER_MARKER_VALUE="aidevops-deferred-job-root-v1"
 _DJ_MAX_DELAY_SECONDS=315360000
+_DJ_MIN_RECHECK_SECONDS=300
+_DJ_MAX_CHECKS=100
+_DJ_DEFAULT_MAX_CHECKS=6
 _DJ_LOCK_TOKEN=""
 
 _dj_now_epoch() {
@@ -227,6 +230,43 @@ _dj_append_event() {
 		'{timestamp:$timestamp,job_id:$job_id,status:$status,event:$event,detail:(if $detail == "" then null else $detail end)}') || return 1
 	printf '%s\n' "$record" >>"$_DJ_EVENTS_FILE"
 	chmod 600 "$_DJ_EVENTS_FILE"
+	return 0
+}
+
+# Terminal failures and exhausted rechecks leave a local advisory, which the
+# next interactive session start surfaces (aidevops-update-check.sh). The text
+# carries the operator label and outcome only: never paths, prompts or logs.
+_dj_raise_attention() {
+	local job_json="$1"
+	local advisory_dir="${AIDEVOPS_ADVISORIES_DIR:-${HOME}/.aidevops/advisories}"
+	local job_id=""
+	local summary=""
+	local advisory_file=""
+	local tmp_file=""
+	job_id=$(printf '%s\n' "$job_json" | jq -r '.id // ""' 2>/dev/null || true)
+	_dj_valid_job_id "$job_id" || return 1
+	summary=$(printf '%s\n' "$job_json" | jq -r '
+		"Scheduled job \"\(.name // "unnamed")\" (\(.id)) ended \(.outcome // "failure")"
+		+ (if .recheck != null then " after \(.recheck.checks_done // 0)/\(.recheck.max_checks) checks" else "" end)
+		+ (if (.recheck.last_reason // "") != "" then ": \(.recheck.last_reason)" else "" end)
+		+ ". Inspect: `aidevops schedule status \(.id)`."' 2>/dev/null || true)
+	[[ -n "$summary" ]] || return 1
+	mkdir -p "$advisory_dir" 2>/dev/null || return 1
+	advisory_file="${advisory_dir}/deferred-job-${job_id}.advisory"
+	tmp_file=$(mktemp "${advisory_dir}/.deferred-job-advisory.XXXXXX") || return 1
+	printf '%s\n' "$summary" | tr -d '\r' | head -n 1 >"$tmp_file"
+	chmod 600 "$tmp_file"
+	mv "$tmp_file" "$advisory_file"
+	return 0
+}
+
+# Reduce operator- or worker-supplied text to one bounded printable line.
+# Backticks are dropped so a reason can never render as a runnable command
+# in the session-start advisory.
+_dj_sanitize_reason() {
+	local value="$1"
+	value=$(printf '%s' "$value" | tr '\r\n\t' '   ' | tr -cd '[:print:]' | tr -d '`')
+	printf '%s\n' "${value:0:200}"
 	return 0
 }
 

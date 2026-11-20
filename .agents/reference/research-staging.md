@@ -61,7 +61,8 @@ Do not substitute `general` or `explore`; they are not fail-closed.
 ## Independent code review
 
 Linked worktrees are outside staging. For a closeout review, write the review
-bundle (`review-evidence-helper.sh bundle local|branch --output FILE`) into a
-fresh task child here and give the reviewer that path. A plain
+bundle with `review-evidence-helper.sh bundle local|branch --stage <task>`
+(creates a fresh `<task>/bundle.md` child here and prints it) and give the
+reviewer that path. `--output` outside staging prints an advisory. A plain
 `git diff origin/main...HEAD` omits uncommitted work; use it only when every
 change is committed. `reference/review-core.md` "Review efficiency" applies.

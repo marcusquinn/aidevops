@@ -52,6 +52,12 @@ _LFG_REMOTE_OBJECT_SOURCE=""
 # GH#38785: specific reason for the last freshness deferral, for diagnostics.
 _LFG_FRESHNESS_DEFER_CAUSE=""
 
+# t19177: split headroom target for file-size-debt briefs, as a percentage of
+# LARGE_FILE_LINE_THRESHOLD (default in pulse-wrapper-defaults.sh). This is the
+# brief's acceptance criterion only; the gate still closes and reopens debt
+# issues against LARGE_FILE_LINE_THRESHOLD itself.
+LARGE_FILE_SPLIT_TARGET_PERCENT="${LARGE_FILE_SPLIT_TARGET_PERCENT:-60}"
+
 #######################################
 # Label-based early-exit precheck for the large-file gate.
 # Handles GH#18042 self-simplification auto-clear, force_recheck bypass,
@@ -705,6 +711,23 @@ _large_file_gate_normalize_debt_issue() {
 	fi
 	# Route the complete transition through the canonical lifecycle helper so
 	# sibling status labels converge atomically and repeated calls are no-ops.
+	# The canonical debt issue is the active record for the next split, not an
+	# archival consolidation source: strip consolidation lifecycle labels so the
+	# consolidated management-label dispatch gate cannot skip it forever (GH#39315).
+	# Exception: never release a consolidation lock another runner still holds.
+	# A live `consolidation-lock:runner=` marker keeps `consolidation-in-progress`
+	# in place; it is stripped on a later pass once the lock marker is gone.
+	# Fail closed: an API error also preserves the label.
+	local lock_count="" keep_in_progress=0
+	lock_count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
+		--jq '[.[] | select(.body | test("^<!-- consolidation-lock:runner=[A-Za-z0-9_-]+ ts="))] | length' 2>/dev/null | paste -sd+ - | bc 2>/dev/null) || lock_count=""
+	if [[ -z "$lock_count" || "$lock_count" != "0" ]]; then
+		keep_in_progress=1
+	fi
+	local -a in_progress_args=()
+	if [[ "$keep_in_progress" -eq 0 ]]; then
+		in_progress_args=(--remove-label "consolidation-in-progress")
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" \
 		--add-label "file-size-debt" \
 		--add-label "auto-dispatch" \
@@ -714,7 +737,10 @@ _large_file_gate_normalize_debt_issue() {
 		--remove-label "already-fixed" \
 		--remove-label "wontfix" \
 		--remove-label "solved:worker" \
-		--remove-label "solved:interactive" >/dev/null 2>&1
+		--remove-label "solved:interactive" \
+		--remove-label "consolidated" \
+		--remove-label "needs-consolidation" \
+		${in_progress_args[@]+"${in_progress_args[@]}"} >/dev/null 2>&1
 	return $?
 }
 
@@ -820,6 +846,20 @@ _large_file_gate_reopen_debt_issue() {
 }
 
 #######################################
+# Print the validated split headroom percentage (t19177). Accepts an integer
+# 1-100 from LARGE_FILE_SPLIT_TARGET_PERCENT; anything else falls back to 60.
+# Leading zeros are rejected so bash arithmetic never reads them as octal.
+#######################################
+_large_file_gate_split_target_percent() {
+	local percent="${LARGE_FILE_SPLIT_TARGET_PERCENT:-60}"
+	if [[ ! "$percent" =~ ^[1-9][0-9]{0,2}$ ]] || ((percent > 100)); then
+		percent=60
+	fi
+	printf '%s' "$percent"
+	return 0
+}
+
+#######################################
 # Print the current file-size-debt issue body template. Pure: no GitHub calls.
 # New issues and refreshed reused issues share this one template (GH#37989).
 # Arguments: lf_path, parent_issue, prior_attempt_issue (optional)
@@ -828,6 +868,11 @@ _large_file_gate_debt_issue_body() {
 	local lf_path="$1"
 	local parent_issue="$2"
 	local prior_attempt_issue="${3:-}"
+
+	# t19177: ask for headroom, not just a result under the threshold.
+	local _lfg_split_percent=""
+	_lfg_split_percent=$(_large_file_gate_split_target_percent)
+	local _lfg_split_target=$((LARGE_FILE_LINE_THRESHOLD * _lfg_split_percent / 100))
 
 	local _prior_attempt_ref=""
 	if [[ -n "$prior_attempt_issue" ]]; then
@@ -862,7 +907,8 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 ## How
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
-- Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+- Verify: \`wc -l ${lf_path}\` is ${_lfg_split_target} lines or fewer, and so is every new module (headroom target: ${_lfg_split_percent}% of the ${LARGE_FILE_LINE_THRESHOLD}-line threshold)
+- Why headroom: hot files regrow, so a split that only just clears ${LARGE_FILE_LINE_THRESHOLD} lines is back over it within days. Put frequently changed function groups in their own modules; find them with \`git log --since=30.days --format= --name-only -- ${lf_path}\` and recent commit subjects (\`git log --since=30.days --format=%s -- ${lf_path}\`)
 - Verify: \`python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD\` exits 0 (pure move: \`removed-only=0 review=0 gated=0\`); paste its summary line into the PR body (playbook section 7.5)
 
 **Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).

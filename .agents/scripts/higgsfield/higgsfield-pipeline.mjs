@@ -16,13 +16,13 @@ import {
   safeJoin,
 } from './higgsfield-common.mjs';
 
-import { generateImage } from './higgsfield-image.mjs';
-import { pipelineAssemble } from './higgsfield-pipeline-assembly.mjs';
 import {
-  generateLipsync,
   pollAndDownloadVideos,
   submitVideoJobOnPage,
-} from './higgsfield-video.mjs';
+} from './higgsfield-batch-video.mjs';
+import { generateImage } from './higgsfield-image.mjs';
+import { generateLipsync } from './higgsfield-lipsync.mjs';
+import { pipelineAssemble } from './higgsfield-pipeline-assembly.mjs';
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 

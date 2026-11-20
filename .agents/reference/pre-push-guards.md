@@ -133,6 +133,10 @@ an interrupted writer cannot leave stale lock ownership behind.
 - Disable autofix only: `AIDEVOPS_PREPUSH_AUTOFIX=0 git push ...`
 - Debug discovery: `AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1 git push ...`
 
+### Push timeout in `full-loop-helper.sh commit-and-pr`
+
+Code-diff pushes legitimately take ~75s or more (privacy, complexity, repo-verify typecheck, secretlint/SonarCloud). The helper's push timeout defaults to 300s; override with `AIDEVOPS_PUSH_TIMEOUT_S=<seconds>` (positive integer; invalid values fall back to 300). A timeout advisory means `git push` did not finish within that budget. The budget covers pre-push hooks and the network transfer. To check a slow hook, use the debug flags above rather than bypassing; `--skip-hooks` is for doc-only diffs only.
+
 ### Test harness
 
 `.agents/scripts/tests/test-repo-verify-pre-push-hook.sh` — hermetic end-to-end scenarios covering bypass paths, all three discovery layers, Python environment resolution, autofix amend + recheck, and the typecheck-never-autofixes invariant. Run: `bash .agents/scripts/tests/test-repo-verify-pre-push-hook.sh`.

@@ -88,8 +88,8 @@ if args.command == "all":
 merge_base = subprocess.run(["git", "merge-base", args.base, "HEAD"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 diff_base = merge_base.stdout.strip() if merge_base.returncode == 0 and merge_base.stdout.strip() else args.base
 # Working tree vs merge-base: committed, staged and unstaged edits, plus untracked scripts.
-changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts"], text=True).splitlines()
-changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts"], text=True).splitlines()
+changed = subprocess.check_output(["git", "diff", "--name-only", diff_base, "--", ".agents/scripts", "aidevops.sh"], text=True).splitlines()
+changed += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "--", ".agents/scripts", "aidevops.sh"], text=True).splitlines()
 if args.command == "all":
     changed = []
 tests = sorted(root.glob(".agents/scripts/tests/test-*.sh"))
@@ -100,13 +100,17 @@ script_token = re.compile(r"[A-Za-z0-9_.-]+\.sh")
 # so a changed shared library also selects suites naming its transitive consumers.
 scripts = [p for p in sorted(root.glob(".agents/scripts/*.sh")) if p.is_file()]
 script_names = {p.name for p in scripts}
+# A changed script may be deleted: keep its name in the graph so remaining sourcers are traversed.
+scripts_dir = Path(root, ".agents", "scripts").relative_to(root)
+graph_names = script_names | {Path(c).name for c in changed
+                              if Path(c).parent == scripts_dir and c.endswith(".sh")}
 consumers = {}
 for script in scripts:
     for line in script.read_text(errors="replace").splitlines():
         match = source_line.match(line)
         if match:
             for token in set(script_token.findall(match.group(1))):
-                if token in script_names and token != script.name:
+                if token in graph_names and token != script.name:
                     consumers.setdefault(token, set()).add(script.name)
 ubiquitous = {"shared-constants.sh"}
 ubiquitous |= {n for n, c in consumers.items() if len(c) > args.ubiquity * len(scripts)}
@@ -138,7 +142,7 @@ for name in changed:
     # GH#39235: JS/TS runtimes (e.g. playwright-runtime.mjs) are exercised by
     # shell suites that name them; select those suites like .py (name match, hop 0).
     elif path.suffix in (".sh", ".py", ".mjs", ".cjs", ".js", ".ts") and "tests" not in path.parts:
-        if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in script_names:
+        if path.parent.name == "scripts" and path.suffix == ".sh" and path.name in graph_names:
             related = sourcer_distances(path.name)
         else:
             related = {path.name: 0}
@@ -249,8 +253,8 @@ def cancel_all():
     for proc in active:
         proc.wait()
 
-def run_all(directory, suites):
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs)
+def run_all(directory, suites, jobs=None):
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs or args.jobs)
     try:
         return dict(zip(suites, pool.map(execute, ((directory, s) for s in suites))))
     except BaseException:
@@ -280,11 +284,18 @@ if failed and args.compare_base:
 # pre-existing failures are not rerun, and a rerun that times out stops the
 # retries: they are the expensive cases.
 attempts = {suite: [head[suite]] for suite in ordered}
-pending = [s for s in ordered if head[s] not in (0, 124) and base.get(s) in (None, 0)]
+#
+# GH#39472: in `all` mode (parallel full-suite run on a shared runner) a timeout is
+# most often load, so timeouts are rerun too, serially when the set is small
+# (<= 20; a larger set signals a runner/environment storm, not suite defects).
+# Reruns after the first stop on a timeout, which bounds the cost.
+retry_codes = (0,) if args.command == "all" else (0, 124)
+pending = [s for s in ordered if head[s] not in retry_codes and base.get(s) in (None, 0)]
+rerun_jobs = 1 if args.command == "all" and len(pending) <= 20 else None
 for _ in range(args.retries):
     if not pending:
         break
-    rerun = run_all(root, pending)
+    rerun = run_all(root, pending, rerun_jobs)
     for suite in pending:
         attempts[suite].append(rerun[suite])
     pending = [s for s in pending if rerun[s] not in (0, 124)]

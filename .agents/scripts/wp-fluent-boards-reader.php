@@ -1,6 +1,6 @@
 <?php
 /**
- * Fluent Boards read actions: boards, cards, show (GH#38593).
+ * Fluent Boards read actions: boards, cards, show (GH#38593; assignees GH#39380).
  *
  * SPDX-License-Identifier: MIT
  * SPDX-FileCopyrightText: 2026 Marcus Quinn
@@ -40,6 +40,7 @@ if ( ! class_exists( 'WPFB_Reader' ) ) {
 				'checklist' => $done . '/' . count( $items ),
 				'comments'  => (int) $card->comments_count,
 				'due_at'    => $card->due_at ? (string) $card->due_at : null,
+				'assignees' => WPFB_Store::people( WPFB_Store::assignee_ids( $card ) ),
 			);
 		}
 

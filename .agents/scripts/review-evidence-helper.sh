@@ -34,17 +34,21 @@ _review_cleanup() {
 _review_usage() {
 	cat <<'EOF'
 Usage:
-  review-evidence-helper.sh bundle local [--output FILE]
-  review-evidence-helper.sh bundle branch [--base REF] [--output FILE]
-  review-evidence-helper.sh bundle commit --commit REF [--output FILE]
-  review-evidence-helper.sh bundle issue NUMBER [--repo OWNER/REPO] [--output FILE]
-  review-evidence-helper.sh bundle pr NUMBER [--repo OWNER/REPO] [--output FILE]
+  review-evidence-helper.sh bundle local [--output FILE | --stage NAME]
+  review-evidence-helper.sh bundle branch [--base REF] [--output FILE | --stage NAME]
+  review-evidence-helper.sh bundle commit --commit REF [--output FILE | --stage NAME]
+  review-evidence-helper.sh bundle issue NUMBER [--repo OWNER/REPO] [--output FILE | --stage NAME]
+  review-evidence-helper.sh bundle pr NUMBER [--repo OWNER/REPO] [--output FILE | --stage NAME]
   review-evidence-helper.sh blind build local|branch|commit [--base REF] [--commit REF]
       [--requirements FILE --requirements-source LABEL]
       [--amendments FILE --amendments-source LABEL]
-      [--verification FILE] [--context PATH]... [--output FILE]
+      [--verification FILE] [--context PATH]... [--output FILE | --stage NAME]
   review-evidence-helper.sh blind validate PACKET
   review-evidence-helper.sh blind check-result PACKET RESULT
+
+--stage NAME writes <tmp>/research-staging/NAME/bundle.md (packet.md for blind
+build), where a research-only reviewer can read it, and prints that path.
+--output outside that root still works but prints a stderr advisory.
 
 The emitted Markdown bundle uses schema aidevops.review-evidence/v1. Git targets
 contain complete text patches and SHA-256-bound metadata for binary changes, plus
@@ -61,6 +65,55 @@ coverage, so any change invalidates reuse. check-result validates a reviewer
 table (| ID | satisfied/unmet/unverified | evidence | gap |) with exactly one
 row per criterion; it exits 3 unless every criterion is satisfied.
 EOF
+	return 0
+}
+
+_review_staging_root() {
+	printf '%s\n' "${TEMP_ROOT}/research-staging"
+	return 0
+}
+
+# Resolve --stage/--output into the final output path (stdout).
+# Args: stage_name output_file default_filename
+_review_resolve_output() {
+	local stage_name="$1"
+	local output_file="$2"
+	local default_name="$3"
+	local root=""
+	root=$(_review_staging_root)
+	if [[ -n "$stage_name" ]]; then
+		if [[ -n "$output_file" ]]; then
+			_review_die "--stage and --output are mutually exclusive"
+			return 1
+		fi
+		if [[ ! "$stage_name" =~ ^[A-Za-z0-9._-]+$ || "$stage_name" == .* ]]; then
+			_review_die "invalid --stage name (use [A-Za-z0-9._-], no leading dot): ${stage_name}"
+			return 1
+		fi
+		mkdir -p "$root" || return 1
+		if [[ ! -d "${root}/${stage_name}" ]]; then
+			mkdir -m 700 "${root}/${stage_name}" || return 1
+		fi
+		printf '%s\n' "${root}/${stage_name}/${default_name}"
+		return 0
+	fi
+	if [[ -n "$output_file" ]]; then
+		local parent=""
+		local resolved_parent=""
+		local resolved_root="$root"
+		parent=$(dirname "$output_file")
+		resolved_parent=$(cd "$parent" 2>/dev/null && pwd -P) || resolved_parent="$parent"
+		if [[ -d "$root" ]]; then
+			resolved_root=$(cd "$root" && pwd -P) || resolved_root="$root"
+		fi
+		case "${resolved_parent}/" in
+		"${resolved_root}/"*) ;;
+		*)
+			printf '%s\n' "review-evidence: advisory: ${output_file} is outside ${root}; a research-only reviewer cannot read it. Use --stage <task> (see reference/research-staging.md)." >&2
+			;;
+		esac
+	fi
+	printf '%s\n' "$output_file"
 	return 0
 }
 
@@ -832,6 +885,7 @@ _blind_build() {
 	local amend_source=""
 	local verification_file=""
 	local output_file=""
+	local stage_name=""
 	local -a contexts=()
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
@@ -850,6 +904,7 @@ _blind_build() {
 		--verification) verification_file="$value" ;;
 		--context) contexts+=("$value") ;;
 		--output) output_file="$value" ;;
+		--stage) stage_name="$value" ;;
 		*)
 			_review_die "unknown option: ${option}"
 			return 1
@@ -857,6 +912,7 @@ _blind_build() {
 		esac
 		shift 2
 	done
+	output_file=$(_review_resolve_output "$stage_name" "$output_file" "packet.md") || return 1
 	mkdir -p "$TEMP_ROOT"
 	REVIEW_BODY_FILE=$(mktemp "${TEMP_ROOT}/review-evidence-body.XXXXXX")
 	REVIEW_PATHS_FILE=$(mktemp "${TEMP_ROOT}/review-evidence-paths.XXXXXX")
@@ -1065,6 +1121,7 @@ main() {
 	local commit_ref=""
 	local repo_slug=""
 	local output_file=""
+	local stage_name=""
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
@@ -1088,12 +1145,18 @@ main() {
 			output_file="$2"
 			shift 2
 			;;
+		--stage)
+			[[ $# -ge 2 ]] || return 1
+			stage_name="${2}"
+			shift 2
+			;;
 		*)
 			_review_die "unknown option: ${option}"
 			return 1
 			;;
 		esac
 	done
+	output_file=$(_review_resolve_output "$stage_name" "$output_file" "bundle.md") || return 1
 	mkdir -p "$TEMP_ROOT"
 	REVIEW_BODY_FILE=$(mktemp "${TEMP_ROOT}/review-evidence-body.XXXXXX")
 	REVIEW_PATHS_FILE=$(mktemp "${TEMP_ROOT}/review-evidence-paths.XXXXXX")
