@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.247] - 2026-11-20
+
+### Added
+
+- add --stage so closeout bundles are readable by sandboxed reviewers (#39322)
+- schedule once recheck/snooze policy and failure advisories
+
+### Fixed
+
+- security dismiss tanstack-minishaihulud-2026-05 writes the requested ID
+- strip consolidation labels when normalizing file-size-debt issues (#39318)
+- release stale assignees from status:available auto-dispatch issues (t19176) (#39336)
+- parallelise approval content-binding suite lanes (GH#39324)
+
 ## [3.39.246] - 2026-11-19
 
 ### Added
