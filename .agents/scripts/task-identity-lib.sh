@@ -230,6 +230,26 @@ task_identity_has_malformed_candidate() {
 	return $?
 }
 
+# Strip canonical task paths from text, reporting an invalid embedded ID.
+_task_identity_strip_valid_paths() {
+	local remaining="${1:-}"
+	local path_ere="${2:-}"
+	local matched=""
+	local candidate=""
+
+	while [[ "$remaining" =~ $path_ere ]]; do
+		matched="${BASH_REMATCH[0]}"
+		candidate="${BASH_REMATCH[2]}"
+		if ! task_identity_validate "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 1
+		fi
+		remaining="${remaining/"$matched"/ }"
+	done
+	printf '%s\n' "$remaining"
+	return 0
+}
+
 # Print the first task-like candidate in text that is not a valid canonical ID
 # and return success; return 1 when there is none. Diagnostics name this token
 # so authors fix the placeholder (for example tNNN in a body), not a valid
@@ -240,22 +260,24 @@ task_identity_first_malformed_candidate() {
 	# letters, falsely classifying ordinary words such as "throughput" as IDs.
 	local candidate_ere='(^|[^[:alnum:].])([tT][0123456789][[:alnum:].-]*|t[ABCDEFGHIJKLMNOPQRSTUVWXYZ][[:alnum:].-]*|[tT][oO][[:alnum:]]{26}-[[:alnum:].-]+)($|[^[:alnum:].])'
 	local brief_path_ere="(^|[^[:alnum:]./])todo/tasks/(${TASK_IDENTITY_TOKEN_ERE})-brief\\.md($|[^[:alnum:].])"
+	local research_path_ere="(^|[^[:alnum:]./])todo/research/(${TASK_IDENTITY_TOKEN_ERE})-[[:alnum:]._-]+($|[^[:alnum:].])"
 	local candidate=""
 	local remaining="$text"
-	local matched=""
+	local stripped=""
 
 	# Canonical task-brief paths contain a valid ID followed by a filename suffix,
 	# not a malformed task identity. Remove only this repository path grammar;
 	# arbitrary <task-id>-suffix tokens must continue to fail closed below.
-	while [[ "$remaining" =~ $brief_path_ere ]]; do
-		matched="${BASH_REMATCH[0]}"
-		candidate="${BASH_REMATCH[2]}"
-		if ! task_identity_validate "$candidate"; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-		remaining="${remaining/"$matched"/ }"
-	done
+	if ! stripped=$(_task_identity_strip_valid_paths "$remaining" "$brief_path_ere"); then
+		printf '%s\n' "$stripped"
+		return 0
+	fi
+	remaining="$stripped"
+	if ! stripped=$(_task_identity_strip_valid_paths "$remaining" "$research_path_ere"); then
+		printf '%s\n' "$stripped"
+		return 0
+	fi
+	remaining="$stripped"
 
 	while [[ "$remaining" =~ $candidate_ere ]]; do
 		matched="${BASH_REMATCH[0]}"

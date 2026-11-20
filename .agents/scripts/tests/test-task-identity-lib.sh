@@ -341,6 +341,21 @@ test_structured_helpers() {
 	return 0
 }
 
+test_research_path_identity_grammar() {
+	if task_identity_has_malformed_candidate "See todo/research/t19048-remote-3d-render-backends.md"; then
+		fail "malformed detector rejected a canonical task research path"
+		return 1
+	fi
+	pass "malformed detector accepts canonical task research paths"
+	if ! task_identity_has_malformed_candidate "See todo/research/tNNN-x.md" ||
+		! task_identity_has_malformed_candidate "t19048-foo"; then
+		fail "malformed detector accepted an invalid research ID or arbitrary task suffix"
+		return 1
+	fi
+	pass "malformed detector rejects invalid research IDs and arbitrary task suffixes"
+	return 0
+}
+
 main() {
 	test_valid_forms_and_fields || return 1
 	test_boundary_forms || return 1
@@ -351,6 +366,7 @@ main() {
 	test_cwd_independence_and_regex_contract || return 1
 	test_text_extraction || return 1
 	test_structured_helpers || return 1
+	test_research_path_identity_grammar || return 1
 	if [[ "$FAIL_COUNT" -ne 0 ]]; then
 		printf '%d test(s) failed\n' "$FAIL_COUNT" >&2
 		return 1
