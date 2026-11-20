@@ -1636,9 +1636,11 @@ _match_terminal_blocker_pattern() {
 		blocker_reason="GitHub token is missing a required scope — workers cannot complete this task"
 		user_action="Check the error details in the comments above, run \`gh auth refresh -s <missing-scope>\` to add the required scope, then remove the \`status:blocked\` label."
 	# Pattern 4: ACTION REQUIRED (supervisor-posted)
-	elif echo "$all_bodies" | grep -F 'ACTION REQUIRED' >/dev/null; then
+	# GH#39452: only a line-anchored heading counts ("ACTION REQUIRED:",
+	# "**ACTION REQUIRED:**", "## ACTION REQUIRED:"), never the phrase quoted in prose/backticks.
+	elif echo "$all_bodies" | grep -E '^[[:space:]]*(#{1,6}[[:space:]]+)?(\*\*)?ACTION REQUIRED(:\*\*|\*\*:|:)' >/dev/null; then
 		blocker_reason="A previous supervisor comment flagged this issue as requiring user action"
-		user_action="Read the ACTION REQUIRED comment above, complete the requested action, then remove the \`status:blocked\` label."
+		user_action="Read the supervisor action request above, complete the requested action, then remove the \`status:blocked\` label."
 	# Pattern 5: persistent authentication/permission failures
 	elif echo "$all_bodies" | grep -iE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow' >/dev/null; then
 		blocker_reason="Persistent authentication or permission failure for workflow files"
@@ -1736,7 +1738,7 @@ check_terminal_blockers() {
 	# Fetch the last N comments
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq "[ .[-${max_comments}:][] | {body: .body, created_at: .created_at} ]" 2>/dev/null)
+		--jq "[ .[-${max_comments}:][] | {body: .body, created_at: .created_at, author_association: .author_association} ]" 2>/dev/null)
 	local api_exit=$?
 
 	if [[ $api_exit -ne 0 ]]; then
@@ -1748,9 +1750,15 @@ check_terminal_blockers() {
 		return 1
 	fi
 
-	# Concatenate comment bodies for pattern matching
+	# GH#39452: drop the detector's own comments (they would re-match and
+	# re-hold forever) and comments from untrusted authors.
+	# #aidevops:trust-boundary
 	local all_bodies
-	all_bodies=$(echo "$comments_json" | jq -r '.[].body // ""' 2>/dev/null)
+	all_bodies=$(echo "$comments_json" | jq -r '
+		.[]
+		| select((.author_association // "") | test("^(OWNER|MEMBER|COLLABORATOR)$"))
+		| (.body // "")
+		| select(startswith("**Terminal blocker detected** (GH#5141)") | not)' 2>/dev/null)
 
 	if [[ -z "$all_bodies" ]]; then
 		return 1
