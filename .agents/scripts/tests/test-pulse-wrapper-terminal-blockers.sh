@@ -311,7 +311,7 @@ test_gh_slurp_prerequisite_blocker() {
 #######################################
 test_action_required_quoted_not_blocking() {
 	reset_mock_state
-	GH_API_OUTPUT='[{"body":"Unblocked: a reconciler wrongly matched an `ACTION REQUIRED` hold marker.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
+	GH_API_OUTPUT='[{"body":"Unblocked: a reconciler wrongly matched an \u0060ACTION REQUIRED\u0060 hold marker.","created_at":"2026-03-16T00:03:00Z","author_association":"OWNER"}]'
 	GH_ISSUE_VIEW_OUTPUT='none'
 	local exit_code=0
 	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
