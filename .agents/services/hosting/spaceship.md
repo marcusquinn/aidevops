@@ -24,7 +24,7 @@ tools:
 - **Auth**: API key + secret, sent as `X-API-Key` and `X-API-Secret` headers to `https://spaceship.dev/api/v1` ([docs](https://docs.spaceship.dev/))
 - **Credentials**: `aidevops secret` names `SPACESHIP_<ACCOUNT>_API_KEY` + `SPACESHIP_<ACCOUNT>_API_SECRET` (account upper-cased, non-alphanumerics → `_`)
 - **Config (fallback)**: `configs/spaceship-config.json` (copy from `configs/spaceship-config.json.txt`); resolved from the script directory, works from any cwd
-- **Commands**: `spaceship-helper.sh [accounts|domains|domain-details|dns-records|add-dns|update-dns|delete-dns|nameservers|update-ns|check-availability|contacts|lock|unlock|transfer-status|monitor-expiration|audit] [account] [domain] [args]`
+- **Commands**: `spaceship-helper.sh [accounts|domains|domain-details|dns-records|add-dns|update-dns|delete-dns|nameservers|update-ns|check-availability|purchase|operation-status|contacts|lock|unlock|transfer-status|monitor-expiration|audit] [account] [domain] [args]`
 - **DNS records**: A, AAAA, CNAME, MX, TXT, NS
 - **Security**: Domain locking, privacy protection, DNSSEC
 - **API key storage**: `aidevops secret set SPACESHIP_PERSONAL_API_KEY` and `aidevops secret set SPACESHIP_PERSONAL_API_SECRET` (prompts; never paste values in chat)
@@ -34,7 +34,7 @@ tools:
 
 ## Setup
 
-Spaceship Dashboard → API Manager → New API key (grant `domains:read`, plus `domains:write` / `dnsrecords:*` as needed). Store both values with `aidevops secret set` (names above), then run the helper through secret injection so values never appear in output:
+Spaceship Dashboard → API Manager → New API key (grant `domains:read`, plus `domains:write` / `dnsrecords:*` as needed, and `domains:transfer` for `lock`, `unlock`, `transfer-status`). Store both values with `aidevops secret set` (names above), then run the helper through secret injection so values never appear in output:
 
 ```bash
 aidevops secret SPACESHIP_PERSONAL_API_KEY SPACESHIP_PERSONAL_API_SECRET -- \
@@ -55,7 +55,7 @@ spaceship-helper.sh audit personal example.com
 # DNS management
 spaceship-helper.sh dns-records personal example.com
 spaceship-helper.sh add-dns personal example.com www A 192.168.1.100 3600
-spaceship-helper.sh update-dns personal example.com - www A 192.168.1.101 3600   # upsert by name/type; id unused
+spaceship-helper.sh update-dns personal example.com 192.168.1.100 www A 192.168.1.101 3600   # deletes old value, adds new
 spaceship-helper.sh delete-dns personal example.com www A 192.168.1.101           # matched by value
 
 # Nameservers (Cloudflare example; Route 53 takes 4 NS args; `basic` = Spaceship DNS)
