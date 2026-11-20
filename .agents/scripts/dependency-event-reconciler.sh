@@ -485,7 +485,11 @@ _der_upstream_gates_ready() {
 # GH#38866: a terminal-blocker observation older than the latest transition to
 # needs-dependency was superseded by that recovery decision; the dependency pass
 # owns release. Prints trusted comment bodies minus the terminal-blocker lines of
-# such superseded observations (other hold text is kept). Fails closed
+# such superseded observations (other hold text is kept). t19195: an
+# external_trigger_pending observation is never superseded, because the worker
+# release applies the needs-dependency companion itself seconds later; its
+# release belongs to terminal-blocker-trigger-revisit.sh or a trusted retry.
+# Fails closed
 # (non-zero) when the label history is unreadable or has no transition.
 _der_comments_after_dependency_conversion() {
 	local repo="$1"
@@ -501,7 +505,7 @@ _der_comments_after_dependency_conversion() {
 	printf '%s' "$comments_json" | jq -r --arg cutoff "$cutoff" --arg tb "$DER_TERMINAL_BLOCKER_RE_JQ" '
 		.[][] | select((.author_association // "") | IN("OWNER", "MEMBER", "COLLABORATOR"))
 		| (.body // "") as $body
-		| if (.created_at // "9999") >= $cutoff then $body
+		| if (.created_at // "9999") >= $cutoff or ($body | test("external_trigger_pending"; "i")) then $body
 		  else ($body | split("\n") | map(select(test($tb; "i") | not)) | join("\n")) end' 2>/dev/null
 	return $?
 }

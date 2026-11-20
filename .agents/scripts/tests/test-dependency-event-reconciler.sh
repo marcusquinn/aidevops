@@ -384,6 +384,11 @@ EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_NEW" 
 assert_eq 0 "$(run_reconcile)" "terminal blocker newer than needs-dependency conversion still holds"
 EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" COMMENTS="$TB_OLD" EVENTS=""
 assert_eq 0 "$(run_reconcile)" "unreadable label history keeps the terminal-blocker hold"
+# t19195: the release's own needs-dependency companion label must not supersede
+# an external_trigger_pending observation, even with closed native blockers.
+TB_ETP='[[{"author_association":"OWNER","created_at":"2026-11-10T10:00:00Z","body":"CLAIM_RELEASED reason=blocked runner=x\nTerminal blocker: reason=external_trigger_pending"}]]'
+EDIT_COUNT=0 REREAD_LABELS="status:blocked,needs-dependency" SEARCH_EXTRA_LABEL="needs-dependency" COMMENTS="$TB_ETP" EVENTS="$CONVERT_EVENTS"
+assert_eq 0 "$(run_reconcile)" "external_trigger_pending observation is not superseded by the companion needs-dependency label"
 SEARCH_EXTRA_LABEL="" COMMENTS='[[]]' EVENTS=""
 
 # t18662: a dependant still waiting on another open blocker must not stop the
