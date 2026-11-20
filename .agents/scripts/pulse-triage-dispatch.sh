@@ -938,6 +938,37 @@ _consolidation_load_reopen_helper() {
 	return 0
 }
 
+#######################################
+# GH#39503: load the large-file gate library on demand (it owns the measured
+# resolved-debt close). Returns 0 when the close function is available.
+#######################################
+_consolidation_load_large_file_gate() {
+	local lib_dir="${BASH_SOURCE[0]%/*}"
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 && return 0
+	[[ "$lib_dir" == "${BASH_SOURCE[0]}" ]] && lib_dir="."
+	[[ -f "${lib_dir}/pulse-dispatch-large-file-gate.sh" ]] || return 1
+	# shellcheck source=pulse-dispatch-large-file-gate.sh
+	source "${lib_dir}/pulse-dispatch-large-file-gate.sh" || return 1
+	declare -F _large_file_gate_close_resolved_debt_issues >/dev/null 2>&1 || return 1
+	return 0
+}
+
+#######################################
+# GH#39503: close a generated file-size-debt issue whose cited file is measured
+# below threshold on the remote default branch, before any consolidation lock.
+# Args: issue_number repo_slug labels_csv body
+# Returns: 0 when closed (skip), 1 otherwise (fail open on any error).
+#######################################
+_consolidation_skip_for_resolved_file_size_debt() {
+	local issue_number="$1" repo_slug="$2" labels="$3" body="$4"
+	printf ',%s,' "$labels" | grep -F ",file-size-debt," >/dev/null || return 1
+	[[ "$body" == *"generator=large-file-simplification-gate cited_file="* ]] || return 1
+	_consolidation_load_large_file_gate || return 1
+	_large_file_gate_close_resolved_debt_issues "$issue_number" "$repo_slug" "$body" || return 1
+	echo "[pulse-wrapper] _consolidation_skip_if_resolved: file-size debt #${issue_number} ${repo_slug} measured below threshold on remote default branch — closed (GH#39503)" >>"$LOGFILE"
+	return 0
+}
+
 # Gate 3: a structural closing PR only resolves the current lifecycle if it
 # merged after the latest reopen. Keep the timeline lookup in dispatch-dedup-pr.
 _consolidation_skip_for_closing_pr() {
@@ -1024,6 +1055,11 @@ _consolidation_skip_if_resolved() {
 		_consolidation_emit_skip "$issue_number" "$repo_slug" \
 			"parent carries terminal completion evidence." \
 			"terminal completion label"
+		return 0
+	fi
+	# Gate 2b (GH#39503): measured-resolved file-size debt (open issues only).
+	if [[ "$state" != "CLOSED" ]] &&
+		_consolidation_skip_for_resolved_file_size_debt "$issue_number" "$repo_slug" "$labels" "$body"; then
 		return 0
 	fi
 	# Gate 3: GitHub retains structural closing links across reopen cycles.
