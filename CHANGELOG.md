@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.248] - 2026-11-20
+
+### Added
+
+- allowlist the SRT workload environment
+- require split headroom in file-size-debt briefs (t19177) (#39368)
+- persistent dispatch exclusions reach the AI brief owner (#39346)
+- qualify macOS arm64 synthetic-only readiness
+- hostinger-helper subdomain-ssl for multisite children behind Cloudflare (#39294)
+
+### Changed
+
+- Maintenance: add t19176 stale available assignees and t19177 split headroom
+- Maintenance: mark t19187 complete (pr:#39389 completed:2026-11-20) (#39399)
+- Refactor: split full-loop-helper-commit.sh below 2000 lines (#39388)
+- Tests: qualify SRT proxy resolved-address, redirect and protocol handling (#39389)
+- Refactor: split headless-runtime-worker finish/terminal helpers to 530 lines (t19180) (#39375)
+- Tests: add security dismiss CLI routing regression (GH#39365) (#39372)
+- Maintenance: add t19186-t19190 (GH#35043 SRT follow-ups)
+- Documentation: SRT credential boundary design rev 2 (OAuth subscription relay, placement, allowance accounting)
+- Maintenance: mark t19178 complete (pr:#39346 completed:2026-11-20) (#39384)
+- Maintenance: mark t19181 complete (pr:#39345 completed:2026-11-20) (#39314)
+- Refactor: split external terminal completion out of headless-runtime-worker.sh (GH#39320) (#39326)
+
+### Fixed
+
+- repair stale imports and init cycle that break every helper command
+- raise commit-and-pr push timeout to 300s, configurable (GH#39356) (#39407)
+- classify self-merged worker PRs without MERGE_SUMMARY as complete when the issue is closed
+- keep external_trigger_pending holds when companion label lands (#39393)
+- run merge-ready resume lane before CI-repair lane and exempt it from the per-repo slice
+- treat a usable OAuth pool account as provider auth on OpenCode 2 (#39097)
+- skip CI-drift update-branch on policy-gate failures and external PRs (#39386)
+- orphan interactive PRs with unresolved review threads recover a tracking issue before handover
+- make route-upstream issue titles finding-specific (#39342)
+- schedule once --name docs example and allowed-character error (Ref #39321)
+- release commands retire their own control and verifier trees at exit
+- release orphaned active-status labels and resurface aged holds (#39347)
+- duplicate PR consolidation scores only multi-PR groups
+
 ## [3.39.247] - 2026-11-20
 
 ### Added
