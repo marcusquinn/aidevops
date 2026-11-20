@@ -253,8 +253,8 @@ def cancel_all():
     for proc in active:
         proc.wait()
 
-def run_all(directory, suites):
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs)
+def run_all(directory, suites, jobs=None):
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs or args.jobs)
     try:
         return dict(zip(suites, pool.map(execute, ((directory, s) for s in suites))))
     except BaseException:
@@ -284,11 +284,18 @@ if failed and args.compare_base:
 # pre-existing failures are not rerun, and a rerun that times out stops the
 # retries: they are the expensive cases.
 attempts = {suite: [head[suite]] for suite in ordered}
-pending = [s for s in ordered if head[s] not in (0, 124) and base.get(s) in (None, 0)]
+#
+# GH#39472: in `all` mode (parallel full-suite run on a shared runner) a timeout is
+# most often load, so timeouts are rerun too, serially when the set is small
+# (<= 20; a larger set signals a runner/environment storm, not suite defects).
+# Reruns after the first stop on a timeout, which bounds the cost.
+retry_codes = (0,) if args.command == "all" else (0, 124)
+pending = [s for s in ordered if head[s] not in retry_codes and base.get(s) in (None, 0)]
+rerun_jobs = 1 if args.command == "all" and len(pending) <= 20 else None
 for _ in range(args.retries):
     if not pending:
         break
-    rerun = run_all(root, pending)
+    rerun = run_all(root, pending, rerun_jobs)
     for suite in pending:
         attempts[suite].append(rerun[suite])
     pending = [s for s in pending if rerun[s] not in (0, 124)]

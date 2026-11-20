@@ -132,6 +132,30 @@ _should_setup_noninteractive_complexity_scan() {
 	return 1
 }
 
+# The systemic CI failure miner files the auto-dispatch issues that repair
+# broken default-branch workflows. setup_failure_miner uninstalls it whenever
+# PULSE_ENABLED is not "true", so one update with an unresolved pulse state
+# removed it, and the generic "already installed" gate never reinstalled it:
+# the maintainer runner went from 2026-04-08 to 2026-11-20 without a miner
+# while a broken review-bot-gate.yml blocked every merge for ~9.5 h (GH#39466).
+_should_setup_noninteractive_failure_miner() {
+	if _should_setup_noninteractive_scheduler \
+		"Failure miner" \
+		"sh.aidevops.routine-gh-failure-miner" \
+		"aidevops: gh-failure-miner" \
+		"aidevops-gh-failure-miner"; then
+		return 0
+	fi
+
+	# Pulse-dependency escape hatch, as for stats-wrapper and complexity scan:
+	# setup_failure_miner still installs only when PULSE_ENABLED is "true".
+	if _should_setup_noninteractive_supervisor_pulse; then
+		return 0
+	fi
+
+	return 1
+}
+
 # The profile README's input-activity rows are measured only by the
 # per-minute sampler that setup_screen_time_snapshot installs: on Linux it is
 # the screen-time row (no OS store), on macOS the "Input activity (Mac)" row

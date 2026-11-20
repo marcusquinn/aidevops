@@ -223,7 +223,8 @@ SQL
 	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
 	other_projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-other';")
 	seed_definition=$(declare -f _seed_worker_db_session_context)
-	initialize_definition=$(declare -f _initialize_worker_db_from_shared_schema)
+	# The bounded-retry wrapper delegates each attempt to the _once body (GH#39417).
+	initialize_definition=$(declare -f _initialize_worker_db_from_shared_schema_once)
 
 	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" && "$seed_definition" != *".backup"* && "$initialize_definition" == *'".schema --nosys"'* ]]; then
 		print_result "seed worker DB uses shared schema for fresh continuation DB" 0
