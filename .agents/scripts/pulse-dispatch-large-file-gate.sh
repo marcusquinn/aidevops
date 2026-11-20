@@ -52,6 +52,12 @@ _LFG_REMOTE_OBJECT_SOURCE=""
 # GH#38785: specific reason for the last freshness deferral, for diagnostics.
 _LFG_FRESHNESS_DEFER_CAUSE=""
 
+# t19177: split headroom target for file-size-debt briefs, as a percentage of
+# LARGE_FILE_LINE_THRESHOLD (default in pulse-wrapper-defaults.sh). This is the
+# brief's acceptance criterion only; the gate still closes and reopens debt
+# issues against LARGE_FILE_LINE_THRESHOLD itself.
+LARGE_FILE_SPLIT_TARGET_PERCENT="${LARGE_FILE_SPLIT_TARGET_PERCENT:-60}"
+
 #######################################
 # Label-based early-exit precheck for the large-file gate.
 # Handles GH#18042 self-simplification auto-clear, force_recheck bypass,
@@ -840,6 +846,20 @@ _large_file_gate_reopen_debt_issue() {
 }
 
 #######################################
+# Print the validated split headroom percentage (t19177). Accepts an integer
+# 1-100 from LARGE_FILE_SPLIT_TARGET_PERCENT; anything else falls back to 60.
+# Leading zeros are rejected so bash arithmetic never reads them as octal.
+#######################################
+_large_file_gate_split_target_percent() {
+	local percent="${LARGE_FILE_SPLIT_TARGET_PERCENT:-60}"
+	if [[ ! "$percent" =~ ^[1-9][0-9]{0,2}$ ]] || ((percent > 100)); then
+		percent=60
+	fi
+	printf '%s' "$percent"
+	return 0
+}
+
+#######################################
 # Print the current file-size-debt issue body template. Pure: no GitHub calls.
 # New issues and refreshed reused issues share this one template (GH#37989).
 # Arguments: lf_path, parent_issue, prior_attempt_issue (optional)
@@ -848,6 +868,11 @@ _large_file_gate_debt_issue_body() {
 	local lf_path="$1"
 	local parent_issue="$2"
 	local prior_attempt_issue="${3:-}"
+
+	# t19177: ask for headroom, not just a result under the threshold.
+	local _lfg_split_percent=""
+	_lfg_split_percent=$(_large_file_gate_split_target_percent)
+	local _lfg_split_target=$((LARGE_FILE_LINE_THRESHOLD * _lfg_split_percent / 100))
 
 	local _prior_attempt_ref=""
 	if [[ -n "$prior_attempt_issue" ]]; then
@@ -882,7 +907,8 @@ Issue #${parent_issue} is blocked by the large-file gate. Workers dispatched aga
 ## How
 - Extract cohesive function groups into separate files
 - Keep a thin orchestrator in the original file that sources the extracted modules
-- Verify: \`wc -l ${lf_path}\` should be below ${LARGE_FILE_LINE_THRESHOLD}
+- Verify: \`wc -l ${lf_path}\` is ${_lfg_split_target} lines or fewer, and so is every new module (headroom target: ${_lfg_split_percent}% of the ${LARGE_FILE_LINE_THRESHOLD}-line threshold)
+- Why headroom: hot files regrow, so a split that only just clears ${LARGE_FILE_LINE_THRESHOLD} lines is back over it within days. Put frequently changed function groups in their own modules; find them with \`git log --since=30.days --format= --name-only -- ${lf_path}\` and recent commit subjects (\`git log --since=30.days --format=%s -- ${lf_path}\`)
 - Verify: \`python3 ~/.aidevops/agents/scripts/file-split-verify.py --base origin/main --head HEAD\` exits 0 (pure move: \`removed-only=0 review=0 gated=0\`); paste its summary line into the PR body (playbook section 7.5)
 
 **Reference pattern:** \`.agents/reference/large-file-split.md\` (playbook for file splits — covers identity-key preservation, CI false-positives, and PR body template).
