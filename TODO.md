@@ -2352,6 +2352,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t19197 fix(higgsfield): repair stale higgsfield-video.mjs imports that break every helper command #bug #interactive ref:GH#39395 logged:2026-11-20 -> [todo/tasks/t19197-brief.md] pr:#39401 completed:2026-11-20
 
+- [ ] t19203 fix(ci): review-bot-gate.yml invalid since #39427 (workflow cannot listen to itself), blocking all merges #bug ref:GH#39458
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
