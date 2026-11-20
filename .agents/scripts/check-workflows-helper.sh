@@ -89,6 +89,7 @@ fi
 readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
+	"review-bot-gate-fork-review.yml:review-bot-gate-fork-review-reusable.yml:review-bot-gate-fork-review-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 	"linked-issue-check.yml:linked-issue-check-reusable.yml:linked-issue-check-caller.yml"
