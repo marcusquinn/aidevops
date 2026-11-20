@@ -909,27 +909,18 @@ jobs:
         # The real /proc census fails closed on unreadable same-UID tasks.
         # Keep runner-owned non-dumpable services outside the fixture UID;
         # do not weaken the production guard or run the contracts as root.
-        t0="$(date +%s.%N)"
-        sudo useradd --create-home --shell /bin/bash lifecycle-contract
-        t1="$(date +%s.%N)"
+        # --no-log-init: without it useradd writes lastlog/faillog entries at the
+        # new UID offset; measured at ~33 s on hosted runners (GH#39549).
+        start=$SECONDS
+        sudo useradd --no-log-init --create-home --shell /bin/bash lifecycle-contract
+        echo "lifecycle-contract useradd took $((SECONDS - start))s"
         # Runner home directories are not traversable by other users.
         dir="$GITHUB_WORKSPACE"
         while [ "$dir" != "/" ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
-        t2="$(date +%s.%N)"
-        run_as_fixture() {
-          sudo -H -u lifecycle-contract env \
-            PATH="$PATH" PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE" \
-            PYTHONPATH="$GITHUB_WORKSPACE/$PYTHONPATH" "$@"
-        }
-        run_as_fixture python3 -B -c 'import sqlite3, unittest'
-        t3="$(date +%s.%N)"
-        run_as_fixture python3 -B -X importtime -c 'import tests.test_absence' 2>&1 | sort -t'|' -k2 -n | tail -n 8
-        t4="$(date +%s.%N)"
-        run_as_fixture python3 -B -m unittest -v \
-          tests.test_absence.AbsenceContract.test_access_failure_is_not_absence_or_archive_failure 2>&1 | tail -n 4
-        t5="$(date +%s.%N)"
-        echo "TIMING useradd=$(echo "$t1 - $t0" | bc) chmod=$(echo "$t2 - $t1" | bc) sudo_python=$(echo "$t3 - $t2" | bc) import=$(echo "$t4 - $t3" | bc) first_test=$(echo "$t5 - $t4" | bc)"
-        run_as_fixture python3 -B -m unittest discover \
+        sudo -H -u lifecycle-contract env \
+          PATH="$PATH" PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE" \
+          PYTHONPATH="$GITHUB_WORKSPACE/$PYTHONPATH" \
+          python3 -B -m unittest discover \
           -s "$GITHUB_WORKSPACE/.agents/worker-lifecycle/tests" -v
 
     - name: Git Safety Guard Regression Suite (GH#36433)
