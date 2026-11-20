@@ -232,6 +232,35 @@ assert_eq "resume lane evaluates the resume item, then the newly ready PR, befor
 assert_eq "resume lane is logged" "1" "$(grep -c 'resume priority lane for org/repo moved 1 ' "$LOGFILE")"
 assert_eq "completed walk clears the lane records" "false" "$([[ -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-served" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-refreshed" || -f "${PULSE_MERGE_PR_CURSOR_FILE}.lane-ci-served" ]] && printf true || printf false)"
 
+# GH#39396: the resume item alone uses the per-repo slice. The promoted
+# merge-ready PR still runs (only the whole-pass deadline binds it), then the
+# slice pauses the walk before the tail, which the next pass resumes.
+rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
+PR102_CHECK_STATE="FAILURE"
+PROCESSED_PRS=""
+FAKE_NOW=100
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=2
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+slice_first_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || slice_first_rc=$?
+assert_eq "slice lane setup pauses after the failing and ready PRs" "5|102 103 " "${slice_first_rc}|${PROCESSED_PRS}"
+PR102_CHECK_STATE="SUCCESS"
+PROCESSED_PRS=""
+FAKE_NOW=200
+export PULSE_MERGE_GRACEFUL_BUDGET_SECONDS=0
+_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$FAKE_NOW")
+_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=201
+_PMP_MERGE_REPO_SLICE_PROGRESS=0
+slice_second_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || slice_second_rc=$?
+assert_eq "spent slice still evaluates the merge lane after the resume item, then pauses" "5|101 102 " "${slice_second_rc}|${PROCESSED_PRS}"
+_PMP_MERGE_REPO_SLICE_DEADLINE_EPOCH=0
+_PMP_MERGE_REPO_SLICE_PROGRESS=0
+PROCESSED_PRS=""
+slice_third_rc=0
+_merge_ready_prs_for_repo "org/repo" merged closed failed pr_count "" || slice_third_rc=$?
+assert_eq "next pass resumes at the tail without repeating lane items" "0|104 " "${slice_third_rc}|${PROCESSED_PRS}"
+
 # GH#39281: a PR that starts failing after the walk passed it joins the
 # CI-repair lane on the next resume and runs right after the resume item.
 rm -f "$PULSE_MERGE_ENRICHMENT_CACHE_FILE" "$PULSE_MERGE_ENRICHMENT_CURSOR_FILE"
