@@ -46,6 +46,12 @@ _full_loop_release_declare_lifecycle_owner() {
 	return 0
 }
 
+# GH#39373: the EXIT trap and verifier cleanup run while this executor is still
+# alive, so the registry answers waiting-for-caller for the executor's own run
+# (declared above) and every release command leaked its trees to the next
+# command's stale reaper (20-50 s per tree). Opt in to the GH#37432 contract:
+# end only this executor's declared session run, then retry retirement once.
+# Runs held by any other session are never ended; all checks still apply.
 # Args: $1=worktree path, $2=short audit reason
 # Returns: 0 when the path is absent afterwards, 1 when preserved
 _full_loop_release_remove_worktree() {
@@ -53,8 +59,8 @@ _full_loop_release_remove_worktree() {
 	local reason="$2"
 	[[ -n "$wt_path" ]] || return 1
 	[[ -e "$wt_path" || -L "$wt_path" ]] || return 0
-	remove_worktree_path_permanently "$wt_path" "$_FULL_LOOP_RELEASE_CALLER" "$reason" \
-		"release_worktree=${reason}" || return 1
+	WORKER_LIFECYCLE_RELINQUISH_CALLER=1 remove_worktree_path_permanently "$wt_path" \
+		"$_FULL_LOOP_RELEASE_CALLER" "$reason" "release_worktree=${reason}" || return 1
 	return 0
 }
 
