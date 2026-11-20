@@ -117,12 +117,15 @@ create_lifecycle_worktree() {
 	local registry="${TEST_SCRIPTS_DIR}/../worker-lifecycle/worker-registry.py"
 	local creator_pid="" rc=0
 	# Short-lived creator: retirement waits for the creating caller to exit.
-	sleep 2 &
+	# GH#39344: keep it alive until creation returns; a fixed sleep raced
+	# registry startup on loaded hosts (process-identity-unavailable).
+	sleep 300 &
 	creator_pid=$!
 	python3 "$registry" --state-dir "${AIDEVOPS_LIFECYCLE_STATE_DIR:?}" create-worktree \
 		--repo "$repo_path" --path "$wt_path" --ref "$branch" --pid "$creator_pid" \
 		--session-id fixture-creator --initialize >/dev/null || rc=$?
-	wait "$creator_pid" || true
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
 	return "$rc"
 }
 

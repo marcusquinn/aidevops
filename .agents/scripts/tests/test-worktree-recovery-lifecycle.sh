@@ -56,8 +56,6 @@ setup() {
 	export AIDEVOPS_ADVISORIES_DIR="${TEST_DIR}/advisories"
 	# Fixture-owned lifecycle registry: removal is authorised only for trees it enrolled.
 	export AIDEVOPS_LIFECYCLE_STATE_DIR="${TEST_DIR}/lifecycle-state"
-	# GH#39344: a host worker's lifecycle identity must not own fixture trees.
-	unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 	export AIDEVOPS_REAL_GIT_BIN="$GIT_BIN"
 	# Retention fixtures must not depend on the host's login daemons. Actual
 	# CWD guards and degraded visibility are covered by the removal audit suite.
@@ -109,13 +107,16 @@ create_enrolled_worktree() {
 
 	# --initialize creates the state directory, which must be absent on first use.
 	# Short-lived creator: retirement waits for the creating caller to exit.
-	sleep 1 &
+	# GH#39344: keep it alive until creation returns; a fixed sleep raced
+	# registry startup on loaded hosts (process-identity-unavailable).
+	sleep 300 &
 	creator_pid=$!
 	python3 "$registry" --state-dir "$AIDEVOPS_LIFECYCLE_STATE_DIR" \
 		create-worktree --repo "$repo_path" --path "$worktree_path" --ref HEAD \
 		--pid "$creator_pid" --session-id fixture-creator --initialize \
 		-- "${git_args[@]}" >/dev/null || rc=$?
-	wait "$creator_pid" || true
+	kill "$creator_pid" 2>/dev/null || true
+	wait "$creator_pid" 2>/dev/null || true
 	return "$rc"
 }
 
