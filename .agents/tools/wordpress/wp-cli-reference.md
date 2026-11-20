@@ -309,7 +309,7 @@ Multisite host changes need per-host dry runs, a folder-path repair and a plugin
 
 For reviewed field-level changes to posts and terms on live sites (titles, slugs, meta, ACF/SCF fields, terms, term deletions), use `wp-helper.sh --change-plan`. It does a dry run, a JSON backup, read-back and conditional restore: see `wp-change-plan.md`.
 
-For Fluent Boards cards (list, show, add, move, comment, tick checklist items) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
+For Fluent Boards cards (list, show, add, move, comment, tick checklist items, assign/unassign members) over SSH or LocalWP, use `wp-helper.sh --fluent-boards`: see `fluent-mcp.md` "Work a setup board".
 
 For FluentSMTP Amazon SES connections (list, move to a new sending domain or region with keys in `wp-config.php`, proof send, checksummed undo), use `wp-helper.sh --fluentsmtp`: see `services/email/ses.md` "FluentSMTP".
 
@@ -415,18 +415,16 @@ export PATH="$FX/bin:$PATH"
 
 ### 2. SQLite instead of MySQL
 
-`wp plugin install` cannot fetch the SQLite plugin before a database exists, and `WordPress/sqlite-database-integration` is a monorepo, so build the `db.php` drop-in from `packages/plugin-sqlite-database-integration/db.copy`:
+`wp plugin install` cannot fetch the SQLite plugin before a database exists, and the default branch of `WordPress/sqlite-database-integration` no longer carries the plugin tree, so build the `db.php` drop-in from the latest release asset (the release zip already contains the driver files under `wp-includes/database`):
 
 ```bash
 cd "$FX/site" && wp core download
-gh api repos/WordPress/sqlite-database-integration/tarball/HEAD > "$FX/sqlite.tgz"
-mkdir "$FX/sqlite" && tar -xzf "$FX/sqlite.tgz" -C "$FX/sqlite" --strip-components=1
+gh release download --repo WordPress/sqlite-database-integration \
+  --pattern plugin-sqlite-database-integration.zip --dir "$FX"
+mkdir "$FX/sqlite" && unzip -q "$FX/plugin-sqlite-database-integration.zip" -d "$FX/sqlite"
 P=wp-content/mu-plugins/sqlite-database-integration
 mkdir -p "$P" wp-content/database
-cp -R "$FX/sqlite/packages/plugin-sqlite-database-integration/." "$P/"
-# wp-includes/database is a relative symlink to the mysql-on-sqlite package; replace it with the driver files
-rm -rf "$P/wp-includes/database"
-cp -R "$FX/sqlite/packages/mysql-on-sqlite/src" "$P/wp-includes/database"
+cp -R "$FX/sqlite/plugin-sqlite-database-integration/." "$P/"
 sed -e "s#{SQLITE_IMPLEMENTATION_FOLDER_PATH}#$PWD/$P#g" \
     -e 's#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g' \
     "$P/db.copy" > wp-content/db.php
@@ -436,7 +434,9 @@ wp core install --url=http://localhost --title=Fixture --admin_user=admin \
 wp plugin install fluent-smtp --activate   # any wordpress.org plugin
 ```
 
-If the monorepo layout has moved, `ls "$FX/sqlite/packages"` and locate `db.copy` and the `mysql-on-sqlite` driver (`database/version.php` must exist under `$P/wp-includes/`).
+If the asset layout has moved, `ls "$FX/sqlite"` and locate `db.copy` and the driver directory (`database/version.php` must exist under `$P/wp-includes/`).
+
+SQLite-only plugin bug (Fluent Boards 2.3.0): on SQLite, WPFluent's `addUpdatedAtColumn` in `vendor/wpfluent/framework/src/WPFluent/Database/Orm/Builder.php` drops `updated_at` when it is the only dirty column. The result is `update ... set  where` (a parse error) on timestamp-only saves such as `TaskService::updateAssignee`. MySQL is not affected because there the column is table-qualified. To exercise `assign`/`unassign` on the fixture, change that method's trailing `unset($values[$column]);` so it runs only when `$qualifiedColumn !== $column`. Patch only the disposable fixture copy.
 
 ### 3. Isolate the site registry
 

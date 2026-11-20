@@ -230,6 +230,41 @@ if ( ! class_exists( 'WPFB_Store' ) ) {
 		}
 
 		/**
+		 * Sorted user IDs assigned to a card (empty on versions without the relation).
+		 *
+		 * @param object $card Card model.
+		 * @return array User IDs.
+		 */
+		public static function assignee_ids( $card ) {
+			$ids = array();
+			if ( method_exists( $card, 'assignees' ) ) {
+				foreach ( $card->assignees as $user ) {
+					$ids[] = (int) $user->ID;
+				}
+			}
+			sort( $ids );
+			return $ids;
+		}
+
+		/**
+		 * User IDs as id/name pairs.
+		 *
+		 * @param array $ids User IDs.
+		 * @return array People.
+		 */
+		public static function people( array $ids ) {
+			return array_map(
+				static function ( $id ) {
+					return array(
+						'id'   => (int) $id,
+						'name' => self::user_name( $id ),
+					);
+				},
+				$ids
+			);
+		}
+
+		/**
 		 * Meta values keyed by a column, for one key and a set of task IDs.
 		 *
 		 * @param array  $task_ids Task IDs.

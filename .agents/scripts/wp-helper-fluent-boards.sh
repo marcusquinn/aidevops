@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2026 Marcus Quinn
 # =============================================================================
-# Fluent Boards cards over SSH/WP-CLI for `wp-helper.sh --fluent-boards` (GH#38593, GH#38699)
+# Fluent Boards cards over SSH/WP-CLI for `wp-helper.sh --fluent-boards` (GH#38593, GH#38699, GH#39380)
 # =============================================================================
 # Runs wp-fluent-boards.php, which reads and writes through the plugin's own
 # models, on a configured site. LocalWP sites run locally; SSH sites reuse the
@@ -27,8 +27,8 @@ _WP_FLUENT_BOARDS_LIB_LOADED=1
 
 WPFB_PHP_FILE="wp-fluent-boards.php"
 # The entry file loads its siblings from its own directory; upload them together.
-WPFB_PHP_FILES=("$WPFB_PHP_FILE" wp-fluent-boards-store.php wp-fluent-boards-reader.php wp-fluent-boards-writer.php wp-fluent-boards-creator.php)
-WPFB_USAGE="Usage: wp-helper.sh --fluent-boards <site> <boards | cards --board ID [--stage S] | show --card ID | add --board ID --title T [--stage S] [--body-file F] | move --card ID --stage S | comment --card ID --body-file F | check --card ID --item ID> [--url URL] [--user=<id>]"
+WPFB_PHP_FILES=("$WPFB_PHP_FILE" wp-fluent-boards-store.php wp-fluent-boards-reader.php wp-fluent-boards-writer.php wp-fluent-boards-creator.php wp-fluent-boards-assigner.php)
+WPFB_USAGE="Usage: wp-helper.sh --fluent-boards <site> <boards | cards --board ID [--stage S] | show --card ID | add --board ID --title T [--stage S] [--body-file F] | move --card ID --stage S | comment --card ID --body-file F | check --card ID --item ID | assign|unassign --card ID[,ID...] --member USER_ID> [--url URL] [--user=<id>]"
 # Parsed options (globals keep Bash 3.2 compatibility without namerefs).
 WPFB_ARGS=()
 WPFB_GLOBALS=()
@@ -50,7 +50,7 @@ _wpfb_parse() {
 			value="${flag#*=}"
 			flag="${flag%%=*}"
 			;;
-		--board | --stage | --title | --card | --item | --body-file | --url | --user)
+		--board | --stage | --title | --card | --item | --member | --body-file | --url | --user)
 			if [[ $# -lt 2 || -z "$value" ]]; then
 				print_error "$flag needs a value"
 				return 1
@@ -63,8 +63,17 @@ _wpfb_parse() {
 			;;
 		esac
 		shift
+		# assign/unassign take a card list; the payload key is cards=ID[,ID...].
+		if [[ "$flag" == "--card" && ("$action" == "assign" || "$action" == "unassign") ]]; then
+			if [[ ! "$value" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+				print_error "--card must be a numeric ID or a comma-separated list of IDs"
+				return 1
+			fi
+			WPFB_ARGS+=("cards=${value}")
+			continue
+		fi
 		case "$flag" in
-		--board | --card | --item)
+		--board | --card | --item | --member)
 			if [[ ! "$value" =~ ^[0-9]+$ ]]; then
 				print_error "$flag must be a numeric ID"
 				return 1
@@ -185,7 +194,7 @@ cmd_fluent_boards() {
 	local site_key="${1:-}"
 	local action="${2:-}"
 	case "$action" in
-	boards | cards | show | add | move | comment | check) ;;
+	boards | cards | show | add | move | comment | check | assign | unassign) ;;
 	*)
 		print_error "$WPFB_USAGE"
 		return 1
@@ -215,7 +224,8 @@ cmd_fluent_boards() {
 	else
 		_wpfb_run_remote "$site_config" "$out_file" || rc=$?
 	fi
-	if [[ "$action" == "cards" || "$action" == "show" ]]; then
+	# assign/unassign echo existing card titles, so they are scanned too.
+	if [[ "$action" == "cards" || "$action" == "show" || "$action" == "assign" || "$action" == "unassign" ]]; then
 		_wpfb_scan_output "$out_file"
 	fi
 	cat "$out_file"
