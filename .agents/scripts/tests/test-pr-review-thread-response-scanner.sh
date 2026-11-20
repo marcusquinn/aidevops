@@ -8,6 +8,7 @@ TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCANNER="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)/pr-review-thread-response-scanner.sh"
 TEST_ROOT=""
 TESTS_RUN=0
+TESTS_SKIPPED=0
 TESTS_FAILED=0
 export TEST_HEAD_OID_1="1111111111111111111111111111111111111111"
 export TEST_HEAD_OID_2="2222222222222222222222222222222222222222"
@@ -25,6 +26,17 @@ source "${TEST_SCRIPT_DIR}/test-pr-review-thread-response-scanner-dispatch.sh"
 # shellcheck source=./test-pr-review-thread-response-scanner-lifecycle.sh
 # shellcheck disable=SC1091 # Sibling module resolved via TEST_SCRIPT_DIR at runtime
 source "${TEST_SCRIPT_DIR}/test-pr-review-thread-response-scanner-lifecycle.sh"
+
+print_skip() {
+	local test_name="$1"
+	local reason="${2:-}"
+	TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+	printf 'SKIP %s\n' "$test_name"
+	if [[ -n "$reason" ]]; then
+		printf '     %s\n' "$reason"
+	fi
+	return 0
+}
 
 print_result() {
 	local test_name="$1"
@@ -126,6 +138,7 @@ main_mutations() {
 	test_reply_falls_back_when_thread_author_missing
 	test_reply_skips_duplicate_marker
 	printf '\nTests run: %d\n' "$TESTS_RUN"
+	printf 'Tests skipped: %d\n' "$TESTS_SKIPPED"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
@@ -264,6 +277,7 @@ main() {
 	test_reply_skips_duplicate_marker
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
+	printf 'Tests skipped: %d\n' "$TESTS_SKIPPED"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
