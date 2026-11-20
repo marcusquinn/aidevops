@@ -63,7 +63,14 @@ jobs:
   # =========================================================================
   check-pr:
     name: Maintainer Review & Assignee Gate
+    # Ordering: when needs-maintainer-review is unlabeled, protect-pr-labels
+    # restores it. Label restoration via GITHUB_TOKEN triggers no new workflow
+    # run, so check-pr must evaluate AFTER the restore or it can post success
+    # against the unlabeled state. always() keeps check-pr running when
+    # protect-pr-labels is skipped (every other event/action).
+    needs: [protect-pr-labels]
     if: >-
+      always() &&
       github.event_name == 'pull_request_target'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
