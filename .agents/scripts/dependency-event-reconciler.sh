@@ -127,8 +127,8 @@ DER_TERMINAL_BLOCKER_RE_JQ='Terminal[_ -]blocker|^CLAIM_RELEASED reason=blocked(
 _der_text_has_strong_hold() {
 	local text="$1"
 	local comments="${2:-}"
-	printf '%s\n' "$text" | grep -qE "$DER_STRONG_HOLD_RE" && return 0
-	printf '%s\n' "$text" | grep -qiE "$DER_WORKER_BLOCKED_RE" && return 0
+	grep -qE "$DER_STRONG_HOLD_RE" <<<"$text" && return 0
+	grep -qiE "$DER_WORKER_BLOCKED_RE" <<<"$text" && return 0
 	printf '%s\n' "$comments" | grep -qiE "$DER_TERMINAL_BLOCKER_RE" && return 0
 	if printf '%s\n' "$text" | grep -qiE '\*\*BLOCKED\*\*' &&
 		printf '%s\n' "$text" | grep -qiE 'cannot proceed'; then
