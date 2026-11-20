@@ -79,7 +79,7 @@ def git_index_state(path, head=None, dirs=None):
     # Git-only preserves current HEAD, not abandoned reflog/previous-HEAD history.
     # Unknown administration, unique drafts and interrupted operations still need
     # preservation. Structured merges returned above preserve required ORIG_HEAD.
-    state = administration(root, admin=admin, common=common, shared_index=shared_index)
+    state = administration(root, dirs=(admin, common, shared_index))
     if state['files'].get('config.worktree'):
         # GH#36883: only known runtime-local keys are preserved (as bytes, never
         # restored); unknown, mixed or comment-only configuration is refused.

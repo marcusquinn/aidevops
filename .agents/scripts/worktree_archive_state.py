@@ -81,7 +81,7 @@ def inventories(root, include_ignored=False, *, index=None, untracked=True):
 def supported_state(root, preserve_git_admin=False, include_ignored=False):
     admin, common = git_dirs(root)
     if preserve_git_admin:
-        administration(root, admin=admin, common=common)
+        administration(root, dirs=(admin, common))
     pending = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD",
                "rebase-merge", "rebase-apply", "sequencer", "BISECT_LOG", "index.lock", "config.worktree", "SQUASH_MSG")
     if not preserve_git_admin and any((admin / name).exists() for name in pending):
