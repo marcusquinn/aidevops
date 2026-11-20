@@ -188,7 +188,7 @@ def _negative_probe(client: Any, customer: str, params: dict[str, Any], kind: st
     resource = f"{level}_criterion"
     query = (f"SELECT {resource}.resource_name, {resource}.keyword.text, {resource}.keyword.match_type "
              f"FROM {resource} WHERE {level}.id = {params[level + '_id']} AND {resource}.negative = TRUE "
-             f"AND {resource}.type = KEYWORD")  # nosec B608 -- fixed identifiers and numeric IDs only
+             f"AND {resource}.type = KEYWORD AND {resource}.status != 'REMOVED'")  # nosec B608 -- fixed IDs only
     key = "campaignCriterion" if level == "campaign" else "adGroupCriterion"
     for row in client.search(customer, query):
         keyword = _dig(row, key, "keyword") or {}
