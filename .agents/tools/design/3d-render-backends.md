@@ -33,6 +33,7 @@ Never quote a price older than 30 days without re-checking the provider page.
 |-------|----------|------------|
 | **Local Mac (Metal)** | Previews, look-dev, short ranges, private scenes | Deadline needs >1 machine-night, or scene exceeds unified memory |
 | **Rented GPU, DIY** (Runpod, Vast.ai, SaladCloud, TensorDock) | Agent-driven batches, cheapest per frame, exact Blender/add-on pinning, parallel frame ranges | Nobody can own SSH/container setup, or scene relies on GUI-only add-ons |
+| **Subscription-credit GPU** (Higgsfield via MCP) | Plan has unused monthly credits; want fast L40S/RTX PRO 6000 starts and render-to-video on the same credits | Paying cash for credits (about 3x Runpod per GPU-hour), or a job needs SSH/rsync |
 | **Managed farm** (GarageFarm, RebusFarm, Fox, Ranch) | Client/NDA work wanting plugin upload, scene checks, support, ISO 27001 | Automation is required (no public API/CLI found), or budget is tight |
 | **Remote workstation** (iRender) | Need a full Windows GPU desktop with arbitrary add-ons | Batch automation; per-hour rates are high and idle time bills |
 | **Community farm** (SheepIt) | Free hobby renders with no deadline | Confidential, commercial NDA, custom Python, >2 GB projects |
@@ -230,8 +231,13 @@ OIDN, Runpod A40 secure at $0.59/hr; RTX 4090 community was refused on every att
   in parallel or by freeing the Mac. Prefer an RTX 4090/5090 when capacity allows.
   Estimate from warm timing (`tools/design/blender-scripted-scenes.md`).
 
+Measured on 2026-11-19 (same richer sunflower scene, Higgsfield 1x L40S at
+71 credits/h via MCP): box ready in 5 s, Blender 5.3.0 verified in 34 s, 4.1 s/frame
+warm (about 2x the A40), 13 minutes of box time, 15.72 credits in total. Details:
+`todo/research/t19048-remote-3d-render-backends.md` section 6.
+
 Image hashes vary between runs and devices, so compare renders by eye or with a
-tolerance, not by hash.
+tolerance (PSNR), not by hash.
 
 ## Provider notes
 
@@ -241,6 +247,13 @@ tolerance, not by hash.
   inspect interactively with the on-demand `@runpod` MCP. Guide:
   `tools/infrastructure/runpod.md`; provisioning and Serverless rules:
   `tools/infrastructure/cloud-gpu.md`; media-generation routes: `content/video-runpod.md`.
+- **Higgsfield GPU** (`content/video-higgsfield.md` "MCP"): L40S to B300 boxes billed
+  per second in web-subscription credits through the OAuth MCP; 10-minute idle
+  auto-stop. No SSH: run the job contract through `gpu_rental_exec` (60 s per
+  call, so start the worker with `nohup` and poll its log), move files through
+  MCP media uploads, check SHA-256 both ways, then `gpu_rental_stop` and confirm
+  `gpu_my scope=live` is empty. `max_credits_per_hour` is a rate cap, not a
+  total budget: watch `credits_spent` and stop at the ceiling.
 - **Vast.ai**: lowest list prices; host quality varies, interruptible jobs get
   outbid, bandwidth may be billed per byte. Filter by reliability score.
 - **SaladCloud**: consumer RTX at the lowest rates; interruptible by design.

@@ -216,15 +216,38 @@ query-docs("/websites/higgsfield_ai", "image-to-video models")
 query-docs("/websites/higgsfield_ai", "character consistency")
 ```
 
-## API vs UI
+## MCP (subscription credits, GPU boxes)
 
-| Feature | API (`video-higgsfield.md`) | UI (`video-higgsfield-ui.md`) |
-|---------|---------------------------|-------------------------------|
-| Auth | API key + secret | Email/password login |
-| Credits | Pay-per-use API credits (separate pool) | Subscription credits (included in plan) |
-| Models | Soul, Popcorn, Reve, Seedream v4, DOP, Kling 2.1/2.6/3.0, Seedance | All API models + Nano Banana Pro, GPT Image, Flux Kontext, Wan, Sora, Veo, MiniMax, Grok + 86 apps |
-| Speed | Direct API calls (~5-30s) | Browser automation (~60s per generation) |
-| Best for | Programmatic pipelines, batch processing | Subscription credits, UI-only features |
+`https://mcp.higgsfield.ai/mcp` bills the **web subscription credits**, not the
+platform API pool, and needs no browser automation. Verified 2026-11-19.
+
+- **Auth:** OAuth, once per machine: `npx -y mcporter@0.17.1 auth https://mcp.higgsfield.ai/mcp`
+  (tokens stay under `~/.mcporter/`). Then call tools with
+  `npx -y mcporter@0.17.1 call https://mcp.higgsfield.ai/mcp.<tool> key=value --output json`.
+- **Generation:** image and video models with a cost estimate before submit, and
+  media upload for references. A Blender frame to Kling 3.0 Turbo 5 s 720p
+  image-to-video cost 7.5 credits (~80 s). UI-only "unlimited" plan models (for
+  example Kling 2.5 Turbo Unlimited) were not exposed.
+- **GPU boxes:** `gpu_list_gpus` (prices, availability), `gpu_rent`,
+  `gpu_rental` (status, `credits_spent`), `gpu_rental_exec` (root shell, 60 s per
+  call), `gpu_rental_stop`, `gpu_my scope=live`. Per-second billing, no minimum,
+  10-minute idle auto-stop. Blender render workflow and measured timings:
+  `tools/design/3d-render-backends.md`.
+- **Spend:** `balance` shows remaining credits. Show the user the per-hour price
+  before renting; `max_credits_per_hour` caps rate, not total spend.
+- **Blender add-on:** higgsfield.ai/plugins/blender sends viewport/renders to
+  Higgsfield generation from inside Blender; the MCP route above is the
+  scriptable equivalent.
+
+## API vs MCP vs UI
+
+| Feature | API (`video-higgsfield.md`) | MCP (above) | UI (`video-higgsfield-ui.md`) |
+|---------|---------------------------|-------------|-------------------------------|
+| Auth | API key + secret | OAuth (`mcporter auth`) | Email/password login |
+| Credits | Pay-per-use API credits (separate pool) | Subscription credits | Subscription credits (included in plan) |
+| Models | Soul, Popcorn, Reve, Seedream v4, DOP, Kling 2.1/2.6/3.0, Seedance | Current catalog incl. Kling 3.0/4.0, Seedance 2.5; no UI "unlimited" variants | All API models + Nano Banana Pro, GPT Image, Flux Kontext, Wan, Sora, Veo, MiniMax, Grok + 86 apps |
+| Speed | Direct API calls (~5-30s) | Direct tool calls; video ~80 s | Browser automation (~60s per generation) |
+| Best for | Programmatic pipelines, batch processing | Scripted use of subscription credits, GPU boxes | Unlimited-plan models, UI-only features |
 
 ### Verified API Models (2026-02-10)
 
@@ -238,7 +261,7 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 ## Related
 
-- **`./higgsfield-ui.md`** -- UI automation subagent (uses subscription credits via browser, no API key needed)
+- **`./video-higgsfield-ui.md`** -- UI automation subagent (uses subscription credits via browser, no API key needed)
 - [Higgsfield Docs](https://docs.higgsfield.ai/)
 - [Higgsfield Dashboard](https://cloud.higgsfield.ai)
 - `./remotion.md` -- Programmatic video editing
