@@ -198,28 +198,64 @@ export const OUTPUT_LIMIT_NOTE =
   "Your previous response hit the configured output-token limit and its tool call was discarded; " +
   "nothing was written. Write large files in sections of under ~120 lines (Write, then Edit appends).";
 
+export const EMPTY_TURN_NOTE =
+  "Your previous response ended with no visible text and no completed tool call (the output budget may have gone on reasoning). " +
+  "Plan in smaller steps, state what you will do, then act; write files in sections of under ~120 lines.";
+export const EMPTY_TOOL_NOTE =
+  "Your previous tool call had empty arguments and was aborted; nothing was executed. " +
+  "Plan in smaller steps, then retry with complete arguments; write files in sections of under ~120 lines.";
+
+const EMPTY_INPUT_TOOL_STATUSES = new Set(["error", "aborted"]);
+
+function isEmptyInput(input) {
+  return !input || (typeof input === "object" && Object.keys(input).length === 0);
+}
+
 /**
  * One-shot per-session notice. observe() flags a session when an assistant
- * message finishes with "length"; take() returns the note once and clears it.
+ * message finishes with "length", ends with no usable content (GH#39556), or
+ * a tool part is aborted with empty input; take() returns the note once.
  */
 export function createOutputLimitNotice() {
-  const pending = new Set();
+  const pending = new Map();
   const seen = new Set();
+  const content = new Set();
+  const flag = (sessionID, key, note) => {
+    if (!sessionID || seen.has(key)) return;
+    seen.add(key);
+    capSet(seen, MAX_TRACKED_IDS * 4);
+    if (!pending.has(sessionID)) pending.set(sessionID, note);
+  };
+  const observePart = (part) => {
+    const sessionID = String(part.sessionID || "");
+    const messageID = String(part.messageID || "");
+    if (part.type === "text" && String(part.text || "").trim()) content.add(messageID);
+    if (part.type !== "tool") return;
+    const state = part.state || {};
+    if (state.status === "completed") content.add(messageID);
+    else if (EMPTY_INPUT_TOOL_STATUSES.has(state.status) && isEmptyInput(state.input)) {
+      flag(sessionID, `${sessionID}:tool:${part.id || messageID}`, EMPTY_TOOL_NOTE);
+    }
+    capSet(content, MAX_TRACKED_IDS * 4);
+  };
   return {
     observe(event) {
       if (event?.type === "session.deleted") {
         this.forget(event.properties?.info?.id || event.properties?.sessionID);
         return;
       }
+      if (event?.type === "message.part.updated") {
+        observePart(event.properties?.part || {});
+        return;
+      }
       if (event?.type !== "message.updated") return;
       const info = event.properties?.info || {};
-      if (info.role !== "assistant" || info.finish !== "length") return;
+      if (info.role !== "assistant" || !info.finish) return;
       const sessionID = String(info.sessionID || "");
       const key = `${sessionID}:${info.id || ""}`;
-      if (!sessionID || seen.has(key)) return;
-      seen.add(key);
-      capSet(seen, MAX_TRACKED_IDS * 4);
-      pending.add(sessionID);
+      if (info.finish === "length") return flag(sessionID, key, OUTPUT_LIMIT_NOTE);
+      if (info.finish === "tool-calls" || content.has(String(info.id || ""))) return;
+      flag(sessionID, key, EMPTY_TURN_NOTE);
     },
     forget(sessionID) {
       const id = String(sessionID || "");
@@ -228,8 +264,9 @@ export function createOutputLimitNotice() {
     },
     take(sessionID) {
       const id = String(sessionID || "");
-      if (!id || !pending.delete(id)) return "";
-      return OUTPUT_LIMIT_NOTE;
+      const note = pending.get(id) || "";
+      pending.delete(id);
+      return note;
     },
     /** Append the one-shot note to a system prompt array, if pending. */
     inject(sessionID, system) {
