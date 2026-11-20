@@ -167,13 +167,21 @@ const findTool = name => {
   return null;
 };
 const proxyTools = { bwrap: findTool('bwrap'), socat: findTool('socat'), rg: findTool('rg') };
-const proxyReady = process.platform === 'darwin' ? Boolean(proxyTools.rg)
-  : process.platform === 'linux' && Object.values(proxyTools).every(Boolean);
+const srtInstalled = fs.existsSync(path.join(scripts,
+  'worker-egress-srt/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js'));
+const proxyReady = srtInstalled && (process.platform === 'darwin' ? Boolean(proxyTools.rg)
+  : process.platform === 'linux' && Object.values(proxyTools).every(Boolean));
 const proxyHost = 'api.openai.com';
 let proxyToken = '';
 
+const parentProxyVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+
 async function withProxy(records, extraAllowed, body) {
   const original = dns.lookup;
+  // Keep the session offline: an inherited parent proxy would be dialled instead
+  // of the fixture-controlled direct path.
+  const savedEnv = Object.fromEntries(parentProxyVars.map(name => [name, process.env[name]]));
+  for (const name of parentProxyVars) delete process.env[name];
   dns.lookup = (host, options, callback) => {
     const cb = typeof options === 'function' ? options : callback;
     const addresses = records[host];
@@ -195,6 +203,9 @@ async function withProxy(records, extraAllowed, body) {
     return await body({ http: manager.getProxyPort(), socks: manager.getSocksProxyPort() });
   } finally {
     await manager.reset();
+    for (const [name, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
     dns.lookup = original;
     syncBuiltinESMExports();
   }
@@ -266,8 +277,8 @@ test('allowed name resolving to a denied address class is refused over CONNECT a
     await withProxy({ [proxyHost]: [address] }, [], async ports => {
       results[label] = { connect: await connectStatus(ports.http, proxyHost + ':443'),
         socks: await socksReply(ports.socks, proxyHost, 443) };
-      assert.ok(results[label].connect >= 400, label + ' CONNECT must be refused');
-      assert.notEqual(results[label].socks, 0, label + ' SOCKS must be refused');
+      assert.equal(results[label].connect, 403, `${label} CONNECT must be a policy refusal`);
+      assert.equal(results[label].socks, 2, `${label} SOCKS must be a policy refusal`);
     });
   }
   console.log('GH39361 resolved-address results', JSON.stringify(results));
@@ -301,12 +312,13 @@ test('positive controls, redirect follow-up, non-443 ports and raw protocol beha
       }, d => d.toString().includes('not-tls raw bytes'));
       assert.equal(statusOf(tunnel), 200, 'positive control: CONNECT tunnel to the owned echo listener');
       assert.match(tunnel.toString(), /not-tls raw bytes$/, 'recorded behaviour: non-TLS bytes are tunnelled opaquely once the authority is allowed');
+      assert.equal(await socksReply(ports.socks, proxyHost, echoPort), 0, 'positive control: SOCKS to the owned echo listener');
     });
     // Production policy permits :443 only; the same name on any other port is refused.
     await withProxy({ [proxyHost]: ['127.0.0.1'] }, [], async ports => {
       for (const p of [80, 22, 25, 8443, port]) {
         assert.equal(await connectStatus(ports.http, `${proxyHost}:${p}`), 403, 'CONNECT :' + p);
-        assert.notEqual(await socksReply(ports.socks, proxyHost, p), 0, 'SOCKS :' + p);
+        assert.equal(await socksReply(ports.socks, proxyHost, p), 2, 'SOCKS :' + p);
       }
       const plain = await exchange(ports.http, s => s.write(`GET http://${proxyHost}/ HTTP/1.1\r\nHost: ${proxyHost}\r\nConnection: close\r\n\r\n`), headDone);
       assert.equal(statusOf(plain), 403, 'plain HTTP to the allowed name on :80');
