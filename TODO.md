@@ -2364,6 +2364,12 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t19213 perf(pulse): partial-continuation in-review revisit reuses timeline PR body/title instead of per-PR reads #auto-dispatch #feat ref:GH#39493 logged:2026-11-20 -> [todo/tasks/t19213-brief.md]
 
+- [ ] t19214 Operator approval records for marketing action plans #feat #interactive tier:thinking ref:GH#39508 logged:2026-11-20 -> [todo/tasks/t19214-brief.md]
+
+- [ ] t19215 Approval-bound Google Ads account actions (validate-only plan, guarded apply, rollback) #feat #interactive tier:thinking blocked-by:t19214 ref:GH#39509 logged:2026-11-20 -> [todo/tasks/t19215-brief.md]
+
+- [ ] t19217 Google Ads readers: make the developer token optional (tokens sunset 2026-09-09) #auto-dispatch #bug tier:simple ref:GH#39511 logged:2026-11-20 -> [todo/tasks/t19217-brief.md]
+
 ## In Progress
 
 - [x] t18849 fix: stop .archive-verify-* scratch leaks from killed archive verification and unbounded prune #bug #type:bug #interactive tier:standard ref:GH#36468 assignee:alex-solovyev pr:#36472 logged:2026-11-02 started:2026-11-02 -> [todo/tasks/t18849-brief.md] completed:2026-11-02
