@@ -238,6 +238,13 @@ snapshot() {
 	return 0
 }
 
+# First differing lines of two snapshots (sed reads all input: no SIGPIPE under pipefail).
+snapshot_diff() {
+	local before="$1" after="$2"
+	diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed -n '1,3p' | tr '\n' ' '
+	return 0
+}
+
 archive_dir_for() {
 	local manifest
 	manifest=$(find "$AIDEVOPS_WORKTREE_ARCHIVE_ROOT" -name manifest.json 2>/dev/null | sort | tail -n 1)
@@ -282,7 +289,7 @@ archive_cycle() {
 	if [[ "$before" == "$after" ]]; then
 		record "$item" pass "snapshot identical; archive=$(basename "$arch"); source-matches=${want_source_matches}"
 	else
-		record "$item" "fail (snapshot diff)" "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n 3 | tr '\n' ' ')"
+		record "$item" "fail (snapshot diff)" "$(snapshot_diff "$before" "$after")"
 		return 1
 	fi
 	return 0
@@ -345,7 +352,7 @@ stage_lifecycle() {
 		if [[ "$before" == "$after" ]]; then
 			record "$ITEM_REMOVE" pass "source retired (exists=$([[ -d "$wt" ]] && echo yes || echo no)); restore snapshot identical; archive=$(basename "$arch")"
 		else
-			record "$ITEM_REMOVE" "fail (snapshot diff)" "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n 3 | tr '\n' ' ')"
+			record "$ITEM_REMOVE" "fail (snapshot diff)" "$(snapshot_diff "$before" "$after")"
 		fi
 	else
 		rc=$?
@@ -374,7 +381,8 @@ stage_merge_cases() {
 	"$GIT" -C "$wt" merge --abort >/dev/null 2>&1 || "$GIT" -C "$wt" reset -q --hard HEAD
 	local tree gd
 	# merge-tree exits 1 on conflicts but still prints the (conflicted) tree first.
-	tree=$("$GIT" -C "$wt" merge-tree --write-tree canary/ours canary/theirs 2>/dev/null | head -n 1) || true
+	tree=$("$GIT" -C "$wt" merge-tree --write-tree canary/ours canary/theirs 2>/dev/null) || true
+	tree="${tree%%$'\n'*}"
 	[[ "$tree" =~ ^[0-9a-f]{40,64}$ ]] || tree=""
 	gd=$("$GIT" -C "$wt" rev-parse --absolute-git-dir)
 	if [[ -n "$tree" ]]; then
