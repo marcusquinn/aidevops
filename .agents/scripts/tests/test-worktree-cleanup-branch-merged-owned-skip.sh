@@ -10,7 +10,8 @@ set -uo pipefail
 
 # Resolve native Git once from the system default PATH (portable to non-FHS
 # hosts such as NixOS); fixtures must bypass the aidevops git wrapper.
-TEST_NATIVE_GIT=$(command -p -v git) || {
+# GH#39344: Bash 3.2 ignores -p with -v, so search the default PATH explicitly.
+TEST_NATIVE_GIT=$(PATH=$(command -p getconf PATH) command -v git) || {
 	printf '%s\n' 'Native Git is unavailable on the system PATH' >&2
 	exit 1
 }
@@ -30,6 +31,11 @@ git() {
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+# GH#39344: macOS mktemp returns /var/... (a symlink to /private/var/...), and
+# lifecycle creation refuses non-canonical state parents; a host worker's
+# inherited lifecycle identity must not reroute fixture creation either.
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 export HOME="${TEST_ROOT}/home"
 mkdir -p "$HOME/.aidevops/logs" "$HOME/.config/aidevops"
 # Registry-driven retirement reads this repository config and lifecycle state;
