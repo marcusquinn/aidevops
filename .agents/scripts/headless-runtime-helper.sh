@@ -676,7 +676,8 @@ _worker_post_pr_handoff_confirmed() {
 	[[ -n "$_WORKER_POST_PR_HANDOFF_STATE" ]] || _WORKER_POST_PR_HANDOFF_STATE="unknown"
 	case "$_WORKER_POST_PR_HANDOFF_STATE" in
 	ready) return 0 ;;
-	merged)
+	merged | merged_missing_summary)
+		# t19196: a missing summary gates nothing after merge (linkage was verified).
 		# GH#34931: a worker may merge its own PR before emitting POST_PR_HANDOFF.
 		# Reopened/open issues remain merged checkpoints, never completion.
 		local issue_state=""
