@@ -52,6 +52,7 @@ retention, and support when accessed through a gateway.
 | Route | Prefer when | Primary strengths | Main trade-off |
 |-------|-------------|-------------------|----------------|
 | **VideoRouter** (`video-videorouter.md`) | The same model is sold by several hosts and lowest live price plus failover matters | Cheapest-host routing across Fal, WaveSpeed, Atlas Cloud, Replicate, Novita, Kie.ai and others; 900+ models; real-time world/avatar sessions | Flat 2.5% fee on top; video/image need an explicit model id; routed host retention varies |
+| **NanoGPT** (`media-generation-providers.md` "NanoGPT images") | An operator-authorised NanoGPT key should generate stills, with live per-size prices across many image models | One key; `image-models?detailed=true` discovery; OpenAI-style `images/generations`; per-request `cost` in the response | Response is inline base64 or an expiring URL; no tool route in `gpt_image_generate`; images only here (audio: `tools/voice/cloud-tts-apis.md`) |
 | **Runpod** (`video-runpod.md`) | Hosted per-output models with no deployment, or your own weights/ComfyUI graph on rented GPUs | Public Endpoints (no charge for failed generations), Serverless scale-to-zero BYO, Pods for interactive work | BYO needs setup, benchmarking and the billable deployment contract in `tools/infrastructure/cloud-gpu.md` |
 | **Kie.ai** (`video-kie.md`) | One generic Market task contract should cover changing image, video, and audio models | JSON pass-through, unified status, uploads, credits, callback HMAC | Model inputs remain provider-specific; gateway stability and retention require defensive handling |
 | **MuAPI** (`video-muapi.md`) | The workflow needs creative orchestration beyond single generation calls | VFX, specialized apps, storyboards, workflows, agents, music and lipsync | Large provider-specific surface; use only when those orchestration features matter |
@@ -81,7 +82,7 @@ a small seed-bracketed test before committing a batch.
 | Edit existing video (relight, restyle, replace) | Runway Aleph 2, Gemini Omni Flash, Kling O3, Flux 3 edit | Runway or VideoRouter | Aleph is a Runway model, resold on VideoRouter at the same $0.28/s; real-time restyle via Decart Lucy on VideoRouter |
 | Motion graphics, captions, explainers | Remotion (deterministic code) plus generated b-roll | `tools/video/remotion/remotion.md`, `tools/video/motion-design.md` | Do not generate text-heavy graphics with diffusion |
 | Upscale, frame rate, HDR finishing | Topaz, Magnific, SeedVR2; Runway Ruby (SDR→HDR) | VideoRouter, Runway, `video-enhancor.md` | Finish only keepers |
-| Images | Nano Banana 2/Pro, GPT Image 2, Seedream 5, Flux 2, Ideogram (text) | Kie.ai, Runway, VideoRouter, Runpod Public Endpoints | Flux Schnell on Runpod is about $0.0024/MP for bulk drafts |
+| Images | Nano Banana 2/Pro, GPT Image 2, Seedream 5, Flux 2, Ideogram (text) | Kie.ai, Runway, VideoRouter, NanoGPT, Runpod Public Endpoints | Flux Schnell on Runpod is about $0.0024/MP for bulk drafts |
 | Privacy or own weights | Open-weight models on rented or local GPUs | Runpod Serverless/Pods, local ComfyUI | Apply the `cloud-gpu.md` billable deployment contract |
 
 ### "H3" = MiniMax Hailuo H3
@@ -93,6 +94,40 @@ Observed list prices: about $0.016/s (H3 Max 768p via SandBase on
 VideoRouter), $0.04/s (H3 on Kie.ai), $0.05/s (480p) to $0.08/s (768p) on
 Runway `h3_max`, and $0.05-$0.16/s by resolution on Fal. VideoRouter's
 `model:"auto"` for video defaults to a MiniMax H3 host.
+
+## NanoGPT images
+
+Discover live model IDs, per-size prices and supported sizes first; never guess
+URLs or rely on static price lists. `pricing.per_image` is keyed by size,
+`supported_parameters.resolutions` lists valid sizes, and
+`architecture.input_modalities` shows whether reference images are accepted.
+
+```bash
+aidevops secret NANOGPT_API_KEY -- sh -c 'curl -H "Authorization: Bearer ${NANOGPT_API_KEY}" "https://api.nano-gpt.com/api/v1/image-models?detailed=true"'
+aidevops secret NANOGPT_API_KEY -- sh -c 'curl -X POST "https://api.nano-gpt.com/api/v1/images/generations" \
+  -H "Authorization: Bearer ${NANOGPT_API_KEY}" -H "Content-Type: application/json" \
+  -d '\''{"model":"<discovered-model-id>","prompt":"<prompt>","n":1,"size":"<supported-size>","response_format":"b64_json"}'\'''
+```
+
+Rules:
+
+- **Handle both response shapes.** Even with `b64_json` requested, `data[0]`
+  may hold inline base64 (`b64_json`) or a signed `url`. Branch on whichever
+  field is present.
+- **Download a signed URL at once.** It expires after 24 hours; save the file
+  inside the worktree or asset folder immediately.
+- **Never retry a request that returned HTTP 200.** It is already charged. Only
+  an error status (for example an unbilled 400) is safe to correct and resubmit.
+- **Record spend.** Responses carry `cost`, `paymentSource`, `remainingBalance`
+  and `requestId`; log `cost` against any operator budget and stop when the
+  budget is reached.
+- **Authorisation.** Generate only with an operator-authorised key and budget.
+  `gpt_image_generate` has no NanoGPT `auth` route (`oauth | api | openrouter`
+  only); call the endpoint directly as above.
+
+Observed 2026-11-20: 264 models listed; `gpt-image-2` returned 200 with cost
+matching the listed price (1536x1024 $0.05351, 1024x1024 $0.06551). Audio and
+music use the same key: see `tools/voice/cloud-tts-apis.md`.
 
 ## Cost Comparison Method
 
