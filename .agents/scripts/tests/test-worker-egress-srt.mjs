@@ -122,6 +122,9 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
     const readiness = JSON.parse(probe.stdout);
     assert.equal(readiness.ready, true);
     assert.equal(readiness.qualification, 'synthetic-only');
+    // GH#39362: every inherited send right named; the probe's host control
+    // separately proves the attribution flags foreign (looked-up) rights.
+    if (process.platform === 'darwin') assert.equal(readiness.checks['mach-send-rights-attributed'], true);
     const run = invoke(['run', '--policy', policyFile, '--worker-id', 'synthetic-check', '--',
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);

@@ -251,8 +251,56 @@ const macResolverServices = ['com.apple.system.opendirectoryd.libinfo',
   'com.apple.SystemConfiguration.DNSConfiguration', 'com.apple.SecurityServer', 'com.apple.trustd',
   'com.apple.cfnetwork.cfnetworkagent', 'com.apple.nsurlsessiond'];
 
+// GH#39362: name every send right in the task's Mach name space by identity,
+// never by kernel object-type numbers, which change between releases. Send
+// rights coalesce per port, so a lookup that returns an existing name proves
+// what it is. Anything not named here (a send right to another process's port)
+// is unattributed: the sandbox check fails and the host control requires one.
+const macSendRights = String.raw`
+def mach_send_attribution(lib):
+    u, ref = ctypes.c_uint, ctypes.byref
+    task = u.in_dll(lib, 'mach_task_self_').value
+    names, types, n, m = ctypes.POINTER(u)(), ctypes.POINTER(u)(), u(), u()
+    if lib.mach_port_names(task, ref(names), ref(n), ref(types), ref(m)) != 0:
+        return None
+    space = {names[i]: types[i] for i in range(n.value)}
+    def kobject(name):
+        kind = u()
+        return kind.value if lib.mach_port_kobject(task, name, ref(kind), ref(ctypes.c_uint64())) == 0 else None
+    lib.mach_host_self.restype = u
+    host = lib.mach_host_self()
+    known = {task: 'task-self', host: 'host-name', u.in_dll(lib, 'bootstrap_port').value: 'bootstrap'}
+    threads, count, clock, voucher, semaphore = ctypes.POINTER(u)(), u(), u(), u(), u()
+    if lib.task_threads(task, ref(threads), ref(count)) == 0:
+        known.update({threads[i]: 'thread-self' for i in range(count.value)})
+    if lib.host_get_clock_service(host, 0, ref(clock)) == 0:  # SYSTEM_CLOCK
+        known.setdefault(clock.value, 'system-clock')
+    # MACH_VOUCHER_ATTR_KEY_BANK + BANK_CREATE: the kernel dedupes vouchers, so
+    # this returns the task's existing bank voucher held by libdispatch.
+    if lib.host_create_mach_voucher(host, (u * 4)(3, 610, 0, 0), 16, ref(voucher)) == 0 and voucher.value:
+        known.setdefault(voucher.value, 'bank-voucher')
+    semaphore_kind = None
+    if lib.semaphore_create(task, ref(semaphore), 0, 0) == 0:
+        semaphore_kind = kobject(semaphore.value)
+        lib.semaphore_destroy(task, semaphore.value)
+    rights = {}
+    for name, kind in space.items():
+        if not kind & 0x10000:  # MACH_PORT_TYPE_SEND
+            continue
+        if name in known:
+            rights[name] = known[name]
+        elif kind & 0x20000:  # MACH_PORT_TYPE_RECEIVE: this task is the receiver
+            rights[name] = 'self-owned'
+        elif semaphore_kind is not None and kobject(name) == semaphore_kind:
+            rights[name] = 'semaphore'
+        else:
+            rights[name] = None
+    return rights
+`;
+
 const canary = String.raw`
 import ctypes, errno, json, os, socket, subprocess, sys, urllib.request, urllib.error
+${macSendRights}
 outside, approved_input, output, python, endpoints_json, allowed_env_json = sys.argv[1:]
 endpoints = json.loads(endpoints_json)
 checks_env_extra = sorted(set(os.environ) - set(json.loads(allowed_env_json)))
@@ -298,6 +346,10 @@ if sys.platform == 'linux':
         checks['nested-userns-denied'] = e.errno in (errno.ENOSPC, errno.EPERM)
 else:
     lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    rights = mach_send_attribution(lib)
+    checks['mach-send-rights-attributed'] = bool(rights) and all(rights.values())
+    if not checks['mach-send-rights-attributed']:
+        print('unattributed mach send rights:', None if rights is None else sum(not v for v in rights.values()), file=sys.stderr)
     port = ctypes.c_uint.in_dll(lib, 'bootstrap_port').value
     for service in ${JSON.stringify(macResolverServices)}:
         handle = ctypes.c_uint()
@@ -365,12 +417,18 @@ async function qualify(manager, envelope, scratch) {
     }
     if (process.platform === 'darwin') {
       // Every service, the resolver and the dns_sd socket must work OUTSIDE
-      // the sandbox, or the negative checks below would be meaningless.
+      // the sandbox, or the negative checks below would be meaningless. The
+      // looked-up services are foreign send rights the attribution must flag.
       const control = spawnSync(envelope.tools.python, ['-I', '-c', String.raw`
 import ctypes, json, socket, sys
+${macSendRights}
 l = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
 p = ctypes.c_uint.in_dll(l, 'bootstrap_port').value
-ok = all(l.bootstrap_look_up(p, s.encode(), ctypes.byref(ctypes.c_uint())) == 0 for s in json.loads(sys.argv[1]))
+handles = [ctypes.c_uint() for s in json.loads(sys.argv[1])]
+ok = all(l.bootstrap_look_up(p, s.encode(), ctypes.byref(h)) == 0 for s, h in zip(json.loads(sys.argv[1]), handles))
+rights = mach_send_attribution(l)
+ok = ok and rights is not None and all(rights.get(h.value, 'missing') is None for h in handles)
+ok = ok and {'task-self', 'thread-self', 'host-name', 'bootstrap'} <= set(rights.values())
 socket.getaddrinfo('localhost', 443)
 u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 u.connect('/var/run/mDNSResponder')

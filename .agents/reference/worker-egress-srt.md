@@ -175,9 +175,53 @@ probe found every resolver path refused in the sandbox (`EAI_NONAME`, dns_sd
 `EPERM`). Raw UDP/TCP to owned loopback and own-LAN listeners was refused and
 nothing was received. All 15 host-reachable services of 18 probed returned
 `BOOTSTRAP_NOT_PRIVILEGED`. The sandboxed task held 9 send and 7 receive Mach
-rights against 27/8 on the host, and only fds 0–2. Each of the 9 send rights is
-not yet individually attributed; bootstrap lookups through them are refused.
-Evidence: GH#38861 comments.
+rights against 27/8 on the host, and only fds 0–2. Evidence: GH#38861 comments.
+
+**Send-right attribution, GH#39362 (macOS 26.6.2 arm64, 2026-11-20).** The 9
+send rights in the sandboxed workload's name space are:
+
+| Right | How it is identified | Receiver |
+| --- | --- | --- |
+| Task control port | `mach_task_self` | Kernel (own task) |
+| Thread control port | `task_threads` | Kernel (own thread) |
+| Host name port | `mach_host_self` (unprivileged name port, not `host_priv`) | Kernel |
+| System clock service | `host_get_clock_service(SYSTEM_CLOCK)` returns the same name | Kernel |
+| Bank voucher | `host_create_mach_voucher` bank-create recipe returns the same name (vouchers are deduplicated) | Kernel |
+| Semaphore | Same kernel object type as a freshly created semaphore | Kernel |
+| Bootstrap port | `bootstrap_port` | launchd; every lookup returns 1100 |
+| 2 self-owned ports, one registered as `TASK_DEBUG_CONTROL_PORT` | Same name also holds the receive right | The workload itself |
+
+Send rights coalesce per port in a name space, so a call that returns an
+existing name proves what that name is. Kernel object-type numbers vary between
+releases and are not used. The 7 receive rights, including the two self-owned
+ports, have the workload as receiver; a receive right cannot reach another
+process. The host process additionally holds notifyd
+(`com.apple.system.notification_center`, connected at libSystem start-up), plus
+any service it looks up. Inside the sandbox those connections are refused.
+
+The probe enforces this. `mach-send-rights-attributed` fails if any send right
+in the sandbox is not one of the rows above. The host control looks up the eight
+resolver services and requires every returned right to be flagged as
+unattributed, which proves that the classifier detects foreign rights. Both
+paths were mutation-checked: an injected unknown right gives
+`primitive-check-failed`, and a classifier that accepts every right gives
+`mach-positive-control-unavailable`.
+
+Rights not held at start but obtainable on request are a residual, not a
+regression. These are the task name, inspect and read ports (kernel, own task),
+`TASK_ACCESS_PORT` and the `EXC_RESOURCE`/`EXC_CORPSE_NOTIFY` exception handler.
+The last two are send rights to other processes that launchd sets at spawn;
+neither is a resolver or network service.
+
+**Open finding: launchd introspection through the bootstrap port.** Lookups are
+refused, but launchd still answers read-only `launchctl print` requests from the
+sandbox. On the qualified host, `print gui/<uid>` returned the same 2,908 lines
+as on the host, including service names and per-job environments.
+`launchctl getenv` returned no value, and `submit` and `setenv` were refused.
+The host control for `submit` created a harmless `/usr/bin/true` job, which was
+then removed. In an experiment, setting the bootstrap port to `MACH_PORT_NULL` before
+`exec` made `print` fail ("Reentrancy avoided") while Python still ran. That
+mitigation is not implemented; see "Before promotion".
 
 No macOS PID namespace exists, and macOS has no `setsid(1)`, so the supervisor
 has no child process group there and relies on descendant snapshots. Cleanup
@@ -209,7 +253,8 @@ Every probe and run rebuilds settings from the immutable-in-memory policy bytes,
 checks the installed SRT version and rejects all dependency errors/warnings. It
 then exercises synthetic readable/forbidden files, denied writes, IPv4/IPv6 and
 Unix-socket listeners with positive host controls, descendant argv preservation,
-Linux nested-userns denial or macOS Mach/resolver denial, and a live proxy 403 for
+Linux nested-userns denial or macOS Mach/resolver denial and send-right
+attribution, and a live proxy 403 for
 a denied reserved hostname. The probe makes **no positive model-provider request**.
 
 One manual, unauthenticated provider check has run (GH#35043, macOS arm64,
@@ -302,7 +347,8 @@ GH#35043. macOS arm64 synthetic qualification is complete under
 qualifies the other architecture.
 
 Still required, tracked as GH#35043 follow-ups: NixOS arm64 and macOS x64
-evidence; attribution of the inherited macOS send rights; independent review
+evidence; closing launchd introspection through the inherited macOS bootstrap
+port (send rights attributed under GH#39362); independent review
 of filesystem composition; minimal credential handling and an explicit
 extraction-role envelope. Model/settings, wall-time/resources/cost, input release
 and comparison-attempt approval remain separate decisions.
