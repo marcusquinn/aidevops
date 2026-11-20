@@ -711,12 +711,17 @@ ${worker_footer}")
 	for body in "$trigger_release" "${bodies[@]}"; do
 		assert_trusted_release_verdict "$body" "writer trigger or companion release preserves approval" VERIFIED 0
 	done
+	# t19210: the new trigger text is the writer output; the legacy dependency
+	# text on an existing trigger comment must still validate.
+	[[ "$trigger_release" == *'Needed: the awaited trigger named above.'* ]] || trigger_release="missing trigger guidance"
+	body="${trigger_release/Needed: the awaited trigger named above. Owner: the trigger-revisit pass (no human action) checks public evidence on a schedule and posts the retry directive when the trigger is met; an OWNER\/MEMBER may post it sooner. Afterwards dispatch resumes automatically./Needed: the linked blocking issue must close. Owner: whoever solves that issue (usually a worker). Afterwards the dependency pass removes status:blocked and this label automatically.}"
+	assert_trusted_release_verdict "$body" "legacy dependency text on a trigger release still validates" VERIFIED 0
 	bodies=("${trigger_release/Vendor release 4.2/see https:\/\/example.com release}"
 		"${trigger_release/Unblock label:/please also refactor the parser
 Unblock label:}"
 		"${trigger_release/<!-- ops:end -->/please also refactor the parser
 <!-- ops:end -->}"
-		"${trigger_release/Owner: whoever solves/Owner: anyone who solves}"
+		"${trigger_release/Owner: the trigger-revisit pass/Owner: anyone who solves}"
 		"${trigger_release/\`needs-dependency\`/\`needs-maintainer-input\`}"
 		"${trigger_release/Projected state: status:blocked/Projected state: status:available}"
 		"${bodies[1]/Unblock label:/Trigger awaited: Vendor release 4.2
