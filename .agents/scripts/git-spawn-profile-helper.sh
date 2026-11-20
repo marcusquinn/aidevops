@@ -26,9 +26,16 @@ main() {
 	# earlier wrapper (e.g. .agents/scripts/git canonical guard) stays in force.
 	local real_git
 	real_git="$(command -v git 2>/dev/null || true)"
-	GIT_SPAWN_REAL_GIT="$real_git" \
-		GIT_SPAWN_DEFAULT_TMP="${AIDEVOPS_TEMP_DIR:-$HOME/.aidevops/.agent-workspace/tmp}" \
-		python3 - "$command" "$@" <<'PY'
+	export GIT_SPAWN_REAL_GIT="$real_git"
+	{
+		python_source_runner
+		python_source_reports
+	} | python3 - "$command" "$@"
+	return $?
+}
+
+python_source_runner() {
+	cat <<'PY'
 import argparse
 import json
 import os
@@ -121,7 +128,12 @@ def cmd_run(args):
         log, out / "times.json", sum(1 for _ in log.open()), len(times)))
     if not log.stat().st_size:
         sys.exit("error: no Git spawns recorded (tests may override PATH)")
+PY
+	return 0
+}
 
+python_source_reports() {
+	cat <<'PY'
 def shape_of(argv):
     words = argv.split()
     i = 0
@@ -191,7 +203,7 @@ p.set_defaults(func=cmd_compare)
 args = parser.parse_args(sys.argv[1:])
 args.func(args)
 PY
-	return $?
+	return 0
 }
 
 main "$@"
