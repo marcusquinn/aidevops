@@ -436,9 +436,11 @@ PY
 # pushed head as their restore dependency; merge captures always keep their own
 # bundle, so they stay "unknown". Prints published|unpublished|unknown.
 archive_remote_state() {
-	local worktree="$1" head_sha="$2" base_sha="$3"
+	local worktree="$1" head_sha="$2" base_sha="$3" admin_dir="${4:-}"
 	local unpublished=""
-	if [[ "$head_sha" == "$base_sha" || -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+	# Callers pass the admin dir resolved earlier in this invocation.
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ "$head_sha" == "$base_sha" || -e "$admin_dir/MERGE_HEAD" ]]; then
 		printf 'unknown\n'
 		return 0
 	fi
@@ -453,9 +455,10 @@ archive_remote_state() {
 
 capture_archive_payload() {
 	local worktree="$1" archive_dir="$2" head_sha="$3" base_sha="$4"
-	local failure_log="$5" remote_state="${6:-unknown}"
+	local failure_log="$5" remote_state="${6:-unknown}" admin_dir="${7:-}"
 	local commit_count
-	if [[ -e "$(git -C "$worktree" rev-parse --absolute-git-dir)/MERGE_HEAD" ]]; then
+	[[ -n "$admin_dir" ]] || admin_dir=$(git -C "$worktree" rev-parse --absolute-git-dir) || return 1
+	if [[ -e "$admin_dir/MERGE_HEAD" ]]; then
 		: >"$archive_dir/diff.patch"
 		: >"$archive_dir/staged.patch"
 		python3 "${SCRIPT_DIR}/worktree_archive_snapshot.py" merge-capture "$worktree" "$archive_dir" || return 1
@@ -582,13 +585,22 @@ archive_worktree() {
 	fi
 	validate_branch "$base_branch" || return 1
 	[[ -d "$worktree" ]] || { die "worktree does not exist: $worktree"; return 1; }
-	# One spawn answers both the work-tree check and the common dir (used once, for the manifest).
-	local inside_probe="" inside_state=""
-	inside_probe=$(git -C "$worktree" rev-parse --is-inside-work-tree --path-format=absolute --git-common-dir 2>/dev/null) || inside_probe=""
+	# One spawn answers the work-tree check, the admin dir (whose MERGE_HEAD is
+	# still tested live where needed) and the common dir (used once, for the manifest).
+	# --absolute-git-dir is absolute before the --path-format switch.
+	local inside_probe="" inside_state="" admin_dir="" probe_rest=""
+	inside_probe=$(git -C "$worktree" rev-parse --is-inside-work-tree --absolute-git-dir --path-format=absolute --git-common-dir 2>/dev/null) || inside_probe=""
 	inside_state=${inside_probe%%$'\n'*}
 	[[ "$inside_state" =~ ^true$ ]] || { die "not a Git worktree: $worktree"; return 1; }
-	git_common_dir=${inside_probe#*$'\n'}
-	[[ -n "$git_common_dir" && "$git_common_dir" != "$inside_probe" ]] || { die "cannot resolve git common dir: $worktree"; return 1; }
+	probe_rest=${inside_probe#*$'\n'}
+	admin_dir=${probe_rest%%$'\n'*}
+	git_common_dir=${probe_rest#*$'\n'}
+	# Exactly three lines: a newline inside either path must not shift the fields.
+	[[ "$probe_rest" != "$inside_probe" && "$admin_dir" == /* && "$git_common_dir" == /* &&
+		"$git_common_dir" != "$probe_rest" && "$git_common_dir" != *$'\n'* ]] || {
+		die "cannot resolve git common dir: $worktree"
+		return 1
+	}
 	worktree=$(cd "$worktree" && pwd -P) || return 1
 	fingerprint_before=$(source_fingerprint "$worktree" 0 0 1) || { die "$FINGERPRINT_UNAVAILABLE"; return 1; }
 	base_sha=$(resolve_base_sha "$worktree" "$base_branch" "$base_sha") || { die "cannot resolve base SHA"; return 1; }
@@ -597,7 +609,7 @@ archive_worktree() {
 	default_branch=$(git -C "$worktree" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
 	default_branch=${default_branch#origin/}
 	[[ -n "$default_branch" ]] || default_branch="$base_branch"
-	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha") || return 1
+	remote_state=$(archive_remote_state "$worktree" "$head_sha" "$base_sha" "$admin_dir") || return 1
 	# GH#38394: a published head's remote branch is deleted by the merge flow, so
 	# --bundle-commits carries the commits and depends only on the base.
 	if [[ "$bundle_commits" -eq 1 && "$remote_state" == "$REMOTE_STATE_PUBLISHED" ]]; then
@@ -612,7 +624,7 @@ archive_worktree() {
 	archive_capacity_check "$worktree" "$output_root" "$head_sha" "$base_sha" "$remote_state" || return 1
 	mkdir -p "${archive_dir%/*}" || return 1
 	mkdir -m 700 "$archive_dir" || return 1
-	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" || {
+	capture_archive_payload "$worktree" "$archive_dir" "$head_sha" "$base_sha" "$failure_log" "$remote_state" "$admin_dir" || {
 		discard_failed_archive "$archive_dir"
 		return 1
 	}

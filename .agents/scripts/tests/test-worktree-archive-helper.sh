@@ -301,7 +301,9 @@ test_failed_capture_leaves_no_archive() {
 }
 
 test_tracked_patch_capacity() {
-	local paths canonical worktree root reserve phase estimate rc=0
+	local paths canonical worktree root reserve phase estimate stderr_text rc=0
+	# A Bash regex, not GNU-only sed label syntax (BSD sed rejects `;ta;b;:a`).
+	local estimate_pattern='estimate=([0-9]+);'
 	paths=$(setup_repo patch-capacity) || return 1
 	IFS=$'\t' read -r canonical worktree <<<"$paths"
 	root="$TEST_ROOT/patch-capacity-archives"
@@ -319,7 +321,9 @@ PY
 			--base-branch main --output-root "$root" >/dev/null 2>"$TEST_ROOT/patch-capacity.stderr"; then rc=1; fi
 		grep -q 'producer:insufficient-capacity;' "$TEST_ROOT/patch-capacity.stderr" || rc=1
 		# Estimate must include the ~150 KB tracked patch (10000 lines x 15 bytes).
-		estimate=$(sed -n 's/.*estimate=\([0-9][0-9]*\);.*/\1/;ta;b;:a;p;q' "$TEST_ROOT/patch-capacity.stderr")
+		estimate=""
+		stderr_text=$(<"$TEST_ROOT/patch-capacity.stderr")
+		if [[ "$stderr_text" =~ $estimate_pattern ]]; then estimate="${BASH_REMATCH[1]}"; fi
 		[[ -n "$estimate" && "$estimate" -ge 150000 ]] || rc=1
 		[[ ! -e "$root" ]] || rc=1
 		git -C "$worktree" reset -q --hard HEAD || return 1

@@ -85,17 +85,20 @@ def validate_admin_config(root, admin):
                 raise ValueError('git_admin:location_dependent_config:' + key.decode('ascii'))
 
 
-def administration(root, allow_merge=False, *, admin=None, common=None):
+def administration(root, allow_merge=False, *, admin=None, common=None, shared_index=None):
     """Read only explicitly supported per-worktree administration, never common config.
 
-    Callers may pass directories they resolved earlier in the same guard pass.
+    Callers may pass directories and the split-index probe (shared_index, as
+    printed by rev-parse --shared-index-path) resolved earlier in the same guard pass.
     """
     admin, common = (admin, common) if admin and common else git_dirs(root)
     files = administration_files(admin, admin, admin.resolve() != common.resolve(), allow_merge)
     fetch_head_roots(files.get("FETCH_HEAD", ""))
     if "AUTO_MERGE" in files:
         validate_auto_merge(root, auto_merge_oid(bytes.fromhex(files["AUTO_MERGE"])))
-    if git(root, "rev-parse", "--shared-index-path").strip():
+    if shared_index is None:
+        shared_index = git(root, "rev-parse", "--shared-index-path")
+    if shared_index.strip():
         raise ValueError("git_admin:split_index:index")
     validate_admin_config(root, admin)
     refs = git(root, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", *PRIVATE_PREFIXES)
