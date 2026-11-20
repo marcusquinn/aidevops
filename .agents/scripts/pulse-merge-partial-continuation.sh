@@ -898,12 +898,13 @@ _pmpc_reconcile_closed_checkpoints() {
 #       $3=walk floor epoch, $4=start epoch of the last completed walk (optional)
 # Returns: 0 on success, 1 on a write failure
 _pmpc_merged_walk_write() {
-	local walk_file="$1" walk_start="$2" walk_floor="$3" walk_completed="${4:-}"
-	{
-		[[ -z "$walk_start" ]] || printf 'start=%s\nfloor=%s\n' "$walk_start" "$walk_floor"
-		[[ -z "$walk_completed" ]] || printf 'completed=%s\n' "$walk_completed"
-	} >"${walk_file}.$$" && mv -f "${walk_file}.$$" "$walk_file" && return 0
-	return 1
+	local walk_file="$1" walk_start="$2" walk_floor="$3" walk_completed="${4:-}" content=""
+	[[ -z "$walk_start" ]] || content="start=${walk_start}"$'\n'"floor=${walk_floor}"$'\n'
+	[[ -z "$walk_completed" ]] || content+="completed=${walk_completed}"$'\n'
+	# One write, checked on its own, so a failed write never replaces the state.
+	printf '%s' "$content" >"${walk_file}.$$" || return 1
+	mv -f "${walk_file}.$$" "$walk_file" || return 1
+	return 0
 }
 
 # List one page of closed PRs (most recently updated first) and keep only the
