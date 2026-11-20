@@ -87,9 +87,16 @@ distributions this is invisible because the tools share `/usr/bin` with
 `which(1)`; on NixOS each package has its own `bin` directory, so omitting this
 field fails the probe with `dependencies-not-ready`.
 
-The child inherits no host environment variables, credential files or agent
-sockets; supervisor-exported framework constants are the known exception (below).
-SRT's own proxy configuration is generated, never inherited from HTTP_PROXY or
+The child inherits no broad host environment, credential files or agent sockets.
+The workload runs through `env -i` (the envelope's `coreutils` tool) with an
+explicit allowlist copied from the sandbox shell: `PATH`, `HOME`, `TMPDIR`,
+`LANG`, and the names SRT 0.0.83 sets itself (the `*_PROXY`/`*_proxy` family,
+`NO_PROXY`, `SANDBOX_RUNTIME`, `SRT_SSH_PROXY_COMMAND`, `GIT_SSH_COMMAND`,
+`GIT_CONFIG_PARAMETERS`, `CLOUDSDK_PROXY_*`, `DOCKER_HTTP(S)_PROXY`,
+`GRPC_PROXY`, `RSYNC_PROXY`, `JAVA_TOOL_OPTIONS`). Framework constants exported
+by the supervisor's sourced helpers are therefore not visible to the workload.
+The canary check `env-allowlisted` fails if any other name is present, apart from
+`PWD`, `SHLVL` and `__CF_USER_TEXT_ENCODING`. SRT's own proxy configuration is generated, never inherited from HTTP_PROXY or
 other ambient proxy variables. The workload sees only the owned proxy bridge
 sockets on Linux; AF_UNIX creation is denied by the seccomp helper. The backend
 keeps its event loop running while children execute so the proxy remains live.

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { providerHost, settings, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
+import { ENV_ADDED, ENV_ALLOWLIST, providerHost, settings, tightenMacCommand, tightenMacProfile } from '../worker-egress-srt/backend.mjs';
 
 const scripts = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const backend = path.join(scripts, 'worker-egress-srt/backend.mjs');
@@ -122,6 +122,14 @@ test('real platform qualification (explicit opt-in, synthetic data, no provider 
       tools.python, '-I', '-c', 'import sys; print(sys.argv[1])', 'a b;$(false)']);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     assert.equal(run.stdout.trim(), 'a b;$(false)');
+    // The supervisor exports framework constants; the workload must not see them.
+    const envRun = invoke(['run', '--policy', policyFile, '--', tools.python, '-I', '-c',
+      'import os,json; print(json.dumps(sorted(os.environ)))']);
+    assert.equal(envRun.status, 0, envRun.stdout + envRun.stderr);
+    const names = JSON.parse(envRun.stdout);
+    const allowed = new Set([...ENV_ALLOWLIST, ...ENV_ADDED]);
+    assert.deepEqual(names.filter(name => !allowed.has(name)), []);
+    assert.ok(names.includes('PATH') && names.includes('HTTPS_PROXY'));
     const timed = invoke(['run', '--policy', policyFile, '--', tools.python,
       '-I', '-c', 'import time; time.sleep(120)']);
     assert.equal(timed.status, 124, timed.stdout + timed.stderr);
