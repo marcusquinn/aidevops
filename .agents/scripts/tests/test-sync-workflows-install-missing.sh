@@ -8,6 +8,9 @@ set -uo pipefail
 
 # Keep the mocked provenance readback independent of the host worker runtime.
 export AIDEVOPS_SESSION_ORIGIN=interactive
+# An inherited runtime lifecycle identity routes worktree creation to the native
+# registry, which these Git fixtures do not provide (GH#39344).
+unset AIDEVOPS_LIFECYCLE_RUNTIME_PID AIDEVOPS_LIFECYCLE_SESSION_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/../sync-workflows-helper.sh"
@@ -63,6 +66,8 @@ assert_exit() {
 }
 
 test_root=$(mktemp -d) || exit 1
+# Registry state parents must be canonical; macOS TMPDIR sits behind /var -> /private/var.
+test_root=$(cd "$test_root" && pwd -P) || exit 1
 trap 'rm -rf "$test_root"' EXIT
 mkdir -p "$test_root/.config/aidevops" "$test_root/bin"
 for repo_name in admin maintain upstream local archived read inaccessible; do
@@ -342,7 +347,7 @@ for ref_case in release cli registry global; do
 		AIDEVOPS_TEST_GIT_BIN="$real_git" CANONICAL_GIT_REPO="$apply_repo" \
 		CANONICAL_GIT_GUARD_LOG="$test_root/canonical-git-guard.log" bash "$HELPER" \
 		--apply --repo fake/apply --workflow loc-badge --install-missing \
-		--branch "chore/metrics-$ref_case" "${ref_args[@]}" 2>&1)
+		--branch "chore/metrics-$ref_case" ${ref_args[@]+"${ref_args[@]}"} 2>&1)
 	metrics_rc=$?
 	assert_exit "metrics $ref_case install succeeds" 0 "$metrics_rc"
 	metrics_caller=$("$real_git" --git-dir="$apply_bare" show \
